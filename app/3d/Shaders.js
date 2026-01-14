@@ -14,6 +14,22 @@ void main() {
 }
 `;
 
+export function common() {
+    return `
+    // common GLSL definitions
+    #define PI 3.1415926
+
+    // common GLSL functions
+    float toRadians(float degrees) {
+        return degrees * (PI / 180.0);
+    }
+        
+    float toDegrees(float radians) {
+        return radians * (180.0 / PI);
+    }
+    `
+}
+
 /**
  * Component that sets up a shader to render to a texture and read back the data.
  * @param {number} w - Width of the render target.
@@ -22,7 +38,7 @@ void main() {
  * @param {string} frag - Fragment shader code.
  * @param {object} uniforms - Uniforms to pass to the shader. (u_time and u_resolution are provided automatically)
  */
-export function Shader({w, h, onData, frag, uniforms, debug=true}) {
+export function Shader({w, h, onData, frag, uniforms, debug=false}) {
     const { gl } = useThree();
 
     const rt = useFBO(w, h, {
