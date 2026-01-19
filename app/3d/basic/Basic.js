@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Box } from "../objects/Box";
 import { Point3D } from "../objects/Object";
-import { LiDARCar } from "../vehicles/LiDARCar";
+import { LiDAR3DCar, LiDARCar } from "../vehicles/LiDARCar";
 
 
 export default function Basic() {
@@ -24,7 +24,7 @@ export default function Basic() {
         <group>
             {obstacles.map(obj => obj.toMesh())}
         </group>
-        <LiDARCar objs={obstacles} />
+        <LiDAR3DCar objs={obstacles} />
         </>
     );
 }

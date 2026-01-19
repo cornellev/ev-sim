@@ -27,6 +27,10 @@ export function common() {
     float toDegrees(float radians) {
         return radians * (180.0 / PI);
     }
+
+    float floatMod(float a, float b) {
+        return a - b * floor(a / b);
+    }
     `
 }
 
@@ -99,7 +103,7 @@ export function Shader({w, h, onData, frag, uniforms, debug=false}) {
         <>
         { debug && (
             <mesh>
-                <planeGeometry args={[2, 2]} />
+                <planeGeometry args={[w / 100, h / 100]} />
                 <meshBasicMaterial map={rt.texture} toneMapped={false} />
             </mesh>
         )}

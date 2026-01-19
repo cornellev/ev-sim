@@ -6,9 +6,10 @@ import Unit, { TestingUnit } from "./units/Unit";
 import NumberUnit from "./units/math/Number";
 import { AddMenu } from "./AddMenu";
 
-export default function Scripting() {
+export default function Scripting({ output, input}) {
     const [unitChildren, setUnitChildren] = useState([
-        
+        <ROSInputUnit key="ros-input" output={output} />,
+        <ROSOutputUnit key="ros-output" input={input} />
     ]);
 
     const addUnit = (unitElement) => {
