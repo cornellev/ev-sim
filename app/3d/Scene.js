@@ -3,8 +3,9 @@
 import { Canvas, useThree } from "@react-three/fiber";
 import Basic from "./basic/Basic";
 import { OrbitControls } from "@react-three/drei";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Shaders } from "./Shaders";
+import VehicleConstructor from "./construct/Constructor";
 
 function SceneInit({ cameraPosition, cameraRotation }) {
 
@@ -20,6 +21,8 @@ function Scene() {
     const [gridEnabled, setGridEnabled] = useState(true);
     const [cameraPosition, setCameraPosition] = useState([10, 10, 10]);
     const [cameraRotation, setCameraRotation] = useState([-0.5, 0.5, 0]);
+
+    const orbitRef = useRef();
 
     useEffect(() => {
         const handleKeyDown = (event) => {
@@ -49,8 +52,9 @@ function Scene() {
             {gridEnabled && <gridHelper args={[100, 100]} />}
             <ambientLight intensity={0.5} />
             <directionalLight position={[10, 10, 5]} intensity={1} />
-            <Basic />
-            <OrbitControls makeDefault enableDamping dampingFactor={0.45} onChange={onOrbitChange} />
+            {/* <Basic /> */}
+            <VehicleConstructor orbitRef={orbitRef} />
+            <OrbitControls makeDefault enableDamping dampingFactor={0.45} onChange={onOrbitChange} ref={orbitRef} />
         </Canvas>
         </>
     );
