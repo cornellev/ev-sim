@@ -27,7 +27,7 @@ export function MovableControls({ origin = { x: 0, y: 0, z: 0 }, onChange = (pos
             xRef.current.line.material.linewidth = w;
             yRef.current.line.material.linewidth = w;
             zRef.current.line.material.linewidth = w;
-            console.log("Set line widths")
+            //console.log("Set line widths")
         }
     }, [xRef, yRef, zRef]);
 

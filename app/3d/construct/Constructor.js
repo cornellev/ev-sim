@@ -9,10 +9,12 @@ export default function VehicleConstructor({ orbitRef }) {
     const [selectedPart, setSelectedPart] = useState(null);
     const [CurrentOverlay, setCurrentOverlay] = useState(null);
     const [CurrentMesh, setCurrentMesh] = useState(null);
-    const [lastDist, setLastDist] = useState(0);
     const [constructorObjects, setConstructorObjects] = useState([
         new DigitalCamera()
     ]);
+
+    const [htmlPos, setHtmlPos] = useState([0, 0, 0]);
+    const [lastRun, setLastRun] = useState(0);
 
     const currentObj = useRef(null);
 
@@ -50,24 +52,13 @@ export default function VehicleConstructor({ orbitRef }) {
         setCurrentMesh(() => selectedPart.meshContructor());
     }, [selectedPart])
 
-    useFrame(() => {
-        if (orbitRef && orbitRef.current) {
-            if (orbitRef.current.getDistance() !== lastDist) {
-                setConstructorObjects(prev => [...prev, selectedPart]);
-                setSelectedPart(null);
-            }
-            setLastDist(orbitRef.current.getDistance());
-        }
-    }, [])
-
     const onPosChange = (newPos) => {
+        if (Date.now() - lastRun < 10) return;
+        setLastRun(Date.now()); // prevent max stack issues.
         if (selectedPart && currentObj.current) {
-            setSelectedPart(prev => {
-                prev.setPosition(newPos.x, newPos.y, newPos.z);
-                return prev;
-            });
-
+            selectedPart.setPosition(newPos.x, newPos.y, newPos.z);
             currentObj.current.position.set(newPos.x, newPos.y, newPos.z);
+            setHtmlPos([newPos.x, newPos.y, newPos.z]);
         }
     }
 
@@ -80,11 +71,50 @@ export default function VehicleConstructor({ orbitRef }) {
         });
     }
 
+    useEffect(() => {
+        const onKeyDown = (event) => {
+            if (event.key === "Escape") {
+                if (selectedPart) {
+                    setConstructorObjects(prev => [...prev, selectedPart]);
+                    setSelectedPart(null);
+                }
+            }
+        }
+
+        window.addEventListener("keydown", onKeyDown);
+
+        return () => {
+            window.removeEventListener("keydown", onKeyDown);
+        }
+    }, [selectedPart, constructorObjects])
+
+    // check for shift-a
+    useEffect(() => {
+        const onKeyDown = (event) => {
+            if (event.key === "A" && event.shiftKey) {
+                console.log("adding digital camera");
+                const device = new DigitalCamera();
+                setConstructorObjects(prev => [...prev, device]);
+            }
+        }
+
+        window.addEventListener("keydown", onKeyDown);
+
+        return () => {
+            window.removeEventListener("keydown", onKeyDown);
+        }
+    }, [constructorObjects])
+
     return (
         <>
-        <Html center transform={false} portal={document.body}> 
-            <div className="fixed top-[-48vh] left-[-48vw] z-10">
-                {CurrentOverlay && <CurrentOverlay disableOrbit={disableOrbit} enableOrbit={enableOrbit} />}
+        <Html position={currentObj.current ? [htmlPos[0], htmlPos[1] - 0.5, htmlPos[2]] : [0, 0, 0]}>
+            <div className="fixed top-4 left-4 z-10">
+                {CurrentOverlay && (
+                    <CurrentOverlay
+                        disableOrbit={disableOrbit}
+                        enableOrbit={enableOrbit}
+                    />
+                )}
             </div>
         </Html>
         { selectedPart && CurrentMesh && <MovableControls origin={selectedPart.getPosition()} onStart={disableOrbit} onEnd={enableOrbit} onChange={onPosChange} /> }
