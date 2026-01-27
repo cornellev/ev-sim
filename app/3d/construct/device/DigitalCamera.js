@@ -16,7 +16,7 @@ export default class DigitalCamera extends Device {
     getMesh({ position, objectRef, selected, onSelected, index }) {
         const raycast = (event) => {
             event.stopPropagation();
-            onSelected(index);
+            if (onSelected) onSelected(index);
         }
 
         return (
