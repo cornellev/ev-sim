@@ -20,6 +20,18 @@ export function MovableControls({ origin = { x: 0, y: 0, z: 0 }, onChange = (pos
     const zRef = useRef();
 
     useEffect(() => {
+        if (xRef.current && yRef.current && zRef.current) {
+            const w = 50;
+
+            // make lines thicker
+            xRef.current.line.material.linewidth = w;
+            yRef.current.line.material.linewidth = w;
+            zRef.current.line.material.linewidth = w;
+            console.log("Set line widths")
+        }
+    }, [xRef, yRef, zRef]);
+
+    useEffect(() => {
         onChangeRef.current = onChange;
     }, [onChange]);
 
@@ -170,7 +182,7 @@ export function MovableControls({ origin = { x: 0, y: 0, z: 0 }, onChange = (pos
             onPointerOver={handlePointerOver('x')}
             onPointerOut={handlePointerOut}
         >
-            <arrowHelper args={[new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 0, 0), xVisual.length, xVisual.color]} />
+            <arrowHelper args={[new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 0, 0), xVisual.length, xVisual.color]} ref={xRef} />
         </mesh>
         <mesh
             position={[position.x, position.y, position.z]}
@@ -179,7 +191,7 @@ export function MovableControls({ origin = { x: 0, y: 0, z: 0 }, onChange = (pos
             onPointerOver={handlePointerOver('y')}
             onPointerOut={handlePointerOut}
         >
-            <arrowHelper args={[new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 0), yVisual.length, yVisual.color]} />
+            <arrowHelper args={[new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 0), yVisual.length, yVisual.color]} ref={yRef} />
         </mesh>
         <mesh
             position={[position.x, position.y, position.z]}
@@ -188,7 +200,7 @@ export function MovableControls({ origin = { x: 0, y: 0, z: 0 }, onChange = (pos
             onPointerOver={handlePointerOver('z')}
             onPointerOut={handlePointerOut}
         >
-            <arrowHelper args={[new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, 0), zVisual.length, zVisual.color]} />
+            <arrowHelper args={[new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, 0), zVisual.length, zVisual.color]} ref={zRef} />
         </mesh>
         </>
     )

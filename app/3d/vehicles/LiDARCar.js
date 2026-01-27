@@ -438,7 +438,7 @@ export function LidarCalculator3D({ lidarState, onDistancesUpdate, lidarSpecs=ne
             frag={frag3d}
             w={w} 
             h={h}
-            debug={true}
+            debug={false}
             uniforms={{
                 u_origin: {
                     value: lidarState.origin.toArray()

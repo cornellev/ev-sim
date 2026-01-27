@@ -6,6 +6,7 @@ import { OrbitControls } from "@react-three/drei";
 import { useEffect, useRef, useState } from "react";
 import { Shaders } from "./Shaders";
 import VehicleConstructor from "./construct/Constructor";
+import DigitalCamera from "./construct/device/DigitalCamera";
 
 function SceneInit({ cameraPosition, cameraRotation }) {
 
@@ -61,9 +62,14 @@ function Scene() {
 }
 
 export default function TotalScene() {
+    const [cam, setCam] = useState(new DigitalCamera());
+    const DigCam = cam.overlayConstructor();
+
     return (
+        <>
         <div id="canvas-container" className="w-[100vw] h-[100vh]">
             <Scene />
         </div>
+        </>
     )
 }
