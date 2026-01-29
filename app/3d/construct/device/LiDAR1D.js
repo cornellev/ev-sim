@@ -1,3 +1,4 @@
+import Device from "./Device";
 
 
 export default class LiDAR1D extends Device {

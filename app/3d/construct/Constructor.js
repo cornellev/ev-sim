@@ -3,6 +3,7 @@ import { MovableControls } from "./Movable";
 import { Html, Hud } from "@react-three/drei";
 import DigitalCamera from "./device/DigitalCamera";
 import { useFrame } from "@react-three/fiber";
+import LiDAR1D from "./device/LiDAR1D";
 
 
 export default function VehicleConstructor({ orbitRef }) {
@@ -63,6 +64,7 @@ export default function VehicleConstructor({ orbitRef }) {
     }
 
     const onSelectObj = (index) => {
+        if (selectedPart) return; // only one at a time
         setSelectedPart(constructorObjects[index]);
         setConstructorObjects(prev => {
             const newArr = [...prev];
@@ -92,9 +94,9 @@ export default function VehicleConstructor({ orbitRef }) {
     useEffect(() => {
         const onKeyDown = (event) => {
             if (event.key === "A" && event.shiftKey) {
-                console.log("adding digital camera");
-                const device = new DigitalCamera();
-                setConstructorObjects(prev => [...prev, device]);
+                const device = new LiDAR1D();
+                constructorObjects.push(device);
+                setConstructorObjects(constructorObjects.slice()); // trigger re-render
             }
         }
 
@@ -119,6 +121,7 @@ export default function VehicleConstructor({ orbitRef }) {
         </Html>
         { selectedPart && CurrentMesh && <MovableControls origin={selectedPart.getPosition()} onStart={disableOrbit} onEnd={enableOrbit} onChange={onPosChange} /> }
         { selectedPart && CurrentMesh && <CurrentMesh position={selectedPart.getPosition()} objectRef={currentObj} selected /> }
+
         {
             constructorObjects.map((obj, index) => {
                 if (obj === null) return null;
