@@ -5,6 +5,7 @@ import { ROSInputUnit, ROSOutputUnit } from "./units/ROSUnit";
 import { Float64ToInt32, Int32ToFloat64 } from "./units/conversions/NumberConversions";
 import { E, GoldenRatio, PI, Tau } from "./units/math/Constants";
 import { RandomNumber } from "./units/math/Random";
+import { Noise } from "./units/math/Noise";
 
 function genUUID() {
     return Math.random().toString(36).substring(2, 9);
@@ -54,6 +55,14 @@ const units = {
             name: "Golden Ratio (φ)",
             obj: () => {
                 return <GoldenRatio key={Math.random()} _uuid={genUUID()} />
+            }
+        }
+    ],
+    vector2: [
+        {
+            name: "Noise Texture (vec2)",
+            obj: () => {
+                return <Noise key={Math.random()} _uuid={genUUID()} />
             }
         }
     ],

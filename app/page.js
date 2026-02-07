@@ -6,7 +6,7 @@ import Scripting from './scripting/Scripting';
 
 
 export default function Home() {
-    const [state, set_state] = useState("3d");
+    const [state, set_state] = useState("scripting");
 
     return (
         <>
