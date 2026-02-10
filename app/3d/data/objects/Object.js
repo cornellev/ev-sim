@@ -1,13 +1,13 @@
 import { isVector3 } from "../../util/Checks";
 import { keys } from "../../util/Keys";
 
-const { Vector3, Scene } = require("three");
+import * as THREE from "three";
 
 export class Object {
     constructor(position=true, rotation=true, scale=true) {
-        if (position) this.position = new Vector3(0, 0, 0);
-        if (rotation) this.rotation = new Vector3(0, 0, 0);
-        if (scale) this.scale = new Vector3(1, 1, 1);
+        if (position) this.position = new THREE.Vector3(0, 0, 0);
+        if (rotation) this.rotation = new THREE.Vector3(0, 0, 0);
+        if (scale) this.scale = new THREE.Vector3(1, 1, 1);
 
         this._color = 0xffffff;
 

@@ -1,11 +1,14 @@
 import { createRef, useEffect, useState } from "react";
-import NumberUnit from "./units/math/Number";
+import NumberUnit, { NumberUnitClass } from "./units/math/Number";
 import { CalculationUnit } from "./units/math/Calculation";
 import { ROSInputUnit, ROSOutputUnit } from "./units/ROSUnit";
 import { Float64ToInt32, Int32ToFloat64 } from "./units/conversions/NumberConversions";
 import { E, GoldenRatio, PI, Tau } from "./units/math/Constants";
 import { RandomNumber } from "./units/math/Random";
 import { Noise } from "./units/math/Noise";
+import { Scale } from "./units/math/Scale";
+import { Mask } from "./units/math/Mask";
+import { LiDAR2DUnit } from "./units/devices/LiDAR2d";
 
 function genUUID() {
     return Math.random().toString(36).substring(2, 9);
@@ -17,19 +20,22 @@ const units = {
             name: "Number",
             obj: () => {
                 return <NumberUnit key={Math.random()} _uuid={genUUID()} />
-            }
+            },
+            class: NumberUnitClass
         },
         {
             name: "Calculation",
             obj: () => {
                 return <CalculationUnit key={Math.random()} _uuid={genUUID()} />
-            }
+            },
+            class: null
         },
         {
             name: "Random Number",
             obj: () => {
                 return <RandomNumber key={Math.random()} _uuid={genUUID()} />
-            }
+            },
+            class: null
         }
     ],
     constants: [
@@ -37,25 +43,29 @@ const units = {
             name: "π (Pi)",
             obj: () => {
                 return <PI key={Math.random()} _uuid={genUUID()} />
-            }
+            },
+            class: null
         },
         {
             name: "e (Euler's Number)",
             obj: () => {
                 return <E key={Math.random()} _uuid={genUUID()} />
-            }
+            },
+            class: null
         },
         {
             name: "τ (Tau)",
             obj: () => {
                 return <Tau key={Math.random()} _uuid={genUUID()} />
-            }
+            },
+            class: null
         },
         {
             name: "Golden Ratio (φ)",
             obj: () => {
                 return <GoldenRatio key={Math.random()} _uuid={genUUID()} />
-            }
+            },
+            class: null
         }
     ],
     vector2: [
@@ -63,7 +73,22 @@ const units = {
             name: "Noise Texture (vec2)",
             obj: () => {
                 return <Noise key={Math.random()} _uuid={genUUID()} />
-            }
+            },
+            class: null
+        },
+        {
+            name: "Mask Texture (vec2)",
+            obj: () => {
+                return <Mask key={Math.random()} _uuid={genUUID()} />
+            },
+            class: null
+        },
+        {
+            name: "Scale Matrix (vec2)",
+            obj: () => {
+                return <Scale key={Math.random()} _uuid={genUUID()} />
+            },
+            class: null
         }
     ],
     conversions: [
@@ -71,13 +96,24 @@ const units = {
             name: "Float64 to Int32",
             obj: () => {
                 return <Float64ToInt32 key={Math.random()} _uuid={genUUID()} />
-            }
+            },
+            class: null
         },
         {
             name: "Int32 to Float64",
             obj: () => {
                 return <Int32ToFloat64 key={Math.random()} _uuid={genUUID()} />
-            }
+            },
+            class: null
+        }
+    ],
+    devices: [
+        {
+            name: "LiDAR 2D",
+            obj: () => {
+                return <LiDAR2DUnit key={Math.random()} _uuid={genUUID()} />
+            },
+            class: null
         }
     ],
     ros: [
@@ -85,13 +121,15 @@ const units = {
             name: "ROS Input",
             obj: () => {
                 return <ROSInputUnit key={Math.random()} _uuid={genUUID()} />
-            }
+            },
+            class: null
         },
         {
             name: "ROS Output",
             obj: () => {
                 return <ROSOutputUnit key={Math.random()} _uuid={genUUID()} />
-            }
+            },
+            class: null
         }
     ]
 }
@@ -163,7 +201,7 @@ export function AddMenu({ onAddUnit=(u)=>{} }) {
                                         className="px-5 py-[3px] cursor-pointer hover:bg-[#4772b3] hover:text-white text-[#e0e0e0]"
                                         onClick={() => {
                                             const unitElement = unit.obj();
-                                            onAddUnit(unitElement);
+                                            onAddUnit(unitElement, unit.class);
                                             setVisible(false);
                                         }}
                                     >

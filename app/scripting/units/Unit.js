@@ -9,7 +9,7 @@ function InputRow({ label="in", type="float64", parentID }) {
         <div className="mb-2 flex items-center">
             {type !== "caption" && <div className={`w-3 h-3 rounded-full mr-2 input-${type.replace(/\[.*?\]/, '')} input parent-${parentID}`} style={{
                 backgroundColor: mainType ? mainType : "rgb(150,150,150)"
-            }}>
+            }} data-encoded={parentID + "|" + label + "|" + type}>
                 <div className={`w-1.5 h-1.5 rounded-full m-[3px]`} style={{
                     backgroundColor: subType ? subType : "#393939"
                 }}></div>
@@ -23,12 +23,13 @@ function OutputRow({ label="out", type="float64", parentID }) {
     const mainType = TYPES[type.replace(/\[.*?\]/, '')];
     const subType = TYPES[type.match(/\[(.*?)\]/)?.[1]];
 
+
     return (
         <div className="mb-2 flex items-center justify-end">
             <span className={"text-xs select-none " + (type === "caption" ? "italic" : "")}>{label}</span>
             {type !== "caption" && <div className={`w-3 h-3 rounded-full ml-2 output-${type.replace(/\[.*?\]/, '')} output parent-${parentID}`} style={{
                 backgroundColor: mainType ? mainType : "rgb(150,150,150)"
-            }}>
+            }}  data-encoded={parentID + "|" + label + "|" + type}>
                 <div className={`w-1.5 h-1.5 rounded-full m-[3px]`} style={{
                     backgroundColor: subType ? subType : "#2b2b2b"
                 }}></div>
@@ -41,6 +42,15 @@ export default function Unit({ children, title="default title", hasOptions=false
     const [position, setPosition] = useState({ x: 100, y: 100 });
     const [uuid, setUUID] = useState(null);
     const [selected, setSelected] = useState(false);
+
+    // make sure inputs/output labels are unique within this unit by throwing an error if there are duplicates
+    useEffect(() => {
+        const labels = [...inputs.map(i => i.label), ...outputs.map(o => o.label)];
+        const uniqueLabels = new Set(labels);
+        if (uniqueLabels.size !== labels.length) {
+            throw new Error(`Duplicate input/output labels in unit "${title}". Labels must be unique within a unit.`);
+        }
+    }, []);
 
     useEffect(() => {
         setUUID(_uuid || Math.random().toString(36).substring(2, 9));

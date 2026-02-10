@@ -8,9 +8,9 @@ export function Line({ start = { x: 0, y: 0 }, end = { x: 0, y: 0 }, color = "wh
         if (!selected) return;
 
         const handleKeyDown = (e) => {
-            console.log(e.key)
+            // console.log(e.key)
             if (e.key === "Delete" || e.key === "Backspace") {
-                console.log("Deleting line");
+                // console.log("Deleting line");
                 onDeleted(ref);
             }
         }
@@ -62,12 +62,21 @@ export function Line({ start = { x: 0, y: 0 }, end = { x: 0, y: 0 }, color = "wh
     );
 }
 
-export function LineManager({ units }) {
+function sourceToInfo(source) {
+    // get data-encoded tag
+    const str = source.dataset.encoded;
+    if (!str) return null;
+    const [uuid, label, type] = str.split('|');
+    return { uuid, label, type };
+}
+
+export function LineManager({ units, notifyConnection=(from, to) => {}, onDeleteConnection=(from, to) => {} }) {
     const [lines, setLines] = useState([]);
     const [lineInProgress, setLineInProgress] = useState(null);
 
     const deleteLine = (lineRef) => {
         setLines(lines.filter(line => line.ref !== lineRef));
+        onDeleteConnection(sourceToInfo(lineRef.current.startSource), sourceToInfo(lineRef.current.endTarget));
     }
 
     // add lines
@@ -93,7 +102,7 @@ export function LineManager({ units }) {
 
         return () => {
             for (let input of inputs) {
-                input.removeEventListener('mousedown', onMouseDownOverTarget);
+                if (input) input.removeEventListener('mousedown', onMouseDownOverTarget);
             }
         };
     }, [units])
@@ -133,6 +142,7 @@ export function LineManager({ units }) {
 
                     if (distance < 10) { // within 10 pixels
                         setLines([...lines, { start: lineInProgress.start, end: { x: outputX, y: outputY }, startSource: lineInProgress.source, endTarget: output, color: TYPES[thisType] || 'white', ref: createRef() }]);
+                        notifyConnection(sourceToInfo(lineInProgress.source), sourceToInfo(output) || output);
                         connected = true;
                         break;
                     }

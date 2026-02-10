@@ -178,7 +178,6 @@ export default function TotalScene() {
         return () => {
             mountRef.current.removeChild(renderer.domElement);
             window.removeEventListener('resize', handleResize);
-            // Optional: dispose of Three.js resources if necessary
         };
     }, []);
 
