@@ -6,6 +6,9 @@ import { Float64ToInt32, Int32ToFloat64 } from "./units/conversions/NumberConver
 import { E, GoldenRatio, PI, Tau } from "./units/math/Constants";
 import { RandomNumber } from "./units/math/Random";
 import { Noise } from "./units/math/Noise";
+import { WheelBaseGeometry } from "./units/vehicle/WheelBaseGeometry";
+import { CarParameters } from "./units/vehicle/CarParameters";
+import { PhysicsModel } from "./units/vehicle/PhysicsModel";
 
 function genUUID() {
     return Math.random().toString(36).substring(2, 9);
@@ -64,6 +67,7 @@ const units = {
             obj: () => {
                 return <Noise key={Math.random()} _uuid={genUUID()} />
             }
+        //TODO: Should add DCMs here, relevant KF calculations to do visually, and other stuff.
         }
     ],
     conversions: [
@@ -79,6 +83,26 @@ const units = {
                 return <Int32ToFloat64 key={Math.random()} _uuid={genUUID()} />
             }
         }
+    ],
+    vehicle: [
+        {
+            name: "Wheelbase Geometry" ,
+            obj: () => {
+                return <WheelBaseGeometry key={Math.random()} _uuid={genUUID()} />
+            }
+        },
+        {
+            name: "Car Parameters",
+            obj: () => {
+                return <CarParameters key={Math.random()} _uuid={genUUID()} />
+            }
+        },
+        {
+            name: "Physics Model Selection",
+            obj: () => {
+                return <PhysicsModel key={Math.random()} _uuid={genUUID()} />
+            }
+        },
     ],
     ros: [
         {
