@@ -1,14 +1,15 @@
 import { createRef, useEffect, useState } from "react";
 import NumberUnit, { NumberUnitClass } from "./units/math/Number";
-import { CalculationUnit } from "./units/math/Calculation";
-import { ROSInputUnit, ROSOutputUnit } from "./units/ROSUnit";
-import { Float64ToInt32, Int32ToFloat64 } from "./units/conversions/NumberConversions";
-import { E, GoldenRatio, PI, Tau } from "./units/math/Constants";
-import { RandomNumber } from "./units/math/Random";
+import { CalculationBlock, CalculationUnit } from "./units/math/Calculation";
+import { ROSInputBlock, ROSInputUnit, ROSOutputBlock, ROSOutputUnit } from "./units/ROSUnit";
+import { Float64ToInt32, Float64ToInt32Block, Int32ToFloat64, Int32ToFloat64Block } from "./units/conversions/NumberConversions";
+import { E, EBlock, GoldenRatio, GoldenRatioBlock, PI, PIBlock, Tau, TauBlock } from "./units/math/Constants";
+import { RandomNumber, RandomNumberBlock } from "./units/math/Random";
 import { Noise } from "./units/math/Noise";
 import { Scale } from "./units/math/Scale";
 import { Mask } from "./units/math/Mask";
 import { LiDAR2DUnit } from "./units/devices/LiDAR2d";
+import { IfBlock, IfUnit } from "./units/statements/If";
 
 function genUUID() {
     return Math.random().toString(36).substring(2, 9);
@@ -28,14 +29,14 @@ const units = {
             obj: () => {
                 return <CalculationUnit key={Math.random()} _uuid={genUUID()} />
             },
-            class: null
+            class: CalculationBlock
         },
         {
             name: "Random Number",
             obj: () => {
                 return <RandomNumber key={Math.random()} _uuid={genUUID()} />
             },
-            class: null
+            class: RandomNumberBlock
         }
     ],
     constants: [
@@ -44,28 +45,28 @@ const units = {
             obj: () => {
                 return <PI key={Math.random()} _uuid={genUUID()} />
             },
-            class: null
+            class: PIBlock
         },
         {
             name: "e (Euler's Number)",
             obj: () => {
                 return <E key={Math.random()} _uuid={genUUID()} />
             },
-            class: null
+            class: EBlock
         },
         {
             name: "τ (Tau)",
             obj: () => {
                 return <Tau key={Math.random()} _uuid={genUUID()} />
             },
-            class: null
+            class: TauBlock
         },
         {
             name: "Golden Ratio (φ)",
             obj: () => {
                 return <GoldenRatio key={Math.random()} _uuid={genUUID()} />
             },
-            class: null
+            class: GoldenRatioBlock
         }
     ],
     vector2: [
@@ -97,14 +98,23 @@ const units = {
             obj: () => {
                 return <Float64ToInt32 key={Math.random()} _uuid={genUUID()} />
             },
-            class: null
+            class: Float64ToInt32Block
         },
         {
             name: "Int32 to Float64",
             obj: () => {
                 return <Int32ToFloat64 key={Math.random()} _uuid={genUUID()} />
             },
-            class: null
+            class: Int32ToFloat64Block
+        }
+    ],
+    statements: [
+        {
+            name: "If Statement",
+            obj: () => {
+                return <IfUnit key={Math.random()} _uuid={genUUID()} />
+            },
+            class: IfBlock
         }
     ],
     devices: [
@@ -122,14 +132,14 @@ const units = {
             obj: () => {
                 return <ROSInputUnit key={Math.random()} _uuid={genUUID()} />
             },
-            class: null
+            class: ROSInputBlock
         },
         {
             name: "ROS Output",
             obj: () => {
                 return <ROSOutputUnit key={Math.random()} _uuid={genUUID()} />
             },
-            class: null
+            class: ROSOutputBlock
         }
     ]
 }
@@ -201,7 +211,7 @@ export function AddMenu({ onAddUnit=(u)=>{} }) {
                                         className="px-5 py-[3px] cursor-pointer hover:bg-[#4772b3] hover:text-white text-[#e0e0e0]"
                                         onClick={() => {
                                             const unitElement = unit.obj();
-                                            onAddUnit(unitElement, unit.class);
+                                            onAddUnit(unitElement, unit.class, unitElement.props._uuid);
                                             setVisible(false);
                                         }}
                                     >

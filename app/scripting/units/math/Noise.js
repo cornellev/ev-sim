@@ -1,8 +1,11 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import * as NoiseJS from "noisejs";
 import Unit from "../Unit";
+import { BlockOutput, storeData, UnitBlock } from "../../ScriptManager";
 
 export function Noise({ _uuid }) {
     const canvasRef = useRef(null);
+    const [values, setValues] = useState([]);
 
     useEffect(() => {
         const canvas = canvasRef.current;
@@ -22,20 +25,30 @@ export function Noise({ _uuid }) {
             const cols = Math.ceil(width / tileSize);
             const rows = Math.ceil(height / tileSize);
 
+            const noise = new NoiseJS.Noise(Math.random());
+            const values = [];
+
             for (let y = 0; y < rows; y++) {
                 for (let x = 0; x < cols; x++) {
-                    const value = Math.random() * 255;
+                    const value = noise.simplex2(x, y) * 128 + 128; // scale to [0, 255]
                     ctx.fillStyle = `rgb(${value}, ${value}, ${value})`;
                     ctx.fillRect(x * tileSize, y * tileSize, tileSize, tileSize);
+                    values.push(value);
                 }
             }
+            return values;
         }
 
-        generateNoise();
+        const noiseValues = generateNoise();
+        setValues(noiseValues);
     }, [])
 
+    useEffect(() => {
+        storeData(_uuid, values);
+    }, [values, _uuid]);
+
     return (
-        <Unit title="Random Number" hasOptions={true} _uuid={_uuid}
+        <Unit title="Noise 2D" hasOptions={true} _uuid={_uuid}
             inputs={[]}
             outputs={
                 [
@@ -47,4 +60,19 @@ export function Noise({ _uuid }) {
                 </div>
         </Unit>
     );
+}
+
+export class NoiseBlock extends UnitBlock {
+    register() {
+        this.registerOutput("out", "tex2");
+    }
+    
+    valid() {
+        return this.hasOutput("out");
+    }
+
+    execute() {
+        return new BlockOutput()
+            .get("out", this.manager.getStoredData(this.uuid) || []);
+    }
 }

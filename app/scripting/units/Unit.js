@@ -23,7 +23,6 @@ function OutputRow({ label="out", type="float64", parentID }) {
     const mainType = TYPES[type.replace(/\[.*?\]/, '')];
     const subType = TYPES[type.match(/\[(.*?)\]/)?.[1]];
 
-
     return (
         <div className="mb-2 flex items-center justify-end">
             <span className={"text-xs select-none " + (type === "caption" ? "italic" : "")}>{label}</span>

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { UnitBlock } from "../../ScriptManager";
+import { BlockOutput, UnitBlock } from "../../ScriptManager";
 
 const { default: Unit } = require("../Unit")
 
@@ -25,12 +25,16 @@ export default function NumberUnit(props) {
 }
 
 export class NumberUnitClass extends UnitBlock {
+    register() {
+        this.registerOutput("number", "float64");
+    }
+
     valid() {
         return true;
     }
 
     execute() {
         const value = parseFloat(document.getElementById(this.uuid + "-input").value);
-        return value;
+        return new BlockOutput().set("number", value);
     }
 }
