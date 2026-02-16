@@ -5,9 +5,9 @@ import { ROSInputBlock, ROSInputUnit, ROSOutputBlock, ROSOutputUnit } from "./un
 import { Float64ToInt32, Float64ToInt32Block, Int32ToFloat64, Int32ToFloat64Block } from "./units/conversions/NumberConversions";
 import { E, EBlock, GoldenRatio, GoldenRatioBlock, PI, PIBlock, Tau, TauBlock } from "./units/math/Constants";
 import { RandomNumber, RandomNumberBlock } from "./units/math/Random";
-import { Noise } from "./units/math/Noise";
-import { Scale } from "./units/math/Scale";
-import { Mask } from "./units/math/Mask";
+import { Noise, NoiseBlock } from "./units/math/tex/Noise";
+import { MultiplyTex, MultiplyTexBlock, Scale } from "./units/math/tex/Scale";
+import { Mask, MaskBlock } from "./units/math/tex/Mask";
 import { LiDAR2DUnit } from "./units/devices/LiDAR2d";
 import { IfBlock, IfUnit } from "./units/statements/If";
 
@@ -71,18 +71,25 @@ const units = {
     ],
     vector2: [
         {
-            name: "Noise Texture (vec2)",
+            name: "Noise Texture (tex1d)",
             obj: () => {
                 return <Noise key={Math.random()} _uuid={genUUID()} />
             },
-            class: null
+            class: NoiseBlock
         },
         {
-            name: "Mask Texture (vec2)",
+            name: "Mask Texture (tex1d)",
             obj: () => {
                 return <Mask key={Math.random()} _uuid={genUUID()} />
             },
-            class: null
+            class: MaskBlock
+        },
+        {
+            name: "Multiply Textures (tex1d)",
+            obj: () => {
+                return <MultiplyTex key={Math.random()} _uuid={genUUID()} />
+            },
+            class: MultiplyTexBlock
         },
         {
             name: "Scale Matrix (vec2)",

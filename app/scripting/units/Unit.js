@@ -175,7 +175,9 @@ export default function Unit({ children, title="default title", hasOptions=false
             </div>}
             {
                 hasOptions &&
-                <div className="bg-[#393939] rounded-b-lg p-3">
+                <div onClick={() => {
+                    setSelected(false);
+                }} className="bg-[#393939] rounded-b-lg p-3">
                     {children}
                 </div>
             }

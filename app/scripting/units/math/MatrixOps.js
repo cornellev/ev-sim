@@ -5,12 +5,12 @@ export function AddMatrix({ _uuid }) {
     return (
         <Unit title="Add Matrix" hasOptions={true} _uuid={_uuid}
             inputs={[
-                { label: "tex2", type: "matrix a" },
-                { label: "tex2", type: "matrix b" }
+                { label: "tex1d", type: "matrix a" },
+                { label: "tex1d", type: "matrix b" }
             ]}
             outputs={
                 [
-                    {label: "out", type: "tex2"}
+                    {label: "out", type: "tex1d"}
                 ]
             } >
         </Unit>

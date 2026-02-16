@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import * as NoiseJS from "noisejs";
-import Unit from "../Unit";
-import { BlockOutput, storeData, UnitBlock } from "../../ScriptManager";
+import Unit from "../../Unit";
+import { BlockOutput, storeData, UnitBlock } from "../../../ScriptManager";
 
 export function Noise({ _uuid }) {
     const canvasRef = useRef(null);
@@ -30,10 +30,11 @@ export function Noise({ _uuid }) {
 
             for (let y = 0; y < rows; y++) {
                 for (let x = 0; x < cols; x++) {
-                    const value = noise.simplex2(x, y) * 128 + 128; // scale to [0, 255]
+                    const raw = noise.simplex2(x, y);
+                    const value = raw * 128 + 128; // scale to [0, 255]
                     ctx.fillStyle = `rgb(${value}, ${value}, ${value})`;
                     ctx.fillRect(x * tileSize, y * tileSize, tileSize, tileSize);
-                    values.push(value);
+                    values.push(raw * 0.5 + 0.5);
                 }
             }
             return values;
@@ -52,7 +53,7 @@ export function Noise({ _uuid }) {
             inputs={[]}
             outputs={
                 [
-                    {label: "out", type: "tex2"}
+                    {label: "out", type: "tex1d"}
                 ]
             } >
                 <div className="w-full h-full flex items-center justify-center">
@@ -64,7 +65,7 @@ export function Noise({ _uuid }) {
 
 export class NoiseBlock extends UnitBlock {
     register() {
-        this.registerOutput("out", "tex2");
+        this.registerOutput("out", "tex1d");
     }
     
     valid() {
@@ -73,6 +74,6 @@ export class NoiseBlock extends UnitBlock {
 
     execute() {
         return new BlockOutput()
-            .get("out", this.manager.getStoredData(this.uuid) || []);
+            .set("out", this.manager.getStoredData(this.uuid) || []);
     }
 }

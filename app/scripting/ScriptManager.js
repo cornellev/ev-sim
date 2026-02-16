@@ -6,7 +6,10 @@ class Connection {
         this.inputUnit = inputUnit;
         this.inputLabel = inputLabel;
     }
-    
+
+    /**
+     * @returns {{unit: UnitBlock, label: String}}
+     */
     getOutput() {
         return { unit: this.outputUnit, label: this.outputLabel };
     }
@@ -37,6 +40,8 @@ export class BlockOutput {
     }
     
     get(label) {
+        if (!Object.keys(this.map).includes(label)) return null;
+
         return this.map[label];
     }
 
@@ -64,6 +69,10 @@ export class UnitBlock {
     }
 
     register() {
+
+    }
+
+    onConnectionsUpdate() {
 
     }
 
@@ -121,16 +130,39 @@ export class UnitBlock {
     addInput(label, connection) {
         if (this.inputs[label]) throw new Error("Input with this name already exists");
         this.inputs[label] = connection;
+
+        this.notifyUpdate();
     }
 
     addOutput(label, connection) {
-        if (this.outputs[label]) throw new Error("Output with this name already exists");
-        this.outputs[label] = connection;
+        if (!Object.keys(this.outputs).includes(label)) {
+            this.outputs[label] = [];
+        }
+        
+        this.outputs[label].push(connection);
+
+        this.notifyUpdate();
+    }
+
+    notifyUpdate() {
+        this.onConnectionsUpdate();
+        for (const output in this.outputs) {
+            const connections = this.outputs[output];
+            connections.forEach(conn => {
+                conn.inputUnit.notifyUpdate();
+            });
+        }
+        for (const input in this.inputs) {
+            const connection = this.inputs[input];
+            connection.getOutput().unit.notifyUpdate();
+        }
     }
 
     getInput(label) {
         if (!this.inputs[label]) throw new Error("Input not found");
         const crossOut = this.inputs[label].getOutput();
+        if (!crossOut.unit.valid()) return null;
+
         return crossOut.unit.execute().get(crossOut.label);
     }
 

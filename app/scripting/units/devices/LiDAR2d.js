@@ -7,7 +7,7 @@ export function LiDAR2DUnit({ _uuid }) {
             inputs={[]}
             outputs={
                 [
-                    {label: "out", type: "tex2"}
+                    {label: "out", type: "tex1d"}
                 ]
             } >
         </Unit>
