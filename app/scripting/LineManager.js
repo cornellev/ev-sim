@@ -1,7 +1,7 @@
-import { createRef, useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { TYPES } from "./Constants";
 
-export function Line({ start = { x: 0, y: 0 }, end = { x: 0, y: 0 }, color = "white", onDeleted=(ref) => {}, ref=null }) {
+export function Line({ lineId, start = { x: 0, y: 0 }, end = { x: 0, y: 0 }, color = "white", onDeleted=() => {} }) {
     const [selected, setSelected] = useState(false);
 
     useEffect(() => {
@@ -11,7 +11,7 @@ export function Line({ start = { x: 0, y: 0 }, end = { x: 0, y: 0 }, color = "wh
             // console.log(e.key)
             if (e.key === "Delete" || e.key === "Backspace") {
                 // console.log("Deleting line");
-                onDeleted(ref);
+                onDeleted(lineId);
             }
         }
 
@@ -29,7 +29,7 @@ export function Line({ start = { x: 0, y: 0 }, end = { x: 0, y: 0 }, color = "wh
     const c2 = { x: end.x - dx * 0.25, y: end.y };
     const path = `M ${start.x},${start.y} C ${c1.x},${c1.y} ${c2.x},${c2.y} ${end.x},${end.y}`;
     return (
-        <svg className="absolute top-0 left-0 w-full h-full pointer-events-none" ref={ref}>
+        <svg className="absolute top-0 left-0 w-full h-full pointer-events-none">
             <path
                 d={path}
                 stroke="white"
@@ -70,13 +70,26 @@ function sourceToInfo(source) {
     return { uuid, label, type };
 }
 
+function isSameConnection(aFrom, aTo, bFrom, bTo) {
+    return aFrom?.uuid === bFrom?.uuid && aFrom?.label === bFrom?.label && aTo?.uuid === bTo?.uuid && aTo?.label === bTo?.label;
+}
+
 export function LineManager({ units, notifyConnection=(from, to) => {}, onDeleteConnection=(from, to) => {} }) {
     const [lines, setLines] = useState([]);
     const [lineInProgress, setLineInProgress] = useState(null);
+    const linesRef = useRef(lines);
 
-    const deleteLine = (lineRef) => {
-        setLines(lines.filter(line => line.ref !== lineRef));
-        onDeleteConnection(sourceToInfo(lineRef.current.startSource), sourceToInfo(lineRef.current.endTarget));
+    useEffect(() => {
+        linesRef.current = lines;
+    }, [lines]);
+
+    const deleteLine = (lineId) => {
+        const line = linesRef.current.find((item) => item.id === lineId);
+        if (line) {
+            onDeleteConnection(sourceToInfo(line.startSource), sourceToInfo(line.endTarget));
+        }
+
+        setLines((prevLines) => prevLines.filter((item) => item.id !== lineId));
     }
 
     // add lines
@@ -141,8 +154,30 @@ export function LineManager({ units, notifyConnection=(from, to) => {}, onDelete
                     const distance = Math.hypot(e.clientX - outputX, e.clientY - outputY);
 
                     if (distance < 10) { // within 10 pixels
-                        setLines([...lines, { start: lineInProgress.start, end: { x: outputX, y: outputY }, startSource: lineInProgress.source, endTarget: output, color: TYPES[thisType] || 'white', ref: createRef() }]);
-                        notifyConnection(sourceToInfo(lineInProgress.source), sourceToInfo(output) || output);
+                        const fromInfo = sourceToInfo(lineInProgress.source);
+                        const toInfo = sourceToInfo(output);
+
+                        const duplicate = lines.some((line) => isSameConnection(
+                            sourceToInfo(line.startSource),
+                            sourceToInfo(line.endTarget),
+                            fromInfo,
+                            toInfo
+                        ));
+
+                        if (duplicate) {
+                            connected = true;
+                            break;
+                        }
+
+                        setLines((prevLines) => [...prevLines, {
+                            id: crypto.randomUUID(),
+                            start: lineInProgress.start,
+                            end: { x: outputX, y: outputY },
+                            startSource: lineInProgress.source,
+                            endTarget: output,
+                            color: TYPES[thisType] || 'white'
+                        }]);
+                        notifyConnection(fromInfo, toInfo || output);
                         connected = true;
                         break;
                     }
@@ -160,7 +195,36 @@ export function LineManager({ units, notifyConnection=(from, to) => {}, onDelete
             document.removeEventListener('mouseup', onMouseUp);
             document.removeEventListener('mousemove', onMouseMove);
         };
-    }, [lineInProgress != null]);
+    }, [lineInProgress, lines, notifyConnection]);
+
+    useEffect(() => {
+        const onDeleteUnit = (e) => {
+            const unitUUID = e.detail?.uuid;
+            if (!unitUUID) return;
+
+            const currentLines = linesRef.current;
+            const toRemove = currentLines.filter((line) => {
+                const from = sourceToInfo(line.startSource);
+                const to = sourceToInfo(line.endTarget);
+                return from?.uuid === unitUUID || to?.uuid === unitUUID;
+            });
+
+            toRemove.forEach((line) => {
+                onDeleteConnection(sourceToInfo(line.startSource), sourceToInfo(line.endTarget));
+            });
+
+            setLines(currentLines.filter((line) => {
+                const from = sourceToInfo(line.startSource);
+                const to = sourceToInfo(line.endTarget);
+                return from?.uuid !== unitUUID && to?.uuid !== unitUUID;
+            }));
+        };
+
+        document.addEventListener('delete-unit', onDeleteUnit);
+        return () => {
+            document.removeEventListener('delete-unit', onDeleteUnit);
+        };
+    }, [onDeleteConnection]);
 
     useEffect(() => {
         const handleResize = () => {
@@ -186,7 +250,7 @@ export function LineManager({ units, notifyConnection=(from, to) => {}, onDelete
         <div className="absolute top-0 left-0 w-full h-full pointer-events-none z-10">
             {lineInProgress && <Line start={lineInProgress.start} end={lineInProgress.end} />}
             {lines.map((line, index) => (
-                <Line key={index} start={line.start} end={line.end} color={line.color} ref={line.ref} onDeleted={deleteLine} />
+                <Line key={line.id || index} lineId={line.id} start={line.start} end={line.end} color={line.color} onDeleted={deleteLine} />
             ))}
         </div>
     )

@@ -1,5 +1,5 @@
-import { isVector3 } from "../../util/Checks";
-import { keys } from "../../util/Keys";
+import { isVector3 } from "../../../util/Checks";
+import { keys } from "../../../util/Keys";
 
 import * as THREE from "three";
 

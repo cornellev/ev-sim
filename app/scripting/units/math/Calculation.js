@@ -36,6 +36,12 @@ export class CalculationBlock extends UnitBlock {
         this.registerOutput("result", "float64");
     }
 
+    serializeState() {
+        return {
+            operation: this.getStateValue("operation", this.uuid + "-operation", "add")
+        };
+    }
+
     valid() {
         return this.hasInput("input A") && this.hasInput("input B");
     }
@@ -43,7 +49,7 @@ export class CalculationBlock extends UnitBlock {
     execute() {
         const a = this.getInput("input A");
         const b = this.getInput("input B");
-        const operation = document.getElementById(this.uuid + "-operation").value;
+        const operation = this.getStateValue("operation", this.uuid + "-operation", "add");
 
         let result;
         switch (operation) {

@@ -12,6 +12,8 @@ import { Sphere } from "./data/objects/Sphere";
 import { LiDAR2d } from "./devices/LiDAR2d";
 import { LiDAR3d } from "./devices/LiDAR3d";
 import { DeviceOverlay } from "./devices/Device";
+import { PointOptimizer } from "../optimization/PointOptimizer";
+import { TriangleOptimizer } from "../optimization/TriangleOptimizer";
 
 function setupScene(scene, camera, renderer) {
     //set background color
@@ -73,6 +75,40 @@ function setupControls(scene, camera, renderer, data) {
 }
 
 /**
+ * 
+ * @param {THREE.Scene} scene 
+ * @param {THREE.Camera} camera 
+ * @param {THREE.WebGLRenderer} renderer 
+ * @param {Data} data 
+ */
+async function setupOptimizer(scene, camera, renderer, data) {
+    // const optimizer = await PointOptimizer.loadFromGLTF("shell/shell.gltf", 0.01);
+    
+    // optimizer.optimize({
+    //     iterations: 1000,
+    //     distanceThreshold: 0.01,
+    //     minInliers: 15,
+    //     clusterEps: 0.3,
+    //     clusterMinPts: 5
+    // }, 10);
+    
+    // // Reconstruct visual objects for remaining points (if any are retained)
+    // optimizer.constructObjects();
+    
+    // // Add points and primitives to the scene
+    // optimizer.addToScene(scene);
+    // optimizer.addPrimitives(scene);
+
+    const optimizer = await TriangleOptimizer.loadFromGLTF("shell/shell.gltf", 0.01);
+    optimizer.optimize(5.0);
+    // optimizer.addToScene(scene);
+    const triangles = optimizer.exportTriangles();
+    data.objects().addObjects(triangles);
+    
+    data.objects().scene(scene);
+}
+
+/**
  * data
  * @param {Data} data 
  */
@@ -122,9 +158,6 @@ function test(scene, camera, data) {
             }
         }
     });
-
-
-
 }
 
 export default function TotalScene() {
@@ -158,7 +191,8 @@ export default function TotalScene() {
         
         setupScene(scene, camera, renderer);
         setupControls(scene, camera, renderer, data);
-        BasicScene(data);
+        setupOptimizer(scene, camera, renderer, data);
+        // BasicScene(data);
         test(scene, camera, data);
         data.objects().scene(scene);
         data.devices().setup(scene);

@@ -1,11 +1,13 @@
 import { Database } from "./Database";
 import { Box } from "./objects/Box";
-import { Object } from "./objects/Object";
+import { GLSLObject, Object } from "./objects/Object";
 import * as THREE from "three";
+import { Triangle } from "./objects/Triangle";
 
 const MAX_BOXES = 2000;
+const MAX_TRIANGLES = 5000;
 
-export { MAX_BOXES };
+export { MAX_BOXES, MAX_TRIANGLES };
 
 class ObjectEvent {
     static TYPES = ["add", "remove", "update"];
@@ -25,13 +27,16 @@ function setupTextures(obj) {
         data: {
             _boxPosData: new Float32Array(4 * MAX_BOXES),
             _boxScaleData: new Float32Array(4 * MAX_BOXES),
+            _trianglePosData: new Float32Array(4 * MAX_TRIANGLES * 3),
         },
         textures: {
             _boxPosTexture: null,
             _boxScaleTexture: null,
+            _trianglePosTexture: null,
         },
         counts: {
             boxCount: 0,
+            triCount: 0,
         },
     };
 
@@ -60,6 +65,19 @@ function setupTextures(obj) {
     obj.textures.textures._boxScaleTexture.magFilter = THREE.NearestFilter;
     obj.textures.textures._boxScaleTexture.wrapS = THREE.ClampToEdgeWrapping;
     obj.textures.textures._boxScaleTexture.wrapT = THREE.ClampToEdgeWrapping;
+
+    obj.textures.textures._trianglePosTexture = new THREE.DataTexture(
+        obj.textures.data._trianglePosData,
+        MAX_TRIANGLES * 3,
+        1,
+        THREE.RGBAFormat,
+        THREE.FloatType
+    );
+    obj.textures.textures._trianglePosTexture.needsUpdate = true;
+    obj.textures.textures._trianglePosTexture.minFilter = THREE.NearestFilter;
+    obj.textures.textures._trianglePosTexture.magFilter = THREE.NearestFilter;
+    obj.textures.textures._trianglePosTexture.wrapS = THREE.ClampToEdgeWrapping;
+    obj.textures.textures._trianglePosTexture.wrapT = THREE.ClampToEdgeWrapping;
 }
 
 export class ObjectDatabase extends Database {
@@ -97,6 +115,35 @@ export class ObjectDatabase extends Database {
                 // mark textures as needing update
                 this.textures.textures._boxPosTexture.needsUpdate = true;
                 this.textures.textures._boxScaleTexture.needsUpdate = true;
+            },
+            triangle: (triangle) => {
+                const uuid = triangle._uuid;
+                const index = this.objects.findIndex((obj) => obj._uuid === uuid);
+                if (index === -1) return;
+
+                const triCount = this.textures.counts.triCount;
+                const dataIndex = index * 12;
+
+                // update position data
+                this.textures.data._trianglePosData[dataIndex + 0] = triangle.a.x;
+                this.textures.data._trianglePosData[dataIndex + 1] = triangle.a.y;
+                this.textures.data._trianglePosData[dataIndex + 2] = triangle.a.z;
+                this.textures.data._trianglePosData[dataIndex + 3] = 1.0;
+
+                // update position data for b
+                this.textures.data._trianglePosData[dataIndex + 4] = triangle.b.x;
+                this.textures.data._trianglePosData[dataIndex + 5] = triangle.b.y;
+                this.textures.data._trianglePosData[dataIndex + 6] = triangle.b.z;
+                this.textures.data._trianglePosData[dataIndex + 7] = 1.0;
+
+                // update position data for c
+                this.textures.data._trianglePosData[dataIndex + 8] = triangle.c.x;
+                this.textures.data._trianglePosData[dataIndex + 9] = triangle.c.y;
+                this.textures.data._trianglePosData[dataIndex + 10] = triangle.c.z;
+                this.textures.data._trianglePosData[dataIndex + 11] = 1.0;
+
+                // mark textures as needing update
+                this.textures.textures._trianglePosTexture.needsUpdate = true;
             },
         }
     }
@@ -142,7 +189,43 @@ export class ObjectDatabase extends Database {
             // mark textures as needing update
             this.textures.textures._boxPosTexture.needsUpdate = true;
             this.textures.textures._boxScaleTexture.needsUpdate = true;
+        } else if (object instanceof Triangle) {
+            object.setNotifyTexture(this.notifiers.triangle);
+            const index = this.triangles().length - 1;
+            const dataIndex = index * 12;
+            const triCount = this.textures.counts.triCount;
+
+            // set position data for a
+            this.textures.data._trianglePosData[dataIndex + 0] = object.a.x;
+            this.textures.data._trianglePosData[dataIndex + 1] = object.a.y;
+            this.textures.data._trianglePosData[dataIndex + 2] = object.a.z;
+            this.textures.data._trianglePosData[dataIndex + 3] = 1.0;
+
+            // set position data for b
+            this.textures.data._trianglePosData[dataIndex + 4] = object.b.x;
+            this.textures.data._trianglePosData[dataIndex + 5] = object.b.y;
+            this.textures.data._trianglePosData[dataIndex + 6] = object.b.z;
+            this.textures.data._trianglePosData[dataIndex + 7] = 1.0;
+
+            // set position data for c
+            this.textures.data._trianglePosData[dataIndex + 8] = object.c.x;
+            this.textures.data._trianglePosData[dataIndex + 9] = object.c.y;
+            this.textures.data._trianglePosData[dataIndex + 10] = object.c.z;
+            this.textures.data._trianglePosData[dataIndex + 11] = 1.0;
+
+            this.textures.counts.triCount += 1;
+
+            // mark textures as needing update
+            this.textures.textures._trianglePosTexture.needsUpdate = true;
         }
+    }
+
+    /**
+     * @param {Object[]} objects
+     * @returns 
+     */
+    addObjects(objects) {
+        objects.forEach((obj) => this.addObject(obj));
     }
 
     /**
@@ -164,8 +247,20 @@ export class ObjectDatabase extends Database {
         }
     }
 
+    triangles() {
+        return this.objects.filter((obj) => obj.constructor.name === "Triangle");
+    }
+    
+    t_triangles() {
+        return {
+            posTexture: this.textures.textures._trianglePosTexture,
+            count: this.textures.counts.triCount,
+        }
+    }
+
     scene(scene) {
         this.objects.forEach((obj) => {
+            if (this.inScene.includes(obj._uuid)) return;
             obj.addToScene(scene);
             this.inScene.push(obj._uuid);
         });

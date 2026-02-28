@@ -40,12 +40,18 @@ export function IfUnit({ _uuid }) {
 
 export class IfBlock extends UnitBlock {
     register() {
-        const outputType = document.getElementById(this.uuid + "-type")?.value || "float64";
+        const outputType = this.getStateValue("type", this.uuid + "-type", "float64");
 
         this.registerInput("condition", "boolean");
         this.registerInput("true value", outputType);
         this.registerInput("false value", outputType);
         this.registerOutput("out", outputType);
+    }
+
+    serializeState() {
+        return {
+            type: this.getStateValue("type", this.uuid + "-type", "float64")
+        };
     }
     
     valid() {

@@ -2,20 +2,23 @@ import { useEffect, useRef, useState } from "react";
 import Grid from "./Grid";
 import { LineManager } from "./LineManager";
 import { ROSInputUnit, ROSOutputBlock, ROSOutputUnit } from "./units/ROSUnit";
+import { createCompiledProgramUnit } from "./units/program/ProgramIO";
 import Unit, { TestingUnit } from "./units/Unit";
 import NumberUnit from "./units/math/Number";
 import { AddMenu } from "./AddMenu";
-import { ScriptManager } from "./ScriptManager";
+import { CompiledProgramUnitBlock, ScriptManager } from "./ScriptManager";
 import { FaCheckCircle } from "react-icons/fa";
 import { FaCircleXmark } from "react-icons/fa6";
 
 export default function Scripting({ output, input}) {
     const headUUID = useRef("head-uuid");
     const [valid, setValid] = useState(false);
+    const compiledRef = useRef(null);
 
     const [unitChildren, setUnitChildren] = useState([
         <ROSOutputUnit key="ros-output" input={input} _uuid={headUUID.current} />
     ]);
+    const importInputRef = useRef(null);
 
     useEffect(() => {
         // add head unit to manager
@@ -52,9 +55,15 @@ export default function Scripting({ output, input}) {
         }
     }, [manager])
 
-    const addUnit = (unitElement, inst, uuid) => {
+    const addUnit = (unitElement, inst, uuid, position) => {
         if (inst) manager.current.addUnit(new inst(uuid));
         setUnitChildren((prev) => [...prev, unitElement]);
+
+        if (position && uuid) {
+            setTimeout(() => {
+                document.dispatchEvent(new CustomEvent('position-unit', { detail: { uuid, position } }));
+            }, 0);
+        }
     };
 
     const onConnectUnits = (from, to) => {
@@ -68,7 +77,10 @@ export default function Scripting({ output, input}) {
     };
 
     const onDeleteConnection = (from, to) => {
-        console.log("Deleted connection from", from, "to", to);
+        if (!from || !to) return;
+
+        manager.current.disconnectUnits(to.uuid, to.label, from.uuid, from.label);
+        setValid(manager.current.checkValidity());
     };
     
     const unitParentRef = useRef();
@@ -76,13 +88,10 @@ export default function Scripting({ output, input}) {
     useEffect(() => {
         const onDeleteUnit = (e) => {
             const unitIdToDelete = e.detail.uuid;
-            const newUnitChildren = unitChildren.filter((unit) => {
-                // get data-uuid from the dom element
-                const unitUUID = unit.props['_uuid'];
-                console.log("Checking unit UUID:", unitUUID, "against", unitIdToDelete);
-                return unitUUID !== unitIdToDelete;
-            });
-            setUnitChildren(newUnitChildren);            
+            manager.current.removeUnit(unitIdToDelete);
+
+            setUnitChildren((prev) => prev.filter((unit) => unit.props['_uuid'] !== unitIdToDelete));
+            setValid(manager.current.checkValidity());
         }
 
         document.addEventListener('delete-unit', onDeleteUnit);
@@ -90,7 +99,7 @@ export default function Scripting({ output, input}) {
         return () => {
             document.removeEventListener('delete-unit', onDeleteUnit);
         }
-    }, [unitChildren]);
+    }, []);
 
     useEffect(() => {
         if (!manager.current) return;
@@ -104,6 +113,88 @@ export default function Scripting({ output, input}) {
             console.log("Execution output:", output);
         } catch (err) {
             console.error("Error during execution:", err);
+        }
+    }
+
+    const compileProgram = () => {
+        try {
+            const compiled = manager.current.compile(`program-${Date.now()}`);
+            compiledRef.current = compiled;
+
+            const payload = JSON.stringify(compiled, null, 2);
+            const blob = new Blob([payload], { type: "application/json" });
+            const url = URL.createObjectURL(blob);
+            const anchor = document.createElement("a");
+            anchor.href = url;
+            anchor.download = `${compiled.name}.json`;
+            anchor.click();
+            URL.revokeObjectURL(url);
+
+            console.log("Compiled program:", compiled);
+        } catch (err) {
+            console.error("Error compiling program:", err);
+        }
+    }
+
+    const runCompiled = () => {
+        try {
+            if (!compiledRef.current) {
+                compiledRef.current = manager.current.compile(`program-${Date.now()}`);
+            }
+
+            const run = ScriptManager.runCompiled(compiledRef.current, {});
+            console.log("Compiled run result:", run);
+        } catch (err) {
+            console.error("Error running compiled program:", err);
+        }
+    }
+
+    const importCompiledProgram = () => {
+        importInputRef.current?.click();
+    }
+
+    const onImportCompiledFile = async (event) => {
+        try {
+            const file = event.target.files?.[0];
+            if (!file) return;
+
+            const text = await file.text();
+            const parsed = JSON.parse(text);
+
+            if (!parsed || !Array.isArray(parsed.units) || !parsed.interface) {
+                throw new Error("Selected file is not a valid compiled program artifact.");
+            }
+
+            compiledRef.current = parsed;
+
+            const uuid = crypto.randomUUID();
+            const block = new CompiledProgramUnitBlock(uuid);
+            block.hydrateState({
+                compiledProgram: parsed,
+                name: parsed.name || "Imported Program"
+            });
+            manager.current.addUnit(block);
+
+            const CompiledUnit = createCompiledProgramUnit(parsed, parsed.name || "Imported Program");
+            const unitElement = <CompiledUnit key={Math.random()} _uuid={uuid} />;
+            const position = {
+                x: Math.max(24, window.innerWidth / 2 - 120),
+                y: Math.max(24, window.innerHeight / 2 - 80)
+            };
+
+            setUnitChildren((prev) => [...prev, unitElement]);
+            setTimeout(() => {
+                document.dispatchEvent(new CustomEvent('position-unit', { detail: { uuid, position } }));
+            }, 0);
+
+            setValid(manager.current.checkValidity());
+            console.log("Imported compiled program:", parsed);
+        } catch (err) {
+            console.error("Error importing compiled program:", err);
+        } finally {
+            if (event.target) {
+                event.target.value = "";
+            }
         }
     }
 
@@ -124,6 +215,18 @@ export default function Scripting({ output, input}) {
         </div>
         <div className="fixed top-10 left-5 z-100">
             <button onClick={attemptExecute} className="rounded-sm bg-blue-500 text-white px-3 py-1 cursor-pointer">Execute</button>
+        </div>
+        <div className="fixed top-10 left-28 z-100 flex gap-2">
+            <button onClick={compileProgram} className="rounded-sm bg-[#4f4f4f] text-white px-3 py-1 cursor-pointer">Compile</button>
+            <button onClick={runCompiled} className="rounded-sm bg-[#4f4f4f] text-white px-3 py-1 cursor-pointer">Run Compiled</button>
+            <button onClick={importCompiledProgram} className="rounded-sm bg-[#4f4f4f] text-white px-3 py-1 cursor-pointer">Import Compiled</button>
+            <input
+                ref={importInputRef}
+                type="file"
+                accept="application/json,.json"
+                className="hidden"
+                onChange={onImportCompiledFile}
+            />
         </div>
         <div className="w-[100vw] h-[100vh] bg-[#292929]">
             <Grid />

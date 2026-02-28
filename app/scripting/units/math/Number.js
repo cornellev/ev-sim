@@ -1,10 +1,23 @@
-import { useState } from "react";
-import { BlockOutput, UnitBlock } from "../../ScriptManager";
+import { useEffect, useState } from "react";
+import { BlockOutput, storeData, UnitBlock } from "../../ScriptManager";
 
 const { default: Unit } = require("../Unit")
 
 export default function NumberUnit(props) {
     const [value, setValue] = useState(0);
+
+    useEffect(() => {
+        if (value === "" || isNaN(value)) {
+            return;
+        }
+        
+        const numericValue = parseFloat(value);
+        if (isNaN(numericValue)) {
+            return;
+        }
+
+        storeData(props._uuid, numericValue);
+    }, [value])
 
     return (
         <Unit title="Number" outputs={[
@@ -34,7 +47,7 @@ export class NumberUnitClass extends UnitBlock {
     }
 
     execute() {
-        const value = parseFloat(document.getElementById(this.uuid + "-input").value);
+        const value = this.getStoredData();
         return new BlockOutput().set("number", value);
     }
 }

@@ -55,6 +55,23 @@ export default function Unit({ children, title="default title", hasOptions=false
         setUUID(_uuid || Math.random().toString(36).substring(2, 9));
     }, []);
 
+    useEffect(() => {
+        const onPositionUnit = (e) => {
+            const { uuid: targetUUID, position: targetPosition } = e.detail || {};
+            if (!targetUUID || !targetPosition) return;
+
+            const ownUUID = _uuid || uuid;
+            if (targetUUID !== ownUUID) return;
+
+            setPosition({ x: targetPosition.x, y: targetPosition.y });
+        };
+
+        document.addEventListener('position-unit', onPositionUnit);
+        return () => {
+            document.removeEventListener('position-unit', onPositionUnit);
+        };
+    }, [_uuid, uuid]);
+
     const ref = useRef();
     const titleRef = useRef();
     const positionRef = useRef(position);
@@ -157,7 +174,7 @@ export default function Unit({ children, title="default title", hasOptions=false
     }, [position]);
 
     return (
-        <div className="min-w-[160px] bg-[#393939] text-white rounded-lg shadow-lg" ref={ref} data-uuid={uuid}>
+        <div className="absolute min-w-[160px] bg-[#393939] text-white rounded-lg shadow-lg" ref={ref} data-uuid={uuid}>
             <div className="bg-[#393939] border-b border-[#252525] rounded-t-lg pb-2 pt-2 p-3" ref={titleRef}>
                 <h4 className="text-xs select-none">{title}</h4>
             </div>

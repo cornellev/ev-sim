@@ -1,5 +1,6 @@
-import { MAX_BOXES } from "../data/ObjectDatabase";
+import { MAX_BOXES, MAX_TRIANGLES } from "../data/ObjectDatabase";
 import { Box } from "../data/objects/Box";
+import { Triangle } from "../data/objects/Triangle";
 import { common, Shader, standardVTX } from "../shaders/Shader";
 import Device from "./Device";
 import * as THREE from "three";
@@ -13,11 +14,19 @@ ${common()}
 // box struct
 ${new Box().getStruct().toString()}
 
+// triangle struct
+${new Triangle().getStruct().toString()}
+
 // box array via data textures
 #define MAX_BOXES ${MAX_BOXES}
+#define MAX_TRIANGLES ${MAX_TRIANGLES}
 uniform sampler2D u_boxPosTex;
 uniform sampler2D u_boxScaleTex;
 uniform int boxCount;
+
+// every 3 points defines a triangle
+uniform sampler2D u_triPosTex;
+uniform int triCount;
 
 uniform vec3 u_origin;
 
@@ -37,6 +46,29 @@ uniform float u_range;
 // obx
 ${new Box().getSDF()}
 
+// triangle (kept for potential future use)
+${new Triangle().getSDF()}
+
+// Möller–Trumbore ray-triangle intersection.
+// Returns the distance along the ray to the hit, or -1.0 if no intersection.
+float rayTriangleIntersect(vec3 orig, vec3 dir, vec3 v0, vec3 v1, vec3 v2) {
+    vec3 e1 = v1 - v0;
+    vec3 e2 = v2 - v0;
+    vec3 h = cross(dir, e2);
+    float a = dot(e1, h);
+    if (abs(a) < 1e-6) return -1.0; // ray parallel to triangle
+    float f = 1.0 / a;
+    vec3 s = orig - v0;
+    float u = f * dot(s, h);
+    if (u < 0.0 || u > 1.0) return -1.0;
+    vec3 q = cross(s, e1);
+    float v = f * dot(dir, q);
+    if (v < 0.0 || u + v > 1.0) return -1.0;
+    float t = f * dot(e2, q);
+    if (t < 1e-4) return -1.0; // behind origin
+    return t;
+}
+
 struct Hit {
     bool hit;
     float distance;
@@ -50,24 +82,54 @@ Hit raycast(float theta, float phi) {
         cos(phi) * sin(theta)
     );
 
-    // march the ray
+    // --- Exact triangle intersections (Möller–Trumbore) ---
+    // SDF marching is unreliable for infinitely thin surfaces: a ray at a
+    // shallow angle can step over the surface without ever triggering the
+    // hit threshold. Analytical intersection has no such problem.
+    float triHitDist = -1.0;
+    int tb = 0;
+    for (int j = 0; j < MAX_TRIANGLES; j++) {
+        if (tb >= triCount) break;
+        float idx = float(j * 3);
+        float texWidth = float(MAX_TRIANGLES * 3);
+        vec2 uvA = vec2((idx + 0.5) / texWidth, 0.5);
+
+        if (texture2D(u_triPosTex, uvA).w == 0.0) {
+            // skip empty triangle
+            continue;
+        }
+
+        vec3 va = texture2D(u_triPosTex, uvA).xyz;
+        vec3 vb = texture2D(u_triPosTex, vec2((idx + 1.5) / texWidth, 0.5)).xyz;
+        vec3 vc = texture2D(u_triPosTex, vec2((idx + 2.5) / texWidth, 0.5)).xyz;
+
+        float t = rayTriangleIntersect(u_origin, dir, va, vb, vc);
+        if (t > 0.0 && t < u_range) {
+            if (triHitDist < 0.0 || t < triHitDist) {
+                triHitDist = t;
+            }
+        }
+
+        ++tb;
+    }
+
+    // --- SDF march for boxes ---
     float totalDistance = 0.0;
     float maxDistance = u_range;
     float hitThreshold = 0.01;
-    bool hit = false;
+    bool boxHit = false;
     
     for (int i = 0; i < 256; i++) {
         vec3 currentPos = u_origin + dir * totalDistance;
         
-        // find the minimum distance to any box
         float minDist = 10000.0;
-        int b = 0;
+        int bb = 0;
         for (int j = 0; j < MAX_BOXES; j++) {
-            if (b >= boxCount) break;
+            if (bb >= boxCount) break;
             float idx = float(j);
             float texWidth = float(MAX_BOXES);
-            float u = (idx + 0.5) / texWidth;
-            vec2 uv = vec2(u, 0.5);
+            float uCoord = (idx + 0.5) / texWidth;
+            vec2 uv = vec2(uCoord, 0.5);
 
             if (texture2D(u_boxPosTex, uv).w == 0.0) {
                 // skip empty box
@@ -83,11 +145,11 @@ Hit raycast(float theta, float phi) {
                 minDist = dist;
             }
 
-            ++b;
+            ++bb;
         }
         
         if (minDist < hitThreshold) {
-            hit = true;
+            boxHit = true;
             break;
         }
         
@@ -97,9 +159,18 @@ Hit raycast(float theta, float phi) {
         }
     }
 
+    // Return the closer of a box hit or a triangle hit
     Hit result;
-    result.hit = hit;
-    result.distance = totalDistance;
+    if (boxHit && (triHitDist < 0.0 || totalDistance <= triHitDist)) {
+        result.hit = true;
+        result.distance = totalDistance;
+    } else if (triHitDist > 0.0) {
+        result.hit = true;
+        result.distance = triHitDist;
+    } else {
+        result.hit = false;
+        result.distance = totalDistance;
+    }
     return result;
 }
 
@@ -167,8 +238,10 @@ export class LiDAR3d extends Device {
                 u_phiStep: { value: phiStep },
                 u_range: { value: range },
                 boxCount: { value: 0 },
+                triCount: { value: 0 },
                 u_boxPosTex: { value: null },
                 u_boxScaleTex: { value: null },
+                u_triPosTex: { value: null },
             }
         );
 
@@ -236,11 +309,14 @@ export class LiDAR3d extends Device {
 
     execute() {
         const { posTexture, scaleTexture, count } = this.getParent().getParent().objects().t_boxes();
+        const { posTexture: triPosTexture, count: triCount } = this.getParent().getParent().objects().t_triangles();
 
         this.shader.update({
             u_origin: { value: this.position },
             boxCount: { value: count },
             u_boxPosTex: { value: posTexture },
+            triCount: { value: triCount },
+            u_triPosTex: { value: triPosTexture },
             u_boxScaleTex: { value: scaleTexture },
         })
     }
@@ -260,7 +336,7 @@ export class LiDAR3d extends Device {
         if (!this.debug) return;
 
         for (let i = 0; i < buffer.length; i += 4) {
-            // buffer[i] contains grayscale intensity where
+            // buffer[i] contains grayscale intensity (0–255) where
             // intensity = 1.0 - (distance / range)
             // so distance = (1.0 - intensity) * range
             const intensity = buffer[i];

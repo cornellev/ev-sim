@@ -3,11 +3,13 @@ import { MouseManager } from "../managers/MouseManager";
 import { DeviceDatabase } from "./DeviceDatabase";
 import { ObjectDatabase } from "./ObjectDatabase";
 import { Settings } from "./Settings";
+import { VehicleDatabase } from "./VehicleDatabase";
 
 export class Data {
     constructor() {
         this.deviceDatabase = new DeviceDatabase(this);
         this.objectDatabase = new ObjectDatabase(this);
+        this.vehicleDatabase = new VehicleDatabase(this);
         this._settings = new Settings();
         this.keyManager = null;
         this.mouseManager = null;
@@ -36,6 +38,13 @@ export class Data {
      */
     settings() {
         return this._settings;
+    }
+
+    /**
+     * @returns {VehicleDatabase}
+     */
+    vehicles() {
+        return this.vehicleDatabase;
     }
 
     /**

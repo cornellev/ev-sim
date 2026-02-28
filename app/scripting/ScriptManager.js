@@ -17,6 +17,22 @@ class Connection {
     getInput() {
         return { unit: this.inputUnit, label: this.inputLabel };
     }
+
+    matches(outputUUID, outputLabel, inputUUID, inputLabel) {
+        return this.outputUnit.uuid === outputUUID && this.outputLabel === outputLabel && this.inputUnit.uuid === inputUUID && this.inputLabel === inputLabel;
+    }
+}
+
+const BLOCK_TYPE_REGISTRY = new Map();
+
+export function registerBlockType(typeId, blockClass) {
+    if (!typeId || !blockClass) return;
+    blockClass.blockType = typeId;
+    BLOCK_TYPE_REGISTRY.set(typeId, blockClass);
+}
+
+export function getRegisteredBlockType(typeId) {
+    return BLOCK_TYPE_REGISTRY.get(typeId) || null;
 }
 
 export function storeData(uuid, data) {
@@ -28,6 +44,8 @@ export function reregister(uuid) {
     const event = new CustomEvent('reregister-unit', { detail: { uuid } });
     document.dispatchEvent(event);
 }
+
+
 
 export class BlockOutput {
     constructor() {
@@ -59,6 +77,7 @@ export class UnitBlock {
         this.manager = null;
         
         this.uuid = uuid;
+        this.state = {};
 
         this.typeMap = {
             outputs: {},
@@ -66,10 +85,16 @@ export class UnitBlock {
         };
 
         this.register();
+
+        this.updateNofitications = new Set();
     }
 
     register() {
 
+    }
+
+    typeId() {
+        return this.constructor.blockType || this.constructor.name;
     }
 
     onConnectionsUpdate() {
@@ -91,6 +116,34 @@ export class UnitBlock {
      */
     setManager(manager) {
         this.manager = manager;
+    }
+
+    serializeState() {
+        return { ...this.state };
+    }
+
+    hydrateState(state = {}) {
+        this.state = { ...state };
+        this.reregister();
+    }
+
+    getStateValue(key, domId, fallback = null) {
+        if (Object.prototype.hasOwnProperty.call(this.state, key)) {
+            return this.state[key];
+        }
+
+        if (typeof document !== "undefined" && domId) {
+            const value = document.getElementById(domId)?.value;
+            if (value !== undefined && value !== null && value !== "") {
+                return value;
+            }
+        }
+
+        return fallback;
+    }
+
+    getProgramPortDefinition() {
+        return null;
     }
 
     registerInput(label, type) {
@@ -131,7 +184,7 @@ export class UnitBlock {
         if (this.inputs[label]) throw new Error("Input with this name already exists");
         this.inputs[label] = connection;
 
-        this.notifyUpdate();
+        this.notifyUpdate(crypto.randomUUID());
     }
 
     addOutput(label, connection) {
@@ -141,20 +194,52 @@ export class UnitBlock {
         
         this.outputs[label].push(connection);
 
-        this.notifyUpdate();
+        this.notifyUpdate(crypto.randomUUID());
     }
 
-    notifyUpdate() {
+    removeInput(label) {
+        if (!this.inputs[label]) return;
+        delete this.inputs[label];
+        this.notifyUpdate(crypto.randomUUID());
+    }
+
+    removeOutputConnection(label, predicate) {
+        if (!Object.keys(this.outputs).includes(label)) return;
+
+        const before = this.outputs[label].length;
+        this.outputs[label] = this.outputs[label].filter((connection) => !predicate(connection));
+
+        if (this.outputs[label].length === 0) {
+            delete this.outputs[label];
+        }
+
+        if (before !== (this.outputs[label]?.length || 0)) {
+            this.notifyUpdate(crypto.randomUUID());
+        }
+    }
+
+    getStoredData() {
+        if (!this.manager) return undefined;
+        return this.manager.getStoredData(this.uuid);
+    }
+
+    notifyUpdate(key) {
+        if (key == null) return;
+        if (this.updateNofitications.has(key)) return; // prevent infinite loops
+
+        this.updateNofitications.add(key);
+        
         this.onConnectionsUpdate();
+
         for (const output in this.outputs) {
             const connections = this.outputs[output];
             connections.forEach(conn => {
-                conn.inputUnit.notifyUpdate();
+                conn.inputUnit.notifyUpdate(key);
             });
         }
         for (const input in this.inputs) {
             const connection = this.inputs[input];
-            connection.getOutput().unit.notifyUpdate();
+            connection.getOutput().unit.notifyUpdate(key);
         }
     }
 
@@ -176,6 +261,56 @@ export class UnitBlock {
     }
 }
 
+export class CompiledProgramUnitBlock extends UnitBlock {
+    register() {
+        const compiledProgram = this.state?.compiledProgram;
+        const inputPorts = compiledProgram?.interface?.inputs || [];
+        const outputPorts = compiledProgram?.interface?.outputs || [];
+
+        inputPorts.forEach((inputPort) => {
+            this.registerInput(inputPort.label, inputPort.type);
+        });
+
+        outputPorts.forEach((outputPort) => {
+            this.registerOutput(outputPort.label, outputPort.type);
+        });
+    }
+
+    valid() {
+        const compiledProgram = this.state?.compiledProgram;
+        if (!compiledProgram) return false;
+
+        const inputPorts = compiledProgram?.interface?.inputs || [];
+        return inputPorts.every((inputPort) => this.hasInput(inputPort.label));
+    }
+
+    execute() {
+        const compiledProgram = this.state?.compiledProgram;
+        if (!compiledProgram) {
+            return new BlockOutput();
+        }
+
+        const inputPorts = compiledProgram?.interface?.inputs || [];
+        const providedInputs = {};
+
+        inputPorts.forEach((inputPort) => {
+            providedInputs[inputPort.label] = this.getInput(inputPort.label);
+        });
+
+        const run = ScriptManager.runCompiled(compiledProgram, providedInputs);
+        const output = new BlockOutput();
+
+        const outputPorts = compiledProgram?.interface?.outputs || [];
+        outputPorts.forEach((outputPort) => {
+            output.set(outputPort.label, run.outputs[outputPort.label]);
+        });
+
+        return output;
+    }
+}
+
+registerBlockType("CompiledProgramUnitBlock", CompiledProgramUnitBlock);
+
 
 export class ScriptManager {
     constructor() {
@@ -184,6 +319,8 @@ export class ScriptManager {
         this.head = null;
 
         this.storedData = {};
+        this.externalInputs = {};
+        this.externalOutputs = {};
     }
 
     getStoredData(uuid) {
@@ -192,6 +329,27 @@ export class ScriptManager {
 
     storeData(uuid, data) {
         this.storedData[uuid] = data;
+        // update
+        this.units.find(u => u.uuid === uuid)?.notifyUpdate(crypto.randomUUID());
+    }
+
+    setRuntimeInputs(inputs = {}) {
+        this.externalInputs = inputs || {};
+    }
+
+    resolveExternalInput(label, fallback = null) {
+        if (Object.prototype.hasOwnProperty.call(this.externalInputs, label)) {
+            return this.externalInputs[label];
+        }
+        return fallback;
+    }
+
+    setExternalOutput(label, value) {
+        this.externalOutputs[label] = value;
+    }
+
+    getExternalOutputs() {
+        return { ...this.externalOutputs };
     }
     
     setHead(uuid) {
@@ -242,12 +400,48 @@ export class ScriptManager {
             return;
         }
 
+        const existing = (outputUnit.outputs[outputLabel] || []).some((connection) =>
+            connection.matches(outputUUID, outputLabel, inputUUID, inputLabel)
+        );
+
+        if (existing) {
+            return;
+        }
+
         // create connection
         const connection = new Connection(outputUnit, outputLabel, inputUnit, inputLabel);
         outputUnit.addOutput(outputLabel, connection);
         inputUnit.addInput(inputLabel, connection);
 
 //        console.log(this);
+    }
+
+    disconnectUnits(outputUUID, outputLabel, inputUUID, inputLabel) {
+        const outputUnit = this.units.find(u => u.uuid === outputUUID);
+        const inputUnit = this.units.find(u => u.uuid === inputUUID);
+
+        if (!outputUnit || !inputUnit) {
+            return false;
+        }
+
+        let removedConnection = null;
+        outputUnit.removeOutputConnection(outputLabel, (connection) => {
+            const shouldRemove = connection.matches(outputUUID, outputLabel, inputUUID, inputLabel);
+            if (shouldRemove) {
+                removedConnection = connection;
+            }
+            return shouldRemove;
+        });
+
+        if (!removedConnection) {
+            return false;
+        }
+
+        if (inputUnit.inputs[inputLabel] === removedConnection) {
+            inputUnit.removeInput(inputLabel);
+        }
+
+        return true;
     }
 
     execute() {
@@ -270,15 +464,175 @@ export class ScriptManager {
         return headUnit.execute();
     }
 
+    executeProgram(inputs = {}) {
+        this.setRuntimeInputs(inputs);
+        this.externalOutputs = {};
+
+        const outputUnits = this.units.filter((unit) => unit.constructor.programNodeRole === "output");
+        if (outputUnits.length > 0) {
+            outputUnits.forEach((unit) => {
+                if (unit.valid()) {
+                    unit.execute();
+                }
+            });
+            return {
+                result: null,
+                outputs: this.getExternalOutputs()
+            };
+        }
+
+        const result = this.execute();
+        return {
+            result,
+            outputs: this.getExternalOutputs()
+        };
+    }
+
+    compile(name = "compiled-program") {
+        const seenConnections = new Set();
+        const connections = [];
+        const programInterface = {
+            inputs: [],
+            outputs: []
+        };
+
+        const units = this.units.map((unit) => {
+            const port = unit.getProgramPortDefinition();
+            if (port && port.role === "input") {
+                programInterface.inputs.push(port);
+            }
+            if (port && port.role === "output") {
+                programInterface.outputs.push(port);
+            }
+
+            Object.entries(unit.outputs).forEach(([label, outputConnections]) => {
+                outputConnections.forEach((connection) => {
+                    const input = connection.getInput();
+                    const key = [unit.uuid, label, input.unit.uuid, input.label].join("|");
+                    if (seenConnections.has(key)) return;
+                    seenConnections.add(key);
+
+                    connections.push({
+                        outputUUID: unit.uuid,
+                        outputLabel: label,
+                        inputUUID: input.unit.uuid,
+                        inputLabel: input.label
+                    });
+                });
+            });
+
+            return {
+                uuid: unit.uuid,
+                type: unit.typeId(),
+                state: unit.serializeState(),
+                storedData: this.storedData[unit.uuid]
+            };
+        });
+
+        return {
+            version: 1,
+            name,
+            head: this.head,
+            units,
+            connections,
+            interface: programInterface
+        };
+    }
+
+    static fromCompiled(compiledProgram) {
+        const manager = new ScriptManager();
+
+        (compiledProgram.units || []).forEach((unitDef) => {
+            const UnitClass = getRegisteredBlockType(unitDef.type);
+            if (!UnitClass) {
+                throw new Error(`Unknown block type \"${unitDef.type}\". Register it first with registerBlockType().`);
+            }
+
+            const unit = new UnitClass(unitDef.uuid);
+            manager.addUnit(unit);
+            if (unitDef.storedData !== undefined) {
+                manager.storedData[unitDef.uuid] = unitDef.storedData;
+            }
+            if (unitDef.state) {
+                unit.hydrateState(unitDef.state);
+            }
+        });
+
+        (compiledProgram.connections || []).forEach((connection) => {
+            manager.connectUnits(
+                connection.outputUUID,
+                connection.outputLabel,
+                connection.inputUUID,
+                connection.inputLabel
+            );
+        });
+
+        if (compiledProgram.head) {
+            manager.setHead(compiledProgram.head);
+        }
+
+        return manager;
+    }
+
+    static runCompiled(compiledProgram, inputs = {}) {
+        const manager = ScriptManager.fromCompiled(compiledProgram);
+        return manager.executeProgram(inputs);
+    }
+
+    static createCompiledProgramBlock(compiledProgram) {
+        return class CompiledProgramBlock extends CompiledProgramUnitBlock {
+            constructor(uuid) {
+                super(uuid);
+                this.state = {
+                    ...this.state,
+                    compiledProgram,
+                    name: compiledProgram?.name || "Compiled Program"
+                };
+                this.reregister();
+            }
+        }
+    }
+
     removeUnit(uuid) {
-        this.units = this.units.filter(unit => unit.uuid !== uuid);
+        const unit = this.units.find((item) => item.uuid === uuid);
+        if (!unit) return;
+
+        const incoming = Object.values(unit.inputs);
+        incoming.forEach((connection) => {
+            const output = connection.getOutput();
+            output.unit.removeOutputConnection(output.label, (candidate) => candidate === connection);
+            unit.removeInput(connection.inputLabel);
+        });
+
+        const outgoing = Object.values(unit.outputs).flat();
+        outgoing.forEach((connection) => {
+            const input = connection.getInput();
+            input.unit.removeInput(input.label);
+            unit.removeOutputConnection(connection.outputLabel, (candidate) => candidate === connection);
+        });
+
+        this.units = this.units.filter((item) => item.uuid !== uuid);
+        delete this.storedData[uuid];
+
+        if (this.head === uuid) {
+            this.head = null;
+        }
     }
 
     checkValidity() {
-        if (!this.head) return false;
+        const outputUnits = this.units.filter((unit) => unit.constructor.programNodeRole === "output");
+        if (!this.head && outputUnits.length === 0) return false;
 
         const visited = new Set();
-        const stack = [this.head];
+        const stack = [];
+
+        if (this.head) {
+            stack.push(this.head);
+        }
+
+        outputUnits.forEach((unit) => {
+            stack.push(unit.uuid);
+        });
 
         while (stack.length > 0) {
             const current = stack.pop();

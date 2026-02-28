@@ -10,10 +10,91 @@ import { MultiplyTex, MultiplyTexBlock, Scale } from "./units/math/tex/Scale";
 import { Mask, MaskBlock } from "./units/math/tex/Mask";
 import { LiDAR2DUnit } from "./units/devices/LiDAR2d";
 import { IfBlock, IfUnit } from "./units/statements/If";
+import { Conjugation, ConjugationBlock, Equality, EqualityBlock } from "./units/statements/Equality";
+import { StringBlock, StringUnit } from "./units/objects/String";
+import {
+    BlendTextureBlock,
+    BlendTextureUnit,
+    HeightToSlopeBlock,
+    HeightToSlopeUnit,
+    NormalizeTextureBlock,
+    NormalizeTextureUnit,
+    TerrainNoiseBlock,
+    TerrainNoiseUnit,
+    TerraceTextureBlock,
+    TerraceTextureUnit,
+} from "./units/math/Terrain";
+import {
+    LowPassFilterBlock,
+    LowPassFilterUnit,
+    RateLimiterBlock,
+    RateLimiterUnit,
+    SampleTextureBlock,
+    SampleTextureUnit,
+    SensorFusionBlock,
+    SensorFusionUnit,
+    ThresholdGateBlock,
+    ThresholdGateUnit,
+} from "./units/math/SensorFlow";
+import {
+    GaussianNoiseBlock,
+    GaussianNoiseUnit,
+    JitterBlock,
+    JitterUnit,
+    RandomRangeBlock,
+    RandomRangeUnit,
+    RemapRangeBlock,
+    RemapRangeUnit,
+    SeededRandomBlock,
+    SeededRandomUnit,
+    WeightedSelectBlock,
+    WeightedSelectUnit,
+} from "./units/math/Randomization";
+import { ProgramInputBlock, ProgramInputUnit, ProgramOutputBlock, ProgramOutputUnit } from "./units/program/ProgramIO";
+import { registerBlockType } from "./ScriptManager";
 
 function genUUID() {
     return Math.random().toString(36).substring(2, 9);
 }
+
+[
+    NumberUnitClass,
+    CalculationBlock,
+    RandomNumberBlock,
+    PIBlock,
+    EBlock,
+    TauBlock,
+    GoldenRatioBlock,
+    NoiseBlock,
+    MaskBlock,
+    MultiplyTexBlock,
+    TerrainNoiseBlock,
+    NormalizeTextureBlock,
+    BlendTextureBlock,
+    TerraceTextureBlock,
+    HeightToSlopeBlock,
+    SampleTextureBlock,
+    LowPassFilterBlock,
+    RateLimiterBlock,
+    SensorFusionBlock,
+    ThresholdGateBlock,
+    RandomRangeBlock,
+    SeededRandomBlock,
+    GaussianNoiseBlock,
+    JitterBlock,
+    WeightedSelectBlock,
+    RemapRangeBlock,
+    Float64ToInt32Block,
+    Int32ToFloat64Block,
+    StringBlock,
+    IfBlock,
+    EqualityBlock,
+    ConjugationBlock,
+    ROSInputBlock,
+    ROSOutputBlock,
+    ProgramInputBlock,
+    ProgramOutputBlock
+].forEach((blockClass) => registerBlockType(blockClass.name, blockClass));
 
 const units = {
     expressions: [
@@ -99,6 +180,124 @@ const units = {
             class: null
         }
     ],
+    terrain: [
+        {
+            name: "Terrain Noise (tex1d)",
+            obj: () => {
+                return <TerrainNoiseUnit key={Math.random()} _uuid={genUUID()} />
+            },
+            class: TerrainNoiseBlock
+        },
+        {
+            name: "Normalize Texture (tex1d)",
+            obj: () => {
+                return <NormalizeTextureUnit key={Math.random()} _uuid={genUUID()} />
+            },
+            class: NormalizeTextureBlock
+        },
+        {
+            name: "Blend Texture (tex1d)",
+            obj: () => {
+                return <BlendTextureUnit key={Math.random()} _uuid={genUUID()} />
+            },
+            class: BlendTextureBlock
+        },
+        {
+            name: "Terrace Texture (tex1d)",
+            obj: () => {
+                return <TerraceTextureUnit key={Math.random()} _uuid={genUUID()} />
+            },
+            class: TerraceTextureBlock
+        },
+        {
+            name: "Height To Slope (tex1d)",
+            obj: () => {
+                return <HeightToSlopeUnit key={Math.random()} _uuid={genUUID()} />
+            },
+            class: HeightToSlopeBlock
+        }
+    ],
+    sensorflow: [
+        {
+            name: "Sample Texture (tex1d -> float64)",
+            obj: () => {
+                return <SampleTextureUnit key={Math.random()} _uuid={genUUID()} />
+            },
+            class: SampleTextureBlock
+        },
+        {
+            name: "Low Pass Filter",
+            obj: () => {
+                return <LowPassFilterUnit key={Math.random()} _uuid={genUUID()} />
+            },
+            class: LowPassFilterBlock
+        },
+        {
+            name: "Rate Limiter",
+            obj: () => {
+                return <RateLimiterUnit key={Math.random()} _uuid={genUUID()} />
+            },
+            class: RateLimiterBlock
+        },
+        {
+            name: "Sensor Fusion",
+            obj: () => {
+                return <SensorFusionUnit key={Math.random()} _uuid={genUUID()} />
+            },
+            class: SensorFusionBlock
+        },
+        {
+            name: "Threshold Gate",
+            obj: () => {
+                return <ThresholdGateUnit key={Math.random()} _uuid={genUUID()} />
+            },
+            class: ThresholdGateBlock
+        }
+    ],
+    randomization: [
+        {
+            name: "Random Range",
+            obj: () => {
+                return <RandomRangeUnit key={Math.random()} _uuid={genUUID()} />
+            },
+            class: RandomRangeBlock
+        },
+        {
+            name: "Seeded Random",
+            obj: () => {
+                return <SeededRandomUnit key={Math.random()} _uuid={genUUID()} />
+            },
+            class: SeededRandomBlock
+        },
+        {
+            name: "Gaussian Noise",
+            obj: () => {
+                return <GaussianNoiseUnit key={Math.random()} _uuid={genUUID()} />
+            },
+            class: GaussianNoiseBlock
+        },
+        {
+            name: "Jitter",
+            obj: () => {
+                return <JitterUnit key={Math.random()} _uuid={genUUID()} />
+            },
+            class: JitterBlock
+        },
+        {
+            name: "Weighted Select",
+            obj: () => {
+                return <WeightedSelectUnit key={Math.random()} _uuid={genUUID()} />
+            },
+            class: WeightedSelectBlock
+        },
+        {
+            name: "Remap Range",
+            obj: () => {
+                return <RemapRangeUnit key={Math.random()} _uuid={genUUID()} />
+            },
+            class: RemapRangeBlock
+        }
+    ],
     conversions: [
         {
             name: "Float64 to Int32",
@@ -115,6 +314,15 @@ const units = {
             class: Int32ToFloat64Block
         }
     ],
+    objects: [
+        {
+            name: "String",
+            obj: () => {
+                return <StringUnit key={Math.random()} _uuid={genUUID()} />
+            },
+            class: StringBlock
+        }
+    ],
     statements: [
         {
             name: "If Statement",
@@ -122,6 +330,20 @@ const units = {
                 return <IfUnit key={Math.random()} _uuid={genUUID()} />
             },
             class: IfBlock
+        },
+        {
+            name: "Comparison (==, !=, >, <, >=, <=)",
+            obj: () => {
+                return <Equality key={Math.random()} _uuid={genUUID()} />
+            },
+            class: EqualityBlock
+        },
+        {
+            name: "Conjunction (AND, OR)",
+            obj: () => {
+                return <Conjugation key={Math.random()} _uuid={genUUID()} />
+            },
+            class: ConjugationBlock
         }
     ],
     devices: [
@@ -147,6 +369,22 @@ const units = {
                 return <ROSOutputUnit key={Math.random()} _uuid={genUUID()} />
             },
             class: ROSOutputBlock
+        }
+    ],
+    program: [
+        {
+            name: "Program Input",
+            obj: () => {
+                return <ProgramInputUnit key={Math.random()} _uuid={genUUID()} />
+            },
+            class: ProgramInputBlock
+        },
+        {
+            name: "Program Output",
+            obj: () => {
+                return <ProgramOutputUnit key={Math.random()} _uuid={genUUID()} />
+            },
+            class: ProgramOutputBlock
         }
     ]
 }
@@ -218,7 +456,7 @@ export function AddMenu({ onAddUnit=(u)=>{} }) {
                                         className="px-5 py-[3px] cursor-pointer hover:bg-[#4772b3] hover:text-white text-[#e0e0e0]"
                                         onClick={() => {
                                             const unitElement = unit.obj();
-                                            onAddUnit(unitElement, unit.class, unitElement.props._uuid);
+                                            onAddUnit(unitElement, unit.class, unitElement.props._uuid, position);
                                             setVisible(false);
                                         }}
                                     >

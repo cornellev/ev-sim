@@ -174,3 +174,59 @@ export class MyBlock extends UnitBlock {
 Let me know if you have any questions or need further clarification on any of these points!
 
 Note: At time of writing, deletion is still work in progress. Please reload the page instead of deleting blocks/connections for now.
+
+## Compiling a Script
+
+Scripts can now be compiled into a saveable JSON program artifact.
+
+- In the scripting UI, click `Compile` to export a `.json` file.
+- Click `Run Compiled` to run the compiled artifact immediately.
+- Click `Import Compiled` to load a saved compiled artifact as a reusable unit in the current graph.
+
+The compiled artifact contains:
+
+- Unit graph (nodes + typed connections)
+- Per-unit state (for dynamic blocks like `If` and `Calculation`)
+- Stored block data
+- Program interface (`inputs` and `outputs`)
+
+### Program Input / Program Output nodes
+
+To define reusable program interfaces, use the new menu entries:
+
+- `Program Input`: creates a typed external input port.
+- `Program Output`: creates a typed external output port.
+
+Their labels/types are captured by compile and used when running compiled programs.
+
+### Running compiled programs in code
+
+```javascript
+import { ScriptManager } from "./ScriptManager";
+
+// `compiled` is the JSON object exported by Compile
+const run = ScriptManager.runCompiled(compiled, {
+    speed: 12.5,
+    enabled: true
+});
+
+console.log(run.outputs);
+```
+
+### Using a compiled program as a unit backend
+
+```javascript
+import { ScriptManager } from "./ScriptManager";
+
+const CompiledBlock = ScriptManager.createCompiledProgramBlock(compiled);
+```
+
+`CompiledBlock` is a `UnitBlock` subclass with typed inputs/outputs based on the compiled interface.
+
+### Importing compiled programs as units
+
+When you import a compiled JSON artifact from the scripting UI, it is wrapped as a typed unit node.
+
+- Unit inputs/outputs mirror the compiled artifact interface.
+- The wrapped unit can be connected and executed like any other unit.
+- Re-compiling your graph preserves the imported program in unit state.

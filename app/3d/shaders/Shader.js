@@ -17,6 +17,14 @@ float toDegrees(float radians) {
 float floatMod(float a, float b) {
     return a - b * floor(a / b);
 }
+
+float dot2(vec2 v) {
+    return dot(v, v);
+}
+
+float dot2(vec3 v) {
+    return dot(v, v);
+}
 `
 }
 

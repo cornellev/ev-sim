@@ -17,6 +17,7 @@
     "react-icons": "^5.5.0",
     "rosnodejs": "^0.1.1",
     "three": "^0.182.0",
+    "three-mesh-bvh": "^0.9.8",
     "vmath": "^1.4.8",
     "ws": "^8.19.0"
   },

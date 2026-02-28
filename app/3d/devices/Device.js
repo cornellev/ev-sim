@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { DeviceDatabase } from "../data/DeviceDatabase";
 import { Vector3 } from "three";
-import { isVector3 } from "../util/Checks";
+import { isVector3 } from "../../util/Checks";
 import { Object } from "../data/objects/Object";
 import { Data } from "../data/Data";
-import { keys, keyText } from "../util/Keys";
+import { keys, keyText } from "../../util/Keys";
 
 export function DeviceOverlayObject({ keyName, value, path, onChange }) {
     const isObject = value !== null && typeof value === "object";
