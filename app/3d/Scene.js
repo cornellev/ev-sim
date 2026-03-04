@@ -14,6 +14,7 @@ import { LiDAR3d } from "./devices/LiDAR3d";
 import { DeviceOverlay } from "./devices/Device";
 import { PointOptimizer } from "../optimization/PointOptimizer";
 import { TriangleOptimizer } from "../optimization/TriangleOptimizer";
+import { BigCar } from "./vehicles/BigCar";
 
 function setupScene(scene, camera, renderer) {
     //set background color
@@ -98,6 +99,7 @@ async function setupOptimizer(scene, camera, renderer, data) {
     // // Add points and primitives to the scene
     // optimizer.addToScene(scene);
     // optimizer.addPrimitives(scene);
+    if (true) return; // todo
 
     const optimizer = await TriangleOptimizer.loadFromGLTF("shell/shell.gltf", 0.01);
     optimizer.optimize(5.0);
@@ -160,6 +162,45 @@ function test(scene, camera, data) {
     });
 }
 
+/**
+ * 
+ * @param {THREE.Scene} scene 
+ * @param {Data} data 
+ */
+function setupVehicles(scene, data) {
+    const car = new BigCar(
+        data.vehicles(), 
+        new THREE.Vector3(0, 0, 0), 
+        new THREE.Euler(0, 0, 0)
+    );
+    car.addToScene(scene);
+
+    data.keys().registerKeyDown("w", () => {
+        car.acceleration.x = -5;
+    });
+    data.keys().registerKeyUp("w", () => {
+        car.acceleration.x = 0;
+    });
+    data.keys().registerKeyDown("s", () => {
+        car.acceleration.x = 5;
+    });
+    data.keys().registerKeyUp("s", () => {
+        car.acceleration.x = 0;
+    });
+    data.keys().registerKeyDown("a", () => {
+        car.acceleration.z = 5;
+    });
+    data.keys().registerKeyUp("a", () => {
+        car.acceleration.z = 0;
+    });
+    data.keys().registerKeyDown("d", () => {
+        car.acceleration.z = -5;
+    });
+    data.keys().registerKeyUp("d", () => {
+        car.acceleration.z = 0;
+    });
+}
+
 export default function TotalScene() {
     const mountRef = useRef(null);
     const keyManagerRef = useRef(new KeyManager());
@@ -193,9 +234,15 @@ export default function TotalScene() {
         setupControls(scene, camera, renderer, data);
         setupOptimizer(scene, camera, renderer, data);
         // BasicScene(data);
-        test(scene, camera, data);
+        // test(scene, camera, data);
+        setupVehicles(scene, data);
+
+        setupScene(scene, camera, renderer);
+
+        // Setup objects and devices.
         data.objects().scene(scene);
         data.devices().setup(scene);
+        data.vehicles().setup(scene);
         
 
         // --- 4. Handle Window Resize (Optional but Recommended) ---

@@ -22,7 +22,22 @@ export class VehicleDatabase extends Database {
      */
     setup(scene) {
         for (const vehicle of this.vehicles) {
-            vehicle.setup(scene);
+            vehicle.start(scene);
         }
+
+        // setup update frames
+        let lastTime = performance.now();
+        const frame = (time) => {
+            const deltaTime = (time - lastTime) / 1000; // in seconds
+            lastTime = time;
+
+            for (const vehicle of this.vehicles) {
+                vehicle.update(deltaTime);
+            }
+
+            requestAnimationFrame(frame);
+        };
+
+        requestAnimationFrame(frame);
     }
 }

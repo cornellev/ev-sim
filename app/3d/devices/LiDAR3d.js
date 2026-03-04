@@ -211,9 +211,9 @@ export class LiDAR3d extends Device {
                 step: phiStep,
                 range: phiRange
             },
+            position,
+            rotation
         });
-        this.position = position;
-        this.rotation = rotation;
         
         this.range = range;
         this.thetaStep = thetaStep;
@@ -229,7 +229,7 @@ export class LiDAR3d extends Device {
             standardVTX,
             frag3d,
             {
-                u_origin: { value: this.position },
+                u_origin: { value: position },
                 u_thetaStart: { value: thetaRange[0] },
                 u_thetaEnd: { value: thetaRange[1] },
                 u_thetaStep: { value: thetaStep },
@@ -252,18 +252,27 @@ export class LiDAR3d extends Device {
         this.debug = false;
     }
 
+    onParentUpdate() {
+        this.pointsGroup.position.copy(this.getPosition());
+        if (this.lines) {
+            this.lines.position.copy(this.getPosition());
+        }
+    }
 
     setup(scene) {
-        const geometry = new THREE.CircleGeometry(0.1, 16);
+        const geometry = new THREE.SphereGeometry(0.1, 8, 8);
         const material = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
         this.pointsGroup = new THREE.Group();
+        this.pointsGroup.position.copy(this.getPosition());
+        this.pointsGroup.add(new THREE.Mesh(geometry, material));
+        
         scene.add(this.pointsGroup);
 
         this.shader.setup(this.getParent().getParent().renderer);
 
-        this.shader.setupTextureInScene(scene, {
-            x: 0, y: 20, z: 0
-        }, 1);
+        // this.shader.setupTextureInScene(scene, {
+        //     x: 0, y: 20, z: 0
+        // }, 1);
 
         const createLine =(p1, p2, mat) => {
             const points = [];
@@ -301,7 +310,7 @@ export class LiDAR3d extends Device {
             }
         }
 
-        lineGroup.position.copy(this.position);
+        lineGroup.position.copy(this.getPosition());
 
         scene.add(lineGroup);
         this.lines = lineGroup;
@@ -312,7 +321,7 @@ export class LiDAR3d extends Device {
         const { posTexture: triPosTexture, count: triCount } = this.getParent().getParent().objects().t_triangles();
 
         this.shader.update({
-            u_origin: { value: this.position },
+            u_origin: { value: this.getPosition() },
             boxCount: { value: count },
             u_boxPosTex: { value: posTexture },
             triCount: { value: triCount },
@@ -324,7 +333,7 @@ export class LiDAR3d extends Device {
     emitRays(buffer) {
         if (!this.lines) return;
 
-        this.lines.position.copy(this.position);
+        this.lines.position.copy(this.getPosition());
         const thetaStart = this.settings.theta.range[0];
         const thetaStep = this.settings.theta.step;
         const phiStart = this.settings.phi.range[0];

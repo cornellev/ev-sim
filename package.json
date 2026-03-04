@@ -9,6 +9,8 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@jax-js/jax": "^0.1.9",
+    "@sparkjsdev/spark": "^0.1.10",
     "express": "^5.2.1",
     "next": "^16.1.6",
     "noisejs": "^2.1.0",
