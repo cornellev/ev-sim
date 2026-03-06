@@ -5,9 +5,43 @@ import { isVector3 } from "../../util/Checks";
 import { Object } from "../data/objects/Object";
 import { Data } from "../data/Data";
 import { keys, keyText } from "../../util/Keys";
+import * as THREE from "three";
 
 export function DeviceOverlayObject({ keyName, value, path, onChange }) {
     const isObject = value !== null && typeof value === "object";
+
+    if (value instanceof THREE.Euler || value instanceof THREE.Vector3) {
+        // just an override to ignore the "isEuler" and "order" keys but keep x,y,z seperate
+
+        return (
+            <div className="flex items-center justify-between gap-2 py-1">
+                {keyName && (
+                    <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-gray-300 select-none">
+                        {keyText(keyName)}
+                    </p>
+                )}
+
+                <div className="flex items-center gap-1">
+                    {["x", "y", "z"].map((axis) => (
+                        <div key={axis} className="flex items-center gap-1">
+                            <label className="text-[11px] text-gray-200 select-none">{axis}</label>
+                            <input
+                                type="number"
+                                value={value[axis]}
+                                onChange={(e) => {
+                                    const newValue = parseFloat(e.target.value);
+                                    if (!isNaN(newValue)) {
+                                        onChange(path.concat(axis), newValue);
+                                    }
+                                }}
+                                className="w-16 rounded-sm border border-[#555555] bg-[#1f1f1f] px-1 py-0.5 text-[11px] text-gray-100 focus:outline-none focus:ring-1 focus:ring-[#5fa9ff] focus:border-[#5fa9ff]"
+                            />
+                        </div>
+                    ))}
+                </div>
+            </div>
+        );    
+    }
 
     if (isObject) {
         return (

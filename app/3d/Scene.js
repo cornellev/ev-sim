@@ -15,6 +15,7 @@ import { DeviceOverlay } from "./devices/Device";
 import { PointOptimizer } from "../optimization/PointOptimizer";
 import { TriangleOptimizer } from "../optimization/TriangleOptimizer";
 import { BigCar } from "./vehicles/BigCar";
+import { loadScenarioFolder } from "./traffic/TrafficScenario";
 
 function setupScene(scene, camera, renderer) {
     //set background color
@@ -176,28 +177,23 @@ function setupVehicles(scene, data) {
     car.addToScene(scene);
 
     data.keys().registerKeyDown("w", () => {
-        car.acceleration.x = -5;
-    });
-    data.keys().registerKeyUp("w", () => {
-        car.acceleration.x = 0;
+        car.velocity.x = 15; // move forward at 5 units/sec
     });
     data.keys().registerKeyDown("s", () => {
-        car.acceleration.x = 5;
+        car.velocity.x = -15; // move backward at 5 units/sec
+    });
+    data.keys().registerKeyUp("w", () => {
+        car.velocity.x = 0; // stop moving forward
     });
     data.keys().registerKeyUp("s", () => {
-        car.acceleration.x = 0;
+        car.velocity.x = 0; // stop moving backward
     });
+
     data.keys().registerKeyDown("a", () => {
-        car.acceleration.z = 5;
-    });
-    data.keys().registerKeyUp("a", () => {
-        car.acceleration.z = 0;
+        car.steeringAngle += (5 / 180) * Math.PI; // turn left by 1 degree
     });
     data.keys().registerKeyDown("d", () => {
-        car.acceleration.z = -5;
-    });
-    data.keys().registerKeyUp("d", () => {
-        car.acceleration.z = 0;
+        car.steeringAngle -= (5 / 180) * Math.PI; // turn right by 1 degree
     });
 }
 
@@ -235,7 +231,11 @@ export default function TotalScene() {
         setupOptimizer(scene, camera, renderer, data);
         // BasicScene(data);
         // test(scene, camera, data);
-        setupVehicles(scene, data);
+        // setupVehicles(scene, data);
+
+        loadScenarioFolder(scene, "/scenarios/interactive/NGSIM/Lankershim/USA_Lanker-1_12_I-1-1").then(() => {
+            console.log("Scenario loaded");
+        })
 
         setupScene(scene, camera, renderer);
 
