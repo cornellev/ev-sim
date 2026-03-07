@@ -15,7 +15,7 @@ import { DeviceOverlay } from "./devices/Device";
 import { PointOptimizer } from "../optimization/PointOptimizer";
 import { TriangleOptimizer } from "../optimization/TriangleOptimizer";
 import { BigCar } from "./vehicles/BigCar";
-import { loadScenarioFolder } from "./traffic/TrafficScenario";
+import { TrafficScenario } from "./traffic/TrafficScenario";
 
 function setupScene(scene, camera, renderer) {
     //set background color
@@ -31,7 +31,7 @@ function setupScene(scene, camera, renderer) {
     scene.add(directionalLight);
     
     // set camera position
-    camera.position.set(0, 50, 100);
+    camera.position.set(0, 10, 10);
     camera.lookAt(0, 0, 0);
 
     // render loop
@@ -56,7 +56,7 @@ function setupControls(scene, camera, renderer, data) {
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
     controls.screenSpacePanning = false;
-    controls.minDistance = 10;
+    controls.minDistance = 4;
     controls.maxDistance = 500;
     controls.maxPolarAngle = Math.PI / 2;
 
@@ -68,12 +68,13 @@ function setupControls(scene, camera, renderer, data) {
     controlLoop();
 
     // add grid helper
-    const gridHelper = new THREE.GridHelper(400, 100);
+    const gridHelper = new THREE.GridHelper(400, 400);
     scene.add(gridHelper);
 
     data.keys().registerKeyDown("g", (e) => {
         gridHelper.visible = !gridHelper.visible;
     });
+
 }
 
 /**
@@ -163,24 +164,38 @@ function test(scene, camera, data) {
     });
 }
 
+async function setupTrafficScenario(scene, data) {
+    const scenario = await TrafficScenario.load(
+        scene,
+        data,
+        "/scenarios/recorded/NGSIM/Peachtree/USA_Peach-1_1_T-1.xml",
+        { autoplay: false }
+    );
+
+    data.keys().registerKeyPress("p", () => {
+        scenario.togglePlayback();
+    });
+}
+
 /**
  * 
  * @param {THREE.Scene} scene 
  * @param {Data} data 
+ * @param {THREE.Camera} camera
  */
-function setupVehicles(scene, data) {
+async function setupVehicles(scene, data, camera) {
     const car = new BigCar(
         data.vehicles(), 
         new THREE.Vector3(0, 0, 0), 
         new THREE.Euler(0, 0, 0)
     );
-    car.addToScene(scene);
+    await car.addToScene(scene);
 
     data.keys().registerKeyDown("w", () => {
-        car.velocity.x = 15; // move forward at 5 units/sec
+        car.velocity.x = 5; // move forward at 5 units/sec
     });
     data.keys().registerKeyDown("s", () => {
-        car.velocity.x = -15; // move backward at 5 units/sec
+        car.velocity.x = -5; // move backward at 5 units/sec
     });
     data.keys().registerKeyUp("w", () => {
         car.velocity.x = 0; // stop moving forward
@@ -189,11 +204,37 @@ function setupVehicles(scene, data) {
         car.velocity.x = 0; // stop moving backward
     });
 
-    data.keys().registerKeyDown("a", () => {
+    data.keys().registerWhileDown("a", () => {
         car.steeringAngle += (5 / 180) * Math.PI; // turn left by 1 degree
     });
-    data.keys().registerKeyDown("d", () => {
+    data.keys().registerWhileDown("d", () => {
         car.steeringAngle -= (5 / 180) * Math.PI; // turn right by 1 degree
+    });
+
+    let camFollowing = false;
+    let following = null;
+
+    data.keys().registerKeyPress("f", () => {
+        camFollowing = !camFollowing;
+
+        if (camFollowing) {
+            data.settings().disableControls();
+
+            for (let vehicle of data.vehicles().vehicles) {
+                if (vehicle["follower"]) {
+                    vehicle.follower.camera = camera;
+                    following = vehicle;
+                    break;
+                }
+            }
+        } else {
+            if (following && following.follower) {
+                following.follower.camera = null;
+            }
+
+            data.settings().enableControls();
+            following = null;
+        }
     });
 }
 
@@ -201,49 +242,50 @@ export default function TotalScene() {
     const mountRef = useRef(null);
     const keyManagerRef = useRef(new KeyManager());
     const mouseManagerRef = useRef(new MouseManager());
-    const _data = useRef(null);
 
     const [selectedDevice, setSelectedDevice] = useState(null);
+    const [sceneData, setSceneData] = useState(null);
 
     useEffect(() => {
         const scene = new THREE.Scene();
         const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
         const renderer = new THREE.WebGLRenderer({ antialias: true });
+        let disposed = false;
+        const mountNode = mountRef.current;
 
          // Set renderer size and append canvas to the referenced div
         renderer.setSize(window.innerWidth, window.innerHeight);
-        mountRef.current.appendChild(renderer.domElement);
+        mountNode.appendChild(renderer.domElement);
 
         const data = new Data();
-
-        _data.current = data;
 
         data.keyManager = keyManagerRef.current;
         data.mouseManager = mouseManagerRef.current;
         data.scene = scene;
         data.camera = camera;
         data.renderer = renderer;
-        
-        // --- 3. Setup Scene, Camera, Renderer, Controls, and Objects ---
-        
-        setupScene(scene, camera, renderer);
-        setupControls(scene, camera, renderer, data);
-        setupOptimizer(scene, camera, renderer, data);
-        // BasicScene(data);
-        // test(scene, camera, data);
-        // setupVehicles(scene, data);
 
-        loadScenarioFolder(scene, "/scenarios/interactive/NGSIM/Lankershim/USA_Lanker-1_12_I-1-1").then(() => {
-            console.log("Scenario loaded");
-        })
+        const initialize = async () => {
+            setupScene(scene, camera, renderer);
+            setupControls(scene, camera, renderer, data);
+            // await setupOptimizer(scene, camera, renderer, data);
+            // BasicScene(data);
+            // test(scene, camera, data);
+            await setupVehicles(scene, data, camera);
 
-        setupScene(scene, camera, renderer);
+            await setupTrafficScenario(scene, data);
 
-        // Setup objects and devices.
-        data.objects().scene(scene);
-        data.devices().setup(scene);
-        data.vehicles().setup(scene);
-        
+            if (disposed) return;
+
+            data.objects().scene(scene);
+            data.devices().setup(scene);
+            data.vehicles().setup(scene);
+            setSceneData(data);
+            setSelectedDevice(data.devices().devices[0] ?? null);
+        };
+
+        initialize();
+
 
         // --- 4. Handle Window Resize (Optional but Recommended) ---
         const handleResize = () => {
@@ -252,12 +294,12 @@ export default function TotalScene() {
             renderer.setSize(window.innerWidth, window.innerHeight);
         };
         window.addEventListener('resize', handleResize);
-        setSelectedDevice(data.devices().devices[0]);
 
 
         // --- 5. Cleanup Function ---
         return () => {
-            mountRef.current.removeChild(renderer.domElement);
+            disposed = true;
+            mountNode.removeChild(renderer.domElement);
             window.removeEventListener('resize', handleResize);
         };
     }, []);
@@ -269,13 +311,19 @@ export default function TotalScene() {
         const ku = (e) => {
             keyManagerRef.current.onKeyUp(e);
         };
+        
+        const kp = (e) => {
+            keyManagerRef.current.onKeyPress(e);
+        };
 
         window.addEventListener("keydown", kd);
         window.addEventListener("keyup", ku);
+        window.addEventListener("keypress", kp);
         
         return () => {
             window.removeEventListener("keydown", kd);
             window.removeEventListener("keyup", ku);
+            window.removeEventListener("keypress", kp);
         };
     }, []);
 
@@ -311,7 +359,7 @@ export default function TotalScene() {
         <>
         <div id="overlay" className="fixed w-[100vw] h-[100vh] top-0 left-0 select-none pointer-events-none bg-transparent">
             {/* Overlay content can go here */}
-            {_data.current && selectedDevice && <DeviceOverlay device={selectedDevice} data={_data.current} />}
+            {sceneData && selectedDevice && <DeviceOverlay device={selectedDevice} data={sceneData} />}
         </div>
         <div id="canvas-container" className="w-[100vw] h-[100vh]" ref={mountRef}>
             

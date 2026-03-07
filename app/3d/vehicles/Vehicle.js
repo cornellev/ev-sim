@@ -83,7 +83,7 @@ export class Vehicle {
      */
     updatePosition(new_position) {
         this.position.copy(new_position);
-        this.sceneObject.position.copy(this.position);
+        this.sceneObject.position.copy(this.position).add(this.offset ? this.offset : new THREE.Vector3(0, 0, 0));
 
         for (let device of this.devices) {
             device.onParentUpdate();
