@@ -8,7 +8,7 @@ import Unit from "@/app/util/Unit";
 import { CameraFollower } from "../tools/CameraFollower";
 
 // ---------- constants ----------
-const WHEELBASE = 5;          // meters (set to your car)
+const WHEELBASE = new Unit(49, Unit.Type.INCH).getValue(Unit.Type.METER);          // meters (set to your car)
 const LOOKAHEAD = 15;           // meters of path to draw
 const SEGMENTS  = 80;           // smoothness
 const PATH_WIDTH = 1;         // meters
@@ -309,7 +309,7 @@ export class BigCar extends PhysicalVehicle {
         const curve = createPathRibbonMesh();
         // rotate curve 90 degrees to align with car's forward direction
         curve.rotation.y = Math.PI / 2;
-        curve.position.x = 0.2;
+        // curve.position.x = 0.2;
         
         this.sceneObject.add(curve);
 

@@ -16,6 +16,7 @@ import { PointOptimizer } from "../optimization/PointOptimizer";
 import { TriangleOptimizer } from "../optimization/TriangleOptimizer";
 import { BigCar } from "./vehicles/BigCar";
 import { TrafficScenario } from "./traffic/TrafficScenario";
+import { buildRoadNetwork } from "./city/RoadNetwork";
 
 function setupScene(scene, camera, renderer) {
     //set background color
@@ -69,6 +70,7 @@ function setupControls(scene, camera, renderer, data) {
 
     // add grid helper
     const gridHelper = new THREE.GridHelper(400, 400);
+    gridHelper.visible = false;
     scene.add(gridHelper);
 
     data.keys().registerKeyDown("g", (e) => {
@@ -177,6 +179,86 @@ async function setupTrafficScenario(scene, data) {
     });
 }
 
+async function setupCity(scene, data) {
+    const ground = new THREE.Mesh(
+        new THREE.PlaneGeometry(220, 220),
+        new THREE.MeshStandardMaterial({
+            color: 0x5c6f52,
+            roughness: 1,
+            metalness: 0,
+        })
+    );
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = -0.02;
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+
+    const vectors = [];
+
+    for (let x = -60; x <= 60; x += 20) {
+        for (let z = -60; z <= 60; z += 20) {
+            vectors.push([
+                `point_${x}_${z}`,
+                new THREE.Vector3(x, 0, z)
+            ]);
+        }
+    }
+
+    const vectorMap = new Map(vectors);
+
+    const connections = [
+        
+    ];
+
+    // make a grid of roads between the points
+    for (let x = -60; x <= 60; x += 20) {
+        for (let z = -60; z <= 60; z += 20) {
+            const current = `point_${x}_${z}`;
+            if (x < 60) {
+                connections.push([current, `point_${x+20}_${z}`, true]);
+            }
+            if (z < 60) {
+                connections.push([current, `point_${x}_${z+20}`, true]);
+            }
+        }
+    }
+
+    buildRoadNetwork(scene, vectorMap, connections, {
+        maxIntersectionDegree: 4,
+        roadOptions: {
+            laneWidth: 3.5,
+            bidirectionalLaneCount: 2,
+            oneWayLaneCount: 1,
+            shoulderWidth: 0.2,
+            laneMarkingWidth: 0.2,
+            dashLength: 3.5,
+            dashGap: 2.5,
+            elevation: 0.015,
+            shoulderElevation: 0.008,
+            markingElevation: 0.02,
+            surfaceColor: 0x2d3034,
+            shoulderColor: 0x4d5055,
+        },
+        intersectionInset: 5,
+    });
+
+
+    const boxes = [];
+
+    // add buildings as boxes at each point, with random heights
+    for (let x = -60; x <= 40; x += 20) {
+        for (let z = -60; z <= 40; z += 20) {
+            const height = Math.random() * 20 + 5;
+            const box = new Box(new THREE.Vector3(x + 10, height/2, z + 10), new THREE.Vector3(10, height, 10));
+            boxes.push(box);
+            data.objects().addObject(box);
+        }
+    }
+
+    
+}
+
 /**
  * 
  * @param {THREE.Scene} scene 
@@ -274,6 +356,8 @@ export default function TotalScene() {
             await setupVehicles(scene, data, camera);
 
             await setupTrafficScenario(scene, data);
+
+            // await setupCity(scene, data);
 
             if (disposed) return;
 
