@@ -11,12 +11,15 @@ import { Box } from "./data/objects/Box";
 import { Sphere } from "./data/objects/Sphere";
 import { LiDAR2d } from "./devices/LiDAR2d";
 import { LiDAR3d } from "./devices/LiDAR3d";
-import { DeviceOverlay } from "./devices/Device";
 import { PointOptimizer } from "../optimization/PointOptimizer";
 import { TriangleOptimizer } from "../optimization/TriangleOptimizer";
 import { BigCar } from "./vehicles/BigCar";
 import { TrafficScenario } from "./traffic/TrafficScenario";
 import { buildRoadNetwork } from "./city/RoadNetwork";
+import { LoadRoadsFromGeoJSON } from "./city/CityBuilder";
+import { setupIGVC } from "./igvc/IGVCScene";
+import { SimulationMenu } from "./overlay/SimulationMenu";
+import { VehicleOverlay } from "./overlay/VehicleOverlay";
 
 function setupScene(scene, camera, renderer) {
     //set background color
@@ -58,8 +61,11 @@ function setupControls(scene, camera, renderer, data) {
     controls.dampingFactor = 0.05;
     controls.screenSpacePanning = false;
     controls.minDistance = 4;
-    controls.maxDistance = 500;
+    controls.maxDistance = 10000;
     controls.maxPolarAngle = Math.PI / 2;
+    // set camera far plane to 1000
+    camera.far = 10000;
+    camera.updateProjectionMatrix();
 
     function controlLoop() {
         requestAnimationFrame(controlLoop);
@@ -177,6 +183,23 @@ async function setupTrafficScenario(scene, data) {
     data.keys().registerKeyPress("p", () => {
         scenario.togglePlayback();
     });
+}
+
+async function tryIthaca(scene, data) {
+    // const ground = new THREE.Mesh(
+    //     new THREE.PlaneGeometry(22000, 22000),
+    //     new THREE.MeshStandardMaterial({
+    //         color: 0x5c6f52,
+    //         roughness: 1,
+    //         metalness: 0,
+    //     })
+    // );
+    // ground.rotation.x = -Math.PI / 2;
+    // ground.position.y = -0.02;
+    // ground.receiveShadow = true;
+    // scene.add(ground);
+
+    LoadRoadsFromGeoJSON(scene, "/geojson/ithaca.geojson");
 }
 
 async function setupCity(scene, data) {
@@ -325,8 +348,8 @@ export default function TotalScene() {
     const keyManagerRef = useRef(new KeyManager());
     const mouseManagerRef = useRef(new MouseManager());
 
-    const [selectedDevice, setSelectedDevice] = useState(null);
     const [sceneData, setSceneData] = useState(null);
+    const [vehicleOverlayVisible, setVehicleOverlayVisible] = useState(true);
 
     useEffect(() => {
         const scene = new THREE.Scene();
@@ -355,17 +378,20 @@ export default function TotalScene() {
             // test(scene, camera, data);
             await setupVehicles(scene, data, camera);
 
-            await setupTrafficScenario(scene, data);
+            // await setupTrafficScenario(scene, data);
+
+            // await tryIthaca(scene, data);
 
             // await setupCity(scene, data);
+
+            await setupIGVC(scene, data);
 
             if (disposed) return;
 
             data.objects().scene(scene);
-            data.devices().setup(scene);
             data.vehicles().setup(scene);
+            data.devices().setup(scene);
             setSceneData(data);
-            setSelectedDevice(data.devices().devices[0] ?? null);
         };
 
         initialize();
@@ -443,7 +469,12 @@ export default function TotalScene() {
         <>
         <div id="overlay" className="fixed w-[100vw] h-[100vh] top-0 left-0 select-none pointer-events-none bg-transparent">
             {/* Overlay content can go here */}
-            {sceneData && selectedDevice && <DeviceOverlay device={selectedDevice} data={sceneData} />}
+            {sceneData && vehicleOverlayVisible && <VehicleOverlay data={sceneData} />}
+            <SimulationMenu
+                data={sceneData}
+                vehicleOverlayVisible={vehicleOverlayVisible}
+                onVehicleOverlayVisibleChange={setVehicleOverlayVisible}
+            />
         </div>
         <div id="canvas-container" className="w-[100vw] h-[100vh]" ref={mountRef}>
             

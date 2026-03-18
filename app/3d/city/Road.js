@@ -36,7 +36,16 @@ function lerp(a, b, t) {
     return a + (b - a) * t;
 }
 
-function buildStripGeometry(leftPoints, rightPoints) {
+export function getBorderColor(type, options) {
+    if (type === RoadBorderType.SOLID_YELLOW || type === RoadBorderType.DASHED_YELLOW) {
+        return options.yellowLineColor;
+    } else if (type === RoadBorderType.SOLID_WHITE || type === RoadBorderType.DASHED_WHITE) {
+        return options.whiteLineColor;
+    }
+    return null;
+}
+
+export function buildStripGeometry(leftPoints, rightPoints) {
     const count = Math.min(leftPoints.length, rightPoints.length);
     if (count < 2) return null;
 
@@ -156,7 +165,7 @@ function createPolylineRibbon(points, width) {
     return buildStripGeometry(left, right);
 }
 
-function createSolidLine(curve, offset, options) {
+export function createSolidLine(curve, offset, options) {
     const points = sampleOffsetCenterline(curve, offset, options.markingElevation, options.segments);
     const geometry = createPolylineRibbon(points, options.laneMarkingWidth);
     if (!geometry) return null;
@@ -176,7 +185,7 @@ function createSolidLine(curve, offset, options) {
     return mesh;
 }
 
-function createDashedLine(curve, offset, options) {
+export function createDashedLine(curve, offset, options) {
     const group = new THREE.Group();
     const totalLength = curve.getLength();
     const stride = Math.max(0.2, options.dashLength + options.dashGap);

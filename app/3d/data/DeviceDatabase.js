@@ -20,6 +20,8 @@ export class DeviceDatabase extends Database {
         for (const device of this.devices) {
             device.setup(scene);
         }
+        
+        console.log("Setup", this.devices.length, "devices");
 
         const animate = () => {
             requestAnimationFrame(animate);

@@ -94,10 +94,10 @@ export class ObjectDatabase extends Database {
         this.notifiers = {
             box: (box) => {
                 const uuid = box._uuid;
-                const index = this.objects.findIndex((obj) => obj._uuid === uuid);
+                // Box texture data is stored in box-order, not global object-order.
+                // Use instanceof so subclasses (e.g., StopSign) are included.
+                const index = this.boxes().findIndex((obj) => obj._uuid === uuid);
                 if (index === -1) return;
-
-                const boxCount = this.textures.counts.boxCount;
                 const dataIndex = index * 4;
 
                 // update position data
@@ -118,10 +118,9 @@ export class ObjectDatabase extends Database {
             },
             triangle: (triangle) => {
                 const uuid = triangle._uuid;
-                const index = this.objects.findIndex((obj) => obj._uuid === uuid);
+                // Triangle texture data is stored in triangle-order.
+                const index = this.triangles().findIndex((obj) => obj._uuid === uuid);
                 if (index === -1) return;
-
-                const triCount = this.textures.counts.triCount;
                 const dataIndex = index * 12;
 
                 // update position data
@@ -236,7 +235,7 @@ export class ObjectDatabase extends Database {
     }
 
     boxes() {
-        return this.objects.filter((obj) => obj.constructor.name === "Box");
+        return this.objects.filter((obj) => obj instanceof Box);
     }
 
     t_boxes() {
@@ -248,7 +247,7 @@ export class ObjectDatabase extends Database {
     }
 
     triangles() {
-        return this.objects.filter((obj) => obj.constructor.name === "Triangle");
+        return this.objects.filter((obj) => obj instanceof Triangle);
     }
     
     t_triangles() {
@@ -259,6 +258,7 @@ export class ObjectDatabase extends Database {
     }
 
     scene(scene) {
+        console.log("Adding", this.objects.length, "objects to scene");
         this.objects.forEach((obj) => {
             if (this.inScene.includes(obj._uuid)) return;
             obj.addToScene(scene);

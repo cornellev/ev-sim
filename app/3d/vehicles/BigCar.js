@@ -16,7 +16,7 @@ const PATH_Y = 0.02;            // lift above ground to avoid z-fighting
 
 const UP = new THREE.Vector3(0, 1, 0);
 
-function makePathGradientTexture({
+export function makePathGradientTexture({
   width = 256,
   height = 4,
   color = 0xff0000,
@@ -57,7 +57,7 @@ function makePathGradientTexture({
 }
 
 // ---------- create a reusable ribbon mesh ----------
-function createPathRibbonMesh() {
+export function createPathRibbonMesh() {
     const vertCount = (SEGMENTS + 1) * 2; // left+right per sample
     const positions = new Float32Array(vertCount * 3);
     const uvs       = new Float32Array(vertCount * 2);
@@ -114,7 +114,7 @@ function createPathRibbonMesh() {
 }
 
 // ---------- update geometry each frame ----------
-function updatePathRibbonGeometry(geometry, carObject3D, steeringAngleRad) {
+export function updatePathRibbonGeometry(geometry, carObject3D, steeringAngleRad) {
   // Ackermann/bicycle curvature (centerline)
   // k = tan(delta) / L
   const curvature = Math.tan(steeringAngleRad) / WHEELBASE;
