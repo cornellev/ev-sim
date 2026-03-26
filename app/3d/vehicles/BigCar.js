@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { Data } from "../data/Data";
 import { LiDAR3d } from "../devices/LiDAR3d";
+import { StereoCamera } from "../devices/StereoCamera";
 import { PhysicalVehicle, Vehicle } from "./Vehicle";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader";
 import { lerp } from "three/src/math/MathUtils";
@@ -15,6 +16,47 @@ const PATH_WIDTH = 1;         // meters
 const PATH_Y = 0.02;            // lift above ground to avoid z-fighting
 
 const UP = new THREE.Vector3(0, 1, 0);
+
+function distancePointToSegmentXZ(point, a, b) {
+    const abx = b.x - a.x;
+    const abz = b.z - a.z;
+    const apx = point.x - a.x;
+    const apz = point.z - a.z;
+
+    const abLenSq = abx * abx + abz * abz;
+    if (abLenSq === 0) {
+        const dx = point.x - a.x;
+        const dz = point.z - a.z;
+        return Math.sqrt(dx * dx + dz * dz);
+    }
+
+    const t = THREE.MathUtils.clamp((apx * abx + apz * abz) / abLenSq, 0, 1);
+    const cx = a.x + abx * t;
+    const cz = a.z + abz * t;
+    const dx = point.x - cx;
+    const dz = point.z - cz;
+    return Math.sqrt(dx * dx + dz * dz);
+}
+
+function isPointOverLane(point, lanePoints, laneHalfWidth) {
+    if (!lanePoints || lanePoints.length < 2) return false;
+
+    const maxVerticalDelta = 4;
+    let minDist = Number.POSITIVE_INFINITY;
+    let nearestLaneY = 0;
+
+    for (let i = 0; i < lanePoints.length - 1; i++) {
+        const a = lanePoints[i];
+        const b = lanePoints[i + 1];
+        const dist = distancePointToSegmentXZ(point, a, b);
+        if (dist < minDist) {
+            minDist = dist;
+            nearestLaneY = (a.y + b.y) * 0.5;
+        }
+    }
+
+    return minDist <= laneHalfWidth && Math.abs(point.y - nearestLaneY) <= maxVerticalDelta;
+}
 
 export function makePathGradientTexture({
   width = 256,
@@ -168,14 +210,6 @@ export function updatePathRibbonGeometry(geometry, carObject3D, steeringAngleRad
   geometry.computeVertexNormals();
   geometry.computeBoundingSphere();
 }
-// in your update loop:
-function update() {
-  // steering angle MUST be radians
-  // if you store degrees: const delta = THREE.MathUtils.degToRad(this.steeringAngleDeg);
-  const delta = this.steeringAngle; // radians
-
-  updatePathRibbonGeometry(pathMesh.geometry, carObject3D, delta);
-}
 
 export class BigCar extends PhysicalVehicle {
     constructor(db, position=new THREE.Vector3(), rotation=new THREE.Euler()) {
@@ -191,16 +225,45 @@ export class BigCar extends PhysicalVehicle {
 
         this.follower = new CameraFollower();
         this.follower.cameraOffset.set(-5, 4, 0); // default offset behind and above the car
+
+        this.controlsEnabled = true; // whether user can control the car
     }
 
     setupDevices() {
         const lidar = new LiDAR3d(
-            new THREE.Vector3(0, 1, 0), // position
+            new THREE.Vector3(0.35, 0.8, 0), // position
             new THREE.Euler(0, 0, 0) // rotation
         );
-        
+
+        const stereoCamera = new StereoCamera("Front Stereo Camera", {
+            position: new THREE.Vector3(1.5, 0.5, 0),
+            rotation: new THREE.Euler(0, 0, 0),
+            range: 20,
+            thetaStep: 2,
+            phiStep: 1,
+            camera: {
+                width: 320,
+                height: 180,
+                fov: 75,
+                near: 0.1,
+                far: 200,
+            },
+            channels: {
+                lidar: "bigcar/stereo/lidar3d",
+                camera: "bigcar/stereo/camera",
+            },
+            maxFramesPerChannel: 180,
+        });
+
+        // lidar.debug = true;
         
         this.addDevice(lidar);
+        this.addDevice(stereoCamera);
+    }
+
+    disableControls() {
+        this.controlsEnabled = false;
+        this.path.visible = false;
     }
 
     async update(deltaTime) {
@@ -241,7 +304,11 @@ export class BigCar extends PhysicalVehicle {
 
         this.renderPath();
 
+        this.updateLaneMeshVisibility();
+
         this.follower.updateCamera(this.sceneObject, deltaTime);
+
+        // closest road update
     }
 
     renderPath() {
@@ -250,6 +317,31 @@ export class BigCar extends PhysicalVehicle {
         this.displaySteeringAngle = lerp(this.displaySteeringAngle, this.steeringAngle, 0.1);
 
         updatePathRibbonGeometry(this.path.geometry, this.sceneObject, this.displaySteeringAngle);
+    }
+
+    updateLaneMeshVisibility() {
+        const roads = this.db?.getParent?.()?.city?.()?.roads;
+        if (!roads || roads.length === 0) return;
+
+        const carPosition = this.sceneObject
+            ? this.sceneObject.getWorldPosition(new THREE.Vector3())
+            : this.position;
+
+        for (const road of roads) {
+            if (!road?.laneMeshes?.length || !road?.lanes?.length || !road?.width) continue;
+
+            const laneCount = Math.max(1, Math.round(road.options?.laneCount ?? road.lanes.length));
+            const laneWidth = road.width.getValue(Unit.Type.METER) / laneCount;
+            const laneHalfWidth = laneWidth * 0.75 * 0.5;
+
+            for (let laneIndex = 0; laneIndex < road.laneMeshes.length; laneIndex++) {
+                const lanePoints = road.lanes[laneIndex];
+                const laneMesh = road.laneMeshes[laneIndex];
+                if (!laneMesh || !lanePoints) continue;
+
+                laneMesh.visible = isPointOverLane(carPosition, lanePoints, laneHalfWidth);
+            }
+        }
     }
     
 

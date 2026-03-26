@@ -1,22 +1,48 @@
+import { Client } from "@/app/client/Client";
 import { KeyManager } from "../managers/KeyManager";
 import { MouseManager } from "../managers/MouseManager";
+import { City } from "./City";
 import { DeviceDatabase } from "./DeviceDatabase";
 import { ObjectDatabase } from "./ObjectDatabase";
 import { Settings } from "./Settings";
 import { VehicleDatabase } from "./VehicleDatabase";
+import { ClientManager } from "../managers/ClientManager";
+import { PhysicsEngine } from "@/app/physics/PhysicsEngine";
 
 export class Data {
     constructor() {
         this.deviceDatabase = new DeviceDatabase(this);
         this.objectDatabase = new ObjectDatabase(this);
         this.vehicleDatabase = new VehicleDatabase(this);
+        this.cityDatabase = new City(this);
+        this.physicsEngine = new PhysicsEngine(this);
         this._settings = new Settings();
         this.keyManager = null;
         this.mouseManager = null;
+
+        this.clientManager = new ClientManager(this);
         
         this.scene = null;
         this.camera = null;
         this.renderer = null;
+
+        (async () => {
+            await this.clientManager.setup();
+        })();
+    }
+
+    /**
+     * @return {ClientManager}
+     */
+    client() {
+        return this.clientManager; 
+    }
+
+    /**
+     * @return {PhysicsEngine}
+     */
+    physics() {
+        return this.physicsEngine;
     }
 
     /**
@@ -59,6 +85,13 @@ export class Data {
      */
     mouse() {
         return this.mouseManager;
+    }
+
+    /**
+     * @returns {City}
+     */
+    city() {
+        return this.cityDatabase;
     }
     
     /**

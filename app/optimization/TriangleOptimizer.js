@@ -71,7 +71,7 @@ export class TriangleOptimizer {
         this.triangles.push([i0, i1, i2]);
     }
 
-    exportTriangles() {
+    exportTriangles(visible=false) {
         const objects = [];
         for (const [i0, i1, i2] of this.triangles) {
             const tri = new Triangle(
@@ -79,6 +79,7 @@ export class TriangleOptimizer {
                 this.vertices[i1],
                 this.vertices[i2]
             );
+            tri.visible = visible;
             // console.log(tri instanceof Object)
             objects.push(tri);
         }

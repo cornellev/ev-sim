@@ -20,6 +20,8 @@ import { LoadRoadsFromGeoJSON } from "./city/CityBuilder";
 import { setupIGVC } from "./igvc/IGVCScene";
 import { SimulationMenu } from "./overlay/SimulationMenu";
 import { VehicleOverlay } from "./overlay/VehicleOverlay";
+import { SensorTest } from "./scenes/SensorTest";
+import { setupScanCar } from "./vehicles/ScanCar";
 
 function setupScene(scene, camera, renderer) {
     //set background color
@@ -297,24 +299,43 @@ async function setupVehicles(scene, data, camera) {
     await car.addToScene(scene);
 
     data.keys().registerKeyDown("w", () => {
+        if (!car.controlsEnabled) return;
         car.velocity.x = 5; // move forward at 5 units/sec
     });
     data.keys().registerKeyDown("s", () => {
+        if (!car.controlsEnabled) return;
         car.velocity.x = -5; // move backward at 5 units/sec
     });
     data.keys().registerKeyUp("w", () => {
+        if (!car.controlsEnabled) return;
         car.velocity.x = 0; // stop moving forward
     });
     data.keys().registerKeyUp("s", () => {
+        if (!car.controlsEnabled) return;
         car.velocity.x = 0; // stop moving backward
     });
 
     data.keys().registerWhileDown("a", () => {
+        if (!car.controlsEnabled) return;
         car.steeringAngle += (5 / 180) * Math.PI; // turn left by 1 degree
     });
     data.keys().registerWhileDown("d", () => {
+        if (!car.controlsEnabled) return;
         car.steeringAngle -= (5 / 180) * Math.PI; // turn right by 1 degree
     });
+
+
+    data.client().onUpdate(info => {
+        if (info.name == "/angle") {
+            // is between -1 and 1
+            const angle = parseFloat(info.value);
+            car.steeringAngle = -angle * (30 / 180) * Math.PI; // max steering angle of 30 degrees
+        } else if (info.name == "/forward") {
+            // boolean
+            const forward = info.value;
+            car.velocity.x = forward ? 5 : 0; // move forward at 5 units/sec when true, stop when false
+        }
+    })
 
     let camFollowing = false;
     let following = null;
@@ -376,17 +397,21 @@ export default function TotalScene() {
             // await setupOptimizer(scene, camera, renderer, data);
             // BasicScene(data);
             // test(scene, camera, data);
-            await setupVehicles(scene, data, camera);
+            // await setupVehicles(scene, data, camera);
+            await setupScanCar(data, scene);
 
             // await setupTrafficScenario(scene, data);
 
             // await tryIthaca(scene, data);
 
             // await setupCity(scene, data);
-
             await setupIGVC(scene, data);
+            // await SensorTest(data, scene);
 
             if (disposed) return;
+
+
+            console.log("Scene initialized, setting data...");
 
             data.objects().scene(scene);
             data.vehicles().setup(scene);

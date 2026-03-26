@@ -29,6 +29,7 @@ uniform sampler2D u_triPosTex;
 uniform int triCount;
 
 uniform vec3 u_origin;
+uniform mat3 u_sensorRotation;
 
 uniform float u_time;
 uniform vec2 u_resolution;
@@ -76,11 +77,12 @@ struct Hit {
 
 Hit raycast(float theta, float phi) {
     // direction vector in 3D
-    vec3 dir = vec3(
+    vec3 localDir = vec3(
         cos(phi) * cos(theta),
         sin(phi),
         cos(phi) * sin(theta)
     );
+    vec3 dir = normalize(u_sensorRotation * localDir);
 
     // --- Exact triangle intersections (Möller–Trumbore) ---
     // SDF marching is unreliable for infinitely thin surfaces: a ray at a
@@ -242,20 +244,32 @@ export class LiDAR3d extends Device {
                 u_boxPosTex: { value: null },
                 u_boxScaleTex: { value: null },
                 u_triPosTex: { value: null },
+                u_sensorRotation: { value: new THREE.Matrix3() },
             }
         );
 
-        this.shader.onData(this.emitRays.bind(this));
+        this.shader.onData(this.onShaderUpdate.bind(this));
 
         this.lines = null;
 
+        this.tags = ["distance", "pointcloud"];
+
         this.debug = false;
+
+        this.buff = null;
+        this.distances = [];
     }
 
     onParentUpdate() {
-        this.pointsGroup.position.copy(this.getPosition());
+        const worldPosition = this.getPosition();
+        const worldRotation = this.getRotation();
+
+        this.pointsGroup.position.copy(worldPosition);
+        this.pointsGroup.rotation.copy(worldRotation);
+
         if (this.lines) {
-            this.lines.position.copy(this.getPosition());
+            this.lines.position.copy(worldPosition);
+            this.lines.rotation.copy(worldRotation);
         }
     }
 
@@ -264,6 +278,7 @@ export class LiDAR3d extends Device {
         const material = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
         this.pointsGroup = new THREE.Group();
         this.pointsGroup.position.copy(this.getPosition());
+        this.pointsGroup.rotation.copy(this.getRotation());
         this.pointsGroup.add(new THREE.Mesh(geometry, material));
         
         scene.add(this.pointsGroup);
@@ -311,6 +326,7 @@ export class LiDAR3d extends Device {
         }
 
         lineGroup.position.copy(this.getPosition());
+        lineGroup.rotation.copy(this.getRotation());
 
         scene.add(lineGroup);
         this.lines = lineGroup;
@@ -320,14 +336,50 @@ export class LiDAR3d extends Device {
         const { posTexture, scaleTexture, count } = this.getParent().getParent().objects().t_boxes();
         const { posTexture: triPosTexture, count: triCount } = this.getParent().getParent().objects().t_triangles();
 
+        const sensorRotationMatrix = new THREE.Matrix3().setFromMatrix4(
+            new THREE.Matrix4().makeRotationFromEuler(this.getRotation())
+        );
+
         this.shader.update({
             u_origin: { value: this.getPosition() },
+            u_sensorRotation: { value: sensorRotationMatrix },
             boxCount: { value: count },
             u_boxPosTex: { value: posTexture },
             triCount: { value: triCount },
             u_triPosTex: { value: triPosTexture },
             u_boxScaleTex: { value: scaleTexture },
         })
+    }
+
+    onShaderUpdate(buffer) {
+        this.buff = buffer;
+        this.emitRays(buffer);
+    }
+
+    parseDistances() {
+        if (!this.buff) return;
+        
+        this.distances = [];
+        for (let i = 0; i < this.buff.length; i += 4) {
+            const intensity = this.buff[i];
+            const dist = (1.0 - intensity) * this.settings.range;
+            this.distances.push(dist);
+        }
+    }
+
+    calculateRayAngle(index) {
+        const thetaCount = Math.ceil((this.settings.theta.range[1] - this.settings.theta.range[0]) / this.settings.theta.step);
+        const thetaIndex = index % thetaCount;
+        const phiIndex = Math.floor(index / thetaCount);
+        
+        const theta = this.settings.theta.range[0] + thetaIndex * this.settings.theta.step;
+        const phi = this.settings.phi.range[0] + phiIndex * this.settings.phi.step;
+
+        return {
+            theta: THREE.MathUtils.degToRad(theta), 
+            phi: THREE.MathUtils.degToRad(phi),
+            outOfRange: theta > this.settings.theta.range[1] || phi > this.settings.phi.range[1] 
+        };
     }
 
     emitRays(buffer) {

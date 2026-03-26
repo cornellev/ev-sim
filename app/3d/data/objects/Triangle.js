@@ -7,6 +7,7 @@ export class Triangle extends GLSLObject {
         this.a = a;
         this.b = b;
         this.c = c;
+        this.visible = true;
     }
 
     getStruct() {
@@ -53,6 +54,7 @@ float udTriangle(vec3 p, Triangle triangle) {
      * @param {THREE.Scene} scene 
      */
     addToScene(scene) {
+        if (!this.visible) return;
         const triangle = new THREE.Triangle(this.a, this.b, this.c);
         const geometry = new THREE.BufferGeometry();
         const vertices = new Float32Array([

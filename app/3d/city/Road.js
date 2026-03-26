@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import Unit from "@/app/util/Unit";
+import { Triangle } from "@/app/3d/data/objects/Triangle";
 
 const UP = new THREE.Vector3(0, 1, 0);
 
@@ -165,6 +166,27 @@ function createPolylineRibbon(points, width) {
     return buildStripGeometry(left, right);
 }
 
+function buildStripTriangles(leftPoints, rightPoints, hidden=true) {
+    const count = Math.min(leftPoints.length, rightPoints.length);
+    if (count < 2) return [];
+
+    const triangles = [];
+    for (let i = 0; i < count - 1; i++) {
+        const leftA = leftPoints[i].clone();
+        const rightA = rightPoints[i].clone();
+        const leftB = leftPoints[i + 1].clone();
+        const rightB = rightPoints[i + 1].clone();
+
+        triangles.push(new Triangle(leftA, rightA, rightB));
+        triangles.push(new Triangle(leftA, rightB, leftB));
+
+        triangles[triangles.length - 1].visible = !hidden;
+        triangles[triangles.length - 2].visible = !hidden;
+    }
+
+    return triangles;
+}
+
 export function createSolidLine(curve, offset, options) {
     const points = sampleOffsetCenterline(curve, offset, options.markingElevation, options.segments);
     const geometry = createPolylineRibbon(points, options.laneMarkingWidth);
@@ -261,6 +283,9 @@ export class Road {
         this.borderRight = borderRight;
         this.options = { ...DEFAULT_OPTIONS, ...options };
 
+        this.lanes = [];
+        this.laneMeshes = [];
+
         this.root = null;
 
         this.roadEdges = null;
@@ -270,6 +295,10 @@ export class Road {
         if (this.direction === 0 && this.oneWay) {
             this.direction = 1;
         }
+
+        this.parent = null;
+
+        this.triangles = [];
     }
 
     setup(scene) {
@@ -286,9 +315,14 @@ export class Road {
         const laneWidth = widthMeters / laneCount;
         const shoulderWidth = Math.max(0, this.options.shoulderWidth);
 
+        this.lanes = [];
+        this.laneMeshes = [];
+        this.triangles = [];
+
         const shoulderEdges = sampleRoadEdges(curve, widthMeters + shoulderWidth * 2, this.options.shoulderElevation, segments);
         const roadEdges = sampleRoadEdges(curve, widthMeters, this.options.elevation, segments);
         this.roadEdges = roadEdges;
+        this.triangles = buildStripTriangles(roadEdges.left, roadEdges.right);
 
         const shoulderGeometry = buildStripGeometry(shoulderEdges.left, shoulderEdges.right);
         const roadGeometry = buildStripGeometry(roadEdges.left, roadEdges.right);
@@ -342,6 +376,31 @@ export class Road {
             });
             if (divider) root.add(divider);
         }
+
+        // for each lane, we'll create a simple geometry that can be used for lane following or other driving behaviors
+        for (let laneIndex = 0; laneIndex < laneCount; laneIndex++) {
+            const offset = -widthMeters * 0.5 + laneWidth * (laneIndex + 0.5);
+            const lanePoints = sampleOffsetCenterline(curve, offset, this.options.elevation + 0.01, segments * 2);
+            this.lanes.push(lanePoints);
+        }
+
+        // display each lane
+        this.lanes.forEach((lanePoints, laneIndex) => {
+            const laneGeometry = createPolylineRibbon(lanePoints, this.width.getValue(Unit.Type.METER) / laneCount * 0.75);
+            const laneMaterial = new THREE.MeshStandardMaterial({
+                color: 0x00ff00,
+                roughness: 1,
+                opacity: 0.5,
+                transparent: true,
+                metalness: 0,
+                side: THREE.DoubleSide,
+            });
+            const laneMesh = new THREE.Mesh(laneGeometry, laneMaterial);
+            laneMesh.visible = false; // hide by default, can be toggled for debugging
+            laneMesh.renderOrder = 5;
+            root.add(laneMesh);
+            this.laneMeshes.push(laneMesh);
+        });
 
         this.root = root;
         scene.add(root);

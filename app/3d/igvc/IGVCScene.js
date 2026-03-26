@@ -5,6 +5,8 @@ import Unit from "@/app/util/Unit";
 import { Data } from "../data/Data";
 import { Intersection } from "../city/Intersection";
 import { StopSign } from "../city/objects/StopSign";
+import { Skybox } from "../skybox/Skybox";
+import { generateBuildings } from "../city/BuildingGenerator";
 
 const locations = `42°40'05.93"N 83°13'03.15"W -> 42°40'04.71"N 83°13'03.11"W
 42°40'04.59"N 83°13'02.44"W -> 42°40'04.59"N 83°13'02.95"W
@@ -78,17 +80,17 @@ export async function setupIGVC(scene, data) {
             vend
         ], new Unit(20, Unit.Type.FOOT), Road.BorderType.SOLID_WHITE, Road.BorderType.SOLID_WHITE, {
             laneCount: 2,
-            shoulderWidth: 0
+            shoulderWidth: 3
         });
 
         roads.push(road);
     }
 
-    roads.forEach(road => road.setup(scene));
+    data.city().addRoads(roads);
+
+    await data.city().setupRoads(scene);
 
     console.log("IGVC scene setup complete");
-
-    const intersections = [];
 
     for (const [i, rds] of raw_intersections.entries()) {
         const iroads = [];
@@ -98,19 +100,30 @@ export async function setupIGVC(scene, data) {
         // console.log(iroads)
         const intersection = new Intersection(iroads);
         
-        intersections.push(intersection);
+        data.city().addIntersection(intersection);
     }
 
-    intersections.forEach(intersection => intersection.setup(scene));
+    data.city().setupIntersections(scene);
 
-    for (const {position, dir} of stopSigns) {
-        const pos = convertFromLatLng(position.lat, position.lng).sub(baseOffset);
-        pos.z *= -1;
+    // for (const {position, dir} of stopSigns) {
+    //     const pos = convertFromLatLng(position.lat, position.lng).sub(baseOffset);
+    //     pos.z *= -1;
 
-        const stopSign = new StopSign(new THREE.Vector3(pos.x, 0, pos.z), new Unit(5, Unit.Type.FOOT), dir);
-        data.objects().addObject(stopSign);
-    }   
+    //     const stopSign = new StopSign(new THREE.Vector3(pos.x, 0, pos.z), new Unit(5, Unit.Type.FOOT), dir);
+    //     data.objects().addObject(stopSign);
+    // }   
 
+    // Skybox(scene);
 
+    generateBuildings(scene, data);
+
+    // generate floor
+    const floorSize = 200;
+    const floorGeometry = new THREE.PlaneGeometry(floorSize, floorSize);
+    const floorMaterial = new THREE.MeshStandardMaterial({ color: 0x555555 });
+    const floor = new THREE.Mesh(floorGeometry, floorMaterial);
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.y = -0.05; // slight offset to prevent z-fighting with road surfaces
+    scene.add(floor);
     
 }

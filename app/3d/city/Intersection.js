@@ -139,9 +139,7 @@ export class Intersection {
     /**
     * @param {THREE.Scene} 
     * */
-    setup(scene) { 
-        const points = []; // list of list of points for each road segment edges
-        
+    setup(scene) {         
         this.roadEdges = this.calculateSides();
 
         let verticies = [];
@@ -150,7 +148,7 @@ export class Intersection {
         // special-case decisions (e.g. 3-way intersections).
         const vertexRoadIndex = new WeakMap();
 
-        const centerPoint = new THREE.Vector3(0, 0, 0);
+        const centerPoint = new THREE.Vector3(0, this.roadEdges[0].center.y, 0);
 
         for (let i = 0; i < this.roadEdges.length; i++) {
             const edge = this.roadEdges[i];
@@ -239,7 +237,7 @@ export class Intersection {
 
             const stopLine = createSolidLine(curve, 0.02, {
                 color: this.roads[0].options.yellowLineColor,
-                laneMarkingWidth: 0.1,
+                laneMarkingWidth: this.roads[0].options.laneMarkingWidth,
                 segments: 12,
                 markingElevation: 0.01
             });
@@ -474,7 +472,7 @@ export class Intersection {
                 }
 
                 leftPoints.push(p.clone().add(normal.clone().multiplyScalar(offsetDist)));
-                rightPoints.push(p.clone().add(normal.clone().multiplyScalar(-offsetDist)));
+                rightPoints.push(p.clone().add(normal.clone().multiplyScalar(-offsetDist )));
             }
 
             const shoulderGeometry = buildStripGeometry(leftPoints, rightPoints);

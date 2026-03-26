@@ -1,7 +1,7 @@
 'use client';
 
 import * as THREE from "three";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { keyText, keys } from "../../util/Keys";
 
 function asInputValue(value) {
@@ -53,6 +53,44 @@ function updateSettingsAtPath(current, path, newValue) {
     };
 }
 
+function NumberInput({ value, onCommit, className }) {
+    const [text, setText] = useState(asInputValue(value));
+
+    useEffect(() => {
+        setText(asInputValue(value));
+    }, [value]);
+
+    const tryCommit = (raw) => {
+        const candidate = raw.trim();
+        if (!candidate || candidate === "-" || candidate === "." || candidate === "-.") return false;
+
+        const next = Number(candidate);
+        if (!Number.isFinite(next)) return false;
+
+        onCommit(next);
+        return true;
+    };
+
+    return (
+        <input
+            type="text"
+            inputMode="decimal"
+            value={text}
+            onChange={(e) => {
+                const raw = e.target.value;
+                setText(raw);
+                tryCommit(raw);
+            }}
+            onBlur={() => {
+                if (!tryCommit(text)) {
+                    setText(asInputValue(value));
+                }
+            }}
+            className={className}
+        />
+    );
+}
+
 function DeviceSettingField({ label, value, path, onChange }) {
     if (value instanceof THREE.Vector3 || value instanceof THREE.Euler) {
         return (
@@ -66,13 +104,9 @@ function DeviceSettingField({ label, value, path, onChange }) {
                     ].map(([axis, axisValue]) => (
                         <label key={axis} className="space-y-1">
                             <span className="text-[10px] uppercase text-zinc-400">{axis}</span>
-                            <input
-                                type="number"
-                                value={asInputValue(axisValue)}
-                                onChange={(e) => {
-                                    const next = Number(e.target.value);
-                                    onChange(path.concat(axis), Number.isFinite(next) ? next : axisValue);
-                                }}
+                            <NumberInput
+                                value={axisValue}
+                                onCommit={(next) => onChange(path.concat(axis), next)}
                                 className="h-8 w-full rounded-md border border-zinc-700/80 bg-zinc-950/80 px-2 text-[11px] text-zinc-100 focus:outline-none focus:ring-2 focus:ring-sky-400/60"
                             />
                         </label>
@@ -149,20 +183,20 @@ function DeviceSettingField({ label, value, path, onChange }) {
     return (
         <label className="flex items-center justify-between gap-2 rounded-lg border border-zinc-700/80 bg-zinc-900/85 px-2 py-1.5">
             <span className="truncate text-[11px] font-medium text-zinc-100">{keyText(label)}</span>
-            <input
-                type={numeric ? "number" : "text"}
-                value={asInputValue(value)}
-                onChange={(e) => {
-                    if (numeric) {
-                        const next = Number(e.target.value);
-                        onChange(path, Number.isFinite(next) ? next : value);
-                        return;
-                    }
-
-                    onChange(path, e.target.value);
-                }}
-                className="h-8 w-28 rounded-md border border-zinc-700/80 bg-zinc-950/80 px-2 text-[11px] text-zinc-100 focus:outline-none focus:ring-2 focus:ring-sky-400/60"
-            />
+            {numeric ? (
+                <NumberInput
+                    value={value}
+                    onCommit={(next) => onChange(path, next)}
+                    className="h-8 w-28 rounded-md border border-zinc-700/80 bg-zinc-950/80 px-2 text-[11px] text-zinc-100 focus:outline-none focus:ring-2 focus:ring-sky-400/60"
+                />
+            ) : (
+                <input
+                    type="text"
+                    value={asInputValue(value)}
+                    onChange={(e) => onChange(path, e.target.value)}
+                    className="h-8 w-28 rounded-md border border-zinc-700/80 bg-zinc-950/80 px-2 text-[11px] text-zinc-100 focus:outline-none focus:ring-2 focus:ring-sky-400/60"
+                />
+            )}
         </label>
     );
 }
@@ -171,6 +205,11 @@ export function DeviceOverlay({ device, data, onBack, panelClassName = "", visib
     const [settings, setSettings] = useState(device?.settings ?? {});
     const [collapsed, setCollapsed] = useState(false);
     const [enabled, setEnabled] = useState(Boolean(device?.enabled));
+
+    useEffect(() => {
+        setSettings(device?.settings ?? {});
+        setEnabled(Boolean(device?.enabled));
+    }, [device]);
 
     const controls = useMemo(() => {
         const settingsRef = data?.settings?.();

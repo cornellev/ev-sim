@@ -5,6 +5,8 @@ export class DeviceDatabase extends Database {
     constructor(parent) {
         super(parent);
         this.devices = [];
+
+        this.loopDisabled = false; // set to true to disable automatic execution loop (for manual control in tests, etc.)
     }
 
     /**
@@ -16,6 +18,10 @@ export class DeviceDatabase extends Database {
         device.parent = this;
     }
 
+    disableLoop() {
+        this.loopDisabled = true;
+    }
+
     setup(scene) {
         for (const device of this.devices) {
             device.setup(scene);
@@ -25,7 +31,7 @@ export class DeviceDatabase extends Database {
 
         const animate = () => {
             requestAnimationFrame(animate);
-            this.execute();
+            if (!this.loopDisabled) this.execute();
         };
         animate();
     }
@@ -34,6 +40,14 @@ export class DeviceDatabase extends Database {
         for (const device of this.devices) {
             if (device.enabled) {
                 device.execute();
+            }
+        }
+    }
+
+    async asyncExecute() {
+        for (const device of this.devices) {
+            if (device.enabled) {
+                await device.execute();
             }
         }
     }
