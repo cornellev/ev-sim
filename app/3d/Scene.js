@@ -397,8 +397,8 @@ export default function TotalScene() {
             // await setupOptimizer(scene, camera, renderer, data);
             // BasicScene(data);
             // test(scene, camera, data);
-            // await setupVehicles(scene, data, camera);
-            await setupScanCar(data, scene);
+            await setupVehicles(scene, data, camera);
+            // await setupScanCar(data, scene);
 
             // await setupTrafficScenario(scene, data);
 

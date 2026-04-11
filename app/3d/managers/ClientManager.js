@@ -1,15 +1,30 @@
-import { Client } from "@/app/client/Client";
+import { Client, registerMsgDefinitionFromFile, syncTypesFromServer } from "@/app/client/Client";
 
 
 export class ClientManager {
     constructor(data) {
         this.data = data;
 
-        this.client = new Client({
-            url: "ws://localhost:8080", // WebSocket server URL for networked multiplayer; can be set to null or undefined to disable networking
-            onUpdate: this._onUpdate.bind(this),
-            reconnect: false
-        }); // for networked multiplayer, can be set to an instance of Client
+        this.client = null;
+
+        const setupClient = async () => {
+            try {
+                const synced = await syncTypesFromServer({ apiBase: "http://localhost:8090" });
+                console.log(`synced ${synced.count} message type(s) from server`);
+            } catch (err) {
+                console.warn("type sync skipped:", err.message);
+            }
+
+            // insert any custom types here...
+
+            this.client = new Client({
+                url: "ws://localhost:8080", // websocket to ROS bridge server
+                onUpdate: this._onUpdate.bind(this),
+                reconnect: false
+            });
+        };
+
+        setupClient();
 
         this.callbacks = [];
     }

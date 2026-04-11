@@ -115,7 +115,7 @@ export async function setupIGVC(scene, data) {
 
     // Skybox(scene);
 
-    generateBuildings(scene, data);
+    // generateBuildings(scene, data);
 
     // generate floor
     const floorSize = 200;
@@ -124,6 +124,6 @@ export async function setupIGVC(scene, data) {
     const floor = new THREE.Mesh(floorGeometry, floorMaterial);
     floor.rotation.x = -Math.PI / 2;
     floor.position.y = -0.05; // slight offset to prevent z-fighting with road surfaces
-    scene.add(floor);
+    // scene.add(floor);
     
 }
