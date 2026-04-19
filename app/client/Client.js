@@ -290,9 +290,172 @@ function _decodeTypedValue(typeName, bytes, offset = 0) {
 	return { value: obj, next: cursor };
 }
 
+function _concatBuffers(chunks) {
+	const total = chunks.reduce((sum, chunk) => sum + (chunk?.length ?? 0), 0);
+	const out = new Uint8Array(total);
+	let offset = 0;
+	for (const chunk of chunks) {
+		if (!chunk?.length) continue;
+		out.set(chunk, offset);
+		offset += chunk.length;
+	}
+	return out;
+}
+
+function _encodePrimitive(typeName, value) {
+	const t = typeName.toLowerCase();
+	switch (t) {
+		case "string": {
+			const text = encoder.encode(value ?? "");
+			const out = new Uint8Array(4 + text.length);
+			new DataView(out.buffer).setUint32(0, text.length, true);
+			out.set(text, 4);
+			return out;
+		}
+		case "bool":
+			return new Uint8Array([value ? 1 : 0]);
+		case "int8":
+		case "char": {
+			const out = new Uint8Array(1);
+			new DataView(out.buffer).setInt8(0, value ?? 0);
+			return out;
+		}
+		case "uint8":
+		case "byte": {
+			const out = new Uint8Array(1);
+			new DataView(out.buffer).setUint8(0, value ?? 0);
+			return out;
+		}
+		case "int16": {
+			const out = new Uint8Array(2);
+			new DataView(out.buffer).setInt16(0, value ?? 0, true);
+			return out;
+		}
+		case "uint16": {
+			const out = new Uint8Array(2);
+			new DataView(out.buffer).setUint16(0, value ?? 0, true);
+			return out;
+		}
+		case "int32": {
+			const out = new Uint8Array(4);
+			new DataView(out.buffer).setInt32(0, value ?? 0, true);
+			return out;
+		}
+		case "uint32": {
+			const out = new Uint8Array(4);
+			new DataView(out.buffer).setUint32(0, value ?? 0, true);
+			return out;
+		}
+		case "int64": {
+			const out = new Uint8Array(8);
+			new DataView(out.buffer).setBigInt64(0, BigInt(value ?? 0), true);
+			return out;
+		}
+		case "uint64": {
+			const out = new Uint8Array(8);
+			new DataView(out.buffer).setBigUint64(0, BigInt(value ?? 0), true);
+			return out;
+		}
+		case "float32": {
+			const out = new Uint8Array(4);
+			new DataView(out.buffer).setFloat32(0, value ?? 0, true);
+			return out;
+		}
+		case "float64": {
+			const out = new Uint8Array(8);
+			new DataView(out.buffer).setFloat64(0, value ?? 0, true);
+			return out;
+		}
+		case "duration": {
+			const out = new Uint8Array(8);
+			const dv = new DataView(out.buffer);
+			const sec = Math.trunc(value ?? 0);
+			const nsec = Math.trunc(((value ?? 0) - sec) * 1e9);
+			dv.setInt32(0, sec, true);
+			dv.setInt32(4, nsec, true);
+			return out;
+		}
+		case "time": {
+			const out = new Uint8Array(8);
+			const dv = new DataView(out.buffer);
+			if (value && typeof value === "object") {
+				dv.setUint32(0, value.sec ?? 0, true);
+				dv.setUint32(4, value.nsec ?? 0, true);
+			} else {
+				const sec = Math.max(0, Math.trunc(value ?? 0));
+				const nsec = Math.max(0, Math.trunc(((value ?? 0) - sec) * 1e9));
+				dv.setUint32(0, sec, true);
+				dv.setUint32(4, nsec, true);
+			}
+			return out;
+		}
+		default:
+			return null;
+	}
+}
+
+function _encodeTypedValue(typeName, value) {
+	const normalized = STD_ALIASES[typeName] ?? normalizeTypeName(typeName, null);
+	const primitive = _encodePrimitive(normalized, value);
+	if (primitive) return primitive;
+
+	const schema = DYNAMIC_SCHEMAS.get(normalized);
+	if (!schema) throw new Error(`Unknown dynamic schema '${normalized}'`);
+
+	const chunks = [];
+	for (const field of schema) {
+		const fieldValue = value?.[field.name];
+		if (field.isArray) {
+			const arrayValue = fieldValue ?? [];
+			const isByteArray = field.typeName === "uint8" || field.typeName === "byte";
+			const values = isByteArray && arrayValue instanceof Uint8Array ? arrayValue : Array.isArray(arrayValue) ? arrayValue : null;
+			if (values == null) throw new Error(`Field '${field.name}' must be an array`);
+
+			if (field.arrayLen != null && values.length !== field.arrayLen) {
+				throw new Error(`Field '${field.name}' must have length ${field.arrayLen}`);
+			}
+
+			if (field.arrayLen == null) {
+				const len = new Uint8Array(4);
+				new DataView(len.buffer).setUint32(0, values.length, true);
+				chunks.push(len);
+			}
+
+			if (isByteArray) {
+				chunks.push(values instanceof Uint8Array ? values : new Uint8Array(values));
+			} else {
+				for (const element of values) {
+					chunks.push(_encodeTypedValue(field.typeName, element));
+				}
+			}
+		} else {
+			chunks.push(_encodeTypedValue(field.typeName, fieldValue));
+		}
+	}
+
+	return _concatBuffers(chunks);
+}
+
 function encodeValue(typeStr, value) {
 	const typeByte = TYPE_ENCODERS[typeStr];
-	if (typeByte === undefined) throw new Error(`Unsupported type '${typeStr}'`);
+	if (typeByte === undefined) {
+		const normalizedType = normalizeTypeName(typeStr, null);
+		const typeNameBytes = encoder.encode(normalizedType);
+		if (typeNameBytes.length > 0xffff) throw new Error(`Dynamic type name too long: '${normalizedType}'`);
+
+		const encodedValue = _encodeTypedValue(normalizedType, value ?? {});
+		const dynamicPayload = new Uint8Array(2 + typeNameBytes.length + encodedValue.length);
+		const dynView = new DataView(dynamicPayload.buffer);
+		dynView.setUint16(0, typeNameBytes.length, true);
+		dynamicPayload.set(typeNameBytes, 2);
+		dynamicPayload.set(encodedValue, 2 + typeNameBytes.length);
+
+		const out = new Uint8Array(1 + 4 + dynamicPayload.length);
+		out[0] = DYNAMIC_TYPE_BYTE;
+		new DataView(out.buffer).setUint32(1, dynamicPayload.length, true);
+		out.set(dynamicPayload, 5);
+		return out;
+	}
 
 	let payload;
 	switch (typeStr) {
@@ -514,6 +677,10 @@ class Client {
 		this._readyResolve = () => {};
 	}
 
+	isOpen() {
+		return !!this.ws && this.ws.readyState === WebSocketImpl.OPEN;
+	}
+
 	async start() {
 		this.stopped = false;
 		let delay = this.backoff;
@@ -604,7 +771,7 @@ class Client {
 				const code = buf[0];
 				const view = buf.subarray(1);
 				const kind = RESP_CODES[code];
-				console.log("Received message of kind", kind);
+				// console.log("Received message of kind", kind);
 				try {
 					if (kind === "echo") {
 						const topics = this._handleEcho(view);

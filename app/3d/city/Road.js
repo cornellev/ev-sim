@@ -312,7 +312,7 @@ export class Road {
         const curve = new THREE.CatmullRomCurve3(this.points, false, "catmullrom", this.options.tension);
         const segments = Math.max(48, Math.ceil(curve.getLength() * 2.5));
         const laneCount = Math.max(1, Math.round(this.options.laneCount));
-        const laneWidth = widthMeters / laneCount;
+        const laneWidth = (widthMeters / laneCount);
         const shoulderWidth = Math.max(0, this.options.shoulderWidth);
 
         this.lanes = [];
@@ -386,7 +386,9 @@ export class Road {
 
         // display each lane
         this.lanes.forEach((lanePoints, laneIndex) => {
-            const laneGeometry = createPolylineRibbon(lanePoints, this.width.getValue(Unit.Type.METER) / laneCount * 0.75);
+            // Make the lane ribbon nearly fill the lane, leaving a small margin for the painted line width.
+            const laneRibbonWidth = Math.max(0.01, laneWidth - this.options.laneMarkingWidth * 1.2);
+            const laneGeometry = createPolylineRibbon(lanePoints, laneRibbonWidth);
             const laneMaterial = new THREE.MeshStandardMaterial({
                 color: 0x00ff00,
                 roughness: 1,

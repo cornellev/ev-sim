@@ -7,6 +7,9 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader";
 import { lerp } from "three/src/math/MathUtils";
 import Unit from "@/app/util/Unit";
 import { CameraFollower } from "../tools/CameraFollower";
+import { wait, waitFor } from "@/app/util/Wait";
+import { StopSign } from "../city/objects/StopSign";
+import { Barrel } from "../city/objects/Barrel";
 
 // ---------- constants ----------
 const WHEELBASE = new Unit(49, Unit.Type.INCH).getValue(Unit.Type.METER);          // meters (set to your car)
@@ -15,7 +18,22 @@ const SEGMENTS  = 80;           // smoothness
 const PATH_WIDTH = 1;         // meters
 const PATH_Y = 0.02;            // lift above ground to avoid z-fighting
 
+const STOP_SIGN_RADIUS_M = 30;
+const STOP_SIGN_PUBLISH_PERIOD_S = 0.05;
+
+const OBSTACLE_RADIUS_M = 30;
+const OBSTACLE_PUBLISH_PERIOD_S = 0.05;
+
 const UP = new THREE.Vector3(0, 1, 0);
+
+function hashStringToInt32(str) {
+    const s = String(str ?? "");
+    let h = 0;
+    for (let i = 0; i < s.length; i++) {
+        h = (h * 31 + s.charCodeAt(i)) | 0;
+    }
+    return h;
+}
 
 function distancePointToSegmentXZ(point, a, b) {
     const abx = b.x - a.x;
@@ -227,6 +245,25 @@ export class BigCar extends PhysicalVehicle {
         this.follower.cameraOffset.set(-5, 4, 0); // default offset behind and above the car
 
         this.controlsEnabled = true; // whether user can control the car
+
+        this.laneBoundsTopic = "bigcar/lane_bounds";
+        this.laneBoundsType = "sensor_fusion_msgs/LaneBounds";
+        this.lastPublishedLaneKey = null;
+        this.lastPublishedLaneBoundsHash = null;
+
+        this.carSizeTopic = "bigcar/size";
+        this.carSizeType = "sensor_fusion_msgs/CarSize";
+        this.lastPublishedCarSizeHash = null;
+
+        this.stopSignsTopic = "bigcar/stop_signs";
+        this.stopSignsType = "sensor_fusion_msgs/StopSigns";
+        this._stopSignsPublishTimer = 0;
+        this.lastPublishedStopSignsHash = null;
+
+        this.obstaclesTopic = "bigcar/obstacles";
+        this.obstaclesType = "sensor_fusion_msgs/Boxes";
+        this._obstaclesPublishTimer = 0;
+        this.lastPublishedObstaclesHash = null;
     }
 
     setupDevices() {
@@ -306,9 +343,222 @@ export class BigCar extends PhysicalVehicle {
 
         this.updateLaneMeshVisibility();
 
+        this.publishNearbyStopSigns(deltaTime);
+
+        this.publishNearbyObstacles(deltaTime);
+
         this.follower.updateCamera(this.sceneObject, deltaTime);
 
         // closest road update
+    }
+
+    publishNearbyStopSigns(deltaTime) {
+        this._stopSignsPublishTimer = (this._stopSignsPublishTimer ?? 0) + (deltaTime ?? 0);
+
+        const data = this.db?.getParent?.();
+        const objectsDb = data?.objects?.();
+        const allObjects = objectsDb?.getAll?.();
+        if (!Array.isArray(allObjects) || allObjects.length === 0) return;
+
+        const carOrigin = this.position;
+        const radiusSq = STOP_SIGN_RADIUS_M * STOP_SIGN_RADIUS_M;
+
+        const nearby = [];
+        for (const obj of allObjects) {
+            if (!(obj instanceof StopSign)) continue;
+            const dx = obj.position.x - carOrigin.x;
+            const dz = obj.position.z - carOrigin.z;
+            const distSq = dx * dx + dz * dz;
+            if (distSq <= radiusSq) nearby.push(obj);
+        }
+
+        // Throttle publish rate and avoid republishing identical payloads.
+        if (this._stopSignsPublishTimer < STOP_SIGN_PUBLISH_PERIOD_S) return;
+
+        nearby.sort((a, b) => (a._uuid || "").localeCompare(b._uuid || ""));
+
+        const forwardWorld = new THREE.Vector3(1, 0, 0).applyEuler(this.rotation);
+        forwardWorld.y = 0;
+        const fLen = forwardWorld.length();
+        if (fLen > 0) forwardWorld.multiplyScalar(1 / fLen);
+        else forwardWorld.set(1, 0, 0);
+
+        const upWorld = new THREE.Vector3(0, 1, 0);
+        const rightWorld = new THREE.Vector3().crossVectors(upWorld, forwardWorld).normalize();
+
+        const delta = new THREE.Vector3();
+        const localPoint = new THREE.Vector3();
+
+        const positions = [];
+        const directions = [];
+        const ids = [];
+
+        for (const sign of nearby) {
+            delta.copy(sign.position).sub(carOrigin);
+            // Publish in car-local frame: +x right, +y forward, +z up
+            localPoint.set(delta.dot(rightWorld), delta.dot(forwardWorld), delta.dot(upWorld));
+            positions.push({ x: localPoint.x, y: localPoint.y, z: localPoint.z });
+
+            // StopSign.dir: 0:+X, 1:+Z, 2:-X, 3:-Z (world axes)
+            const dRaw = Number.isFinite(sign.dir) ? Math.trunc(sign.dir) : 0;
+            const d = ((dRaw % 4) + 4) % 4;
+            const signForwardWorld =
+                d === 0
+                    ? new THREE.Vector3(1, 0, 0)
+                    : d === 1
+                      ? new THREE.Vector3(0, 0, 1)
+                      : d === 2
+                        ? new THREE.Vector3(-1, 0, 0)
+                        : new THREE.Vector3(0, 0, -1);
+
+            const localDir = new THREE.Vector3(
+                signForwardWorld.dot(rightWorld),
+                signForwardWorld.dot(forwardWorld),
+                signForwardWorld.dot(upWorld)
+            ).normalize();
+            directions.push({ x: localDir.x, y: localDir.y, z: localDir.z });
+            ids.push(sign.id);
+        }
+
+        const hash = `${positions.length}|${positions
+            .map((p) => `${p.x.toFixed(2)},${p.y.toFixed(2)},${p.z.toFixed(2)}`)
+            .join(";")}|${directions.map((v) => `${v.x.toFixed(3)},${v.y.toFixed(3)},${v.z.toFixed(3)}`).join(";")}|${ids.join(";")}`;
+
+        if (hash === this.lastPublishedStopSignsHash) {
+            this._stopSignsPublishTimer = 0;
+            return;
+        }
+
+        const client = data?.client?.()?.get?.();
+        if (!client) {
+            this._stopSignsPublishTimer = 0;
+            return;
+        }
+        if (typeof client.isOpen === "function" && !client.isOpen()) {
+            this._stopSignsPublishTimer = 0;
+            return;
+        }
+
+        const payload = { positions, directions, ids };
+        client
+            .publish(this.stopSignsTopic, this.stopSignsType, payload)
+            .then(() => {
+                this.lastPublishedStopSignsHash = hash;
+                this._stopSignsPublishTimer = 0;
+            })
+            .catch((err) => {
+                this._stopSignsPublishTimer = 0;
+                console.warn("failed to publish stop signs:", err?.message || err);
+            });
+    }
+
+    publishNearbyObstacles(deltaTime) {
+        this._obstaclesPublishTimer = (this._obstaclesPublishTimer ?? 0) + (deltaTime ?? 0);
+
+        const data = this.db?.getParent?.();
+        const objectsDb = data?.objects?.();
+        const allObjects = objectsDb?.getAll?.();
+        if (!Array.isArray(allObjects) || allObjects.length === 0) return;
+
+        const carOrigin = this.position;
+        const radiusSq = OBSTACLE_RADIUS_M * OBSTACLE_RADIUS_M;
+
+        const nearby = [];
+        for (const obj of allObjects) {
+            if (!(obj instanceof Barrel)) continue;
+            if (!obj.position) continue;
+            const dx = obj.position.x - carOrigin.x;
+            const dz = obj.position.z - carOrigin.z;
+            const distSq = dx * dx + dz * dz;
+            if (distSq <= radiusSq) nearby.push(obj);
+        }
+
+        // Throttle publish rate and avoid republishing identical payloads.
+        if (this._obstaclesPublishTimer < OBSTACLE_PUBLISH_PERIOD_S) return;
+
+        nearby.sort((a, b) => (a._uuid || "").localeCompare(b._uuid || ""));
+
+        const forwardWorld = new THREE.Vector3(1, 0, 0).applyEuler(this.rotation);
+        forwardWorld.y = 0;
+        const fLen = forwardWorld.length();
+        if (fLen > 0) forwardWorld.multiplyScalar(1 / fLen);
+        else forwardWorld.set(1, 0, 0);
+
+        const upWorld = new THREE.Vector3(0, 1, 0);
+        const rightWorld = new THREE.Vector3().crossVectors(upWorld, forwardWorld).normalize();
+
+        const delta = new THREE.Vector3();
+        const localCenter = new THREE.Vector3();
+
+        const worldQuat = new THREE.Quaternion();
+        const worldEuler = new THREE.Euler();
+
+        const boxes = [];
+
+        for (const barrel of nearby) {
+            delta.copy(barrel.position).sub(carOrigin);
+            // Publish in car-local frame: +x right, +y forward, +z up
+            localCenter.set(delta.dot(rightWorld), delta.dot(forwardWorld), delta.dot(upWorld));
+
+            const size = barrel.scale ?? new THREE.Vector3();
+
+            // Barrels currently don't store a logical rotation, but if a mesh exists,
+            // include its yaw relative to the car as a best-effort.
+            let relYaw = 0;
+            if (barrel._mesh && typeof barrel._mesh.getWorldQuaternion === "function") {
+                barrel._mesh.getWorldQuaternion(worldQuat);
+                worldEuler.setFromQuaternion(worldQuat, "YXZ");
+                relYaw = worldEuler.y - (this.rotation?.y ?? 0);
+                // wrap to [-pi, pi]
+                relYaw = ((relYaw + Math.PI) % (2 * Math.PI)) - Math.PI;
+            }
+
+            const id = Number.isInteger(barrel.id) ? (barrel.id | 0) : hashStringToInt32(barrel._uuid);
+
+            boxes.push({
+                id,
+                center: { x: localCenter.x, y: localCenter.y, z: localCenter.z },
+                size: { x: size.x ?? 0, y: size.y ?? 0, z: size.z ?? 0 },
+                rotation: { x: 0, y: 0, z: relYaw },
+            });
+        }
+
+        const hash = `${boxes.length}|${boxes
+            .map((b) =>
+                `${b.id}|${b.center.x.toFixed(2)},${b.center.y.toFixed(2)},${b.center.z.toFixed(2)}|${b.size.x.toFixed(
+                    2
+                )},${b.size.y.toFixed(2)},${b.size.z.toFixed(2)}|${b.rotation.x.toFixed(3)},${b.rotation.y.toFixed(
+                    3
+                )},${b.rotation.z.toFixed(3)}`
+            )
+            .join(";")}`;
+
+        if (hash === this.lastPublishedObstaclesHash) {
+            this._obstaclesPublishTimer = 0;
+            return;
+        }
+
+        const client = data?.client?.()?.get?.();
+        if (!client) {
+            this._obstaclesPublishTimer = 0;
+            return;
+        }
+        if (typeof client.isOpen === "function" && !client.isOpen()) {
+            this._obstaclesPublishTimer = 0;
+            return;
+        }
+
+        const payload = { boxes };
+        client
+            .publish(this.obstaclesTopic, this.obstaclesType, payload)
+            .then(() => {
+                this.lastPublishedObstaclesHash = hash;
+                this._obstaclesPublishTimer = 0;
+            })
+            .catch((err) => {
+                this._obstaclesPublishTimer = 0;
+                console.warn("failed to publish obstacles:", err?.message || err);
+            });
     }
 
     renderPath() {
@@ -327,7 +577,10 @@ export class BigCar extends PhysicalVehicle {
             ? this.sceneObject.getWorldPosition(new THREE.Vector3())
             : this.position;
 
-        for (const road of roads) {
+        let activeLane = null;
+
+        for (let roadIndex = 0; roadIndex < roads.length; roadIndex++) {
+            const road = roads[roadIndex];
             if (!road?.laneMeshes?.length || !road?.lanes?.length || !road?.width) continue;
 
             const laneCount = Math.max(1, Math.round(road.options?.laneCount ?? road.lanes.length));
@@ -339,9 +592,175 @@ export class BigCar extends PhysicalVehicle {
                 const laneMesh = road.laneMeshes[laneIndex];
                 if (!laneMesh || !lanePoints) continue;
 
-                laneMesh.visible = isPointOverLane(carPosition, lanePoints, laneHalfWidth);
+                const overLane = isPointOverLane(carPosition, lanePoints, laneHalfWidth);
+                laneMesh.visible = overLane;
+
+                if (overLane && !activeLane) {
+                    activeLane = {
+                        road,
+                        roadIndex,
+                        laneIndex,
+                        lanePoints,
+                        laneWidth,
+                        laneCount,
+                    };
+                }
             }
         }
+
+        this.publishLaneBounds(activeLane);
+    }
+
+    publishLaneBounds(activeLane) {
+        if (!activeLane?.lanePoints?.length) {
+            this.lastPublishedLaneKey = null;
+            this.lastPublishedLaneBoundsHash = null;
+
+            //publish empty bounds to indicate no active lane
+            const data = this.db?.getParent?.();
+            const client = data?.client?.()?.get?.();
+            if (client && typeof client.isOpen === "function" && client.isOpen()) {
+                client
+                    .publish(this.laneBoundsTopic, this.laneBoundsType, { laneIndex: -1, leftBoundary: null, rightBoundary: null })
+                    .catch((err) => {
+                        console.warn("failed to publish lane bounds:", err?.message || err);
+                    });
+            }
+            return;
+        }
+
+        const carOrigin = this.position;
+        const localPoint = new THREE.Vector3();
+        const delta = new THREE.Vector3();
+        const forwardWorld = new THREE.Vector3(1, 0, 0).applyEuler(this.rotation).normalize();
+        const upWorld = new THREE.Vector3(0, 1, 0).applyEuler(this.rotation).normalize();
+        const rightWorld = new THREE.Vector3().crossVectors(upWorld, forwardWorld).normalize();
+        const tangent = new THREE.Vector3();
+        const leftNormal = new THREE.Vector3();
+
+        const points = activeLane.lanePoints;
+        const halfWidth = (activeLane.laneWidth ?? 0) * 0.5;
+
+        const laneCount = Math.max(
+            1,
+            Math.round(
+                Number.isFinite(activeLane.laneCount)
+                    ? activeLane.laneCount
+                    : (activeLane.road?.options?.laneCount ?? activeLane.road?.lanes?.length ?? 1)
+            )
+        );
+
+        // lane0/lane1 correspond to the +/- leftNormal boundaries of the active lane.
+        // In this codebase, lane index 0 is the first generated lane offset from one road edge.
+        // That makes lane0 the outer edge boundary for laneIndex==0, and lane1 the outer edge
+        // boundary for laneIndex==laneCount-1.
+        const is_edge0 = (laneCount === 1 ? true : activeLane.laneIndex === 0);
+        const is_edge1 = (laneCount === 1 ? true : activeLane.laneIndex === laneCount - 1);
+
+        let minX = Number.POSITIVE_INFINITY;
+        let minY = Number.POSITIVE_INFINITY;
+        let minZ = Number.POSITIVE_INFINITY;
+        let maxX = Number.NEGATIVE_INFINITY;
+        let maxY = Number.NEGATIVE_INFINITY;
+        let maxZ = Number.NEGATIVE_INFINITY;
+
+        const lane0 = [];
+        const lane1 = [];
+
+        for (let i = 0; i < points.length; i++) {
+            const point = points[i];
+            if (!point) continue;
+            if (!Number.isFinite(point.x) || !Number.isFinite(point.y) || !Number.isFinite(point.z)) continue;
+
+            const prev = points[Math.max(0, i - 1)] ?? point;
+            const next = points[Math.min(points.length - 1, i + 1)] ?? point;
+
+            tangent.set(next.x - prev.x, 0, next.z - prev.z);
+            const tLen = tangent.length();
+            if (tLen > 0) tangent.multiplyScalar(1 / tLen);
+            else tangent.set(1, 0, 0);
+
+            leftNormal.set(-tangent.z, 0, tangent.x);
+
+            // World-space boundary points (left/right of lane centerline)
+            const worldLeftX = point.x + leftNormal.x * halfWidth;
+            const worldLeftY = point.y;
+            const worldLeftZ = point.z + leftNormal.z * halfWidth;
+
+            const worldRightX = point.x - leftNormal.x * halfWidth;
+            const worldRightY = point.y;
+            const worldRightZ = point.z - leftNormal.z * halfWidth;
+
+            // Transform each boundary point into car-local frame with axes:
+            // +x right, +y forward, +z up
+            delta.set(worldLeftX, worldLeftY, worldLeftZ).sub(carOrigin);
+            localPoint.set(delta.dot(rightWorld), delta.dot(forwardWorld), delta.dot(upWorld));
+            lane0.push({ x: localPoint.x, y: localPoint.y, z: localPoint.z });
+            if (localPoint.x < minX) minX = localPoint.x;
+            if (localPoint.y < minY) minY = localPoint.y;
+            if (localPoint.z < minZ) minZ = localPoint.z;
+            if (localPoint.x > maxX) maxX = localPoint.x;
+            if (localPoint.y > maxY) maxY = localPoint.y;
+            if (localPoint.z > maxZ) maxZ = localPoint.z;
+
+            delta.set(worldRightX, worldRightY, worldRightZ).sub(carOrigin);
+            localPoint.set(delta.dot(rightWorld), delta.dot(forwardWorld), delta.dot(upWorld));
+            lane1.push({ x: localPoint.x, y: localPoint.y, z: localPoint.z });
+            if (localPoint.x < minX) minX = localPoint.x;
+            if (localPoint.y < minY) minY = localPoint.y;
+            if (localPoint.z < minZ) minZ = localPoint.z;
+            if (localPoint.x > maxX) maxX = localPoint.x;
+            if (localPoint.y > maxY) maxY = localPoint.y;
+            if (localPoint.z > maxZ) maxZ = localPoint.z;
+        }
+
+        if (!Number.isFinite(minX) || !Number.isFinite(maxX)) return;
+
+        const relMinX = minX;
+        const relMinY = minY;
+        const relMinZ = minZ;
+        const relMaxX = maxX;
+        const relMaxY = maxY;
+        const relMaxZ = maxZ;
+
+        const laneKey = `${activeLane.roadIndex}:${activeLane.laneIndex}`;
+        const boundsHash = [
+            relMinX,
+            relMinY,
+            relMinZ,
+            relMaxX,
+            relMaxY,
+            relMaxZ,
+            is_edge0 ? 1 : 0,
+            is_edge1 ? 1 : 0,
+        ]
+            .map((value) => (Number.isFinite(value) ? value.toFixed(3) : String(value)))
+            .join(",");
+        if (laneKey === this.lastPublishedLaneKey && boundsHash === this.lastPublishedLaneBoundsHash) {
+            return;
+        }
+
+        const client = this.db?.getParent?.()?.client?.()?.get?.();
+        if (!client) return;
+
+        if (typeof client.isOpen === "function" && !client.isOpen()) return;
+
+        const payload = {
+            road: `road_${activeLane.roadIndex}:lane_${activeLane.laneIndex}`,
+            lane0,
+            lane1,
+            is_edge0,
+            is_edge1,
+        };
+
+
+        client
+            .publish(this.laneBoundsTopic, this.laneBoundsType, payload)
+            .then(() => {
+                this.lastPublishedLaneKey = laneKey;
+                this.lastPublishedLaneBoundsHash = boundsHash;
+            })
+            .catch(err => console.warn("failed to publish lane bounds:", err?.message || err));
     }
     
 
@@ -406,5 +825,40 @@ export class BigCar extends PhysicalVehicle {
         this.sceneObject.add(curve);
 
         this.path = curve;
+
+        // publish car size for sensor fusion purposes
+        const publish_size = async () => {
+            console.log("Waiting for client to publish car size...");
+            while (!this.db.getParent().client().hasClient()) {
+                await wait(100);
+            }
+
+            const client = this.db.getParent().client().get();
+
+            console.log("Client available, waiting for connection...");
+
+            while (Object.keys(client).includes("isOpen") && !client.isOpen()) {
+                await wait(100);
+            }
+
+            console.log("Publishing car size:", worldSize);
+
+            const sizePayload = {// width is along Z in the model
+                width: worldSize.z,
+                length: worldSize.x,
+                height: worldSize.y,
+            };
+            const sizeHash = [sizePayload.width, sizePayload.length, sizePayload.height].map(value => value.toFixed(3)).join(",");
+            if (sizeHash === this.lastPublishedCarSizeHash) return;
+
+            client
+                .publish(this.carSizeTopic, this.carSizeType, sizePayload)
+                .then(() => {
+                    this.lastPublishedCarSizeHash = sizeHash;
+                })
+                .catch(err => console.warn("failed to publish car size:", err?.message || err));
+        }
+
+        publish_size().catch(err => console.warn("failed to publish car size:", err?.message || err));
     }
 }

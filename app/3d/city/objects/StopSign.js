@@ -26,6 +26,8 @@ export class StopSign extends Box {
         ));
 
         this.dir = dir;
+        // random int32
+        this.id = Math.floor(Math.random() * 0xFFFFFFFF);
     }
 
     addToScene(scene) {

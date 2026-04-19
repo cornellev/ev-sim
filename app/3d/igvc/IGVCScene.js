@@ -7,6 +7,7 @@ import { Intersection } from "../city/Intersection";
 import { StopSign } from "../city/objects/StopSign";
 import { Skybox } from "../skybox/Skybox";
 import { generateBuildings } from "../city/BuildingGenerator";
+import { Barrel } from "../city/objects/Barrel";
 
 const locations = `42°40'05.93"N 83°13'03.15"W -> 42°40'04.71"N 83°13'03.11"W
 42°40'04.59"N 83°13'02.44"W -> 42°40'04.59"N 83°13'02.95"W
@@ -43,6 +44,12 @@ const stopSigns = [
         dir: 0
     }
 ]
+
+const barrels = `42°40'05.62"N 83°13'03.20"W
+42°40'05.19"N 83°13'03.06"W
+42°40'05.25"N 83°13'04.70"W
+42°40'05.66"N 83°13'04.85"W
+42°40'04.71"N 83°13'03.77"W`.split("\n").map(convertStringToLatLng);
 
 export const locationsLatLng = locations.map(([start, end]) => {
     return {
@@ -105,13 +112,21 @@ export async function setupIGVC(scene, data) {
 
     data.city().setupIntersections(scene);
 
-    // for (const {position, dir} of stopSigns) {
-    //     const pos = convertFromLatLng(position.lat, position.lng).sub(baseOffset);
-    //     pos.z *= -1;
+    for (const {position, dir} of stopSigns) {
+        const pos = convertFromLatLng(position.lat, position.lng).sub(baseOffset);
+        pos.z *= -1;
 
-    //     const stopSign = new StopSign(new THREE.Vector3(pos.x, 0, pos.z), new Unit(5, Unit.Type.FOOT), dir);
-    //     data.objects().addObject(stopSign);
-    // }   
+        const stopSign = new StopSign(new THREE.Vector3(pos.x, 0, pos.z), new Unit(5, Unit.Type.FOOT), dir);
+        data.objects().addObject(stopSign);
+    }   
+
+    for (const position of barrels) {
+        const pos = convertFromLatLng(position.lat, position.lng).sub(baseOffset);
+        pos.z *= -1;
+
+        const barrel = new Barrel(new THREE.Vector3(pos.x, 0, pos.z), new THREE.Vector3(0.75, 1, 0.75));
+        data.objects().addObject(barrel);
+    }
 
     // Skybox(scene);
 
