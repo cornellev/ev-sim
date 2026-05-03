@@ -2,6 +2,56 @@ import * as THREE from "three";
 import Unit from "@/app/util/Unit";
 import { buildStripGeometry, createSolidLine, Road } from "./Road";
 
+const UP = new THREE.Vector3(0, 1, 0);
+
+function computeOffsetPoint(curve, u, lateralOffset, y) {
+    const point = curve.getPointAt(u);
+    const tangent = curve.getTangentAt(u).normalize();
+    const normal = new THREE.Vector3().crossVectors(UP, tangent);
+
+    if (normal.lengthSq() === 0) {
+        normal.set(-tangent.z, 0, tangent.x);
+    }
+
+    normal.normalize();
+    return point.addScaledVector(normal, lateralOffset).setY(y);
+}
+
+function sampleOffsetCenterline(curve, lateralOffset, y, segments, startU = 0, endU = 1) {
+    const points = [];
+    for (let i = 0; i <= segments; i++) {
+        const t = segments === 0 ? 0 : i / segments;
+        const u = startU + (endU - startU) * t;
+        points.push(computeOffsetPoint(curve, u, lateralOffset, y));
+    }
+    return points;
+}
+
+function createPolylineRibbon(points, width) {
+    if (!points || points.length < 2) return null;
+
+    const left = [];
+    const right = [];
+    const halfWidth = width * 0.5;
+
+    for (let i = 0; i < points.length; i++) {
+        const current = points[i];
+        const prev = points[Math.max(i - 1, 0)];
+        const next = points[Math.min(i + 1, points.length - 1)];
+        const tangent = next.clone().sub(prev);
+
+        tangent.y = 0;
+        if (tangent.lengthSq() === 0) tangent.set(1, 0, 0);
+        else tangent.normalize();
+
+        const normal = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize();
+        left.push(current.clone().addScaledVector(normal, halfWidth));
+        right.push(current.clone().addScaledVector(normal, -halfWidth));
+    }
+
+    return buildStripGeometry(left, right);
+}
+
 
 export class Intersection {
     /**
@@ -12,12 +62,22 @@ export class Intersection {
     constructor(roads = [], options = {}) { 
         this.roads = roads;
 
+        // Mirror `Road` so lane-following/debugging code can treat intersections like roads.
+        this.width = roads?.[0]?.width ?? new Unit(4, Unit.Type.METER);
+        this.lanes = [];
+        this.laneMeshes = [];
+        this.root = null;
+
         this.options = Object.assign({
             borderRadius: 0.5, // radius of the rounded corners in meters
             cornerSamples: 8, // number of samples to take when rounding corners
         }, options);
 
         this.roadEnds = []; // list of { left: THREE.Vector3, right: THREE.Vector3 } for each road end, ordered clockwise
+
+        // Stop-line geometry for 3-/4-way intersections (used as YieldBoundaries).
+        // Array of polylines: THREE.Vector3[]
+        this.yieldBoundaries = [];
     }
 
     calculateSides() {
@@ -140,7 +200,20 @@ export class Intersection {
     * @param {THREE.Scene} 
     * */
     setup(scene) {         
+        if (this.root?.parent) {
+            this.root.parent.remove(this.root);
+        }
+
         this.roadEdges = this.calculateSides();
+
+        this.width = this.roads?.[0]?.width ?? this.width;
+        this.lanes = [];
+        this.laneMeshes = [];
+
+        const root = new THREE.Group();
+        root.name = "Intersection";
+
+        this.yieldBoundaries = [];
 
         let verticies = [];
 
@@ -179,7 +252,13 @@ export class Intersection {
                     markingElevation: 0.01
                 });
 
-                scene.add(stopLine);
+                // Store a matching polyline in world space so the vehicle can publish it.
+                // Note: `createSolidLine` uses the same offset/segments/markingElevation.
+                this.yieldBoundaries.push(
+                    sampleOffsetCenterline(curve, 0.02, 0.01, 2)
+                );
+
+                if (stopLine) root.add(stopLine);
             }
         } else {
             // for 2-road intersections, create a line between the two inner points of the roads, and add it to the scene
@@ -235,6 +314,41 @@ export class Intersection {
             // create curve
             const curve = new THREE.QuadraticBezierCurve3(p1, control, p2);
 
+            // Add lane centerlines along the connector curve, similar to `Road.setup()`.
+            // This is currently only used for 2-road (curved) intersections.
+            const widthMeters = this.width?.getValue?.(Unit.Type.METER) ?? 4;
+            const laneCount = 2;
+            const laneWidth = widthMeters / laneCount;
+            const laneRibbonWidth = Math.max(
+                0.01,
+                laneWidth - (this.roads?.[0]?.options?.laneMarkingWidth ?? 0.14) * 1.2
+            );
+            const laneY = (p1.y + p2.y) * 0.5 + 0.01;
+            const laneSegments = Math.max(32, Math.ceil(curve.getLength() * 10));
+
+            for (let laneIndex = 0; laneIndex < laneCount; laneIndex++) {
+                const offset = -widthMeters * 0.5 + laneWidth * (laneIndex + 0.5);
+                const lanePoints = sampleOffsetCenterline(curve, offset, laneY, laneSegments);
+                this.lanes.push(lanePoints);
+
+                const laneGeometry = createPolylineRibbon(lanePoints, laneRibbonWidth);
+                if (!laneGeometry) continue;
+
+                const laneMaterial = new THREE.MeshStandardMaterial({
+                    color: 0x00ff00,
+                    roughness: 1,
+                    opacity: 0.5,
+                    transparent: true,
+                    metalness: 0,
+                    side: THREE.DoubleSide,
+                });
+                const laneMesh = new THREE.Mesh(laneGeometry, laneMaterial);
+                laneMesh.visible = false;
+                laneMesh.renderOrder = 5;
+                root.add(laneMesh);
+                this.laneMeshes.push(laneMesh);
+            }
+
             const stopLine = createSolidLine(curve, 0.02, {
                 color: this.roads[0].options.yellowLineColor,
                 laneMarkingWidth: this.roads[0].options.laneMarkingWidth,
@@ -242,7 +356,7 @@ export class Intersection {
                 markingElevation: 0.01
             });
 
-            scene.add(stopLine);
+            if (stopLine) root.add(stopLine);
         }
 
         verticies = this.sortVertices(verticies, centerPoint);
@@ -440,7 +554,7 @@ export class Intersection {
         mesh.rotation.x = Math.PI / 2;
         mesh.position.y = -0.01; // slight offset to prevent z-fighting with the road surfaces
         mesh.receiveShadow = true;
-        scene.add(mesh);
+        root.add(mesh);
 
         // for each curve, create a shoulder with a thickness of options.sholderWidth, and the same curve but offset to the left and right by options.shoulderWidth, and add it to the scene
         for (let curve of curves) {
@@ -486,7 +600,7 @@ export class Intersection {
             // shoulderMesh.rotation.x = Math.PI / 2;
             shoulderMesh.position.y = -0.02; // slight offset to prevent z-fighting with the road surfaces and intersection fill
             shoulderMesh.receiveShadow = true;
-            scene.add(shoulderMesh);
+            root.add(shoulderMesh);
         }
         
 
@@ -495,6 +609,9 @@ export class Intersection {
         // const material = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
         // const sphere = new THREE.Mesh(geometry, material);
         // sphere.position.copy(centerPoint);
-        // scene.add(sphere);
+        // root.add(sphere);
+
+        this.root = root;
+        scene.add(root);
     }
 }

@@ -10,6 +10,8 @@ export class ClientManager {
         this._initPromise = this._setupClient();
 
         this.callbacks = [];
+
+        window.clientHandler = this; // for debugging
     }
 
     hasClient() {
@@ -25,49 +27,94 @@ export class ClientManager {
         }
 
         try {
-                await registerMsgDefinitionFromFile(
-                    "geometry_msgs/Point32",
-                    "/messages/geometry_msgs/msg/Point32.msg"
-                );
-            } catch (err) {
-                console.warn("Point32 message definition load skipped:", err.message);
-            }
+            await registerMsgDefinitionFromFile(
+                "geometry_msgs/Point32",
+                "/messages/geometry_msgs/msg/Point32.msg"
+            );
+        } catch (err) {
+            console.warn("Point32 message definition load skipped:", err.message);
+        }
 
-            try {
-                await registerMsgDefinitionFromFile(
-                    "sensor_fusion_msgs/LaneBounds",
-                    "/messages/sensor_fusion_msgs/msg/LaneBounds.msg"
-                );
-            } catch (err) {
-                console.warn("lane bounds message definition load skipped:", err.message);
-            }
+        try {
+            await registerMsgDefinitionFromFile(
+                "sensor_fusion_msgs/LaneBounds",
+                "/messages/sensor_fusion_msgs/msg/LaneBounds.msg"
+            );
+        } catch (err) {
+            console.warn("lane bounds message definition load skipped:", err.message);
+        }
 
-            try {
-                await registerMsgDefinitionFromFile(
-                    "sensor_fusion_msgs/StopSigns",
-                    "/messages/sensor_fusion_msgs/msg/StopSigns.msg"
-                );
-            } catch (err) {
-                console.warn("stop signs message definition load skipped:", err.message);
-            }
+        try {
+            await registerMsgDefinitionFromFile(
+                "sensor_fusion_msgs/Lanes",
+                "/messages/sensor_fusion_msgs/msg/Lanes.msg"
+            );
+        } catch (err) {
+            console.warn("lanes message definition load skipped:", err.message);
+        }
 
-            try {
-                await registerMsgDefinitionFromFile(
-                    "sensor_fusion_msgs/Box",
-                    "/messages/sensor_fusion_msgs/msg/Box.msg"
-                );
-            } catch (err) {
-                console.warn("box message definition load skipped:", err.message);
-            }
+        try {
+            await registerMsgDefinitionFromFile(
+                "sensor_fusion_msgs/StopSigns",
+                "/messages/sensor_fusion_msgs/msg/StopSigns.msg"
+            );
+        } catch (err) {
+            console.warn("stop signs message definition load skipped:", err.message);
+        }
 
-            try {
-                await registerMsgDefinitionFromFile(
-                    "sensor_fusion_msgs/Boxes",
-                    "/messages/sensor_fusion_msgs/msg/Boxes.msg"
-                );
-            } catch (err) {
-                console.warn("boxes message definition load skipped:", err.message);
-            }
+        try {
+            await registerMsgDefinitionFromFile(
+                "sensor_fusion_msgs/YieldBoundary",
+                "/messages/sensor_fusion_msgs/msg/YieldBoundary.msg"
+            );
+        } catch (err) {
+            console.warn("yield boundary message definition load skipped:", err.message);
+        }
+
+        try {
+            await registerMsgDefinitionFromFile(
+                "sensor_fusion_msgs/YieldBoundaries",
+                "/messages/sensor_fusion_msgs/msg/YieldBoundaries.msg"
+            );
+        } catch (err) {
+            console.warn("yield boundaries message definition load skipped:", err.message);
+        }
+
+        try {
+            await registerMsgDefinitionFromFile(
+                "sensor_fusion_msgs/Box",
+                "/messages/sensor_fusion_msgs/msg/Box.msg"
+            );
+        } catch (err) {
+            console.warn("box message definition load skipped:", err.message);
+        }
+
+        try {
+            await registerMsgDefinitionFromFile(
+                "sensor_fusion_msgs/Boxes",
+                "/messages/sensor_fusion_msgs/msg/Boxes.msg"
+            );
+        } catch (err) {
+            console.warn("boxes message definition load skipped:", err.message);
+        }
+
+        try {
+            await registerMsgDefinitionFromFile(
+                "sensor_fusion_msgs/imu",
+                "/messages/sensor_fusion_msgs/msg/imu.msg"
+            );
+        } catch (err) {
+            console.warn("imu message definition load skipped:", err.message);
+        }
+
+        try {
+            await registerMsgDefinitionFromFile(
+                "sensor_fusion_msgs/CarPosition",
+                "/messages/sensor_fusion_msgs/msg/CarPosition.msg"
+            );
+        } catch (err) {
+            console.warn("car position message definition load skipped:", err.message);
+        }
 
         this.client = new Client({
             url: "ws://localhost:8080", // websocket to ROS bridge server

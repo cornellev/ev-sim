@@ -29,6 +29,13 @@ export class City extends Database {
         return this.roads;
     }
 
+    /**
+     * @returns {any[]}
+     */
+    getIntersections() {
+        return this.intersections;
+    }
+
     addIntersection(intersection) {
         this.intersections.push(intersection);
         intersection.parent = this;

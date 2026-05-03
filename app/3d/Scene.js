@@ -22,6 +22,10 @@ import { SimulationMenu } from "./overlay/SimulationMenu";
 import { VehicleOverlay } from "./overlay/VehicleOverlay";
 import { SensorTest } from "./scenes/SensorTest";
 import { setupScanCar } from "./vehicles/ScanCar";
+import { Q1 } from "./igvc/mini/q1";
+import { Q3 } from "./igvc/mini/q3";
+import Unit from "../scripting/units/Unit";
+import { Q4 } from "./igvc/mini/q4";
 
 function setupScene(scene, camera, renderer) {
     //set background color
@@ -249,7 +253,7 @@ async function setupCity(scene, data) {
         }
     }
 
-    buildRoadNetwork(scene, vectorMap, connections, {
+    const { roads, intersections } = buildRoadNetwork(null, vectorMap, connections, {
         maxIntersectionDegree: 4,
         roadOptions: {
             laneWidth: 3.5,
@@ -267,6 +271,14 @@ async function setupCity(scene, data) {
         },
         intersectionInset: 5,
     });
+
+    data.city().addRoads(roads);
+    for (const intersection of intersections) {
+        data.city().addIntersection(intersection);
+    }
+
+    await data.city().setupRoads(scene);
+    await data.city().setupIntersections(scene);
 
 
     const boxes = [];
@@ -326,14 +338,25 @@ async function setupVehicles(scene, data, camera) {
 
 
     data.client().onUpdate(info => {
-        if (info.name == "/angle") {
-            // is between -1 and 1
-            const angle = parseFloat(info.value);
-            car.steeringAngle = -angle * (30 / 180) * Math.PI; // max steering angle of 30 degrees
-        } else if (info.name == "/forward") {
-            // boolean
-            const forward = info.value;
-            car.velocity.x = forward ? 5 : 0; // move forward at 5 units/sec when true, stop when false
+        // if (info.name == "/angle") {
+        //     // is between -1 and 1
+        //     const angle = parseFloat(info.value);
+        //     car.steeringAngle = -angle * (30 / 180) * Math.PI; // max steering angle of 30 degrees
+        // } else if (info.name == "/forward") {
+        //     // boolean
+        //     const forward = info.value;
+        //     car.velocity.x = forward ? 5 : 0; // move forward at 5 units/sec when true, stop when false
+        // }
+        // console.log(info)
+
+        if (info.name == "/ackdrive") {
+            const raw_speed = info.value.speed; // mph
+            const raw_angle = info.value.steering_angle; // degrees
+            const speed = raw_speed * 0.44704; // convert to m/s
+            const angle = raw_angle * (Math.PI / 180); // convert to radians
+
+            car.velocity.x = speed;
+            car.steeringAngle = -angle; // invert angle if necessary based on your coordinate system
         }
     })
 
@@ -394,6 +417,9 @@ export default function TotalScene() {
         const initialize = async () => {
             setupScene(scene, camera, renderer);
             setupControls(scene, camera, renderer, data);
+
+            let startingState = {};
+
             // await setupOptimizer(scene, camera, renderer, data);
             // BasicScene(data);
             // test(scene, camera, data);
@@ -405,8 +431,22 @@ export default function TotalScene() {
             // await tryIthaca(scene, data);
 
             // await setupCity(scene, data);
-            await setupIGVC(scene, data);
+            // await setupIGVC(scene, data);
             // await SensorTest(data, scene);
+            startingState = await Q4(scene, data);
+
+            if (startingState && startingState["startingPosition"] && startingState["startingRotation"]) {
+                // startingState["s/tingRotation"].y = 0; // ensure car starts on ground level
+                // copy to big car
+                data.vehicles().vehicles[0].position.copy(startingState["startingPosition"]);
+                data.vehicles().vehicles[0].rotation.copy(startingState["startingRotation"]);
+            }
+
+            // add spheres at (0,0,1) and (1,0,0) for reference
+            const sphere1 = new Sphere(new THREE.Vector3(0, 0, 1), 0.2);
+            const sphere2 = new Sphere(new THREE.Vector3(1, 0, 0), 0.2);
+            // data.objects().addObject(sphere1);
+            // data.objects().addObject(sphere2);
 
             if (disposed) return;
 
