@@ -23,9 +23,30 @@ import { VehicleOverlay } from "./overlay/VehicleOverlay";
 import { SensorTest } from "./scenes/SensorTest";
 import { setupScanCar } from "./vehicles/ScanCar";
 import { Q1 } from "./igvc/mini/q1";
+import { Q2 } from "./igvc/mini/q2";
 import { Q3 } from "./igvc/mini/q3";
-import Unit from "../scripting/units/Unit";
 import { Q4 } from "./igvc/mini/q4";
+import { FI1 } from "./igvc/mini/fi1";
+import { FI2 } from "./igvc/mini/fi2";
+import { FII1 } from "./igvc/mini/fii1";
+import { FIII1 } from "./igvc/mini/fiii1";
+import { FIII2 } from "./igvc/mini/fiii2";
+import { FIII3 } from "./igvc/mini/fiii3";
+import Unit from "../scripting/units/Unit";
+
+/** `?mini=q1` | `q2` | `q3` | `q4` | `fi1` | `fi2` | `fii1` | `fiii1` | `fiii2` | `fiii3` (default: q4) */
+const MINI_SCENARIOS = {
+    q1: Q1,
+    q2: Q2,
+    q3: Q3,
+    q4: Q4,
+    fi1: FI1,
+    fi2: FI2,
+    fii1: FII1,
+    fiii1: FIII1,
+    fiii2: FIII2,
+    fiii3: FIII3
+};
 
 function setupScene(scene, camera, renderer) {
     //set background color
@@ -433,7 +454,12 @@ export default function TotalScene() {
             // await setupCity(scene, data);
             // await setupIGVC(scene, data);
             // await SensorTest(data, scene);
-            startingState = await Q4(scene, data);
+            const miniKey =
+                typeof window !== "undefined"
+                    ? new URLSearchParams(window.location.search).get("mini")
+                    : null;
+            const runMini = MINI_SCENARIOS[miniKey] ?? Q4;
+            startingState = await runMini(scene, data);
 
             if (startingState && startingState["startingPosition"] && startingState["startingRotation"]) {
                 // startingState["s/tingRotation"].y = 0; // ensure car starts on ground level
