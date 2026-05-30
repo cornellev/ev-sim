@@ -452,14 +452,14 @@ export default function TotalScene() {
             // await tryIthaca(scene, data);
 
             // await setupCity(scene, data);
-            // await setupIGVC(scene, data);
+            await setupIGVC(scene, data);
             // await SensorTest(data, scene);
-            const miniKey =
-                typeof window !== "undefined"
-                    ? new URLSearchParams(window.location.search).get("mini")
-                    : null;
-            const runMini = MINI_SCENARIOS[miniKey] ?? Q4;
-            startingState = await runMini(scene, data);
+            // const miniKey =
+            //     typeof window !== "undefined"
+            //         ? new URLSearchParams(window.location.search).get("mini")
+            //         : null;
+            // const runMini = MINI_SCENARIOS[miniKey] ?? Q4;
+            // startingState = await runMini(scene, data);
 
             if (startingState && startingState["startingPosition"] && startingState["startingRotation"]) {
                 // startingState["s/tingRotation"].y = 0; // ensure car starts on ground level
@@ -469,8 +469,6 @@ export default function TotalScene() {
             }
 
             // add spheres at (0,0,1) and (1,0,0) for reference
-            const sphere1 = new Sphere(new THREE.Vector3(0, 0, 1), 0.2);
-            const sphere2 = new Sphere(new THREE.Vector3(1, 0, 0), 0.2);
             // data.objects().addObject(sphere1);
             // data.objects().addObject(sphere2);
 

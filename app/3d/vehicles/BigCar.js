@@ -18,27 +18,7 @@ const SEGMENTS  = 80;           // smoothness
 const PATH_WIDTH = 1;         // meters
 const PATH_Y = 0.02;            // lift above ground to avoid z-fighting
 
-const STOP_SIGN_RADIUS_M = 30;
-const STOP_SIGN_PUBLISH_PERIOD_S = 0.05;
-
-const YIELD_BOUNDARY_RADIUS_M = 30;
-const YIELD_BOUNDARY_PUBLISH_PERIOD_S = 0.1;
-
-const OBSTACLE_RADIUS_M = 30;
-const OBSTACLE_PUBLISH_PERIOD_S = 0.05;
-
-const TWO_PI = Math.PI * 2;
-
 const UP = new THREE.Vector3(0, 1, 0);
-
-function hashStringToInt32(str) {
-    const s = String(str ?? "");
-    let h = 0;
-    for (let i = 0; i < s.length; i++) {
-        h = (h * 31 + s.charCodeAt(i)) | 0;
-    }
-    return h;
-}
 
 function distancePointToSegmentXZ(point, a, b) {
     const abx = b.x - a.x;
@@ -142,6 +122,7 @@ export function makePathGradientTexture({
 }
 
 // ---------- create a reusable ribbon mesh ----------
+// TODO: export to a generalized "path ribbon" module that can be used for trajectories, etc.
 export function createPathRibbonMesh() {
     const vertCount = (SEGMENTS + 1) * 2; // left+right per sample
     const positions = new Float32Array(vertCount * 3);
@@ -197,6 +178,9 @@ export function createPathRibbonMesh() {
     mesh.renderOrder = 999; // draw on top if needed
     return mesh;
 }
+
+
+
 
 // ---------- update geometry each frame ----------
 export function updatePathRibbonGeometry(geometry, carObject3D, steeringAngleRad) {
@@ -270,133 +254,11 @@ export class BigCar extends PhysicalVehicle {
         this.follower.cameraOffset.set(-5, 4, 0); // default offset behind and above the car
 
         this.controlsEnabled = true; // whether user can control the car
-
-        this.lanesTopic = "bigcar/lane_bounds";
-        this.lanesType = "sensor_fusion_msgs/Lanes";
-        this.lastPublishedLanesHash = null;
-
-        this.carSizeTopic = "bigcar/size";
-        this.carSizeType = "sensor_fusion_msgs/CarSize";
-        this.lastPublishedCarSizeHash = null;
-
-        this.stopSignsTopic = "bigcar/stop_signs";
-        this.stopSignsType = "sensor_fusion_msgs/StopSigns";
-        this._stopSignsPublishTimer = 0;
-        this.lastPublishedStopSignsHash = null;
-
-        this.yieldBoundariesTopic = "bigcar/yield_boundaries";
-        this.yieldBoundariesType = "sensor_fusion_msgs/YieldBoundaries";
-        this._yieldBoundariesPublishTimer = 0;
-        this.lastPublishedYieldBoundariesHash = null;
-
-        this.obstaclesTopic = "bigcar/obstacles";
-        this.obstaclesType = "sensor_fusion_msgs/Boxes";
-        this._obstaclesPublishTimer = 0;
-        this.lastPublishedObstaclesHash = null;
-
-        this.imuTopic = "bigcar/imu";
-        this.imuType = "sensor_fusion_msgs/imu";
-        this._prevImuYaw = null;
-        this._prevImuWorldVel = new THREE.Vector3();
-
-        this.positionTopic = "bigcar/position";
-        this.positionType = "sensor_fusion_msgs/CarPosition";
-        this.basePositionOffset = new THREE.Vector3();
-        this.baseRotationOffset = new THREE.Euler();
     }
 
     resetPose() {
         this.basePositionOffset.copy(this.position);
         this.baseRotationOffset.copy(this.rotation);
-    }
-
-    _wrapAngleRad(angle) {
-        // Wrap to [-pi, pi]
-        const a = ((angle + Math.PI) % TWO_PI + TWO_PI) % TWO_PI;
-        return a - Math.PI;
-    }
-
-    publishPosition() {
-        const position = this.position.clone();
-        const rotation = this.rotation.clone();
-
-        const data = this.db?.getParent?.();
-        const client = data?.client?.()?.get?.();
-        const canPublish = !!client && (typeof client.isOpen !== "function" || client.isOpen());
-
-        const np = position.sub(this.basePositionOffset);
-        const nr = new THREE.Euler(
-            this._wrapAngleRad(rotation.x - this.baseRotationOffset.x),
-            this._wrapAngleRad(rotation.y - this.baseRotationOffset.y),
-            this._wrapAngleRad(rotation.z - this.baseRotationOffset.z),
-            rotation.order
-        );
-
-        const payload = {
-            position: { x: np.x, y: np.y, z: np.z },
-            rotation: { x: nr.x, y: nr.y, z: nr.z },
-        };
-
-        if (canPublish) {
-            client
-                .publish(this.positionTopic, this.positionType, payload)
-                .catch((err) => console.warn("failed to publish position:", err?.message || err));
-        }
-    }
-
-    publishImu(deltaTime, forwardSpeedMps) {
-        const dt = Number.isFinite(deltaTime) ? deltaTime : 0;
-        if (dt <= 0) return;
-
-        const data = this.db?.getParent?.();
-        const client = data?.client?.()?.get?.();
-        const canPublish = !!client && (typeof client.isOpen !== "function" || client.isOpen());
-
-        const yawNow = Number.isFinite(this.rotation?.y) ? this.rotation.y : 0;
-
-        const forwardWorld = new THREE.Vector3(1, 0, 0).applyEuler(this.rotation);
-        forwardWorld.y = 0;
-        const fLen = forwardWorld.length();
-        if (fLen > 0) forwardWorld.multiplyScalar(1 / fLen);
-        else forwardWorld.set(1, 0, 0);
-
-        const upWorld = new THREE.Vector3(0, 1, 0);
-        const rightWorld = new THREE.Vector3().crossVectors(upWorld, forwardWorld).normalize();
-
-        const worldVel = new THREE.Vector3().copy(forwardWorld).multiplyScalar(forwardSpeedMps ?? 0);
-
-        let yawRate = 0;
-        const worldAccel = new THREE.Vector3();
-        if (Number.isFinite(this._prevImuYaw)) {
-            const dYaw = this._wrapAngleRad(yawNow - this._prevImuYaw);
-            yawRate = dYaw / dt;
-            worldAccel.copy(worldVel).sub(this._prevImuWorldVel).multiplyScalar(1 / dt);
-        }
-
-        // Publish in the same car-local frame used elsewhere in this file:
-        // +x right, +y forward, +z up.
-        const localAccel = {
-            x: worldAccel.dot(rightWorld),
-            y: worldAccel.dot(forwardWorld),
-            z: worldAccel.dot(upWorld),
-        };
-
-        const payload = {
-            // Pack (roll, pitch, yaw) into a Point32 for convenience; only yaw is non-zero.
-            heading: { x: 0, y: 0, z: yawNow },
-            // Yaw rate is about the car's +z axis in this local convention.
-            angular_velocity: { x: 0, y: 0, z: yawRate },
-            linear_acceleration: localAccel,
-        };
-
-        if (canPublish) {
-            client
-                .publish(this.imuTopic, this.imuType, payload)
-                .catch((err) => console.warn("failed to publish imu:", err?.message || err));
-        }
-
-        this._prevImuYaw = yawNow;
-        this._prevImuWorldVel.copy(worldVel);
     }
 
     setupDevices() {
@@ -476,329 +338,9 @@ export class BigCar extends PhysicalVehicle {
 
         this.updateLaneMeshVisibility();
 
-        this.publishNearbyStopSigns(deltaTime);
-
-        this.publishNearbyYieldBoundaries(deltaTime);
-
-        this.publishNearbyObstacles(deltaTime);
-
-        this.publishImu(deltaTime, v);
-        this.publishPosition();
-
         this.follower.updateCamera(this.sceneObject, deltaTime);
 
         // closest road update
-    }
-
-    publishNearbyYieldBoundaries(deltaTime) {
-        this._yieldBoundariesPublishTimer = (this._yieldBoundariesPublishTimer ?? 0) + (deltaTime ?? 0);
-
-        const data = this.db?.getParent?.();
-        const city = data?.city?.();
-        const intersections = city?.getIntersections?.() ?? city?.intersections ?? [];
-
-        if (!Array.isArray(intersections) || intersections.length === 0) return;
-
-        // Throttle publish rate and avoid republishing identical payloads.
-        if (this._yieldBoundariesPublishTimer < YIELD_BOUNDARY_PUBLISH_PERIOD_S) return;
-
-        const carOrigin = this.position;
-
-        const forwardWorld = new THREE.Vector3(1, 0, 0).applyEuler(this.rotation);
-        forwardWorld.y = 0;
-        const fLen = forwardWorld.length();
-        if (fLen > 0) forwardWorld.multiplyScalar(1 / fLen);
-        else forwardWorld.set(1, 0, 0);
-
-        const upWorld = new THREE.Vector3(0, 1, 0);
-        const rightWorld = new THREE.Vector3().crossVectors(upWorld, forwardWorld).normalize();
-
-        const delta = new THREE.Vector3();
-        const localPoint = new THREE.Vector3();
-
-        const boundaries = [];
-        
-        if (intersections.length == 0) return;
-
-        for (const intersection of intersections) {
-            const polylines = intersection?.yieldBoundaries ?? [];
-            if (!Array.isArray(polylines) || polylines.length === 0) continue;
-
-            for (const polyline of polylines) {
-                if (!Array.isArray(polyline) || polyline.length < 2) continue;
-
-                let minDist = Number.POSITIVE_INFINITY;
-                for (let i = 0; i < polyline.length - 1; i++) {
-                    const a = polyline[i];
-                    const b = polyline[i + 1];
-                    if (!a || !b) continue;
-                    const dist = distancePointToSegmentXZ(carOrigin, a, b);
-                    if (dist < minDist) minDist = dist;
-                }
-
-                if (!(minDist <= YIELD_BOUNDARY_RADIUS_M)) continue;
-
-                const idKey = polyline
-                    .map((p) => `${p.x.toFixed(2)},${p.y.toFixed(2)},${p.z.toFixed(2)}`)
-                    .join(";");
-                const id = hashStringToInt32(idKey);
-
-                const boundary = [];
-                for (const p of polyline) {
-                    delta.copy(p).sub(carOrigin);
-                    localPoint.set(delta.dot(rightWorld), delta.dot(forwardWorld), delta.dot(upWorld));
-                    boundary.push({ x: localPoint.x, y: localPoint.y, z: localPoint.z });
-                }
-
-                boundaries.push({ id, boundary });
-            }
-        }
-
-        boundaries.sort((a, b) => (a.id | 0) - (b.id | 0));
-
-        const hash = `${boundaries.length}|${boundaries
-            .map((b) =>
-                `${b.id}|${(b.boundary ?? [])
-                    .map((p) => `${p.x.toFixed(2)},${p.y.toFixed(2)},${p.z.toFixed(2)}`)
-                    .join(":")}`
-            )
-            .join(";")}`;
-
-        if (hash === this.lastPublishedYieldBoundariesHash) {
-            this._yieldBoundariesPublishTimer = 0;
-            return;
-        }
-
-        const client = data?.client?.()?.get?.();
-        if (!client) {
-            this._yieldBoundariesPublishTimer = 0;
-            return;
-        }
-        if (typeof client.isOpen === "function" && !client.isOpen()) {
-            this._yieldBoundariesPublishTimer = 0;
-            return;
-        }
-
-        const payload = { boundaries };
-        client
-            .publish(this.yieldBoundariesTopic, this.yieldBoundariesType, payload)
-            .then(() => {
-                this.lastPublishedYieldBoundariesHash = hash;
-                this._yieldBoundariesPublishTimer = 0;
-            })
-            .catch((err) => {
-                this._yieldBoundariesPublishTimer = 0;
-                console.warn("failed to publish yield boundaries:", err?.message || err);
-            });
-    }
-
-    publishNearbyStopSigns(deltaTime) {
-        this._stopSignsPublishTimer = (this._stopSignsPublishTimer ?? 0) + (deltaTime ?? 0);
-
-        const data = this.db?.getParent?.();
-        const objectsDb = data?.objects?.();
-        const allObjects = objectsDb?.getAll?.();
-        if (!Array.isArray(allObjects) || allObjects.length === 0) return;
-
-        const carOrigin = this.position;
-        const radiusSq = STOP_SIGN_RADIUS_M * STOP_SIGN_RADIUS_M;
-
-        const nearby = [];
-        for (const obj of allObjects) {
-            if (!(obj instanceof StopSign)) continue;
-            const dx = obj.position.x - carOrigin.x;
-            const dz = obj.position.z - carOrigin.z;
-            const distSq = dx * dx + dz * dz;
-            if (distSq <= radiusSq) nearby.push(obj);
-        }
-
-        // Throttle publish rate and avoid republishing identical payloads.
-        if (this._stopSignsPublishTimer < STOP_SIGN_PUBLISH_PERIOD_S) return;
-
-        nearby.sort((a, b) => (a._uuid || "").localeCompare(b._uuid || ""));
-
-        const forwardWorld = new THREE.Vector3(1, 0, 0).applyEuler(this.rotation);
-        forwardWorld.y = 0;
-        const fLen = forwardWorld.length();
-        if (fLen > 0) forwardWorld.multiplyScalar(1 / fLen);
-        else forwardWorld.set(1, 0, 0);
-
-        const upWorld = new THREE.Vector3(0, 1, 0);
-        const rightWorld = new THREE.Vector3().crossVectors(upWorld, forwardWorld).normalize();
-
-        const delta = new THREE.Vector3();
-        const localPoint = new THREE.Vector3();
-
-        const positions = [];
-        const directions = [];
-        const ids = [];
-
-        for (const sign of nearby) {
-            delta.copy(sign.position).sub(carOrigin);
-            // Publish in car-local frame: +x right, +y forward, +z up
-            localPoint.set(delta.dot(rightWorld), delta.dot(forwardWorld), delta.dot(upWorld));
-            positions.push({ x: localPoint.x, y: localPoint.y, z: localPoint.z });
-
-            // StopSign.dir: 0:+X, 1:+Z, 2:-X, 3:-Z (world axes)
-            const dRaw = Number.isFinite(sign.dir) ? Math.trunc(sign.dir) : 0;
-            const d = ((dRaw % 4) + 4) % 4;
-            const signForwardWorld =
-                d === 0
-                    ? new THREE.Vector3(1, 0, 0)
-                    : d === 1
-                      ? new THREE.Vector3(0, 0, 1)
-                      : d === 2
-                        ? new THREE.Vector3(-1, 0, 0)
-                        : new THREE.Vector3(0, 0, -1);
-
-            const localDir = new THREE.Vector3(
-                signForwardWorld.dot(rightWorld),
-                signForwardWorld.dot(forwardWorld),
-                signForwardWorld.dot(upWorld)
-            ).normalize();
-            directions.push({ x: localDir.x, y: localDir.y, z: localDir.z });
-            ids.push(sign.id);
-        }
-
-        const hash = `${positions.length}|${positions
-            .map((p) => `${p.x.toFixed(2)},${p.y.toFixed(2)},${p.z.toFixed(2)}`)
-            .join(";")}|${directions.map((v) => `${v.x.toFixed(3)},${v.y.toFixed(3)},${v.z.toFixed(3)}`).join(";")}|${ids.join(";")}`;
-
-        if (hash === this.lastPublishedStopSignsHash) {
-            this._stopSignsPublishTimer = 0;
-            return;
-        }
-
-        const client = data?.client?.()?.get?.();
-        if (!client) {
-            this._stopSignsPublishTimer = 0;
-            return;
-        }
-        if (typeof client.isOpen === "function" && !client.isOpen()) {
-            this._stopSignsPublishTimer = 0;
-            return;
-        }
-
-        const payload = { positions, directions, ids };
-        client
-            .publish(this.stopSignsTopic, this.stopSignsType, payload)
-            .then(() => {
-                this.lastPublishedStopSignsHash = hash;
-                this._stopSignsPublishTimer = 0;
-            })
-            .catch((err) => {
-                this._stopSignsPublishTimer = 0;
-                console.warn("failed to publish stop signs:", err?.message || err);
-            });
-    }
-
-    publishNearbyObstacles(deltaTime) {
-        this._obstaclesPublishTimer = (this._obstaclesPublishTimer ?? 0) + (deltaTime ?? 0);
-
-        const data = this.db?.getParent?.();
-        const objectsDb = data?.objects?.();
-        const allObjects = objectsDb?.getAll?.();
-        if (!Array.isArray(allObjects) || allObjects.length === 0) return;
-
-        const carOrigin = this.position;
-        const radiusSq = OBSTACLE_RADIUS_M * OBSTACLE_RADIUS_M;
-
-        const nearby = [];
-        for (const obj of allObjects) {
-            if (!(obj instanceof Barrel)) continue;
-            if (!obj.position) continue;
-            const dx = obj.position.x - carOrigin.x;
-            const dz = obj.position.z - carOrigin.z;
-            const distSq = dx * dx + dz * dz;
-            if (distSq <= radiusSq) nearby.push(obj);
-        }
-
-        // Throttle publish rate and avoid republishing identical payloads.
-        if (this._obstaclesPublishTimer < OBSTACLE_PUBLISH_PERIOD_S) return;
-
-        nearby.sort((a, b) => (a._uuid || "").localeCompare(b._uuid || ""));
-
-        const forwardWorld = new THREE.Vector3(1, 0, 0).applyEuler(this.rotation);
-        forwardWorld.y = 0;
-        const fLen = forwardWorld.length();
-        if (fLen > 0) forwardWorld.multiplyScalar(1 / fLen);
-        else forwardWorld.set(1, 0, 0);
-
-        const upWorld = new THREE.Vector3(0, 1, 0);
-        const rightWorld = new THREE.Vector3().crossVectors(upWorld, forwardWorld).normalize();
-
-        const delta = new THREE.Vector3();
-        const localCenter = new THREE.Vector3();
-
-        const worldQuat = new THREE.Quaternion();
-        const worldEuler = new THREE.Euler();
-
-        const boxes = [];
-
-        for (const barrel of nearby) {
-            delta.copy(barrel.position).sub(carOrigin);
-            // Publish in car-local frame: +x right, +y forward, +z up
-            localCenter.set(delta.dot(rightWorld), delta.dot(forwardWorld), delta.dot(upWorld));
-
-            const size = barrel.scale ?? new THREE.Vector3();
-
-            // Barrels currently don't store a logical rotation, but if a mesh exists,
-            // include its yaw relative to the car as a best-effort.
-            let relYaw = 0;
-            if (barrel._mesh && typeof barrel._mesh.getWorldQuaternion === "function") {
-                barrel._mesh.getWorldQuaternion(worldQuat);
-                worldEuler.setFromQuaternion(worldQuat, "YXZ");
-                relYaw = worldEuler.y - (this.rotation?.y ?? 0);
-                // wrap to [-pi, pi]
-                relYaw = ((relYaw + Math.PI) % (2 * Math.PI)) - Math.PI;
-            }
-
-            const id = Number.isInteger(barrel.id) ? (barrel.id | 0) : hashStringToInt32(barrel._uuid);
-
-            boxes.push({
-                id,
-                center: { x: localCenter.x, y: localCenter.y, z: localCenter.z },
-                size: { x: size.x ?? 0, y: size.y ?? 0, z: size.z ?? 0 },
-                rotation: { x: 0, y: 0, z: relYaw },
-            });
-        }
-
-        const hash = `${boxes.length}|${boxes
-            .map((b) =>
-                `${b.id}|${b.center.x.toFixed(2)},${b.center.y.toFixed(2)},${b.center.z.toFixed(2)}|${b.size.x.toFixed(
-                    2
-                )},${b.size.y.toFixed(2)},${b.size.z.toFixed(2)}|${b.rotation.x.toFixed(3)},${b.rotation.y.toFixed(
-                    3
-                )},${b.rotation.z.toFixed(3)}`
-            )
-            .join(";")}`;
-
-        if (hash === this.lastPublishedObstaclesHash) {
-            this._obstaclesPublishTimer = 0;
-            return;
-        }
-
-        const client = data?.client?.()?.get?.();
-        if (!client) {
-            this._obstaclesPublishTimer = 0;
-            return;
-        }
-        if (typeof client.isOpen === "function" && !client.isOpen()) {
-            this._obstaclesPublishTimer = 0;
-            return;
-        }
-
-        const payload = { boxes };
-        client
-            .publish(this.obstaclesTopic, this.obstaclesType, payload)
-            .then(() => {
-                this.lastPublishedObstaclesHash = hash;
-                this._obstaclesPublishTimer = 0;
-            })
-            .catch((err) => {
-                this._obstaclesPublishTimer = 0;
-                console.warn("failed to publish obstacles:", err?.message || err);
-            });
     }
 
     renderPath() {
@@ -809,6 +351,9 @@ export class BigCar extends PhysicalVehicle {
         updatePathRibbonGeometry(this.path.geometry, this.sceneObject, this.displaySteeringAngle);
     }
 
+    /**
+     * @deprecated Removing soon to a generalized method
+     */
     updateLaneMeshVisibility() {
         const city = this.db?.getParent?.()?.city?.();
         const roads = city?.roads ?? [];
@@ -852,155 +397,7 @@ export class BigCar extends PhysicalVehicle {
             }
         }
 
-        // Publish all active lanes' boundaries in the car's local frame for use by other clients.
-        this.publishLanes(activeLanes);
     }
-
-    _buildLaneBoundsPayload(activeLane) {
-        if (!activeLane?.lanePoints?.length) return null;
-
-        const carOrigin = this.position;
-        const localPoint = new THREE.Vector3();
-        const delta = new THREE.Vector3();
-        const forwardWorld = new THREE.Vector3(1, 0, 0).applyEuler(this.rotation).normalize();
-        const upWorld = new THREE.Vector3(0, 1, 0).applyEuler(this.rotation).normalize();
-        const rightWorld = new THREE.Vector3().crossVectors(upWorld, forwardWorld).normalize();
-        const tangent = new THREE.Vector3();
-        const leftNormal = new THREE.Vector3();
-
-        const points = activeLane.lanePoints;
-        const halfWidth = (activeLane.laneWidth ?? 0) * 0.5;
-
-        const laneCount = Math.max(
-            1,
-            Math.round(
-                Number.isFinite(activeLane.laneCount)
-                    ? activeLane.laneCount
-                    : (activeLane.road?.options?.laneCount ?? activeLane.road?.lanes?.length ?? 1)
-            )
-        );
-
-        // lane0/lane1 correspond to the +/- leftNormal boundaries of the lane.
-        // In this codebase, lane index 0 is the first generated lane offset from one road edge.
-        // That makes is_edge0 true for laneIndex==0 and is_edge1 true for laneIndex==laneCount-1.
-        const is_edge0 = laneCount === 1 ? true : activeLane.laneIndex === 0;
-        const is_edge1 = laneCount === 1 ? true : activeLane.laneIndex === laneCount - 1;
-
-        let minX = Number.POSITIVE_INFINITY;
-        let minY = Number.POSITIVE_INFINITY;
-        let minZ = Number.POSITIVE_INFINITY;
-        let maxX = Number.NEGATIVE_INFINITY;
-        let maxY = Number.NEGATIVE_INFINITY;
-        let maxZ = Number.NEGATIVE_INFINITY;
-
-        const lane0 = [];
-        const lane1 = [];
-
-        for (let i = 0; i < points.length; i++) {
-            const point = points[i];
-            if (!point) continue;
-            if (!Number.isFinite(point.x) || !Number.isFinite(point.y) || !Number.isFinite(point.z)) continue;
-
-            const prev = points[Math.max(0, i - 1)] ?? point;
-            const next = points[Math.min(points.length - 1, i + 1)] ?? point;
-
-            tangent.set(next.x - prev.x, 0, next.z - prev.z);
-            const tLen = tangent.length();
-            if (tLen > 0) tangent.multiplyScalar(1 / tLen);
-            else tangent.set(1, 0, 0);
-
-            leftNormal.set(-tangent.z, 0, tangent.x);
-
-            // World-space boundary points (left/right of lane centerline)
-            const worldLeftX = point.x + leftNormal.x * halfWidth;
-            const worldLeftY = point.y;
-            const worldLeftZ = point.z + leftNormal.z * halfWidth;
-
-            const worldRightX = point.x - leftNormal.x * halfWidth;
-            const worldRightY = point.y;
-            const worldRightZ = point.z - leftNormal.z * halfWidth;
-
-            // Transform each boundary point into car-local frame with axes:
-            // +x right, +y forward, +z up
-            delta.set(worldLeftX, worldLeftY, worldLeftZ).sub(carOrigin);
-            localPoint.set(delta.dot(rightWorld), delta.dot(forwardWorld), delta.dot(upWorld));
-            lane0.push({ x: localPoint.x, y: localPoint.y, z: localPoint.z });
-            if (localPoint.x < minX) minX = localPoint.x;
-            if (localPoint.y < minY) minY = localPoint.y;
-            if (localPoint.z < minZ) minZ = localPoint.z;
-            if (localPoint.x > maxX) maxX = localPoint.x;
-            if (localPoint.y > maxY) maxY = localPoint.y;
-            if (localPoint.z > maxZ) maxZ = localPoint.z;
-
-            delta.set(worldRightX, worldRightY, worldRightZ).sub(carOrigin);
-            localPoint.set(delta.dot(rightWorld), delta.dot(forwardWorld), delta.dot(upWorld));
-            lane1.push({ x: localPoint.x, y: localPoint.y, z: localPoint.z });
-            if (localPoint.x < minX) minX = localPoint.x;
-            if (localPoint.y < minY) minY = localPoint.y;
-            if (localPoint.z < minZ) minZ = localPoint.z;
-            if (localPoint.x > maxX) maxX = localPoint.x;
-            if (localPoint.y > maxY) maxY = localPoint.y;
-            if (localPoint.z > maxZ) maxZ = localPoint.z;
-        }
-
-        if (!Number.isFinite(minX) || !Number.isFinite(maxX)) return null;
-
-        const laneKey = `${activeLane.roadIndex}:${activeLane.laneIndex}`;
-        const boundsHash = [
-            minX,
-            minY,
-            minZ,
-            maxX,
-            maxY,
-            maxZ,
-            is_edge0 ? 1 : 0,
-            is_edge1 ? 1 : 0,
-        ]
-            .map((value) => (Number.isFinite(value) ? value.toFixed(3) : String(value)))
-            .join(",");
-
-        return {
-            laneKey,
-            boundsHash,
-            payload: {
-                road: `road_${activeLane.roadIndex}:lane_${activeLane.laneIndex}`,
-                lane0,
-                lane1,
-                is_edge0,
-                is_edge1,
-                in_road: activeLane.overLane
-            },
-        };
-    }
-
-    publishLanes(activeLanes) {
-        const lanesIn = Array.isArray(activeLanes) ? activeLanes : [];
-
-        const client = this.db?.getParent?.()?.client?.()?.get?.();
-        if (!client) return;
-        if (typeof client.isOpen === "function" && !client.isOpen()) return;
-
-        const built = [];
-        for (const lane of lanesIn) {
-            const out = this._buildLaneBoundsPayload(lane);
-            if (out) built.push(out);
-        }
-
-        built.sort((a, b) => a.laneKey.localeCompare(b.laneKey));
-
-        const lanesPayload = built.map((b) => b.payload);
-        const lanesHash = `${built.length}|${built.map((b) => `${b.laneKey}|${b.boundsHash}`).join(";")}`;
-
-        if (lanesHash === this.lastPublishedLanesHash) return;
-
-        client
-            .publish(this.lanesTopic, this.lanesType, { lanes: lanesPayload })
-            .then(() => {
-                this.lastPublishedLanesHash = lanesHash;
-            })
-            .catch((err) => console.warn("failed to publish lanes:", err?.message || err));
-    }
-    
 
     async addToScene(scene) {
         console.log("Loading BigCar model...");
@@ -1064,45 +461,11 @@ export class BigCar extends PhysicalVehicle {
 
         this.path = curve;
 
+        //debug utils
         window.getPositionAndRotationOfBigCar = () => {
             const pos = this.position.clone();
             const rot = this.rotation.clone();
             return { position: pos, rotation: rot };
-        }
-
-        // publish car size for sensor fusion purposes
-        const publish_size = async () => {
-            console.log("Waiting for client to publish car size...");
-            while (!this.db.getParent().client().hasClient()) {
-                await wait(100);
-            }
-
-            const client = this.db.getParent().client().get();
-
-            console.log("Client available, waiting for connection...");
-
-            while (Object.keys(client).includes("isOpen") && !client.isOpen()) {
-                await wait(100);
-            }
-
-            console.log("Publishing car size:", worldSize);
-
-            const sizePayload = {// width is along Z in the model
-                width: worldSize.z,
-                length: worldSize.x,
-                height: worldSize.y,
-            };
-            const sizeHash = [sizePayload.width, sizePayload.length, sizePayload.height].map(value => value.toFixed(3)).join(",");
-            if (sizeHash === this.lastPublishedCarSizeHash) return;
-
-            client
-                .publish(this.carSizeTopic, this.carSizeType, sizePayload)
-                .then(() => {
-                    this.lastPublishedCarSizeHash = sizeHash;
-                })
-                .catch(err => console.warn("failed to publish car size:", err?.message || err));
-        }
-
-        publish_size().catch(err => console.warn("failed to publish car size:", err?.message || err));
+        };
     }
 }
