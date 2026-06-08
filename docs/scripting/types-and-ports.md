@@ -49,6 +49,20 @@ outputs={[{ label: "out", type: "float64" }]}
 this.registerOutput("out", "float64");
 ```
 
+If a port has a separate display label and internal id, pass both from the React unit. `Unit` encodes `id` into the connection metadata and only uses `label` for display:
+
+```javascript
+outputs={[{ id: "input", label: "speed", type: "float64" }]}
+```
+
+The backend block must register the stable id:
+
+```javascript
+this.registerOutput("input", "float64");
+```
+
+Program Input uses this pattern. Its visible external label defaults to `input`, then `input_2`, and so on, while its internal output port remains `input` so compilation and existing wires do not depend on generated unit IDs.
+
 ## Dynamic Ports
 
 When a block changes its port type map, call `reregister(_uuid)` from the UI. This dispatches `reregister-unit`, and `Scripting.js` calls the matching backend block's `reregister()`.

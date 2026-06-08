@@ -165,55 +165,87 @@ function getInitialData(uuid, fallbackPrefix) {
     };
 }
 
-export function ProgramInputUnit({ _uuid }) {
-    const [data, setData] = useState(() => getInitialData(_uuid, "input"));
+export function createProgramInputState(index = 0, overrides = {}) {
+    const defaultLabel = index === 0 ? "input" : `input_${index + 1}`;
+
+    return {
+        label: sanitizeLabel(overrides.label, defaultLabel),
+        type: normalizeType(overrides.type),
+        defaultValue: overrides.defaultValue ?? "0"
+    };
+}
+
+export function normalizeProgramInputState(data = {}, index = 0, uuid = null) {
+    const label = data?.label === uuid ? undefined : data?.label;
+
+    return createProgramInputState(index, {
+        ...data,
+        label
+    });
+}
+
+export function ProgramInputUnit({ _uuid, initialData = null }) {
+    const [data, setData] = useState(() => normalizeProgramInputState(initialData, 0, _uuid));
 
     useEffect(() => {
         storeData(_uuid, data);
+        reregister(_uuid);
     }, [data, _uuid]);
 
     const outputType = normalizeType(data.type);
+
+    const commitData = (next) => {
+        setData(next);
+        storeData(_uuid, next);
+        reregister(_uuid);
+    };
 
     return (
         <Unit title="Program Input" hasOptions={true} _uuid={_uuid}
             inputs={[]}
             outputs={[
-                { label: "input", type: outputType }
+                { id: "input", label: data.label, type: outputType }
             ]}
         >
-            <div className="flex flex-col gap-2">
-                <input
-                    value={data.label}
-                    className="w-full px-2 py-1 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:border-blue-500 hover:border-gray-400"
-                    placeholder="input label"
-                    onChange={(e) => {
-                        const label = sanitizeLabel(e.target.value, "input");
-                        setData((prev) => ({ ...prev, label }));
-                    }}
-                />
-                <select
-                    value={outputType}
-                    className="w-full px-2 py-1 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:border-blue-500 hover:border-gray-400"
-                    onChange={(e) => {
-                        const type = normalizeType(e.target.value);
-                        const next = { ...data, type };
-                        setData(next);
-                        storeData(_uuid, next);
-                        reregister(_uuid);
-                    }}
-                >
-                    {SUPPORTED_TYPES.map((type) => (
-                        <option key={type} value={type}>{type}</option>
-                    ))}
-                </select>
-                <input
-                    value={data.defaultValue}
-                    className="w-full px-2 py-1 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:border-blue-500 hover:border-gray-400"
-                    placeholder="default"
-                    onChange={(e) => {
-                        setData((prev) => ({ ...prev, defaultValue: e.target.value }));
-                    }}
-                />
+            <div className="flex flex-col gap-3 text-xs text-zinc-300">
+                <label className="flex flex-col gap-1.5">
+                    <span className="text-zinc-400">External label</span>
+                    <input
+                        value={data.label}
+                        className="w-full rounded-sm border border-white/10 bg-[#2b2b2b] px-2.5 py-1.5 text-white outline-none transition-[border-color,box-shadow] duration-150 focus:border-white/30 focus:shadow-[0_0_0_3px_rgba(255,255,255,0.06)]"
+                        onChange={(e) => {
+                            const label = sanitizeLabel(e.target.value, "input");
+                            commitData({ ...data, label });
+                        }}
+                    />
+                </label>
+
+                <label className="flex flex-col gap-1.5">
+                    <span className="text-zinc-400">Type</span>
+                    <select
+                        value={outputType}
+                        className="w-full rounded-sm border border-white/10 bg-[#2b2b2b] px-2.5 py-1.5 text-white outline-none transition-[border-color,box-shadow] duration-150 focus:border-white/30 focus:shadow-[0_0_0_3px_rgba(255,255,255,0.06)]"
+                        onChange={(e) => {
+                            const type = normalizeType(e.target.value);
+                            commitData({ ...data, type });
+                        }}
+                    >
+                        {SUPPORTED_TYPES.map((type) => (
+                            <option key={type} value={type}>{type}</option>
+                        ))}
+                    </select>
+                </label>
+
+                <label className="flex flex-col gap-1.5">
+                    <span className="text-zinc-400">Default value</span>
+                    <input
+                        value={data.defaultValue}
+                        className="w-full rounded-sm border border-white/10 bg-[#2b2b2b] px-2.5 py-1.5 text-white outline-none transition-[border-color,box-shadow] duration-150 focus:border-white/30 focus:shadow-[0_0_0_3px_rgba(255,255,255,0.06)]"
+                        onChange={(e) => {
+                            commitData({ ...data, defaultValue: e.target.value });
+                        }}
+                    />
+                </label>
             </div>
         </Unit>
     )
@@ -223,23 +255,17 @@ export class ProgramInputBlock extends UnitBlock {
     static programNodeRole = "input";
 
     register() {
-        const data = this.getStoredData() || this.state || getInitialData(this.uuid, "input");
-        const label = sanitizeLabel(data.label, "input");
-        const type = normalizeType(data.type);
+        const data = this.getStoredData() || this.state || createProgramInputState();
+        this.state = normalizeProgramInputState(data, 0, this.uuid);
 
-        this.state = {
-            label,
-            type,
-            defaultValue: data.defaultValue ?? "0"
-        };
-
-        this.registerOutput("input", type);
+        this.registerOutput("input", this.state.type);
     }
 
     getProgramPortDefinition() {
         return {
             role: "input",
             uuid: this.uuid,
+            portId: "input",
             label: this.state.label,
             type: this.state.type
         };
@@ -256,11 +282,12 @@ export class ProgramInputBlock extends UnitBlock {
     }
 }
 
-export function ProgramOutputUnit({ _uuid }) {
-    const [data, setData] = useState(() => getInitialData(_uuid, "output"));
+export function ProgramOutputUnit({ _uuid, initialData = null }) {
+    const [data, setData] = useState(() => initialData || getInitialData(_uuid, "output"));
 
     useEffect(() => {
         storeData(_uuid, data);
+        reregister(_uuid);
     }, [data, _uuid]);
 
     const inputType = normalizeType(data.type);
@@ -272,32 +299,35 @@ export function ProgramOutputUnit({ _uuid }) {
             ]}
             outputs={[]}
         >
-            <div className="flex flex-col gap-2">
+            <div className="flex flex-col gap-3 text-xs text-zinc-300">
+                <label className="flex flex-col gap-1.5">
+                    <span className="text-zinc-400">External label</span>
                 <input
                     value={data.label}
-                    className="w-full px-2 py-1 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:border-blue-500 hover:border-gray-400"
+                    className="w-full rounded-sm border border-white/10 bg-[#2b2b2b] px-2.5 py-1.5 text-white outline-none transition-[border-color,box-shadow] duration-150 focus:border-white/30 focus:shadow-[0_0_0_3px_rgba(255,255,255,0.06)]"
                     placeholder="output label"
                     onChange={(e) => {
                         const label = sanitizeLabel(e.target.value, "output");
                         setData((prev) => ({ ...prev, label }));
                     }}
                 />
+                </label>
 
+                <label className="flex flex-col gap-1.5">
+                    <span className="text-zinc-400">Type</span>
                 <select
                     value={inputType}
-                    className="w-full px-2 py-1 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:border-blue-500 hover:border-gray-400"
+                    className="w-full rounded-sm border border-white/10 bg-[#2b2b2b] px-2.5 py-1.5 text-white outline-none transition-[border-color,box-shadow] duration-150 focus:border-white/30 focus:shadow-[0_0_0_3px_rgba(255,255,255,0.06)]"
                     onChange={(e) => {
                         const type = normalizeType(e.target.value);
-                        const next = { ...data, type };
-                        setData(next);
-                        storeData(_uuid, next);
-                        reregister(_uuid);
+                        setData((prev) => ({ ...prev, type }));
                     }}
                 >
                     {SUPPORTED_TYPES.map((type) => (
                         <option key={type} value={type}>{type}</option>
                     ))}
                 </select>
+                </label>
             </div>
         </Unit>
     )
@@ -339,7 +369,7 @@ export class ProgramOutputBlock extends UnitBlock {
     }
 }
 
-export function OutputNodeUnit({ _uuid, outputs = null, outputType = "float64" }) {
+export function OutputNodeUnit({ _uuid, outputs = null, outputType = "float64", initialPosition = null }) {
     const state = normalizeOutputNodeState(outputs ? { outputs } : {
         id: "output",
         label: "output",
@@ -347,7 +377,7 @@ export function OutputNodeUnit({ _uuid, outputs = null, outputType = "float64" }
     });
 
     return (
-        <Unit title="OutputNode" hasOptions={false} _uuid={_uuid}
+        <Unit title="OutputNode" hasOptions={false} _uuid={_uuid} initialPosition={initialPosition}
             inputs={state.outputs.map((output) => ({
                 id: output.id,
                 label: output.label,

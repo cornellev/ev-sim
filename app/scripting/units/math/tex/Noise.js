@@ -3,9 +3,9 @@ import * as NoiseJS from "noisejs";
 import Unit from "../../Unit";
 import { BlockOutput, storeData, UnitBlock } from "../../../ScriptManager";
 
-export function Noise({ _uuid }) {
+export function Noise({ _uuid, initialData = null }) {
     const canvasRef = useRef(null);
-    const [values, setValues] = useState([]);
+    const [values, setValues] = useState(() => Array.isArray(initialData) ? initialData : []);
 
     useEffect(() => {
         const canvas = canvasRef.current;
@@ -16,6 +16,23 @@ export function Noise({ _uuid }) {
         const rect = canvas.getBoundingClientRect();
         canvas.width = rect.width;
         canvas.height = rect.height;
+
+        function paintValues(existingValues) {
+            const width = canvas.width;
+            const height = canvas.height;
+            const tileSize = 4; // size of each noise block in pixels
+
+            const cols = Math.ceil(width / tileSize);
+            const rows = Math.ceil(height / tileSize);
+            existingValues.forEach((sample, index) => {
+                const x = index % cols;
+                const y = Math.floor(index / cols);
+                if (y >= rows) return;
+                const value = Math.max(0, Math.min(255, sample * 255));
+                ctx.fillStyle = `rgb(${value}, ${value}, ${value})`;
+                ctx.fillRect(x * tileSize, y * tileSize, tileSize, tileSize);
+            });
+        }
 
         function generateNoise() {
             const width = canvas.width;
@@ -40,9 +57,14 @@ export function Noise({ _uuid }) {
             return values;
         }
 
+        if (Array.isArray(initialData) && initialData.length > 0) {
+            paintValues(initialData);
+            return;
+        }
+
         const noiseValues = generateNoise();
         setValues(noiseValues);
-    }, [])
+    }, [initialData])
 
     useEffect(() => {
         storeData(_uuid, values);

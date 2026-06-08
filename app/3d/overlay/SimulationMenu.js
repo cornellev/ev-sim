@@ -24,18 +24,12 @@ import { FlyoutPanel } from "./ui/FlyoutPanel";
 import { MenuButton } from "./ui/MenuButton";
 import { MenuToggle } from "./ui/MenuToggle";
 import { PanelSection } from "./ui/PanelSection";
+import { cn } from "./ui/cn";
 
 export function SimulationMenu({ data, vehicleOverlayVisible = true, onVehicleOverlayVisibleChange }) {
     const [openPanel, setOpenPanel] = useState(null);
-    const [transportState, setTransportState] = useState("stopped");
     const [toggles, setToggles] = useState({
-        physics: false,
-        realtime: true,
-        deterministic: false,
         agents: true,
-        environment: true,
-        sensors: true,
-        dataFeeds: true,
         diagnostics: false,
         recording: false,
         overlay: false,
@@ -59,8 +53,8 @@ export function SimulationMenu({ data, vehicleOverlayVisible = true, onVehicleOv
         { key: "author", icon: <FaEdit className="h-3 w-3" />, title: "Author mode" },
     ];
 
-    const engineToggleCount = [toggles.physics, toggles.realtime, toggles.deterministic].filter(Boolean).length;
-    const modulesToggleCount = [toggles.agents, toggles.environment, toggles.sensors, toggles.dataFeeds].filter(Boolean).length;
+    const engineToggleCount = [simState?.modules?.physics, simState?.realtime, simState?.deterministic].filter(Boolean).length;
+    const modulesToggleCount = [toggles.agents, simState?.modules?.environment, simState?.modules?.sensors, simState?.modules?.scripting].filter(Boolean).length;
 
     const controls = useMemo(() => {
         const settings = data?.settings?.();
@@ -98,7 +92,7 @@ export function SimulationMenu({ data, vehicleOverlayVisible = true, onVehicleOv
                                         label="Physics Engine"
                                         icon={<FaMicrochip className="h-3 w-3" />}
                                         checked={!!simState?.modules?.physics}
-                                        onChange={(v) => sim?.setPhysicsEnable(v)}
+                                        onChange={(v) => sim?.setPhysicsEnabled(v)}
                                     />
                                     <MenuToggle
                                         label="Real-Time Clock"
@@ -202,21 +196,11 @@ export function SimulationMenu({ data, vehicleOverlayVisible = true, onVehicleOv
                 )}
 
                 <div className="flex items-center gap-2 rounded-2xl border border-zinc-700/80 bg-zinc-950/70 p-2 text-zinc-100 shadow-[0_20px_70px_rgba(0,0,0,0.5)] backdrop-blur-2xl">
-                    <div className="flex items-center gap-1 rounded-xl border border-zinc-700/80 bg-zinc-900/80 p-1">
-                        {modeOptions.map((option) => (
-                            <MenuButton
-                                key={option.key}
-                                iconOnly
-                                variant="ghost"
-                                active={option.key === mode}
-                                onClick={() => setMode(option.key)}
-                                title={option.title}
-                                ariaLabel={option.title}
-                            >
-                                {option.icon}
-                            </MenuButton>
-                        ))}
-                    </div>
+                    <ModeSwitch
+                        value={mode}
+                        options={modeOptions}
+                        onChange={setMode}
+                    />
 
                     <div className="h-7 w-px bg-zinc-700/80" />
 
@@ -311,6 +295,61 @@ export function SimulationMenu({ data, vehicleOverlayVisible = true, onVehicleOv
                     </div>
                 </div>
             </div>
+        </div>
+    );
+}
+
+function ModeSwitch({ value, options, onChange }) {
+    const activeIndex = Math.max(0, options.findIndex((option) => option.key === value));
+
+    const move = (direction) => {
+        const nextIndex = (activeIndex + direction + options.length) % options.length;
+        onChange(options[nextIndex].key);
+    };
+
+    return (
+        <div
+            role="radiogroup"
+            aria-label="Interaction mode"
+            className="relative grid w-[104px] shrink-0 grid-cols-3 rounded-xl border border-zinc-700/80 bg-zinc-900/80 p-1"
+            onKeyDown={(event) => {
+                if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+                    event.preventDefault();
+                    move(1);
+                }
+
+                if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+                    event.preventDefault();
+                    move(-1);
+                }
+            }}
+        >
+            <span
+                aria-hidden="true"
+                className="mode-switch-thumb absolute left-1 top-1 h-8 w-8 rounded-lg border border-sky-400/70 bg-sky-500/25 shadow-[inset_0_1px_0_rgba(255,255,255,0.14)]"
+                style={{ transform: `translateX(${activeIndex * 2}rem)` }}
+            />
+            {options.map((option) => {
+                const active = option.key === value;
+
+                return (
+                    <button
+                        key={option.key}
+                        type="button"
+                        role="radio"
+                        aria-checked={active}
+                        title={option.title}
+                        aria-label={option.title}
+                        className={cn(
+                            "relative z-[1] flex h-8 w-8 items-center justify-center rounded-lg transition-[color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] focus:outline-none focus:ring-2 focus:ring-sky-400/60 active:scale-[0.97]",
+                            active ? "text-sky-50" : "text-zinc-400 hover:text-zinc-100"
+                        )}
+                        onClick={() => onChange(option.key)}
+                    >
+                        {option.icon}
+                    </button>
+                );
+            })}
         </div>
     );
 }

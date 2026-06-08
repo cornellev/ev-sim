@@ -38,6 +38,8 @@ They also implement `getProgramPortDefinition()`. See `app/scripting/units/progr
 
 Program labels must be unique per role. Duplicate labels fail compilation.
 
+For Program Input, keep the backend port id stable and expose the editable name separately. The built-in Program Input registers the internal output port as `input`, while its user-facing external label defaults to `input`, `input_2`, `input_3`, and so on. `getProgramPortDefinition()` exports that external label for compiled program inputs.
+
 ## Add A New Type
 
 The scripting type system is string-based. To add a new type:

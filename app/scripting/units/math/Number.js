@@ -4,7 +4,7 @@ import { BlockOutput, storeData, UnitBlock } from "../../ScriptManager";
 const { default: Unit } = require("../Unit")
 
 export default function NumberUnit(props) {
-    const [value, setValue] = useState(0);
+    const [value, setValue] = useState(() => props.initialData ?? 0);
 
     useEffect(() => {
         if (value === "" || isNaN(value)) {
@@ -17,7 +17,7 @@ export default function NumberUnit(props) {
         }
 
         storeData(props._uuid, numericValue);
-    }, [value])
+    }, [value, props._uuid])
 
     return (
         <Unit title="Number" outputs={[

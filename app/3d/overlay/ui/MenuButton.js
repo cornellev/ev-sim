@@ -14,7 +14,7 @@ export function MenuButton({
     type = "button",
 }) {
     const base =
-        "inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border text-[11px] font-medium tracking-wide select-none transition-colors";
+        "inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border text-[11px] font-medium tracking-wide select-none transition-[background-color,border-color,color,box-shadow,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.97]";
 
     const variants = {
         default:
@@ -39,7 +39,7 @@ export function MenuButton({
                 iconOnly ? "h-8 w-8 p-0" : compact ? "px-2.5 py-1.5" : "px-3 py-1.5",
                 variants[variant] || variants.default,
                 active && "border-sky-400/90 bg-sky-500/35 text-sky-50",
-                disabled && "opacity-50 cursor-not-allowed",
+                disabled && "opacity-50 cursor-not-allowed active:scale-100",
                 className
             )}
         >

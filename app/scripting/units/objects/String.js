@@ -1,13 +1,13 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { storeData, UnitBlock } from "../../ScriptManager";
 import Unit from "../Unit";
 
-export function StringUnit({ _uuid }) {
-    const [value, setValue] = useState("");
+export function StringUnit({ _uuid, initialData = "" }) {
+    const [value, setValue] = useState(() => initialData ?? "");
 
-    useState(() => {
+    useEffect(() => {
         storeData(_uuid, value);
-    }, [value])
+    }, [value, _uuid])
 
     return (
         <Unit title="String" hasOptions={true} _uuid={_uuid}

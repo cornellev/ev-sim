@@ -2,13 +2,13 @@ import { useEffect, useState } from "react";
 import { storeData, UnitBlock } from "../../ScriptManager";
 import Unit from "../Unit";
 
-export function Equality({ _uuid }) {
-    const [type, setType] = useState("eq");
+export function Equality({ _uuid, initialData = "eq" }) {
+    const [type, setType] = useState(() => initialData || "eq");
 
     //types: eq, neq, gt, lt, gte, lte
     useEffect(() => {
         storeData(_uuid, type);
-    }, [type])
+    }, [type, _uuid])
 
     return (
         <Unit title="Equality" hasOptions={true} _uuid={_uuid}
@@ -83,12 +83,12 @@ export class EqualityBlock extends UnitBlock {
 }
 
 
-export function Conjugation({ _uuid }) {
-    const [type, setType] = useState("and");
+export function Conjugation({ _uuid, initialData = "and" }) {
+    const [type, setType] = useState(() => initialData || "and");
 
-    useState(() => {
+    useEffect(() => {
         storeData(_uuid, type);
-    }, [type])
+    }, [type, _uuid])
 
     return (
         <Unit title="Conjugation" hasOptions={true} _uuid={_uuid}

@@ -3,6 +3,8 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+  --ease-out-ui: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out-ui: cubic-bezier(0.77, 0, 0.175, 1);
 }
 
 @theme inline {
@@ -23,6 +25,89 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+.route-switcher-scrim {
+  background: rgb(9 9 11 / 0.72);
+  opacity: 1;
+  transition: opacity 140ms var(--ease-out-ui);
+}
+
+.route-switcher-panel {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transform-origin: top center;
+  filter: blur(0);
+  transition:
+    opacity 140ms var(--ease-out-ui),
+    transform 180ms var(--ease-out-ui),
+    filter 140ms var(--ease-out-ui);
+}
+
+.route-switcher-item {
+  transition:
+    background-color 150ms var(--ease-out-ui),
+    border-color 150ms var(--ease-out-ui),
+    color 150ms var(--ease-out-ui),
+    transform 150ms var(--ease-out-ui);
+}
+
+.route-switcher-item:active:not(:disabled) {
+  transform: scale(0.985);
+}
+
+.mode-switch-thumb {
+  transition: transform 180ms var(--ease-out-ui);
+  will-change: transform;
+}
+
+.menu-flyout-panel {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transform-origin: bottom right;
+  transition:
+    opacity 140ms var(--ease-out-ui),
+    transform 180ms var(--ease-out-ui);
+}
+
+@starting-style {
+  .route-switcher-scrim {
+    opacity: 0;
+  }
+
+  .route-switcher-panel {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+    filter: blur(2px);
+  }
+
+  .menu-flyout-panel {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .route-switcher-item:hover:not(:disabled) {
+    transform: translateY(-1px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .route-switcher-scrim,
+  .route-switcher-panel,
+  .route-switcher-item,
+  .mode-switch-thumb,
+  .menu-flyout-panel {
+    transition-duration: 0ms;
+  }
+
+  .route-switcher-panel,
+  .route-switcher-item,
+  .menu-flyout-panel {
+    transform: none !important;
+    filter: none;
+  }
 }
 
 .hide-scrollbar {

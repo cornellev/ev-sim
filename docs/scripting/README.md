@@ -2,6 +2,19 @@
 
 The scripting system is a node editor plus a compile/run runtime. It lets users wire visual units together, execute them in the editor, export a versioned JSON artifact, run the artifact, and import compiled programs as reusable units.
 
+## Load And Run From Code
+
+Use `loadScript` when application code needs to load a compiled artifact or a locally saved editor document and execute it without opening the visual editor:
+
+```javascript
+import { loadScript } from "@/app/scripting/ScriptRuntime";
+
+const script = await loadScript("/scripts/add-two.json");
+const outputs = script.run({ input: 21 });
+```
+
+`loadScript("local:<script-id>")` loads from the browser-local script library. `script.run(...)` accepts either a named input object or positional inputs in the order exposed by the compiled script interface.
+
 ## Read First
 
 1. [Architecture](architecture.md): editor execution, compiled execution, and data flow.
@@ -16,6 +29,7 @@ The scripting system is a node editor plus a compile/run runtime. It lets users 
 - `app/scripting/ScriptManager.js`: graph manager, `UnitBlock`, connections, compiled program wrapper.
 - `app/scripting/LineManager.js`: visual wire creation and deletion.
 - `app/scripting/AddMenu.js`: visual add menu categories and React unit creation.
+- `app/scripting/ScriptRuntime.js`: load local or URL scripts and run compiled artifacts from code.
 - `app/scripting/BlockRegistry.js`: block type registry.
 - `app/scripting/registerBuiltInBlocks.js`: built-in block registration.
 - `app/scripting/runtime/Compiler.js`: v2 artifact compiler.

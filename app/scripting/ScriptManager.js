@@ -347,6 +347,22 @@ export class CompiledProgramUnitBlock extends UnitBlock {
 
 registerBlockType("CompiledProgramUnitBlock", CompiledProgramUnitBlock);
 
+export class LocalScriptProgramBlock extends CompiledProgramUnitBlock {
+    static blockType = "LocalScriptProgramBlock";
+    static isLocalScriptBlock = true;
+
+    hydrateState(state = {}) {
+        super.hydrateState({
+            sourceScriptId: state.sourceScriptId || null,
+            sourceRevision: state.sourceRevision || null,
+            name: state.name || state.compiledProgram?.name || "Local Script",
+            compiledProgram: state.compiledProgram || null
+        });
+    }
+}
+
+registerBlockType("LocalScriptProgramBlock", LocalScriptProgramBlock);
+
 
 // Below, this I made myself
 

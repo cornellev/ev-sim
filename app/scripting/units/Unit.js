@@ -39,8 +39,13 @@ function OutputRow({ id = null, label="out", type="float64", parentID }) {
     )
 }
 
-export default function Unit({ children, title="default title", hasOptions=false, inputs=[], outputs=[], _uuid=null }) {
-    const [position, setPosition] = useState({ x: 100, y: 100 });
+function isEditableTarget(target) {
+    if (!target || typeof target.closest !== "function") return false;
+    return Boolean(target.closest("input, textarea, select, [contenteditable]")) || target.isContentEditable;
+}
+
+export default function Unit({ children, title="default title", hasOptions=false, inputs=[], outputs=[], _uuid=null, initialPosition=null }) {
+    const [position, setPosition] = useState(() => initialPosition || { x: 100, y: 100 });
     const generatedId = useId().replace(/:/g, "");
     const uuid = _uuid || generatedId;
     const [selected, setSelected] = useState(false);
@@ -81,15 +86,21 @@ export default function Unit({ children, title="default title", hasOptions=false
         const element = titleRef.current;
         if (element === null) return;
 
-        const onMouseDown = (e) => {
+        const onMouseDown = () => {
             setSelected(true);
-        }
+        };
+
+        const onDoubleClick = () => {
+            document.dispatchEvent(new CustomEvent('unit-double-click', { detail: { uuid } }));
+        };
 
         element.addEventListener('mousedown', onMouseDown);
+        element.addEventListener('dblclick', onDoubleClick);
         return () => {
             element.removeEventListener('mousedown', onMouseDown);
-        }
-    }, [])
+            element.removeEventListener('dblclick', onDoubleClick);
+        };
+    }, [uuid])
 
     useEffect(() => {
         if (ref.current === null) return;
@@ -99,31 +110,30 @@ export default function Unit({ children, title="default title", hasOptions=false
             ref.current.style.boxShadow = "0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)";
         }
 
-        if (!selected) {
-            const onMouseClickOutside = (e) => {
-                if (ref.current && !ref.current.contains(e.target)) {
-                    setSelected(false);
-                }
-            }
-            
-            document.addEventListener('mousedown', onMouseClickOutside);
-            return () => {
-                document.removeEventListener('mousedown', onMouseClickOutside);
-            };
-        } else {
-            const onKeyPress = (e) => {
-                if (e.key === "Escape") {
-                    setSelected(false);
-                } else if (e.key === "Delete" || e.key === "Backspace") {
-                    document.dispatchEvent(new CustomEvent('delete-unit', { detail: { uuid } }));
-                    setSelected(false);
-                }
-            }
-            document.addEventListener('keydown', onKeyPress);
-            return () => {
-                document.removeEventListener('keydown', onKeyPress);
+        if (!selected) return;
+
+        const onMouseClickOutside = (e) => {
+            if (ref.current && !ref.current.contains(e.target)) {
+                setSelected(false);
             }
         }
+
+        const onKeyPress = (e) => {
+            if (e.key === "Escape") {
+                setSelected(false);
+            } else if (e.key === "Delete" || e.key === "Backspace") {
+                if (isEditableTarget(e.target)) return;
+                document.dispatchEvent(new CustomEvent('delete-unit', { detail: { uuid } }));
+                setSelected(false);
+            }
+        }
+
+        document.addEventListener('mousedown', onMouseClickOutside);
+        document.addEventListener('keydown', onKeyPress);
+        return () => {
+            document.removeEventListener('mousedown', onMouseClickOutside);
+            document.removeEventListener('keydown', onKeyPress);
+        };
     }, [selected, uuid])
 
     // add drag functionality
@@ -149,13 +159,21 @@ export default function Unit({ children, title="default title", hasOptions=false
             if (!dragState.isDragging) return;
             const newX = e.clientX - dragState.startX;
             const newY = e.clientY - dragState.startY;
-            setPosition({ x: newX, y: newY });
+            const nextPosition = { x: newX, y: newY };
+            positionRef.current = nextPosition;
+            setPosition(nextPosition);
         }
         
         function onMouseUp() {
             dragState.isDragging = false;
             document.removeEventListener('mousemove', onMouseMove);
             document.removeEventListener('mouseup', onMouseUp);
+            document.dispatchEvent(new CustomEvent('unit-position-changed', {
+                detail: {
+                    uuid,
+                    position: positionRef.current
+                }
+            }));
         }
         
         element.addEventListener('mousedown', onMouseDown);
@@ -164,7 +182,7 @@ export default function Unit({ children, title="default title", hasOptions=false
             document.removeEventListener('mousemove', onMouseMove);
             document.removeEventListener('mouseup', onMouseUp);
         };
-    }, []);
+    }, [uuid]);
 
     useEffect(() => {
         if (!ref.current) return;
@@ -172,17 +190,17 @@ export default function Unit({ children, title="default title", hasOptions=false
     }, [position]);
 
     return (
-        <div className="absolute min-w-[160px] bg-[#393939] text-white rounded-lg shadow-lg" ref={ref} data-uuid={uuid}>
-            <div className="bg-[#393939] border-b border-[#252525] rounded-t-lg pb-2 pt-2 p-3" ref={titleRef}>
+        <div className="absolute min-w-[160px] bg-[#393939] text-white rounded-md shadow-lg" ref={ref} data-uuid={uuid}>
+            <div className="bg-[#393939] border-b border-[#252525] rounded-t-md pb-2 pt-2 p-3" ref={titleRef}>
                 <h4 className="text-xs select-none">{title}</h4>
             </div>
-            { (outputs.length > 0 || inputs.length > 0) && <div className={`mt-[0px] grid ${singleColumn ? 'grid-cols-1' : 'grid-cols-2'} gap-2 ${hasOptions ? 'border-b border-[#252525]' : 'rounded-b-lg' }`}>
-                {inputs.length > 0 && <div className={`inputs bg-[#393939] pl-3 pt-2 ${hasOptions ? '' : 'rounded-bl-lg'}`}>
+            { (outputs.length > 0 || inputs.length > 0) && <div className={`mt-[0px] grid ${singleColumn ? 'grid-cols-1' : 'grid-cols-2'} gap-2 ${hasOptions ? 'border-b border-[#252525]' : 'rounded-b-md' }`}>
+                {inputs.length > 0 && <div className={`inputs bg-[#393939] pl-3 pt-2 ${hasOptions ? '' : 'rounded-bl-md'}`}>
                     {inputs.map((input, index) => (
                         <InputRow key={input.id || input.label || index} id={input.id} label={input.label} type={input.type} parentID={uuid} />
                     ))}
                 </div>}
-                {outputs.length > 0 && <div className={`outputs bg-[#2b2b2b] pr-3 pt-2 ${hasOptions ? '' : 'rounded-br-lg'}`}>
+                {outputs.length > 0 && <div className={`outputs bg-[#2b2b2b] pr-3 pt-2 ${hasOptions ? '' : 'rounded-br-md'}`}>
                     {outputs.map((output, index) => (
                         <OutputRow key={output.id || output.label || index} id={output.id} label={output.label} type={output.type} parentID={uuid} />
                     ))}
@@ -192,7 +210,7 @@ export default function Unit({ children, title="default title", hasOptions=false
                 hasOptions &&
                 <div onClick={() => {
                     setSelected(false);
-                }} className="bg-[#393939] rounded-b-lg p-3">
+                }} className="bg-[#393939] rounded-b-md p-3">
                     {children}
                 </div>
             }

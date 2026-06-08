@@ -1,13 +1,12 @@
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { BlockOutput, reregister, UnitBlock } from "../../ScriptManager";
 import Unit from "../Unit";
 
-export function IfUnit({ _uuid }) {
-    const selectRef = useRef();
-    const [outputType, setOutputType] = useState("float64");
+export function IfUnit({ _uuid, initialState = {} }) {
+    const [outputType, setOutputType] = useState(() => initialState.type || "float64");
 
     const onChange = (e) => {
-        const type = selectRef.current.value;
+        const type = e.target.value;
         setOutputType(type);
 
         reregister(_uuid);
@@ -27,7 +26,12 @@ export function IfUnit({ _uuid }) {
             }>
 
             <div className="flex flex-col gap-2">
-                <select onChange={onChange} id={_uuid + "-type"} className="w-full px-2 py-1 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:border-blue-500 hover:border-gray-400" ref={selectRef}>
+                <select
+                    value={outputType}
+                    onChange={onChange}
+                    id={_uuid + "-type"}
+                    className="w-full px-2 py-1 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:border-blue-500 hover:border-gray-400"
+                >
                     <option value="float64">Float64</option>
                     <option value="int32">Int32</option>
                     <option value="boolean">Boolean</option>

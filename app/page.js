@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import TotalScene from './3d/Scene';
 import Scripting from './scripting/Scripting';
 import Menu from './3d/overlay/menu/Menu';
@@ -10,20 +10,24 @@ export default function Home() {
     const [state, set_state] = useState("scripting");
     const [menuVisible, setMenuVisible] = useState(false);
 
-    const goToScene = () => {
+    const closeMenu = useCallback(() => {
+        setMenuVisible(false);
+    }, []);
+
+    const goToScene = useCallback(() => {
         set_state("3d");
         setMenuVisible(false);
-    }
+    }, []);
 
-    const goToScripting = () => {
+    const goToScripting = useCallback(() => {
         set_state("scripting");
         setMenuVisible(false);
-    }
+    }, []);
 
     useEffect(() => {
         const ev = (e) => {
             if (e.key == "Escape") {
-                setMenuVisible(!menuVisible)
+                setMenuVisible((visible) => !visible);
             }
         };
         document.addEventListener("keydown", ev);
@@ -31,12 +35,19 @@ export default function Home() {
         return () => {
             document.removeEventListener("keydown", ev);
         }
-    })
+    }, [])
 
     return (
         <>
         {
-            menuVisible && <Menu onScene={goToScene} onScripting={goToScripting}></Menu>
+            menuVisible && (
+                <Menu
+                    activeView={state}
+                    onClose={closeMenu}
+                    onScene={goToScene}
+                    onScripting={goToScripting}
+                />
+            )
         }
         {
             state === "scripting" && <Scripting />

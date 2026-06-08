@@ -5,10 +5,24 @@ import {
     BlockOutput,
     clearBlockTypeRegistryForTests,
     CompiledProgramUnitBlock,
+    getRegisteredBlockType,
+    LocalScriptProgramBlock,
     registerBlockType,
     ScriptManager,
     UnitBlock,
 } from "../app/scripting/ScriptManager.js";
+import {
+    createArtifactOnlyDocument,
+    createScriptDocument,
+    isCompiledArtifact,
+    isEditorDocument,
+} from "../app/scripting/EditorDocument.js";
+import {
+    restoreManagerFromGraph,
+    serializeManagerGraph,
+    wouldCreateScriptReferenceCycle,
+} from "../app/scripting/GraphDocument.js";
+import { createLoadedScript, loadScript } from "../app/scripting/ScriptRuntime.js";
 
 class ConstBlock extends UnitBlock {
     constructor(uuid, value = 1) {
@@ -89,6 +103,7 @@ class InputBlock extends UnitBlock {
         return {
             role: "input",
             uuid: this.uuid,
+            portId: "input",
             label: this.state.label,
             type: "float64"
         };
@@ -259,7 +274,9 @@ function resetRegistry() {
         ThrowBlock,
         AccumulatorBlock,
         CompiledProgramUnitBlock,
+        LocalScriptProgramBlock,
     ].forEach((blockClass) => registerBlockType(blockClass.name, blockClass));
+    registerBlockType(LocalScriptProgramBlock.blockType, LocalScriptProgramBlock);
 }
 
 function createBasicProgram() {
@@ -443,17 +460,51 @@ test("compiled program block maps imported inputs and outputs", () => {
     manager.connectUnits("input", "input", "add", "a");
     manager.connectUnits("two", "out", "add", "b");
     manager.connectUnits("add", "out", "output", "output");
+    const artifact = manager.compile("imported");
 
     const imported = new CompiledProgramUnitBlock("imported");
-    imported.hydrateState({ compiledProgram: manager.compile("imported") });
+    imported.hydrateState({ compiledProgram: artifact });
     imported.inputs.x = {};
     imported.getInput = () => 3;
 
     const output = imported.execute();
 
+    assert.equal(artifact.interface.inputs[0].label, "x");
+    assert.equal(artifact.interface.inputs[0].portId, "input");
     assert.equal(imported.inputType("x"), "float64");
     assert.equal(imported.outputType("result"), "float64");
     assert.equal(output.get("result"), 5);
+});
+
+test("executeProgram surfaces outputs from connected imported programs", () => {
+    resetRegistry();
+
+    const inner = new ScriptManager();
+    inner.addUnit(new InputBlock("input", "x"));
+    inner.addUnit(new AddBlock("add"));
+    inner.addUnit(new ConstBlock("two", 2));
+    inner.addUnit(new OutputBlock("output", "result"));
+    inner.connectUnits("input", "input", "add", "a");
+    inner.connectUnits("two", "out", "add", "b");
+    inner.connectUnits("add", "out", "output", "output");
+    const artifact = inner.compile("add-two");
+
+    const outer = new ScriptManager();
+    outer.addUnit(new ConstBlock("three", 3));
+
+    const imported = new CompiledProgramUnitBlock("imported");
+    imported.hydrateState({ compiledProgram: artifact });
+    outer.addUnit(imported);
+
+    outer.addUnit(new OutputBlock("output", "final"));
+    outer.connectUnits("three", "out", "imported", "x");
+    outer.connectUnits("imported", "result", "output", "output");
+
+    assert.equal(outer.checkValidity(), true);
+
+    const run = outer.executeProgram();
+    assert.equal(run.status, "success");
+    assert.deepEqual(run.outputs, { final: 5 });
 });
 
 test("persistent runners preserve runtime state across runs", () => {
@@ -471,4 +522,291 @@ test("persistent runners preserve runtime state across runs", () => {
     assert.equal(runner.run({ x: 2 }).outputs.result, 2);
     assert.equal(runner.run({ x: 2 }).outputs.result, 4);
     assert.deepEqual(runner.serializeRuntimeState().acc, { total: 4 });
+});
+
+test("editor graph serialization round-trips nodes, state, positions, connections, and runtime state", () => {
+    resetRegistry();
+
+    const manager = new ScriptManager();
+    manager.addUnit(new ConstBlock("one", 1));
+    manager.addUnit(new AccumulatorBlock("acc"));
+    manager.addUnit(new OutputBlock("output", "total"));
+    manager.connectUnits("one", "out", "acc", "value");
+    manager.connectUnits("acc", "out", "output", "output");
+
+    const accumulator = manager.units.find((unit) => unit.uuid === "acc");
+    accumulator.total = 7;
+
+    const outputNodeConfig = {
+        outputs: [
+            { id: "total", label: "total", type: "float64" }
+        ]
+    };
+    const graph = serializeManagerGraph(manager, {
+        outputNodeConfig,
+        positions: {
+            head: { x: 480, y: 120 },
+            one: { x: 12, y: 24 },
+            acc: { x: 120, y: 240 },
+            output: { x: 320, y: 260 }
+        },
+        headUUID: "head"
+    });
+
+    assert.deepEqual(graph.outputNodeConfig, outputNodeConfig);
+    assert.deepEqual(graph.headPosition, { x: 480, y: 120 });
+    assert.deepEqual(graph.nodes.find((node) => node.uuid === "acc").position, { x: 120, y: 240 });
+    assert.deepEqual(graph.nodes.find((node) => node.uuid === "acc").runtimeState, { total: 7 });
+    assert.deepEqual(graph.connections.map((edge) => `${edge.from}:${edge.output}->${edge.to}:${edge.input}`), [
+        "one:out->acc:value",
+        "acc:out->output:output"
+    ]);
+
+    const restored = restoreManagerFromGraph(graph, getRegisteredBlockType);
+    const run = restored.executeProgram();
+
+    assert.equal(restored.checkValidity(), true);
+    assert.equal(restored.units.find((unit) => unit.uuid === "acc").total, 8);
+    assert.deepEqual(run.outputs, { total: 8 });
+});
+
+test("autosave-style document updates keep the previous latest valid artifact when a graph becomes invalid", () => {
+    const artifact = createBasicProgram().compile("stable");
+    const document = createScriptDocument({
+        name: "Stable Script",
+        latestValidArtifact: artifact,
+        compileStatus: {
+            valid: true,
+            error: null,
+            artifactUpdatedAt: "2026-06-09T00:00:00.000Z"
+        }
+    });
+
+    const invalidUpdate = {
+        ...document,
+        graph: {
+            head: "head-uuid",
+            outputNodeConfig: null,
+            nodes: [],
+            connections: []
+        },
+        compileStatus: {
+            valid: false,
+            error: "Graph is not valid.",
+            artifactUpdatedAt: document.compileStatus.artifactUpdatedAt
+        }
+    };
+
+    assert.equal(invalidUpdate.latestValidArtifact, artifact);
+    assert.equal(invalidUpdate.compileStatus.valid, false);
+    assert.equal(invalidUpdate.compileStatus.artifactUpdatedAt, "2026-06-09T00:00:00.000Z");
+});
+
+test("live-linked local script blocks can refresh to a newer compiled artifact", () => {
+    resetRegistry();
+
+    const makeAddProgram = (amount, name) => {
+        const manager = new ScriptManager();
+        manager.addUnit(new InputBlock("input", "x"));
+        manager.addUnit(new ConstBlock("amount", amount));
+        manager.addUnit(new AddBlock("add"));
+        manager.addUnit(new OutputBlock("output", "result"));
+        manager.connectUnits("input", "input", "add", "a");
+        manager.connectUnits("amount", "out", "add", "b");
+        manager.connectUnits("add", "out", "output", "output");
+        return manager.compile(name);
+    };
+
+    const addTwo = makeAddProgram(2, "add-two");
+    const addThree = makeAddProgram(3, "add-three");
+
+    const outer = new ScriptManager();
+    outer.addUnit(new ConstBlock("value", 3));
+
+    const local = new LocalScriptProgramBlock("local");
+    local.hydrateState({
+        sourceScriptId: "child",
+        sourceRevision: "rev-1",
+        compiledProgram: addTwo,
+        name: "Child Script"
+    });
+    outer.addUnit(local);
+
+    outer.addUnit(new OutputBlock("output", "final"));
+    outer.connectUnits("value", "out", "local", "x");
+    outer.connectUnits("local", "result", "output", "output");
+
+    assert.deepEqual(outer.executeProgram().outputs, { final: 5 });
+
+    local.hydrateState({
+        ...local.state,
+        sourceRevision: "rev-2",
+        compiledProgram: addThree
+    });
+
+    assert.equal(local.inputType("x"), "float64");
+    assert.equal(local.outputType("result"), "float64");
+    assert.deepEqual(outer.executeProgram().outputs, { final: 6 });
+});
+
+test("script-reference cycle detection rejects self-reference and indirect cycles", () => {
+    const scriptA = createScriptDocument({
+        id: "a",
+        graph: {
+            head: "head-uuid",
+            outputNodeConfig: null,
+            nodes: [
+                { uuid: "local-b", type: "LocalScriptProgramBlock", state: { sourceScriptId: "b" } }
+            ],
+            connections: []
+        }
+    });
+    const scriptB = createScriptDocument({
+        id: "b",
+        graph: {
+            head: "head-uuid",
+            outputNodeConfig: null,
+            nodes: [
+                { uuid: "local-c", type: "LocalScriptProgramBlock", state: { sourceScriptId: "c" } }
+            ],
+            connections: []
+        }
+    });
+    const scriptC = createScriptDocument({
+        id: "c",
+        graph: {
+            head: "head-uuid",
+            outputNodeConfig: null,
+            nodes: [],
+            connections: []
+        }
+    });
+
+    const documents = [scriptA, scriptB, scriptC];
+
+    assert.equal(wouldCreateScriptReferenceCycle("a", "a", documents), true);
+    assert.equal(wouldCreateScriptReferenceCycle("c", "a", documents), true);
+    assert.equal(wouldCreateScriptReferenceCycle("a", "c", documents), false);
+});
+
+test("import format detection separates editable documents from compiled artifacts", () => {
+    const artifact = createBasicProgram().compile("compiled");
+    const document = createScriptDocument({
+        name: "Editable",
+        latestValidArtifact: artifact
+    });
+
+    assert.equal(isEditorDocument(document), true);
+    assert.equal(isCompiledArtifact(document), false);
+    assert.equal(isCompiledArtifact(artifact), true);
+    assert.equal(isEditorDocument(artifact), false);
+});
+
+test("legacy v2 compiled artifacts remain executable as artifact-only blocks", () => {
+    resetRegistry();
+
+    const child = new ScriptManager();
+    child.addUnit(new InputBlock("input", "x"));
+    child.addUnit(new ConstBlock("two", 2));
+    child.addUnit(new AddBlock("add"));
+    child.addUnit(new OutputBlock("output", "result"));
+    child.connectUnits("input", "input", "add", "a");
+    child.connectUnits("two", "out", "add", "b");
+    child.connectUnits("add", "out", "output", "output");
+
+    const artifactDocument = createArtifactOnlyDocument(child.compile("legacy"), {
+        name: "Legacy Artifact"
+    });
+
+    const outer = new ScriptManager();
+    outer.addUnit(new ConstBlock("three", 3));
+
+    const imported = new CompiledProgramUnitBlock("imported");
+    imported.hydrateState({
+        compiledProgram: artifactDocument.latestValidArtifact,
+        name: artifactDocument.name
+    });
+    outer.addUnit(imported);
+
+    outer.addUnit(new OutputBlock("output", "final"));
+    outer.connectUnits("three", "out", "imported", "x");
+    outer.connectUnits("imported", "result", "output", "output");
+
+    const run = outer.executeProgram();
+
+    assert.equal(artifactDocument.editable, false);
+    assert.equal(run.status, "success");
+    assert.deepEqual(run.outputs, { final: 5 });
+});
+
+test("createLoadedScript runs a compiled artifact with named and positional inputs", () => {
+    resetRegistry();
+
+    const manager = new ScriptManager();
+    manager.addUnit(new InputBlock("input", "x"));
+    manager.addUnit(new ConstBlock("two", 2));
+    manager.addUnit(new AddBlock("add"));
+    manager.addUnit(new OutputBlock("output", "result"));
+    manager.connectUnits("input", "input", "add", "a");
+    manager.connectUnits("two", "out", "add", "b");
+    manager.connectUnits("add", "out", "output", "output");
+
+    const script = createLoadedScript(manager.compile("add-two"));
+
+    assert.deepEqual(script.run({ x: 3 }), { result: 5 });
+    assert.deepEqual(script.run(4), { result: 6 });
+});
+
+test("loadScript resolves editor documents and local script ids", async () => {
+    resetRegistry();
+
+    const manager = new ScriptManager();
+    manager.addUnit(new InputBlock("input", "x"));
+    manager.addUnit(new ConstBlock("two", 2));
+    manager.addUnit(new AddBlock("add"));
+    manager.addUnit(new OutputBlock("output", "result"));
+    manager.connectUnits("input", "input", "add", "a");
+    manager.connectUnits("two", "out", "add", "b");
+    manager.connectUnits("add", "out", "output", "output");
+
+    const document = createScriptDocument({
+        id: "local-add-two",
+        name: "Local Add Two",
+        latestValidArtifact: manager.compile("local-add-two")
+    });
+
+    const direct = await loadScript(document, { registerBuiltIns: false });
+    const local = await loadScript("local:local-add-two", {
+        registerBuiltIns: false,
+        getDocument: async (id) => {
+            assert.equal(id, "local-add-two");
+            return document;
+        }
+    });
+
+    assert.deepEqual(direct.run(5), { result: 7 });
+    assert.deepEqual(local.run({ x: 6 }), { result: 8 });
+});
+
+test("loadScript resolves URL JSON with an injected fetcher", async () => {
+    resetRegistry();
+
+    const manager = new ScriptManager();
+    manager.addUnit(new ConstBlock("two", 2));
+    manager.addUnit(new OutputBlock("output", "result"));
+    manager.connectUnits("two", "out", "output", "output");
+
+    const artifact = manager.compile("url-script");
+    const script = await loadScript("https://example.test/url-script.json", {
+        registerBuiltIns: false,
+        fetcher: async (url) => {
+            assert.equal(url, "https://example.test/url-script.json");
+            return {
+                ok: true,
+                json: async () => artifact
+            };
+        }
+    });
+
+    assert.deepEqual(script.run(), { result: 2 });
 });

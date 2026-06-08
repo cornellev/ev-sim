@@ -15,3 +15,5 @@ export function bind(context, onChange=(n_value)=>{}, interval=1) {
         }
     }, interval); // check every interval ms
 }
+
+//lowk can be fixed up not 100% the best lol

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { TYPES } from "./Constants";
 
 export function Line({ lineId, start = { x: 0, y: 0 }, end = { x: 0, y: 0 }, color = "white", onDeleted=() => {} }) {
@@ -75,14 +75,131 @@ function isSameConnection(aFrom, aTo, bFrom, bTo) {
     return aFrom?.uuid === bFrom?.uuid && aFrom?.label === bFrom?.label && aTo?.uuid === bTo?.uuid && aTo?.label === bTo?.label;
 }
 
-export function LineManager({ units, notifyConnection=(from, to) => true, onDeleteConnection=(from, to) => {} }) {
+function getPortCenter(element) {
+    const rect = element.getBoundingClientRect();
+    return {
+        x: rect.left + rect.width / 2,
+        y: rect.top + rect.height / 2
+    };
+}
+
+function findPortElement(kind, uuid, label) {
+    const selector = kind === "input" ? ".input" : ".output";
+    return Array.from(document.querySelectorAll(selector)).find((element) => {
+        const info = sourceToInfo(element);
+        return info?.uuid === uuid && info?.label === label;
+    }) || null;
+}
+
+function lineFromConnection(connection) {
+    const startSource = findPortElement("input", connection.to, connection.input);
+    const endTarget = findPortElement("output", connection.from, connection.output);
+
+    if (!startSource || !endTarget) return null;
+
+    const inputInfo = sourceToInfo(startSource);
+    return {
+        id: `edge:${connection.from}|${connection.output}|${connection.to}|${connection.input}`,
+        start: getPortCenter(startSource),
+        end: getPortCenter(endTarget),
+        startSource,
+        endTarget,
+        color: TYPES[connection.type || inputInfo?.type] || "white"
+    };
+}
+
+export function LineManager({
+    units,
+    notifyConnection=(from, to) => true,
+    onDeleteConnection=(from, to) => {},
+    graphKey=null,
+    connectionSnapshot=[]
+}) {
     const [lines, setLines] = useState([]);
     const [lineInProgress, setLineInProgress] = useState(null);
     const linesRef = useRef(lines);
+    const snapshotRef = useRef(connectionSnapshot);
 
     useEffect(() => {
         linesRef.current = lines;
     }, [lines]);
+
+    useEffect(() => {
+        snapshotRef.current = connectionSnapshot;
+    }, [connectionSnapshot]);
+
+    const rebuildLinesFromSnapshot = useCallback(() => {
+        const restoredLines = snapshotRef.current
+            .map((connection) => lineFromConnection(connection))
+            .filter(Boolean);
+        setLineInProgress(null);
+        setLines(restoredLines);
+    }, []);
+
+    useEffect(() => {
+        let cancelled = false;
+        const frames = [];
+        const timers = [];
+        const maxAttempts = connectionSnapshot.length === 0 ? 1 : 16;
+
+        const scheduleAttempt = (attempt = 0) => {
+            if (cancelled) return;
+
+            const run = () => {
+                if (cancelled) return;
+
+                const restoredLines = snapshotRef.current
+                    .map((connection) => lineFromConnection(connection))
+                    .filter(Boolean);
+                const complete = restoredLines.length === snapshotRef.current.length;
+
+                if (complete || attempt >= maxAttempts - 1) {
+                    setLineInProgress(null);
+                    setLines(restoredLines);
+                    return;
+                }
+
+                scheduleAttempt(attempt + 1);
+            };
+
+            if (typeof window === "undefined" || typeof window.requestAnimationFrame !== "function") {
+                const timer = setTimeout(run, attempt < 3 ? 0 : 40);
+                timers.push(timer);
+                return;
+            }
+
+            const frame = window.requestAnimationFrame(() => {
+                if (attempt < 3) {
+                    run();
+                    return;
+                }
+
+                const timer = window.setTimeout(run, 40);
+                timers.push(timer);
+            });
+            frames.push(frame);
+        };
+
+        scheduleAttempt();
+
+        return () => {
+            cancelled = true;
+            frames.forEach((frame) => window.cancelAnimationFrame(frame));
+            timers.forEach((timer) => clearTimeout(timer));
+        };
+    }, [graphKey, connectionSnapshot]);
+
+    useEffect(() => {
+        const onRefreshGraphLines = (event) => {
+            if (event.detail?.graphKey !== graphKey) return;
+            rebuildLinesFromSnapshot();
+        };
+
+        document.addEventListener("refresh-graph-lines", onRefreshGraphLines);
+        return () => {
+            document.removeEventListener("refresh-graph-lines", onRefreshGraphLines);
+        };
+    }, [graphKey, rebuildLinesFromSnapshot]);
 
     const deleteLine = (lineId) => {
         const line = linesRef.current.find((item) => item.id === lineId);
