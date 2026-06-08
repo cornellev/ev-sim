@@ -22,22 +22,19 @@ export class VehicleDatabase extends Database {
      */
     setup(scene) {
         for (const vehicle of this.vehicles) {
-            vehicle.start(scene);
+            vehicle.start?.(scene);
         }
+    }
 
-        // setup update frames
-        let lastTime = performance.now();
-        const frame = (time) => {
-            const deltaTime = (time - lastTime) / 1000; // in seconds
-            lastTime = time;
+    update(dt) {
+        for (const vehicle of this.vehicles) {
+            const result = vehicle.update?.(dt);
 
-            for (const vehicle of this.vehicles) {
-                vehicle.update(deltaTime);
+            if (result?.catch) {
+                result.catch(err => {
+                    console.error("Error updating vehicle:", err);
+                });
             }
-
-            requestAnimationFrame(frame);
-        };
-
-        requestAnimationFrame(frame);
+        }
     }
 }

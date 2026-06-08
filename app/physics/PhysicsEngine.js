@@ -28,11 +28,14 @@ export class PhysicsEngine {
         // For now, the physics engine doesn't do anything active; it just provides a structure for future physics updates and a place to store physics-related state if needed.
     }
 
-    step(deltaTime) {
-        // This method would be called on each simulation step to update the physics state. For now, it doesn't do anything, but in a more complete implementation, it could handle things like collision detection, vehicle dynamics, etc.
+    async step(deltaTime) {
+        if (!this.world) return;
+
+        this.world.timestep = deltaTime;
+        this.world.step();
     }
 
-    stop() {
+    async stop() {
         // Clean up any physics-related resources if needed. For now, there's nothing to clean up.
     }
 

@@ -1,6 +1,6 @@
 
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
     FaPlay,
     FaPause,
@@ -40,6 +40,17 @@ export function SimulationMenu({ data, vehicleOverlayVisible = true, onVehicleOv
         recording: false,
         overlay: false,
     });
+
+    const sim = data?.simulation?.();
+
+    const [simState, setSimState] = useState(() => {
+        return sim?.getSnapshot?.() ?? null;
+    });
+
+    useEffect(() => {
+        if (!sim) return;
+        return sim.subscribe(setSimState);
+    }, [sim]);
 
     const [mode, setMode] = useState("run");
     const modeOptions = [
@@ -86,20 +97,20 @@ export function SimulationMenu({ data, vehicleOverlayVisible = true, onVehicleOv
                                     <MenuToggle
                                         label="Physics Engine"
                                         icon={<FaMicrochip className="h-3 w-3" />}
-                                        checked={toggles.physics}
-                                        onChange={(v) => setToggle("physics", v)}
+                                        checked={!!simState?.modules?.physics}
+                                        onChange={(v) => sim?.setPhysicsEnable(v)}
                                     />
                                     <MenuToggle
                                         label="Real-Time Clock"
                                         icon={<FaBroadcastTower className="h-3 w-3" />}
-                                        checked={toggles.realtime}
-                                        onChange={(v) => setToggle("realtime", v)}
+                                        checked={!!simState?.realtime}
+                                        onChange={(v) => sim?.setRealtime(v)}
                                     />
                                     <MenuToggle
                                         label="Deterministic Mode"
                                         icon={<FaLayerGroup className="h-3 w-3" />}
-                                        checked={toggles.deterministic}
-                                        onChange={(v) => setToggle("deterministic", v)}
+                                        checked={!!simState?.deterministic}
+                                        onChange={(v) => sim?.setDeterministic(v)}
                                     />
                                 </PanelSection>
                             </FlyoutPanel>
@@ -111,6 +122,7 @@ export function SimulationMenu({ data, vehicleOverlayVisible = true, onVehicleOv
                                 subtitle="Global systems for any simulation type"
                             >
                                 <PanelSection title="Core Modules">
+                                    {/* TODO: implement agents! */}
                                     <MenuToggle
                                         label="Agents"
                                         icon={<FaCube className="h-3 w-3" />}
@@ -120,20 +132,20 @@ export function SimulationMenu({ data, vehicleOverlayVisible = true, onVehicleOv
                                     <MenuToggle
                                         label="Environment"
                                         icon={<FaGlobe className="h-3 w-3" />}
-                                        checked={toggles.environment}
-                                        onChange={(v) => setToggle("environment", v)}
+                                        checked={!!simState?.modules?.environment}
+                                        onChange={(v) => sim?.setModule("environment", v)}
                                     />
                                     <MenuToggle
                                         label="Sensors"
                                         icon={<FaBroadcastTower className="h-3 w-3" />}
-                                        checked={toggles.sensors}
-                                        onChange={(v) => setToggle("sensors", v)}
+                                        checked={!!simState?.modules?.sensors}
+                                        onChange={(v) => sim?.setModule("sensors", v)}
                                     />
                                     <MenuToggle
-                                        label="Data Feeds"
+                                        label="Scripting"
                                         icon={<FaDatabase className="h-3 w-3" />}
-                                        checked={toggles.dataFeeds}
-                                        onChange={(v) => setToggle("dataFeeds", v)}
+                                        checked={!!simState?.modules?.scripting}
+                                        onChange={(v) => sim?.setModule("scripting", v)}
                                     />
                                 </PanelSection>
                             </FlyoutPanel>
@@ -212,17 +224,18 @@ export function SimulationMenu({ data, vehicleOverlayVisible = true, onVehicleOv
                         <MenuButton
                             iconOnly
                             variant="primary"
-                            active={transportState === "playing"}
-                            onClick={() => setTransportState("playing")}
+                            active={simState?.status === "playing"}
+                            onClick={() => sim?.play()}
                             title="Run simulation"
                             ariaLabel="Play"
                         >
                             <FaPlay className="h-3 w-3" />
                         </MenuButton>
+                        {/* TODO: Check out, for some reason doesn't update */}
                         <MenuButton
                             iconOnly
-                            active={transportState === "paused"}
-                            onClick={() => setTransportState("paused")}
+                            active={simState?.status === "paused"}
+                            onClick={() => sim?.pause()}
                             title="Pause simulation"
                             ariaLabel="Pause"
                         >
@@ -230,7 +243,7 @@ export function SimulationMenu({ data, vehicleOverlayVisible = true, onVehicleOv
                         </MenuButton>
                         <MenuButton
                             iconOnly
-                            onClick={() => setTransportState("step")}
+                            onClick={() => sim?.step()}
                             title="Advance one simulation step"
                             ariaLabel="Step"
                         >
@@ -239,7 +252,8 @@ export function SimulationMenu({ data, vehicleOverlayVisible = true, onVehicleOv
                         <MenuButton
                             iconOnly
                             variant="danger"
-                            onClick={() => setTransportState("stopped")}
+                            active={simState?.status === "stopped"}
+                            onClick={() => sim?.stop()}
                             title="Stop and reset simulation"
                             ariaLabel="Reset"
                         >

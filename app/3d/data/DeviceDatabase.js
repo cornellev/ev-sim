@@ -28,26 +28,26 @@ export class DeviceDatabase extends Database {
         }
         
         console.log("Setup", this.devices.length, "devices");
-
-        const animate = () => {
-            requestAnimationFrame(animate);
-            if (!this.loopDisabled) this.execute();
-        };
-        animate();
     }
 
-    execute() {
+    update(dt) {
+        if (this.loopDisabled) return;
+
+        this.execute(dt);
+    }
+
+    execute(dt) {
         for (const device of this.devices) {
             if (device.enabled) {
-                device.execute();
+                device.execute(dt);
             }
         }
     }
 
-    async asyncExecute() {
+    async asyncExecute(dt) {
         for (const device of this.devices) {
             if (device.enabled) {
-                await device.execute();
+                await device.execute(dt);
             }
         }
     }

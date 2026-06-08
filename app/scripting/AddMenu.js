@@ -173,7 +173,7 @@ const units = {
             class: MultiplyTexBlock
         },
         {
-            name: "Scale Matrix (vec2)",
+            name: "Scale Matrix (tex1d)",
             obj: () => {
                 return <Scale key={Math.random()} _uuid={genUUID()} />
             },

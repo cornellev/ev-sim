@@ -8,6 +8,7 @@ import { Settings } from "./Settings";
 import { VehicleDatabase } from "./VehicleDatabase";
 import { ClientManager } from "../managers/ClientManager";
 import { PhysicsEngine } from "@/app/physics/PhysicsEngine";
+import { SimulationEngine } from "@/app/simulation/SimulationEngine";
 
 export class Data {
     constructor() {
@@ -21,6 +22,8 @@ export class Data {
         this.mouseManager = null;
 
         this.clientManager = new ClientManager(this);
+
+        this.simulationEngine = new SimulationEngine(this);
         
         this.scene = null;
         this.camera = null;
@@ -78,6 +81,13 @@ export class Data {
      */
     keys() {
         return this.keyManager;
+    }
+
+    /**
+     * @returns {SimulationEngine}
+     */
+    simulation() {
+        return this.simulationEngine;
     }
 
     /**

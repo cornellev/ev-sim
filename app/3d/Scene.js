@@ -65,13 +65,6 @@ function setupScene(scene, camera, renderer) {
     camera.position.set(0, 10, 10);
     camera.lookAt(0, 0, 0);
 
-    // render loop
-    function animate() {
-        requestAnimationFrame(animate);
-        renderer.render(scene, camera);
-    }
-    animate();
-
     console.log("Scene setup complete");
 }
 
@@ -94,13 +87,6 @@ function setupControls(scene, camera, renderer, data) {
     camera.far = 10000;
     camera.updateProjectionMatrix();
 
-    function controlLoop() {
-        requestAnimationFrame(controlLoop);
-        if (data.settings().cameraControlsEnabled) controls.update();
-        renderer.render(scene, camera);
-    }
-    controlLoop();
-
     // add grid helper
     const gridHelper = new THREE.GridHelper(400, 400);
     gridHelper.visible = false;
@@ -110,6 +96,7 @@ function setupControls(scene, camera, renderer, data) {
         gridHelper.visible = !gridHelper.visible;
     });
 
+    return controls;
 }
 
 /**
@@ -348,13 +335,15 @@ async function setupVehicles(scene, data, camera) {
         car.velocity.x = 0; // stop moving backward
     });
 
-    data.keys().registerWhileDown("a", () => {
+    const STEER_RATE = THREE.MathUtils.degToRad(50);
+
+    data.keys().registerWhileDown("a", (dt) => {
         if (!car.controlsEnabled) return;
-        car.steeringAngle += (5 / 180) * Math.PI; // turn left by 1 degree
+        car.steeringAngle += STEER_RATE * dt;
     });
-    data.keys().registerWhileDown("d", () => {
+    data.keys().registerWhileDown("d", (dt) => {
         if (!car.controlsEnabled) return;
-        car.steeringAngle -= (5 / 180) * Math.PI; // turn right by 1 degree
+        car.steeringAngle -= STEER_RATE * dt;
     });
 
 
@@ -437,7 +426,9 @@ export default function TotalScene() {
 
         const initialize = async () => {
             setupScene(scene, camera, renderer);
-            setupControls(scene, camera, renderer, data);
+            const controls = setupControls(scene, camera, renderer, data);
+
+            data.simulation().configure({ scene, camera, renderer, controls });
 
             let startingState = {};
 
@@ -480,6 +471,10 @@ export default function TotalScene() {
             data.objects().scene(scene);
             data.vehicles().setup(scene);
             data.devices().setup(scene);
+
+            data.simulation().startLoop();
+            data.simulation().play();
+
             setSceneData(data);
         };
 
@@ -498,8 +493,15 @@ export default function TotalScene() {
         // --- 5. Cleanup Function ---
         return () => {
             disposed = true;
-            mountNode.removeChild(renderer.domElement);
+
+            data.simulation().dispose();
+
+            if (mountNode.contains(renderer.domElement)) {
+                mountNode.removeChild(renderer.domElement);
+            }
+
             window.removeEventListener('resize', handleResize);
+            renderer.dispose();
         };
     }, []);
 

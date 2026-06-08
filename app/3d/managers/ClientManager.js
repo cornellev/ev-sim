@@ -26,6 +26,8 @@ export class ClientManager {
             console.warn("type sync skipped:", err.message);
         }
 
+        // TODO: SYNC THESE FROM FOLDER!!!
+
         try {
             await registerMsgDefinitionFromFile(
                 "geometry_msgs/Point32",

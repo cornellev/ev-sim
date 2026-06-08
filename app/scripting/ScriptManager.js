@@ -261,6 +261,36 @@ export class UnitBlock {
     }
 }
 
+export class Program {
+    constructor() {
+        this.nodes = []; // list of ids
+        this.types = []; // type list, defined (id, type)
+        this.connections = []; // connection list, we'll do two point connections so just a list of (input id, output id, name) (name is what the output uses to refer to input)
+        this.inputs = []; // list of (id, input type), where id is the node that requires the input
+        this.output = null; // output type
+    }
+
+    findInput(outputId, inputName) {
+        for (let connection of this.connections) {
+            if (connection[1] === outputId && connection[2] === inputName) {
+                return connection[0];
+            }
+        }
+
+        return null;
+    }
+}
+
+// what we can do is take the normal unit block, take the execute function, and bind it to the compiled unit block
+// making use of javascript's wack ass syntax but would work really really well.
+export class CompiledUnitBlock {
+    constructor() {
+        
+    }
+}
+
+// BELOW IS AI GENERATED CODE
+
 export class CompiledProgramUnitBlock extends UnitBlock {
     register() {
         const compiledProgram = this.state?.compiledProgram;
@@ -311,6 +341,8 @@ export class CompiledProgramUnitBlock extends UnitBlock {
 
 registerBlockType("CompiledProgramUnitBlock", CompiledProgramUnitBlock);
 
+
+// Below, this I made myself
 
 export class ScriptManager {
     constructor() {

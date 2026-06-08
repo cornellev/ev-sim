@@ -7,8 +7,18 @@ import Menu from './3d/overlay/menu/Menu';
 
 
 export default function Home() {
-    const [state, set_state] = useState("3d");
+    const [state, set_state] = useState("scripting");
     const [menuVisible, setMenuVisible] = useState(false);
+
+    const goToScene = () => {
+        set_state("3d");
+        setMenuVisible(false);
+    }
+
+    const goToScripting = () => {
+        set_state("scripting");
+        setMenuVisible(false);
+    }
 
     useEffect(() => {
         const ev = (e) => {
@@ -26,7 +36,7 @@ export default function Home() {
     return (
         <>
         {
-            menuVisible && <Menu></Menu>
+            menuVisible && <Menu onScene={goToScene} onScripting={goToScripting}></Menu>
         }
         {
             state === "scripting" && <Scripting />
