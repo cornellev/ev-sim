@@ -1,15 +1,16 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { TYPES } from "../Constants";
 
-function InputRow({ label="in", type="float64", parentID }) {
+function InputRow({ id = null, label="in", type="float64", parentID }) {
     const mainType = TYPES[type.replace(/\[.*?\]/, '')];
     const subType = TYPES[type.match(/\[(.*?)\]/)?.[1]];
+    const encodedLabel = id || label;
 
     return (
         <div className="mb-2 flex items-center">
             {type !== "caption" && <div className={`w-3 h-3 rounded-full mr-2 input-${type.replace(/\[.*?\]/, '')} input parent-${parentID}`} style={{
                 backgroundColor: mainType ? mainType : "rgb(150,150,150)"
-            }} data-encoded={parentID + "|" + label + "|" + type}>
+            }} data-encoded={parentID + "|" + encodedLabel + "|" + type}>
                 <div className={`w-1.5 h-1.5 rounded-full m-[3px]`} style={{
                     backgroundColor: subType ? subType : "#393939"
                 }}></div>
@@ -19,16 +20,17 @@ function InputRow({ label="in", type="float64", parentID }) {
     )
 }
 
-function OutputRow({ label="out", type="float64", parentID }) {
+function OutputRow({ id = null, label="out", type="float64", parentID }) {
     const mainType = TYPES[type.replace(/\[.*?\]/, '')];
     const subType = TYPES[type.match(/\[(.*?)\]/)?.[1]];
+    const encodedLabel = id || label;
 
     return (
         <div className="mb-2 flex items-center justify-end">
             <span className={"text-xs select-none " + (type === "caption" ? "italic" : "")}>{label}</span>
             {type !== "caption" && <div className={`w-3 h-3 rounded-full ml-2 output-${type.replace(/\[.*?\]/, '')} output parent-${parentID}`} style={{
                 backgroundColor: mainType ? mainType : "rgb(150,150,150)"
-            }}  data-encoded={parentID + "|" + label + "|" + type}>
+            }}  data-encoded={parentID + "|" + encodedLabel + "|" + type}>
                 <div className={`w-1.5 h-1.5 rounded-full m-[3px]`} style={{
                     backgroundColor: subType ? subType : "#2b2b2b"
                 }}></div>
@@ -39,29 +41,22 @@ function OutputRow({ label="out", type="float64", parentID }) {
 
 export default function Unit({ children, title="default title", hasOptions=false, inputs=[], outputs=[], _uuid=null }) {
     const [position, setPosition] = useState({ x: 100, y: 100 });
-    const [uuid, setUUID] = useState(null);
+    const generatedId = useId().replace(/:/g, "");
+    const uuid = _uuid || generatedId;
     const [selected, setSelected] = useState(false);
 
-    // make sure inputs/output labels are unique within this unit by throwing an error if there are duplicates
-    useEffect(() => {
-        const labels = [...inputs.map(i => i.label), ...outputs.map(o => o.label)];
-        const uniqueLabels = new Set(labels);
-        if (uniqueLabels.size !== labels.length) {
-            throw new Error(`Duplicate input/output labels in unit "${title}". Labels must be unique within a unit.`);
-        }
-    }, []);
-
-    useEffect(() => {
-        setUUID(_uuid || Math.random().toString(36).substring(2, 9));
-    }, []);
+    const labels = [...inputs.map(i => i.id || i.label), ...outputs.map(o => o.id || o.label)];
+    const uniqueLabels = new Set(labels);
+    if (uniqueLabels.size !== labels.length) {
+        throw new Error(`Duplicate input/output labels in unit "${title}". Labels must be unique within a unit.`);
+    }
 
     useEffect(() => {
         const onPositionUnit = (e) => {
             const { uuid: targetUUID, position: targetPosition } = e.detail || {};
             if (!targetUUID || !targetPosition) return;
 
-            const ownUUID = _uuid || uuid;
-            if (targetUUID !== ownUUID) return;
+            if (targetUUID !== uuid) return;
 
             setPosition({ x: targetPosition.x, y: targetPosition.y });
         };
@@ -70,7 +65,7 @@ export default function Unit({ children, title="default title", hasOptions=false
         return () => {
             document.removeEventListener('position-unit', onPositionUnit);
         };
-    }, [_uuid, uuid]);
+    }, [uuid]);
 
     const ref = useRef();
     const titleRef = useRef();
@@ -83,18 +78,18 @@ export default function Unit({ children, title="default title", hasOptions=false
     }, [position]);
 
     useEffect(() => {
-        if (titleRef.current === null) return;
+        const element = titleRef.current;
+        if (element === null) return;
 
         const onMouseDown = (e) => {
             setSelected(true);
         }
 
-        titleRef.current.addEventListener('mousedown', onMouseDown);
+        element.addEventListener('mousedown', onMouseDown);
         return () => {
-            if (titleRef.current === null) return;
-            titleRef.current.removeEventListener('mousedown', onMouseDown);
+            element.removeEventListener('mousedown', onMouseDown);
         }
-    }, [titleRef.current, selected])
+    }, [])
 
     useEffect(() => {
         if (ref.current === null) return;
@@ -112,6 +107,9 @@ export default function Unit({ children, title="default title", hasOptions=false
             }
             
             document.addEventListener('mousedown', onMouseClickOutside);
+            return () => {
+                document.removeEventListener('mousedown', onMouseClickOutside);
+            };
         } else {
             const onKeyPress = (e) => {
                 if (e.key === "Escape") {
@@ -126,7 +124,7 @@ export default function Unit({ children, title="default title", hasOptions=false
                 document.removeEventListener('keydown', onKeyPress);
             }
         }
-    }, [selected])
+    }, [selected, uuid])
 
     // add drag functionality
     useEffect(() => {
@@ -181,12 +179,12 @@ export default function Unit({ children, title="default title", hasOptions=false
             { (outputs.length > 0 || inputs.length > 0) && <div className={`mt-[0px] grid ${singleColumn ? 'grid-cols-1' : 'grid-cols-2'} gap-2 ${hasOptions ? 'border-b border-[#252525]' : 'rounded-b-lg' }`}>
                 {inputs.length > 0 && <div className={`inputs bg-[#393939] pl-3 pt-2 ${hasOptions ? '' : 'rounded-bl-lg'}`}>
                     {inputs.map((input, index) => (
-                        <InputRow key={index} label={input.label} type={input.type} parentID={uuid} />
+                        <InputRow key={input.id || input.label || index} id={input.id} label={input.label} type={input.type} parentID={uuid} />
                     ))}
                 </div>}
                 {outputs.length > 0 && <div className={`outputs bg-[#2b2b2b] pr-3 pt-2 ${hasOptions ? '' : 'rounded-br-lg'}`}>
                     {outputs.map((output, index) => (
-                        <OutputRow key={index} label={output.label} type={output.type} parentID={uuid} />
+                        <OutputRow key={output.id || output.label || index} id={output.id} label={output.label} type={output.type} parentID={uuid} />
                     ))}
                 </div>}
             </div>}

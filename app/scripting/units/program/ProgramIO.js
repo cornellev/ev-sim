@@ -2,15 +2,75 @@ import { useEffect, useState } from "react";
 import { BlockOutput, reregister, storeData, UnitBlock } from "../../ScriptManager";
 import Unit from "../Unit";
 
-const SUPPORTED_TYPES = ["float64", "int32", "boolean", "string"];
+export const SUPPORTED_TYPES = [
+    "float64",
+    "int32",
+    "boolean",
+    "string",
+    "tex1d",
+    "array[float64]",
+    "array[int32]",
+    "array[boolean]",
+    "array[string]",
+    "custom[string]"
+];
 
-function normalizeType(type) {
+export const OUTPUT_NODE_MAX_OUTPUTS = 8;
+
+export function normalizeType(type) {
     if (SUPPORTED_TYPES.includes(type)) return type;
     return "float64";
 }
 
+function arrayMemberType(type) {
+    return type.match(/\[(.*?)\]/)?.[1] || "float64";
+}
+
+function parseArrayValue(value, itemType = "float64") {
+    let rawItems = value;
+
+    if (typeof value === "string") {
+        const trimmed = value.trim();
+
+        if (trimmed.length === 0) {
+            rawItems = [];
+        } else {
+            try {
+                const parsed = JSON.parse(trimmed);
+                rawItems = Array.isArray(parsed) ? parsed : trimmed.split(",");
+            } catch {
+                rawItems = trimmed.split(",");
+            }
+        }
+    }
+
+    if (!Array.isArray(rawItems)) {
+        rawItems = [rawItems];
+    }
+
+    return rawItems.map((item) => parseValueByType(item, itemType));
+}
+
 function parseValueByType(value, type) {
     const normalizedType = normalizeType(type);
+
+    if (normalizedType === "tex1d") {
+        return parseArrayValue(value, "float64");
+    }
+
+    if (normalizedType.startsWith("array[")) {
+        return parseArrayValue(value, arrayMemberType(normalizedType));
+    }
+
+    if (normalizedType.startsWith("custom[")) {
+        if (typeof value !== "string") return value;
+
+        try {
+            return JSON.parse(value);
+        } catch {
+            return value;
+        }
+    }
 
     if (normalizedType === "float64") {
         const parsed = Number.parseFloat(value);
@@ -40,6 +100,63 @@ function sanitizeLabel(rawLabel, fallbackPrefix) {
     return trimmed.length > 0 ? trimmed : `${fallbackPrefix}`;
 }
 
+function sanitizePortId(rawId, fallbackId) {
+    const trimmed = String(rawId || "").trim().replace(/\|/g, "-");
+    return trimmed.length > 0 ? trimmed : fallbackId;
+}
+
+export function createOutputNodePort(index = 0, overrides = {}) {
+    const suffix = index + 1;
+
+    return {
+        id: sanitizePortId(overrides.id, index === 0 ? "output" : `output-${suffix}`),
+        label: sanitizeLabel(overrides.label, index === 0 ? "output" : `output ${suffix}`),
+        type: normalizeType(overrides.type)
+    };
+}
+
+export function normalizeOutputNodeState(data = {}) {
+    const hasOutputList = Array.isArray(data?.outputs);
+    const rawOutputs = hasOutputList
+        ? data.outputs
+        : [createOutputNodePort(0, {
+            id: "output",
+            label: data?.label,
+            type: data?.type
+        })];
+
+    const usedIds = new Set();
+    const outputs = rawOutputs.map((port, index) => {
+        const fallbackId = index === 0 ? "output" : `output-${index + 1}`;
+        const normalized = createOutputNodePort(index, {
+            ...port,
+            id: port?.id || fallbackId
+        });
+
+        let id = normalized.id;
+        let duplicateIndex = 2;
+        while (usedIds.has(id)) {
+            id = `${normalized.id}-${duplicateIndex}`;
+            duplicateIndex += 1;
+        }
+        usedIds.add(id);
+
+        return {
+            ...normalized,
+            id
+        };
+    });
+
+    return {
+        outputs: outputs.length > 0 ? outputs : [createOutputNodePort(0)]
+    };
+}
+
+export function hasDuplicateOutputLabels(outputs = []) {
+    const labels = outputs.map((output) => sanitizeLabel(output.label, "output"));
+    return new Set(labels).size !== labels.length;
+}
+
 function getInitialData(uuid, fallbackPrefix) {
     return {
         label: sanitizeLabel(uuid, fallbackPrefix),
@@ -65,12 +182,23 @@ export function ProgramInputUnit({ _uuid }) {
             ]}
         >
             <div className="flex flex-col gap-2">
+                <input
+                    value={data.label}
+                    className="w-full px-2 py-1 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:border-blue-500 hover:border-gray-400"
+                    placeholder="input label"
+                    onChange={(e) => {
+                        const label = sanitizeLabel(e.target.value, "input");
+                        setData((prev) => ({ ...prev, label }));
+                    }}
+                />
                 <select
                     value={outputType}
                     className="w-full px-2 py-1 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:border-blue-500 hover:border-gray-400"
                     onChange={(e) => {
                         const type = normalizeType(e.target.value);
-                        setData((prev) => ({ ...prev, type }));
+                        const next = { ...data, type };
+                        setData(next);
+                        storeData(_uuid, next);
                         reregister(_uuid);
                     }}
                 >
@@ -78,6 +206,14 @@ export function ProgramInputUnit({ _uuid }) {
                         <option key={type} value={type}>{type}</option>
                     ))}
                 </select>
+                <input
+                    value={data.defaultValue}
+                    className="w-full px-2 py-1 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:border-blue-500 hover:border-gray-400"
+                    placeholder="default"
+                    onChange={(e) => {
+                        setData((prev) => ({ ...prev, defaultValue: e.target.value }));
+                    }}
+                />
             </div>
         </Unit>
     )
@@ -97,7 +233,7 @@ export class ProgramInputBlock extends UnitBlock {
             defaultValue: data.defaultValue ?? "0"
         };
 
-        this.registerOutput(label, type);
+        this.registerOutput("input", type);
     }
 
     getProgramPortDefinition() {
@@ -110,13 +246,13 @@ export class ProgramInputBlock extends UnitBlock {
     }
 
     valid() {
-        return this.hasOutput(this.state.label);
+        return this.hasOutput("input");
     }
 
     execute() {
         const fallbackValue = parseValueByType(this.state.defaultValue, this.state.type);
         const value = this.manager.resolveExternalInput(this.state.label, fallbackValue);
-        return new BlockOutput().set(this.state.label, parseValueByType(value, this.state.type));
+        return new BlockOutput().set("input", parseValueByType(value, this.state.type));
     }
 }
 
@@ -137,13 +273,24 @@ export function ProgramOutputUnit({ _uuid }) {
             outputs={[]}
         >
             <div className="flex flex-col gap-2">
+                <input
+                    value={data.label}
+                    className="w-full px-2 py-1 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:border-blue-500 hover:border-gray-400"
+                    placeholder="output label"
+                    onChange={(e) => {
+                        const label = sanitizeLabel(e.target.value, "output");
+                        setData((prev) => ({ ...prev, label }));
+                    }}
+                />
 
                 <select
                     value={inputType}
                     className="w-full px-2 py-1 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:border-blue-500 hover:border-gray-400"
                     onChange={(e) => {
                         const type = normalizeType(e.target.value);
-                        setData((prev) => ({ ...prev, type }));
+                        const next = { ...data, type };
+                        setData(next);
+                        storeData(_uuid, next);
                         reregister(_uuid);
                     }}
                 >
@@ -169,7 +316,7 @@ export class ProgramOutputBlock extends UnitBlock {
             type
         };
 
-        this.registerInput(label, type);
+        this.registerInput("output", type);
     }
 
     getProgramPortDefinition() {
@@ -182,12 +329,82 @@ export class ProgramOutputBlock extends UnitBlock {
     }
 
     valid() {
-        return this.hasInput(this.state.label);
+        return this.hasInput("output");
     }
 
     execute() {
-        const value = this.getInput(this.state.label);
+        const value = this.getInput("output");
         this.manager.setExternalOutput(this.state.label, value);
+        return new BlockOutput();
+    }
+}
+
+export function OutputNodeUnit({ _uuid, outputs = null, outputType = "float64" }) {
+    const state = normalizeOutputNodeState(outputs ? { outputs } : {
+        id: "output",
+        label: "output",
+        type: outputType
+    });
+
+    return (
+        <Unit title="OutputNode" hasOptions={false} _uuid={_uuid}
+            inputs={state.outputs.map((output) => ({
+                id: output.id,
+                label: output.label,
+                type: output.type
+            }))}
+            outputs={[]}
+        />
+    )
+}
+
+export class OutputNodeBlock extends UnitBlock {
+    static programNodeRole = "output";
+
+    register() {
+        const data = this.getStoredData() || this.state || normalizeOutputNodeState();
+        const state = normalizeOutputNodeState(data);
+
+        this.state = state;
+
+        this.state.outputs.forEach((output) => {
+            this.registerInput(output.id, output.type);
+        });
+    }
+
+    resolveInputLabel(label) {
+        const outputs = this.state.outputs || [];
+        const idMatch = outputs.find((output) => output.id === label);
+        if (idMatch) return idMatch.id;
+
+        const labelMatch = outputs.find((output) => output.label === label);
+        return labelMatch?.id || label;
+    }
+
+    getProgramPortDefinition() {
+        return this.state.outputs.map((output) => ({
+            role: "output",
+            uuid: this.uuid,
+            portId: output.id,
+            label: output.label,
+            type: output.type
+        }));
+    }
+
+    valid() {
+        const outputs = this.state.outputs || [];
+
+        return outputs.length > 0
+            && !hasDuplicateOutputLabels(outputs)
+            && outputs.every((output) => this.hasInput(output.id));
+    }
+
+    execute() {
+        this.state.outputs.forEach((output) => {
+            const value = this.getInput(output.id);
+            this.manager.setExternalOutput(output.label, value);
+        });
+
         return new BlockOutput();
     }
 }

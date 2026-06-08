@@ -1,3 +1,7 @@
+# IGVC Competition Rules
+
+This root file preserves the full IGVC rule reference. The docs entry point is [docs/igvc/competition-rules.md](docs/igvc/competition-rules.md), and implementation notes live in [docs/igvc/overview.md](docs/igvc/overview.md).
+
 # III.5 APPENDIX A. Unique SELF DRIVE QUALIFICATION TESTING
 
 ## Qualification Test Descriptions

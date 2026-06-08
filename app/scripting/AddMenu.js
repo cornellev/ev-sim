@@ -51,50 +51,10 @@ import {
     WeightedSelectUnit,
 } from "./units/math/Randomization";
 import { ProgramInputBlock, ProgramInputUnit, ProgramOutputBlock, ProgramOutputUnit } from "./units/program/ProgramIO";
-import { registerBlockType } from "./ScriptManager";
 
 function genUUID() {
     return Math.random().toString(36).substring(2, 9);
 }
-
-[
-    NumberUnitClass,
-    CalculationBlock,
-    RandomNumberBlock,
-    PIBlock,
-    EBlock,
-    TauBlock,
-    GoldenRatioBlock,
-    NoiseBlock,
-    MaskBlock,
-    MultiplyTexBlock,
-    TerrainNoiseBlock,
-    NormalizeTextureBlock,
-    BlendTextureBlock,
-    TerraceTextureBlock,
-    HeightToSlopeBlock,
-    SampleTextureBlock,
-    LowPassFilterBlock,
-    RateLimiterBlock,
-    SensorFusionBlock,
-    ThresholdGateBlock,
-    RandomRangeBlock,
-    SeededRandomBlock,
-    GaussianNoiseBlock,
-    JitterBlock,
-    WeightedSelectBlock,
-    RemapRangeBlock,
-    Float64ToInt32Block,
-    Int32ToFloat64Block,
-    StringBlock,
-    IfBlock,
-    EqualityBlock,
-    ConjugationBlock,
-    ROSInputBlock,
-    ROSOutputBlock,
-    ProgramInputBlock,
-    ProgramOutputBlock
-].forEach((blockClass) => registerBlockType(blockClass.name, blockClass));
 
 const units = {
     expressions: [

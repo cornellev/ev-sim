@@ -82,6 +82,18 @@ export class LowPassFilterBlock extends UnitBlock {
         return this.hasInput("signal") && this.hasInput("alpha");
     }
 
+    serializeRuntimeState() {
+        return {
+            prev: this.prev,
+            initialized: this.initialized
+        };
+    }
+
+    hydrateRuntimeState(state = {}) {
+        this.prev = Number.isFinite(state.prev) ? state.prev : 0;
+        this.initialized = Boolean(state.initialized);
+    }
+
     execute() {
         const signal = this.getInput("signal") || 0;
         const alpha = Math.max(0, Math.min(1, this.getInput("alpha") || 0.5));
@@ -128,6 +140,18 @@ export class RateLimiterBlock extends UnitBlock {
 
     valid() {
         return this.hasInput("signal") && this.hasInput("max delta");
+    }
+
+    serializeRuntimeState() {
+        return {
+            prev: this.prev,
+            initialized: this.initialized
+        };
+    }
+
+    hydrateRuntimeState(state = {}) {
+        this.prev = Number.isFinite(state.prev) ? state.prev : 0;
+        this.initialized = Boolean(state.initialized);
     }
 
     execute() {

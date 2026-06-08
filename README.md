@@ -1,16 +1,40 @@
+# sensor-fusion
 
-vroom vroom
+Browser-based autonomous vehicle and sensor-fusion workbench with a Next.js UI, Three.js simulation scene, visual scripting runtime, and optional ROS-style topic integration through an external orchestrator process.
 
-# car:
-      ______  
-     /|_||_\`.__  
-    (   _    _ _\  
-    =`-(_)--(_)-'  
+## Quick Start
 
+```bash
+npm install
+npm run dev
+```
 
-For the scenarios, please download from `https://gitlab.lrz.de/tum-cps/commonroad-scenarios` and place the `scenarios` folder in the `public` directory (creating the `public/scenarios` endpoint). Then, you can load scenarios by their name, e.g. `scenarios/DR_CHN_Merging_ZS_1_T_1.xml`.
+The app starts on the visual scripting canvas. Press `Escape` to switch between scripting and the 3D scene.
 
+## Documentation
 
-# References
+- [Documentation index](docs/README.md)
+- [Getting started](docs/getting-started.md)
+- [Architecture](docs/architecture.md)
+- [Development workflow](docs/development.md)
+- [Visual scripting](docs/scripting/README.md)
+- [Simulation](docs/simulation.md)
+- [ROS integration](docs/ros-integration.md)
+- [Assets](docs/assets.md)
+- [Troubleshooting](docs/troubleshooting.md)
 
-[M. Althoff, M. Koschi, and S. Manzinger, ''CommonRoad: Composable Benchmarks for Motion Planning on Roads,'' in Proc. of the IEEE Intelligent Vehicles Symposium, 2017, pp. 719-726.](http://mediatum.ub.tum.de/doc/1379638/776321.pdf)
+## CommonRoad Scenarios
+
+Download scenarios from `https://gitlab.lrz.de/tum-cps/commonroad-scenarios` and place the `scenarios` folder in `public/`, creating `public/scenarios`.
+
+Example browser path:
+
+```text
+/scenarios/DR_CHN_Merging_ZS_1_T_1.xml
+```
+
+See [Assets](docs/assets.md) for asset policy and setup details.
+
+## References
+
+[M. Althoff, M. Koschi, and S. Manzinger, "CommonRoad: Composable Benchmarks for Motion Planning on Roads," in Proc. of the IEEE Intelligent Vehicles Symposium, 2017, pp. 719-726.](http://mediatum.ub.tum.de/doc/1379638/776321.pdf)

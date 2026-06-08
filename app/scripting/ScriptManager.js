@@ -1,4 +1,11 @@
 
+import { getRegisteredBlockType, registerBlockType } from "./BlockRegistry.js";
+import { assertSupportedArtifact } from "./runtime/Artifact.js";
+import { compileVisualScript } from "./runtime/Compiler.js";
+import { createVisualScriptRunner } from "./runtime/Runner.js";
+
+export { clearBlockTypeRegistryForTests, getRegisteredBlockType, registerBlockType } from "./BlockRegistry.js";
+
 class Connection {
     constructor(outputUnit, outputLabel, inputUnit, inputLabel) {
         this.outputUnit = outputUnit;
@@ -21,18 +28,6 @@ class Connection {
     matches(outputUUID, outputLabel, inputUUID, inputLabel) {
         return this.outputUnit.uuid === outputUUID && this.outputLabel === outputLabel && this.inputUnit.uuid === inputUUID && this.inputLabel === inputLabel;
     }
-}
-
-const BLOCK_TYPE_REGISTRY = new Map();
-
-export function registerBlockType(typeId, blockClass) {
-    if (!typeId || !blockClass) return;
-    blockClass.blockType = typeId;
-    BLOCK_TYPE_REGISTRY.set(typeId, blockClass);
-}
-
-export function getRegisteredBlockType(typeId) {
-    return BLOCK_TYPE_REGISTRY.get(typeId) || null;
 }
 
 export function storeData(uuid, data) {
@@ -64,7 +59,7 @@ export class BlockOutput {
     }
 
     has(label) {
-        return !!this.map[label];
+        return Object.prototype.hasOwnProperty.call(this.map, label);
     }
 }
 
@@ -127,6 +122,14 @@ export class UnitBlock {
         this.reregister();
     }
 
+    serializeRuntimeState() {
+        return {};
+    }
+
+    hydrateRuntimeState() {
+
+    }
+
     getStateValue(key, domId, fallback = null) {
         if (Object.prototype.hasOwnProperty.call(this.state, key)) {
             return this.state[key];
@@ -144,6 +147,14 @@ export class UnitBlock {
 
     getProgramPortDefinition() {
         return null;
+    }
+
+    resolveInputLabel(label) {
+        return label;
+    }
+
+    resolveOutputLabel(label) {
+        return label;
     }
 
     registerInput(label, type) {
@@ -165,55 +176,59 @@ export class UnitBlock {
     }
 
     inputType(label) {
-        return this.typeMap.inputs[label];
+        return this.typeMap.inputs[this.resolveInputLabel(label)];
     }
 
     outputType(label) {
-        return this.typeMap.outputs[label];
+        return this.typeMap.outputs[this.resolveOutputLabel(label)];
     }
 
     hasInput(label) {
-        return !!this.inputs[label];
+        return !!this.inputs[this.resolveInputLabel(label)];
     }
 
     hasOutput(label) {
-        return !!this.outputs[label];
+        return !!this.outputs[this.resolveOutputLabel(label)];
     }
 
     addInput(label, connection) {
-        if (this.inputs[label]) throw new Error("Input with this name already exists");
-        this.inputs[label] = connection;
+        const resolvedLabel = this.resolveInputLabel(label);
+        if (this.inputs[resolvedLabel]) throw new Error("Input with this name already exists");
+        this.inputs[resolvedLabel] = connection;
 
         this.notifyUpdate(crypto.randomUUID());
     }
 
     addOutput(label, connection) {
-        if (!Object.keys(this.outputs).includes(label)) {
-            this.outputs[label] = [];
+        const resolvedLabel = this.resolveOutputLabel(label);
+        if (!Object.keys(this.outputs).includes(resolvedLabel)) {
+            this.outputs[resolvedLabel] = [];
         }
         
-        this.outputs[label].push(connection);
+        this.outputs[resolvedLabel].push(connection);
 
         this.notifyUpdate(crypto.randomUUID());
     }
 
     removeInput(label) {
-        if (!this.inputs[label]) return;
-        delete this.inputs[label];
+        const resolvedLabel = this.resolveInputLabel(label);
+        if (!this.inputs[resolvedLabel]) return;
+        delete this.inputs[resolvedLabel];
         this.notifyUpdate(crypto.randomUUID());
     }
 
     removeOutputConnection(label, predicate) {
-        if (!Object.keys(this.outputs).includes(label)) return;
+        const resolvedLabel = this.resolveOutputLabel(label);
+        if (!Object.keys(this.outputs).includes(resolvedLabel)) return;
 
-        const before = this.outputs[label].length;
-        this.outputs[label] = this.outputs[label].filter((connection) => !predicate(connection));
+        const before = this.outputs[resolvedLabel].length;
+        this.outputs[resolvedLabel] = this.outputs[resolvedLabel].filter((connection) => !predicate(connection));
 
-        if (this.outputs[label].length === 0) {
-            delete this.outputs[label];
+        if (this.outputs[resolvedLabel].length === 0) {
+            delete this.outputs[resolvedLabel];
         }
 
-        if (before !== (this.outputs[label]?.length || 0)) {
+        if (before !== (this.outputs[resolvedLabel]?.length || 0)) {
             this.notifyUpdate(crypto.randomUUID());
         }
     }
@@ -244,8 +259,9 @@ export class UnitBlock {
     }
 
     getInput(label) {
-        if (!this.inputs[label]) throw new Error("Input not found");
-        const crossOut = this.inputs[label].getOutput();
+        const resolvedLabel = this.resolveInputLabel(label);
+        if (!this.inputs[resolvedLabel]) throw new Error("Input not found");
+        const crossOut = this.inputs[resolvedLabel].getOutput();
         if (!crossOut.unit.valid()) return null;
 
         return crossOut.unit.execute().get(crossOut.label);
@@ -261,37 +277,12 @@ export class UnitBlock {
     }
 }
 
-export class Program {
-    constructor() {
-        this.nodes = []; // list of ids
-        this.types = []; // type list, defined (id, type)
-        this.connections = []; // connection list, we'll do two point connections so just a list of (input id, output id, name) (name is what the output uses to refer to input)
-        this.inputs = []; // list of (id, input type), where id is the node that requires the input
-        this.output = null; // output type
-    }
-
-    findInput(outputId, inputName) {
-        for (let connection of this.connections) {
-            if (connection[1] === outputId && connection[2] === inputName) {
-                return connection[0];
-            }
-        }
-
-        return null;
-    }
-}
-
-// what we can do is take the normal unit block, take the execute function, and bind it to the compiled unit block
-// making use of javascript's wack ass syntax but would work really really well.
-export class CompiledUnitBlock {
-    constructor() {
-        
-    }
-}
-
-// BELOW IS AI GENERATED CODE
-
 export class CompiledProgramUnitBlock extends UnitBlock {
+    constructor(uuid) {
+        super(uuid);
+        this.runner = null;
+    }
+
     register() {
         const compiledProgram = this.state?.compiledProgram;
         const inputPorts = compiledProgram?.interface?.inputs || [];
@@ -304,6 +295,11 @@ export class CompiledProgramUnitBlock extends UnitBlock {
         outputPorts.forEach((outputPort) => {
             this.registerOutput(outputPort.label, outputPort.type);
         });
+    }
+
+    hydrateState(state = {}) {
+        super.hydrateState(state);
+        this.runner = null;
     }
 
     valid() {
@@ -320,6 +316,8 @@ export class CompiledProgramUnitBlock extends UnitBlock {
             return new BlockOutput();
         }
 
+        assertSupportedArtifact(compiledProgram);
+
         const inputPorts = compiledProgram?.interface?.inputs || [];
         const providedInputs = {};
 
@@ -327,7 +325,15 @@ export class CompiledProgramUnitBlock extends UnitBlock {
             providedInputs[inputPort.label] = this.getInput(inputPort.label);
         });
 
-        const run = ScriptManager.runCompiled(compiledProgram, providedInputs);
+        if (!this.runner) {
+            this.runner = ScriptManager.createRunner(compiledProgram);
+        }
+
+        const run = this.runner.run(providedInputs);
+        if (run.status === "failure") {
+            throw new Error(`Imported compiled program failed: ${run.e?.message || "unknown error"}`);
+        }
+
         const output = new BlockOutput();
 
         const outputPorts = compiledProgram?.interface?.outputs || [];
@@ -408,44 +414,47 @@ export class ScriptManager {
 
         if (!outputUnit || !inputUnit) {
             console.error("Invalid UUIDs for connection. Did you forget to pass the UUID to the unit component? Check scripting.md", outputUUID, inputUUID, this.units);
-            return;
+            return false;
         }
 
         //console.log(outputUnit, outputLabel)
 
         if (!outputUnit.outputType(outputLabel)) {
             console.error("Output label not found in output unit. Check scripting.md");
-            return;
+            return false;
         }
 
         if (!inputUnit.inputType(inputLabel)) {
             console.error("Input label not found in input unit. Check scripting.md");
-            return;
+            return false;
         }
 
         // check type compatibility (for now, just check if they are the same)
-        const outputType = outputUnit.outputType(outputLabel);
-        const inputType = inputUnit.inputType(inputLabel);
+        const resolvedOutputLabel = outputUnit.resolveOutputLabel(outputLabel);
+        const resolvedInputLabel = inputUnit.resolveInputLabel(inputLabel);
+        const outputType = outputUnit.outputType(resolvedOutputLabel);
+        const inputType = inputUnit.inputType(resolvedInputLabel);
 
         if (outputType !== inputType) {
             console.error("Type mismatch between output and input. Check scripting.md");
-            return;
+            return false;
         }
 
-        const existing = (outputUnit.outputs[outputLabel] || []).some((connection) =>
-            connection.matches(outputUUID, outputLabel, inputUUID, inputLabel)
+        const existing = (outputUnit.outputs[resolvedOutputLabel] || []).some((connection) =>
+            connection.matches(outputUUID, resolvedOutputLabel, inputUUID, resolvedInputLabel)
         );
 
         if (existing) {
-            return;
+            return true;
         }
 
         // create connection
-        const connection = new Connection(outputUnit, outputLabel, inputUnit, inputLabel);
-        outputUnit.addOutput(outputLabel, connection);
-        inputUnit.addInput(inputLabel, connection);
+        const connection = new Connection(outputUnit, resolvedOutputLabel, inputUnit, resolvedInputLabel);
+        outputUnit.addOutput(resolvedOutputLabel, connection);
+        inputUnit.addInput(resolvedInputLabel, connection);
 
 //        console.log(this);
+        return true;
     }
 
     disconnectUnits(outputUUID, outputLabel, inputUUID, inputLabel) {
@@ -456,9 +465,11 @@ export class ScriptManager {
             return false;
         }
 
+        const resolvedOutputLabel = outputUnit.resolveOutputLabel(outputLabel);
+        const resolvedInputLabel = inputUnit.resolveInputLabel(inputLabel);
         let removedConnection = null;
-        outputUnit.removeOutputConnection(outputLabel, (connection) => {
-            const shouldRemove = connection.matches(outputUUID, outputLabel, inputUUID, inputLabel);
+        outputUnit.removeOutputConnection(resolvedOutputLabel, (connection) => {
+            const shouldRemove = connection.matches(outputUUID, resolvedOutputLabel, inputUUID, resolvedInputLabel);
             if (shouldRemove) {
                 removedConnection = connection;
             }
@@ -469,8 +480,8 @@ export class ScriptManager {
             return false;
         }
 
-        if (inputUnit.inputs[inputLabel] === removedConnection) {
-            inputUnit.removeInput(inputLabel);
+        if (inputUnit.inputs[resolvedInputLabel] === removedConnection) {
+            inputUnit.removeInput(resolvedInputLabel);
         }
 
         return true;
@@ -497,118 +508,60 @@ export class ScriptManager {
     }
 
     executeProgram(inputs = {}) {
-        this.setRuntimeInputs(inputs);
-        this.externalOutputs = {};
+        try {
+            this.setRuntimeInputs(inputs);
+            this.externalOutputs = {};
 
-        const outputUnits = this.units.filter((unit) => unit.constructor.programNodeRole === "output");
-        if (outputUnits.length > 0) {
-            outputUnits.forEach((unit) => {
-                if (unit.valid()) {
-                    unit.execute();
-                }
-            });
+            const outputUnits = this.units.filter((unit) => unit.constructor.programNodeRole === "output");
+            if (outputUnits.length > 0) {
+                outputUnits.forEach((unit) => {
+                    if (unit.valid()) {
+                        unit.execute();
+                    }
+                });
+                return {
+                    status: "success",
+                    result: null,
+                    outputs: this.getExternalOutputs(),
+                    e: null
+                };
+            }
+
+            const result = this.execute();
             return {
+                status: "success",
+                result,
+                outputs: this.getExternalOutputs(),
+                e: null
+            };
+        } catch (err) {
+            return {
+                status: "failure",
                 result: null,
-                outputs: this.getExternalOutputs()
+                outputs: {},
+                e: {
+                    name: err?.name || "Error",
+                    message: err?.message || String(err),
+                    stack: err?.stack || null
+                }
             };
         }
-
-        const result = this.execute();
-        return {
-            result,
-            outputs: this.getExternalOutputs()
-        };
     }
 
     compile(name = "compiled-program") {
-        const seenConnections = new Set();
-        const connections = [];
-        const programInterface = {
-            inputs: [],
-            outputs: []
-        };
-
-        const units = this.units.map((unit) => {
-            const port = unit.getProgramPortDefinition();
-            if (port && port.role === "input") {
-                programInterface.inputs.push(port);
-            }
-            if (port && port.role === "output") {
-                programInterface.outputs.push(port);
-            }
-
-            Object.entries(unit.outputs).forEach(([label, outputConnections]) => {
-                outputConnections.forEach((connection) => {
-                    const input = connection.getInput();
-                    const key = [unit.uuid, label, input.unit.uuid, input.label].join("|");
-                    if (seenConnections.has(key)) return;
-                    seenConnections.add(key);
-
-                    connections.push({
-                        outputUUID: unit.uuid,
-                        outputLabel: label,
-                        inputUUID: input.unit.uuid,
-                        inputLabel: input.label
-                    });
-                });
-            });
-
-            return {
-                uuid: unit.uuid,
-                type: unit.typeId(),
-                state: unit.serializeState(),
-                storedData: this.storedData[unit.uuid]
-            };
-        });
-
-        return {
-            version: 1,
-            name,
-            head: this.head,
-            units,
-            connections,
-            interface: programInterface
-        };
+        return compileVisualScript(this, name, getRegisteredBlockType);
     }
 
     static fromCompiled(compiledProgram) {
-        const manager = new ScriptManager();
-
-        (compiledProgram.units || []).forEach((unitDef) => {
-            const UnitClass = getRegisteredBlockType(unitDef.type);
-            if (!UnitClass) {
-                throw new Error(`Unknown block type \"${unitDef.type}\". Register it first with registerBlockType().`);
-            }
-
-            const unit = new UnitClass(unitDef.uuid);
-            manager.addUnit(unit);
-            if (unitDef.storedData !== undefined) {
-                manager.storedData[unitDef.uuid] = unitDef.storedData;
-            }
-            if (unitDef.state) {
-                unit.hydrateState(unitDef.state);
-            }
-        });
-
-        (compiledProgram.connections || []).forEach((connection) => {
-            manager.connectUnits(
-                connection.outputUUID,
-                connection.outputLabel,
-                connection.inputUUID,
-                connection.inputLabel
-            );
-        });
-
-        if (compiledProgram.head) {
-            manager.setHead(compiledProgram.head);
-        }
-
-        return manager;
+        return ScriptManager.createRunner(compiledProgram);
     }
 
     static runCompiled(compiledProgram, inputs = {}) {
-        const manager = ScriptManager.fromCompiled(compiledProgram);
-        return manager.executeProgram(inputs);
+        return ScriptManager.createRunner(compiledProgram).run(inputs);
+    }
+
+    static createRunner(compiledProgram) {
+        return createVisualScriptRunner(compiledProgram, getRegisteredBlockType);
     }
 
     static createCompiledProgramBlock(compiledProgram) {
@@ -679,7 +632,11 @@ export class ScriptManager {
             // add connected units to stack
             for (const input in unit.inputs) {
                 const connections = unit.inputs[input];
-                stack.push(connections.getOutput().unit.uuid);
+                const output = connections.getOutput();
+                const outputType = output.unit.outputType(output.label);
+                const inputType = unit.inputType(input);
+                if (!outputType || !inputType || outputType !== inputType) return false;
+                stack.push(output.unit.uuid);
             }
         }
 

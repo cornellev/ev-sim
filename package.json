@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "node server/App.js",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "node --experimental-default-type=module --test tests/*.test.js"
   },
   "dependencies": {
     "@dimforge/rapier3d": "^0.19.3",

@@ -19,7 +19,7 @@ export function Line({ lineId, start = { x: 0, y: 0 }, end = { x: 0, y: 0 }, col
         return () => {
             document.removeEventListener('keydown', handleKeyDown);
         }
-    }, [selected]);
+    }, [selected, lineId, onDeleted]);
 
     // Calculate control points for a smooth cubic Bézier curve
     const dx = end.x - start.x;
@@ -63,6 +63,7 @@ export function Line({ lineId, start = { x: 0, y: 0 }, end = { x: 0, y: 0 }, col
 }
 
 function sourceToInfo(source) {
+    if (!source?.dataset) return null;
     // get data-encoded tag
     const str = source.dataset.encoded;
     if (!str) return null;
@@ -74,7 +75,7 @@ function isSameConnection(aFrom, aTo, bFrom, bTo) {
     return aFrom?.uuid === bFrom?.uuid && aFrom?.label === bFrom?.label && aTo?.uuid === bTo?.uuid && aTo?.label === bTo?.label;
 }
 
-export function LineManager({ units, notifyConnection=(from, to) => {}, onDeleteConnection=(from, to) => {} }) {
+export function LineManager({ units, notifyConnection=(from, to) => true, onDeleteConnection=(from, to) => {} }) {
     const [lines, setLines] = useState([]);
     const [lineInProgress, setLineInProgress] = useState(null);
     const linesRef = useRef(lines);
@@ -104,6 +105,7 @@ export function LineManager({ units, notifyConnection=(from, to) => {}, onDelete
             // check if e.target has class 'input-<type>'
             const hasInputClass = Array.from(e.target.classList).some(cls => cls.startsWith('input-'));
             const source = hasInputClass ? e.target : e.target.closest('.input');
+            if (!source) return;
              
             setLineInProgress({ start: { x: startX, y: startY }, end: { x: startX, y: startY }, source });
 //            console.log("Started line from", e.target);
@@ -156,6 +158,7 @@ export function LineManager({ units, notifyConnection=(from, to) => {}, onDelete
                     if (distance < 10) { // within 10 pixels
                         const fromInfo = sourceToInfo(lineInProgress.source);
                         const toInfo = sourceToInfo(output);
+                        if (!fromInfo || !toInfo) continue;
 
                         const duplicate = lines.some((line) => isSameConnection(
                             sourceToInfo(line.startSource),
@@ -169,6 +172,11 @@ export function LineManager({ units, notifyConnection=(from, to) => {}, onDelete
                             break;
                         }
 
+                        const accepted = notifyConnection(fromInfo, toInfo);
+                        if (!accepted) {
+                            continue;
+                        }
+
                         setLines((prevLines) => [...prevLines, {
                             id: crypto.randomUUID(),
                             start: lineInProgress.start,
@@ -177,7 +185,6 @@ export function LineManager({ units, notifyConnection=(from, to) => {}, onDelete
                             endTarget: output,
                             color: TYPES[thisType] || 'white'
                         }]);
-                        notifyConnection(fromInfo, toInfo || output);
                         connected = true;
                         break;
                     }
@@ -223,6 +230,42 @@ export function LineManager({ units, notifyConnection=(from, to) => {}, onDelete
         document.addEventListener('delete-unit', onDeleteUnit);
         return () => {
             document.removeEventListener('delete-unit', onDeleteUnit);
+        };
+    }, [onDeleteConnection]);
+
+    useEffect(() => {
+        const onDeletePortConnections = (e) => {
+            const { uuid, labels = [], notifyBackend = true } = e.detail || {};
+            if (!uuid || labels.length === 0) return;
+
+            const labelSet = new Set(labels);
+            const currentLines = linesRef.current;
+            const toRemove = currentLines.filter((line) => {
+                const from = sourceToInfo(line.startSource);
+                const to = sourceToInfo(line.endTarget);
+
+                return (from?.uuid === uuid && labelSet.has(from.label))
+                    || (to?.uuid === uuid && labelSet.has(to.label));
+            });
+
+            if (notifyBackend) {
+                toRemove.forEach((line) => {
+                    onDeleteConnection(sourceToInfo(line.startSource), sourceToInfo(line.endTarget));
+                });
+            }
+
+            setLines(currentLines.filter((line) => {
+                const from = sourceToInfo(line.startSource);
+                const to = sourceToInfo(line.endTarget);
+
+                return !((from?.uuid === uuid && labelSet.has(from.label))
+                    || (to?.uuid === uuid && labelSet.has(to.label)));
+            }));
+        };
+
+        document.addEventListener('delete-port-connections', onDeletePortConnections);
+        return () => {
+            document.removeEventListener('delete-port-connections', onDeletePortConnections);
         };
     }, [onDeleteConnection]);
 
