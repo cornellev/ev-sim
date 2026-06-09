@@ -538,8 +538,11 @@ function ScriptLibraryDrawer({
                                             {valid ? "valid" : "invalid"}
                                         </span>
                                         <span>{summary.inputs} in</span>
+                                        <span>/</span>
                                         <span>{summary.outputs} out</span>
+                                        <span>/</span>
                                         <span>{editable ? "editable" : "artifact"}</span>
+                                        <span>/</span>
                                         <span>{relativeTime(summary.updatedAt)}</span>
                                     </div>
                                 </button>
@@ -550,7 +553,7 @@ function ScriptLibraryDrawer({
                                     onClick={() => onUse(document)}
                                     className="rounded-sm border border-white/10 bg-white/8 px-2 py-1.5 text-xs text-zinc-200 transition-[transform,background-color,border-color] duration-150 hover:border-white/20 hover:bg-white/12 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-35"
                                 >
-                                    {usability.reason === "Would create a script-reference cycle" ? "Cycle" : "Use"}
+                                    {usability.code === IMPORT_CODE.CYCLE ? "Dependent" : "Use"}
                                 </button>
                             </div>
 
@@ -564,8 +567,8 @@ function ScriptLibraryDrawer({
                                 <button type="button" disabled={!editable} onClick={() => onOpen(document.id)} className="mini-btn">Open</button>
                                 <button type="button" onClick={() => onDuplicate(document)} className="mini-btn">Duplicate</button>
                                 <button type="button" onClick={() => onRename(document)} className="mini-btn">Rename</button>
-                                <button type="button" disabled={!editable} onClick={() => onDownloadEditable(document)} className="mini-btn">Editable</button>
-                                <button type="button" disabled={!document.latestValidArtifact} onClick={() => onDownloadCompiled(document)} className="mini-btn">Compiled</button>
+                                <button type="button" disabled={!editable} onClick={() => onDownloadEditable(document)} className="mini-btn">Export</button>
+                                <button type="button" disabled={!document.latestValidArtifact} onClick={() => onDownloadCompiled(document)} className="mini-btn">Download Compiled</button>
                                 <button type="button" onClick={() => onDelete(document)} className="mini-btn text-rose-200">Delete</button>
                             </div>
                         </div>
@@ -599,6 +602,12 @@ function getNextProgramInputState(manager) {
 
     return next;
 }
+
+export const IMPORT_CODE = {
+    USABLE: 0,
+    INCOMPLETE: 1,
+    CYCLE: 2
+};
 
 export default function Scripting() {
     const headUUID = useRef("head-uuid");
@@ -760,14 +769,14 @@ export default function Scripting() {
 
     const getScriptBlockUsability = (scriptDocument) => {
         if (!scriptDocument?.latestValidArtifact) {
-            return { usable: false, reason: "No valid compiled artifact yet" };
+            return { usable: false, reason: "No valid compiled artifact yet", code: IMPORT_CODE.INCOMPLETE };
         }
 
         if (wouldCreateScriptReferenceCycle(currentScriptIdRef.current, scriptDocument.id, scriptsRef.current)) {
-            return { usable: false, reason: "Would create a script-reference cycle" };
+            return { usable: false, reason: "Would create a script-reference cycle", code: IMPORT_CODE.CYCLE };
         }
 
-        return { usable: true, reason: null };
+        return { usable: true, reason: null, code: IMPORT_CODE.USABLE };
     };
 
     const saveCurrentScript = async () => {

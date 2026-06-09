@@ -1,13 +1,11 @@
 import NumberUnit, { NumberUnitClass } from "./units/math/Number";
 import { CalculationBlock, CalculationUnit } from "./units/math/Calculation";
-import { ROSInputBlock, ROSInputUnit, ROSOutputBlock, ROSOutputUnit } from "./units/ROSUnit";
 import { Float64ToInt32, Float64ToInt32Block, Int32ToFloat64, Int32ToFloat64Block } from "./units/conversions/NumberConversions";
 import { E, EBlock, GoldenRatio, GoldenRatioBlock, PI, PIBlock, Tau, TauBlock } from "./units/math/Constants";
 import { RandomNumber, RandomNumberBlock } from "./units/math/Random";
 import { Noise, NoiseBlock } from "./units/math/tex/Noise";
 import { MultiplyTex, MultiplyTexBlock, Scale } from "./units/math/tex/Scale";
 import { Mask, MaskBlock } from "./units/math/tex/Mask";
-import { LiDAR2DUnit } from "./units/devices/LiDAR2d";
 import { IfBlock, IfUnit } from "./units/statements/If";
 import { Conjugation, ConjugationBlock, Equality, EqualityBlock } from "./units/statements/Equality";
 import { StringBlock, StringUnit } from "./units/objects/String";
@@ -103,9 +101,6 @@ export const UNIT_CATALOG = [
     entry("statements", "If Statement", IfUnit, IfBlock),
     entry("statements", "Comparison (==, !=, >, <, >=, <=)", Equality, EqualityBlock),
     entry("statements", "Conjunction (AND, OR)", Conjugation, ConjugationBlock),
-    entry("devices", "LiDAR 2D", LiDAR2DUnit, null),
-    entry("ros", "ROS Input", ROSInputUnit, ROSInputBlock),
-    entry("ros", "ROS Output", ROSOutputUnit, ROSOutputBlock),
     entry("program", "Program Input", ProgramInputUnit, ProgramInputBlock),
     entry("program", "Program Output", ProgramOutputUnit, ProgramOutputBlock)
 ];
