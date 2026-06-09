@@ -1,10 +1,10 @@
 # Built-In Blocks
 
-Built-in block registration lives in `app/scripting/registerBuiltInBlocks.js`. User-facing menu categories live in `app/scripting/AddMenu.js`.
+Built-in block registration lives in `app/scripting/registerBuiltInBlocks.js`. User-facing block library inventory lives in `app/scripting/UnitCatalog.js`. `app/scripting/AddMenu.js` renders that catalog with category filters and search.
 
 ## Menu Categories
 
-Current add menu categories:
+Current block library categories:
 
 - `expressions`: number, calculation, random number.
 - `constants`: pi, e, tau, golden ratio.
@@ -15,24 +15,27 @@ Current add menu categories:
 - `conversions`: numeric conversions.
 - `objects`: string.
 - `statements`: if, comparisons, conjunctions.
-- `devices`: device-related units.
-- `ros`: placeholder ROS input/output units.
 - `program`: program input/output units.
+- `signals`: read/write and inspect signal-store values.
+- `topics`: topic snapshots, fields, staged publish messages, metadata, and stale gates.
+- `simulator`: vehicle, device, simulation, scenario, and object snapshots.
+- `mission`: waypoint, mission state, route progress, and scenario flag helpers.
+- `bindings`: signal/tick/timer triggers and input/output/trigger bindings.
+- `diagnostics`: probes, logs, assertions, recording/replay, and binding status.
 
 ## Compileable Vs UI-Only
 
-Most menu entries have a backend block class and can compile. Entries with `class: null` are UI-only.
+Most catalog entries have a backend block class and can compile. Entries with `blockClass: null` are UI-only.
 
 Known UI-only entries:
 
 - `Scale Matrix (tex1d)`
-- `LiDAR 2D`
 
 If a UI-only entry becomes runtime behavior, add a `UnitBlock` subclass and register it in `registerBuiltInBlocks.js`.
 
 ## ROS Blocks
 
-`app/scripting/units/ROSUnit.js` currently returns placeholder random/logged values. It does not yet connect to the external orchestrator client. Treat these blocks as prototypes until they are wired to `app/client/Client.js` or a scripting-specific integration layer.
+`app/scripting/units/ROSUnit.js` still contains placeholder ROS input/output blocks, and those block classes are registered. They are not currently exposed in `UnitCatalog.js`. Topic-oriented scripting work now appears in the `topics` category through signal blocks.
 
 ## Program Blocks
 

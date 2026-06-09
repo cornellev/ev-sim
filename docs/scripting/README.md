@@ -28,7 +28,8 @@ const outputs = script.run({ input: 21 });
 - `app/scripting/Scripting.js`: canvas shell, output node sidebar, compile/run/import buttons.
 - `app/scripting/ScriptManager.js`: graph manager, `UnitBlock`, connections, compiled program wrapper.
 - `app/scripting/LineManager.js`: visual wire creation and deletion.
-- `app/scripting/AddMenu.js`: visual add menu categories and React unit creation.
+- `app/scripting/UnitCatalog.js`: block library inventory, categories, React components, and backend block classes.
+- `app/scripting/AddMenu.js`: searchable/categorized block library UI and spawn positioning.
 - `app/scripting/ScriptRuntime.js`: load local or URL scripts and run compiled artifacts from code.
 - `app/scripting/BlockRegistry.js`: block type registry.
 - `app/scripting/registerBuiltInBlocks.js`: built-in block registration.

@@ -41,7 +41,8 @@ The existing tests define small in-file block classes such as constant, add, inp
 
 For UI-facing scripting changes, also run the app and verify:
 
-- `Ctrl+A` or `Cmd+A` opens the add menu.
+- `Ctrl+A` or `Cmd+A` opens the block library, unless focus is inside an editable field.
+- Category filters and search find the expected `UnitCatalog.js` entries.
 - Wires connect only between matching types.
 - The validity badge updates after adding, connecting, deleting, or re-registering units.
 - `Compile` downloads a JSON artifact.

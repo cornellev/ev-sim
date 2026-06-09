@@ -33,7 +33,7 @@ Common causes:
 - Required inputs are not connected.
 - Output and input port types do not match.
 - Program input or output labels are duplicated.
-- A block was added to `AddMenu.js` but not registered in `registerBuiltInBlocks.js`.
+- A block was added to `UnitCatalog.js` but not registered in `registerBuiltInBlocks.js`.
 - A dynamic port changed type and existing connections were removed.
 
 See [Scripting Troubleshooting](scripting/troubleshooting.md).

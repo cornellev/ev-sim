@@ -28,7 +28,7 @@ Every compileable block needs:
 - A React unit component that renders the node UI with matching port labels and types.
 - A `UnitBlock` subclass that registers the same ports and implements validation/execution.
 
-If the add menu entry has `class: null`, the node is UI-only and cannot participate in compile/run.
+If the catalog entry has `blockClass: null`, the node is UI-only and cannot participate in compile/run.
 
 ## Registry
 
@@ -40,11 +40,13 @@ The built-in path is:
 app/scripting/registerBuiltInBlocks.js
 ```
 
-The user-facing add menu path is:
+The user-facing block inventory path is:
 
 ```text
-app/scripting/AddMenu.js
+app/scripting/UnitCatalog.js
 ```
+
+`AddMenu.js` renders the searchable, categorized block library from that catalog.
 
 Most new blocks need both.
 

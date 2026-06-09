@@ -10,15 +10,21 @@ Use this checklist when adding a new visual scripting block.
 4. Make React port labels/types match `registerInput` and `registerOutput`.
 5. Implement `valid()` and `execute()`.
 6. Add the block class to `app/scripting/registerBuiltInBlocks.js`.
-7. Add a menu entry to `app/scripting/AddMenu.js` with a non-null `class`.
+7. Add a catalog entry to `app/scripting/UnitCatalog.js` with a non-null `blockClass`.
 8. Add or update tests in `tests/visual-script-runtime.test.js` if compile/run behavior changes.
 9. Run `npm test` and `npm run lint`.
 
+`AddMenu.js` renders the block library from `UnitCatalog.js`. Only edit `AddMenu.js` when changing the menu UI, search/filter behavior, spawn positioning, or category presentation.
+
 ## Add A UI-Only Block
 
-Use `class: null` in `AddMenu.js` only when the unit is intentionally visual-only. UI-only blocks cannot compile or run as part of a v2 artifact.
+Use `blockClass: null` in `UnitCatalog.js` only when the unit is intentionally visual-only. UI-only blocks can appear in the block library but cannot compile or run as part of a v2 artifact.
 
-Existing examples include the `Scale Matrix (tex1d)` and `LiDAR 2D` add menu entries.
+The current example is `Scale Matrix (tex1d)`.
+
+## Add Or Rename A Category
+
+Catalog entries have a category string. `AddMenu.js` can display unknown categories with fallback labels and icons, but add the category to `CATEGORY_META` when it needs a deliberate label, icon, or accent color.
 
 ## Add Program Inputs Or Outputs
 
@@ -63,6 +69,7 @@ For blocks that need state across compiled runs:
 
 - Adding a block to the menu but not registering it for compile/run.
 - Registering a block but forgetting to expose it in the menu.
+- Editing `AddMenu.js` directly for block inventory instead of updating `UnitCatalog.js`.
 - Changing a port label in the React component but not in the `UnitBlock`.
 - Returning raw values from `execute()` instead of a `BlockOutput`.
 - Using duplicate program input/output labels.

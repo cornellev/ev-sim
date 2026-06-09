@@ -30,7 +30,7 @@ The scripting layer has two execution modes:
 - Editor execution uses `ScriptManager.execute()` and live `UnitBlock` instances.
 - Compiled execution uses `app/scripting/runtime/Compiler.js` to produce a versioned JSON artifact and `app/scripting/runtime/Runner.js` to run it without generated JavaScript or `eval`.
 
-Built-in block classes are registered by `app/scripting/registerBuiltInBlocks.js`. UI menu entries live in `app/scripting/AddMenu.js`.
+Built-in block classes are registered by `app/scripting/registerBuiltInBlocks.js`. The block library inventory lives in `app/scripting/UnitCatalog.js`, and `app/scripting/AddMenu.js` renders it as a searchable categorized sidebar.
 
 ## Simulation Layer
 

@@ -8,7 +8,7 @@ Error example:
 Unknown block type "MyBlock". Register it before compiling.
 ```
 
-Add the block class to `app/scripting/registerBuiltInBlocks.js`. If the block appears in the add menu, also confirm its menu entry has the same backend class.
+Add the block class to `app/scripting/registerBuiltInBlocks.js`. If the block appears in the block library, also confirm its `UnitCatalog.js` entry references the same backend class.
 
 ## Missing Port
 
@@ -28,7 +28,7 @@ Compiled visual scripts are evaluated backward from final states and currently r
 
 ## Block Is Visible But Does Not Compile
 
-Check `app/scripting/AddMenu.js`. If the entry has `class: null`, it is UI-only. Add a backend `UnitBlock` and register it before expecting compile/run support.
+Check `app/scripting/UnitCatalog.js`. If the entry has `blockClass: null`, it is UI-only. Add a backend `UnitBlock` and register it before expecting compile/run support.
 
 ## Dynamic Port Changes Break Wires
 
