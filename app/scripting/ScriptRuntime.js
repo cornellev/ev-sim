@@ -2,6 +2,7 @@ import { assertSupportedArtifact } from "./runtime/Artifact.js";
 import { isCompiledArtifact, isEditorDocument, normalizeScriptDocument } from "./EditorDocument.js";
 import { getScriptDocument } from "./ScriptStorage.js";
 import { ScriptManager } from "./ScriptManager.js";
+import { SignalStore } from "./runtime/SignalStore.js";
 
 function isPlainObject(value) {
     return Boolean(value)
@@ -140,11 +141,19 @@ export class LoadedVisualScript {
         this.artifact = artifact;
         this.name = artifact.name;
         this.interface = artifact.interface;
-        this.runner = options.runner || ScriptManager.createRunner(artifact);
+        this.signalStore = options.signalStore || new SignalStore(options.signalSnapshot || {});
+        this.runtimeContext = options.runtimeContext || options.context || {};
+        this.runner = options.runner || ScriptManager.createRunner(artifact, {
+            signalStore: this.signalStore,
+            runtimeContext: this.runtimeContext
+        });
     }
 
     runResult(...inputs) {
-        return this.runner.run(normalizeRunInputs(this.artifact, inputs));
+        return this.runner.run(normalizeRunInputs(this.artifact, inputs), {
+            signalStore: this.signalStore,
+            runtimeContext: this.runtimeContext
+        });
     }
 
     run(...inputs) {
@@ -154,6 +163,18 @@ export class LoadedVisualScript {
         }
 
         return result.outputs;
+    }
+
+    getSignalStore() {
+        return this.signalStore;
+    }
+
+    setSignal(path, value, options = {}) {
+        return this.signalStore.set(path, value, options);
+    }
+
+    readSignal(path, options = {}) {
+        return this.signalStore.read(path, options);
     }
 }
 

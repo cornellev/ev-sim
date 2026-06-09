@@ -23,6 +23,7 @@ import {
     wouldCreateScriptReferenceCycle,
 } from "../app/scripting/GraphDocument.js";
 import { createLoadedScript, loadScript } from "../app/scripting/ScriptRuntime.js";
+import { SignalStore } from "../app/scripting/runtime/SignalStore.js";
 
 class ConstBlock extends UnitBlock {
     constructor(uuid, value = 1) {
@@ -261,6 +262,102 @@ class AccumulatorBlock extends UnitBlock {
     }
 }
 
+class SignalWriteTestBlock extends UnitBlock {
+    register() {
+        this.registerInput("value", "float64");
+        this.registerOutput("written", "boolean");
+    }
+
+    valid() {
+        return this.hasInput("value");
+    }
+
+    execute() {
+        this.manager.writeSignal("debug.value", this.getInput("value"), {
+            type: "float64",
+            source: "test"
+        });
+        return new BlockOutput().set("written", true);
+    }
+}
+
+class FailingSignalWriteBlock extends UnitBlock {
+    register() {
+        this.registerOutput("out", "float64");
+    }
+
+    valid() {
+        return true;
+    }
+
+    execute() {
+        this.manager.writeSignal("debug.value", 99, {
+            type: "float64",
+            source: "test"
+        });
+        throw new Error("write failed");
+    }
+}
+
+class SignalReadValueBlock extends UnitBlock {
+    register() {
+        this.registerOutput("out", "float64");
+    }
+
+    valid() {
+        return true;
+    }
+
+    execute() {
+        return new BlockOutput().set("out", this.manager.readSignal("debug.value", { type: "float64" }).value ?? 0);
+    }
+}
+
+class BindingConfigBlock extends UnitBlock {
+    register() {
+        this.registerOutput("config", "json");
+    }
+
+    valid() {
+        return true;
+    }
+
+    getBindingDefinition() {
+        return {
+            kind: "input",
+            sourceKind: "topic",
+            source: "/ackdrive",
+            path: "topics./ackdrive",
+            type: "message"
+        };
+    }
+
+    execute() {
+        return new BlockOutput().set("config", this.getBindingDefinition());
+    }
+}
+
+class EntrypointConfigBlock extends UnitBlock {
+    register() {
+        this.registerOutput("config", "json");
+    }
+
+    valid() {
+        return true;
+    }
+
+    getEntrypointDefinition() {
+        return {
+            kind: "signal-update",
+            path: "topics./ackdrive"
+        };
+    }
+
+    execute() {
+        return new BlockOutput().set("config", this.getEntrypointDefinition());
+    }
+}
+
 function resetRegistry() {
     clearBlockTypeRegistryForTests();
     [
@@ -273,6 +370,11 @@ function resetRegistry() {
         CountingBlock,
         ThrowBlock,
         AccumulatorBlock,
+        SignalWriteTestBlock,
+        FailingSignalWriteBlock,
+        SignalReadValueBlock,
+        BindingConfigBlock,
+        EntrypointConfigBlock,
         CompiledProgramUnitBlock,
         LocalScriptProgramBlock,
     ].forEach((blockClass) => registerBlockType(blockClass.name, blockClass));
@@ -522,6 +624,123 @@ test("persistent runners preserve runtime state across runs", () => {
     assert.equal(runner.run({ x: 2 }).outputs.result, 2);
     assert.equal(runner.run({ x: 2 }).outputs.result, 4);
     assert.deepEqual(runner.serializeRuntimeState().acc, { total: 4 });
+});
+
+test("signal store reads expose value, age, stale status, and changed status", () => {
+    const now = Date.parse("2026-06-09T00:00:10.000Z");
+    const store = new SignalStore({
+        "topics./ackdrive": {
+            value: { speed: 4 },
+            type: "message",
+            updatedAt: "2026-06-09T00:00:08.000Z",
+            source: "mock-ros",
+            staleAfter: 5
+        }
+    }, {
+        now: () => now
+    });
+
+    const fresh = store.read("topics./ackdrive");
+    assert.deepEqual(fresh.value, { speed: 4 });
+    assert.equal(fresh.age, 2);
+    assert.equal(fresh.stale, false);
+    assert.equal(fresh.source, "mock-ros");
+    assert.equal(store.changed("topics./ackdrive"), false);
+
+    store.set("topics./ackdrive", { speed: 6 }, {
+        type: "message",
+        updatedAt: "2026-06-09T00:00:01.000Z",
+        staleAfter: 5
+    });
+
+    const stale = store.read("topics./ackdrive");
+    assert.equal(stale.stale, true);
+    assert.equal(store.changed("topics./ackdrive"), true);
+});
+
+test("signal writes are staged and only committed after successful execution", () => {
+    resetRegistry();
+
+    const manager = new ScriptManager();
+    manager.addUnit(new ConstBlock("value", 12));
+    manager.addUnit(new SignalWriteTestBlock("write"));
+    manager.addUnit(new OutputBlock("output", "ok", "boolean"));
+    manager.connectUnits("value", "out", "write", "value");
+    manager.connectUnits("write", "written", "output", "output");
+
+    const signalStore = new SignalStore();
+    const runner = ScriptManager.createRunner(manager.compile("write-signal"), { signalStore });
+
+    assert.equal(signalStore.read("debug.value").exists, false);
+
+    const run = runner.run();
+
+    assert.equal(run.status, "success");
+    assert.equal(run.outputs.ok, true);
+    assert.equal(signalStore.read("debug.value").value, 12);
+    assert.equal(signalStore.read("debug.value").source, "test");
+});
+
+test("signal writes roll back when execution fails", () => {
+    resetRegistry();
+
+    const manager = new ScriptManager();
+    manager.addUnit(new FailingSignalWriteBlock("write"));
+    manager.addUnit(new OutputBlock("output"));
+    manager.connectUnits("write", "out", "output", "output");
+
+    const signalStore = new SignalStore();
+    const run = ScriptManager.runCompiled(manager.compile("rollback-signal"), {}, { signalStore });
+
+    assert.equal(run.status, "failure");
+    assert.match(run.e.message, /write failed/);
+    assert.equal(signalStore.read("debug.value").exists, false);
+});
+
+test("compiler emits binding and entrypoint metadata from config units", () => {
+    resetRegistry();
+
+    const manager = createBasicProgram();
+    manager.addUnit(new BindingConfigBlock("binding"));
+    manager.addUnit(new EntrypointConfigBlock("entrypoint"));
+
+    const artifact = manager.compile("metadata");
+
+    assert.deepEqual(artifact.bindings, [{
+        uuid: "binding",
+        blockType: "BindingConfigBlock",
+        kind: "input",
+        sourceKind: "topic",
+        source: "/ackdrive",
+        path: "topics./ackdrive",
+        type: "message"
+    }]);
+    assert.deepEqual(artifact.entrypoints, [{
+        uuid: "entrypoint",
+        blockType: "EntrypointConfigBlock",
+        kind: "signal-update",
+        path: "topics./ackdrive"
+    }]);
+});
+
+test("loaded scripts can execute against an injected signal store", () => {
+    resetRegistry();
+
+    const manager = new ScriptManager();
+    manager.addUnit(new SignalReadValueBlock("read"));
+    manager.addUnit(new OutputBlock("output", "result"));
+    manager.connectUnits("read", "out", "output", "output");
+
+    const signalStore = new SignalStore();
+    const script = createLoadedScript(manager.compile("read-signal"), { signalStore });
+
+    script.setSignal("debug.value", 42, {
+        type: "float64",
+        source: "test"
+    });
+
+    assert.deepEqual(script.run(), { result: 42 });
+    assert.equal(script.readSignal("debug.value").value, 42);
 });
 
 test("editor graph serialization round-trips nodes, state, positions, connections, and runtime state", () => {

@@ -1,4 +1,5 @@
 import { assertSupportedArtifact, createRuntimeError } from "./Artifact.js";
+import { SignalStore } from "./SignalStore.js";
 
 function makeBlockOutputMap(blockOutput) {
     if (blockOutput?.map && typeof blockOutput.map === "object") {
@@ -13,7 +14,7 @@ function freezeArtifactCopy(artifact) {
 }
 
 export class VisualScriptRunner {
-    constructor(artifact, getBlockClass) {
+    constructor(artifact, getBlockClass, options = {}) {
         assertSupportedArtifact(artifact);
 
         this.artifact = freezeArtifactCopy(artifact);
@@ -22,6 +23,8 @@ export class VisualScriptRunner {
         this.storedData = {};
         this.externalInputs = {};
         this.externalOutputs = {};
+        this.runtimeContext = options.runtimeContext || {};
+        this.signalStore = options.signalStore || new SignalStore(options.signalSnapshot || {});
 
         this._hydrateUnits();
         this._hydrateRuntimeConnections();
@@ -42,8 +45,35 @@ export class VisualScriptRunner {
             setExternalOutput: (label, value) => {
                 this.externalOutputs[label] = value;
             },
-            getExternalOutputs: () => ({ ...this.externalOutputs })
+            getExternalOutputs: () => ({ ...this.externalOutputs }),
+            getRuntimeContext: () => ({ ...this.runtimeContext }),
+            setRuntimeContext: (context = {}) => {
+                this.runtimeContext = context || {};
+            },
+            getSignalStore: () => this.signalStore,
+            readSignal: (path, options = {}) => this.signalStore.read(path, options),
+            writeSignal: (path, value, options = {}) => this.signalStore.write(path, value, options),
+            setSignal: (path, value, options = {}) => this.signalStore.set(path, value, options),
+            signalExists: (path) => this.signalStore.has(path),
+            signalAge: (path) => this.signalStore.age(path),
+            signalChanged: (path) => this.signalStore.changed(path),
+            recordSignal: (path, value, options = {}) => this.signalStore.record(path, value, options),
+            getSignalHistory: (path) => this.signalStore.history(path)
         };
+    }
+
+    setSignalStore(signalStore) {
+        if (signalStore) {
+            this.signalStore = signalStore;
+        }
+    }
+
+    getSignalStore() {
+        return this.signalStore;
+    }
+
+    setRuntimeContext(context = {}) {
+        this.runtimeContext = context || {};
     }
 
     _hydrateUnits() {
@@ -154,11 +184,24 @@ export class VisualScriptRunner {
         });
     }
 
-    run(inputs = {}) {
+    run(inputs = {}, options = {}) {
+        if (options.signalStore) {
+            this.setSignalStore(options.signalStore);
+        }
+
+        if (options.signalSnapshot) {
+            this.signalStore.hydrate(options.signalSnapshot);
+        }
+
+        if (options.context || options.runtimeContext) {
+            this.setRuntimeContext(options.context || options.runtimeContext);
+        }
+
         this.externalInputs = inputs || {};
         this.externalOutputs = {};
         this.outputMemo = new Map();
         this.evaluating = new Set();
+        const signalTransaction = this.signalStore.beginTransaction();
 
         try {
             let result = null;
@@ -173,20 +216,24 @@ export class VisualScriptRunner {
             }
 
             this._syncRuntimeState();
+            this.signalStore.commitTransaction(signalTransaction);
 
             return {
                 status: "success",
                 outputs: { ...this.externalOutputs },
                 result,
+                signals: this.signalStore.snapshot(),
                 e: null
             };
         } catch (error) {
+            this.signalStore.rollbackTransaction(signalTransaction);
             this._syncRuntimeState();
 
             return {
                 status: "failure",
                 outputs: {},
                 result: null,
+                signals: this.signalStore.snapshot(),
                 e: createRuntimeError(error)
             };
         }
@@ -205,6 +252,6 @@ export class VisualScriptRunner {
     }
 }
 
-export function createVisualScriptRunner(artifact, getBlockClass) {
-    return new VisualScriptRunner(artifact, getBlockClass);
+export function createVisualScriptRunner(artifact, getBlockClass, options = {}) {
+    return new VisualScriptRunner(artifact, getBlockClass, options);
 }

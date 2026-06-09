@@ -176,6 +176,24 @@ function collectInterface(units, reachable) {
     return programInterface;
 }
 
+function collectUnitDefinitions(units, methodName) {
+    return units.flatMap((unit) => {
+        if (typeof unit[methodName] !== "function") return [];
+
+        const definition = unit[methodName]();
+        if (!definition) return [];
+
+        const definitions = Array.isArray(definition) ? definition : [definition];
+        return definitions
+            .filter(Boolean)
+            .map((item) => ({
+                uuid: unit.uuid,
+                blockType: unit.typeId(),
+                ...item
+            }));
+    });
+}
+
 function createNodeDefinition(unit, storedData) {
     return {
         uuid: unit.uuid,
@@ -226,6 +244,8 @@ export function compileVisualScript(manager, name, getBlockClass) {
     const reverseSuccess = createReverseSuccess(success);
     const startStates = Q.filter((uuid) => !reverseSuccess[uuid]);
     const programInterface = collectInterface(units, reachable);
+    const bindings = collectUnitDefinitions(units, "getBindingDefinition");
+    const entrypoints = collectUnitDefinitions(units, "getEntrypointDefinition");
 
     return {
         kind: VISUAL_SCRIPT_KIND,
@@ -244,6 +264,8 @@ export function compileVisualScript(manager, name, getBlockClass) {
         failureNode: createFailureNode(),
         F: [FAILURE_NODE_ID],
         reverseSuccess,
-        interface: programInterface
+        interface: programInterface,
+        bindings,
+        entrypoints
     };
 }

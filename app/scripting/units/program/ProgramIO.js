@@ -7,11 +7,27 @@ export const SUPPORTED_TYPES = [
     "int32",
     "boolean",
     "string",
+    "json",
+    "message",
+    "topic",
+    "timestamp",
+    "vec2",
+    "vec3",
+    "pose2d",
+    "pose3d",
+    "vehicle_ref",
+    "device_ref",
+    "object_ref",
+    "route",
+    "waypoint",
+    "lane_ref",
+    "sim_event",
     "tex1d",
     "array[float64]",
     "array[int32]",
     "array[boolean]",
     "array[string]",
+    "array[json]",
     "custom[string]"
 ];
 
@@ -51,7 +67,7 @@ function parseArrayValue(value, itemType = "float64") {
     return rawItems.map((item) => parseValueByType(item, itemType));
 }
 
-function parseValueByType(value, type) {
+export function parseValueByType(value, type) {
     const normalizedType = normalizeType(type);
 
     if (normalizedType === "tex1d") {
@@ -63,6 +79,32 @@ function parseValueByType(value, type) {
     }
 
     if (normalizedType.startsWith("custom[")) {
+        if (typeof value !== "string") return value;
+
+        try {
+            return JSON.parse(value);
+        } catch {
+            return value;
+        }
+    }
+
+    if ([
+        "json",
+        "message",
+        "topic",
+        "timestamp",
+        "vec2",
+        "vec3",
+        "pose2d",
+        "pose3d",
+        "vehicle_ref",
+        "device_ref",
+        "object_ref",
+        "route",
+        "waypoint",
+        "lane_ref",
+        "sim_event"
+    ].includes(normalizedType)) {
         if (typeof value !== "string") return value;
 
         try {

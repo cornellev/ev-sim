@@ -3,6 +3,7 @@ import { getRegisteredBlockType, registerBlockType } from "./BlockRegistry.js";
 import { assertSupportedArtifact } from "./runtime/Artifact.js";
 import { compileVisualScript } from "./runtime/Compiler.js";
 import { createVisualScriptRunner } from "./runtime/Runner.js";
+import { SignalStore } from "./runtime/SignalStore.js";
 
 export { clearBlockTypeRegistryForTests, getRegisteredBlockType, registerBlockType } from "./BlockRegistry.js";
 
@@ -146,6 +147,14 @@ export class UnitBlock {
     }
 
     getProgramPortDefinition() {
+        return null;
+    }
+
+    getBindingDefinition() {
+        return null;
+    }
+
+    getEntrypointDefinition() {
         return null;
     }
 
@@ -326,7 +335,13 @@ export class CompiledProgramUnitBlock extends UnitBlock {
         });
 
         if (!this.runner) {
-            this.runner = ScriptManager.createRunner(compiledProgram);
+            this.runner = ScriptManager.createRunner(compiledProgram, {
+                signalStore: this.manager?.getSignalStore?.(),
+                runtimeContext: this.manager?.getRuntimeContext?.()
+            });
+        } else {
+            this.runner.setSignalStore?.(this.manager?.getSignalStore?.());
+            this.runner.setRuntimeContext?.(this.manager?.getRuntimeContext?.() || {});
         }
 
         const run = this.runner.run(providedInputs);
@@ -375,6 +390,8 @@ export class ScriptManager {
         this.storedData = {};
         this.externalInputs = {};
         this.externalOutputs = {};
+        this.runtimeContext = {};
+        this.signalStore = new SignalStore();
     }
 
     getStoredData(uuid) {
@@ -404,6 +421,56 @@ export class ScriptManager {
 
     getExternalOutputs() {
         return { ...this.externalOutputs };
+    }
+
+    setRuntimeContext(context = {}) {
+        this.runtimeContext = context || {};
+    }
+
+    getRuntimeContext() {
+        return { ...this.runtimeContext };
+    }
+
+    setSignalStore(signalStore) {
+        if (signalStore) {
+            this.signalStore = signalStore;
+        }
+    }
+
+    getSignalStore() {
+        return this.signalStore;
+    }
+
+    readSignal(path, options = {}) {
+        return this.signalStore.read(path, options);
+    }
+
+    writeSignal(path, value, options = {}) {
+        return this.signalStore.write(path, value, options);
+    }
+
+    setSignal(path, value, options = {}) {
+        return this.signalStore.set(path, value, options);
+    }
+
+    signalExists(path) {
+        return this.signalStore.has(path);
+    }
+
+    signalAge(path) {
+        return this.signalStore.age(path);
+    }
+
+    signalChanged(path) {
+        return this.signalStore.changed(path);
+    }
+
+    recordSignal(path, value, options = {}) {
+        return this.signalStore.record(path, value, options);
+    }
+
+    getSignalHistory(path) {
+        return this.signalStore.history(path);
     }
     
     setHead(uuid) {
@@ -523,7 +590,18 @@ export class ScriptManager {
         return headUnit.execute();
     }
 
-    executeProgram(inputs = {}) {
+    executeProgram(inputs = {}, options = {}) {
+        if (options.signalStore) {
+            this.setSignalStore(options.signalStore);
+        }
+
+        if (options.signalSnapshot) {
+            this.signalStore.hydrate(options.signalSnapshot);
+        }
+
+        this.setRuntimeContext(options.context || options.runtimeContext || this.runtimeContext);
+        const signalTransaction = this.signalStore.beginTransaction();
+
         try {
             this.setRuntimeInputs(inputs);
             this.externalOutputs = {};
@@ -535,26 +613,32 @@ export class ScriptManager {
                         unit.execute();
                     }
                 });
+                this.signalStore.commitTransaction(signalTransaction);
                 return {
                     status: "success",
                     result: null,
                     outputs: this.getExternalOutputs(),
+                    signals: this.signalStore.snapshot(),
                     e: null
                 };
             }
 
             const result = this.execute();
+            this.signalStore.commitTransaction(signalTransaction);
             return {
                 status: "success",
                 result,
                 outputs: this.getExternalOutputs(),
+                signals: this.signalStore.snapshot(),
                 e: null
             };
         } catch (err) {
+            this.signalStore.rollbackTransaction(signalTransaction);
             return {
                 status: "failure",
                 result: null,
                 outputs: {},
+                signals: this.signalStore.snapshot(),
                 e: {
                     name: err?.name || "Error",
                     message: err?.message || String(err),
@@ -572,12 +656,12 @@ export class ScriptManager {
         return ScriptManager.createRunner(compiledProgram);
     }
 
-    static runCompiled(compiledProgram, inputs = {}) {
-        return ScriptManager.createRunner(compiledProgram).run(inputs);
+    static runCompiled(compiledProgram, inputs = {}, options = {}) {
+        return ScriptManager.createRunner(compiledProgram, options).run(inputs, options);
     }
 
-    static createRunner(compiledProgram) {
-        return createVisualScriptRunner(compiledProgram, getRegisteredBlockType);
+    static createRunner(compiledProgram, options = {}) {
+        return createVisualScriptRunner(compiledProgram, getRegisteredBlockType, options);
     }
 
     static createCompiledProgramBlock(compiledProgram) {

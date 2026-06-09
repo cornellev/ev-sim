@@ -44,17 +44,22 @@ function isEditableTarget(target) {
     return Boolean(target.closest("input, textarea, select, [contenteditable]")) || target.isContentEditable;
 }
 
+function assertUniquePorts(ports, kind, title) {
+    const labels = ports.map((port, index) => port.id || port.label || `${kind}-${index}`);
+    const uniqueLabels = new Set(labels);
+    if (uniqueLabels.size !== labels.length) {
+        throw new Error(`Duplicate ${kind} labels in unit "${title}". Labels must be unique within ${kind} ports.`);
+    }
+}
+
 export default function Unit({ children, title="default title", hasOptions=false, inputs=[], outputs=[], _uuid=null, initialPosition=null }) {
     const [position, setPosition] = useState(() => initialPosition || { x: 100, y: 100 });
     const generatedId = useId().replace(/:/g, "");
     const uuid = _uuid || generatedId;
     const [selected, setSelected] = useState(false);
 
-    const labels = [...inputs.map(i => i.id || i.label), ...outputs.map(o => o.id || o.label)];
-    const uniqueLabels = new Set(labels);
-    if (uniqueLabels.size !== labels.length) {
-        throw new Error(`Duplicate input/output labels in unit "${title}". Labels must be unique within a unit.`);
-    }
+    assertUniquePorts(inputs, "input", title);
+    assertUniquePorts(outputs, "output", title);
 
     useEffect(() => {
         const onPositionUnit = (e) => {

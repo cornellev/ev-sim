@@ -24,6 +24,7 @@ import { registerBuiltInBlocks } from "./registerBuiltInBlocks";
 import { TYPES } from "./Constants";
 import { FaCheckCircle } from "react-icons/fa";
 import { FaCircleXmark } from "react-icons/fa6";
+import { TbLayoutSidebarRightCollapse, TbLayoutSidebarRightExpand } from "react-icons/tb";
 import {
     createArtifactOnlyDocument,
     createDocumentId,
@@ -255,10 +256,12 @@ function compactError(error) {
 }
 
 function OutputNodeSidebar({ config, onChange, valid }) {
+    const [collapsed, setCollapsed] = useState(false);
     const outputState = normalizeOutputNodeState(config);
     const outputs = outputState.outputs;
     const duplicateLabels = hasDuplicateOutputLabels(outputs);
     const canAddOutput = outputs.length < OUTPUT_NODE_MAX_OUTPUTS;
+    const ready = valid && !duplicateLabels;
 
     const updateOutput = (id, patch) => {
         onChange({
@@ -298,76 +301,95 @@ function OutputNodeSidebar({ config, onChange, valid }) {
     };
 
     return (
-        <aside className="fixed right-4 top-4 z-40 w-[300px] rounded-md border border-white/10 bg-[#202020]/95 text-white shadow-[0_16px_48px_rgba(0,0,0,0.28)] backdrop-blur">
-            <div className="border-b border-white/10 px-4 py-3">
-                <div className="flex items-center justify-between gap-3">
-                    <h2 className="text-sm font-medium tracking-normal">OutputNode</h2>
-                    <span className={`rounded-sm px-2 py-1 text-[11px] ${valid && !duplicateLabels ? "bg-emerald-400/12 text-emerald-200" : "bg-white/8 text-zinc-300"}`}>
-                        {valid && !duplicateLabels ? "Ready" : "Invalid"}
+        <aside className={`fixed right-4 top-4 z-40 overflow-hidden rounded-md border border-white/10 bg-[#202020]/95 text-white shadow-[0_16px_48px_rgba(0,0,0,0.28)] backdrop-blur transition-[width,border-color,background-color] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] ${collapsed ? "w-12" : "w-[300px]"}`}>
+            <div className={`${collapsed ? "flex h-full min-h-[156px] flex-col items-center gap-2 p-2" : "border-b border-white/10 px-4 py-3"}`}>
+                <div className={`${collapsed ? "flex flex-col items-center gap-2" : "flex items-center justify-between gap-3"}`}>
+                    <button
+                        type="button"
+                        aria-label={collapsed ? "Expand OutputNode menu" : "Collapse OutputNode menu"}
+                        title={collapsed ? "Expand OutputNode menu" : "Collapse OutputNode menu"}
+                        onClick={() => setCollapsed((value) => !value)}
+                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-white/10 bg-white/6 text-zinc-300 transition-[transform,background-color,border-color,color] duration-150 hover:border-white/18 hover:bg-white/10 hover:text-white active:scale-[0.97]"
+                    >
+                        {collapsed
+                            ? <TbLayoutSidebarRightExpand className="h-4 w-4" strokeWidth={1.8} />
+                            : <TbLayoutSidebarRightCollapse className="h-4 w-4" strokeWidth={1.8} />}
+                    </button>
+
+                    {!collapsed && <h2 className="min-w-0 flex-1 text-sm font-medium tracking-normal">OutputNode</h2>}
+
+                    <span className={`${collapsed ? "flex h-7 min-w-7 items-center justify-center rounded-md px-1 font-mono text-[10px]" : "rounded-sm px-2 py-1 text-[11px]"} ${ready ? "bg-emerald-400/12 text-emerald-200" : "bg-white/8 text-zinc-300"}`}>
+                        {collapsed ? outputs.length : ready ? "Ready" : "Invalid"}
                     </span>
                 </div>
-            </div>
 
-            <div className="max-h-[calc(100vh-112px)] overflow-y-auto px-4 py-4">
-                <div className="space-y-3">
-                    {outputs.map((output, index) => (
-                        <div key={output.id} className="rounded-md border border-white/10 bg-[#171717] p-3">
-                            <div className="mb-3 flex items-center justify-between gap-3">
-                                <div className="text-xs text-zinc-400">Output {index + 1}</div>
-                                <button
-                                    type="button"
-                                    disabled={outputs.length <= 1}
-                                    onClick={() => removeOutput(output.id)}
-                                    className="rounded-sm px-2 py-1 text-[11px] text-zinc-400 transition-[transform,background-color,color] duration-150 hover:bg-white/8 hover:text-white active:scale-[0.98] disabled:pointer-events-none disabled:opacity-35"
-                                >
-                                    Remove
-                                </button>
-                            </div>
-
-                            <label className="block">
-                                <span className="mb-1.5 block text-xs text-zinc-400">Label</span>
-                                <input
-                                    value={output.label}
-                                    className="w-full rounded-sm border border-white/10 bg-[#101010] px-3 py-2 text-sm text-white outline-none transition-[border-color,box-shadow] duration-150 focus:border-white/30 focus:shadow-[0_0_0_3px_rgba(255,255,255,0.06)]"
-                                    onChange={(event) => updateOutput(output.id, { label: event.target.value })}
-                                />
-                            </label>
-
-                            <label className="mt-3 block">
-                                <span className="mb-1.5 block text-xs text-zinc-400">Type</span>
-                                <div className="flex items-center gap-2">
-                                    <span
-                                        className="h-2.5 w-2.5 shrink-0 rounded-full"
-                                        style={{ backgroundColor: TYPES[output.type.replace(/\[.*?\]/, "")] || TYPES[output.type] || "rgb(150,150,150)" }}
-                                    />
-                                    <select
-                                        value={output.type}
-                                        className="min-w-0 flex-1 rounded-sm border border-white/10 bg-[#101010] px-3 py-2 text-sm text-white outline-none transition-[border-color,box-shadow] duration-150 focus:border-white/30 focus:shadow-[0_0_0_3px_rgba(255,255,255,0.06)]"
-                                        onChange={(event) => updateOutput(output.id, { type: event.target.value })}
-                                    >
-                                        {SUPPORTED_TYPES.map((type) => (
-                                            <option key={type} value={type}>{type}</option>
-                                        ))}
-                                    </select>
-                                </div>
-                            </label>
-                        </div>
-                    ))}
-                </div>
-
-                {duplicateLabels && (
-                    <p className="mt-3 text-xs text-rose-200">Output labels must be unique.</p>
+                {collapsed && (
+                    <div className="mt-1 h-1.5 w-1.5 rounded-full" style={{ backgroundColor: ready ? "rgb(110, 231, 183)" : "rgb(244, 114, 182)" }} />
                 )}
-
-                <button
-                    type="button"
-                    disabled={!canAddOutput}
-                    onClick={addOutput}
-                    className="mt-4 w-full rounded-sm border border-white/10 bg-white/8 px-3 py-2 text-sm text-white transition-[transform,background-color,border-color] duration-150 hover:border-white/18 hover:bg-white/12 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-45"
-                >
-                    Add Output
-                </button>
             </div>
+
+            {!collapsed && (
+                <div className="max-h-[calc(100vh-112px)] overflow-y-auto px-4 py-4">
+                    <div className="space-y-3">
+                        {outputs.map((output, index) => (
+                            <div key={output.id} className="rounded-md border border-white/10 bg-[#171717] p-3">
+                                <div className="mb-3 flex items-center justify-between gap-3">
+                                    <div className="text-xs text-zinc-400">Output {index + 1}</div>
+                                    <button
+                                        type="button"
+                                        disabled={outputs.length <= 1}
+                                        onClick={() => removeOutput(output.id)}
+                                        className="rounded-sm px-2 py-1 text-[11px] text-zinc-400 transition-[transform,background-color,color] duration-150 hover:bg-white/8 hover:text-white active:scale-[0.98] disabled:pointer-events-none disabled:opacity-35"
+                                    >
+                                        Remove
+                                    </button>
+                                </div>
+
+                                <label className="block">
+                                    <span className="mb-1.5 block text-xs text-zinc-400">Label</span>
+                                    <input
+                                        value={output.label}
+                                        className="w-full rounded-sm border border-white/10 bg-[#101010] px-3 py-2 text-sm text-white outline-none transition-[border-color,box-shadow] duration-150 focus:border-white/30 focus:shadow-[0_0_0_3px_rgba(255,255,255,0.06)]"
+                                        onChange={(event) => updateOutput(output.id, { label: event.target.value })}
+                                    />
+                                </label>
+
+                                <label className="mt-3 block">
+                                    <span className="mb-1.5 block text-xs text-zinc-400">Type</span>
+                                    <div className="flex items-center gap-2">
+                                        <span
+                                            className="h-2.5 w-2.5 shrink-0 rounded-full"
+                                            style={{ backgroundColor: TYPES[output.type.replace(/\[.*?\]/, "")] || TYPES[output.type] || "rgb(150,150,150)" }}
+                                        />
+                                        <select
+                                            value={output.type}
+                                            className="min-w-0 flex-1 rounded-sm border border-white/10 bg-[#101010] px-3 py-2 text-sm text-white outline-none transition-[border-color,box-shadow] duration-150 focus:border-white/30 focus:shadow-[0_0_0_3px_rgba(255,255,255,0.06)]"
+                                            onChange={(event) => updateOutput(output.id, { type: event.target.value })}
+                                        >
+                                            {SUPPORTED_TYPES.map((type) => (
+                                                <option key={type} value={type}>{type}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                </label>
+                            </div>
+                        ))}
+                    </div>
+
+                    {duplicateLabels && (
+                        <p className="mt-3 text-xs text-rose-200">Output labels must be unique.</p>
+                    )}
+
+                    <button
+                        type="button"
+                        disabled={!canAddOutput}
+                        onClick={addOutput}
+                        className="mt-4 w-full rounded-sm border border-white/10 bg-white/8 px-3 py-2 text-sm text-white transition-[transform,background-color,border-color] duration-150 hover:border-white/18 hover:bg-white/12 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-45"
+                    >
+                        Add Output
+                    </button>
+                </div>
+            )}
         </aside>
     );
 }
@@ -410,7 +432,7 @@ function EditorToolbar({
     onToggleDownload
 }) {
     return (
-        <div className="fixed left-4 top-4 z-50 flex max-w-[calc(100vw-360px)] items-center gap-2 rounded-md border border-white/10 bg-[#202020]/95 px-2.5 py-2 text-white shadow-[0_18px_48px_rgba(0,0,0,0.28)] backdrop-blur">
+        <div className="fixed left-18 top-4 z-50 flex max-w-[calc(100vw-360px)] items-center gap-2 rounded-md border border-white/10 bg-[#202020]/95 px-2.5 py-2 text-white shadow-[0_18px_48px_rgba(0,0,0,0.28)] backdrop-blur">
             {backStack.length > 0 && (
                 <button
                     type="button"
@@ -490,7 +512,7 @@ function ScriptLibraryDrawer({
     if (!open) return null;
 
     return (
-        <aside className="fixed left-4 top-[72px] z-40 flex max-h-[calc(100vh-92px)] w-[360px] flex-col rounded-md border border-white/10 bg-[#202020]/95 text-white shadow-[0_18px_52px_rgba(0,0,0,0.34)] backdrop-blur">
+        <aside className="fixed left-18 top-[72px] z-40 flex max-h-[calc(100vh-92px)] w-[360px] flex-col rounded-md border border-white/10 bg-[#202020]/95 text-white shadow-[0_18px_52px_rgba(0,0,0,0.34)] backdrop-blur">
             <div className="border-b border-white/10 px-3 py-3">
                 <div className="mb-3 flex items-center justify-between gap-3">
                     <div>
