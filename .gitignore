@@ -46,3 +46,7 @@ next-env.d.ts
 public/scenarios
 public/scenario-docs
 
+baking/raw
+baking/__pycache__
+baking/venv
+baking/baked
