@@ -26,6 +26,7 @@ export class Data {
         this.simulationEngine = new SimulationEngine(this);
         this.bakeHarness = null;
         this._bakeRunConfig = null;
+        this._splatAccumulator = null;
         
         this.scene = null;
         this.camera = null;
@@ -119,6 +120,20 @@ export class Data {
      */
     bakeRunConfig() {
         return this._bakeRunConfig;
+    }
+
+    /**
+     * @param {import("../environment/visualization/SplatAccumulator").SplatAccumulator|null} accumulator
+     */
+    setSplatAccumulator(accumulator) {
+        this._splatAccumulator = accumulator;
+    }
+
+    /**
+     * @returns {import("../environment/visualization/SplatAccumulator").SplatAccumulator|null}
+     */
+    splats() {
+        return this._splatAccumulator;
     }
 
     /**

@@ -1,4 +1,4 @@
-import { denormalizeTagId, tagNameFromId } from "../data/ObjectTagRegistry";
+import { denormalizeTagId, tagNameFromId } from "../data/ObjectTagRegistry.js";
 
 /** @typedef {{ distance: number, tagId: number, tagName: string, objectKind: "triangle"|"box"|null, objectIndex: number, hit: boolean }} LidarHit */
 

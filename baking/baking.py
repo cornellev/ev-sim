@@ -19,6 +19,7 @@ queue = deque()
 pending_samples = {}
 run_manifests = {}
 building_bake_state = {}
+sample_results = {}
 lock = threading.Lock()
 
 
@@ -47,6 +48,7 @@ def clear_data():
         queue.clear()
         run_manifests.clear()
         building_bake_state.clear()
+        sample_results.clear()
 
 
 def files_check():
@@ -254,6 +256,24 @@ def get_queue_status():
         }
 
 
+def get_sample_result(sample_id, view_id):
+    with lock:
+        views = sample_results.get(sample_id, {})
+        if view_id in views:
+            path = views[view_id]
+            if path and os.path.exists(path):
+                return {"status": "ready", "path": path}
+
+        if sample_id in pending_samples:
+            return {"status": "pending"}
+
+        for job in queue:
+            if job.sample_id == sample_id:
+                return {"status": "pending"}
+
+    return {"status": "not_found"}
+
+
 def _slug(value):
     text = str(value or "view")
     return "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in text)
@@ -395,6 +415,8 @@ def _process_sample_job(job):
             final_path = os.path.join(baked_dir, f"final_{_slug(view_id)}.png")
             shutil.copy2(render_file.path, final_path)
             frame_record["final"][view_id] = final_path
+            with lock:
+                sample_results.setdefault(job.sample_id, {})[view_id] = final_path
             continue
 
         current_image = render_file.path
@@ -444,6 +466,8 @@ def _process_sample_job(job):
             final_path = os.path.join(baked_dir, f"final_{_slug(view_id)}.png")
             shutil.copy2(current_image, final_path)
             frame_record["final"][view_id] = final_path
+            with lock:
+                sample_results.setdefault(job.sample_id, {})[view_id] = final_path
 
     _write_frame_record(job, frame_record)
 
@@ -471,6 +495,7 @@ if __name__ == "__main__":
     bake_server.add_manifest_listener(on_manifest)
     bake_server.add_clear_listener(on_clear_data)
     bake_server.set_queue_status_provider(get_queue_status)
+    bake_server.set_result_provider(get_sample_result)
 
     bake_server.begin_server_async()
 

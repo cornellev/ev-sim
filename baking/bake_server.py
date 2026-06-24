@@ -2,6 +2,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import cgi
 import json
+from urllib.parse import parse_qs, urlparse
 
 on_photo_recieve = []
 
@@ -32,11 +33,17 @@ def add_clear_listener(listener):
 
 
 queue_status_provider = None
+result_provider = None
 
 
 def set_queue_status_provider(provider):
     global queue_status_provider
     queue_status_provider = provider
+
+
+def set_result_provider(provider):
+    global result_provider
+    result_provider = provider
 
 
 class RawImage:
@@ -70,6 +77,14 @@ class BakingRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Max-Age", "3600")
         self.end_headers()
         self.wfile.write(body)
+
+    def _send_png(self, payload):
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "image/png")
+        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(payload)
 
     def _send_cors_preflight(self):
         self.send_response(HTTPStatus.NO_CONTENT)
@@ -109,6 +124,45 @@ class BakingRequestHandler(BaseHTTPRequestHandler):
                 "pending": [],
             }
             self._send_json(HTTPStatus.OK, payload)
+            return
+
+        if self.path.startswith("/bake/result"):
+            parsed = urlparse(self.path)
+            params = parse_qs(parsed.query)
+            sample_id = (params.get("sampleId") or [""])[0]
+            view_id = (params.get("viewId") or [""])[0]
+
+            if not sample_id or not view_id:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "missing sampleId or viewId"})
+                return
+
+            if not result_provider:
+                self._send_json(HTTPStatus.NOT_FOUND, {"error": "result provider unavailable"})
+                return
+
+            result = result_provider(sample_id, view_id)
+            status = result.get("status")
+
+            if status == "ready":
+                path = result.get("path")
+                try:
+                    with open(path, "rb") as f:
+                        payload = f.read()
+                except OSError:
+                    self._send_json(HTTPStatus.NOT_FOUND, {"error": "result file missing"})
+                    return
+                self._send_png(payload)
+                return
+
+            if status == "pending":
+                self.send_response(HTTPStatus.ACCEPTED)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({"status": "pending"}).encode("utf-8"))
+                return
+
+            self._send_json(HTTPStatus.NOT_FOUND, {"error": "not found"})
             return
 
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "not found"})

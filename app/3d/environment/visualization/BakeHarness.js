@@ -3,7 +3,12 @@ import { BakeView } from "./BakeView";
 import { BakePath } from "./BakePath";
 import { buildSampleId, resolveViewPasses } from "./BakePass";
 import { BuildingRegionPlanner, resolvePassesForSample } from "./BuildingRegionPlanner";
-import { deriveModelSeed } from "../../../util/SeededRNG";
+import { deriveModelSeed } from "../../../util/SeededRNG.js";
+import { getBakedImage } from "./BakeRoundTrip";
+import {
+    filterForSplatting,
+    hitsToWorldPoints,
+} from "./LidarSplatProjector";
 import {
     checkBakeServerHealth,
     clearBakeServer,
@@ -15,7 +20,8 @@ import {
 } from "./bakeUpload";
 
 /**
- * Orchestrates BakeView cameras along BakePaths and uploads captured frames.
+ * Orchestrates BakeView cameras along BakePaths, uploads captures, and
+ * incrementally builds Gaussian splats from sequential frames.
  */
 export class BakeHarness {
     /**
@@ -34,6 +40,25 @@ export class BakeHarness {
         };
         this.maskMinPixels = options.maskMinPixels ?? 64;
         this.manifest = options.manifest ?? null;
+        this.roundTrip = options.roundTrip ?? {
+            useModel: false,
+            pollIntervalMs: 1000,
+            timeoutMs: 180000,
+            resultEndpoint: "/bake/result",
+        };
+        this.splatConfig = options.splat ?? {
+            enabled: true,
+            excludeTags: ["road"],
+            bandNear: 0,
+            bandFar: 15,
+            maxSplatDistance: 60,
+            maxPointsPerFrame: 20000,
+            coverageVoxelSize: 0.25,
+            radius: 0.06,
+            adaptiveRadius: true,
+            hideBakedGeometry: true,
+            hideThreshold: 50,
+        };
 
         this.server = {
             host: options.host ?? "http://localhost:8000",
@@ -159,7 +184,7 @@ export class BakeHarness {
     /**
      * Called by the simulation loop, but intentionally not time-based. Each
      * invocation starts at most one capture/upload. The next path point is not
-     * processed until the current image has been sent to the bake server.
+     * processed until the current sample has been fully handled.
      */
     update() {
         if (!this.running || this.completed || this.processingSample) return;
@@ -183,7 +208,7 @@ export class BakeHarness {
             const sample = path.sampleAtDistance(this.nextSampleDistance);
             if (sample) {
                 this._applySample(sample);
-                await this._captureAndUpload(sample);
+                await this._processSampleSequential(sample);
             }
 
             if (!this.running) return;
@@ -241,14 +266,16 @@ export class BakeHarness {
     }
 
     /**
+     * Sequential render -> round-trip -> splat -> manifest upload.
      * @param {{ distance: number, segmentIndex: number }} sample
      */
-    async _captureAndUpload(sample) {
+    async _processSampleSequential(sample) {
         const frameIndex = this.frameIndex;
         const pathIndex = this.activePathIndex;
         const sampleId = buildSampleId(this.runId, frameIndex);
         const uploads = [];
         let expectedFiles = 0;
+        const accumulator = this.data.splats?.();
 
         for (const view of this.views) {
             const regionPlan = this.regionPlanner.planForView(this.data.scene, view.sensorCamera);
@@ -280,6 +307,46 @@ export class BakeHarness {
             });
             if (!capture) continue;
 
+            let maskPassFrame = null;
+            if (this.roundTrip.useModel) {
+                const maskData = view._renderMaskPass([], ["road"]);
+                maskPassFrame = {
+                    data: maskData,
+                    width: view.cameraSettings.width,
+                    height: view.cameraSettings.height,
+                };
+            }
+
+            const bakedImage = await getBakedImage({
+                server: this.server,
+                roundTrip: this.roundTrip,
+                capture,
+                view,
+                sampleMetadata: metadata,
+                maskPassFrame,
+            });
+
+            if (this.splatConfig.enabled && accumulator && capture.lidar) {
+                const worldPoints = hitsToWorldPoints(
+                    capture.lidar,
+                    capture.metadata.cameraExtrinsics,
+                );
+                const filtered = filterForSplatting(worldPoints, this.splatConfig);
+                const commitResult = await accumulator.commitSliver(filtered, bakedImage, {
+                    intrinsics: capture.metadata.cameraIntrinsics,
+                    matrixWorld: capture.metadata.cameraExtrinsics.matrixWorld,
+                    buildingId: regionPlan.activeBuildingId,
+                    ...this.splatConfig,
+                });
+
+                accumulator.hideBakedGeometry(this.data.scene, this.splatConfig);
+
+                console.log(
+                    `BakeHarness: committed ${commitResult.committed} splats for ${sampleId}`,
+                    `(total ${accumulator.splatCount}, source ${bakedImage.source})`,
+                );
+            }
+
             const lidar = capture.lidar;
             const depth = capture.depth;
             const intrinsics = capture.metadata.cameraIntrinsics;
@@ -295,22 +362,20 @@ export class BakeHarness {
                 lidarHeight: lidar?.height ?? 0,
                 lidarRange: lidar?.range ?? 0,
                 coordinateSystem: "threejs-y-up-right-handed",
+                bakedImageSource: bakedImage.source,
             };
 
             if (lidar?.data) {
                 expectedFiles += 1;
                 uploads.push((async () => {
                     const filename = `lidar_range_${viewSlug}.bin`;
-                    const ok = await uploadBakeBinary(this.server, lidar.data.buffer, {
+                    await uploadBakeBinary(this.server, lidar.data.buffer, {
                         ...sharedMetadata,
                         filename,
                         fileRole: "lidar",
                         passId: "lidar",
                         contentType: "application/octet-stream",
                     });
-                    if (!ok) {
-                        console.warn("LiDAR upload failed for", view.name, "at distance", sample.distance);
-                    }
                 })());
             }
 
@@ -323,16 +388,12 @@ export class BakeHarness {
                         depth.height,
                         { linearToSrgb: false },
                     );
-                    const filename = `depth_${viewSlug}.png`;
-                    const ok = await uploadBakeFrame(this.server, blob, {
+                    await uploadBakeFrame(this.server, blob, {
                         ...sharedMetadata,
-                        filename,
+                        filename: `depth_${viewSlug}.png`,
                         fileRole: "depth",
                         passId: "depth",
                     });
-                    if (!ok) {
-                        console.warn("Depth upload failed for", view.name, "at distance", sample.distance);
-                    }
                 })());
             }
 
@@ -355,7 +416,7 @@ export class BakeHarness {
                     );
 
                     const filename = `${passFrame.fileRole}_${passFrame.passId}_${viewSlug}.png`;
-                    const ok = await uploadBakeFrame(this.server, blob, {
+                    await uploadBakeFrame(this.server, blob, {
                         ...sharedMetadata,
                         filename,
                         fileRole: passFrame.fileRole,
@@ -368,16 +429,6 @@ export class BakeHarness {
                         modelSeed: String(modelSeed),
                         chainProcess: passFrame.chainProcess ? "1" : "0",
                     });
-
-                    if (!ok) {
-                        console.warn(
-                            "Bake upload failed for",
-                            view.name,
-                            passFrame.passId,
-                            "at distance",
-                            sample.distance,
-                        );
-                    }
                 })());
             }
         }

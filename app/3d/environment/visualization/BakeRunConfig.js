@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { SeededRNG } from "../../../util/SeededRNG";
+import { SeededRNG } from "../../../util/SeededRNG.js";
 
 
 /**
@@ -65,6 +65,28 @@ export class BakeRunConfig {
         this.views = options.views ?? BakeRunConfig.defaultViews();
         this.pathVertices = options.pathVertices ?? DEFAULT_SAMPLE_PATH;
         this.createdAt = options.createdAt || new Date().toISOString();
+        this.roundTrip = {
+            useModel: false,
+            pollIntervalMs: 1000,
+            timeoutMs: 180000,
+            resultEndpoint: "/bake/result",
+            ...options.roundTrip,
+        };
+        this.splat = {
+            enabled: true,
+            excludeTags: ["road"],
+            bandNear: 0,
+            bandFar: 15,
+            maxSplatDistance: 60,
+            maxPointsPerFrame: 20000,
+            coverageVoxelSize: 0.25,
+            radius: 0.06,
+            adaptiveRadius: true,
+            hideBakedGeometry: true,
+            hideThreshold: 50,
+            maxSplats: 500000,
+            ...options.splat,
+        };
     }
 
     /**
@@ -122,6 +144,8 @@ export class BakeRunConfig {
             })),
             passPolicy: { ...this.passPolicy },
             modelSettings: { ...this.modelSettings },
+            roundTrip: { ...this.roundTrip },
+            splat: { ...this.splat },
             deltaDistance: this.deltaDistance,
             maskMinPixels: this.maskMinPixels,
         };

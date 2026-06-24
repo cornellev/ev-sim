@@ -39,6 +39,7 @@ class BakeSampleAccumulatorTest(unittest.TestCase):
         self.baking.queue.clear()
         self.baking.run_manifests.clear()
         self.baking.building_bake_state.clear()
+        self.baking.sample_results.clear()
 
     def tearDown(self):
         os.chdir(self.previous_cwd)
@@ -267,6 +268,48 @@ class BakeSampleAccumulatorTest(unittest.TestCase):
         job = self.baking.queue[0]
         roles = {sample.file_role for sample in job.files}
         self.assertEqual(roles, {"render", "lidar", "depth"})
+
+    def test_get_sample_result_ready_after_processing(self):
+        metadata = {
+            "runId": "run-f",
+            "frameIndex": "8",
+            "sampleId": "run-f:8",
+            "viewId": "bake/view/main",
+            "expectedFiles": "1",
+        }
+
+        self.baking.fprocess.process_image = lambda *args, **kwargs: None
+
+        self.baking.on_photo(self._photo({
+            **metadata,
+            "fileRole": "render",
+            "passId": "beauty",
+        }, "render_beauty_bake_view_main.png"))
+
+        self.assertEqual(len(self.baking.queue), 1)
+        self.baking.process()
+
+        result = self.baking.get_sample_result("run-f:8", "bake/view/main")
+        self.assertEqual(result["status"], "ready")
+        self.assertTrue(os.path.exists(result["path"]))
+
+    def test_get_sample_result_pending_while_accumulating(self):
+        metadata = {
+            "runId": "run-g",
+            "frameIndex": "1",
+            "sampleId": "run-g:1",
+            "viewId": "bake/view/main",
+            "expectedFiles": "2",
+        }
+
+        self.baking.on_photo(self._photo({
+            **metadata,
+            "fileRole": "render",
+            "passId": "beauty",
+        }))
+
+        result = self.baking.get_sample_result("run-g:1", "bake/view/main")
+        self.assertEqual(result["status"], "pending")
 
 
 class GaussianSplatExportTest(unittest.TestCase):

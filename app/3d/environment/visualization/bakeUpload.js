@@ -197,6 +197,37 @@ export async function uploadSampleComplete(server, metadata = {}) {
 }
 
 /**
+ * Poll the bake server for a processed frame result.
+ * @param {{ host: string }} server
+ * @param {{ sampleId: string, viewId: string, endpoint?: string }} params
+ * @returns {Promise<{ status: "ready"|"pending"|"not_found", blob?: Blob }>}
+ */
+export async function fetchBakeResult(server, params) {
+    const endpoint = params.endpoint ?? "/bake/result";
+    const query = new URLSearchParams({
+        sampleId: params.sampleId,
+        viewId: params.viewId,
+    });
+
+    try {
+        const response = await fetch(`${server.host}${endpoint}?${query.toString()}`);
+        if (response.status === 202) {
+            return { status: "pending" };
+        }
+        if (response.status === 404) {
+            return { status: "not_found" };
+        }
+        if (!response.ok) {
+            return { status: "not_found" };
+        }
+        const blob = await response.blob();
+        return { status: "ready", blob };
+    } catch {
+        return { status: "not_found" };
+    }
+}
+
+/**
  * Serial upload queue to avoid flooding the bake server.
  */
 export class BakeUploadQueue {

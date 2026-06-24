@@ -37,6 +37,7 @@ import { SparkRenderer } from "@sparkjsdev/spark";
 import { BakeHarness } from "./environment/visualization/BakeHarness";
 import { BakePath } from "./environment/visualization/BakePath";
 import { createDefaultBakeRunConfig } from "./environment/visualization/BakeRunConfig";
+import { SplatAccumulator } from "./environment/visualization/SplatAccumulator";
 import { Skybox } from "./skybox/Skybox";
 
 /** `?mini=q1` | `q2` | `q3` | `q4` | `fi1` | `fi2` | `fii1` | `fiii1` | `fiii2` | `fiii3` (default: q4) */
@@ -439,7 +440,12 @@ function setupBaking(data, scene) {
         passPolicy: bakeConfig.passPolicy,
         maskMinPixels: bakeConfig.maskMinPixels,
         manifest: bakeConfig.toManifest(),
+        roundTrip: bakeConfig.roundTrip,
+        splat: bakeConfig.splat,
     });
+
+    const splatAccumulator = new SplatAccumulator(scene, bakeConfig.splat);
+    data.setSplatAccumulator(splatAccumulator);
 
     const samplePath = new BakePath(bakeConfig.pathVertices);
     samplePath.display(data);
@@ -491,6 +497,7 @@ export default function TotalScene() {
         data.camera = camera;
         data.renderer = renderer;
         data.spark = spark; // this is for guassian splats
+        scene.add(spark);
 
         const initialize = async () => {
             setupScene(scene, camera, renderer);
