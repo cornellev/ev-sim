@@ -1,6 +1,6 @@
-# sensor-fusion
+# ev-sim
 
-Browser-based autonomous vehicle and sensor-fusion workbench with a Next.js UI, Three.js simulation scene, visual scripting runtime, and optional ROS-style topic integration through an external orchestrator process.
+This is our in-house simulation environment for testing and developing algorithms for autonomous driving. It is built on top of [three.js](https://threejs.org/) and provides a visual scripting interface for creating and running simulations.
 
 ## Quick Start
 
