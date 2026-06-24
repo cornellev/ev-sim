@@ -316,6 +316,8 @@ function generateBuildingMeshes(scene, footprints, params) {
         const mesh = new THREE.Mesh(geometry, material);
         mesh.castShadow = true;
         mesh.receiveShadow = true;
+        mesh.name = "Building";
+        mesh.userData.bakeTags = ["building"];
 
         scene.add(mesh);
         meshes.push(mesh);

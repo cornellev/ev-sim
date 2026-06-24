@@ -121,6 +121,52 @@ class BakeSampleAccumulatorTest(unittest.TestCase):
 
         self.assertEqual(len(self.baking.queue), 1)
 
+    def test_process_routes_sample_masks_through_fprocess(self):
+        metadata = {
+            "runId": "run-c",
+            "frameIndex": "5",
+            "sampleId": "run-c:5",
+            "viewId": "bake/view/main",
+            "expectedFiles": "2",
+        }
+        calls = []
+
+        def fake_process_image(image_path, mask_path, tag, save_path=None, metadata=None):
+            calls.append({
+                "image_path": image_path,
+                "mask_path": mask_path,
+                "tag": tag,
+                "save_path": save_path,
+                "metadata": metadata,
+            })
+            with open(save_path, "wb") as f:
+                f.write(b"processed")
+            return save_path
+
+        self.baking.fprocess.process_image = fake_process_image
+
+        self.baking.on_photo(self._photo({
+            **metadata,
+            "fileRole": "render",
+            "passId": "beauty",
+        }, "render_beauty_bake_view_main.png"))
+        self.baking.on_photo(self._photo({
+            **metadata,
+            "fileRole": "mask",
+            "passId": "mask_building",
+            "maskTags": "building",
+        }, "mask_mask_building_bake_view_main.png"))
+
+        self.assertEqual(len(self.baking.queue), 1)
+        self.baking.process()
+
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["tag"], "building")
+        self.assertTrue(calls[0]["image_path"].endswith("render_beauty_bake_view_main.png"))
+        self.assertTrue(calls[0]["mask_path"].endswith("mask_mask_building_bake_view_main.png"))
+        self.assertEqual(calls[0]["metadata"]["sampleId"], "run-c:5")
+        self.assertTrue(os.path.exists("baked/run-c/00005/final_bake_view_main.png"))
+
 
 if __name__ == "__main__":
     unittest.main()

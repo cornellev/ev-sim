@@ -6,6 +6,7 @@ from collections import deque
 from dataclasses import dataclass, field
 
 import bake_server
+import fprocess
 
 queue = deque()
 pending_samples = {}
@@ -208,24 +209,107 @@ def get_queue_status():
         }
 
 
+def _slug(value):
+    text = str(value or "view")
+    return "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in text)
+
+
+def _mask_tag(sample_file):
+    mask_tags = sample_file.metadata.get("maskTags", "")
+    tags = [tag.strip() for tag in mask_tags.split(",") if tag.strip()]
+    if tags:
+        return "_".join(tags)
+
+    pass_id = sample_file.pass_id or "mask"
+    return pass_id[5:] if pass_id.startswith("mask_") else pass_id
+
+
+def _processing_metadata(job, render_file, mask_file, tag):
+    return {
+        "sampleId": job.sample_id,
+        "runId": job.run_id,
+        "frameIndex": job.frame_index,
+        "viewId": mask_file.view_id,
+        "tag": tag,
+        "render": {
+            "name": render_file.name,
+            "passId": render_file.pass_id,
+            "fileRole": render_file.file_role,
+        },
+        "mask": {
+            "name": mask_file.name,
+            "passId": mask_file.pass_id,
+            "fileRole": mask_file.file_role,
+            "maskTags": mask_file.metadata.get("maskTags", ""),
+            "includeTags": mask_file.metadata.get("includeTags", ""),
+            "excludeTags": mask_file.metadata.get("excludeTags", ""),
+        },
+    }
+
+
+def _process_sample_job(job):
+    baked_dir = os.path.join("baked", job.run_id, f"{job.frame_index:05d}")
+    os.makedirs(baked_dir, exist_ok=True)
+
+    renders_by_view = {}
+    masks_by_view = {}
+
+    for sample_file in job.files:
+        if sample_file.file_role == "render":
+            renders_by_view.setdefault(sample_file.view_id, sample_file)
+        elif sample_file.file_role == "mask":
+            masks_by_view.setdefault(sample_file.view_id, []).append(sample_file)
+
+    for view_id, render_file in renders_by_view.items():
+        masks = sorted(
+            masks_by_view.get(view_id, []),
+            key=lambda file: file.pass_id,
+        )
+
+        if not masks:
+            shutil.copy2(
+                render_file.path,
+                os.path.join(baked_dir, f"final_{_slug(view_id)}.png"),
+            )
+            continue
+
+        current_image = render_file.path
+        for mask_file in masks:
+            tag = _mask_tag(mask_file)
+            output_path = os.path.join(
+                baked_dir,
+                f"processed_{tag}_{_slug(view_id)}.png",
+            )
+            result_path = fprocess.process_image(
+                current_image,
+                mask_file.path,
+                tag,
+                save_path=output_path,
+                metadata=_processing_metadata(job, render_file, mask_file, tag),
+            )
+
+            if not result_path:
+                print(
+                    f"Processing failed for sample {job.sample_id}, "
+                    f"view {view_id}, mask {mask_file.pass_id}"
+                )
+                continue
+
+            current_image = result_path
+
+        if os.path.exists(current_image):
+            shutil.copy2(
+                current_image,
+                os.path.join(baked_dir, f"final_{_slug(view_id)}.png"),
+            )
+
+
 def process():
     if not queue:
         return
 
     job = queue.popleft()
-    sample_dir = os.path.join(
-        "raw",
-        job.run_id,
-        "samples",
-        f"{job.frame_index:05d}",
-    )
-    baked_dir = os.path.join("baked", job.run_id, f"{job.frame_index:05d}")
-    os.makedirs(baked_dir, exist_ok=True)
-
-    for sample_file in job.files:
-        baked_path = os.path.join(baked_dir, sample_file.name)
-        if os.path.exists(sample_file.path):
-            shutil.copy2(sample_file.path, baked_path)
+    _process_sample_job(job)
 
 
 if __name__ == "__main__":

@@ -12,8 +12,17 @@ test("BakePass resolves default beauty and mask passes", () => {
     assert.equal(passes.length, 3);
     assert.equal(passes[0].id, "beauty");
     assert.equal(passes[0].kind, "render");
-    assert.equal(passes[1].kind, "mask");
-    assert.equal(passes[1].includeTags.includes("road"), true);
+
+    const buildingMask = passes.find((pass) => pass.id === "mask_building");
+    assert.ok(buildingMask);
+    assert.equal(buildingMask.kind, "mask");
+    assert.equal(buildingMask.includeTags.includes("building"), true);
+
+    const noRoadMask = passes.find((pass) => pass.id === "mask_no_road_building");
+    assert.ok(noRoadMask);
+    assert.equal(noRoadMask.includeTags.length, 0);
+    assert.equal(noRoadMask.excludeTags.includes("road"), true);
+    assert.equal(noRoadMask.excludeTags.includes("building"), true);
 });
 
 test("BakePass preserves custom pass lists", () => {

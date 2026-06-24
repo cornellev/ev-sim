@@ -154,6 +154,7 @@ export class BakePath {
         const points = this.vertices.map((v) => v.position);
         const geometry = new THREE.BufferGeometry().setFromPoints(points);
         const line = new THREE.Line(geometry, material);
+        line.userData.bakeIgnore = true;
         scene.add(line);
 
         for (const vertex of this.vertices) {
@@ -161,6 +162,7 @@ export class BakePath {
             const sphereMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
             const sphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
             sphere.position.copy(vertex.position);
+            sphere.userData.bakeIgnore = true;
             scene.add(sphere);
         }
     }

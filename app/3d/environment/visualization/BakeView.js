@@ -21,6 +21,62 @@ function getFusionObject(threeObject) {
 }
 
 /**
+ * Walk an object's ancestry looking for a truthy userData flag.
+ * @param {THREE.Object3D} threeObject
+ * @param {string} flag
+ * @returns {boolean}
+ */
+function hasAncestorFlag(threeObject, flag) {
+    let current = threeObject;
+    while (current) {
+        if (current.userData?.[flag]) return true;
+        current = current.parent;
+    }
+    return false;
+}
+
+/**
+ * @param {THREE.Object3D} object
+ * @returns {boolean}
+ */
+function isRenderable(object) {
+    return Boolean(object.isMesh || object.isLine || object.isPoints || object.isSprite);
+}
+
+/**
+ * Resolve the semantic tag names that apply to a rendered object, gathered
+ * across its ancestry. Sources:
+ *  - `userData.fusionObject.tags` (tagged data objects, e.g. signs)
+ *  - `userData.bakeTags` (plain meshes tagged for baking, e.g. buildings)
+ *  - `userData.bakeRoadSurface` flag (road/intersection corridors)
+ * @param {THREE.Object3D} object
+ * @returns {Set<string>}
+ */
+function effectiveTagNames(object) {
+    const names = new Set();
+    let current = object;
+
+    while (current) {
+        const userData = current.userData || {};
+
+        const fusionObject = userData.fusionObject;
+        if (fusionObject?.tags) {
+            for (const tag of fusionObject.tags) names.add(String(tag).toLowerCase());
+        }
+
+        if (Array.isArray(userData.bakeTags)) {
+            for (const tag of userData.bakeTags) names.add(String(tag).toLowerCase());
+        }
+
+        if (userData.bakeRoadSurface) names.add("road");
+
+        current = current.parent;
+    }
+
+    return names;
+}
+
+/**
  * BakeView is not a simulation Device. It is a harness-owned capture processor
  * that renders RGB and LiDAR buffers only when BakeHarness asks it to capture.
  */
@@ -128,6 +184,11 @@ export class BakeView {
         this._maskMaterial = new THREE.MeshBasicMaterial({
             color: 0xffffff,
             toneMapped: false,
+            side: THREE.DoubleSide,
+            transparent: false,
+            depthTest: true,
+            depthWrite: true,
+            fog: false,
         });
 
         this.shader.onData((buffer) => {
@@ -220,6 +281,13 @@ export class BakeView {
 
         scene.traverse((object) => {
             if (!object.visible) return;
+
+            if (object.userData?.bakeIgnore) {
+                this._hiddenObjects.push(object);
+                object.visible = false;
+                return;
+            }
+
             if (!(object.isMesh || object.isGroup)) return;
 
             const fusionObject = getFusionObject(object);
@@ -368,32 +436,72 @@ export class BakeView {
     }
 
     /**
-     * Render a binary mask where tagged fusion objects are white on black.
+     * Decide whether an object should be painted pure white in a mask pass.
+     *
+     * Semantics:
+     *  - includeTags non-empty: white only when the object carries one of the
+     *    include tags (and none of the exclude tags). e.g. ["building"].
+     *  - includeTags empty: white for every renderable scene object that does
+     *    not carry an exclude tag. e.g. excludeTags ["road", "building"] yields
+     *    "everything on screen but the road and buildings".
+     *
+     * @param {THREE.Object3D} object
+     * @param {string[]} includeTags
+     * @param {string[]} excludeTags
+     * @returns {boolean}
+     */
+    _isMaskWhite(object, includeTags, excludeTags) {
+        const tags = effectiveTagNames(object);
+        const include = includeTags.map((tag) => tag.toLowerCase());
+        const exclude = excludeTags.map((tag) => tag.toLowerCase());
+
+        if (exclude.some((tag) => tags.has(tag))) {
+            return false;
+        }
+
+        if (include.length > 0) {
+            return include.some((tag) => tags.has(tag));
+        }
+
+        return true;
+    }
+
+    /**
+     * Render a binary mask: matching geometry is pure white (#ffffff, opaque),
+     * everything else is fully transparent (rgba 0,0,0,0).
      * @param {string[]} includeTags
      * @param {string[]} excludeTags
      */
     _renderMaskPass(includeTags = [], excludeTags = []) {
         const previousBackground = this.scene.background;
-        this.scene.background = new THREE.Color(0x000000);
+        const previousClearColor = new THREE.Color();
+        this.renderer.getClearColor(previousClearColor);
+        const previousClearAlpha = this.renderer.getClearAlpha();
+
+        this.scene.background = null;
+        this.renderer.setClearColor(0x000000, 0);
+
         this._maskRestoreState = {
             background: previousBackground,
+            clearColor: previousClearColor,
+            clearAlpha: previousClearAlpha,
             entries: [],
         };
 
         this.scene.traverse((object) => {
-            if (!object.isMesh) return;
-
-            const fusionObject = getFusionObject(object);
-            const matches = fusionObject
-                ? objectMatchesTags(fusionObject, includeTags, excludeTags)
-                : false;
+            if (!isRenderable(object)) return;
 
             const previousVisible = object.visible;
             const previousMaterial = object.material;
             const previousCastShadow = object.castShadow;
             const previousReceiveShadow = object.receiveShadow;
 
-            if (matches) {
+            const ignored = hasAncestorFlag(object, "bakeIgnore");
+            const white = !ignored
+                && object.isMesh
+                && this._isMaskWhite(object, includeTags, excludeTags);
+
+            if (white) {
                 object.visible = true;
                 object.material = this._maskMaterial;
                 object.castShadow = false;
@@ -427,6 +535,10 @@ export class BakeView {
         }
 
         this.scene.background = this._maskRestoreState.background;
+        this.renderer.setClearColor(
+            this._maskRestoreState.clearColor,
+            this._maskRestoreState.clearAlpha,
+        );
         this._maskRestoreState = null;
     }
 

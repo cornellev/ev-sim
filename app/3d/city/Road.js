@@ -346,6 +346,7 @@ export class Road {
 
         const root = new THREE.Group();
         root.name = "Road";
+        root.userData.bakeRoadSurface = true;
 
         const shoulderMesh = new THREE.Mesh(shoulderGeometry, shoulderMaterial);
         shoulderMesh.receiveShadow = true;

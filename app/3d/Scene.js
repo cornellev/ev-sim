@@ -437,14 +437,15 @@ function setupBaking(data, scene) {
                         excludeTags: ["sign", "vehicle"],
                     },
                     {
-                        id: "mask_road",
-                        kind: "mask",
-                        includeTags: ["road"],
-                    },
-                    {
                         id: "mask_building",
                         kind: "mask",
                         includeTags: ["building"],
+                    },
+                    {
+                        id: "mask_no_road_building",
+                        kind: "mask",
+                        includeTags: [],
+                        excludeTags: ["road", "building"],
                     },
                 ],
             },

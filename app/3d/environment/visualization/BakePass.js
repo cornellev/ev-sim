@@ -21,17 +21,17 @@ export const DEFAULT_BEAUTY_PASS = {
 /** @type {BakePassDescriptor[]} */
 export const DEFAULT_MASK_PASSES = [
     {
-        id: "mask_road",
-        kind: "mask",
-        includeTags: ["road"],
-        excludeTags: [],
-        upload: true,
-    },
-    {
         id: "mask_building",
         kind: "mask",
         includeTags: ["building"],
         excludeTags: [],
+        upload: true,
+    },
+    {
+        id: "mask_no_road_building",
+        kind: "mask",
+        includeTags: [],
+        excludeTags: ["road", "building"],
         upload: true,
     },
 ];

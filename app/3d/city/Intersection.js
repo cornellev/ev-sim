@@ -212,6 +212,7 @@ export class Intersection {
 
         const root = new THREE.Group();
         root.name = "Intersection";
+        root.userData.bakeRoadSurface = true;
 
         this.yieldBoundaries = [];
 
