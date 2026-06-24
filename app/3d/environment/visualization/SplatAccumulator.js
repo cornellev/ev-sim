@@ -58,6 +58,9 @@ export class SplatAccumulator {
         const maxPointsPerFrame = options.maxPointsPerFrame ?? 20000;
         const buildingId = options.buildingId ?? null;
 
+        // Raw framebuffer reads are already linear; decoded model PNGs are sRGB.
+        const isSrgb = (bakedImage.colorSpace ?? "linear") === "srgb";
+
         const sorted = [...filteredPoints].sort((a, b) => a.distance - b.distance);
         const identityQuat = new THREE.Quaternion();
         let committed = 0;
@@ -85,7 +88,9 @@ export class SplatAccumulator {
                 ? Math.max(radius, point.distance * angularStep * 0.5)
                 : radius;
             const scales = new THREE.Vector3(splatRadius, splatRadius, splatRadius);
-            const color = srgbToLinearColor(rgb);
+            const color = isSrgb
+                ? srgbToLinearColor(rgb)
+                : new THREE.Color(rgb.r, rgb.g, rgb.b);
 
             this.mesh.pushSplat(point.world, scales, identityQuat, 1.0, color);
             this.coverageGrid.add(point.world);

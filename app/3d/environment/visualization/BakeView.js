@@ -4,6 +4,7 @@ import { Shader, standardVTX } from "../../shaders/Shader";
 import { frag3d } from "../../shaders/Lidar3dShader";
 import { parseLidarHits } from "../../devices/LidarHitDecoder";
 import { passFileRole } from "./BakePass";
+import { buildSensorRotationMatrix } from "./LidarSplatProjector";
 
 /**
  * @param {THREE.Object3D} threeObject
@@ -385,9 +386,9 @@ export class BakeView {
         const { posTexture, scaleTexture, tagTexture: boxTagTexture, count } = objectDb.t_boxes();
         const { posTexture: triPosTexture, tagTexture: triTagTexture, count: triCount } = objectDb.t_triangles();
 
-        const sensorRotationMatrix = new THREE.Matrix3().setFromMatrix4(
-            new THREE.Matrix4().makeRotationFromEuler(this.getRotation())
-        );
+        // Align the LiDAR scan with the camera view direction so reconstructed
+        // hit points fall inside the camera frustum (see buildSensorRotationMatrix).
+        const sensorRotationMatrix = buildSensorRotationMatrix(this.getRotation());
 
         this.shader.update({
             u_origin: { value: this.getPosition() },

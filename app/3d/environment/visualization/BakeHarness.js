@@ -2,9 +2,8 @@ import * as THREE from "three";
 import { BakeView } from "./BakeView";
 import { BakePath } from "./BakePath";
 import { buildSampleId, resolveViewPasses } from "./BakePass";
-import { BuildingRegionPlanner, resolvePassesForSample } from "./BuildingRegionPlanner";
-import { deriveModelSeed } from "../../../util/SeededRNG.js";
-import { getBakedImage } from "./BakeRoundTrip";
+import { BuildingRegionPlanner } from "./BuildingRegionPlanner";
+import { getRawBeautyImage, pollBakedImage } from "./BakeRoundTrip";
 import {
     filterForSplatting,
     hitsToWorldPoints,
@@ -266,27 +265,29 @@ export class BakeHarness {
     }
 
     /**
-     * Sequential render -> round-trip -> splat -> manifest upload.
+     * Sequential render -> (optional model round-trip) -> splat.
+     *
+     * With roundTrip.useModel === false this loop never touches the bake
+     * server: each frame is rendered locally, projected from LiDAR, and
+     * splatted immediately so the splat cloud visibly builds up sliver by
+     * sliver. The server (and therefore the model) is only engaged when
+     * useModel is explicitly enabled.
      * @param {{ distance: number, segmentIndex: number }} sample
      */
     async _processSampleSequential(sample) {
         const frameIndex = this.frameIndex;
         const pathIndex = this.activePathIndex;
         const sampleId = buildSampleId(this.runId, frameIndex);
-        const uploads = [];
-        let expectedFiles = 0;
         const accumulator = this.data.splats?.();
+        const useModel = this.roundTrip.useModel === true;
 
         for (const view of this.views) {
-            const regionPlan = this.regionPlanner.planForView(this.data.scene, view.sensorCamera);
-            const passes = resolvePassesForSample(this.passPolicy, {
-                activeBuildingId: regionPlan.activeBuildingId,
-                hasVisibleBuilding: regionPlan.hasVisibleBuilding,
-                hasVisibleContext: false,
-            });
+            const regionPlan = this.regionPlanner.planForView(
+                this.data.scene,
+                view.sensorCamera,
+            );
 
             const viewSlug = view.name.replace(/\//g, "_");
-
             const metadata = {
                 runId: this.runId,
                 sampleId,
@@ -301,30 +302,35 @@ export class BakeHarness {
                 visibleBuildingIds: regionPlan.visibleBuildingIds.join(","),
             };
 
+            // Beauty-only capture. The round-trip re-bakes everything but the
+            // road via a single non-road mask, so per-building masks are not
+            // needed here. LiDAR + depth are still captured by capturePasses.
+            const passes = resolveViewPasses([
+                { id: "beauty", kind: "render", excludeTags: ["sign", "vehicle"] },
+            ]);
+
             const capture = view.capturePasses(passes, metadata, {
                 maskMinPixels: this.maskMinPixels,
-                skipEmptyMasks: this.passPolicy.skipEmptyMasks !== false,
+                skipEmptyMasks: false,
             });
             if (!capture) continue;
 
-            let maskPassFrame = null;
-            if (this.roundTrip.useModel) {
-                const maskData = view._renderMaskPass([], ["road"]);
-                maskPassFrame = {
-                    data: maskData,
-                    width: view.cameraSettings.width,
-                    height: view.cameraSettings.height,
-                };
+            let bakedImage = getRawBeautyImage(capture);
+            if (!bakedImage) {
+                console.warn("BakeHarness: missing beauty pass for", sampleId);
+                continue;
             }
 
-            const bakedImage = await getBakedImage({
-                server: this.server,
-                roundTrip: this.roundTrip,
-                capture,
-                view,
-                sampleMetadata: metadata,
-                maskPassFrame,
-            });
+            if (useModel) {
+                const modelImage = await this._roundTripModelImage({
+                    view,
+                    viewSlug,
+                    capture,
+                    metadata,
+                    bakedImage,
+                });
+                if (modelImage) bakedImage = modelImage;
+            }
 
             if (this.splatConfig.enabled && accumulator && capture.lidar) {
                 const worldPoints = hitsToWorldPoints(
@@ -342,112 +348,124 @@ export class BakeHarness {
                 accumulator.hideBakedGeometry(this.data.scene, this.splatConfig);
 
                 console.log(
-                    `BakeHarness: committed ${commitResult.committed} splats for ${sampleId}`,
+                    `BakeHarness: ${filtered.length} candidate hits -> committed ${commitResult.committed} splats for ${sampleId}`,
                     `(total ${accumulator.splatCount}, source ${bakedImage.source})`,
                 );
             }
+        }
+    }
 
-            const lidar = capture.lidar;
-            const depth = capture.depth;
-            const intrinsics = capture.metadata.cameraIntrinsics;
-            const extrinsics = capture.metadata.cameraExtrinsics;
+    /**
+     * Upload the frame for model processing and poll for the baked result.
+     * Returns the decoded model image, or null on any failure so the caller
+     * can fall back to the raw render.
+     * @returns {Promise<Object|null>}
+     */
+    async _roundTripModelImage({ view, viewSlug, capture, metadata, bakedImage }) {
+        const healthy = await checkBakeServerHealth(this.server);
+        if (!healthy) {
+            console.warn("Bake server unreachable; using raw beauty render");
+            return null;
+        }
 
-            const sharedMetadata = {
-                ...metadata,
-                position: JSON.stringify(capture.metadata.position),
-                rotation: JSON.stringify(capture.metadata.rotation),
-                cameraIntrinsics: JSON.stringify(intrinsics),
-                cameraExtrinsics: JSON.stringify(extrinsics),
-                lidarWidth: lidar?.width ?? 0,
-                lidarHeight: lidar?.height ?? 0,
-                lidarRange: lidar?.range ?? 0,
-                coordinateSystem: "threejs-y-up-right-handed",
-                bakedImageSource: bakedImage.source,
-            };
+        const sharedMetadata = {
+            ...metadata,
+            position: JSON.stringify(capture.metadata.position),
+            rotation: JSON.stringify(capture.metadata.rotation),
+            cameraIntrinsics: JSON.stringify(capture.metadata.cameraIntrinsics),
+            cameraExtrinsics: JSON.stringify(capture.metadata.cameraExtrinsics),
+            lidarWidth: capture.lidar?.width ?? 0,
+            lidarHeight: capture.lidar?.height ?? 0,
+            lidarRange: capture.lidar?.range ?? 0,
+            coordinateSystem: "threejs-y-up-right-handed",
+        };
 
-            if (lidar?.data) {
-                expectedFiles += 1;
-                uploads.push((async () => {
-                    const filename = `lidar_range_${viewSlug}.bin`;
-                    await uploadBakeBinary(this.server, lidar.data.buffer, {
-                        ...sharedMetadata,
-                        filename,
-                        fileRole: "lidar",
-                        passId: "lidar",
-                        contentType: "application/octet-stream",
-                    });
-                })());
-            }
+        const uploads = [];
+        let expectedFiles = 0;
 
-            if (depth?.data) {
-                expectedFiles += 1;
-                uploads.push((async () => {
-                    const blob = await rgbaToPngBlob(
-                        depth.data,
-                        depth.width,
-                        depth.height,
-                        { linearToSrgb: false },
-                    );
-                    await uploadBakeFrame(this.server, blob, {
-                        ...sharedMetadata,
-                        filename: `depth_${viewSlug}.png`,
-                        fileRole: "depth",
-                        passId: "depth",
-                    });
-                })());
-            }
+        expectedFiles += 1;
+        uploads.push((async () => {
+            const blob = await rgbaToPngBlob(bakedImage.data, bakedImage.width, bakedImage.height, {
+                linearToSrgb: true,
+            });
+            await uploadBakeFrame(this.server, blob, {
+                ...sharedMetadata,
+                filename: `render_beauty_${viewSlug}.png`,
+                fileRole: "render",
+                passId: "beauty",
+            });
+        })());
 
-            for (const passFrame of capture.passes) {
-                expectedFiles += 1;
+        const maskData = view._renderMaskPass([], ["road"]);
+        expectedFiles += 1;
+        uploads.push((async () => {
+            const blob = await rgbaToPngBlob(
+                maskData,
+                view.cameraSettings.width,
+                view.cameraSettings.height,
+                { linearToSrgb: false },
+            );
+            await uploadBakeFrame(this.server, blob, {
+                ...sharedMetadata,
+                filename: `mask_non_road_${viewSlug}.png`,
+                fileRole: "mask",
+                passId: "mask_non_road",
+                maskTags: "no_road",
+                processTag: "no_road_building",
+                excludeTags: "road",
+            });
+        })());
 
-                const modelSeed = deriveModelSeed(
-                    this.runId,
-                    passFrame.modelSeedKey || passFrame.buildingId || passFrame.passId,
-                    0,
-                    frameIndex,
+        if (capture.lidar?.data) {
+            expectedFiles += 1;
+            uploads.push(uploadBakeBinary(this.server, capture.lidar.data.buffer, {
+                ...sharedMetadata,
+                filename: `lidar_range_${viewSlug}.bin`,
+                fileRole: "lidar",
+                passId: "lidar",
+                contentType: "application/octet-stream",
+            }));
+        }
+
+        if (capture.depth?.data) {
+            expectedFiles += 1;
+            uploads.push((async () => {
+                const blob = await rgbaToPngBlob(
+                    capture.depth.data,
+                    capture.depth.width,
+                    capture.depth.height,
+                    { linearToSrgb: false },
                 );
-
-                uploads.push((async () => {
-                    const blob = await rgbaToPngBlob(
-                        passFrame.data,
-                        passFrame.width,
-                        passFrame.height,
-                        { linearToSrgb: passFrame.kind !== "mask" && passFrame.kind !== "depth" },
-                    );
-
-                    const filename = `${passFrame.fileRole}_${passFrame.passId}_${viewSlug}.png`;
-                    await uploadBakeFrame(this.server, blob, {
-                        ...sharedMetadata,
-                        filename,
-                        fileRole: passFrame.fileRole,
-                        passId: passFrame.passId,
-                        includeTags: passFrame.includeTags.join(","),
-                        excludeTags: passFrame.excludeTags.join(","),
-                        maskTags: passFrame.maskTags.join(","),
-                        buildingId: passFrame.buildingId ?? "",
-                        processTag: passFrame.processTag ?? "",
-                        modelSeed: String(modelSeed),
-                        chainProcess: passFrame.chainProcess ? "1" : "0",
-                    });
-                })());
-            }
+                await uploadBakeFrame(this.server, blob, {
+                    ...sharedMetadata,
+                    filename: `depth_${viewSlug}.png`,
+                    fileRole: "depth",
+                    passId: "depth",
+                });
+            })());
         }
 
         await Promise.allSettled(uploads);
 
         const completeOk = await uploadSampleComplete(this.server, {
             runId: this.runId,
-            sampleId,
-            frameIndex,
-            pathIndex,
-            distance: sample.distance,
-            segmentIndex: sample.segmentIndex,
+            sampleId: metadata.sampleId,
+            frameIndex: metadata.frameIndex,
+            pathIndex: metadata.pathIndex,
+            distance: metadata.distance,
+            segmentIndex: metadata.segmentIndex,
             expectedFiles,
         });
 
         if (!completeOk) {
-            console.warn("Bake sample complete signal failed for", sampleId);
+            console.warn("Bake sample complete signal failed for", metadata.sampleId);
+            return null;
         }
+
+        return pollBakedImage(this.server, this.roundTrip, {
+            sampleId: metadata.sampleId,
+            viewId: view.name,
+        });
     }
 }
 

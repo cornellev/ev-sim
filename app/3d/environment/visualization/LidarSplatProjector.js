@@ -78,6 +78,33 @@ export class CoverageGrid {
 }
 
 /**
+ * The bake LiDAR scans centered on its local +X axis (theta = phi = 0), but a
+ * THREE.PerspectiveCamera with the same Euler rotation looks down its local -Z
+ * axis. Without correcting for this the LiDAR ends up scanning ~90deg away from
+ * where the camera looks, so almost no hits land inside the camera frustum and
+ * nothing can be colored / splatted. A +90deg rotation about Y maps the LiDAR
+ * forward (+X) onto the camera forward (-Z) so the two sensors stay aligned.
+ */
+const LIDAR_TO_CAMERA = new THREE.Matrix4().makeRotationY(Math.PI / 2);
+
+/**
+ * Build the world-space basis the bake LiDAR rays are cast in for a given
+ * camera rotation. Must be kept identical to the matrix uploaded to the LiDAR
+ * shader in BakeView._captureLidar so reconstructed points match real hits.
+ * @param {THREE.Euler|{ x: number, y: number, z: number }} rotation
+ * @returns {THREE.Matrix3}
+ */
+export function buildSensorRotationMatrix(rotation) {
+    const euler = rotation instanceof THREE.Euler
+        ? rotation
+        : new THREE.Euler(rotation.x, rotation.y, rotation.z);
+    const m4 = new THREE.Matrix4()
+        .makeRotationFromEuler(euler)
+        .multiply(LIDAR_TO_CAMERA);
+    return new THREE.Matrix3().setFromMatrix4(m4);
+}
+
+/**
  * @param {Object} lidarFrame
  * @param {Object} extrinsics
  * @returns {Object[]}
@@ -102,9 +129,7 @@ export function hitsToWorldPoints(lidarFrame, extrinsics) {
         extrinsics.rotation.y,
         extrinsics.rotation.z,
     );
-    const sensorRotation = new THREE.Matrix3().setFromMatrix4(
-        new THREE.Matrix4().makeRotationFromEuler(rotation),
-    );
+    const sensorRotation = buildSensorRotationMatrix(rotation);
 
     const thetaStep = width > 1
         ? (thetaRange[1] - thetaRange[0]) / (width - 1)

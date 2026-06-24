@@ -50,7 +50,7 @@ function makeLidarFrame({
     };
 }
 
-test("hitsToWorldPoints reconstructs a forward hit along +X", () => {
+test("hitsToWorldPoints reconstructs a forward hit along camera -Z", () => {
     const frame = makeLidarFrame({
         width: 1,
         height: 1,
@@ -64,10 +64,38 @@ test("hitsToWorldPoints reconstructs a forward hit along +X", () => {
         rotation: { x: 0, y: 0, z: 0 },
     });
 
+    // The LiDAR forward axis is aligned to the camera's -Z view direction so
+    // reconstructed hits land inside the camera frustum.
     assert.equal(points.length, 1);
-    assert.ok(points[0].world.x > 4.5);
+    assert.ok(points[0].world.z < -4.5);
+    assert.ok(Math.abs(points[0].world.x) < 0.01);
     assert.ok(Math.abs(points[0].world.y) < 0.01);
     assert.equal(points[0].tagName, "building");
+});
+
+test("a forward LiDAR hit projects to the camera image center", () => {
+    const frame = makeLidarFrame({
+        width: 1,
+        height: 1,
+        hits: [{ hit: true, intensity: 0.5, tagId: TAG_BUILDING, tagName: "building" }],
+    });
+    frame.phiRange = [0, 0];
+    frame.thetaRange = [0, 0];
+
+    // Camera at origin looking down -Z (identity rotation), matching the LiDAR.
+    const extrinsics = {
+        position: { x: 0, y: 0, z: 0 },
+        rotation: { x: 0, y: 0, z: 0 },
+        matrixWorld: new THREE.Matrix4().identity().elements,
+    };
+    const intrinsics = { width: 100, height: 50, fx: 50, fy: 50, cx: 50, cy: 25 };
+
+    const [point] = hitsToWorldPoints(frame, extrinsics);
+    const pixel = worldToPixel(point.world, intrinsics, extrinsics.matrixWorld);
+
+    assert.ok(pixel, "forward hit should be visible to the camera");
+    assert.equal(pixel.px, 50);
+    assert.equal(pixel.py, 25);
 });
 
 test("filterForSplatting drops road and respects depth band", () => {
