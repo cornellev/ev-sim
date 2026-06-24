@@ -127,7 +127,9 @@ export async function setupIGVC(scene, data) {
         data.objects().addObject(barrel);
     }
 
-    generateBuildings(scene, data);
+    generateBuildings(scene, data, {
+        seed: data.bakeRunConfig?.()?.seed ?? 42,
+    });
 
     // generate floor
     const floorSize = 200;

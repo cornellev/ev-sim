@@ -1,15 +1,24 @@
+import json
 import os
 import time
 import shutil
 import threading
+import hashlib
 from collections import deque
 from dataclasses import dataclass, field
 
 import bake_server
 import fprocess
 
+try:
+    import gs_export
+except ImportError:
+    gs_export = None
+
 queue = deque()
 pending_samples = {}
+run_manifests = {}
+building_bake_state = {}
 lock = threading.Lock()
 
 
@@ -33,12 +42,11 @@ class SampleJob:
 
 
 def clear_data():
-    for folder in ["raw", "baked"]:
-        if os.path.exists(folder):
-            for filename in os.listdir(folder):
-                file_path = os.path.join(folder, filename)
-                if os.path.isfile(file_path):
-                    os.remove(file_path)
+    with lock:
+        pending_samples.clear()
+        queue.clear()
+        run_manifests.clear()
+        building_bake_state.clear()
 
 
 def files_check():
@@ -53,6 +61,14 @@ def _parse_int(value, default=0):
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _parse_bool(value, default=False):
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _sample_key(metadata):
@@ -72,6 +88,22 @@ def _file_key(metadata):
     return f"{file_role}:{pass_id}:{view_id}"
 
 
+def _run_dir(run_id):
+    return os.path.join("baked", run_id)
+
+
+def _manifest_path(run_id):
+    return os.path.join(_run_dir(run_id), "manifest.json")
+
+
+def _frames_log_path(run_id):
+    return os.path.join(_run_dir(run_id), "frames.jsonl")
+
+
+def _building_state_path(run_id):
+    return os.path.join(_run_dir(run_id), "building_bake_state.json")
+
+
 def save_photo(payload, name, metadata=None):
     files_check()
     metadata = metadata or {}
@@ -86,6 +118,21 @@ def save_photo(payload, name, metadata=None):
         f.write(payload)
 
     return destination
+
+
+def on_manifest(payload):
+    if not payload:
+        return
+
+    run_id = payload.get("runId", "default")
+    with lock:
+        run_manifests[run_id] = payload
+
+    os.makedirs(_run_dir(run_id), exist_ok=True)
+    with open(_manifest_path(run_id), "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
+
+    print(f"Run manifest saved for {run_id}")
 
 
 def _enqueue_sample(sample_id):
@@ -179,9 +226,7 @@ def on_sample_complete(payload):
 
 def on_clear_data():
     print("clearing...")
-    with lock:
-        pending_samples.clear()
-        queue.clear()
+    clear_data()
 
     for folder in ["raw", "baked"]:
         if os.path.exists(folder):
@@ -224,13 +269,24 @@ def _mask_tag(sample_file):
     return pass_id[5:] if pass_id.startswith("mask_") else pass_id
 
 
+def _mask_is_nonempty(mask_path, min_bytes=128):
+    try:
+        return os.path.getsize(mask_path) >= min_bytes
+    except OSError:
+        return False
+
+
 def _processing_metadata(job, render_file, mask_file, tag):
+    building_id = mask_file.metadata.get("buildingId", "")
+    model_seed = mask_file.metadata.get("modelSeed")
     return {
         "sampleId": job.sample_id,
         "runId": job.run_id,
         "frameIndex": job.frame_index,
         "viewId": mask_file.view_id,
         "tag": tag,
+        "buildingId": building_id,
+        "modelSeed": model_seed,
         "render": {
             "name": render_file.name,
             "passId": render_file.pass_id,
@@ -243,8 +299,49 @@ def _processing_metadata(job, render_file, mask_file, tag):
             "maskTags": mask_file.metadata.get("maskTags", ""),
             "includeTags": mask_file.metadata.get("includeTags", ""),
             "excludeTags": mask_file.metadata.get("excludeTags", ""),
+            "buildingId": building_id,
         },
     }
+
+
+def _record_building_state(job, mask_file, output_path):
+    building_id = mask_file.metadata.get("buildingId")
+    if not building_id:
+        return
+
+    run_id = job.run_id
+    with lock:
+        state = building_bake_state.setdefault(run_id, {})
+        entry = state.setdefault(building_id, {
+            "buildingId": building_id,
+            "revision": 0,
+            "acceptedSlivers": [],
+        })
+        entry["revision"] += 1
+        entry["acceptedSlivers"].append({
+            "sampleId": job.sample_id,
+            "frameIndex": job.frame_index,
+            "maskPassId": mask_file.pass_id,
+            "outputPath": output_path,
+            "modelSeed": mask_file.metadata.get("modelSeed"),
+        })
+
+    os.makedirs(_run_dir(run_id), exist_ok=True)
+    with open(_building_state_path(run_id), "w", encoding="utf-8") as f:
+        json.dump(building_bake_state[run_id], f, indent=2)
+
+
+def _write_frame_record(job, frame_record):
+    run_id = job.run_id
+    baked_dir = os.path.join("baked", run_id, f"{job.frame_index:05d}")
+    os.makedirs(baked_dir, exist_ok=True)
+
+    meta_path = os.path.join(baked_dir, "meta.json")
+    with open(meta_path, "w", encoding="utf-8") as f:
+        json.dump(frame_record, f, indent=2)
+
+    with open(_frames_log_path(run_id), "a", encoding="utf-8") as f:
+        f.write(json.dumps(frame_record) + "\n")
 
 
 def _process_sample_job(job):
@@ -253,29 +350,62 @@ def _process_sample_job(job):
 
     renders_by_view = {}
     masks_by_view = {}
+    aux_files = []
 
     for sample_file in job.files:
         if sample_file.file_role == "render":
             renders_by_view.setdefault(sample_file.view_id, sample_file)
         elif sample_file.file_role == "mask":
             masks_by_view.setdefault(sample_file.view_id, []).append(sample_file)
+        else:
+            aux_files.append(sample_file)
+
+    frame_record = {
+        "sampleId": job.sample_id,
+        "runId": job.run_id,
+        "frameIndex": job.frame_index,
+        "metadata": dict(job.metadata),
+        "files": {
+            sample_file.file_role: sample_file.path
+            for sample_file in job.files
+        },
+        "processed": [],
+        "final": {},
+        "aux": [
+            {
+                "fileRole": sample_file.file_role,
+                "passId": sample_file.pass_id,
+                "path": sample_file.path,
+            }
+            for sample_file in aux_files
+        ],
+    }
 
     for view_id, render_file in renders_by_view.items():
         masks = sorted(
             masks_by_view.get(view_id, []),
             key=lambda file: file.pass_id,
         )
+        nonempty_masks = [
+            mask for mask in masks
+            if _mask_is_nonempty(mask.path)
+        ]
 
-        if not masks:
-            shutil.copy2(
-                render_file.path,
-                os.path.join(baked_dir, f"final_{_slug(view_id)}.png"),
-            )
+        if not nonempty_masks:
+            final_path = os.path.join(baked_dir, f"final_{_slug(view_id)}.png")
+            shutil.copy2(render_file.path, final_path)
+            frame_record["final"][view_id] = final_path
             continue
 
         current_image = render_file.path
-        for mask_file in masks:
-            tag = _mask_tag(mask_file)
+        processed_paths = []
+
+        for index, mask_file in enumerate(nonempty_masks):
+            chain = _parse_bool(mask_file.metadata.get("chainProcess"), False)
+            if index > 0 and not chain:
+                break
+
+            tag = mask_file.metadata.get("processTag") or _mask_tag(mask_file)
             output_path = os.path.join(
                 baked_dir,
                 f"processed_{tag}_{_slug(view_id)}.png",
@@ -295,13 +425,33 @@ def _process_sample_job(job):
                 )
                 continue
 
+            processed_paths.append(result_path)
+            frame_record["processed"].append({
+                "viewId": view_id,
+                "maskPassId": mask_file.pass_id,
+                "tag": tag,
+                "path": result_path,
+                "buildingId": mask_file.metadata.get("buildingId", ""),
+            })
+            _record_building_state(job, mask_file, result_path)
+
             current_image = result_path
 
+            if not chain:
+                break
+
         if os.path.exists(current_image):
-            shutil.copy2(
-                current_image,
-                os.path.join(baked_dir, f"final_{_slug(view_id)}.png"),
-            )
+            final_path = os.path.join(baked_dir, f"final_{_slug(view_id)}.png")
+            shutil.copy2(current_image, final_path)
+            frame_record["final"][view_id] = final_path
+
+    _write_frame_record(job, frame_record)
+
+    if gs_export is not None:
+        try:
+            gs_export.update_transforms_for_run(job.run_id)
+        except Exception as exc:
+            print(f"GS export update failed for {job.run_id}: {exc}")
 
 
 def process():
@@ -314,10 +464,11 @@ def process():
 
 if __name__ == "__main__":
     print("Beginning baking server!")
-    clear_data()
+    on_clear_data()
 
     bake_server.add_photo_listener(on_photo)
     bake_server.add_sample_complete_listener(on_sample_complete)
+    bake_server.add_manifest_listener(on_manifest)
     bake_server.add_clear_listener(on_clear_data)
     bake_server.set_queue_status_provider(get_queue_status)
 

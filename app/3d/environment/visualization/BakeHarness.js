@@ -2,11 +2,15 @@ import * as THREE from "three";
 import { BakeView } from "./BakeView";
 import { BakePath } from "./BakePath";
 import { buildSampleId, resolveViewPasses } from "./BakePass";
+import { BuildingRegionPlanner, resolvePassesForSample } from "./BuildingRegionPlanner";
+import { deriveModelSeed } from "../../util/SeededRNG";
 import {
     checkBakeServerHealth,
     clearBakeServer,
     rgbaToPngBlob,
+    uploadBakeBinary,
     uploadBakeFrame,
+    uploadRunManifest,
     uploadSampleComplete,
 } from "./bakeUpload";
 
@@ -20,8 +24,16 @@ export class BakeHarness {
      */
     constructor(data, options = {}) {
         this.data = data;
-        this.runId = options.runId || crypto.randomUUID();
+        this.runId = options.runId || `bake-${options.seed ?? 42}`;
         this.deltaDistance = options.deltaDistance ?? 1.0;
+        this.passPolicy = options.passPolicy ?? {
+            beautyAlways: true,
+            activeBuildingMask: true,
+            contextMask: false,
+            skipEmptyMasks: true,
+        };
+        this.maskMinPixels = options.maskMinPixels ?? 64;
+        this.manifest = options.manifest ?? null;
 
         this.server = {
             host: options.host ?? "http://localhost:8000",
@@ -51,8 +63,10 @@ export class BakeHarness {
         this.running = false;
         this.completed = false;
         this.processingSample = false;
+        this.regionPlanner = new BuildingRegionPlanner(this.manifest?.buildings ?? []);
 
         this._setupComplete = false;
+        this._manifestUploaded = false;
     }
 
     /**
@@ -80,7 +94,7 @@ export class BakeHarness {
                 position: localPosition.clone(),
                 rotation: localRotation.clone(),
             };
-            view._passes = resolveViewPasses(viewConfig.passes);
+            view._defaultPasses = resolveViewPasses(viewConfig.passes);
 
             this.views.push(view);
             view.setup({
@@ -121,12 +135,20 @@ export class BakeHarness {
             console.log("Bake server cleared successfully.");
         }
 
+        if (this.manifest && !this._manifestUploaded) {
+            const ok = await uploadRunManifest(this.server, this.manifest);
+            if (ok) {
+                this._manifestUploaded = true;
+            }
+        }
+
         this.running = true;
         this.completed = false;
         this.processingSample = false;
         this.activePathIndex = 0;
         this.nextSampleDistance = 0;
         this.frameIndex = 0;
+        this.regionPlanner = new BuildingRegionPlanner(this.manifest?.buildings ?? []);
     }
 
     stop() {
@@ -168,6 +190,7 @@ export class BakeHarness {
 
             this.nextSampleDistance += this.deltaDistance;
             this.frameIndex += 1;
+            this.regionPlanner.advance(this.frameIndex);
 
             if (this.nextSampleDistance > path.totalLength) {
                 this._advancePath();
@@ -228,7 +251,13 @@ export class BakeHarness {
         let expectedFiles = 0;
 
         for (const view of this.views) {
-            const passes = view._passes || resolveViewPasses();
+            const regionPlan = this.regionPlanner.planForView(this.data.scene, view.sensorCamera);
+            const passes = resolvePassesForSample(this.passPolicy, {
+                activeBuildingId: regionPlan.activeBuildingId,
+                hasVisibleBuilding: regionPlan.hasVisibleBuilding,
+                hasVisibleContext: false,
+            });
+
             const viewSlug = view.name.replace(/\//g, "_");
 
             const metadata = {
@@ -241,30 +270,88 @@ export class BakeHarness {
                 cameraId: view.name,
                 segmentIndex: sample.segmentIndex,
                 expectedFiles: 0,
+                activeBuildingId: regionPlan.activeBuildingId ?? "",
+                visibleBuildingIds: regionPlan.visibleBuildingIds.join(","),
             };
 
-            const capture = view.capturePasses(passes, metadata);
-            if (!capture?.passes?.length) continue;
+            const capture = view.capturePasses(passes, metadata, {
+                maskMinPixels: this.maskMinPixels,
+                skipEmptyMasks: this.passPolicy.skipEmptyMasks !== false,
+            });
+            if (!capture) continue;
 
             const lidar = capture.lidar;
+            const depth = capture.depth;
+            const intrinsics = capture.metadata.cameraIntrinsics;
+            const extrinsics = capture.metadata.cameraExtrinsics;
+
             const sharedMetadata = {
                 ...metadata,
                 position: JSON.stringify(capture.metadata.position),
                 rotation: JSON.stringify(capture.metadata.rotation),
+                cameraIntrinsics: JSON.stringify(intrinsics),
+                cameraExtrinsics: JSON.stringify(extrinsics),
                 lidarWidth: lidar?.width ?? 0,
                 lidarHeight: lidar?.height ?? 0,
                 lidarRange: lidar?.range ?? 0,
+                coordinateSystem: "threejs-y-up-right-handed",
             };
+
+            if (lidar?.data) {
+                expectedFiles += 1;
+                uploads.push((async () => {
+                    const filename = `lidar_range_${viewSlug}.bin`;
+                    const ok = await uploadBakeBinary(this.server, lidar.data.buffer, {
+                        ...sharedMetadata,
+                        filename,
+                        fileRole: "lidar",
+                        passId: "lidar",
+                        contentType: "application/octet-stream",
+                    });
+                    if (!ok) {
+                        console.warn("LiDAR upload failed for", view.name, "at distance", sample.distance);
+                    }
+                })());
+            }
+
+            if (depth?.data) {
+                expectedFiles += 1;
+                uploads.push((async () => {
+                    const blob = await rgbaToPngBlob(
+                        depth.data,
+                        depth.width,
+                        depth.height,
+                        { linearToSrgb: false },
+                    );
+                    const filename = `depth_${viewSlug}.png`;
+                    const ok = await uploadBakeFrame(this.server, blob, {
+                        ...sharedMetadata,
+                        filename,
+                        fileRole: "depth",
+                        passId: "depth",
+                    });
+                    if (!ok) {
+                        console.warn("Depth upload failed for", view.name, "at distance", sample.distance);
+                    }
+                })());
+            }
 
             for (const passFrame of capture.passes) {
                 expectedFiles += 1;
+
+                const modelSeed = deriveModelSeed(
+                    this.runId,
+                    passFrame.modelSeedKey || passFrame.buildingId || passFrame.passId,
+                    0,
+                    frameIndex,
+                );
 
                 uploads.push((async () => {
                     const blob = await rgbaToPngBlob(
                         passFrame.data,
                         passFrame.width,
                         passFrame.height,
-                        { linearToSrgb: passFrame.kind !== "mask" },
+                        { linearToSrgb: passFrame.kind !== "mask" && passFrame.kind !== "depth" },
                     );
 
                     const filename = `${passFrame.fileRole}_${passFrame.passId}_${viewSlug}.png`;
@@ -276,6 +363,10 @@ export class BakeHarness {
                         includeTags: passFrame.includeTags.join(","),
                         excludeTags: passFrame.excludeTags.join(","),
                         maskTags: passFrame.maskTags.join(","),
+                        buildingId: passFrame.buildingId ?? "",
+                        processTag: passFrame.processTag ?? "",
+                        modelSeed: String(modelSeed),
+                        chainProcess: passFrame.chainProcess ? "1" : "0",
                     });
 
                     if (!ok) {

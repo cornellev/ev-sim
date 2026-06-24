@@ -118,6 +118,54 @@ export async function uploadBakeFrame(server, blob, metadata = {}) {
     return response.ok;
 }
 
+/**
+ * Upload binary payloads such as LiDAR float buffers.
+ * @param {{ host: string, endpoint: string }} server
+ * @param {ArrayBuffer} buffer
+ * @param {Record<string, string|number|boolean>} metadata
+ * @returns {Promise<boolean>}
+ */
+export async function uploadBakeBinary(server, buffer, metadata = {}) {
+    const formData = new FormData();
+    const filename = metadata.filename || `payload_${metadata.frameIndex ?? Date.now()}.bin`;
+    const blob = new Blob([buffer], {
+        type: metadata.contentType || "application/octet-stream",
+    });
+    formData.append("photo", blob, filename);
+
+    for (const [key, value] of Object.entries(metadata)) {
+        if (key === "filename" || key === "contentType") continue;
+        formData.append(key, String(value));
+    }
+
+    const response = await fetch(`${server.host}${server.endpoint}`, {
+        method: "POST",
+        body: formData,
+    });
+
+    return response.ok;
+}
+
+/**
+ * @param {{ host: string }} server
+ * @param {Object} manifest
+ * @returns {Promise<boolean>}
+ */
+export async function uploadRunManifest(server, manifest) {
+    try {
+        const response = await fetch(`${server.host}/bake/manifest`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify(manifest),
+        });
+        return response.ok;
+    } catch {
+        return false;
+    }
+}
+
 export async function clearBakeServer(server) {
     try {
         const response = await fetch(`${server.host}/clear`);

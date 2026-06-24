@@ -17,6 +17,13 @@ def add_sample_complete_listener(listener):
     on_sample_complete_listeners.append(listener)
 
 
+on_manifest_listeners = []
+
+
+def add_manifest_listener(listener):
+    on_manifest_listeners.append(listener)
+
+
 on_clear_listeners = []
 
 
@@ -115,6 +122,18 @@ class BakingRequestHandler(BaseHTTPRequestHandler):
                 return
 
             for listener in on_sample_complete_listeners:
+                listener(payload)
+            self._send_json(HTTPStatus.OK, {"ok": True})
+            return
+
+        if self.path == "/bake/manifest":
+            try:
+                payload = self._read_json_body()
+            except json.JSONDecodeError:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid json"})
+                return
+
+            for listener in on_manifest_listeners:
                 listener(payload)
             self._send_json(HTTPStatus.OK, {"ok": True})
             return

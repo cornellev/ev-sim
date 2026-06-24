@@ -1,24 +1,43 @@
-import * as THREE from 'three';
-import { Data } from '../data/Data';
+import * as THREE from "three";
+import { Triangle } from "../data/objects/Triangle.js";
+import { SeededRNG } from "../util/SeededRNG.js";
+import { buildingIdFromFootprint } from "./buildingIds.js";
 
-function partitionLength(totalLength, minWidth, maxWidth, variation = 0.25) {
+/**
+ * @typedef {import("../environment/visualization/BakeRunConfig").BuildingRecord} BuildingRecord
+ */
+
+/**
+ * @param {{ x: number, y: number, z: number }[]} footprint
+ * @param {number} index
+ * @returns {string}
+ */
+export { buildingIdFromFootprint } from "./buildingIds.js";
+
+/**
+ * @param {THREE.Vector3[]} footprint
+ * @returns {{ x: number, y: number, z: number }[]}
+ */
+function serializeFootprint(footprint) {
+    return footprint.map((point) => ({
+        x: point.x,
+        y: point.y,
+        z: point.z,
+    }));
+}
+
+function partitionLength(totalLength, minWidth, maxWidth, variation, rng) {
     if (totalLength <= 0) return [];
-
-    // Tiny leftover strip: either skip it or keep one undersized lot.
     if (totalLength < minWidth) return [totalLength];
-
-    // If the whole strip fits inside one valid building width, just use one.
     if (totalLength <= maxWidth) return [totalLength];
 
     const minCount = Math.ceil(totalLength / maxWidth);
     const maxCount = Math.floor(totalLength / minWidth);
 
     if (minCount > maxCount) {
-        // Impossible to satisfy strictly; fallback to one strip
         return [totalLength];
     }
 
-    // Pick a reasonable count near the midpoint width.
     const targetWidth = (minWidth + maxWidth) * 0.5;
     let count = Math.round(totalLength / targetWidth);
     count = THREE.MathUtils.clamp(count, minCount, maxCount);
@@ -26,25 +45,23 @@ function partitionLength(totalLength, minWidth, maxWidth, variation = 0.25) {
     const baseWidth = totalLength / count;
     const widths = new Array(count).fill(baseWidth);
 
-    // Optional jitter so every building is not identical,
-    // while keeping total footprint exactly the same.
     if (variation > 0 && count > 1) {
         for (let pass = 0; pass < count * 3; pass++) {
-            const i = Math.floor(Math.random() * (count - 1));
+            const i = rng.int(count - 1);
 
             const maxPositive = Math.min(
                 widths[i] - minWidth,
                 maxWidth - widths[i + 1],
-                baseWidth * variation
+                baseWidth * variation,
             );
 
             const maxNegative = Math.min(
                 maxWidth - widths[i],
                 widths[i + 1] - minWidth,
-                baseWidth * variation
+                baseWidth * variation,
             );
 
-            const delta = THREE.MathUtils.lerp(-maxNegative, maxPositive, Math.random());
+            const delta = THREE.MathUtils.lerp(-maxNegative, maxPositive, rng.next());
 
             widths[i] -= delta;
             widths[i + 1] += delta;
@@ -54,7 +71,7 @@ function partitionLength(totalLength, minWidth, maxWidth, variation = 0.25) {
     return widths;
 }
 
-function makeFootprintsForSide(start, end, normal, params) {
+function makeFootprintsForSide(start, end, normal, params, rng) {
     const tangentVec = new THREE.Vector3().subVectors(end, start).setY(0);
     const totalLength = tangentVec.length();
     if (totalLength < 0.001) return [];
@@ -71,7 +88,8 @@ function makeFootprintsForSide(start, end, normal, params) {
         usableLength,
         params.minWidth,
         params.maxWidth,
-        0.3
+        0.3,
+        rng,
     );
 
     const footprints = [];
@@ -161,9 +179,8 @@ function footprintAreaXZ(footprint) {
 }
 
 function filterOverlappingFootprints(footprints, padding = 0.1) {
-    // Keep larger footprints first
     const sorted = [...footprints].sort(
-        (a, b) => footprintAreaXZ(b) - footprintAreaXZ(a)
+        (a, b) => footprintAreaXZ(b) - footprintAreaXZ(a),
     );
 
     const accepted = [];
@@ -187,11 +204,53 @@ function filterOverlappingFootprints(footprints, padding = 0.1) {
 }
 
 /**
- * @param {THREE.Scene} scene
- * @param {Data} data
+ * Extract world-space triangles from an extruded building mesh.
+ * @param {THREE.Mesh} mesh
+ * @returns {Triangle[]}
  */
-export function generateBuildings(scene, data) {
+export function trianglesFromBuildingMesh(mesh) {
+    const geometry = mesh.geometry;
+    if (!geometry?.attributes?.position) return [];
+
+    mesh.updateMatrixWorld(true);
+    const position = geometry.attributes.position;
+    const index = geometry.index;
+    const triangles = [];
+
+    const pushTriangle = (ia, ib, ic) => {
+        const a = new THREE.Vector3().fromBufferAttribute(position, ia).applyMatrix4(mesh.matrixWorld);
+        const b = new THREE.Vector3().fromBufferAttribute(position, ib).applyMatrix4(mesh.matrixWorld);
+        const c = new THREE.Vector3().fromBufferAttribute(position, ic).applyMatrix4(mesh.matrixWorld);
+        const triangle = new Triangle(a, b, c);
+        triangle.setTags(["building"]);
+        triangle.visible = false;
+        triangles.push(triangle);
+    };
+
+    if (index) {
+        for (let i = 0; i < index.count; i += 3) {
+            pushTriangle(index.getX(i), index.getX(i + 1), index.getX(i + 2));
+        }
+    } else {
+        for (let i = 0; i < position.count; i += 3) {
+            pushTriangle(i, i + 1, i + 2);
+        }
+    }
+
+    return triangles;
+}
+
+/**
+ * @param {THREE.Scene} scene
+ * @param {import("../data/Data").Data} data
+ * @param {Object} [options]
+ * @returns {BuildingRecord[]}
+ */
+export function generateBuildings(scene, data, options = {}) {
     const roads = data.city().getRoads();
+    const seed = options.seed ?? data.bakeRunConfig?.()?.seed ?? 42;
+    const rng = options.rng ?? new SeededRNG(seed);
+    const records = Array.isArray(options.records) ? options.records : null;
 
     const params = {
         depthOffRoad: 2,
@@ -199,9 +258,14 @@ export function generateBuildings(scene, data) {
         minWidth: 5,
         maxWidth: 20,
         heightRange: [6, 14],
-        intersectionInset: 0,   // push buildings away from road ends
-        overlapPadding: 0.2     // tiny epsilon
+        intersectionInset: 0,
+        overlapPadding: 0.2,
+        ...options.params,
     };
+
+    if (records?.length) {
+        return rehydrateBuildings(scene, data, records, params);
+    }
 
     const rectangles = [];
 
@@ -221,65 +285,81 @@ export function generateBuildings(scene, data) {
         const rightStart = rightPoints[0].clone().setY(0);
         const rightEnd = rightPoints[rightPoints.length - 1].clone().setY(0);
 
+        const roadRng = rng.fork(`road-${leftStart.x.toFixed(2)}-${leftStart.z.toFixed(2)}`);
+
         rectangles.push(
-            ...makeFootprintsForSide(leftStart, leftEnd, leftNormal, params),
-            ...makeFootprintsForSide(rightStart, rightEnd, rightNormal, params)
+            ...makeFootprintsForSide(leftStart, leftEnd, leftNormal, params, roadRng),
+            ...makeFootprintsForSide(rightStart, rightEnd, rightNormal, params, roadRng.fork("right")),
         );
     }
 
     const filtered = filterOverlappingFootprints(
         rectangles,
-        params.overlapPadding
+        params.overlapPadding,
     );
 
-    console.log("Generated", rectangles.length, "building footprints,", filtered.length, "after filtering overlaps");
+    console.log(
+        "Generated",
+        rectangles.length,
+        "building footprints,",
+        filtered.length,
+        "after filtering overlaps",
+    );
 
-
-    // generate lines between each rectangle corner to visualize the building footprints
-    // visualizeFootprints(scene, filtered);
-
-    generateBuildingMeshes(scene, filtered, params);
+    return generateBuildingMeshes(scene, data, filtered, params, rng);
 }
 
-function visualizeFootprints(scene, footprints) {
-    const material = new THREE.LineBasicMaterial({ color: 0x00ff00 });
+/**
+ * @param {THREE.Scene} scene
+ * @param {import("../data/Data").Data} data
+ * @param {BuildingRecord[]} records
+ * @param {Object} params
+ * @returns {BuildingRecord[]}
+ */
+function rehydrateBuildings(scene, data, records, params) {
+    const footprints = records.map((record) =>
+        record.footprint.map((point) => new THREE.Vector3(point.x, point.y, point.z)),
+    );
 
-    for (const footprint of footprints) {
-        // footprint = [p0, p1, p2, p3]
-        const points = [
-            ...footprint,
-            footprint[0] // close the loop
-        ];
-
-        const geometry = new THREE.BufferGeometry().setFromPoints(points);
-        const line = new THREE.Line(geometry, material);
-        scene.add(line);
-    }
+    const rng = new SeededRNG(records[0]?.buildingId ?? "rehydrate");
+    return generateBuildingMeshes(scene, data, footprints, params, rng, records);
 }
 
-function chooseTexture() {
-    const basePath = `assets/textures/buildings/`;
-    const maxIndex = 6;
-    return `${basePath}${Math.ceil(Math.random() * maxIndex)}.jpg`;
+function chooseTexture(rng, maxIndex = 6) {
+    const basePath = "assets/textures/buildings/";
+    const index = rng.intRange(1, maxIndex);
+    return { path: `${basePath}${index}.jpg`, textureId: index };
 }
 
-function generateBuildingMeshes(scene, footprints, params) {
+/**
+ * @param {THREE.Scene} scene
+ * @param {import("../data/Data").Data} data
+ * @param {THREE.Vector3[][]} footprints
+ * @param {Object} params
+ * @param {SeededRNG} rng
+ * @param {BuildingRecord[]} [presetRecords]
+ * @returns {BuildingRecord[]}
+ */
+function generateBuildingMeshes(scene, data, footprints, params, rng, presetRecords = null) {
     const meshes = [];
+    const buildingRecords = [];
 
-    for (const footprint of footprints) {
-        if (!footprint || footprint.length < 3) continue;
+    footprints.forEach((footprint, index) => {
+        if (!footprint || footprint.length < 3) return;
 
-        const height = THREE.MathUtils.lerp(
+        const preset = presetRecords?.[index];
+        const serialized = preset?.footprint ?? serializeFootprint(footprint);
+        const buildingId = preset?.buildingId ?? buildingIdFromFootprint(serialized, index);
+        const lotRng = rng.fork(buildingId);
+
+        const height = preset?.height ?? THREE.MathUtils.lerp(
             params.heightRange[0],
             params.heightRange[1],
-            Math.random()
+            lotRng.next(),
         );
 
-        // Build the 2D shape in local XY, using -z so that after rotation
-        // it lands back in world XZ with the same footprint orientation.
-        let points2D = footprint.map(p => new THREE.Vector2(p.x, -p.z));
+        let points2D = footprint.map((p) => new THREE.Vector2(p.x, -p.z));
 
-        // Keep outer contour winding consistent for triangulation/caps.
         if (THREE.ShapeUtils.isClockWise(points2D)) {
             points2D = points2D.reverse();
         }
@@ -289,39 +369,60 @@ function generateBuildingMeshes(scene, footprints, params) {
         const geometry = new THREE.ExtrudeGeometry(shape, {
             steps: 1,
             depth: height,
-            bevelEnabled: false
+            bevelEnabled: false,
         });
 
-        // ExtrudeGeometry extrudes along local +Z.
-        // Rotate so extrusion becomes world +Y.
         geometry.rotateX(-Math.PI / 2);
-
-        // Put the base on the ground plane cleanly.
         geometry.computeBoundingBox();
         if (geometry.boundingBox) {
             geometry.translate(0, -geometry.boundingBox.min.y, 0);
         }
-
         geometry.computeVertexNormals();
 
-        const texture = new THREE.TextureLoader().load(chooseTexture());
+        const textureChoice = preset?.textureId
+            ? { path: `assets/textures/buildings/${preset.textureId}.jpg`, textureId: preset.textureId }
+            : chooseTexture(lotRng);
+
+        const texture = new THREE.TextureLoader().load(textureChoice.path);
         texture.wrapS = THREE.RepeatWrapping;
         texture.wrapT = THREE.RepeatWrapping;
         texture.repeat.set(1, height / 10);
+
         const material = new THREE.MeshStandardMaterial({
             map: texture,
-            side: THREE.FrontSide
+            side: THREE.FrontSide,
         });
 
+        const meshName = preset?.meshName ?? `Building:${buildingId}`;
         const mesh = new THREE.Mesh(geometry, material);
         mesh.castShadow = true;
         mesh.receiveShadow = true;
-        mesh.name = "Building";
-        mesh.userData.bakeTags = ["building"];
+        mesh.name = meshName;
+        mesh.userData.buildingId = buildingId;
+        mesh.userData.bakeObjectId = buildingId;
+        mesh.userData.bakeTags = preset?.tags ?? ["building"];
 
         scene.add(mesh);
         meshes.push(mesh);
+
+        const triangles = trianglesFromBuildingMesh(mesh);
+        if (data?.objects?.()) {
+            data.objects().addObjects(triangles);
+        }
+
+        buildingRecords.push({
+            buildingId,
+            footprint: serialized,
+            height,
+            textureId: textureChoice.textureId,
+            tags: preset?.tags ?? ["building"],
+            meshName,
+        });
+    });
+
+    if (data?.bakeRunConfig?.()) {
+        data.bakeRunConfig().setBuildings(buildingRecords);
     }
 
-    return meshes;
+    return buildingRecords;
 }

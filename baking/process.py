@@ -111,7 +111,7 @@ def _pipeline_dimensions(image):
     return rounded_width, rounded_height
 
 
-def _process_pil_image(image, mask, tag):
+def _process_pil_image(image, mask, tag, seed=None):
     from PIL import Image
 
     image = image.convert("RGB")
@@ -130,7 +130,8 @@ def _process_pil_image(image, mask, tag):
     pipe = _load_pipeline()
     torch = _torch
     config = _prompt_config(tag)
-    seed = int(os.environ.get("BAKE_PROCESS_SEED", "2"))
+    if seed is None:
+        seed = int(os.environ.get("BAKE_PROCESS_SEED", "2"))
 
     result = pipe(
         prompt=config["prompt"],
@@ -142,7 +143,7 @@ def _process_pil_image(image, mask, tag):
         guidance_scale=float(os.environ.get("BAKE_PROCESS_GUIDANCE", "14")),
         num_inference_steps=int(os.environ.get("BAKE_PROCESS_STEPS", "36")),
         max_sequence_length=int(os.environ.get("BAKE_PROCESS_MAX_SEQUENCE", "512")),
-        generator=torch.Generator("cpu").manual_seed(seed),
+        generator=torch.Generator("cpu").manual_seed(int(seed)),
     ).images[0]
 
     if result.size != original_size:
@@ -150,24 +151,24 @@ def _process_pil_image(image, mask, tag):
     return result
 
 
-def process_image(image_path, mask_path, tag, save_path=None):
+def process_image(image_path, mask_path, tag, save_path=None, seed=None):
     from PIL import Image
 
     image = Image.open(image_path)
     mask = Image.open(mask_path)
-    result = _process_pil_image(image, mask, tag)
+    result = _process_pil_image(image, mask, tag, seed=seed)
     if save_path:
         os.makedirs(os.path.dirname(save_path) or ".", exist_ok=True)
         result.save(save_path)
     return result
 
 
-def process_image_bytes(image_bytes, mask_bytes, tag):
+def process_image_bytes(image_bytes, mask_bytes, tag, seed=None):
     from PIL import Image
 
     image = Image.open(BytesIO(image_bytes))
     mask = Image.open(BytesIO(mask_bytes))
-    return _process_pil_image(image, mask, tag)
+    return _process_pil_image(image, mask, tag, seed=seed)
 
 
 class ProcessRequestHandler(BaseHTTPRequestHandler):
@@ -231,8 +232,24 @@ class ProcessRequestHandler(BaseHTTPRequestHandler):
         tag_field = form["tag"] if "tag" in form else None
         tag = tag_field.value if tag_field is not None else "default"
 
+        metadata_field = form["metadata"] if "metadata" in form else None
+        metadata = {}
+        if metadata_field is not None and metadata_field.value:
+            try:
+                metadata = json.loads(metadata_field.value)
+            except json.JSONDecodeError:
+                metadata = {}
+
+        model_seed = metadata.get("modelSeed")
+        seed = int(model_seed) if model_seed is not None else None
+
         try:
-            result = process_image_bytes(image.file.read(), mask.file.read(), tag)
+            result = process_image_bytes(
+                image.file.read(),
+                mask.file.read(),
+                tag,
+                seed=seed,
+            )
             output = BytesIO()
             result.save(output, format="PNG")
             self._send_png(output.getvalue())

@@ -36,6 +36,7 @@ import Unit from "../scripting/units/Unit";
 import { SparkRenderer } from "@sparkjsdev/spark";
 import { BakeHarness } from "./environment/visualization/BakeHarness";
 import { BakePath } from "./environment/visualization/BakePath";
+import { createDefaultBakeRunConfig } from "./environment/visualization/BakeRunConfig";
 import { Skybox } from "./skybox/Skybox";
 
 /** `?mini=q1` | `q2` | `q3` | `q4` | `fi1` | `fi2` | `fii1` | `fiii1` | `fiii2` | `fiii3` (default: q4) */
@@ -298,11 +299,15 @@ async function setupCity(scene, data) {
 
     const boxes = [];
 
-    // add buildings as boxes at each point, with random heights
+    // add buildings as boxes at each point, with deterministic heights
+    const { SeededRNG } = await import("../util/SeededRNG.js");
+    const cityRng = new SeededRNG(data.bakeRunConfig?.()?.seed ?? 42);
+
     for (let x = -60; x <= 40; x += 20) {
         for (let z = -60; z <= 40; z += 20) {
-            const height = Math.random() * 20 + 5;
+            const height = cityRng.range(5, 25);
             const box = new Box(new THREE.Vector3(x + 10, height/2, z + 10), new THREE.Vector3(10, height, 10));
+            box.setTags(["building"]);
             boxes.push(box);
             data.objects().addObject(box);
         }
@@ -417,52 +422,26 @@ async function setupVehicles(scene, data, camera) {
  * @param {THREE.Scene} scene
  */
 function setupBaking(data, scene) {
-    const harness = new BakeHarness(data, {
-        deltaDistance: 2.0,
-        views: [
-            {
-                name: "bake/view/main",
-                position: new THREE.Vector3(0, 1.6, 0),
-                rotation: new THREE.Euler(0, 0, 0),
-                excludeTags: ["sign", "vehicle"],
-                camera: {
-                    width: 1920,
-                    height: 1080,
-                    fov: 75,
-                },
-                passes: [
-                    {
-                        id: "beauty",
-                        kind: "render",
-                        excludeTags: ["sign", "vehicle"],
-                    },
-                    {
-                        id: "mask_building",
-                        kind: "mask",
-                        includeTags: ["building"],
-                    },
-                    {
-                        id: "mask_no_road_building",
-                        kind: "mask",
-                        includeTags: [],
-                        excludeTags: ["road", "building"],
-                    },
-                ],
-            },
-        ],
+    const bakeConfig = data.bakeRunConfig() || createDefaultBakeRunConfig({
+        environmentId: "igvc",
+        seed: 42,
     });
 
-    const samplePath = new BakePath([
-        {
-            position: new THREE.Vector3(-25.120153743222073, 0.5, 1.1525929487085005),
-            rotation: new THREE.Euler(0, Math.PI / 4, 0),
-        },
-        {
-            position: new THREE.Vector3(-24.40545504348329, 0.5, 50.754401939102294),
-            rotation: new THREE.Euler(0, Math.PI / 4, 0),
-        },
-    ]);
+    if (!data.bakeRunConfig()) {
+        data.setBakeRunConfig(bakeConfig);
+    }
 
+    const harness = new BakeHarness(data, {
+        runId: bakeConfig.runId,
+        host: bakeConfig.host,
+        deltaDistance: bakeConfig.deltaDistance,
+        views: bakeConfig.views,
+        passPolicy: bakeConfig.passPolicy,
+        maskMinPixels: bakeConfig.maskMinPixels,
+        manifest: bakeConfig.toManifest(),
+    });
+
+    const samplePath = new BakePath(bakeConfig.pathVertices);
     samplePath.display(data);
 
     harness.addPath(samplePath);
@@ -518,6 +497,12 @@ export default function TotalScene() {
             const controls = setupControls(scene, camera, renderer, data);
 
             data.simulation().configure({ scene, camera, renderer, controls });
+
+            const bakeConfig = createDefaultBakeRunConfig({
+                environmentId: "igvc",
+                seed: 42,
+            });
+            data.setBakeRunConfig(bakeConfig);
 
             let startingState = {};
 

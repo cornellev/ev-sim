@@ -190,6 +190,9 @@ export class BakeView {
             depthWrite: true,
             fog: false,
         });
+        this._depthMaterial = new THREE.MeshDepthMaterial({
+            depthPacking: THREE.RGBADepthPacking,
+        });
 
         this.shader.onData((buffer) => {
             this.buff = buffer;
@@ -450,7 +453,11 @@ export class BakeView {
      * @param {string[]} excludeTags
      * @returns {boolean}
      */
-    _isMaskWhite(object, includeTags, excludeTags) {
+    _isMaskWhite(object, includeTags, excludeTags, buildingId = null) {
+        if (buildingId && object.userData?.buildingId !== buildingId) {
+            return false;
+        }
+
         const tags = effectiveTagNames(object);
         const include = includeTags.map((tag) => tag.toLowerCase());
         const exclude = excludeTags.map((tag) => tag.toLowerCase());
@@ -471,8 +478,9 @@ export class BakeView {
      * everything else is fully transparent (rgba 0,0,0,0).
      * @param {string[]} includeTags
      * @param {string[]} excludeTags
+     * @param {string|null} [buildingId]
      */
-    _renderMaskPass(includeTags = [], excludeTags = []) {
+    _renderMaskPass(includeTags = [], excludeTags = [], buildingId = null) {
         const previousBackground = this.scene.background;
         const previousClearColor = new THREE.Color();
         this.renderer.getClearColor(previousClearColor);
@@ -499,7 +507,7 @@ export class BakeView {
             const ignored = hasAncestorFlag(object, "bakeIgnore");
             const white = !ignored
                 && object.isMesh
-                && this._isMaskWhite(object, includeTags, excludeTags);
+                && this._isMaskWhite(object, includeTags, excludeTags, buildingId);
 
             if (white) {
                 object.visible = true;
@@ -542,12 +550,93 @@ export class BakeView {
         this._maskRestoreState = null;
     }
 
+    _renderDepthPass() {
+        this._maskRestoreState = {
+            background: this.scene.background,
+            clearColor: new THREE.Color(),
+            clearAlpha: this.renderer.getClearAlpha(),
+            entries: [],
+        };
+        this.renderer.getClearColor(this._maskRestoreState.clearColor);
+
+        this.scene.background = null;
+        this.renderer.setClearColor(0x000000, 1);
+
+        this.scene.traverse((object) => {
+            if (!isRenderable(object)) return;
+            if (hasAncestorFlag(object, "bakeIgnore")) {
+                this._maskRestoreState.entries.push({
+                    object,
+                    visible: object.visible,
+                    material: object.material,
+                });
+                object.visible = false;
+                return;
+            }
+
+            if (!object.isMesh) return;
+
+            this._maskRestoreState.entries.push({
+                object,
+                visible: object.visible,
+                material: object.material,
+            });
+            object.visible = true;
+            object.material = this._depthMaterial;
+        });
+
+        const rgba = this._renderCameraPixels();
+        this._restoreMaskPass();
+        return rgba;
+    }
+
+    /**
+     * @returns {Object}
+     */
+    getCameraIntrinsics() {
+        const aspect = this.cameraSettings.width / Math.max(1, this.cameraSettings.height);
+        const fovRad = THREE.MathUtils.degToRad(this.cameraSettings.fov);
+        const fy = (this.cameraSettings.height / 2) / Math.tan(fovRad / 2);
+        const fx = fy * aspect;
+
+        return {
+            width: this.cameraSettings.width,
+            height: this.cameraSettings.height,
+            fov: this.cameraSettings.fov,
+            near: this.cameraSettings.near,
+            far: this.cameraSettings.far,
+            aspect,
+            fx,
+            fy,
+            cx: this.cameraSettings.width / 2,
+            cy: this.cameraSettings.height / 2,
+        };
+    }
+
+    /**
+     * @returns {Object}
+     */
+    getCameraExtrinsics() {
+        const position = this.getPosition();
+        const rotation = this.getRotation();
+        const matrixWorld = this.sensorCamera?.matrixWorld?.elements
+            ? [...this.sensorCamera.matrixWorld.elements]
+            : [];
+
+        return {
+            position: { x: position.x, y: position.y, z: position.z },
+            rotation: { x: rotation.x, y: rotation.y, z: rotation.z },
+            matrixWorld,
+        };
+    }
+
     /**
      * @param {import("./BakePass").BakePassDescriptor[]} passes
      * @param {Object} metadata
-     * @returns {{ passes: Object[], lidar: Object|null, metadata: Object }|null}
+     * @param {{ maskMinPixels?: number, skipEmptyMasks?: boolean }} [options]
+     * @returns {{ passes: Object[], lidar: Object|null, depth: Object|null, metadata: Object }|null}
      */
-    capturePasses(passes = [], metadata = {}) {
+    capturePasses(passes = [], metadata = {}, options = {}) {
         if (
             this._captureInFlight ||
             !this.sensorCamera ||
@@ -572,6 +661,8 @@ export class BakeView {
             cameraId: this.name,
             position: { x: position.x, y: position.y, z: position.z },
             rotation: { x: rotation.x, y: rotation.y, z: rotation.z },
+            cameraIntrinsics: this.getCameraIntrinsics(),
+            cameraExtrinsics: this.getCameraExtrinsics(),
         };
 
         const lidarFrame = this._captureLidar();
@@ -580,17 +671,34 @@ export class BakeView {
             this._recordFrame(this.channels.lidar, lidarFrame);
         }
 
+        const depthRgba = this._renderDepthPass();
+        const depthFrame = {
+            timestamp: Date.now(),
+            width: this.cameraSettings.width,
+            height: this.cameraSettings.height,
+            format: "depth-rgba8",
+            data: depthRgba,
+            passId: "depth",
+            kind: "depth",
+            fileRole: "depth",
+        };
+
         const passResults = [];
+        const maskMinPixels = options.maskMinPixels ?? 64;
+        const skipEmptyMasks = options.skipEmptyMasks !== false;
 
         for (const pass of passes) {
             if (pass.upload === false) continue;
 
             const includeTags = pass.includeTags ?? this.includeTags;
             const excludeTags = pass.excludeTags ?? this.excludeTags;
+            const buildingId = pass.buildingId ?? null;
 
             let rgba;
             if (pass.kind === "mask") {
-                rgba = this._renderMaskPass(includeTags, excludeTags);
+                rgba = this._renderMaskPass(includeTags, excludeTags, buildingId);
+            } else if (pass.kind === "depth") {
+                rgba = this._renderDepthPass();
             } else {
                 this._applyVisibilityFilter(this.scene, includeTags, excludeTags);
                 this._applyCaptureMaterialBoost();
@@ -602,25 +710,41 @@ export class BakeView {
                 }
             }
 
+            if (pass.kind === "mask" && skipEmptyMasks) {
+                let whiteCount = 0;
+                for (let i = 0; i < rgba.length; i += 4) {
+                    if (rgba[i + 3] > 0 && rgba[i] > 0) whiteCount += 1;
+                }
+                if (whiteCount < maskMinPixels) {
+                    continue;
+                }
+            }
+
             const passFrame = {
                 timestamp: Date.now(),
                 width: this.cameraSettings.width,
                 height: this.cameraSettings.height,
-                format: "rgba8",
+                format: pass.kind === "depth" ? "depth-rgba8" : "rgba8",
                 data: rgba,
                 passId: pass.id,
                 kind: pass.kind,
                 fileRole: passFileRole(pass),
                 includeTags: [...includeTags],
                 excludeTags: [...excludeTags],
-                maskTags: pass.kind === "mask" ? [...includeTags] : [],
+                maskTags: pass.maskTags ?? (pass.kind === "mask" ? [...includeTags] : []),
+                buildingId,
+                processTag: pass.processTag ?? null,
+                modelSeedKey: pass.modelSeedKey ?? buildingId ?? pass.id,
+                chainProcess: pass.chainProcess === true,
                 metadata: {
                     ...frameMetadata,
                     passId: pass.id,
                     fileRole: passFileRole(pass),
                     includeTags: [...includeTags],
                     excludeTags: [...excludeTags],
-                    maskTags: pass.kind === "mask" ? [...includeTags] : [],
+                    maskTags: pass.maskTags ?? (pass.kind === "mask" ? [...includeTags] : []),
+                    buildingId,
+                    processTag: pass.processTag ?? null,
                 },
             };
 
@@ -636,6 +760,7 @@ export class BakeView {
         return {
             passes: passResults,
             lidar: lidarFrame,
+            depth: depthFrame,
             metadata: frameMetadata,
         };
     }

@@ -4,7 +4,7 @@ import uuid
 from urllib import error, request
 
 
-SERVER_HOST = os.environ.get("BAKE_PROCESS_SERVER", "http://localhost:8001")
+SERVER_HOST = os.environ.get("BAKE_PROCESS_SERVER", "http://thor.tail4ccb95.ts.net:8001")
 SERVER_ENDPOINT = os.environ.get("BAKE_PROCESS_ENDPOINT", f"{SERVER_HOST}/process")
 
 
@@ -72,8 +72,8 @@ def process_image(image_path, mask_path, tag, save_path=None, metadata=None):
         with request.urlopen(req, timeout=600) as response:
             result = response.read()
     except error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace")
-        print(f"Error processing image: {exc.code} - {body}")
+        body_text = exc.read().decode("utf-8", errors="replace")
+        print(f"Error processing image: {exc.code} - {body_text}")
         return None
     except error.URLError as exc:
         print(f"Error processing image: {exc.reason}")
@@ -82,4 +82,10 @@ def process_image(image_path, mask_path, tag, save_path=None, metadata=None):
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
     with open(output_path, "wb") as f:
         f.write(result)
+
+    if metadata:
+        sidecar_path = f"{output_path}.meta.json"
+        with open(sidecar_path, "w", encoding="utf-8") as f:
+            json.dump(metadata, f, indent=2)
+
     return output_path

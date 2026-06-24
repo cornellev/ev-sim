@@ -25,6 +25,7 @@ export class Data {
 
         this.simulationEngine = new SimulationEngine(this);
         this.bakeHarness = null;
+        this._bakeRunConfig = null;
         
         this.scene = null;
         this.camera = null;
@@ -104,6 +105,20 @@ export class Data {
      */
     baking() {
         return this.bakeHarness;
+    }
+
+    /**
+     * @param {import("../environment/visualization/BakeRunConfig").BakeRunConfig|null} config
+     */
+    setBakeRunConfig(config) {
+        this._bakeRunConfig = config;
+    }
+
+    /**
+     * @returns {import("../environment/visualization/BakeRunConfig").BakeRunConfig|null}
+     */
+    bakeRunConfig() {
+        return this._bakeRunConfig;
     }
 
     /**
