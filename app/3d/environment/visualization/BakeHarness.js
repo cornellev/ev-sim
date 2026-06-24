@@ -3,7 +3,7 @@ import { BakeView } from "./BakeView";
 import { BakePath } from "./BakePath";
 import { buildSampleId, resolveViewPasses } from "./BakePass";
 import { BuildingRegionPlanner, resolvePassesForSample } from "./BuildingRegionPlanner";
-import { deriveModelSeed } from "../../util/SeededRNG";
+import { deriveModelSeed } from "../../../util/SeededRNG";
 import {
     checkBakeServerHealth,
     clearBakeServer,

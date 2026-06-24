@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { SeededRNG } from "../app/3d/util/SeededRNG.js";
+import { SeededRNG } from "../app/util/SeededRNG.js";
 
 test("SeededRNG is deterministic for the same seed", () => {
     const a = new SeededRNG(42);

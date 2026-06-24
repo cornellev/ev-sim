@@ -1,4 +1,4 @@
-import { SeededRNG } from "../util/SeededRNG.js";
+import { SeededRNG } from "../../util/SeededRNG.js";
 
 /**
  * @param {{ x: number, y: number, z: number }[]} footprint

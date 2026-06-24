@@ -1,5 +1,6 @@
 import * as THREE from "three";
-import { SeededRNG } from "../../util/SeededRNG.js";
+import { SeededRNG } from "../../../util/SeededRNG";
+
 
 /**
  * @typedef {Object} BuildingRecord

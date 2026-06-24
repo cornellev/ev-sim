@@ -11,7 +11,7 @@ import {
     resolvePassesForSample,
 } from "../app/3d/environment/visualization/BuildingRegionPlanner.js";
 import { createDefaultBakeRunConfig } from "../app/3d/environment/visualization/BakeRunConfig.js";
-import { deriveModelSeed } from "../app/3d/util/SeededRNG.js";
+import { deriveModelSeed } from "../app/util/SeededRNG.js";
 import { buildingIdFromFootprint } from "../app/3d/city/buildingIds.js";
 
 test("BakePass resolves legacy default beauty and mask passes", () => {

@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { Triangle } from "../data/objects/Triangle.js";
-import { SeededRNG } from "../util/SeededRNG.js";
+import { SeededRNG } from "../../util/SeededRNG.js";
 import { buildingIdFromFootprint } from "./buildingIds.js";
 
 /**

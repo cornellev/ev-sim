@@ -27,4 +27,4 @@ export {
 
 export { buildingIdFromFootprint } from "../../city/buildingIds.js";
 
-export { deriveModelSeed } from "../../util/SeededRNG.js";
+export { deriveModelSeed } from "../../../util/SeededRNG.js";
