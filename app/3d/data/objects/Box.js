@@ -40,6 +40,7 @@ float sdBox(vec3 p, Box box) {
         const material = new MeshStandardMaterial({ color: this.getColor() });
         const cube = new Mesh(geometry, material);
         cube.position.set(this.position.x, this.position.y, this.position.z);
+        cube.userData.fusionObject = this;
         scene.add(cube);
 
         this._mesh = cube;

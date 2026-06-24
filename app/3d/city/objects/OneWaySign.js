@@ -25,6 +25,7 @@ export class OneWaySign extends Box {
         this.dir = dir;
         this._poleH = poleH;
         this._ground = groundPos.clone();
+        this.setTags(["sign"]);
     }
 
     addToScene(scene) {
@@ -46,6 +47,7 @@ export class OneWaySign extends Box {
         const group = new THREE.Group();
         group.add(pole);
         group.add(board);
+        group.userData.fusionObject = this;
         scene.add(group);
         this._mesh = group;
     }

@@ -67,6 +67,7 @@ float udTriangle(vec3 p, Triangle triangle) {
 
         const material = new THREE.MeshStandardMaterial({ color: this.getColor(), side: THREE.DoubleSide });
         const mesh = new THREE.Mesh(geometry, material);
+        mesh.userData.fusionObject = this;
         scene.add(mesh);
 
         this._mesh = mesh;

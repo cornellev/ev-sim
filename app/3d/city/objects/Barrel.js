@@ -12,6 +12,7 @@ export class Barrel extends Box {
      */
     constructor(position, size) {
         super(position.clone().add(new THREE.Vector3(0, size.y / 2, 0)), size);
+        this.setTags(["barrel"]);
     }
 
     addToScene(scene) {
@@ -19,6 +20,7 @@ export class Barrel extends Box {
         const material = new THREE.MeshStandardMaterial({ color: 0xcf761d });
         const mesh = new THREE.Mesh(geometry, material);
         mesh.position.copy(this.position);
+        mesh.userData.fusionObject = this;
         
         this._mesh = mesh;
         scene.add(mesh);

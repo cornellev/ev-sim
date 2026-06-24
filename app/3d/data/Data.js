@@ -24,10 +24,12 @@ export class Data {
         this.clientManager = new ClientManager(this);
 
         this.simulationEngine = new SimulationEngine(this);
+        this.bakeHarness = null;
         
         this.scene = null;
         this.camera = null;
         this.renderer = null;
+        this.spark = null;
 
         (async () => {
             await this.clientManager.setup();
@@ -88,6 +90,20 @@ export class Data {
      */
     simulation() {
         return this.simulationEngine;
+    }
+
+    /**
+     * @param {import("../environment/visualization/BakeHarness").BakeHarness|null} harness
+     */
+    setBakeHarness(harness) {
+        this.bakeHarness = harness;
+    }
+
+    /**
+     * @returns {import("../environment/visualization/BakeHarness").BakeHarness|null}
+     */
+    baking() {
+        return this.bakeHarness;
     }
 
     /**

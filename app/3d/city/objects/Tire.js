@@ -13,6 +13,7 @@ export class Tire extends Box {
         this.majorRadius = majorRadius;
         this.tubeRadius = tubeRadius;
         this.color(0x1a1a1a);
+        this.setTags(["tire"]);
     }
 
     addToScene(scene) {
@@ -21,6 +22,7 @@ export class Tire extends Box {
         const mesh = new THREE.Mesh(geometry, material);
         mesh.rotation.x = Math.PI / 2;
         mesh.position.copy(this.position);
+        mesh.userData.fusionObject = this;
         scene.add(mesh);
         this._mesh = mesh;
     }

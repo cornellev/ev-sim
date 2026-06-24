@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { storeData, UnitBlock } from "../../ScriptManager";
+import { BlockOutput, storeData, UnitBlock } from "../../ScriptManager";
 import Unit from "../Unit";
 
 export function StringUnit({ _uuid, initialData = "" }) {

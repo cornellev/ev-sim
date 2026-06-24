@@ -28,6 +28,7 @@ export class StopSign extends Box {
         this.dir = dir;
         // random int32
         this.id = Math.floor(Math.random() * 0xFFFFFFFF);
+        this.setTags(["sign"]);
     }
 
     addToScene(scene) {
@@ -59,6 +60,7 @@ export class StopSign extends Box {
         const mesh = new THREE.Group();
         mesh.add(pole);
         mesh.add(sign);
+        mesh.userData.fusionObject = this;
         this._mesh = mesh;
 
         // super.addToScene(scene); // call parent method to store reference

@@ -554,6 +554,8 @@ export class Intersection {
         mesh.rotation.x = Math.PI / 2;
         mesh.position.y = -0.01; // slight offset to prevent z-fighting with the road surfaces
         mesh.receiveShadow = true;
+        mesh.name = "IntersectionSurface";
+        mesh.userData.bakeRoadSurface = true;
         root.add(mesh);
 
         // for each curve, create a shoulder with a thickness of options.sholderWidth, and the same curve but offset to the left and right by options.shoulderWidth, and add it to the scene
@@ -600,6 +602,8 @@ export class Intersection {
             // shoulderMesh.rotation.x = Math.PI / 2;
             shoulderMesh.position.y = -0.02; // slight offset to prevent z-fighting with the road surfaces and intersection fill
             shoulderMesh.receiveShadow = true;
+            shoulderMesh.name = "IntersectionShoulder";
+            shoulderMesh.userData.bakeRoadSurface = true;
             root.add(shoulderMesh);
         }
         

@@ -30,7 +30,7 @@ const CATEGORY_META = {
     all: { label: "All", icon: TbCategory, accent: "text-zinc-100" },
     expressions: { label: "Expressions", icon: TbMathFunction, accent: "text-rose-300" },
     constants: { label: "Constants", icon: TbFunction, accent: "text-amber-300" },
-    vector2: { label: "Vector 2", icon: TbVector, accent: "text-blue-300" },
+    texture1d: { label: "Texture 1D", icon: TbVector, accent: "text-blue-300" },
     terrain: { label: "Terrain", icon: TbMountain, accent: "text-lime-300" },
     sensorflow: { label: "Sensor Flow", icon: TbActivity, accent: "text-cyan-300" },
     randomization: { label: "Random", icon: TbDice, accent: "text-fuchsia-300" },

@@ -3,6 +3,7 @@ import { Box } from "./objects/Box";
 import { GLSLObject, Object } from "./objects/Object";
 import * as THREE from "three";
 import { Triangle } from "./objects/Triangle";
+import { getDefaultTagId } from "./ObjectTagRegistry";
 
 const MAX_BOXES = 2000;
 const MAX_TRIANGLES = 5000;
@@ -18,21 +19,45 @@ class ObjectEvent {
 }
 
 /**
- * 
- * @param {ObjectDatabase} obj 
- * @returns 
+ * @param {Float32Array} data
+ * @param {number} width
+ * @returns {THREE.DataTexture}
+ */
+function createObjectDataTexture(data, width) {
+    const texture = new THREE.DataTexture(
+        data,
+        width,
+        1,
+        THREE.RGBAFormat,
+        THREE.FloatType
+    );
+    texture.needsUpdate = true;
+    texture.minFilter = THREE.NearestFilter;
+    texture.magFilter = THREE.NearestFilter;
+    texture.wrapS = THREE.ClampToEdgeWrapping;
+    texture.wrapT = THREE.ClampToEdgeWrapping;
+    return texture;
+}
+
+/**
+ * @param {ObjectDatabase} obj
+ * @returns
  */
 function setupTextures(obj) {
     obj.textures = {
         data: {
             _boxPosData: new Float32Array(4 * MAX_BOXES),
             _boxScaleData: new Float32Array(4 * MAX_BOXES),
+            _boxTagData: new Float32Array(4 * MAX_BOXES),
             _trianglePosData: new Float32Array(4 * MAX_TRIANGLES * 3),
+            _triangleTagData: new Float32Array(4 * MAX_TRIANGLES),
         },
         textures: {
             _boxPosTexture: null,
             _boxScaleTexture: null,
+            _boxTagTexture: null,
             _trianglePosTexture: null,
+            _triangleTagTexture: null,
         },
         counts: {
             boxCount: 0,
@@ -40,44 +65,97 @@ function setupTextures(obj) {
         },
     };
 
-    obj.textures.textures._boxPosTexture = new THREE.DataTexture(
+    obj.textures.textures._boxPosTexture = createObjectDataTexture(
         obj.textures.data._boxPosData,
-        MAX_BOXES,
-        1,
-        THREE.RGBAFormat,
-        THREE.FloatType
+        MAX_BOXES
     );
-    obj.textures.textures._boxPosTexture.needsUpdate = true;
-    obj.textures.textures._boxPosTexture.minFilter = THREE.NearestFilter;
-    obj.textures.textures._boxPosTexture.magFilter = THREE.NearestFilter;
-    obj.textures.textures._boxPosTexture.wrapS = THREE.ClampToEdgeWrapping;
-    obj.textures.textures._boxPosTexture.wrapT = THREE.ClampToEdgeWrapping;
-
-    obj.textures.textures._boxScaleTexture = new THREE.DataTexture(
+    obj.textures.textures._boxScaleTexture = createObjectDataTexture(
         obj.textures.data._boxScaleData,
-        MAX_BOXES,
-        1,
-        THREE.RGBAFormat,
-        THREE.FloatType
+        MAX_BOXES
     );
-    obj.textures.textures._boxScaleTexture.needsUpdate = true;
-    obj.textures.textures._boxScaleTexture.minFilter = THREE.NearestFilter;
-    obj.textures.textures._boxScaleTexture.magFilter = THREE.NearestFilter;
-    obj.textures.textures._boxScaleTexture.wrapS = THREE.ClampToEdgeWrapping;
-    obj.textures.textures._boxScaleTexture.wrapT = THREE.ClampToEdgeWrapping;
-
-    obj.textures.textures._trianglePosTexture = new THREE.DataTexture(
+    obj.textures.textures._boxTagTexture = createObjectDataTexture(
+        obj.textures.data._boxTagData,
+        MAX_BOXES
+    );
+    obj.textures.textures._trianglePosTexture = createObjectDataTexture(
         obj.textures.data._trianglePosData,
-        MAX_TRIANGLES * 3,
-        1,
-        THREE.RGBAFormat,
-        THREE.FloatType
+        MAX_TRIANGLES * 3
     );
-    obj.textures.textures._trianglePosTexture.needsUpdate = true;
-    obj.textures.textures._trianglePosTexture.minFilter = THREE.NearestFilter;
-    obj.textures.textures._trianglePosTexture.magFilter = THREE.NearestFilter;
-    obj.textures.textures._trianglePosTexture.wrapS = THREE.ClampToEdgeWrapping;
-    obj.textures.textures._trianglePosTexture.wrapT = THREE.ClampToEdgeWrapping;
+    obj.textures.textures._triangleTagTexture = createObjectDataTexture(
+        obj.textures.data._triangleTagData,
+        MAX_TRIANGLES
+    );
+}
+
+/**
+ * @param {Object} object
+ * @returns {number}
+ */
+function getObjectTagId(object) {
+    return object?.tagId ?? getDefaultTagId();
+}
+
+/**
+ * @param {ObjectDatabase} database
+ * @param {Box} box
+ * @param {number} index
+ */
+function writeBoxTextureSlot(database, box, index) {
+    const dataIndex = index * 4;
+
+    database.textures.data._boxPosData[dataIndex + 0] = box.position.x;
+    database.textures.data._boxPosData[dataIndex + 1] = box.position.y;
+    database.textures.data._boxPosData[dataIndex + 2] = box.position.z;
+    database.textures.data._boxPosData[dataIndex + 3] = 1.0;
+
+    database.textures.data._boxScaleData[dataIndex + 0] = box.scale.x;
+    database.textures.data._boxScaleData[dataIndex + 1] = box.scale.y;
+    database.textures.data._boxScaleData[dataIndex + 2] = box.scale.z;
+    database.textures.data._boxScaleData[dataIndex + 3] = 1.0;
+
+    const tagId = getObjectTagId(box);
+    database.textures.data._boxTagData[dataIndex + 0] = tagId;
+    database.textures.data._boxTagData[dataIndex + 1] = 0.0;
+    database.textures.data._boxTagData[dataIndex + 2] = 0.0;
+    database.textures.data._boxTagData[dataIndex + 3] = 1.0;
+
+    database.textures.textures._boxPosTexture.needsUpdate = true;
+    database.textures.textures._boxScaleTexture.needsUpdate = true;
+    database.textures.textures._boxTagTexture.needsUpdate = true;
+}
+
+/**
+ * @param {ObjectDatabase} database
+ * @param {Triangle} triangle
+ * @param {number} index
+ */
+function writeTriangleTextureSlot(database, triangle, index) {
+    const dataIndex = index * 12;
+    const tagIndex = index * 4;
+
+    database.textures.data._trianglePosData[dataIndex + 0] = triangle.a.x;
+    database.textures.data._trianglePosData[dataIndex + 1] = triangle.a.y;
+    database.textures.data._trianglePosData[dataIndex + 2] = triangle.a.z;
+    database.textures.data._trianglePosData[dataIndex + 3] = 1.0;
+
+    database.textures.data._trianglePosData[dataIndex + 4] = triangle.b.x;
+    database.textures.data._trianglePosData[dataIndex + 5] = triangle.b.y;
+    database.textures.data._trianglePosData[dataIndex + 6] = triangle.b.z;
+    database.textures.data._trianglePosData[dataIndex + 7] = 1.0;
+
+    database.textures.data._trianglePosData[dataIndex + 8] = triangle.c.x;
+    database.textures.data._trianglePosData[dataIndex + 9] = triangle.c.y;
+    database.textures.data._trianglePosData[dataIndex + 10] = triangle.c.z;
+    database.textures.data._trianglePosData[dataIndex + 11] = 1.0;
+
+    const tagId = getObjectTagId(triangle);
+    database.textures.data._triangleTagData[tagIndex + 0] = tagId;
+    database.textures.data._triangleTagData[tagIndex + 1] = 0.0;
+    database.textures.data._triangleTagData[tagIndex + 2] = 0.0;
+    database.textures.data._triangleTagData[tagIndex + 3] = 1.0;
+
+    database.textures.textures._trianglePosTexture.needsUpdate = true;
+    database.textures.textures._triangleTagTexture.needsUpdate = true;
 }
 
 export class ObjectDatabase extends Database {
@@ -94,55 +172,15 @@ export class ObjectDatabase extends Database {
         this.notifiers = {
             box: (box) => {
                 const uuid = box._uuid;
-                // Box texture data is stored in box-order, not global object-order.
-                // Use instanceof so subclasses (e.g., StopSign) are included.
                 const index = this.boxes().findIndex((obj) => obj._uuid === uuid);
                 if (index === -1) return;
-                const dataIndex = index * 4;
-
-                // update position data
-                this.textures.data._boxPosData[dataIndex + 0] = box.position.x;
-                this.textures.data._boxPosData[dataIndex + 1] = box.position.y;
-                this.textures.data._boxPosData[dataIndex + 2] = box.position.z;
-                this.textures.data._boxPosData[dataIndex + 3] = 1.0;
-
-                // update scale data
-                this.textures.data._boxScaleData[dataIndex + 0] = box.scale.x;
-                this.textures.data._boxScaleData[dataIndex + 1] = box.scale.y;
-                this.textures.data._boxScaleData[dataIndex + 2] = box.scale.z;
-                this.textures.data._boxScaleData[dataIndex + 3] = 1.0;
-
-                // mark textures as needing update
-                this.textures.textures._boxPosTexture.needsUpdate = true;
-                this.textures.textures._boxScaleTexture.needsUpdate = true;
+                writeBoxTextureSlot(this, box, index);
             },
             triangle: (triangle) => {
                 const uuid = triangle._uuid;
-                // Triangle texture data is stored in triangle-order.
                 const index = this.triangles().findIndex((obj) => obj._uuid === uuid);
                 if (index === -1) return;
-                const dataIndex = index * 12;
-
-                // update position data
-                this.textures.data._trianglePosData[dataIndex + 0] = triangle.a.x;
-                this.textures.data._trianglePosData[dataIndex + 1] = triangle.a.y;
-                this.textures.data._trianglePosData[dataIndex + 2] = triangle.a.z;
-                this.textures.data._trianglePosData[dataIndex + 3] = 1.0;
-
-                // update position data for b
-                this.textures.data._trianglePosData[dataIndex + 4] = triangle.b.x;
-                this.textures.data._trianglePosData[dataIndex + 5] = triangle.b.y;
-                this.textures.data._trianglePosData[dataIndex + 6] = triangle.b.z;
-                this.textures.data._trianglePosData[dataIndex + 7] = 1.0;
-
-                // update position data for c
-                this.textures.data._trianglePosData[dataIndex + 8] = triangle.c.x;
-                this.textures.data._trianglePosData[dataIndex + 9] = triangle.c.y;
-                this.textures.data._trianglePosData[dataIndex + 10] = triangle.c.z;
-                this.textures.data._trianglePosData[dataIndex + 11] = 1.0;
-
-                // mark textures as needing update
-                this.textures.textures._trianglePosTexture.needsUpdate = true;
+                writeTriangleTextureSlot(this, triangle, index);
             },
         }
     }
@@ -160,62 +198,16 @@ export class ObjectDatabase extends Database {
         if (!(object instanceof Object)) return;
         this.objects.push(object);
 
-        // update max dimensions
-        // const objMaxX = Math.abs(object.position.x) + object.size.x / 2;
-        // const objMaxY = Math.abs(object.position.z) + object.size.z / 2;
-        // if (objMaxX > this._maxX) this._maxX = objMaxX;
-        // if (objMaxY > this._maxY) this._maxY = objMaxY;
-
         if (object instanceof Box) {
             object.setNotifyTexture(this.notifiers.box);
             const index = this.boxes().length - 1;
-            const dataIndex = index * 4;
-            const boxCount = this.textures.counts.boxCount;
-            
-            // set position data
-            this.textures.data._boxPosData[dataIndex + 0] = object.position.x;
-            this.textures.data._boxPosData[dataIndex + 1] = object.position.y;
-            this.textures.data._boxPosData[dataIndex + 2] = object.position.z;
-            this.textures.data._boxPosData[dataIndex + 3] = 1.0;
-            
-            // set scale data
-            this.textures.data._boxScaleData[dataIndex + 0] = object.scale.x;
-            this.textures.data._boxScaleData[dataIndex + 1] = object.scale.y;
-            this.textures.data._boxScaleData[dataIndex + 2] = object.scale.z;
-            this.textures.data._boxScaleData[dataIndex + 3] = 1.0;
+            writeBoxTextureSlot(this, object, index);
             this.textures.counts.boxCount += 1;
-
-            // mark textures as needing update
-            this.textures.textures._boxPosTexture.needsUpdate = true;
-            this.textures.textures._boxScaleTexture.needsUpdate = true;
         } else if (object instanceof Triangle) {
             object.setNotifyTexture(this.notifiers.triangle);
             const index = this.triangles().length - 1;
-            const dataIndex = index * 12;
-            const triCount = this.textures.counts.triCount;
-
-            // set position data for a
-            this.textures.data._trianglePosData[dataIndex + 0] = object.a.x;
-            this.textures.data._trianglePosData[dataIndex + 1] = object.a.y;
-            this.textures.data._trianglePosData[dataIndex + 2] = object.a.z;
-            this.textures.data._trianglePosData[dataIndex + 3] = 1.0;
-
-            // set position data for b
-            this.textures.data._trianglePosData[dataIndex + 4] = object.b.x;
-            this.textures.data._trianglePosData[dataIndex + 5] = object.b.y;
-            this.textures.data._trianglePosData[dataIndex + 6] = object.b.z;
-            this.textures.data._trianglePosData[dataIndex + 7] = 1.0;
-
-            // set position data for c
-            this.textures.data._trianglePosData[dataIndex + 8] = object.c.x;
-            this.textures.data._trianglePosData[dataIndex + 9] = object.c.y;
-            this.textures.data._trianglePosData[dataIndex + 10] = object.c.z;
-            this.textures.data._trianglePosData[dataIndex + 11] = 1.0;
-
+            writeTriangleTextureSlot(this, object, index);
             this.textures.counts.triCount += 1;
-
-            // mark textures as needing update
-            this.textures.textures._trianglePosTexture.needsUpdate = true;
         }
     }
 
@@ -242,6 +234,7 @@ export class ObjectDatabase extends Database {
         return {
             posTexture: this.textures.textures._boxPosTexture,
             scaleTexture: this.textures.textures._boxScaleTexture,
+            tagTexture: this.textures.textures._boxTagTexture,
             count: this.textures.counts.boxCount,
         }
     }
@@ -253,6 +246,7 @@ export class ObjectDatabase extends Database {
     t_triangles() {
         return {
             posTexture: this.textures.textures._trianglePosTexture,
+            tagTexture: this.textures.textures._triangleTagTexture,
             count: this.textures.counts.triCount,
         }
     }

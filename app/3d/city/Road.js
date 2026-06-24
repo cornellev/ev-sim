@@ -180,6 +180,8 @@ function buildStripTriangles(leftPoints, rightPoints, hidden=true) {
         triangles.push(new Triangle(leftA, rightA, rightB));
         triangles.push(new Triangle(leftA, rightB, leftB));
 
+        triangles[triangles.length - 1].setTags(["road"]);
+        triangles[triangles.length - 2].setTags(["road"]);
         triangles[triangles.length - 1].visible = !hidden;
         triangles[triangles.length - 2].visible = !hidden;
     }
@@ -347,10 +349,14 @@ export class Road {
 
         const shoulderMesh = new THREE.Mesh(shoulderGeometry, shoulderMaterial);
         shoulderMesh.receiveShadow = true;
+        shoulderMesh.name = "RoadShoulder";
+        shoulderMesh.userData.bakeRoadSurface = true;
         root.add(shoulderMesh);
 
         const roadMesh = new THREE.Mesh(roadGeometry, roadMaterial);
         roadMesh.receiveShadow = true;
+        roadMesh.name = "RoadSurface";
+        roadMesh.userData.bakeRoadSurface = true;
         root.add(roadMesh);
 
         const leftBorder = createBorder(curve, this.borderLeft, widthMeters * 0.5, {

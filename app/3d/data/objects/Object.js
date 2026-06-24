@@ -1,5 +1,6 @@
 import { isVector3 } from "../../../util/Checks";
 import { keys } from "../../../util/Keys";
+import { getDefaultTagId, resolveTagId } from "../ObjectTagRegistry";
 
 import * as THREE from "three";
 
@@ -13,6 +14,48 @@ export class Object {
 
         this._uuid = crypto.randomUUID();
         this._mesh = null;
+
+        /** @type {string[]} Semantic labels such as building, sign, road. */
+        this.tags = [];
+        /** @type {number} Numeric tag id packed into GPU object textures. */
+        this.tagId = getDefaultTagId();
+    }
+
+    /**
+     * @param {string[]} tags
+     * @returns {this}
+     */
+    setTags(tags = []) {
+        this.tags = [...tags];
+        this.tagId = tags.length > 0 ? resolveTagId(tags[0]) : getDefaultTagId();
+        this._notifyTagChange?.();
+        return this;
+    }
+
+    /**
+     * @param {string} tag
+     * @returns {this}
+     */
+    addTag(tag) {
+        if (!tag) return this;
+        if (!this.tags.includes(tag)) {
+            this.tags.push(tag);
+        }
+        if (this.tags.length === 1) {
+            this.tagId = resolveTagId(tag);
+        }
+        this._notifyTagChange?.();
+        return this;
+    }
+
+    /**
+     * @param {number} tagId
+     * @returns {this}
+     */
+    setTagId(tagId) {
+        this.tagId = tagId;
+        this._notifyTagChange?.();
+        return this;
     }
     
     color(color) {
@@ -139,6 +182,13 @@ export class GLSLObject extends Object {
 
     setNotifyTexture(onNotify) {
         this._notifyTexture = onNotify;
+        this._notifyTagChange = onNotify;
+    }
+
+    notifyTextureUpdate() {
+        if (this._notifyTexture) {
+            this._notifyTexture(this);
+        }
     }
 }
 

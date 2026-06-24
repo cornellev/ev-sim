@@ -5,7 +5,6 @@ import Unit from "@/app/util/Unit";
 import { Data } from "../data/Data";
 import { Intersection } from "../city/Intersection";
 import { StopSign } from "../city/objects/StopSign";
-import { Skybox } from "../skybox/Skybox";
 import { generateBuildings } from "../city/BuildingGenerator";
 import { Barrel } from "../city/objects/Barrel";
 
@@ -128,9 +127,7 @@ export async function setupIGVC(scene, data) {
         data.objects().addObject(barrel);
     }
 
-    // Skybox(scene);
-
-    // generateBuildings(scene, data);
+    generateBuildings(scene, data);
 
     // generate floor
     const floorSize = 200;

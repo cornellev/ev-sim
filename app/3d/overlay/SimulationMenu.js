@@ -25,6 +25,7 @@ import { MenuButton } from "./ui/MenuButton";
 import { MenuToggle } from "./ui/MenuToggle";
 import { PanelSection } from "./ui/PanelSection";
 import { cn } from "./ui/cn";
+import { BiWorld } from "react-icons/bi";
 
 export function SimulationMenu({ data, vehicleOverlayVisible = true, onVehicleOverlayVisibleChange }) {
     const [openPanel, setOpenPanel] = useState(null);
@@ -145,50 +146,46 @@ export function SimulationMenu({ data, vehicleOverlayVisible = true, onVehicleOv
                             </FlyoutPanel>
                         )}
 
-                        {openPanel === "tools" && (
+                        {openPanel === "views" && (
                             <FlyoutPanel
-                                title="Operator Tools"
-                                subtitle="Inspection, scripting, and diagnostics"
+                                title="Operator Views"
+                                subtitle="Used for viewing the scene."
                             >
-                                <PanelSection title="Actions">
+                                <PanelSection title="Tools">
                                     <div className="grid grid-cols-2 gap-1.5">
-                                        <MenuButton compact variant="primary" title="Open ROS visual scripts" className="justify-start">
+                                        <MenuButton compact title="Open sensor viewer and inspector" className="justify-start">
                                             <FaSlidersH className="h-3 w-3" />
-                                            ROS
+                                            PhysicsView
                                         </MenuButton>
-                                        <MenuButton compact title="Open visual scripting canvas" className="justify-start">
+                                        <MenuButton compact title="Open vehicle viewer, editor, and inspector" className="justify-start">
                                             <FaEdit className="h-3 w-3" />
-                                            Script
+                                            AutoShop
                                         </MenuButton>
-                                        <MenuButton compact title="Open profiling tools" className="justify-start">
-                                            <FaChartBar className="h-3 w-3" />
-                                            Profile
+                                        <MenuButton compact title="Open world view editor and viewer" className="justify-start">
+                                            <BiWorld className="h-3 w-3" />
+                                            WorldEdit
                                         </MenuButton>
-                                        <MenuButton compact title="Reset all runtime states" variant="danger" className="justify-start">
-                                            <FaStop className="h-3 w-3" />
-                                            Reset
+                                        <MenuButton compact title="Change to simulation view" className="justify-start">
+                                            <BiWorld className="h-3 w-3" />
+                                            SimView
                                         </MenuButton>
                                     </div>
                                 </PanelSection>
-                                <PanelSection title="Overlays">
-                                    <MenuToggle
-                                        label="Diagnostics"
-                                        icon={<FaChartBar className="h-3 w-3" />}
-                                        checked={toggles.diagnostics}
-                                        onChange={(v) => setToggle("diagnostics", v)}
-                                    />
-                                    <MenuToggle
-                                        label="Recording"
-                                        icon={<FaVideo className="h-3 w-3" />}
-                                        checked={toggles.recording}
-                                        onChange={(v) => setToggle("recording", v)}
-                                    />
-                                    <MenuToggle
-                                        label="Viewport Overlay"
-                                        icon={<FaLayerGroup className="h-3 w-3" />}
-                                        checked={toggles.overlay}
-                                        onChange={(v) => setToggle("overlay", v)}
-                                    />
+                                <PanelSection title="Views">
+                                    <div className="grid grid-cols-2 gap-1.5">
+                                        <MenuButton compact title="Open sensor viewer and inspector" className="justify-start">
+                                            <FaSlidersH className="h-3 w-3" />
+                                            Normal Render
+                                        </MenuButton>
+                                        <MenuButton compact title="Open world view editor and viewer" className="justify-start">
+                                            <BiWorld className="h-3 w-3" />
+                                            Sensor Render
+                                        </MenuButton>
+                                        <MenuButton compact title="Open vehicle viewer, editor, and inspector" className="justify-start">
+                                            <FaEdit className="h-3 w-3" />
+                                            Life Render
+                                        </MenuButton>
+                                    </div>
                                 </PanelSection>
                             </FlyoutPanel>
                         )}
@@ -196,13 +193,6 @@ export function SimulationMenu({ data, vehicleOverlayVisible = true, onVehicleOv
                 )}
 
                 <div className="flex items-center gap-2 rounded-2xl border border-zinc-700/80 bg-zinc-950/70 p-2 text-zinc-100 shadow-[0_20px_70px_rgba(0,0,0,0.5)] backdrop-blur-2xl">
-                    <ModeSwitch
-                        value={mode}
-                        options={modeOptions}
-                        onChange={setMode}
-                    />
-
-                    <div className="h-7 w-px bg-zinc-700/80" />
 
                     <div className="flex items-center gap-1 rounded-xl border border-zinc-700/80 bg-zinc-900/80 p-1">
                         <MenuButton
@@ -215,7 +205,6 @@ export function SimulationMenu({ data, vehicleOverlayVisible = true, onVehicleOv
                         >
                             <FaPlay className="h-3 w-3" />
                         </MenuButton>
-                        {/* TODO: Check out, for some reason doesn't update */}
                         <MenuButton
                             iconOnly
                             active={simState?.status === "paused"}
@@ -268,10 +257,10 @@ export function SimulationMenu({ data, vehicleOverlayVisible = true, onVehicleOv
                         </MenuButton>
                         <MenuButton
                             iconOnly
-                            active={openPanel === "tools"}
-                            onClick={() => togglePanel("tools")}
-                            title="Open operator tools"
-                            ariaLabel="Tools"
+                            active={openPanel === "views"}
+                            onClick={() => togglePanel("views")}
+                            title="Open operator views"
+                            ariaLabel="Views"
                         >
                             <FaTools className="h-3 w-3" />
                         </MenuButton>

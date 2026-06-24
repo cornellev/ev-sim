@@ -29,7 +29,8 @@ export class SimulationEngine {
             controls: true,
             rendering: true,
             environment: true,
-            scripting: true
+            scripting: true,
+            baking: false,
         }
 
         this.scene = null;
@@ -191,8 +192,13 @@ export class SimulationEngine {
 
         const frameDt = clamp(rawFrameDt, 0, this.maxFrameDt);
 
-        if (this.modules.controls && this.controls && this.data.settings()?.cameraControlsEnabled) {
-            this.controls.update();
+        if (this.controls) {
+            const cameraControlsEnabled = this.modules.controls && this.data.settings()?.cameraControlsEnabled !== false;
+            this.controls.enabled = cameraControlsEnabled;
+
+            if (cameraControlsEnabled) {
+                this.controls.update();
+            }
         }
 
         if (this.status === 'playing') {
@@ -243,6 +249,10 @@ export class SimulationEngine {
 
         if (this.modules.sensors) {
             this.data.devices()?.update?.(dt);
+        }
+
+        if (this.modules.baking) {
+            this.data.baking()?.update?.(dt);
         }
 
         this.time += dt;

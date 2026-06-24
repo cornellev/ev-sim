@@ -33,6 +33,10 @@ import { FIII1 } from "./igvc/mini/fiii1";
 import { FIII2 } from "./igvc/mini/fiii2";
 import { FIII3 } from "./igvc/mini/fiii3";
 import Unit from "../scripting/units/Unit";
+import { SparkRenderer } from "@sparkjsdev/spark";
+import { BakeHarness } from "./environment/visualization/BakeHarness";
+import { BakePath } from "./environment/visualization/BakePath";
+import { Skybox } from "./skybox/Skybox";
 
 /** `?mini=q1` | `q2` | `q3` | `q4` | `fi1` | `fi2` | `fii1` | `fiii1` | `fiii2` | `fiii3` (default: q4) */
 const MINI_SCENARIOS = {
@@ -48,9 +52,12 @@ const MINI_SCENARIOS = {
     fiii3: FIII3
 };
 
+const FOLLOW_CAMERA_CONTROL_LOCK = "vehicle-follow-camera";
+
 function setupScene(scene, camera, renderer) {
     //set background color
     scene.background = new THREE.Color(0x202020);
+    Skybox(scene, renderer);
     
     // add ambient light
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
@@ -377,7 +384,7 @@ async function setupVehicles(scene, data, camera) {
         camFollowing = !camFollowing;
 
         if (camFollowing) {
-            data.settings().disableControls();
+            data.settings().disableControls(FOLLOW_CAMERA_CONTROL_LOCK);
 
             for (let vehicle of data.vehicles().vehicles) {
                 if (vehicle["follower"]) {
@@ -386,14 +393,92 @@ async function setupVehicles(scene, data, camera) {
                     break;
                 }
             }
+
+            if (!following) {
+                camFollowing = false;
+                data.settings().enableControls(FOLLOW_CAMERA_CONTROL_LOCK);
+            }
         } else {
             if (following && following.follower) {
                 following.follower.camera = null;
             }
 
-            data.settings().enableControls();
+            data.settings().enableControls(FOLLOW_CAMERA_CONTROL_LOCK);
             following = null;
         }
+    });
+}
+
+/**
+ * Register an optional bake harness behind the explicit baking module toggle.
+ * Press "b" to start/stop a sample bake run when a harness is configured.
+ *
+ * @param {Data} data
+ * @param {THREE.Scene} scene
+ */
+function setupBaking(data, scene) {
+    const harness = new BakeHarness(data, {
+        deltaDistance: 2.0,
+        views: [
+            {
+                name: "bake/view/main",
+                position: new THREE.Vector3(0, 1.6, 0),
+                rotation: new THREE.Euler(0, 0, 0),
+                excludeTags: ["sign", "vehicle"],
+                camera: {
+                    width: 1920,
+                    height: 1080,
+                    fov: 75,
+                },
+                passes: [
+                    {
+                        id: "beauty",
+                        kind: "render",
+                        excludeTags: ["sign", "vehicle"],
+                    },
+                    {
+                        id: "mask_road",
+                        kind: "mask",
+                        includeTags: ["road"],
+                    },
+                    {
+                        id: "mask_building",
+                        kind: "mask",
+                        includeTags: ["building"],
+                    },
+                ],
+            },
+        ],
+    });
+
+    const samplePath = new BakePath([
+        {
+            position: new THREE.Vector3(-25.120153743222073, 0.5, 1.1525929487085005),
+            rotation: new THREE.Euler(0, Math.PI / 4, 0),
+        },
+        {
+            position: new THREE.Vector3(-24.40545504348329, 0.5, 50.754401939102294),
+            rotation: new THREE.Euler(0, Math.PI / 4, 0),
+        },
+    ]);
+
+    samplePath.display(data);
+
+    harness.addPath(samplePath);
+    harness.setup(scene);
+    data.setBakeHarness(harness);
+
+    data.keys().registerKeyPress("b", async () => {
+        if (harness.running) {
+            harness.stop();
+            data.simulation().setModule("baking", false);
+            console.log("Bake run stopped");
+            return;
+        }
+
+        await harness.start();
+        data.simulation().setModule("baking", true);
+        console.log("Bake run started", harness.runId);
     });
 }
 
@@ -416,6 +501,8 @@ export default function TotalScene() {
         renderer.setSize(window.innerWidth, window.innerHeight);
         mountNode.appendChild(renderer.domElement);
 
+        const spark = new SparkRenderer({ renderer });
+
         const data = new Data();
 
         data.keyManager = keyManagerRef.current;
@@ -423,6 +510,7 @@ export default function TotalScene() {
         data.scene = scene;
         data.camera = camera;
         data.renderer = renderer;
+        data.spark = spark; // this is for guassian splats
 
         const initialize = async () => {
             setupScene(scene, camera, renderer);
@@ -471,6 +559,7 @@ export default function TotalScene() {
             data.objects().scene(scene);
             data.vehicles().setup(scene);
             data.devices().setup(scene);
+            setupBaking(data, scene);
 
             data.simulation().startLoop();
             data.simulation().play();
