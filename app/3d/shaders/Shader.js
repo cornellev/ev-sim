@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { withPixelPackBufferUnbound } from '../util/glReadback.js';
 
 export function common() {
     return `` +
@@ -143,15 +144,19 @@ export class Shader {
         this._renderer.render(this._scene, this._camera);
         this._renderer.setRenderTarget(null);
 
-        // read back pixels (synchronously in three.js)
-        this._renderer.readRenderTargetPixels(
-            this._renderTarget,
-            0,
-            0,
-            w,
-            h,
-            this._pixelBuffer,
-        );
+        // read back pixels (synchronously in three.js). Unbind any PIXEL_PACK
+        // buffer first: Spark's SparkRenderer can leave a PBO bound across
+        // frames, which makes this readPixels throw INVALID_OPERATION.
+        withPixelPackBufferUnbound(this._renderer, () => {
+            this._renderer.readRenderTargetPixels(
+                this._renderTarget,
+                0,
+                0,
+                w,
+                h,
+                this._pixelBuffer,
+            );
+        });
 
         // notify listeners
         for (const listener of this.listeners) {

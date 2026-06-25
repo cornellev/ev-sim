@@ -260,6 +260,8 @@ export function generateBuildings(scene, data, options = {}) {
         heightRange: [6, 14],
         intersectionInset: 0,
         overlapPadding: 0.2,
+        debugTileMaterials: options.debugTileMaterials === true,
+        debugTileSize: options.debugTileSize ?? 2,
         ...options.params,
     };
 
@@ -331,6 +333,76 @@ function chooseTexture(rng, maxIndex = 6) {
     return { path: `${basePath}${index}.jpg`, textureId: index };
 }
 
+function hashStringToUnit(value) {
+    let hash = 2166136261;
+    const input = String(value ?? "building");
+    for (let i = 0; i < input.length; i += 1) {
+        hash ^= input.charCodeAt(i);
+        hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0) / 0xffffffff;
+}
+
+function createDebugTileMaterial(buildingId, tileSize = 2) {
+    const baseColor = new THREE.Color().setHSL(hashStringToUnit(buildingId), 0.78, 0.56);
+
+    return new THREE.ShaderMaterial({
+        uniforms: {
+            uBaseColor: { value: baseColor },
+            uTileSize: { value: Math.max(0.1, tileSize) },
+        },
+        vertexShader: `
+            varying vec3 vWorldPosition;
+            varying vec3 vWorldNormal;
+
+            void main() {
+                vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+                vWorldPosition = worldPosition.xyz;
+                vWorldNormal = normalize(mat3(modelMatrix) * normal);
+                gl_Position = projectionMatrix * viewMatrix * worldPosition;
+            }
+        `,
+        fragmentShader: `
+            uniform vec3 uBaseColor;
+            uniform float uTileSize;
+            varying vec3 vWorldPosition;
+            varying vec3 vWorldNormal;
+
+            void main() {
+                vec3 normal = normalize(vWorldNormal);
+                vec3 absNormal = abs(normal);
+                vec3 sideTint = vec3(1.0);
+
+                if (absNormal.y >= absNormal.x && absNormal.y >= absNormal.z) {
+                    sideTint = normal.y >= 0.0 ? vec3(1.25, 1.12, 0.72) : vec3(0.65, 0.85, 1.15);
+                } else if (absNormal.x >= absNormal.z) {
+                    sideTint = normal.x >= 0.0 ? vec3(1.22, 0.72, 0.78) : vec3(0.72, 1.18, 0.82);
+                } else {
+                    sideTint = normal.z >= 0.0 ? vec3(0.78, 0.92, 1.25) : vec3(1.22, 0.82, 1.18);
+                }
+
+                vec3 tile = vWorldPosition / uTileSize;
+                vec3 fracTile = fract(tile);
+                float checker = mod(floor(tile.x) + floor(tile.y) + floor(tile.z), 2.0);
+                float grid = max(
+                    max(1.0 - step(0.04, fracTile.x), step(0.96, fracTile.x)),
+                    max(
+                        max(1.0 - step(0.04, fracTile.y), step(0.96, fracTile.y)),
+                        max(1.0 - step(0.04, fracTile.z), step(0.96, fracTile.z))
+                    )
+                );
+
+                vec3 color = clamp(uBaseColor * sideTint, 0.0, 1.0);
+                color = mix(color * 0.72, min(color * 1.22, vec3(1.0)), checker * 0.55);
+                color = mix(color, vec3(0.02), grid * 0.85);
+                gl_FragColor = vec4(color, 1.0);
+            }
+        `,
+        side: THREE.FrontSide,
+        toneMapped: false,
+    });
+}
+
 /**
  * @param {THREE.Scene} scene
  * @param {import("../data/Data").Data} data
@@ -343,6 +415,7 @@ function chooseTexture(rng, maxIndex = 6) {
 function generateBuildingMeshes(scene, data, footprints, params, rng, presetRecords = null) {
     const meshes = [];
     const buildingRecords = [];
+    let debugTileMaterialCount = 0;
 
     footprints.forEach((footprint, index) => {
         if (!footprint || footprint.length < 3) return;
@@ -383,15 +456,20 @@ function generateBuildingMeshes(scene, data, footprints, params, rng, presetReco
             ? { path: `assets/textures/buildings/${preset.textureId}.jpg`, textureId: preset.textureId }
             : chooseTexture(lotRng);
 
-        const texture = new THREE.TextureLoader().load(textureChoice.path);
-        texture.wrapS = THREE.RepeatWrapping;
-        texture.wrapT = THREE.RepeatWrapping;
-        texture.repeat.set(1, height / 10);
-
-        const material = new THREE.MeshStandardMaterial({
-            map: texture,
-            side: THREE.FrontSide,
-        });
+        let material;
+        if (params.debugTileMaterials === true) {
+            material = createDebugTileMaterial(buildingId, params.debugTileSize);
+            debugTileMaterialCount += 1;
+        } else {
+            const texture = new THREE.TextureLoader().load(textureChoice.path);
+            texture.wrapS = THREE.RepeatWrapping;
+            texture.wrapT = THREE.RepeatWrapping;
+            texture.repeat.set(1, height / 10);
+            material = new THREE.MeshStandardMaterial({
+                map: texture,
+                side: THREE.FrontSide,
+            });
+        }
 
         const meshName = preset?.meshName ?? `Building:${buildingId}`;
         const mesh = new THREE.Mesh(geometry, material);
@@ -422,6 +500,12 @@ function generateBuildingMeshes(scene, data, footprints, params, rng, presetReco
 
     if (data?.bakeRunConfig?.()) {
         data.bakeRunConfig().setBuildings(buildingRecords);
+    }
+
+    if (params.debugTileMaterials === true) {
+        // #region agent log
+        fetch('http://127.0.0.1:7888/ingest/39c56e68-cc15-4bd9-8cfa-9d0d2daf2b74',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'8f4404'},body:JSON.stringify({sessionId:'8f4404',runId:data?.bakeRunConfig?.()?.runId ?? 'bake-igvc',hypothesisId:'H14',location:'BuildingGenerator.js:debug-tile-materials',message:'IGVC building debug tile materials assigned at generation time',data:{buildingCount:buildingRecords.length,debugTileMaterialCount,tileSize:params.debugTileSize ?? 2,buildingIds:buildingRecords.slice(0,12).map((record)=>record.buildingId)},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
     }
 
     return buildingRecords;

@@ -1,5 +1,6 @@
 import { LiDAR3d } from "./LiDAR3d";
 import * as THREE from "three";
+import { withPixelPackBufferUnbound } from "../util/glReadback.js";
 
 
 export class StereoCamera extends LiDAR3d {
@@ -129,14 +130,16 @@ export class StereoCamera extends LiDAR3d {
         const previousRenderTarget = renderer.getRenderTarget();
         renderer.setRenderTarget(this.cameraRenderTarget);
         renderer.render(scene, this.sensorCamera);
-        renderer.readRenderTargetPixels(
-            this.cameraRenderTarget,
-            0,
-            0,
-            this.cameraSettings.width,
-            this.cameraSettings.height,
-            this.cameraPixelBuffer,
-        );
+        withPixelPackBufferUnbound(renderer, () => {
+            renderer.readRenderTargetPixels(
+                this.cameraRenderTarget,
+                0,
+                0,
+                this.cameraSettings.width,
+                this.cameraSettings.height,
+                this.cameraPixelBuffer,
+            );
+        });
         renderer.setRenderTarget(previousRenderTarget);
 
         this._recordFrame(this.channels.camera, {

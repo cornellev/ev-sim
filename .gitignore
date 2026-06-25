@@ -50,3 +50,7 @@ baking/raw
 baking/__pycache__
 baking/venv
 baking/baked
+
+tests/__pycache__
+
+.cursor

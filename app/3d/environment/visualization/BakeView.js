@@ -5,6 +5,7 @@ import { frag3d } from "../../shaders/Lidar3dShader";
 import { parseLidarHits } from "../../devices/LidarHitDecoder";
 import { passFileRole } from "./BakePass";
 import { buildSensorRotationMatrix } from "./LidarSplatProjector";
+import { withPixelPackBufferUnbound } from "../../util/glReadback.js";
 
 /**
  * @param {THREE.Object3D} threeObject
@@ -34,6 +35,15 @@ function hasAncestorFlag(threeObject, flag) {
         current = current.parent;
     }
     return false;
+}
+
+function effectiveBuildingId(threeObject) {
+    let current = threeObject;
+    while (current) {
+        if (current.userData?.buildingId) return current.userData.buildingId;
+        current = current.parent;
+    }
+    return null;
 }
 
 /**
@@ -415,6 +425,8 @@ export class BakeView {
             hits: this.hits,
             thetaRange: [...this.thetaRange],
             phiRange: [...this.phiRange],
+            thetaStep: this.thetaStep,
+            phiStep: this.phiStep,
             range: this.range,
         };
     }
@@ -424,14 +436,16 @@ export class BakeView {
         try {
             this.renderer.setRenderTarget(this.cameraRenderTarget);
             this.renderer.render(this.scene, this.sensorCamera);
-            this.renderer.readRenderTargetPixels(
-                this.cameraRenderTarget,
-                0,
-                0,
-                this.cameraSettings.width,
-                this.cameraSettings.height,
-                this.cameraPixelBuffer,
-            );
+            withPixelPackBufferUnbound(this.renderer, () => {
+                this.renderer.readRenderTargetPixels(
+                    this.cameraRenderTarget,
+                    0,
+                    0,
+                    this.cameraSettings.width,
+                    this.cameraSettings.height,
+                    this.cameraPixelBuffer,
+                );
+            });
         } finally {
             this.renderer.setRenderTarget(previousRenderTarget);
         }
@@ -455,7 +469,7 @@ export class BakeView {
      * @returns {boolean}
      */
     _isMaskWhite(object, includeTags, excludeTags, buildingId = null) {
-        if (buildingId && object.userData?.buildingId !== buildingId) {
+        if (buildingId && effectiveBuildingId(object) !== buildingId) {
             return false;
         }
 
@@ -506,7 +520,8 @@ export class BakeView {
             const previousReceiveShadow = object.receiveShadow;
 
             const ignored = hasAncestorFlag(object, "bakeIgnore");
-            const white = !ignored
+            const white = previousVisible
+                && !ignored
                 && object.isMesh
                 && this._isMaskWhite(object, includeTags, excludeTags, buildingId);
 
@@ -598,7 +613,9 @@ export class BakeView {
         const aspect = this.cameraSettings.width / Math.max(1, this.cameraSettings.height);
         const fovRad = THREE.MathUtils.degToRad(this.cameraSettings.fov);
         const fy = (this.cameraSettings.height / 2) / Math.tan(fovRad / 2);
-        const fx = fy * aspect;
+        // THREE.PerspectiveCamera's vertical FOV plus aspect keeps square pixels:
+        // fx = width / (2 * tan(horizontalFov / 2)) simplifies to fy.
+        const fx = fy;
 
         return {
             width: this.cameraSettings.width,

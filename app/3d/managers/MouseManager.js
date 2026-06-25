@@ -9,10 +9,30 @@ export class MouseManager {
 
     registerClick(callback) {
         this.onClick.push(callback);
+        return () => {
+            this.onClick = this.onClick.filter((registered) => registered !== callback);
+        };
     }
 
     registerMove(callback) {
         this.onMove.push(callback);
+        return () => {
+            this.onMove = this.onMove.filter((registered) => registered !== callback);
+        };
+    }
+
+    registerDown(callback) {
+        this.onDown.push(callback);
+        return () => {
+            this.onDown = this.onDown.filter((registered) => registered !== callback);
+        };
+    }
+
+    registerUp(callback) {
+        this.onUp.push(callback);
+        return () => {
+            this.onUp = this.onUp.filter((registered) => registered !== callback);
+        };
     }
 
     handleClick(event) {

@@ -33,23 +33,29 @@ export function resolvePassesForSample(policy = {}, context = {}) {
         beautyAlways = true,
         activeBuildingMask = true,
         contextMask = false,
+        processAllVisibleBuildings = true,
     } = policy;
 
     if (beautyAlways) {
         basePasses.push({ ...DEFAULT_BEAUTY_PASS });
     }
 
-    if (activeBuildingMask && context.activeBuildingId && context.hasVisibleBuilding) {
+    if (activeBuildingMask && context.hasVisibleBuilding) {
+        const restrictToActive = processAllVisibleBuildings === false && context.activeBuildingId;
         basePasses.push({
-            id: `mask_building_${context.activeBuildingId}`,
+            id: restrictToActive
+                ? `mask_building_${context.activeBuildingId}`
+                : "mask_buildings_visible",
             kind: "mask",
             includeTags: ["building"],
             excludeTags: [],
-            buildingId: context.activeBuildingId,
+            buildingId: restrictToActive ? context.activeBuildingId : null,
             maskTags: ["building"],
             upload: true,
             processTag: "building",
-            modelSeedKey: context.activeBuildingId,
+            modelSeedKey: restrictToActive
+                ? context.activeBuildingId
+                : (context.visibleBuildingIds ?? []).join(",") || "visible-buildings",
         });
     }
 
@@ -66,6 +72,15 @@ export function resolvePassesForSample(policy = {}, context = {}) {
     }
 
     return resolveViewPasses(basePasses);
+}
+
+function effectiveBuildingId(object) {
+    let current = object;
+    while (current) {
+        if (current.userData?.buildingId) return current.userData.buildingId;
+        current = current.parent;
+    }
+    return null;
 }
 
 /**
@@ -97,7 +112,7 @@ export class BuildingRegionPlanner {
 
         scene.traverse((object) => {
             if (!object.isMesh) return;
-            const buildingId = object.userData?.buildingId;
+            const buildingId = effectiveBuildingId(object);
             if (!buildingId) return;
 
             const box = new THREE.Box3().setFromObject(object);

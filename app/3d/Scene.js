@@ -20,6 +20,8 @@ import { LoadRoadsFromGeoJSON } from "./city/CityBuilder";
 import { setupIGVC } from "./igvc/IGVCScene";
 import { SimulationMenu } from "./overlay/SimulationMenu";
 import { VehicleOverlay } from "./overlay/VehicleOverlay";
+import { BuildingInspector } from "./overlay/BuildingInspector";
+import { BakeProgressOverlay } from "./overlay/BakeProgressOverlay";
 import { SensorTest } from "./scenes/SensorTest";
 import { setupScanCar } from "./vehicles/ScanCar";
 import { Q1 } from "./igvc/mini/q1";
@@ -441,6 +443,7 @@ function setupBaking(data, scene) {
         maskMinPixels: bakeConfig.maskMinPixels,
         manifest: bakeConfig.toManifest(),
         roundTrip: bakeConfig.roundTrip,
+        debug: bakeConfig.debug,
         splat: bakeConfig.splat,
     });
 
@@ -643,6 +646,8 @@ export default function TotalScene() {
         <div id="overlay" className="fixed w-[100vw] h-[100vh] top-0 left-0 select-none pointer-events-none bg-transparent">
             {/* Overlay content can go here */}
             {sceneData && vehicleOverlayVisible && <VehicleOverlay data={sceneData} />}
+            {sceneData && <BuildingInspector data={sceneData} />}
+            {sceneData && <BakeProgressOverlay data={sceneData} />}
             <SimulationMenu
                 data={sceneData}
                 vehicleOverlayVisible={vehicleOverlayVisible}

@@ -3,6 +3,7 @@ import test from "node:test";
 import * as THREE from "three";
 
 import {
+    activeBuildingAllowsPoint,
     CoverageGrid,
     filterForSplatting,
     hitsToWorldPoints,
@@ -10,6 +11,12 @@ import {
     srgbToLinearColor,
     worldToPixel,
 } from "../app/3d/environment/visualization/LidarSplatProjector.js";
+import {
+    buildCenterSliverBounds,
+    composeImageThroughMask,
+    countMaskPixelsInSliver,
+    pixelInSliver,
+} from "../app/3d/environment/visualization/BakeImageMask.js";
 
 const TAG_BUILDING = 1;
 
@@ -137,6 +144,74 @@ test("worldToPixel projects a point in front of the camera", () => {
     assert.equal(pixel.py, 25);
 });
 
+test("worldToPixel matches THREE.Vector3.project camera mapping", () => {
+    const camera = new THREE.PerspectiveCamera(60, 16 / 9, 0.1, 100);
+    camera.position.set(2, 1, 5);
+    camera.rotation.set(0.05, -0.25, 0.02);
+    camera.updateMatrixWorld(true);
+    camera.updateProjectionMatrix();
+
+    const width = 160;
+    const height = 90;
+    const fovRad = THREE.MathUtils.degToRad(camera.fov);
+    const fy = (height / 2) / Math.tan(fovRad / 2);
+    const fx = fy;
+    const intrinsics = { width, height, fx, fy, cx: width / 2, cy: height / 2 };
+    const world = new THREE.Vector3(1.2, 0.8, -3);
+
+    const ours = worldToPixel(world, intrinsics, camera.matrixWorld.elements);
+    const ndc = world.clone().project(camera);
+    const expected = {
+        px: Math.round(((ndc.x + 1) / 2) * width),
+        py: Math.round(((ndc.y + 1) / 2) * height),
+    };
+
+    assert.deepEqual(ours, expected);
+});
+
+test("pinhole LiDAR reconstruction projects back to its frustum pixel center", () => {
+    const frame = makeLidarFrame({
+        width: 4,
+        height: 2,
+        hits: [
+            { hit: false },
+            { hit: false },
+            { hit: false },
+            { hit: false },
+            { hit: false },
+            { hit: false },
+            { hit: true, intensity: 0.5, tagId: TAG_BUILDING, tagName: "building" },
+            { hit: false },
+        ],
+    });
+    frame.thetaRange = [-45, 45];
+    frame.phiRange = [-30, 30];
+    frame.projection = "pinhole";
+
+    const extrinsics = {
+        position: { x: 0, y: 0, z: 0 },
+        rotation: { x: 0, y: 0, z: 0 },
+        matrixWorld: new THREE.Matrix4().identity().elements,
+    };
+    const intrinsics = {
+        width: 400,
+        height: 200,
+        fx: 200,
+        fy: 200,
+        cx: 200,
+        cy: 100,
+    };
+
+    const [point] = hitsToWorldPoints(frame, extrinsics);
+    const pixel = worldToPixel(point.world, intrinsics, extrinsics.matrixWorld);
+
+    assert.ok(point.cameraPlane);
+    assert.deepEqual(pixel, {
+        px: Math.round(intrinsics.fx * point.cameraPlane.x + intrinsics.cx),
+        py: Math.round(intrinsics.fy * point.cameraPlane.y + intrinsics.cy),
+    });
+});
+
 test("CoverageGrid deduplicates nearby world points", () => {
     const grid = new CoverageGrid(1);
     const a = new THREE.Vector3(0.2, 0, 0.2);
@@ -146,6 +221,17 @@ test("CoverageGrid deduplicates nearby world points", () => {
     grid.add(a);
     assert.equal(grid.has(a), true);
     assert.equal(grid.has(b), false);
+});
+
+test("CoverageGrid.hasNeighbor rejects offset duplicates across voxels", () => {
+    const grid = new CoverageGrid(0.25);
+    grid.add(new THREE.Vector3(0, 0, 0));
+
+    // A point one voxel away (drift from a different viewpoint) is treated as
+    // already covered so it does not deposit an offset duplicate splat.
+    assert.equal(grid.hasNeighbor(new THREE.Vector3(0.26, 0, 0)), true);
+    // A point several voxels away is genuinely new.
+    assert.equal(grid.hasNeighbor(new THREE.Vector3(1.0, 0, 0)), false);
 });
 
 test("sampleColor reads bottom-left origin RGBA", () => {
@@ -164,4 +250,83 @@ test("srgbToLinearColor converts for Spark", () => {
     const color = srgbToLinearColor({ r: 1, g: 0, b: 0 });
     assert.ok(color.r > 0.9);
     assert.equal(color.g, 0);
+});
+
+test("center sliver bounds admit only the configured middle band", () => {
+    const bounds = buildCenterSliverBounds(10, { enabled: true, widthPx: 4 });
+
+    assert.deepEqual(bounds, { enabled: true, xMin: 3, xMax: 7, width: 4 });
+    assert.equal(pixelInSliver(2, bounds), false);
+    assert.equal(pixelInSliver(3, bounds), true);
+    assert.equal(pixelInSliver(6, bounds), true);
+    assert.equal(pixelInSliver(7, bounds), false);
+});
+
+test("mask pre-check counts only update pixels inside the center sliver", () => {
+    const mask = new Uint8Array(8 * 1 * 4);
+    for (const x of [1, 3, 4, 6]) {
+        const idx = x * 4;
+        mask[idx + 0] = 255;
+        mask[idx + 3] = 255;
+    }
+
+    const bounds = buildCenterSliverBounds(8, { enabled: true, widthPx: 2 });
+
+    assert.equal(countMaskPixelsInSliver({ data: mask, width: 8, height: 1 }, bounds), 2);
+    assert.equal(countMaskPixelsInSliver({ data: mask, width: 8, height: 1 }, {
+        enabled: true,
+        xMin: 6,
+        xMax: 8,
+    }), 1);
+    assert.equal(countMaskPixelsInSliver({ data: mask, width: 8, height: 1 }, {
+        enabled: true,
+        xMin: 0,
+        xMax: 1,
+    }), 0);
+});
+
+test("composeImageThroughMask preserves original pixels outside the process mask", () => {
+    const base = {
+        data: new Uint8Array([
+            10, 20, 30, 255,
+            40, 50, 60, 255,
+        ]),
+        width: 2,
+        height: 1,
+        colorSpace: "srgb",
+        source: "raw",
+    };
+    const processed = {
+        data: new Uint8Array([
+            100, 110, 120, 255,
+            200, 210, 220, 255,
+        ]),
+        width: 2,
+        height: 1,
+        colorSpace: "srgb",
+        source: "model",
+    };
+    const mask = {
+        data: new Uint8Array([
+            0, 0, 0, 0,
+            255, 255, 255, 255,
+        ]),
+        width: 2,
+        height: 1,
+    };
+
+    const composited = composeImageThroughMask(base, processed, mask);
+
+    assert.deepEqual([...composited.data], [
+        10, 20, 30, 255,
+        200, 210, 220, 255,
+    ]);
+    assert.equal(composited.source, "model");
+});
+
+test("active building attribution rejects explicit wrong-building candidates", () => {
+    assert.equal(activeBuildingAllowsPoint("building-a", "building-a"), true);
+    assert.equal(activeBuildingAllowsPoint("building-a", null), true);
+    assert.equal(activeBuildingAllowsPoint(null, "building-b"), true);
+    assert.equal(activeBuildingAllowsPoint("building-a", "building-b"), false);
 });

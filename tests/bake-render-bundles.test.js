@@ -26,10 +26,11 @@ test("BakeRunConfig defaults to beauty-only capture passes", () => {
     assert.equal(config.views[0].passes.length, 1);
     assert.equal(config.views[0].passes[0].id, "beauty");
     assert.equal(config.passPolicy.activeBuildingMask, true);
+    assert.equal(config.passPolicy.processAllVisibleBuildings, true);
     assert.equal(config.passPolicy.contextMask, false);
 });
 
-test("resolvePassesForSample adds active building mask only when visible", () => {
+test("resolvePassesForSample adds all-visible building mask by default", () => {
     const hidden = resolvePassesForSample(
         { beautyAlways: true, activeBuildingMask: true },
         { activeBuildingId: null, hasVisibleBuilding: false },
@@ -39,9 +40,23 @@ test("resolvePassesForSample adds active building mask only when visible", () =>
 
     const visible = resolvePassesForSample(
         { beautyAlways: true, activeBuildingMask: true },
-        { activeBuildingId: "bldg-abc", hasVisibleBuilding: true },
+        { activeBuildingId: "bldg-abc", hasVisibleBuilding: true, visibleBuildingIds: ["bldg-abc", "bldg-def"] },
     );
     assert.equal(visible.length, 2);
+    assert.equal(visible[1].id, "mask_buildings_visible");
+    assert.equal(visible[1].buildingId, null);
+    assert.equal(visible[1].processTag, "building");
+    assert.equal(visible[1].modelSeedKey, "bldg-abc,bldg-def");
+});
+
+test("resolvePassesForSample can restrict mask to the active building", () => {
+    const visible = resolvePassesForSample(
+        { beautyAlways: true, activeBuildingMask: true, processAllVisibleBuildings: false },
+        { activeBuildingId: "bldg-abc", hasVisibleBuilding: true, visibleBuildingIds: ["bldg-abc", "bldg-def"] },
+    );
+
+    assert.equal(visible.length, 2);
+    assert.equal(visible[1].id, "mask_building_bldg-abc");
     assert.equal(visible[1].buildingId, "bldg-abc");
     assert.equal(visible[1].processTag, "building");
 });

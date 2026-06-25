@@ -70,6 +70,28 @@ body {
     transform 180ms var(--ease-out-ui);
 }
 
+.building-popout-panel {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transition:
+    opacity 140ms var(--ease-out-ui),
+    transform 180ms var(--ease-out-ui);
+}
+
+.bake-progress-overlay {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transform-origin: top right;
+  transition:
+    opacity 140ms var(--ease-out-ui),
+    transform 180ms var(--ease-out-ui);
+}
+
+.bake-progress-fill {
+  transition: transform 160ms var(--ease-out-ui);
+  will-change: transform;
+}
+
 @starting-style {
   .route-switcher-scrim {
     opacity: 0;
@@ -82,6 +104,16 @@ body {
   }
 
   .menu-flyout-panel {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+
+  .building-popout-panel {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
+
+  .bake-progress-overlay {
     opacity: 0;
     transform: translateY(8px) scale(0.98);
   }
@@ -98,13 +130,18 @@ body {
   .route-switcher-panel,
   .route-switcher-item,
   .mode-switch-thumb,
-  .menu-flyout-panel {
+  .menu-flyout-panel,
+  .building-popout-panel,
+  .bake-progress-overlay,
+  .bake-progress-fill {
     transition-duration: 0ms;
   }
 
   .route-switcher-panel,
   .route-switcher-item,
-  .menu-flyout-panel {
+  .menu-flyout-panel,
+  .building-popout-panel,
+  .bake-progress-overlay {
     transform: none !important;
     filter: none;
   }

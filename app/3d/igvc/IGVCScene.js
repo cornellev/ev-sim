@@ -129,6 +129,8 @@ export async function setupIGVC(scene, data) {
 
     generateBuildings(scene, data, {
         seed: data.bakeRunConfig?.()?.seed ?? 42,
+        debugTileMaterials: data.bakeRunConfig?.()?.debug?.buildingTileMaterials === true,
+        debugTileSize: data.bakeRunConfig?.()?.debug?.buildingTileSize ?? 2,
     });
 
     // generate floor

@@ -119,6 +119,31 @@ def save_photo(payload, name, metadata=None):
     with open(destination, "wb") as f:
         f.write(payload)
 
+    # #region agent log
+    try:
+        with open("/Users/jgrimminck/Coding/js/sensor-fusion/.cursor/debug-8f4404.log", "a", encoding="utf-8") as log_file:
+            log_file.write(json.dumps({
+                "sessionId": "8f4404",
+                "runId": run_id,
+                "hypothesisId": "H11",
+                "location": "baking.py:save_photo",
+                "message": "Raw bake upload saved",
+                "data": {
+                    "frameIndex": frame_index,
+                    "sampleId": metadata.get("sampleId"),
+                    "fileRole": metadata.get("fileRole"),
+                    "passId": metadata.get("passId"),
+                    "debugOnly": _parse_bool(metadata.get("debugOnly"), False),
+                    "path": destination,
+                    "sizeBytes": len(payload),
+                    "sampleFileCount": len(os.listdir(target_dir)),
+                },
+                "timestamp": int(time.time() * 1000),
+            }) + "\n")
+    except OSError:
+        pass
+    # #endregion
+
     return destination
 
 
@@ -163,6 +188,8 @@ def on_photo(raw_photo):
     name = raw_photo.name or f"frame_{int(time.time() * 1000)}.png"
 
     destination = save_photo(raw_photo.payload, name, metadata)
+    if _parse_bool(metadata.get("debugOnly"), False):
+        return
 
     with lock:
         accumulator = pending_samples.setdefault(

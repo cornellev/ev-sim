@@ -70,6 +70,30 @@ export class CoverageGrid {
     }
 
     /**
+     * True when this voxel OR any of its 26 neighbors is already covered.
+     * Robust against sub-voxel drift between viewpoints, so the same surface
+     * observed from successive frames does not deposit offset duplicate splats.
+     * @param {{ x: number, y: number, z: number }|THREE.Vector3} world
+     * @returns {boolean}
+     */
+    hasNeighbor(world) {
+        const cx = Math.floor(world.x / this.voxelSize);
+        const cy = Math.floor(world.y / this.voxelSize);
+        const cz = Math.floor(world.z / this.voxelSize);
+
+        for (let dx = -1; dx <= 1; dx += 1) {
+            for (let dy = -1; dy <= 1; dy += 1) {
+                for (let dz = -1; dz <= 1; dz += 1) {
+                    if (this.keys.has(`${cx + dx},${cy + dy},${cz + dz}`)) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
      * @param {{ x: number, y: number, z: number }|THREE.Vector3} world
      */
     add(world) {
@@ -86,6 +110,10 @@ export class CoverageGrid {
  * forward (+X) onto the camera forward (-Z) so the two sensors stay aligned.
  */
 const LIDAR_TO_CAMERA = new THREE.Matrix4().makeRotationY(Math.PI / 2);
+
+function lerp(a, b, t) {
+    return a + (b - a) * t;
+}
 
 /**
  * Build the world-space basis the bake LiDAR rays are cast in for a given
@@ -118,6 +146,7 @@ export function hitsToWorldPoints(lidarFrame, extrinsics) {
     const thetaRange = lidarFrame.thetaRange ?? [-45, 45];
     const phiRange = lidarFrame.phiRange ?? [-30, 30];
     const hits = lidarFrame.hits ?? decodeHitsFromBuffer(lidarFrame.data, range);
+    const projection = lidarFrame.projection ?? "spherical";
 
     const origin = new THREE.Vector3(
         extrinsics.position.x,
@@ -137,6 +166,8 @@ export function hitsToWorldPoints(lidarFrame, extrinsics) {
     const phiStep = height > 1
         ? (phiRange[1] - phiRange[0]) / (height - 1)
         : 0;
+    const shaderThetaStep = lidarFrame.thetaStep ?? thetaStep;
+    const shaderPhiStep = lidarFrame.phiStep ?? phiStep;
 
     const points = [];
 
@@ -146,16 +177,42 @@ export function hitsToWorldPoints(lidarFrame, extrinsics) {
 
         const thetaIndex = i % width;
         const phiIndex = Math.floor(i / width);
-        const thetaDeg = thetaRange[0] + thetaIndex * thetaStep;
-        const phiDeg = phiRange[0] + phiIndex * phiStep;
-        const thetaRad = THREE.MathUtils.degToRad(thetaDeg);
-        const phiRad = THREE.MathUtils.degToRad(phiDeg);
+        const legacyThetaDeg = thetaRange[0] + thetaIndex * thetaStep;
+        const legacyPhiDeg = phiRange[0] + phiIndex * phiStep;
+        let reconThetaDeg;
+        let reconPhiDeg;
+        let cameraPlane = null;
+        let localDir;
 
-        const localDir = new THREE.Vector3(
-            Math.cos(phiRad) * Math.cos(thetaRad),
-            Math.sin(phiRad),
-            Math.cos(phiRad) * Math.sin(thetaRad),
-        );
+        if (projection === "pinhole") {
+            const u = (thetaIndex + 0.5) / width;
+            const v = (phiIndex + 0.5) / height;
+            const xPlane = lerp(
+                Math.tan(THREE.MathUtils.degToRad(thetaRange[0])),
+                Math.tan(THREE.MathUtils.degToRad(thetaRange[1])),
+                u,
+            );
+            const yPlane = lerp(
+                Math.tan(THREE.MathUtils.degToRad(phiRange[0])),
+                Math.tan(THREE.MathUtils.degToRad(phiRange[1])),
+                v,
+            );
+            cameraPlane = { x: xPlane, y: yPlane };
+            reconThetaDeg = THREE.MathUtils.radToDeg(Math.atan(xPlane));
+            reconPhiDeg = THREE.MathUtils.radToDeg(Math.atan(yPlane));
+            localDir = new THREE.Vector3(1, yPlane, xPlane).normalize();
+        } else {
+            // Legacy spherical ray grid. Kept for old captured frames/tests.
+            reconThetaDeg = thetaRange[0] + thetaIndex * shaderThetaStep;
+            reconPhiDeg = phiRange[0] + phiIndex * shaderPhiStep;
+            const thetaRad = THREE.MathUtils.degToRad(reconThetaDeg);
+            const phiRad = THREE.MathUtils.degToRad(reconPhiDeg);
+            localDir = new THREE.Vector3(
+                Math.cos(phiRad) * Math.cos(thetaRad),
+                Math.sin(phiRad),
+                Math.cos(phiRad) * Math.sin(thetaRad),
+            );
+        }
         const dir = localDir.applyMatrix3(sensorRotation).normalize();
         const world = origin.clone().add(dir.multiplyScalar(hit.distance));
 
@@ -167,8 +224,16 @@ export function hitsToWorldPoints(lidarFrame, extrinsics) {
             tagId: hit.tagId,
             thetaIndex,
             phiIndex,
-            thetaStepDeg: thetaStep,
-            phiStepDeg: phiStep,
+            thetaStepDeg: shaderThetaStep,
+            phiStepDeg: shaderPhiStep,
+            thetaDeg: legacyThetaDeg,
+            phiDeg: legacyPhiDeg,
+            shaderThetaStepDeg: shaderThetaStep,
+            shaderPhiStepDeg: shaderPhiStep,
+            shaderThetaDeg: reconThetaDeg,
+            shaderPhiDeg: reconPhiDeg,
+            projection,
+            cameraPlane,
         });
     }
 
@@ -193,6 +258,18 @@ export function filterForSplatting(points, options = {}) {
         if (point.distance > maxSplatDistance) return false;
         return true;
     });
+}
+
+/**
+ * Missing attribution is allowed because some meshes only carry building ids on
+ * ancestors; an explicit different attribution is rejected.
+ * @param {string|null|undefined} activeBuildingId
+ * @param {string|null|undefined} attributedBuildingId
+ * @returns {boolean}
+ */
+export function activeBuildingAllowsPoint(activeBuildingId, attributedBuildingId) {
+    if (!activeBuildingId || !attributedBuildingId) return true;
+    return activeBuildingId === attributedBuildingId;
 }
 
 /**

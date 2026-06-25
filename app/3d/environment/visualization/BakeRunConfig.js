@@ -51,6 +51,7 @@ export class BakeRunConfig {
         this.passPolicy = {
             beautyAlways: true,
             activeBuildingMask: true,
+            processAllVisibleBuildings: true,
             contextMask: false,
             skipEmptyMasks: true,
             ...options.passPolicy,
@@ -72,6 +73,13 @@ export class BakeRunConfig {
             resultEndpoint: "/bake/result",
             ...options.roundTrip,
         };
+        this.debug = {
+            saveRawCaptures: true,
+            logPipeline: false,
+            buildingTileMaterials: true,
+            buildingTileSize: 2,
+            ...options.debug,
+        };
         this.splat = {
             enabled: true,
             excludeTags: ["road"],
@@ -79,10 +87,21 @@ export class BakeRunConfig {
             bandFar: 15,
             maxSplatDistance: 60,
             maxPointsPerFrame: 20000,
-            coverageVoxelSize: 0.25,
-            radius: 0.06,
+            // Neighbor-aware coverage enforces ~1 splat per voxel neighborhood,
+            // so the effective min splat spacing is ~voxel..2*voxel. Keep the
+            // voxel small enough for building detail while still de-duplicating
+            // the same surface seen from successive frames.
+            coverageVoxelSize: 0.02,
+            coverageNeighbor: true,
+            updateSliver: {
+                enabled: true,
+                widthPx: 320,
+                minMaskPixels: 1,
+                requireBuildingHit: true,
+            },
+            radius: 0.01,
             adaptiveRadius: true,
-            hideBakedGeometry: true,
+            hideBakedGeometry: false,
             hideThreshold: 50,
             maxSplats: 500000,
             ...options.splat,
@@ -145,6 +164,7 @@ export class BakeRunConfig {
             passPolicy: { ...this.passPolicy },
             modelSettings: { ...this.modelSettings },
             roundTrip: { ...this.roundTrip },
+            debug: { ...this.debug },
             splat: { ...this.splat },
             deltaDistance: this.deltaDistance,
             maskMinPixels: this.maskMinPixels,
