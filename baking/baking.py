@@ -17,6 +17,7 @@ except ImportError:
 
 queue = deque()
 pending_samples = {}
+processing_samples = {}
 run_manifests = {}
 building_bake_state = {}
 sample_results = {}
@@ -45,6 +46,7 @@ class SampleJob:
 def clear_data():
     with lock:
         pending_samples.clear()
+        processing_samples.clear()
         queue.clear()
         run_manifests.clear()
         building_bake_state.clear()
@@ -272,6 +274,7 @@ def get_queue_status():
         return {
             "queuedSamples": len(queue),
             "pendingSamples": len(pending_samples),
+            "processingSamples": len(processing_samples),
             "pending": [
                 {
                     "sampleId": sample_id,
@@ -279,6 +282,14 @@ def get_queue_status():
                     "receivedFiles": len(state["files"]),
                 }
                 for sample_id, state in pending_samples.items()
+            ],
+            "processing": [
+                {
+                    "sampleId": sample_id,
+                    "runId": job.run_id,
+                    "frameIndex": job.frame_index,
+                }
+                for sample_id, job in processing_samples.items()
             ],
         }
 
@@ -297,6 +308,9 @@ def get_sample_result(sample_id, view_id):
         for job in queue:
             if job.sample_id == sample_id:
                 return {"status": "pending"}
+
+        if sample_id in processing_samples:
+            return {"status": "pending"}
 
     return {"status": "not_found"}
 
@@ -506,11 +520,16 @@ def _process_sample_job(job):
 
 
 def process():
-    if not queue:
-        return
-
-    job = queue.popleft()
-    _process_sample_job(job)
+    with lock:
+        if not queue:
+            return
+        job = queue.popleft()
+        processing_samples[job.sample_id] = job
+    try:
+        _process_sample_job(job)
+    finally:
+        with lock:
+            processing_samples.pop(job.sample_id, None)
 
 
 if __name__ == "__main__":

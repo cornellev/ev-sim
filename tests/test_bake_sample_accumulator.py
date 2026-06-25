@@ -36,6 +36,7 @@ class BakeSampleAccumulatorTest(unittest.TestCase):
         os.chdir(self.tempdir.name)
         self.baking = load_baking_module()
         self.baking.pending_samples.clear()
+        self.baking.processing_samples.clear()
         self.baking.queue.clear()
         self.baking.run_manifests.clear()
         self.baking.building_bake_state.clear()
@@ -184,6 +185,18 @@ class BakeSampleAccumulatorTest(unittest.TestCase):
         self.assertTrue(os.path.exists("baked/run-c/00005/final_bake_view_main.png"))
         self.assertTrue(os.path.exists("baked/run-c/00005/meta.json"))
         self.assertTrue(os.path.exists("baked/run-c/frames.jsonl"))
+
+    def test_processing_sample_result_stays_pending(self):
+        job = self.baking.SampleJob(
+            sample_id="run-processing:1",
+            run_id="run-processing",
+            frame_index=1,
+        )
+        self.baking.processing_samples[job.sample_id] = job
+
+        result = self.baking.get_sample_result("run-processing:1", "bake/view/main")
+
+        self.assertEqual(result["status"], "pending")
 
     def test_process_runs_only_one_model_call_when_chain_disabled(self):
         metadata = {

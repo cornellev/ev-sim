@@ -1,7 +1,8 @@
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from email.parser import BytesParser
+from email.policy import default as email_policy
 from io import BytesIO
-import cgi
 import json
 import os
 import traceback
@@ -13,6 +14,38 @@ SERVER_PORT = int(os.environ.get("BAKE_PROCESS_PORT", "8001"))
 
 _pipe = None
 _torch = None
+
+
+class MultipartField:
+    def __init__(self, payload, filename=None, content_type="application/octet-stream"):
+        self.filename = filename
+        self.type = content_type
+        self.file = BytesIO(payload)
+        self.value = payload.decode("utf-8", errors="replace")
+
+
+def parse_multipart_form(handler, content_type):
+    length = int(handler.headers.get("Content-Length", "0"))
+    body = handler.rfile.read(length)
+    header = (
+        f"Content-Type: {content_type}\r\n"
+        "MIME-Version: 1.0\r\n\r\n"
+    ).encode("utf-8")
+    message = BytesParser(policy=email_policy).parsebytes(header + body)
+    fields = {}
+
+    for part in message.iter_parts():
+        name = part.get_param("name", header="content-disposition")
+        if not name:
+            continue
+        payload = part.get_payload(decode=True) or b""
+        fields[name] = MultipartField(
+            payload,
+            filename=part.get_filename(),
+            content_type=part.get_content_type(),
+        )
+
+    return fields
 
 
 PROMPTS = {
@@ -214,25 +247,18 @@ class ProcessRequestHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "expected multipart/form-data"})
             return
 
-        form = cgi.FieldStorage(
-            fp=self.rfile,
-            headers=self.headers,
-            environ={
-                "REQUEST_METHOD": "POST",
-                "CONTENT_TYPE": content_type,
-            },
-        )
+        form = parse_multipart_form(self, content_type)
 
-        image = form["image"] if "image" in form else None
-        mask = form["mask"] if "mask" in form else None
+        image = form.get("image")
+        mask = form.get("mask")
         if image is None or mask is None:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "missing image or mask"})
             return
 
-        tag_field = form["tag"] if "tag" in form else None
+        tag_field = form.get("tag")
         tag = tag_field.value if tag_field is not None else "default"
 
-        metadata_field = form["metadata"] if "metadata" in form else None
+        metadata_field = form.get("metadata")
         metadata = {}
         if metadata_field is not None and metadata_field.value:
             try:

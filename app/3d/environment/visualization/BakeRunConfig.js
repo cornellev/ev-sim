@@ -67,17 +67,15 @@ export class BakeRunConfig {
         this.pathVertices = options.pathVertices ?? DEFAULT_SAMPLE_PATH;
         this.createdAt = options.createdAt || new Date().toISOString();
         this.roundTrip = {
-            useModel: false,
+            useModel: true,
             pollIntervalMs: 1000,
-            timeoutMs: 180000,
+            timeoutMs: 1000 * 60 * 5, // 5 minutes
             resultEndpoint: "/bake/result",
             ...options.roundTrip,
         };
         this.debug = {
             saveRawCaptures: true,
             logPipeline: false,
-            buildingTileMaterials: true,
-            buildingTileSize: 2,
             ...options.debug,
         };
         this.splat = {

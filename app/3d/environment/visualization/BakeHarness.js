@@ -962,16 +962,17 @@ export class BakeHarness {
                 } else {
                     this._updateTelemetry(
                         {
-                            stage: "Using raw image",
+                            stage: "Model unavailable",
                             server: { awaitingModel: false },
                         },
                         {
                             type: "model",
                             severity: "warning",
-                            message: "Model result unavailable, using raw image",
+                            message: "Model result unavailable; skipping splat commit",
                             detail: sampleId,
                         },
                     );
+                    continue;
                 }
             }
 

@@ -1,6 +1,8 @@
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-import cgi
+from email.parser import BytesParser
+from email.policy import default as email_policy
+from io import BytesIO
 import json
 from urllib.parse import parse_qs, urlparse
 
@@ -63,6 +65,38 @@ class ImageInfo:
         self.name = name
         self.tag = tag
         self.metadata = metadata or {}
+
+
+class MultipartField:
+    def __init__(self, payload, filename=None, content_type="application/octet-stream"):
+        self.filename = filename
+        self.type = content_type
+        self.file = BytesIO(payload)
+        self.value = payload.decode("utf-8", errors="replace")
+
+
+def parse_multipart_form(handler, content_type):
+    length = int(handler.headers.get("Content-Length", "0"))
+    body = handler.rfile.read(length)
+    header = (
+        f"Content-Type: {content_type}\r\n"
+        "MIME-Version: 1.0\r\n\r\n"
+    ).encode("utf-8")
+    message = BytesParser(policy=email_policy).parsebytes(header + body)
+    fields = {}
+
+    for part in message.iter_parts():
+        name = part.get_param("name", header="content-disposition")
+        if not name:
+            continue
+        payload = part.get_payload(decode=True) or b""
+        fields[name] = MultipartField(
+            payload,
+            filename=part.get_filename(),
+            content_type=part.get_content_type(),
+        )
+
+    return fields
 
 
 class BakingRequestHandler(BaseHTTPRequestHandler):
@@ -198,15 +232,8 @@ class BakingRequestHandler(BaseHTTPRequestHandler):
 
         content_type = self.headers.get("Content-Type", "")
         if content_type.startswith("multipart/form-data"):
-            form = cgi.FieldStorage(
-                fp=self.rfile,
-                headers=self.headers,
-                environ={
-                    "REQUEST_METHOD": "POST",
-                    "CONTENT_TYPE": content_type,
-                },
-            )
-            photo = form["photo"] if "photo" in form else None
+            form = parse_multipart_form(self, content_type)
+            photo = form.get("photo")
             if photo is None or not getattr(photo, "file", None):
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": "missing photo"})
                 return
