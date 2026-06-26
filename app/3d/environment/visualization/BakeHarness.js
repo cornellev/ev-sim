@@ -35,6 +35,7 @@ import {
     markBakeErrored,
     markBakeStopped,
 } from "./BakeTelemetry";
+import { ProjectedBuildingTextureManager } from "./ProjectedBuildingTextureManager";
 
 function countBy(items, getKey) {
     const counts = {};
@@ -176,6 +177,40 @@ function pointsInUpdateRegion(points, intrinsics, matrixWorld, processMaskImage,
     return candidates;
 }
 
+function effectiveBuildingId(object) {
+    let current = object;
+    while (current) {
+        if (current.userData?.buildingId) return current.userData.buildingId;
+        current = current.parent;
+    }
+    return null;
+}
+
+function nearestBuildingIdForPoint(scene, world, tolerance = 0.05) {
+    let nearestId = null;
+    let nearestDistance = Infinity;
+    const box = new THREE.Box3();
+    const expanded = new THREE.Box3();
+
+    scene.traverse((object) => {
+        if (!object.isMesh || !object.visible) return;
+        const buildingId = effectiveBuildingId(object);
+        if (!buildingId) return;
+
+        box.setFromObject(object);
+        expanded.copy(box).expandByScalar(tolerance);
+        if (!expanded.containsPoint(world)) return;
+
+        const distance = box.distanceToPoint(world);
+        if (distance < nearestDistance) {
+            nearestDistance = distance;
+            nearestId = buildingId;
+        }
+    });
+
+    return nearestId;
+}
+
 /**
  * Orchestrates BakeView cameras along BakePaths, uploads captures, and
  * incrementally builds Gaussian splats from sequential frames.
@@ -216,6 +251,16 @@ export class BakeHarness {
             bandNear: 0,
             bandFar: 15,
             maxSplatDistance: 60,
+            renderMode: "projectedTexture",
+            projectedTexture: {
+                enabled: true,
+                opacity: 1,
+                cellSizePx: 10,
+                maxPixelDistancePx: 16,
+                maxDepthDelta: 1.5,
+                maxTriangleDepthDelta: 1,
+                surfaceOffset: 0.005,
+            },
             maxPointsPerFrame: 20000,
             coverageVoxelSize: 0.25,
             coverageNeighbor: true,
@@ -233,6 +278,10 @@ export class BakeHarness {
         this.splatConfig = {
             ...defaultSplatConfig,
             ...options.splat,
+            projectedTexture: {
+                ...defaultSplatConfig.projectedTexture,
+                ...(options.splat?.projectedTexture ?? {}),
+            },
             updateSliver: {
                 ...defaultSplatConfig.updateSliver,
                 ...(options.splat?.updateSliver ?? {}),
@@ -270,6 +319,7 @@ export class BakeHarness {
         /** @type {BakePath[]} */
         this.paths = [];
         this.views = [];
+        this.projectedTextureManager = null;
 
         this.activePathIndex = 0;
         this.nextSampleDistance = 0;
@@ -379,6 +429,8 @@ export class BakeHarness {
      */
     setup(scene) {
         if (this._setupComplete) return;
+
+        this.projectedTextureManager = new ProjectedBuildingTextureManager(scene);
 
         for (const viewConfig of this.viewConfigs) {
             const localPosition = viewConfig.position.clone();
@@ -541,6 +593,7 @@ export class BakeHarness {
         this.regionPlanner = new BuildingRegionPlanner(this.manifest?.buildings ?? []);
 
         this.data.splats?.()?.reset?.();
+        this.projectedTextureManager?.reset();
 
         this._updateTelemetry(
             {
@@ -731,13 +784,11 @@ export class BakeHarness {
     }
 
     /**
-     * Sequential render -> (optional model round-trip) -> splat.
+     * Sequential render -> optional model round-trip -> configured projection.
      *
-     * With roundTrip.useModel === false this loop never touches the bake
-     * server: each frame is rendered locally, projected from LiDAR, and
-     * splatted immediately so the splat cloud visibly builds up sliver by
-     * sliver. The server (and therefore the model) is only engaged when
-     * useModel is explicitly enabled.
+     * renderMode controls the final display primitive. "projectedTexture"
+     * applies the image directly to building materials; "splats" keeps the
+     * legacy LiDAR-colored Gaussian splat path.
      * @param {{ distance: number, segmentIndex: number }} sample
      */
     async _processSampleSequential(sample) {
@@ -895,6 +946,7 @@ export class BakeHarness {
                     kindCounts: countBy(hitHits, (hit) => hit.objectKind),
                 } : null,
                 splatConfig: {
+                    renderMode: this.splatConfig.renderMode,
                     excludeTags: this.splatConfig.excludeTags,
                     bandNear: this.splatConfig.bandNear,
                     bandFar: this.splatConfig.bandFar,
@@ -968,7 +1020,7 @@ export class BakeHarness {
                         {
                             type: "model",
                             severity: "warning",
-                            message: "Model result unavailable; skipping splat commit",
+                            message: "Model result unavailable; skipping projection",
                             detail: sampleId,
                         },
                     );
@@ -976,7 +1028,190 @@ export class BakeHarness {
                 }
             }
 
-            if (this.splatConfig.enabled && accumulator && capture.lidar) {
+            if (
+                this.splatConfig.renderMode === "projectedTexture"
+                && this.splatConfig.projectedTexture?.enabled !== false
+            ) {
+                if (!processMaskImage) {
+                    this._updateTelemetry(
+                        { stage: "Missing projection mask", viewId: view.name },
+                        {
+                            type: "projected-texture",
+                            severity: "warning",
+                            message: "Missing process mask; skipping texture projection",
+                            detail: sampleId,
+                        },
+                    );
+                    continue;
+                }
+
+                const sliverBounds = buildCenterSliverBounds(
+                    bakedImage.width,
+                    this.splatConfig.updateSliver,
+                );
+                const maskPixelsInSliver = countMaskPixelsInSliver(processMaskImage, sliverBounds);
+                const minMaskPixels = this.splatConfig.updateSliver?.minMaskPixels ?? 1;
+                if (maskPixelsInSliver < minMaskPixels) {
+                    this._updateTelemetry(
+                        {
+                            stage: "Skipped texture projection",
+                            mask: summarizeMask(processMaskImage, {
+                                sliverPixels: maskPixelsInSliver,
+                                sliverBounds,
+                            }),
+                        },
+                        {
+                            type: "projected-texture",
+                            severity: "warning",
+                            message: "Center sliver has too few mask pixels",
+                            detail: `${maskPixelsInSliver}/${minMaskPixels}`,
+                        },
+                    );
+                    continue;
+                }
+
+                if (!capture.lidar) {
+                    this._updateTelemetry(
+                        {
+                            stage: "Skipped texture projection",
+                            mask: summarizeMask(processMaskImage, {
+                                sliverPixels: maskPixelsInSliver,
+                                sliverBounds,
+                            }),
+                        },
+                        {
+                            type: "projected-texture",
+                            severity: "warning",
+                            message: "Missing LiDAR frame for texture projection",
+                            detail: sampleId,
+                        },
+                    );
+                    continue;
+                }
+
+                const worldPoints = hitsToWorldPoints(
+                    capture.lidar,
+                    capture.metadata.cameraExtrinsics,
+                );
+                const filtered = filterForSplatting(worldPoints, this.splatConfig);
+                const updateCandidates = pointsInUpdateRegion(
+                    filtered,
+                    capture.metadata.cameraIntrinsics,
+                    capture.metadata.cameraExtrinsics.matrixWorld,
+                    processMaskImage,
+                    sliverBounds,
+                );
+                const polygonCandidates = updateCandidates
+                    .map((point) => ({
+                        ...point,
+                        pixel: worldToPixel(
+                            point.world,
+                            capture.metadata.cameraIntrinsics,
+                            capture.metadata.cameraExtrinsics.matrixWorld,
+                        ),
+                        buildingId: nearestBuildingIdForPoint(
+                            this.data.scene,
+                            point.world,
+                            (this.splatConfig.coverageVoxelSize ?? 0.05) * 2,
+                        ),
+                    }))
+                    .filter((point) => point.pixel);
+                this._updateTelemetry({
+                    stage: "LiDAR polygon filtering",
+                    lidar: summarizeLidarFrame(capture.lidar, {
+                        worldPointCount: worldPoints.length,
+                        filteredCount: filtered.length,
+                        updateCandidateCount: polygonCandidates.length,
+                        sampleFilteredPoints: summarizePoints(filtered),
+                    }),
+                });
+                if (
+                    this.splatConfig.updateSliver?.requireBuildingHit !== false
+                    && polygonCandidates.length === 0
+                ) {
+                    this._updateTelemetry(
+                        {
+                            stage: "Skipped mask polygon",
+                            lidar: summarizeLidarFrame(capture.lidar, {
+                                worldPointCount: worldPoints.length,
+                                filteredCount: filtered.length,
+                                updateCandidateCount: polygonCandidates.length,
+                                sampleFilteredPoints: summarizePoints(filtered),
+                            }),
+                        },
+                        {
+                            type: "projected-texture",
+                            severity: "warning",
+                            message: "No LiDAR candidates inside mask polygon region",
+                            detail: sampleId,
+                        },
+                    );
+                    continue;
+                }
+
+                const projectionResult = this.projectedTextureManager?.applyProjection({
+                    image: bakedImage,
+                    maskImage: processMaskImage,
+                    candidates: polygonCandidates,
+                    intrinsics: capture.metadata.cameraIntrinsics,
+                    matrixWorld: capture.metadata.cameraExtrinsics.matrixWorld,
+                    sliverBounds,
+                    opacity: this.splatConfig.projectedTexture?.opacity ?? 1,
+                    cellSizePx: this.splatConfig.projectedTexture?.cellSizePx ?? 10,
+                    maxPixelDistancePx: this.splatConfig.projectedTexture?.maxPixelDistancePx ?? 16,
+                    maxDepthDelta: this.splatConfig.projectedTexture?.maxDepthDelta ?? 1.5,
+                    maxTriangleDepthDelta: this.splatConfig.projectedTexture?.maxTriangleDepthDelta ?? 1,
+                    surfaceOffset: this.splatConfig.projectedTexture?.surfaceOffset ?? 0.005,
+                }) ?? { updatedMeshes: 0 };
+
+                this._updateTelemetry(
+                    {
+                        stage: "Projected texture",
+                        mask: summarizeMask(processMaskImage, {
+                            sliverPixels: maskPixelsInSliver,
+                            sliverBounds,
+                        }),
+                        lastImage: summarizeImage(bakedImage, {
+                            sampleId,
+                            viewId: view.name,
+                            passId: "projected-texture",
+                        }),
+                        splat: {
+                            committed: 0,
+                            total: accumulator?.splatCount ?? 0,
+                            inputCount: 0,
+                            skippedCovered: 0,
+                            skippedNoPixel: 0,
+                            skippedNoColor: 0,
+                            skippedMasked: 0,
+                            skippedBuildingMask: 0,
+                            skippedSliver: 0,
+                            skippedWrongBuilding: 0,
+                            updatedAt: Date.now(),
+                        },
+                        lidar: summarizeLidarFrame(capture.lidar, {
+                            worldPointCount: worldPoints.length,
+                            filteredCount: filtered.length,
+                            updateCandidateCount: polygonCandidates.length,
+                            sampleFilteredPoints: summarizePoints(filtered),
+                        }),
+                    },
+                    {
+                        type: "projected-texture",
+                        severity: projectionResult.updatedMeshes > 0 ? "info" : "warning",
+                        message: `Built mask polygon with ${projectionResult.triangleCount ?? 0} triangles`,
+                        detail: sampleId,
+                    },
+                );
+                continue;
+            }
+
+            if (
+                this.splatConfig.renderMode !== "projectedTexture"
+                && this.splatConfig.enabled
+                && accumulator
+                && capture.lidar
+            ) {
                 if (!processMaskImage) {
                     console.warn("BakeHarness: missing process mask for", sampleId);
                     this._updateTelemetry(

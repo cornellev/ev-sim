@@ -84,6 +84,7 @@ export class BakeRunConfig {
             bandNear: 0,
             bandFar: 15,
             maxSplatDistance: 60,
+            renderMode: "projectedTexture",
             maxPointsPerFrame: 20000,
             // Neighbor-aware coverage enforces ~1 splat per voxel neighborhood,
             // so the effective min splat spacing is ~voxel..2*voxel. Keep the
@@ -91,18 +92,29 @@ export class BakeRunConfig {
             // the same surface seen from successive frames.
             coverageVoxelSize: 0.02,
             coverageNeighbor: true,
-            updateSliver: {
-                enabled: true,
-                widthPx: 320,
-                minMaskPixels: 1,
-                requireBuildingHit: true,
-            },
             radius: 0.01,
             adaptiveRadius: true,
             hideBakedGeometry: false,
             hideThreshold: 50,
             maxSplats: 500000,
             ...options.splat,
+            projectedTexture: {
+                enabled: true,
+                opacity: 1,
+                cellSizePx: 10,
+                maxPixelDistancePx: 16,
+                maxDepthDelta: 1.5,
+                maxTriangleDepthDelta: 1,
+                surfaceOffset: 0.005,
+                ...(options.splat?.projectedTexture ?? {}),
+            },
+            updateSliver: {
+                enabled: true,
+                widthPx: 320,
+                minMaskPixels: 1,
+                requireBuildingHit: true,
+                ...(options.splat?.updateSliver ?? {}),
+            },
         };
     }
 

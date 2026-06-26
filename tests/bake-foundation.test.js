@@ -10,7 +10,10 @@ import {
     tagNameFromId,
 } from "../app/3d/data/ObjectTagRegistry.js";
 import { BakePath } from "../app/3d/environment/visualization/BakePath.js";
-import { prepareRgbaForPng } from "../app/3d/environment/visualization/bakeUpload.js";
+import {
+    flipRgbaRows,
+    prepareRgbaForPng,
+} from "../app/3d/environment/visualization/bakeUpload.js";
 
 test("ObjectTagRegistry resolves known tags", () => {
     assert.equal(resolveTagId("building"), 1);
@@ -68,5 +71,23 @@ test("prepareRgbaForPng flips WebGL rows and can preserve raw color", () => {
         10, 11, 12, 255,
         1, 2, 3, 255,
         4, 5, 6, 255,
+    ]);
+});
+
+test("flipRgbaRows restores top-left PNG rows to framebuffer layout", () => {
+    const rgba = new Uint8Array([
+        7, 8, 9, 255,
+        10, 11, 12, 255,
+        1, 2, 3, 255,
+        4, 5, 6, 255,
+    ]);
+
+    const flipped = flipRgbaRows(rgba, 2, 2);
+
+    assert.deepEqual([...flipped], [
+        1, 2, 3, 255,
+        4, 5, 6, 255,
+        7, 8, 9, 255,
+        10, 11, 12, 255,
     ]);
 });

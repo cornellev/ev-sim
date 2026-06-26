@@ -11,6 +11,7 @@ import {
     resolvePassesForSample,
 } from "../app/3d/environment/visualization/BuildingRegionPlanner.js";
 import { createDefaultBakeRunConfig } from "../app/3d/environment/visualization/BakeRunConfig.js";
+import { sliverBoundsToUv } from "../app/3d/environment/visualization/ProjectedBuildingTextureManager.js";
 import { deriveModelSeed } from "../app/util/SeededRNG.js";
 import { buildingIdFromFootprint } from "../app/3d/city/buildingIds.js";
 
@@ -28,6 +29,23 @@ test("BakeRunConfig defaults to beauty-only capture passes", () => {
     assert.equal(config.passPolicy.activeBuildingMask, true);
     assert.equal(config.passPolicy.processAllVisibleBuildings, true);
     assert.equal(config.passPolicy.contextMask, false);
+    assert.equal(config.splat.renderMode, "projectedTexture");
+    assert.equal(config.splat.projectedTexture.enabled, true);
+    assert.equal(config.splat.projectedTexture.cellSizePx, 10);
+    assert.equal(config.splat.projectedTexture.maxPixelDistancePx, 16);
+    assert.equal(config.splat.projectedTexture.maxDepthDelta, 1.5);
+    assert.equal(config.splat.projectedTexture.maxTriangleDepthDelta, 1);
+    assert.equal(config.splat.projectedTexture.surfaceOffset, 0.005);
+});
+
+test("projected texture helper maps sliver bounds to normalized UVs", () => {
+    const uv = sliverBoundsToUv({ enabled: true, xMin: 160, xMax: 480 }, 640);
+    assert.equal(uv.x, 0.25);
+    assert.equal(uv.y, 0.75);
+
+    const disabled = sliverBoundsToUv({ enabled: false, xMin: 10, xMax: 20 }, 640);
+    assert.equal(disabled.x, 0);
+    assert.equal(disabled.y, 1);
 });
 
 test("resolvePassesForSample adds all-visible building mask by default", () => {

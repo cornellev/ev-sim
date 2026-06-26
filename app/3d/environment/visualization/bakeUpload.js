@@ -7,6 +7,25 @@ function linearByteToSrgbByte(value) {
 }
 
 /**
+ * @param {Uint8Array|Uint8ClampedArray} rgba
+ * @param {number} width
+ * @param {number} height
+ * @returns {Uint8ClampedArray}
+ */
+export function flipRgbaRows(rgba, width, height) {
+    const output = new Uint8ClampedArray(width * height * 4);
+    const rowStride = width * 4;
+
+    for (let y = 0; y < height; y++) {
+        const sourceRow = (height - 1 - y) * rowStride;
+        const targetRow = y * rowStride;
+        output.set(rgba.slice(sourceRow, sourceRow + rowStride), targetRow);
+    }
+
+    return output;
+}
+
+/**
  * Prepare WebGL readback pixels for image encoding.
  * WebGL readRenderTargetPixels returns bottom-left-origin rows and, for this
  * offscreen path, linear-ish RGB values. PNG/canvas expects top-left sRGB.

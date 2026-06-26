@@ -1,4 +1,7 @@
-import { fetchBakeResult } from "./bakeUpload";
+import {
+    fetchBakeResult,
+    flipRgbaRows,
+} from "./bakeUpload";
 
 /**
  * @param {Blob} blob
@@ -45,9 +48,9 @@ export function getRawBeautyImage(capture) {
 /**
  * Poll the bake server for a model-processed image. Returns null on timeout or
  * if the sample is not found so callers can fall back to the raw render.
- * Decoded PNG bytes are sRGB (top-left origin); the canvas readback below keeps
- * top-left origin which matches the WebGL bottom-left layout after the model
- * flips during PNG encode/decode, so it lines up with worldToPixel sampling.
+ * Decoded PNG bytes are sRGB top-left origin. Convert them back to the
+ * bottom-left-origin layout used by WebGL readback, masks, worldToPixel, and
+ * polygon UV generation.
  * @param {string} server
  * @param {Object} roundTrip
  * @param {{ sampleId: string, viewId: string }} params
@@ -64,7 +67,12 @@ export async function pollBakedImage(server, roundTrip = {}, { sampleId, viewId 
 
         if (result.status === "ready" && result.blob) {
             const decoded = await decodeBlobToRgba(result.blob);
-            return { ...decoded, colorSpace: "srgb", source: "model" };
+            return {
+                ...decoded,
+                data: flipRgbaRows(decoded.data, decoded.width, decoded.height),
+                colorSpace: "srgb",
+                source: "model",
+            };
         }
 
         if (result.status === "not_found") {
