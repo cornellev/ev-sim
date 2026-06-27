@@ -9,22 +9,17 @@ import {
     FaSlidersH,
     FaCube,
     FaTools,
-    FaFlask,
-    FaSearch,
     FaEdit,
     FaMicrochip,
     FaGlobe,
     FaBroadcastTower,
     FaDatabase,
-    FaChartBar,
-    FaVideo,
     FaLayerGroup,
 } from "react-icons/fa";
 import { FlyoutPanel } from "./ui/FlyoutPanel";
 import { MenuButton } from "./ui/MenuButton";
 import { MenuToggle } from "./ui/MenuToggle";
 import { PanelSection } from "./ui/PanelSection";
-import { cn } from "./ui/cn";
 import { BiWorld } from "react-icons/bi";
 
 export function SimulationMenu({ data, vehicleOverlayVisible = true, onVehicleOverlayVisibleChange }) {
@@ -46,13 +41,6 @@ export function SimulationMenu({ data, vehicleOverlayVisible = true, onVehicleOv
         if (!sim) return;
         return sim.subscribe(setSimState);
     }, [sim]);
-
-    const [mode, setMode] = useState("run");
-    const modeOptions = [
-        { key: "run", icon: <FaFlask className="h-3 w-3" />, title: "Run mode" },
-        { key: "inspect", icon: <FaSearch className="h-3 w-3" />, title: "Inspect mode" },
-        { key: "author", icon: <FaEdit className="h-3 w-3" />, title: "Author mode" },
-    ];
 
     const engineToggleCount = [simState?.modules?.physics, simState?.realtime, simState?.deterministic].filter(Boolean).length;
     const modulesToggleCount = [toggles.agents, simState?.modules?.environment, simState?.modules?.sensors, simState?.modules?.scripting].filter(Boolean).length;
@@ -284,61 +272,6 @@ export function SimulationMenu({ data, vehicleOverlayVisible = true, onVehicleOv
                     </div>
                 </div>
             </div>
-        </div>
-    );
-}
-
-function ModeSwitch({ value, options, onChange }) {
-    const activeIndex = Math.max(0, options.findIndex((option) => option.key === value));
-
-    const move = (direction) => {
-        const nextIndex = (activeIndex + direction + options.length) % options.length;
-        onChange(options[nextIndex].key);
-    };
-
-    return (
-        <div
-            role="radiogroup"
-            aria-label="Interaction mode"
-            className="relative grid w-[104px] shrink-0 grid-cols-3 rounded-xl border border-zinc-700/80 bg-zinc-900/80 p-1"
-            onKeyDown={(event) => {
-                if (event.key === "ArrowRight" || event.key === "ArrowDown") {
-                    event.preventDefault();
-                    move(1);
-                }
-
-                if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
-                    event.preventDefault();
-                    move(-1);
-                }
-            }}
-        >
-            <span
-                aria-hidden="true"
-                className="mode-switch-thumb absolute left-1 top-1 h-8 w-8 rounded-lg border border-sky-400/70 bg-sky-500/25 shadow-[inset_0_1px_0_rgba(255,255,255,0.14)]"
-                style={{ transform: `translateX(${activeIndex * 2}rem)` }}
-            />
-            {options.map((option) => {
-                const active = option.key === value;
-
-                return (
-                    <button
-                        key={option.key}
-                        type="button"
-                        role="radio"
-                        aria-checked={active}
-                        title={option.title}
-                        aria-label={option.title}
-                        className={cn(
-                            "relative z-[1] flex h-8 w-8 items-center justify-center rounded-lg transition-[color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] focus:outline-none focus:ring-2 focus:ring-sky-400/60 active:scale-[0.97]",
-                            active ? "text-sky-50" : "text-zinc-400 hover:text-zinc-100"
-                        )}
-                        onClick={() => onChange(option.key)}
-                    >
-                        {option.icon}
-                    </button>
-                );
-            })}
         </div>
     );
 }

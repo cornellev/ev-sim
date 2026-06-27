@@ -4,29 +4,39 @@ import { useCallback, useEffect, useState } from 'react';
 import TotalScene from './3d/Scene';
 import Scripting from './scripting/Scripting';
 import Menu from './3d/overlay/menu/Menu';
+import { APP_VIEWS, THREE_D_MODES } from './3d/viewState';
 
 
 export default function Home() {
-    const [state, set_state] = useState("3d");
+    const [view, setView] = useState(APP_VIEWS.THREE_D);
+    const [threeDMode, setThreeDMode] = useState(THREE_D_MODES.SIMULATION);
     const [menuVisible, setMenuVisible] = useState(false);
 
     const closeMenu = useCallback(() => {
         setMenuVisible(false);
     }, []);
 
-    const goToScene = useCallback(() => {
-        set_state("3d");
+    const goToSimulation = useCallback(() => {
+        setView(APP_VIEWS.THREE_D);
+        setThreeDMode(THREE_D_MODES.SIMULATION);
+        setMenuVisible(false);
+    }, []);
+
+    const goToEnvironmentEditor = useCallback(() => {
+        setView(APP_VIEWS.THREE_D);
+        setThreeDMode(THREE_D_MODES.ENVIRONMENT);
         setMenuVisible(false);
     }, []);
 
     const goToScripting = useCallback(() => {
-        set_state("scripting");
+        setView(APP_VIEWS.SCRIPTING);
         setMenuVisible(false);
     }, []);
 
     useEffect(() => {
         const ev = (e) => {
             if (e.key == "Escape") {
+                if (window.__fusionEnvironmentEditorConsumesEscape) return;
                 setMenuVisible((visible) => !visible);
             }
         };
@@ -42,18 +52,20 @@ export default function Home() {
         {
             menuVisible && (
                 <Menu
-                    activeView={state}
+                    activeView={view}
+                    activeThreeDMode={threeDMode}
                     onClose={closeMenu}
-                    onScene={goToScene}
+                    onSimulation={goToSimulation}
+                    onEnvironmentEditor={goToEnvironmentEditor}
                     onScripting={goToScripting}
                 />
             )
         }
         {
-            state === "scripting" && <Scripting />
+            view === APP_VIEWS.SCRIPTING && <Scripting />
         }
         {
-            state === "3d" && <TotalScene />
+            view === APP_VIEWS.THREE_D && <TotalScene mode={threeDMode} />
         }
         </>
     );

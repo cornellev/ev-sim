@@ -9,6 +9,7 @@ import { VehicleDatabase } from "./VehicleDatabase";
 import { ClientManager } from "../managers/ClientManager";
 import { PhysicsEngine } from "@/app/physics/PhysicsEngine";
 import { SimulationEngine } from "@/app/simulation/SimulationEngine";
+import { Environment } from "../environment/Environment";
 
 export class Data {
     constructor() {
@@ -24,6 +25,8 @@ export class Data {
         this.clientManager = new ClientManager(this);
 
         this.simulationEngine = new SimulationEngine(this);
+        // Environment runtime (editor, registry, chunks). Access via environment(); document is environment().getDocument().
+        this.environmentDocument = new Environment(this);
         this.bakeHarness = null;
         this._bakeRunConfig = null;
         this._splatAccumulator = null;
@@ -92,6 +95,17 @@ export class Data {
      */
     simulation() {
         return this.simulationEngine;
+    }
+
+    /**
+     * @returns {Environment}
+     */
+    environment() {
+        return this.environmentDocument;
+    }
+
+    editor() {
+        return this.environmentDocument.editor();
     }
 
     /**

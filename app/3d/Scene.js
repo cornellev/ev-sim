@@ -18,10 +18,9 @@ import { TrafficScenario } from "./traffic/TrafficScenario";
 import { buildRoadNetwork } from "./city/RoadNetwork";
 import { LoadRoadsFromGeoJSON } from "./city/CityBuilder";
 import { setupIGVC } from "./igvc/IGVCScene";
-import { SimulationMenu } from "./overlay/SimulationMenu";
-import { VehicleOverlay } from "./overlay/VehicleOverlay";
-import { BuildingInspector } from "./overlay/BuildingInspector";
-import { BakeProgressOverlay } from "./overlay/BakeProgressOverlay";
+import { SimulationChrome } from "./overlay/SimulationChrome";
+import { EnvironmentEditorChrome } from "./overlay/EnvironmentEditorChrome";
+import { THREE_D_MODES } from "./viewState";
 import { SensorTest } from "./scenes/SensorTest";
 import { setupScanCar } from "./vehicles/ScanCar";
 import { Q1 } from "./igvc/mini/q1";
@@ -40,7 +39,9 @@ import { BakeHarness } from "./environment/visualization/BakeHarness";
 import { BakePath } from "./environment/visualization/BakePath";
 import { createDefaultBakeRunConfig } from "./environment/visualization/BakeRunConfig";
 import { SplatAccumulator } from "./environment/visualization/SplatAccumulator";
-import { Skybox } from "./skybox/Skybox";
+import { loadSkybox } from "./skybox/Skybox";
+import { SceneLoadingScreen } from "./overlay/SceneLoadingScreen";
+import { EditorToolController } from "./editor/tools/EditorToolController";
 
 /** `?mini=q1` | `q2` | `q3` | `q4` | `fi1` | `fi2` | `fii1` | `fiii1` | `fiii2` | `fiii3` (default: q4) */
 const MINI_SCENARIOS = {
@@ -58,11 +59,10 @@ const MINI_SCENARIOS = {
 
 const FOLLOW_CAMERA_CONTROL_LOCK = "vehicle-follow-camera";
 
-function setupScene(scene, camera, renderer) {
-    //set background color
+async function setupScene(scene, camera, renderer) {
     scene.background = new THREE.Color(0x202020);
-    Skybox(scene, renderer);
-    
+    await loadSkybox(scene, renderer);
+
     // add ambient light
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
     scene.add(ambientLight);
@@ -418,7 +418,55 @@ async function setupVehicles(scene, data, camera) {
 }
 
 /**
- * Register an optional bake harness behind the explicit baking module toggle.
+ * @param {Data} data
+ * @param {THREE.Scene} scene
+ * @param {THREE.Camera} camera
+ * @param {Object} startingState
+ */
+async function setupSimulationRuntime(data, scene, camera, startingState = {}) {
+    await setupVehicles(scene, data, camera);
+
+    if (startingState?.startingPosition && startingState?.startingRotation) {
+        data.vehicles().vehicles[0].position.copy(startingState.startingPosition);
+        data.vehicles().vehicles[0].rotation.copy(startingState.startingRotation);
+    }
+
+    data.objects().scene(scene);
+    data.vehicles().setup(scene);
+    data.devices().setup(scene);
+
+    const sim = data.simulation();
+    sim.setModule("baking", false);
+    sim.startLoop();
+    sim.play();
+}
+
+/**
+ * @param {Data} data
+ * @param {THREE.Scene} scene
+ */
+async function setupEnvironmentRuntime(data, scene, camera, renderer) {
+    const sim = data.simulation();
+    sim.setModule("vehicles", false);
+    sim.setModule("sensors", false);
+    sim.setModule("baking", false);
+    await sim.setPhysicsEnabled(false);
+
+    data.objects().scene(scene);
+    data.environment().setup(scene);
+    data.environment().setToolController(new EditorToolController({
+        data,
+        scene,
+        camera,
+        renderer,
+    }));
+    setupBaking(data, scene);
+    sim.startLoop();
+    sim.pause();
+}
+
+/**
+ * Register bake harness for environment editor mode.
  * Press "b" to start/stop a sample bake run when a harness is configured.
  *
  * @param {Data} data
@@ -458,28 +506,35 @@ function setupBaking(data, scene) {
     data.setBakeHarness(harness);
 
     data.keys().registerKeyPress("b", async () => {
+        const sim = data.simulation();
         if (harness.running) {
             harness.stop();
-            data.simulation().setModule("baking", false);
+            sim.setModule("baking", false);
+            sim.pause();
             console.log("Bake run stopped");
             return;
         }
 
         await harness.start();
-        data.simulation().setModule("baking", true);
+        sim.setModule("baking", true);
+        sim.play();
         console.log("Bake run started", harness.runId);
     });
 }
 
-export default function TotalScene() {
+export default function TotalScene({ mode = THREE_D_MODES.SIMULATION }) {
     const mountRef = useRef(null);
     const keyManagerRef = useRef(new KeyManager());
     const mouseManagerRef = useRef(new MouseManager());
 
     const [sceneData, setSceneData] = useState(null);
-    const [vehicleOverlayVisible, setVehicleOverlayVisible] = useState(true);
+    const [sceneReady, setSceneReady] = useState(false);
+    const [loadPhase, setLoadPhase] = useState("atmosphere");
 
     useEffect(() => {
+        setSceneReady(false);
+        setLoadPhase("atmosphere");
+        setSceneData(null);
         const scene = new THREE.Scene();
         const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
         const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -503,7 +558,11 @@ export default function TotalScene() {
         scene.add(spark);
 
         const initialize = async () => {
-            setupScene(scene, camera, renderer);
+            setLoadPhase("atmosphere");
+            await setupScene(scene, camera, renderer);
+            if (disposed) return;
+
+            setLoadPhase("scene");
             const controls = setupControls(scene, camera, renderer, data);
 
             data.simulation().configure({ scene, camera, renderer, controls });
@@ -519,13 +578,9 @@ export default function TotalScene() {
             // await setupOptimizer(scene, camera, renderer, data);
             // BasicScene(data);
             // test(scene, camera, data);
-            await setupVehicles(scene, data, camera);
             // await setupScanCar(data, scene);
-
             // await setupTrafficScenario(scene, data);
-
             // await tryIthaca(scene, data);
-
             // await setupCity(scene, data);
             await setupIGVC(scene, data);
             // await SensorTest(data, scene);
@@ -536,31 +591,21 @@ export default function TotalScene() {
             // const runMini = MINI_SCENARIOS[miniKey] ?? Q4;
             // startingState = await runMini(scene, data);
 
-            if (startingState && startingState["startingPosition"] && startingState["startingRotation"]) {
-                // startingState["s/tingRotation"].y = 0; // ensure car starts on ground level
-                // copy to big car
-                data.vehicles().vehicles[0].position.copy(startingState["startingPosition"]);
-                data.vehicles().vehicles[0].rotation.copy(startingState["startingRotation"]);
-            }
+            if (disposed) return;
 
-            // add spheres at (0,0,1) and (1,0,0) for reference
-            // data.objects().addObject(sphere1);
-            // data.objects().addObject(sphere2);
+            console.log(`Scene initialized (${mode}), setting data...`);
+
+            setLoadPhase("runtime");
+            if (mode === THREE_D_MODES.SIMULATION) {
+                await setupSimulationRuntime(data, scene, camera, startingState);
+            } else {
+                await setupEnvironmentRuntime(data, scene, camera, renderer);
+            }
 
             if (disposed) return;
 
-
-            console.log("Scene initialized, setting data...");
-
-            data.objects().scene(scene);
-            data.vehicles().setup(scene);
-            data.devices().setup(scene);
-            setupBaking(data, scene);
-
-            data.simulation().startLoop();
-            data.simulation().play();
-
             setSceneData(data);
+            setSceneReady(true);
         };
 
         initialize();
@@ -578,8 +623,11 @@ export default function TotalScene() {
         // --- 5. Cleanup Function ---
         return () => {
             disposed = true;
+            setSceneReady(false);
+            setSceneData(null);
 
             data.simulation().dispose();
+            data.environment().dispose();
 
             if (mountNode.contains(renderer.domElement)) {
                 mountNode.removeChild(renderer.domElement);
@@ -588,7 +636,7 @@ export default function TotalScene() {
             window.removeEventListener('resize', handleResize);
             renderer.dispose();
         };
-    }, []);
+    }, [mode]);
 
     useEffect(() => {
         const kd = (e) => {
@@ -643,20 +691,21 @@ export default function TotalScene() {
 
     return (
         <>
-        <div id="overlay" className="fixed w-[100vw] h-[100vh] top-0 left-0 select-none pointer-events-none bg-transparent">
-            {/* Overlay content can go here */}
-            {sceneData && vehicleOverlayVisible && <VehicleOverlay data={sceneData} />}
-            {sceneData && <BuildingInspector data={sceneData} />}
-            {sceneData && <BakeProgressOverlay data={sceneData} />}
-            <SimulationMenu
-                data={sceneData}
-                vehicleOverlayVisible={vehicleOverlayVisible}
-                onVehicleOverlayVisibleChange={setVehicleOverlayVisible}
-            />
+        <SceneLoadingScreen visible={!sceneReady} mode={mode} phase={loadPhase} />
+        <div
+            id="overlay"
+            className="fixed w-[100vw] h-[100vh] top-0 left-0 select-none pointer-events-none bg-transparent"
+            aria-hidden={!sceneReady}
+        >
+            {sceneReady && mode === THREE_D_MODES.SIMULATION && <SimulationChrome data={sceneData} />}
+            {sceneReady && mode === THREE_D_MODES.ENVIRONMENT && <EnvironmentEditorChrome data={sceneData} />}
         </div>
-        <div id="canvas-container" className="w-[100vw] h-[100vh]" ref={mountRef}>
-            
-        </div>
+        <div
+            id="canvas-container"
+            className={`w-[100vw] h-[100vh] transition-opacity duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] ${sceneReady ? "opacity-100" : "opacity-0"}`}
+            ref={mountRef}
+            aria-hidden={!sceneReady}
+        />
         </>
     )
 }

@@ -11,21 +11,33 @@ export class KeyManager {
     registerKeyDown(key, callback) {
         if (!this.keysDown[key]) this.keysDown[key] = [];
         this.keysDown[key].push(callback);
+        return () => {
+            this.keysDown[key] = this.keysDown[key]?.filter((registered) => registered !== callback) ?? [];
+        };
     }
 
     registerKeyUp(key, callback) {
         if (!this.keysUp[key]) this.keysUp[key] = [];
         this.keysUp[key].push(callback);
+        return () => {
+            this.keysUp[key] = this.keysUp[key]?.filter((registered) => registered !== callback) ?? [];
+        };
     }
 
     registerKeyPress(key, callback) {
         if (!this.keysPress[key]) this.keysPress[key] = [];
         this.keysPress[key].push(callback);
+        return () => {
+            this.keysPress[key] = this.keysPress[key]?.filter((registered) => registered !== callback) ?? [];
+        };
     }
 
     registerWhileDown(key, callback) {
         if (!this.whileDownCallbacks[key]) this.whileDownCallbacks[key] = [];
         this.whileDownCallbacks[key].push(callback);
+        return () => {
+            this.whileDownCallbacks[key] = this.whileDownCallbacks[key]?.filter((registered) => registered !== callback) ?? [];
+        };
     }
 
     onKeyDown(event) {

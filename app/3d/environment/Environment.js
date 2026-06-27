@@ -1,4 +1,9 @@
-import { Data } from "../data/Data";
+import { ChunkManager } from "../editor/chunks/ChunkManager.js";
+import { DEFAULT_CHUNK_SIZE } from "../editor/chunks/ChunkIndex.js";
+import { EnvironmentDocument } from "../editor/document/EnvironmentDocument.js";
+import { hydrateDocumentFromRuntime } from "../editor/document/documentRuntimeHydration.js";
+import { EditorState } from "../editor/EditorState.js";
+import { EnvironmentRegistry } from "../editor/EnvironmentRegistry.js";
 
 /**
  * What is an environment?
@@ -13,15 +18,28 @@ import { Data } from "../data/Data";
  * 
  * This acts as a container for all the objects in the scene, and can be used to manage them.
  */
-class Environment {
+export class Environment {
     /**
      * 
      * @param {Data} data 
      */
-    constructor(data) {
-        if (!!data) throw new Error("Data object is required to create an environment.");
+    constructor(data, options = {}) {
+        if (!data) throw new Error("Data object is required to create an environment.");
 
         this.data = data; // general data object
+        this.environmentId = options.environmentId ?? "igvc";
+        this.chunkSize = options.chunkSize ?? DEFAULT_CHUNK_SIZE;
+        this.editorState = new EditorState(options.editorState);
+        this.document = options.document instanceof EnvironmentDocument
+            ? options.document
+            : EnvironmentDocument.fromManifest(options.document ?? {});
+        this.chunkManager = new ChunkManager({
+            scene: data.three?.()?.scene ?? null,
+            chunkSize: this.chunkSize,
+        });
+        this.registry = new EnvironmentRegistry({
+            chunkManager: this.chunkManager,
+        });
 
         // A list of all the static objects (as in, that don't move) in the environment.
         // These are particularly objects can still interact with LiDAR and other sensors, but they don't move.
@@ -36,6 +54,57 @@ class Environment {
         // For example, a skybox, or a ground plane.
         this.visualObjects = []; // Type: Array of ThreeJS objects
 
-        
+        this.scene = null;
+        this.toolController = null;
+    }
+
+    setup(scene) {
+        this.scene = scene;
+        this.chunkManager.setScene(scene);
+        this.registry.registerExistingContent(scene, this.data);
+        hydrateDocumentFromRuntime(this.data, this.document);
+    }
+
+    editor() {
+        return this.editorState;
+    }
+
+    getDocument() {
+        return this.document;
+    }
+
+    objects() {
+        return this.registry;
+    }
+
+    chunks() {
+        return this.chunkManager;
+    }
+
+    setToolController(controller) {
+        this.toolController?.dispose?.();
+        this.toolController = controller;
+    }
+
+    dispose() {
+        this.toolController?.dispose?.();
+        this.toolController = null;
+    }
+
+    toManifest() {
+        const editorSnapshot = this.editorState.snapshot();
+        return {
+            environmentId: this.environmentId,
+            chunkSize: this.chunkSize,
+            document: this.document.toManifest(),
+            ...this.chunkManager.toManifest(),
+            ...this.registry.toManifest(),
+            editor: {
+                layers: editorSnapshot.layers,
+                hiddenEntityIds: [...editorSnapshot.hiddenEntityIds],
+                editorMode: editorSnapshot.editorMode,
+                map: editorSnapshot.map,
+            },
+        };
     }
 }

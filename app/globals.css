@@ -125,6 +125,71 @@ body {
   }
 }
 
+.scene-loading-screen {
+  opacity: 1;
+  filter: blur(0);
+  transition:
+    opacity 220ms var(--ease-out-ui),
+    filter 220ms var(--ease-out-ui);
+}
+
+.scene-loading-screen--exit {
+  opacity: 0;
+  filter: blur(3px);
+  pointer-events: none;
+}
+
+.scene-loading-shimmer {
+  animation: scene-loading-shimmer 1.35s var(--ease-in-out-ui) infinite;
+  will-change: transform;
+}
+
+.scene-loading-pulse {
+  animation: scene-loading-pulse 1.1s var(--ease-in-out-ui) infinite;
+}
+
+.scene-loading-grain {
+  background-image:
+    radial-gradient(circle at 20% 20%, rgba(255, 255, 255, 0.9) 0.6px, transparent 0.7px),
+    radial-gradient(circle at 80% 40%, rgba(255, 255, 255, 0.7) 0.5px, transparent 0.6px),
+    radial-gradient(circle at 40% 80%, rgba(255, 255, 255, 0.8) 0.55px, transparent 0.65px);
+  background-size: 3px 3px, 4px 4px, 5px 5px;
+}
+
+@keyframes scene-loading-shimmer {
+  0% {
+    transform: translateX(-120%) scaleX(0.35);
+  }
+
+  50% {
+    transform: translateX(180%) scaleX(1);
+  }
+
+  100% {
+    transform: translateX(320%) scaleX(0.35);
+  }
+}
+
+@keyframes scene-loading-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.85;
+  }
+
+  50% {
+    transform: scale(1.35);
+    opacity: 1;
+  }
+}
+
+@starting-style {
+  .scene-loading-screen {
+    opacity: 0;
+    filter: blur(4px);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .route-switcher-scrim,
   .route-switcher-panel,
@@ -133,7 +198,8 @@ body {
   .menu-flyout-panel,
   .building-popout-panel,
   .bake-progress-overlay,
-  .bake-progress-fill {
+  .bake-progress-fill,
+  .scene-loading-screen {
     transition-duration: 0ms;
   }
 
@@ -141,9 +207,15 @@ body {
   .route-switcher-item,
   .menu-flyout-panel,
   .building-popout-panel,
-  .bake-progress-overlay {
+  .bake-progress-overlay,
+  .scene-loading-screen {
     transform: none !important;
     filter: none;
+  }
+
+  .scene-loading-shimmer,
+  .scene-loading-pulse {
+    animation: none;
   }
 }
 
