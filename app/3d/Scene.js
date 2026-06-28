@@ -39,7 +39,7 @@ import { BakeHarness } from "./environment/visualization/BakeHarness";
 import { BakePath } from "./environment/visualization/BakePath";
 import { createDefaultBakeRunConfig } from "./environment/visualization/BakeRunConfig";
 import { SplatAccumulator } from "./environment/visualization/SplatAccumulator";
-import { loadSkybox } from "./skybox/Skybox";
+import { EnvironmentSkyManager } from "./skybox/EnvironmentSkyManager";
 import { SceneLoadingScreen } from "./overlay/SceneLoadingScreen";
 import { EditorToolController } from "./editor/tools/EditorToolController";
 
@@ -59,9 +59,17 @@ const MINI_SCENARIOS = {
 
 const FOLLOW_CAMERA_CONTROL_LOCK = "vehicle-follow-camera";
 
-async function setupScene(scene, camera, renderer) {
+async function setupScene(scene, camera, renderer, data) {
     scene.background = new THREE.Color(0x202020);
-    await loadSkybox(scene, renderer);
+    const skyManager = new EnvironmentSkyManager({
+        scene,
+        camera,
+        renderer,
+        skyState: data.sky(),
+        invalidate: () => data.simulation()?.render?.(),
+    });
+    data.setSkyManager(skyManager);
+    await skyManager.setup();
 
     // add ambient light
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
@@ -559,7 +567,7 @@ export default function TotalScene({ mode = THREE_D_MODES.SIMULATION }) {
 
         const initialize = async () => {
             setLoadPhase("atmosphere");
-            await setupScene(scene, camera, renderer);
+            await setupScene(scene, camera, renderer, data);
             if (disposed) return;
 
             setLoadPhase("scene");
@@ -616,6 +624,8 @@ export default function TotalScene({ mode = THREE_D_MODES.SIMULATION }) {
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
+            data.skyManager()?.resize?.(window.innerWidth, window.innerHeight);
+            data.simulation()?.render?.();
         };
         window.addEventListener('resize', handleResize);
 
@@ -628,6 +638,8 @@ export default function TotalScene({ mode = THREE_D_MODES.SIMULATION }) {
 
             data.simulation().dispose();
             data.environment().dispose();
+            data.skyManager()?.dispose?.();
+            data.setSkyManager(null);
 
             if (mountNode.contains(renderer.domElement)) {
                 mountNode.removeChild(renderer.domElement);

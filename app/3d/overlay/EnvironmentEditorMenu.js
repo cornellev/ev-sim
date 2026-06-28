@@ -13,6 +13,7 @@ import {
 } from "react-icons/fa";
 import { EDITOR_MODES, EDITOR_TOOLS } from "../editor/EditorState";
 import { PLACEMENT_CATALOG } from "../editor/placement/PlacementCatalog";
+import { EnvironmentSkyPanel, SkyToolIcon } from "./EnvironmentSkyPanel";
 import { FlyoutPanel } from "./ui/FlyoutPanel";
 import { MenuButton } from "./ui/MenuButton";
 import { MenuToggle } from "./ui/MenuToggle";
@@ -173,6 +174,15 @@ export function EnvironmentEditorMenu({ data }) {
                                 </PanelSection>
                             </FlyoutPanel>
                         )}
+
+                        {openPanel === "sky" && (
+                            <FlyoutPanel
+                                title="Atmosphere"
+                                subtitle="Skybox, sun, and Takram cloud controls"
+                            >
+                                <EnvironmentSkyPanel data={data} />
+                            </FlyoutPanel>
+                        )}
                     </div>
                 )}
 
@@ -214,6 +224,15 @@ export function EnvironmentEditorMenu({ data }) {
                             ariaLabel="Layers"
                         >
                             <FaLayerGroup className="h-3 w-3" />
+                        </MenuButton>
+                        <MenuButton
+                            iconOnly
+                            active={openPanel === "sky"}
+                            onClick={() => togglePanel("sky")}
+                            title="Open atmosphere controls"
+                            ariaLabel="Atmosphere"
+                        >
+                            <SkyToolIcon className="h-3.5 w-3.5" />
                         </MenuButton>
                         <MenuButton
                             iconOnly

@@ -30,6 +30,7 @@ export class Data {
         this.bakeHarness = null;
         this._bakeRunConfig = null;
         this._splatAccumulator = null;
+        this._skyManager = null;
         
         this.scene = null;
         this.camera = null;
@@ -106,6 +107,18 @@ export class Data {
 
     editor() {
         return this.environmentDocument.editor();
+    }
+
+    sky() {
+        return this.environmentDocument.sky();
+    }
+
+    setSkyManager(manager) {
+        this._skyManager = manager;
+    }
+
+    skyManager() {
+        return this._skyManager;
     }
 
     /**

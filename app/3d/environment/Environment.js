@@ -4,6 +4,7 @@ import { EnvironmentDocument } from "../editor/document/EnvironmentDocument.js";
 import { hydrateDocumentFromRuntime } from "../editor/document/documentRuntimeHydration.js";
 import { EditorState } from "../editor/EditorState.js";
 import { EnvironmentRegistry } from "../editor/EnvironmentRegistry.js";
+import { EnvironmentSkyState } from "../skybox/EnvironmentSkyState.js";
 
 /**
  * What is an environment?
@@ -30,6 +31,7 @@ export class Environment {
         this.environmentId = options.environmentId ?? "igvc";
         this.chunkSize = options.chunkSize ?? DEFAULT_CHUNK_SIZE;
         this.editorState = new EditorState(options.editorState);
+        this.skyState = new EnvironmentSkyState(options.sky);
         this.document = options.document instanceof EnvironmentDocument
             ? options.document
             : EnvironmentDocument.fromManifest(options.document ?? {});
@@ -69,6 +71,10 @@ export class Environment {
         return this.editorState;
     }
 
+    sky() {
+        return this.skyState;
+    }
+
     getDocument() {
         return this.document;
     }
@@ -105,6 +111,7 @@ export class Environment {
                 editorMode: editorSnapshot.editorMode,
                 map: editorSnapshot.map,
             },
+            sky: this.skyState.toManifest(),
         };
     }
 }

@@ -261,7 +261,12 @@ export class SimulationEngine {
 
     render() {
         if (!this.scene || !this.camera || !this.renderer) return;
-        
+
+        if (this.data.skyManager?.()?.render?.()) {
+            this.frames += 1;
+            return;
+        }
+
         this.renderer.render(this.scene, this.camera);
         this.frames += 1;
     }
