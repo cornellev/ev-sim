@@ -9,13 +9,15 @@ npm install
 npm run dev
 ```
 
-The app starts on the visual scripting canvas. Press `Escape` to switch between scripting and the 3D scene.
+The app opens to the simulation workspace by default. Press `Escape` to switch between scripting, simulation, and the environment editor.
 
 ## Documentation
 
 - [Documentation index](docs/README.md)
 - [Getting started](docs/getting-started.md)
 - [Architecture](docs/architecture.md)
+- [Environment editor](docs/environment-editor.md)
+- [Earth import](docs/earth-import.md)
 - [Development workflow](docs/development.md)
 - [Visual scripting](docs/scripting/README.md)
 - [Simulation](docs/simulation.md)

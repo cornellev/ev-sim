@@ -31,6 +31,8 @@ export class Data {
         this._bakeRunConfig = null;
         this._splatAccumulator = null;
         this._skyManager = null;
+        this._earthTilesManager = null;
+        this._earthImportController = null;
         
         this.scene = null;
         this.camera = null;
@@ -119,6 +121,22 @@ export class Data {
 
     skyManager() {
         return this._skyManager;
+    }
+
+    setEarthTilesManager(manager) {
+        this._earthTilesManager = manager;
+    }
+
+    earthTilesManager() {
+        return this._earthTilesManager;
+    }
+
+    setEarthImportController(controller) {
+        this._earthImportController = controller;
+    }
+
+    earthImportController() {
+        return this._earthImportController;
     }
 
     /**

@@ -27,7 +27,6 @@ export function MapSurface({ data, editorSnapshot, documentSnapshot }) {
     const showDetail = isMapDetailZoom(viewport);
 
     const {
-        onWheel,
         onPointerDown,
         onPointerMove,
         onPointerUp,
@@ -45,7 +44,6 @@ export function MapSurface({ data, editorSnapshot, documentSnapshot }) {
         <div
             ref={containerRef}
             className="fixed inset-0 z-[15] bg-zinc-950/95 pointer-events-auto touch-none"
-            onWheel={onWheel}
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
             onPointerUp={onPointerUp}

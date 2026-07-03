@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { MapPointerController } from "../../editor/map/MapPointerController.js";
 import { screenToWorld } from "../../editor/map/mapCoords.js";
 
@@ -15,7 +15,7 @@ export function useMapPointerController({
     documentSnapshot,
 }) {
     const controllerRef = useRef(null);
-    if (!controllerRef.current) {
+    if (controllerRef.current == null) {
         controllerRef.current = new MapPointerController();
     }
 
@@ -39,9 +39,18 @@ export function useMapPointerController({
         getWorldFromEvent,
     }), [data, size, viewport, layers, showDetail, documentSnapshot, getWorldFromEvent]);
 
-    const onWheel = useCallback((event) => {
-        const containerRect = containerRef.current?.getBoundingClientRect();
-        controllerRef.current.handleWheel({ data, containerRect, size }, event);
+    // React's onWheel is passive; non-passive listener required for preventDefault (map zoom).
+    useEffect(() => {
+        const container = containerRef.current;
+        if (!container) return undefined;
+
+        const handleWheel = (event) => {
+            const containerRect = container.getBoundingClientRect();
+            controllerRef.current.handleWheel({ data, containerRect, size }, event);
+        };
+
+        container.addEventListener("wheel", handleWheel, { passive: false });
+        return () => container.removeEventListener("wheel", handleWheel);
     }, [containerRef, data, size]);
 
     const onPointerDown = useCallback((event) => {
@@ -62,7 +71,6 @@ export function useMapPointerController({
     }, [containerRef, pointerContext]);
 
     return {
-        onWheel,
         onPointerDown,
         onPointerMove,
         onPointerUp,

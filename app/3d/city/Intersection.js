@@ -1,6 +1,6 @@
 import * as THREE from "three";
-import Unit from "@/app/util/Unit";
-import { buildStripGeometry, createSolidLine, Road } from "./Road";
+import Unit from "../../util/Unit.js";
+import { buildStripGeometry, createSolidLine, Road } from "./Road.js";
 
 const UP = new THREE.Vector3(0, 1, 0);
 

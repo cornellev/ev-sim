@@ -1,3 +1,13 @@
+import {
+    DEFAULT_EARTH_IMPORT_CONFIG,
+    EARTH_IMPORT_STATUS,
+    normalizeEarthImportEditorState,
+} from "../earth/EarthImportConfig.js";
+
+/**
+ * @typedef {ReturnType<typeof normalizeEarthImportEditorState>} EarthImportEditorState
+ */
+
 export const EDITOR_TOOLS = Object.freeze({
     SELECT: "select",
     TRANSLATE: "translate",
@@ -25,6 +35,7 @@ export const MAP_SELECTION_TYPES = Object.freeze({
 export const EDITOR_MODES = Object.freeze({
     SCENE: "scene",
     MAP: "map",
+    EARTH_IMPORT: "earth-import",
 });
 
 export const EDITOR_LAYERS = Object.freeze({
@@ -41,6 +52,7 @@ const DEFAULT_LAYERS = Object.freeze({
 
 const TOOL_VALUES = new Set(Object.values(EDITOR_TOOLS));
 const MAP_TOOL_VALUES = new Set(Object.values(MAP_TOOLS));
+const EDITOR_MODE_VALUES = new Set(Object.values(EDITOR_MODES));
 
 const DEFAULT_MAP_STATE = Object.freeze({
     centerX: 0,
@@ -72,14 +84,20 @@ function cloneMapState(map) {
     };
 }
 
+function cloneEarthImportState(earthImport) {
+    return normalizeEarthImportEditorState(earthImport);
+}
+
+function normalizeEditorMode(mode) {
+    return EDITOR_MODE_VALUES.has(mode) ? mode : EDITOR_MODES.SCENE;
+}
+
 export class EditorState {
     constructor(options = {}) {
         this.activeTool = TOOL_VALUES.has(options.activeTool)
             ? options.activeTool
             : EDITOR_TOOLS.SELECT;
-        this.editorMode = options.editorMode === EDITOR_MODES.MAP
-            ? EDITOR_MODES.MAP
-            : EDITOR_MODES.SCENE;
+        this.editorMode = normalizeEditorMode(options.editorMode);
         this.selection = cloneSelection(options.selection);
         this.layers = {
             ...DEFAULT_LAYERS,
@@ -89,6 +107,7 @@ export class EditorState {
         this.activePlacement = options.activePlacement ?? null;
         this.chunkOutlinesVisible = options.chunkOutlinesVisible ?? true;
         this.map = cloneMapState(options.map);
+        this.earthImport = cloneEarthImportState(options.earthImport);
         this.dirty = false;
         this.subscribers = new Set();
     }
@@ -103,6 +122,7 @@ export class EditorState {
             activePlacement: this.activePlacement ? { ...this.activePlacement } : null,
             chunkOutlinesVisible: this.chunkOutlinesVisible,
             map: cloneMapState(this.map),
+            earthImport: cloneEarthImportState(this.earthImport),
             dirty: this.dirty,
         };
     }
@@ -128,24 +148,77 @@ export class EditorState {
     }
 
     setEditorMode(mode) {
-        const next = mode === EDITOR_MODES.MAP ? EDITOR_MODES.MAP : EDITOR_MODES.SCENE;
+        const next = normalizeEditorMode(mode);
         if (this.editorMode === next) return;
+        const previous = this.editorMode;
         this.editorMode = next;
-        if (next === EDITOR_MODES.MAP) {
-            this.map.activeMapTool = this.map.activeMapTool ?? MAP_TOOLS.SELECT;
-        } else {
+
+        if (next !== EDITOR_MODES.MAP) {
             this.map.draft = null;
             this.map.selection = null;
         }
+
+        if (next === EDITOR_MODES.MAP) {
+            this.map.activeMapTool = this.map.activeMapTool ?? MAP_TOOLS.SELECT;
+        }
+
+        if (next !== EDITOR_MODES.EARTH_IMPORT) {
+            this.earthImport.previewActive = false;
+            if (this.earthImport.status === EARTH_IMPORT_STATUS.PREVIEW) {
+                this.earthImport.status = EARTH_IMPORT_STATUS.IDLE;
+                this.earthImport.statusMessage = null;
+            }
+        }
+
         this.notify();
 
         if (next === EDITOR_MODES.MAP) {
             this.onEnterMapMode?.();
+        } else if (previous === EDITOR_MODES.MAP) {
+            this.onExitMapMode?.();
+        }
+
+        if (next === EDITOR_MODES.EARTH_IMPORT) {
+            this.onEnterEarthImportMode?.();
+        } else if (previous === EDITOR_MODES.EARTH_IMPORT) {
+            this.onExitEarthImportMode?.();
         }
     }
 
     setMapModeEnterHandler(handler) {
         this.onEnterMapMode = handler;
+    }
+
+    setMapModeExitHandler(handler) {
+        this.onExitMapMode = handler;
+    }
+
+    setEarthImportModeEnterHandler(handler) {
+        this.onEnterEarthImportMode = handler;
+    }
+
+    setEarthImportModeExitHandler(handler) {
+        this.onExitEarthImportMode = handler;
+    }
+
+    patchEarthImport(patch = {}) {
+        const next = cloneEarthImportState({
+            ...this.earthImport,
+            ...patch,
+        });
+
+        const changed = JSON.stringify(next) !== JSON.stringify(this.earthImport);
+        if (!changed) return;
+
+        this.earthImport = next;
+        this.notify();
+    }
+
+    setEarthImportStatus(status, message = null) {
+        this.patchEarthImport({
+            status,
+            statusMessage: message,
+        });
     }
 
     setActiveTool(tool) {
@@ -316,3 +389,5 @@ export class EditorState {
         this.notify();
     }
 }
+
+export { EARTH_IMPORT_STATUS, DEFAULT_EARTH_IMPORT_CONFIG };

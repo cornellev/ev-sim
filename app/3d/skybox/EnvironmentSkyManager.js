@@ -2,6 +2,7 @@ import * as THREE from "three";
 import {
     EffectComposer,
     EffectPass,
+    NormalPass,
     RenderPass,
     ToneMappingEffect,
     ToneMappingMode,
@@ -46,6 +47,7 @@ const OBSERVER_ECEF = new THREE.Vector3(3954947, 3354895, 3700264);
 const SKY_OBJECT_FLAGS = Object.freeze({
     skipEnvironmentSelection: true,
     bakeIgnore: true,
+    preserveInEarthImportMode: true,
 });
 const ECEF_Z_AXIS = new THREE.Vector3(0, 0, 1);
 
@@ -119,6 +121,7 @@ export class EnvironmentSkyManager {
         this.sunLight = null;
         this.aerialPerspective = null;
         this.cloudsEffect = null;
+        this.normalPass = null;
         this.composer = null;
         this.generator = null;
         this.imageTexture = null;
@@ -234,7 +237,10 @@ export class EnvironmentSkyManager {
             albedoScale: config.takram.atmosphereIntensity,
         });
 
-        const effects = [];
+        this.normalPass = new NormalPass(this.scene, this.camera);
+        this.aerialPerspective.normalBuffer = this.normalPass.texture;
+
+        const atmosphereEffects = [this.aerialPerspective];
         if (config.takram.cloudsEnabled) {
             this.cloudsEffect = new CloudsEffect(this.camera, {
                 resolutionScale: this.getCloudResolutionScale(config.takram.cloudQuality),
@@ -245,22 +251,24 @@ export class EnvironmentSkyManager {
             this.cloudsEffect.lightShafts = config.takram.lightShafts;
             this.loadCloudTextures(this.cloudsEffect);
             this.syncCloudComposition();
-            this.handleCloudChange = () => this.syncCloudComposition();
+            this.handleCloudChange = (event) => {
+                this.syncCloudComposition(event);
+            };
             this.cloudsEffect.events.addEventListener("change", this.handleCloudChange);
-            effects.push(this.cloudsEffect);
+            atmosphereEffects.unshift(this.cloudsEffect);
         }
-
-        effects.push(
-            this.aerialPerspective,
-            new ToneMappingEffect({ mode: ToneMappingMode.AGX }),
-            new DitheringEffect(),
-        );
 
         this.composer = new EffectComposer(this.renderer, {
             frameBufferType: THREE.HalfFloatType,
         });
         this.composer.addPass(new RenderPass(this.scene, this.camera));
-        this.composer.addPass(new EffectPass(this.camera, ...effects));
+        this.composer.addPass(this.normalPass);
+        this.composer.addPass(new EffectPass(this.camera, ...atmosphereEffects));
+        this.composer.addPass(new EffectPass(
+            this.camera,
+            new ToneMappingEffect({ mode: ToneMappingMode.AGX }),
+            new DitheringEffect(),
+        ));
         this.resize();
 
         this.generator = new PrecomputedTexturesGenerator(this.renderer);
@@ -397,6 +405,9 @@ export class EnvironmentSkyManager {
 
         effect.stbnTexture = new STBNLoader().load(DEFAULT_STBN_URL, (texture) => {
             this.loadedTextures.push(texture);
+            if (this.aerialPerspective) {
+                this.aerialPerspective.stbnTexture = texture;
+            }
             this.invalidate();
         });
     }
@@ -418,11 +429,38 @@ export class EnvironmentSkyManager {
         }
     }
 
-    syncCloudComposition() {
+    syncCloudComposition(event) {
         if (!this.aerialPerspective || !this.cloudsEffect) return;
+
+        switch (event?.property) {
+            case "atmosphereOverlay":
+                this.aerialPerspective.overlay = this.cloudsEffect.atmosphereOverlay;
+                return;
+            case "atmosphereShadow":
+                this.aerialPerspective.shadow = this.cloudsEffect.atmosphereShadow;
+                if (this.cloudsEffect.stbnTexture) {
+                    this.aerialPerspective.stbnTexture = this.cloudsEffect.stbnTexture;
+                }
+                return;
+            case "atmosphereShadowLength":
+                this.aerialPerspective.shadowLength = this.cloudsEffect.atmosphereShadowLength;
+                return;
+            default:
+                break;
+        }
+
         this.aerialPerspective.overlay = this.cloudsEffect.atmosphereOverlay;
         this.aerialPerspective.shadow = this.cloudsEffect.atmosphereShadow;
         this.aerialPerspective.shadowLength = this.cloudsEffect.atmosphereShadowLength;
+        if (this.cloudsEffect.stbnTexture) {
+            this.aerialPerspective.stbnTexture = this.cloudsEffect.stbnTexture;
+        }
+    }
+
+    resetCloudTemporalHistory() {
+        if (!this.cloudsEffect?.temporalUpscale) return;
+        this.cloudsEffect.temporalUpscale = false;
+        this.cloudsEffect.temporalUpscale = true;
     }
 
     updateCelestial() {
@@ -483,7 +521,9 @@ export class EnvironmentSkyManager {
         const nextWidth = width ?? size.x;
         const nextHeight = height ?? size.y;
         this.composer?.setSize?.(nextWidth, nextHeight);
+        this.normalPass?.setSize?.(nextWidth, nextHeight);
         this.cloudsEffect?.setSize?.(nextWidth, nextHeight);
+        this.resetCloudTemporalHistory();
     }
 
     render(deltaTime = 0) {
@@ -511,6 +551,7 @@ export class EnvironmentSkyManager {
 
         this.cloudsEffect?.dispose?.();
         this.aerialPerspective?.dispose?.();
+        this.normalPass?.dispose?.();
         this.composer?.dispose?.();
         this.generator?.dispose?.({ textures: true });
         this.imageTexture?.dispose?.();
@@ -521,6 +562,7 @@ export class EnvironmentSkyManager {
 
         this.cloudsEffect = null;
         this.aerialPerspective = null;
+        this.normalPass = null;
         this.composer = null;
         this.generator = null;
         this.imageTexture = null;

@@ -1,6 +1,6 @@
 import * as THREE from "three";
-import Unit from "@/app/util/Unit";
-import { Triangle } from "@/app/3d/data/objects/Triangle";
+import Unit from "../../util/Unit.js";
+import { Triangle } from "../data/objects/Triangle.js";
 
 const UP = new THREE.Vector3(0, 1, 0);
 
@@ -31,10 +31,62 @@ const DEFAULT_OPTIONS = {
     shoulderRoughness: 1,
     metalness: 0.02,
     direction: 1, // 0 = no direction, 1 = forward, -1 = backward
+    curveSegmentsPerMeter: 2.5,
+    curvedMinSegments: 48,
+    straightRoadSegments: 1,
+    straightTolerance: 0.05,
 };
 
 function lerp(a, b, t) {
     return a + (b - a) * t;
+}
+
+function distanceToLine(point, lineStart, lineEnd) {
+    const axis = lineEnd.clone().sub(lineStart);
+    axis.y = 0;
+    const lengthSq = axis.lengthSq();
+    if (lengthSq === 0) {
+        return point.distanceTo(lineStart);
+    }
+
+    const pointOffset = point.clone().sub(lineStart);
+    pointOffset.y = 0;
+    const t = THREE.MathUtils.clamp(pointOffset.dot(axis) / lengthSq, 0, 1);
+    const projected = lineStart.clone().addScaledVector(axis, t);
+    return point.distanceTo(projected);
+}
+
+export function isStraightRoadPolyline(points, tolerance = DEFAULT_OPTIONS.straightTolerance) {
+    if (points.length <= 2) return true;
+
+    const start = points[0];
+    const end = points[points.length - 1];
+    return points.every((point) => distanceToLine(point, start, end) <= tolerance);
+}
+
+export function resolveRoadSampleInfo(points, curve, options = DEFAULT_OPTIONS) {
+    const isStraight = isStraightRoadPolyline(
+        points,
+        options.straightTolerance ?? DEFAULT_OPTIONS.straightTolerance,
+    );
+    if (isStraight) {
+        const straightRoadSegments = options.straightRoadSegments ?? DEFAULT_OPTIONS.straightRoadSegments;
+        return {
+            isStraight,
+            segments: Math.max(1, Math.round(straightRoadSegments)),
+        };
+    }
+
+    const length = curve.getLength();
+    const curvedMinSegments = options.curvedMinSegments ?? DEFAULT_OPTIONS.curvedMinSegments;
+    const curveSegmentsPerMeter = options.curveSegmentsPerMeter ?? DEFAULT_OPTIONS.curveSegmentsPerMeter;
+    return {
+        isStraight,
+        segments: Math.max(
+            Math.max(1, Math.round(curvedMinSegments)),
+            Math.ceil(length * curveSegmentsPerMeter),
+        ),
+    };
 }
 
 export function getBorderColor(type, options) {
@@ -234,7 +286,7 @@ export function createDashedLine(curve, offset, options) {
             curve,
             offset,
             options.markingElevation,
-            Math.max(3, Math.ceil((end - start) * 2)),
+            options.isStraight ? 1 : Math.max(3, Math.ceil((end - start) * 2)),
             startU,
             endU
         );
@@ -312,7 +364,8 @@ export class Road {
 
         const widthMeters = this.width.getValue(Unit.Type.METER);
         const curve = new THREE.CatmullRomCurve3(this.points, false, "catmullrom", this.options.tension);
-        const segments = Math.max(48, Math.ceil(curve.getLength() * 2.5));
+        const sampleInfo = resolveRoadSampleInfo(this.points, curve, this.options);
+        const segments = sampleInfo.segments;
         const laneCount = Math.max(1, Math.round(this.options.laneCount));
         const laneWidth = (widthMeters / laneCount);
         const shoulderWidth = Math.max(0, this.options.shoulderWidth);
@@ -363,12 +416,14 @@ export class Road {
         const leftBorder = createBorder(curve, this.borderLeft, widthMeters * 0.5, {
             ...this.options,
             segments,
+            isStraight: sampleInfo.isStraight,
         });
         if (leftBorder) root.add(leftBorder);
 
         const rightBorder = createBorder(curve, this.borderRight, -widthMeters * 0.5, {
             ...this.options,
             segments,
+            isStraight: sampleInfo.isStraight,
         });
         if (rightBorder) root.add(rightBorder);
 
@@ -380,6 +435,7 @@ export class Road {
             const divider = createBorder(curve, type, offset, {
                 ...this.options,
                 segments,
+                isStraight: sampleInfo.isStraight,
             });
             if (divider) root.add(divider);
         }
@@ -387,7 +443,8 @@ export class Road {
         // for each lane, we'll create a simple geometry that can be used for lane following or other driving behaviors
         for (let laneIndex = 0; laneIndex < laneCount; laneIndex++) {
             const offset = -widthMeters * 0.5 + laneWidth * (laneIndex + 0.5);
-            const lanePoints = sampleOffsetCenterline(curve, offset, this.options.elevation + 0.01, segments * 2);
+            const laneSegments = sampleInfo.isStraight ? segments : segments * 2;
+            const lanePoints = sampleOffsetCenterline(curve, offset, this.options.elevation + 0.01, laneSegments);
             this.lanes.push(lanePoints);
         }
 

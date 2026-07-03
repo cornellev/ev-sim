@@ -20,7 +20,11 @@ npm install
 npm run dev
 ```
 
-Open the local URL printed by Next. The default app state is the visual scripting canvas. Press `Escape` to open the app menu and switch between the scripting canvas and the 3D scene.
+Open the local URL printed by Next. Press `Escape` to open the app menu. From there you can switch between:
+
+- **Scripting** — visual node editor.
+- **Simulation** — vehicles, sensors, and scenario playback.
+- **Environment Editor** — author roads, buildings, props, and import real-world geography.
 
 For a production-style local run:
 
@@ -77,3 +81,13 @@ public/scenarios/recorded/NGSIM/Peachtree/USA_Peach-1_1_T-1.xml
 ```
 
 See [Assets](assets.md) before adding large or generated files.
+
+## Optional: Earth Import
+
+To preview Google Photorealistic 3D Tiles in the environment editor, add a Google Maps API key to `.env.local`:
+
+```bash
+NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=your_key_here
+```
+
+Restart the dev server after adding the key. See [Earth Import](earth-import.md) for the full workflow.

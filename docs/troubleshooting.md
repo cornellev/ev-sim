@@ -1,8 +1,8 @@
 # Troubleshooting
 
-## The App Starts On The Scripting Canvas
+## The App Starts On The Simulation View
 
-This is expected. `app/page.js` defaults to `scripting`. Press `Escape` to open the app menu and switch to the 3D scene.
+`app/page.js` defaults to the 3D simulation workspace. Press `Escape` to open the app menu and switch to scripting or the environment editor.
 
 ## CommonRoad Scenario Fails To Load
 
@@ -47,3 +47,9 @@ See [Artifact Schema v2](scripting/artifact-schema-v2.md).
 ## Deleting Nodes Or Connections Behaves Strangely
 
 Deletion support exists in the current UI, but it is still a high-risk path compared with creating and connecting blocks. If graph state looks inconsistent, refresh and rebuild the small section of the graph.
+
+## Earth Import Shows No Tiles
+
+Set `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` in `.env.local` and restart the dev server. The key needs Map Tiles API access. Placeholder values are ignored.
+
+See [Earth Import](earth-import.md) for more cases (Overpass timeouts, preview vs apply, scene isolation).

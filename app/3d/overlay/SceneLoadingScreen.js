@@ -1,6 +1,5 @@
 'use client';
 
-import { useEffect, useState } from "react";
 import { FaGlobeAmericas } from "react-icons/fa";
 import { THREE_D_MODES } from "../viewState";
 import { cn } from "./ui/cn";
@@ -47,20 +46,6 @@ function StatusRow({ active, complete, label, detail }) {
 }
 
 export function SceneLoadingScreen({ visible, mode = THREE_D_MODES.SIMULATION, phase = "atmosphere" }) {
-    const [mounted, setMounted] = useState(visible);
-
-    useEffect(() => {
-        if (visible) {
-            setMounted(true);
-            return undefined;
-        }
-
-        const timeout = setTimeout(() => setMounted(false), 240);
-        return () => clearTimeout(timeout);
-    }, [visible]);
-
-    if (!mounted) return null;
-
     const modeLabel = mode === THREE_D_MODES.ENVIRONMENT ? "Environment Editor" : "Simulation";
     const phaseIndex = phase === "atmosphere" ? 0 : phase === "scene" ? 1 : 2;
     const current = STATUS_COPY[phase] ?? STATUS_COPY.atmosphere;
@@ -68,6 +53,7 @@ export function SceneLoadingScreen({ visible, mode = THREE_D_MODES.SIMULATION, p
     return (
         <div
             aria-busy={visible}
+            aria-hidden={!visible}
             aria-live="polite"
             aria-label="Loading 3D scene"
             className={cn(

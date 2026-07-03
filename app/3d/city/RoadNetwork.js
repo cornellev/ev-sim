@@ -1,7 +1,7 @@
 import * as THREE from "three";
-import Unit from "@/app/util/Unit";
-import { Road } from "./Road";
-import { Intersection } from "./Intersection";
+import Unit from "../../util/Unit.js";
+import { Road } from "./Road.js";
+import { Intersection } from "./Intersection.js";
 
 const DEFAULT_ROAD_OPTIONS = {
     laneWidth: 3.5,

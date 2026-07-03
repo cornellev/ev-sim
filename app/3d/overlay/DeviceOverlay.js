@@ -201,15 +201,26 @@ function DeviceSettingField({ label, value, path, onChange }) {
     );
 }
 
-export function DeviceOverlay({ device, data, onBack, panelClassName = "", visible = true }) {
-    const [settings, setSettings] = useState(device?.settings ?? {});
+export function DeviceOverlay({
+    device,
+    data,
+    onBack,
+    onDeviceEnabledChange,
+    onDeviceSettingsChange,
+    panelClassName = "",
+    visible = true,
+}) {
+    const [settingsState, setSettingsState] = useState(() => ({
+        device,
+        settings: device?.settings ?? {},
+    }));
     const [collapsed, setCollapsed] = useState(false);
-    const [enabled, setEnabled] = useState(Boolean(device?.enabled));
-
-    useEffect(() => {
-        setSettings(device?.settings ?? {});
-        setEnabled(Boolean(device?.enabled));
-    }, [device]);
+    const [enabledState, setEnabledState] = useState(() => ({
+        device,
+        enabled: Boolean(device?.enabled),
+    }));
+    const settings = settingsState.device === device ? settingsState.settings : device?.settings ?? {};
+    const enabled = enabledState.device === device ? enabledState.enabled : Boolean(device?.enabled);
 
     const controls = useMemo(() => {
         const settingsRef = data?.settings?.();
@@ -222,11 +233,14 @@ export function DeviceOverlay({ device, data, onBack, panelClassName = "", visib
     if (!device) return null;
 
     const handleChange = (path, newValue) => {
-        setSettings((previous) => {
-            const next = updateSettingsAtPath(previous, path, newValue);
-            device.settings = next;
-            return next;
-        });
+        const next = updateSettingsAtPath(settings, path, newValue);
+        setSettingsState({ device, settings: next });
+
+        if (onDeviceSettingsChange) {
+            onDeviceSettingsChange(next);
+        } else {
+            device.setSettings?.(next);
+        }
     };
 
     return (
@@ -268,8 +282,12 @@ export function DeviceOverlay({ device, data, onBack, panelClassName = "", visib
                         className="flex w-full items-center justify-between gap-2 rounded-lg border border-zinc-700/80 bg-zinc-900/85 px-2 py-1.5 text-left transition-colors hover:bg-zinc-800/90"
                         onClick={() => {
                             const next = !enabled;
-                            setEnabled(next);
-                            device.enabled = next;
+                            setEnabledState({ device, enabled: next });
+                            if (onDeviceEnabledChange) {
+                                onDeviceEnabledChange(next);
+                            } else {
+                                device.setEnabled?.(next);
+                            }
                         }}
                     >
                         <div>

@@ -1,6 +1,8 @@
 # Simulation
 
-The simulation surface is the Three.js mode rendered by `app/3d/Scene.js`. Press `Escape` in the app and choose the 3D scene from the menu.
+The simulation workspace is the Three.js mode where vehicles, sensors, and physics run. Open it from the app menu (`Escape` → **Simulation**).
+
+For authoring static world content — roads, buildings, props, geographic imports — use the [Environment Editor](environment-editor.md) instead.
 
 ## Startup Flow
 
@@ -17,6 +19,11 @@ flowchart LR
 
 `TotalScene` creates a `Data` object, assigns the key/mouse managers and Three.js references, configures `SimulationEngine`, sets up vehicles, then calls `setupIGVC`.
 
+The active setup path depends on `mode` (`app/3d/viewState.js`):
+
+- `THREE_D_MODES.SIMULATION` — `setupIGVC()` for vehicle/sensor runtime.
+- `THREE_D_MODES.ENVIRONMENT` — `setupEnvironmentRuntime()` for environment authoring, earth import services, and baking.
+
 Mini scenarios are imported in `app/3d/Scene.js` and can be selected by the `?mini=` query path in code, but that path is currently commented out. The default active scene setup is `setupIGVC`.
 
 ## Data Registries
@@ -30,6 +37,8 @@ Mini scenarios are imported in `app/3d/Scene.js` and can be selected by the `?mi
 - `physics()` for physics integration.
 - `simulation()` for the simulation engine.
 - `client()` for orchestrator topic integration.
+- `environment()` for the environment editor container (environment mode only).
+- `earthTilesManager()` / `earthImportController()` for Earth Import (environment mode only).
 
 ## Simulation Engine
 
@@ -40,6 +49,7 @@ Mini scenarios are imported in `app/3d/Scene.js` and can be selected by the `?mi
 - Real-time vs deterministic progression.
 - Speed scaling.
 - Module toggles for physics, vehicles, sensors, controls, rendering, environment, and scripting.
+- Per-frame `earthTilesManager.update()` while Google 3D Tiles are loaded in environment mode.
 
 The bottom simulation menu in `app/3d/overlay/SimulationMenu.js` exposes some of these controls.
 
@@ -54,3 +64,16 @@ Current orchestrator control input is handled in `app/3d/Scene.js`: updates on `
 CommonRoad scenarios should be placed under `public/scenarios/` locally. They are loaded through `TrafficScenario.load(...)` with browser paths such as `/scenarios/recorded/NGSIM/Peachtree/USA_Peach-1_1_T-1.xml`.
 
 Downloaded scenario folders should stay out of git.
+
+## Environment vs Simulation
+
+Both workspaces share `app/3d/Scene.js` and the `Data` object, but they initialize different runtime paths:
+
+| | Simulation | Environment Editor |
+|---|------------|-------------------|
+| Entry | `Escape` → Simulation | `Escape` → Environment Editor |
+| Vehicles/sensors | Enabled (IGVC setup) | Disabled |
+| Primary UI | `SimulationChrome` | `EnvironmentEditorChrome` |
+| Authoring | Not the focus | `EnvironmentDocument`, map tools, earth import |
+
+See [Environment Editor](environment-editor.md) for editor modes, baking, and the document model.

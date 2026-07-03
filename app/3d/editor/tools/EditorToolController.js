@@ -12,6 +12,7 @@ export class EditorToolController {
             if (typeof window === "undefined") return;
             window.__fusionEnvironmentEditorConsumesEscape = Boolean(
                 snapshot.editorMode === EDITOR_MODES.MAP
+                || snapshot.editorMode === EDITOR_MODES.EARTH_IMPORT
                 || snapshot.selection
                 || snapshot.activeTool !== EDITOR_TOOLS.SELECT,
             );
@@ -34,7 +35,8 @@ export class EditorToolController {
 
     handleEscape() {
         const snapshot = this.editor.snapshot();
-        if (snapshot.editorMode === EDITOR_MODES.MAP) return;
+        if (snapshot.editorMode === EDITOR_MODES.MAP
+            || snapshot.editorMode === EDITOR_MODES.EARTH_IMPORT) return;
 
         if (snapshot.activeTool !== EDITOR_TOOLS.SELECT) {
             this.editor.setActiveTool(EDITOR_TOOLS.SELECT);

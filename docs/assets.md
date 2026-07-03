@@ -45,3 +45,7 @@ Before committing new assets, check whether they are:
 - Large enough to slow down clone/build workflows.
 
 If so, document the setup path here instead of committing the files.
+
+## API Keys and Secrets
+
+Do not commit API keys. Earth Import reads the Google Maps key from `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` in your local `.env.local` file. See [Earth Import](earth-import.md).

@@ -1029,3 +1029,32 @@ test("loadScript resolves URL JSON with an injected fetcher", async () => {
 
     assert.deepEqual(script.run(), { result: 2 });
 });
+
+test("loadScript default fetch preserves global binding", async () => {
+    resetRegistry();
+
+    const manager = new ScriptManager();
+    manager.addUnit(new ConstBlock("two", 2));
+    manager.addUnit(new OutputBlock("output", "result"));
+    manager.connectUnits("two", "out", "output", "output");
+    const artifact = manager.compile("url-script");
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = function fetchWithStrictThis(url) {
+        assert.equal(this, globalThis);
+        assert.equal(url, "https://example.test/default-fetch-script.json");
+        return Promise.resolve({
+            ok: true,
+            json: async () => artifact
+        });
+    };
+
+    try {
+        const script = await loadScript("https://example.test/default-fetch-script.json", {
+            registerBuiltIns: false,
+        });
+        assert.deepEqual(script.run(), { result: 2 });
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+});

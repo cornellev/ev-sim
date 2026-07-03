@@ -5,6 +5,29 @@ export const MAX_INTERSECTION_DEGREE = 4;
 export const MIN_BUILDING_DIMENSION = 2;
 export const DEFAULT_INTERSECTION_INSET = 5;
 
+function roadEdgeKey(startNodeId, endNodeId) {
+    return startNodeId < endNodeId
+        ? `${startNodeId}:${endNodeId}`
+        : `${endNodeId}:${startNodeId}`;
+}
+
+export function buildRoadDegreeMap(document) {
+    const degreeMap = new Map();
+
+    for (const edge of document.roads.edges) {
+        degreeMap.set(edge.startNodeId, (degreeMap.get(edge.startNodeId) ?? 0) + 1);
+        degreeMap.set(edge.endNodeId, (degreeMap.get(edge.endNodeId) ?? 0) + 1);
+    }
+
+    return degreeMap;
+}
+
+export function buildRoadEdgeKeySet(document) {
+    return new Set(
+        document.roads.edges.map((edge) => roadEdgeKey(edge.startNodeId, edge.endNodeId)),
+    );
+}
+
 /**
  * Resolve a road node from either an EnvironmentDocument instance or a plain snapshot.
  * @param {import("./EnvironmentDocument.js").EnvironmentDocument | ReturnType<import("./EnvironmentDocument.js").EnvironmentDocument["snapshot"]>} document
@@ -76,9 +99,7 @@ export function dedupeRoadNodes(document) {
  * @param {string} nodeId
  */
 export function getNodeDegree(document, nodeId) {
-    return document.roads.edges.filter(
-        (edge) => edge.startNodeId === nodeId || edge.endNodeId === nodeId,
-    ).length;
+    return buildRoadDegreeMap(document).get(nodeId) ?? 0;
 }
 
 export function isIntersectionNode(document, node) {
@@ -96,8 +117,10 @@ export function canMoveNode(document, nodeId) {
 }
 
 export function refreshNodeKinds(document) {
+    const degreeMap = buildRoadDegreeMap(document);
+
     for (const node of document.roads.nodes) {
-        const degree = getNodeDegree(document, node.id);
+        const degree = degreeMap.get(node.id) ?? 0;
         if (degree > 1 || node.kind === "intersection") {
             node.kind = "intersection";
         } else if (!node.kind) {
@@ -358,12 +381,15 @@ export function addRoadEdge(document, startNodeId, endNodeId, options = {}, runt
         return { ok: false, error: "Road edge cannot connect a node to itself." };
     }
 
-    if (hasEdgeBetween(document, startNodeId, endNodeId)) {
+    const edgeKey = roadEdgeKey(startNodeId, endNodeId);
+    const edgeKeySet = runtime.edgeKeySet ?? null;
+    if (edgeKeySet ? edgeKeySet.has(edgeKey) : hasEdgeBetween(document, startNodeId, endNodeId)) {
         return { ok: false, error: "Road edge already exists between these nodes." };
     }
 
-    const startDegree = getNodeDegree(document, startNodeId);
-    const endDegree = getNodeDegree(document, endNodeId);
+    const degreeMap = runtime.degreeMap ?? null;
+    const startDegree = degreeMap ? (degreeMap.get(startNodeId) ?? 0) : getNodeDegree(document, startNodeId);
+    const endDegree = degreeMap ? (degreeMap.get(endNodeId) ?? 0) : getNodeDegree(document, endNodeId);
 
     if (startDegree >= MAX_INTERSECTION_DEGREE || endDegree >= MAX_INTERSECTION_DEGREE) {
         return {
@@ -384,7 +410,14 @@ export function addRoadEdge(document, startNodeId, endNodeId, options = {}, runt
     };
 
     document.roads.edges.push(edge);
-    refreshNodeKinds(document);
+    edgeKeySet?.add(edgeKey);
+    if (degreeMap) {
+        degreeMap.set(startNodeId, startDegree + 1);
+        degreeMap.set(endNodeId, endDegree + 1);
+    }
+    if (runtime.refreshKinds !== false) {
+        refreshNodeKinds(document);
+    }
     if (runtime.notify !== false) {
         document.notify();
     }

@@ -110,6 +110,7 @@ export class Environment {
                 hiddenEntityIds: [...editorSnapshot.hiddenEntityIds],
                 editorMode: editorSnapshot.editorMode,
                 map: editorSnapshot.map,
+                earthImport: editorSnapshot.earthImport,
             },
             sky: this.skyState.toManifest(),
         };

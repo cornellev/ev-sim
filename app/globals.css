@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "leaflet/dist/leaflet.css";
 
 :root {
   --background: #ffffff;
@@ -217,6 +218,42 @@ body {
   .scene-loading-pulse {
     animation: none;
   }
+}
+
+.earth-import-map,
+.earth-import-map.leaflet-container {
+  width: 100%;
+  min-height: 200px;
+}
+
+.earth-import-map .leaflet-container,
+.earth-import-map.leaflet-container {
+  background: #18181b;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+  height: 100%;
+  width: 100%;
+}
+
+/* Leaflet tiles break inside transformed ancestors (flyout enter animation). */
+.earth-import-map-shell {
+  transform: none !important;
+  filter: none;
+}
+
+.earth-import-map .leaflet-control-attribution {
+  background: rgb(9 9 11 / 0.82);
+  color: #a1a1aa;
+  font-size: 9px;
+  border-radius: 6px 0 0 0;
+}
+
+.earth-import-map .leaflet-control-attribution a {
+  color: #7dd3fc;
+}
+
+.earth-import-map--draw-mode .leaflet-container,
+.earth-import-map--drawing {
+  cursor: crosshair;
 }
 
 .hide-scrollbar {

@@ -3,6 +3,7 @@ import { isCompiledArtifact, isEditorDocument, normalizeScriptDocument } from ".
 import { getScriptDocument } from "./ScriptStorage.js";
 import { ScriptManager } from "./ScriptManager.js";
 import { SignalStore } from "./runtime/SignalStore.js";
+import { defaultFetch } from "../util/Fetch.js";
 
 function isPlainObject(value) {
     return Boolean(value)
@@ -42,7 +43,7 @@ async function maybeRegisterBlocks(options = {}) {
 }
 
 async function fetchJson(source, options = {}) {
-    const fetcher = options.fetcher || globalThis.fetch;
+    const fetcher = options.fetcher || defaultFetch;
     if (typeof fetcher !== "function") {
         throw new Error("Cannot load script from URL because fetch is not available.");
     }

@@ -40,6 +40,8 @@ import { BakePath } from "./environment/visualization/BakePath";
 import { createDefaultBakeRunConfig } from "./environment/visualization/BakeRunConfig";
 import { SplatAccumulator } from "./environment/visualization/SplatAccumulator";
 import { EnvironmentSkyManager } from "./skybox/EnvironmentSkyManager";
+import { EarthTilesManager } from "./earth/EarthTilesManager";
+import { EarthImportController } from "./earth/EarthImportController";
 import { SceneLoadingScreen } from "./overlay/SceneLoadingScreen";
 import { EditorToolController } from "./editor/tools/EditorToolController";
 
@@ -468,6 +470,21 @@ async function setupEnvironmentRuntime(data, scene, camera, renderer) {
         camera,
         renderer,
     }));
+
+    const earthTilesManager = new EarthTilesManager({
+        scene,
+        camera,
+        renderer,
+        invalidate: () => data.simulation()?.render?.(),
+    });
+    data.setEarthTilesManager(earthTilesManager);
+    const earthImportController = new EarthImportController(data, earthTilesManager);
+    data.setEarthImportController(earthImportController);
+
+    const editor = data.editor();
+    editor.setEarthImportModeEnterHandler(() => earthImportController.onEnterMode());
+    editor.setEarthImportModeExitHandler(() => earthImportController.onExitMode());
+
     setupBaking(data, scene);
     sim.startLoop();
     sim.pause();
@@ -540,9 +557,6 @@ export default function TotalScene({ mode = THREE_D_MODES.SIMULATION }) {
     const [loadPhase, setLoadPhase] = useState("atmosphere");
 
     useEffect(() => {
-        setSceneReady(false);
-        setLoadPhase("atmosphere");
-        setSceneData(null);
         const scene = new THREE.Scene();
         const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
         const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -638,6 +652,10 @@ export default function TotalScene({ mode = THREE_D_MODES.SIMULATION }) {
 
             data.simulation().dispose();
             data.environment().dispose();
+            data.earthImportController()?.dispose?.();
+            data.setEarthImportController(null);
+            data.earthTilesManager()?.dispose?.();
+            data.setEarthTilesManager(null);
             data.skyManager()?.dispose?.();
             data.setSkyManager(null);
 

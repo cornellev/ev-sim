@@ -71,6 +71,8 @@ export class EnvironmentRegistry {
         this.chunkManager = chunkManager;
         this.entities = new Map();
         this.subscribers = new Set();
+        this.batchDepth = 0;
+        this.pendingNotify = false;
     }
 
     subscribe(callback) {
@@ -83,8 +85,26 @@ export class EnvironmentRegistry {
     }
 
     notify() {
+        if (this.batchDepth > 0) {
+            this.pendingNotify = true;
+            return;
+        }
+
         const snapshot = this.snapshot();
         this.subscribers.forEach((callback) => callback(snapshot));
+    }
+
+    batch(callback) {
+        this.batchDepth += 1;
+        try {
+            return callback();
+        } finally {
+            this.batchDepth -= 1;
+            if (this.batchDepth === 0 && this.pendingNotify) {
+                this.pendingNotify = false;
+                this.notify();
+            }
+        }
     }
 
     snapshot() {

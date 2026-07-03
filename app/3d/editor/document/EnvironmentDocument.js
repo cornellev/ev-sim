@@ -2,6 +2,9 @@
  * @typedef {{ id: string, x: number, z: number, kind?: 'intersection' | 'endpoint' }} RoadNode
  * @typedef {{ id: string, startNodeId: string, endNodeId: string, bidirectional?: boolean, width?: number, laneCount?: number, startArm?: { x: number, z: number }, endArm?: { x: number, z: number } }} RoadEdge
  * @typedef {{ id: string, type: string, x: number, z: number, dir?: number, tags?: string[] }} FeatureRecord
+ * @typedef {{ lat: number, lng: number }} EarthAnchor
+ * @typedef {{ north: number, south: number, east: number, west: number }} EarthBounds
+ * @typedef {{ anchor: EarthAnchor, bounds: EarthBounds, tileProvider: string, roadProvider: string, importedLayerIds: string[], importedAt: string|null }} EarthSourceRecord
  */
 
 const DEFAULT_ROAD_EDGE = Object.freeze({
@@ -44,6 +47,8 @@ export class EnvironmentDocument {
         this.features = Array.isArray(options.features)
             ? options.features.map(cloneFeature)
             : [];
+        /** @type {EarthSourceRecord|null} */
+        this.earth = options.earth ? cloneEarthSource(options.earth) : null;
         this.subscribers = new Set();
     }
 
@@ -57,7 +62,50 @@ export class EnvironmentDocument {
             },
             buildings: this.buildings.map(cloneBuilding),
             features: this.features.map(cloneFeature),
+            earth: this.earth ? cloneEarthSource(this.earth) : null,
         };
+    }
+
+    /**
+     * Restore a prior snapshot produced by {@link snapshot}.
+     * @param {ReturnType<EnvironmentDocument["snapshot"]>} manifest
+     */
+    restoreSnapshot(manifest) {
+        this.environmentId = manifest.environmentId ?? this.environmentId;
+        this.chunkSize = manifest.chunkSize ?? this.chunkSize;
+        this.roads = {
+            nodes: Array.isArray(manifest.roads?.nodes) ? manifest.roads.nodes.map(cloneNode) : [],
+            edges: Array.isArray(manifest.roads?.edges) ? manifest.roads.edges.map(cloneEdge) : [],
+        };
+        this.buildings = Array.isArray(manifest.buildings)
+            ? manifest.buildings.map(cloneBuilding)
+            : [];
+        this.features = Array.isArray(manifest.features)
+            ? manifest.features.map(cloneFeature)
+            : [];
+        this.earth = manifest.earth ? cloneEarthSource(manifest.earth) : null;
+        this.notify();
+    }
+
+    /**
+     * @param {Partial<EarthSourceRecord>} source
+     */
+    setEarthSource(source) {
+        this.earth = cloneEarthSource({
+            anchor: source.anchor ?? { lat: 0, lng: 0 },
+            bounds: source.bounds ?? { north: 0, south: 0, east: 0, west: 0 },
+            tileProvider: source.tileProvider ?? "google-photorealistic",
+            roadProvider: source.roadProvider ?? "overpass",
+            importedLayerIds: source.importedLayerIds ?? [],
+            importedAt: source.importedAt ?? null,
+        });
+        this.notify();
+    }
+
+    clearEarthSource() {
+        if (!this.earth) return;
+        this.earth = null;
+        this.notify();
     }
 
     subscribe(callback) {
@@ -143,6 +191,29 @@ function cloneFeature(feature) {
         z: feature.z,
         dir: feature.dir ?? 0,
         tags: [...(feature.tags ?? [])],
+    };
+}
+
+/**
+ * @param {Partial<EarthSourceRecord>|null|undefined} earth
+ * @returns {EarthSourceRecord}
+ */
+function cloneEarthSource(earth) {
+    return {
+        anchor: {
+            lat: Number(earth?.anchor?.lat) || 0,
+            lng: Number(earth?.anchor?.lng) || 0,
+        },
+        bounds: {
+            north: Number(earth?.bounds?.north) || 0,
+            south: Number(earth?.bounds?.south) || 0,
+            east: Number(earth?.bounds?.east) || 0,
+            west: Number(earth?.bounds?.west) || 0,
+        },
+        tileProvider: earth?.tileProvider ?? "google-photorealistic",
+        roadProvider: earth?.roadProvider ?? "overpass",
+        importedLayerIds: [...(earth?.importedLayerIds ?? [])],
+        importedAt: earth?.importedAt ?? null,
     };
 }
 

@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { GLSLObject, Struct } from "./Object";
+import { GLSLObject, Struct } from "./Object.js";
 
 export class Triangle extends GLSLObject {
     constructor(a, b, c) {

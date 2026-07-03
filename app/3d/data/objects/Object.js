@@ -1,6 +1,6 @@
-import { isVector3 } from "../../../util/Checks";
-import { keys } from "../../../util/Keys";
-import { getDefaultTagId, resolveTagId } from "../ObjectTagRegistry";
+import { isVector3 } from "../../../util/Checks.js";
+import { keys } from "../../../util/Keys.js";
+import { getDefaultTagId, resolveTagId } from "../ObjectTagRegistry.js";
 
 import * as THREE from "three";
 

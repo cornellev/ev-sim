@@ -262,6 +262,8 @@ export class SimulationEngine {
     render() {
         if (!this.scene || !this.camera || !this.renderer) return;
 
+        this.data.earthTilesManager?.()?.update?.();
+
         if (this.data.skyManager?.()?.render?.()) {
             this.frames += 1;
             return;

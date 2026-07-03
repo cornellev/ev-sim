@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
     FaCube,
+    FaGlobeAmericas,
     FaLayerGroup,
     FaMap,
     FaMousePointer,
@@ -90,6 +91,7 @@ export function EnvironmentEditorMenu({ data }) {
     const setTool = (tool) => data?.editor?.()?.setActiveTool?.(tool);
     const setPlacementAsset = (asset) => data?.editor?.()?.setPlacementAsset?.(asset);
     const enterMapMode = () => data?.editor?.()?.setEditorMode?.(EDITOR_MODES.MAP);
+    const enterEarthImportMode = () => data?.editor?.()?.setEditorMode?.(EDITOR_MODES.EARTH_IMPORT);
 
     return (
         <div className="fixed bottom-0 left-0 right-0 z-20 px-3 pb-3 pointer-events-auto">
@@ -171,6 +173,15 @@ export function EnvironmentEditorMenu({ data }) {
                                         <FaMap className="h-3 w-3" />
                                         Map Mode
                                     </MenuButton>
+                                    <MenuButton
+                                        compact
+                                        className="justify-start"
+                                        onClick={enterEarthImportMode}
+                                        title="Import Google Earth tiles and road network"
+                                    >
+                                        <FaGlobeAmericas className="h-3 w-3" />
+                                        Earth Import
+                                    </MenuButton>
                                 </PanelSection>
                             </FlyoutPanel>
                         )}
@@ -233,6 +244,14 @@ export function EnvironmentEditorMenu({ data }) {
                             ariaLabel="Atmosphere"
                         >
                             <SkyToolIcon className="h-3.5 w-3.5" />
+                        </MenuButton>
+                        <MenuButton
+                            iconOnly
+                            onClick={enterEarthImportMode}
+                            title="Open Earth import mode"
+                            ariaLabel="Earth import mode"
+                        >
+                            <FaGlobeAmericas className="h-3 w-3" />
                         </MenuButton>
                         <MenuButton
                             iconOnly

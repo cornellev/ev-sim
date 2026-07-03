@@ -58,28 +58,41 @@ function statusTone(status) {
 }
 
 function useBakeSnapshot(data) {
-    const [snapshot, setSnapshot] = useState(() => data?.baking?.()?.getSnapshot?.() ?? null);
+    const harness = data?.baking?.();
+    const [snapshotState, setSnapshotState] = useState(() => ({
+        harness,
+        snapshot: harness?.getSnapshot?.() ?? null,
+    }));
 
     useEffect(() => {
-        const harness = data?.baking?.();
         if (!harness?.subscribe) {
-            setSnapshot(null);
             return undefined;
         }
 
-        return harness.subscribe(setSnapshot);
-    }, [data]);
+        return harness.subscribe((snapshot) => {
+            setSnapshotState({ harness, snapshot });
+        });
+    }, [harness]);
 
-    return snapshot;
+    if (!harness?.subscribe) return null;
+    if (snapshotState.harness !== harness) return harness.getSnapshot?.() ?? null;
+    return snapshotState.snapshot;
 }
 
 function useFrameObjectUrl(frame, options = {}) {
-    const [url, setUrl] = useState(null);
+    const [urlState, setUrlState] = useState({
+        frame: null,
+        optionKey: "",
+        signature: null,
+        url: null,
+    });
     const signature = frame?.updatedAt ?? null;
+    const hasFrame = Boolean(frame?.data && frame.width && frame.height);
+    const frameKey = hasFrame ? frame : null;
+    const optionKey = `${options.flipY ?? "auto"}:${options.linearToSrgb ?? "auto"}`;
 
     useEffect(() => {
-        if (!frame?.data || !frame.width || !frame.height) {
-            setUrl(null);
+        if (!hasFrame) {
             return undefined;
         }
 
@@ -91,7 +104,6 @@ function useFrameObjectUrl(frame, options = {}) {
         const context = canvas.getContext("2d");
 
         if (!context) {
-            setUrl(null);
             return undefined;
         }
 
@@ -105,16 +117,26 @@ function useFrameObjectUrl(frame, options = {}) {
         canvas.toBlob((blob) => {
             if (!blob || revoked) return;
             objectUrl = URL.createObjectURL(blob);
-            setUrl(objectUrl);
+            setUrlState({
+                frame: frameKey,
+                optionKey,
+                signature,
+                url: objectUrl,
+            });
         }, "image/png");
 
         return () => {
             revoked = true;
             if (objectUrl) URL.revokeObjectURL(objectUrl);
         };
-    }, [frame, signature, options.flipY, options.linearToSrgb]);
+    }, [frame, frameKey, hasFrame, optionKey, signature, options.flipY, options.linearToSrgb]);
 
-    return url;
+    return frameKey
+        && urlState.frame === frameKey
+        && urlState.signature === signature
+        && urlState.optionKey === optionKey
+        ? urlState.url
+        : null;
 }
 
 function Metric({ label, value, tone = "default" }) {
@@ -408,7 +430,10 @@ function Diagnostics({ snapshot }) {
 export function BakeProgressOverlay({ data }) {
     const snapshot = useBakeSnapshot(data);
     const [drawerOpen, setDrawerOpen] = useState(true);
-    const [hiddenAfterStop, setHiddenAfterStop] = useState(false);
+    const [hiddenStopToken, setHiddenStopToken] = useState(null);
+    const stopToken = snapshot?.status === "stopped"
+        ? `${snapshot.runId || "unknown"}:${snapshot.finishedAt ?? snapshot.updatedAt ?? ""}`
+        : null;
 
     const controls = useMemo(() => {
         const settings = data?.settings?.();
@@ -425,15 +450,13 @@ export function BakeProgressOverlay({ data }) {
     }, [controls]);
 
     useEffect(() => {
-        if (!snapshot) return undefined;
-        if (snapshot.status !== "stopped") {
-            setHiddenAfterStop(false);
-            return undefined;
-        }
+        if (!stopToken) return undefined;
 
-        const timeout = setTimeout(() => setHiddenAfterStop(true), 3500);
+        const timeout = setTimeout(() => setHiddenStopToken(stopToken), 3500);
         return () => clearTimeout(timeout);
-    }, [snapshot]);
+    }, [stopToken]);
+
+    const hiddenAfterStop = Boolean(stopToken && hiddenStopToken === stopToken);
 
     if (!snapshot || snapshot.status === "idle" || hiddenAfterStop) return null;
 

@@ -17,6 +17,14 @@ export default class Device extends Object {
         this.tags = [];
     }
 
+    setSettings(settings) {
+        this.settings = settings;
+    }
+
+    setEnabled(enabled) {
+        this.enabled = Boolean(enabled);
+    }
+
     getPosition() {
         const localPosition = new Vector3().copy(this.settings.position || new Vector3(0, 0, 0));
         if (!this.parentVehicle) {

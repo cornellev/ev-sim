@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { DeviceOverlay } from "./DeviceOverlay";
 
+const EMPTY_VEHICLES = [];
+
 function getVehicleName(vehicle, index) {
     if (!vehicle) return `Vehicle ${index + 1}`;
     if (vehicle.name && String(vehicle.name).trim()) return vehicle.name;
@@ -15,8 +17,9 @@ export function VehicleOverlay({ data }) {
     const [selectedVehicleIndex, setSelectedVehicleIndex] = useState(null);
     const [selectedDeviceRef, setSelectedDeviceRef] = useState(null);
     const [deviceOverlayVisible, setDeviceOverlayVisible] = useState(false);
+    const [, refreshDevices] = useState(0);
 
-    const vehicles = data?.vehicles?.()?.vehicles ?? [];
+    const vehicles = useMemo(() => data?.vehicles?.()?.vehicles ?? EMPTY_VEHICLES, [data]);
 
     const controls = useMemo(() => {
         const settings = data?.settings?.();
@@ -27,16 +30,6 @@ export function VehicleOverlay({ data }) {
     }, [data]);
 
     useEffect(() => {
-        setExpandedVehicles((previous) => {
-            const next = { ...previous };
-            vehicles.forEach((_, index) => {
-                if (typeof next[index] === "undefined") next[index] = true;
-            });
-            return next;
-        });
-    }, [vehicles]);
-
-    useEffect(() => {
         if (!selectedDeviceRef) return;
 
         const stillExists =
@@ -44,10 +37,10 @@ export function VehicleOverlay({ data }) {
             selectedDeviceRef.deviceIndex < (vehicles[selectedDeviceRef.vehicleIndex]?.devices?.length ?? 0);
 
         if (!stillExists) {
-            setDeviceOverlayVisible(false);
             const timeout = setTimeout(() => {
+                setDeviceOverlayVisible(false);
                 setSelectedDeviceRef(null);
-            }, 180);
+            }, 0);
 
             return () => clearTimeout(timeout);
         }
@@ -79,7 +72,7 @@ export function VehicleOverlay({ data }) {
                     <div className="max-h-[58vh] space-y-1 overflow-auto pr-1">
                         {vehicles.map((vehicle, vehicleIndex) => {
                             const vehicleName = getVehicleName(vehicle, vehicleIndex);
-                            const isExpanded = Boolean(expandedVehicles[vehicleIndex]);
+                            const isExpanded = expandedVehicles[vehicleIndex] ?? true;
                             const isVehicleSelected = selectedVehicleIndex === vehicleIndex;
                             const devices = vehicle.devices ?? [];
 
@@ -176,6 +169,14 @@ export function VehicleOverlay({ data }) {
                         setTimeout(() => {
                             setSelectedDeviceRef(null);
                         }, 180);
+                    }}
+                    onDeviceEnabledChange={(enabled) => {
+                        selectedDevice.setEnabled?.(enabled);
+                        refreshDevices((revision) => revision + 1);
+                    }}
+                    onDeviceSettingsChange={(settings) => {
+                        selectedDevice.setSettings?.(settings);
+                        refreshDevices((revision) => revision + 1);
                     }}
                     panelClassName="left-[306px]"
                     visible={deviceOverlayVisible}

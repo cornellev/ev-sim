@@ -3,6 +3,8 @@
 import { BakeProgressOverlay } from "./BakeProgressOverlay";
 import { ChunkOutlines } from "./ChunkOutlines";
 import { EnvironmentEditorMenu } from "./EnvironmentEditorMenu";
+import { EarthImportBoundsOutline } from "./earth/EarthImportBoundsOutline";
+import { EarthImportModeChrome } from "./earth/EarthImportModeChrome";
 import { MapModeChrome } from "./map/MapModeChrome";
 import { ObjectInspector } from "./ObjectInspector";
 import { SceneHierarchy } from "./SceneHierarchy";
@@ -17,17 +19,21 @@ export function EnvironmentEditorChrome({ data }) {
 
     if (!data) return null;
 
-    const inMapMode = editorSnapshot?.editorMode === EDITOR_MODES.MAP;
+    const editorMode = editorSnapshot?.editorMode;
+    const inOverlayMode = editorMode === EDITOR_MODES.MAP
+        || editorMode === EDITOR_MODES.EARTH_IMPORT;
 
     return (
         <>
-            {!inMapMode && <ChunkOutlines data={data} />}
-            {!inMapMode && <SelectionVisualizer data={data} />}
-            {!inMapMode && <SceneHierarchy data={data} />}
-            {!inMapMode && <ObjectInspector data={data} />}
+            {!inOverlayMode && <ChunkOutlines data={data} />}
+            {!inOverlayMode && <SelectionVisualizer data={data} />}
+            {!inOverlayMode && <SceneHierarchy data={data} />}
+            {!inOverlayMode && <ObjectInspector data={data} />}
             <BakeProgressOverlay data={data} />
-            {!inMapMode && <EnvironmentEditorMenu data={data} />}
+            {!inOverlayMode && <EnvironmentEditorMenu data={data} />}
             <MapModeChrome data={data} />
+            <EarthImportBoundsOutline data={data} />
+            <EarthImportModeChrome data={data} />
         </>
     );
 }
