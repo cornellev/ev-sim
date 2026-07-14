@@ -211,7 +211,7 @@ export function EnvironmentSkyPanel({ data }) {
                         active={snapshot.mode === SKY_MODES.TAKRAM}
                         onClick={() => setMode(SKY_MODES.TAKRAM)}
                     >
-                        Takram Atmosphere
+                        Atmosphere
                     </SkyModeButton>
                     <SkyModeButton
                         active={snapshot.mode === SKY_MODES.IMAGE}
@@ -230,7 +230,7 @@ export function EnvironmentSkyPanel({ data }) {
                         checked={snapshot.takram.cloudsEnabled}
                         onChange={(cloudsEnabled) => updateTakram({ cloudsEnabled })}
                         icon={<SkyToolIcon className="h-3 w-3" />}
-                        hint="Clouds and aerial perspective are default"
+                        hint=""
                     />
                     <RangeControl
                         label="Cloud coverage"
@@ -239,7 +239,7 @@ export function EnvironmentSkyPanel({ data }) {
                         max={1}
                         step={0.01}
                         display={`${Math.round(snapshot.takram.cloudCoverage * 100)}%`}
-                        helper="Higher values thicken the Takram cloud layer."
+                        helper=""
                         onChange={(cloudCoverage) => updateTakram({ cloudCoverage })}
                     />
                     <div className="grid grid-cols-2 gap-2">
@@ -271,7 +271,7 @@ export function EnvironmentSkyPanel({ data }) {
                         max={23.99}
                         step={0.05}
                         display={formatTime(snapshot.takram.timeOfDay)}
-                        helper="Moves sun, moon, sky lighting, and cloud illumination together."
+                        helper=""
                         onChange={(timeOfDay) => updateTakram({ timeOfDay })}
                     />
                     <div className="grid grid-cols-2 gap-1.5">
@@ -279,13 +279,13 @@ export function EnvironmentSkyPanel({ data }) {
                             label="Haze"
                             checked={snapshot.takram.haze}
                             onChange={(haze) => updateTakram({ haze })}
-                            hint="Low-altitude atmospheric depth"
+                            hint=""
                         />
                         <MenuToggle
                             label="Light shafts"
                             checked={snapshot.takram.lightShafts}
                             onChange={(lightShafts) => updateTakram({ lightShafts })}
-                            hint="More dramatic, more expensive"
+                            hint=""
                         />
                     </div>
                 </PanelSection>

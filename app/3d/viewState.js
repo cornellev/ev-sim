@@ -1,8 +1,9 @@
-/** @typedef {"scripting" | "3d"} AppView */
+/** @typedef {"scripting" | "bindings" | "3d"} AppView */
 /** @typedef {"simulation" | "environment"} ThreeDMode */
 
 export const APP_VIEWS = {
     SCRIPTING: "scripting",
+    BINDINGS: "bindings",
     THREE_D: "3d",
 };
 
@@ -23,6 +24,7 @@ export function isThreeDMode(mode) {
  */
 export function getActiveWorkspaceKey(view, threeDMode) {
     if (view === APP_VIEWS.SCRIPTING) return APP_VIEWS.SCRIPTING;
+    if (view === APP_VIEWS.BINDINGS) return APP_VIEWS.BINDINGS;
     if (view === APP_VIEWS.THREE_D) return `3d:${threeDMode}`;
     return view;
 }
@@ -34,6 +36,10 @@ export function getActiveWorkspaceKey(view, threeDMode) {
 export function parseWorkspaceKey(workspaceKey) {
     if (workspaceKey === APP_VIEWS.SCRIPTING) {
         return { view: APP_VIEWS.SCRIPTING, threeDMode: null };
+    }
+
+    if (workspaceKey === APP_VIEWS.BINDINGS) {
+        return { view: APP_VIEWS.BINDINGS, threeDMode: null };
     }
 
     if (workspaceKey.startsWith("3d:")) {

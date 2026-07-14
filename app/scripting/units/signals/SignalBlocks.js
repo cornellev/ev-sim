@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { BlockOutput, reregister, storeData, UnitBlock } from "../../ScriptManager";
+import { SIGNAL_NAMESPACES, SIGNAL_PATHS } from "../../runtime/SignalPaths";
 import { getByPath, setByPath } from "../../runtime/SignalStore";
 import Unit from "../Unit";
 import { normalizeType, parseValueByType, SUPPORTED_TYPES } from "../program/ProgramIO";
@@ -223,7 +224,7 @@ export function ReadSignalUnit(props) {
             defaults={ReadSignalBlock.defaults}
             normalize={(data) => ({
                 ...data,
-                path: pathOrFallback(data.path, "vehicle.ego.pose"),
+                path: pathOrFallback(data.path, SIGNAL_PATHS.VEHICLE_EGO_POSE),
                 type: normalizeType(data.type || "json"),
                 staleAfter: data.staleAfter ?? "",
                 fallback: data.fallback ?? ""
@@ -237,7 +238,7 @@ export function ReadSignalUnit(props) {
         >
             {(data, commit) => (
                 <>
-                    <TextField label="Path" value={data.path} onChange={(path) => commit({ path })} placeholder="topics./ackdrive" />
+                    <TextField label="Path" value={data.path} onChange={(path) => commit({ path })} placeholder={SIGNAL_PATHS.ACKDRIVE_TOPIC} />
                     <SelectField label="Value type" value={typedOutput(data.type)} onChange={(type) => commit({ type })} options={SUPPORTED_TYPES} />
                     <TextField label="Stale after seconds" value={data.staleAfter} onChange={(staleAfter) => commit({ staleAfter })} placeholder="0.5" />
                     <TextField label="Fallback" value={data.fallback} onChange={(fallback) => commit({ fallback })} />
@@ -248,7 +249,7 @@ export function ReadSignalUnit(props) {
 }
 
 export class ReadSignalBlock extends ConfiguredBlock {
-    static defaults = { path: "vehicle.ego.pose", type: "json", staleAfter: "", fallback: "" };
+    static defaults = { path: SIGNAL_PATHS.VEHICLE_EGO_POSE, type: "json", staleAfter: "", fallback: "" };
 
     register() {
         this.state = this.config();
@@ -280,7 +281,7 @@ export function WriteSignalUnit(props) {
             defaults={WriteSignalBlock.defaults}
             normalize={(data) => ({
                 ...data,
-                path: pathOrFallback(data.path, "debug.value"),
+                path: pathOrFallback(data.path, SIGNAL_PATHS.DEBUG_VALUE),
                 type: normalizeType(data.type || "json"),
                 source: data.source || "script",
                 staleAfter: data.staleAfter ?? ""
@@ -301,7 +302,7 @@ export function WriteSignalUnit(props) {
 }
 
 export class WriteSignalBlock extends ConfiguredBlock {
-    static defaults = { path: "debug.value", type: "json", source: "script", staleAfter: "" };
+    static defaults = { path: SIGNAL_PATHS.DEBUG_VALUE, type: "json", source: "script", staleAfter: "" };
 
     register() {
         this.state = this.config();
@@ -335,7 +336,7 @@ export function SignalExistsUnit(props) {
 }
 
 export class SignalExistsBlock extends ConfiguredBlock {
-    static defaults = { path: "debug.value" };
+    static defaults = { path: SIGNAL_PATHS.DEBUG_VALUE };
 
     register() {
         this.state = this.config();
@@ -373,7 +374,7 @@ export function SignalAgeUnit(props) {
 }
 
 export class SignalAgeBlock extends ConfiguredBlock {
-    static defaults = { path: "debug.value", staleAfter: "" };
+    static defaults = { path: SIGNAL_PATHS.DEBUG_VALUE, staleAfter: "" };
 
     register() {
         this.state = this.config();
@@ -406,7 +407,7 @@ export function SignalChangedUnit(props) {
 }
 
 export class SignalChangedBlock extends ConfiguredBlock {
-    static defaults = { path: "debug.value" };
+    static defaults = { path: SIGNAL_PATHS.DEBUG_VALUE };
 
     register() {
         this.state = this.config();
@@ -541,7 +542,7 @@ export function StoreNamespaceUnit(props) {
                     label="Namespace"
                     value={data.namespace}
                     onChange={(namespace) => commit({ namespace })}
-                    options={["topics", "vehicle", "mission", "scenario", "debug", "simulation", "devices", "objects", "publish"]}
+                    options={Object.values(SIGNAL_NAMESPACES)}
                 />
             )}
         </ConfigUnit>
@@ -715,7 +716,7 @@ export function StagePublishUnit(props) {
                 <>
                     <TextField label="Topic" value={data.topic} onChange={(topic) => commit({ topic })} placeholder="/ackdrive_cmd" />
                     <TextField label="Message type" value={data.messageType} onChange={(messageType) => commit({ messageType })} />
-                    <TextField label="Store path" value={data.path} onChange={(path) => commit({ path })} placeholder="publish./ackdrive_cmd" />
+                    <TextField label="Store path" value={data.path} onChange={(path) => commit({ path })} placeholder={SIGNAL_PATHS.ACKDRIVE_COMMAND} />
                 </>
             )}
         </ConfigUnit>
@@ -878,7 +879,7 @@ export function VehicleSnapshotUnit(props) {
 }
 
 export class VehicleSnapshotBlock extends PathSnapshotBlock {
-    static defaults = { path: "vehicle.ego" };
+    static defaults = { path: SIGNAL_PATHS.VEHICLE_EGO };
 }
 
 export function VehiclePoseUnit(props) {
@@ -886,7 +887,7 @@ export function VehiclePoseUnit(props) {
 }
 
 export class VehiclePoseBlock extends PathSnapshotBlock {
-    static defaults = { path: "vehicle.ego.pose" };
+    static defaults = { path: SIGNAL_PATHS.VEHICLE_EGO_POSE };
     static outputLabel = "pose";
     static outputType = "pose3d";
 
@@ -907,7 +908,7 @@ export function VehicleVelocityUnit(props) {
 }
 
 export class VehicleVelocityBlock extends PathSnapshotBlock {
-    static defaults = { path: "vehicle.ego.velocity" };
+    static defaults = { path: SIGNAL_PATHS.VEHICLE_EGO_VELOCITY };
     static outputLabel = "velocity";
     static outputType = "vec3";
 }
@@ -917,7 +918,7 @@ export function VehicleDimensionsUnit(props) {
 }
 
 export class VehicleDimensionsBlock extends PathSnapshotBlock {
-    static defaults = { path: "vehicle.ego.dimensions" };
+    static defaults = { path: SIGNAL_PATHS.VEHICLE_EGO_DIMENSIONS };
     static outputLabel = "dimensions";
 }
 
@@ -926,7 +927,7 @@ export function DeviceSnapshotUnit(props) {
 }
 
 export class DeviceSnapshotBlock extends PathSnapshotBlock {
-    static defaults = { path: "devices.front_camera" };
+    static defaults = { path: SIGNAL_PATHS.FRONT_CAMERA };
 }
 
 export function SimulationSnapshotUnit(props) {
@@ -934,7 +935,7 @@ export function SimulationSnapshotUnit(props) {
 }
 
 export class SimulationSnapshotBlock extends PathSnapshotBlock {
-    static defaults = { path: "simulation" };
+    static defaults = { path: SIGNAL_PATHS.SIMULATION };
 
     register() {
         this.state = this.config();
@@ -957,7 +958,7 @@ export function ScenarioSnapshotUnit(props) {
 }
 
 export class ScenarioSnapshotBlock extends PathSnapshotBlock {
-    static defaults = { path: "scenario" };
+    static defaults = { path: SIGNAL_PATHS.SCENARIO };
 }
 
 export function ObjectSnapshotUnit(props) {
@@ -965,7 +966,7 @@ export function ObjectSnapshotUnit(props) {
 }
 
 export class ObjectSnapshotBlock extends PathSnapshotBlock {
-    static defaults = { path: "objects.target" };
+    static defaults = { path: SIGNAL_PATHS.TARGET_OBJECT };
 }
 
 export function WaypointListUnit(props) {
@@ -990,7 +991,7 @@ export function WaypointListUnit(props) {
 }
 
 export class WaypointListBlock extends ConfiguredBlock {
-    static defaults = { path: "mission.route", waypoints: "[]" };
+    static defaults = { path: SIGNAL_PATHS.MISSION_ROUTE, waypoints: "[]" };
 
     register() {
         this.state = this.config();
@@ -1032,7 +1033,7 @@ export function CurrentWaypointUnit(props) {
 }
 
 export class CurrentWaypointBlock extends ConfiguredBlock {
-    static defaults = { indexPath: "mission.currentWaypoint" };
+    static defaults = { indexPath: SIGNAL_PATHS.MISSION_CURRENT_WAYPOINT };
 
     register() {
         this.state = this.config();
@@ -1077,7 +1078,7 @@ export function AdvanceWaypointUnit(props) {
 }
 
 export class AdvanceWaypointBlock extends ConfiguredBlock {
-    static defaults = { indexPath: "mission.currentWaypoint" };
+    static defaults = { indexPath: SIGNAL_PATHS.MISSION_CURRENT_WAYPOINT };
 
     register() {
         this.state = this.config();
@@ -1150,7 +1151,7 @@ export function MissionStateUnit(props) {
 }
 
 export class MissionStateBlock extends PathSnapshotBlock {
-    static defaults = { path: "mission.state" };
+    static defaults = { path: SIGNAL_PATHS.MISSION_STATE };
     static outputLabel = "state";
     static outputType = "string";
 }
@@ -1172,7 +1173,7 @@ export function SetMissionStateUnit(props) {
 }
 
 export class SetMissionStateBlock extends ConfiguredBlock {
-    static defaults = { path: "mission.state" };
+    static defaults = { path: SIGNAL_PATHS.MISSION_STATE };
 
     register() {
         this.state = this.config();
@@ -1377,7 +1378,7 @@ export function BindInputUnit(props) {
             {(data, commit) => (
                 <>
                     <TextField label="External source" value={data.source} onChange={(source) => commit({ source })} placeholder="/ackdrive" />
-                    <TextField label="Store path" value={data.path} onChange={(path) => commit({ path })} placeholder="topics./ackdrive" />
+                    <TextField label="Store path" value={data.path} onChange={(path) => commit({ path })} placeholder={SIGNAL_PATHS.ACKDRIVE_TOPIC} />
                     <TextField label="Type" value={data.type} onChange={(type) => commit({ type })} placeholder="ackermann_msgs/AckermannDrive" />
                 </>
             )}
@@ -1386,7 +1387,7 @@ export function BindInputUnit(props) {
 }
 
 export class BindInputBlock extends BindingBlock {
-    static defaults = { sourceKind: "topic", source: "/ackdrive", path: "topics./ackdrive", type: "message" };
+    static defaults = { sourceKind: "topic", source: "/ackdrive", path: SIGNAL_PATHS.ACKDRIVE_TOPIC, type: "message" };
     bindingKind = "input";
 }
 
@@ -1395,7 +1396,7 @@ export function BindOutputUnit(props) {
         <BindingUnit {...props} title="Bind Output" defaults={BindOutputBlock.defaults}>
             {(data, commit) => (
                 <>
-                    <TextField label="Store path" value={data.path} onChange={(path) => commit({ path })} placeholder="publish./ackdrive_cmd" />
+                    <TextField label="Store path" value={data.path} onChange={(path) => commit({ path })} placeholder={SIGNAL_PATHS.ACKDRIVE_COMMAND} />
                     <TextField label="External sink" value={data.sink} onChange={(sink) => commit({ sink })} placeholder="/ackdrive_cmd" />
                     <TextField label="Type" value={data.type} onChange={(type) => commit({ type })} />
                 </>
@@ -1405,7 +1406,7 @@ export function BindOutputUnit(props) {
 }
 
 export class BindOutputBlock extends BindingBlock {
-    static defaults = { sinkKind: "topic", sink: "/ackdrive_cmd", path: "publish./ackdrive_cmd", type: "message" };
+    static defaults = { sinkKind: "topic", sink: "/ackdrive_cmd", path: SIGNAL_PATHS.ACKDRIVE_COMMAND, type: "message" };
     bindingKind = "output";
 }
 
@@ -1414,7 +1415,7 @@ export function BindTriggerUnit(props) {
         <BindingUnit {...props} title="Bind Trigger" defaults={BindTriggerBlock.defaults}>
             {(data, commit) => (
                 <>
-                    <TextField label="Store path" value={data.path} onChange={(path) => commit({ path })} placeholder="topics./ackdrive" />
+                    <TextField label="Store path" value={data.path} onChange={(path) => commit({ path })} placeholder={SIGNAL_PATHS.ACKDRIVE_TOPIC} />
                     <SelectField label="Mode" value={data.mode} onChange={(mode) => commit({ mode })} options={["update", "change", "fresh"]} />
                 </>
             )}
@@ -1423,7 +1424,7 @@ export function BindTriggerUnit(props) {
 }
 
 export class BindTriggerBlock extends BindingBlock {
-    static defaults = { path: "topics./ackdrive", mode: "update" };
+    static defaults = { path: SIGNAL_PATHS.ACKDRIVE_TOPIC, mode: "update" };
     bindingKind = "trigger";
 }
 
@@ -1462,7 +1463,7 @@ export function OnSignalUpdateUnit(props) {
 }
 
 export class OnSignalUpdateBlock extends EntrypointBlock {
-    static defaults = { path: "topics./ackdrive" };
+    static defaults = { path: SIGNAL_PATHS.ACKDRIVE_TOPIC };
     entrypointKind = "signal-update";
 }
 
@@ -1477,7 +1478,7 @@ export function OnTickUnit(props) {
 }
 
 export class OnTickBlock extends EntrypointBlock {
-    static defaults = { clockPath: "simulation.frame" };
+    static defaults = { clockPath: SIGNAL_PATHS.SIMULATION_FRAME };
     entrypointKind = "tick";
 }
 
@@ -1516,7 +1517,7 @@ export function ProbeSignalUnit(props) {
 }
 
 export class ProbeSignalBlock extends ConfiguredBlock {
-    static defaults = { path: "debug.value" };
+    static defaults = { path: SIGNAL_PATHS.DEBUG_VALUE };
 
     register() {
         this.state = this.config();
@@ -1655,7 +1656,7 @@ export function RecordSignalUnit(props) {
 }
 
 export class RecordSignalBlock extends ConfiguredBlock {
-    static defaults = { path: "debug.recorded", type: "json", maxSamples: 120 };
+    static defaults = { path: SIGNAL_PATHS.DEBUG_RECORDED, type: "json", maxSamples: 120 };
 
     register() {
         this.state = this.config();
@@ -1698,7 +1699,7 @@ export function ReplaySignalUnit(props) {
 }
 
 export class ReplaySignalBlock extends ConfiguredBlock {
-    static defaults = { path: "debug.recorded", index: 0 };
+    static defaults = { path: SIGNAL_PATHS.DEBUG_RECORDED, index: 0 };
 
     register() {
         this.state = this.config();
@@ -1739,7 +1740,7 @@ export function BindingStatusUnit(props) {
 }
 
 export class BindingStatusBlock extends ConfiguredBlock {
-    static defaults = { path: "debug.bindings.default" };
+    static defaults = { path: SIGNAL_PATHS.DEBUG_BINDING_STATUS };
 
     register() {
         this.state = this.config();

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import TotalScene from './3d/Scene';
 import Scripting from './scripting/Scripting';
+import BindingsPage from './scripting/bindings/BindingsPage';
 import Menu from './3d/overlay/menu/Menu';
 import { APP_VIEWS, THREE_D_MODES } from './3d/viewState';
 
@@ -33,6 +34,11 @@ export default function Home() {
         setMenuVisible(false);
     }, []);
 
+    const goToBindings = useCallback(() => {
+        setView(APP_VIEWS.BINDINGS);
+        setMenuVisible(false);
+    }, []);
+
     useEffect(() => {
         const ev = (e) => {
             if (e.key == "Escape") {
@@ -58,11 +64,15 @@ export default function Home() {
                     onSimulation={goToSimulation}
                     onEnvironmentEditor={goToEnvironmentEditor}
                     onScripting={goToScripting}
+                    onBindings={goToBindings}
                 />
             )
         }
         {
             view === APP_VIEWS.SCRIPTING && <Scripting />
+        }
+        {
+            view === APP_VIEWS.BINDINGS && <BindingsPage />
         }
         {
             view === APP_VIEWS.THREE_D && <TotalScene mode={threeDMode} />

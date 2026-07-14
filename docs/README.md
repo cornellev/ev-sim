@@ -8,14 +8,16 @@ This folder is the contributor guide for sensor-fusion. Start here when you need
 - Architecture work: [Architecture](architecture.md), [Simulation](simulation.md), and [ROS Integration](ros-integration.md).
 - Environment authoring: [Environment Editor](environment-editor.md), then [Earth Import](earth-import.md) for geographic imports.
 - Visual scripting work: [Scripting Overview](scripting/README.md), then [Scripting Architecture](scripting/architecture.md) and [Extension Guide](scripting/extension-guide.md).
+- Running scripts on live data: [Script Bindings](script-bindings.md) (topics, fixed updates, signals, timers).
 - IGVC/domain work: [IGVC Overview](igvc/overview.md) and [Competition Rules](igvc/competition-rules.md).
 - Asset setup: [Assets](assets.md).
 - Broken local setup: [Troubleshooting](troubleshooting.md).
 
 ## Project Map
 
-- `app/page.js` selects between the visual scripting canvas and the 3D scene (simulation or environment editor).
+- `app/page.js` selects between the visual scripting canvas, the bindings workspace, and the 3D scene (simulation or environment editor).
 - `app/scripting/` contains the node editor, block registry, compiler, runner, and built-in units.
+- `app/scripting/bindings/` contains the bindings manifest, runtime dispatcher, and Bindings workspace UI.
 - `app/3d/` contains Three.js scenes, vehicles, devices, overlays, and IGVC scenarios.
 - `app/3d/editor/` and `app/3d/environment/` contain the environment editor document model, tools, and baking.
 - `app/3d/earth/` contains Earth Import (tiles, roads, geospatial transforms).

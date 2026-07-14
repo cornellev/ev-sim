@@ -1,3 +1,5 @@
+import { normalizeSignalPath } from "./SignalPaths.js";
+
 function nowIso(now = Date.now()) {
     const value = typeof now === "function" ? now() : now;
     return new Date(value).toISOString();
@@ -47,10 +49,6 @@ function normalizeStaleAfter(value) {
     if (value === null || value === undefined || value === "") return null;
     const parsed = Number(value);
     return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
-}
-
-function normalizePath(path) {
-    return String(path || "").trim();
 }
 
 function entryAgeSeconds(entry, now = Date.now()) {
@@ -152,8 +150,9 @@ export class SignalStore {
         this._layers = [];
 
         Object.entries(values || {}).forEach(([path, entry]) => {
-            if (!normalizePath(path)) return;
-            this._committed.set(path, normalizeSignalEntry(entry, { now: this.now }));
+            const normalizedPath = normalizeSignalPath(path);
+            if (!normalizedPath) return;
+            this._committed.set(normalizedPath, normalizeSignalEntry(entry, { now: this.now }));
         });
     }
 
@@ -161,6 +160,10 @@ export class SignalStore {
         return Object.fromEntries(
             [...this._committed.entries()].map(([path, entry]) => [path, cloneValue(entry)])
         );
+    }
+
+    paths() {
+        return [...this._committed.keys()].sort((a, b) => a.localeCompare(b));
     }
 
     pendingSnapshot() {
@@ -228,7 +231,7 @@ export class SignalStore {
     }
 
     set(path, value, options = {}) {
-        const normalizedPath = normalizePath(path);
+        const normalizedPath = normalizeSignalPath(path);
         if (!normalizedPath) return null;
 
         const entry = normalizeSignalEntry(value, { ...options, now: options.now || this.now });
@@ -243,7 +246,7 @@ export class SignalStore {
     }
 
     write(path, value, options = {}) {
-        const normalizedPath = normalizePath(path);
+        const normalizedPath = normalizeSignalPath(path);
         if (!normalizedPath) return null;
 
         if (this._layers.length === 0) {
@@ -256,7 +259,7 @@ export class SignalStore {
     }
 
     read(path, options = {}) {
-        const normalizedPath = normalizePath(path);
+        const normalizedPath = normalizeSignalPath(path);
         const now = options.now || this.now;
         const entry = this._committed.get(normalizedPath);
 
@@ -298,7 +301,7 @@ export class SignalStore {
     }
 
     changed(path) {
-        const normalizedPath = normalizePath(path);
+        const normalizedPath = normalizeSignalPath(path);
         if (!normalizedPath || !this._committed.has(normalizedPath) || !this._previous.has(normalizedPath)) {
             return false;
         }
@@ -310,7 +313,7 @@ export class SignalStore {
     }
 
     record(path, value, options = {}) {
-        const normalizedPath = normalizePath(path);
+        const normalizedPath = normalizeSignalPath(path);
         if (!normalizedPath) return [];
 
         const entry = createSignalEntry(value, {
@@ -323,11 +326,11 @@ export class SignalStore {
     }
 
     history(path) {
-        return (this._history.get(normalizePath(path)) || []).map((entry) => cloneValue(entry));
+        return (this._history.get(normalizeSignalPath(path)) || []).map((entry) => cloneValue(entry));
     }
 
     _appendHistory(path, entry, maxSamples = 120) {
-        const normalizedPath = normalizePath(path);
+        const normalizedPath = normalizeSignalPath(path);
         if (!normalizedPath) return;
 
         const current = this._history.get(normalizedPath) || [];

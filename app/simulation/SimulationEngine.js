@@ -255,6 +255,10 @@ export class SimulationEngine {
             this.data.baking()?.update?.(dt);
         }
 
+        if (this.modules.scripting) {
+            this.data.bindings?.()?.update?.(dt);
+        }
+
         this.time += dt;
         this.steps += 1;
     }

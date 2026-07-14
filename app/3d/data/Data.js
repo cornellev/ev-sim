@@ -10,6 +10,7 @@ import { ClientManager } from "../managers/ClientManager";
 import { PhysicsEngine } from "@/app/physics/PhysicsEngine";
 import { SimulationEngine } from "@/app/simulation/SimulationEngine";
 import { Environment } from "../environment/Environment";
+import { getBindingRuntime } from "@/app/scripting/bindings/BindingRuntime";
 
 export class Data {
     constructor() {
@@ -23,6 +24,9 @@ export class Data {
         this.mouseManager = null;
 
         this.clientManager = new ClientManager(this);
+
+        this.bindingRuntime = getBindingRuntime();
+        this.bindingRuntime.attachClient(this.clientManager);
 
         this.simulationEngine = new SimulationEngine(this);
         // Environment runtime (editor, registry, chunks). Access via environment(); document is environment().getDocument().
@@ -49,6 +53,13 @@ export class Data {
      */
     client() {
         return this.clientManager; 
+    }
+
+    /**
+     * @returns {import("@/app/scripting/bindings/BindingRuntime").BindingRuntime}
+     */
+    bindings() {
+        return this.bindingRuntime;
     }
 
     /**
