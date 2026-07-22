@@ -1,6 +1,8 @@
 import * as THREE from "three";
 import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 import { EDITOR_TOOLS } from "../EditorState.js";
+import { transformBuilding, transformFeature } from "../document/documentMutations.js";
+import { trianglesFromBuildingMesh } from "../../city/BuildingGenerator.js";
 
 const TRANSFORM_CONTROL_LOCK = "environment-transform-controls";
 
@@ -45,6 +47,7 @@ export class TransformTool {
 
             applyWorldDelta(entity.object3D, delta);
             this.previousPivotMatrixWorld.copy(currentPivotMatrixWorld);
+            this.persistEntityTransform(entity, delta);
             this.registry.updateEntityTransform(this.selectedEntityId);
             this.editor.markDirty(true, false);
             this.data.simulation()?.render?.();
@@ -56,6 +59,7 @@ export class TransformTool {
             } else {
                 this.editor.suppressSelection?.(300);
                 this.data.settings()?.enableControls?.(TRANSFORM_CONTROL_LOCK);
+                this.syncBuildingSensorGeometry();
             }
             this.data.simulation()?.render?.();
         };
@@ -65,12 +69,59 @@ export class TransformTool {
         this.disposeEditor = this.editor.subscribe((snapshot) => this.sync(snapshot));
     }
 
+    syncBuildingSensorGeometry() {
+        const entity = this.registry.getEntity(this.selectedEntityId);
+        if (entity?.kind !== "building" || !entity.object3D) return;
+
+        const triangles = trianglesFromBuildingMesh(entity.object3D);
+        triangles.forEach((triangle) => {
+            triangle.environmentGeometryType = "building";
+            triangle.environmentSourceId = entity.sourceId;
+        });
+        this.data.objects().replaceTriangles?.(
+            (triangle) => triangle.environmentGeometryType === "building"
+                && triangle.environmentSourceId === entity.sourceId,
+            triangles,
+        );
+    }
+
+    persistEntityTransform(entity, deltaMatrixWorld) {
+        const document = this.data.environment().getDocument();
+
+        if (entity.kind === "building") {
+            const result = transformBuilding(document, entity.sourceId, deltaMatrixWorld);
+            if (result.ok) entity.record = result.building;
+            return;
+        }
+
+        if (entity.layer === "props") {
+            const feature = document.getFeature(entity.sourceId);
+            if (!feature) return;
+            const position = new THREE.Vector3(feature.x, 0, feature.z)
+                .applyMatrix4(deltaMatrixWorld);
+            if (entity.fusionObject?.position) {
+                entity.fusionObject.position.applyMatrix4(deltaMatrixWorld);
+                entity.fusionObject._notifyTexture?.(entity.fusionObject);
+            }
+            const quaternion = new THREE.Quaternion();
+            entity.object3D.getWorldQuaternion(quaternion);
+            const rotationY = new THREE.Euler().setFromQuaternion(quaternion, "YXZ").y;
+            transformFeature(document, entity.sourceId, {
+                x: position.x,
+                z: position.z,
+                dir: entity.fusionObject?.dir,
+                rotationY,
+            });
+        }
+    }
+
     sync(snapshot) {
         const mode = TOOL_MODES[snapshot.activeTool];
         const selectedId = snapshot.selection?.id ?? null;
         const entity = selectedId ? this.registry.getEntity(selectedId) : null;
+        const unsupportedPropScale = entity?.layer === "props" && mode === "scale";
 
-        if (!mode || !entity?.object3D) {
+        if (!mode || !entity?.object3D || unsupportedPropScale) {
             this.selectedEntityId = null;
             this.controls.detach();
             this.helper.visible = false;
@@ -81,6 +132,14 @@ export class TransformTool {
 
         this.selectedEntityId = entity.id;
         this.controls.setMode(mode);
+        // Buildings and props are ground-authored records. Keep controls to the
+        // transform components their document schemas can round-trip.
+        const groundEntity = entity.kind === "building" || entity.layer === "props";
+        const planarTranslation = groundEntity && mode === "translate";
+        const yawOnlyRotation = groundEntity && mode === "rotate";
+        this.controls.showX = !yawOnlyRotation;
+        this.controls.showY = !planarTranslation;
+        this.controls.showZ = !yawOnlyRotation;
         positionPivotAtObjectCenter(this.pivot, entity.object3D);
         this.pivot.visible = true;
         this.pivot.updateMatrixWorld(true);

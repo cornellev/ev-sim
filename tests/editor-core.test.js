@@ -10,11 +10,72 @@ import {
 import { ChunkManager } from "../app/3d/editor/chunks/ChunkManager.js";
 import { EDITOR_TOOLS, EditorState } from "../app/3d/editor/EditorState.js";
 import { EnvironmentRegistry } from "../app/3d/editor/EnvironmentRegistry.js";
+import { EnvironmentDocument } from "../app/3d/editor/document/EnvironmentDocument.js";
+import {
+    transformBuilding,
+    transformFeature,
+} from "../app/3d/editor/document/documentMutations.js";
 import {
     getPickableObjectRoots,
     isPointerDrag,
     pickEnvironmentEntity,
 } from "../app/3d/editor/tools/SelectTool.js";
+
+test("building world transforms update the authoritative footprint and height", () => {
+    const document = new EnvironmentDocument({
+        buildings: [{
+            buildingId: "b1",
+            footprint: [
+                { x: 0, y: 0, z: 0 },
+                { x: 2, y: 0, z: 0 },
+                { x: 2, y: 0, z: 2 },
+                { x: 0, y: 0, z: 2 },
+            ],
+            height: 10,
+        }],
+    });
+    const delta = new THREE.Matrix4()
+        .makeScale(2, 1.5, 2)
+        .premultiply(new THREE.Matrix4().makeTranslation(5, 0, -3));
+
+    const result = transformBuilding(document, "b1", delta);
+
+    assert.equal(result.ok, true);
+    assert.equal(document.buildingsAuthored, true);
+    assert.deepEqual(
+        document.getBuilding("b1").footprint.map(({ x, z }) => ({ x, z })),
+        [
+            { x: 5, z: -3 },
+            { x: 9, z: -3 },
+            { x: 9, z: 1 },
+            { x: 5, z: 1 },
+        ],
+    );
+    assert.equal(document.getBuilding("b1").height, 15);
+    assert.deepEqual(
+        EnvironmentDocument.fromManifest(document.toManifest()).getBuilding("b1").footprint,
+        document.getBuilding("b1").footprint,
+    );
+});
+
+test("prop transforms persist position and heading in the document", () => {
+    const document = new EnvironmentDocument({
+        features: [{ id: "prop-1", type: "barrel", x: 0, z: 0 }],
+    });
+
+    transformFeature(document, "prop-1", { x: 8, z: -4, rotationY: Math.PI / 2 });
+
+    assert.equal(document.featuresAuthored, true);
+    assert.deepEqual(document.getFeature("prop-1"), {
+        id: "prop-1",
+        type: "barrel",
+        x: 8,
+        z: -4,
+        dir: 0,
+        rotationY: Math.PI / 2,
+        tags: [],
+    });
+});
 
 test("chunk keys and bounds use configurable chunk size", () => {
     assert.equal(getChunkKeyForPoint({ x: 0, z: 0 }, 20), "0,0");

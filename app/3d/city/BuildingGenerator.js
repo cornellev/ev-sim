@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { Triangle } from "../data/objects/Triangle.js";
 import { SeededRNG } from "../../util/SeededRNG.js";
+import { footprintsOverlap } from "../editor/document/documentGeometry.js";
 import { buildingIdFromFootprint } from "./buildingIds.js";
 
 /**
@@ -124,48 +125,6 @@ function makeFootprintsForSide(start, end, normal, params, rng) {
 
 function toXZ(v) {
     return new THREE.Vector2(v.x, v.z);
-}
-
-function getFootprintAxes(footprint) {
-    const pts = footprint.map(toXZ);
-
-    const edge0 = pts[1].clone().sub(pts[0]).normalize();
-    const edge1 = pts[3].clone().sub(pts[0]).normalize();
-
-    return [edge0, edge1];
-}
-
-function projectFootprint(axis, footprint) {
-    let min = Infinity;
-    let max = -Infinity;
-
-    for (const p3 of footprint) {
-        const p = toXZ(p3);
-        const d = p.dot(axis);
-        if (d < min) min = d;
-        if (d > max) max = d;
-    }
-
-    return { min, max };
-}
-
-function intervalsOverlap(a, b, padding = 0) {
-    return a.max > b.min + padding && b.max > a.min + padding;
-}
-
-function footprintsOverlap(a, b, padding = 0) {
-    const axes = [...getFootprintAxes(a), ...getFootprintAxes(b)];
-
-    for (const axis of axes) {
-        const projA = projectFootprint(axis, a);
-        const projB = projectFootprint(axis, b);
-
-        if (!intervalsOverlap(projA, projB, padding)) {
-            return false;
-        }
-    }
-
-    return true;
 }
 
 function footprintAreaXZ(footprint) {
@@ -484,6 +443,10 @@ function generateBuildingMeshes(scene, data, footprints, params, rng, presetReco
         meshes.push(mesh);
 
         const triangles = trianglesFromBuildingMesh(mesh);
+        triangles.forEach((triangle) => {
+            triangle.environmentGeometryType = "building";
+            triangle.environmentSourceId = buildingId;
+        });
         if (data?.objects?.()) {
             data.objects().addObjects(triangles);
         }

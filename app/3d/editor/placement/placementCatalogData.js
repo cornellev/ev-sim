@@ -23,6 +23,12 @@ export const PLACEMENT_CATALOG = Object.freeze([
         kind: "tire",
         mapColor: "#71717a",
     },
+    {
+        id: "cone",
+        label: "Cone",
+        kind: "cone",
+        mapColor: "#f97316",
+    },
 ]);
 
 const CATALOG_BY_ID = new Map(PLACEMENT_CATALOG.map((asset) => [asset.id, asset]));
@@ -44,9 +50,11 @@ export function fusionObjectToCatalogType(fusionObject) {
     if (name === "StopSign") return "stop-sign";
     if (name === "OneWaySign") return "one-way-sign";
     if (name === "Tire") return "tire";
+    if (name === "Cone") return "cone";
     if (name === "Barrel") return "barrel";
 
     const tags = fusionObject?.tags ?? [];
+    if (tags.includes("cone")) return "cone";
     if (tags.includes("barrel")) return "barrel";
     if (tags.includes("tire")) return "tire";
     if (tags.includes("sign")) return "stop-sign";

@@ -1,7 +1,7 @@
 /**
  * @typedef {{ id: string, x: number, z: number, kind?: 'intersection' | 'endpoint' }} RoadNode
- * @typedef {{ id: string, startNodeId: string, endNodeId: string, bidirectional?: boolean, width?: number, laneCount?: number, startArm?: { x: number, z: number }, endArm?: { x: number, z: number } }} RoadEdge
- * @typedef {{ id: string, type: string, x: number, z: number, dir?: number, tags?: string[] }} FeatureRecord
+ * @typedef {{ id: string, startNodeId: string, endNodeId: string, bidirectional?: boolean, width?: number, laneCount?: number, shoulderWidth?: number, tension?: number, borderLeft?: string, borderRight?: string, startArm?: { x: number, z: number }, endArm?: { x: number, z: number } }} RoadEdge
+ * @typedef {{ id: string, type: string, x: number, z: number, dir?: number, rotationY?: number, tags?: string[] }} FeatureRecord
  * @typedef {{ lat: number, lng: number }} EarthAnchor
  * @typedef {{ north: number, south: number, east: number, west: number }} EarthBounds
  * @typedef {{ anchor: EarthAnchor, bounds: EarthBounds, tileProvider: string, roadProvider: string, importedLayerIds: string[], importedAt: string|null }} EarthSourceRecord
@@ -34,6 +34,12 @@ export class EnvironmentDocument {
     constructor(options = {}) {
         this.environmentId = options.environmentId ?? "igvc";
         this.chunkSize = options.chunkSize ?? 20;
+        // Runtime hydration describes a template but is not an author edit.
+        // Map/Earth mutations flip this flag so the loader knows when native
+        // template roads should be replaced by document-authored roads.
+        this.roadsAuthored = options.roadsAuthored === true;
+        this.buildingsAuthored = options.buildingsAuthored === true;
+        this.featuresAuthored = options.featuresAuthored === true;
         /** @type {RoadNode[]} */
         this.roads = {
             nodes: Array.isArray(options.roads?.nodes) ? options.roads.nodes.map(cloneNode) : [],
@@ -56,6 +62,9 @@ export class EnvironmentDocument {
         return {
             environmentId: this.environmentId,
             chunkSize: this.chunkSize,
+            roadsAuthored: this.roadsAuthored,
+            buildingsAuthored: this.buildingsAuthored,
+            featuresAuthored: this.featuresAuthored,
             roads: {
                 nodes: this.roads.nodes.map(cloneNode),
                 edges: this.roads.edges.map(cloneEdge),
@@ -73,6 +82,9 @@ export class EnvironmentDocument {
     restoreSnapshot(manifest) {
         this.environmentId = manifest.environmentId ?? this.environmentId;
         this.chunkSize = manifest.chunkSize ?? this.chunkSize;
+        this.roadsAuthored = manifest.roadsAuthored === true;
+        this.buildingsAuthored = manifest.buildingsAuthored === true;
+        this.featuresAuthored = manifest.featuresAuthored === true;
         this.roads = {
             nodes: Array.isArray(manifest.roads?.nodes) ? manifest.roads.nodes.map(cloneNode) : [],
             edges: Array.isArray(manifest.roads?.edges) ? manifest.roads.edges.map(cloneEdge) : [],
@@ -167,6 +179,10 @@ function cloneEdge(edge) {
         bidirectional: edge.bidirectional ?? DEFAULT_ROAD_EDGE.bidirectional,
         width: edge.width ?? DEFAULT_ROAD_EDGE.width,
         laneCount: edge.laneCount ?? DEFAULT_ROAD_EDGE.laneCount,
+        shoulderWidth: edge.shoulderWidth ?? null,
+        tension: edge.tension ?? null,
+        borderLeft: edge.borderLeft ?? null,
+        borderRight: edge.borderRight ?? null,
         startArm: edge.startArm ? { ...edge.startArm } : null,
         endArm: edge.endArm ? { ...edge.endArm } : null,
     };
@@ -190,6 +206,7 @@ function cloneFeature(feature) {
         x: feature.x,
         z: feature.z,
         dir: feature.dir ?? 0,
+        rotationY: feature.rotationY ?? 0,
         tags: [...(feature.tags ?? [])],
     };
 }

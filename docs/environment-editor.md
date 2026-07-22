@@ -40,6 +40,18 @@ The document supports `snapshot()` / `restoreSnapshot()` so preview flows (espec
 
 Runtime meshes are rebuilt from the document through adapters such as `RoadRuntimeAdapter.syncRoadsFromDocument()`. Editing the document does not automatically update every 3D mesh; sync happens on explicit actions like Apply in Earth Import or hydration when entering map mode.
 
+## Persistence (server-side)
+
+Environment edits are saved to the backend, not the browser. Loading and saving are deliberately separate:
+
+- **`EnvironmentLoader`** fetches the selected manifest and applies it to the one runtime shared by Simulation and Environment Editor. IGVC starts from its native template meshes; legacy hydrated road data does not replace those roads. Roads are rebuilt only after a map/Earth Import edit marks them as authored.
+- **`EnvironmentPersistence`** watches the document, registry, editor, and sky. Changes trigger a debounced `PUT /api/storage/environments/<id>` (about 1.5s after the last edit, with an 8s cap so long drag sessions still save).
+- **On page unload / tab hide** it flushes a final save with a `keepalive` request.
+
+Building transforms update their authoritative footprint/height records as the gizmo moves; prop transforms update position and heading. Reload therefore reconstructs the edited location rather than the original runtime mesh.
+
+The environment switcher in both 3D workspaces selects, creates, duplicates, renames, and deletes environments. Selection is shared between Simulation and Editor and stored in server settings. The saved payload is `Environment.toManifest()` at `server/data/environments/<id>.json`. See [development.md](development.md) for the storage backend.
+
 ## UI chrome
 
 `EnvironmentEditorChrome` mounts the editor overlay stack:

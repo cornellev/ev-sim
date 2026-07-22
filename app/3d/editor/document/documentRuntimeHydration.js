@@ -14,11 +14,17 @@ function getRoadDocumentOptions(road, overrides = {}) {
     const widthMeters = road?.width?.getValue?.(Unit.Type.METER);
     const laneCount = road?.options?.laneCount;
     const bidirectional = road?.oneWay ? false : (road?.network?.bidirectional !== false);
+    const shoulderWidth = road?.options?.shoulderWidth;
+    const tension = road?.options?.tension;
 
     return {
         bidirectional,
         ...(Number.isFinite(widthMeters) && widthMeters > 0 ? { width: widthMeters } : {}),
         ...(Number.isFinite(laneCount) && laneCount > 0 ? { laneCount } : {}),
+        ...(Number.isFinite(shoulderWidth) && shoulderWidth >= 0 ? { shoulderWidth } : {}),
+        ...(Number.isFinite(tension) ? { tension } : {}),
+        ...(road?.borderLeft ? { borderLeft: road.borderLeft } : {}),
+        ...(road?.borderRight ? { borderRight: road.borderRight } : {}),
         ...overrides,
     };
 }
@@ -80,6 +86,7 @@ function upsertDocumentFeature(document, feature) {
         x: feature.x,
         z: feature.z,
         dir: feature.dir ?? 0,
+        rotationY: feature.rotationY ?? 0,
         tags: [...(feature.tags ?? [])],
     });
 }
@@ -127,7 +134,7 @@ function hydrateRoadsFromNetwork(city, document) {
 
         const result = addRoadEdge(document, startNode.id, endNode.id, getRoadDocumentOptions(road, {
             bidirectional: network.bidirectional !== false,
-        }), { notify: false });
+        }), { notify: false, markAuthored: false });
 
         if (result.ok) changed = true;
     }
@@ -189,7 +196,7 @@ function hydrateRoadsFromIntersections(city, document) {
                 bidirectional: true,
                 startArm: a.arm,
                 endArm: b.arm,
-            }), { notify: false });
+            }), { notify: false, markAuthored: false });
             if (result.ok) changed = true;
             continue;
         }
@@ -210,7 +217,7 @@ function hydrateRoadsFromIntersections(city, document) {
             const result = addRoadEdge(document, link.intersectionId, endpoint.id, getRoadDocumentOptions(road, {
                 bidirectional: true,
                 startArm: link.arm,
-            }), { notify: false });
+            }), { notify: false, markAuthored: false });
             if (result.ok) changed = true;
         }
     }
@@ -234,7 +241,10 @@ function hydrateRoadsFromEndpoints(city, document) {
 
         if (hasEdgeBetween(document, startNode.id, endNode.id)) continue;
 
-        const result = addRoadEdge(document, startNode.id, endNode.id, getRoadDocumentOptions(road), { notify: false });
+        const result = addRoadEdge(document, startNode.id, endNode.id, getRoadDocumentOptions(road), {
+            notify: false,
+            markAuthored: false,
+        });
         if (result.ok) changed = true;
     }
 
@@ -286,6 +296,7 @@ export function hydrateDocumentFromRuntime(data, document) {
                 x: position.x,
                 z: position.z,
                 dir: entity.fusionObject.dir ?? 0,
+                rotationY: entity.object3D?.rotation?.y ?? 0,
                 tags: entity.tags ?? entity.fusionObject.tags ?? [],
             });
             if (document.features.length > before) changed = true;

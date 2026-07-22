@@ -24,6 +24,8 @@ import {
 } from "../app/scripting/GraphDocument.js";
 import { createLoadedScript, loadScript } from "../app/scripting/ScriptRuntime.js";
 import { SignalStore } from "../app/scripting/runtime/SignalStore.js";
+import { OutputNodeBlock } from "../app/scripting/units/program/ProgramIO.block.js";
+import { normalizeOutputNodeState } from "../app/scripting/units/program/ProgramTypes.js";
 
 class ConstBlock extends UnitBlock {
     constructor(uuid, value = 1) {
@@ -377,6 +379,7 @@ function resetRegistry() {
         EntrypointConfigBlock,
         CompiledProgramUnitBlock,
         LocalScriptProgramBlock,
+        OutputNodeBlock,
     ].forEach((blockClass) => registerBlockType(blockClass.name, blockClass));
     registerBlockType(LocalScriptProgramBlock.blockType, LocalScriptProgramBlock);
 }
@@ -746,45 +749,51 @@ test("loaded scripts can execute against an injected signal store", () => {
 test("editor graph serialization round-trips nodes, state, positions, connections, and runtime state", () => {
     resetRegistry();
 
+    const outputNodeConfig = normalizeOutputNodeState({
+        outputs: [
+            { id: "total", label: "total", type: "float64" }
+        ]
+    });
+
     const manager = new ScriptManager();
+    const head = new OutputNodeBlock("head-uuid");
+    head.hydrateState(outputNodeConfig);
+    manager.addUnit(head);
+    manager.setHead("head-uuid");
+    manager.storeData("head-uuid", outputNodeConfig);
     manager.addUnit(new ConstBlock("one", 1));
     manager.addUnit(new AccumulatorBlock("acc"));
-    manager.addUnit(new OutputBlock("output", "total"));
     manager.connectUnits("one", "out", "acc", "value");
-    manager.connectUnits("acc", "out", "output", "output");
+    manager.connectUnits("acc", "out", "head-uuid", "total");
 
     const accumulator = manager.units.find((unit) => unit.uuid === "acc");
     accumulator.total = 7;
 
-    const outputNodeConfig = {
-        outputs: [
-            { id: "total", label: "total", type: "float64" }
-        ]
-    };
     const graph = serializeManagerGraph(manager, {
         outputNodeConfig,
         positions: {
-            head: { x: 480, y: 120 },
+            "head-uuid": { x: 480, y: 120 },
             one: { x: 12, y: 24 },
             acc: { x: 120, y: 240 },
-            output: { x: 320, y: 260 }
         },
-        headUUID: "head"
+        headUUID: "head-uuid"
     });
 
     assert.deepEqual(graph.outputNodeConfig, outputNodeConfig);
     assert.deepEqual(graph.headPosition, { x: 480, y: 120 });
+    assert.equal(graph.nodes.some((node) => node.uuid === "head-uuid"), false);
     assert.deepEqual(graph.nodes.find((node) => node.uuid === "acc").position, { x: 120, y: 240 });
     assert.deepEqual(graph.nodes.find((node) => node.uuid === "acc").runtimeState, { total: 7 });
     assert.deepEqual(graph.connections.map((edge) => `${edge.from}:${edge.output}->${edge.to}:${edge.input}`), [
         "one:out->acc:value",
-        "acc:out->output:output"
+        "acc:out->head-uuid:total"
     ]);
 
     const restored = restoreManagerFromGraph(graph, getRegisteredBlockType);
     const run = restored.executeProgram();
 
     assert.equal(restored.checkValidity(), true);
+    assert.equal(restored.head, "head-uuid");
     assert.equal(restored.units.find((unit) => unit.uuid === "acc").total, 8);
     assert.deepEqual(run.outputs, { total: 8 });
 });

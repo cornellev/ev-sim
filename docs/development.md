@@ -13,13 +13,27 @@ npm run lint
 npm test
 ```
 
-- `npm run dev` starts Next development mode.
+- `npm run dev` runs the Express server in `server/App.js` with Next in development mode (hot reload). It also hosts the storage API, so saving works in dev.
 - `npm run build` builds the app.
 - `npm run start` runs `server/App.js` on `PORT` or `3000`.
 - `npm run lint` runs ESLint.
 - `npm test` runs `node --experimental-default-type=module --test tests/*.test.js`.
 
-Test files are grouped by area: `visual-script-runtime.test.js`, `editor-core.test.js`, `editor-map-mode.test.js`, `earth-import-mode.test.js`, and `bake-*.test.js`.
+Test files are grouped by area: `visual-script-runtime.test.js`, `editor-core.test.js`, `editor-map-mode.test.js`, `earth-import-mode.test.js`, `bake-*.test.js`, and `storage-service.test.js`.
+
+## Storage backend
+
+Environment edits, scripts, and bindings are persisted on the server rather than in the browser. The backend is deliberately simple - no database, just JSON files with an in-memory cache:
+
+- `server/storage/JsonFileStore.js` - one file's worth of JSON: reads are cached in memory, writes are atomic (temp file + rename).
+- `server/storage/StorageService.js` - owns the on-disk layout under `server/data/` (`environments/<id>.json`, `scripts/<id>.json`, `bindings.json`, `settings.json`) and environment catalog operations.
+- `server/routes/storageRouter.js` - the Express router mounted at `/api/storage`; a thin HTTP-to-service translation layer.
+- `app/client/storageClient.js` - the browser's single fetch wrapper for that API.
+- `app/3d/environment/EnvironmentCatalogClient.js` - list/create/duplicate/rename/delete and active-environment settings.
+- `app/3d/environment/EnvironmentLoader.js` - the sole manifest/template-to-runtime application path.
+- `app/3d/environment/EnvironmentPersistence.js` - debounced manifest saving only.
+
+The `server/data/` directory is git-ignored; it is created on first write.
 
 ## Code Layout
 

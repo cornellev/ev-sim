@@ -20,7 +20,7 @@ For bracketed types, such as `array[float64]`, the UI can fall back to the base 
 
 ## Program I/O Types
 
-`app/scripting/units/program/ProgramIO.js` defines the types exposed by Program Input, Program Output, and OutputNode configuration.
+`app/scripting/units/program/ProgramIO.js` defines the types exposed by Program Input and OutputNode configuration.
 
 Current supported program I/O types:
 

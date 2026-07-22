@@ -160,7 +160,19 @@ test("documentToRoadNetworkInputs matches buildRoadNetwork tuple format", () => 
 
     const { vectorMap, connections } = documentToRoadNetworkInputs(document);
     assert.equal(vectorMap.get("a").x, 0);
-    assert.deepEqual(connections, [["a", "b", true]]);
+    assert.equal(connections[0][0], "a");
+    assert.equal(connections[0][1], "b");
+    assert.equal(connections[0][2], true);
+    assert.deepEqual(connections[0][3], {
+        width: 7,
+        laneCount: 2,
+        shoulderWidth: null,
+        tension: null,
+        borderLeft: null,
+        borderRight: null,
+        startArm: null,
+        endArm: null,
+    });
 });
 
 test("editor state tracks map mode, viewport, and map tools", () => {

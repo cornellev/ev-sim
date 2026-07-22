@@ -5,13 +5,13 @@ Bindings connect compiled visual scripts to live triggers: ROS topics, fixed sim
 ## Concepts
 
 - A **binding** references one script from the local script library and describes when it runs, where its inputs come from, and where its outputs go.
-- All bindings live in a single **manifest**: a plain JSON document that is persisted locally, hot-reloaded by the runtime, and can be exported/imported for hand-editing and version control.
+- All bindings live in a single **manifest**: a plain JSON document that is persisted on the server (via the script settings store), hot-reloaded by the runtime, and can be exported/imported for hand-editing and version control.
 - All bound scripts share one **signal store**. Topic updates are bridged into `topics.<name>`, and each fixed step writes a `simulation` snapshot (`{ dt, time, step, frame }`), so signal blocks inside scripts observe live data.
 
 ## Files
 
 - `app/scripting/bindings/BindingDocument.js` — manifest schema, normalization, validation, trigger suggestions from artifact metadata.
-- `app/scripting/bindings/BindingStorage.js` — persistence (script settings store) and JSON serialize/parse.
+- `app/scripting/bindings/BindingStorage.js` — persistence (via the script settings store, now server-backed) and JSON serialize/parse.
 - `app/scripting/bindings/BindingRuntime.js` — the dispatcher. Singleton via `getBindingRuntime()`, exposed as `data.bindings()`.
 - `app/scripting/bindings/BindingsPage.js` — the Bindings workspace UI.
 - `tests/script-bindings.test.js` — document and runtime tests.

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { BlockOutput, storeData, UnitBlock } from "../../ScriptManager";
+import { storeData } from "../../ScriptManager";
 import Unit from "../Unit";
 
 export function StringUnit({ _uuid, initialData = "" }) {
@@ -21,18 +21,4 @@ export function StringUnit({ _uuid, initialData = "" }) {
         </Unit>
     )
 }
-
-export class StringBlock extends UnitBlock {
-    register() {
-        this.registerOutput("out", "string");
-    }
-
-    valid() {
-        return this.hasOutput("out");
-    }
-
-    execute() {
-        const value = this.getStoredData() || "";
-        return new BlockOutput().set("out", value);
-    }
-}
+export { StringBlock } from "./String.block.js";

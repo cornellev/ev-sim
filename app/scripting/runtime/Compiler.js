@@ -218,7 +218,7 @@ export function compileVisualScript(manager, name, getBlockClass) {
         : (manager.head ? [manager.head] : []);
 
     if (finalStates.length === 0) {
-        throw new Error("Cannot compile a script without a head or Program Output block.");
+        throw new Error("Cannot compile a script without a head OutputNode.");
     }
 
     const reachable = collectReachableUnits(finalStates, unitById);

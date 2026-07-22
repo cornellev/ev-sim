@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import * as NoiseJS from "noisejs";
 import Unit from "../../Unit";
-import { BlockOutput, storeData, UnitBlock } from "../../../ScriptManager";
+import { storeData } from "../../../ScriptManager";
 
 export function Noise({ _uuid, initialData = null }) {
     const canvasRef = useRef(null);
@@ -84,18 +84,4 @@ export function Noise({ _uuid, initialData = null }) {
         </Unit>
     );
 }
-
-export class NoiseBlock extends UnitBlock {
-    register() {
-        this.registerOutput("out", "tex1d");
-    }
-    
-    valid() {
-        return this.hasOutput("out");
-    }
-
-    execute() {
-        return new BlockOutput()
-            .set("out", this.manager.getStoredData(this.uuid) || []);
-    }
-}
+export { NoiseBlock } from "./Noise.block.js";

@@ -4,6 +4,7 @@ import { GLSLObject, Object } from "./objects/Object";
 import * as THREE from "three";
 import { Triangle } from "./objects/Triangle";
 import { getDefaultTagId } from "./ObjectTagRegistry";
+import Values from "@/app/util/Values";
 
 const MAX_BOXES = 2000;
 const MAX_TRIANGLES = 5000;
@@ -217,6 +218,38 @@ export class ObjectDatabase extends Database {
      */
     addObjects(objects) {
         objects.forEach((obj) => this.addObject(obj));
+    }
+
+    /**
+     * Replace one authored triangle domain (roads or one building) in place and
+     * rebuild the existing GPU texture buffers without swapping texture objects.
+     */
+    replaceTriangles(predicate, triangles = []) {
+        this.objects = this.objects.filter(
+            (object) => !(object instanceof Triangle && predicate(object)),
+        );
+        for (const triangle of triangles) {
+            this.addObject(triangle);
+        }
+        this.rebuildTextureData();
+    }
+
+    rebuildTextureData() {
+        const textureData = this.textures.data;
+        Values(textureData).forEach((array) => array.fill(0));
+        this.textures.counts.boxCount = 0;
+        this.textures.counts.triCount = 0;
+
+        this.boxes().forEach((box, index) => {
+            box.setNotifyTexture(this.notifiers.box);
+            writeBoxTextureSlot(this, box, index);
+            this.textures.counts.boxCount += 1;
+        });
+        this.triangles().forEach((triangle, index) => {
+            triangle.setNotifyTexture(this.notifiers.triangle);
+            writeTriangleTextureSlot(this, triangle, index);
+            this.textures.counts.triCount += 1;
+        });
     }
 
     /**

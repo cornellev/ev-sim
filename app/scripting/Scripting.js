@@ -47,6 +47,8 @@ import {
     putScriptSetting
 } from "./ScriptStorage";
 import { createCatalogUnitUUID, getUnitCatalogEntry } from "./UnitCatalog";
+import { subscribeStorageEvents } from "../client/storageEvents";
+import { getBindingRuntime } from "./bindings/BindingRuntime";
 
 registerBuiltInBlocks();
 
@@ -1050,6 +1052,46 @@ export default function Scripting() {
     // loadDocumentIntoEditor intentionally reads the latest refs while bootstrapping once.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
+
+    // Live-sync: MCP script writes refresh the library; reload the open doc if clean.
+    useEffect(() => {
+        return subscribeStorageEvents((event) => {
+            if (event.domain !== "script") return;
+
+            (async () => {
+                try {
+                    const stored = await listScriptDocuments();
+                    const documents = sortedScripts(
+                        stored
+                            .map((document) => {
+                                try {
+                                    return normalizeScriptDocument(document);
+                                } catch {
+                                    return null;
+                                }
+                            })
+                            .filter(Boolean),
+                    );
+                    setScriptsWithRef(documents);
+
+                    if (event.id) {
+                        getBindingRuntime().invalidateScript(event.id);
+                    }
+
+                    const openId = currentDocumentRef.current?.id;
+                    if (!openId || (event.id && event.id !== openId)) return;
+                    if (compileState.dirty) return;
+
+                    const next = documents.find((document) => document.id === openId);
+                    if (next) loadDocumentIntoEditor(next);
+                } catch (error) {
+                    console.warn("[scripting] MCP live-sync failed:", error);
+                }
+            })();
+        });
+    // compileState.dirty gates reload; loadDocumentIntoEditor uses latest refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [compileState.dirty]);
 
     useEffect(() => {
         if (!currentScriptId || loadingRef.current) return;

@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { documentToRoadNetworkInputs } from "../documentMutations.js";
 import buildRoadNetwork from "../../../city/RoadNetwork.js";
 import { EDITOR_LAYERS } from "../../EditorState.js";
+import { getRoadStylePreset } from "../../../environment/road/RoadStylePresets.js";
 
 function getRoadRegistry(data) {
     return data?.environment?.()?.objects?.() ?? null;
@@ -53,6 +54,7 @@ export function syncRoadsFromDocument(data, scene, document) {
     const city = data.city();
     const { vectorMap: rawMap, connections } = documentToRoadNetworkInputs(document);
     const registry = getRoadRegistry(data);
+    const preset = getRoadStylePreset(data.environment?.()?.roadStylePreset);
 
     const threeVectorMap = new Map();
     for (const [id, point] of rawMap.entries()) {
@@ -75,14 +77,31 @@ export function syncRoadsFromDocument(data, scene, document) {
         city.intersectionSetup = false;
 
         if (!connections.length) {
+            data.objects?.()?.replaceTriangles?.(
+                (triangle) => triangle.environmentGeometryType === "road",
+                [],
+            );
             return { roads: [], intersections: [] };
         }
 
-        const result = buildRoadNetwork(scene, threeVectorMap, connections);
+        const result = buildRoadNetwork(scene, threeVectorMap, connections, {
+            ...(preset.networkOptions ?? {}),
+            roadOptions: {
+                ...(preset.roadOptions ?? {}),
+            },
+        });
         city.addRoads(result.roads);
         for (const intersection of result.intersections) {
             city.addIntersection(intersection);
         }
+        const roadTriangles = result.roads.flatMap((road) => road.triangles ?? []);
+        roadTriangles.forEach((triangle) => {
+            triangle.environmentGeometryType = "road";
+        });
+        data.objects?.()?.replaceTriangles?.(
+            (triangle) => triangle.environmentGeometryType === "road",
+            roadTriangles,
+        );
         registerRoadEntities(registry, result);
 
         return result;

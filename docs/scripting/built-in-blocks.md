@@ -41,9 +41,8 @@ If a UI-only entry becomes runtime behavior, add a `UnitBlock` subclass and regi
 
 `app/scripting/units/program/ProgramIO.js` provides:
 
-- `OutputNode`: default canvas output node controlled by the right sidebar.
+- `OutputNode`: default canvas output node controlled by the right sidebar (and `graph.outputNodeConfig` for MCP).
 - `Program Input`: exposes external inputs to compiled programs.
-- `Program Output`: exposes named outputs from compiled programs.
 - Compiled program wrapper helpers for importing artifacts as reusable blocks.
 
 Program block behavior is central to compiled artifact interfaces, so update tests when changing it.

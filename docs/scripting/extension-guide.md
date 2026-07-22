@@ -40,7 +40,7 @@ or:
 static programNodeRole = "output";
 ```
 
-They also implement `getProgramPortDefinition()`. See `app/scripting/units/program/ProgramIO.js`.
+They also implement `getProgramPortDefinition()`. The built-in `OutputNode` (graph head) is the standard program output; see `app/scripting/units/program/ProgramIO.js`.
 
 Program labels must be unique per role. Duplicate labels fail compilation.
 

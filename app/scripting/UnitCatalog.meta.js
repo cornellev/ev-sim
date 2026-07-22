@@ -1,0 +1,178 @@
+/**
+ * Server-safe unit catalog metadata (no React components).
+ * Used by /api/scripting/units and MCP tooling.
+ */
+import { NumberUnitClass } from "./units/math/Number.block.js";
+import { CalculationBlock } from "./units/math/Calculation.block.js";
+import { Float64ToInt32Block, Int32ToFloat64Block } from "./units/conversions/NumberConversions.block.js";
+import { EBlock, GoldenRatioBlock, PIBlock, TauBlock } from "./units/math/Constants.block.js";
+import { RandomNumberBlock } from "./units/math/Random.block.js";
+import { NoiseBlock } from "./units/math/tex/Noise.block.js";
+import { MultiplyTexBlock } from "./units/math/tex/Scale.block.js";
+import { MaskBlock } from "./units/math/tex/Mask.block.js";
+import { IfBlock } from "./units/statements/If.block.js";
+import { ConjugationBlock, EqualityBlock } from "./units/statements/Equality.block.js";
+import { StringBlock } from "./units/objects/String.block.js";
+import {
+    BlendTextureBlock,
+    HeightToSlopeBlock,
+    NormalizeTextureBlock,
+    TerrainNoiseBlock,
+    TerraceTextureBlock,
+} from "./units/math/Terrain.block.js";
+import {
+    LowPassFilterBlock,
+    RateLimiterBlock,
+    SampleTextureBlock,
+    SensorFusionBlock,
+    ThresholdGateBlock,
+} from "./units/math/SensorFlow.block.js";
+import {
+    GaussianNoiseBlock,
+    JitterBlock,
+    RandomRangeBlock,
+    RemapRangeBlock,
+    SeededRandomBlock,
+    WeightedSelectBlock,
+} from "./units/math/Randomization.block.js";
+import { OutputNodeBlock, ProgramInputBlock } from "./units/program/ProgramIO.block.js";
+import {
+    AdvanceWaypointBlock,
+    AssertSignalBlock,
+    BindInputBlock,
+    BindingStatusBlock,
+    BindOutputBlock,
+    BindTriggerBlock,
+    BuildTopicMessageBlock,
+    CurrentWaypointBlock,
+    DeviceSnapshotBlock,
+    LogSignalBlock,
+    MissionStateBlock,
+    ObjectSnapshotBlock,
+    OnSignalUpdateBlock,
+    OnTickBlock,
+    OnTimerBlock,
+    ProbeSignalBlock,
+    ReadSignalBlock,
+    ReachedWaypointBlock,
+    RecordSignalBlock,
+    ReplaySignalBlock,
+    RouteProgressBlock,
+    ScenarioFlagReadBlock,
+    ScenarioFlagWriteBlock,
+    ScenarioSnapshotBlock,
+    SetMissionStateBlock,
+    SignalAgeBlock,
+    SignalChangedBlock,
+    SignalDefaultBlock,
+    SignalExistsBlock,
+    SignalLatchBlock,
+    SimulationSnapshotBlock,
+    StagePublishBlock,
+    StoreNamespaceBlock,
+    TopicFieldBlock,
+    TopicMetadataBlock,
+    TopicSnapshotBlock,
+    TopicStaleGateBlock,
+    VehicleDimensionsBlock,
+    VehiclePoseBlock,
+    VehicleSnapshotBlock,
+    VehicleVelocityBlock,
+    WaypointListBlock,
+    WriteSignalBlock,
+} from "./units/signals/SignalBlocks.block.js";
+
+function entry(category, name, blockClass, options = {}) {
+    return {
+        category,
+        name,
+        blockClass,
+        type: blockClass?.blockType || blockClass?.name || null,
+        placeable: options.placeable !== false,
+        notes: options.notes || null,
+    };
+}
+
+/** @type {{ category: string, name: string, blockClass: Function, type: string|null }[]} */
+export const UNIT_CATALOG_META = [
+    entry("expressions", "Number", NumberUnitClass),
+    entry("expressions", "Calculation", CalculationBlock),
+    entry("expressions", "Random Number", RandomNumberBlock),
+    entry("constants", "PI", PIBlock),
+    entry("constants", "E", EBlock),
+    entry("constants", "Tau", TauBlock),
+    entry("constants", "Golden Ratio", GoldenRatioBlock),
+    entry("texture1d", "Noise", NoiseBlock),
+    entry("texture1d", "Mask", MaskBlock),
+    entry("texture1d", "Multiply Tex", MultiplyTexBlock),
+    entry("terrain", "Terrain Noise", TerrainNoiseBlock),
+    entry("terrain", "Normalize Texture", NormalizeTextureBlock),
+    entry("terrain", "Blend Texture", BlendTextureBlock),
+    entry("terrain", "Terrace Texture", TerraceTextureBlock),
+    entry("terrain", "Height To Slope", HeightToSlopeBlock),
+    entry("sensorflow", "Sample Texture", SampleTextureBlock),
+    entry("sensorflow", "Low Pass Filter", LowPassFilterBlock),
+    entry("sensorflow", "Rate Limiter", RateLimiterBlock),
+    entry("sensorflow", "Sensor Fusion", SensorFusionBlock),
+    entry("sensorflow", "Threshold Gate", ThresholdGateBlock),
+    entry("randomization", "Random Range", RandomRangeBlock),
+    entry("randomization", "Seeded Random", SeededRandomBlock),
+    entry("randomization", "Gaussian Noise", GaussianNoiseBlock),
+    entry("randomization", "Jitter", JitterBlock),
+    entry("randomization", "Weighted Select", WeightedSelectBlock),
+    entry("randomization", "Remap Range", RemapRangeBlock),
+    entry("conversions", "Float64 → Int32", Float64ToInt32Block),
+    entry("conversions", "Int32 → Float64", Int32ToFloat64Block),
+    entry("objects", "String", StringBlock),
+    entry("statements", "If", IfBlock),
+    entry("statements", "Equality", EqualityBlock),
+    entry("statements", "Conjugation", ConjugationBlock),
+    entry("program", "Program Input", ProgramInputBlock),
+    entry("program", "OutputNode", OutputNodeBlock, {
+        placeable: false,
+        notes: "Graph head output node. Configure via graph.outputNodeConfig / script_update_unit on the head uuid (default head-uuid). Do not script_add_unit this type.",
+    }),
+    entry("signals", "Read Signal", ReadSignalBlock),
+    entry("signals", "Write Signal", WriteSignalBlock),
+    entry("signals", "Signal Exists", SignalExistsBlock),
+    entry("signals", "Signal Age", SignalAgeBlock),
+    entry("signals", "Signal Changed", SignalChangedBlock),
+    entry("signals", "Signal Latch", SignalLatchBlock),
+    entry("signals", "Signal Default", SignalDefaultBlock),
+    entry("signals", "Store Namespace", StoreNamespaceBlock),
+    entry("topics", "Topic Snapshot", TopicSnapshotBlock),
+    entry("topics", "Topic Field", TopicFieldBlock),
+    entry("topics", "Build Topic Message", BuildTopicMessageBlock),
+    entry("topics", "Stage Publish", StagePublishBlock),
+    entry("topics", "Topic Stale Gate", TopicStaleGateBlock),
+    entry("topics", "Topic Metadata", TopicMetadataBlock),
+    entry("simulator", "Vehicle Snapshot", VehicleSnapshotBlock),
+    entry("simulator", "Vehicle Pose", VehiclePoseBlock),
+    entry("simulator", "Vehicle Velocity", VehicleVelocityBlock),
+    entry("simulator", "Vehicle Dimensions", VehicleDimensionsBlock),
+    entry("simulator", "Device Snapshot", DeviceSnapshotBlock),
+    entry("simulator", "Simulation Snapshot", SimulationSnapshotBlock),
+    entry("simulator", "Object Snapshot", ObjectSnapshotBlock),
+    entry("mission", "Scenario Snapshot", ScenarioSnapshotBlock),
+    entry("mission", "Waypoint List", WaypointListBlock),
+    entry("mission", "Current Waypoint", CurrentWaypointBlock),
+    entry("mission", "Advance Waypoint", AdvanceWaypointBlock),
+    entry("mission", "Reached Waypoint", ReachedWaypointBlock),
+    entry("mission", "Mission State", MissionStateBlock),
+    entry("mission", "Set Mission State", SetMissionStateBlock),
+    entry("mission", "Route Progress", RouteProgressBlock),
+    entry("mission", "Scenario Flag Read", ScenarioFlagReadBlock),
+    entry("mission", "Scenario Flag Write", ScenarioFlagWriteBlock),
+    entry("bindings", "On Signal Update", OnSignalUpdateBlock),
+    entry("bindings", "On Tick", OnTickBlock),
+    entry("bindings", "On Timer", OnTimerBlock),
+    entry("bindings", "Bind Input", BindInputBlock),
+    entry("bindings", "Bind Output", BindOutputBlock),
+    entry("bindings", "Bind Trigger", BindTriggerBlock),
+    entry("diagnostics", "Probe Signal", ProbeSignalBlock),
+    entry("diagnostics", "Log Signal", LogSignalBlock),
+    entry("diagnostics", "Assert Signal", AssertSignalBlock),
+    entry("diagnostics", "Record Signal", RecordSignalBlock),
+    entry("diagnostics", "Replay Signal", ReplaySignalBlock),
+    entry("diagnostics", "Binding Status", BindingStatusBlock),
+];

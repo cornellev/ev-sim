@@ -13,7 +13,7 @@ import { Environment } from "../environment/Environment";
 import { getBindingRuntime } from "@/app/scripting/bindings/BindingRuntime";
 
 export class Data {
-    constructor() {
+    constructor(options = {}) {
         this.deviceDatabase = new DeviceDatabase(this);
         this.objectDatabase = new ObjectDatabase(this);
         this.vehicleDatabase = new VehicleDatabase(this);
@@ -30,7 +30,7 @@ export class Data {
 
         this.simulationEngine = new SimulationEngine(this);
         // Environment runtime (editor, registry, chunks). Access via environment(); document is environment().getDocument().
-        this.environmentDocument = new Environment(this);
+        this.environmentDocument = new Environment(this, options.environment);
         this.bakeHarness = null;
         this._bakeRunConfig = null;
         this._splatAccumulator = null;

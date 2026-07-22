@@ -32,7 +32,9 @@ export function isEditorDocument(value) {
 export function createEmptyGraph(outputNodeConfig = null) {
     return {
         head: "head-uuid",
-        outputNodeConfig,
+        outputNodeConfig: outputNodeConfig ?? {
+            outputs: [{ id: "output", label: "output", type: "float64" }],
+        },
         nodes: [],
         connections: []
     };

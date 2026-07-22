@@ -1,11 +1,8 @@
-import { Data } from "../3d/data/Data";
-import { waitFor } from "../util/Wait";
-
 export class PhysicsEngine {
     /**
      * @param {Data} data 
      */
-    constructor(data) {
+    constructor(data, { loadPhysics = () => import("@dimforge/rapier3d") } = {}) {
         this.data = data;
 
         this.world = null; // placeholder for physics world object (e.g., from a physics library like Cannon.js or Ammo.js)
@@ -13,17 +10,16 @@ export class PhysicsEngine {
         this.rigidbodies = []; // list of rigid bodies in the simulation; can be used for collision detection, etc.
 
 
-        import("@dimforge/rapier3d").then(RAPIER => {
+        this._initialization = loadPhysics().then(RAPIER => {
             let gravity = { x: 0, y: -9.81, z: 0 };
             this.world = new RAPIER.World(gravity);
             console.log("Physics engine initialized with gravity", gravity);
-        })
+            return this.world;
+        });
     }
 
     async start() {
-        await waitFor(() => this.world !== null, 10, 10); // wait for the physics world to be initialized
-
-        
+        await this._initialization;
 
         // For now, the physics engine doesn't do anything active; it just provides a structure for future physics updates and a place to store physics-related state if needed.
     }

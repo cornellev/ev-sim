@@ -6,6 +6,7 @@ export class ClientManager {
         this.data = data;
 
         this.client = null;
+        this._disposed = false;
 
         this._initPromise = this._setupClient();
 
@@ -118,6 +119,7 @@ export class ClientManager {
             console.warn("car position message definition load skipped:", err.message);
         }
 
+        if (this._disposed) return null;
         this.client = new Client({
             url: "ws://localhost:8080", // websocket to ROS bridge server
             onUpdate: this._onUpdate.bind(this),
@@ -131,7 +133,7 @@ export class ClientManager {
 
     async setup() {
         await this._initPromise;
-        if (!this.client) return;
+        if (this._disposed || !this.client) return;
 
         console.log("Starting client...");
         this.client.start();
@@ -140,10 +142,24 @@ export class ClientManager {
 
     onUpdate(callback) {
         this.callbacks.push(callback);
+        return () => {
+            this.callbacks = this.callbacks.filter((registered) => registered !== callback);
+        };
     }
 
     _onUpdate(info) {
         this.callbacks.forEach(callback => callback(info));
+    }
+
+    async dispose() {
+        this._disposed = true;
+        this.callbacks = [];
+        try {
+            await this._initPromise;
+        } catch {
+            // Setup already logs recoverable initialization failures.
+        }
+        return this.client?.stop?.();
     }
 
     /**

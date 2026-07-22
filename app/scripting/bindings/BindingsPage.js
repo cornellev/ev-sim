@@ -5,7 +5,7 @@ import { listScriptDocuments } from "../ScriptStorage.js";
 import { summarizeScriptDocument } from "../EditorDocument.js";
 import { SIGNAL_PATHS } from "../runtime/SignalPaths.js";
 import { getBindingRuntime } from "./BindingRuntime.js";
-import { parseBindingManifest, serializeBindingManifest } from "./BindingStorage.js";
+import { getBindingManifest, parseBindingManifest, serializeBindingManifest } from "./BindingStorage.js";
 import {
     INPUT_SOURCES,
     OUTPUT_SINKS,
@@ -19,6 +19,7 @@ import {
     summarizeTrigger,
     validateBinding
 } from "./BindingDocument.js";
+import { subscribeStorageEvents } from "../../client/storageEvents.js";
 
 const TRIGGER_LABELS = {
     [TRIGGER_KINDS.TOPIC]: "ROS topic",
@@ -765,6 +766,31 @@ export default function BindingsPage() {
         if (feedbackTimer.current) clearTimeout(feedbackTimer.current);
         feedbackTimer.current = setTimeout(() => setFeedback(null), 2000);
     }, []);
+
+    // Live-sync: MCP binding writes rehydrate the runtime without re-persisting.
+    useEffect(() => {
+        return subscribeStorageEvents((event) => {
+            if (event.domain === "script") {
+                runtime.invalidateScript(event.id || undefined);
+                listScriptDocuments()
+                    .then((documents) => setScriptDocs(documents || []))
+                    .catch(() => {});
+                return;
+            }
+            if (event.domain !== "bindings") return;
+
+            (async () => {
+                try {
+                    const next = await getBindingManifest();
+                    setManifest(next);
+                    await runtime.setManifest(next, { persist: false });
+                    showFeedback("Bindings updated by agent");
+                } catch (error) {
+                    console.warn("[bindings] MCP live-sync failed:", error);
+                }
+            })();
+        });
+    }, [runtime, showFeedback]);
 
     const commitManifest = useCallback((next, { immediate = false } = {}) => {
         setManifest(next);

@@ -42,6 +42,9 @@ next-env.d.ts
 
 
 
+# server-side persisted editor data (environments, scripts, bindings)
+/server/data
+
 # large files
 public/scenarios
 public/scenario-docs
@@ -54,3 +57,5 @@ baking/baked
 tests/__pycache__
 
 .cursor
+
+graphify-out

@@ -171,8 +171,13 @@ function createRoadPoints(startPoint, endPoint) {
 }
 
 function createRoadFromEdge(edge, trimmedEndpoints, networkOptions) {
-    const roadOptions = networkOptions.roadOptions;
-    const laneCount = edge.bidirectional ? roadOptions.bidirectionalLaneCount : roadOptions.oneWayLaneCount;
+    const roadOptions = {
+        ...networkOptions.roadOptions,
+        ...(edge.roadOptions ?? {}),
+    };
+    const laneCount = edge.laneCount
+        ?? (edge.bidirectional ? roadOptions.bidirectionalLaneCount : roadOptions.oneWayLaneCount);
+    const width = edge.width ?? (roadOptions.laneWidth * laneCount);
     const centerLineType = edge.bidirectional
         ? roadOptions.centerLineType
         : laneCount > 1
@@ -181,15 +186,15 @@ function createRoadFromEdge(edge, trimmedEndpoints, networkOptions) {
 
     const road = new Road(
         createRoadPoints(trimmedEndpoints.startPoint, trimmedEndpoints.endPoint),
-        new Unit(roadOptions.laneWidth * laneCount, Unit.Type.METER),
-        roadOptions.borderLeft,
-        roadOptions.borderRight,
+        new Unit(width, Unit.Type.METER),
+        edge.borderLeft ?? roadOptions.borderLeft,
+        edge.borderRight ?? roadOptions.borderRight,
         {
             ...roadOptions,
             laneCount,
             centerLineType,
             direction: edge.bidirectional ? 0 : 1,
-            tension: networkOptions.tension,
+            tension: edge.tension ?? networkOptions.tension,
         },
     );
 
@@ -227,14 +232,21 @@ export function buildRoadNetwork(scene, vectorMap, connections, options = {}) {
 
     const edges = [];
 
-    for (const [startName, endName, bidirectional = true] of connections) {
-        const startVec = vectorMap.get(startName)?.clone();
-        const endVec = vectorMap.get(endName)?.clone();
+    for (const [startName, endName, bidirectional = true, metadata = {}] of connections) {
+        const startNodeVec = vectorMap.get(startName)?.clone();
+        const endNodeVec = vectorMap.get(endName)?.clone();
 
-        if (!startVec || !endVec) {
+        if (!startNodeVec || !endNodeVec) {
             console.warn(`Missing vector for road connection: ${startName} to ${endName}`);
             continue;
         }
+
+        const startVec = metadata.startArm
+            ? new THREE.Vector3(metadata.startArm.x, metadata.startArm.y ?? 0, metadata.startArm.z)
+            : startNodeVec.clone();
+        const endVec = metadata.endArm
+            ? new THREE.Vector3(metadata.endArm.x, metadata.endArm.y ?? 0, metadata.endArm.z)
+            : endNodeVec.clone();
 
         edges.push({
             startName,
@@ -243,9 +255,19 @@ export function buildRoadNetwork(scene, vectorMap, connections, options = {}) {
             endVec,
             bidirectional,
             nodeVectors: {
-                [startName]: startVec,
-                [endName]: endVec,
+                [startName]: startNodeVec,
+                [endName]: endNodeVec,
             },
+            width: Number.isFinite(metadata.width) ? metadata.width : null,
+            laneCount: Number.isFinite(metadata.laneCount) ? metadata.laneCount : null,
+            tension: Number.isFinite(metadata.tension) ? metadata.tension : null,
+            borderLeft: metadata.borderLeft ?? null,
+            borderRight: metadata.borderRight ?? null,
+            roadOptions: Number.isFinite(metadata.shoulderWidth)
+                ? { shoulderWidth: metadata.shoulderWidth }
+                : null,
+            hasExplicitStart: Boolean(metadata.startArm),
+            hasExplicitEnd: Boolean(metadata.endArm),
         });
     }
 
@@ -270,8 +292,8 @@ export function buildRoadNetwork(scene, vectorMap, connections, options = {}) {
     for (const edge of edges) {
         const trimmedEndpoints = computeTrimmedEndpoints(
             edge,
-            nodeInsetMap.get(edge.startName) ?? 0,
-            nodeInsetMap.get(edge.endName) ?? 0,
+            edge.hasExplicitStart ? 0 : (nodeInsetMap.get(edge.startName) ?? 0),
+            edge.hasExplicitEnd ? 0 : (nodeInsetMap.get(edge.endName) ?? 0),
             networkOptions.minRoadLength,
         );
         const road = createRoadFromEdge(edge, trimmedEndpoints, networkOptions);

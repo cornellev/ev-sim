@@ -9,6 +9,7 @@ This folder is the contributor guide for sensor-fusion. Start here when you need
 - Environment authoring: [Environment Editor](environment-editor.md), then [Earth Import](earth-import.md) for geographic imports.
 - Visual scripting work: [Scripting Overview](scripting/README.md), then [Scripting Architecture](scripting/architecture.md) and [Extension Guide](scripting/extension-guide.md).
 - Running scripts on live data: [Script Bindings](script-bindings.md) (topics, fixed updates, signals, timers).
+- Agent tooling: [MCP Server](mcp.md) — environment, scripting, and binding tools for AI agents.
 - IGVC/domain work: [IGVC Overview](igvc/overview.md) and [Competition Rules](igvc/competition-rules.md).
 - Asset setup: [Assets](assets.md).
 - Broken local setup: [Troubleshooting](troubleshooting.md).
@@ -23,6 +24,7 @@ This folder is the contributor guide for sensor-fusion. Start here when you need
 - `app/3d/earth/` contains Earth Import (tiles, roads, geospatial transforms).
 - `app/simulation/SimulationEngine.js` owns the simulation loop and module toggles.
 - `app/client/Client.js` implements the orchestrator WebSocket protocol used for ROS-style topics.
-- `server/App.js` runs the production Next app behind Express.
+- `server/App.js` runs the Next app behind Express (both `dev` and `start`), hosts the storage API at `/api/storage`, and the MCP endpoint at `/mcp`.
+- `server/mcp/` contains the MCP tool suites for environments, scripts, and bindings.
 - `public/` stores browser-served assets and fallback message definitions.
 - `tests/` contains Node test-runner tests for scripting, editor, bake, and earth-import behavior.

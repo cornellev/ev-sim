@@ -1,4 +1,5 @@
 import { ScriptManager } from "./ScriptManager.js";
+import { normalizeOutputNodeState } from "./units/program/ProgramTypes.js";
 
 function cloneJson(value) {
     if (value === undefined) return undefined;
@@ -71,11 +72,25 @@ export function restoreManagerFromGraph(graph, getBlockClass, {
 } = {}) {
     const manager = createManager();
     const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
+    const resolvedHeadUUID = graph?.head || headUUID;
+    const headInNodes = nodes.some((node) => node.uuid === resolvedHeadUUID);
 
     if (headUnit) {
         manager.addUnit(headUnit);
-        manager.setHead(headUUID);
-    } else if (graph?.head && nodes.some((node) => node.uuid === graph.head)) {
+        manager.setHead(resolvedHeadUUID);
+    } else if (!headInNodes) {
+        const OutputNodeClass = typeof getBlockClass === "function"
+            ? getBlockClass("OutputNodeBlock")
+            : null;
+        if (OutputNodeClass) {
+            const unit = new OutputNodeClass(resolvedHeadUUID);
+            const config = normalizeOutputNodeState(graph?.outputNodeConfig || {});
+            unit.hydrateState(config);
+            manager.addUnit(unit);
+            manager.storeData(resolvedHeadUUID, config);
+            manager.setHead(resolvedHeadUUID);
+        }
+    } else if (graph?.head) {
         manager.setHead(graph.head);
     }
 

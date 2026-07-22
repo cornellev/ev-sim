@@ -45,6 +45,9 @@ export class City extends Database {
         for (const road of this.roads) {
             await road.setup(scene);
             if (road.triangles?.length) {
+                road.triangles.forEach((triangle) => {
+                    triangle.environmentGeometryType = "road";
+                });
                 this.getParent().objects().addObjects(road.triangles);
             }
         }

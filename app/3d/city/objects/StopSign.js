@@ -42,7 +42,7 @@ export class StopSign extends Box {
         const pole = new THREE.Mesh(geometry, material);
 
         // the pole's bottom is at the stop sign's position, so offset it up by half the pole height
-        pole.position.set(this.position.x, pos.y + poleHeight / 2, this.position.z);
+        pole.position.set(0, poleHeight / 2, 0);
 
         // add the sign
         const scale = Math.max(this.scale.x, this.scale.z); // use the larger horizontal scale for the sign size
@@ -53,11 +53,12 @@ export class StopSign extends Box {
         });
 
         const sign = new THREE.Mesh(signGeometry, signMaterial);
-        sign.position.set(this.position.x, pos.y + poleHeight + scale / 4, this.position.z);
+        sign.position.set(0, poleHeight + scale / 4, 0);
         // CircleGeometry faces +Z by default; map dir (0:+X, 1:+Z, 2:-X, 3:-Z) to a Y-rotation.
         sign.rotation.y = (Math.PI / 2) * (1 - this.dir);
 
         const mesh = new THREE.Group();
+        mesh.position.copy(pos);
         mesh.add(pole);
         mesh.add(sign);
         mesh.userData.fusionObject = this;

@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { EDITOR_TOOLS } from "../EditorState.js";
 import { placeFusionObjectInScene } from "../placement/placeFusionObject.js";
 import { getGroundPointFromEvent, isOverlayEvent } from "../editorPointerUtils.js";
+import { addFeature } from "../document/documentMutations.js";
 
 function createGhost() {
     const geometry = new THREE.CylinderGeometry(0.45, 0.45, 0.12, 24);
@@ -72,13 +73,22 @@ export class PlaceTool {
         const point = getGroundPointFromEvent(event, this.camera, this.renderer);
         if (!point) return;
 
-        const { entity } = placeFusionObjectInScene({
+        const { entity, object } = placeFusionObjectInScene({
             data: this.data,
             scene: this.scene,
             registry: this.registry,
             assetId: asset.id,
             point,
             label: asset.label,
+        });
+        addFeature(this.data.environment().getDocument(), {
+            id: object._uuid,
+            type: asset.id,
+            x: point.x,
+            z: point.z,
+            dir: object.dir ?? 0,
+            rotationY: object._mesh?.rotation?.y ?? 0,
+            tags: object.tags,
         });
 
         this.editor.selectEntity(entity);

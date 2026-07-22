@@ -11,9 +11,12 @@ export function placeFusionObjectInScene({
     assetId,
     point,
     label = null,
+    sourceId = null,
+    dir = null,
 }) {
     const asset = getPlacementAsset(assetId);
-    const object = createFusionObject(assetId, point);
+    const object = createFusionObject(assetId, point, { dir });
+    if (sourceId) object._uuid = sourceId;
     const objectDatabase = data.objects();
 
     objectDatabase.addObject(object);

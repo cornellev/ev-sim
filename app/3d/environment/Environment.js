@@ -29,6 +29,10 @@ export class Environment {
 
         this.data = data; // general data object
         this.environmentId = options.environmentId ?? "igvc";
+        this.name = options.name ?? (this.environmentId === "igvc" ? "IGVC" : this.environmentId);
+        this.templateId = options.templateId ?? (this.environmentId === "igvc" ? "igvc" : "blank");
+        this.roadStylePreset = options.roadStylePreset
+            ?? (this.templateId === "igvc" ? "igvc" : "default");
         this.chunkSize = options.chunkSize ?? DEFAULT_CHUNK_SIZE;
         this.editorState = new EditorState(options.editorState);
         this.skyState = new EnvironmentSkyState(options.sky);
@@ -101,6 +105,13 @@ export class Environment {
         const editorSnapshot = this.editorState.snapshot();
         return {
             environmentId: this.environmentId,
+            name: this.name,
+            schemaVersion: 2,
+            templateId: this.templateId,
+            roadStylePreset: this.roadStylePreset,
+            roadsAuthored: this.document.roadsAuthored,
+            buildingsAuthored: this.document.buildingsAuthored,
+            featuresAuthored: this.document.featuresAuthored,
             chunkSize: this.chunkSize,
             document: this.document.toManifest(),
             ...this.chunkManager.toManifest(),

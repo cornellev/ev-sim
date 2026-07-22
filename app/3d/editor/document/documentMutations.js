@@ -1,9 +1,14 @@
+import * as THREE from "three";
 import { buildingIdFromFootprint } from "../../city/buildingIds.js";
 import { createId, DEFAULT_ROAD_EDGE } from "./EnvironmentDocument.js";
 
 export const MAX_INTERSECTION_DEGREE = 4;
 export const MIN_BUILDING_DIMENSION = 2;
 export const DEFAULT_INTERSECTION_INSET = 5;
+
+function markRoadsAuthored(document) {
+    document.roadsAuthored = true;
+}
 
 function roadEdgeKey(startNodeId, endNodeId) {
     return startNodeId < endNodeId
@@ -228,6 +233,7 @@ export function createIntersectionNode(document, point) {
         kind: "intersection",
     };
     document.roads.nodes.push(node);
+    markRoadsAuthored(document);
     document.notify();
     return node;
 }
@@ -282,6 +288,7 @@ export function moveRoadNode(document, nodeId, point, options = {}) {
     node.x = targetPoint.x;
     node.z = targetPoint.z;
     node.kind = "endpoint";
+    markRoadsAuthored(document);
     document.notify();
     return { ok: true, node };
 }
@@ -339,6 +346,7 @@ export function connectEndpointToIntersection(document, endpointId, point, snapR
 
     document.roads.nodes = document.roads.nodes.filter((node) => node.id !== endpointId);
     refreshNodeKinds(document);
+    markRoadsAuthored(document);
     document.notify();
     return { ok: true, connected: true, intersection, edge };
 }
@@ -405,6 +413,10 @@ export function addRoadEdge(document, startNodeId, endNodeId, options = {}, runt
         bidirectional: options.bidirectional ?? DEFAULT_ROAD_EDGE.bidirectional,
         width: options.width ?? DEFAULT_ROAD_EDGE.width,
         laneCount: options.laneCount ?? DEFAULT_ROAD_EDGE.laneCount,
+        shoulderWidth: options.shoulderWidth ?? null,
+        tension: options.tension ?? null,
+        borderLeft: options.borderLeft ?? null,
+        borderRight: options.borderRight ?? null,
         startArm: options.startArm ? { ...options.startArm } : null,
         endArm: options.endArm ? { ...options.endArm } : null,
     };
@@ -417,6 +429,9 @@ export function addRoadEdge(document, startNodeId, endNodeId, options = {}, runt
     }
     if (runtime.refreshKinds !== false) {
         refreshNodeKinds(document);
+    }
+    if (runtime.markAuthored !== false) {
+        markRoadsAuthored(document);
     }
     if (runtime.notify !== false) {
         document.notify();
@@ -496,6 +511,7 @@ export function addBuildingRectangle(document, cornerA, cornerB, options = {}) {
     };
 
     document.buildings.push(record);
+    document.buildingsAuthored = true;
     document.notify();
     return { ok: true, record };
 }
@@ -511,10 +527,12 @@ export function addFeature(document, feature) {
         x: feature.x,
         z: feature.z,
         dir: feature.dir ?? 0,
+        rotationY: feature.rotationY ?? 0,
         tags: [...(feature.tags ?? [])],
     };
 
     document.features.push(record);
+    document.featuresAuthored = true;
     document.notify();
     return { ok: true, record };
 }
@@ -530,6 +548,7 @@ export function removeBuilding(document, buildingId) {
     }
 
     document.buildings.splice(index, 1);
+    document.buildingsAuthored = true;
     document.notify();
     return { ok: true };
 }
@@ -545,6 +564,7 @@ export function removeFeature(document, featureId) {
     }
 
     document.features.splice(index, 1);
+    document.featuresAuthored = true;
     document.notify();
     return { ok: true };
 }
@@ -562,7 +582,68 @@ export function moveFeature(document, featureId, point) {
 
     feature.x = point.x;
     feature.z = point.z;
+    document.featuresAuthored = true;
     document.notify();
+    return { ok: true, feature };
+}
+
+/**
+ * Apply the same world-space delta used by TransformTool to a building's
+ * authoritative footprint. Building meshes are regenerated from these points
+ * on load, so writing the delta here is what makes scene transforms persist.
+ *
+ * @param {import("./EnvironmentDocument.js").EnvironmentDocument} document
+ * @param {string} buildingId
+ * @param {THREE.Matrix4} deltaMatrixWorld
+ * @param {{ notify?: boolean }} [options]
+ */
+export function transformBuilding(document, buildingId, deltaMatrixWorld, options = {}) {
+    const building = document.getBuilding(buildingId);
+    if (!building || !deltaMatrixWorld?.isMatrix4) {
+        return { ok: false, error: "Building not found or transform is invalid." };
+    }
+
+    building.footprint = building.footprint.map((point) => {
+        const transformed = new THREE.Vector3(
+            Number(point.x) || 0,
+            Number(point.y) || 0,
+            Number(point.z) || 0,
+        ).applyMatrix4(deltaMatrixWorld);
+        return { x: transformed.x, y: transformed.y, z: transformed.z };
+    });
+
+    // Extrusion height is separate from the footprint. Preserve Y-axis scale
+    // from the delta while ignoring translation.
+    const linear = new THREE.Matrix3().setFromMatrix4(deltaMatrixWorld);
+    const heightScale = new THREE.Vector3(0, 1, 0).applyMatrix3(linear).length();
+    if (Number.isFinite(heightScale) && heightScale > 0) {
+        building.height *= heightScale;
+    }
+
+    document.buildingsAuthored = true;
+    if (options.notify !== false) document.notify();
+    return { ok: true, building };
+}
+
+/**
+ * Persist a placed prop's world position and heading.
+ *
+ * @param {import("./EnvironmentDocument.js").EnvironmentDocument} document
+ * @param {string} featureId
+ * @param {{ x: number, z: number, dir?: number, rotationY?: number }} transform
+ * @param {{ notify?: boolean }} [options]
+ */
+export function transformFeature(document, featureId, transform, options = {}) {
+    const feature = document.getFeature(featureId);
+    if (!feature) return { ok: false, error: "Feature not found." };
+
+    feature.x = transform.x;
+    feature.z = transform.z;
+    if (Number.isFinite(transform.dir)) feature.dir = transform.dir;
+    if (Number.isFinite(transform.rotationY)) feature.rotationY = transform.rotationY;
+
+    document.featuresAuthored = true;
+    if (options.notify !== false) document.notify();
     return { ok: true, feature };
 }
 
@@ -589,6 +670,7 @@ export function removeRoadEdge(document, edgeId) {
     }
 
     refreshNodeKinds(document);
+    markRoadsAuthored(document);
     document.notify();
     return { ok: true };
 }
@@ -625,6 +707,7 @@ export function removeIntersectionNode(document, nodeId) {
     }
 
     refreshNodeKinds(document);
+    markRoadsAuthored(document);
     document.notify();
     return { ok: true, removedEdges: connectedEdges.length };
 }
@@ -699,6 +782,16 @@ export function documentToRoadNetworkInputs(document) {
         edge.startNodeId,
         edge.endNodeId,
         edge.bidirectional !== false,
+        {
+            width: edge.width,
+            laneCount: edge.laneCount,
+            shoulderWidth: edge.shoulderWidth,
+            tension: edge.tension,
+            borderLeft: edge.borderLeft,
+            borderRight: edge.borderRight,
+            startArm: edge.startArm,
+            endArm: edge.endArm,
+        },
     ]);
 
     return { vectorMap, connections };

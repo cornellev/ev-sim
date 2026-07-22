@@ -1,10 +1,10 @@
 import { registerBlockType } from "./BlockRegistry.js";
-import { ROSInputBlock, ROSOutputBlock } from "./units/ROSUnit";
-import { Float64ToInt32Block, Int32ToFloat64Block } from "./units/conversions/NumberConversions";
-import { NumberUnitClass } from "./units/math/Number";
-import { CalculationBlock } from "./units/math/Calculation";
-import { EBlock, GoldenRatioBlock, PIBlock, TauBlock } from "./units/math/Constants";
-import { RandomNumberBlock } from "./units/math/Random";
+import { ROSInputBlock, ROSOutputBlock } from "./units/ROSUnit.block.js";
+import { Float64ToInt32Block, Int32ToFloat64Block } from "./units/conversions/NumberConversions.block.js";
+import { NumberUnitClass } from "./units/math/Number.block.js";
+import { CalculationBlock } from "./units/math/Calculation.block.js";
+import { EBlock, GoldenRatioBlock, PIBlock, TauBlock } from "./units/math/Constants.block.js";
+import { RandomNumberBlock } from "./units/math/Random.block.js";
 import {
     GaussianNoiseBlock,
     JitterBlock,
@@ -12,26 +12,26 @@ import {
     RemapRangeBlock,
     SeededRandomBlock,
     WeightedSelectBlock,
-} from "./units/math/Randomization";
+} from "./units/math/Randomization.block.js";
 import {
     LowPassFilterBlock,
     RateLimiterBlock,
     SampleTextureBlock,
     SensorFusionBlock,
     ThresholdGateBlock,
-} from "./units/math/SensorFlow";
+} from "./units/math/SensorFlow.block.js";
 import {
     BlendTextureBlock,
     HeightToSlopeBlock,
     NormalizeTextureBlock,
     TerrainNoiseBlock,
     TerraceTextureBlock,
-} from "./units/math/Terrain";
-import { MaskBlock } from "./units/math/tex/Mask";
-import { NoiseBlock } from "./units/math/tex/Noise";
-import { MultiplyTexBlock } from "./units/math/tex/Scale";
-import { StringBlock } from "./units/objects/String";
-import { OutputNodeBlock, ProgramInputBlock, ProgramOutputBlock } from "./units/program/ProgramIO";
+} from "./units/math/Terrain.block.js";
+import { MaskBlock } from "./units/math/tex/Mask.block.js";
+import { NoiseBlock } from "./units/math/tex/Noise.block.js";
+import { MultiplyTexBlock } from "./units/math/tex/Scale.block.js";
+import { StringBlock } from "./units/objects/String.block.js";
+import { OutputNodeBlock, ProgramInputBlock } from "./units/program/ProgramIO.block.js";
 import {
     AdvanceWaypointBlock,
     AssertSignalBlock,
@@ -76,9 +76,9 @@ import {
     VehicleVelocityBlock,
     WaypointListBlock,
     WriteSignalBlock,
-} from "./units/signals/SignalBlocks";
-import { ConjugationBlock, EqualityBlock } from "./units/statements/Equality";
-import { IfBlock } from "./units/statements/If";
+} from "./units/signals/SignalBlocks.block.js";
+import { ConjugationBlock, EqualityBlock } from "./units/statements/Equality.block.js";
+import { IfBlock } from "./units/statements/If.block.js";
 
 let registered = false;
 
@@ -121,7 +121,6 @@ export function registerBuiltInBlocks() {
         ROSInputBlock,
         ROSOutputBlock,
         ProgramInputBlock,
-        ProgramOutputBlock,
         OutputNodeBlock,
         ReadSignalBlock,
         WriteSignalBlock,

@@ -47,7 +47,7 @@ import {
     WeightedSelectBlock,
     WeightedSelectUnit,
 } from "./units/math/Randomization";
-import { ProgramInputBlock, ProgramInputUnit, ProgramOutputBlock, ProgramOutputUnit } from "./units/program/ProgramIO";
+import { ProgramInputBlock, ProgramInputUnit } from "./units/program/ProgramIO";
 import {
     AdvanceWaypointBlock,
     AdvanceWaypointUnit,
@@ -190,7 +190,6 @@ export const UNIT_CATALOG = [
     entry("statements", "Comparison (==, !=, >, <, >=, <=)", Equality, EqualityBlock),
     entry("statements", "Conjunction (AND, OR)", Conjugation, ConjugationBlock),
     entry("program", "Program Input", ProgramInputUnit, ProgramInputBlock),
-    entry("program", "Program Output", ProgramOutputUnit, ProgramOutputBlock),
     entry("signals", "Read Signal", ReadSignalUnit, ReadSignalBlock),
     entry("signals", "Write Signal", WriteSignalUnit, WriteSignalBlock),
     entry("signals", "Signal Exists", SignalExistsUnit, SignalExistsBlock),

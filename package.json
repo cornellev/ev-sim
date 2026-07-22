@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "node server/App.js",
     "build": "next build",
     "start": "node server/App.js",
     "lint": "eslint",
@@ -12,6 +12,7 @@
   "dependencies": {
     "@dimforge/rapier3d": "^0.19.3",
     "@jax-js/jax": "^0.1.9",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@sparkjsdev/spark": "^0.1.10",
     "@takram/three-atmosphere": "^0.19.1",
     "@takram/three-clouds": "^0.7.6",
@@ -30,7 +31,8 @@
     "three": "^0.182.0",
     "three-mesh-bvh": "^0.9.8",
     "vmath": "^1.4.8",
-    "ws": "^8.19.0"
+    "ws": "^8.19.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

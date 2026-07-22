@@ -30,7 +30,7 @@ The 3D scene has two modes (`app/3d/viewState.js`):
 - **Simulation** (`THREE_D_MODES.SIMULATION`) — vehicles, sensors, physics, and scenario playback.
 - **Environment** (`THREE_D_MODES.ENVIRONMENT`) — authoring static world content. See [Environment Editor](environment-editor.md).
 
-`server/App.js` is only used by `npm run start`. It prepares Next and serves all requests through Express.
+`server/App.js` is used by both `npm run dev` and `npm run start`. It prepares Next, serves all page requests through Express, and mounts the storage API at `/api/storage` (see [development.md](development.md) for the storage backend).
 
 ## Scripting Layer
 

@@ -17,7 +17,6 @@ import { BigCar } from "./vehicles/BigCar";
 import { TrafficScenario } from "./traffic/TrafficScenario";
 import { buildRoadNetwork } from "./city/RoadNetwork";
 import { LoadRoadsFromGeoJSON } from "./city/CityBuilder";
-import { setupIGVC } from "./igvc/IGVCScene";
 import { SimulationChrome } from "./overlay/SimulationChrome";
 import { EnvironmentEditorChrome } from "./overlay/EnvironmentEditorChrome";
 import { THREE_D_MODES } from "./viewState";
@@ -44,6 +43,15 @@ import { EarthTilesManager } from "./earth/EarthTilesManager";
 import { EarthImportController } from "./earth/EarthImportController";
 import { SceneLoadingScreen } from "./overlay/SceneLoadingScreen";
 import { EditorToolController } from "./editor/tools/EditorToolController";
+import { EnvironmentPersistence } from "./environment/EnvironmentPersistence";
+import { EnvironmentLoader } from "./environment/EnvironmentLoader";
+import { getEnvironmentManifest } from "./environment/EnvironmentCatalogClient";
+import { subscribeStorageEvents } from "../client/storageEvents";
+import {
+    clearLaneHighlights,
+    setDeviceVisualsVisible,
+    setVehiclesVisible,
+} from "./runtimeVisibility";
 
 /** `?mini=q1` | `q2` | `q3` | `q4` | `fi1` | `fi2` | `fii1` | `fiii1` | `fiii2` | `fiii3` (default: q4) */
 const MINI_SCENARIOS = {
@@ -113,7 +121,7 @@ function setupControls(scene, camera, renderer, data) {
     gridHelper.visible = false;
     scene.add(gridHelper);
 
-    data.keys().registerKeyDown("g", (e) => {
+    controls.disposeEnvironmentKeys = data.keys().registerKeyDown("g", () => {
         gridHelper.visible = !gridHelper.visible;
     });
 
@@ -336,6 +344,7 @@ async function setupCity(scene, data) {
  * @param {THREE.Camera} camera
  */
 async function setupVehicles(scene, data, camera) {
+    const disposers = [];
     const car = new BigCar(
         data.vehicles(), 
         new THREE.Vector3(0, 0, 0), 
@@ -343,36 +352,36 @@ async function setupVehicles(scene, data, camera) {
     );
     await car.addToScene(scene);
 
-    data.keys().registerKeyDown("w", () => {
+    disposers.push(data.keys().registerKeyDown("w", () => {
         if (!car.controlsEnabled) return;
         car.velocity.x = 5; // move forward at 5 units/sec
-    });
-    data.keys().registerKeyDown("s", () => {
+    }));
+    disposers.push(data.keys().registerKeyDown("s", () => {
         if (!car.controlsEnabled) return;
         car.velocity.x = -5; // move backward at 5 units/sec
-    });
-    data.keys().registerKeyUp("w", () => {
+    }));
+    disposers.push(data.keys().registerKeyUp("w", () => {
         if (!car.controlsEnabled) return;
         car.velocity.x = 0; // stop moving forward
-    });
-    data.keys().registerKeyUp("s", () => {
+    }));
+    disposers.push(data.keys().registerKeyUp("s", () => {
         if (!car.controlsEnabled) return;
         car.velocity.x = 0; // stop moving backward
-    });
+    }));
 
     const STEER_RATE = THREE.MathUtils.degToRad(50);
 
-    data.keys().registerWhileDown("a", (dt) => {
+    disposers.push(data.keys().registerWhileDown("a", (dt) => {
         if (!car.controlsEnabled) return;
         car.steeringAngle += STEER_RATE * dt;
-    });
-    data.keys().registerWhileDown("d", (dt) => {
+    }));
+    disposers.push(data.keys().registerWhileDown("d", (dt) => {
         if (!car.controlsEnabled) return;
         car.steeringAngle -= STEER_RATE * dt;
-    });
+    }));
 
 
-    data.client().onUpdate(info => {
+    disposers.push(data.client().onUpdate(info => {
         // if (info.name == "/angle") {
         //     // is between -1 and 1
         //     const angle = parseFloat(info.value);
@@ -393,12 +402,18 @@ async function setupVehicles(scene, data, camera) {
             car.velocity.x = speed;
             car.steeringAngle = -angle; // invert angle if necessary based on your coordinate system
         }
-    })
+    }));
 
     let camFollowing = false;
     let following = null;
+    const releaseCameraFollow = () => {
+        camFollowing = false;
+        if (following?.follower) following.follower.camera = null;
+        data.settings().enableControls(FOLLOW_CAMERA_CONTROL_LOCK);
+        following = null;
+    };
 
-    data.keys().registerKeyPress("f", () => {
+    disposers.push(data.keys().registerKeyPress("f", () => {
         camFollowing = !camFollowing;
 
         if (camFollowing) {
@@ -413,18 +428,18 @@ async function setupVehicles(scene, data, camera) {
             }
 
             if (!following) {
-                camFollowing = false;
-                data.settings().enableControls(FOLLOW_CAMERA_CONTROL_LOCK);
+                releaseCameraFollow();
             }
         } else {
-            if (following && following.follower) {
-                following.follower.camera = null;
-            }
-
-            data.settings().enableControls(FOLLOW_CAMERA_CONTROL_LOCK);
-            following = null;
+            releaseCameraFollow();
         }
-    });
+    }));
+    const dispose = () => {
+        releaseCameraFollow();
+        disposers.forEach((registeredDispose) => registeredDispose?.());
+    };
+    dispose.releaseCameraFollow = releaseCameraFollow;
+    return dispose;
 }
 
 /**
@@ -434,7 +449,7 @@ async function setupVehicles(scene, data, camera) {
  * @param {Object} startingState
  */
 async function setupSimulationRuntime(data, scene, camera, startingState = {}) {
-    await setupVehicles(scene, data, camera);
+    const disposeVehicleControls = await setupVehicles(scene, data, camera);
 
     if (startingState?.startingPosition && startingState?.startingRotation) {
         data.vehicles().vehicles[0].position.copy(startingState.startingPosition);
@@ -449,6 +464,7 @@ async function setupSimulationRuntime(data, scene, camera, startingState = {}) {
     sim.setModule("baking", false);
     sim.startLoop();
     sim.play();
+    return disposeVehicleControls;
 }
 
 /**
@@ -462,8 +478,6 @@ async function setupEnvironmentRuntime(data, scene, camera, renderer) {
     sim.setModule("baking", false);
     await sim.setPhysicsEnabled(false);
 
-    data.objects().scene(scene);
-    data.environment().setup(scene);
     data.environment().setToolController(new EditorToolController({
         data,
         scene,
@@ -485,9 +499,87 @@ async function setupEnvironmentRuntime(data, scene, camera, renderer) {
     editor.setEarthImportModeEnterHandler(() => earthImportController.onEnterMode());
     editor.setEarthImportModeExitHandler(() => earthImportController.onExitMode());
 
-    setupBaking(data, scene);
+    const disposeBakeKey = setupBaking(data, scene);
     sim.startLoop();
     sim.pause();
+    return disposeBakeKey;
+
+}
+
+async function enterRuntimeMode(runtime, mode) {
+    if (runtime.disposed) return;
+    const { data, scene, camera, renderer, startingState } = runtime;
+    const simulation = data.simulation();
+
+    if (mode === THREE_D_MODES.SIMULATION) {
+        data.environment().setToolController(null);
+        runtime.disposeEditorInfrastructure?.();
+        runtime.disposeEditorInfrastructure = null;
+        setVehiclesVisible(data, true);
+        setDeviceVisualsVisible(data, true);
+
+        if (!runtime.simulationInitialized) {
+            simulation.setModule("vehicles", true);
+            simulation.setModule("sensors", true);
+            await simulation.setPhysicsEnabled(true);
+            if (runtime.disposed) return;
+            runtime.disposeSimulationControls = await setupSimulationRuntime(
+                data,
+                scene,
+                camera,
+                startingState,
+            );
+            if (runtime.disposed) {
+                runtime.disposeSimulationControls?.();
+                simulation.dispose();
+                return;
+            }
+            runtime.simulationInitialized = true;
+        } else {
+            simulation.setModule("vehicles", true);
+            simulation.setModule("sensors", true);
+            await simulation.setPhysicsEnabled(true);
+            simulation.play();
+        }
+        return;
+    }
+
+    simulation.pause();
+    runtime.disposeSimulationControls?.releaseCameraFollow?.();
+    clearLaneHighlights(data);
+    simulation.setModule("vehicles", false);
+    simulation.setModule("sensors", false);
+    simulation.setModule("baking", false);
+    await simulation.setPhysicsEnabled(false);
+    if (runtime.disposed) return;
+    setVehiclesVisible(data, false);
+    setDeviceVisualsVisible(data, false);
+
+    if (!runtime.editorInfrastructureInitialized) {
+        runtime.disposeEditorInfrastructure = await setupEnvironmentRuntime(data, scene, camera, renderer);
+        if (runtime.disposed) {
+            runtime.disposeEditorInfrastructure?.();
+            return;
+        }
+        runtime.editorInfrastructureInitialized = true;
+    } else {
+        data.environment().setToolController(new EditorToolController({
+            data,
+            scene,
+            camera,
+            renderer,
+        }));
+        runtime.disposeEditorInfrastructure = registerBakeKey(data, data.baking());
+    }
+}
+
+function queueRuntimeMode(runtime, mode) {
+    runtime.modeTransition = runtime.modeTransition
+        .catch((error) => {
+            if (!runtime.disposed) console.error("Runtime mode transition failed:", error);
+        })
+        .then(() => enterRuntimeMode(runtime, mode));
+    return runtime.modeTransition;
 }
 
 /**
@@ -530,7 +622,12 @@ function setupBaking(data, scene) {
     harness.setup(scene);
     data.setBakeHarness(harness);
 
-    data.keys().registerKeyPress("b", async () => {
+    return registerBakeKey(data, harness);
+}
+
+function registerBakeKey(data, harness) {
+    if (!harness) return null;
+    return data.keys().registerKeyPress("b", async () => {
         const sim = data.simulation();
         if (harness.running) {
             harness.stop();
@@ -547,14 +644,21 @@ function setupBaking(data, scene) {
     });
 }
 
-export default function TotalScene({ mode = THREE_D_MODES.SIMULATION }) {
+export default function TotalScene({
+    mode = THREE_D_MODES.SIMULATION,
+    environmentId = "igvc",
+    onEnvironmentChange,
+}) {
     const mountRef = useRef(null);
     const keyManagerRef = useRef(new KeyManager());
     const mouseManagerRef = useRef(new MouseManager());
+    const runtimeRef = useRef(null);
+    const modeRef = useRef(mode);
 
     const [sceneData, setSceneData] = useState(null);
     const [sceneReady, setSceneReady] = useState(false);
     const [loadPhase, setLoadPhase] = useState("atmosphere");
+    const [loadError, setLoadError] = useState(null);
 
     useEffect(() => {
         const scene = new THREE.Scene();
@@ -569,7 +673,7 @@ export default function TotalScene({ mode = THREE_D_MODES.SIMULATION }) {
 
         const spark = new SparkRenderer({ renderer });
 
-        const data = new Data();
+        const data = new Data({ environment: { environmentId } });
 
         data.keyManager = keyManagerRef.current;
         data.mouseManager = mouseManagerRef.current;
@@ -580,6 +684,7 @@ export default function TotalScene({ mode = THREE_D_MODES.SIMULATION }) {
         scene.add(spark);
 
         const initialize = async () => {
+            setLoadError(null);
             setLoadPhase("atmosphere");
             await setupScene(scene, camera, renderer, data);
             if (disposed) return;
@@ -590,7 +695,7 @@ export default function TotalScene({ mode = THREE_D_MODES.SIMULATION }) {
             data.simulation().configure({ scene, camera, renderer, controls });
 
             const bakeConfig = createDefaultBakeRunConfig({
-                environmentId: "igvc",
+                environmentId,
                 seed: 42,
             });
             data.setBakeRunConfig(bakeConfig);
@@ -604,7 +709,8 @@ export default function TotalScene({ mode = THREE_D_MODES.SIMULATION }) {
             // await setupTrafficScenario(scene, data);
             // await tryIthaca(scene, data);
             // await setupCity(scene, data);
-            await setupIGVC(scene, data);
+            const environmentLoader = new EnvironmentLoader({ data, scene });
+            await environmentLoader.load(environmentId);
             // await SensorTest(data, scene);
             // const miniKey =
             //     typeof window !== "undefined"
@@ -615,14 +721,33 @@ export default function TotalScene({ mode = THREE_D_MODES.SIMULATION }) {
 
             if (disposed) return;
 
-            console.log(`Scene initialized (${mode}), setting data...`);
+            console.log(`Scene initialized (${modeRef.current}), setting data...`);
 
             setLoadPhase("runtime");
-            if (mode === THREE_D_MODES.SIMULATION) {
-                await setupSimulationRuntime(data, scene, camera, startingState);
-            } else {
-                await setupEnvironmentRuntime(data, scene, camera, renderer);
-            }
+            const environmentPersistence = new EnvironmentPersistence({
+                data,
+                scene,
+                clientRevision: environmentLoader.manifest?.clientRevision,
+            });
+            environmentPersistence.attach();
+            const runtime = {
+                data,
+                scene,
+                camera,
+                renderer,
+                controls,
+                startingState,
+                environmentLoader,
+                environmentPersistence,
+                simulationInitialized: false,
+                editorInfrastructureInitialized: false,
+                disposeEditorInfrastructure: null,
+                disposeSimulationControls: null,
+                disposed: false,
+                modeTransition: Promise.resolve(),
+            };
+            runtimeRef.current = runtime;
+            await queueRuntimeMode(runtime, modeRef.current);
 
             if (disposed) return;
 
@@ -630,7 +755,13 @@ export default function TotalScene({ mode = THREE_D_MODES.SIMULATION }) {
             setSceneReady(true);
         };
 
-        initialize();
+        initialize().catch((error) => {
+            console.error("Could not initialize the 3D environment:", error);
+            if (!disposed) {
+                setLoadError(error?.message ?? "The environment could not be loaded.");
+                setSceneReady(true);
+            }
+        });
 
 
         // --- 4. Handle Window Resize (Optional but Recommended) ---
@@ -650,7 +781,16 @@ export default function TotalScene({ mode = THREE_D_MODES.SIMULATION }) {
             setSceneReady(false);
             setSceneData(null);
 
+            // Flush a final environment save and detach autosave listeners.
+            const runtime = runtimeRef.current;
+            if (runtime) runtime.disposed = true;
+            runtime?.environmentPersistence?.dispose();
+            runtime?.disposeEditorInfrastructure?.();
+            runtime?.disposeSimulationControls?.();
+            runtimeRef.current = null;
+
             data.simulation().dispose();
+            data.client()?.dispose?.();
             data.environment().dispose();
             data.earthImportController()?.dispose?.();
             data.setEarthImportController(null);
@@ -664,7 +804,60 @@ export default function TotalScene({ mode = THREE_D_MODES.SIMULATION }) {
             }
 
             window.removeEventListener('resize', handleResize);
+            data.simulation()?.controls?.disposeEnvironmentKeys?.();
             renderer.dispose();
+        };
+    }, [environmentId]);
+
+    // Live-sync: when an MCP agent writes the active environment, re-apply it.
+    useEffect(() => {
+        if (!sceneReady) return undefined;
+
+        return subscribeStorageEvents((event) => {
+            if (event.domain !== "environment") return;
+            if (event.id && event.id !== environmentId) return;
+
+            const runtime = runtimeRef.current;
+            if (!runtime || runtime.disposed) return;
+
+            const persistence = runtime.environmentPersistence;
+            const loader = runtime.environmentLoader;
+            if (!loader) return;
+
+            (async () => {
+                try {
+                    persistence?.suspendAutosave();
+                    const manifest = await getEnvironmentManifest(environmentId);
+                    if (!manifest || runtime.disposed) return;
+                    loader.apply(manifest);
+                    loader.manifest = manifest;
+                    persistence?.adoptClientRevision(manifest.clientRevision);
+                } catch (error) {
+                    console.warn("[environment] MCP live-sync apply failed:", error);
+                } finally {
+                    persistence?.resumeAutosave();
+                }
+            })();
+        });
+    }, [sceneReady, environmentId]);
+
+    useEffect(() => {
+        modeRef.current = mode;
+        const runtime = runtimeRef.current;
+        if (!runtime) return;
+
+        let cancelled = false;
+        queueRuntimeMode(runtime, mode)
+            .then(() => {
+                if (!cancelled) setSceneReady(true);
+            })
+            .catch((error) => {
+                console.error(`Could not enter ${mode} mode:`, error);
+                if (!cancelled) setSceneReady(true);
+            });
+
+        return () => {
+            cancelled = true;
         };
     }, [mode]);
 
@@ -722,13 +915,31 @@ export default function TotalScene({ mode = THREE_D_MODES.SIMULATION }) {
     return (
         <>
         <SceneLoadingScreen visible={!sceneReady} mode={mode} phase={loadPhase} />
+        {loadError && (
+            <div className="fixed inset-0 z-50 grid place-items-center bg-zinc-950 px-6 text-zinc-100">
+                <div className="max-w-md border-l-2 border-red-400 pl-5">
+                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-red-300">
+                        Environment load failed
+                    </p>
+                    <p className="mt-2 text-sm leading-relaxed text-zinc-400">{loadError}</p>
+                </div>
+            </div>
+        )}
         <div
             id="overlay"
             className="fixed w-[100vw] h-[100vh] top-0 left-0 select-none pointer-events-none bg-transparent"
             aria-hidden={!sceneReady}
         >
-            {sceneReady && mode === THREE_D_MODES.SIMULATION && <SimulationChrome data={sceneData} />}
-            {sceneReady && mode === THREE_D_MODES.ENVIRONMENT && <EnvironmentEditorChrome data={sceneData} />}
+            {sceneReady && mode === THREE_D_MODES.SIMULATION && (
+                <SimulationChrome data={sceneData} />
+            )}
+            {sceneReady && mode === THREE_D_MODES.ENVIRONMENT && (
+                <EnvironmentEditorChrome
+                    data={sceneData}
+                    activeEnvironmentId={environmentId}
+                    onEnvironmentChange={onEnvironmentChange}
+                />
+            )}
         </div>
         <div
             id="canvas-container"

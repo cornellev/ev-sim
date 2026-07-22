@@ -11,20 +11,21 @@ flowchart LR
   totalScene[TotalScene] --> threeObjects[Scene Camera Renderer]
   totalScene --> dataObject[Data]
   dataObject --> simEngine[SimulationEngine]
+  totalScene --> envLoader[EnvironmentLoader]
+  envLoader --> selectedEnvironment[Selected Environment]
   totalScene --> setupVehicles[setupVehicles]
-  totalScene --> setupIGVC[setupIGVC]
   simEngine --> frameLoop[Animation Frame Loop]
   frameLoop --> registries[Vehicles Devices Rendering]
 ```
 
-`TotalScene` creates a `Data` object, assigns the key/mouse managers and Three.js references, configures `SimulationEngine`, sets up vehicles, then calls `setupIGVC`.
+`TotalScene` creates a `Data` object, assigns the key/mouse managers and Three.js references, configures `SimulationEngine`, and asks `EnvironmentLoader` to load the shared active environment. The IGVC environment uses `setupIGVC` as its native bootstrap; blank and duplicated environments use their own manifest/template metadata.
 
 The active setup path depends on `mode` (`app/3d/viewState.js`):
 
-- `THREE_D_MODES.SIMULATION` — `setupIGVC()` for vehicle/sensor runtime.
-- `THREE_D_MODES.ENVIRONMENT` — `setupEnvironmentRuntime()` for environment authoring, earth import services, and baking.
+- `THREE_D_MODES.SIMULATION` — enables vehicles, sensors, physics, and playback.
+- `THREE_D_MODES.ENVIRONMENT` — pauses runtime modules and enables authoring tools, Earth Import, and baking.
 
-Mini scenarios are imported in `app/3d/Scene.js` and can be selected by the `?mini=` query path in code, but that path is currently commented out. The default active scene setup is `setupIGVC`.
+Changing between these modes no longer reloads the world: both use the same selected environment and road/intersection meshes. Changing the environment itself performs a clean world reload and resets simulation runtime state.
 
 ## Data Registries
 
@@ -37,7 +38,7 @@ Mini scenarios are imported in `app/3d/Scene.js` and can be selected by the `?mi
 - `physics()` for physics integration.
 - `simulation()` for the simulation engine.
 - `client()` for orchestrator topic integration.
-- `environment()` for the environment editor container (environment mode only).
+- `environment()` for the selected environment container (shared by both 3D modes).
 - `earthTilesManager()` / `earthImportController()` for Earth Import (environment mode only).
 
 ## Simulation Engine

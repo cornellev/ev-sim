@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { BlockOutput, storeData, UnitBlock } from "../../ScriptManager";
+import { storeData } from "../../ScriptManager";
 
 const { default: Unit } = require("../Unit")
 
@@ -36,18 +36,4 @@ export default function NumberUnit(props) {
         </Unit>
     )
 }
-
-export class NumberUnitClass extends UnitBlock {
-    register() {
-        this.registerOutput("number", "float64");
-    }
-
-    valid() {
-        return true;
-    }
-
-    execute() {
-        const value = this.getStoredData();
-        return new BlockOutput().set("number", value);
-    }
-}
+export { NumberUnitClass } from "./Number.block.js";

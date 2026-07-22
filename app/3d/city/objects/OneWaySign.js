@@ -33,18 +33,19 @@ export class OneWaySign extends Box {
         const poleMat = new THREE.MeshStandardMaterial({ color: 0xaaaaaa });
         const pole = new THREE.Mesh(poleGeom, poleMat);
         pole.position.set(
-            this._ground.x,
-            this._ground.y + this._poleH / 2,
-            this._ground.z
+            0,
+            this._poleH / 2,
+            0
         );
 
         const boardGeom = new THREE.BoxGeometry(this.scale.x, this.scale.y, this.scale.z);
         const boardMat = new THREE.MeshStandardMaterial({ color: 0x1e4f96 });
         const board = new THREE.Mesh(boardGeom, boardMat);
-        board.position.set(this.position.x, this.position.y, this.position.z);
+        board.position.set(0, this.position.y - this._ground.y, 0);
         board.rotation.y = (Math.PI / 2) * (1 - this.dir);
 
         const group = new THREE.Group();
+        group.position.copy(this._ground);
         group.add(pole);
         group.add(board);
         group.userData.fusionObject = this;

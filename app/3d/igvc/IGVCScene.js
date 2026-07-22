@@ -111,19 +111,21 @@ export async function setupIGVC(scene, data) {
 
     data.city().setupIntersections(scene);
 
-    for (const {position, dir} of stopSigns) {
+    for (const [index, { position, dir }] of stopSigns.entries()) {
         const pos = convertFromLatLng(position.lat, position.lng).sub(baseOffset);
         pos.z *= -1;
 
         const stopSign = new StopSign(new THREE.Vector3(pos.x, 0, pos.z), new Unit(5, Unit.Type.FOOT), dir);
+        stopSign._uuid = `igvc:stop-sign:${index}`;
         data.objects().addObject(stopSign);
     }   
 
-    for (const position of barrels) {
+    for (const [index, position] of barrels.entries()) {
         const pos = convertFromLatLng(position.lat, position.lng).sub(baseOffset);
         pos.z *= -1;
 
         const barrel = new Barrel(new THREE.Vector3(pos.x, 0, pos.z), new THREE.Vector3(0.75, 1, 0.75));
+        barrel._uuid = `igvc:barrel:${index}`;
         data.objects().addObject(barrel);
     }
 

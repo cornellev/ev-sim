@@ -45,6 +45,7 @@ export function removeFeatureFromRuntime(data, scene, featureId) {
     const objectIndex = objectDatabase.objects.findIndex((object) => object._uuid === featureId);
     if (objectIndex >= 0) {
         objectDatabase.objects.splice(objectIndex, 1);
+        objectDatabase.rebuildTextureData?.();
     }
 
     const sceneIndex = objectDatabase.inScene.indexOf(featureId);
@@ -91,6 +92,11 @@ export function deleteMapSelectionFromRuntime(data, scene, document, selection) 
         if (!result.ok) return result;
 
         removeBuildingMeshesFromScene(scene, selection.id);
+        data.objects().replaceTriangles?.(
+            (triangle) => triangle.environmentGeometryType === "building"
+                && triangle.environmentSourceId === selection.id,
+            [],
+        );
 
         const bakeConfig = data.bakeRunConfig?.();
         if (bakeConfig) {

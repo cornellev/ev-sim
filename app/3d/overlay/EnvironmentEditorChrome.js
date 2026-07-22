@@ -11,8 +11,9 @@ import { SceneHierarchy } from "./SceneHierarchy";
 import { SelectionVisualizer } from "./SelectionVisualizer";
 import { EDITOR_MODES } from "../editor/EditorState";
 import { useEffect, useState } from "react";
+import { EnvironmentSwitcher } from "./EnvironmentSwitcher";
 
-export function EnvironmentEditorChrome({ data }) {
+export function EnvironmentEditorChrome({ data, activeEnvironmentId, onEnvironmentChange }) {
     const [editorSnapshot, setEditorSnapshot] = useState(null);
 
     useEffect(() => data?.editor?.()?.subscribe?.(setEditorSnapshot), [data]);
@@ -25,6 +26,11 @@ export function EnvironmentEditorChrome({ data }) {
 
     return (
         <>
+            <EnvironmentSwitcher
+                data={data}
+                activeEnvironmentId={activeEnvironmentId}
+                onEnvironmentChange={onEnvironmentChange}
+            />
             {!inOverlayMode && <ChunkOutlines data={data} />}
             {!inOverlayMode && <SelectionVisualizer data={data} />}
             {!inOverlayMode && <SceneHierarchy data={data} />}
