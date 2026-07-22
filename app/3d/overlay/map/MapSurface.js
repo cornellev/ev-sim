@@ -1,6 +1,7 @@
 'use client';
 
 import { useRef } from "react";
+import { fitMapViewportToContent } from "../../editor/document/documentRuntimeHydration.js";
 import { isMapDetailZoom } from "../../editor/map/mapCoords.js";
 import { MapSurfaceHud } from "./MapSurfaceHud.js";
 import { MapSurfaceLayers } from "./MapSurfaceLayers.js";
@@ -40,6 +41,13 @@ export function MapSurface({ data, editorSnapshot, documentSnapshot }) {
         documentSnapshot,
     });
 
+    const handleRecenter = () => {
+        const editor = data?.editor?.();
+        const document = data?.environment?.()?.getDocument?.();
+        if (!editor || !document) return;
+        fitMapViewportToContent(editor, document);
+    };
+
     return (
         <div
             ref={containerRef}
@@ -66,7 +74,12 @@ export function MapSurface({ data, editorSnapshot, documentSnapshot }) {
                 />
             </svg>
 
-            <MapSurfaceHud viewport={viewport} layers={layers} showDetail={showDetail} />
+            <MapSurfaceHud
+                viewport={viewport}
+                layers={layers}
+                showDetail={showDetail}
+                onRecenter={handleRecenter}
+            />
         </div>
     );
 }

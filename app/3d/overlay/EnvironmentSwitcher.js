@@ -121,9 +121,6 @@ export function EnvironmentSwitcher({ data, activeEnvironmentId, onEnvironmentCh
                 aria-expanded={open}
             >
                 <span className="min-w-0">
-                    <span className="block text-[10px] font-medium uppercase tracking-[0.16em] text-zinc-500">
-                        Environment
-                    </span>
                     <span className="block truncate text-[13px] font-semibold text-zinc-100">
                         {active?.name ?? activeEnvironmentId ?? "Loading"}
                     </span>
@@ -150,7 +147,7 @@ export function EnvironmentSwitcher({ data, activeEnvironmentId, onEnvironmentCh
                             >
                                 <span className="truncate text-[12px] font-medium">{environment.name}</span>
                                 <span className="ml-3 text-[9px] uppercase tracking-wider text-zinc-500">
-                                    {environment.templateId}
+                                    {environment.templateId != "blank" ? "sourced from " + environment.templateId : ""}
                                 </span>
                             </button>
                         ))}

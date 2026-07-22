@@ -198,12 +198,6 @@ export function EnvironmentEditorMenu({ data }) {
                 )}
 
                 <div className="flex items-center gap-2 rounded-2xl border border-zinc-700/80 bg-zinc-950/70 p-2 text-zinc-100 shadow-[0_20px_70px_rgba(0,0,0,0.5)] backdrop-blur-2xl">
-                    <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-100">
-                        Environment Editor
-                    </div>
-
-                    <div className="h-7 w-px bg-zinc-700/80" />
-
                     <div className="flex items-center gap-1 rounded-xl border border-zinc-700/80 bg-zinc-900/80 p-1">
                         <MenuButton
                             iconOnly

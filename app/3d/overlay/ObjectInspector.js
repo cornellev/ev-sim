@@ -163,7 +163,7 @@ export function ObjectInspector({ data }) {
 
             {!entitySummary ? (
                 <div className="rounded-xl border border-zinc-800/90 bg-zinc-900/45 p-3 text-[11px] text-zinc-400">
-                    Select an object in the scene or hierarchy to inspect and edit it.
+                    No object is currently selected.
                 </div>
             ) : (
                 <div className="space-y-2">
