@@ -1,6 +1,6 @@
 # Architecture
 
-sensor-fusion is a Next.js app with two main user surfaces: a visual scripting canvas and a Three.js simulation scene. The browser app can also connect to an external orchestrator process for ROS-style topics.
+cev-sim is a Next.js app with two main user surfaces: a visual scripting canvas and a Three.js simulation scene. The browser app can also connect to an external orchestrator process for ROS-style topics.
 
 ```mermaid
 flowchart LR
@@ -56,7 +56,7 @@ The environment editor authors static world content through an `EnvironmentDocum
 
 ## External Integration
 
-sensor-fusion does not embed ROS. `app/3d/managers/ClientManager.js` creates a browser client from `app/client/Client.js`, syncs message definitions from the external orchestrator Types API, then connects to the orchestrator WebSocket.
+cev-sim does not embed ROS. `app/3d/managers/ClientManager.js` creates a browser client from `app/client/Client.js`, syncs message definitions from the external orchestrator Types API, then connects to the orchestrator WebSocket.
 
 The orchestrator repo is at `/Users/jgrimminck/Coding/py/orchestrator`.
 

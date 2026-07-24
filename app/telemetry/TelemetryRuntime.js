@@ -1,6 +1,6 @@
 import { getBindingRuntime } from "../scripting/bindings/BindingRuntime.js";
 
-const CHANNEL_NAME = "sensor-fusion-telemetry-v1";
+const CHANNEL_NAME = "cev-sim-telemetry-v1";
 const HEARTBEAT_MS = 2000;
 const SOURCE_TIMEOUT_MS = 6500;
 

@@ -1,6 +1,6 @@
 import { VISUAL_SCRIPT_KIND, VISUAL_SCRIPT_VERSION } from "./runtime/Artifact.js";
 
-export const EDITOR_DOCUMENT_KIND = "sensor-fusion.visual-script.editor-document";
+export const EDITOR_DOCUMENT_KIND = "cev-sim.visual-script.editor-document";
 export const EDITOR_DOCUMENT_VERSION = 1;
 
 export function createDocumentId() {

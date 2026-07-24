@@ -1,4 +1,4 @@
-export const VISUAL_SCRIPT_KIND = "sensor-fusion.visual-script.program";
+export const VISUAL_SCRIPT_KIND = "cev-sim.visual-script.program";
 export const VISUAL_SCRIPT_VERSION = 2;
 export const FAILURE_NODE_ID = "__visual_script_failure__";
 

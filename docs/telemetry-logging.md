@@ -28,7 +28,7 @@ Every path has a descriptor. `replayRole` is `input`, `state`, or `derived`; `lo
 
 `SignalStore` retains timestamped, bounded live histories. Structured signals are stored once. Analysis creates virtual numeric child fields at read time, so `imu.accel` can expose `imu.accel.x` without writing duplicate samples.
 
-The same-origin tab bridge uses `BroadcastChannel("sensor-fusion-telemetry-v1")`. The simulator tab remains authoritative. Remote tabs discover catalogs and snapshots, then request full-rate paths. They never record mirrored samples.
+The same-origin tab bridge uses `BroadcastChannel("cev-sim-telemetry-v1")`. The simulator tab remains authoritative. Remote tabs discover catalogs and snapshots, then request full-rate paths. They never record mirrored samples.
 
 ## Recording profiles
 

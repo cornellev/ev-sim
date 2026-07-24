@@ -123,7 +123,7 @@ def save_photo(payload, name, metadata=None):
 
     # #region agent log
     try:
-        with open("/Users/jgrimminck/Coding/js/sensor-fusion/.cursor/debug-8f4404.log", "a", encoding="utf-8") as log_file:
+        with open("~/Coding/js/sensor-fusion/.cursor/debug-8f4404.log", "a", encoding="utf-8") as log_file:
             log_file.write(json.dumps({
                 "sessionId": "8f4404",
                 "runId": run_id,

@@ -1,6 +1,6 @@
 # MCP Server
 
-Sensor-fusion exposes a [Model Context Protocol](https://modelcontextprotocol.io) endpoint so AI agents can edit environments, visual scripts, simulation bindings, recordings, and replay sessions without driving the browser UI by hand.
+cev-sim exposes a [Model Context Protocol](https://modelcontextprotocol.io) endpoint so AI agents can edit environments, visual scripts, simulation bindings, recordings, and replay sessions without driving the browser UI by hand.
 
 ## Connect
 
@@ -15,7 +15,7 @@ Example Cursor MCP config (`.cursor/mcp.json`):
 ```json
 {
   "mcpServers": {
-    "sensor-fusion": {
+    "cev-sim": {
       "url": "http://localhost:3000/mcp"
     }
   }

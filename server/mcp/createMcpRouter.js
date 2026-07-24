@@ -7,7 +7,7 @@ import { registerBindingTools } from "./bindingTools.js";
 import { registerLoggingTools } from "./loggingTools.js";
 
 /**
- * Build an Express router that serves the sensor-fusion MCP endpoint.
+ * Build an Express router that serves the cev-sim MCP endpoint.
  *
  * Stateless Streamable HTTP: a fresh McpServer + transport per request so
  * concurrent agent sessions do not share mutable server state.
@@ -53,7 +53,7 @@ export function createMcpRouter(storage, logService) {
  */
 export function createSensorFusionMcpServer(storage, logService) {
     const server = new McpServer({
-        name: "sensor-fusion",
+        name: "cev-sim",
         version: "0.1.0",
     });
 

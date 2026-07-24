@@ -10,7 +10,7 @@ Required identity fields:
 
 ```json
 {
-  "kind": "sensor-fusion.visual-script.program",
+  "kind": "cev-sim.visual-script.program",
   "version": 2,
   "name": "program-name"
 }
@@ -20,7 +20,7 @@ Required identity fields:
 
 ## Top-Level Fields
 
-- `kind`: must be `sensor-fusion.visual-script.program`.
+- `kind`: must be `cev-sim.visual-script.program`.
 - `version`: must be `2`.
 - `name`: human-readable program name.
 - `head`: the head node UUID when compiling without program output-role blocks, otherwise `null`.

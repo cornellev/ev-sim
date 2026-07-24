@@ -8,7 +8,7 @@ import { JsonFileStore } from "../server/storage/JsonFileStore.js";
 import { StorageService } from "../server/storage/StorageService.js";
 
 async function tempDir() {
-    return fs.mkdtemp(path.join(os.tmpdir(), "sensor-fusion-storage-"));
+    return fs.mkdtemp(path.join(os.tmpdir(), "cev-sim-storage-"));
 }
 
 test("JsonFileStore returns the fallback when the file does not exist", async () => {

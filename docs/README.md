@@ -1,6 +1,6 @@
 # Documentation
 
-This folder is the contributor guide for sensor-fusion. Start here when you need to run the app, understand the major systems, add a visual scripting block, or connect the simulator to the external orchestrator/ROS bridge.
+This folder is the contributor guide for cev-sim. Start here when you need to run the app, understand the major systems, add a visual scripting block, or connect the simulator to the external orchestrator/ROS bridge.
 
 ## Reading Paths
 

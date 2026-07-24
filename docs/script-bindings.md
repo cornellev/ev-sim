@@ -20,7 +20,7 @@ Bindings connect compiled visual scripts to live triggers: ROS topics, fixed sim
 
 ```json
 {
-  "kind": "sensor-fusion.script-bindings",
+  "kind": "cev-sim.script-bindings",
   "version": 1,
   "enabled": true,
   "updatedAt": "2026-07-03T00:00:00.000Z",

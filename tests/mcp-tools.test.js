@@ -155,7 +155,7 @@ test("binding tools path: manifest CRUD and interface check", async () => {
             name: "Bound",
             graph: createEmptyGraph(),
             latestValidArtifact: {
-                kind: "sensor-fusion.visual-script.program",
+                kind: "cev-sim.visual-script.program",
                 version: 2,
                 name: "Bound",
                 head: "out",

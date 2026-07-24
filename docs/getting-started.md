@@ -1,6 +1,6 @@
 # Getting Started
 
-sensor-fusion is a browser-based autonomous vehicle and sensor-fusion workbench. It uses Next.js and React for the UI, Three.js for the 3D simulator, a visual scripting canvas for node programs, and an external Python orchestrator process for ROS-style topic integration.
+cev-sim is a browser-based autonomous vehicle and cev-sim workbench. It uses Next.js and React for the UI, Three.js for the 3D simulator, a visual scripting canvas for node programs, and an external Python orchestrator process for ROS-style topic integration.
 
 ## Requirements
 
@@ -59,7 +59,7 @@ pip install -r requirements.txt
 python main.py
 ```
 
-By default sensor-fusion expects:
+By default cev-sim expects:
 
 - WebSocket topics at `ws://localhost:8080`.
 - Message type sync at `http://localhost:8090`.

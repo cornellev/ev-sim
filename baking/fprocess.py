@@ -9,7 +9,7 @@ SERVER_ENDPOINT = os.environ.get("BAKE_PROCESS_ENDPOINT", f"{SERVER_HOST}/proces
 
 
 def _multipart_body(fields, files):
-    boundary = f"----sensor-fusion-bake-{uuid.uuid4().hex}"
+    boundary = f"----cev-sim-bake-{uuid.uuid4().hex}"
     chunks = []
 
     for name, value in fields.items():

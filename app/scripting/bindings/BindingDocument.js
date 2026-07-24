@@ -1,6 +1,6 @@
 import { TOPIC_SIGNAL_PREFIX } from "../runtime/SignalPaths.js";
 
-export const BINDING_MANIFEST_KIND = "sensor-fusion.script-bindings";
+export const BINDING_MANIFEST_KIND = "cev-sim.script-bindings";
 export const BINDING_MANIFEST_VERSION = 1;
 
 export const TRIGGER_KINDS = {
@@ -174,7 +174,7 @@ export function normalizeBindingManifest(manifest) {
     }
 
     if (manifest.kind !== undefined && !isBindingManifest(manifest)) {
-        throw new Error("Unsupported bindings manifest. Expected kind \"sensor-fusion.script-bindings\" version 1.");
+        throw new Error("Unsupported bindings manifest. Expected kind \"cev-sim.script-bindings\" version 1.");
     }
 
     return createBindingManifest({

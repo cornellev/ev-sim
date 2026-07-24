@@ -1,6 +1,6 @@
 # ROS Integration
 
-sensor-fusion does not talk to ROS directly. It talks to a separate orchestrator process in `/Users/jgrimminck/Coding/py/orchestrator`.
+cev-sim does not talk to ROS directly. It talks to a separate orchestrator process in `/Users/jgrimminck/Coding/py/orchestrator`.
 
 ```mermaid
 flowchart LR
@@ -42,7 +42,7 @@ The orchestrator defaults are:
 - `ROS_NODE_NAME=orchestrator_bridge`
 - `ROS_DISCOVERY_PERIOD_SEC=1.0`
 
-## sensor-fusion Side
+## cev-sim Side
 
 `app/3d/managers/ClientManager.js` does three things during setup:
 
@@ -89,7 +89,7 @@ The scripting ROS units in `app/scripting/units/ROSUnit.js` are placeholders. Th
 
 ## Troubleshooting
 
-- If type sync fails, sensor-fusion logs a warning and attempts to load fallback `.msg` files from `public/messages/`.
+- If type sync fails, cev-sim logs a warning and attempts to load fallback `.msg` files from `public/messages/`.
 - If `ws://localhost:8080` is unavailable, the 3D scene should still load but live topic updates will not arrive.
 - Run the orchestrator in the same ROS 2 environment as the nodes it needs to discover.
 - Dockerized ROS 2 discovery on macOS can be unreliable because ROS 2 uses DDS discovery rather than a single fixed TCP port.

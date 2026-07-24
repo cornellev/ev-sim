@@ -40,7 +40,7 @@ See [Scripting Troubleshooting](scripting/troubleshooting.md).
 
 ## Compiled Program Fails To Import Or Run
 
-Compiled artifacts must have `kind: "sensor-fusion.visual-script.program"` and `version: 2`. The runtime also requires every block type in the artifact to be registered before import or run.
+Compiled artifacts must have `kind: "cev-sim.visual-script.program"` and `version: 2`. The runtime also requires every block type in the artifact to be registered before import or run.
 
 See [Artifact Schema v2](scripting/artifact-schema-v2.md).
 
