@@ -4,6 +4,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { registerEnvironmentTools } from "./environmentTools.js";
 import { registerScriptingTools } from "./scriptingTools.js";
 import { registerBindingTools } from "./bindingTools.js";
+import { registerLoggingTools } from "./loggingTools.js";
 
 /**
  * Build an Express router that serves the sensor-fusion MCP endpoint.
@@ -12,12 +13,13 @@ import { registerBindingTools } from "./bindingTools.js";
  * concurrent agent sessions do not share mutable server state.
  *
  * @param {import("../storage/StorageService.js").StorageService} storage
+ * @param {import("../logging/LogService.js").LogService} logService
  */
-export function createMcpRouter(storage) {
+export function createMcpRouter(storage, logService) {
     const router = express.Router();
 
     router.all("/", async (req, res) => {
-        const server = createSensorFusionMcpServer(storage);
+        const server = createSensorFusionMcpServer(storage, logService);
         const transport = new StreamableHTTPServerTransport({
             sessionIdGenerator: undefined,
         });
@@ -47,8 +49,9 @@ export function createMcpRouter(storage) {
 
 /**
  * @param {import("../storage/StorageService.js").StorageService} storage
+ * @param {import("../logging/LogService.js").LogService} logService
  */
-export function createSensorFusionMcpServer(storage) {
+export function createSensorFusionMcpServer(storage, logService) {
     const server = new McpServer({
         name: "sensor-fusion",
         version: "0.1.0",
@@ -57,6 +60,7 @@ export function createSensorFusionMcpServer(storage) {
     registerEnvironmentTools(server, storage);
     registerScriptingTools(server, storage);
     registerBindingTools(server, storage);
+    registerLoggingTools(server, logService);
 
     return server;
 }

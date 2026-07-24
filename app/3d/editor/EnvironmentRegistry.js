@@ -29,10 +29,27 @@ function labelForEntity(entity) {
 
 function cloneTransform(object3D) {
     if (!object3D) return null;
+
+    object3D.updateMatrixWorld(true);
+
+    const position = new THREE.Vector3();
+    const quaternion = new THREE.Quaternion();
+    const scale = new THREE.Vector3();
+    const box = new THREE.Box3().setFromObject(object3D);
+
+    if (!box.isEmpty()) {
+        box.getCenter(position);
+    } else {
+        object3D.getWorldPosition(position);
+    }
+
+    object3D.getWorldQuaternion(quaternion);
+    object3D.getWorldScale(scale);
+
     return {
-        position: object3D.position.clone(),
-        rotation: object3D.rotation.clone(),
-        scale: object3D.scale.clone(),
+        position,
+        rotation: new THREE.Euler().setFromQuaternion(quaternion, object3D.rotation?.order ?? "XYZ"),
+        scale,
     };
 }
 

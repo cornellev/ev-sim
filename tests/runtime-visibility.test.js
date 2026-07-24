@@ -7,6 +7,19 @@ import {
     setVehiclesVisible,
 } from "../app/3d/runtimeVisibility.js";
 import { PhysicsEngine } from "../app/physics/PhysicsEngine.js";
+import { Settings } from "../app/3d/data/Settings.js";
+
+test("camera control locks release only their matching stable id", () => {
+    const settings = new Settings();
+    settings.disableControls("hierarchy");
+    settings.disableControls("device-panel");
+    assert.equal(settings.cameraControlsEnabled, false);
+
+    settings.enableControls("hierarchy");
+    assert.equal(settings.cameraControlsEnabled, false);
+    settings.enableControls("device-panel");
+    assert.equal(settings.cameraControlsEnabled, true);
+});
 
 test("physics startup waits for Rapier initialization instead of timing out", async () => {
     let resolvePhysics;
@@ -60,4 +73,3 @@ test("editor mode visibility hides vehicle and detached device visuals", () => {
     assert.deepEqual(deviceRoots.map((root) => root.visible), [false, false, false, false]);
     assert.deepEqual(laneMeshes.map((mesh) => mesh.visible), [false, false]);
 });
-

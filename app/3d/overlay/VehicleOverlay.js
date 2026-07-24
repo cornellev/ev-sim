@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { DeviceOverlay } from "./DeviceOverlay";
 
 const EMPTY_VEHICLES = [];
+const HIERARCHY_CONTROL_LOCK = "simulation-vehicle-hierarchy";
 
 function getVehicleName(vehicle, index) {
     if (!vehicle) return `Vehicle ${index + 1}`;
@@ -24,8 +25,8 @@ export function VehicleOverlay({ data }) {
     const controls = useMemo(() => {
         const settings = data?.settings?.();
         return {
-            disable: settings?.disableControls,
-            enable: settings?.enableControls,
+            disable: () => settings?.disableControls?.(HIERARCHY_CONTROL_LOCK),
+            enable: () => settings?.enableControls?.(HIERARCHY_CONTROL_LOCK),
         };
     }, [data]);
 
@@ -162,6 +163,7 @@ export function VehicleOverlay({ data }) {
 
             {selectedDevice && (
                 <DeviceOverlay
+                    key={`${selectedDeviceRef.vehicleIndex}:${selectedDeviceRef.deviceIndex}`}
                     data={data}
                     device={selectedDevice}
                     onBack={() => {
@@ -178,6 +180,7 @@ export function VehicleOverlay({ data }) {
                         selectedDevice.setSettings?.(settings);
                         refreshDevices((revision) => revision + 1);
                     }}
+                    onDeviceTelemetryIdChange={() => refreshDevices((revision) => revision + 1)}
                     panelClassName="left-[306px]"
                     visible={deviceOverlayVisible}
                 />

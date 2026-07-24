@@ -6,6 +6,7 @@ import ReplayScene from "./ReplayScene";
 import { deleteLog, getLogDownloadUrl, importLog, listLogs, updateLog } from "../logging/LogClient.js";
 import { LogDataset } from "../logging/LogDataset.js";
 import { getTimelineStore } from "../logging/TimelineStore.js";
+import { subscribeStorageEvents } from "../client/storageEvents.js";
 
 function useTimeline(store) {
     const [state, setState] = useState(() => store.getSnapshot());
@@ -21,7 +22,7 @@ function formatTime(timeUs) {
     return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}.${String(millis).padStart(3, "0")}`;
 }
 
-export default function ReplayPage({ initialLogId, onOpenAnalysis }) {
+export default function ReplayPage({ initialLogId, mcpCommand, onOpenAnalysis }) {
     const timeline = useMemo(() => getTimelineStore(), []);
     const timelineState = useTimeline(timeline);
     const [logs, setLogs] = useState([]);
@@ -30,13 +31,13 @@ export default function ReplayPage({ initialLogId, onOpenAnalysis }) {
     const [status, setStatus] = useState("catalog");
     const [error, setError] = useState(null);
     const [selectedEntity, setSelectedEntity] = useState(null);
-    const [loopEnabled, setLoopEnabled] = useState(false);
     const [manageOpen, setManageOpen] = useState(false);
     const [nameDraft, setNameDraft] = useState("");
     const [tagsDraft, setTagsDraft] = useState("");
     const [deleteArmed, setDeleteArmed] = useState(false);
     const fileRef = useRef(null);
     const playRef = useRef({ timeUs: 0, stamp: 0 });
+    const appliedMcpCommandRef = useRef(null);
 
     const refreshLogs = useCallback(async () => {
         try {
@@ -49,6 +50,14 @@ export default function ReplayPage({ initialLogId, onOpenAnalysis }) {
         }
     }, []);
 
+    useEffect(() => subscribeStorageEvents(async (event) => {
+        if (event.domain !== "logging" || !["updated", "deleted"].includes(event.action)) return;
+        const catalog = await refreshLogs();
+        if (event.action === "deleted" && event.id === selectedId) {
+            setDataset(null);
+            setSelectedId(catalog[0]?.id || "");
+        }
+    }), [refreshLogs, selectedId]);
     useEffect(() => {
         let cancelled = false;
         listLogs()
@@ -73,7 +82,7 @@ export default function ReplayPage({ initialLogId, onOpenAnalysis }) {
             .then((opened) => {
                 if (cancelled || !opened) return;
                 setDataset(opened);
-                timeline.set({ durationUs: opened.durationUs, timeUs: 0, playing: false, speed: 1, selection: { startUs: 0, endUs: opened.durationUs } });
+                timeline.set({ durationUs: opened.durationUs, timeUs: 0, playing: false, speed: 1, loopEnabled: false, selection: { startUs: 0, endUs: opened.durationUs } });
                 const firstEntity = opened.descriptors.find((item) => item.type === "pose3" && item.path.startsWith("vehicles."))?.path.split(".")[1];
                 setSelectedEntity(firstEntity || null);
                 setStatus("ready");
@@ -83,16 +92,29 @@ export default function ReplayPage({ initialLogId, onOpenAnalysis }) {
     }, [selectedId, timeline]);
 
     useEffect(() => {
+        if (!mcpCommand?.requestId || appliedMcpCommandRef.current === mcpCommand.requestId) return;
+        if (mcpCommand.logId !== selectedId) return;
+        if (!dataset || dataset.id !== mcpCommand.logId) return;
+        const patch = {};
+        if (mcpCommand.timeUs !== undefined) patch.timeUs = Number(mcpCommand.timeUs);
+        if (mcpCommand.playing !== undefined) patch.playing = Boolean(mcpCommand.playing);
+        if (mcpCommand.speed !== undefined) patch.speed = Number(mcpCommand.speed);
+        if (mcpCommand.loop !== undefined) patch.loopEnabled = Boolean(mcpCommand.loop);
+        if (Object.keys(patch).length) timeline.set(patch);
+        appliedMcpCommandRef.current = mcpCommand.requestId;
+    }, [dataset, mcpCommand, selectedId, timeline]);
+
+    useEffect(() => {
         if (!timelineState.playing || !dataset) return undefined;
         let frame;
         playRef.current = { timeUs: timeline.getSnapshot().timeUs, stamp: performance.now() };
         const tick = (stamp) => {
             const elapsedUs = (stamp - playRef.current.stamp) * 1000 * timelineState.speed;
             let next = playRef.current.timeUs + elapsedUs;
-            const end = loopEnabled ? (timelineState.selection?.endUs ?? dataset.durationUs) : dataset.durationUs;
-            const start = loopEnabled ? (timelineState.selection?.startUs ?? 0) : 0;
+            const end = timelineState.loopEnabled ? (timelineState.selection?.endUs ?? dataset.durationUs) : dataset.durationUs;
+            const start = timelineState.loopEnabled ? (timelineState.selection?.startUs ?? 0) : 0;
             if (next >= end) {
-                if (loopEnabled && end > start) {
+                if (timelineState.loopEnabled && end > start) {
                     next = start + ((next - start) % (end - start));
                     playRef.current = { timeUs: next, stamp };
                 } else {
@@ -105,7 +127,7 @@ export default function ReplayPage({ initialLogId, onOpenAnalysis }) {
         };
         frame = requestAnimationFrame(tick);
         return () => cancelAnimationFrame(frame);
-    }, [dataset, loopEnabled, timeline, timelineState.playing, timelineState.selection?.endUs, timelineState.selection?.startUs, timelineState.speed]);
+    }, [dataset, timeline, timelineState.loopEnabled, timelineState.playing, timelineState.selection?.endUs, timelineState.selection?.startUs, timelineState.speed]);
 
     const stepEvent = useCallback((direction) => {
         if (!dataset) return;
@@ -211,7 +233,7 @@ export default function ReplayPage({ initialLogId, onOpenAnalysis }) {
                     <select value={timelineState.speed} onChange={(event) => timeline.set({ speed: Number(event.target.value) })} className="h-8 rounded-lg border border-zinc-700 bg-zinc-900 px-2 text-[10px] outline-none">
                         {[0.25, 0.5, 1, 2, 4].map((speed) => <option key={speed} value={speed}>{speed}×</option>)}
                     </select>
-                    <button type="button" onClick={() => setLoopEnabled((value) => !value)} className={`workspace-button ${loopEnabled ? "border-sky-500/50 bg-sky-500/15 text-sky-200" : ""}`}><FaRedo /> Loop</button>
+                    <button type="button" onClick={() => timeline.set({ loopEnabled: !timelineState.loopEnabled })} className={`workspace-button ${timelineState.loopEnabled ? "border-sky-500/50 bg-sky-500/15 text-sky-200" : ""}`}><FaRedo /> Loop</button>
                     <button type="button" disabled={!dataset} onClick={() => timeline.set({ selection: { ...(timelineState.selection || {}), startUs: timelineState.timeUs } })} className="workspace-button">Mark in</button>
                     <button type="button" disabled={!dataset} onClick={() => timeline.set({ selection: { ...(timelineState.selection || {}), endUs: timelineState.timeUs } })} className="workspace-button">Mark out</button>
                     <span className="ml-auto font-mono text-[11px] tabular-nums text-zinc-300">{formatTime(timelineState.timeUs)} <span className="text-zinc-600">/ {formatTime(timelineState.durationUs)}</span></span>

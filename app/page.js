@@ -22,6 +22,7 @@ export default function Home() {
     const [menuVisible, setMenuVisible] = useState(false);
     const [activeEnvironmentId, setActiveEnvironment] = useState(null);
     const [selectedLogId, setSelectedLogId] = useState(null);
+    const [replayCommand, setReplayCommand] = useState(null);
 
     const closeMenu = useCallback(() => {
         setMenuVisible(false);
@@ -86,9 +87,19 @@ export default function Home() {
 
     useEffect(() => {
         return subscribeStorageEvents((event) => {
-            if (event.domain !== "environment" || event.action !== "active") return;
-            if (!event.id) return;
-            setActiveEnvironment(event.id);
+            if (event.domain === "environment" && event.action === "active" && event.id) {
+                setActiveEnvironment(event.id);
+                return;
+            }
+            if (event.domain !== "replay" || !event.data?.logId) return;
+            setSelectedLogId(event.data.logId);
+            setReplayCommand({
+                ...event.data,
+                action: event.action,
+                requestId: event.requestId || `${event.action}:${event.at}`,
+            });
+            setView(APP_VIEWS.REPLAY);
+            setMenuVisible(false);
         });
     }, []);
 
@@ -131,7 +142,7 @@ export default function Home() {
         }
         {
             view === APP_VIEWS.REPLAY && (
-                <ReplayPage initialLogId={selectedLogId} onOpenAnalysis={goToAnalysis} />
+                <ReplayPage key={selectedLogId || "replay"} initialLogId={selectedLogId} mcpCommand={replayCommand} onOpenAnalysis={goToAnalysis} />
             )
         }
         {

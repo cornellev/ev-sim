@@ -110,7 +110,7 @@ export class TelemetryTabBridge {
     _onLocalMessage(message) {
         if (!this.channel) return;
         if (message.kind === "catalog") {
-            this._post("catalog", { descriptor: message.descriptor });
+            this._post("catalog", { action: message.action || "updated", path: message.path, descriptor: message.descriptor });
             return;
         }
 
@@ -184,9 +184,13 @@ export class TelemetryTabBridge {
             source.descriptors = message.descriptors || source.descriptors;
             source.snapshot = message.snapshot || source.snapshot;
             source.timeUs = message.timeUs || source.timeUs;
-        } else if (message.type === "catalog" && message.descriptor) {
-            source.descriptors = source.descriptors.filter((item) => item.path !== message.descriptor.path);
-            source.descriptors.push(message.descriptor);
+        } else if (message.type === "catalog") {
+            const path = message.path || message.descriptor?.path;
+            if (path) {
+                source.descriptors = source.descriptors.filter((item) => item.path !== path);
+                if (message.action === "removed") delete source.snapshot[path];
+                else if (message.descriptor) source.descriptors.push(message.descriptor);
+            }
         } else if (["update", "preview"].includes(message.type) && message.message?.path) {
             const sequence = Number(message.updateSequence || 0);
             if (source.lastUpdateSequence && sequence > source.lastUpdateSequence + 1) {

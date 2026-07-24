@@ -23,6 +23,7 @@ import { SignalStore } from "../app/scripting/runtime/SignalStore.js";
 import { TimelineStore } from "../app/logging/TimelineStore.js";
 import { TelemetryTabBridge } from "../app/telemetry/TelemetryRuntime.js";
 import { LogService } from "../server/logging/LogService.js";
+import { validateDeviceTelemetryId } from "../app/3d/data/DeviceTelemetryId.js";
 
 test("SFLog varints, zigzag values, primitives, vectors, arrays, and JSON round-trip", () => {
     const writer = new ByteWriter();
@@ -98,6 +99,17 @@ test("recording profiles use last-match precedence and lock replay-critical sign
     assert.equal(resolveProfileRule(DEFAULT_TELEMETRY_PROFILE, requiredInput).enabled, false);
 });
 
+test("device telemetry IDs are path-safe and unique", () => {
+    assert.deepEqual(validateDeviceTelemetryId(" front_lidar-2 ", ["rear-lidar"]), {
+        ok: true,
+        id: "front_lidar-2",
+        error: null,
+    });
+    assert.equal(validateDeviceTelemetryId("front.lidar", []).ok, false);
+    assert.match(validateDeviceTelemetryId("front lidar", []).error, /letters, numbers/i);
+    assert.match(validateDeviceTelemetryId("front-lidar", ["front-lidar"]).error, /already in use/i);
+});
+
 test("SignalStore publishes typed updates, schema changes, events, and bounded timestamped history", () => {
     const store = new SignalStore({}, { historyDurationSeconds: 1, historySampleLimit: 3, sourceId: "test-source" });
     const messages = [];
@@ -113,6 +125,10 @@ test("SignalStore publishes typed updates, schema changes, events, and bounded t
     assert.equal(last.previous.value, 3);
     assert.equal(last.descriptor.type, "string");
     assert.equal(last.cycle, 4);
+    assert.equal(store.removeSignal("imu.accel"), true);
+    assert.equal(store.descriptor("imu.accel"), null);
+    assert.equal(Object.hasOwn(store.snapshot(), "imu.accel"), false);
+    assert.ok(messages.some((message) => message.kind === "catalog" && message.action === "removed" && message.path === "imu.accel"));
 });
 
 test("nested numeric extraction and dataset interpolation do not duplicate parent payloads", () => {
@@ -182,6 +198,11 @@ test("TelemetryTabBridge discovers sources, filters full-rate subscriptions, mir
         assert.equal(bridgeA.remoteSubscriptions.get("simulation.time"), 1);
         sourceA.publishSignal("simulation.time", 3, { type: "float64", timeUs: 300 });
         assert.equal(bridgeB.getSources().find((source) => source.sourceId === "source-a").snapshot["simulation.time"].value, 3);
+
+        sourceA.removeSignal("simulation.time");
+        const mirrored = bridgeB.getSources().find((source) => source.sourceId === "source-a");
+        assert.equal(mirrored.descriptors.some((descriptor) => descriptor.path === "simulation.time"), false);
+        assert.equal(Object.hasOwn(mirrored.snapshot, "simulation.time"), false);
 
         bridgeB.remoteSources.get("source-a").lastSeenAt = 0;
         bridgeB._expireSources();

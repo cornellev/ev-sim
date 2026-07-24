@@ -42,6 +42,33 @@ function getMetrics(object3D) {
     return size;
 }
 
+/** World-space pose: bbox center + world rotation/scale (not local offsets). */
+function getAbsoluteTransform(object3D) {
+    if (!object3D) return null;
+
+    object3D.updateMatrixWorld(true);
+
+    const position = new THREE.Vector3();
+    const quaternion = new THREE.Quaternion();
+    const scale = new THREE.Vector3();
+    const box = new THREE.Box3().setFromObject(object3D);
+
+    if (!box.isEmpty()) {
+        box.getCenter(position);
+    } else {
+        object3D.getWorldPosition(position);
+    }
+
+    object3D.getWorldQuaternion(quaternion);
+    object3D.getWorldScale(scale);
+
+    return {
+        position,
+        rotation: new THREE.Euler().setFromQuaternion(quaternion, object3D.rotation?.order ?? "XYZ"),
+        scale,
+    };
+}
+
 function Field({ label, value, mono = false }) {
     return (
         <div className="rounded-lg border border-zinc-800/90 bg-zinc-950/45 px-2 py-1.5">
@@ -76,13 +103,7 @@ export function ObjectInspector({ data }) {
     const entitySummary = registrySnapshot.entities.find((item) => item.id === selectedId);
     const activeTool = editorSnapshot?.activeTool ?? EDITOR_TOOLS.SELECT;
     const metrics = getMetrics(entity?.object3D);
-    const transform = entity?.object3D
-        ? {
-            position: entity.object3D.position,
-            rotation: entity.object3D.rotation,
-            scale: entity.object3D.scale,
-        }
-        : entitySummary?.transform;
+    const transform = getAbsoluteTransform(entity?.object3D) ?? entitySummary?.transform;
 
     const clearSelection = () => {
         data.editor()?.clearSelection();
@@ -195,17 +216,9 @@ export function ObjectInspector({ data }) {
                         <div className="grid gap-1.5">
                             <Field label="Position" value={formatVector(transform?.position)} mono />
                             <Field label="Rotation" value={formatVector(transform?.rotation)} mono />
-                            <Field label="Scale" value={formatVector(transform?.scale)} mono />
+                            <Field label="Size" value={formatVector(metrics ?? transform?.scale)} mono />
                         </div>
                     </div>
-
-                    {metrics && (
-                        <div className="grid grid-cols-3 gap-1.5">
-                            <Field label="Width" value={formatNumber(metrics.x, 1)} mono />
-                            <Field label="Height" value={formatNumber(metrics.y, 1)} mono />
-                            <Field label="Depth" value={formatNumber(metrics.z, 1)} mono />
-                        </div>
-                    )}
 
                     {entitySummary.tags?.length > 0 && (
                         <div className="rounded-xl border border-zinc-800/90 bg-zinc-900/45 p-2">

@@ -1,6 +1,6 @@
 # MCP Server
 
-Sensor-fusion exposes a [Model Context Protocol](https://modelcontextprotocol.io) endpoint so AI agents can edit environments, visual scripts, and simulation bindings without driving the browser UI by hand.
+Sensor-fusion exposes a [Model Context Protocol](https://modelcontextprotocol.io) endpoint so AI agents can edit environments, visual scripts, simulation bindings, recordings, and replay sessions without driving the browser UI by hand.
 
 ## Connect
 
@@ -24,7 +24,7 @@ Example Cursor MCP config (`.cursor/mcp.json`):
 
 Start the app with `npm run dev` (or `npm start` after a build). The server logs the MCP URL on boot.
 
-Live sessions stay in sync: MCP writes publish Server-Sent Events on `GET /api/storage/events`, and the open browser re-hydrates environments, scripts, and bindings automatically.
+Live sessions stay in sync: MCP writes and workspace commands publish Server-Sent Events on `GET /api/storage/events`. The open browser re-hydrates environments, scripts, bindings, log catalogs, and Replay controls automatically.
 
 ## Tool categories
 
@@ -67,6 +67,20 @@ Compile / unit metadata run through Next API routes (`/api/scripting/compile`, `
 
 Triggers (`topic`, `fixed-update`, `signal-update`, `timer`) are the run modes. Input/output labels must match the script artifact's `interface`.
 
+### Logging and replay
+
+| Tool | Purpose |
+|------|---------|
+| `log_list` / `log_get` | Discover logs, metadata, checkpoints, and typed signal schemas |
+| `log_update` / `log_delete` | Edit catalog names/tags or delete a log |
+| `recording_status` | Inspect active backend recording sessions |
+| `recording_start` / `recording_stop` | Control the authoritative open simulator tab |
+| `replay_open` / `replay_control` | Open, seek, play, pause, loop, and set Replay speed |
+| `replay_inspect` | Read exact state and nearby events at a timestamp, with optional path globs |
+| `replay_series` | Read a bounded, downsampled signal or nested-field series |
+
+The resources `fusion://logs` and `fusion://logs/{logId}` expose the catalog and per-log metadata/signal catalog. Headless inspection tools read directly from the backend and do not require a browser. Recording and visual Replay controls require one initialized simulator browser tab; same-origin tabs elect exactly one command executor.
+
 ## Typical agent workflow
 
 1. `environment_create` / `environment_add_road` / `environment_add_building` / `environment_add_object` — author a world, inspect `conflicts`.
@@ -74,6 +88,7 @@ Triggers (`topic`, `fixed-update`, `signal-update`, `timer`) are the run modes. 
    Configure output ports with `script_update_unit` on the head uuid (`storedData`/`state`: `{ outputs: [{ id, label, type }] }`). Do not add `OutputNodeBlock` via `script_add_unit`.
 3. `binding_suggest` → `binding_create` with the compiled `scriptId`.
 4. `environment_set_active` if the browser should switch worlds.
+5. `recording_start` → run the simulation → `recording_stop`, then use `replay_inspect`, `replay_series`, or `replay_open`.
 
 ## Implementation map
 

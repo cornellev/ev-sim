@@ -24,7 +24,7 @@ app.prepare().then(async () => {
     const jsonParser = express.json({ limit: '20mb' });
     server.use('/api/logs', createLogRouter(logService));
     server.use('/api/storage', jsonParser, createStorageRouter(storageService));
-    server.use('/mcp', jsonParser, createMcpRouter(storageService));
+    server.use('/mcp', jsonParser, createMcpRouter(storageService, logService));
 
     server.all(/(.*)/, (req, res) => {
         return handle(req, res);

@@ -6,6 +6,7 @@ export class TimelineStore {
             durationUs: 0,
             playing: false,
             speed: 1,
+            loopEnabled: false,
             liveLocked: true,
             selection: null,
         };

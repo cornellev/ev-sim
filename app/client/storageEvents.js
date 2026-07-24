@@ -1,13 +1,13 @@
 /**
- * Subscribe to MCP-originated storage change events via SSE.
- * Only MCP writes publish here — browser autosaves do not, so there is no
- * feedback loop with EnvironmentPersistence.
+ * Subscribe to MCP-originated storage changes and live workspace commands via
+ * SSE. Browser autosaves do not publish here, so there is no feedback loop
+ * with EnvironmentPersistence.
  */
 
 const DEFAULT_URL = "/api/storage/events";
 
 /**
- * @param {(event: { domain: string, id: string|null, action: string, at: string }) => void} onEvent
+ * @param {(event: { domain: string, id: string|null, action: string, requestId?: string|null, data?: object|null, at: string }) => void} onEvent
  * @param {{ url?: string }} [options]
  * @returns {() => void} unsubscribe
  */

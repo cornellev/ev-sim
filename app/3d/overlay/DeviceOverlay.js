@@ -4,6 +4,8 @@ import * as THREE from "three";
 import { useEffect, useMemo, useState } from "react";
 import { keyText, keys } from "../../util/Keys";
 
+const DEVICE_PANEL_CONTROL_LOCK = "simulation-device-control-panel";
+
 function asInputValue(value) {
     if (value === null || value === undefined) return "";
     if (typeof value === "number" && Number.isFinite(value)) return String(value);
@@ -207,6 +209,7 @@ export function DeviceOverlay({
     onBack,
     onDeviceEnabledChange,
     onDeviceSettingsChange,
+    onDeviceTelemetryIdChange,
     panelClassName = "",
     visible = true,
 }) {
@@ -219,14 +222,20 @@ export function DeviceOverlay({
         device,
         enabled: Boolean(device?.enabled),
     }));
+    const [telemetryIdState, setTelemetryIdState] = useState(() => ({
+        device,
+        value: device?.telemetryId ?? "",
+    }));
+    const [telemetryIdError, setTelemetryIdError] = useState(null);
     const settings = settingsState.device === device ? settingsState.settings : device?.settings ?? {};
     const enabled = enabledState.device === device ? enabledState.enabled : Boolean(device?.enabled);
+    const telemetryId = telemetryIdState.device === device ? telemetryIdState.value : device?.telemetryId ?? "";
 
     const controls = useMemo(() => {
         const settingsRef = data?.settings?.();
         return {
-            disable: settingsRef?.disableControls,
-            enable: settingsRef?.enableControls,
+            disable: () => settingsRef?.disableControls?.(DEVICE_PANEL_CONTROL_LOCK),
+            enable: () => settingsRef?.enableControls?.(DEVICE_PANEL_CONTROL_LOCK),
         };
     }, [data]);
 
@@ -240,6 +249,17 @@ export function DeviceOverlay({
             onDeviceSettingsChange(next);
         } else {
             device.setSettings?.(next);
+        }
+    };
+
+    const commitTelemetryId = (value) => {
+        try {
+            const id = data.devices().renameTelemetryId(device, value);
+            setTelemetryIdState({ device, value: id });
+            setTelemetryIdError(null);
+            onDeviceTelemetryIdChange?.(id);
+        } catch (error) {
+            setTelemetryIdError(error.message);
         }
     };
 
@@ -306,8 +326,36 @@ export function DeviceOverlay({
                         </span>
                     </button>
 
+                    <label className="block rounded-lg border border-zinc-700/80 bg-zinc-900/85 p-2">
+                        <span className="block text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-400">Telemetry ID</span>
+                        <span className="mt-1 block text-[9px] text-zinc-500">Published under the device telemetry namespace.</span>
+                        <span className={`mt-2 flex h-8 items-center overflow-hidden rounded-md border bg-zinc-950/85 font-mono text-[10px] focus-within:border-sky-500 ${telemetryIdError ? "border-red-500/70" : "border-zinc-700"}`}>
+                            <span className="border-r border-zinc-800 px-2 text-zinc-600">devices.</span>
+                            <input
+                                aria-label={`${device.name} telemetry ID`}
+                                value={telemetryId}
+                                onChange={(event) => {
+                                    setTelemetryIdState({ device, value: event.target.value });
+                                    setTelemetryIdError(null);
+                                }}
+                                onBlur={(event) => commitTelemetryId(event.currentTarget.value)}
+                                onKeyDown={(event) => {
+                                    event.stopPropagation();
+                                    if (event.key === "Enter") event.currentTarget.blur();
+                                    if (event.key === "Escape") {
+                                        setTelemetryIdState({ device, value: device.telemetryId || "" });
+                                        setTelemetryIdError(null);
+                                    }
+                                }}
+                                spellCheck={false}
+                                className="min-w-0 flex-1 bg-transparent px-2 text-zinc-100 outline-none"
+                            />
+                        </span>
+                        {telemetryIdError && <span className="mt-1.5 block text-[9px] leading-tight text-red-300">{telemetryIdError}</span>}
+                    </label>
+
                     <div className="max-h-[52vh] space-y-1.5 overflow-auto pr-1 hide-scrollbar">
-                        {keys(settings || {}).map((key) => (
+                        {keys(settings || {}).filter((key) => key !== "telemetryId").map((key) => (
                             <DeviceSettingField
                                 key={key}
                                 label={key}

@@ -7,6 +7,7 @@ import { DEFAULT_REPLAY_PROFILE, DEFAULT_TELEMETRY_PROFILE, normalizeProfile, re
 import { getTelemetryStore } from "../telemetry/TelemetryRuntime.js";
 import { importLog } from "./LogClient.js";
 import { storageGet, storagePut } from "../client/storageClient.js";
+import { buildRecordingOptions } from "./RecordingOptions.js";
 
 const PROFILE_SETTING = "logging-profiles-v1";
 
@@ -124,21 +125,7 @@ export function RecordingPanel({ data, onOpenReplay }) {
         setLocalError(null);
         try {
             await saveProfile();
-            const runtime = data?.bindings?.();
-            const attachments = [
-                { name: "signal-catalog.json", mime: "application/json", bytes: JSON.stringify(store.descriptors()) },
-                { name: "bindings.json", mime: "application/json", bytes: JSON.stringify(runtime?.manifest || null) },
-                { name: "environment.json", mime: "application/json", bytes: JSON.stringify(store.read("environment.manifest")?.value || null) },
-            ];
-            for (const [scriptId, script] of runtime?._scripts || []) {
-                attachments.push({ name: `scripts/${scriptId}.json`, mime: "application/json", bytes: JSON.stringify(script.artifact) });
-            }
-            await controller.start({
-                profile,
-                environmentId: data?.environment?.()?.environmentId || null,
-                simulator: data?.simulation?.()?.getSnapshot?.(),
-                attachments,
-            });
+            await controller.start(buildRecordingOptions({ data, store, profile }));
         } catch (error) {
             setLocalError(error.message);
         }

@@ -216,6 +216,20 @@ export class SignalStore {
             .sort((a, b) => a.path.localeCompare(b.path));
     }
 
+    removeSignal(path) {
+        const normalizedPath = normalizeSignalPath(path);
+        if (!normalizedPath) return false;
+        const descriptor = this._descriptors.get(normalizedPath);
+        const existed = Boolean(descriptor || this._committed.has(normalizedPath));
+        if (!existed) return false;
+        this._descriptors.delete(normalizedPath);
+        this._committed.delete(normalizedPath);
+        this._previous.delete(normalizedPath);
+        this._history.delete(normalizedPath);
+        this._notify({ kind: "catalog", action: "removed", path: normalizedPath, descriptor: descriptor ? cloneValue(descriptor) : null });
+        return true;
+    }
+
     subscribeSignals(options, listener) {
         let resolvedOptions = options;
         let resolvedListener = listener;

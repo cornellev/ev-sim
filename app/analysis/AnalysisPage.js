@@ -8,6 +8,7 @@ import { flattenNumericFields, LogDataset } from "../logging/LogDataset.js";
 import { getTimelineStore } from "../logging/TimelineStore.js";
 import { importLog, listLogs } from "../logging/LogClient.js";
 import { storageGet, storagePut } from "../client/storageClient.js";
+import { subscribeStorageEvents } from "../client/storageEvents.js";
 
 const LAYOUT_KEY = "analysis:layout:v1";
 const PALETTE = ["#38bdf8", "#f59e0b", "#a78bfa", "#34d399", "#fb7185", "#60a5fa", "#f472b6", "#a3e635"];
@@ -83,6 +84,11 @@ export default function AnalysisPage({ initialLogId, onOpenReplay }) {
 
     const loadCatalog = useCallback(() => listLogs().then(setLogs).catch((caught) => setError(caught.message)), []);
     useEffect(() => { loadCatalog(); }, [loadCatalog]);
+    useEffect(() => subscribeStorageEvents((event) => {
+        if (event.domain !== "logging" || !["updated", "deleted"].includes(event.action)) return;
+        loadCatalog();
+        if (event.action === "deleted" && sourceKey === `log:${event.id}`) setSourceKey("live");
+    }), [loadCatalog, sourceKey]);
     useEffect(() => bridge.subscribe(setRemoteSources), [bridge]);
     useEffect(() => {
         if (initialLogId) setSourceKey(`log:${initialLogId}`);

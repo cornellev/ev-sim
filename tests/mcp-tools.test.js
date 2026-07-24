@@ -23,7 +23,14 @@ import {
     validateBinding,
 } from "../app/scripting/bindings/BindingDocument.js";
 import { StorageService } from "../server/storage/StorageService.js";
+import { LogService } from "../server/logging/LogService.js";
 import { storageEvents } from "../server/mcp/events.js";
+import {
+    inspectReplay,
+    readReplaySeries,
+    registerLoggingTools,
+} from "../server/mcp/loggingTools.js";
+import { SFLogBatchEncoder } from "../app/logging/SFLogCodec.js";
 import {
     loadDocument,
     saveDocument,
@@ -208,14 +215,63 @@ test("storageEvents publishes MCP change payloads", async () => {
     const onChange = (payload) => events.push(payload);
     storageEvents.on("change", onChange);
     try {
-        storageEvents.publish({ domain: "environment", id: "yard", action: "updated" });
+        storageEvents.publish({ domain: "environment", id: "yard", action: "updated", requestId: "request-1", data: { source: "test" } });
         assert.equal(events.length, 1);
         assert.equal(events[0].domain, "environment");
         assert.equal(events[0].id, "yard");
+        assert.equal(events[0].requestId, "request-1");
+        assert.deepEqual(events[0].data, { source: "test" });
         assert.ok(events[0].at);
     } finally {
         storageEvents.off("change", onChange);
     }
+});
+
+test("logging MCP helpers inspect replay state and bounded series", async (context) => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "sf-mcp-logs-"));
+    context.after(() => rm(directory, { recursive: true, force: true }));
+    const logs = new LogService(directory);
+    const session = await logs.createSession({ id: "mcp-replay", name: "MCP Replay" });
+    const encoder = new SFLogBatchEncoder();
+    const descriptor = { path: "simulation.time", type: "float64", unit: "s", replayRole: "state", logClass: "core" };
+    encoder.addUpdate({ path: descriptor.path, timeUs: 0, cycle: 0, descriptor, entry: { type: descriptor.type, value: 0, timeUs: 0, cycle: 0 } });
+    encoder.addCheckpoint({ "simulation.time": { type: "float64", value: 0 } }, [descriptor], 0);
+    encoder.addEvent({ timeUs: 750_000, category: "simulation", name: "pause", severity: "info", payload: { source: "test" } });
+    encoder.addUpdate({ path: descriptor.path, timeUs: 1_000_000, cycle: 60, descriptor, entry: { type: descriptor.type, value: 1, timeUs: 1_000_000, cycle: 60 } });
+    const batch = encoder.flush();
+    await logs.appendBatch(session.id, { sequence: 0, startUs: 0, endUs: 1_000_000, bytes: batch.bytes });
+    await logs.finalize(session.id);
+
+    const inspected = await inspectReplay(logs, session.id, { timeUs: 800_000, paths: ["simulation.**"], eventWindowUs: 100_000 });
+    assert.equal(inspected.state["simulation.time"], 0);
+    assert.equal(inspected.events[0].name, "pause");
+    const series = await readReplaySeries(logs, session.id, { path: "simulation.time", maxSamples: 2 });
+    assert.deepEqual(series.samples.map((sample) => sample.value), [0, 1]);
+    assert.equal(series.descriptor.unit, "s");
+});
+
+test("logging MCP suite registers catalog, recording, and replay capabilities", () => {
+    const tools = [];
+    const resources = [];
+    const server = {
+        registerTool(name) { tools.push(name); },
+        registerResource(name) { resources.push(name); },
+    };
+    registerLoggingTools(server, {});
+    assert.deepEqual(tools, [
+        "log_list",
+        "log_get",
+        "log_update",
+        "log_delete",
+        "recording_status",
+        "recording_start",
+        "recording_stop",
+        "replay_open",
+        "replay_control",
+        "replay_inspect",
+        "replay_series",
+    ]);
+    assert.deepEqual(resources, ["simulation-log-catalog", "simulation-log"]);
 });
 
 test("EnvironmentDocument round-trip after MCP-style save", async () => {

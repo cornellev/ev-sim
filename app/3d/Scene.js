@@ -47,6 +47,7 @@ import { EnvironmentPersistence } from "./environment/EnvironmentPersistence";
 import { EnvironmentLoader } from "./environment/EnvironmentLoader";
 import { getEnvironmentManifest } from "./environment/EnvironmentCatalogClient";
 import { subscribeStorageEvents } from "../client/storageEvents";
+import McpLoggingBridge from "../logging/McpLoggingBridge";
 import {
     clearLaneHighlights,
     setDeviceVisualsVisible,
@@ -945,6 +946,7 @@ export default function TotalScene({
     return (
         <>
         <SceneLoadingScreen visible={visible && !sceneReady} mode={mode} phase={loadPhase} />
+        {sceneReady && sceneData && <McpLoggingBridge data={sceneData} onOpenReplay={onOpenReplay} />}
         {visible && loadError && (
             <div className="fixed inset-0 z-50 grid place-items-center bg-zinc-950 px-6 text-zinc-100">
                 <div className="max-w-md border-l-2 border-red-400 pl-5">
