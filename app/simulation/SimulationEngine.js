@@ -45,8 +45,43 @@ export class SimulationEngine {
 
         this.listeners = new Set();
         this.resetHandlers = new Set();
+        this.viewportActive = true;
+        this.telemetry = this.data.bindings?.()?.signalStore ?? null;
+
+        this._defineTelemetrySignals();
 
         this._frame = this._frame.bind(this);
+    }
+
+    _defineTelemetrySignals() {
+        const define = (path, options) => this.telemetry?.defineSignal?.({ path, source: "simulation", ...options });
+        define("simulation.status", { type: "string", category: "simulation", replayRole: "input", logClass: "core" });
+        define("simulation.time", { type: "float64", unit: "s", category: "simulation", replayRole: "state", logClass: "core" });
+        define("simulation.step", { type: "uint64", category: "simulation", replayRole: "state", logClass: "core" });
+        define("simulation.speed", { type: "float64", category: "simulation", replayRole: "input", logClass: "core" });
+        define("simulation.fixedDt", { type: "float64", unit: "s", category: "simulation", replayRole: "input", logClass: "core" });
+        define("simulation.modules", { type: "json", category: "simulation", replayRole: "input", logClass: "core" });
+    }
+
+    _publishRuntimeState() {
+        if (!this.telemetry) return;
+        const timeUs = this.telemetry.getTimeUs();
+        const common = { timeUs, cycle: this.steps, source: "simulation" };
+        this.telemetry.publishSignal("simulation.status", this.status, common);
+        this.telemetry.publishSignal("simulation.time", this.time, common);
+        this.telemetry.publishSignal("simulation.step", this.steps, common);
+        this.telemetry.publishSignal("simulation.speed", this.speed, common);
+        this.telemetry.publishSignal("simulation.fixedDt", this.fixedDt, common);
+        this.telemetry.publishSignal("simulation.modules", { ...this.modules }, common);
+    }
+
+    _emitLifecycle(name, payload = {}) {
+        this.telemetry?.emitTelemetryEvent?.({
+            category: "simulation",
+            name,
+            severity: "info",
+            payload: { time: this.time, step: this.steps, ...payload },
+        });
     }
 
     configure({ scene, camera, renderer, controls = null }) {
@@ -76,6 +111,7 @@ export class SimulationEngine {
     }
 
     _emit() {
+        this._publishRuntimeState();
         const snapshot = this.getSnapshot();
         for (const listener of this.listeners) {
             listener(snapshot);
@@ -109,11 +145,13 @@ export class SimulationEngine {
     play() {
         this.startLoop();
         this.status = 'playing';
+        this._emitLifecycle("play");
         this._emit();
     }
 
     pause() {
         this.status = 'paused';
+        this._emitLifecycle("pause");
         this._emit();
     }
 
@@ -126,6 +164,7 @@ export class SimulationEngine {
         }
 
         this.render();
+        this._emitLifecycle("stop", { reset });
         this._emit();
     }
 
@@ -137,6 +176,7 @@ export class SimulationEngine {
         for (const handler of this.resetHandlers) {
             handler();
         }
+        this._emitLifecycle("reset");
     }
 
     step(count = 1) {
@@ -147,6 +187,7 @@ export class SimulationEngine {
         }
 
         this.render();
+        this._emitLifecycle("step", { count });
         this._emit();
     }
 
@@ -184,6 +225,11 @@ export class SimulationEngine {
         this._emit();
     }
 
+    setViewportActive(active) {
+        this.viewportActive = Boolean(active);
+        this._emit();
+    }
+
     _frame(nowMs) {
         if (!this.looping) return;
 
@@ -194,9 +240,9 @@ export class SimulationEngine {
 
         if (this.controls) {
             const cameraControlsEnabled = this.modules.controls && this.data.settings()?.cameraControlsEnabled !== false;
-            this.controls.enabled = cameraControlsEnabled;
+            this.controls.enabled = this.viewportActive && cameraControlsEnabled;
 
-            if (cameraControlsEnabled) {
+            if (this.viewportActive && cameraControlsEnabled) {
                 this.controls.update();
             }
         }
@@ -205,7 +251,7 @@ export class SimulationEngine {
             this._advanceSimulation(frameDt);
         }
 
-        if (this.modules.rendering) {
+        if (this.viewportActive && this.modules.rendering) {
             this.render();
         }
 
@@ -261,6 +307,46 @@ export class SimulationEngine {
 
         this.time += dt;
         this.steps += 1;
+        this._publishSimulationEntities();
+        this._publishRuntimeState();
+    }
+
+    _publishSimulationEntities() {
+        if (!this.telemetry) return;
+        const timeUs = this.telemetry.getTimeUs();
+        const vehicles = this.data.vehicles?.()?.vehicles || [];
+        vehicles.forEach((vehicle, index) => {
+            const id = vehicle.telemetryId || `vehicle-${index + 1}`;
+            const prefix = `vehicles.${id}`;
+            const pose = {
+                position: {
+                    x: Number(vehicle.position?.x || 0),
+                    y: Number(vehicle.position?.y || 0),
+                    z: Number(vehicle.position?.z || 0),
+                },
+                rotation: {
+                    x: Number(vehicle.rotation?.x || 0),
+                    y: Number(vehicle.rotation?.y || 0),
+                    z: Number(vehicle.rotation?.z || 0),
+                    order: vehicle.rotation?.order || "XYZ",
+                },
+            };
+            const options = { timeUs, cycle: this.steps, source: "simulation", category: "vehicles", replayRole: "state", logClass: "core" };
+            this.telemetry.publishSignal(`${prefix}.pose`, pose, { ...options, type: "pose3" });
+            this.telemetry.publishSignal(`${prefix}.velocity`, {
+                x: Number(vehicle.velocity?.x || 0),
+                y: Number(vehicle.velocity?.y || 0),
+                z: Number(vehicle.velocity?.z || 0),
+            }, { ...options, type: "vec3", unit: "m/s" });
+            if (Number.isFinite(vehicle.steeringAngle)) {
+                this.telemetry.publishSignal(`${prefix}.steeringAngle`, vehicle.steeringAngle, {
+                    ...options,
+                    type: "float64",
+                    unit: "rad",
+                    replayRole: "input",
+                });
+            }
+        });
     }
 
     render() {

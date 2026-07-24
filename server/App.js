@@ -13,12 +13,16 @@ app.prepare().then(async () => {
     const { StorageService } = await import('./storage/StorageService.js');
     const { createStorageRouter } = await import('./routes/storageRouter.js');
     const { createMcpRouter } = await import('./mcp/createMcpRouter.js');
+    const { LogService } = await import('./logging/LogService.js');
+    const { createLogRouter } = await import('./routes/logRouter.js');
     const storageService = new StorageService();
+    const logService = new LogService();
 
     // Parse JSON only for Express-owned routes. A global body parser locks the
     // request stream and breaks Next.js App Router handlers (e.g. POST
     // /api/scripting/compile) that need to read the body themselves.
     const jsonParser = express.json({ limit: '20mb' });
+    server.use('/api/logs', createLogRouter(logService));
     server.use('/api/storage', jsonParser, createStorageRouter(storageService));
     server.use('/mcp', jsonParser, createMcpRouter(storageService));
 

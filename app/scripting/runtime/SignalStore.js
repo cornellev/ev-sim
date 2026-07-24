@@ -26,6 +26,18 @@ function cloneValue(value) {
     return JSON.parse(JSON.stringify(value));
 }
 
+function createSourceId() {
+    const suffix = Math.random().toString(36).slice(2, 10);
+    return `source-${Date.now().toString(36)}-${suffix}`;
+}
+
+function monotonicNowMs() {
+    if (typeof performance !== "undefined" && typeof performance.now === "function") {
+        return performance.now();
+    }
+    return Date.now();
+}
+
 function inferSignalType(value, fallback = "json") {
     if (typeof value === "number") return Number.isInteger(value) ? "int32" : "float64";
     if (typeof value === "boolean") return "boolean";
@@ -76,6 +88,8 @@ export function createSignalEntry(value, options = {}) {
         type,
         updatedAt: normalizeUpdatedAt(options.updatedAt, options.now || Date.now),
         source: options.source || "local",
+        timeUs: Number.isFinite(Number(options.timeUs)) ? Math.max(0, Math.round(Number(options.timeUs))) : null,
+        cycle: Number.isFinite(Number(options.cycle)) ? Math.max(0, Math.round(Number(options.cycle))) : null,
         staleAfter: normalizeStaleAfter(options.staleAfter),
         metadata: isPlainObject(options.metadata) ? cloneValue(options.metadata) : null,
         validation: isPlainObject(options.validation) ? cloneValue(options.validation) : null
@@ -137,11 +151,126 @@ export function setByPath(value, path, nextValue) {
 export class SignalStore {
     constructor(initialValues = {}, options = {}) {
         this.now = options.now || Date.now;
+        this.sourceId = options.sourceId || createSourceId();
+        this.sessionStartedAtMs = options.sessionStartedAtMs ?? monotonicNowMs();
+        this.historyDurationUs = Math.max(1, Number(options.historyDurationSeconds ?? 120)) * 1e6;
+        this.historySampleLimit = Math.max(1, Number(options.historySampleLimit ?? 20000));
         this._committed = new Map();
         this._previous = new Map();
         this._layers = [];
         this._history = new Map();
+        this._descriptors = new Map();
+        this._listeners = new Set();
+        this._events = [];
+        this._eventLimit = Math.max(1, Number(options.eventLimit ?? 5000));
+        this._sequence = 0;
         this.hydrate(initialValues);
+    }
+
+    getTimeUs() {
+        return Math.max(0, Math.round((monotonicNowMs() - this.sessionStartedAtMs) * 1000));
+    }
+
+    defineSignal(descriptor = {}) {
+        const path = normalizeSignalPath(descriptor.path);
+        if (!path) throw new Error("Signal descriptors require a path.");
+
+        const current = this._descriptors.get(path);
+        const normalized = {
+            path,
+            type: descriptor.type || current?.type || "json",
+            unit: descriptor.unit ?? current?.unit ?? null,
+            source: descriptor.source || current?.source || "local",
+            category: descriptor.category || current?.category || path.split(".")[0] || "signals",
+            replayRole: descriptor.replayRole || current?.replayRole || "derived",
+            logClass: descriptor.logClass || current?.logClass || "standard",
+            description: descriptor.description ?? current?.description ?? null,
+            metadata: {
+                ...(current?.metadata || {}),
+                ...(isPlainObject(descriptor.metadata) ? cloneValue(descriptor.metadata) : {}),
+            },
+        };
+
+        const typeChanged = Boolean(current && current.type !== normalized.type);
+        this._descriptors.set(path, normalized);
+        if (typeChanged) {
+            this.emitTelemetryEvent({
+                category: "schema",
+                name: "signal-type-changed",
+                severity: "warning",
+                payload: { path, previousType: current.type, nextType: normalized.type },
+            });
+        }
+        this._notify({ kind: "catalog", descriptor: cloneValue(normalized) });
+        return cloneValue(normalized);
+    }
+
+    descriptor(path) {
+        const descriptor = this._descriptors.get(normalizeSignalPath(path));
+        return descriptor ? cloneValue(descriptor) : null;
+    }
+
+    descriptors() {
+        return [...this._descriptors.values()]
+            .map((descriptor) => cloneValue(descriptor))
+            .sort((a, b) => a.path.localeCompare(b.path));
+    }
+
+    subscribeSignals(options, listener) {
+        let resolvedOptions = options;
+        let resolvedListener = listener;
+        if (typeof options === "function") {
+            resolvedListener = options;
+            resolvedOptions = {};
+        }
+        if (typeof resolvedListener !== "function") return () => {};
+
+        const paths = Array.isArray(resolvedOptions?.paths)
+            ? new Set(resolvedOptions.paths.map(normalizeSignalPath).filter(Boolean))
+            : null;
+        const subscription = {
+            listener: resolvedListener,
+            paths,
+            includeEvents: resolvedOptions?.includeEvents !== false,
+            includeCatalog: resolvedOptions?.includeCatalog !== false,
+        };
+        this._listeners.add(subscription);
+        return () => this._listeners.delete(subscription);
+    }
+
+    _notify(message) {
+        const envelope = {
+            sourceId: this.sourceId,
+            sequence: ++this._sequence,
+            ...message,
+        };
+        for (const subscription of this._listeners) {
+            if (envelope.kind === "event" && !subscription.includeEvents) continue;
+            if (envelope.kind === "catalog" && !subscription.includeCatalog) continue;
+            if (envelope.path && subscription.paths && !subscription.paths.has(envelope.path)) continue;
+            subscription.listener(cloneValue(envelope));
+        }
+    }
+
+    emitTelemetryEvent(event = {}) {
+        const normalized = {
+            id: `event-${this.sourceId}-${this._sequence + 1}`,
+            timeUs: Number.isFinite(Number(event.timeUs)) ? Math.max(0, Math.round(Number(event.timeUs))) : this.getTimeUs(),
+            category: String(event.category || "system"),
+            name: String(event.name || "event"),
+            severity: String(event.severity || "info"),
+            payload: cloneValue(event.payload ?? null),
+        };
+        this._events.push(normalized);
+        this._events = this._events.slice(-this._eventLimit);
+        this._notify({ kind: "event", event: cloneValue(normalized) });
+        return cloneValue(normalized);
+    }
+
+    events({ fromUs = 0, toUs = Number.POSITIVE_INFINITY } = {}) {
+        return this._events
+            .filter((event) => event.timeUs >= fromUs && event.timeUs <= toUs)
+            .map((event) => cloneValue(event));
     }
 
     hydrate(values = {}) {
@@ -195,6 +324,7 @@ export class SignalStore {
 
             this._committed.set(path, cloneValue(entry));
             this._appendHistory(path, entry);
+            this._publishUpdate(path, entry, previous);
         });
     }
 
@@ -234,7 +364,27 @@ export class SignalStore {
         const normalizedPath = normalizeSignalPath(path);
         if (!normalizedPath) return null;
 
-        const entry = normalizeSignalEntry(value, { ...options, now: options.now || this.now });
+        const currentDescriptor = this._descriptors.get(normalizedPath);
+        const type = options.type || currentDescriptor?.type || inferSignalType(value);
+        if (!currentDescriptor || currentDescriptor.type !== type) {
+            this.defineSignal({
+                path: normalizedPath,
+                type,
+                unit: options.unit,
+                source: options.source,
+                category: options.category,
+                replayRole: options.replayRole,
+                logClass: options.logClass,
+                description: options.description,
+                metadata: options.descriptorMetadata,
+            });
+        }
+        const entry = normalizeSignalEntry(value, {
+            ...options,
+            type,
+            timeUs: options.timeUs ?? this.getTimeUs(),
+            now: options.now || this.now,
+        });
         const previous = this._committed.get(normalizedPath);
         if (previous) {
             this._previous.set(normalizedPath, cloneValue(previous));
@@ -242,7 +392,24 @@ export class SignalStore {
 
         this._committed.set(normalizedPath, entry);
         this._appendHistory(normalizedPath, entry);
+        this._publishUpdate(normalizedPath, entry, previous);
         return cloneValue(entry);
+    }
+
+    publishSignal(path, value, options = {}) {
+        return this.set(path, value, options);
+    }
+
+    _publishUpdate(path, entry, previous) {
+        this._notify({
+            kind: "update",
+            path,
+            timeUs: entry.timeUs ?? this.getTimeUs(),
+            cycle: entry.cycle ?? null,
+            entry: cloneValue(entry),
+            previous: previous ? cloneValue(previous) : null,
+            descriptor: this.descriptor(path),
+        });
     }
 
     write(path, value, options = {}) {
@@ -253,7 +420,26 @@ export class SignalStore {
             this.beginTransaction();
         }
 
-        const entry = normalizeSignalEntry(value, { ...options, now: options.now || this.now });
+        const currentDescriptor = this._descriptors.get(normalizedPath);
+        const type = options.type || currentDescriptor?.type || inferSignalType(value);
+        if (!currentDescriptor || currentDescriptor.type !== type) {
+            this.defineSignal({
+                path: normalizedPath,
+                type,
+                unit: options.unit,
+                source: options.source,
+                category: options.category,
+                replayRole: options.replayRole,
+                logClass: options.logClass,
+                metadata: options.descriptorMetadata,
+            });
+        }
+        const entry = normalizeSignalEntry(value, {
+            ...options,
+            type,
+            timeUs: options.timeUs ?? this.getTimeUs(),
+            now: options.now || this.now,
+        });
         this._layers[this._layers.length - 1].set(normalizedPath, entry);
         return cloneValue(entry);
     }
@@ -319,6 +505,7 @@ export class SignalStore {
         const entry = createSignalEntry(value, {
             ...options,
             source: options.source || "record",
+            timeUs: options.timeUs ?? this.getTimeUs(),
             now: options.now || this.now
         });
         this._appendHistory(normalizedPath, entry, options.maxSamples);
@@ -329,13 +516,25 @@ export class SignalStore {
         return (this._history.get(normalizeSignalPath(path)) || []).map((entry) => cloneValue(entry));
     }
 
-    _appendHistory(path, entry, maxSamples = 120) {
+    series(path, { fromUs = 0, toUs = Number.POSITIVE_INFINITY } = {}) {
+        return this.history(path).filter((entry) => {
+            const timeUs = entry.timeUs ?? 0;
+            return timeUs >= fromUs && timeUs <= toUs;
+        });
+    }
+
+    _appendHistory(path, entry, maxSamples = null) {
         const normalizedPath = normalizeSignalPath(path);
         if (!normalizedPath) return;
 
         const current = this._history.get(normalizedPath) || [];
         current.push(cloneValue(entry));
-        const limit = Number.isFinite(Number(maxSamples)) ? Math.max(1, Number(maxSamples)) : 120;
-        this._history.set(normalizedPath, current.slice(-limit));
+        const limit = maxSamples !== null && maxSamples !== undefined && Number.isFinite(Number(maxSamples))
+            ? Math.max(1, Number(maxSamples))
+            : this.historySampleLimit;
+        const newestTimeUs = entry?.timeUs ?? this.getTimeUs();
+        const oldestTimeUs = Math.max(0, newestTimeUs - this.historyDurationUs);
+        const bounded = current.filter((sample) => (sample.timeUs ?? newestTimeUs) >= oldestTimeUs);
+        this._history.set(normalizedPath, bounded.slice(-limit));
     }
 }

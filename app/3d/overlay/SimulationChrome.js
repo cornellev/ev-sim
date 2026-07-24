@@ -4,7 +4,7 @@ import { useState } from "react";
 import { SimulationMenu } from "./SimulationMenu";
 import { VehicleOverlay } from "./VehicleOverlay";
 
-export function SimulationChrome({ data }) {
+export function SimulationChrome({ data, onOpenReplay }) {
     const [vehicleOverlayVisible, setVehicleOverlayVisible] = useState(true);
 
     if (!data) return null;
@@ -16,6 +16,7 @@ export function SimulationChrome({ data }) {
                 data={data}
                 vehicleOverlayVisible={vehicleOverlayVisible}
                 onVehicleOverlayVisibleChange={setVehicleOverlayVisible}
+                onOpenReplay={onOpenReplay}
             />
         </>
     );

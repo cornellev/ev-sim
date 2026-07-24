@@ -69,6 +69,17 @@ const MINI_SCENARIOS = {
 
 const FOLLOW_CAMERA_CONTROL_LOCK = "vehicle-follow-camera";
 
+function publishEnvironmentTelemetry(data, environmentId, manifest, initialSceneState = {}) {
+    const telemetry = data.bindings?.()?.signalStore;
+    if (!telemetry) return;
+    const common = { source: "environment", category: "environment", replayRole: "input", logClass: "core" };
+    telemetry.publishSignal("environment.id", environmentId, { ...common, type: "string" });
+    telemetry.publishSignal("environment.revision", manifest?.clientRevision ?? null, { ...common, type: "json" });
+    telemetry.publishSignal("environment.seed", data.bakeRunConfig?.()?.seed ?? 42, { ...common, type: "int32" });
+    telemetry.publishSignal("environment.manifest", manifest || { environmentId }, { ...common, type: "json" });
+    telemetry.publishSignal("environment.initialSceneState", initialSceneState, { ...common, type: "json" });
+}
+
 async function setupScene(scene, camera, renderer, data) {
     scene.background = new THREE.Color(0x202020);
     const skyManager = new EnvironmentSkyManager({
@@ -350,6 +361,7 @@ async function setupVehicles(scene, data, camera) {
         new THREE.Vector3(0, 0, 0), 
         new THREE.Euler(0, 0, 0)
     );
+    car.telemetryId = "ego";
     await car.addToScene(scene);
 
     disposers.push(data.keys().registerKeyDown("w", () => {
@@ -646,8 +658,10 @@ function registerBakeKey(data, harness) {
 
 export default function TotalScene({
     mode = THREE_D_MODES.SIMULATION,
+    visible = true,
     environmentId = "igvc",
     onEnvironmentChange,
+    onOpenReplay,
 }) {
     const mountRef = useRef(null);
     const keyManagerRef = useRef(new KeyManager());
@@ -676,6 +690,7 @@ export default function TotalScene({
         const data = new Data({ environment: { environmentId } });
 
         data.keyManager = keyManagerRef.current;
+        data.keyManager.attachTelemetry(data.bindings()?.signalStore);
         data.mouseManager = mouseManagerRef.current;
         data.scene = scene;
         data.camera = camera;
@@ -718,6 +733,8 @@ export default function TotalScene({
             //         : null;
             // const runMini = MINI_SCENARIOS[miniKey] ?? Q4;
             // startingState = await runMini(scene, data);
+
+            publishEnvironmentTelemetry(data, environmentId, environmentLoader.manifest, startingState);
 
             if (disposed) return;
 
@@ -831,6 +848,7 @@ export default function TotalScene({
                     if (!manifest || runtime.disposed) return;
                     loader.apply(manifest);
                     loader.manifest = manifest;
+                    publishEnvironmentTelemetry(runtime.data, environmentId, manifest, runtime.startingState);
                     persistence?.adoptClientRevision(manifest.clientRevision);
                 } catch (error) {
                     console.warn("[environment] MCP live-sync apply failed:", error);
@@ -862,14 +880,22 @@ export default function TotalScene({
     }, [mode]);
 
     useEffect(() => {
+        runtimeRef.current?.data?.simulation?.()?.setViewportActive?.(visible);
+        if (!visible) keyManagerRef.current.releaseAll?.();
+    }, [visible, sceneReady]);
+
+    useEffect(() => {
         const kd = (e) => {
+            if (!visible) return;
             keyManagerRef.current.onKeyDown(e);
         };
         const ku = (e) => {
+            if (!visible) return;
             keyManagerRef.current.onKeyUp(e);
         };
         
         const kp = (e) => {
+            if (!visible) return;
             keyManagerRef.current.onKeyPress(e);
         };
 
@@ -882,21 +908,25 @@ export default function TotalScene({
             window.removeEventListener("keyup", ku);
             window.removeEventListener("keypress", kp);
         };
-    }, []);
+    }, [visible]);
 
     useEffect(() => {
         const mm = mouseManagerRef.current;
         const md = (e) => {
+            if (!visible) return;
             mm.handleDown(e);
         };
         const mu = (e) => {
+            if (!visible) return;
             mm.handleUp(e);
         };
         const mmove = (e) => {
+            if (!visible) return;
             mm.handleMove(e);
         };
 
         const mc = (e) => {
+            if (!visible) return;
             mm.handleClick(e);
         }
         
@@ -910,12 +940,12 @@ export default function TotalScene({
             window.removeEventListener("mousemove", mmove);
             window.removeEventListener("click", mc);
         };
-    }, [])
+    }, [visible])
 
     return (
         <>
-        <SceneLoadingScreen visible={!sceneReady} mode={mode} phase={loadPhase} />
-        {loadError && (
+        <SceneLoadingScreen visible={visible && !sceneReady} mode={mode} phase={loadPhase} />
+        {visible && loadError && (
             <div className="fixed inset-0 z-50 grid place-items-center bg-zinc-950 px-6 text-zinc-100">
                 <div className="max-w-md border-l-2 border-red-400 pl-5">
                     <p className="text-xs font-semibold uppercase tracking-[0.16em] text-red-300">
@@ -927,13 +957,13 @@ export default function TotalScene({
         )}
         <div
             id="overlay"
-            className="fixed w-[100vw] h-[100vh] top-0 left-0 select-none pointer-events-none bg-transparent"
-            aria-hidden={!sceneReady}
+            className={`fixed inset-0 z-20 select-none bg-transparent ${visible ? "pointer-events-none visible" : "pointer-events-none invisible"}`}
+            aria-hidden={!sceneReady || !visible}
         >
-            {sceneReady && mode === THREE_D_MODES.SIMULATION && (
-                <SimulationChrome data={sceneData} />
+            {visible && sceneReady && mode === THREE_D_MODES.SIMULATION && (
+                <SimulationChrome data={sceneData} onOpenReplay={onOpenReplay} />
             )}
-            {sceneReady && mode === THREE_D_MODES.ENVIRONMENT && (
+            {visible && sceneReady && mode === THREE_D_MODES.ENVIRONMENT && (
                 <EnvironmentEditorChrome
                     data={sceneData}
                     activeEnvironmentId={environmentId}
@@ -943,9 +973,9 @@ export default function TotalScene({
         </div>
         <div
             id="canvas-container"
-            className={`w-[100vw] h-[100vh] transition-opacity duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] ${sceneReady ? "opacity-100" : "opacity-0"}`}
+            className={`fixed inset-0 z-0 h-[100vh] w-[100vw] transition-opacity duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] ${sceneReady && visible ? "visible opacity-100" : "invisible pointer-events-none opacity-0"}`}
             ref={mountRef}
-            aria-hidden={!sceneReady}
+            aria-hidden={!sceneReady || !visible}
         />
         </>
     )

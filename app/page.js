@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from 'react';
 import TotalScene from './3d/Scene';
 import Scripting from './scripting/Scripting';
 import BindingsPage from './scripting/bindings/BindingsPage';
+import ReplayPage from './replay/ReplayPage';
+import AnalysisPage from './analysis/AnalysisPage';
 import Menu from './3d/overlay/menu/Menu';
 import { APP_VIEWS, THREE_D_MODES } from './3d/viewState';
 import {
@@ -19,6 +21,7 @@ export default function Home() {
     const [threeDMode, setThreeDMode] = useState(THREE_D_MODES.SIMULATION);
     const [menuVisible, setMenuVisible] = useState(false);
     const [activeEnvironmentId, setActiveEnvironment] = useState(null);
+    const [selectedLogId, setSelectedLogId] = useState(null);
 
     const closeMenu = useCallback(() => {
         setMenuVisible(false);
@@ -43,6 +46,18 @@ export default function Home() {
 
     const goToBindings = useCallback(() => {
         setView(APP_VIEWS.BINDINGS);
+        setMenuVisible(false);
+    }, []);
+
+    const goToReplay = useCallback((logId = null) => {
+        if (typeof logId === "string") setSelectedLogId(logId);
+        setView(APP_VIEWS.REPLAY);
+        setMenuVisible(false);
+    }, []);
+
+    const goToAnalysis = useCallback((logId = null) => {
+        if (typeof logId === "string") setSelectedLogId(logId);
+        setView(APP_VIEWS.ANALYSIS);
         setMenuVisible(false);
     }, []);
 
@@ -103,6 +118,8 @@ export default function Home() {
                     onEnvironmentEditor={goToEnvironmentEditor}
                     onScripting={goToScripting}
                     onBindings={goToBindings}
+                    onReplay={goToReplay}
+                    onAnalysis={goToAnalysis}
                 />
             )
         }
@@ -113,11 +130,23 @@ export default function Home() {
             view === APP_VIEWS.BINDINGS && <BindingsPage />
         }
         {
-            view === APP_VIEWS.THREE_D && activeEnvironmentId && (
+            view === APP_VIEWS.REPLAY && (
+                <ReplayPage initialLogId={selectedLogId} onOpenAnalysis={goToAnalysis} />
+            )
+        }
+        {
+            view === APP_VIEWS.ANALYSIS && (
+                <AnalysisPage initialLogId={selectedLogId} onOpenReplay={goToReplay} />
+            )
+        }
+        {
+            activeEnvironmentId && (
                 <TotalScene
                     mode={threeDMode}
+                    visible={view === APP_VIEWS.THREE_D}
                     environmentId={activeEnvironmentId}
                     onEnvironmentChange={selectEnvironment}
+                    onOpenReplay={goToReplay}
                 />
             )
         }

@@ -21,6 +21,7 @@ The app opens to the simulation workspace by default. Press `Escape` to switch b
 - [Development workflow](docs/development.md)
 - [Visual scripting](docs/scripting/README.md)
 - [Simulation](docs/simulation.md)
+- [Telemetry, logging, replay, and analysis](docs/telemetry-logging.md)
 - [ROS integration](docs/ros-integration.md)
 - [Assets](docs/assets.md)
 - [Troubleshooting](docs/troubleshooting.md)

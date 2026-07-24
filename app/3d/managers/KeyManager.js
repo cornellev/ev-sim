@@ -6,6 +6,22 @@ export class KeyManager {
         this.keysPress = {};
         this.whileDownCallbacks = {};
         this.down = new Set();
+        this.telemetry = null;
+    }
+
+    attachTelemetry(store) {
+        this.telemetry = store;
+    }
+
+    _publishKey(key, down, event) {
+        this.telemetry?.publishSignal?.(`inputs.keyboard.${String(key)}`, Boolean(down), {
+            source: "keyboard",
+            type: "boolean",
+            category: "inputs",
+            replayRole: "input",
+            logClass: "core",
+            descriptorMetadata: { code: event?.code || null },
+        });
     }
 
     registerKeyDown(key, callback) {
@@ -45,6 +61,7 @@ export class KeyManager {
         const wasAlreadyDown = this.down.has(key);
 
         this.down.add(key);
+        if (!wasAlreadyDown) this._publishKey(key, true, event);
 
         if (!wasAlreadyDown && this.keysDown[key]) {
             this.keysDown[key].forEach((callback) => callback?.(event));
@@ -55,6 +72,7 @@ export class KeyManager {
         const key = event.key;
 
         this.down.delete(key);
+        this._publishKey(key, false, event);
 
         if (this.keysUp[key]) {
             this.keysUp[key].forEach((callback) => callback?.(event));
@@ -67,6 +85,13 @@ export class KeyManager {
         if (this.keysPress[key]) {
             this.keysPress[key].forEach((callback) => callback?.(event));
         }
+    }
+
+    releaseAll() {
+        for (const key of this.down) {
+            this._publishKey(key, false, null);
+        }
+        this.down.clear();
     }
 
     update(deltaTime) {

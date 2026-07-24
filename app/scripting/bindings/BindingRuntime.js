@@ -21,6 +21,16 @@ function nowMs() {
     return Date.now();
 }
 
+function stableArtifactHash(value) {
+    const text = JSON.stringify(value ?? null);
+    let hash = 0x811c9dc5;
+    for (let index = 0; index < text.length; index += 1) {
+        hash ^= text.charCodeAt(index);
+        hash = Math.imul(hash, 0x01000193);
+    }
+    return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
 function getConfiguredSignalPaths(manifest) {
     const paths = [];
 
@@ -196,6 +206,14 @@ export class BindingRuntime {
             .then((script) => {
                 this._scripts.set(scriptId, script);
                 this._scriptLoads.delete(scriptId);
+                this.signalStore.publishSignal(`scripts.${scriptId}.versionHash`, stableArtifactHash(script.artifact), {
+                    source: "scripting",
+                    type: "string",
+                    category: "scripts",
+                    replayRole: "input",
+                    logClass: "core",
+                    descriptorMetadata: { artifactKind: script.artifact?.kind || null, artifactVersion: script.artifact?.version || null },
+                });
                 this._emitThrottled();
                 return script;
             })
@@ -229,8 +247,12 @@ export class BindingRuntime {
 
         this.signalStore.set(topicSignalPath(topic), info.value, {
             source: "topic",
-            type: "message",
-            metadata: { typeStr: info.typeStr ?? null, count: info.count ?? null }
+            type: "json",
+            category: "topics",
+            replayRole: "input",
+            logClass: "standard",
+            metadata: { typeStr: info.typeStr ?? null, count: info.count ?? null },
+            descriptorMetadata: { rosType: info.typeStr ?? null, schema: info.schema ?? null },
         });
 
         if (!this.manifest.enabled) return;
@@ -372,6 +394,22 @@ export class BindingRuntime {
                 lastRanAt: startedAt,
                 lastDurationMs: nowMs() - startedAt
             });
+            const status = this.telemetry.get(binding.id);
+            this.signalStore.publishSignal(`bindings.${binding.id}.status`, status, {
+                source: "bindings",
+                type: "json",
+                category: "bindings",
+                replayRole: "derived",
+                logClass: "standard",
+            });
+            if (["failure", "invalid"].includes(patch.lastStatus)) {
+                this.signalStore.emitTelemetryEvent({
+                    category: "bindings",
+                    name: patch.lastStatus === "invalid" ? "binding-invalid" : "binding-failure",
+                    severity: "error",
+                    payload: { bindingId: binding.id, scriptId: binding.scriptId, error: patch.lastError || null },
+                });
+            }
             this._emitThrottled();
         };
 
@@ -427,6 +465,14 @@ export class BindingRuntime {
             lastError: publishError,
             lastInputs: inputs,
             lastOutputs: run.outputs || {}
+        });
+
+        this.signalStore.publishSignal(`bindings.${binding.id}.outputs`, run.outputs || {}, {
+            source: "bindings",
+            type: "json",
+            category: "bindings",
+            replayRole: "derived",
+            logClass: "standard",
         });
 
         if (manual) this._emit();

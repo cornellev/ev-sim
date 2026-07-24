@@ -6,6 +6,7 @@ This folder is the contributor guide for sensor-fusion. Start here when you need
 
 - New contributors: [Getting Started](getting-started.md), then [Development](development.md).
 - Architecture work: [Architecture](architecture.md), [Simulation](simulation.md), and [ROS Integration](ros-integration.md).
+- Telemetry work: [Telemetry, Logging, Replay, and Analysis](telemetry-logging.md).
 - Environment authoring: [Environment Editor](environment-editor.md), then [Earth Import](earth-import.md) for geographic imports.
 - Visual scripting work: [Scripting Overview](scripting/README.md), then [Scripting Architecture](scripting/architecture.md) and [Extension Guide](scripting/extension-guide.md).
 - Running scripts on live data: [Script Bindings](script-bindings.md) (topics, fixed updates, signals, timers).
@@ -16,7 +17,8 @@ This folder is the contributor guide for sensor-fusion. Start here when you need
 
 ## Project Map
 
-- `app/page.js` selects between the visual scripting canvas, the bindings workspace, and the 3D scene (simulation or environment editor).
+- `app/page.js` selects Simulation, Environment, Scripting, Bindings, Replay, and Analysis workspaces while preserving the live scene runtime.
+- `app/telemetry/`, `app/logging/`, `app/replay/`, and `app/analysis/` contain the shared signal transport, SFLog client, and inspection workspaces.
 - `app/scripting/` contains the node editor, block registry, compiler, runner, and built-in units.
 - `app/scripting/bindings/` contains the bindings manifest, runtime dispatcher, and Bindings workspace UI.
 - `app/3d/` contains Three.js scenes, vehicles, devices, overlays, and IGVC scenarios.

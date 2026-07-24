@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef } from "react";
-import { FaCheck, FaCode, FaCodepen, FaCog, FaCube, FaEdit, FaFlask, FaLink, FaShapes, FaTimes } from "react-icons/fa";
+import { FaChartLine, FaCheck, FaCode, FaCog, FaCube, FaEdit, FaFilm, FaFlask, FaLink, FaShapes, FaTimes } from "react-icons/fa";
 import { cn } from "../ui/cn";
 import { APP_VIEWS, THREE_D_MODES } from "../../viewState";
 
@@ -13,11 +13,27 @@ export default function Menu({
     onConfig,
     onScripting,
     onBindings,
+    onReplay,
+    onAnalysis,
     onClose,
 }) {
     const focusItemRef = useRef(null);
 
     const topLevelItems = useMemo(() => [
+        {
+            key: APP_VIEWS.REPLAY,
+            label: "Replay",
+            hint: "Inspect recorded simulation state",
+            icon: <FaFilm className="h-4 w-4" />,
+            onSelect: onReplay,
+        },
+        {
+            key: APP_VIEWS.ANALYSIS,
+            label: "Analysis",
+            hint: "Graph live and recorded signals",
+            icon: <FaChartLine className="h-4 w-4" />,
+            onSelect: onAnalysis,
+        },
         {
             key: "config",
             label: "Config",
@@ -25,7 +41,7 @@ export default function Menu({
             icon: <FaCog className="h-4 w-4" />,
             onSelect: onConfig,
         },
-    ], [onConfig]);
+    ], [onAnalysis, onConfig, onReplay]);
 
     const threeDChildren = useMemo(() => [
         {

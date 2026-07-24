@@ -15,14 +15,17 @@ import {
     FaBroadcastTower,
     FaDatabase,
     FaLayerGroup,
+    FaCircle,
 } from "react-icons/fa";
 import { FlyoutPanel } from "./ui/FlyoutPanel";
 import { MenuButton } from "./ui/MenuButton";
 import { MenuToggle } from "./ui/MenuToggle";
 import { PanelSection } from "./ui/PanelSection";
 import { BiWorld } from "react-icons/bi";
+import { RecordingPanel } from "../../logging/RecordingPanel";
+import { getRecordingController } from "../../logging/RecordingController";
 
-export function SimulationMenu({ data, vehicleOverlayVisible = true, onVehicleOverlayVisibleChange }) {
+export function SimulationMenu({ data, vehicleOverlayVisible = true, onVehicleOverlayVisibleChange, onOpenReplay }) {
     const [openPanel, setOpenPanel] = useState(null);
     const [toggles, setToggles] = useState({
         agents: true,
@@ -36,11 +39,15 @@ export function SimulationMenu({ data, vehicleOverlayVisible = true, onVehicleOv
     const [simState, setSimState] = useState(() => {
         return sim?.getSnapshot?.() ?? null;
     });
+    const recordingController = useMemo(() => getRecordingController(), []);
+    const [recordingState, setRecordingState] = useState(() => recordingController.getSnapshot());
 
     useEffect(() => {
         if (!sim) return;
         return sim.subscribe(setSimState);
     }, [sim]);
+
+    useEffect(() => recordingController.subscribe(setRecordingState), [recordingController]);
 
     const engineToggleCount = [simState?.modules?.physics, simState?.realtime, simState?.deterministic].filter(Boolean).length;
     const modulesToggleCount = [toggles.agents, simState?.modules?.environment, simState?.modules?.sensors, simState?.modules?.scripting].filter(Boolean).length;
@@ -177,6 +184,15 @@ export function SimulationMenu({ data, vehicleOverlayVisible = true, onVehicleOv
                                 </PanelSection>
                             </FlyoutPanel>
                         )}
+
+                        {openPanel === "recording" && (
+                            <FlyoutPanel
+                                title="Telemetry Recording"
+                                subtitle="Compact backend logs with replay checkpoints"
+                            >
+                                <RecordingPanel data={data} onOpenReplay={onOpenReplay} />
+                            </FlyoutPanel>
+                        )}
                     </div>
                 )}
 
@@ -219,6 +235,21 @@ export function SimulationMenu({ data, vehicleOverlayVisible = true, onVehicleOv
                             ariaLabel="Reset"
                         >
                             <FaStop className="h-3 w-3" />
+                        </MenuButton>
+                    </div>
+
+                    <div className="h-7 w-px bg-zinc-700/80" />
+
+                    <div className="flex items-center gap-1 rounded-xl border border-zinc-700/80 bg-zinc-900/80 p-1">
+                        <MenuButton
+                            iconOnly
+                            variant={recordingState.active ? "danger" : "default"}
+                            active={recordingState.active || openPanel === "recording"}
+                            onClick={() => togglePanel("recording")}
+                            title={recordingState.active ? "Recording in progress" : "Configure logging"}
+                            ariaLabel="Telemetry recording"
+                        >
+                            <FaCircle className={`h-2.5 w-2.5 ${recordingState.active ? "animate-pulse" : "text-red-400"}`} />
                         </MenuButton>
                     </div>
 

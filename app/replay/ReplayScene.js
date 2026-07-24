@@ -1,0 +1,137 @@
+'use client';
+
+import { useEffect, useRef } from "react";
+import * as THREE from "three";
+import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+
+function labelSprite(text) {
+    const canvas = document.createElement("canvas");
+    canvas.width = 256;
+    canvas.height = 64;
+    const context = canvas.getContext("2d");
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = "rgba(9,9,11,.86)";
+    context.roundRect(4, 4, 248, 52, 10);
+    context.fill();
+    context.font = "600 22px Arial";
+    context.fillStyle = "#e4e4e7";
+    context.textAlign = "center";
+    context.fillText(text, 128, 39);
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false }));
+    sprite.scale.set(4, 1, 1);
+    sprite.position.y = 2.2;
+    return sprite;
+}
+
+export default function ReplayScene({ dataset, timeUs, selectedEntity, onSelectEntity }) {
+    const mountRef = useRef(null);
+    const runtimeRef = useRef(null);
+
+    useEffect(() => {
+        const mount = mountRef.current;
+        if (!mount) return undefined;
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x09090b);
+        scene.fog = new THREE.FogExp2(0x09090b, 0.012);
+        const camera = new THREE.PerspectiveCamera(52, 1, 0.1, 5000);
+        camera.position.set(16, 13, 18);
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+        renderer.outputColorSpace = THREE.SRGBColorSpace;
+        mount.appendChild(renderer.domElement);
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.08;
+        controls.maxPolarAngle = Math.PI / 2.03;
+        controls.target.set(0, 0.6, 0);
+        const grid = new THREE.GridHelper(400, 200, 0x3f3f46, 0x202024);
+        scene.add(grid);
+        scene.add(new THREE.HemisphereLight(0xbce8ff, 0x18181b, 1.7));
+        const sun = new THREE.DirectionalLight(0xffffff, 2.2);
+        sun.position.set(12, 25, 8);
+        scene.add(sun);
+        const raycaster = new THREE.Raycaster();
+        const pointer = new THREE.Vector2();
+        const meshes = new Map();
+        const resize = () => {
+            const { width, height } = mount.getBoundingClientRect();
+            camera.aspect = Math.max(1, width) / Math.max(1, height);
+            camera.updateProjectionMatrix();
+            renderer.setSize(Math.max(1, width), Math.max(1, height), false);
+        };
+        const observer = new ResizeObserver(resize);
+        observer.observe(mount);
+        resize();
+        let frame;
+        const render = () => {
+            controls.update();
+            renderer.render(scene, camera);
+            frame = requestAnimationFrame(render);
+        };
+        render();
+        const click = (event) => {
+            const rect = renderer.domElement.getBoundingClientRect();
+            pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+            pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+            raycaster.setFromCamera(pointer, camera);
+            const hit = raycaster.intersectObjects([...meshes.values()], false)[0];
+            if (hit?.object?.userData?.entityId) onSelectEntity?.(hit.object.userData.entityId);
+        };
+        renderer.domElement.addEventListener("click", click);
+        runtimeRef.current = { scene, meshes };
+        return () => {
+            cancelAnimationFrame(frame);
+            observer.disconnect();
+            renderer.domElement.removeEventListener("click", click);
+            controls.dispose();
+            for (const mesh of meshes.values()) {
+                mesh.geometry.dispose();
+                mesh.material.dispose();
+                mesh.children.forEach((child) => child.material?.map?.dispose?.());
+            }
+            renderer.dispose();
+            renderer.domElement.remove();
+            runtimeRef.current = null;
+        };
+    }, [onSelectEntity]);
+
+    useEffect(() => {
+        const runtime = runtimeRef.current;
+        if (!runtime || !dataset) return;
+        const posePaths = dataset.descriptors.filter((item) => item.type === "pose3" && item.path.startsWith("vehicles.")).map((item) => item.path);
+        const active = new Set();
+        for (const path of posePaths) {
+            const entityId = path.split(".")[1] || path;
+            active.add(entityId);
+            let mesh = runtime.meshes.get(entityId);
+            if (!mesh) {
+                mesh = new THREE.Mesh(
+                    new THREE.BoxGeometry(1.8, 0.8, 3.4),
+                    new THREE.MeshStandardMaterial({ color: 0x38bdf8, roughness: 0.58, metalness: 0.18 }),
+                );
+                mesh.position.y = 0.45;
+                mesh.userData.entityId = entityId;
+                mesh.add(labelSprite(entityId));
+                runtime.scene.add(mesh);
+                runtime.meshes.set(entityId, mesh);
+            }
+            const pose = dataset.valueAt(path, timeUs, { interpolate: true });
+            if (pose?.position) mesh.position.set(pose.position.x || 0, (pose.position.y || 0) + 0.45, pose.position.z || 0);
+            if (pose?.rotation) mesh.rotation.set(pose.rotation.x || 0, pose.rotation.y || 0, pose.rotation.z || 0, pose.rotation.order || "XYZ");
+            const selected = selectedEntity === entityId;
+            mesh.material.color.setHex(selected ? 0xfbbf24 : 0x38bdf8);
+            mesh.material.emissive.setHex(selected ? 0x332100 : 0x00131d);
+        }
+        for (const [entityId, mesh] of runtime.meshes) {
+            if (active.has(entityId)) continue;
+            runtime.scene.remove(mesh);
+            runtime.meshes.delete(entityId);
+            mesh.geometry.dispose();
+            mesh.material.dispose();
+        }
+    }, [dataset, selectedEntity, timeUs]);
+
+    return <div ref={mountRef} className="absolute inset-0" aria-label="Read-only replay scene" />;
+}
