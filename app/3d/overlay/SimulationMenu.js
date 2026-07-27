@@ -24,6 +24,11 @@ import { PanelSection } from "./ui/PanelSection";
 import { BiWorld } from "react-icons/bi";
 import { RecordingPanel } from "../../logging/RecordingPanel";
 import { getRecordingController } from "../../logging/RecordingController";
+import { getRunSessionController } from "../../simulation/RunSessionController";
+import { SimulationRunStatus } from "./SimulationRunStatus";
+import { deriveSimulationStatus, formatSimulationTime } from "./simulationStatus";
+
+const SIMULATION_MENU_CONTROL_LOCK = "simulation-menu";
 
 export function SimulationMenu({ data, vehicleOverlayVisible = true, onVehicleOverlayVisibleChange, onOpenReplay }) {
     const [openPanel, setOpenPanel] = useState(null);
@@ -40,7 +45,9 @@ export function SimulationMenu({ data, vehicleOverlayVisible = true, onVehicleOv
         return sim?.getSnapshot?.() ?? null;
     });
     const recordingController = useMemo(() => getRecordingController(), []);
+    const runController = useMemo(() => getRunSessionController(), []);
     const [recordingState, setRecordingState] = useState(() => recordingController.getSnapshot());
+    const [runState, setRunState] = useState(() => runController.getSnapshot());
 
     useEffect(() => {
         if (!sim) return;
@@ -48,17 +55,24 @@ export function SimulationMenu({ data, vehicleOverlayVisible = true, onVehicleOv
     }, [sim]);
 
     useEffect(() => recordingController.subscribe(setRecordingState), [recordingController]);
+    useEffect(() => runController.subscribe(setRunState), [runController]);
 
-    const engineToggleCount = [simState?.modules?.physics, simState?.realtime, simState?.deterministic].filter(Boolean).length;
-    const modulesToggleCount = [toggles.agents, simState?.modules?.environment, simState?.modules?.sensors, simState?.modules?.scripting].filter(Boolean).length;
+    const invokeRunControl = (manifestAction, legacyAction) => {
+        const result = runState.activeRunId ? manifestAction() : legacyAction();
+        result?.catch?.((error) => console.warn("Run control failed", error));
+    };
+
+    const runtimeStatus = deriveSimulationStatus(runState, simState);
 
     const controls = useMemo(() => {
         const settings = data?.settings?.();
         return {
-            disable: settings?.disableControls,
-            enable: settings?.enableControls,
+            disable: () => settings?.disableControls?.(SIMULATION_MENU_CONTROL_LOCK),
+            enable: () => settings?.enableControls?.(SIMULATION_MENU_CONTROL_LOCK),
         };
     }, [data]);
+
+    useEffect(() => () => controls.enable(), [controls]);
 
     const setToggle = (key, value) => {
         setToggles((prev) => ({ ...prev, [key]: value }));
@@ -68,13 +82,15 @@ export function SimulationMenu({ data, vehicleOverlayVisible = true, onVehicleOv
         setOpenPanel((current) => (current === panel ? null : panel));
     };
 
-    return (
+    return (<>
+        <SimulationRunStatus simState={simState} runState={runState} recordingState={recordingState} />
         <div className="fixed bottom-0 left-0 right-0 z-20 px-3 pb-3 pointer-events-auto">
             <div
                 className="relative mx-auto w-fit"
-                onMouseDown={controls.disable}
-                onMouseUp={controls.enable}
-                onMouseLeave={controls.enable}
+                onPointerDown={controls.disable}
+                onPointerUp={controls.enable}
+                onPointerCancel={controls.enable}
+                onPointerLeave={controls.enable}
             >
                 {openPanel && (
                     <div className="absolute bottom-[calc(100%+10px)] right-0">
@@ -196,14 +212,24 @@ export function SimulationMenu({ data, vehicleOverlayVisible = true, onVehicleOv
                     </div>
                 )}
 
-                <div className="flex items-center gap-2 rounded-2xl border border-zinc-700/80 bg-zinc-950/70 p-2 text-zinc-100 shadow-[0_20px_70px_rgba(0,0,0,0.5)] backdrop-blur-2xl">
+                <div className="flex max-w-[calc(100vw-1.5rem)] items-center gap-2 overflow-x-auto rounded-2xl border border-zinc-700/80 bg-zinc-950/90 p-2 text-zinc-100 shadow-[0_20px_70px_rgba(0,0,0,0.5)] backdrop-blur-xl">
+
+                    <div className="hidden min-w-[118px] px-2 sm:block">
+                        <div className="flex items-center gap-1.5">
+                            <FaCircle className={`h-2 w-2 ${runtimeStatus.tone === "emerald" ? "text-emerald-400" : runtimeStatus.tone === "amber" ? "text-amber-400" : runtimeStatus.tone === "rose" ? "text-rose-400" : runtimeStatus.tone === "sky" ? "text-sky-400" : "text-zinc-500"}`} />
+                            <span className="truncate text-[10px] font-semibold text-zinc-200">{runtimeStatus.label}</span>
+                        </div>
+                        <p className="mt-0.5 truncate font-mono text-[9px] tabular-nums text-zinc-500">step {simState?.steps ?? 0} / {formatSimulationTime(simState?.time)}</p>
+                    </div>
+
+                    <div className="h-7 w-px shrink-0 bg-zinc-700/80" />
 
                     <div className="flex items-center gap-1 rounded-xl border border-zinc-700/80 bg-zinc-900/80 p-1">
                         <MenuButton
                             iconOnly
                             variant="primary"
                             active={simState?.status === "playing"}
-                            onClick={() => sim?.play()}
+                            onClick={() => invokeRunControl(() => runController.play(), () => sim?.play())}
                             title="Run simulation"
                             ariaLabel="Play"
                         >
@@ -212,7 +238,7 @@ export function SimulationMenu({ data, vehicleOverlayVisible = true, onVehicleOv
                         <MenuButton
                             iconOnly
                             active={simState?.status === "paused"}
-                            onClick={() => sim?.pause()}
+                            onClick={() => invokeRunControl(() => runController.pause(), () => sim?.pause())}
                             title="Pause simulation"
                             ariaLabel="Pause"
                         >
@@ -220,7 +246,7 @@ export function SimulationMenu({ data, vehicleOverlayVisible = true, onVehicleOv
                         </MenuButton>
                         <MenuButton
                             iconOnly
-                            onClick={() => sim?.step()}
+                            onClick={() => invokeRunControl(() => runController.step(), () => sim?.step())}
                             title="Advance one simulation step"
                             ariaLabel="Step"
                         >
@@ -230,8 +256,8 @@ export function SimulationMenu({ data, vehicleOverlayVisible = true, onVehicleOv
                             iconOnly
                             variant="danger"
                             active={simState?.status === "stopped"}
-                            onClick={() => sim?.stop()}
-                            title="Stop and reset simulation"
+                            onClick={() => invokeRunControl(() => runController.reset(), () => sim?.stop())}
+                            title="Finalize and reset simulation"
                             ariaLabel="Reset"
                         >
                             <FaStop className="h-3 w-3" />
@@ -296,13 +322,12 @@ export function SimulationMenu({ data, vehicleOverlayVisible = true, onVehicleOv
                         </MenuButton>
                     </div>
 
-                    <div className="flex items-center gap-1 rounded-lg border border-zinc-700/80 bg-zinc-900/80 px-2 py-1 text-[10px] font-medium tracking-wide text-zinc-300 select-none">
-                        <span className="text-sky-300">{engineToggleCount}</span>
-                        <span className="text-zinc-500">/</span>
-                        <span>{modulesToggleCount}</span>
+                    <div className="flex shrink-0 items-center gap-1 rounded-lg border border-zinc-700/80 bg-zinc-900/80 px-2 py-1 font-mono text-[9px] font-medium tabular-nums text-zinc-300 select-none" title="Simulation clock">
+                        <span className="text-zinc-500">t</span>
+                        <span>{formatSimulationTime(simState?.time)}</span>
                     </div>
                 </div>
             </div>
         </div>
-    );
+    </>);
 }

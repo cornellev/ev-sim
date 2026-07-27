@@ -7,12 +7,14 @@ import { SIGNAL_PATHS } from "../runtime/SignalPaths.js";
 import { getBindingRuntime } from "./BindingRuntime.js";
 import { getBindingManifest, parseBindingManifest, serializeBindingManifest } from "./BindingStorage.js";
 import {
+    BINDING_SCOPES,
     INPUT_SOURCES,
     OUTPUT_SINKS,
     SIM_VALUE_KEYS,
     TRIGGER_KINDS,
     TRIGGER_KIND_ORDER,
     createBinding,
+    createBindingFolder,
     normalizeBindingManifest,
     normalizeTrigger,
     suggestTriggerFromArtifact,
@@ -20,19 +22,18 @@ import {
     validateBinding
 } from "./BindingDocument.js";
 import { subscribeStorageEvents } from "../../client/storageEvents.js";
-
-const TRIGGER_LABELS = {
-    [TRIGGER_KINDS.TOPIC]: "ROS topic",
-    [TRIGGER_KINDS.FIXED_UPDATE]: "Fixed update",
-    [TRIGGER_KINDS.SIGNAL_UPDATE]: "Signal change",
-    [TRIGGER_KINDS.TIMER]: "Timer"
-};
+import {
+    getRunManifest,
+    listRunManifests,
+    saveRunManifest,
+} from "../../simulation/RunManifestClient.js";
 
 const TRIGGER_SHORT_LABELS = {
     [TRIGGER_KINDS.TOPIC]: "Topic",
     [TRIGGER_KINDS.FIXED_UPDATE]: "Tick",
     [TRIGGER_KINDS.SIGNAL_UPDATE]: "Signal",
-    [TRIGGER_KINDS.TIMER]: "Timer"
+    [TRIGGER_KINDS.TIMER]: "Timer",
+    [TRIGGER_KINDS.SIMULATION_TIMER]: "Sim time",
 };
 
 const INPUT_SOURCE_LABELS = {
@@ -136,7 +137,7 @@ function Toggle({ checked, onChange, label }) {
 
 function SegmentedControl({ value, options, onChange }) {
     return (
-        <div className="grid grid-cols-4 gap-0 overflow-hidden rounded-md border border-white/10 bg-[#171717]">
+        <div className="grid grid-cols-5 gap-0 overflow-hidden rounded-md border border-white/10 bg-[#171717]">
             {options.map((option) => {
                 const active = option.value === value;
                 return (
@@ -182,11 +183,16 @@ function StatusDot({ telemetry, enabled }) {
 
 // ------------------------------------------------------------------ list rail
 
-function BindingRow({ binding, telemetry, selected, onSelect, onToggle }) {
+function BindingRow({ binding, folders, telemetry, selected, onSelect, onToggle, onMove }) {
     return (
         <div
             role="button"
             tabIndex={0}
+            draggable
+            onDragStart={(event) => {
+                event.dataTransfer.effectAllowed = "move";
+                event.dataTransfer.setData("application/x-binding-id", binding.id);
+            }}
             onClick={() => onSelect(binding.id)}
             onKeyDown={(event) => {
                 if (event.key === "Enter" || event.key === " ") {
@@ -211,6 +217,16 @@ function BindingRow({ binding, telemetry, selected, onSelect, onToggle }) {
                 </span>
             )}
             <span onClick={(event) => event.stopPropagation()}>
+                <select
+                    value={binding.folderId || ""}
+                    onChange={(event) => onMove(binding.id, event.target.value || null)}
+                    aria-label={`Move ${binding.name} to folder`}
+                    title="Move to folder"
+                    className="mr-2 h-7 max-w-[96px] rounded border border-white/10 bg-[#171717] px-1.5 text-[10px] text-zinc-400 outline-none focus:border-emerald-400/40"
+                >
+                    <option value="">Unfiled</option>
+                    {folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
+                </select>
                 <Toggle
                     checked={binding.enabled}
                     onChange={(next) => onToggle(binding.id, next)}
@@ -221,23 +237,82 @@ function BindingRow({ binding, telemetry, selected, onSelect, onToggle }) {
     );
 }
 
-function BindingList({ manifest, telemetry, selectedId, query, onQuery, onSelect, onToggle, onCreate }) {
+function BindingList({
+    manifest,
+    telemetry,
+    selectedId,
+    query,
+    onQuery,
+    onSelect,
+    onToggle,
+    onCreate,
+    onCreateFolder,
+    onRenameFolder,
+    onDeleteFolder,
+    onMoveFolder,
+    onReorderFolder,
+    onMoveBinding,
+}) {
+    const [collapsed, setCollapsed] = useState(() => new Set());
+    const [creatingFolder, setCreatingFolder] = useState(false);
+    const [editingFolderId, setEditingFolderId] = useState(null);
+    const [folderName, setFolderName] = useState("");
+
     const filtered = useMemo(() => {
         const needle = query.trim().toLowerCase();
         if (!needle) return manifest.bindings;
-        return manifest.bindings.filter((binding) =>
+        const folderNames = new Map(manifest.folders.map((folder) => [folder.id, folder.name.toLowerCase()]));
+        return manifest.bindings.filter((binding) => (
             binding.name.toLowerCase().includes(needle)
             || summarizeTrigger(binding.trigger).toLowerCase().includes(needle)
-        );
-    }, [manifest.bindings, query]);
+            || (folderNames.get(binding.folderId) || "unfiled").includes(needle)
+        ));
+    }, [manifest.bindings, manifest.folders, query]);
 
-    const groups = useMemo(() => TRIGGER_KIND_ORDER
-        .map((kind) => ({
-            kind,
-            bindings: filtered.filter((binding) => binding.trigger.kind === kind)
-        }))
-        .filter((group) => group.bindings.length > 0),
-    [filtered]);
+    const groups = useMemo(() => [
+        ...manifest.folders.map((folder) => ({
+            id: folder.id,
+            name: folder.name,
+            bindings: filtered.filter((binding) => binding.folderId === folder.id),
+        })),
+        {
+            id: "__unfiled__",
+            name: "Unfiled",
+            bindings: filtered.filter((binding) => !binding.folderId),
+        },
+    ], [filtered, manifest.folders]);
+
+    const toggleCollapsed = (id) => {
+        setCollapsed((current) => {
+            const next = new Set(current);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    };
+
+    const submitFolder = () => {
+        const name = folderName.trim();
+        if (!name) return;
+        if (editingFolderId) onRenameFolder(editingFolderId, name);
+        else onCreateFolder(name);
+        setEditingFolderId(null);
+        setCreatingFolder(false);
+        setFolderName("");
+    };
+
+    const receiveDrop = (event, folderId) => {
+        event.preventDefault();
+        const bindingId = event.dataTransfer.getData("application/x-binding-id");
+        if (bindingId) {
+            onMoveBinding(bindingId, folderId === "__unfiled__" ? null : folderId);
+            return;
+        }
+        const sourceFolderId = event.dataTransfer.getData("application/x-folder-id");
+        if (sourceFolderId && folderId !== "__unfiled__" && sourceFolderId !== folderId) {
+            onReorderFolder(sourceFolderId, folderId);
+        }
+    };
 
     return (
         <aside className="flex w-[340px] shrink-0 flex-col border-r border-white/10 bg-[#202020]/60">
@@ -251,7 +326,40 @@ function BindingList({ manifest, telemetry, selectedId, query, onQuery, onSelect
                 <button type="button" onClick={onCreate} className="bnd-btn bnd-btn--primary shrink-0">
                     New
                 </button>
+                <button
+                    type="button"
+                    onClick={() => {
+                        setCreatingFolder(true);
+                        setEditingFolderId(null);
+                        setFolderName("");
+                    }}
+                    className="bnd-btn shrink-0"
+                    aria-label="Create folder"
+                    title="Create folder"
+                >
+                    Folder
+                </button>
             </div>
+
+            {creatingFolder && (
+                <div className="flex gap-2 border-b border-white/10 px-4 py-2">
+                    <TextInput
+                        autoFocus
+                        value={folderName}
+                        onChange={(event) => setFolderName(event.target.value)}
+                        onKeyDown={(event) => {
+                            if (event.key === "Enter") submitFolder();
+                            if (event.key === "Escape") {
+                                setFolderName("");
+                                setCreatingFolder(false);
+                            }
+                        }}
+                        placeholder="Folder name"
+                        aria-label="Folder name"
+                    />
+                    <button type="button" onClick={submitFolder} className="bnd-btn bnd-btn--primary">Add</button>
+                </div>
+            )}
 
             <div className="min-h-0 flex-1 overflow-y-auto mod-scrollbar">
                 {manifest.bindings.length === 0 && (
@@ -273,25 +381,92 @@ function BindingList({ manifest, telemetry, selectedId, query, onQuery, onSelect
                     </p>
                 )}
 
-                {groups.map((group) => (
-                    <section key={group.kind}>
-                        <p className="sticky top-0 z-[1] border-b border-white/5 bg-[#232323] px-4 py-1.5 text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
-                            {TRIGGER_LABELS[group.kind]}
-                        </p>
-                        <div className="divide-y divide-white/[0.04]">
+                {groups.map((group, index) => {
+                    const isUnfiled = group.id === "__unfiled__";
+                    const isOpen = Boolean(query.trim()) || !collapsed.has(group.id);
+                    if (query.trim() && group.bindings.length === 0) return null;
+                    return (
+                    <section
+                        key={group.id}
+                        onDragOver={(event) => event.preventDefault()}
+                        onDrop={(event) => receiveDrop(event, group.id)}
+                    >
+                        <div
+                            draggable={!isUnfiled && editingFolderId !== group.id}
+                            onDragStart={(event) => {
+                                if (isUnfiled) return;
+                                event.dataTransfer.effectAllowed = "move";
+                                event.dataTransfer.setData("application/x-folder-id", group.id);
+                            }}
+                            className="sticky top-0 z-[1] flex min-h-8 items-center gap-2 border-b border-white/5 bg-[#232323] px-3"
+                        >
+                            <button
+                                type="button"
+                                onClick={() => toggleCollapsed(group.id)}
+                                className="bnd-press h-6 w-5 text-[10px] text-zinc-500 hover:text-zinc-200"
+                                aria-label={`${isOpen ? "Collapse" : "Expand"} ${group.name}`}
+                            >
+                                {isOpen ? "▾" : "▸"}
+                            </button>
+                            {editingFolderId === group.id ? (
+                                <input
+                                    autoFocus
+                                    value={folderName}
+                                    onChange={(event) => setFolderName(event.target.value)}
+                                    onBlur={submitFolder}
+                                    onKeyDown={(event) => {
+                                        if (event.key === "Enter") submitFolder();
+                                        if (event.key === "Escape") {
+                                            setFolderName("");
+                                            setEditingFolderId(null);
+                                        }
+                                    }}
+                                    className="h-6 min-w-0 flex-1 rounded border border-emerald-400/30 bg-[#171717] px-1.5 text-[10px] text-zinc-200 outline-none"
+                                    aria-label="Rename folder"
+                                />
+                            ) : (
+                                <button
+                                    type="button"
+                                    onDoubleClick={() => {
+                                        if (isUnfiled) return;
+                                        setEditingFolderId(group.id);
+                                        setFolderName(group.name);
+                                    }}
+                                    onClick={() => toggleCollapsed(group.id)}
+                                    className="min-w-0 flex-1 truncate text-left text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-500"
+                                >
+                                    {group.name} <span className="font-mono text-zinc-600">{group.bindings.length}</span>
+                                </button>
+                            )}
+                            {!isUnfiled && editingFolderId !== group.id && (
+                                <div className="flex items-center text-zinc-600">
+                                    <button type="button" onClick={() => onMoveFolder(group.id, -1)} disabled={index === 0} className="bnd-press h-6 w-5 hover:text-zinc-300 disabled:opacity-25" aria-label={`Move ${group.name} up`}>↑</button>
+                                    <button type="button" onClick={() => onMoveFolder(group.id, 1)} disabled={index === manifest.folders.length - 1} className="bnd-press h-6 w-5 hover:text-zinc-300 disabled:opacity-25" aria-label={`Move ${group.name} down`}>↓</button>
+                                    <button type="button" onClick={() => { setEditingFolderId(group.id); setFolderName(group.name); }} className="bnd-press h-6 px-1 text-[9px] hover:text-zinc-300" aria-label={`Rename ${group.name}`}>Edit</button>
+                                    <button type="button" onClick={() => onDeleteFolder(group.id)} className="bnd-press h-6 w-5 hover:text-rose-300" aria-label={`Delete ${group.name}`}>×</button>
+                                </div>
+                            )}
+                        </div>
+                        {isOpen && <div className="divide-y divide-white/[0.04]">
                             {group.bindings.map((binding) => (
                                 <BindingRow
                                     key={binding.id}
                                     binding={binding}
+                                    folders={manifest.folders}
                                     telemetry={telemetry[binding.id]}
                                     selected={binding.id === selectedId}
                                     onSelect={onSelect}
                                     onToggle={onToggle}
+                                    onMove={onMoveBinding}
                                 />
                             ))}
-                        </div>
+                            {group.bindings.length === 0 && !query.trim() && (
+                                <p className="px-10 py-3 text-[10px] text-zinc-600">Drop bindings here</p>
+                            )}
+                        </div>}
                     </section>
-                ))}
+                    );
+                })}
             </div>
         </aside>
     );
@@ -368,6 +543,22 @@ function TriggerEditor({ binding, topics, onPatchTrigger }) {
                         />
                     </Field>
                 )}
+
+                {trigger.kind === TRIGGER_KINDS.SIMULATION_TIMER && (
+                    <Field
+                        label="Interval (simulation ns)"
+                        hint="Uses deterministic simulation time and pauses with the simulation."
+                    >
+                        <TextInput
+                            mono
+                            type="number"
+                            min={1}
+                            step={1}
+                            value={trigger.intervalNs}
+                            onChange={(event) => onPatchTrigger({ intervalNs: event.target.value })}
+                        />
+                    </Field>
+                )}
             </div>
         </section>
     );
@@ -415,6 +606,68 @@ function ScriptPicker({ binding, scripts, scriptsLoading, onSelectScript }) {
                     </p>
                 )}
             </div>
+        </section>
+    );
+}
+
+function ActivationEditor({ binding, runManifests, loading, savingIds, onPatchScope, onToggleManifest }) {
+    const global = binding.scope === BINDING_SCOPES.GLOBAL;
+
+    return (
+        <section className="border-t border-white/10 pt-5">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500">Active for</p>
+            <div className="mt-3 grid grid-cols-2 overflow-hidden rounded-md border border-white/10 bg-[#171717]">
+                {[
+                    { value: BINDING_SCOPES.GLOBAL, label: "All manifests" },
+                    { value: BINDING_SCOPES.SELECTED, label: "Selected manifests" },
+                ].map((option) => {
+                    const active = binding.scope === option.value;
+                    return (
+                        <button
+                            key={option.value}
+                            type="button"
+                            onClick={() => onPatchScope(option.value)}
+                            aria-pressed={active}
+                            className={`bnd-press h-9 border-r border-white/10 text-[11px] font-medium last:border-r-0 ${active ? "bg-emerald-400/15 text-emerald-200" : "text-zinc-400 hover:bg-white/5 hover:text-zinc-200"}`}
+                        >
+                            {option.label}
+                        </button>
+                    );
+                })}
+            </div>
+
+            {global ? (
+                <p className="mt-2 text-[11px] leading-relaxed text-zinc-500">
+                    This binding is included in every current and future run manifest.
+                </p>
+            ) : (
+                <div className="mt-3 overflow-hidden rounded-md border border-white/10 bg-[#171717]">
+                    {loading && <div className="h-20 animate-pulse bg-white/[0.03]" />}
+                    {!loading && runManifests.length === 0 && (
+                        <p className="px-3 py-4 text-[11px] text-zinc-500">No run manifests are available.</p>
+                    )}
+                    {!loading && runManifests.map((entry) => {
+                        const checked = entry.manifest.scripts?.bindingIds?.includes(binding.id) || false;
+                        const saving = savingIds.has(entry.id);
+                        return (
+                            <label key={entry.id} className="flex cursor-pointer items-center gap-3 border-b border-white/[0.05] px-3 py-2.5 last:border-b-0 hover:bg-white/[0.025]">
+                                <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    disabled={saving}
+                                    onChange={(event) => onToggleManifest(entry.id, event.target.checked)}
+                                    className="h-3.5 w-3.5 accent-emerald-400"
+                                />
+                                <span className="min-w-0 flex-1">
+                                    <span className="block truncate text-[11px] font-medium text-zinc-200">{entry.name}</span>
+                                    <span className="block truncate font-mono text-[9px] text-zinc-600">{entry.id}</span>
+                                </span>
+                                {saving && <span className="text-[9px] text-zinc-500">Saving</span>}
+                            </label>
+                        );
+                    })}
+                </div>
+            )}
         </section>
     );
 }
@@ -639,11 +892,16 @@ function DetailPanel({
     scripts,
     scriptDocs,
     scriptsLoading,
+    runManifests,
+    runManifestsLoading,
+    savingManifestIds,
     topics,
     signalPaths = [],
     onPatch,
     onPatchTrigger,
     onSelectScript,
+    onPatchScope,
+    onToggleManifest,
     onPatchInput,
     onPatchOutput,
     onRunNow,
@@ -688,6 +946,14 @@ function DetailPanel({
                     />
                 </div>
 
+                <ActivationEditor
+                    binding={binding}
+                    runManifests={runManifests}
+                    loading={runManifestsLoading}
+                    savingIds={savingManifestIds}
+                    onPatchScope={onPatchScope}
+                    onToggleManifest={onToggleManifest}
+                />
                 <TriggerEditor binding={binding} topics={topics} onPatchTrigger={onPatchTrigger} />
                 <ScriptPicker
                     binding={binding}
@@ -721,6 +987,9 @@ export default function BindingsPage() {
     const [query, setQuery] = useState("");
     const [scriptDocs, setScriptDocs] = useState([]);
     const [scriptsLoading, setScriptsLoading] = useState(true);
+    const [runManifests, setRunManifests] = useState([]);
+    const [runManifestsLoading, setRunManifestsLoading] = useState(true);
+    const [savingManifestIds, setSavingManifestIds] = useState(() => new Set());
     const [running, setRunning] = useState(false);
     const [feedback, setFeedback] = useState(null);
 
@@ -767,6 +1036,26 @@ export default function BindingsPage() {
         feedbackTimer.current = setTimeout(() => setFeedback(null), 2000);
     }, []);
 
+    const loadRunManifestCatalog = useCallback(async () => {
+        setRunManifestsLoading(true);
+        try {
+            const catalog = await listRunManifests();
+            const entries = await Promise.all((catalog || []).map(async (summary) => ({
+                ...summary,
+                manifest: await getRunManifest(summary.id),
+            })));
+            setRunManifests(entries.filter((entry) => entry.manifest));
+        } catch (error) {
+            showFeedback(error?.message || "Could not load run manifests.");
+        } finally {
+            setRunManifestsLoading(false);
+        }
+    }, [showFeedback]);
+
+    useEffect(() => {
+        loadRunManifestCatalog();
+    }, [loadRunManifestCatalog]);
+
     // Live-sync: MCP binding writes rehydrate the runtime without re-persisting.
     useEffect(() => {
         return subscribeStorageEvents((event) => {
@@ -777,27 +1066,34 @@ export default function BindingsPage() {
                     .catch(() => {});
                 return;
             }
+            if (event.domain === "run-manifest") {
+                loadRunManifestCatalog();
+                return;
+            }
             if (event.domain !== "bindings") return;
 
             (async () => {
                 try {
                     const next = await getBindingManifest();
                     setManifest(next);
-                    await runtime.setManifest(next, { persist: false });
+                    await runtime.setLibraryManifest(next, { persist: false });
                     showFeedback("Bindings updated by agent");
                 } catch (error) {
                     console.warn("[bindings] MCP live-sync failed:", error);
                 }
             })();
         });
-    }, [runtime, showFeedback]);
+    }, [loadRunManifestCatalog, runtime, showFeedback]);
 
     const commitManifest = useCallback((next, { immediate = false } = {}) => {
-        setManifest(next);
+        const normalized = normalizeBindingManifest(next);
+        setManifest(normalized);
 
         if (saveTimer.current) clearTimeout(saveTimer.current);
         const save = () => {
-            runtime.setManifest(next).catch(() => {});
+            runtime.setLibraryManifest(normalized).catch((error) => {
+                showFeedback(error?.message || "Could not save bindings.");
+            });
         };
 
         if (immediate) {
@@ -805,7 +1101,7 @@ export default function BindingsPage() {
         } else {
             saveTimer.current = setTimeout(save, 450);
         }
-    }, [runtime]);
+    }, [runtime, showFeedback]);
 
     const scripts = useMemo(
         () => scriptDocs.map(summarizeScriptDocument).sort((a, b) => a.name.localeCompare(b.name)),
@@ -826,6 +1122,99 @@ export default function BindingsPage() {
             )
         }, options);
     }, [commitManifest, manifest]);
+
+    const createFolder = useCallback((name) => {
+        if (!manifest) return;
+        const folder = createBindingFolder({ name });
+        commitManifest({ ...manifest, folders: [...manifest.folders, folder] }, { immediate: true });
+    }, [commitManifest, manifest]);
+
+    const renameFolder = useCallback((folderId, name) => {
+        if (!manifest) return;
+        commitManifest({
+            ...manifest,
+            folders: manifest.folders.map((folder) => folder.id === folderId ? { ...folder, name } : folder),
+        }, { immediate: true });
+    }, [commitManifest, manifest]);
+
+    const deleteFolder = useCallback((folderId) => {
+        if (!manifest) return;
+        commitManifest({
+            ...manifest,
+            folders: manifest.folders.filter((folder) => folder.id !== folderId),
+            bindings: manifest.bindings.map((binding) => (
+                binding.folderId === folderId ? { ...binding, folderId: null } : binding
+            )),
+        }, { immediate: true });
+        showFeedback("Folder removed; bindings moved to Unfiled");
+    }, [commitManifest, manifest, showFeedback]);
+
+    const moveFolder = useCallback((folderId, direction) => {
+        if (!manifest) return;
+        const index = manifest.folders.findIndex((folder) => folder.id === folderId);
+        const target = index + direction;
+        if (index < 0 || target < 0 || target >= manifest.folders.length) return;
+        const folders = [...manifest.folders];
+        [folders[index], folders[target]] = [folders[target], folders[index]];
+        commitManifest({ ...manifest, folders }, { immediate: true });
+    }, [commitManifest, manifest]);
+
+    const reorderFolder = useCallback((folderId, beforeFolderId) => {
+        if (!manifest) return;
+        const source = manifest.folders.find((folder) => folder.id === folderId);
+        if (!source) return;
+        const folders = manifest.folders.filter((folder) => folder.id !== folderId);
+        const target = folders.findIndex((folder) => folder.id === beforeFolderId);
+        folders.splice(target < 0 ? folders.length : target, 0, source);
+        commitManifest({ ...manifest, folders }, { immediate: true });
+    }, [commitManifest, manifest]);
+
+    const moveBinding = useCallback((bindingId, folderId) => {
+        patchBinding(bindingId, { folderId }, { immediate: true });
+    }, [patchBinding]);
+
+    const toggleManifestBinding = useCallback(async (manifestId, active) => {
+        if (!selectedBinding) return;
+        const entry = runManifests.find((candidate) => candidate.id === manifestId);
+        if (!entry?.manifest) return;
+
+        const currentIds = entry.manifest.scripts?.bindingIds || [];
+        const bindingIds = active
+            ? [...new Set([...currentIds, selectedBinding.id])]
+            : currentIds.filter((id) => id !== selectedBinding.id);
+        const draft = {
+            ...entry.manifest,
+            scripts: { ...entry.manifest.scripts, bindingIds },
+        };
+
+        setRunManifests((current) => current.map((candidate) => (
+            candidate.id === manifestId ? { ...candidate, manifest: draft } : candidate
+        )));
+        setSavingManifestIds((current) => new Set(current).add(manifestId));
+
+        try {
+            const stored = await saveRunManifest(manifestId, draft, entry.manifest.revision);
+            setRunManifests((current) => current.map((candidate) => (
+                candidate.id === manifestId ? { ...candidate, manifest: stored, name: stored.name } : candidate
+            )));
+        } catch (error) {
+            try {
+                const latest = await getRunManifest(manifestId);
+                setRunManifests((current) => current.map((candidate) => (
+                    candidate.id === manifestId ? { ...candidate, manifest: latest, name: latest?.name || candidate.name } : candidate
+                )));
+            } catch {
+                await loadRunManifestCatalog();
+            }
+            showFeedback(error?.message || "Could not update manifest assignment.");
+        } finally {
+            setSavingManifestIds((current) => {
+                const next = new Set(current);
+                next.delete(manifestId);
+                return next;
+            });
+        }
+    }, [loadRunManifestCatalog, runManifests, selectedBinding, showFeedback]);
 
     const patchTrigger = useCallback((patch) => {
         if (!selectedBinding) return;
@@ -897,11 +1286,6 @@ export default function BindingsPage() {
         patchBinding(id, { enabled }, { immediate: true });
     }, [patchBinding]);
 
-    const setMasterEnabled = useCallback((enabled) => {
-        if (!manifest) return;
-        commitManifest({ ...manifest, enabled }, { immediate: true });
-    }, [commitManifest, manifest]);
-
     const runNow = useCallback(async () => {
         if (!selectedBinding) return;
         setRunning(true);
@@ -909,7 +1293,7 @@ export default function BindingsPage() {
         try {
             if (saveTimer.current) {
                 clearTimeout(saveTimer.current);
-                await runtime.setManifest(manifest);
+                await runtime.setLibraryManifest(manifest);
             }
             await runtime.runBindingNow(selectedBinding.id);
         } catch (error) {
@@ -958,26 +1342,6 @@ export default function BindingsPage() {
 
                 <div className="flex-1" />
 
-                <div className="flex items-center gap-1.5" title={snapshot?.connected ? "ROS bridge connected" : "ROS bridge not connected"}>
-                    <span className={`h-1.5 w-1.5 rounded-full ${snapshot?.connected ? "bg-emerald-400" : "bg-zinc-600"}`} />
-                    <span className="font-mono text-[10px] text-zinc-500">
-                        {snapshot?.connected ? "bridge up" : "bridge down"}
-                    </span>
-                </div>
-
-                <div className="mx-1 h-5 w-px bg-white/10" />
-
-                <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500">Runtime</span>
-                    <Toggle
-                        checked={manifest?.enabled !== false}
-                        onChange={setMasterEnabled}
-                        label="Enable binding runtime"
-                    />
-                </div>
-
-                <div className="mx-1 h-5 w-px bg-white/10" />
-
                 <button type="button" onClick={exportManifest} className="bnd-btn">Export</button>
                 <button type="button" onClick={() => fileInputRef.current?.click()} className="bnd-btn">Import</button>
                 <input
@@ -1012,6 +1376,12 @@ export default function BindingsPage() {
                         onSelect={setSelectedId}
                         onToggle={toggleBinding}
                         onCreate={createNewBinding}
+                        onCreateFolder={createFolder}
+                        onRenameFolder={renameFolder}
+                        onDeleteFolder={deleteFolder}
+                        onMoveFolder={moveFolder}
+                        onReorderFolder={reorderFolder}
+                        onMoveBinding={moveBinding}
                     />
                     <DetailPanel
                         binding={selectedBinding}
@@ -1019,11 +1389,16 @@ export default function BindingsPage() {
                         scripts={scripts}
                         scriptDocs={scriptDocs}
                         scriptsLoading={scriptsLoading}
+                        runManifests={runManifests}
+                        runManifestsLoading={runManifestsLoading}
+                        savingManifestIds={savingManifestIds}
                         topics={topics}
                         signalPaths={signalPaths}
                         onPatch={(patch) => patchBinding(selectedBinding.id, patch)}
                         onPatchTrigger={patchTrigger}
                         onSelectScript={selectScript}
+                        onPatchScope={(scope) => patchBinding(selectedBinding.id, { scope }, { immediate: true })}
+                        onToggleManifest={toggleManifestBinding}
                         onPatchInput={patchInput}
                         onPatchOutput={patchOutput}
                         onRunNow={runNow}

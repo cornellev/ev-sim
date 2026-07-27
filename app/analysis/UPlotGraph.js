@@ -2,12 +2,12 @@
 
 import { useEffect, useRef } from "react";
 
-export default function UPlotGraph({ data, series, onCursor, onUnlockLive }) {
+export default function UPlotGraph({ data, series, onCursor, onUnlockLive, onWidth }) {
     const mountRef = useRef(null);
     const plotRef = useRef(null);
     const dataRef = useRef(data);
-    const callbacksRef = useRef({ onCursor, onUnlockLive });
-    callbacksRef.current = { onCursor, onUnlockLive };
+    const callbacksRef = useRef({ onCursor, onUnlockLive, onWidth });
+    callbacksRef.current = { onCursor, onUnlockLive, onWidth };
     dataRef.current = data;
 
     useEffect(() => {
@@ -18,6 +18,7 @@ export default function UPlotGraph({ data, series, onCursor, onUnlockLive }) {
         import("uplot").then(({ default: uPlot }) => {
             if (disposed) return;
             const rect = mount.getBoundingClientRect();
+            callbacksRef.current.onWidth?.(Math.floor(rect.width));
             const options = {
                 width: Math.max(320, Math.floor(rect.width)),
                 height: Math.max(240, Math.floor(rect.height)),
@@ -54,6 +55,7 @@ export default function UPlotGraph({ data, series, onCursor, onUnlockLive }) {
             plotRef.current = plot;
             observer = new ResizeObserver(() => {
                 const next = mount.getBoundingClientRect();
+                callbacksRef.current.onWidth?.(Math.floor(next.width));
                 plot.setSize({ width: Math.max(320, Math.floor(next.width)), height: Math.max(240, Math.floor(next.height)) });
             });
             observer.observe(mount);
@@ -78,5 +80,5 @@ export default function UPlotGraph({ data, series, onCursor, onUnlockLive }) {
         }
     };
 
-    return <div className="relative h-full min-h-[240px] w-full bg-zinc-950" onPointerUp={finishPointerGesture}><div ref={mountRef} className="absolute inset-0 overflow-hidden" />{!data?.[0]?.length && <div className="pointer-events-none absolute inset-0 grid place-items-center bg-zinc-950 text-center"><div><p className="text-xs font-medium text-zinc-300">Add numeric signals to graph</p><p className="mt-1 text-[10px] text-zinc-600">Double-click, press Enter, or drag from the field tree.</p></div></div>}</div>;
+    return <div className="relative h-full min-h-[240px] w-full bg-zinc-950" onPointerUp={finishPointerGesture}><div ref={mountRef} className="absolute inset-0 overflow-hidden" />{!data?.[0]?.length && <div className="pointer-events-none absolute inset-0 grid place-items-center bg-zinc-950 text-center"><div><p className="text-xs font-medium text-zinc-300">Add numeric signals to graph</p><p className="mt-1 text-[10px] text-zinc-600">Click +, double-click a signal, press Enter, or drag it here.</p></div></div>}</div>;
 }

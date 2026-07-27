@@ -29,7 +29,7 @@ export class IGVCCar extends PhysicalVehicle {
     }
 
 
-    async update(dt) {
+    update(dt) {
 
     }
 

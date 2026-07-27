@@ -1,4 +1,14 @@
-import { Client, registerMsgDefinitionFromFile, syncTypesFromServer } from "@/app/client/Client";
+import { Client, registerMsgDefinitionFromFile, syncTypesFromServer, syncTypesToServer } from "@/app/client/Client";
+
+const STANDARD_SENSOR_TYPES = {
+    "builtin_interfaces/Time": "int32 sec\nuint32 nanosec\n",
+    "std_msgs/Header": "builtin_interfaces/Time stamp\nstring frame_id\n",
+    "sensor_msgs/Image": "std_msgs/Header header\nuint32 height\nuint32 width\nstring encoding\nuint8 is_bigendian\nuint32 step\nuint8[] data\n",
+    "sensor_msgs/CameraInfo": "std_msgs/Header header\nuint32 height\nuint32 width\nstring distortion_model\nfloat64[] d\nfloat64[9] k\nfloat64[9] r\nfloat64[12] p\nuint32 binning_x\nuint32 binning_y\n",
+    "sensor_msgs/PointField": "uint8 INT8=1\nuint8 UINT8=2\nuint8 INT16=3\nuint8 UINT16=4\nuint8 INT32=5\nuint8 UINT32=6\nuint8 FLOAT32=7\nuint8 FLOAT64=8\nstring name\nuint32 offset\nuint8 datatype\nuint32 count\n",
+    "sensor_msgs/PointCloud2": "std_msgs/Header header\nuint32 height\nuint32 width\nsensor_msgs/PointField[] fields\nbool is_bigendian\nuint32 point_step\nuint32 row_step\nuint8[] data\nbool is_dense\n",
+    "rosgraph_msgs/Clock": "builtin_interfaces/Time clock\n",
+};
 
 
 export class ClientManager {
@@ -6,6 +16,7 @@ export class ClientManager {
         this.data = data;
 
         this.client = null;
+        this.catalogHash = null;
         this._disposed = false;
 
         this._initPromise = this._setupClient();
@@ -22,6 +33,7 @@ export class ClientManager {
     async _setupClient() {
         try {
             const synced = await syncTypesFromServer({ apiBase: "http://localhost:8090" });
+            this.catalogHash = synced.catalogHash;
             console.log(`synced ${synced.count} message type(s) from server`);
         } catch (err) {
             console.warn("type sync skipped:", err.message);
@@ -36,6 +48,29 @@ export class ClientManager {
             );
         } catch (err) {
             console.warn("Point32 message definition load skipped:", err.message);
+        }
+
+        const standardSensorDefinitions = [
+            ["builtin_interfaces/Time", "/messages/builtin_interfaces/msg/Time.msg"],
+            ["std_msgs/Header", "/messages/std_msgs/msg/Header.msg"],
+            ["sensor_msgs/Image", "/messages/sensor_msgs/msg/Image.msg"],
+            ["sensor_msgs/CameraInfo", "/messages/sensor_msgs/msg/CameraInfo.msg"],
+            ["sensor_msgs/PointField", "/messages/sensor_msgs/msg/PointField.msg"],
+            ["sensor_msgs/PointCloud2", "/messages/sensor_msgs/msg/PointCloud2.msg"],
+            ["rosgraph_msgs/Clock", "/messages/rosgraph_msgs/msg/Clock.msg"],
+        ];
+        for (const [type, url] of standardSensorDefinitions) {
+            try {
+                await registerMsgDefinitionFromFile(type, url);
+            } catch (err) {
+                console.warn(`${type} message definition load skipped:`, err.message);
+            }
+        }
+        try {
+            const synced = await syncTypesToServer(STANDARD_SENSOR_TYPES, { apiBase: "http://localhost:8090" });
+            this.catalogHash = synced.catalogHash || synced.hash || this.catalogHash;
+        } catch (err) {
+            console.warn("standard sensor type catalog sync skipped:", err.message);
         }
 
         try {

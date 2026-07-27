@@ -27,6 +27,26 @@ export const DEFAULT_TELEMETRY_PROFILE = Object.freeze({
     ],
 });
 
+export const SIMULATION_RUN_SENSOR_PROFILE = Object.freeze({
+    kind: PROFILE_KIND,
+    version: PROFILE_VERSION,
+    id: "simulation-run-full-sensors",
+    name: "Simulation Run: Full Sensors",
+    mode: "replay-safe",
+    rules: [
+        { pattern: "**", enabled: true, sampling: "on-change", rateHz: null },
+        { pattern: "simulation.**", enabled: true, sampling: "every-update", rateHz: null },
+        { pattern: "vehicles.**", enabled: true, sampling: "every-update", rateHz: null },
+        { pattern: "devices.**", enabled: true, sampling: "every-update", rateHz: null },
+    ],
+});
+
+export function builtInProfile(id) {
+    if (id === SIMULATION_RUN_SENSOR_PROFILE.id) return SIMULATION_RUN_SENSOR_PROFILE;
+    if (id === DEFAULT_TELEMETRY_PROFILE.id) return DEFAULT_TELEMETRY_PROFILE;
+    return DEFAULT_REPLAY_PROFILE;
+}
+
 function escapeRegExp(value) {
     return value.replace(/[|\\{}()[\]^$+?.]/g, "\\$&");
 }

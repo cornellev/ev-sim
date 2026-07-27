@@ -19,7 +19,7 @@ import { buildRoadNetwork } from "./city/RoadNetwork";
 import { LoadRoadsFromGeoJSON } from "./city/CityBuilder";
 import { SimulationChrome } from "./overlay/SimulationChrome";
 import { EnvironmentEditorChrome } from "./overlay/EnvironmentEditorChrome";
-import { THREE_D_MODES } from "./viewState";
+import { isThreeDMode, THREE_D_MODES } from "./viewState";
 import { SensorTest } from "./scenes/SensorTest";
 import { setupScanCar } from "./vehicles/ScanCar";
 import { Q1 } from "./igvc/mini/q1";
@@ -53,6 +53,7 @@ import {
     setDeviceVisualsVisible,
     setVehiclesVisible,
 } from "./runtimeVisibility";
+import { getRunSessionController } from "../simulation/RunSessionController.js";
 
 /** `?mini=q1` | `q2` | `q3` | `q4` | `fi1` | `fi2` | `fii1` | `fiii1` | `fiii2` | `fiii3` (default: q4) */
 const MINI_SCENARIOS = {
@@ -407,6 +408,7 @@ async function setupVehicles(scene, data, camera) {
         // console.log(info)
 
         if (info.name == "/ackdrive") {
+            if (data.simulation()?.resolvedRun) return;
             const raw_speed = info.value.speed; // mph
             const raw_angle = info.value.steering_angle; // degrees
             const speed = raw_speed * 0.44704; // convert to m/s
@@ -476,7 +478,7 @@ async function setupSimulationRuntime(data, scene, camera, startingState = {}) {
     const sim = data.simulation();
     sim.setModule("baking", false);
     sim.startLoop();
-    sim.play();
+    sim.pause();
     return disposeVehicleControls;
 }
 
@@ -552,7 +554,8 @@ async function enterRuntimeMode(runtime, mode) {
             simulation.setModule("vehicles", true);
             simulation.setModule("sensors", true);
             await simulation.setPhysicsEnabled(true);
-            simulation.play();
+            simulation.startLoop();
+            simulation.render();
         }
         return;
     }
@@ -881,9 +884,15 @@ export default function TotalScene({
     }, [mode]);
 
     useEffect(() => {
-        runtimeRef.current?.data?.simulation?.()?.setViewportActive?.(visible);
+        // Both Simulation and Environment Editor need the shared render loop and orbit.
+        runtimeRef.current?.data?.simulation?.()?.setWorkspaceActive?.(visible && isThreeDMode(mode));
         if (!visible) keyManagerRef.current.releaseAll?.();
-    }, [visible, sceneReady]);
+    }, [mode, visible, sceneReady]);
+
+    useEffect(() => {
+        if (!sceneData) return undefined;
+        return getRunSessionController().attachData(sceneData);
+    }, [sceneData]);
 
     useEffect(() => {
         const kd = (e) => {

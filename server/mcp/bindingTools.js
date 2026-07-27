@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+    BINDING_SCOPES,
     createBinding,
     createBindingManifest,
     normalizeBinding,
@@ -10,14 +11,13 @@ import {
 import { storageEvents } from "./events.js";
 import { fail, ok } from "./toolResult.js";
 
-const BINDINGS_SETTING_KEY = "bindings:manifest";
-
 const TriggerSchema = z.object({
-    kind: z.enum(["topic", "fixed-update", "signal-update", "timer"]),
+    kind: z.enum(["topic", "fixed-update", "signal-update", "timer", "simulation-timer"]),
     topic: z.string().optional(),
     everyN: z.number().int().positive().optional(),
     path: z.string().optional(),
     intervalMs: z.number().positive().optional(),
+    intervalNs: z.number().int().positive().optional(),
 });
 
 const InputMappingSchema = z.object({
@@ -56,6 +56,7 @@ export function registerBindingTools(server, storage) {
                     ok: true,
                     enabled: manifest.enabled,
                     updatedAt: manifest.updatedAt,
+                    folders: manifest.folders,
                     bindings: manifest.bindings.map(summarizeBinding),
                 });
             } catch (error) {
@@ -90,25 +91,34 @@ export function registerBindingTools(server, storage) {
         {
             title: "Create binding",
             description:
-                "Create a binding that wires a compiled script to a trigger (topic / fixed-update / signal-update / timer) with input/output mappings.",
+                "Create a binding that wires a compiled script to a trigger with input/output mappings and optional folder/scope organization.",
             inputSchema: {
                 name: z.string().optional(),
                 scriptId: z.string().min(1),
                 enabled: z.boolean().optional(),
+                folderId: z.string().nullable().optional(),
+                scope: z.enum(Object.values(BINDING_SCOPES)).optional(),
                 trigger: TriggerSchema,
                 inputs: z.array(InputMappingSchema).optional(),
                 outputs: z.array(OutputMappingSchema).optional(),
             },
         },
-        async ({ name, scriptId, enabled, trigger, inputs, outputs }) => {
+        async ({ name, scriptId, enabled, folderId, scope, trigger, inputs, outputs }) => {
             try {
                 const interfaceCheck = await checkScriptInterface(storage, scriptId, inputs, outputs);
                 if (!interfaceCheck.ok) return fail(interfaceCheck.error, interfaceCheck);
+
+                const manifest = await getManifest(storage);
+                if (folderId && !manifest.folders.some((folder) => folder.id === folderId)) {
+                    return fail(`Binding folder "${folderId}" not found.`);
+                }
 
                 const binding = createBinding({
                     name: name || "Untitled binding",
                     scriptId,
                     enabled: enabled !== false,
+                    folderId: folderId || null,
+                    scope: scope || BINDING_SCOPES.SELECTED,
                     trigger,
                     inputs: inputs ?? [],
                     outputs: outputs ?? [],
@@ -118,7 +128,6 @@ export function registerBindingTools(server, storage) {
                     return fail(issues.join(" "), { issues, binding });
                 }
 
-                const manifest = await getManifest(storage);
                 manifest.bindings.push(binding);
                 await putManifest(storage, manifest);
                 storageEvents.publish({ domain: "bindings", id: binding.id, action: "created" });
@@ -133,12 +142,14 @@ export function registerBindingTools(server, storage) {
         "binding_update",
         {
             title: "Update binding",
-            description: "Update fields on an existing binding (name, script, trigger, inputs, outputs, enabled).",
+            description: "Update fields on an existing binding, including its folder and global/selected scope.",
             inputSchema: {
                 bindingId: z.string().min(1),
                 name: z.string().optional(),
                 scriptId: z.string().optional(),
                 enabled: z.boolean().optional(),
+                folderId: z.string().nullable().optional(),
+                scope: z.enum(Object.values(BINDING_SCOPES)).optional(),
                 trigger: TriggerSchema.optional(),
                 inputs: z.array(InputMappingSchema).optional(),
                 outputs: z.array(OutputMappingSchema).optional(),
@@ -149,6 +160,9 @@ export function registerBindingTools(server, storage) {
                 const manifest = await getManifest(storage);
                 const index = manifest.bindings.findIndex((entry) => entry.id === args.bindingId);
                 if (index === -1) return fail(`Binding "${args.bindingId}" not found.`);
+                if (args.folderId && !manifest.folders.some((folder) => folder.id === args.folderId)) {
+                    return fail(`Binding folder "${args.folderId}" not found.`);
+                }
 
                 const current = manifest.bindings[index];
                 const next = normalizeBinding({
@@ -156,6 +170,8 @@ export function registerBindingTools(server, storage) {
                     name: args.name ?? current.name,
                     scriptId: args.scriptId ?? current.scriptId,
                     enabled: args.enabled ?? current.enabled,
+                    folderId: args.folderId === undefined ? current.folderId : args.folderId,
+                    scope: args.scope ?? current.scope,
                     trigger: args.trigger ?? current.trigger,
                     inputs: args.inputs ?? current.inputs,
                     outputs: args.outputs ?? current.outputs,
@@ -298,7 +314,7 @@ export function registerBindingTools(server, storage) {
 }
 
 async function getManifest(storage) {
-    const stored = await storage.getSetting(BINDINGS_SETTING_KEY);
+    const stored = await storage.getBindings();
     if (!stored) return createBindingManifest();
     return normalizeBindingManifest(stored);
 }
@@ -308,8 +324,7 @@ async function putManifest(storage, manifest) {
         ...manifest,
         updatedAt: new Date().toISOString(),
     });
-    await storage.putSetting(BINDINGS_SETTING_KEY, normalized);
-    return normalized;
+    return storage.putBindings(normalized);
 }
 
 async function checkScriptInterface(storage, scriptId, inputs = [], outputs = []) {
@@ -367,6 +382,8 @@ function summarizeBinding(binding) {
         id: binding.id,
         name: binding.name,
         enabled: binding.enabled,
+        folderId: binding.folderId,
+        scope: binding.scope,
         scriptId: binding.scriptId,
         trigger: binding.trigger,
         inputCount: binding.inputs?.length ?? 0,

@@ -40,6 +40,8 @@ import {
     putManifest,
     checkScriptInterface,
 } from "../server/mcp/bindingTools.js";
+import { registerRunManifestTools } from "../server/mcp/runManifestTools.js";
+import { createDefaultRunManifest } from "../app/simulation/RunManifest.js";
 import { PLACEMENT_CATALOG } from "../app/3d/editor/placement/placementCatalogData.js";
 
 async function withTempStorage(fn) {
@@ -195,6 +197,8 @@ test("binding tools path: manifest CRUD and interface check", async () => {
 
         const binding = createBinding({
             name: "Speed binding",
+            folderId: "controllers",
+            scope: "global",
             scriptId: "script-b",
             trigger: { kind: "fixed-update", everyN: 1 },
             inputs: [{ input: "speed", source: "sim", key: "dt" }],
@@ -202,11 +206,17 @@ test("binding tools path: manifest CRUD and interface check", async () => {
         });
         assert.deepEqual(validateBinding(binding), []);
 
-        const manifest = createBindingManifest({ bindings: [binding] });
+        const manifest = createBindingManifest({
+            folders: [{ id: "controllers", name: "Controllers" }],
+            bindings: [binding],
+        });
         await putManifest(storage, manifest);
         const loaded = await getManifest(storage);
         assert.equal(loaded.bindings.length, 1);
         assert.equal(loaded.bindings[0].scriptId, "script-b");
+        assert.equal(loaded.bindings[0].folderId, "controllers");
+        assert.equal(loaded.bindings[0].scope, "global");
+        assert.deepEqual(loaded.folders, [{ id: "controllers", name: "Controllers" }]);
     });
 });
 
@@ -272,6 +282,81 @@ test("logging MCP suite registers catalog, recording, and replay capabilities", 
         "replay_series",
     ]);
     assert.deepEqual(resources, ["simulation-log-catalog", "simulation-log"]);
+});
+
+test("run manifest MCP suite exposes catalog, lifecycle, portable, and launch capabilities", () => {
+    const tools = [];
+    const resources = [];
+    const server = {
+        registerTool(name) { tools.push(name); },
+        registerResource(name) { resources.push(name); },
+    };
+    registerRunManifestTools(server, {});
+    assert.deepEqual(tools, [
+        "run_manifest_list",
+        "run_manifest_get",
+        "run_manifest_create",
+        "run_manifest_update",
+        "run_manifest_duplicate",
+        "run_manifest_delete",
+        "run_manifest_validate",
+        "run_manifest_resolve",
+        "run_manifest_export",
+        "run_manifest_import",
+        "run_manifest_launch",
+    ]);
+    assert.deepEqual(resources, ["run-manifest-catalog", "run-manifest"]);
+});
+
+test("run manifest MCP tools preserve descriptions, enforce revisions, and publish launch", async () => {
+    await withTempStorage(async (storage) => {
+        const tools = new Map();
+        const server = {
+            registerTool(name, _definition, handler) { tools.set(name, handler); },
+            registerResource() {},
+        };
+        registerRunManifestTools(server, storage);
+
+        const events = [];
+        const onChange = (event) => {
+            if (event.domain === "run-manifest") events.push(event);
+        };
+        storageEvents.on("change", onChange);
+        try {
+            const createdResult = await tools.get("run_manifest_create")({
+                manifest: createDefaultRunManifest({
+                    id: "mcp-run",
+                    name: "MCP Run",
+                    description: "A description containing spaces",
+                }),
+            });
+            const created = JSON.parse(createdResult.content[0].text).manifest;
+            assert.equal(created.description, "A description containing spaces");
+            assert.equal(created.revision, 1);
+
+            const updateResult = await tools.get("run_manifest_update")({
+                manifestId: created.id,
+                expectedRevision: created.revision,
+                manifest: { ...created, description: "An updated multi word description" },
+            });
+            const updated = JSON.parse(updateResult.content[0].text).manifest;
+            assert.equal(updated.description, "An updated multi word description");
+            assert.equal(updated.revision, 2);
+
+            const validationResult = await tools.get("run_manifest_validate")({ manifestId: created.id });
+            assert.equal(JSON.parse(validationResult.content[0].text).ok, true);
+
+            const launchResult = await tools.get("run_manifest_launch")({ manifestId: created.id });
+            const launch = JSON.parse(launchResult.content[0].text);
+            assert.equal(launch.ok, true);
+            assert.equal(launch.browserRequiredForLaunch, true);
+            assert.equal(launch.resolvedHash.length, 64);
+            assert.equal(events.at(-1).action, "launch");
+            assert.equal(events.at(-1).data.autoplay, false);
+        } finally {
+            storageEvents.off("change", onChange);
+        }
+    });
 });
 
 test("EnvironmentDocument round-trip after MCP-style save", async () => {

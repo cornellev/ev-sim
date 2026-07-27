@@ -19,17 +19,44 @@ export function createLogRouter(service) {
     router.post("/import", handle(async (req) => service.importStream(req, { name: req.get("x-sflog-name") })));
     router.get("/:id/metadata", handle(async (req) => service.getMetadata(req.params.id)));
     router.get("/:id/index", handle(async (req) => service.getIndex(req.params.id)));
-    router.get("/:id/chunks", async (req, res) => {
+    router.get("/:id/chunks/:chunkIndex", async (req, res) => {
         try {
-            const bytes = await service.readChunks(req.params.id, {
-                fromUs: Number(req.query.fromUs || 0),
-                toUs: req.query.toUs === undefined ? Number.POSITIVE_INFINITY : Number(req.query.toUs),
-            });
-            res.type("application/x-sflog-records").send(bytes);
+            const bytes = await service.readChunk(req.params.id, Number(req.params.chunkIndex));
+            res.type("application/x-sflog-records");
+            res.setHeader("Content-Length", bytes.byteLength);
+            res.end(bytes);
         } catch (error) {
             respondError(req, res, error);
         }
     });
+    router.get("/:id/chunks", async (req, res) => {
+        try {
+            res.type("application/x-sflog-records");
+            for await (const chunk of service.iterateChunks(req.params.id, {
+                fromUs: Number(req.query.fromUs || 0),
+                toUs: req.query.toUs === undefined ? Number.POSITIVE_INFINITY : Number(req.query.toUs),
+            })) {
+                if (!res.write(chunk.raw)) await new Promise((resolve) => res.once("drain", resolve));
+            }
+            res.end();
+        } catch (error) {
+            if (res.headersSent) res.destroy(error);
+            else respondError(req, res, error);
+        }
+    });
+    router.get("/:id/series", handle(async (req) => service.readSeries(req.params.id, {
+        path: req.query.path,
+        field: req.query.field || "",
+        fromUs: Number(req.query.fromUs || 0),
+        toUs: req.query.toUs === undefined ? Number.POSITIVE_INFINITY : Number(req.query.toUs),
+        maxPoints: Number(req.query.maxPoints || 2000),
+    })));
+    router.get("/:id/snapshot", handle(async (req) => service.readSnapshot(req.params.id, Number(req.query.timeUs || 0))));
+    router.get("/:id/events", handle(async (req) => service.readEvents(req.params.id, {
+        fromUs: Number(req.query.fromUs || 0),
+        toUs: req.query.toUs === undefined ? Number.POSITIVE_INFINITY : Number(req.query.toUs),
+        limit: Number(req.query.limit || 5000),
+    })));
     router.get("/:id/file", async (req, res) => {
         try {
             const filePath = service.getFilePath(req.params.id);

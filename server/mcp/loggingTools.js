@@ -114,9 +114,19 @@ async function getLogOverview(logService, logId, includeSignals = true) {
 /** Decode one finalized log into a read-only replay dataset for MCP inspection. */
 export async function loadReplayData(logService, logId) {
     const index = await logService.getIndex(logId);
-    const schemas = new Map((index.schemas || []).map((schema) => [schema.id, schema]));
-    const bytes = await logService.readChunks(logId, { fromUs: 0 });
-    const decoded = decodeRecordStream(bytes, schemas);
+    const decoded = {
+        schemas: new Map((index.schemas || []).map((schema) => [schema.id, schema])),
+        updates: [],
+        events: [],
+        checkpoints: [],
+    };
+    for await (const chunk of logService.iterateChunks(logId, { fromUs: 0 })) {
+        const part = decodeRecordStream(chunk.raw, decoded.schemas);
+        decoded.schemas = part.schemas;
+        decoded.updates.push(...part.updates);
+        decoded.events.push(...part.events);
+        decoded.checkpoints.push(...part.checkpoints);
+    }
     return {
         metadata: await logService.getMetadata(logId),
         durationUs: index.durationUs || 0,

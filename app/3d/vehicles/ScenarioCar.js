@@ -234,7 +234,7 @@ export class ScenarioCar extends PhysicalVehicle {
         this.updateRotation(new THREE.Euler(0, -state.yaw, 0));
     }
 
-    async update(deltaTime) {
+    update(deltaTime) {
         if (!this.started || !this.keyframes.length || this.completed || !this.isPlaying) {
             return;
         }

@@ -181,7 +181,7 @@ async function syncTypesFromServer({ apiBase = "http://localhost:8090", since } 
 		registerMsgDefinition(item.type, item.definition);
 		loaded.push(item.type);
 	}
-	return { count: loaded.length, types: loaded };
+	return { count: loaded.length, types: loaded, catalogHash: payload.catalogHash || payload.hash || null };
 }
 
 async function syncTypesToServer(types, { apiBase = "http://localhost:8090" } = {}) {
@@ -524,6 +524,10 @@ function encodeValue(typeStr, value) {
 	return out;
 }
 
+export function encodeTopicValue(typeStr, value) {
+	return encodeValue(typeStr, value);
+}
+
 function decodeValue(view, offset) {
 	const typeByte = view[offset];
 	const count = new DataView(view.buffer, view.byteOffset).getUint32(offset + 1, true);
@@ -592,6 +596,10 @@ function decodeValue(view, offset) {
 function buildTopicData(topicName, typeStr, value) {
 	const encodedName = encoder.encode(topicName);
 	const payload = encodeValue(typeStr, value);
+	return buildTopicDataFromEncodedName(encodedName, payload);
+}
+
+function buildTopicDataFromEncodedName(encodedName, payload) {
 	const out = new Uint8Array(1 + encodedName.length + payload.length);
 	out[0] = encodedName.length;
 	out.set(encodedName, 1);
@@ -723,6 +731,15 @@ class Client {
 		await this._send(out);
 	}
 
+	async publishEncoded(topic, encodedValue) {
+		const encodedName = encoder.encode(topic);
+		const payload = buildTopicDataFromEncodedName(encodedName, encodedValue);
+		const out = new Uint8Array(1 + payload.length);
+		out[0] = OP_CODES.publish;
+		out.set(payload, 1);
+		await this._send(out);
+	}
+
 	async syncTypesFromServer(options = {}) {
 		return syncTypesFromServer(options);
 	}
@@ -839,6 +856,17 @@ class Client {
 function wait(ms) {
 	return new Promise((r) => setTimeout(r, ms));
 }
+
+export {
+	Client,
+	buildTopicData,
+	decodeValue,
+	registerMessageSchema,
+	registerMsgDefinition,
+	registerMsgDefinitionFromFile,
+	syncTypesFromServer,
+	syncTypesToServer,
+};
 
 // Export for Node (CommonJS) and attach to window in browsers
 if (typeof module !== "undefined" && module.exports) {

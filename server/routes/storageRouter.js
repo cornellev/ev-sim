@@ -36,6 +36,54 @@ export function createStorageRouter(service) {
     router.get("/bindings", handle(async () => service.getBindings()));
     router.put("/bindings", handle(async (req) => service.putBindings(req.body)));
 
+    // --- Simulation run manifests ---
+    router.get("/run-manifests", handle(async () => service.listRunManifests()));
+    router.post("/run-manifests", handle(async (req) => service.createRunManifest(req.body ?? {})));
+    router.post("/run-manifests/import", handle(async (req) => service.importRunBundle(req.body ?? {})));
+    router.post("/run-manifests/:id/duplicate", handle(async (req) => service.duplicateRunManifest(req.params.id, req.body ?? {})));
+    router.post("/run-manifests/:id/validate", handle(async (req) => service.validateRunManifest(req.params.id, req.body ?? null)));
+    router.post("/run-manifests/:id/resolve", handle(async (req) => service.resolveRunManifest(req.params.id, req.body ?? null)));
+    router.get("/run-manifests/:id/export", handle(async (req) => service.exportRunManifest(req.params.id)));
+    router.get("/run-manifests/:id", handle(async (req) => service.getRunManifest(req.params.id)));
+    router.put("/run-manifests/:id", handle(async (req) => service.putRunManifest(req.params.id, req.body ?? {})));
+    router.delete("/run-manifests/:id", handle(async (req) => service.deleteRunManifest(req.params.id)));
+
+    // --- Vehicle manifests ---
+    router.get("/vehicles", handle(async () => service.listVehicleManifests()));
+    router.post("/vehicles", handle(async (req) => service.createVehicleManifest(req.body ?? {})));
+    router.post("/vehicles/import", handle(async (req) => service.importVehicleBundle(req.body ?? {})));
+    router.post("/vehicles/:id/duplicate", handle(async (req) => service.duplicateVehicleManifest(req.params.id, req.body ?? {})));
+    router.post("/vehicles/:id/validate", handle(async (req) => service.validateVehicleManifest(req.params.id, req.body ?? null)));
+    router.get("/vehicles/:id/export", handle(async (req) => service.exportVehicleBundle(req.params.id)));
+    router.get("/vehicles/:id", handle(async (req) => service.getVehicleManifest(req.params.id)));
+    router.put("/vehicles/:id", handle(async (req) => service.putVehicleManifest(req.params.id, req.body ?? {})));
+    router.delete("/vehicles/:id", handle(async (req) => service.deleteVehicleManifest(req.params.id)));
+
+    // --- Vehicle model assets (raw binary uploads, not JSON) ---
+    const rawBody = express.raw({ limit: "100mb", type: () => true });
+    router.put("/vehicle-assets/:id/:file", rawBody, handle(async (req) => {
+        if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+            throw new Error("A non-empty binary request body is required.");
+        }
+        return service.putVehicleAsset(req.params.id, req.params.file, req.body);
+    }));
+    router.get("/vehicle-assets/:id/:file", async (req, res) => {
+        try {
+            const buffer = await service.readVehicleAsset(req.params.id, req.params.file);
+            res.setHeader("Content-Type", assetContentType(req.params.file));
+            res.setHeader("Cache-Control", "no-cache");
+            res.send(buffer);
+        } catch (error) {
+            if (error.code === "ENOENT") {
+                res.status(404).json({ error: `Asset "${req.params.file}" does not exist.` });
+                return;
+            }
+            console.error(`[storage] GET ${req.originalUrl} failed:`, error);
+            res.status(400).json({ error: error.message });
+        }
+    });
+    router.delete("/vehicle-assets/:id/:file", handle(async (req) => service.deleteVehicleAsset(req.params.id, req.params.file)));
+
     // --- Settings ---
     router.get("/settings/:key", handle(async (req) => ({ value: await service.getSetting(req.params.key) })));
     router.put("/settings/:key", handle(async (req) => ({ value: await service.putSetting(req.params.key, req.body?.value) })));
@@ -64,6 +112,13 @@ export function createStorageRouter(service) {
     });
 
     return router;
+}
+
+function assetContentType(fileName) {
+    const lower = String(fileName).toLowerCase();
+    if (lower.endsWith(".glb")) return "model/gltf-binary";
+    if (lower.endsWith(".gltf")) return "model/gltf+json";
+    return "application/octet-stream";
 }
 
 /**

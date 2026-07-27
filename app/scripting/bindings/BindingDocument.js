@@ -1,20 +1,28 @@
 import { TOPIC_SIGNAL_PREFIX } from "../runtime/SignalPaths.js";
 
 export const BINDING_MANIFEST_KIND = "cev-sim.script-bindings";
-export const BINDING_MANIFEST_VERSION = 1;
+export const BINDING_MANIFEST_VERSION = 2;
+export const LEGACY_BINDING_MANIFEST_VERSION = 1;
+
+export const BINDING_SCOPES = Object.freeze({
+    GLOBAL: "global",
+    SELECTED: "selected",
+});
 
 export const TRIGGER_KINDS = {
     TOPIC: "topic",
     FIXED_UPDATE: "fixed-update",
     SIGNAL_UPDATE: "signal-update",
-    TIMER: "timer"
+    TIMER: "timer",
+    SIMULATION_TIMER: "simulation-timer",
 };
 
 export const TRIGGER_KIND_ORDER = [
     TRIGGER_KINDS.TOPIC,
     TRIGGER_KINDS.FIXED_UPDATE,
     TRIGGER_KINDS.SIGNAL_UPDATE,
-    TRIGGER_KINDS.TIMER
+    TRIGGER_KINDS.TIMER,
+    TRIGGER_KINDS.SIMULATION_TIMER,
 ];
 
 export const INPUT_SOURCES = {
@@ -41,6 +49,14 @@ export function createBindingId() {
     }
 
     return `binding-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+export function createBindingFolderId() {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+        return crypto.randomUUID();
+    }
+
+    return `folder-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
 function nowIso() {
@@ -74,8 +90,11 @@ export function normalizeTrigger(trigger = {}) {
         case TRIGGER_KINDS.SIGNAL_UPDATE:
             return { kind, path: toTrimmedString(trigger.path) };
         case TRIGGER_KINDS.TIMER:
-        default:
             return { kind: TRIGGER_KINDS.TIMER, intervalMs: toPositiveNumber(trigger.intervalMs, 100) };
+        case TRIGGER_KINDS.SIMULATION_TIMER:
+            return { kind, intervalNs: toPositiveInt(trigger.intervalNs, 100_000_000) };
+        default:
+            return { kind: TRIGGER_KINDS.TIMER, intervalMs: 100 };
     }
 }
 
@@ -123,24 +142,46 @@ export function normalizeOutputMapping(mapping = {}) {
     return normalized;
 }
 
+export function createBindingFolder(partial = {}) {
+    return normalizeBindingFolder({
+        id: createBindingFolderId(),
+        name: "New folder",
+        ...partial,
+    });
+}
+
+export function normalizeBindingFolder(folder = {}) {
+    return {
+        id: toTrimmedString(folder.id, createBindingFolderId()),
+        name: toTrimmedString(folder.name, "Untitled folder"),
+    };
+}
+
 export function createBinding(partial = {}) {
     return normalizeBinding({
         id: createBindingId(),
         name: "Untitled binding",
         enabled: true,
+        folderId: null,
+        scope: BINDING_SCOPES.SELECTED,
         scriptId: null,
         trigger: { kind: TRIGGER_KINDS.TOPIC },
         inputs: [],
         outputs: [],
         ...partial
-    });
+    }, { defaultScope: BINDING_SCOPES.SELECTED });
 }
 
-export function normalizeBinding(binding = {}) {
+export function normalizeBinding(binding = {}, { defaultScope = BINDING_SCOPES.SELECTED, folderIds = null } = {}) {
+    const requestedFolderId = toTrimmedString(binding.folderId, "") || null;
     return {
         id: toTrimmedString(binding.id, createBindingId()),
         name: toTrimmedString(binding.name, "Untitled binding"),
         enabled: binding.enabled !== false,
+        folderId: requestedFolderId && (!folderIds || folderIds.has(requestedFolderId))
+            ? requestedFolderId
+            : null,
+        scope: Object.values(BINDING_SCOPES).includes(binding.scope) ? binding.scope : defaultScope,
         scriptId: toTrimmedString(binding.scriptId, "") || null,
         trigger: normalizeTrigger(binding.trigger),
         inputs: Array.isArray(binding.inputs)
@@ -152,13 +193,16 @@ export function normalizeBinding(binding = {}) {
     };
 }
 
-export function createBindingManifest({ bindings = [], enabled = true, updatedAt = nowIso() } = {}) {
+export function createBindingManifest({ folders = [], bindings = [], enabled = true, updatedAt = nowIso() } = {}) {
+    const normalizedFolders = normalizeBindingFolders(folders);
+    const folderIds = new Set(normalizedFolders.map((folder) => folder.id));
     return {
         kind: BINDING_MANIFEST_KIND,
         version: BINDING_MANIFEST_VERSION,
         enabled: enabled !== false,
         updatedAt,
-        bindings: bindings.map(normalizeBinding)
+        folders: normalizedFolders,
+        bindings: bindings.map((binding) => normalizeBinding(binding, { folderIds }))
     };
 }
 
@@ -168,20 +212,57 @@ export function isBindingManifest(value) {
         && value.version === BINDING_MANIFEST_VERSION;
 }
 
+function normalizeBindingFolders(folders) {
+    const seen = new Set();
+    const normalized = [];
+
+    for (const folder of Array.isArray(folders) ? folders : []) {
+        const next = normalizeBindingFolder(folder);
+        if (seen.has(next.id)) continue;
+        seen.add(next.id);
+        normalized.push(next);
+    }
+
+    return normalized;
+}
+
 export function normalizeBindingManifest(manifest) {
     if (!isPlainObject(manifest)) {
         return createBindingManifest();
     }
 
-    if (manifest.kind !== undefined && !isBindingManifest(manifest)) {
-        throw new Error("Unsupported bindings manifest. Expected kind \"cev-sim.script-bindings\" version 1.");
+    const version = manifest.version ?? BINDING_MANIFEST_VERSION;
+    const supportedVersion = version === LEGACY_BINDING_MANIFEST_VERSION
+        || version === BINDING_MANIFEST_VERSION;
+    if (manifest.kind !== undefined && manifest.kind !== BINDING_MANIFEST_KIND) {
+        throw new Error(`Unsupported bindings manifest kind ${JSON.stringify(manifest.kind)}.`);
+    }
+    if (!supportedVersion) {
+        throw new Error(`Unsupported bindings manifest version ${JSON.stringify(version)}; expected 1 or 2.`);
     }
 
-    return createBindingManifest({
-        bindings: Array.isArray(manifest.bindings) ? manifest.bindings : [],
-        enabled: manifest.enabled,
-        updatedAt: manifest.updatedAt || nowIso()
-    });
+    const folders = version === LEGACY_BINDING_MANIFEST_VERSION
+        ? []
+        : normalizeBindingFolders(manifest.folders);
+    const folderIds = new Set(folders.map((folder) => folder.id));
+    const defaultScope = version === LEGACY_BINDING_MANIFEST_VERSION
+        ? BINDING_SCOPES.GLOBAL
+        : BINDING_SCOPES.SELECTED;
+
+    return {
+        kind: BINDING_MANIFEST_KIND,
+        version: BINDING_MANIFEST_VERSION,
+        enabled: manifest.enabled !== false,
+        updatedAt: manifest.updatedAt || nowIso(),
+        folders,
+        bindings: (Array.isArray(manifest.bindings) ? manifest.bindings : [])
+            .map((binding) => normalizeBinding(
+                version === LEGACY_BINDING_MANIFEST_VERSION
+                    ? { ...binding, folderId: null, scope: BINDING_SCOPES.GLOBAL }
+                    : binding,
+                { defaultScope, folderIds },
+            )),
+    };
 }
 
 export function validateBinding(binding) {
@@ -230,6 +311,8 @@ export function summarizeTrigger(trigger = {}) {
             return trigger.path ? `when ${trigger.path} changes` : "on signal —";
         case TRIGGER_KINDS.TIMER:
             return `every ${trigger.intervalMs} ms`;
+        case TRIGGER_KINDS.SIMULATION_TIMER:
+            return `every ${trigger.intervalNs} ns of simulation time`;
         default:
             return "unknown trigger";
     }

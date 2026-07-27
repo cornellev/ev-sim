@@ -52,6 +52,40 @@ export class TriangleOptimizer {
         return optimizer;
     }
 
+    /**
+     * Sample every mesh under `root`, expressed in `root`'s local frame.
+     * Used by the vehicle editor to simplify a placed model in place, so the
+     * resulting triangles line up with the visual model exactly.
+     * @param {THREE.Object3D} root
+     * @returns {TriangleOptimizer}
+     */
+    static fromObject(root) {
+        const optimizer = new TriangleOptimizer();
+        root.updateMatrixWorld(true);
+        const rootInverse = root.matrixWorld.clone().invert();
+        const toRoot = new THREE.Matrix4();
+
+        root.traverse((child) => {
+            if (!child.isMesh || !child.geometry?.attributes?.position) return;
+            toRoot.multiplyMatrices(rootInverse, child.matrixWorld);
+            const geometry = child.geometry.index
+                ? child.geometry.toNonIndexed()
+                : child.geometry;
+            const positionAttribute = geometry.attributes.position;
+            const baseIndex = optimizer.vertices.length;
+            for (let i = 0; i < positionAttribute.count; i++) {
+                const vertex = new THREE.Vector3().fromBufferAttribute(positionAttribute, i);
+                vertex.applyMatrix4(toRoot);
+                optimizer.addVertex(vertex);
+            }
+            for (let i = 0; i < positionAttribute.count; i += 3) {
+                optimizer.addTriangle(baseIndex + i, baseIndex + i + 1, baseIndex + i + 2);
+            }
+        });
+
+        return optimizer;
+    }
+
     constructor() {
         /** @type {THREE.Vector3[]} */
         this.vertices = [];

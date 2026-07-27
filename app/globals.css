@@ -2,6 +2,48 @@
 @import "leaflet/dist/leaflet.css";
 @import "uplot/dist/uPlot.min.css";
 
+.config-field input,
+.config-field select,
+.config-field textarea {
+  width: 100%;
+  border: 1px solid rgb(63 63 70 / 0.9);
+  border-radius: 0.65rem;
+  background: rgb(9 9 11 / 0.85);
+  padding: 0.6rem 0.7rem;
+  color: rgb(244 244 245);
+  font-size: 0.72rem;
+  outline: none;
+}
+
+.config-field input:focus,
+.config-field select:focus,
+.config-field textarea:focus {
+  border-color: rgb(14 165 233 / 0.9);
+}
+
+.config-field input:disabled {
+  color: rgb(113 113 122);
+}
+
+.config-field input.drag-number {
+  cursor: ew-resize;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+
+.config-field input.drag-number:focus {
+  cursor: text;
+  user-select: text;
+}
+
+.config-field input.drag-number.is-pressed,
+.config-field input.drag-number.is-pressed:focus,
+.config-field input.drag-number.is-dragging {
+  cursor: ew-resize;
+  user-select: none;
+  border-color: rgb(14 165 233 / 0.9);
+  caret-color: transparent;
+}
 :root {
   --background: #ffffff;
   --foreground: #171717;

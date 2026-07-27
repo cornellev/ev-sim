@@ -1,5 +1,6 @@
 import { clamp } from "three/src/math/MathUtils.js";
-import { Data } from "../3d/data/Data";
+import { AssertionEngine } from "./AssertionEngine.js";
+import { TopicInputQueue } from "./TopicInputQueue.js";
 
 export class SimulationEngine {
     /**
@@ -8,21 +9,25 @@ export class SimulationEngine {
     constructor(data, options={}) {
         this.data = data;
 
-        this.fixedDt = options.fixedDt ?? 0.016; // default to 60fps
+        this.stepNs = Math.max(1, Math.floor(options.stepNs ?? ((options.fixedDt ?? (1 / 60)) * 1e9)));
+        this.fixedDt = this.stepNs / 1e9;
         this.maxFrameDt = options.maxFrameDt ?? 0.1; // cap delta time to avoid instability
         this.maxSubSteps = options.maxSubSteps ?? 10; // cap sub-steps to avoid spiral of death
 
         this.status = 'stopped'; // ['stopped', 'playing', 'paused']
         this.time = 0;
+        this.timeNs = 0;
         this.steps = 0;
         this.frames = 0;
         this.speed = 1;
+        this.maxSteps = null;
         
         this.realtime = true; // whether to run in real-time (vs. as fast as possible)
 
         this.deterministic = true; // whether to use fixed time steps (vs. variable time steps)
 
         this.modules = {
+            inputs: true,
             physics: false,
             vehicles: true,
             sensors: true,
@@ -31,6 +36,7 @@ export class SimulationEngine {
             environment: true,
             scripting: true,
             baking: false,
+            assertions: true,
         }
 
         this.scene = null;
@@ -39,6 +45,7 @@ export class SimulationEngine {
         this.controls = null;
 
         this.accumulator = 0; // for fixed time step simulation
+        this.accumulatorNs = 0;
         this.lastFrameMs = 0; // for calculating delta time
         this.rafId = null; // for canceling the animation frame
         this.looping = false; // to prevent multiple simultaneous loops
@@ -47,6 +54,10 @@ export class SimulationEngine {
         this.resetHandlers = new Set();
         this.viewportActive = true;
         this.telemetry = this.data.bindings?.()?.signalStore ?? null;
+        this.resolvedRun = null;
+        this.inputQueue = new TopicInputQueue();
+        this.assertionEngine = new AssertionEngine([], this.telemetry);
+        this.lastStepPhases = [];
 
         this._defineTelemetrySignals();
 
@@ -60,23 +71,33 @@ export class SimulationEngine {
         define("simulation.step", { type: "uint64", category: "simulation", replayRole: "state", logClass: "core" });
         define("simulation.speed", { type: "float64", category: "simulation", replayRole: "input", logClass: "core" });
         define("simulation.fixedDt", { type: "float64", unit: "s", category: "simulation", replayRole: "input", logClass: "core" });
+        define("simulation.timeNs", { type: "uint64", unit: "ns", category: "simulation", replayRole: "state", logClass: "core" });
+        define("simulation.clock", { type: "json", category: "simulation", replayRole: "state", logClass: "core" });
+        define("simulation.assertions", { type: "json", category: "assertions", replayRole: "state", logClass: "core" });
         define("simulation.modules", { type: "json", category: "simulation", replayRole: "input", logClass: "core" });
+        define("simulation.run", { type: "json", category: "simulation", replayRole: "input", logClass: "core" });
     }
 
     _publishRuntimeState() {
         if (!this.telemetry) return;
-        const timeUs = this.telemetry.getTimeUs();
+        const timeUs = Math.round(this.timeNs / 1000);
         const common = { timeUs, cycle: this.steps, source: "simulation" };
         this.telemetry.publishSignal("simulation.status", this.status, common);
         this.telemetry.publishSignal("simulation.time", this.time, common);
+        this.telemetry.publishSignal("simulation.timeNs", this.timeNs, { ...common, type: "uint64" });
         this.telemetry.publishSignal("simulation.step", this.steps, common);
         this.telemetry.publishSignal("simulation.speed", this.speed, common);
         this.telemetry.publishSignal("simulation.fixedDt", this.fixedDt, common);
         this.telemetry.publishSignal("simulation.modules", { ...this.modules }, common);
+        this.telemetry.publishSignal("simulation.run", this.resolvedRun ? {
+            manifestId: this.resolvedRun.manifest.id,
+            resolvedHash: this.resolvedRun.resolvedHash,
+        } : null, common);
     }
 
     _emitLifecycle(name, payload = {}) {
         this.telemetry?.emitTelemetryEvent?.({
+            timeUs: Math.round(this.timeNs / 1000),
             category: "simulation",
             name,
             severity: "info",
@@ -95,12 +116,20 @@ export class SimulationEngine {
         return {
             status: this.status,
             time: this.time,
+            timeNs: this.timeNs,
+            stepNs: this.stepNs,
             steps: this.steps,
             frames: this.frames,
             speed: this.speed,
             realtime: this.realtime,
             deterministic: this.deterministic,
-            modules: { ...this.modules }
+            modules: { ...this.modules },
+            maxSteps: this.maxSteps,
+            activeRun: this.resolvedRun ? {
+                manifestId: this.resolvedRun.manifest.id,
+                resolvedHash: this.resolvedRun.resolvedHash,
+            } : null,
+            assertions: this.assertionEngine.snapshot(),
         }
     }
 
@@ -130,12 +159,17 @@ export class SimulationEngine {
         this.rafId = requestAnimationFrame(this._frame);
     }
 
-    dispose() {
-        this.stop();
+    stopLoop() {
+        this.looping = false;
         if (this.rafId !== null) {
             cancelAnimationFrame(this.rafId);
             this.rafId = null;
         }
+    }
+
+    dispose() {
+        this.stop();
+        this.stopLoop();
 
         this.controls?.dispose();
         this.listeners.clear();
@@ -158,6 +192,7 @@ export class SimulationEngine {
     stop({ reset = true} = {}) {
         this.status = 'stopped';
         this.accumulator = 0;
+        this.accumulatorNs = 0;
 
         if (reset) {
             this.reset();
@@ -170,20 +205,26 @@ export class SimulationEngine {
 
     reset() {
         this.time = 0;
+        this.timeNs = 0;
         this.steps = 0;
         this.frames = 0;
+        this.accumulator = 0;
+        this.accumulatorNs = 0;
+        this.inputQueue.reset();
+        this.assertionEngine.reset();
         
         for (const handler of this.resetHandlers) {
             handler();
         }
         this._emitLifecycle("reset");
+        if (this.resolvedRun) this._applyInitialState(this.resolvedRun.manifest.initialState);
     }
 
     step(count = 1) {
         this.status = 'paused';
 
         for (let i = 0; i < count; i++) {
-            this._fixedStep(this.fixedDt);
+            if (this._fixedStep(this.fixedDt) === false) break;
         }
 
         this.render();
@@ -202,7 +243,7 @@ export class SimulationEngine {
     }
 
     setDeterministic(deterministic) {
-        this.deterministic = Boolean(deterministic);
+        this.deterministic = this.resolvedRun ? true : Boolean(deterministic);
         this._emit();
     }
 
@@ -225,9 +266,79 @@ export class SimulationEngine {
         this._emit();
     }
 
-    setViewportActive(active) {
-        this.viewportActive = Boolean(active);
+    setWorkspaceActive(active) {
+        const nextActive = Boolean(active);
+        if (this.viewportActive === nextActive && (nextActive ? this.looping : !this.looping)) return;
+        this.viewportActive = nextActive;
+        if (!nextActive) {
+            if (this.status === "playing") this.pause();
+            this.stopLoop();
+            if (this.controls) this.controls.enabled = false;
+            this._emit();
+            return;
+        }
+        this.startLoop();
+        this.render();
         this._emit();
+    }
+
+    setViewportActive(active) {
+        this.setWorkspaceActive(active);
+    }
+
+    async applyRunManifest(resolved) {
+        if (!resolved?.manifest) throw new Error("Resolved run manifest is required.");
+        this.pause();
+        this.resolvedRun = structuredClone(resolved);
+        const manifest = this.resolvedRun.manifest;
+        this.stepNs = Math.max(1, Math.floor(manifest.clock.stepNs));
+        this.fixedDt = this.stepNs / 1e9;
+        this.realtime = manifest.clock.pacing === "realtime";
+        this.deterministic = true;
+        this.speed = Math.max(0, Number(manifest.clock.speed) || 0);
+        this.maxSteps = manifest.clock.maxSteps;
+        for (const [name, enabled] of Object.entries(manifest.clock.modules || {})) {
+            if (name in this.modules) this.modules[name] = Boolean(enabled);
+        }
+        this.inputQueue = new TopicInputQueue(manifest.topics);
+        this.assertionEngine = new AssertionEngine(manifest.assertions, this.telemetry);
+        this.data.bindings?.()?.setTopicScheduler?.((info) => this.queueTopicInput(info));
+
+        await this.data.vehicles?.()?.configureFromManifest?.(manifest.initialState.vehicles, this.scene);
+
+        const selectedBindings = resolved.bindings?.entries || [];
+        await this.data.bindings?.()?.setManifest?.({
+            kind: "cev-sim.script-bindings",
+            version: 2,
+            enabled: manifest.scripts.enabled,
+            folders: [],
+            bindings: selectedBindings,
+        }, { persist: false });
+        await this.data.bindings?.()?.prepareResolvedScripts?.(resolved.scripts || []);
+        this.data.bindings?.()?.setTopicScheduler?.((info) => this.queueTopicInput(info));
+        this.data.devices?.()?.configureFromManifest?.(manifest.sensorRig, {
+            seed: manifest.seed,
+            topics: manifest.topics,
+        });
+        await this.data.physics?.()?.configureRun?.(manifest, resolved.environment?.manifest);
+        this.reset();
+        for (const [path, value] of Object.entries(manifest.initialState.signals || {})) {
+            this.telemetry?.publishSignal?.(path, value, { timeUs: 0, cycle: 0, source: "manifest", replayRole: "input", logClass: "core" });
+        }
+        this.status = "paused";
+        this._publishClock();
+        this._emitLifecycle("manifest-applied", { manifestId: manifest.id, resolvedHash: resolved.resolvedHash });
+        this._emit();
+        this.render();
+        return this.getSnapshot();
+    }
+
+    queueTopicInput(info) {
+        if (!this.resolvedRun) {
+            this.data.bindings?.()?.applyTopicUpdate?.(info);
+            return null;
+        }
+        return this.inputQueue.enqueue(info, this.steps + 1);
     }
 
     _frame(nowMs) {
@@ -249,13 +360,14 @@ export class SimulationEngine {
 
         if (this.status === 'playing') {
             this._advanceSimulation(frameDt);
+            this._emit();
         }
 
         if (this.viewportActive && this.modules.rendering) {
             this.render();
         }
 
-        this.rafId = requestAnimationFrame(this._frame);
+        if (this.looping) this.rafId = requestAnimationFrame(this._frame);
     }
 
     _advanceSimulation(frameDt) {
@@ -266,54 +378,149 @@ export class SimulationEngine {
             return;
         }
 
-        this.accumulator += this.realtime ? scaledDt : this.fixedDt * this.speed;
+        this.accumulatorNs += this.realtime
+            ? Math.max(0, Math.round(scaledDt * 1e9))
+            : this.stepNs * Math.max(1, this.maxSubSteps);
+        this.accumulator = this.accumulatorNs / 1e9;
 
         let subSteps = 0;
 
-        while (this.accumulator >= this.fixedDt && subSteps < this.maxSubSteps) {
-            this._fixedStep(this.fixedDt);
-            this.accumulator -= this.fixedDt;
+        while (this.accumulatorNs >= this.stepNs && subSteps < this.maxSubSteps) {
+            const previousStep = this.steps;
+            const shouldContinue = this._fixedStep(this.fixedDt);
+            if (this.steps > previousStep) this.accumulatorNs -= this.stepNs;
+            this.accumulator = this.accumulatorNs / 1e9;
             subSteps++;
+            if (shouldContinue === false) break;
         }
 
-        if (subSteps === this.maxSubSteps) {
-            // prevent death spiral by dropping remaining time
-            this.accumulator = 0;
-        }
+        // Remaining accumulated simulation time is intentionally retained.
+        // Rendering may lag or skip, but deterministic simulation steps are never dropped.
     }
 
     _fixedStep(dt) {
-        this.data.keys()?.update?.(dt);
-
-        if (this.modules.physics) {
-            this.data.physics()?.step?.(dt);
+        if (this.maxSteps !== null && this.steps >= this.maxSteps) {
+            this.status = "paused";
+            this._emitLifecycle("max-steps-reached", { maxSteps: this.maxSteps });
+            return false;
         }
 
-        if (this.modules.vehicles) {
-            this.data.vehicles()?.update?.(dt);
-        }
+        const nextStep = this.steps + 1;
+        const nextTimeNs = nextStep * this.stepNs;
+        this.lastStepPhases = [];
+        let shouldContinue = true;
+        const phase = (name, operation) => {
+            this.lastStepPhases.push(name);
+            return operation?.();
+        };
 
-        if (this.modules.sensors) {
-            this.data.devices()?.update?.(dt);
-        }
+        phase("inputs", () => {
+            this.data.keys()?.update?.(dt);
+            this._applyQueuedInputs(nextStep);
+        });
 
-        if (this.modules.baking) {
-            this.data.baking()?.update?.(dt);
-        }
+        phase("scripts", () => {
+            if (this.modules.scripting) {
+                this.data.bindings?.()?.update?.(dt, { step: nextStep, timeNs: nextTimeNs });
+            }
+        });
 
-        if (this.modules.scripting) {
-            this.data.bindings?.()?.update?.(dt);
-        }
+        this.data.physics?.()?.beginStep?.();
+        phase("vehicles", () => {
+            if (this.modules.vehicles) this.data.vehicles()?.update?.(dt);
+        });
 
-        this.time += dt;
-        this.steps += 1;
+        phase("physics", () => {
+            if (this.modules.physics) this.data.physics()?.step?.(dt);
+        });
+
+        phase("contacts", () => this.data.physics?.()?.syncAndPublishContacts?.({ step: nextStep, timeNs: nextTimeNs }));
+
+        this.steps = nextStep;
+        this.timeNs = nextTimeNs;
+        this.time = this.timeNs / 1e9;
+        phase("clock", () => this._publishClock());
+
+        phase("sensors", () => {
+            if (this.modules.sensors) this.data.devices()?.update?.(dt, { step: this.steps, timeNs: this.timeNs });
+        });
+
+        phase("delivery", () => this.data.devices?.()?.deliver?.({ step: this.steps, timeNs: this.timeNs }));
+
+        if (this.modules.baking) this.data.baking()?.update?.(dt);
+
         this._publishSimulationEntities();
         this._publishRuntimeState();
+        phase("assertions", () => {
+            if (!this.resolvedRun || this.modules.assertions === false) return;
+            const evaluated = this.assertionEngine.evaluate(this.steps);
+            this.telemetry?.publishSignal?.("simulation.assertions", evaluated.results, {
+                timeUs: Math.round(this.timeNs / 1000), cycle: this.steps, source: "assertions", type: "json",
+            });
+            if (evaluated.shouldStop) {
+                this.status = "paused";
+                shouldContinue = false;
+                this._emitLifecycle("assertion-stop", { results: evaluated.results });
+            }
+        });
+        return shouldContinue;
+    }
+
+    _applyQueuedInputs(step) {
+        for (const entry of this.inputQueue.drain(step)) {
+            this.data.bindings?.()?.applyTopicUpdate?.(entry.info);
+            if (entry.info.name === "/ackdrive") {
+                const vehicle = this.data.vehicles?.()?.vehicles?.find((candidate) => candidate.telemetryId === "ego")
+                    ?? this.data.vehicles?.()?.vehicles?.[0];
+                if (vehicle) {
+                    vehicle.velocity.x = Number(entry.info.value?.speed || 0) * 0.44704;
+                    vehicle.steeringAngle = -Number(entry.info.value?.steering_angle || 0) * Math.PI / 180;
+                }
+            }
+            this.telemetry?.emitTelemetryEvent?.({
+                timeUs: Math.round(((step - 1) * this.stepNs) / 1000),
+                category: "topics",
+                name: "input-applied",
+                payload: { topic: entry.info.name, step, sequence: entry.sequence },
+            });
+        }
+    }
+
+    _applyInitialState(initialState = {}) {
+        const byId = new Map((initialState.vehicles || []).map((vehicle) => [vehicle.id, vehicle]));
+        for (const [index, vehicle] of (this.data.vehicles?.()?.vehicles || []).entries()) {
+            const configured = byId.get(vehicle.telemetryId) || initialState.vehicles?.[index];
+            if (!configured) continue;
+            vehicle.position?.set?.(configured.pose.position.x, configured.pose.position.y, configured.pose.position.z);
+            vehicle.rotation?.set?.(configured.pose.rotation.x, configured.pose.rotation.y, configured.pose.rotation.z, configured.pose.rotation.order || "XYZ");
+            vehicle.velocity?.set?.(configured.linearVelocity.x, configured.linearVelocity.y, configured.linearVelocity.z);
+            if (Number.isFinite(configured.steeringAngle)) vehicle.steeringAngle = configured.steeringAngle;
+            vehicle.updatePosition?.(vehicle.position);
+            vehicle.updateRotation?.(vehicle.rotation);
+        }
+        this.data.physics?.()?.resetRun?.();
+        this.data.devices?.()?.resetSchedule?.();
+    }
+
+    _publishClock() {
+        if (!this.telemetry) return;
+        const stamp = {
+            sec: Math.floor(this.timeNs / 1e9),
+            nanosec: this.timeNs % 1e9,
+        };
+        this.telemetry.publishSignal("simulation.clock", stamp, {
+            timeUs: Math.round(this.timeNs / 1000), cycle: this.steps, source: "simulation", type: "json",
+        });
+        if (this.resolvedRun?.manifest.clock.publishClock) {
+            const topic = this.resolvedRun.manifest.topics.find((candidate) => candidate.id === "clock");
+            const client = this.data.client?.()?.get?.();
+            if (topic && client?.isOpen?.()) client.publish(topic.name, topic.type, { clock: stamp }).catch?.(() => {});
+        }
     }
 
     _publishSimulationEntities() {
         if (!this.telemetry) return;
-        const timeUs = this.telemetry.getTimeUs();
+        const timeUs = Math.round(this.timeNs / 1000);
         const vehicles = this.data.vehicles?.()?.vehicles || [];
         vehicles.forEach((vehicle, index) => {
             const id = vehicle.telemetryId || `vehicle-${index + 1}`;

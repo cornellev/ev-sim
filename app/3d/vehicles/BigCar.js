@@ -298,7 +298,7 @@ export class BigCar extends PhysicalVehicle {
         this.path.visible = false;
     }
 
-    async update(deltaTime) {
+    update(deltaTime) {
         // Planar bicycle / Ackermann kinematics.
         // State: (x,z,yaw). Control: forward speed v and steering angle delta.
         // yawRate = v/L * tan(delta)

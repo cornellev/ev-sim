@@ -116,6 +116,31 @@ test("StorageService keeps settings in a single flat map", async () => {
     assert.deepEqual(Object.keys(onDisk).sort(), ["bindings:manifest", "currentScriptId"]);
 });
 
+test("StorageService migrates legacy binding settings into the canonical v2 store", async () => {
+    const dir = await tempDir();
+    const service = new StorageService(dir);
+    await service.putSetting("bindings:manifest", {
+        kind: "cev-sim.script-bindings",
+        version: 1,
+        enabled: true,
+        bindings: [{ id: "legacy", name: "Legacy", trigger: { kind: "fixed-update" } }],
+    });
+
+    const migrated = await service.getBindings();
+    assert.equal(migrated.version, 2);
+    assert.equal(migrated.bindings[0].scope, "global");
+    assert.equal(migrated.bindings[0].folderId, null);
+    assert.deepEqual(JSON.parse(await fs.readFile(path.join(dir, "bindings.json"), "utf8")), migrated);
+
+    await service.putBindings({
+        kind: "cev-sim.script-bindings",
+        version: 2,
+        folders: [],
+        bindings: [{ id: "canonical", scope: "selected" }],
+    });
+    assert.deepEqual((await service.getBindings()).bindings.map((binding) => binding.id), ["canonical"]);
+});
+
 test("StorageService serializes concurrent updates to different settings", async () => {
     const dir = await tempDir();
     const service = new StorageService(dir);

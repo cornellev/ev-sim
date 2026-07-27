@@ -21,6 +21,16 @@ test("camera control locks release only their matching stable id", () => {
     assert.equal(settings.cameraControlsEnabled, true);
 });
 
+test("camera controls recover when UI event callbacks are passed directly", () => {
+    const settings = new Settings();
+
+    settings.disableControls({ type: "pointerdown" });
+    assert.equal(settings.cameraControlsEnabled, false);
+
+    settings.enableControls({ type: "pointerup" });
+    assert.equal(settings.cameraControlsEnabled, true);
+});
+
 test("physics startup waits for Rapier initialization instead of timing out", async () => {
     let resolvePhysics;
     const loadPhysics = () => new Promise((resolve) => {

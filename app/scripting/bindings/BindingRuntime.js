@@ -4,9 +4,10 @@ import {
     listSignalPaths,
     topicSignalPath
 } from "../runtime/SignalPaths.js";
-import { loadScript } from "../ScriptRuntime.js";
+import { createLoadedScript, loadScript } from "../ScriptRuntime.js";
 import { getBindingManifest, putBindingManifest } from "./BindingStorage.js";
 import {
+    BINDING_SCOPES,
     INPUT_SOURCES,
     OUTPUT_SINKS,
     TRIGGER_KINDS,
@@ -63,7 +64,9 @@ function getConfiguredSignalPaths(manifest) {
 export class BindingRuntime {
     constructor(options = {}) {
         this.signalStore = options.signalStore || new SignalStore();
+        this.libraryManifest = createBindingManifest();
         this.manifest = createBindingManifest();
+        this._activeSource = "library";
         this.loadScriptImpl = options.loadScript || loadScript;
 
         this.listeners = new Set();
@@ -77,6 +80,7 @@ export class BindingRuntime {
         this._topicsSeen = new Set();
         this._attachedClients = new WeakSet();
         this._clientManager = null;
+        this._topicScheduler = null;
         this._lastEmit = 0;
         this._emitTimeout = null;
         this._ready = false;
@@ -87,11 +91,12 @@ export class BindingRuntime {
     async _hydrate(autoLoad) {
         if (autoLoad) {
             try {
-                this.manifest = await getBindingManifest();
+                this.libraryManifest = await getBindingManifest();
             } catch {
-                this.manifest = createBindingManifest();
+                this.libraryManifest = createBindingManifest();
             }
         }
+        this.manifest = this._globalManifest(this.libraryManifest);
 
         this._ready = true;
         this._syncTimers();
@@ -109,7 +114,8 @@ export class BindingRuntime {
         return {
             ready: this._ready,
             enabled: this.manifest.enabled,
-            manifest: this.manifest,
+            manifest: this.libraryManifest,
+            activeManifest: this.manifest,
             telemetry: Object.fromEntries(
                 [...this.telemetry.entries()].map(([id, entry]) => [id, { ...entry }])
             ),
@@ -117,7 +123,7 @@ export class BindingRuntime {
             signalPaths: listSignalPaths(
                 this.signalStore.paths(),
                 [...this._topicsSeen].map(topicSignalPath),
-                getConfiguredSignalPaths(this.manifest)
+                getConfiguredSignalPaths(this.libraryManifest)
             ),
             connected: Boolean(this._clientManager?.hasClient?.())
         };
@@ -153,23 +159,49 @@ export class BindingRuntime {
 
     // -------------------------------------------------------------- manifest
 
-    async setManifest(manifest, { persist = true } = {}) {
+    _globalManifest(libraryManifest) {
+        return createBindingManifest({
+            enabled: libraryManifest.enabled,
+            bindings: libraryManifest.bindings.filter((binding) => binding.scope === BINDING_SCOPES.GLOBAL),
+        });
+    }
+
+    _activateManifest(manifest, source) {
         this.manifest = normalizeBindingManifest(manifest);
+        this._activeSource = source;
         this._tickCounters.clear();
         this._signalWatch.clear();
         this._syncTimers();
         this._preloadScripts();
         this._emit();
-
-        if (persist) {
-            this.manifest = await putBindingManifest(this.manifest);
-        }
-
         return this.manifest;
     }
 
+    async setLibraryManifest(manifest, { persist = true } = {}) {
+        let next = normalizeBindingManifest(manifest);
+        if (persist) next = await putBindingManifest(next);
+        this.libraryManifest = next;
+
+        if (this._activeSource === "library") {
+            this._activateManifest(this._globalManifest(next), "library");
+        } else {
+            this._emit();
+        }
+
+        return this.libraryManifest;
+    }
+
+    async setManifest(manifest, { persist = true } = {}) {
+        if (persist) return this.setLibraryManifest(manifest, { persist: true });
+        return this._activateManifest(manifest, "resolved");
+    }
+
+    activateLibraryBindings() {
+        return this._activateManifest(this._globalManifest(this.libraryManifest), "library");
+    }
+
     setEnabled(enabled) {
-        return this.setManifest({ ...this.manifest, enabled: Boolean(enabled) });
+        return this.setLibraryManifest({ ...this.libraryManifest, enabled: Boolean(enabled) });
     }
 
     invalidateScript(scriptId) {
@@ -186,11 +218,26 @@ export class BindingRuntime {
     // --------------------------------------------------------------- scripts
 
     _preloadScripts() {
-        this.manifest.bindings
+        this._orderedBindings()
             .filter((binding) => binding.enabled && binding.scriptId)
             .forEach((binding) => {
                 this._ensureScript(binding.scriptId).catch(() => {});
             });
+    }
+
+    async prepareResolvedScripts(entries = []) {
+        if (entries.length === 0) return;
+        const { registerBuiltInBlocks } = await import("../registerBuiltInBlocks.js");
+        registerBuiltInBlocks();
+        await Promise.all(entries.map((entry) => this._ensureScript(entry.scriptId).catch(() => null)));
+        for (const entry of [...entries].sort((left, right) => left.scriptId.localeCompare(right.scriptId))) {
+            this._scripts.set(entry.scriptId, createLoadedScript(entry.artifact, { signalStore: this.signalStore }));
+            this._scriptLoads.delete(entry.scriptId);
+        }
+    }
+
+    _orderedBindings() {
+        return [...this.manifest.bindings].sort((left, right) => String(left.id).localeCompare(String(right.id)));
     }
 
     _ensureScript(scriptId) {
@@ -237,6 +284,18 @@ export class BindingRuntime {
     }
 
     _onTopicUpdate(info) {
+        if (this._topicScheduler) {
+            this._topicScheduler(info);
+            return;
+        }
+        this.applyTopicUpdate(info);
+    }
+
+    setTopicScheduler(scheduler = null) {
+        this._topicScheduler = typeof scheduler === "function" ? scheduler : null;
+    }
+
+    applyTopicUpdate(info) {
         const topic = info?.name;
         if (!topic) return;
 
@@ -257,7 +316,7 @@ export class BindingRuntime {
 
         if (!this.manifest.enabled) return;
 
-        this.manifest.bindings
+        this._orderedBindings()
             .filter((binding) => binding.enabled
                 && binding.trigger.kind === TRIGGER_KINDS.TOPIC
                 && binding.trigger.topic === topic)
@@ -270,7 +329,7 @@ export class BindingRuntime {
 
     // ------------------------------------------------------------- sim ticks
 
-    update(dt) {
+    update(dt, clock = {}) {
         if (!this.manifest.enabled) return;
 
         const simulation = this.signalStore.read(SIGNAL_PATHS.SIMULATION);
@@ -279,7 +338,7 @@ export class BindingRuntime {
 
         this.signalStore.set(SIGNAL_PATHS.SIMULATION, { dt, time, step, frame: step }, { source: "simulation" });
 
-        this.manifest.bindings
+        this._orderedBindings()
             .filter((binding) => binding.enabled && binding.trigger.kind === TRIGGER_KINDS.FIXED_UPDATE)
             .forEach((binding) => {
                 const everyN = binding.trigger.everyN || 1;
@@ -293,11 +352,25 @@ export class BindingRuntime {
                 }
             });
 
+        const timeNs = Number(clock.timeNs ?? Math.round(time * 1e9));
+        this._orderedBindings()
+            .filter((binding) => binding.enabled && binding.trigger.kind === "simulation-timer")
+            .forEach((binding) => {
+                const intervalNs = Math.max(1, Number(binding.trigger.intervalNs || 100_000_000));
+                const nextKey = `sim-timer:${binding.id}`;
+                let nextNs = this._tickCounters.get(nextKey) ?? intervalNs;
+                while (timeNs >= nextNs) {
+                    this._dispatch(binding, { dt: intervalNs / 1e9, time: nextNs / 1e9, step: clock.step ?? step });
+                    nextNs += intervalNs;
+                }
+                this._tickCounters.set(nextKey, nextNs);
+            });
+
         this._checkSignalTriggers({ dt, time, step });
     }
 
     _checkSignalTriggers(context = {}) {
-        this.manifest.bindings
+        this._orderedBindings()
             .filter((binding) => binding.enabled
                 && binding.trigger.kind === TRIGGER_KINDS.SIGNAL_UPDATE
                 && binding.trigger.path)
@@ -333,7 +406,7 @@ export class BindingRuntime {
 
         if (typeof window === "undefined" || !this.manifest.enabled) return;
 
-        this.manifest.bindings
+        this._orderedBindings()
             .filter((binding) => binding.enabled && binding.trigger.kind === TRIGGER_KINDS.TIMER)
             .forEach((binding) => {
                 const intervalMs = binding.trigger.intervalMs || 100;
@@ -351,6 +424,7 @@ export class BindingRuntime {
             clearInterval(timer);
         }
         this._timers.clear();
+        this._topicScheduler = null;
         if (this._emitTimeout) {
             clearTimeout(this._emitTimeout);
             this._emitTimeout = null;
@@ -361,7 +435,8 @@ export class BindingRuntime {
     // ------------------------------------------------------------- execution
 
     async runBindingNow(bindingId) {
-        const binding = this.manifest.bindings.find((item) => item.id === bindingId);
+        const binding = this.libraryManifest.bindings.find((item) => item.id === bindingId)
+            || this.manifest.bindings.find((item) => item.id === bindingId);
         if (!binding) {
             throw new Error(`Binding "${bindingId}" was not found.`);
         }

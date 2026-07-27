@@ -131,6 +131,27 @@ test("SignalStore publishes typed updates, schema changes, events, and bounded t
     assert.ok(messages.some((message) => message.kind === "catalog" && message.action === "removed" && message.path === "imu.accel"));
 });
 
+test("SignalStore retains only the latest heavy sample", () => {
+    const store = new SignalStore({}, { sourceId: "heavy-source" });
+    store.defineSignal({ path: "sensors.camera.frame", type: "bytes", logClass: "heavy" });
+    store.publishSignal("sensors.camera.frame", new Uint8Array([1]), { timeUs: 1 });
+    store.publishSignal("sensors.camera.frame", new Uint8Array([2]), { timeUs: 2 });
+    store.publishSignal("sensors.camera.frame", new Uint8Array([3]), { timeUs: 3 });
+    assert.equal(store.history("sensors.camera.frame").length, 1);
+    assert.deepEqual([...store.history("sensors.camera.frame")[0].value], [3]);
+});
+
+test("SignalStore uses simulation time as its source clock while paused", () => {
+    const store = new SignalStore({}, { sourceId: "simulation-clock-source", sessionStartedAtMs: -1_000_000 });
+    assert.equal(store.getSimulationTimeUs(), null);
+    store.publishSignal("simulation.time", 4, { type: "float64", timeUs: 4_000_000 });
+    store.publishSignal("simulation.timeNs", 4_000_000_000, { type: "uint64", timeUs: 4_000_000 });
+    store.publishSignal("simulation.status", "paused", { type: "string", timeUs: 4_000_000 });
+
+    assert.equal(store.getTimeUs(), 4_000_000);
+    assert.equal(store.emitTelemetryEvent({ name: "paused-check" }).timeUs, 4_000_000);
+});
+
 test("nested numeric extraction and dataset interpolation do not duplicate parent payloads", () => {
     assert.deepEqual(flattenNumericFields({ accel: { x: 1, y: 2 }, label: "imu" }), [
         { field: "accel.x", value: 1 },
@@ -149,6 +170,17 @@ test("nested numeric extraction and dataset interpolation do not duplicate paren
     });
     assert.equal(dataset.valueAt("vehicles.ego.pose", 500, { interpolate: true }).position.x, 5);
     assert.equal(dataset.snapshotAt(500)["vehicles.ego.pose"].position.x, 0);
+});
+
+test("LogDataset exposes the recorded resolved manifest and assertion report", () => {
+    const encoder = new SFLogBatchEncoder();
+    encoder.addAttachment({ name: "run-manifest.json", mime: "application/json", bytes: JSON.stringify({ resolvedHash: "abc", manifest: { id: "golden", name: "Golden Run" } }) });
+    encoder.addAttachment({ name: "run-results.json", mime: "application/json", bytes: JSON.stringify({ passed: true, assertions: [{ id: "clear" }] }) });
+    const decoded = decodeRecordStream(encoder.flush().bytes);
+    const dataset = new LogDataset("run-log", { metadata: { resolvedHash: "abc" }, durationUs: 0 }, decoded);
+    assert.equal(dataset.runManifest.id, "golden");
+    assert.equal(dataset.runResults.passed, true);
+    assert.equal(dataset.runResults.assertions[0].id, "clear");
 });
 
 test("TimelineStore clamps seeks and preserves shared playback state", () => {
@@ -191,13 +223,21 @@ test("TelemetryTabBridge discovers sources, filters full-rate subscriptions, mir
     try {
         assert.ok(bridgeA.getSources().some((source) => source.sourceId === "source-b"));
         assert.ok(bridgeB.getSources().some((source) => source.sourceId === "source-a"));
+        assert.equal(bridgeA.getSources().find((source) => source.sourceId === "source-b").timeUs, 0);
+        assert.equal(bridgeB.getSources().find((source) => source.sourceId === "source-a").timeUs, 1_000_000);
         sourceA.publishSignal("simulation.time", 2, { type: "float64", timeUs: 200 });
-        assert.equal(bridgeB.getSources().find((source) => source.sourceId === "source-a").snapshot["simulation.time"].value, 2);
+        const updatedSource = bridgeB.getSources().find((source) => source.sourceId === "source-a");
+        assert.equal(updatedSource.snapshot["simulation.time"].value, 2);
+        assert.equal(updatedSource.timeUs, 2_000_000);
 
         bridgeB.requestSource("source-a", ["simulation.time"]);
         assert.equal(bridgeA.remoteSubscriptions.get("simulation.time"), 1);
+        assert.deepEqual(bridgeB.getSeries("source-a", "simulation.time").map((sample) => sample.value), [1, 2]);
         sourceA.publishSignal("simulation.time", 3, { type: "float64", timeUs: 300 });
         assert.equal(bridgeB.getSources().find((source) => source.sourceId === "source-a").snapshot["simulation.time"].value, 3);
+        assert.equal(bridgeB.getSeries("source-a", "simulation.time").at(-1).value, 3);
+        bridgeB.requestSource("source-a", []);
+        assert.equal(bridgeA.remoteSubscriptions.has("simulation.time"), false);
 
         sourceA.removeSignal("simulation.time");
         const mirrored = bridgeB.getSources().find((source) => source.sourceId === "source-a");
@@ -218,7 +258,9 @@ test("LogService finalizes indexed chunks, retries batches idempotently, imports
     const directory = await mkdtemp(path.join(os.tmpdir(), "fusion-sflog-test-"));
     context.after(() => rm(directory, { recursive: true, force: true }));
     const service = new LogService(directory);
-    const session = await service.createSession({ id: "session-safe", name: "Test Log", environmentId: "igvc" });
+    const session = await service.createSession({ id: "session-safe", name: "Test Log", environmentId: "igvc", runId: "run-1", manifestId: "golden", manifestRevision: 3, definitionHash: "def", resolvedHash: "resolved", provenance: { gpu: "test" } });
+    assert.equal(session.metadata.runId, "run-1");
+    assert.equal(session.metadata.resolvedHash, "resolved");
     const encoder = new SFLogBatchEncoder();
     encoder.addUpdate({ path: "simulation.time", timeUs: 2_000_000, cycle: 120, entry: { type: "float64", value: 2 }, descriptor: { path: "simulation.time", type: "float64", replayRole: "state", logClass: "core" } });
     encoder.addCheckpoint({ "simulation.time": { type: "float64", value: 2 } }, [{ path: "simulation.time", type: "float64", replayRole: "state", logClass: "core" }], 2_000_000);
@@ -227,14 +269,27 @@ test("LogService finalizes indexed chunks, retries batches idempotently, imports
     const duplicate = await service.appendBatch(session.id, { sequence: 0, startUs: 0, endUs: 2_000_000, bytes: batch.bytes });
     assert.equal(first.duplicate, false);
     assert.equal(duplicate.duplicate, true);
+    encoder.addUpdate({ path: "simulation.time", timeUs: 3_000_000, cycle: 180, entry: { type: "float64", value: 3 }, descriptor: { path: "simulation.time", type: "float64", replayRole: "state", logClass: "core" } });
+    const secondBatch = encoder.flush();
+    await service.appendBatch(session.id, { sequence: 1, startUs: 3_000_000, endUs: 3_000_000, bytes: secondBatch.bytes });
     const metadata = await service.finalize(session.id);
     assert.equal(metadata.status, "complete");
     const index = await service.getIndex(session.id);
-    assert.equal(index.chunks.length, 1);
+    assert.equal(index.chunks.length, 2);
     assert.equal(index.checkpoints[0].timeUs, 2_000_000);
     assert.equal(index.schemas[0].path, "simulation.time");
     const decoded = decodeRecordStream(await service.readChunks(session.id), new Map(index.schemas.map((schema) => [schema.id, schema])));
     assert.equal(decoded.updates[0].value, 2);
+    assert.equal(decoded.updates[1].value, 3);
+    const exactChunk = decodeRecordStream(await service.readChunk(session.id, 1), new Map(index.schemas.map((schema) => [schema.id, schema])));
+    assert.deepEqual(exactChunk.updates.map((update) => update.value), [3]);
+    const iterated = [];
+    for await (const chunk of service.iterateChunks(session.id, { fromUs: 2_500_000 })) iterated.push(chunk.index);
+    assert.deepEqual(iterated, [0, 1]);
+    const series = await service.readSeries(session.id, { path: "simulation.time", maxPoints: 10 });
+    assert.deepEqual(series.samples.map((sample) => sample.value), [2, 3]);
+    const snapshot = await service.readSnapshot(session.id, 3_000_000);
+    assert.equal(snapshot.snapshot["simulation.time"], 3);
 
     const file = await readFile(service.getFilePath(session.id));
     const imported = await service.importLog(file, { name: "Imported Copy" });

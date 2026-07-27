@@ -1,6 +1,6 @@
 # MCP Server
 
-cev-sim exposes a [Model Context Protocol](https://modelcontextprotocol.io) endpoint so AI agents can edit environments, visual scripts, simulation bindings, recordings, and replay sessions without driving the browser UI by hand.
+cev-sim exposes a [Model Context Protocol](https://modelcontextprotocol.io) endpoint so AI agents can edit environments, visual scripts, simulation bindings, deterministic run manifests, recordings, and replay sessions without driving the browser UI by hand.
 
 ## Connect
 
@@ -67,6 +67,19 @@ Compile / unit metadata run through Next API routes (`/api/scripting/compile`, `
 
 Triggers (`topic`, `fixed-update`, `signal-update`, `timer`) are the run modes. Input/output labels must match the script artifact's `interface`.
 
+### Run manifests
+
+| Tool | Purpose |
+|------|---------|
+| `run_manifest_list` / `run_manifest_get` | Discover and read versioned authoring manifests |
+| `run_manifest_create` / `run_manifest_update` / `run_manifest_duplicate` / `run_manifest_delete` | Catalog CRUD with optimistic revisions |
+| `run_manifest_validate` | Validate schema, deterministic constraints, and dependency hashes |
+| `run_manifest_resolve` | Produce the immutable resolved run snapshot |
+| `run_manifest_export` / `run_manifest_import` | Portable run-bundle round trips |
+| `run_manifest_launch` | Validate and launch through the authoritative simulator tab |
+
+The resources `fusion://run-manifests` and `fusion://run-manifests/{manifestId}` expose the catalog and complete saved manifests. MCP mutations publish live-sync events, so an open Config workspace refreshes without overwriting a dirty local draft. Launching requires an initialized simulator browser tab; validation, resolution, import, and export are fully headless.
+
 ### Logging and replay
 
 | Tool | Purpose |
@@ -87,7 +100,7 @@ The resources `fusion://logs` and `fusion://logs/{logId}` expose the catalog and
 2. `script_create` → `unit_catalog` → `script_add_unit` → `script_connect` (wire into head `OutputNode` at `head-uuid`) → `script_lint`.
    Configure output ports with `script_update_unit` on the head uuid (`storedData`/`state`: `{ outputs: [{ id, label, type }] }`). Do not add `OutputNodeBlock` via `script_add_unit`.
 3. `binding_suggest` → `binding_create` with the compiled `scriptId`.
-4. `environment_set_active` if the browser should switch worlds.
+4. `run_manifest_create` or `run_manifest_update` → `run_manifest_validate` → `run_manifest_launch` to start an exact deterministic configuration.
 5. `recording_start` → run the simulation → `recording_stop`, then use `replay_inspect`, `replay_series`, or `replay_open`.
 
 ## Implementation map

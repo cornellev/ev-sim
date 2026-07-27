@@ -1,5 +1,5 @@
 import { decodeRecordStream } from "./SFLogCodec.js";
-import { getLogChunks, getLogIndex } from "./LogClient.js";
+import { getLogChunk, getLogEvents, getLogIndex, getLogSeries, getLogSnapshot } from "./LogClient.js";
 
 function clone(value) {
     if (typeof structuredClone === "function") return structuredClone(value);
@@ -22,6 +22,9 @@ export class LogDataset {
         this.events = decoded.events.sort((a, b) => a.timeUs - b.timeUs);
         this.checkpoints = decoded.checkpoints.sort((a, b) => a.timeUs - b.timeUs);
         this.attachments = decoded.attachments;
+        this.resolvedRun = this.jsonAttachment("run-manifest.json");
+        this.runManifest = this.resolvedRun?.manifest || this.resolvedRun || null;
+        this.runResults = this.jsonAttachment("run-results.json");
         this.series = new Map();
         for (const update of this.updates) {
             const samples = this.series.get(update.path) || [];
@@ -30,16 +33,55 @@ export class LogDataset {
         }
     }
 
-    static async open(id) {
+    static async open(id, { eager = true } = {}) {
         const index = await getLogIndex(id);
         const schemaMap = new Map((index.schemas || []).map((schema) => [schema.id, schema]));
-        const bytes = await getLogChunks(id, { fromUs: 0 });
-        const decoded = decodeRecordStream(bytes, schemaMap);
-        return new LogDataset(id, index, decoded);
+        const decoded = { schemas: schemaMap, updates: [], events: [], checkpoints: [], attachments: [] };
+        if (eager) {
+            for (const chunk of index.chunks || []) {
+                const part = decodeRecordStream(await getLogChunk(id, chunk.index), decoded.schemas);
+                decoded.schemas = part.schemas;
+                decoded.updates.push(...part.updates);
+                decoded.events.push(...part.events);
+                decoded.checkpoints.push(...part.checkpoints);
+                decoded.attachments.push(...part.attachments);
+            }
+        }
+        const dataset = new LogDataset(id, index, decoded);
+        dataset.lazy = !eager;
+        return dataset;
+    }
+
+    async loadSeries(path, field = "", options = {}) {
+        return (await getLogSeries(this.id, { path, field, ...options })).samples;
+    }
+
+    async loadSnapshot(timeUs) {
+        return (await getLogSnapshot(this.id, timeUs)).snapshot;
+    }
+
+    async loadEvents(options = {}) {
+        const result = await getLogEvents(this.id, options);
+        this.events = result.events;
+        return result;
     }
 
     getSeries(path, field = "") {
         return (this.series.get(path) || []).map((sample) => ({ ...sample, value: getNested(sample.value, field) }));
+    }
+
+    attachment(name) {
+        return this.attachments.find((attachment) => attachment.name === name) || null;
+    }
+
+    jsonAttachment(name) {
+        const attachment = this.attachment(name);
+        if (!attachment) return null;
+        try {
+            return JSON.parse(new TextDecoder().decode(attachment.bytes));
+        } catch {
+            return null;
+        }
     }
 
     valueAt(path, timeUs, { interpolate = false } = {}) {

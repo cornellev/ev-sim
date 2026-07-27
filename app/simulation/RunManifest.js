@@ -1,0 +1,352 @@
+export const RUN_MANIFEST_KIND = "cev-sim.run-manifest";
+export const RUN_MANIFEST_VERSION = 1;
+export const RUN_BUNDLE_KIND = "cev-sim.run-bundle";
+export const RUN_BUNDLE_VERSION = 1;
+
+export const RUN_LOGGING_POLICIES = Object.freeze(["required", "optional", "disabled"]);
+export const RUN_PACING_MODES = Object.freeze(["realtime", "unbounded"]);
+export const SENSOR_TYPES = Object.freeze(["camera", "lidar3d"]);
+
+const DEFAULT_MODULES = Object.freeze({
+    inputs: true,
+    scripting: true,
+    vehicles: true,
+    physics: true,
+    sensors: true,
+    assertions: true,
+});
+
+function object(value) {
+    return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function text(value, fallback = "") {
+    const normalized = String(value ?? "").trim();
+    return normalized || fallback;
+}
+
+function finite(value, fallback) {
+    const normalized = Number(value);
+    return Number.isFinite(normalized) ? normalized : fallback;
+}
+
+function nonNegativeInteger(value, fallback = 0) {
+    const normalized = Math.floor(finite(value, fallback));
+    return normalized >= 0 ? normalized : fallback;
+}
+
+function positiveInteger(value, fallback = 1) {
+    const normalized = Math.floor(finite(value, fallback));
+    return normalized > 0 ? normalized : fallback;
+}
+
+function vec3(value = {}, fallback = {}) {
+    const source = object(value);
+    return {
+        x: finite(source.x, fallback.x ?? 0),
+        y: finite(source.y, fallback.y ?? 0),
+        z: finite(source.z, fallback.z ?? 0),
+    };
+}
+
+function euler(value = {}) {
+    const source = object(value);
+    return { ...vec3(source), order: text(source.order, "XYZ") };
+}
+
+function pose(value = {}) {
+    const source = object(value);
+    return {
+        position: vec3(source.position),
+        rotation: euler(source.rotation),
+    };
+}
+
+function topic(value = {}, index = 0) {
+    const source = object(value);
+    const direction = ["input", "output"].includes(source.direction) ? source.direction : "output";
+    return {
+        id: text(source.id, `topic-${index + 1}`),
+        name: text(source.name, `/topic-${index + 1}`),
+        direction,
+        type: text(source.type, "std_msgs/String"),
+        required: source.required === true,
+    };
+}
+
+function sensor(value = {}, index = 0) {
+    const source = object(value);
+    const type = SENSOR_TYPES.includes(source.type) ? source.type : "lidar3d";
+    const id = text(source.id, `sensor-${index + 1}`);
+    const defaultCalibration = type === "camera"
+        ? {
+            width: 320,
+            height: 180,
+            encoding: "rgba8",
+            verticalFovDeg: 75,
+            near: 0.1,
+            far: 200,
+            distortionModel: "plumb_bob",
+            distortion: [0, 0, 0, 0, 0],
+        }
+        : {
+            range: 20,
+            azimuth: { startDeg: -180, endDeg: 180, stepDeg: 2 },
+            elevation: { startDeg: -20, endDeg: 20, stepDeg: 1 },
+        };
+    const defaultSchema = type === "camera"
+        ? { imageTopicId: "sensor_msgs/Image", cameraInfoTopicId: "sensor_msgs/CameraInfo" }
+        : { pointCloudTopicId: "sensor_msgs/PointCloud2" };
+    return {
+        id,
+        type,
+        enabled: source.enabled !== false,
+        parentId: text(source.parentId, "ego"),
+        frameId: text(source.frameId, `${id}_frame`),
+        pose: pose(source.pose),
+        rateHz: Math.max(0.001, finite(source.rateHz, type === "camera" ? 30 : 10)),
+        phaseNs: nonNegativeInteger(source.phaseNs, 0),
+        calibration: {
+            ...defaultCalibration,
+            ...object(source.calibration),
+        },
+        latency: {
+            fixedNs: nonNegativeInteger(source.latency?.fixedNs, 0),
+            jitterNs: nonNegativeInteger(source.latency?.jitterNs, 0),
+        },
+        noise: {
+            model: ["none", "gaussian"].includes(source.noise?.model) ? source.noise.model : "none",
+            standardDeviation: Math.max(0, finite(source.noise?.standardDeviation, 0)),
+            bias: finite(source.noise?.bias, 0),
+            dropoutProbability: Math.min(1, Math.max(0, finite(source.noise?.dropoutProbability, 0))),
+        },
+        outputs: object(source.outputs),
+        schema: { ...defaultSchema, ...object(source.schema) },
+        determinism: type === "camera"
+            ? { comparison: "semantic-tolerance", crossDeviceByteEquality: false }
+            : { comparison: "numeric-tolerance", crossDeviceByteEquality: true },
+        maxQueueFrames: positiveInteger(source.maxQueueFrames, 8),
+    };
+}
+
+function assertion(value = {}, index = 0) {
+    const source = object(value);
+    const assertionSource = source.source === "event" ? "event" : "signal";
+    return {
+        id: text(source.id, `assertion-${index + 1}`),
+        name: text(source.name, text(source.id, `Assertion ${index + 1}`)),
+        source: assertionSource,
+        path: assertionSource === "signal" ? text(source.path) : undefined,
+        selector: assertionSource === "signal" ? text(source.selector) : undefined,
+        category: assertionSource === "event" ? text(source.category) : undefined,
+        event: assertionSource === "event" ? text(source.event || source.name) : undefined,
+        operator: text(source.operator, assertionSource === "event" ? "count" : "eq"),
+        expected: source.expected ?? (assertionSource === "event" ? { min: 1, max: null } : true),
+        tolerance: Math.max(0, finite(source.tolerance, 0)),
+        mode: ["always", "eventually", "at-end"].includes(source.mode) ? source.mode : "at-end",
+        window: {
+            startStep: nonNegativeInteger(source.window?.startStep, 0),
+            endStep: source.window?.endStep === null || source.window?.endStep === undefined
+                ? null
+                : nonNegativeInteger(source.window.endStep, 0),
+        },
+        severity: source.severity === "warning" ? "warning" : "error",
+        onFailure: source.onFailure === "continue" ? "continue" : "stop",
+    };
+}
+
+export function createDefaultRunManifest(overrides = {}) {
+    const base = {
+        kind: RUN_MANIFEST_KIND,
+        version: RUN_MANIFEST_VERSION,
+        id: "igvc-default",
+        name: "IGVC Default",
+        description: "Deterministic IGVC simulation run.",
+        environment: { id: "igvc", expectedHash: null },
+        seed: "42",
+        initialState: {
+            vehicles: [{
+                id: "ego",
+                type: "big-car",
+                pose: pose(),
+                linearVelocity: vec3(),
+                steeringAngle: 0,
+            }],
+            signals: {},
+        },
+        clock: {
+            stepNs: 16_666_667,
+            pacing: "realtime",
+            speed: 1,
+            maxSteps: null,
+            publishClock: true,
+            modules: { ...DEFAULT_MODULES },
+        },
+        sensorRig: {
+            rootFrameId: "base_link",
+            sensors: [
+                sensor({
+                    id: "front-camera",
+                    type: "camera",
+                    parentId: "ego",
+                    frameId: "front_camera_optical_frame",
+                    pose: { position: { x: 1.5, y: 0.5, z: 0 } },
+                    outputs: { imageTopicId: "front-camera-image", cameraInfoTopicId: "front-camera-info" },
+                }),
+                sensor({
+                    id: "front-lidar",
+                    type: "lidar3d",
+                    parentId: "ego",
+                    frameId: "front_lidar_frame",
+                    pose: { position: { x: 0.35, y: 0.8, z: 0 } },
+                    outputs: { pointCloudTopicId: "front-lidar-points" },
+                }),
+            ],
+        },
+        scripts: { enabled: true, artifacts: [], bindingIds: [], expectedBindingsHash: null, embeddedBindings: [] },
+        topics: [
+            topic({ id: "ackdrive", name: "/ackdrive", direction: "input", type: "sensor_fusion_msgs/AckermannDrive" }),
+            topic({ id: "clock", name: "/clock", direction: "output", type: "rosgraph_msgs/Clock" }),
+            topic({ id: "front-camera-image", name: "/sensors/front_camera/image_raw", direction: "output", type: "sensor_msgs/Image" }),
+            topic({ id: "front-camera-info", name: "/sensors/front_camera/camera_info", direction: "output", type: "sensor_msgs/CameraInfo" }),
+            topic({ id: "front-lidar-points", name: "/sensors/front_lidar/points", direction: "output", type: "sensor_msgs/PointCloud2" }),
+        ],
+        assertions: [],
+        logging: { policy: "optional", profileId: "simulation-run-full-sensors" },
+    };
+    return normalizeRunManifest({ ...base, ...overrides }, { allowMissingKind: true });
+}
+
+export function normalizeRunManifest(value, { allowMissingKind = false } = {}) {
+    const source = object(value);
+    if (!allowMissingKind && source.kind !== undefined && source.kind !== RUN_MANIFEST_KIND) {
+        throw new Error(`Unsupported run manifest kind: ${JSON.stringify(source.kind)}.`);
+    }
+    if (source.version !== undefined && Number(source.version) !== RUN_MANIFEST_VERSION) {
+        throw new Error(`Unsupported run manifest version ${source.version}; expected ${RUN_MANIFEST_VERSION}.`);
+    }
+    const initial = object(source.initialState);
+    const clock = object(source.clock);
+    const scripts = object(source.scripts);
+    return {
+        kind: RUN_MANIFEST_KIND,
+        version: RUN_MANIFEST_VERSION,
+        id: text(source.id, "untitled-run"),
+        name: text(source.name, "Untitled Run"),
+        description: text(source.description),
+        environment: {
+            id: text(source.environment?.id, "igvc"),
+            expectedHash: text(source.environment?.expectedHash) || null,
+        },
+        seed: typeof source.seed === "number" ? source.seed : text(source.seed, "42"),
+        initialState: {
+            vehicles: (Array.isArray(initial.vehicles) ? initial.vehicles : []).map((vehicle, index) => ({
+                ...object(vehicle),
+                id: text(vehicle?.id, `vehicle-${index + 1}`),
+                type: text(vehicle?.type, "big-car"),
+                pose: pose(vehicle?.pose),
+                linearVelocity: vec3(vehicle?.linearVelocity),
+                steeringAngle: finite(vehicle?.steeringAngle, 0),
+            })),
+            signals: object(initial.signals),
+        },
+        clock: {
+            stepNs: positiveInteger(clock.stepNs, 16_666_667),
+            pacing: RUN_PACING_MODES.includes(clock.pacing) ? clock.pacing : "realtime",
+            speed: Math.max(0, finite(clock.speed, 1)),
+            maxSteps: clock.maxSteps === null || clock.maxSteps === undefined ? null : positiveInteger(clock.maxSteps),
+            publishClock: clock.publishClock !== false,
+            modules: { ...DEFAULT_MODULES, ...object(clock.modules) },
+        },
+        sensorRig: {
+            rootFrameId: text(source.sensorRig?.rootFrameId, "base_link"),
+            sensors: (Array.isArray(source.sensorRig?.sensors) ? source.sensorRig.sensors : []).map(sensor),
+        },
+        scripts: {
+            enabled: scripts.enabled !== false,
+            artifacts: (Array.isArray(scripts.artifacts) ? scripts.artifacts : []).map((entry) => ({
+                scriptId: text(entry?.scriptId),
+                expectedHash: text(entry?.expectedHash) || null,
+            })).filter((entry) => entry.scriptId),
+            bindingIds: (Array.isArray(scripts.bindingIds) ? scripts.bindingIds : []).map((id) => text(id)).filter(Boolean),
+            expectedBindingsHash: text(scripts.expectedBindingsHash) || null,
+            embeddedBindings: Array.isArray(scripts.embeddedBindings) ? structuredClone(scripts.embeddedBindings) : [],
+        },
+        topics: (Array.isArray(source.topics) ? source.topics : []).map(topic),
+        assertions: (Array.isArray(source.assertions) ? source.assertions : []).map(assertion),
+        logging: {
+            policy: RUN_LOGGING_POLICIES.includes(source.logging?.policy) ? source.logging.policy : "optional",
+            profileId: text(source.logging?.profileId, "simulation-run-full-sensors"),
+        },
+    };
+}
+
+export function validateRunManifest(value) {
+    let manifest;
+    try {
+        manifest = normalizeRunManifest(value);
+    } catch (error) {
+        return { ok: false, manifest: null, issues: [{ path: "", message: error.message }] };
+    }
+    const issues = [];
+    const duplicateIssues = (entries, path) => {
+        const seen = new Set();
+        for (const [index, entry] of entries.entries()) {
+            if (!entry.id) issues.push({ path: `${path}.${index}.id`, message: "A stable id is required." });
+            if (seen.has(entry.id)) issues.push({ path: `${path}.${index}.id`, message: `Duplicate id \"${entry.id}\".` });
+            seen.add(entry.id);
+        }
+    };
+    duplicateIssues(manifest.initialState.vehicles, "initialState.vehicles");
+    duplicateIssues(manifest.sensorRig.sensors, "sensorRig.sensors");
+    duplicateIssues(manifest.topics, "topics");
+    duplicateIssues(manifest.assertions, "assertions");
+    const topics = new Map(manifest.topics.map((entry) => [entry.id, entry]));
+    for (const [index, sensorEntry] of manifest.sensorRig.sensors.entries()) {
+        for (const [key, topicId] of Object.entries(sensorEntry.outputs)) {
+            if (topicId && !topics.has(topicId)) {
+                issues.push({ path: `sensorRig.sensors.${index}.outputs.${key}`, message: `Unknown topic id \"${topicId}\".` });
+            }
+            if (topicId && topics.has(topicId) && sensorEntry.schema[key] !== topics.get(topicId).type) {
+                issues.push({ path: `sensorRig.sensors.${index}.schema.${key}`, message: `Schema must match topic type "${topics.get(topicId).type}".` });
+            }
+        }
+    }
+    for (const [index, assertionEntry] of manifest.assertions.entries()) {
+        if (assertionEntry.source === "signal" && !assertionEntry.path) {
+            issues.push({ path: `assertions.${index}.path`, message: "Signal assertions require a path." });
+        }
+        if (assertionEntry.source === "event" && (!assertionEntry.category || !assertionEntry.event)) {
+            issues.push({ path: `assertions.${index}`, message: "Event assertions require category and event names." });
+        }
+        if (assertionEntry.window.endStep !== null && assertionEntry.window.endStep < assertionEntry.window.startStep) {
+            issues.push({ path: `assertions.${index}.window`, message: "endStep must not precede startStep." });
+        }
+    }
+    return { ok: issues.length === 0, manifest, issues };
+}
+
+export function canonicalStringify(value) {
+    const normalize = (entry) => {
+        if (Array.isArray(entry)) return entry.map(normalize);
+        if (!entry || typeof entry !== "object") return entry;
+        return Object.fromEntries(
+            Object.keys(entry).sort().map((key) => [key, normalize(entry[key])])
+        );
+    };
+    return JSON.stringify(normalize(value));
+}
+
+export function stripRunMetadata(value) {
+    const volatile = new Set(["createdAt", "updatedAt", "exportedAt", "clientRevision", "revision", "definitionHash", "resolvedHash"]);
+    const visit = (entry) => {
+        if (Array.isArray(entry)) return entry.map(visit);
+        if (!entry || typeof entry !== "object") return entry;
+        return Object.fromEntries(
+            Object.entries(entry)
+                .filter(([key]) => !volatile.has(key))
+                .map(([key, nested]) => [key, visit(nested)])
+        );
+    };
+    return visit(value);
+}

@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+    BINDING_SCOPES,
     BINDING_MANIFEST_KIND,
     BINDING_MANIFEST_VERSION,
     TRIGGER_KINDS,
     createBinding,
+    createBindingFolder,
     createBindingManifest,
     normalizeBinding,
     normalizeBindingManifest,
@@ -91,7 +93,42 @@ test("createBindingManifest produces a normalized versioned document", () => {
     assert.equal(manifest.kind, BINDING_MANIFEST_KIND);
     assert.equal(manifest.version, BINDING_MANIFEST_VERSION);
     assert.equal(manifest.enabled, true);
+    assert.deepEqual(manifest.folders, []);
     assert.deepEqual(manifest.bindings, []);
+});
+
+test("binding manifest v2 organizes folders and migrates v1 bindings as global", () => {
+    const folder = createBindingFolder({ id: "controls", name: "Controls" });
+    const current = normalizeBindingManifest({
+        kind: BINDING_MANIFEST_KIND,
+        version: 2,
+        folders: [folder, { ...folder, name: "Duplicate" }],
+        bindings: [
+            { id: "drive", folderId: "controls", scope: "selected" },
+            { id: "orphan", folderId: "missing", scope: "selected" },
+        ],
+    });
+    assert.deepEqual(current.folders, [folder]);
+    assert.equal(current.bindings[0].folderId, "controls");
+    assert.equal(current.bindings[1].folderId, null);
+
+    const migrated = normalizeBindingManifest({
+        kind: BINDING_MANIFEST_KIND,
+        version: 1,
+        bindings: [{ id: "legacy", folderId: "ignored", scope: "selected" }],
+    });
+    assert.equal(migrated.version, 2);
+    assert.deepEqual(migrated.folders, []);
+    assert.equal(migrated.bindings[0].folderId, null);
+    assert.equal(migrated.bindings[0].scope, BINDING_SCOPES.GLOBAL);
+
+    const legacyWithoutScope = normalizeBindingManifest({
+        kind: BINDING_MANIFEST_KIND,
+        version: 1,
+        bindings: [{ id: "legacy-default" }],
+    });
+    assert.equal(legacyWithoutScope.bindings[0].scope, BINDING_SCOPES.GLOBAL);
+    assert.equal(createBinding().scope, BINDING_SCOPES.SELECTED);
 });
 
 test("normalizeBindingManifest rejects unknown kinds and repairs bindings", () => {
@@ -158,6 +195,7 @@ test("summarizeTrigger renders human-readable summaries", () => {
     assert.equal(summarizeTrigger({ kind: "fixed-update", everyN: 4 }), "every 4 ticks");
     assert.equal(summarizeTrigger({ kind: "signal-update", path: "a.b" }), "when a.b changes");
     assert.equal(summarizeTrigger({ kind: "timer", intervalMs: 250 }), "every 250 ms");
+    assert.equal(summarizeTrigger({ kind: "simulation-timer", intervalNs: 250_000_000 }), "every 250000000 ns of simulation time");
 });
 
 test("suggestTriggerFromArtifact maps entrypoints and trigger bindings", () => {
@@ -307,6 +345,58 @@ test("fixed-update bindings honor everyN and receive sim inputs", async () => {
     assert.equal(runs[0].step, 2);
     assert.equal(runs[1].step, 5);
     assert.equal(runtime.signalStore.read("simulation").value.step, 6);
+});
+
+test("simulation-time bindings fire deterministically from integer nanoseconds", async () => {
+    const runs = [];
+    const runtime = createRuntime({
+        scripts: { "script-1": createScriptStub((inputs) => { runs.push(inputs); return {}; }) },
+    });
+    await runtime.ready();
+    await runtime.setManifest({
+        bindings: [{
+            id: "sim-timer",
+            scriptId: "script-1",
+            trigger: { kind: "simulation-timer", intervalNs: 100_000_000 },
+            inputs: [{ input: "time", source: "sim", key: "time" }],
+        }],
+    }, { persist: false });
+    await flush();
+
+    runtime.update(0.05, { timeNs: 50_000_000, step: 1 });
+    runtime.update(0.05, { timeNs: 100_000_000, step: 2 });
+    runtime.update(0.20, { timeNs: 300_000_000, step: 3 });
+
+    assert.equal(runs.length, 3);
+    assert.deepEqual(runs.map((entry) => entry.time), [0.1, 0.2, 0.3]);
+});
+
+test("library activation runs only global bindings while manual execution can run selected bindings", async () => {
+    const runs = [];
+    const runtime = createRuntime({
+        scripts: {
+            global: createScriptStub(() => { runs.push("global"); return {}; }),
+            selected: createScriptStub(() => { runs.push("selected"); return {}; }),
+        },
+    });
+    await runtime.ready();
+    await runtime.setLibraryManifest({
+        kind: BINDING_MANIFEST_KIND,
+        version: 2,
+        bindings: [
+            { id: "global", scope: "global", scriptId: "global", trigger: { kind: "fixed-update" } },
+            { id: "selected", scope: "selected", scriptId: "selected", trigger: { kind: "fixed-update" } },
+        ],
+    }, { persist: false });
+    await flush();
+
+    runtime.update(0.016);
+    assert.deepEqual(runs, ["global"]);
+    assert.deepEqual(runtime.getSnapshot().activeManifest.bindings.map((binding) => binding.id), ["global"]);
+
+    const result = await runtime.runBindingNow("selected");
+    assert.equal(result.status, "success");
+    assert.deepEqual(runs, ["global", "selected"]);
 });
 
 test("signal-update bindings fire only when the watched value changes", async () => {

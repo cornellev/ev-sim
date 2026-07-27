@@ -73,7 +73,7 @@ export class Vehicle {
      * Asynchronous to allow parallel execution of multiple vehicles' update functions, and to allow for async operations within the update (e.g. waiting for sensor data).
      * @param {Number} deltaTime Delta time in seconds.
      */
-    async update(deltaTime) {
+    update(deltaTime) {
         // to be implemented by subclasses
     }
 
@@ -125,7 +125,7 @@ export class PhysicalVehicle extends Vehicle {
      * Update the vehicle's physics state based on its velocity and acceleration.
      * @param {Number} deltaTime Delta time in seconds.
      */
-    async update(deltaTime) {
+    update(deltaTime) {
         // Simple physics integration (not using a physics engine here)
         this.velocity.addScaledVector(this.acceleration, deltaTime);
         const deltaPosition = new THREE.Vector3().copy(this.velocity).multiplyScalar(deltaTime);

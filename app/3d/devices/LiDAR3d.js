@@ -67,6 +67,8 @@ export class LiDAR3d extends Device {
     }
 
     onParentUpdate() {
+        if (!this.pointsGroup) return;
+
         const worldPosition = this.getPosition();
         const worldRotation = this.getRotation();
 
@@ -138,7 +140,7 @@ export class LiDAR3d extends Device {
         this.lines = lineGroup;
     }
 
-    execute() {
+    execute(simulationTimeSeconds = null) {
         const { posTexture, scaleTexture, tagTexture: boxTagTexture, count } = this.getParent().getParent().objects().t_boxes();
         const { posTexture: triPosTexture, tagTexture: triTagTexture, count: triCount } = this.getParent().getParent().objects().t_triangles();
 
@@ -147,6 +149,7 @@ export class LiDAR3d extends Device {
         );
 
         this.shader.update({
+            ...(simulationTimeSeconds === null ? {} : { u_time: { value: simulationTimeSeconds } }),
             u_origin: { value: this.getPosition() },
             u_sensorRotation: { value: sensorRotationMatrix },
             boxCount: { value: count },

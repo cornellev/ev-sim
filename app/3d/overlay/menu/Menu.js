@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef } from "react";
-import { FaChartLine, FaCheck, FaCode, FaCog, FaCube, FaEdit, FaFilm, FaFlask, FaLink, FaShapes, FaTimes } from "react-icons/fa";
+import { FaCar, FaChartLine, FaCheck, FaCode, FaCog, FaCube, FaEdit, FaFilm, FaFlask, FaLink, FaShapes, FaTimes } from "react-icons/fa";
 import { cn } from "../ui/cn";
 import { APP_VIEWS, THREE_D_MODES } from "../../viewState";
 
@@ -11,6 +11,7 @@ export default function Menu({
     onSimulation,
     onEnvironmentEditor,
     onConfig,
+    onVehicleEditor,
     onScripting,
     onBindings,
     onReplay,
@@ -35,7 +36,7 @@ export default function Menu({
             onSelect: onAnalysis,
         },
         {
-            key: "config",
+            key: APP_VIEWS.CONFIG,
             label: "Config",
             hint: "Settings panel",
             icon: <FaCog className="h-4 w-4" />,
@@ -58,7 +59,14 @@ export default function Menu({
             icon: <FaEdit className="h-3.5 w-3.5" />,
             onSelect: onEnvironmentEditor,
         },
-    ], [onEnvironmentEditor, onSimulation]);
+        {
+            key: APP_VIEWS.VEHICLE_EDITOR,
+            label: "Vehicle Editor",
+            hint: "Author custom vehicle manifests",
+            icon: <FaCar className="h-3.5 w-3.5" />,
+            onSelect: onVehicleEditor,
+        },
+    ], [onEnvironmentEditor, onSimulation, onVehicleEditor]);
 
     const scriptingChildren = useMemo(() => [
         {
@@ -80,6 +88,10 @@ export default function Menu({
     const focusKey = useMemo(() => {
         if (activeView === APP_VIEWS.THREE_D) {
             return `3d:${activeThreeDMode}`;
+        }
+
+        if (activeView === APP_VIEWS.VEHICLE_EDITOR) {
+            return `3d:${APP_VIEWS.VEHICLE_EDITOR}`;
         }
 
         const activeScriptingChild = scriptingChildren.find((item) => item.key === activeView && typeof item.onSelect === "function");
@@ -105,7 +117,7 @@ export default function Menu({
         };
     }, []);
 
-    const threeDActive = activeView === APP_VIEWS.THREE_D;
+    const threeDActive = activeView === APP_VIEWS.THREE_D || activeView === APP_VIEWS.VEHICLE_EDITOR;
     const scriptingActive = activeView === APP_VIEWS.SCRIPTING || activeView === APP_VIEWS.BINDINGS;
 
     return (
@@ -171,7 +183,9 @@ export default function Menu({
                         <div className="space-y-1 pl-2">
                             {threeDChildren.map((item) => {
                                 const enabled = typeof item.onSelect === "function";
-                                const active = threeDActive && item.key === activeThreeDMode;
+                                const active = item.key === APP_VIEWS.VEHICLE_EDITOR
+                                    ? activeView === APP_VIEWS.VEHICLE_EDITOR
+                                    : activeView === APP_VIEWS.THREE_D && item.key === activeThreeDMode;
                                 const itemKey = `3d:${item.key}`;
 
                                 return (

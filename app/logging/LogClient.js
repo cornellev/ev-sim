@@ -58,6 +58,33 @@ export async function getLogChunks(id, { fromUs = 0, toUs } = {}) {
     return new Uint8Array(await (await assertOk(response, "Log chunk load")).arrayBuffer());
 }
 
+export async function getLogChunk(id, chunkIndex) {
+    const response = await fetch(`${BASE_URL}/${encodeURIComponent(id)}/chunks/${encodeURIComponent(chunkIndex)}`);
+    return new Uint8Array(await (await assertOk(response, "Log chunk load")).arrayBuffer());
+}
+
+export async function getLogSeries(id, { path, field = "", fromUs = 0, toUs, maxPoints = 2000 }) {
+    const params = new URLSearchParams({
+        path,
+        field,
+        fromUs: String(Math.max(0, fromUs)),
+        maxPoints: String(Math.min(2000, Math.max(2, maxPoints))),
+    });
+    if (toUs !== undefined && Number.isFinite(toUs)) params.set("toUs", String(toUs));
+    return (await assertOk(await fetch(`${BASE_URL}/${encodeURIComponent(id)}/series?${params}`), "Log series load")).json();
+}
+
+export async function getLogSnapshot(id, timeUs) {
+    const params = new URLSearchParams({ timeUs: String(Math.max(0, Number(timeUs) || 0)) });
+    return (await assertOk(await fetch(`${BASE_URL}/${encodeURIComponent(id)}/snapshot?${params}`), "Log snapshot load")).json();
+}
+
+export async function getLogEvents(id, { fromUs = 0, toUs, limit = 5000 } = {}) {
+    const params = new URLSearchParams({ fromUs: String(Math.max(0, fromUs)), limit: String(limit) });
+    if (toUs !== undefined && Number.isFinite(toUs)) params.set("toUs", String(toUs));
+    return (await assertOk(await fetch(`${BASE_URL}/${encodeURIComponent(id)}/events?${params}`), "Log event load")).json();
+}
+
 export async function importLog(file) {
     const response = await fetch(`${BASE_URL}/import`, {
         method: "POST",

@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { gzipSync, gunzipSync } from "node:zlib";
 
 import { ByteReader, ByteWriter, SFLOG_VERSION, decodeRecordStream } from "../../app/logging/SFLogCodec.js";
+import { downsampleMinMax } from "../../app/analysis/downsample.js";
 
 const DEFAULT_LOGS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "data", "logs");
 const textEncoder = new TextEncoder();
@@ -15,6 +16,22 @@ const END_MAGIC = Buffer.from("SEND");
 const CHUNK_HEADER_BYTES = 36;
 const MAX_CHUNK_BYTES = 64 * 1024 * 1024;
 const MAX_IMPORT_BYTES = 2 * 1024 * 1024 * 1024;
+
+async function readAt(handle, length, position) {
+    const buffer = Buffer.allocUnsafe(length);
+    let offset = 0;
+    while (offset < length) {
+        const { bytesRead } = await handle.read(buffer, offset, length - offset, position + offset);
+        if (bytesRead === 0) throw new Error("Unexpected end of SFLog file.");
+        offset += bytesRead;
+    }
+    return buffer;
+}
+
+function getNested(value, field) {
+    if (!field) return value;
+    return String(field).split(".").reduce((current, key) => current?.[key], value);
+}
 
 function safeSegment(value) {
     const text = String(value ?? "").trim();
@@ -152,6 +169,12 @@ export class LogService {
             simulator: input.simulator || null,
             appVersion: input.appVersion || null,
             gitHash: input.gitHash || null,
+            runId: input.runId || null,
+            manifestId: input.manifestId || null,
+            manifestRevision: input.manifestRevision || null,
+            definitionHash: input.definitionHash || null,
+            resolvedHash: input.resolvedHash || null,
+            provenance: input.provenance || null,
             tags: Array.isArray(input.tags) ? input.tags : [],
             incomplete: false,
         };
@@ -300,7 +323,7 @@ export class LogService {
         const result = {
             metadata: scanned.header.metadata,
             durationUs: scanned.chunks.at(-1)?.endUs || 0,
-            chunks: scanned.chunks.map(({ startUs, endUs, offset, compressedLength, hasCheckpoint }) => ({ startUs, endUs, offset, compressedLength, hasCheckpoint })),
+            chunks: scanned.chunks.map(({ startUs, endUs, offset, compressedLength, uncompressedLength, crc, hasCheckpoint }, index) => ({ index, startUs, endUs, offset, compressedLength, uncompressedLength, crc, hasCheckpoint })),
             checkpoints: scanned.checkpoints,
             schemas: [...scanned.schemas.values()],
         };
@@ -309,15 +332,105 @@ export class LogService {
     }
 
     async readChunks(idValue, { fromUs = 0, toUs = Number.POSITIVE_INFINITY } = {}) {
+        const chunks = [];
+        for await (const chunk of this.iterateChunks(idValue, { fromUs, toUs })) chunks.push(chunk.raw);
+        return Buffer.concat(chunks);
+    }
+
+    async readChunk(idValue, chunkIndex) {
         const id = safeSegment(idValue);
-        const scanned = await this._scanFile(this._finalPath(id));
+        const index = await this.getIndex(id);
+        const chunk = index.chunks[Number(chunkIndex)];
+        if (!chunk || !Number.isInteger(Number(chunkIndex))) throw new Error(`Log chunk ${chunkIndex} does not exist.`);
+        return this._readIndexedChunk(this._finalPath(id), chunk);
+    }
+
+    async *iterateChunks(idValue, { fromUs = 0, toUs = Number.POSITIVE_INFINITY } = {}) {
+        const id = safeSegment(idValue);
+        const index = await this.getIndex(id);
         let startIndex = 0;
-        for (let index = 0; index < scanned.chunks.length; index += 1) {
-            const chunk = scanned.chunks[index];
-            if (chunk.hasCheckpoint && chunk.startUs <= fromUs) startIndex = index;
+        for (let candidate = 0; candidate < index.chunks.length; candidate += 1) {
+            const chunk = index.chunks[candidate];
+            if (chunk.hasCheckpoint && chunk.startUs <= fromUs) startIndex = candidate;
         }
-        const selected = scanned.chunks.slice(startIndex).filter((chunk) => chunk.startUs <= toUs);
-        return Buffer.concat(selected.map((chunk) => chunk.raw));
+        for (const chunk of index.chunks.slice(startIndex)) {
+            if (chunk.startUs > toUs) break;
+            yield { ...chunk, raw: await this._readIndexedChunk(this._finalPath(id), chunk) };
+        }
+    }
+
+    async readSeries(idValue, { path: signalPath, field = "", fromUs = 0, toUs = Number.POSITIVE_INFINITY, maxPoints = 2000 } = {}) {
+        if (!signalPath) throw new Error("A signal path is required.");
+        const index = await this.getIndex(idValue);
+        const descriptor = index.schemas.find((schema) => schema.path === signalPath);
+        if (!descriptor) throw new Error(`Signal "${signalPath}" does not exist in log "${idValue}".`);
+        const schemas = new Map(index.schemas.map((schema) => [schema.id, schema]));
+        const samples = [];
+        for await (const chunk of this.iterateChunks(idValue, { fromUs, toUs })) {
+            const decoded = decodeRecordStream(chunk.raw, schemas);
+            for (const update of decoded.updates) {
+                if (update.path !== signalPath || update.timeUs < fromUs || update.timeUs > toUs) continue;
+                const value = getNested(update.value, field);
+                if (typeof value === "number" && Number.isFinite(value)) samples.push({ timeUs: update.timeUs, cycle: update.cycle, value });
+            }
+        }
+        const limit = Math.min(2000, Math.max(2, Math.floor(Number(maxPoints) || 2000)));
+        const downsampled = downsampleMinMax(samples, limit);
+        return {
+            path: signalPath,
+            field: field || "",
+            fromUs,
+            toUs: Number.isFinite(toUs) ? toUs : index.durationUs,
+            totalSamples: samples.length,
+            samples: downsampled,
+            downsampled: downsampled.length < samples.length,
+        };
+    }
+
+    async readSnapshot(idValue, timeUs = 0) {
+        const index = await this.getIndex(idValue);
+        const cursorUs = Math.min(index.durationUs, Math.max(0, Number(timeUs) || 0));
+        const schemas = new Map(index.schemas.map((schema) => [schema.id, schema]));
+        const updates = [];
+        let checkpoint = null;
+        for await (const chunk of this.iterateChunks(idValue, { fromUs: cursorUs, toUs: cursorUs })) {
+            const decoded = decodeRecordStream(chunk.raw, schemas);
+            updates.push(...decoded.updates.filter((update) => update.timeUs <= cursorUs));
+            for (const candidate of decoded.checkpoints) {
+                if (candidate.timeUs <= cursorUs && (!checkpoint || candidate.timeUs >= checkpoint.timeUs)) checkpoint = candidate;
+            }
+        }
+        const snapshot = checkpoint ? structuredClone(checkpoint.values) : {};
+        const checkpointUs = checkpoint?.timeUs || 0;
+        for (const update of updates.sort((a, b) => a.timeUs - b.timeUs)) {
+            if (update.timeUs >= checkpointUs) snapshot[update.path] = structuredClone(update.value);
+        }
+        return { timeUs: cursorUs, snapshot };
+    }
+
+    async readEvents(idValue, { fromUs = 0, toUs = Number.POSITIVE_INFINITY, limit = 5000 } = {}) {
+        const index = await this.getIndex(idValue);
+        const schemas = new Map(index.schemas.map((schema) => [schema.id, schema]));
+        const events = [];
+        for await (const chunk of this.iterateChunks(idValue, { fromUs, toUs })) {
+            const decoded = decodeRecordStream(chunk.raw, schemas);
+            events.push(...decoded.events.filter((event) => event.timeUs >= fromUs && event.timeUs <= toUs));
+        }
+        const boundedLimit = Math.min(10000, Math.max(1, Math.floor(Number(limit) || 5000)));
+        return { events: events.sort((a, b) => a.timeUs - b.timeUs).slice(-boundedLimit), truncated: events.length > boundedLimit };
+    }
+
+    async _readIndexedChunk(filePath, chunk) {
+        const handle = await fs.open(filePath, "r");
+        try {
+            const compressed = await readAt(handle, chunk.compressedLength, chunk.offset + CHUNK_HEADER_BYTES);
+            const raw = gunzipSync(compressed);
+            if (raw.length !== chunk.uncompressedLength) throw new Error("SFLog chunk length does not match its header.");
+            if (crc32(raw) !== chunk.crc) throw new Error("SFLog chunk failed CRC validation.");
+            return raw;
+        } finally {
+            await handle.close();
+        }
     }
 
     async importLog(bytes, { name } = {}) {
@@ -419,88 +532,99 @@ export class LogService {
     }
 
     async _scanFile(filePath, { allowPartial = false } = {}) {
-        const bytes = await fs.readFile(filePath);
-        const header = parseFileHeader(bytes);
-        const chunks = [];
-        let schemas = new Map();
-        const checkpoints = [];
-        let offset = header.headerLength;
+        const handle = await fs.open(filePath, "r");
+        try {
+            const stat = await handle.stat();
+            if (stat.size < 12) throw new Error("The file is too short to be a valid SFLog.");
+            const prefix = await readAt(handle, 12, 0);
+            const metadataLength = prefix.readUInt32LE(8);
+            if (metadataLength > 16 * 1024 * 1024) throw new Error("SFLog metadata is too large.");
+            const headerBytes = await readAt(handle, 12 + metadataLength, 0);
+            const header = parseFileHeader(headerBytes);
+            const chunks = [];
+            let schemas = new Map();
+            const checkpoints = [];
+            let offset = header.headerLength;
+            let indexOffset = null;
 
-        while (offset + 4 <= bytes.length) {
-            const magic = bytes.subarray(offset, offset + 4).toString("utf8");
-            if (magic === "INDX") break;
-            if (magic !== "CHNK") {
-                if (allowPartial) break;
-                throw new Error(`Invalid SFLog chunk magic at byte ${offset}.`);
+            if (!allowPartial) {
+                const locatorBytes = await readAt(handle, 12, stat.size - 12);
+                if (locatorBytes.subarray(8).toString("utf8") !== "SEND") throw new Error("SFLog is missing its footer locator.");
+                indexOffset = Number(new DataView(locatorBytes.buffer, locatorBytes.byteOffset, 8).getBigUint64(0, true));
+                if (!Number.isSafeInteger(indexOffset) || indexOffset < offset || indexOffset > stat.size - 12) throw new Error("SFLog footer points outside the index boundary.");
             }
-            if (offset + CHUNK_HEADER_BYTES > bytes.length) {
-                if (allowPartial) break;
-                throw new Error("Truncated SFLog chunk header.");
-            }
-            const view = new DataView(bytes.buffer, bytes.byteOffset + offset, CHUNK_HEADER_BYTES);
-            const startUs = Number(view.getBigUint64(4, true));
-            const endUs = Number(view.getBigUint64(12, true));
-            const uncompressedLength = view.getUint32(20, true);
-            const compressedLength = view.getUint32(24, true);
-            const expectedCrc = view.getUint32(28, true);
-            if (uncompressedLength > MAX_CHUNK_BYTES || compressedLength > MAX_CHUNK_BYTES) {
-                if (allowPartial) break;
-                throw new Error("SFLog chunk exceeds the 64 MiB safety limit.");
-            }
-            const dataStart = offset + CHUNK_HEADER_BYTES;
-            const dataEnd = dataStart + compressedLength;
-            if (dataEnd > bytes.length) {
-                if (allowPartial) break;
-                throw new Error("Truncated SFLog chunk payload.");
-            }
-            let raw;
-            let decoded;
-            try {
-                raw = gunzipSync(bytes.subarray(dataStart, dataEnd));
-                if (raw.length !== uncompressedLength) throw new Error("SFLog chunk length does not match its header.");
-                if (crc32(raw) !== expectedCrc) throw new Error("SFLog chunk failed CRC validation.");
-                decoded = decodeRecordStream(raw, schemas);
-            } catch (error) {
-                if (allowPartial) break;
-                throw error;
-            }
-            schemas = decoded.schemas;
-            const hasCheckpoint = decoded.checkpoints.length > 0;
-            checkpoints.push(...decoded.checkpoints.map((checkpoint) => ({ timeUs: checkpoint.timeUs, chunkOffset: offset })));
-            chunks.push({ startUs, endUs, offset, uncompressedLength, compressedLength, raw, hasCheckpoint });
-            offset = dataEnd;
-        }
 
-        const validEnd = offset;
-        if (allowPartial && (offset + 4 > bytes.length || bytes.subarray(offset, offset + 4).toString("utf8") !== "INDX")) {
+            const dataLimit = indexOffset ?? stat.size;
+            while (offset + 4 <= dataLimit) {
+                const magicBytes = await readAt(handle, 4, offset);
+                const magic = magicBytes.toString("utf8");
+                if (magic === "INDX") break;
+                if (magic !== "CHNK") {
+                    if (allowPartial) break;
+                    throw new Error(`Invalid SFLog chunk magic at byte ${offset}.`);
+                }
+                if (offset + CHUNK_HEADER_BYTES > dataLimit) {
+                    if (allowPartial) break;
+                    throw new Error("Truncated SFLog chunk header.");
+                }
+                const chunkHeader = await readAt(handle, CHUNK_HEADER_BYTES, offset);
+                const view = new DataView(chunkHeader.buffer, chunkHeader.byteOffset, CHUNK_HEADER_BYTES);
+                const startUs = Number(view.getBigUint64(4, true));
+                const endUs = Number(view.getBigUint64(12, true));
+                const uncompressedLength = view.getUint32(20, true);
+                const compressedLength = view.getUint32(24, true);
+                const expectedCrc = view.getUint32(28, true);
+                if (uncompressedLength > MAX_CHUNK_BYTES || compressedLength > MAX_CHUNK_BYTES) {
+                    if (allowPartial) break;
+                    throw new Error("SFLog chunk exceeds the 64 MiB safety limit.");
+                }
+                const dataEnd = offset + CHUNK_HEADER_BYTES + compressedLength;
+                if (dataEnd > dataLimit) {
+                    if (allowPartial) break;
+                    throw new Error("Truncated SFLog chunk payload.");
+                }
+                let decoded;
+                try {
+                    const compressed = await readAt(handle, compressedLength, offset + CHUNK_HEADER_BYTES);
+                    const raw = gunzipSync(compressed);
+                    if (raw.length !== uncompressedLength) throw new Error("SFLog chunk length does not match its header.");
+                    if (crc32(raw) !== expectedCrc) throw new Error("SFLog chunk failed CRC validation.");
+                    decoded = decodeRecordStream(raw, schemas);
+                } catch (error) {
+                    if (allowPartial) break;
+                    throw error;
+                }
+                schemas = decoded.schemas;
+                const hasCheckpoint = decoded.checkpoints.length > 0;
+                const chunkIndex = chunks.length;
+                checkpoints.push(...decoded.checkpoints.map((checkpoint) => ({ timeUs: checkpoint.timeUs, chunkOffset: offset, chunkIndex })));
+                chunks.push({ startUs, endUs, offset, uncompressedLength, compressedLength, crc: expectedCrc, hasCheckpoint });
+                offset = dataEnd;
+            }
+
+            const validEnd = offset;
+            if (allowPartial) return { header, chunks, schemas, checkpoints, validEnd };
+            if (offset !== indexOffset) throw new Error("SFLog is incomplete or missing its index.");
+            const indexLength = stat.size - 12 - indexOffset;
+            const indexBytes = await readAt(handle, indexLength, indexOffset);
+            if (indexBytes.subarray(0, 4).toString("utf8") !== "INDX") throw new Error("SFLog is incomplete or missing its index.");
+            const indexView = new DataView(indexBytes.buffer, indexBytes.byteOffset, indexBytes.byteLength);
+            const entryCount = indexView.getUint32(4, true);
+            if (8 + entryCount * 25 !== indexBytes.length) throw new Error("SFLog index length is invalid.");
+            if (entryCount !== chunks.length) throw new Error("SFLog index does not match its chunk count.");
+            for (let index = 0; index < entryCount; index += 1) {
+                const entryOffset = 8 + index * 25;
+                const chunk = chunks[index];
+                const matches = Number(indexView.getBigUint64(entryOffset, true)) === chunk.startUs
+                    && Number(indexView.getBigUint64(entryOffset + 8, true)) === chunk.endUs
+                    && Number(indexView.getBigUint64(entryOffset + 16, true)) === chunk.offset
+                    && (indexView.getUint8(entryOffset + 24) !== 0) === chunk.hasCheckpoint;
+                if (!matches) throw new Error(`SFLog index entry ${index} does not match its chunk.`);
+            }
             return { header, chunks, schemas, checkpoints, validEnd };
+        } finally {
+            await handle.close();
         }
-        if (offset + 4 > bytes.length || bytes.subarray(offset, offset + 4).toString("utf8") !== "INDX") {
-            throw new Error("SFLog is incomplete or missing its index.");
-        }
-        if (bytes.length < 12 || bytes.subarray(bytes.length - 4).toString("utf8") !== "SEND") {
-            throw new Error("SFLog is missing its footer locator.");
-        }
-        const locator = new DataView(bytes.buffer, bytes.byteOffset + bytes.length - 12, 8);
-        const indexOffset = Number(locator.getBigUint64(0, true));
-        if (!Number.isSafeInteger(indexOffset) || indexOffset !== offset) throw new Error("SFLog footer points outside the index boundary.");
-        const indexView = new DataView(bytes.buffer, bytes.byteOffset + indexOffset);
-        const entryCount = indexView.getUint32(4, true);
-        const expectedIndexEnd = indexOffset + 8 + entryCount * 25;
-        if (expectedIndexEnd !== bytes.length - 12) throw new Error("SFLog index length is invalid.");
-        if (entryCount !== chunks.length) throw new Error("SFLog index does not match its chunk count.");
-        for (let index = 0; index < entryCount; index += 1) {
-            const entryOffset = 8 + index * 25;
-            const indexedStart = Number(indexView.getBigUint64(entryOffset, true));
-            const indexedEnd = Number(indexView.getBigUint64(entryOffset + 8, true));
-            const indexedFileOffset = Number(indexView.getBigUint64(entryOffset + 16, true));
-            const indexedCheckpoint = indexView.getUint8(entryOffset + 24) !== 0;
-            const chunk = chunks[index];
-            if (indexedStart !== chunk.startUs || indexedEnd !== chunk.endUs || indexedFileOffset !== chunk.offset || indexedCheckpoint !== chunk.hasCheckpoint) {
-                throw new Error(`SFLog index entry ${index} does not match its chunk.`);
-            }
-        }
-        return { header, chunks, schemas, checkpoints, validEnd };
     }
 
     getFilePath(idValue) {

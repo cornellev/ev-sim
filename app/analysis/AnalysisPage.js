@@ -9,6 +9,8 @@ import { getTimelineStore } from "../logging/TimelineStore.js";
 import { importLog, listLogs } from "../logging/LogClient.js";
 import { storageGet, storagePut } from "../client/storageClient.js";
 import { subscribeStorageEvents } from "../client/storageEvents.js";
+import { downsampleMinMax } from "./downsample.js";
+import { simulationTimeUsFromSnapshot } from "../telemetry/SimulationClock.js";
 
 const LAYOUT_KEY = "analysis:layout:v1";
 const PALETTE = ["#38bdf8", "#f59e0b", "#a78bfa", "#34d399", "#fb7185", "#60a5fa", "#f472b6", "#a3e635"];
@@ -57,6 +59,14 @@ function formatCursor(timeUs) {
     return `${((Number(timeUs) || 0) / 1e6).toFixed(3)} s`;
 }
 
+function localSimulationTimeUs(store) {
+    return store.getSimulationTimeUs?.() ?? 0;
+}
+
+function remoteSimulationTimeUs(source) {
+    return simulationTimeUsFromSnapshot(source?.snapshot) ?? 0;
+}
+
 function selectionKey(selection) { return `${selection.path}\u0000${selection.field || ""}`; }
 
 export default function AnalysisPage({ initialLogId, onOpenReplay }) {
@@ -66,11 +76,14 @@ export default function AnalysisPage({ initialLogId, onOpenReplay }) {
     const timelineState = useTimeline(timeline);
     const fileRef = useRef(null);
     const layoutFileRef = useRef(null);
+    const sourceSelectionRef = useRef(initialLogId ? `log:${initialLogId}` : "live");
     const [revision, setRevision] = useState(0);
     const [logs, setLogs] = useState([]);
     const [remoteSources, setRemoteSources] = useState(() => bridge.getSources());
     const [sourceKey, setSourceKey] = useState(initialLogId ? `log:${initialLogId}` : "live");
     const [dataset, setDataset] = useState(null);
+    const [datasetSnapshot, setDatasetSnapshot] = useState({});
+    const [logSeries, setLogSeries] = useState(new Map());
     const [query, setQuery] = useState("");
     const [activeView, setActiveView] = useState("graph");
     const [selected, setSelected] = useState([]);
@@ -80,6 +93,7 @@ export default function AnalysisPage({ initialLogId, onOpenReplay }) {
     const [error, setError] = useState(null);
     const [leftDrawerOpen, setLeftDrawerOpen] = useState(false);
     const [rightDrawerOpen, setRightDrawerOpen] = useState(false);
+    const [graphPixelWidth, setGraphPixelWidth] = useState(1000);
     const [expandedGroups, setExpandedGroups] = useState(() => new Set(["devices", "simulation", "topics", "vehicles"]));
 
     const loadCatalog = useCallback(() => listLogs().then(setLogs).catch((caught) => setError(caught.message)), []);
@@ -94,36 +108,87 @@ export default function AnalysisPage({ initialLogId, onOpenReplay }) {
         if (initialLogId) setSourceKey(`log:${initialLogId}`);
     }, [initialLogId]);
     useEffect(() => {
-        return store.subscribeSignals({ includeEvents: true, includeCatalog: true }, () => {
-            setRevision((value) => value + 1);
-            if (sourceKey === "live" && timeline.getSnapshot().liveLocked) {
-                const timeUs = store.getTimeUs();
-                timeline.set({ durationUs: timeUs, timeUs, liveLocked: true });
-            }
-        });
-    }, [sourceKey, store, timeline]);
+        let timer = null;
+        const schedule = () => {
+            if (timer) return;
+            timer = setTimeout(() => {
+                timer = null;
+                setRevision((value) => value + 1);
+                if (sourceKey === "live" && timeline.getSnapshot().liveLocked) {
+                    const timeUs = localSimulationTimeUs(store);
+                    timeline.set({ durationUs: timeUs, timeUs, liveLocked: true });
+                }
+            }, 100);
+        };
+        const paths = [...new Set(selected.map((item) => item.path))];
+        const unsubscribe = store.subscribeSignals({ paths, includeEvents: true, includeCatalog: true }, schedule);
+        return () => {
+            unsubscribe();
+            clearTimeout(timer);
+        };
+    }, [selected, sourceKey, store, timeline]);
     useEffect(() => {
-        if (sourceKey !== "live") return;
-        const timeUs = store.getTimeUs();
-        timeline.set({ durationUs: timeUs, timeUs, liveLocked: true, playing: false });
-    }, [sourceKey, store, timeline]);
+        const changed = sourceSelectionRef.current !== sourceKey;
+        sourceSelectionRef.current = sourceKey;
+        const current = timeline.getSnapshot();
+        if (sourceKey === "live") {
+            const timeUs = localSimulationTimeUs(store);
+            timeline.set({ durationUs: timeUs, timeUs: changed || current.liveLocked ? timeUs : current.timeUs, liveLocked: changed ? true : current.liveLocked, playing: false });
+            return;
+        }
+        if (sourceKey.startsWith("remote:")) {
+            const timeUs = remoteSimulationTimeUs(remoteSources.find((item) => item.sourceId === sourceKey.slice(7)));
+            timeline.set({ durationUs: timeUs, timeUs: changed || current.liveLocked ? timeUs : current.timeUs, liveLocked: changed ? true : current.liveLocked, playing: false });
+        }
+    }, [remoteSources, sourceKey, store, timeline]);
     useEffect(() => {
-        if (!sourceKey.startsWith("remote:")) return;
-        bridge.requestSource(sourceKey.slice(7), selected.map((item) => item.path));
+        if (!sourceKey.startsWith("remote:")) return undefined;
+        const sourceId = sourceKey.slice(7);
+        bridge.requestSource(sourceId, selected.map((item) => item.path));
+        return () => bridge.requestSource(sourceId, []);
     }, [bridge, selected, sourceKey]);
     useEffect(() => {
         if (!sourceKey.startsWith("log:")) { setDataset(null); return; }
         let cancelled = false;
         setError(null);
-        LogDataset.open(sourceKey.slice(4))
+        LogDataset.open(sourceKey.slice(4), { eager: false })
             .then((opened) => {
                 if (cancelled) return;
                 setDataset(opened);
+                setDatasetSnapshot({});
+                setLogSeries(new Map());
                 timeline.set({ durationUs: opened.durationUs, timeUs: 0, liveLocked: false, playing: false });
+                opened.loadEvents({ limit: 5000 }).then(() => { if (!cancelled) setRevision((value) => value + 1); }).catch(() => {});
             })
             .catch((caught) => { if (!cancelled) setError(caught.message); });
         return () => { cancelled = true; };
     }, [sourceKey, timeline]);
+    useEffect(() => {
+        if (!dataset || !sourceKey.startsWith("log:")) return undefined;
+        let cancelled = false;
+        const timer = setTimeout(() => {
+            dataset.loadSnapshot(timelineState.timeUs)
+                .then((snapshot) => { if (!cancelled) setDatasetSnapshot(snapshot); })
+                .catch((caught) => { if (!cancelled) setError(caught.message); });
+        }, 50);
+        return () => {
+            cancelled = true;
+            clearTimeout(timer);
+        };
+    }, [dataset, sourceKey, timelineState.timeUs]);
+    useEffect(() => {
+        if (!dataset || !sourceKey.startsWith("log:")) return undefined;
+        let cancelled = false;
+        const maxPoints = Math.min(2000, Math.max(2, Math.floor(graphPixelWidth * 2)));
+        Promise.all(selected.map(async (item) => [selectionKey(item), await dataset.loadSeries(item.path, item.field, {
+            fromUs: 0,
+            toUs: dataset.durationUs,
+            maxPoints,
+        })])).then((entries) => {
+            if (!cancelled) setLogSeries(new Map(entries));
+        }).catch((caught) => { if (!cancelled) setError(caught.message); });
+        return () => { cancelled = true; };
+    }, [dataset, graphPixelWidth, selected, sourceKey]);
     useEffect(() => {
         let cancelled = false;
         storageGet(`settings/${encodeURIComponent(LAYOUT_KEY)}`)
@@ -147,11 +212,14 @@ export default function AnalysisPage({ initialLogId, onOpenReplay }) {
     }, [activeView, leftWidth, liveWindow, rightWidth, selected]);
 
     const source = useMemo(() => {
-        if (sourceKey === "live") return { descriptors: store.descriptors(), snapshot: store.snapshot(), events: store.events(), timeUs: store.getTimeUs(), revision };
-        if (sourceKey.startsWith("remote:")) return remoteSources.find((item) => item.sourceId === sourceKey.slice(7)) || { descriptors: [], snapshot: {}, events: [], timeUs: 0 };
-        if (dataset) return { descriptors: dataset.descriptors, snapshot: dataset.snapshotAt(timelineState.timeUs), events: dataset.events, timeUs: timelineState.timeUs };
+        if (sourceKey === "live") return { descriptors: store.descriptors(), snapshot: store.snapshot({ includeHeavy: false }), events: store.events(), timeUs: localSimulationTimeUs(store), revision };
+        if (sourceKey.startsWith("remote:")) {
+            const remote = remoteSources.find((item) => item.sourceId === sourceKey.slice(7));
+            return remote ? { ...remote, timeUs: remoteSimulationTimeUs(remote) } : { descriptors: [], snapshot: {}, events: [], timeUs: 0 };
+        }
+        if (dataset) return { descriptors: dataset.descriptors, snapshot: datasetSnapshot, events: dataset.events, timeUs: timelineState.timeUs };
         return { descriptors: [], snapshot: {}, events: [], timeUs: 0 };
-    }, [dataset, remoteSources, revision, sourceKey, store, timelineState.timeUs]);
+    }, [dataset, datasetSnapshot, remoteSources, revision, sourceKey, store, timelineState.timeUs]);
 
     const fieldRows = useMemo(() => {
         const rows = [];
@@ -193,26 +261,36 @@ export default function AnalysisPage({ initialLogId, onOpenReplay }) {
     }, [selected.length]);
 
     const samplesFor = useCallback((item) => {
-        if (dataset && sourceKey.startsWith("log:")) return dataset.getSeries(item.path, item.field);
+        if (dataset && sourceKey.startsWith("log:")) return logSeries.get(selectionKey(item)) || [];
         if (sourceKey === "live") return store.series(item.path).map((sample) => ({ ...sample, value: item.field ? item.field.split(".").reduce((value, key) => value?.[key], sample.value) : sample.value }));
+        if (sourceKey.startsWith("remote:")) {
+            return bridge.getSeries(sourceKey.slice(7), item.path).map((sample) => ({
+                ...sample,
+                value: item.field ? item.field.split(".").reduce((current, key) => current?.[key], sample.value) : sample.value,
+            }));
+        }
         const raw = source.snapshot?.[item.path];
         const value = raw?.value !== undefined ? raw.value : raw;
         return [{ timeUs: source.timeUs || 0, value: item.field ? item.field.split(".").reduce((current, key) => current?.[key], value) : value }];
-    }, [dataset, source, sourceKey, store]);
+    }, [bridge, dataset, logSeries, source, sourceKey, store]);
 
     const graphData = useMemo(() => {
-        const series = selected.map(samplesFor);
+        const rawSeries = selected.map(samplesFor);
+        const newestTime = rawSeries.reduce((latest, samples) => Math.max(latest, samples.at(-1)?.timeUs || 0), 0);
+        const windowStart = !sourceKey.startsWith("log:") && timelineState.liveLocked ? Math.max(0, newestTime - liveWindow * 1e6) : 0;
+        const maxPoints = Math.min(2000, Math.max(2, Math.floor(graphPixelWidth * 2)));
+        const series = rawSeries.map((samples) => downsampleMinMax(samples.filter((sample) => (sample.timeUs || 0) >= windowStart), maxPoints));
         const times = [...new Set(series.flatMap((samples) => samples.map((sample) => sample.timeUs || 0)))].sort((a, b) => a - b);
-        const windowStart = sourceKey === "live" && timelineState.liveLocked ? Math.max(0, (times.at(-1) || 0) - liveWindow * 1e6) : 0;
         const visibleTimes = times.filter((time) => time >= windowStart);
         return [visibleTimes.map((time) => time / 1e6), ...series.map((samples) => {
             const values = new Map(samples.map((sample) => [sample.timeUs || 0, typeof sample.value === "number" ? sample.value : null]));
             return visibleTimes.map((time) => values.get(time) ?? null);
         })];
-    }, [liveWindow, samplesFor, selected, sourceKey, timelineState.liveLocked]);
+    }, [graphPixelWidth, liveWindow, samplesFor, selected, sourceKey, timelineState.liveLocked]);
 
     const removeSignal = (index) => setSelected((current) => current.filter((_item, itemIndex) => itemIndex !== index));
     const updateSignal = (index, patch) => setSelected((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item));
+    const isLiveSource = !sourceKey.startsWith("log:");
 
     const handleImport = async (event) => {
         const file = event.target.files?.[0];
@@ -253,10 +331,10 @@ export default function AnalysisPage({ initialLogId, onOpenReplay }) {
             <header className="flex h-14 shrink-0 items-center gap-3 border-b border-zinc-800 px-3">
                 <div className="mr-2 min-w-0"><h1 className="text-[13px] font-semibold tracking-wide">Analysis</h1><p className="text-[10px] text-zinc-500">Live and recorded telemetry</p></div>
                 <div className="flex min-w-0 flex-1 items-center gap-2">
-                    <FaBroadcastTower className={sourceKey === "live" ? "text-emerald-400" : "text-zinc-600"} />
+                    <FaBroadcastTower className={isLiveSource ? "text-emerald-400" : "text-zinc-600"} />
                     <select value={sourceKey} onChange={(event) => setSourceKey(event.target.value)} className="h-8 min-w-0 max-w-md flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-2 text-[11px] outline-none focus:border-sky-500">
                         <option value="live">Live · this simulator tab</option>
-                        {remoteSources.map((remote) => <option key={remote.sourceId} value={`remote:${remote.sourceId}`}>Live · {remote.sourceId}</option>)}
+                        {remoteSources.map((remote) => <option key={remote.sourceId} value={`remote:${remote.sourceId}`}>Live · {remote.metadata?.environmentId || "unmanaged"} · {remote.metadata?.simulationStatus || "idle"} · {remote.sourceId.slice(-6)}</option>)}
                         {logs.map((log) => <option key={log.id} value={`log:${log.id}`}>Log · {log.name}</option>)}
                     </select>
                     <button type="button" className="workspace-button" onClick={() => fileRef.current?.click()}><FaFileImport /> Import log</button>
@@ -287,14 +365,14 @@ export default function AnalysisPage({ initialLogId, onOpenReplay }) {
                         </div>
                     </div>
                     <div className="min-h-0 flex-1" onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); try { addSignal(JSON.parse(event.dataTransfer.getData("application/x-fusion-signal"))); } catch {} }}>
-                        {activeView === "graph" && <UPlotGraph data={graphData} series={selected} onCursor={(timeUs) => timeline.seek(timeUs)} onUnlockLive={() => { if (sourceKey === "live" && timeline.getSnapshot().liveLocked) timeline.set({ liveLocked: false }); }} />}
+                        {activeView === "graph" && <UPlotGraph data={graphData} series={selected} onWidth={setGraphPixelWidth} onCursor={(timeUs) => timeline.seek(timeUs)} onUnlockLive={() => { if (isLiveSource && timeline.getSnapshot().liveLocked) timeline.set({ liveLocked: false }); }} />}
                         {activeView === "table" && <SignalTable selected={selected} samplesFor={samplesFor} timeUs={timelineState.timeUs} />}
                         {activeView === "events" && <EventView events={source.events || []} timeline={timeline} />}
                     </div>
                     <div className="shrink-0 border-t border-zinc-800 px-3 py-2">
                         <div className="mb-1.5 flex items-center gap-2">
-                            <button type="button" onClick={() => { const timeUs = sourceKey === "live" ? store.getTimeUs() : timelineState.durationUs; timeline.set({ timeUs, liveLocked: sourceKey === "live" }); }} className={`workspace-button ${timelineState.liveLocked && sourceKey === "live" ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200" : ""}`}>{timelineState.liveLocked && sourceKey === "live" ? <FaLock /> : <FaUnlock />}{sourceKey === "live" ? "Live" : "Cursor"}</button>
-                            {sourceKey === "live" && <select value={liveWindow} onChange={(event) => setLiveWindow(Number(event.target.value))} className="h-8 rounded-lg border border-zinc-700 bg-zinc-900 px-2 text-[10px] outline-none">{[10, 30, 60, 120].map((seconds) => <option key={seconds} value={seconds}>{seconds}s window</option>)}</select>}
+                            <button type="button" onClick={() => { const timeUs = sourceKey === "live" ? localSimulationTimeUs(store) : isLiveSource ? source.timeUs : timelineState.durationUs; timeline.set({ timeUs, liveLocked: isLiveSource }); }} className={`workspace-button ${timelineState.liveLocked && isLiveSource ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200" : ""}`}>{timelineState.liveLocked && isLiveSource ? <FaLock /> : <FaUnlock />}{isLiveSource ? "Live" : "Cursor"}</button>
+                            {!sourceKey.startsWith("log:") && <select value={liveWindow} onChange={(event) => setLiveWindow(Number(event.target.value))} className="h-8 rounded-lg border border-zinc-700 bg-zinc-900 px-2 text-[10px] outline-none">{[10, 30, 60, 120].map((seconds) => <option key={seconds} value={seconds}>{seconds}s window</option>)}</select>}
                             <span className="ml-auto font-mono text-[10px] text-zinc-500">{formatCursor(timelineState.timeUs)} / {formatCursor(timelineState.durationUs)}</span>
                         </div>
                         <input aria-label="Analysis timeline" type="range" min="0" max={Math.max(1, timelineState.durationUs)} step="1000" value={Math.min(timelineState.timeUs, Math.max(1, timelineState.durationUs))} onChange={(event) => timeline.seek(Number(event.target.value))} className="timeline-range w-full" />
@@ -315,7 +393,51 @@ export default function AnalysisPage({ initialLogId, onOpenReplay }) {
 }
 
 function SignalTree({ groups, query, expanded, onToggle, onAdd }) {
-    return <div className="min-h-0 flex-1 overflow-y-auto py-1">{groups.map(([group, rows]) => { const open = Boolean(query) || expanded.has(group); return <div key={group}><button type="button" onClick={() => onToggle(group)} className="flex w-full items-center gap-2 border-b border-zinc-900 px-2.5 py-2 text-left text-[9px] font-semibold uppercase tracking-[0.12em] text-zinc-500 hover:bg-zinc-900 hover:text-zinc-300">{open ? <FaChevronDown className="text-[8px]" /> : <FaChevronRight className="text-[8px]" />}<span className="flex-1">{group}</span><span className="font-mono text-[8px] text-zinc-700">{rows.length}</span></button>{open && rows.map((row) => { const key = `${row.path}.${row.field}`; return <button key={key} type="button" draggable={row.numeric} onDragStart={(event) => event.dataTransfer.setData("application/x-fusion-signal", JSON.stringify(row))} onDoubleClick={() => onAdd(row)} onKeyDown={(event) => { if (event.key === "Enter") onAdd(row); }} className="group flex w-full items-center gap-1.5 px-2 py-1.5 pl-4 text-left hover:bg-zinc-900 focus:bg-zinc-900 focus:outline-none"><FaGripVertical className="text-[8px] text-zinc-800 group-hover:text-zinc-600" /><span className={`h-1.5 w-1.5 rounded-full ${row.numeric ? "bg-sky-400" : "bg-zinc-700"}`} /><span className="min-w-0 flex-1"><span className="block truncate font-mono text-[9px] text-zinc-300">{row.field ? <><span className="text-zinc-600">{row.path}.</span>{row.field}</> : row.path}</span><span className="block truncate text-[8px] text-zinc-600">{row.descriptor.type}{row.descriptor.unit ? ` · ${row.descriptor.unit}` : ""} · {formatValue(row.value)}</span></span>{row.numeric && <FaPlus className="text-[8px] text-zinc-700 group-hover:text-sky-300" />}</button>; })}</div>; })}</div>;
+    return (
+        <div className="min-h-0 flex-1 overflow-y-auto py-1">
+            {groups.map(([group, rows]) => {
+                const open = Boolean(query) || expanded.has(group);
+                return (
+                    <div key={group}>
+                        <button type="button" onClick={() => onToggle(group)} className="flex w-full items-center gap-2 border-b border-zinc-900 px-2.5 py-2 text-left text-[9px] font-semibold uppercase tracking-[0.12em] text-zinc-500 hover:bg-zinc-900 hover:text-zinc-300">
+                            {open ? <FaChevronDown className="text-[8px]" /> : <FaChevronRight className="text-[8px]" />}
+                            <span className="flex-1">{group}</span>
+                            <span className="font-mono text-[8px] text-zinc-700">{rows.length}</span>
+                        </button>
+                        {open && rows.map((row) => {
+                            const key = `${row.path}.${row.field}`;
+                            const label = row.field ? `${row.path}.${row.field}` : row.path;
+                            return (
+                                <div key={key} className="group flex w-full items-center gap-1 px-2 py-1 pl-4 hover:bg-zinc-900 focus-within:bg-zinc-900">
+                                    <button
+                                        type="button"
+                                        disabled={!row.numeric}
+                                        draggable={row.numeric}
+                                        onDragStart={(event) => event.dataTransfer.setData("application/x-fusion-signal", JSON.stringify(row))}
+                                        onDoubleClick={() => onAdd(row)}
+                                        onKeyDown={(event) => { if (event.key === "Enter") onAdd(row); }}
+                                        className="flex min-w-0 flex-1 items-center gap-1.5 text-left focus:outline-none disabled:cursor-default"
+                                    >
+                                        <FaGripVertical className="text-[8px] text-zinc-800 group-hover:text-zinc-600" />
+                                        <span className={`h-1.5 w-1.5 rounded-full ${row.numeric ? "bg-sky-400" : "bg-zinc-700"}`} />
+                                        <span className="min-w-0 flex-1">
+                                            <span className="block truncate font-mono text-[9px] text-zinc-300">{row.field ? <><span className="text-zinc-600">{row.path}.</span>{row.field}</> : row.path}</span>
+                                            <span className="block truncate text-[8px] text-zinc-600">{row.descriptor.type}{row.descriptor.unit ? ` · ${row.descriptor.unit}` : ""} · {formatValue(row.value)}</span>
+                                        </span>
+                                    </button>
+                                    {row.numeric && (
+                                        <button type="button" onClick={() => onAdd(row)} aria-label={`Add ${label} to graph`} title={`Add ${label} to graph`} className="grid h-6 w-6 shrink-0 place-items-center rounded text-zinc-700 hover:bg-sky-500/10 hover:text-sky-300 focus:outline-none focus:ring-1 focus:ring-sky-500/60">
+                                            <FaPlus className="text-[8px]" />
+                                        </button>
+                                    )}
+                                </div>
+                            );
+                        })}
+                    </div>
+                );
+            })}
+        </div>
+    );
 }
 
 function SignalConfiguration({ selected, onRemove, onUpdate, onExport, onImport }) {

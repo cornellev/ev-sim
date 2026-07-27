@@ -6,6 +6,8 @@ import Scripting from './scripting/Scripting';
 import BindingsPage from './scripting/bindings/BindingsPage';
 import ReplayPage from './replay/ReplayPage';
 import AnalysisPage from './analysis/AnalysisPage';
+import ConfigPage from './config/ConfigPage';
+import VehicleEditorPage from './vehicles/editor/VehicleEditorPage';
 import Menu from './3d/overlay/menu/Menu';
 import { APP_VIEWS, THREE_D_MODES } from './3d/viewState';
 import {
@@ -14,6 +16,9 @@ import {
     setActiveEnvironmentId,
 } from './3d/environment/EnvironmentCatalogClient';
 import { subscribeStorageEvents } from './client/storageEvents';
+import { getRunSessionController } from './simulation/RunSessionController';
+import { resolveRunManifest } from './simulation/RunManifestClient';
+import { getTelemetryTabBridge } from './telemetry/TelemetryRuntime';
 
 
 export default function Home() {
@@ -23,6 +28,16 @@ export default function Home() {
     const [activeEnvironmentId, setActiveEnvironment] = useState(null);
     const [selectedLogId, setSelectedLogId] = useState(null);
     const [replayCommand, setReplayCommand] = useState(null);
+
+    useEffect(() => {
+        const bridge = getTelemetryTabBridge();
+        return () => bridge.stop();
+    }, []);
+
+    useEffect(() => {
+        const workspace = view === APP_VIEWS.THREE_D ? threeDMode : view;
+        getTelemetryTabBridge().setContext({ workspace, environmentId: activeEnvironmentId });
+    }, [activeEnvironmentId, threeDMode, view]);
 
     const closeMenu = useCallback(() => {
         setMenuVisible(false);
@@ -62,12 +77,32 @@ export default function Home() {
         setMenuVisible(false);
     }, []);
 
+    const goToConfig = useCallback(() => {
+        setView(APP_VIEWS.CONFIG);
+        setMenuVisible(false);
+    }, []);
+
+    const goToVehicleEditor = useCallback(() => {
+        setView(APP_VIEWS.VEHICLE_EDITOR);
+        setMenuVisible(false);
+    }, []);
+
     const selectEnvironment = useCallback((environmentId) => {
         setActiveEnvironment(environmentId);
         setActiveEnvironmentId(environmentId).catch((error) => {
             console.error("Could not persist active environment:", error);
         });
     }, []);
+
+    useEffect(() => getRunSessionController().setEnvironmentHandler(selectEnvironment), [selectEnvironment]);
+
+    const launchResolvedRun = useCallback((resolved) => {
+        const environmentId = resolved?.manifest?.environment?.id;
+        if (environmentId) selectEnvironment(environmentId);
+        setView(APP_VIEWS.THREE_D);
+        setThreeDMode(THREE_D_MODES.SIMULATION);
+        setMenuVisible(false);
+    }, [selectEnvironment]);
 
     useEffect(() => {
         let cancelled = false;
@@ -91,6 +126,17 @@ export default function Home() {
                 setActiveEnvironment(event.id);
                 return;
             }
+            if (event.domain === "run-manifest" && event.action === "launch" && event.id) {
+                resolveRunManifest(event.id)
+                    .then(async (resolved) => {
+                        await getRunSessionController().prepare(resolved, {
+                            autoplay: event.data?.autoplay === true,
+                        });
+                        launchResolvedRun(resolved);
+                    })
+                    .catch((error) => console.warn("Could not launch MCP run manifest:", error));
+                return;
+            }
             if (event.domain !== "replay" || !event.data?.logId) return;
             setSelectedLogId(event.data.logId);
             setReplayCommand({
@@ -101,7 +147,7 @@ export default function Home() {
             setView(APP_VIEWS.REPLAY);
             setMenuVisible(false);
         });
-    }, []);
+    }, [launchResolvedRun]);
 
     useEffect(() => {
         const ev = (e) => {
@@ -129,6 +175,8 @@ export default function Home() {
                     onEnvironmentEditor={goToEnvironmentEditor}
                     onScripting={goToScripting}
                     onBindings={goToBindings}
+                    onConfig={goToConfig}
+                    onVehicleEditor={goToVehicleEditor}
                     onReplay={goToReplay}
                     onAnalysis={goToAnalysis}
                 />
@@ -149,6 +197,12 @@ export default function Home() {
             view === APP_VIEWS.ANALYSIS && (
                 <AnalysisPage initialLogId={selectedLogId} onOpenReplay={goToReplay} />
             )
+        }
+        {
+            view === APP_VIEWS.CONFIG && <ConfigPage onLaunch={launchResolvedRun} />
+        }
+        {
+            view === APP_VIEWS.VEHICLE_EDITOR && <VehicleEditorPage />
         }
         {
             activeEnvironmentId && (

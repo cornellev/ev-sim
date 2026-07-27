@@ -1,14 +1,26 @@
-import { getScriptSetting, putScriptSetting } from "../ScriptStorage.js";
+import { storageGet, storagePut } from "../../client/storageClient.js";
+import { getScriptSetting } from "../ScriptStorage.js";
 import { createBindingManifest, normalizeBindingManifest } from "./BindingDocument.js";
 
 const MANIFEST_KEY = "bindings:manifest";
 
 export async function getBindingManifest() {
-    const stored = await getScriptSetting(MANIFEST_KEY);
-    if (!stored) return createBindingManifest();
+    const canonical = await storageGet("bindings");
+    if (canonical) {
+        const normalized = normalizeBindingManifest(canonical);
+        if (canonical.version !== normalized.version) {
+            await storagePut("bindings", normalized);
+        }
+        return normalized;
+    }
+
+    const legacy = await getScriptSetting(MANIFEST_KEY);
+    if (!legacy) return createBindingManifest();
 
     try {
-        return normalizeBindingManifest(stored);
+        const migrated = normalizeBindingManifest(legacy);
+        await storagePut("bindings", migrated);
+        return migrated;
     } catch {
         return createBindingManifest();
     }
@@ -19,8 +31,7 @@ export async function putBindingManifest(manifest) {
         ...manifest,
         updatedAt: new Date().toISOString()
     });
-    await putScriptSetting(MANIFEST_KEY, normalized);
-    return normalized;
+    return storagePut("bindings", normalized);
 }
 
 export function serializeBindingManifest(manifest) {

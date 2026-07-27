@@ -1,4 +1,5 @@
 import { normalizeSignalPath } from "./SignalPaths.js";
+import { simulationTimeUsFromValues } from "../../telemetry/SimulationClock.js";
 
 function nowIso(now = Date.now()) {
     const value = typeof now === "function" ? now() : now;
@@ -167,7 +168,16 @@ export class SignalStore {
         this.hydrate(initialValues);
     }
 
+    getSimulationTimeUs() {
+        return simulationTimeUsFromValues(
+            this._committed.get("simulation.timeNs"),
+            this._committed.get("simulation.time"),
+        );
+    }
+
     getTimeUs() {
+        const simulationTimeUs = this.getSimulationTimeUs();
+        if (simulationTimeUs !== null) return simulationTimeUs;
         return Math.max(0, Math.round((monotonicNowMs() - this.sessionStartedAtMs) * 1000));
     }
 
@@ -299,9 +309,13 @@ export class SignalStore {
         });
     }
 
-    snapshot() {
+    snapshot({ paths = null, includeHeavy = true } = {}) {
+        const selectedPaths = Array.isArray(paths) ? new Set(paths.map(normalizeSignalPath).filter(Boolean)) : null;
         return Object.fromEntries(
-            [...this._committed.entries()].map(([path, entry]) => [path, cloneValue(entry)])
+            [...this._committed.entries()]
+                .filter(([path]) => !selectedPaths || selectedPaths.has(path))
+                .filter(([path]) => includeHeavy || this._descriptors.get(path)?.logClass !== "heavy")
+                .map(([path, entry]) => [path, cloneValue(entry)])
         );
     }
 
@@ -527,7 +541,9 @@ export class SignalStore {
     }
 
     history(path) {
-        return (this._history.get(normalizeSignalPath(path)) || []).map((entry) => cloneValue(entry));
+        const buffer = this._history.get(normalizeSignalPath(path));
+        if (!buffer) return [];
+        return buffer.items.slice(buffer.head).map((entry) => cloneValue(entry));
     }
 
     series(path, { fromUs = 0, toUs = Number.POSITIVE_INFINITY } = {}) {
@@ -541,14 +557,24 @@ export class SignalStore {
         const normalizedPath = normalizeSignalPath(path);
         if (!normalizedPath) return;
 
-        const current = this._history.get(normalizedPath) || [];
-        current.push(cloneValue(entry));
+        const buffer = this._history.get(normalizedPath) || { items: [], head: 0 };
+        buffer.items.push(cloneValue(entry));
+        const descriptor = this._descriptors.get(normalizedPath);
         const limit = maxSamples !== null && maxSamples !== undefined && Number.isFinite(Number(maxSamples))
             ? Math.max(1, Number(maxSamples))
-            : this.historySampleLimit;
+            : descriptor?.logClass === "heavy" ? 1 : this.historySampleLimit;
         const newestTimeUs = entry?.timeUs ?? this.getTimeUs();
         const oldestTimeUs = Math.max(0, newestTimeUs - this.historyDurationUs);
-        const bounded = current.filter((sample) => (sample.timeUs ?? newestTimeUs) >= oldestTimeUs);
-        this._history.set(normalizedPath, bounded.slice(-limit));
+        while (buffer.head < buffer.items.length) {
+            const activeLength = buffer.items.length - buffer.head;
+            const sampleTimeUs = buffer.items[buffer.head]?.timeUs ?? newestTimeUs;
+            if (activeLength <= limit && sampleTimeUs >= oldestTimeUs) break;
+            buffer.head += 1;
+        }
+        if (buffer.head > 1024 && buffer.head * 2 >= buffer.items.length) {
+            buffer.items = buffer.items.slice(buffer.head);
+            buffer.head = 0;
+        }
+        this._history.set(normalizedPath, buffer);
     }
 }

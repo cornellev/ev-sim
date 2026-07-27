@@ -43,6 +43,7 @@ export class RecordingController {
         this.sequence = 0;
         this.lastCheckpointUs = 0;
         this.recordingTimeOriginUs = 0;
+        this.timeBase = "wall";
         this._unsubscribe = null;
         this._flushTimer = null;
         this._uploadChain = Promise.resolve();
@@ -98,6 +99,13 @@ export class RecordingController {
                 simulator: options.simulator,
                 profile: this.profile,
                 appVersion: options.appVersion || "0.1.0",
+                gitHash: options.gitHash || null,
+                runId: options.runId || null,
+                manifestId: options.manifestId || null,
+                manifestRevision: options.manifestRevision || null,
+                definitionHash: options.definitionHash || null,
+                resolvedHash: options.resolvedHash || null,
+                provenance: options.provenance || null,
             });
             this.session = created.metadata;
             this.session.id = created.id;
@@ -110,6 +118,7 @@ export class RecordingController {
             this.sequence = 0;
             this.lastCheckpointUs = 0;
             this.recordingTimeOriginUs = this.store.getTimeUs();
+            this.timeBase = options.timeBase === "simulation" ? "simulation" : "wall";
             this._lastValues.clear();
             this._lastSamples.clear();
             for (const attachment of options.attachments || []) this.encoder.addAttachment(attachment);
@@ -125,7 +134,7 @@ export class RecordingController {
             }
             this.encoder.addCheckpoint(initialSnapshot, descriptors, initialTimeUs);
             this.lastCheckpointUs = initialTimeUs;
-            this.store.emitTelemetryEvent({ category: "logging", name: "recording-started", payload: { id: created.id, profile: this.profile.id } });
+            this.store.emitTelemetryEvent({ timeUs: this.timeBase === "simulation" ? 0 : undefined, category: "logging", name: "recording-started", payload: { id: created.id, profile: this.profile.id } });
             this._unsubscribe = this.store.subscribeSignals({ includeEvents: true, includeCatalog: false }, (message) => this._capture(message));
             this._flushTimer = setInterval(() => this._flush(), FLUSH_INTERVAL_MS);
             this._emit();
@@ -143,12 +152,12 @@ export class RecordingController {
         if (message.kind === "event") {
             this.encoder.addEvent({
                 ...message.event,
-                timeUs: Math.max(0, Number(message.event?.timeUs || 0) - this.recordingTimeOriginUs),
+                timeUs: this._recordingTimeUs(message.event?.timeUs),
             });
             return;
         }
         if (message.kind !== "update") return;
-        const recordingTimeUs = Math.max(0, Number(message.timeUs || 0) - this.recordingTimeOriginUs);
+        const recordingTimeUs = this._recordingTimeUs(message.timeUs);
         const descriptor = message.descriptor || { path: message.path, type: message.entry?.type || "json" };
         const rule = resolveProfileRule(this.profile, descriptor);
         if (!rule.enabled) return;
@@ -171,6 +180,11 @@ export class RecordingController {
             this.lastCheckpointUs = recordingTimeUs;
         }
         if (this.encoder.byteEstimate >= 256 * 1024) this._flush();
+    }
+
+    _recordingTimeUs(value) {
+        const timeUs = Math.max(0, Number(value || 0));
+        return this.timeBase === "simulation" ? timeUs : Math.max(0, timeUs - this.recordingTimeOriginUs);
     }
 
     _flush() {
@@ -208,24 +222,36 @@ export class RecordingController {
             });
     }
 
-    async stop() {
+    addAttachment(attachment) {
+        if (!this.encoder || !this.session || !attachment) return false;
+        this.encoder.addAttachment(attachment);
+        return true;
+    }
+
+    async stop(finalizePatch = {}) {
         if (!this.session || !["recording", "error"].includes(this.status)) return null;
         this.status = "stopping";
         clearInterval(this._flushTimer);
         this._flushTimer = null;
         this._unsubscribe?.();
         this._unsubscribe = null;
-        this.store.emitTelemetryEvent({ category: "logging", name: "recording-stopped", payload: { id: this.session.id } });
+        const finalTimeUs = this.timeBase === "simulation"
+            ? Math.round(Number(this._simulation?.timeNs || 0) / 1000)
+            : Math.max(0, this.store.getTimeUs() - this.recordingTimeOriginUs);
+        this.store.emitTelemetryEvent({ timeUs: finalTimeUs, category: "logging", name: "recording-stopped", payload: { id: this.session.id } });
         this.encoder?.addCheckpoint(
             this.store.snapshot(),
             this.store.descriptors(),
-            Math.max(0, this.store.getTimeUs() - this.recordingTimeOriginUs),
+            finalTimeUs,
         );
         this._flush();
         this._emit();
         try {
             await this._uploadChain;
-            const metadata = await finalizeLogSession(this.session.id, { incomplete: Boolean(this.error || this.droppedSamples) });
+            const metadata = await finalizeLogSession(this.session.id, {
+                ...finalizePatch,
+                incomplete: Boolean(finalizePatch.incomplete || this.error || this.droppedSamples),
+            });
             this.status = "idle";
             this.session = null;
             this.encoder = null;
