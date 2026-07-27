@@ -211,7 +211,7 @@ export default function ReplayPage({ initialLogId, mcpCommand, onOpenAnalysis, o
     return (
         <WorkspaceFrame
             title="Replay"
-            subtitle="Read-only state and event playback"
+            subtitle=""
             onOpenWorkspace={onOpenWorkspace}
             contentClassName={styles.workspaceContent}
             actions={(

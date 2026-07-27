@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { IconArrowDown, IconArrowUp, IconChevronDown, IconChevronRight, IconX } from "@tabler/icons-react";
+import { IconArrowDown, IconArrowUp, IconChevronDown, IconChevronRight, IconLayoutGrid, IconX } from "@tabler/icons-react";
 import { listScriptDocuments } from "../ScriptStorage.js";
 import { summarizeScriptDocument } from "../EditorDocument.js";
 import { SIGNAL_PATHS } from "../runtime/SignalPaths.js";
@@ -1316,14 +1316,17 @@ export default function BindingsPage({ onOpenWorkspace }) {
                 <button type="button" onClick={onOpenWorkspace} className="flex min-w-0 items-center gap-2 rounded-[4px] px-1 py-1 text-left outline-none hover:bg-white/5 focus-visible:ring-2 focus-visible:ring-white/45" aria-label="Open workspace switcher">
                     <span className="text-[11px] font-semibold text-zinc-500">cev-sim</span>
                     <span className="h-3 w-px bg-white/10" aria-hidden="true" />
-                    <span className="text-[13px] font-medium text-zinc-100">Bindings</span>
-                    <span className="hidden text-[11px] text-zinc-500 min-[900px]:inline">Wire scripts to topics, ticks, signals, and timers</span>
+                    <IconLayoutGrid size={15} stroke={1.75} aria-hidden="true" />
+                    <span className="text-[13px]/[13px] font-medium text-zinc-100">Bindings</span>
                 </button>
 
                 <div className="flex-1" />
 
-                <button type="button" onClick={exportManifest} className="bnd-btn">Export</button>
-                <button type="button" onClick={() => fileInputRef.current?.click()} className="bnd-btn">Import</button>
+                <div className="flex gap-2">
+                    <button type="button" onClick={exportManifest} className="bnd-btn">Export</button>
+                    <button type="button" onClick={() => fileInputRef.current?.click()} className="bnd-btn">Import</button>
+                </div>
+
                 <input
                     ref={fileInputRef}
                     type="file"

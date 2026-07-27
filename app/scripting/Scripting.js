@@ -25,6 +25,7 @@ import { TYPES } from "./Constants";
 import {
     IconCircleCheck,
     IconCircleX,
+    IconLayoutGrid,
     IconLayoutSidebarRightCollapse,
     IconLayoutSidebarRightExpand,
 } from "@tabler/icons-react";
@@ -439,11 +440,11 @@ function EditorToolbar({
 }) {
     return (
         <div className="fixed left-18 right-[332px] top-3 z-50 flex min-w-0 items-center gap-2 rounded-[4px] border border-white/10 bg-[var(--slate-floating)] px-2.5 py-2 text-white shadow-[0_16px_40px_rgba(0,0,0,0.24)] backdrop-blur-sm max-[899px]:right-3">
-            <button type="button" onClick={onOpenWorkspace} className="toolbar-btn shrink-0" aria-label="Open workspace switcher">
+            {/* <button type="button" onClick={onOpenWorkspace} className="toolbar-btn shrink-0" aria-label="Open workspace switcher">
                 <span className="font-semibold">cev-sim</span>
                 <span className="mx-1 text-zinc-600" aria-hidden="true">/</span>
                 <span className="text-zinc-300">Scripts</span>
-            </button>
+            </button> */}
             {backStack.length > 0 && (
                 <button
                     type="button"
@@ -1638,6 +1639,10 @@ export default function Scripting({ onOpenWorkspace }) {
                     opacity: 0.4;
                 }
             `}</style>
+
+            <button type="button " onClick={onOpenWorkspace} className="w-[52px] h-[52px] toolbar-btn fixed left-3 top-3 z-[50] rounded-xl border border-white/10 bg-[var(--slate-floating)] shadow-[0_12px_36px_rgba(0,0,0,0.28)] backdrop-blur-sm flex items-center justify-center" title="Open workspace">
+                <IconLayoutGrid size={20} stroke={1.75} aria-hidden="true" />
+            </button>
 
             <EditorToolbar
                 currentDocument={currentDocument}

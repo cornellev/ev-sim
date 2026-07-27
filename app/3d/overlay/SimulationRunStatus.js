@@ -29,12 +29,13 @@ const DOTS = {
     rose: "text-rose-400",
 };
 
-function Metric({ icon, label, value, valueClassName = "text-zinc-100", className = "" }) {
+function Metric({ icon, label, value, valueClassName = "text-zinc-100", className = "", boldValue = "" }) {
     return (
         <div className={`min-w-0 px-3 ${className}`}>
             <div className="flex items-center gap-1.5 text-[11px] font-medium text-zinc-500">
                 {icon}
                 <span>{label}</span>
+                <span className="font-bold">{boldValue}</span>
             </div>
             <p className={`mt-0.5 truncate font-mono text-[11px] font-semibold tabular-nums ${valueClassName}`}>{value}</p>
         </div>
@@ -98,7 +99,8 @@ export function SimulationRunStatus({ simState, runState, recordingState }) {
 
                 <Metric
                     icon={<FaClock aria-hidden="true" className="h-2.5 w-2.5" />}
-                    label={`Step ${simState?.steps ?? 0}`}
+                    label={`Step`}
+                    boldValue={simState?.steps ?? 0}
                     value={formatSimulationTime(simState?.time)}
                     className="max-sm:hidden"
                 />
@@ -106,7 +108,7 @@ export function SimulationRunStatus({ simState, runState, recordingState }) {
                 <div className="min-w-0 px-3 py-2 max-lg:hidden">
                     <div className="flex items-center gap-1.5 text-[11px] font-medium text-zinc-500">
                         <FaDatabase aria-hidden="true" className="h-2.5 w-2.5" />
-                        <span>SFLog</span>
+                        <span>Logging</span>
                     </div>
                     <p className={`mt-0.5 truncate text-[11px] font-semibold ${recordingTone}`}>{recordingLabel}</p>
                 </div>

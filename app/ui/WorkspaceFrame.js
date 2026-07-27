@@ -1,4 +1,4 @@
-import { IconAlertTriangle, IconCheck, IconFolderOff, IconLoader2 } from "@tabler/icons-react";
+import { IconAlertTriangle, IconCheck, IconFolderOff, IconLayoutGrid, IconLoader2 } from "@tabler/icons-react";
 
 import { Button } from "./Button";
 import { cx } from "./cx";
@@ -20,6 +20,7 @@ export function WorkspaceFrame({
                 <button type="button" className="sf-workspace-identity" onClick={onOpenWorkspace}>
                     <span className="sf-workspace-identity__product">cev-sim</span>
                     <span className="sf-workspace-identity__divider" aria-hidden="true" />
+                    <IconLayoutGrid size={15} stroke={1.75} aria-hidden="true" />
                     <span className="sf-workspace-identity__title">{title}</span>
                     {subtitle && <span className="sf-workspace-identity__subtitle">{subtitle}</span>}
                 </button>

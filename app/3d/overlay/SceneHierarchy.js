@@ -69,7 +69,7 @@ export function SceneHierarchy({ data, compactOpen = false }) {
 
     return (
         <div
-            className={cn("absolute left-3 top-[58px] z-30 w-[312px] max-w-[calc(100vw-24px)] rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-950/85 p-2.5 text-zinc-100 shadow-[0_30px_80px_rgba(0,0,0,0.45)] pointer-events-auto", !compactOpen && "max-[1023px]:hidden")}
+            className={cn("absolute left-3 top-[58px] z-30 w-[292px] max-w-[calc(100vw-24px)] rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-950/85 p-2.5 text-zinc-100 shadow-[0_30px_80px_rgba(0,0,0,0.45)] pointer-events-auto", !compactOpen && "max-[1023px]:hidden")}
             onMouseDown={controls.disable}
             onMouseUp={controls.enable}
             onMouseLeave={controls.enable}
@@ -84,7 +84,7 @@ export function SceneHierarchy({ data, compactOpen = false }) {
                 </div>
             </div>
 
-            <div className="max-h-[60vh] space-y-1 overflow-auto pr-1">
+            <div className="max-h-[60vh] space-y-1 overflow-auto pr-1 hide-scrollbar">
                 {chunkKeys.map((chunkKey) => {
                     const entities = grouped[chunkKey] ?? [];
                     const expanded = expandedChunks[chunkKey] !== false;

@@ -637,7 +637,7 @@ function setupBaking(data, scene) {
 
         const splatAccumulator = new SplatAccumulator(scene, bakeConfig.splat);
         data.setSplatAccumulator(splatAccumulator);
-        samplePath.display(data);
+        //samplePath.display(data);
         data.setBakeHarness(harness);
     } catch (error) {
         harness.dispose();

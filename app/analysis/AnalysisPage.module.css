@@ -20,7 +20,10 @@
 }
 
 .sourceSelector select { min-height: 32px; }
-.headerClock { color: var(--slate-fg-2); font-family: var(--font-geist-mono), monospace; font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.headerClock { 
+    color: var(--slate-fg-2); font-family: var(--font-geist-mono), monospace; font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; 
+    line-height: 12px;
+}
 
 .error {
     flex: none;

@@ -359,13 +359,14 @@ export default function AnalysisPage({ initialLogId, onOpenReplay, onOpenWorkspa
     return (
         <WorkspaceFrame
             title="Analysis"
-            subtitle="Live and recorded telemetry"
+            subtitle=""
             onOpenWorkspace={onOpenWorkspace}
             contentClassName={styles.workspaceContent}
             actions={(
                 <>
                     <div className={styles.sourceSelector}>
                         <IconBroadcast size={15} stroke={1.75} aria-hidden="true" />
+                        <div className="w-[2px]"></div>
                         <NativeSelect value={sourceKey} onChange={(event) => setSourceKey(event.target.value)} aria-label="Telemetry source">
                             <option value="live">Live · this simulator tab</option>
                             {remoteSources.map((remote) => <option key={remote.sourceId} value={`remote:${remote.sourceId}`}>Live · {remote.metadata?.environmentId || "unmanaged"} · {remote.metadata?.simulationStatus || "idle"} · {remote.sourceId.slice(-6)}</option>)}
@@ -374,6 +375,7 @@ export default function AnalysisPage({ initialLogId, onOpenReplay, onOpenWorkspa
                     </div>
                     <Button size="compact" onClick={() => fileRef.current?.click()}><IconFileImport size={15} stroke={1.75} /> Import log</Button>
                     <input ref={fileRef} hidden type="file" accept=".sflog,application/x-sflog" onChange={handleImport} />
+                    <div className="w-[2px]"></div>
                     <span className={styles.headerClock}>{formatCursor(timelineState.timeUs)}</span>
                     {sourceKey.startsWith("log:") && <Button size="compact" onClick={() => onOpenReplay?.(sourceKey.slice(4))}><IconMovie size={15} stroke={1.75} /> Replay</Button>}
                 </>

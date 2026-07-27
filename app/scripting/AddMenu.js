@@ -227,11 +227,11 @@ export function AddMenu({ onAddUnit = () => {} }) {
         <aside
             data-block-library
             className={cx(
-                "fixed bottom-4 left-3 top-[64px] z-50 flex overflow-hidden rounded-[4px] border border-white/10 bg-[var(--slate-surface-1)] text-white shadow-[0_16px_40px_rgba(0,0,0,0.28)] transition-[width,background-color,border-color] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)]",
-                open ? "w-[330px] max-[899px]:w-[min(330px,calc(100vw-24px))]" : "w-12"
+                "fixed bottom-4 left-3 top-[72px] z-50 flex overflow-hidden rounded-[4px] border border-white/10 bg-[var(--slate-surface-1)] text-white shadow-[0_16px_40px_rgba(0,0,0,0.28)] transition-[width,background-color,border-color] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)]",
+                open ? "w-[330px] max-[899px]:w-[min(330px,calc(100vw-24px))]" : "w-[52px]"
             )}
         >
-            <div className="flex w-12 shrink-0 flex-col items-center border-r border-white/8 bg-[var(--slate-bg)] py-2">
+            <div className="flex w-[52px] shrink-0 flex-col items-center border-r border-white/8 bg-[var(--slate-bg)] py-2">
                 <button
                     type="button"
                     aria-label={open ? "Collapse block library" : "Expand block library"}
