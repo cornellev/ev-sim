@@ -1086,6 +1086,10 @@ button,
   transform: scale(0.98);
 }
 
+.sf-tabs__content[data-state="inactive"] {
+  display: none;
+}
+
 .sf-tabs__content:focus-visible {
   outline: none;
 }
@@ -1686,4 +1690,4 @@ body [class~="uppercase"] {
 }
 
 
-.hide-scrollbar::-webkit-scrollbar { display: none; } 
+.hide-scrollbar::-webkit-scrollbar { display: none; }

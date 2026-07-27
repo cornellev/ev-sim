@@ -5,7 +5,7 @@ async function openWorkspace(page, label) {
     await page.keyboard.press("Escape");
     const dialog = page.getByRole("dialog", { name: "Workspaces" });
     await expect(dialog).toBeVisible();
-    await dialog.getByRole("button", { name: new RegExp(`^${label}`) }).click();
+    await dialog.getByRole("button", { name: new RegExp(`^${label}`, "i") }).click();
 }
 
 test("workspace switcher reaches every workspace at laptop height", async ({ page }) => {
@@ -15,7 +15,7 @@ test("workspace switcher reaches every workspace at laptop height", async ({ pag
     const dialog = page.getByRole("dialog", { name: "Workspaces" });
     await expect(dialog).toBeVisible();
     await expect(dialog.getByRole("button")).toHaveCount(9);
-    await expect(dialog.getByRole("button", { name: /^Run configuration/ })).toBeVisible();
+    await expect(dialog.getByRole("button", { name: /^Run configuration/i })).toBeVisible();
 
     const activeWorkspace = dialog.getByRole("button", { name: /^Simulation/ });
     await expect(activeWorkspace).toHaveCSS("background-color", "rgb(33, 35, 37)");
@@ -30,7 +30,7 @@ test("workspace switcher reaches every workspace at laptop height", async ({ pag
 
     for (const label of ["Environment editor", "Run configuration", "Vehicle editor", "Scripting canvas", "Bindings", "Replay", "Analysis"]) {
         if (!(await dialog.isVisible())) await page.keyboard.press("Escape");
-        await dialog.getByRole("button", { name: new RegExp(`^${label}`) }).click();
+        await dialog.getByRole("button", { name: new RegExp(`^${label}`, "i") }).click();
         await expect(dialog).toBeHidden();
         await page.keyboard.press("Escape");
         await expect(dialog).toBeVisible();
@@ -46,6 +46,27 @@ test("global workspace shortcut is suppressed while editing", async ({ page }) =
     await expect(input).toBeFocused();
     await page.keyboard.press("Escape");
     await expect(page.getByRole("dialog", { name: "Workspaces" })).toBeHidden();
+});
+
+test("run configuration tabs show only the selected section", async ({ page }) => {
+    test.setTimeout(60_000);
+    await page.goto("/");
+    await openWorkspace(page, "Run configuration");
+
+    const tabs = page.getByRole("tablist", { name: "Run manifest sections" });
+    const overview = tabs.getByRole("tab", { name: "Overview" });
+    const clock = tabs.getByRole("tab", { name: "Clock" });
+    const nameField = page.getByRole("textbox", { name: "Name" });
+    const stepField = page.getByRole("spinbutton", { name: "Step (nanoseconds)" });
+
+    await expect(overview).toHaveAttribute("aria-selected", "true");
+    await expect(nameField).toBeVisible();
+    await expect(stepField).toBeHidden();
+
+    await clock.click();
+    await expect(clock).toHaveAttribute("aria-selected", "true");
+    await expect(nameField).toBeHidden();
+    await expect(stepField).toBeVisible();
 });
 
 test("phone widths show the deliberate desktop requirement", async ({ page }) => {

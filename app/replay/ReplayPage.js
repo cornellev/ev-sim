@@ -197,6 +197,7 @@ export default function ReplayPage({ initialLogId, mcpCommand, onOpenAnalysis, o
     const manageTrigger = (
         <IconButton
             label="Manage log"
+            tooltip={null}
             disabled={!selectedLog}
             onClick={() => {
                 setNameDraft(selectedLog?.name || "");
@@ -218,6 +219,7 @@ export default function ReplayPage({ initialLogId, mcpCommand, onOpenAnalysis, o
                 <>
                     <div className={styles.logSelector}>
                         <IconFolderOpen size={15} stroke={1.75} aria-hidden="true" />
+                        <div className="w-[2px]"></div>
                         <NativeSelect aria-label="Replay log" value={selectedId} onChange={(event) => setSelectedId(event.target.value)}>
                             <option value="">Choose a log</option>
                             {logs.map((log) => <option key={log.id} value={log.id}>{log.name} · {formatTime(log.durationUs)}</option>)}

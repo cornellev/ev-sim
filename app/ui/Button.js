@@ -27,8 +27,12 @@ export const Button = forwardRef(function Button({
             type={asChild ? undefined : type}
             {...props}
         >
-            {loading && <span className="sf-spinner" aria-hidden="true" />}
-            <span className="sf-button__content">{children}</span>
+            {asChild ? children : (
+                <>
+                    {loading && <span className="sf-spinner" aria-hidden="true" />}
+                    <span className="sf-button__content">{children}</span>
+                </>
+            )}
         </Component>
     );
 });

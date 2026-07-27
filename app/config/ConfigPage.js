@@ -411,11 +411,11 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace }) {
 
     return (
         <main className="fixed inset-0 z-[1] overflow-hidden bg-[var(--slate-bg)] text-[var(--slate-fg)]">
-            <header className="flex h-10 items-center justify-between border-b border-[var(--slate-border)] bg-[var(--slate-surface-1)] px-3">
+            <header className="flex h-12 items-center justify-between border-b border-[var(--slate-border)] bg-[var(--slate-surface-1)] px-3">
                 <button type="button" className="flex min-w-0 items-center gap-2 text-left" onClick={onOpenWorkspace}>
                     <span className="text-[11px] font-medium text-[var(--slate-muted)]">cev-sim</span>
                     <span aria-hidden="true" className="h-3 w-px bg-[var(--slate-border)]" />
-                    <span className="truncate text-[13px] font-semibold">Run configuration</span>
+                    <span className="truncate text-[13px] font-semibold">Run Configuration</span>
                 </button>
                 <div className="flex items-center gap-2">
                     <select
@@ -553,7 +553,41 @@ function InitialState({ draft, update, vehicleCatalog = [] }) {
         ...BUILT_IN_VEHICLE_OPTIONS.map((entry) => entry.id),
         ...vehicleCatalog.map((entry) => entry.id),
     ]);
-    return <div className="space-y-4"><div className="flex items-center justify-between"><Action compact icon={<FaPlus />} label="Add vehicle" onClick={addVehicle} /></div>{draft.initialState.vehicles.map((vehicle, index) => <div key={`${vehicle.id}-${index}`} className="rounded-[var(--radius)] border border-[var(--slate-border-60)] bg-[var(--slate-surface-1)] p-4"><div className="grid gap-3 md:grid-cols-4"><Field label="Stable ID"><input value={vehicle.id} onChange={(event) => update(["initialState", "vehicles", index, "id"], event.target.value)} /></Field><Field label="Vehicle type"><select value={vehicle.type} onChange={(event) => update(["initialState", "vehicles", index, "type"], event.target.value)}>{BUILT_IN_VEHICLE_OPTIONS.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}{vehicleCatalog.length > 0 && <optgroup label="Custom vehicles">{vehicleCatalog.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</optgroup>}{!knownTypes.has(vehicle.type) && <option value={vehicle.type}>{vehicle.type} (missing)</option>}</select></Field><Field label="Steering (rad)"><input type="number" step="0.001" value={vehicle.steeringAngle} onChange={(event) => update(["initialState", "vehicles", index, "steeringAngle"], Number(event.target.value))} /></Field><button type="button" onClick={() => update(["initialState", "vehicles"], draft.initialState.vehicles.filter((_, candidate) => candidate !== index))} className="self-end pb-2 text-left text-[11px] text-[var(--slate-danger)]">Remove vehicle</button></div>{!knownTypes.has(vehicle.type) && <p className="mt-2 text-[11px] text-[var(--slate-warning)]">This vehicle type no longer exists in the catalog; the run will fail to spawn it.</p>}<VectorFields label="Position (m)" value={vehicle.pose.position} onChange={(axis, value) => update(["initialState", "vehicles", index, "pose", "position", axis], value)} /><VectorFields label="Rotation (rad)" value={vehicle.pose.rotation} onChange={(axis, value) => update(["initialState", "vehicles", index, "pose", "rotation", axis], value)} /><VectorFields label="Linear velocity (m/s)" value={vehicle.linearVelocity} onChange={(axis, value) => update(["initialState", "vehicles", index, "linearVelocity", axis], value)} /></div>)}<Field label="Initial signal values"><JsonField value={draft.initialState.signals} onChange={(value) => update(["initialState", "signals"], value)} rows={7} /></Field></div>;
+    return (
+        <div className="space-y-4 mt-4">
+            <div className="flex items-center justify-between">
+                <Action icon={<FaPlus />} label="Add vehicle" onClick={addVehicle} />
+                </div>{draft.initialState.vehicles.map((vehicle, index) => <div key={`${vehicle.id}-${index}`} className="rounded-[var(--radius)] border border-[var(--slate-border-60)] bg-[var(--slate-surface-1)] p-4">
+                    <div className="grid gap-3 md:grid-cols-4">
+                        <Field label="Stable ID">
+                            <input value={vehicle.id} onChange={(event) => update(["initialState", "vehicles", index, "id"], event.target.value)} />
+                        </Field>
+                        <Field label="Vehicle type">
+                            <select value={vehicle.type} onChange={(event) => update(["initialState", "vehicles", index, "type"], event.target.value)}>
+                                {
+                                    BUILT_IN_VEHICLE_OPTIONS.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)
+                                }
+                                {
+                                    vehicleCatalog.length > 0 && 
+                                        <optgroup label="Custom vehicles">
+                                            {vehicleCatalog.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}
+                                        </optgroup>
+                                }
+                            </select>
+                        </Field>
+                        <Field label="Steering (rad)">
+                            <input type="number" step="0.001" value={vehicle.steeringAngle} onChange={(event) => update(["initialState", "vehicles", index, "steeringAngle"], Number(event.target.value))} />
+                        </Field>
+                        <button type="button" onClick={() => update(["initialState", "vehicles"], draft.initialState.vehicles.filter((_, candidate) => candidate !== index))} className="self-end pb-2 text-left text-[11px] text-[var(--slate-danger)]">Remove vehicle</button>
+                    </div>
+                    {!knownTypes.has(vehicle.type) && <p className="mt-2 text-[11px] text-[var(--slate-warning)]">This vehicle type no longer exists in the catalog; the run will fail to spawn it.</p>}
+                    <VectorFields label="Position (m)" value={vehicle.pose.position} onChange={(axis, value) => update(["initialState", "vehicles", index, "pose", "position", axis], value)} />
+                    <VectorFields label="Rotation (rad)" value={vehicle.pose.rotation} onChange={(axis, value) => update(["initialState", "vehicles", index, "pose", "rotation", axis], value)} />
+                    <VectorFields label="Linear velocity (m/s)" value={vehicle.linearVelocity} onChange={(axis, value) => update(["initialState", "vehicles", index, "linearVelocity", axis], value)} />
+                </div>
+            )}
+        </div>
+    );
 }
 
 function Clock({ draft, update }) {

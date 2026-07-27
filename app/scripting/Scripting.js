@@ -307,7 +307,7 @@ function OutputNodeSidebar({ config, onChange, valid }) {
     };
 
     return (
-        <aside className={`fixed right-4 top-16 z-40 overflow-hidden rounded-[4px] border border-white/10 bg-[var(--slate-surface-1)] text-white shadow-[0_16px_40px_rgba(0,0,0,0.24)] transition-[width,border-color,background-color] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] max-[899px]:bottom-4 max-[899px]:top-auto ${collapsed ? "w-12" : "w-[300px] max-w-[calc(100vw-24px)]"}`}>
+        <aside className={`fixed right-4 top-3 z-40 overflow-hidden rounded-[4px] border border-white/10 bg-[var(--slate-surface-1)] text-white shadow-[0_16px_40px_rgba(0,0,0,0.24)] transition-[width,border-color,background-color] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] max-[899px]:bottom-4 max-[899px]:top-auto ${collapsed ? "w-12" : "w-[300px] max-w-[calc(100vw-24px)]"}`}>
             <div className={`${collapsed ? "flex h-full min-h-[156px] flex-col items-center gap-2 p-2" : "border-b border-white/10 px-4 py-3"}`}>
                 <div className={`${collapsed ? "flex flex-col items-center gap-2" : "flex items-center justify-between gap-3"}`}>
                     <button
@@ -1640,7 +1640,7 @@ export default function Scripting({ onOpenWorkspace }) {
                 }
             `}</style>
 
-            <button type="button " onClick={onOpenWorkspace} className="w-[52px] h-[52px] toolbar-btn fixed left-3 top-3 z-[50] rounded-xl border border-white/10 bg-[var(--slate-floating)] shadow-[0_12px_36px_rgba(0,0,0,0.28)] backdrop-blur-sm flex items-center justify-center" title="Open workspace">
+            <button type="button " onClick={onOpenWorkspace} className="w-[52px] h-[52px] toolbar-btn fixed left-3 top-3 z-[50] rounded-l border border-white/10 bg-[var(--slate-floating)] shadow-[0_12px_36px_rgba(0,0,0,0.28)] backdrop-blur-sm flex items-center justify-center" title="Open workspace">
                 <IconLayoutGrid size={20} stroke={1.75} aria-hidden="true" />
             </button>
 
