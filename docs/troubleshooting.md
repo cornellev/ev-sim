@@ -17,7 +17,7 @@ See [Assets](assets.md).
 Start the orchestrator with:
 
 ```bash
-cd /Users/jgrimminck/Coding/py/orchestrator
+cd /your/path/to/orchestrator
 source .venv/bin/activate
 python main.py
 ```

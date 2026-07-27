@@ -49,10 +49,11 @@ npm test
 
 ## Optional Orchestrator
 
-Live ROS-style topics are served by a separate repository:
+Live ROS-style topics are served by a [separate repository](https://github.com/cornellev/orchestrator):
 
 ```bash
-cd /Users/jgrimminck/Coding/py/orchestrator
+git clone https://github.com/cornellev/orchestrator.git
+cd orchestrator
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt

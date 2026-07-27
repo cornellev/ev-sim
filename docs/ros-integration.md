@@ -1,6 +1,6 @@
 # ROS Integration
 
-cev-sim does not talk to ROS directly. It talks to a separate orchestrator process in `/Users/jgrimminck/Coding/py/orchestrator`.
+cev-sim does not talk to ROS directly. It talks to a separate orchestrator process in [orchestrator](https://github.com/cornellev/orchestrator).
 
 ```mermaid
 flowchart LR
@@ -16,7 +16,7 @@ flowchart LR
 Standalone mode, without ROS 2:
 
 ```bash
-cd /Users/jgrimminck/Coding/py/orchestrator
+cd /your/path/to/orchestrator
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -26,7 +26,7 @@ python main.py
 ROS 2 bridge mode:
 
 ```bash
-cd /Users/jgrimminck/Coding/py/orchestrator
+cd /your/path/to/orchestrator
 source .venv/bin/activate
 ROS_ENABLED=true python main.py
 ```

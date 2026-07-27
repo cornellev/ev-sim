@@ -24,7 +24,7 @@ public/scenarios/recorded/NGSIM/Peachtree/USA_Peach-1_1_T-1.xml
 
 `public/messages/` contains fallback `.msg` files used by the browser client when the external orchestrator Types API is unavailable.
 
-The canonical custom message definitions should live in `/Users/jgrimminck/Coding/py/orchestrator/custom_types/`. Keep the browser fallback copies synchronized when message shapes change.
+The canonical custom message definitions should live in the orchestrator repository. Keep the browser fallback copies synchronized when message shapes change.
 
 ## Models
 

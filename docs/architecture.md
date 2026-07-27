@@ -58,7 +58,7 @@ The environment editor authors static world content through an `EnvironmentDocum
 
 cev-sim does not embed ROS. `app/3d/managers/ClientManager.js` creates a browser client from `app/client/Client.js`, syncs message definitions from the external orchestrator Types API, then connects to the orchestrator WebSocket.
 
-The orchestrator repo is at `/Users/jgrimminck/Coding/py/orchestrator`.
+Orchestrator can be found from [this repository](https://github.com/cornellev/orchestrator).
 
 ## Assets
 
