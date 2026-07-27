@@ -697,7 +697,37 @@ function Scripts({ draft, update }) {
 
 function Topics({ draft, update }) {
     const add = () => update(["topics"], [...draft.topics, { id: `topic-${draft.topics.length + 1}`, name: `/topic-${draft.topics.length + 1}`, direction: "output", type: "std_msgs/String", required: false }]);
-    return <div className="space-y-3"><div className="flex justify-end"><Action compact icon={<FaPlus />} label="Add topic" onClick={add} /></div>{draft.topics.map((topic, index) => <div key={`${topic.id}-${index}`} className="grid gap-3 rounded-[var(--radius)] border border-[var(--slate-border-60)] bg-[var(--slate-surface-1)] p-3 md:grid-cols-[1fr_1.4fr_1fr_1.5fr_.8fr_auto]"><Field label="ID"><input value={topic.id} onChange={(event) => update(["topics", index, "id"], event.target.value)} /></Field><Field label="Topic"><input value={topic.name} onChange={(event) => update(["topics", index, "name"], event.target.value)} /></Field><Field label="Direction"><select value={topic.direction} onChange={(event) => update(["topics", index, "direction"], event.target.value)}><option value="input">Input</option><option value="output">Output</option></select></Field><Field label="ROS type"><input value={topic.type} onChange={(event) => update(["topics", index, "type"], event.target.value)} /></Field><Toggle label="Required" value={topic.required} onChange={(value) => update(["topics", index, "required"], value)} /><button type="button" onClick={() => update(["topics"], draft.topics.filter((_, candidate) => candidate !== index))} className="self-end pb-2 text-[11px] text-[var(--slate-danger)]">Remove</button></div>)}</div>;
+    return (
+        <div className="space-y-3">
+            <div className="flex justify-end">
+                <Action compact icon={<FaPlus />} label="Add topic" onClick={add} />
+            </div>
+            {draft.topics.map((topic, index) => <div key={`${topic.id}-${index}`} className="grid gap-3 rounded-[var(--radius)] border border-[var(--slate-border-60)] bg-[var(--slate-surface-1)] p-3 md:grid-cols-[1fr_1.4fr_1fr_1.5fr_.8fr_auto]">
+                <Field label="ID">
+                    <input value={topic.id} onChange={(event) => update(["topics", index, "id"], event.target.value)} />
+                </Field>
+                <Field label="Topic">
+                    <input value={topic.name} onChange={(event) => update(["topics", index, "name"], event.target.value)} />
+                </Field>
+                <Field label="Direction">
+                    <select value={topic.direction} onChange={(event) => update(["topics", index, "direction"], event.target.value)}>
+                        <option value="input">Input</option>
+                        <option value="output">Output</option>
+                    </select>
+                </Field>
+                <Field label="ROS type">
+                    <input value={topic.type} onChange={(event) => update(["topics", index, "type"], event.target.value)} />
+                </Field>
+                <div className="h-[100%] flex items-center justify-center flex-col gap-6 border-l border-r border-[var(--slate-border-60)] px-3 text-center text-[11px] text-[var(--slate-fg-2)]">
+                    <div></div>
+                    <Toggle label="Required" value={topic.required} onChange={(value) => update(["topics", index, "required"], value)} />
+                </div>
+                <button type="button" onClick={() => update(["topics"], draft.topics.filter((_, candidate) => candidate !== index))} className="self-end pb-2 text-[11px] text-[var(--slate-danger)]">
+                    Remove
+                </button>
+            </div>)}
+        </div>
+    );
 }
 
 function Assertions({ draft, update }) {

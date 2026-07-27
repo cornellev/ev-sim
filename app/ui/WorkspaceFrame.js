@@ -71,7 +71,7 @@ export function DesktopRequired() {
         <div className="sf-desktop-required" role="status">
             <div className="sf-desktop-required__brand">cev-sim</div>
             <h1>Desktop workspace required</h1>
-            <p>cev-sim is designed for a desktop workspace. Use a window at least 768 px wide.</p>
+            <p><span className="font-bold">cev-sim</span> is designed for a desktop workspace. Please use a larger screen or increase the window size.</p>
         </div>
     );
 }
