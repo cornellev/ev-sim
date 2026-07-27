@@ -9,6 +9,7 @@ import {
     IconDeviceFloppy,
     IconDownload,
     IconFileImport,
+    IconLayoutGrid,
     IconLayoutSidebarLeftCollapse,
     IconLayoutSidebarRightCollapse,
     IconPlus,
@@ -535,7 +536,8 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
                 <button type="button" className="flex min-w-0 items-center gap-2 text-left" onClick={onOpenWorkspace}>
                     <span className="text-[11px] font-medium text-[var(--slate-muted)]">cev-sim</span>
                     <span aria-hidden="true" className="h-3 w-px bg-[var(--slate-border)]" />
-                    <span className="truncate text-[13px] font-semibold">Vehicle editor</span>
+                    <IconLayoutGrid size={15} stroke={1.75} aria-hidden="true" />
+                    <span className="truncate text-[13px] font-semibold">Vehicle Editor</span>
                 </button>
                 <div className="flex items-center gap-2">
                     {readOnly && <span className="text-[11px] font-medium text-[var(--slate-muted)]">Built-in · read only</span>}
@@ -547,7 +549,7 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
                 </div>
             </header>
 
-            <div className="grid h-[calc(100dvh-2.5rem)] grid-cols-[240px_minmax(0,1fr)_360px] max-[1199px]:grid-cols-[240px_minmax(0,1fr)] max-[899px]:grid-cols-[minmax(0,1fr)]">
+            <div className="grid h-[calc(100dvh-2.5rem)] grid-cols-[260px_minmax(0,1fr)_360px] max-[1199px]:grid-cols-[240px_minmax(0,1fr)] max-[899px]:grid-cols-[minmax(0,1fr)]">
                 <aside className={`flex min-h-0 flex-col border-r border-[var(--slate-border)] bg-[var(--slate-surface-1)] max-[899px]:fixed max-[899px]:bottom-3 max-[899px]:left-3 max-[899px]:top-[52px] max-[899px]:z-[var(--layer-drawer)] max-[899px]:w-[min(320px,calc(100vw-24px))] max-[899px]:border max-[899px]:shadow-[var(--slate-shadow-overlay)] ${catalogOpen ? "max-[899px]:flex" : "max-[899px]:hidden"}`}>
                     <div className="flex items-center gap-2 border-b border-[var(--slate-border)] p-3">
                         <Action icon={<FaPlus />} label="New" onClick={createNew} disabled={busy} compact />
@@ -610,14 +612,14 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
                                 )}
                                 {selection && (
                                     <div className="pointer-events-auto flex items-center gap-2 rounded-[var(--radius)] border border-[var(--slate-border)] bg-[var(--slate-floating)] px-2.5 py-1.5">
-                                        <span className="text-[11px] font-medium text-[var(--slate-fg-2)]">{selection.kind}{selection.id ? ` · ${selection.id}` : ""}</span>
-                                        <button type="button" onClick={() => setSelection(null)} className="text-[11px] text-[var(--slate-muted)] hover:text-[var(--slate-fg)]">Deselect</button>
+                                        <span className="text-[14px] font-medium text-[var(--slate-fg-2)]">{selection.kind}{selection.id ? ` · ${selection.id}` : ""}</span>
+                                        <button type="button" onClick={() => setSelection(null)} className="text-[12px] text-[var(--slate-muted)] hover:text-[var(--slate-fg)]">Deselect</button>
                                     </div>
                                 )}
                             </div>
-                            <p className="pointer-events-none absolute bottom-3 left-3 rounded-[var(--radius)] border border-[var(--slate-border)] bg-[var(--slate-floating)] px-2 py-1 text-[11px] text-[var(--slate-muted)]">
+                            {/* <p className="pointer-events-none absolute bottom-3 left-3 rounded-[var(--radius)] border border-[var(--slate-border)] bg-[var(--slate-floating)] px-2 py-1 text-[11px] text-[var(--slate-muted)]">
                                 {readOnly ? "Orbit to inspect · duplicate to edit" : "Click a marker to select · drag gizmo to place"}
-                            </p>
+                            </p> */}
                         </>
                     )}
                 </section>
@@ -634,7 +636,7 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
                                     This built-in vehicle is defined in code. Inspect its projected values here, or duplicate it to make an editable manifest.
                                 </div>
                             )}
-                            <TabsList aria-label="Vehicle editor sections" className="overflow-x-auto border-b border-[var(--slate-border)] p-1.5">
+                            <TabsList aria-label="Vehicle editor sections" className="overflow-x-auto border-b border-[var(--slate-border)] p-1.5 hide-scrollbar">
                                 {TABS.map((item) => <TabsTrigger key={item} value={item} className="whitespace-nowrap">{item}</TabsTrigger>)}
                             </TabsList>
 

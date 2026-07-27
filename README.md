@@ -9,7 +9,23 @@ npm install
 npm run dev
 ```
 
-The app opens to the simulation workspace by default. Press `Escape` to switch between scripting, simulation, and the environment editor.
+The app opens to the simulation workspace by default. Press `Escape` to open the app menu, where you can see options such as:
+
+### Environment Editor
+
+![Environment editor](docs/screenshots/environment.png)
+
+### Visual Scripting ("Canvas")
+
+![Visual scripting](docs/screenshots/canvas.png)
+
+### Log Analysis and Telemetry
+
+![Telemetry and logging](docs/screenshots/logging.png)
+
+### Vehicle Editor
+
+![Vehicle editor](docs/screenshots/vehicle.png)
 
 ## Documentation
 
