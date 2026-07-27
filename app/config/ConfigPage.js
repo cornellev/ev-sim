@@ -7,6 +7,7 @@ import {
     IconDeviceFloppy,
     IconDownload,
     IconFileImport,
+    IconLayoutGrid,
     IconPlayerPlay,
     IconPlus,
     IconTrash,
@@ -415,7 +416,8 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace }) {
                 <button type="button" className="flex min-w-0 items-center gap-2 text-left" onClick={onOpenWorkspace}>
                     <span className="text-[11px] font-medium text-[var(--slate-muted)]">cev-sim</span>
                     <span aria-hidden="true" className="h-3 w-px bg-[var(--slate-border)]" />
-                    <span className="truncate text-[13px] font-semibold">Run Configuration</span>
+                    <IconLayoutGrid size={15} stroke={1.75} aria-hidden="true" />
+                    <span className="truncate text-[13px]/[13px] font-semibold">Run Configuration</span>
                 </button>
                 <div className="flex items-center gap-2">
                     <select
@@ -472,7 +474,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace }) {
                                         <h1 className="text-2xl font-semibold tracking-tight">{draft.name}</h1>
                                         {dirty && <span className="text-[11px] font-medium text-[var(--slate-warning)]">{changedFields} changed</span>}
                                     </div>
-                                    <p className="mt-1 text-[13px] text-[var(--slate-muted)]">Active runs remain immutable. Changes apply on the next launch or reset.</p>
+                                    <p className="mt-1 text-[13px] text-[var(--slate-muted)]">{draft.id}</p>
                                 </div>
                                 <div className="border-l border-[var(--slate-border)] pl-3 text-right">
                                     <p className="text-[11px] text-[var(--slate-muted)]">Run session</p>
