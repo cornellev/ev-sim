@@ -22,9 +22,12 @@ import {
 } from "./ScriptManager";
 import { registerBuiltInBlocks } from "./registerBuiltInBlocks";
 import { TYPES } from "./Constants";
-import { FaCheckCircle } from "react-icons/fa";
-import { FaCircleXmark } from "react-icons/fa6";
-import { TbLayoutSidebarRightCollapse, TbLayoutSidebarRightExpand } from "react-icons/tb";
+import {
+    IconCircleCheck,
+    IconCircleX,
+    IconLayoutSidebarRightCollapse,
+    IconLayoutSidebarRightExpand,
+} from "@tabler/icons-react";
 import {
     createArtifactOnlyDocument,
     createDocumentId,
@@ -303,7 +306,7 @@ function OutputNodeSidebar({ config, onChange, valid }) {
     };
 
     return (
-        <aside className={`fixed right-4 top-4 z-40 overflow-hidden rounded-md border border-white/10 bg-[#202020]/95 text-white shadow-[0_16px_48px_rgba(0,0,0,0.28)] backdrop-blur transition-[width,border-color,background-color] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] ${collapsed ? "w-12" : "w-[300px]"}`}>
+        <aside className={`fixed right-4 top-16 z-40 overflow-hidden rounded-[4px] border border-white/10 bg-[var(--slate-surface-1)] text-white shadow-[0_16px_40px_rgba(0,0,0,0.24)] transition-[width,border-color,background-color] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] max-[899px]:bottom-4 max-[899px]:top-auto ${collapsed ? "w-12" : "w-[300px] max-w-[calc(100vw-24px)]"}`}>
             <div className={`${collapsed ? "flex h-full min-h-[156px] flex-col items-center gap-2 p-2" : "border-b border-white/10 px-4 py-3"}`}>
                 <div className={`${collapsed ? "flex flex-col items-center gap-2" : "flex items-center justify-between gap-3"}`}>
                     <button
@@ -311,22 +314,22 @@ function OutputNodeSidebar({ config, onChange, valid }) {
                         aria-label={collapsed ? "Expand OutputNode menu" : "Collapse OutputNode menu"}
                         title={collapsed ? "Expand OutputNode menu" : "Collapse OutputNode menu"}
                         onClick={() => setCollapsed((value) => !value)}
-                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-white/10 bg-white/6 text-zinc-300 transition-[transform,background-color,border-color,color] duration-150 hover:border-white/18 hover:bg-white/10 hover:text-white active:scale-[0.97]"
+                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius)] border border-white/10 bg-white/6 text-zinc-300 transition-[transform,background-color,border-color,color] duration-150 hover:border-white/18 hover:bg-white/10 hover:text-white active:scale-[0.97]"
                     >
                         {collapsed
-                            ? <TbLayoutSidebarRightExpand className="h-4 w-4" strokeWidth={1.8} />
-                            : <TbLayoutSidebarRightCollapse className="h-4 w-4" strokeWidth={1.8} />}
+                            ? <IconLayoutSidebarRightExpand className="h-4 w-4" stroke={1.75} />
+                            : <IconLayoutSidebarRightCollapse className="h-4 w-4" stroke={1.75} />}
                     </button>
 
-                    {!collapsed && <h2 className="min-w-0 flex-1 text-sm font-medium tracking-normal">OutputNode</h2>}
+                    {!collapsed && <h2 className="min-w-0 flex-1 text-sm font-medium tracking-normal">Output node</h2>}
 
-                    <span className={`${collapsed ? "flex h-7 min-w-7 items-center justify-center rounded-md px-1 font-mono text-[10px]" : "rounded-sm px-2 py-1 text-[11px]"} ${ready ? "bg-emerald-400/12 text-emerald-200" : "bg-white/8 text-zinc-300"}`}>
+                    <span className={`${collapsed ? "flex h-7 min-w-7 items-center justify-center rounded-[4px] px-1 font-mono text-[11px]" : "rounded-[4px] px-2 py-1 text-[11px]"} ${ready ? "bg-white/10 text-zinc-100" : "bg-white/6 text-zinc-400"}`}>
                         {collapsed ? outputs.length : ready ? "Ready" : "Invalid"}
                     </span>
                 </div>
 
                 {collapsed && (
-                    <div className="mt-1 h-1.5 w-1.5 rounded-full" style={{ backgroundColor: ready ? "rgb(110, 231, 183)" : "rgb(244, 114, 182)" }} />
+                    <span className="mt-1 font-mono text-[11px] text-zinc-500">{outputs.length}</span>
                 )}
             </div>
 
@@ -334,7 +337,7 @@ function OutputNodeSidebar({ config, onChange, valid }) {
                 <div className="max-h-[calc(100vh-112px)] overflow-y-auto px-4 py-4">
                     <div className="space-y-3">
                         {outputs.map((output, index) => (
-                            <div key={output.id} className="rounded-md border border-white/10 bg-[#171717] p-3">
+                            <div key={output.id} className="rounded-[4px] border border-white/8 bg-[var(--slate-surface-2)] p-3">
                                 <div className="mb-3 flex items-center justify-between gap-3">
                                     <div className="text-xs text-zinc-400">Output {index + 1}</div>
                                     <button
@@ -351,7 +354,7 @@ function OutputNodeSidebar({ config, onChange, valid }) {
                                     <span className="mb-1.5 block text-xs text-zinc-400">Label</span>
                                     <input
                                         value={output.label}
-                                        className="w-full rounded-sm border border-white/10 bg-[#101010] px-3 py-2 text-sm text-white outline-none transition-[border-color,box-shadow] duration-150 focus:border-white/30 focus:shadow-[0_0_0_3px_rgba(255,255,255,0.06)]"
+                                        className="w-full rounded-sm border border-white/10 bg-[var(--slate-bg)] px-3 py-2 text-sm text-white outline-none transition-[border-color,box-shadow] duration-150 focus:border-white/30 focus:shadow-[0_0_0_3px_rgba(255,255,255,0.06)]"
                                         onChange={(event) => updateOutput(output.id, { label: event.target.value })}
                                     />
                                 </label>
@@ -365,7 +368,7 @@ function OutputNodeSidebar({ config, onChange, valid }) {
                                         />
                                         <select
                                             value={output.type}
-                                            className="min-w-0 flex-1 rounded-sm border border-white/10 bg-[#101010] px-3 py-2 text-sm text-white outline-none transition-[border-color,box-shadow] duration-150 focus:border-white/30 focus:shadow-[0_0_0_3px_rgba(255,255,255,0.06)]"
+                                            className="min-w-0 flex-1 rounded-sm border border-white/10 bg-[var(--slate-bg)] px-3 py-2 text-sm text-white outline-none transition-[border-color,box-shadow] duration-150 focus:border-white/30 focus:shadow-[0_0_0_3px_rgba(255,255,255,0.06)]"
                                             onChange={(event) => updateOutput(output.id, { type: event.target.value })}
                                         >
                                             {SUPPORTED_TYPES.map((type) => (
@@ -410,9 +413,9 @@ function StatusBadge({ compileState, valid }) {
     const ok = compileState.valid || hasStaleArtifact;
 
     return (
-        <span className={`inline-flex items-center gap-1.5 rounded-sm border px-2 py-1 text-[11px] ${ok ? "border-emerald-300/15 bg-emerald-400/10 text-emerald-200" : "border-rose-300/15 bg-rose-400/10 text-rose-200"}`}>
-            {ok ? <FaCheckCircle size={11} /> : <FaCircleXmark size={11} />}
-            {label}
+        <span aria-label={`Script status: ${label}`} className={`inline-flex items-center gap-1.5 rounded-[4px] border px-2 py-1 text-[11px] ${ok ? "border-white/10 bg-white/8 text-zinc-200" : "border-red-300/15 bg-red-400/8 text-red-200"}`}>
+            {ok ? <IconCircleCheck size={13} stroke={1.75} aria-hidden="true" /> : <IconCircleX size={13} stroke={1.75} aria-hidden="true" />}
+            <span className="max-[899px]:sr-only">{label}</span>
         </span>
     );
 }
@@ -431,10 +434,16 @@ function EditorToolbar({
     onDownloadCompiled,
     onImport,
     downloadOpen,
-    onToggleDownload
+    onToggleDownload,
+    onOpenWorkspace
 }) {
     return (
-        <div className="fixed left-18 top-4 z-50 flex max-w-[calc(100vw-360px)] items-center gap-2 rounded-md border border-white/10 bg-[#202020]/95 px-2.5 py-2 text-white shadow-[0_18px_48px_rgba(0,0,0,0.28)] backdrop-blur">
+        <div className="fixed left-18 right-[332px] top-3 z-50 flex min-w-0 items-center gap-2 rounded-[4px] border border-white/10 bg-[var(--slate-floating)] px-2.5 py-2 text-white shadow-[0_16px_40px_rgba(0,0,0,0.24)] backdrop-blur-sm max-[899px]:right-3">
+            <button type="button" onClick={onOpenWorkspace} className="toolbar-btn shrink-0" aria-label="Open workspace switcher">
+                <span className="font-semibold">cev-sim</span>
+                <span className="mx-1 text-zinc-600" aria-hidden="true">/</span>
+                <span className="text-zinc-300">Scripts</span>
+            </button>
             {backStack.length > 0 && (
                 <button
                     type="button"
@@ -446,9 +455,10 @@ function EditorToolbar({
             )}
 
             <input
+                aria-label="Script name"
                 value={currentDocument?.name || ""}
                 onChange={(event) => onRename(event.target.value)}
-                className="min-w-[180px] max-w-[280px] rounded-sm border border-transparent bg-transparent px-2 py-1.5 text-sm font-medium text-white outline-none transition-[border-color,background-color] duration-150 hover:bg-white/5 focus:border-white/15 focus:bg-[#121212]"
+                className="min-w-[180px] max-w-[280px] rounded-sm border border-transparent bg-transparent px-2 py-1.5 text-sm font-medium text-white outline-none transition-[border-color,background-color] duration-150 hover:bg-white/5 focus:border-white/15 focus:bg-[var(--slate-surface-2)] max-[899px]:min-w-[118px] max-[899px]:max-w-[160px] max-[899px]:flex-1"
             />
 
             <StatusBadge compileState={compileState} valid={valid} />
@@ -462,7 +472,7 @@ function EditorToolbar({
             <div className="relative">
                 <button type="button" onClick={onToggleDownload} className="toolbar-btn">Download</button>
                 {downloadOpen && (
-                    <div className="absolute left-0 top-[calc(100%+8px)] w-56 rounded-md border border-white/10 bg-[#1b1b1b] p-1 text-sm shadow-[0_16px_48px_rgba(0,0,0,0.32)]">
+                    <div className="absolute left-0 top-[calc(100%+8px)] w-56 rounded-[var(--radius)] border border-white/10 bg-[var(--slate-surface-1)] p-1 text-sm shadow-[0_16px_48px_rgba(0,0,0,0.32)]">
                         <button
                             type="button"
                             onClick={onDownloadEditable}
@@ -514,7 +524,7 @@ function ScriptLibraryDrawer({
     if (!open) return null;
 
     return (
-        <aside className="fixed left-18 top-[72px] z-40 flex max-h-[calc(100vh-92px)] w-[360px] flex-col rounded-md border border-white/10 bg-[#202020]/95 text-white shadow-[0_18px_52px_rgba(0,0,0,0.34)] backdrop-blur">
+        <aside className="fixed left-18 top-[72px] z-40 flex max-h-[calc(100vh-92px)] w-[360px] flex-col rounded-[var(--radius)] border border-white/10 bg-[var(--slate-floating)] text-white shadow-[0_18px_52px_rgba(0,0,0,0.34)] backdrop-blur">
             <div className="border-b border-white/10 px-3 py-3">
                 <div className="mb-3 flex items-center justify-between gap-3">
                     <div>
@@ -528,7 +538,7 @@ function ScriptLibraryDrawer({
                         value={search}
                         onChange={(event) => onSearch(event.target.value)}
                         placeholder="Search scripts"
-                        className="min-w-0 flex-1 rounded-sm border border-white/10 bg-[#101010] px-3 py-2 text-sm text-white outline-none transition-[border-color,box-shadow] duration-150 placeholder:text-zinc-600 focus:border-white/30 focus:shadow-[0_0_0_3px_rgba(255,255,255,0.06)]"
+                        className="min-w-0 flex-1 rounded-sm border border-white/10 bg-[var(--slate-bg)] px-3 py-2 text-sm text-white outline-none transition-[border-color,box-shadow] duration-150 placeholder:text-zinc-600 focus:border-white/30 focus:shadow-[0_0_0_3px_rgba(255,255,255,0.06)]"
                     />
                     <button type="button" onClick={onCreate} className="toolbar-btn">New</button>
                     <button type="button" onClick={onImport} className="toolbar-btn">Import</button>
@@ -547,7 +557,7 @@ function ScriptLibraryDrawer({
                     return (
                         <div
                             key={document.id}
-                            className={`mb-2 rounded-md border p-2.5 transition-[border-color,background-color] duration-150 ${isCurrent ? "border-white/24 bg-white/8" : "border-white/10 bg-[#171717] hover:border-white/18"}`}
+                            className={`mb-2 rounded-[var(--radius)] border p-2.5 transition-[border-color,background-color] duration-150 ${isCurrent ? "border-white/24 bg-white/8" : "border-white/10 bg-[var(--slate-bg)] hover:border-white/18"}`}
                         >
                             <div className="mb-2 flex items-start justify-between gap-3">
                                 <button
@@ -558,7 +568,7 @@ function ScriptLibraryDrawer({
                                 >
                                     <div className="truncate text-sm font-medium text-white">{document.name}</div>
                                     <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-zinc-500">
-                                        <span className={`rounded-sm px-1.5 py-0.5 ${valid ? "bg-emerald-400/10 text-emerald-200" : "bg-rose-400/10 text-rose-200"}`}>
+                                        <span className={`rounded-[4px] px-1.5 py-0.5 ${valid ? "bg-white/8 text-zinc-300" : "bg-red-400/8 text-red-200"}`}>
                                             {valid ? "valid" : "invalid"}
                                         </span>
                                         <span>{summary.inputs} in</span>
@@ -600,7 +610,7 @@ function ScriptLibraryDrawer({
                 })}
 
                 {visibleScripts.length === 0 && (
-                    <div className="rounded-md border border-white/10 bg-[#171717] px-3 py-8 text-center text-sm text-zinc-500">
+                    <div className="rounded-[var(--radius)] border border-white/10 bg-[var(--slate-bg)] px-3 py-8 text-center text-sm text-zinc-500">
                         No matching scripts.
                     </div>
                 )}
@@ -633,7 +643,7 @@ export const IMPORT_CODE = {
     CYCLE: 2
 };
 
-export default function Scripting() {
+export default function Scripting({ onOpenWorkspace }) {
     const headUUID = useRef("head-uuid");
     const manager = useRef(new ScriptManager());
     const positionsRef = useRef({});
@@ -1644,11 +1654,14 @@ export default function Scripting() {
                 onImport={importScriptFile}
                 downloadOpen={downloadOpen}
                 onToggleDownload={() => setDownloadOpen((value) => !value)}
+                onOpenWorkspace={onOpenWorkspace}
             />
 
-            <div className={`fixed left-1/2 top-4 z-[60] -translate-x-1/2 rounded-md border border-emerald-300/15 bg-[#171717]/95 px-3 py-1.5 text-xs font-medium text-emerald-100 shadow-[0_12px_36px_rgba(0,0,0,0.28)] backdrop-blur transition-[opacity,transform] duration-150 ${saveFeedbackVisible ? "translate-y-0 opacity-100" : "pointer-events-none -translate-y-1 opacity-0"}`}>
-                Saved!
-            </div>
+            {saveFeedbackVisible && (
+                <div className="fixed left-1/2 top-4 z-[60] -translate-x-1/2 rounded-[4px] border border-white/10 bg-[var(--slate-floating)] px-3 py-1.5 text-xs font-medium text-zinc-100 shadow-[0_12px_36px_rgba(0,0,0,0.28)] backdrop-blur-sm" role="status" aria-live="polite">
+                    Saved
+                </div>
+            )}
 
             <ScriptLibraryDrawer
                 open={libraryOpen}
@@ -1670,7 +1683,7 @@ export default function Scripting() {
             />
 
             {lastRun && (
-                <div className="fixed bottom-4 right-4 z-40 max-w-[360px] rounded-md border border-white/10 bg-[#202020]/95 px-3 py-2 text-xs text-zinc-300 shadow-[0_14px_40px_rgba(0,0,0,0.25)]">
+                <div className="fixed bottom-4 right-4 z-40 max-w-[360px] rounded-[var(--radius)] border border-white/10 bg-[var(--slate-floating)] px-3 py-2 text-xs text-zinc-300 shadow-[0_14px_40px_rgba(0,0,0,0.25)]">
                     <div className="mb-1 font-medium text-white">
                         {lastRun.status === "success" ? "Execution output" : "Execution failed"}
                     </div>
@@ -1696,7 +1709,7 @@ export default function Scripting() {
                 valid={valid}
             />
 
-            <div className="h-[100vh] w-[100vw] bg-[#292929]">
+            <div className="fixed inset-0 z-[1] h-[100dvh] w-[100vw] bg-[var(--slate-bg)]">
                 <Grid />
                 <LineManager
                     units={visibleUnitChildren}

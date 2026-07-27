@@ -10,11 +10,11 @@ function labelSprite(text) {
     canvas.height = 64;
     const context = canvas.getContext("2d");
     context.clearRect(0, 0, canvas.width, canvas.height);
-    context.fillStyle = "rgba(9,9,11,.86)";
-    context.roundRect(4, 4, 248, 52, 10);
+    context.fillStyle = "rgba(28,30,32,.94)";
+    context.roundRect(4, 4, 248, 52, 4);
     context.fill();
-    context.font = "600 22px Arial";
-    context.fillStyle = "#e4e4e7";
+    context.font = "600 22px system-ui, sans-serif";
+    context.fillStyle = "#e9eaec";
     context.textAlign = "center";
     context.fillText(text, 128, 39);
     const texture = new THREE.CanvasTexture(canvas);
@@ -33,8 +33,8 @@ export default function ReplayScene({ dataset, timeUs, selectedEntity, onSelectE
         const mount = mountRef.current;
         if (!mount) return undefined;
         const scene = new THREE.Scene();
-        scene.background = new THREE.Color(0x09090b);
-        scene.fog = new THREE.FogExp2(0x09090b, 0.012);
+        scene.background = new THREE.Color(0x17181a);
+        scene.fog = new THREE.FogExp2(0x17181a, 0.012);
         const camera = new THREE.PerspectiveCamera(52, 1, 0.1, 5000);
         camera.position.set(16, 13, 18);
         const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
@@ -46,9 +46,9 @@ export default function ReplayScene({ dataset, timeUs, selectedEntity, onSelectE
         controls.dampingFactor = 0.08;
         controls.maxPolarAngle = Math.PI / 2.03;
         controls.target.set(0, 0.6, 0);
-        const grid = new THREE.GridHelper(400, 200, 0x3f3f46, 0x202024);
+        const grid = new THREE.GridHelper(400, 200, 0x3b3e41, 0x242628);
         scene.add(grid);
-        scene.add(new THREE.HemisphereLight(0xbce8ff, 0x18181b, 1.7));
+        scene.add(new THREE.HemisphereLight(0xdde7ec, 0x17181a, 1.7));
         const sun = new THREE.DirectionalLight(0xffffff, 2.2);
         sun.position.set(12, 25, 8);
         scene.add(sun);

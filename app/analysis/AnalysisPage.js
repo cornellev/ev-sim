@@ -1,7 +1,26 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FaBroadcastTower, FaChartLine, FaChevronDown, FaChevronRight, FaCircle, FaDownload, FaFileImport, FaFilm, FaGripVertical, FaList, FaLock, FaPlus, FaSearch, FaSlidersH, FaTable, FaTimes, FaUnlock } from "react-icons/fa";
+import { Dialog } from "radix-ui";
+import {
+    IconAdjustmentsHorizontal,
+    IconBroadcast,
+    IconChartLine,
+    IconChevronDown,
+    IconChevronRight,
+    IconCircle,
+    IconDownload,
+    IconFileImport,
+    IconGripVertical,
+    IconList,
+    IconLock,
+    IconLockOpen,
+    IconMovie,
+    IconPlus,
+    IconSearch,
+    IconTable,
+    IconX,
+} from "@tabler/icons-react";
 import UPlotGraph from "./UPlotGraph";
 import { getTelemetryStore, getTelemetryTabBridge } from "../telemetry/TelemetryRuntime.js";
 import { flattenNumericFields, LogDataset } from "../logging/LogDataset.js";
@@ -11,13 +30,15 @@ import { storageGet, storagePut } from "../client/storageClient.js";
 import { subscribeStorageEvents } from "../client/storageEvents.js";
 import { downsampleMinMax } from "./downsample.js";
 import { simulationTimeUsFromSnapshot } from "../telemetry/SimulationClock.js";
+import { Button, IconButton, NativeSelect, StatusMessage, TabsContent, TabsList, TabsRoot, TabsTrigger, TextInput, WorkspaceFrame } from "../ui";
+import styles from "./AnalysisPage.module.css";
 
 const LAYOUT_KEY = "analysis:layout:v1";
 const PALETTE = ["#38bdf8", "#f59e0b", "#a78bfa", "#34d399", "#fb7185", "#60a5fa", "#f472b6", "#a3e635"];
 const ANALYSIS_TABS = [
-    { key: "graph", name: "Graph", viewType: "graph", icon: FaChartLine },
-    { key: "table", name: "Table", viewType: "table", icon: FaTable },
-    { key: "events", name: "Events", viewType: "events", icon: FaCircle },
+    { key: "graph", name: "Graph", viewType: "graph", icon: IconChartLine },
+    { key: "table", name: "Table", viewType: "table", icon: IconTable },
+    { key: "events", name: "Events", viewType: "events", icon: IconCircle },
 ];
 
 function serializeLayout({ activeView, selected, liveWindow, leftWidth, rightWidth }) {
@@ -69,7 +90,7 @@ function remoteSimulationTimeUs(source) {
 
 function selectionKey(selection) { return `${selection.path}\u0000${selection.field || ""}`; }
 
-export default function AnalysisPage({ initialLogId, onOpenReplay }) {
+export default function AnalysisPage({ initialLogId, onOpenReplay, onOpenWorkspace }) {
     const store = useMemo(() => getTelemetryStore(), []);
     const bridge = useMemo(() => getTelemetryTabBridge(), []);
     const timeline = useMemo(() => getTimelineStore(), []);
@@ -93,6 +114,8 @@ export default function AnalysisPage({ initialLogId, onOpenReplay }) {
     const [error, setError] = useState(null);
     const [leftDrawerOpen, setLeftDrawerOpen] = useState(false);
     const [rightDrawerOpen, setRightDrawerOpen] = useState(false);
+    const leftDrawerTriggerRef = useRef(null);
+    const rightDrawerTriggerRef = useRef(null);
     const [graphPixelWidth, setGraphPixelWidth] = useState(1000);
     const [expandedGroups, setExpandedGroups] = useState(() => new Set(["devices", "simulation", "topics", "vehicles"]));
 
@@ -326,89 +349,109 @@ export default function AnalysisPage({ initialLogId, onOpenReplay }) {
         } catch (caught) { setError(caught.message); }
     };
 
+    const signalSearch = (
+        <div className={styles.searchField}>
+            <IconSearch size={15} stroke={1.75} aria-hidden="true" />
+            <TextInput value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search fields, types, units" aria-label="Search signals" />
+        </div>
+    );
+
     return (
-        <main className="fixed inset-0 z-10 flex min-h-0 flex-col overflow-hidden bg-zinc-950 text-zinc-100">
-            <header className="flex h-14 shrink-0 items-center gap-3 border-b border-zinc-800 px-3">
-                <div className="mr-2 min-w-0"><h1 className="text-[13px] font-semibold tracking-wide">Analysis</h1><p className="text-[10px] text-zinc-500">Live and recorded telemetry</p></div>
-                <div className="flex min-w-0 flex-1 items-center gap-2">
-                    <FaBroadcastTower className={isLiveSource ? "text-emerald-400" : "text-zinc-600"} />
-                    <select value={sourceKey} onChange={(event) => setSourceKey(event.target.value)} className="h-8 min-w-0 max-w-md flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-2 text-[11px] outline-none focus:border-sky-500">
-                        <option value="live">Live · this simulator tab</option>
-                        {remoteSources.map((remote) => <option key={remote.sourceId} value={`remote:${remote.sourceId}`}>Live · {remote.metadata?.environmentId || "unmanaged"} · {remote.metadata?.simulationStatus || "idle"} · {remote.sourceId.slice(-6)}</option>)}
-                        {logs.map((log) => <option key={log.id} value={`log:${log.id}`}>Log · {log.name}</option>)}
-                    </select>
-                    <button type="button" className="workspace-button" onClick={() => fileRef.current?.click()}><FaFileImport /> Import log</button>
+        <WorkspaceFrame
+            title="Analysis"
+            subtitle="Live and recorded telemetry"
+            onOpenWorkspace={onOpenWorkspace}
+            contentClassName={styles.workspaceContent}
+            actions={(
+                <>
+                    <div className={styles.sourceSelector}>
+                        <IconBroadcast size={15} stroke={1.75} aria-hidden="true" />
+                        <NativeSelect value={sourceKey} onChange={(event) => setSourceKey(event.target.value)} aria-label="Telemetry source">
+                            <option value="live">Live · this simulator tab</option>
+                            {remoteSources.map((remote) => <option key={remote.sourceId} value={`remote:${remote.sourceId}`}>Live · {remote.metadata?.environmentId || "unmanaged"} · {remote.metadata?.simulationStatus || "idle"} · {remote.sourceId.slice(-6)}</option>)}
+                            {logs.map((log) => <option key={log.id} value={`log:${log.id}`}>Log · {log.name}</option>)}
+                        </NativeSelect>
+                    </div>
+                    <Button size="compact" onClick={() => fileRef.current?.click()}><IconFileImport size={15} stroke={1.75} /> Import log</Button>
                     <input ref={fileRef} hidden type="file" accept=".sflog,application/x-sflog" onChange={handleImport} />
+                    <span className={styles.headerClock}>{formatCursor(timelineState.timeUs)}</span>
+                    {sourceKey.startsWith("log:") && <Button size="compact" onClick={() => onOpenReplay?.(sourceKey.slice(4))}><IconMovie size={15} stroke={1.75} /> Replay</Button>}
+                </>
+            )}
+        >
+            <div className={styles.analysisShell}>
+                {error && <StatusMessage className={styles.error} tone="danger" title="Analysis unavailable">{error}<button type="button" onClick={() => setError(null)}>Dismiss</button></StatusMessage>}
+                <div className={styles.workArea}>
+                    <aside className={styles.leftRail} style={{ width: leftWidth }}>
+                        <div className={styles.railSearch}>{signalSearch}</div>
+                        <div className={styles.railHeading}><span>Signal tree</span><span>{fieldRows.length}</span></div>
+                        <SignalTree groups={groupedFields} query={query} expanded={expandedGroups} onToggle={toggleGroup} onAdd={addSignal} />
+                        <ResizeHandle side="right" onDelta={(delta) => setLeftWidth((width) => Math.min(440, Math.max(210, width + delta)))} />
+                    </aside>
+
+                    <section className={styles.centerPane}>
+                        <div className={styles.viewToolbar}>
+                            <TabsRoot value={activeView} onValueChange={setActiveView}>
+                                <TabsList aria-label="Analysis view">
+                                    {ANALYSIS_TABS.map((view) => <TabsTrigger key={view.key} value={view.key}><view.icon size={14} stroke={1.75} />{view.name}</TabsTrigger>)}
+                                </TabsList>
+                                {ANALYSIS_TABS.map((view) => (
+                                    <TabsContent key={view.key} value={view.key} forceMount className="sr-only">
+                                        {view.name} view
+                                    </TabsContent>
+                                ))}
+                            </TabsRoot>
+                            <div className={styles.drawerButtons}>
+                                <Button ref={leftDrawerTriggerRef} size="compact" onClick={() => setLeftDrawerOpen(true)}><IconList size={15} stroke={1.75} /> Signals</Button>
+                                <Button ref={rightDrawerTriggerRef} size="compact" onClick={() => setRightDrawerOpen(true)}><IconAdjustmentsHorizontal size={15} stroke={1.75} /> Configure</Button>
+                            </div>
+                        </div>
+                        <div className={styles.visualization} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); try { addSignal(JSON.parse(event.dataTransfer.getData("application/x-fusion-signal"))); } catch {} }}>
+                            {activeView === "graph" && <UPlotGraph data={graphData} series={selected} onWidth={setGraphPixelWidth} onCursor={(timeUs) => timeline.seek(timeUs)} onUnlockLive={() => { if (isLiveSource && timeline.getSnapshot().liveLocked) timeline.set({ liveLocked: false }); }} />}
+                            {activeView === "table" && <SignalTable selected={selected} samplesFor={samplesFor} timeUs={timelineState.timeUs} />}
+                            {activeView === "events" && <EventView events={source.events || []} timeline={timeline} />}
+                        </div>
+                        <div className={styles.timelinePanel}>
+                            <div className={styles.timelineToolbar}>
+                                <Button size="compact" aria-pressed={timelineState.liveLocked && isLiveSource} className={timelineState.liveLocked && isLiveSource ? styles.activeControl : undefined} onClick={() => { const timeUs = sourceKey === "live" ? localSimulationTimeUs(store) : isLiveSource ? source.timeUs : timelineState.durationUs; timeline.set({ timeUs, liveLocked: isLiveSource }); }}>{timelineState.liveLocked && isLiveSource ? <IconLock size={15} stroke={1.75} /> : <IconLockOpen size={15} stroke={1.75} />}{isLiveSource ? "Live" : "Cursor"}</Button>
+                                {!sourceKey.startsWith("log:") && <NativeSelect value={liveWindow} onChange={(event) => setLiveWindow(Number(event.target.value))} aria-label="Live data window" className={styles.windowSelect}>{[10, 30, 60, 120].map((seconds) => <option key={seconds} value={seconds}>{seconds}s window</option>)}</NativeSelect>}
+                                <span>{formatCursor(timelineState.timeUs)} / {formatCursor(timelineState.durationUs)}</span>
+                            </div>
+                            <input aria-label="Analysis timeline" type="range" min="0" max={Math.max(1, timelineState.durationUs)} step="1000" value={Math.min(timelineState.timeUs, Math.max(1, timelineState.durationUs))} onChange={(event) => timeline.seek(Number(event.target.value))} className="timeline-range" />
+                        </div>
+                    </section>
+
+                    <aside className={styles.rightRail} style={{ width: rightWidth }}>
+                        <ResizeHandle side="left" onDelta={(delta) => setRightWidth((width) => Math.min(380, Math.max(200, width - delta)))} />
+                        <SignalConfiguration selected={selected} onRemove={removeSignal} onUpdate={updateSignal} onExport={exportLayout} onImport={() => layoutFileRef.current?.click()} />
+                    </aside>
                 </div>
-                <span className="font-mono text-[11px] tabular-nums text-zinc-300">{formatCursor(timelineState.timeUs)}</span>
-                {sourceKey.startsWith("log:") && <button type="button" className="workspace-button" onClick={() => onOpenReplay?.(sourceKey.slice(4))}><FaFilm /> Replay</button>}
-            </header>
 
-            {error && <button onClick={() => setError(null)} className="border-b border-red-500/30 bg-red-950/50 px-4 py-2 text-left text-[10px] text-red-200">{error} <span className="float-right text-red-300">Dismiss</span></button>}
-
-            <div className="flex min-h-0 flex-1">
-                <aside className="relative hidden shrink-0 flex-col border-r border-zinc-800 bg-zinc-950 lg:flex" style={{ width: leftWidth }}>
-                    <div className="border-b border-zinc-800 p-2">
-                        <div className="flex h-8 items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-900 px-2.5"><FaSearch className="text-[10px] text-zinc-500" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search fields, types, units…" className="min-w-0 flex-1 bg-transparent text-[10px] outline-none" /></div>
-                    </div>
-                    <div className="flex items-center justify-between border-b border-zinc-800 px-3 py-2"><span className="text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Signal tree</span><span className="text-[9px] text-zinc-600">{fieldRows.length}</span></div>
-                    <SignalTree groups={groupedFields} query={query} expanded={expandedGroups} onToggle={toggleGroup} onAdd={addSignal} />
-                    <ResizeHandle side="right" onDelta={(delta) => setLeftWidth((width) => Math.min(440, Math.max(210, width + delta)))} />
-                </aside>
-
-                <section className="flex min-w-0 flex-1 flex-col">
-                    <div className="flex h-10 shrink-0 items-end border-b border-zinc-800 bg-zinc-950 px-2">
-                        {ANALYSIS_TABS.map((view) => <button key={view.key} onClick={() => setActiveView(view.key)} className={`flex h-9 items-center gap-2 border-b-2 px-3 text-[10px] font-semibold ${activeView === view.key ? "border-sky-400 text-zinc-100" : "border-transparent text-zinc-500 hover:text-zinc-300"}`}><view.icon className="text-[9px]" />{view.name}</button>)}
-                        <div className="ml-auto flex h-9 items-center gap-1">
-                            <span className="lg:hidden"><button type="button" onClick={() => setLeftDrawerOpen(true)} className="workspace-button"><FaList /> Signals</button></span>
-                            <span className="xl:hidden"><button type="button" onClick={() => setRightDrawerOpen(true)} className="workspace-button"><FaSlidersH /> Configure</button></span>
-                        </div>
-                    </div>
-                    <div className="min-h-0 flex-1" onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); try { addSignal(JSON.parse(event.dataTransfer.getData("application/x-fusion-signal"))); } catch {} }}>
-                        {activeView === "graph" && <UPlotGraph data={graphData} series={selected} onWidth={setGraphPixelWidth} onCursor={(timeUs) => timeline.seek(timeUs)} onUnlockLive={() => { if (isLiveSource && timeline.getSnapshot().liveLocked) timeline.set({ liveLocked: false }); }} />}
-                        {activeView === "table" && <SignalTable selected={selected} samplesFor={samplesFor} timeUs={timelineState.timeUs} />}
-                        {activeView === "events" && <EventView events={source.events || []} timeline={timeline} />}
-                    </div>
-                    <div className="shrink-0 border-t border-zinc-800 px-3 py-2">
-                        <div className="mb-1.5 flex items-center gap-2">
-                            <button type="button" onClick={() => { const timeUs = sourceKey === "live" ? localSimulationTimeUs(store) : isLiveSource ? source.timeUs : timelineState.durationUs; timeline.set({ timeUs, liveLocked: isLiveSource }); }} className={`workspace-button ${timelineState.liveLocked && isLiveSource ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200" : ""}`}>{timelineState.liveLocked && isLiveSource ? <FaLock /> : <FaUnlock />}{isLiveSource ? "Live" : "Cursor"}</button>
-                            {!sourceKey.startsWith("log:") && <select value={liveWindow} onChange={(event) => setLiveWindow(Number(event.target.value))} className="h-8 rounded-lg border border-zinc-700 bg-zinc-900 px-2 text-[10px] outline-none">{[10, 30, 60, 120].map((seconds) => <option key={seconds} value={seconds}>{seconds}s window</option>)}</select>}
-                            <span className="ml-auto font-mono text-[10px] text-zinc-500">{formatCursor(timelineState.timeUs)} / {formatCursor(timelineState.durationUs)}</span>
-                        </div>
-                        <input aria-label="Analysis timeline" type="range" min="0" max={Math.max(1, timelineState.durationUs)} step="1000" value={Math.min(timelineState.timeUs, Math.max(1, timelineState.durationUs))} onChange={(event) => timeline.seek(Number(event.target.value))} className="timeline-range w-full" />
-                    </div>
-                </section>
-
-                <aside className="relative hidden shrink-0 flex-col border-l border-zinc-800 bg-zinc-950 xl:flex" style={{ width: rightWidth }}>
-                    <ResizeHandle side="left" onDelta={(delta) => setRightWidth((width) => Math.min(380, Math.max(200, width - delta)))} />
-                    <SignalConfiguration selected={selected} onRemove={removeSignal} onUpdate={updateSignal} onExport={exportLayout} onImport={() => layoutFileRef.current?.click()} />
-                </aside>
+                {leftDrawerOpen && <Drawer side="left" title="Signals" onClose={() => setLeftDrawerOpen(false)} restoreFocusRef={leftDrawerTriggerRef}><div className={styles.railSearch}>{signalSearch}</div><SignalTree groups={groupedFields} query={query} expanded={expandedGroups} onToggle={toggleGroup} onAdd={(row) => { addSignal(row); setLeftDrawerOpen(false); }} /></Drawer>}
+                {rightDrawerOpen && <Drawer side="right" title="View configuration" onClose={() => setRightDrawerOpen(false)} restoreFocusRef={rightDrawerTriggerRef}><SignalConfiguration selected={selected} onRemove={removeSignal} onUpdate={updateSignal} onExport={exportLayout} onImport={() => layoutFileRef.current?.click()} /></Drawer>}
+                <input ref={layoutFileRef} hidden type="file" accept="application/json,.json" onChange={importLayout} />
             </div>
-
-            {leftDrawerOpen && <Drawer side="left" title="Signals" onClose={() => setLeftDrawerOpen(false)}><div className="border-b border-zinc-800 p-2"><div className="flex h-8 items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-900 px-2.5"><FaSearch className="text-[10px] text-zinc-500" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search fields, types, units…" className="min-w-0 flex-1 bg-transparent text-[10px] outline-none" /></div></div><SignalTree groups={groupedFields} query={query} expanded={expandedGroups} onToggle={toggleGroup} onAdd={(row) => { addSignal(row); setLeftDrawerOpen(false); }} /></Drawer>}
-            {rightDrawerOpen && <Drawer side="right" title="View configuration" onClose={() => setRightDrawerOpen(false)}><SignalConfiguration selected={selected} onRemove={removeSignal} onUpdate={updateSignal} onExport={exportLayout} onImport={() => layoutFileRef.current?.click()} /></Drawer>}
-            <input ref={layoutFileRef} hidden type="file" accept="application/json,.json" onChange={importLayout} />
-        </main>
+        </WorkspaceFrame>
     );
 }
 
 function SignalTree({ groups, query, expanded, onToggle, onAdd }) {
     return (
-        <div className="min-h-0 flex-1 overflow-y-auto py-1">
+        <div className={styles.signalTree}>
             {groups.map(([group, rows]) => {
                 const open = Boolean(query) || expanded.has(group);
                 return (
                     <div key={group}>
-                        <button type="button" onClick={() => onToggle(group)} className="flex w-full items-center gap-2 border-b border-zinc-900 px-2.5 py-2 text-left text-[9px] font-semibold uppercase tracking-[0.12em] text-zinc-500 hover:bg-zinc-900 hover:text-zinc-300">
-                            {open ? <FaChevronDown className="text-[8px]" /> : <FaChevronRight className="text-[8px]" />}
-                            <span className="flex-1">{group}</span>
-                            <span className="font-mono text-[8px] text-zinc-700">{rows.length}</span>
+                        <button type="button" onClick={() => onToggle(group)} className={styles.groupButton} aria-expanded={open}>
+                            {open ? <IconChevronDown size={14} stroke={1.75} /> : <IconChevronRight size={14} stroke={1.75} />}
+                            <span>{group}</span>
+                            <code>{rows.length}</code>
                         </button>
                         {open && rows.map((row) => {
                             const key = `${row.path}.${row.field}`;
                             const label = row.field ? `${row.path}.${row.field}` : row.path;
                             return (
-                                <div key={key} className="group flex w-full items-center gap-1 px-2 py-1 pl-4 hover:bg-zinc-900 focus-within:bg-zinc-900">
+                                <div key={key} className={styles.signalRow}>
                                     <button
                                         type="button"
                                         disabled={!row.numeric}
@@ -416,19 +459,17 @@ function SignalTree({ groups, query, expanded, onToggle, onAdd }) {
                                         onDragStart={(event) => event.dataTransfer.setData("application/x-fusion-signal", JSON.stringify(row))}
                                         onDoubleClick={() => onAdd(row)}
                                         onKeyDown={(event) => { if (event.key === "Enter") onAdd(row); }}
-                                        className="flex min-w-0 flex-1 items-center gap-1.5 text-left focus:outline-none disabled:cursor-default"
+                                        className={styles.signalMain}
                                     >
-                                        <FaGripVertical className="text-[8px] text-zinc-800 group-hover:text-zinc-600" />
-                                        <span className={`h-1.5 w-1.5 rounded-full ${row.numeric ? "bg-sky-400" : "bg-zinc-700"}`} />
-                                        <span className="min-w-0 flex-1">
-                                            <span className="block truncate font-mono text-[9px] text-zinc-300">{row.field ? <><span className="text-zinc-600">{row.path}.</span>{row.field}</> : row.path}</span>
-                                            <span className="block truncate text-[8px] text-zinc-600">{row.descriptor.type}{row.descriptor.unit ? ` · ${row.descriptor.unit}` : ""} · {formatValue(row.value)}</span>
+                                        <IconGripVertical size={13} stroke={1.5} className={styles.grip} />
+                                        <span className={row.numeric ? styles.numericMark : styles.valueMark} />
+                                        <span className={styles.signalCopy}>
+                                            <span className={styles.signalName}>{row.field ? <><span>{row.path}.</span>{row.field}</> : row.path}</span>
+                                            <span className={styles.signalMeta}>{row.descriptor.type}{row.descriptor.unit ? ` · ${row.descriptor.unit}` : ""} · {formatValue(row.value)}</span>
                                         </span>
                                     </button>
                                     {row.numeric && (
-                                        <button type="button" onClick={() => onAdd(row)} aria-label={`Add ${label} to graph`} title={`Add ${label} to graph`} className="grid h-6 w-6 shrink-0 place-items-center rounded text-zinc-700 hover:bg-sky-500/10 hover:text-sky-300 focus:outline-none focus:ring-1 focus:ring-sky-500/60">
-                                            <FaPlus className="text-[8px]" />
-                                        </button>
+                                        <IconButton type="button" onClick={() => onAdd(row)} label={`Add ${label} to graph`}><IconPlus size={14} stroke={1.75} /></IconButton>
                                     )}
                                 </div>
                             );
@@ -441,21 +482,21 @@ function SignalTree({ groups, query, expanded, onToggle, onAdd }) {
 }
 
 function SignalConfiguration({ selected, onRemove, onUpdate, onExport, onImport }) {
-    return <><div className="border-b border-zinc-800 px-3 py-3"><p className="text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-500">View configuration</p><p className="mt-1 text-[9px] text-zinc-600">{selected.length} plotted series</p></div><div className="min-h-0 flex-1 overflow-y-auto">{selected.map((item, index) => <div key={selectionKey(item)} className="border-b border-zinc-800 p-3"><div className="flex items-start gap-2"><input aria-label={`${item.label} color`} type="color" value={item.color} onChange={(event) => onUpdate(index, { color: event.target.value })} className="mt-0.5 h-4 w-4 cursor-pointer rounded border-0 bg-transparent p-0" /><span className="min-w-0 flex-1 break-all font-mono text-[9px] leading-relaxed text-zinc-300">{item.label}</span><button onClick={() => onRemove(index)} className="text-[9px] text-zinc-600 hover:text-red-300">Remove</button></div><div className="mt-2 flex gap-1"><button onClick={() => onUpdate(index, { axis: "left" })} className={`flex-1 rounded-md border px-2 py-1 text-[8px] ${item.axis !== "right" ? "border-sky-500/40 text-sky-200" : "border-zinc-800 text-zinc-600"}`}>Left axis</button><button onClick={() => onUpdate(index, { axis: "right" })} className={`flex-1 rounded-md border px-2 py-1 text-[8px] ${item.axis === "right" ? "border-sky-500/40 text-sky-200" : "border-zinc-800 text-zinc-600"}`}>Right axis</button></div></div>)}{selected.length === 0 && <p className="px-4 py-8 text-center text-[10px] leading-relaxed text-zinc-600">Add a numeric field to configure its axis and color.</p>}</div><div className="grid grid-cols-2 gap-1 border-t border-zinc-800 p-2"><button className="workspace-button" onClick={onExport}><FaDownload /> Export</button><button className="workspace-button" onClick={onImport}><FaFileImport /> Layout</button></div></>;
+    return <div className={styles.configuration}><div className={styles.configurationHeader}><p>View configuration</p><span>{selected.length} plotted series</span></div><div className={styles.configurationList}>{selected.map((item, index) => <div key={selectionKey(item)} className={styles.seriesCard}><div className={styles.seriesHeader}><input aria-label={`${item.label} color`} type="color" value={item.color} onChange={(event) => onUpdate(index, { color: event.target.value })} /><code>{item.label}</code><button type="button" onClick={() => onRemove(index)}>Remove</button></div><div className={styles.axisControl}><button type="button" aria-pressed={item.axis !== "right"} onClick={() => onUpdate(index, { axis: "left" })}>Left axis</button><button type="button" aria-pressed={item.axis === "right"} onClick={() => onUpdate(index, { axis: "right" })}>Right axis</button></div></div>)}{selected.length === 0 && <p className={styles.emptyCopy}>Add a numeric field to configure its axis and color.</p>}</div><div className={styles.configurationActions}><Button size="compact" onClick={onExport}><IconDownload size={15} stroke={1.75} /> Export</Button><Button size="compact" onClick={onImport}><IconFileImport size={15} stroke={1.75} /> Layout</Button></div></div>;
 }
 
-function Drawer({ side, title, onClose, children }) {
-    return <div className="fixed inset-0 z-40 bg-black/55 backdrop-blur-[2px]" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><aside className={`absolute bottom-0 top-14 flex w-[min(340px,88vw)] flex-col border-zinc-700 bg-zinc-950 shadow-2xl ${side === "left" ? "left-0 border-r" : "right-0 border-l"}`}><div className="flex h-11 shrink-0 items-center justify-between border-b border-zinc-800 px-3"><p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-400">{title}</p><button type="button" onClick={onClose} className="timeline-icon-button" aria-label={`Close ${title}`}><FaTimes /></button></div>{children}</aside></div>;
+function Drawer({ side, title, onClose, restoreFocusRef, children }) {
+    return <Dialog.Root open onOpenChange={(open) => { if (!open) onClose(); }}><Dialog.Portal><Dialog.Overlay className={styles.drawerOverlay} /><Dialog.Content onCloseAutoFocus={(event) => { event.preventDefault(); restoreFocusRef?.current?.focus(); }} className={`${styles.drawer} ${side === "left" ? styles.drawerLeft : styles.drawerRight}`}><div className={styles.drawerHeader}><Dialog.Title>{title}</Dialog.Title><Dialog.Close asChild><IconButton label={`Close ${title}`}><IconX size={16} stroke={1.75} /></IconButton></Dialog.Close></div>{children}</Dialog.Content></Dialog.Portal></Dialog.Root>;
 }
 
 function SignalTable({ selected, samplesFor, timeUs }) {
-    return <div className="h-full overflow-auto"><table className="w-full border-collapse text-left text-[10px]"><thead className="sticky top-0 bg-zinc-950 text-[8px] uppercase tracking-[0.13em] text-zinc-600"><tr>{["Signal", "Value", "Previous", "Delta", "Unit", "Age"].map((name) => <th key={name} className="border-b border-zinc-800 px-3 py-2 font-semibold">{name}</th>)}</tr></thead><tbody>{selected.map((item) => { const samples = samplesFor(item); const current = valueAtSamples(samples, timeUs); const index = current ? samples.indexOf(current) : -1; const previous = index > 0 ? samples[index - 1] : null; const delta = typeof current?.value === "number" && typeof previous?.value === "number" ? current.value - previous.value : undefined; return <tr key={selectionKey(item)} className="border-b border-zinc-900 hover:bg-zinc-900/60"><td className="max-w-sm px-3 py-2 font-mono text-zinc-300">{item.label}</td><td className="px-3 py-2 font-mono text-zinc-100">{formatValue(current?.value)}</td><td className="px-3 py-2 font-mono text-zinc-500">{formatValue(previous?.value)}</td><td className="px-3 py-2 font-mono text-zinc-400">{formatValue(delta)}</td><td className="px-3 py-2 text-zinc-500">{item.unit || "—"}</td><td className="px-3 py-2 font-mono text-zinc-500">{current ? `${Math.max(0, (timeUs - current.timeUs) / 1e6).toFixed(3)}s` : "—"}</td></tr>; })}</tbody></table>{selected.length === 0 && <div className="grid h-48 place-items-center text-[10px] text-zinc-600">Add signals from the field tree.</div>}</div>;
+    return <div className={styles.tableWrap}><table><thead><tr>{["Signal", "Value", "Previous", "Delta", "Unit", "Age"].map((name) => <th key={name}>{name}</th>)}</tr></thead><tbody>{selected.map((item) => { const samples = samplesFor(item); const current = valueAtSamples(samples, timeUs); const index = current ? samples.indexOf(current) : -1; const previous = index > 0 ? samples[index - 1] : null; const delta = typeof current?.value === "number" && typeof previous?.value === "number" ? current.value - previous.value : undefined; return <tr key={selectionKey(item)}><td>{item.label}</td><td>{formatValue(current?.value)}</td><td>{formatValue(previous?.value)}</td><td>{formatValue(delta)}</td><td>{item.unit || "—"}</td><td>{current ? `${Math.max(0, (timeUs - current.timeUs) / 1e6).toFixed(3)}s` : "—"}</td></tr>; })}</tbody></table>{selected.length === 0 && <div className={styles.emptyCopy}>Add signals from the field tree.</div>}</div>;
 }
 
 function EventView({ events, timeline }) {
     const [filter, setFilter] = useState("");
     const visible = events.filter((event) => `${event.category} ${event.name} ${event.severity}`.toLowerCase().includes(filter.toLowerCase()));
-    return <div className="flex h-full min-h-0 flex-col"><div className="border-b border-zinc-800 p-2"><input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Filter event category, name, severity…" className="h-8 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 text-[10px] outline-none focus:border-sky-500" /></div><div className="min-h-0 flex-1 overflow-auto">{visible.map((event, index) => <button key={event.id || index} onClick={() => timeline.seek(event.timeUs)} className="grid w-full grid-cols-[90px_100px_1fr_80px] gap-3 border-b border-zinc-900 px-3 py-2 text-left text-[10px] hover:bg-zinc-900"><span className="font-mono text-zinc-600">{formatCursor(event.timeUs)}</span><span className="truncate text-sky-300">{event.category}</span><span className="truncate text-zinc-300">{event.name}</span><span className="text-zinc-600">{event.severity}</span></button>)}{visible.length === 0 && <div className="grid h-48 place-items-center text-[10px] text-zinc-600">No matching events.</div>}</div></div>;
+    return <div className={styles.eventView}><div className={styles.eventFilter}><TextInput value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Filter event category, name, severity" aria-label="Filter events" /></div><div className={styles.eventList}>{visible.map((event, index) => <button key={event.id || index} onClick={() => timeline.seek(event.timeUs)}><code>{formatCursor(event.timeUs)}</code><span>{event.category}</span><span>{event.name}</span><span>{event.severity}</span></button>)}{visible.length === 0 && <div className={styles.emptyCopy}>No matching events.</div>}</div></div>;
 }
 
 function ResizeHandle({ side, onDelta }) {
@@ -467,5 +508,5 @@ function ResizeHandle({ side, onDelta }) {
         window.addEventListener("pointermove", move);
         window.addEventListener("pointerup", stop);
     };
-    return <div onPointerDown={start} className={`absolute bottom-0 top-0 z-20 w-1 cursor-col-resize hover:bg-sky-500/50 ${side === "right" ? "right-0" : "left-0"}`} />;
+    return <div onPointerDown={start} className={`${styles.resizeHandle} ${side === "right" ? styles.resizeRight : styles.resizeLeft}`} role="separator" aria-orientation="vertical" />;
 }

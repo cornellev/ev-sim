@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { IconLayoutGrid } from '@tabler/icons-react';
 import TotalScene from './3d/Scene';
 import Scripting from './scripting/Scripting';
 import BindingsPage from './scripting/bindings/BindingsPage';
@@ -19,15 +20,49 @@ import { subscribeStorageEvents } from './client/storageEvents';
 import { getRunSessionController } from './simulation/RunSessionController';
 import { resolveRunManifest } from './simulation/RunManifestClient';
 import { getTelemetryTabBridge } from './telemetry/TelemetryRuntime';
+import {
+    DesktopRequired,
+    ShortcutProvider,
+    UiProvider,
+    WorkspaceGuardProvider,
+    useShortcut,
+    useWorkspaceNavigation,
+} from './ui';
 
 
 export default function Home() {
+    return (
+        <UiProvider>
+            <ShortcutProvider>
+                <WorkspaceGuardProvider>
+                    <HomeContent />
+                </WorkspaceGuardProvider>
+            </ShortcutProvider>
+        </UiProvider>
+    );
+}
+
+function HomeContent() {
+    const { requestNavigation } = useWorkspaceNavigation();
     const [view, setView] = useState(APP_VIEWS.THREE_D);
     const [threeDMode, setThreeDMode] = useState(THREE_D_MODES.SIMULATION);
     const [menuVisible, setMenuVisible] = useState(false);
+    const [menuSource, setMenuSource] = useState("keyboard");
     const [activeEnvironmentId, setActiveEnvironment] = useState(null);
     const [selectedLogId, setSelectedLogId] = useState(null);
     const [replayCommand, setReplayCommand] = useState(null);
+    const [desktopRequired, setDesktopRequired] = useState(false);
+
+    useEffect(() => {
+        const query = window.matchMedia("(max-width: 767px)");
+        const sync = () => {
+            setDesktopRequired(query.matches);
+            if (query.matches) setMenuVisible(false);
+        };
+        sync();
+        query.addEventListener("change", sync);
+        return () => query.removeEventListener("change", sync);
+    }, []);
 
     useEffect(() => {
         const bridge = getTelemetryTabBridge();
@@ -43,49 +78,76 @@ export default function Home() {
         setMenuVisible(false);
     }, []);
 
-    const goToSimulation = useCallback(() => {
-        setView(APP_VIEWS.THREE_D);
-        setThreeDMode(THREE_D_MODES.SIMULATION);
-        setMenuVisible(false);
+    const openWorkspaceSwitcher = useCallback((source = "pointer") => {
+        setMenuSource(source);
+        setMenuVisible(true);
     }, []);
+
+    const requestWorkspace = useCallback((action) => {
+        const changedImmediately = requestNavigation(action);
+        if (!changedImmediately) setMenuVisible(false);
+        return changedImmediately;
+    }, [requestNavigation]);
+
+    const goToSimulation = useCallback(() => {
+        requestWorkspace(() => {
+            setView(APP_VIEWS.THREE_D);
+            setThreeDMode(THREE_D_MODES.SIMULATION);
+            setMenuVisible(false);
+        });
+    }, [requestWorkspace]);
 
     const goToEnvironmentEditor = useCallback(() => {
-        setView(APP_VIEWS.THREE_D);
-        setThreeDMode(THREE_D_MODES.ENVIRONMENT);
-        setMenuVisible(false);
-    }, []);
+        requestWorkspace(() => {
+            setView(APP_VIEWS.THREE_D);
+            setThreeDMode(THREE_D_MODES.ENVIRONMENT);
+            setMenuVisible(false);
+        });
+    }, [requestWorkspace]);
 
     const goToScripting = useCallback(() => {
-        setView(APP_VIEWS.SCRIPTING);
-        setMenuVisible(false);
-    }, []);
+        requestWorkspace(() => {
+            setView(APP_VIEWS.SCRIPTING);
+            setMenuVisible(false);
+        });
+    }, [requestWorkspace]);
 
     const goToBindings = useCallback(() => {
-        setView(APP_VIEWS.BINDINGS);
-        setMenuVisible(false);
-    }, []);
+        requestWorkspace(() => {
+            setView(APP_VIEWS.BINDINGS);
+            setMenuVisible(false);
+        });
+    }, [requestWorkspace]);
 
     const goToReplay = useCallback((logId = null) => {
-        if (typeof logId === "string") setSelectedLogId(logId);
-        setView(APP_VIEWS.REPLAY);
-        setMenuVisible(false);
-    }, []);
+        requestWorkspace(() => {
+            if (typeof logId === "string") setSelectedLogId(logId);
+            setView(APP_VIEWS.REPLAY);
+            setMenuVisible(false);
+        });
+    }, [requestWorkspace]);
 
     const goToAnalysis = useCallback((logId = null) => {
-        if (typeof logId === "string") setSelectedLogId(logId);
-        setView(APP_VIEWS.ANALYSIS);
-        setMenuVisible(false);
-    }, []);
+        requestWorkspace(() => {
+            if (typeof logId === "string") setSelectedLogId(logId);
+            setView(APP_VIEWS.ANALYSIS);
+            setMenuVisible(false);
+        });
+    }, [requestWorkspace]);
 
     const goToConfig = useCallback(() => {
-        setView(APP_VIEWS.CONFIG);
-        setMenuVisible(false);
-    }, []);
+        requestWorkspace(() => {
+            setView(APP_VIEWS.CONFIG);
+            setMenuVisible(false);
+        });
+    }, [requestWorkspace]);
 
     const goToVehicleEditor = useCallback(() => {
-        setView(APP_VIEWS.VEHICLE_EDITOR);
-        setMenuVisible(false);
-    }, []);
+        requestWorkspace(() => {
+            setView(APP_VIEWS.VEHICLE_EDITOR);
+            setMenuVisible(false);
+        });
+    }, [requestWorkspace]);
 
     const selectEnvironment = useCallback((environmentId) => {
         setActiveEnvironment(environmentId);
@@ -149,22 +211,26 @@ export default function Home() {
         });
     }, [launchResolvedRun]);
 
-    useEffect(() => {
-        const ev = (e) => {
-            if (e.key == "Escape") {
-                if (window.__fusionEnvironmentEditorConsumesEscape) return;
-                setMenuVisible((visible) => !visible);
-            }
-        };
-        document.addEventListener("keydown", ev);
-
-        return () => {
-            document.removeEventListener("keydown", ev);
-        }
-    }, [])
+    useShortcut({
+        id: "global-workspace-switcher",
+        keys: "Escape",
+        scope: "global",
+        priority: 0,
+        enabled: !menuVisible && !desktopRequired,
+        handler: () => {
+            if (window.__fusionEnvironmentEditorConsumesEscape) return false;
+            openWorkspaceSwitcher("keyboard");
+            return true;
+        },
+    });
 
     return (
-        <>
+        <div className="sf-application-root">
+        <div
+            className="sf-runtime-layer"
+            aria-hidden={desktopRequired || undefined}
+            inert={desktopRequired || undefined}
+        >
         {
             menuVisible && (
                 <Menu
@@ -179,30 +245,42 @@ export default function Home() {
                     onVehicleEditor={goToVehicleEditor}
                     onReplay={goToReplay}
                     onAnalysis={goToAnalysis}
+                    instant={menuSource === "keyboard"}
                 />
             )
         }
+        {view === APP_VIEWS.THREE_D && (
+            <button
+                type="button"
+                className="sf-canvas-workspace-button"
+                onClick={() => openWorkspaceSwitcher("pointer")}
+                aria-label="Open workspaces"
+            >
+                <IconLayoutGrid size={15} stroke={1.75} aria-hidden="true" />
+                <span>{threeDMode === THREE_D_MODES.ENVIRONMENT ? "Environment Editor" : "Simulation"}</span>
+            </button>
+        )}
         {
-            view === APP_VIEWS.SCRIPTING && <Scripting />
+            view === APP_VIEWS.SCRIPTING && <Scripting onOpenWorkspace={() => openWorkspaceSwitcher("pointer")} />
         }
         {
-            view === APP_VIEWS.BINDINGS && <BindingsPage />
+            view === APP_VIEWS.BINDINGS && <BindingsPage onOpenWorkspace={() => openWorkspaceSwitcher("pointer")} />
         }
         {
             view === APP_VIEWS.REPLAY && (
-                <ReplayPage key={selectedLogId || "replay"} initialLogId={selectedLogId} mcpCommand={replayCommand} onOpenAnalysis={goToAnalysis} />
+                <ReplayPage key={selectedLogId || "replay"} initialLogId={selectedLogId} mcpCommand={replayCommand} onOpenAnalysis={goToAnalysis} onOpenWorkspace={() => openWorkspaceSwitcher("pointer")} />
             )
         }
         {
             view === APP_VIEWS.ANALYSIS && (
-                <AnalysisPage initialLogId={selectedLogId} onOpenReplay={goToReplay} />
+                <AnalysisPage initialLogId={selectedLogId} onOpenReplay={goToReplay} onOpenWorkspace={() => openWorkspaceSwitcher("pointer")} />
             )
         }
         {
-            view === APP_VIEWS.CONFIG && <ConfigPage onLaunch={launchResolvedRun} />
+            view === APP_VIEWS.CONFIG && <ConfigPage onLaunch={launchResolvedRun} onOpenWorkspace={() => openWorkspaceSwitcher("pointer")} />
         }
         {
-            view === APP_VIEWS.VEHICLE_EDITOR && <VehicleEditorPage />
+            view === APP_VIEWS.VEHICLE_EDITOR && <VehicleEditorPage onOpenWorkspace={() => openWorkspaceSwitcher("pointer")} />
         }
         {
             activeEnvironmentId && (
@@ -215,6 +293,8 @@ export default function Home() {
                 />
             )
         }
-        </>
+        </div>
+        <DesktopRequired />
+        </div>
     );
 }

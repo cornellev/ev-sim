@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef } from "react";
+import styles from "./AnalysisPage.module.css";
 
 export default function UPlotGraph({ data, series, onCursor, onUnlockLive, onWidth }) {
     const mountRef = useRef(null);
@@ -26,9 +27,9 @@ export default function UPlotGraph({ data, series, onCursor, onUnlockLive, onWid
                 select: { show: true },
                 scales: { x: { time: false }, y: { auto: true }, y2: { auto: true } },
                 axes: [
-                    { stroke: "#71717a", grid: { stroke: "#27272a", width: 1 }, ticks: { stroke: "#3f3f46" }, values: (_u, values) => values.map((value) => `${value.toFixed(1)}s`) },
-                    { stroke: "#71717a", grid: { stroke: "#27272a", width: 1 }, ticks: { stroke: "#3f3f46" }, size: 55 },
-                    { side: 1, scale: "y2", stroke: "#71717a", grid: { show: false }, ticks: { stroke: "#3f3f46" }, size: 55 },
+                    { stroke: "#8a8a8a", grid: { stroke: "rgba(255,255,255,.06)", width: 1 }, ticks: { stroke: "rgba(255,255,255,.12)" }, values: (_u, values) => values.map((value) => `${value.toFixed(1)}s`) },
+                    { stroke: "#8a8a8a", grid: { stroke: "rgba(255,255,255,.06)", width: 1 }, ticks: { stroke: "rgba(255,255,255,.12)" }, size: 55 },
+                    { side: 1, scale: "y2", stroke: "#8a8a8a", grid: { show: false }, ticks: { stroke: "rgba(255,255,255,.12)" }, size: 55 },
                 ],
                 series: [
                     { label: "Time" },
@@ -80,5 +81,5 @@ export default function UPlotGraph({ data, series, onCursor, onUnlockLive, onWid
         }
     };
 
-    return <div className="relative h-full min-h-[240px] w-full bg-zinc-950" onPointerUp={finishPointerGesture}><div ref={mountRef} className="absolute inset-0 overflow-hidden" />{!data?.[0]?.length && <div className="pointer-events-none absolute inset-0 grid place-items-center bg-zinc-950 text-center"><div><p className="text-xs font-medium text-zinc-300">Add numeric signals to graph</p><p className="mt-1 text-[10px] text-zinc-600">Click +, double-click a signal, press Enter, or drag it here.</p></div></div>}</div>;
+    return <div className={styles.graph} onPointerUp={finishPointerGesture}><div ref={mountRef} className={styles.graphMount} />{!data?.[0]?.length && <div className={styles.graphEmpty}><div><p>Add numeric signals to graph</p><span>Use the add button, double-click, press Enter, or drag a signal here.</span></div></div>}</div>;
 }

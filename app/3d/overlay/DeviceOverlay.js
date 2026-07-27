@@ -3,6 +3,7 @@
 import * as THREE from "three";
 import { useEffect, useMemo, useState } from "react";
 import { keyText, keys } from "../../util/Keys";
+import { Switch } from "../../ui";
 
 const DEVICE_PANEL_CONTROL_LOCK = "simulation-device-control-panel";
 
@@ -96,8 +97,8 @@ function NumberInput({ value, onCommit, className }) {
 function DeviceSettingField({ label, value, path, onChange }) {
     if (value instanceof THREE.Vector3 || value instanceof THREE.Euler) {
         return (
-            <div className="rounded-lg border border-zinc-700/80 bg-zinc-900/70 p-2">
-                <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-400">{keyText(label)}</p>
+            <div className="rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-900/70 p-2">
+                <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-400">{keyText(label)}</p>
                 <div className="grid grid-cols-3 gap-1.5">
                     {[
                         ["x", value.x],
@@ -105,11 +106,11 @@ function DeviceSettingField({ label, value, path, onChange }) {
                         ["z", value.z],
                     ].map(([axis, axisValue]) => (
                         <label key={axis} className="space-y-1">
-                            <span className="text-[10px] uppercase text-zinc-400">{axis}</span>
+                            <span className="text-[11px] uppercase text-zinc-400">{axis}</span>
                             <NumberInput
                                 value={axisValue}
                                 onCommit={(next) => onChange(path.concat(axis), next)}
-                                className="h-8 w-full rounded-md border border-zinc-700/80 bg-zinc-950/80 px-2 text-[11px] text-zinc-100 focus:outline-none focus:ring-2 focus:ring-sky-400/60"
+                                className="h-8 w-full rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-950/80 px-2 text-[11px] text-zinc-100 focus:outline-none focus:ring-2 focus:ring-sky-400/60"
                             />
                         </label>
                     ))}
@@ -120,8 +121,8 @@ function DeviceSettingField({ label, value, path, onChange }) {
 
     if (Array.isArray(value)) {
         return (
-            <div className="rounded-lg border border-zinc-700/80 bg-zinc-900/70 p-2">
-                <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-400">{keyText(label)}</p>
+            <div className="rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-900/70 p-2">
+                <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-400">{keyText(label)}</p>
                 <div className="space-y-1.5">
                     {value.map((entry, index) => (
                         <DeviceSettingField
@@ -140,8 +141,8 @@ function DeviceSettingField({ label, value, path, onChange }) {
     const isObject = value !== null && typeof value === "object";
     if (isObject) {
         return (
-            <div className="rounded-lg border border-zinc-700/80 bg-zinc-900/70 p-2">
-                <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-400">{keyText(label)}</p>
+            <div className="rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-900/70 p-2">
+                <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-400">{keyText(label)}</p>
                 <div className="space-y-1.5">
                     {keys(value).map((childKey) => (
                         <DeviceSettingField
@@ -161,7 +162,7 @@ function DeviceSettingField({ label, value, path, onChange }) {
         return (
             <button
                 type="button"
-                className="flex w-full items-center justify-between gap-2 rounded-lg border border-zinc-700/80 bg-zinc-900/85 px-2 py-1.5 text-left transition-colors hover:bg-zinc-800/90"
+                className="flex w-full items-center justify-between gap-2 rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-900/85 px-2 py-1.5 text-left transition-colors hover:bg-zinc-800/90"
                 onClick={() => onChange(path, !value)}
             >
                 <span className="text-[11px] font-medium text-zinc-100">{keyText(label)}</span>
@@ -183,20 +184,20 @@ function DeviceSettingField({ label, value, path, onChange }) {
     const numeric = typeof value === "number";
 
     return (
-        <label className="flex items-center justify-between gap-2 rounded-lg border border-zinc-700/80 bg-zinc-900/85 px-2 py-1.5">
+        <label className="flex items-center justify-between gap-2 rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-900/85 px-2 py-1.5">
             <span className="truncate text-[11px] font-medium text-zinc-100">{keyText(label)}</span>
             {numeric ? (
                 <NumberInput
                     value={value}
                     onCommit={(next) => onChange(path, next)}
-                    className="h-8 w-28 rounded-md border border-zinc-700/80 bg-zinc-950/80 px-2 text-[11px] text-zinc-100 focus:outline-none focus:ring-2 focus:ring-sky-400/60"
+                    className="h-8 w-28 rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-950/80 px-2 text-[11px] text-zinc-100 focus:outline-none focus:ring-2 focus:ring-sky-400/60"
                 />
             ) : (
                 <input
                     type="text"
                     value={asInputValue(value)}
                     onChange={(e) => onChange(path, e.target.value)}
-                    className="h-8 w-28 rounded-md border border-zinc-700/80 bg-zinc-950/80 px-2 text-[11px] text-zinc-100 focus:outline-none focus:ring-2 focus:ring-sky-400/60"
+                    className="h-8 w-28 rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-950/80 px-2 text-[11px] text-zinc-100 focus:outline-none focus:ring-2 focus:ring-sky-400/60"
                 />
             )}
         </label>
@@ -265,7 +266,7 @@ export function DeviceOverlay({
 
     return (
         <div
-            className={`absolute top-3 left-3 z-30 w-[300px] rounded-2xl border border-zinc-700/80 bg-zinc-950/85 p-3 text-zinc-100 shadow-[0_30px_80px_rgba(0,0,0,0.45)] backdrop-blur-2xl transition-all duration-200 ease-out ${visible ? "opacity-100 translate-y-0 scale-100 pointer-events-auto" : "opacity-0 -translate-y-1 scale-[0.985] pointer-events-none"} ${panelClassName}`}
+            className={`absolute top-[58px] left-3 z-30 w-[300px] rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-950/85 p-3 text-zinc-100 shadow-[0_30px_80px_rgba(0,0,0,0.45)] transition-[opacity,color,background-color,border-color,transform] duration-200 ease-out ${visible ? "opacity-100 translate-y-0 scale-100 pointer-events-auto" : "opacity-0 -translate-y-1 scale-[0.985] pointer-events-none"} ${panelClassName}`}
             onMouseDown={controls.disable}
             onMouseUp={controls.enable}
             onMouseLeave={controls.enable}
@@ -273,19 +274,19 @@ export function DeviceOverlay({
             <div className="mb-2 flex items-center justify-between border-b border-zinc-700/80 pb-2">
                 <div className="min-w-0">
                     <p className="truncate text-[12px] font-semibold tracking-wide text-zinc-100">{device.name}</p>
-                    <p className="text-[10px] text-zinc-400">Device Control Panel</p>
+                    <p className="text-[11px] text-zinc-400">Device Control Panel</p>
                 </div>
                 <div className="flex items-center gap-1">
                     <button
                         type="button"
-                        className="rounded-md border border-zinc-700/80 bg-zinc-900/80 px-2 py-1 text-[10px] font-medium text-zinc-200 hover:bg-zinc-800/90"
+                        className="rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-900/80 px-2 py-1 text-[11px] font-medium text-zinc-200 hover:bg-zinc-800/90"
                         onClick={onBack}
                     >
                         Back
                     </button>
                     <button
                         type="button"
-                        className="h-7 w-7 rounded-md border border-zinc-700/80 bg-zinc-900/80 text-xs text-zinc-200 hover:bg-zinc-800/90"
+                        className="h-7 w-7 rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-900/80 text-xs text-zinc-200 hover:bg-zinc-800/90"
                         onClick={() => setCollapsed((prev) => !prev)}
                         aria-label={collapsed ? "Expand panel" : "Collapse panel"}
                         title={collapsed ? "Expand panel" : "Collapse panel"}
@@ -297,11 +298,13 @@ export function DeviceOverlay({
 
             {!collapsed && (
                 <div className="space-y-2">
-                    <button
-                        type="button"
-                        className="flex w-full items-center justify-between gap-2 rounded-lg border border-zinc-700/80 bg-zinc-900/85 px-2 py-1.5 text-left transition-colors hover:bg-zinc-800/90"
-                        onClick={() => {
-                            const next = !enabled;
+                    <Switch
+                        label="Enabled"
+                        checked={enabled}
+                        tone="status"
+                        className="rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-900/85 px-2 py-1.5"
+                        aria-label={`${device.name} enabled`}
+                        onCheckedChange={(next) => {
                             setEnabledState({ device, enabled: next });
                             if (onDeviceEnabledChange) {
                                 onDeviceEnabledChange(next);
@@ -309,27 +312,11 @@ export function DeviceOverlay({
                                 device.setEnabled?.(next);
                             }
                         }}
-                    >
-                        <div>
-                            <p className="text-[11px] font-medium text-zinc-100">Enabled</p>
-                        </div>
-                        <span
-                            className={`relative inline-flex h-5 w-9 items-center rounded-full border transition-colors ${
-                                enabled ? "border-sky-400/80 bg-sky-500/75" : "border-zinc-500/70 bg-zinc-700/80"
-                            }`}
-                        >
-                            <span
-                                className={`mx-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${
-                                    enabled ? "translate-x-4" : "translate-x-0"
-                                }`}
-                            />
-                        </span>
-                    </button>
+                    />
 
-                    <label className="block rounded-lg border border-zinc-700/80 bg-zinc-900/85 p-2">
-                        <span className="block text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-400">Telemetry ID</span>
-                        <span className="mt-1 block text-[9px] text-zinc-500">Published under the device telemetry namespace.</span>
-                        <span className={`mt-2 flex h-8 items-center overflow-hidden rounded-md border bg-zinc-950/85 font-mono text-[10px] focus-within:border-sky-500 ${telemetryIdError ? "border-red-500/70" : "border-zinc-700"}`}>
+                    <label className="block rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-900/85 p-2">
+                        <span className="block text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-400">Telemetry ID</span>
+                        <span className={`mt-2 flex h-8 items-center overflow-hidden rounded-[var(--radius)] border bg-zinc-950/85 font-mono text-[11px] focus-within:border-sky-500 ${telemetryIdError ? "border-red-500/70" : "border-zinc-700"}`}>
                             <span className="border-r border-zinc-800 px-2 text-zinc-600">devices.</span>
                             <input
                                 aria-label={`${device.name} telemetry ID`}
@@ -351,7 +338,7 @@ export function DeviceOverlay({
                                 className="min-w-0 flex-1 bg-transparent px-2 text-zinc-100 outline-none"
                             />
                         </span>
-                        {telemetryIdError && <span className="mt-1.5 block text-[9px] leading-tight text-red-300">{telemetryIdError}</span>}
+                        {telemetryIdError && <span className="mt-1.5 block text-[11px] leading-tight text-red-300">{telemetryIdError}</span>}
                     </label>
 
                     <div className="max-h-[52vh] space-y-1.5 overflow-auto pr-1 hide-scrollbar">

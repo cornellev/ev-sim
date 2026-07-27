@@ -103,8 +103,6 @@ export class Shader {
             stencilBuffer: false,
         });
 
-        this._pixelBuffer = new Float32Array(4 * w * h);
-
         this._scene = scene2;
         this._camera = cam2;
         this._mat = mat;
@@ -126,6 +124,10 @@ export class Shader {
         this._busy = true;
 
         const { w, h } = this.size;
+        const pixelBufferLength = 4 * w * h;
+        if (this._pixelBuffer?.length !== pixelBufferLength) {
+            this._pixelBuffer = new Float32Array(pixelBufferLength);
+        }
 
         // update time uniform
         const currentTime = Date.now();
@@ -184,5 +186,22 @@ export class Shader {
         mesh.position.set(position.x, position.y, position.z);
         scene.add(mesh);
         return mesh;
+    }
+
+    dispose() {
+        this._renderTarget?.dispose?.();
+        this._quad?.geometry?.dispose?.();
+        this._mat?.dispose?.();
+        this._quad?.removeFromParent?.();
+
+        this._scene = null;
+        this._camera = null;
+        this._mat = null;
+        this._quad = null;
+        this._renderTarget = null;
+        this._renderer = null;
+        this._pixelBuffer = null;
+        this._busy = false;
+        this.listeners = [];
     }
 }

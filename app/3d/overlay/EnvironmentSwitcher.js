@@ -2,12 +2,12 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
-    FaChevronDown,
-    FaCopy,
-    FaPen,
-    FaPlus,
-    FaTrash,
-} from "react-icons/fa";
+    IconChevronDown as FaChevronDown,
+    IconCopy as FaCopy,
+    IconPencil as FaPen,
+    IconPlus as FaPlus,
+    IconTrash as FaTrash,
+} from "@tabler/icons-react";
 import {
     createEnvironment,
     deleteEnvironment,
@@ -116,7 +116,7 @@ export function EnvironmentSwitcher({ data, activeEnvironmentId, onEnvironmentCh
         <div className="fixed left-1/2 top-3 z-40 w-[320px] max-w-[calc(100vw-24px)] -translate-x-1/2 pointer-events-auto text-zinc-100">
             <button
                 type="button"
-                className="mx-auto flex min-w-[190px] items-center justify-between gap-3 rounded-xl border border-zinc-700/80 bg-zinc-950/90 px-3 py-2.5 text-left shadow-[0_14px_44px_rgba(0,0,0,0.4)] backdrop-blur-xl transition-colors hover:border-zinc-600 hover:bg-zinc-900 focus:outline-none focus:ring-2 focus:ring-sky-400/60"
+                className="mx-auto flex min-w-[190px] items-center justify-between gap-3 rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-950/90 px-3 py-2.5 text-left shadow-[0_14px_44px_rgba(0,0,0,0.4)] transition-colors hover:border-zinc-600 hover:bg-zinc-900 focus:outline-none focus:ring-2 focus:ring-sky-400/60"
                 onClick={() => setOpen((value) => !value)}
                 aria-expanded={open}
             >
@@ -129,7 +129,7 @@ export function EnvironmentSwitcher({ data, activeEnvironmentId, onEnvironmentCh
             </button>
 
             {open && (
-                <div className="mt-2 w-full overflow-hidden rounded-xl border border-zinc-700/80 bg-zinc-950/95 shadow-[0_20px_70px_rgba(0,0,0,0.55)] backdrop-blur-xl">
+                <div className="mt-2 w-full overflow-hidden rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-950/95 shadow-[0_20px_70px_rgba(0,0,0,0.55)]">
                     <div className="max-h-52 overflow-y-auto p-2">
                         {environments.map((environment) => (
                             <button
@@ -139,14 +139,14 @@ export function EnvironmentSwitcher({ data, activeEnvironmentId, onEnvironmentCh
                                     onEnvironmentChange?.(environment.id);
                                     setOpen(false);
                                 }}
-                                className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left transition-colors ${
+                                className={`flex w-full items-center justify-between rounded-[var(--radius)] px-3 py-2 text-left transition-colors ${
                                     environment.id === activeEnvironmentId
                                         ? "bg-sky-500/15 text-sky-100"
                                         : "text-zinc-300 hover:bg-zinc-800/80 hover:text-white"
                                 }`}
                             >
                                 <span className="truncate text-[12px] font-medium">{environment.name}</span>
-                                <span className="ml-3 text-[9px] uppercase tracking-wider text-zinc-500">
+                                <span className="ml-3 text-[11px] uppercase tracking-wider text-zinc-500">
                                     {environment.templateId != "blank" ? "sourced from " + environment.templateId : ""}
                                 </span>
                             </button>
@@ -154,17 +154,17 @@ export function EnvironmentSwitcher({ data, activeEnvironmentId, onEnvironmentCh
                     </div>
 
                     <div className="border-t border-zinc-800 p-3">
-                        <label className="block text-[10px] font-medium uppercase tracking-[0.14em] text-zinc-500">
+                        <label className="block text-[11px] font-medium uppercase tracking-[0.14em] text-zinc-500">
                             Name
                         </label>
                         <input
                             value={name}
                             onChange={(event) => setName(event.target.value)}
-                            className="mt-1.5 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-[12px] text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-sky-500/70 focus:ring-2 focus:ring-sky-500/20"
+                            className="mt-1.5 w-full rounded-[var(--radius)] border border-zinc-700 bg-zinc-900 px-3 py-2 text-[12px] text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-sky-500/70 focus:ring-2 focus:ring-sky-500/20"
                             placeholder="Environment name"
                             disabled={busy}
                         />
-                        {error && <p className="mt-2 text-[10px] leading-relaxed text-red-300">{error}</p>}
+                        {error && <p className="mt-2 text-[11px] leading-relaxed text-red-300">{error}</p>}
 
                         <div className="mt-3 grid grid-cols-2 gap-1.5">
                             <ActionButton icon={FaPlus} label="New blank" onClick={createBlank} disabled={busy} />
@@ -191,7 +191,7 @@ function ActionButton({ icon: Icon, label, onClick, disabled, destructive = fals
             type="button"
             onClick={onClick}
             disabled={disabled}
-            className={`flex items-center justify-center gap-2 rounded-lg border px-2 py-2 text-[10px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-35 ${
+            className={`flex items-center justify-center gap-2 rounded-[var(--radius)] border px-2 py-2 text-[11px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-35 ${
                 destructive
                     ? "border-red-900/60 bg-red-950/30 text-red-300 hover:bg-red-950/60"
                     : "border-zinc-700 bg-zinc-900 text-zinc-300 hover:border-zinc-600 hover:bg-zinc-800 hover:text-white"
@@ -202,4 +202,3 @@ function ActionButton({ icon: Icon, label, onClick, disabled, destructive = fals
         </button>
     );
 }
-

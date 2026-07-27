@@ -1,17 +1,16 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { cloneElement, isValidElement, useEffect, useMemo, useRef, useState } from "react";
 import {
-    FaCheck,
-    FaClone,
-    FaDownload,
-    FaExclamationTriangle,
-    FaFileImport,
-    FaPlay,
-    FaPlus,
-    FaSave,
-    FaTrash,
-} from "react-icons/fa";
+    IconCheck,
+    IconCopy,
+    IconDeviceFloppy,
+    IconDownload,
+    IconFileImport,
+    IconPlayerPlay,
+    IconPlus,
+    IconTrash,
+} from "@tabler/icons-react";
 
 import { listEnvironments } from "../3d/environment/EnvironmentCatalogClient.js";
 import {
@@ -46,9 +45,23 @@ import {
     loadRunManifestCatalog,
     withConfigLoadTimeout,
 } from "./ConfigCatalogLoader.js";
+import {
+    AsyncState,
+    Button,
+    Field as SharedField,
+    IconButton,
+    StatusMessage,
+    Switch as SharedSwitch,
+    TabsContent,
+    TabsList,
+    TabsRoot,
+    TabsTrigger,
+    useWorkspaceGuard,
+} from "../ui";
 
 const TABS = ["Overview", "Initial State", "Clock", "Sensors", "Scripts", "Topics", "Assertions", "Logging", "JSON"];
 const SENSOR_TYPE_DEFINITIONS = listSensorTypes();
+const FaPlus = (props) => <IconPlus size={14} stroke={1.75} {...props} />;
 
 function runIdFromName(name) {
     return String(name || "run")
@@ -89,7 +102,7 @@ function parseInputValue(value) {
     try { return JSON.parse(value); } catch { return value; }
 }
 
-export default function ConfigPage({ onLaunch }) {
+export default function ConfigPage({ onLaunch, onOpenWorkspace }) {
     const controller = useMemo(() => getRunSessionController(), []);
     const importRef = useRef(null);
     const manifestLoadRequest = useRef(0);
@@ -389,111 +402,124 @@ export default function ConfigPage({ onLaunch }) {
         await refreshCatalog(created.id);
     });
 
+    useWorkspaceGuard("run-config", {
+        dirty,
+        label: "Run configuration",
+        save,
+        discard: () => saved && applyManifestDocument(selectedId, saved),
+    });
+
     return (
-        <main className="fixed inset-0 overflow-hidden bg-zinc-950 text-zinc-100">
-            <header className="flex h-16 items-center justify-between border-b border-zinc-800 bg-zinc-950/95 px-5">
-                <div>
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-sky-400">Simulation configuration</p>
-                    <h1 className="mt-0.5 text-lg font-semibold">Run manifests</h1>
-                </div>
+        <main className="fixed inset-0 z-[1] overflow-hidden bg-[var(--slate-bg)] text-[var(--slate-fg)]">
+            <header className="flex h-10 items-center justify-between border-b border-[var(--slate-border)] bg-[var(--slate-surface-1)] px-3">
+                <button type="button" className="flex min-w-0 items-center gap-2 text-left" onClick={onOpenWorkspace}>
+                    <span className="text-[11px] font-medium text-[var(--slate-muted)]">cev-sim</span>
+                    <span aria-hidden="true" className="h-3 w-px bg-[var(--slate-border)]" />
+                    <span className="truncate text-[13px] font-semibold">Run configuration</span>
+                </button>
                 <div className="flex items-center gap-2">
-                    <Action icon={<FaCheck />} label="Validate" onClick={validate} disabled={!draft || busy} />
-                    <Action icon={<FaSave />} label="Save" onClick={save} disabled={!draft || !dirty || busy} />
-                    <Action primary icon={<FaPlay />} label="Validate & Run" onClick={launch} disabled={!draft || busy} />
+                    <select
+                        aria-label="Select run manifest"
+                        className="sf-input hidden max-w-48 max-[1023px]:block"
+                        value={selectedId || ""}
+                        onChange={(event) => select(event.target.value)}
+                        disabled={busy || catalog.length === 0}
+                    >
+                        {catalog.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}
+                    </select>
+                    <Action icon={<IconCheck size={14} stroke={1.75} />} label="Validate" onClick={validate} disabled={!draft || busy} />
+                    <Action icon={<IconDeviceFloppy size={14} stroke={1.75} />} label="Save" onClick={save} disabled={!draft || !dirty || busy} />
+                    <Action primary icon={<IconPlayerPlay size={14} stroke={1.75} />} label="Validate and run" onClick={launch} disabled={!draft || busy} />
                 </div>
             </header>
 
-            <div className="grid h-[calc(100vh-4rem)] grid-cols-[260px_minmax(0,1fr)]">
-                <aside className="flex min-h-0 flex-col border-r border-zinc-800 bg-zinc-950">
-                    <div className="flex items-center gap-1.5 border-b border-zinc-800 p-3">
-                        <Action icon={<FaPlus />} label="New" onClick={createNew} disabled={busy} compact />
-                        <Action icon={<FaFileImport />} label="Import" onClick={() => importRef.current?.click()} disabled={busy} compact />
+            <div className="grid h-[calc(100dvh-2.5rem)] grid-cols-[260px_minmax(0,1fr)] max-[1023px]:grid-cols-[minmax(0,1fr)]">
+                <aside className="flex min-h-0 flex-col border-r border-[var(--slate-border)] bg-[var(--slate-surface-1)] max-[1023px]:hidden">
+                    <div className="flex items-center gap-2 border-b border-[var(--slate-border)] p-3">
+                        <Action icon={<IconPlus size={14} stroke={1.75} />} label="New" onClick={createNew} disabled={busy} compact />
+                        <Action icon={<IconFileImport size={14} stroke={1.75} />} label="Import" onClick={() => importRef.current?.click()} disabled={busy} compact />
                         <input ref={importRef} hidden type="file" accept=".json,application/json" onChange={importBundleFile} />
                     </div>
-                    <div className="min-h-0 flex-1 overflow-y-auto p-2">
+                    <div className="mod-scrollbar min-h-0 flex-1 overflow-y-auto p-2">
                         {catalog.map((entry) => (
-                            <button key={entry.id} type="button" onClick={() => select(entry.id)} className={`mb-1 w-full rounded-xl border px-3 py-2.5 text-left transition-colors ${entry.id === selectedId ? "border-sky-400/50 bg-sky-500/10" : "border-transparent hover:border-zinc-700 hover:bg-zinc-900"}`}>
-                                <span className="block truncate text-xs font-semibold">{entry.name}</span>
-                                <span className="mt-1 block truncate font-mono text-[9px] text-zinc-500">{entry.id} · r{entry.revision}</span>
+                            <button key={entry.id} type="button" onClick={() => select(entry.id)} aria-current={entry.id === selectedId ? "page" : undefined} className={`mb-1 w-full rounded-[var(--radius)] border px-3 py-2.5 text-left transition-[background-color,border-color,color] duration-150 ${entry.id === selectedId ? "border-[var(--slate-border)] bg-[var(--slate-surface-3)] text-[var(--slate-fg)]" : "border-transparent text-[var(--slate-fg-2)] hover:bg-[var(--slate-surface-2)]"}`}>
+                                <span className="block truncate text-[13px] font-medium">{entry.name}</span>
+                                <span className="mt-1 block truncate font-mono text-[11px] text-[var(--slate-muted)]">{entry.id} · r{entry.revision}</span>
                             </button>
                         ))}
                     </div>
                     {draft && (
-                        <div className="space-y-2 border-t border-zinc-800 p-3">
-                            <div className="flex gap-1.5">
-                                <Action compact icon={<FaClone />} label="Duplicate" onClick={duplicate} disabled={busy} />
-                                <Action compact icon={<FaDownload />} label="Export" onClick={exportBundle} disabled={busy} />
-                                <button type="button" aria-label="Delete manifest" onClick={remove} disabled={busy} className="grid h-8 w-8 place-items-center rounded-lg border border-red-500/30 text-red-300 hover:bg-red-500/10 disabled:opacity-50"><FaTrash className="h-3 w-3" /></button>
+                        <div className="space-y-2 border-t border-[var(--slate-border)] p-3">
+                            <div className="flex gap-2">
+                                <Action compact icon={<IconCopy size={14} stroke={1.75} />} label="Duplicate" onClick={duplicate} disabled={busy} />
+                                <Action compact icon={<IconDownload size={14} stroke={1.75} />} label="Export" onClick={exportBundle} disabled={busy} />
+                                <IconButton label="Delete manifest" onClick={remove} disabled={busy} className="text-[var(--slate-danger)]"><IconTrash size={14} stroke={1.75} /></IconButton>
                             </div>
-                            <p className="truncate font-mono text-[9px] text-zinc-600">{saved?.definitionHash || "unsaved"}</p>
+                            <p className="truncate font-mono text-[11px] text-[var(--slate-muted)]">{saved?.definitionHash || "Unsaved"}</p>
                         </div>
                     )}
                 </aside>
 
-                <section className="min-w-0 overflow-y-auto">
-                    {manifestLoadState === "loading" && (
-                        <ConfigLoadState
-                            title="Loading manifests…"
-                            detail="Reading the server-backed run catalog and selected manifest."
-                        />
-                    )}
-                    {manifestLoadState === "error" && (
-                        <ConfigLoadState
-                            error
-                            title="Couldn’t load manifests"
-                            detail={error || "The manifest catalog is unavailable."}
-                            action={<Action icon={<FaCheck />} label="Retry" onClick={() => loadManifestCatalog(selectedId)} />}
-                        />
-                    )}
-                    {manifestLoadState === "empty" && (
-                        <ConfigLoadState
-                            title="No run manifests"
-                            detail="Create the first server-backed manifest to configure a simulation run."
-                            action={<Action primary icon={<FaPlus />} label="Create manifest" onClick={createNew} disabled={busy} />}
-                        />
-                    )}
+                <section className="mod-scrollbar min-w-0 overflow-y-auto">
+                    {manifestLoadState === "loading" && <ConfigLoadState title="Loading manifests" detail="Reading the server-backed run catalog and selected manifest." />}
+                    {manifestLoadState === "error" && <ConfigLoadState error title="Could not load manifests" detail={error || "The manifest catalog is unavailable."} action={<Action label="Retry" onClick={() => loadManifestCatalog(selectedId)} />} />}
+                    {manifestLoadState === "empty" && <ConfigLoadState title="No run manifests" detail="Create the first server-backed manifest to configure a simulation run." action={<Action primary icon={<IconPlus size={14} stroke={1.75} />} label="Create manifest" onClick={createNew} disabled={busy} />} />}
                     {manifestLoadState === "ready" && draft && (
-                        <div className="mx-auto max-w-6xl p-6">
-                            <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
+                        <TabsRoot value={tab} onValueChange={setTab} className="mx-auto max-w-6xl p-6 max-[900px]:p-4">
+                            <div className="mb-5 flex flex-wrap items-start justify-between gap-3 border-b border-[var(--slate-border)] pb-5">
                                 <div>
-                                    <div className="flex items-center gap-2">
-                                        <h2 className="text-2xl font-semibold tracking-tight">{draft.name}</h2>
-                                        {dirty && <span className="rounded-full border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-200">{changedFields} changed</span>}
+                                    <div className="flex items-center gap-3">
+                                        <h1 className="text-2xl font-semibold tracking-tight">{draft.name}</h1>
+                                        {dirty && <span className="text-[11px] font-medium text-[var(--slate-warning)]">{changedFields} changed</span>}
                                     </div>
-                                    <p className="mt-1 text-xs text-zinc-500">Active runs remain immutable. Changes apply on the next launch or reset.</p>
+                                    <p className="mt-1 text-[13px] text-[var(--slate-muted)]">Active runs remain immutable. Changes apply on the next launch or reset.</p>
                                 </div>
-                                <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 px-3 py-2 text-right">
-                                    <p className="text-[9px] uppercase tracking-[0.14em] text-zinc-500">Run session</p>
-                                    <p className={`mt-0.5 text-[11px] font-semibold ${runState.status === "error" ? "text-red-300" : "text-emerald-300"}`}>{runState.status}</p>
+                                <div className="border-l border-[var(--slate-border)] pl-3 text-right">
+                                    <p className="text-[11px] text-[var(--slate-muted)]">Run session</p>
+                                    <p className={`mt-0.5 text-[13px] font-medium ${runState.status === "error" ? "text-[var(--slate-danger)]" : "text-[var(--slate-fg-2)]"}`}>{runState.status}</p>
                                 </div>
                             </div>
 
                             {(error || environmentError || rawError || validation?.issues?.length > 0) && (
-                                <div className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-[11px] leading-relaxed text-amber-100">
+                                <StatusMessage className="mb-4" tone="danger" title="Configuration needs attention">
                                     <div className="flex items-start justify-between gap-3">
-                                        <div className="flex min-w-0 items-start gap-2"><FaExclamationTriangle className="mt-0.5 shrink-0" /><pre className="whitespace-pre-wrap font-sans">{error || environmentError || rawError || validation.issues.map((issue) => `${issue.path || "manifest"}: ${issue.message}`).join("\n")}</pre></div>
+                                        <pre className="min-w-0 whitespace-pre-wrap font-sans">{error || environmentError || rawError || validation.issues.map((issue) => `${issue.path || "manifest"}: ${issue.message}`).join("\n")}</pre>
                                         {environmentError && !error && <Action compact label="Retry environments" onClick={loadEnvironmentCatalog} />}
                                     </div>
-                                </div>
+                                </StatusMessage>
                             )}
-                            {validation?.ok && <div className="mb-4 flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-[11px] text-emerald-200"><FaCheck /> Manifest and dependencies are valid.</div>}
+                            {validation?.ok && <StatusMessage className="mb-4" tone="success" title="Manifest and dependencies are valid." />}
 
-                            <nav className="mb-5 flex gap-1 overflow-x-auto rounded-xl border border-zinc-800 bg-zinc-900/50 p-1">
-                                {TABS.map((item) => <button key={item} type="button" onClick={() => setTab(item)} className={`rounded-lg px-3 py-2 text-[10px] font-semibold transition-colors ${tab === item ? "bg-sky-500/20 text-sky-100" : "text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"}`}>{item}</button>)}
-                            </nav>
+                            <TabsList aria-label="Run manifest sections" className="mb-5 overflow-x-auto">
+                                {TABS.map((item) => <TabsTrigger key={item} value={item}>{item}</TabsTrigger>)}
+                            </TabsList>
 
-                            <div key={selectedId} className="rounded-2xl border border-zinc-800 bg-zinc-900/35 p-5">
-                                {tab === "Overview" && <Overview draft={draft} environments={environments} update={update} />}
-                                {tab === "Initial State" && <InitialState draft={draft} update={update} vehicleCatalog={vehicleCatalog} />}
-                                {tab === "Clock" && <Clock draft={draft} update={update} />}
-                                {tab === "Sensors" && <Sensors draft={draft} update={update} />}
-                                {tab === "Scripts" && <Scripts draft={draft} update={update} />}
-                                {tab === "Topics" && <Topics draft={draft} update={update} />}
-                                {tab === "Assertions" && <Assertions draft={draft} update={update} />}
-                                {tab === "Logging" && <Logging draft={draft} update={update} />}
-                                {tab === "JSON" && <div className="space-y-3"><textarea aria-label="Raw run manifest JSON" spellCheck={false} value={raw} onChange={(event) => applyRaw(event.target.value)} className="min-h-[520px] w-full resize-y rounded-xl border border-zinc-700 bg-zinc-950 p-4 font-mono text-[11px] leading-relaxed text-zinc-200 outline-none focus:border-sky-500" /><details className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3"><summary className="cursor-pointer text-[10px] font-semibold text-zinc-300">Normalized diff preview ({normalizedDiff.length})</summary><div className="mt-2 max-h-52 overflow-auto font-mono text-[9px] text-zinc-400">{normalizedDiff.length === 0 ? <p>No normalized changes.</p> : normalizedDiff.slice(0, 100).map((entry) => <div key={entry.path} className="grid grid-cols-[minmax(120px,.8fr)_1fr_1fr] gap-2 border-t border-zinc-800 py-1.5"><span className="truncate text-sky-300">{entry.path}</span><span className="truncate text-red-300/70">{JSON.stringify(entry.before)}</span><span className="truncate text-emerald-300/70">{JSON.stringify(entry.after)}</span></div>)}</div></details></div>}
+                            <div key={selectedId} className="border-t border-[var(--slate-border)] pt-5">
+                                {TABS.map((item) => (
+                                    <TabsContent key={item} value={item} forceMount>
+                                        {item === "Overview" && <Overview draft={draft} environments={environments} update={update} />}
+                                        {item === "Initial State" && <InitialState draft={draft} update={update} vehicleCatalog={vehicleCatalog} />}
+                                        {item === "Clock" && <Clock draft={draft} update={update} />}
+                                        {item === "Sensors" && <Sensors draft={draft} update={update} />}
+                                        {item === "Scripts" && <Scripts draft={draft} update={update} />}
+                                        {item === "Topics" && <Topics draft={draft} update={update} />}
+                                        {item === "Assertions" && <Assertions draft={draft} update={update} />}
+                                        {item === "Logging" && <Logging draft={draft} update={update} />}
+                                        {item === "JSON" && (
+                                            <div className="space-y-3">
+                                                <textarea aria-label="Raw run manifest JSON" spellCheck={false} value={raw} onChange={(event) => applyRaw(event.target.value)} className="sf-input min-h-[520px] resize-y p-4 font-mono text-[12px] leading-relaxed" />
+                                                <details className="rounded-[var(--radius)] border border-[var(--slate-border)] bg-[var(--slate-surface-1)] p-3">
+                                                    <summary className="cursor-pointer text-[12px] font-medium text-[var(--slate-fg-2)]">Normalized diff preview ({normalizedDiff.length})</summary>
+                                                    <div className="mod-scrollbar mt-2 max-h-52 overflow-auto font-mono text-[11px] text-[var(--slate-muted)]">
+                                                        {normalizedDiff.length === 0 ? <p>No normalized changes.</p> : normalizedDiff.slice(0, 100).map((entry) => <div key={entry.path} className="grid grid-cols-[minmax(120px,.8fr)_1fr_1fr] gap-2 border-t border-[var(--slate-border-60)] py-1.5"><span className="truncate text-[var(--slate-fg-2)]">{entry.path}</span><span className="truncate text-[var(--slate-danger)]">{JSON.stringify(entry.before)}</span><span className="truncate text-[var(--slate-fg-2)]">{JSON.stringify(entry.after)}</span></div>)}
+                                                    </div>
+                                                </details>
+                                            </div>
+                                        )}
+                                    </TabsContent>
+                                ))}
                             </div>
-                        </div>
+                        </TabsRoot>
                     )}
                 </section>
             </div>
@@ -502,7 +528,7 @@ export default function ConfigPage({ onLaunch }) {
 }
 
 function ConfigLoadState({ title, detail, action = null, error = false }) {
-    return <div className="grid h-full place-items-center p-6"><div className={`max-w-md rounded-2xl border p-6 text-center ${error ? "border-red-500/30 bg-red-500/10" : "border-zinc-800 bg-zinc-900/35"}`}><h2 className={`text-sm font-semibold ${error ? "text-red-200" : "text-zinc-200"}`}>{title}</h2><p className="mt-2 text-xs leading-relaxed text-zinc-500">{detail}</p>{action && <div className="mt-4 flex justify-center">{action}</div>}</div></div>;
+    return <div className="grid h-full place-items-center p-6"><div><AsyncState status={error ? "error" : action ? "empty" : "loading"} title={title} detail={detail} />{action && <div className="mt-4 flex justify-center">{action}</div>}</div></div>;
 }
 
 function Overview({ draft, environments, update }) {
@@ -527,12 +553,12 @@ function InitialState({ draft, update, vehicleCatalog = [] }) {
         ...BUILT_IN_VEHICLE_OPTIONS.map((entry) => entry.id),
         ...vehicleCatalog.map((entry) => entry.id),
     ]);
-    return <div className="space-y-4"><div className="flex items-center justify-between"><Action compact icon={<FaPlus />} label="Add vehicle" onClick={addVehicle} /></div>{draft.initialState.vehicles.map((vehicle, index) => <div key={`${vehicle.id}-${index}`} className="rounded-xl border border-zinc-800 bg-zinc-950/50 p-4"><div className="grid gap-3 md:grid-cols-4"><Field label="Stable ID"><input value={vehicle.id} onChange={(event) => update(["initialState", "vehicles", index, "id"], event.target.value)} /></Field><Field label="Vehicle type"><select value={vehicle.type} onChange={(event) => update(["initialState", "vehicles", index, "type"], event.target.value)}>{BUILT_IN_VEHICLE_OPTIONS.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}{vehicleCatalog.length > 0 && <optgroup label="Custom vehicles">{vehicleCatalog.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</optgroup>}{!knownTypes.has(vehicle.type) && <option value={vehicle.type}>{vehicle.type} (missing)</option>}</select></Field><Field label="Steering (rad)"><input type="number" step="0.001" value={vehicle.steeringAngle} onChange={(event) => update(["initialState", "vehicles", index, "steeringAngle"], Number(event.target.value))} /></Field><button type="button" onClick={() => update(["initialState", "vehicles"], draft.initialState.vehicles.filter((_, candidate) => candidate !== index))} className="self-end pb-2 text-left text-[10px] text-red-300">Remove vehicle</button></div>{!knownTypes.has(vehicle.type) && <p className="mt-2 text-[10px] text-amber-300">This vehicle type no longer exists in the catalog; the run will fail to spawn it.</p>}<VectorFields label="Position (m)" value={vehicle.pose.position} onChange={(axis, value) => update(["initialState", "vehicles", index, "pose", "position", axis], value)} /><VectorFields label="Rotation (rad)" value={vehicle.pose.rotation} onChange={(axis, value) => update(["initialState", "vehicles", index, "pose", "rotation", axis], value)} /><VectorFields label="Linear velocity (m/s)" value={vehicle.linearVelocity} onChange={(axis, value) => update(["initialState", "vehicles", index, "linearVelocity", axis], value)} /></div>)}<Field label="Initial signal values"><JsonField value={draft.initialState.signals} onChange={(value) => update(["initialState", "signals"], value)} rows={7} /></Field></div>;
+    return <div className="space-y-4"><div className="flex items-center justify-between"><Action compact icon={<FaPlus />} label="Add vehicle" onClick={addVehicle} /></div>{draft.initialState.vehicles.map((vehicle, index) => <div key={`${vehicle.id}-${index}`} className="rounded-[var(--radius)] border border-[var(--slate-border-60)] bg-[var(--slate-surface-1)] p-4"><div className="grid gap-3 md:grid-cols-4"><Field label="Stable ID"><input value={vehicle.id} onChange={(event) => update(["initialState", "vehicles", index, "id"], event.target.value)} /></Field><Field label="Vehicle type"><select value={vehicle.type} onChange={(event) => update(["initialState", "vehicles", index, "type"], event.target.value)}>{BUILT_IN_VEHICLE_OPTIONS.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}{vehicleCatalog.length > 0 && <optgroup label="Custom vehicles">{vehicleCatalog.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</optgroup>}{!knownTypes.has(vehicle.type) && <option value={vehicle.type}>{vehicle.type} (missing)</option>}</select></Field><Field label="Steering (rad)"><input type="number" step="0.001" value={vehicle.steeringAngle} onChange={(event) => update(["initialState", "vehicles", index, "steeringAngle"], Number(event.target.value))} /></Field><button type="button" onClick={() => update(["initialState", "vehicles"], draft.initialState.vehicles.filter((_, candidate) => candidate !== index))} className="self-end pb-2 text-left text-[11px] text-[var(--slate-danger)]">Remove vehicle</button></div>{!knownTypes.has(vehicle.type) && <p className="mt-2 text-[11px] text-[var(--slate-warning)]">This vehicle type no longer exists in the catalog; the run will fail to spawn it.</p>}<VectorFields label="Position (m)" value={vehicle.pose.position} onChange={(axis, value) => update(["initialState", "vehicles", index, "pose", "position", axis], value)} /><VectorFields label="Rotation (rad)" value={vehicle.pose.rotation} onChange={(axis, value) => update(["initialState", "vehicles", index, "pose", "rotation", axis], value)} /><VectorFields label="Linear velocity (m/s)" value={vehicle.linearVelocity} onChange={(axis, value) => update(["initialState", "vehicles", index, "linearVelocity", axis], value)} /></div>)}<Field label="Initial signal values"><JsonField value={draft.initialState.signals} onChange={(value) => update(["initialState", "signals"], value)} rows={7} /></Field></div>;
 }
 
 function Clock({ draft, update }) {
     const modules = draft.clock.modules;
-    return <div className="space-y-5"><div className="grid gap-4 md:grid-cols-3"><Field label="Step (nanoseconds)"><input type="number" min="1" value={draft.clock.stepNs} onChange={(event) => update(["clock", "stepNs"], Number(event.target.value))} /></Field><Field label="Pacing"><select value={draft.clock.pacing} onChange={(event) => update(["clock", "pacing"], event.target.value)}><option value="realtime">Realtime</option><option value="unbounded">Unbounded</option></select></Field><Field label="Speed"><input type="number" min="0" step="0.1" value={draft.clock.speed} onChange={(event) => update(["clock", "speed"], Number(event.target.value))} /></Field><Field label="Maximum steps"><input type="number" min="1" value={draft.clock.maxSteps ?? ""} placeholder="Unlimited" onChange={(event) => update(["clock", "maxSteps"], event.target.value ? Number(event.target.value) : null)} /></Field><Toggle label="Publish /clock" value={draft.clock.publishClock} onChange={(value) => update(["clock", "publishClock"], value)} /></div><div><p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Deterministic modules</p><div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{Object.entries(modules).map(([name, enabled]) => <Toggle key={name} label={name} value={enabled} onChange={(value) => update(["clock", "modules", name], value)} />)}</div></div></div>;
+    return <div className="space-y-5"><div className="grid gap-4 md:grid-cols-3"><Field label="Step (nanoseconds)"><input type="number" min="1" value={draft.clock.stepNs} onChange={(event) => update(["clock", "stepNs"], Number(event.target.value))} /></Field><Field label="Pacing"><select value={draft.clock.pacing} onChange={(event) => update(["clock", "pacing"], event.target.value)}><option value="realtime">Realtime</option><option value="unbounded">Unbounded</option></select></Field><Field label="Speed"><input type="number" min="0" step="0.1" value={draft.clock.speed} onChange={(event) => update(["clock", "speed"], Number(event.target.value))} /></Field><Field label="Maximum steps"><input type="number" min="1" value={draft.clock.maxSteps ?? ""} placeholder="Unlimited" onChange={(event) => update(["clock", "maxSteps"], event.target.value ? Number(event.target.value) : null)} /></Field><Toggle label="Publish /clock" value={draft.clock.publishClock} onChange={(value) => update(["clock", "publishClock"], value)} /></div><div><p className="mb-2 text-[13px] font-medium text-[var(--slate-fg-2)]">Deterministic modules</p><div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{Object.entries(modules).map(([name, enabled]) => <Toggle key={name} label={name} value={enabled} onChange={(value) => update(["clock", "modules", name], value)} />)}</div></div></div>;
 }
 
 function Sensors({ draft, update }) {
@@ -547,7 +573,7 @@ function Sensors({ draft, update }) {
         const change = (parts, value) => update([...sensorPath, ...parts], value);
         const definition = getSensorType(sensor.type);
         return (
-            <div key={`${sensor.id}-${index}`} className="rounded-xl border border-zinc-800 bg-zinc-950/50 p-4">
+            <div key={`${sensor.id}-${index}`} className="rounded-[var(--radius)] border border-[var(--slate-border-60)] bg-[var(--slate-surface-1)] p-4">
                 <div className="grid gap-3 md:grid-cols-4">
                     <Field label="Stable ID">
                         <input value={sensor.id} onChange={(event) => change(["id"], event.target.value)} />
@@ -603,8 +629,8 @@ function Sensors({ draft, update }) {
                         <SensorDefinitionField key={field.path.join(".")} field={field} sensor={sensor} change={change} />
                     ))}
                 </div>
-                {!definition && <p className="mt-3 text-[10px] text-amber-300">This sensor type is not registered. Its data is preserved, but the run cannot launch until a supported type is selected.</p>}
-                <button type="button" onClick={() => update(["sensorRig", "sensors"], draft.sensorRig.sensors.filter((_, candidate) => candidate !== index))} className="mt-4 text-[10px] text-red-300 hover:text-red-200">Remove sensor</button>
+                {!definition && <p className="mt-3 text-[11px] text-[var(--slate-warning)]">This sensor type is not registered. Its data is preserved, but the run cannot launch until a supported type is selected.</p>}
+                <button type="button" onClick={() => update(["sensorRig", "sensors"], draft.sensorRig.sensors.filter((_, candidate) => candidate !== index))} className="mt-4 text-[11px] text-[var(--slate-danger)]">Remove sensor</button>
             </div>
         );
     })}</div>;
@@ -630,17 +656,17 @@ function SensorDefinitionField({ field, sensor, change }) {
 function Scripts({ draft, update }) {
     const addArtifact = () => update(["scripts", "artifacts"], [...draft.scripts.artifacts, { scriptId: "", expectedHash: null }]);
     return <div className="space-y-4">
-<Toggle label="Run deterministic scripts" value={draft.scripts.enabled} onChange={(value) => update(["scripts", "enabled"], value)} /><div className="flex items-center justify-between"><p className="text-xs text-zinc-400">Artifact and binding hashes lock the exact controller dependencies.</p><Action compact icon={<FaPlus />} label="Add artifact" onClick={addArtifact} /></div>{draft.scripts.artifacts.map((artifact, index) => <div key={`${artifact.scriptId}-${index}`} className="grid gap-3 rounded-xl border border-zinc-800 bg-zinc-950/50 p-3 md:grid-cols-[1fr_2fr_auto]"><Field label="Script ID"><input value={artifact.scriptId} onChange={(event) => update(["scripts", "artifacts", index, "scriptId"], event.target.value)} /></Field><Field label="Expected SHA-256"><input value={artifact.expectedHash || ""} placeholder="Unlocked" onChange={(event) => update(["scripts", "artifacts", index, "expectedHash"], event.target.value || null)} /></Field><button type="button" onClick={() => update(["scripts", "artifacts"], draft.scripts.artifacts.filter((_, candidate) => candidate !== index))} className="self-end pb-2 text-[10px] text-red-300">Remove</button></div>)}<div className="grid gap-4 md:grid-cols-2"><Field label="Binding IDs (comma separated)"><input value={draft.scripts.bindingIds.join(", ")} onChange={(event) => update(["scripts", "bindingIds"], event.target.value.split(",").map((id) => id.trim()).filter(Boolean))} /></Field><Field label="Expected bindings SHA-256"><input value={draft.scripts.expectedBindingsHash || ""} placeholder="Unlocked" onChange={(event) => update(["scripts", "expectedBindingsHash"], event.target.value || null)} /></Field></div><Field label="Embedded portable bindings"><JsonField value={draft.scripts.embeddedBindings} onChange={(value) => update(["scripts", "embeddedBindings"], value)} rows={9} /></Field></div>;
+<Toggle label="Run deterministic scripts" value={draft.scripts.enabled} onChange={(value) => update(["scripts", "enabled"], value)} /><div className="flex items-center justify-between"><p className="text-xs text-zinc-400">Artifact and binding hashes lock the exact controller dependencies.</p><Action compact icon={<FaPlus />} label="Add artifact" onClick={addArtifact} /></div>{draft.scripts.artifacts.map((artifact, index) => <div key={`${artifact.scriptId}-${index}`} className="grid gap-3 rounded-[var(--radius)] border border-[var(--slate-border-60)] bg-[var(--slate-surface-1)] p-3 md:grid-cols-[1fr_2fr_auto]"><Field label="Script ID"><input value={artifact.scriptId} onChange={(event) => update(["scripts", "artifacts", index, "scriptId"], event.target.value)} /></Field><Field label="Expected SHA-256"><input value={artifact.expectedHash || ""} placeholder="Unlocked" onChange={(event) => update(["scripts", "artifacts", index, "expectedHash"], event.target.value || null)} /></Field><button type="button" onClick={() => update(["scripts", "artifacts"], draft.scripts.artifacts.filter((_, candidate) => candidate !== index))} className="self-end pb-2 text-[11px] text-[var(--slate-danger)]">Remove</button></div>)}<div className="grid gap-4 md:grid-cols-2"><Field label="Binding IDs (comma separated)"><input value={draft.scripts.bindingIds.join(", ")} onChange={(event) => update(["scripts", "bindingIds"], event.target.value.split(",").map((id) => id.trim()).filter(Boolean))} /></Field><Field label="Expected bindings SHA-256"><input value={draft.scripts.expectedBindingsHash || ""} placeholder="Unlocked" onChange={(event) => update(["scripts", "expectedBindingsHash"], event.target.value || null)} /></Field></div><Field label="Embedded portable bindings"><JsonField value={draft.scripts.embeddedBindings} onChange={(value) => update(["scripts", "embeddedBindings"], value)} rows={9} /></Field></div>;
 }
 
 function Topics({ draft, update }) {
     const add = () => update(["topics"], [...draft.topics, { id: `topic-${draft.topics.length + 1}`, name: `/topic-${draft.topics.length + 1}`, direction: "output", type: "std_msgs/String", required: false }]);
-    return <div className="space-y-3"><div className="flex justify-end"><Action compact icon={<FaPlus />} label="Add topic" onClick={add} /></div>{draft.topics.map((topic, index) => <div key={`${topic.id}-${index}`} className="grid gap-3 rounded-xl border border-zinc-800 bg-zinc-950/50 p-3 md:grid-cols-[1fr_1.4fr_1fr_1.5fr_.8fr_auto]"><Field label="ID"><input value={topic.id} onChange={(event) => update(["topics", index, "id"], event.target.value)} /></Field><Field label="Topic"><input value={topic.name} onChange={(event) => update(["topics", index, "name"], event.target.value)} /></Field><Field label="Direction"><select value={topic.direction} onChange={(event) => update(["topics", index, "direction"], event.target.value)}><option value="input">Input</option><option value="output">Output</option></select></Field><Field label="ROS type"><input value={topic.type} onChange={(event) => update(["topics", index, "type"], event.target.value)} /></Field><Toggle label="Required" value={topic.required} onChange={(value) => update(["topics", index, "required"], value)} /><button type="button" onClick={() => update(["topics"], draft.topics.filter((_, candidate) => candidate !== index))} className="self-end pb-2 text-[10px] text-red-300">Remove</button></div>)}</div>;
+    return <div className="space-y-3"><div className="flex justify-end"><Action compact icon={<FaPlus />} label="Add topic" onClick={add} /></div>{draft.topics.map((topic, index) => <div key={`${topic.id}-${index}`} className="grid gap-3 rounded-[var(--radius)] border border-[var(--slate-border-60)] bg-[var(--slate-surface-1)] p-3 md:grid-cols-[1fr_1.4fr_1fr_1.5fr_.8fr_auto]"><Field label="ID"><input value={topic.id} onChange={(event) => update(["topics", index, "id"], event.target.value)} /></Field><Field label="Topic"><input value={topic.name} onChange={(event) => update(["topics", index, "name"], event.target.value)} /></Field><Field label="Direction"><select value={topic.direction} onChange={(event) => update(["topics", index, "direction"], event.target.value)}><option value="input">Input</option><option value="output">Output</option></select></Field><Field label="ROS type"><input value={topic.type} onChange={(event) => update(["topics", index, "type"], event.target.value)} /></Field><Toggle label="Required" value={topic.required} onChange={(value) => update(["topics", index, "required"], value)} /><button type="button" onClick={() => update(["topics"], draft.topics.filter((_, candidate) => candidate !== index))} className="self-end pb-2 text-[11px] text-[var(--slate-danger)]">Remove</button></div>)}</div>;
 }
 
 function Assertions({ draft, update }) {
     const add = () => update(["assertions"], [...draft.assertions, { id: `assertion-${draft.assertions.length + 1}`, name: "New assertion", source: "signal", path: "simulation.time", operator: "gte", expected: 0, mode: "at-end", window: { startStep: 0, endStep: null }, severity: "error", onFailure: "stop" }]);
-    return <div className="space-y-3"><div className="flex justify-end"><Action compact icon={<FaPlus />} label="Add assertion" onClick={add} /></div>{draft.assertions.length === 0 && <p className="py-10 text-center text-xs text-zinc-600">No assertions configured.</p>}{draft.assertions.map((assertion, index) => <div key={`${assertion.id}-${index}`} className="rounded-xl border border-zinc-800 bg-zinc-950/50 p-4"><div className="grid gap-3 md:grid-cols-4"><Field label="Stable ID"><input value={assertion.id} onChange={(event) => update(["assertions", index, "id"], event.target.value)} /></Field><Field label="Name"><input value={assertion.name} onChange={(event) => update(["assertions", index, "name"], event.target.value)} /></Field><Field label="Source"><select value={assertion.source} onChange={(event) => update(["assertions", index, "source"], event.target.value)}><option value="signal">Signal</option><option value="event">Event</option></select></Field><Field label="Mode"><select value={assertion.mode} onChange={(event) => update(["assertions", index, "mode"], event.target.value)}><option value="always">Always</option><option value="eventually">Eventually</option><option value="at-end">At end</option></select></Field>{assertion.source === "signal" ? <><Field label="Signal path"><input value={assertion.path || ""} onChange={(event) => update(["assertions", index, "path"], event.target.value)} /></Field><Field label="Selector"><input value={assertion.selector || ""} placeholder="Optional nested.path" onChange={(event) => update(["assertions", index, "selector"], event.target.value)} /></Field></> : <><Field label="Event category"><input value={assertion.category || ""} onChange={(event) => update(["assertions", index, "category"], event.target.value)} /></Field><Field label="Event name"><input value={assertion.event || ""} onChange={(event) => update(["assertions", index, "event"], event.target.value)} /></Field></>}<Field label="Operator"><select value={assertion.operator} onChange={(event) => update(["assertions", index, "operator"], event.target.value)}>{["eq", "neq", "lt", "lte", "gt", "gte", "within", "count"].map((operator) => <option key={operator}>{operator}</option>)}</select></Field><Field label="Expected value"><input value={typeof assertion.expected === "string" ? assertion.expected : JSON.stringify(assertion.expected)} onChange={(event) => update(["assertions", index, "expected"], parseInputValue(event.target.value))} /></Field><Field label="Tolerance"><input type="number" min="0" step="0.0001" value={assertion.tolerance} onChange={(event) => update(["assertions", index, "tolerance"], Number(event.target.value))} /></Field><Field label="Start step"><input type="number" min="0" value={assertion.window.startStep} onChange={(event) => update(["assertions", index, "window", "startStep"], Number(event.target.value))} /></Field><Field label="End step"><input type="number" min="0" value={assertion.window.endStep ?? ""} placeholder="No limit" onChange={(event) => update(["assertions", index, "window", "endStep"], event.target.value ? Number(event.target.value) : null)} /></Field><Field label="Severity"><select value={assertion.severity} onChange={(event) => update(["assertions", index, "severity"], event.target.value)}><option value="error">Error</option><option value="warning">Warning</option></select></Field><Field label="On failure"><select value={assertion.onFailure} onChange={(event) => update(["assertions", index, "onFailure"], event.target.value)}><option value="stop">Stop run</option><option value="continue">Continue</option></select></Field></div><button type="button" onClick={() => update(["assertions"], draft.assertions.filter((_, candidate) => candidate !== index))} className="mt-4 text-left text-[10px] text-red-300">Remove assertion</button></div>)}</div>;
+    return <div className="space-y-3"><div className="flex justify-end"><Action compact icon={<FaPlus />} label="Add assertion" onClick={add} /></div>{draft.assertions.length === 0 && <p className="py-10 text-center text-xs text-zinc-600">No assertions configured.</p>}{draft.assertions.map((assertion, index) => <div key={`${assertion.id}-${index}`} className="rounded-[var(--radius)] border border-[var(--slate-border-60)] bg-[var(--slate-surface-1)] p-4"><div className="grid gap-3 md:grid-cols-4"><Field label="Stable ID"><input value={assertion.id} onChange={(event) => update(["assertions", index, "id"], event.target.value)} /></Field><Field label="Name"><input value={assertion.name} onChange={(event) => update(["assertions", index, "name"], event.target.value)} /></Field><Field label="Source"><select value={assertion.source} onChange={(event) => update(["assertions", index, "source"], event.target.value)}><option value="signal">Signal</option><option value="event">Event</option></select></Field><Field label="Mode"><select value={assertion.mode} onChange={(event) => update(["assertions", index, "mode"], event.target.value)}><option value="always">Always</option><option value="eventually">Eventually</option><option value="at-end">At end</option></select></Field>{assertion.source === "signal" ? <><Field label="Signal path"><input value={assertion.path || ""} onChange={(event) => update(["assertions", index, "path"], event.target.value)} /></Field><Field label="Selector"><input value={assertion.selector || ""} placeholder="Optional nested.path" onChange={(event) => update(["assertions", index, "selector"], event.target.value)} /></Field></> : <><Field label="Event category"><input value={assertion.category || ""} onChange={(event) => update(["assertions", index, "category"], event.target.value)} /></Field><Field label="Event name"><input value={assertion.event || ""} onChange={(event) => update(["assertions", index, "event"], event.target.value)} /></Field></>}<Field label="Operator"><select value={assertion.operator} onChange={(event) => update(["assertions", index, "operator"], event.target.value)}>{["eq", "neq", "lt", "lte", "gt", "gte", "within", "count"].map((operator) => <option key={operator}>{operator}</option>)}</select></Field><Field label="Expected value"><input value={typeof assertion.expected === "string" ? assertion.expected : JSON.stringify(assertion.expected)} onChange={(event) => update(["assertions", index, "expected"], parseInputValue(event.target.value))} /></Field><Field label="Tolerance"><input type="number" min="0" step="0.0001" value={assertion.tolerance} onChange={(event) => update(["assertions", index, "tolerance"], Number(event.target.value))} /></Field><Field label="Start step"><input type="number" min="0" value={assertion.window.startStep} onChange={(event) => update(["assertions", index, "window", "startStep"], Number(event.target.value))} /></Field><Field label="End step"><input type="number" min="0" value={assertion.window.endStep ?? ""} placeholder="No limit" onChange={(event) => update(["assertions", index, "window", "endStep"], event.target.value ? Number(event.target.value) : null)} /></Field><Field label="Severity"><select value={assertion.severity} onChange={(event) => update(["assertions", index, "severity"], event.target.value)}><option value="error">Error</option><option value="warning">Warning</option></select></Field><Field label="On failure"><select value={assertion.onFailure} onChange={(event) => update(["assertions", index, "onFailure"], event.target.value)}><option value="stop">Stop run</option><option value="continue">Continue</option></select></Field></div><button type="button" onClick={() => update(["assertions"], draft.assertions.filter((_, candidate) => candidate !== index))} className="mt-4 text-left text-[11px] text-[var(--slate-danger)]">Remove assertion</button></div>)}</div>;
 }
 
 function Logging({ draft, update }) {
@@ -648,23 +674,26 @@ function Logging({ draft, update }) {
 }
 
 function VectorFields({ label, value, onChange }) {
-    return <div className="mt-4"><p className="mb-2 text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-500">{label}</p><div className="grid gap-3 sm:grid-cols-3">{["x", "y", "z"].map((axis) => <Field key={axis} label={axis.toUpperCase()}><input type="number" step="0.001" value={value?.[axis] ?? 0} onChange={(event) => onChange(axis, Number(event.target.value))} /></Field>)}</div></div>;
+    return <div className="mt-4"><p className="mb-2 text-[13px] font-medium text-[var(--slate-fg-2)]">{label}</p><div className="grid gap-3 sm:grid-cols-3">{["x", "y", "z"].map((axis) => <Field key={axis} label={axis.toUpperCase()}><input type="number" step="0.001" value={value?.[axis] ?? 0} onChange={(event) => onChange(axis, Number(event.target.value))} /></Field>)}</div></div>;
 }
 
-function JsonField({ value, onChange, rows = 5 }) {
+function JsonField({ value, onChange, rows = 5, className = "", ...props }) {
     const [textValue, setTextValue] = useState(() => JSON.stringify(value, null, 2));
     const [invalid, setInvalid] = useState(false);
-    return <div><textarea spellCheck={false} rows={rows} value={textValue} onChange={(event) => { const next = event.target.value; setTextValue(next); try { onChange(JSON.parse(next)); setInvalid(false); } catch { setInvalid(true); } }} className={invalid ? "border-red-500/70" : ""} />{invalid && <p className="mt-1 text-[9px] text-red-300">Enter valid JSON to apply this field.</p>}</div>;
+    return <div><textarea {...props} spellCheck={false} rows={rows} value={textValue} onChange={(event) => { const next = event.target.value; setTextValue(next); try { onChange(JSON.parse(next)); setInvalid(false); } catch { setInvalid(true); } }} className={[className, invalid && "border-[var(--slate-danger)]"].filter(Boolean).join(" ")} />{invalid && <p className="mt-1 text-[11px] text-[var(--slate-danger)]">Enter valid JSON to apply this field.</p>}</div>;
 }
 
 function Field({ label, wide = false, children }) {
-    return <label className={wide ? "md:col-span-2" : ""}><span className="mb-1.5 block text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-500">{label}</span><span className="config-field block">{children}</span></label>;
+    const control = isValidElement(children)
+        ? cloneElement(children, { className: [children.props.className, "sf-input"].filter(Boolean).join(" ") })
+        : children;
+    return <SharedField label={label} className={wide ? "md:col-span-2" : ""}>{control}</SharedField>;
 }
 
 function Toggle({ label, value, onChange }) {
-    return <button type="button" onClick={() => onChange(!value)} className="flex items-center justify-between rounded-xl border border-zinc-800 bg-zinc-950/60 px-3 py-2 text-[11px] capitalize text-zinc-200"><span>{label}</span><span className={`h-4 w-7 rounded-full border p-0.5 ${value ? "border-sky-400 bg-sky-500/40" : "border-zinc-700 bg-zinc-800"}`}><span className={`block h-2.5 w-2.5 rounded-full bg-white transition-transform ${value ? "translate-x-3" : ""}`} /></span></button>;
+    return <SharedSwitch label={label} checked={value} onCheckedChange={onChange} />;
 }
 
 function Action({ icon, label, onClick, disabled = false, primary = false, compact = false }) {
-    return <button type="button" disabled={disabled} onClick={() => Promise.resolve(onClick?.()).catch(() => {})} className={`inline-flex items-center justify-center gap-1.5 rounded-lg border font-semibold transition-colors active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 ${compact ? "h-8 flex-1 px-2 text-[9px]" : "h-9 px-3 text-[10px]"} ${primary ? "border-sky-400/60 bg-sky-500/20 text-sky-100 hover:bg-sky-500/30" : "border-zinc-700 bg-zinc-900 text-zinc-300 hover:bg-zinc-800"}`}>{icon}{label}</button>;
+    return <Button disabled={disabled} size={compact ? "compact" : "default"} variant={primary ? "primary" : "default"} onClick={() => Promise.resolve(onClick?.()).catch(() => {})}>{icon}{label}</Button>;
 }

@@ -1,0 +1,253 @@
+.workspaceContent {
+    overflow: hidden;
+}
+
+.replayShell {
+    display: flex;
+    min-width: 0;
+    min-height: 0;
+    height: 100%;
+    flex-direction: column;
+}
+
+.logSelector {
+    display: flex;
+    width: min(340px, 32vw);
+    align-items: center;
+    gap: 6px;
+    color: var(--slate-muted);
+}
+
+.logSelector select { min-height: 32px; }
+
+.managePopover {
+    display: grid;
+    width: 288px;
+    gap: 8px;
+    padding: 12px;
+}
+
+.managePopover h2 {
+    margin: 0 0 2px;
+    color: var(--slate-fg);
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.manageRow,
+.manageActions,
+.transportControls {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.manageRow > :first-child { flex: 1; }
+.manageActions > * { flex: 1; }
+
+.sceneRegion {
+    position: relative;
+    min-height: 0;
+    flex: 1;
+    overflow: hidden;
+    background: var(--slate-bg);
+}
+
+.stateOverlay {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    background: var(--slate-bg);
+}
+
+.errorMessage {
+    position: absolute;
+    top: 16px;
+    left: 16px;
+    z-index: var(--layer-inspector);
+    max-width: 420px;
+    background: var(--slate-surface-1);
+    padding: 10px 12px;
+}
+
+.inspector {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    z-index: var(--layer-inspector);
+    width: 292px;
+    max-height: calc(100% - 24px);
+    overflow: auto;
+    border: 1px solid var(--slate-border);
+    border-radius: var(--radius);
+    background: var(--slate-surface-1);
+    color: var(--slate-fg-2);
+}
+
+.inspectorHeader,
+.inspectorSection,
+.metric {
+    padding: 10px 12px;
+}
+
+.inspectorHeader { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.compactClose,
+.compactInspectorButton { display: none; }
+
+.inspectorHeader,
+.inspectorSection,
+.metricGrid {
+    border-bottom: 1px solid var(--slate-border-60);
+}
+
+.inspectorHeader p,
+.sectionLabel,
+.metric p {
+    margin: 0;
+    color: var(--slate-muted);
+    font-size: 11px;
+}
+
+.inspectorHeader strong {
+    display: block;
+    margin-top: 4px;
+    color: var(--slate-fg);
+    font-family: var(--font-geist-mono), monospace;
+    font-size: 18px;
+    font-variant-numeric: tabular-nums;
+    font-weight: 500;
+}
+
+.metricGrid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+}
+
+.metric + .metric { border-left: 1px solid var(--slate-border-60); }
+.metric code { display: block; margin-top: 3px; color: var(--slate-fg-2); font-size: 12px; }
+
+.emphasis {
+    margin: 5px 0 0;
+    overflow: hidden;
+    color: var(--slate-fg);
+    font-size: 13px;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.hash,
+.muted,
+.resultPassed,
+.resultFailed {
+    margin: 4px 0 0;
+    overflow: hidden;
+    color: var(--slate-muted);
+    font-size: 11px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.hash { font-family: var(--font-geist-mono), monospace; }
+.resultFailed { color: var(--slate-danger); }
+
+.dataRow,
+.eventRow {
+    display: flex;
+    min-width: 0;
+    gap: 8px;
+    border-top: 1px solid var(--slate-border-60);
+    padding: 6px 0;
+    color: var(--slate-muted);
+    font-size: 11px;
+}
+
+.dataRow:first-of-type { margin-top: 8px; }
+.dataRow span { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.dataRow code { max-width: 150px; overflow: hidden; color: var(--slate-fg-2); text-overflow: ellipsis; white-space: nowrap; }
+
+.eventRow {
+    width: 100%;
+    border-inline: 0;
+    border-bottom: 0;
+    background: transparent;
+    text-align: left;
+    cursor: pointer;
+}
+
+.eventRow code { flex: none; color: var(--slate-muted); }
+.eventRow span { min-width: 0; overflow: hidden; color: var(--slate-fg-2); text-overflow: ellipsis; white-space: nowrap; }
+
+.transport {
+    flex: none;
+    border-top: 1px solid var(--slate-border-60);
+    background: var(--slate-surface-1);
+    padding: 8px 12px 10px;
+}
+
+.transportControls { min-width: 0; }
+.speedSelect { width: 72px; min-height: 32px; }
+.activeControl { border-color: var(--slate-ring); color: var(--slate-fg); }
+
+.clock {
+    margin-left: auto;
+    color: var(--slate-fg-2);
+    font-family: var(--font-geist-mono), monospace;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.clock span { color: var(--slate-muted); }
+
+.timeline {
+    position: relative;
+    height: 26px;
+    margin-top: 6px;
+}
+
+.timeline input {
+    position: absolute;
+    top: 6px;
+    width: 100%;
+}
+
+.eventMarker {
+    position: absolute;
+    top: 0;
+    width: 2px;
+    height: 7px;
+    border: 0;
+    background: var(--slate-warning);
+    cursor: pointer;
+}
+
+@media (max-width: 1050px) {
+    .logSelector { width: min(270px, 30vw); }
+}
+
+@media (max-width: 899px) {
+    .logSelector { width: 220px; }
+    .inspector {
+        top: auto;
+        right: 8px;
+        bottom: 8px;
+        width: min(360px, calc(100% - 16px));
+        max-height: min(44%, 320px);
+        box-shadow: var(--slate-shadow-overlay);
+        transform: translateY(10px);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity var(--duration-drawer) var(--ease-drawer-ui), transform var(--duration-drawer) var(--ease-drawer-ui);
+    }
+    .inspector[data-open] { transform: translateY(0); opacity: 1; pointer-events: auto; }
+    .compactClose,
+    .compactInspectorButton { display: inline-flex; }
+    .transportControls { overflow-x: auto; padding-bottom: 2px; }
+    .clock { position: sticky; right: 0; background: var(--slate-surface-1); padding-left: 8px; }
+}
+
+@media (max-width: 800px) {
+    .logSelector { width: 185px; }
+}

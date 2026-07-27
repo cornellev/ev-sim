@@ -119,6 +119,8 @@ export function LineManager({
     const [lineInProgress, setLineInProgress] = useState(null);
     const linesRef = useRef(lines);
     const snapshotRef = useRef(connectionSnapshot);
+    const measureFrameRef = useRef(null);
+    const keyboardSourceRef = useRef(null);
 
     useEffect(() => {
         linesRef.current = lines;
@@ -134,6 +136,20 @@ export function LineManager({
             .filter(Boolean);
         setLineInProgress(null);
         setLines(restoredLines);
+    }, []);
+
+    const scheduleLineMeasurement = useCallback(() => {
+        if (typeof window === "undefined") return;
+        if (measureFrameRef.current !== null) return;
+
+        measureFrameRef.current = window.requestAnimationFrame(() => {
+            measureFrameRef.current = null;
+            setLines((current) => current.map((line) => ({
+                ...line,
+                start: line.startSource ? getPortCenter(line.startSource) : line.start,
+                end: line.endTarget ? getPortCenter(line.endTarget) : line.end
+            })));
+        });
     }, []);
 
     useEffect(() => {
@@ -210,9 +226,10 @@ export function LineManager({
         setLines((prevLines) => prevLines.filter((item) => item.id !== lineId));
     }
 
-    // add lines
+    // Add pointer and keyboard connections without changing the graph's DOM hooks.
     useEffect(() => {
         const inputs = document.querySelectorAll('.input');
+        const outputs = document.querySelectorAll('.output');
 
         const onMouseDownOverTarget = (e) => {
 //            console.log("Mouse down over input", e.target);
@@ -232,12 +249,58 @@ export function LineManager({
             input.addEventListener('mousedown', onMouseDownOverTarget);
         }
 
+        const onPortKeyDown = (event) => {
+            const source = event.currentTarget;
+            if (event.key === "Escape") {
+                keyboardSourceRef.current = null;
+                setLineInProgress(null);
+                return;
+            }
+            if (event.key !== "Enter" && event.key !== " ") return;
+            event.preventDefault();
+            event.stopPropagation();
+
+            if (source.classList.contains("input")) {
+                keyboardSourceRef.current = source;
+                const center = getPortCenter(source);
+                setLineInProgress({ start: center, end: center, source });
+                return;
+            }
+
+            const pendingInput = keyboardSourceRef.current;
+            if (!pendingInput || !source.classList.contains("output")) return;
+            const fromInfo = sourceToInfo(pendingInput);
+            const toInfo = sourceToInfo(source);
+            if (!fromInfo || !toInfo || fromInfo.uuid === toInfo.uuid || fromInfo.type !== toInfo.type) return;
+            const duplicate = linesRef.current.some((line) => isSameConnection(
+                sourceToInfo(line.startSource),
+                sourceToInfo(line.endTarget),
+                fromInfo,
+                toInfo
+            ));
+            if (!duplicate && notifyConnection(fromInfo, toInfo)) {
+                setLines((current) => [...current, {
+                    id: crypto.randomUUID(),
+                    start: getPortCenter(pendingInput),
+                    end: getPortCenter(source),
+                    startSource: pendingInput,
+                    endTarget: source,
+                    color: TYPES[fromInfo.type.replace(/\[.*?\]/, "")] || "white"
+                }]);
+            }
+            keyboardSourceRef.current = null;
+            setLineInProgress(null);
+        };
+
+        [...inputs, ...outputs].forEach((port) => port.addEventListener("keydown", onPortKeyDown));
+
         return () => {
             for (let input of inputs) {
                 if (input) input.removeEventListener('mousedown', onMouseDownOverTarget);
             }
+            [...inputs, ...outputs].forEach((port) => port.removeEventListener("keydown", onPortKeyDown));
         };
-    }, [units])
+    }, [notifyConnection, units])
 
     useEffect(() => {
         if (!lineInProgress) return;
@@ -387,24 +450,25 @@ export function LineManager({
     }, [onDeleteConnection]);
 
     useEffect(() => {
-        const handleResize = () => {
-            for (let i = 0; i < lines.length; i++) {
-                const line = lines[i];
-                if (line.startSource) {
-                    const rect = line.startSource.getBoundingClientRect();
-                    line.start = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-                }
-                if (line.endTarget) {
-                    const rect = line.endTarget.getBoundingClientRect();
-                    line.end = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-                }
-            }
-            setLines([...lines]);
-        };
+        const observer = typeof ResizeObserver === "undefined"
+            ? null
+            : new ResizeObserver(scheduleLineMeasurement);
+        document.querySelectorAll("[data-uuid], .input, .output").forEach((element) => observer?.observe(element));
+        window.addEventListener("resize", scheduleLineMeasurement);
+        document.addEventListener("unit-position-preview", scheduleLineMeasurement);
+        document.addEventListener("unit-position-changed", scheduleLineMeasurement);
 
-        const interval = setInterval(handleResize, 10);
-        return () => clearInterval(interval);
-    }, [lines])
+        return () => {
+            observer?.disconnect();
+            window.removeEventListener("resize", scheduleLineMeasurement);
+            document.removeEventListener("unit-position-preview", scheduleLineMeasurement);
+            document.removeEventListener("unit-position-changed", scheduleLineMeasurement);
+            if (measureFrameRef.current !== null) {
+                window.cancelAnimationFrame(measureFrameRef.current);
+                measureFrameRef.current = null;
+            }
+        };
+    }, [graphKey, scheduleLineMeasurement, units]);
 
     return (
         <div className="absolute top-0 left-0 w-full h-full pointer-events-none z-10">

@@ -22,7 +22,7 @@ export function CalculationUnit({ _uuid, initialState = {} }) {
                 <select
                     id={_uuid + "-operation"}
                     value={operation}
-                    className="w-full px-2 py-1 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:border-blue-500 hover:border-gray-400"
+                    className="w-full px-2 py-1 border border-gray-300 rounded-[var(--radius)] shadow-sm focus:outline-none focus:border-blue-500 hover:border-gray-400"
                     onChange={(event) => setOperation(event.target.value)}
                 >
                     <option value="add">Add</option>

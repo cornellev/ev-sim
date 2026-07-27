@@ -30,7 +30,7 @@ export function IfUnit({ _uuid, initialState = {} }) {
                     value={outputType}
                     onChange={onChange}
                     id={_uuid + "-type"}
-                    className="w-full px-2 py-1 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:border-blue-500 hover:border-gray-400"
+                    className="w-full px-2 py-1 border border-gray-300 rounded-[var(--radius)] shadow-sm focus:outline-none focus:border-blue-500 hover:border-gray-400"
                 >
                     <option value="float64">Float64</option>
                     <option value="int32">Int32</option>

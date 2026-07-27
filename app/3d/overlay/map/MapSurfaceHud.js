@@ -1,6 +1,6 @@
 export function MapSurfaceHud({ viewport, layers, showDetail, onRecenter }) {
     return (
-        <div className="pointer-events-none absolute left-4 top-4 rounded-xl border border-zinc-700/80 bg-zinc-950/80 px-3 py-2 text-[11px] text-zinc-300 backdrop-blur-xl">
+        <div className="pointer-events-none absolute left-4 top-4 rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-950/80 px-3 py-2 text-[11px] text-zinc-300">
             <p className="font-mono text-zinc-200">
                 {viewport.centerX.toFixed(1)}, {viewport.centerZ.toFixed(1)}
             </p>
@@ -9,7 +9,7 @@ export function MapSurfaceHud({ viewport, layers, showDetail, onRecenter }) {
                 {viewport.snapEnabled ? ` · Snap ${viewport.snapSize}m` : " · Snap off"}
             </p>
             {layers.roads && showDetail && (
-                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-zinc-800/80 pt-2 text-[10px] text-zinc-500">
+                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-zinc-800/80 pt-2 text-[11px] text-zinc-500">
                     <span className="inline-flex items-center gap-1.5">
                         <span className="inline-block h-2.5 w-2.5 rotate-45 rounded-[1px] border border-amber-500 bg-amber-500/30" />
                         Intersection
@@ -25,7 +25,7 @@ export function MapSurfaceHud({ viewport, layers, showDetail, onRecenter }) {
                 </div>
             )}
             {!showDetail && (
-                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-zinc-800/80 pt-2 text-[10px] text-zinc-500">
+                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-zinc-800/80 pt-2 text-[11px] text-zinc-500">
                     <span className="inline-flex items-center gap-1.5 italic">
                         Zoomed Out
                     </span>

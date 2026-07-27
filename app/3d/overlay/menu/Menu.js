@@ -1,9 +1,24 @@
 'use client';
 
-import { useEffect, useMemo, useRef } from "react";
-import { FaCar, FaChartLine, FaCheck, FaCode, FaCog, FaCube, FaEdit, FaFilm, FaFlask, FaLink, FaShapes, FaTimes } from "react-icons/fa";
-import { cn } from "../ui/cn";
+import { useMemo, useRef } from "react";
+import {
+    IconAdjustments,
+    IconCar,
+    IconChartHistogram,
+    IconCode,
+    IconCube,
+    IconHistory,
+    IconLink,
+    IconPlayerPlay,
+    IconWorld,
+    IconX,
+} from "@tabler/icons-react";
+import { Dialog } from "radix-ui";
+
+import { IconButton } from "../../../ui";
 import { APP_VIEWS, THREE_D_MODES } from "../../viewState";
+
+const ICON_PROPS = { size: 16, stroke: 1.75 };
 
 export default function Menu({
     activeView = APP_VIEWS.SCRIPTING,
@@ -17,429 +32,99 @@ export default function Menu({
     onReplay,
     onAnalysis,
     onClose,
+    instant = false,
 }) {
-    const focusItemRef = useRef(null);
-
-    const topLevelItems = useMemo(() => [
+    const selectedRef = useRef(null);
+    const sections = useMemo(() => [
         {
-            key: APP_VIEWS.CONFIG,
-            label: "Config",
-            hint: "Settings panel",
-            icon: <FaCog className="h-4 w-4" />,
-            onSelect: onConfig,
-        },
-    ], [onConfig]);
-
-    const analysisChildren = useMemo(() => [
-        {
-            key: APP_VIEWS.REPLAY,
-            label: "Replay",
-            hint: "Inspect recorded simulation state",
-            icon: <FaFilm className="h-4 w-4" />,
-            onSelect: onReplay,
+            label: "Build and run",
+            items: [
+                { key: "simulation", label: "Simulation", hint: "Run vehicles, sensors, and scenarios", icon: IconPlayerPlay, active: activeView === APP_VIEWS.THREE_D && activeThreeDMode === THREE_D_MODES.SIMULATION, onSelect: onSimulation },
+                { key: "environment", label: "Environment Editor", hint: "Edit environments and scenes", icon: IconWorld, active: activeView === APP_VIEWS.THREE_D && activeThreeDMode === THREE_D_MODES.ENVIRONMENT, onSelect: onEnvironmentEditor },
+                { key: "vehicles", label: "Vehicle Editor", hint: "Create and inspect vehicle manifests", icon: IconCar, active: activeView === APP_VIEWS.VEHICLE_EDITOR, onSelect: onVehicleEditor },
+                { key: "config", label: "Run Configuration", hint: "Edit simulation manifests", icon: IconAdjustments, active: activeView === APP_VIEWS.CONFIG, onSelect: onConfig },
+            ],
         },
         {
-            key: APP_VIEWS.ANALYSIS,
-            label: "Live Analysis",
-            hint: "Graph live and recorded signals",
-            icon: <FaChartLine className="h-4 w-4" />,
-            onSelect: onAnalysis,
-        },
-    ], [onAnalysis, onReplay]);
-
-    const threeDChildren = useMemo(() => [
-        {
-            key: THREE_D_MODES.SIMULATION,
-            label: "Simulation",
-            hint: "Vehicles, sensors, and runtime playback",
-            icon: <FaFlask className="h-3.5 w-3.5" />,
-            onSelect: onSimulation,
+            label: "Logic",
+            items: [
+                { key: "scripting", label: "Scripting Canvas", hint: "Build simulation logic", icon: IconCode, active: activeView === APP_VIEWS.SCRIPTING, onSelect: onScripting },
+                { key: "bindings", label: "Bindings", hint: "Bind scripts to signals", icon: IconLink, active: activeView === APP_VIEWS.BINDINGS, onSelect: onBindings },
+            ],
         },
         {
-            key: THREE_D_MODES.ENVIRONMENT,
-            label: "Environment Editor",
-            hint: "World editing and building inspection",
-            icon: <FaEdit className="h-3.5 w-3.5" />,
-            onSelect: onEnvironmentEditor,
+            label: "Inspect",
+            items: [
+                { key: "replay", label: "Replay", hint: "Inspect recorded simulations", icon: IconHistory, active: activeView === APP_VIEWS.REPLAY, onSelect: onReplay },
+                { key: "analysis", label: "Analysis", hint: "Graph live data", icon: IconChartHistogram, active: activeView === APP_VIEWS.ANALYSIS, onSelect: onAnalysis },
+            ],
         },
-        {
-            key: APP_VIEWS.VEHICLE_EDITOR,
-            label: "Vehicle Editor",
-            hint: "Author custom vehicle manifests",
-            icon: <FaCar className="h-3.5 w-3.5" />,
-            onSelect: onVehicleEditor,
-        },
-    ], [onEnvironmentEditor, onSimulation, onVehicleEditor]);
-
-    const scriptingChildren = useMemo(() => [
-        {
-            key: APP_VIEWS.SCRIPTING,
-            label: "Canvas",
-            hint: "Visual logic canvas",
-            icon: <FaShapes className="h-3.5 w-3.5" />,
-            onSelect: onScripting,
-        },
-        {
-            key: APP_VIEWS.BINDINGS,
-            label: "Bindings",
-            hint: "Connect scripts to topics, ticks, and timers",
-            icon: <FaLink className="h-3.5 w-3.5" />,
-            onSelect: onBindings,
-        },
-    ], [onBindings, onScripting]);
-
-    const focusKey = useMemo(() => {
-        if (activeView === APP_VIEWS.THREE_D) {
-            return `3d:${activeThreeDMode}`;
-        }
-
-        if (activeView === APP_VIEWS.VEHICLE_EDITOR) {
-            return `3d:${APP_VIEWS.VEHICLE_EDITOR}`;
-        }
-
-        const activeAnalysisChild = analysisChildren.find((item) => item.key === activeView && typeof item.onSelect === "function");
-        if (activeAnalysisChild) {
-            return `analysis:${activeAnalysisChild.key}`;
-        }
-
-        const activeScriptingChild = scriptingChildren.find((item) => item.key === activeView && typeof item.onSelect === "function");
-        if (activeScriptingChild) {
-            return `scripting:${activeScriptingChild.key}`;
-        }
-
-        const activeItem = topLevelItems.find((item) => item.key === activeView && typeof item.onSelect === "function");
-        const firstEnabledChild = threeDChildren.find((item) => typeof item.onSelect === "function");
-        const firstEnabledTopLevel = topLevelItems.find((item) => typeof item.onSelect === "function");
-
-        return activeItem?.key ?? firstEnabledChild?.key ?? firstEnabledTopLevel?.key;
-    }, [activeThreeDMode, activeView, analysisChildren, scriptingChildren, threeDChildren, topLevelItems]);
-
-    useEffect(() => {
-        const previousFocus = document.activeElement;
-        focusItemRef.current?.focus();
-
-        return () => {
-            if (previousFocus instanceof HTMLElement) {
-                previousFocus.focus();
-            }
-        };
-    }, []);
-
-    const threeDActive = activeView === APP_VIEWS.THREE_D || activeView === APP_VIEWS.VEHICLE_EDITOR;
-    const analysisActive = activeView === APP_VIEWS.REPLAY || activeView === APP_VIEWS.ANALYSIS;
-    const scriptingActive = activeView === APP_VIEWS.SCRIPTING || activeView === APP_VIEWS.BINDINGS;
+    ], [
+        activeThreeDMode,
+        activeView,
+        onAnalysis,
+        onBindings,
+        onConfig,
+        onEnvironmentEditor,
+        onReplay,
+        onScripting,
+        onSimulation,
+        onVehicleEditor,
+    ]);
 
     return (
-        <div
-            className="route-switcher-scrim fixed inset-0 z-[100] flex items-start justify-center px-4 pt-[12dvh] text-zinc-100"
-            onMouseDown={(event) => {
-                if (event.target === event.currentTarget) {
-                    onClose?.();
-                }
-            }}
-        >
-            <div
-                role="dialog"
-                aria-modal="true"
-                aria-labelledby="route-switcher-title"
-                className="route-switcher-panel w-full max-w-[420px] rounded-2xl border border-zinc-700/80 bg-zinc-950/90 p-2 shadow-[0_30px_100px_rgba(0,0,0,0.55)] backdrop-blur-2xl"
-                onMouseDown={(event) => event.stopPropagation()}
-            >
-                <div className="flex items-center justify-between gap-3 px-2 py-2">
-                    <div className="min-w-0">
-                        <p id="route-switcher-title" className="text-[12px] font-semibold tracking-wide text-zinc-50">
-                            Workspace
-                        </p>
+        <Dialog.Root open onOpenChange={(open) => !open && onClose?.()}>
+            <Dialog.Portal>
+                <Dialog.Overlay className="sf-dialog-overlay" data-instant={instant || undefined} />
+                <Dialog.Content
+                    className="sf-dialog sf-workspace-menu"
+                    data-instant={instant || undefined}
+                    onOpenAutoFocus={(event) => {
+                        event.preventDefault();
+                        selectedRef.current?.focus();
+                    }}
+                >
+                    <header className="sf-dialog__header">
+                        <div>
+                            <Dialog.Title className="sf-dialog__title">Workspaces</Dialog.Title>
+                        </div>
+                        <Dialog.Close asChild>
+                            <IconButton label="Close workspaces" tooltip="Close">
+                                <IconX {...ICON_PROPS} />
+                            </IconButton>
+                        </Dialog.Close>
+                    </header>
+                    <div className="sf-workspace-menu__body">
+                        {sections.map((section) => (
+                            <section className="sf-workspace-menu__section" key={section.label}>
+                                <h2 className="sf-workspace-menu__section-title">{section.label}</h2>
+                                <div className="sf-workspace-menu__items">
+                                    {section.items.map((item) => {
+                                        const Icon = item.icon || IconCube;
+                                        return (
+                                            <button
+                                                key={item.key}
+                                                ref={item.active ? selectedRef : undefined}
+                                                type="button"
+                                                className="sf-workspace-menu__item mx-1"
+                                                data-active={item.active || undefined}
+                                                aria-current={item.active ? "page" : undefined}
+                                                onClick={() => item.active ? onClose?.() : item.onSelect?.()}
+                                            >
+                                                <Icon className="sf-workspace-menu__icon" {...ICON_PROPS} aria-hidden="true" />
+                                                <span className="sf-workspace-menu__copy">
+                                                    <span className="sf-workspace-menu__label">{item.label}</span>
+                                                    <span className="sf-workspace-menu__hint">{item.hint}</span>
+                                                </span>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </section>
+                        ))}
                     </div>
-                    <button
-                        type="button"
-                        className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-zinc-700/80 bg-zinc-900/75 text-zinc-300 transition-[background-color,border-color,color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-zinc-800/85 focus:outline-none focus:ring-2 focus:ring-sky-400/60 active:scale-[0.97]"
-                        aria-label="Close switcher"
-                        title="Close switcher"
-                        onClick={onClose}
-                    >
-                        <FaTimes className="h-3 w-3" />
-                    </button>
-                </div>
-
-                <div className="space-y-1">
-                    <div
-                        className={cn(
-                            "rounded-xl border px-2 py-2",
-                            threeDActive
-                                ? "border-sky-400/50 bg-sky-500/10"
-                                : "border-zinc-700/60 bg-zinc-900/35"
-                        )}
-                    >
-                        <div className="mb-1.5 flex items-center gap-2 px-1">
-                            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-xl border border-zinc-700/70 bg-zinc-900/80 text-zinc-300">
-                                <FaCube className="h-3 w-3" />
-                            </span>
-                            <div className="min-w-0 flex-1">
-                                <p className="text-[12px] font-semibold tracking-wide text-zinc-50">3D</p>
-                            </div>
-                            {threeDActive && (
-                                <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-sky-400/15 text-sky-200">
-                                    <FaCheck className="h-3 w-3" />
-                                </span>
-                            )}
-                        </div>
-
-                        <div className="space-y-1 pl-2">
-                            {threeDChildren.map((item) => {
-                                const enabled = typeof item.onSelect === "function";
-                                const active = item.key === APP_VIEWS.VEHICLE_EDITOR
-                                    ? activeView === APP_VIEWS.VEHICLE_EDITOR
-                                    : activeView === APP_VIEWS.THREE_D && item.key === activeThreeDMode;
-                                const itemKey = `3d:${item.key}`;
-
-                                return (
-                                    <button
-                                        key={item.key}
-                                        ref={itemKey === focusKey ? focusItemRef : undefined}
-                                        type="button"
-                                        disabled={!enabled}
-                                        aria-current={active ? "page" : undefined}
-                                        className={cn(
-                                            "route-switcher-item flex w-full items-center gap-3 rounded-xl border px-3 py-2.5 text-left focus:outline-none focus:ring-2 focus:ring-sky-400/60",
-                                            active
-                                                ? "border-sky-400/70 bg-sky-500/15 text-sky-50"
-                                                : "border-transparent bg-zinc-900/35 text-zinc-100",
-                                            enabled
-                                                ? "cursor-pointer hover:border-zinc-600/80 hover:bg-zinc-800/80"
-                                                : "cursor-not-allowed opacity-45"
-                                        )}
-                                        onClick={() => {
-                                            if (!enabled) return;
-                                            item.onSelect();
-                                        }}
-                                    >
-                                        <span
-                                            className={cn(
-                                                "flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border",
-                                                active
-                                                    ? "border-sky-400/70 bg-sky-500/20 text-sky-100"
-                                                    : "border-zinc-700/70 bg-zinc-900/80 text-zinc-300"
-                                            )}
-                                        >
-                                            {item.icon}
-                                        </span>
-                                        <span className="min-w-0 flex-1">
-                                            <span className="block truncate text-[12px] font-semibold tracking-wide">
-                                                {item.label}
-                                            </span>
-                                        </span>
-                                        {active && (
-                                            <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-sky-400/15 text-sky-200">
-                                                <FaCheck className="h-2.5 w-2.5" />
-                                            </span>
-                                        )}
-                                    </button>
-                                );
-                            })}
-                        </div>
-                    </div>
-
-                    <div
-                        className={cn(
-                            "rounded-xl border px-2 py-2",
-                            analysisActive
-                                ? "border-sky-400/50 bg-sky-500/10"
-                                : "border-zinc-700/60 bg-zinc-900/35"
-                        )}
-                    >
-                        <div className="mb-1.5 flex items-center gap-2 px-1">
-                            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-xl border border-zinc-700/70 bg-zinc-900/80 text-zinc-300">
-                                <FaChartLine className="h-3 w-3" />
-                            </span>
-                            <div className="min-w-0 flex-1">
-                                <p className="text-[12px] font-semibold tracking-wide text-zinc-50">Analysis</p>
-                            </div>
-                            {analysisActive && (
-                                <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-sky-400/15 text-sky-200">
-                                    <FaCheck className="h-3 w-3" />
-                                </span>
-                            )}
-                        </div>
-
-                        <div className="space-y-1 pl-2">
-                            {analysisChildren.map((item) => {
-                                const enabled = typeof item.onSelect === "function";
-                                const active = item.key === activeView;
-                                const itemKey = `analysis:${item.key}`;
-
-                                return (
-                                    <button
-                                        key={item.key}
-                                        ref={itemKey === focusKey ? focusItemRef : undefined}
-                                        type="button"
-                                        disabled={!enabled}
-                                        aria-current={active ? "page" : undefined}
-                                        className={cn(
-                                            "route-switcher-item flex w-full items-center gap-3 rounded-xl border px-3 py-2.5 text-left focus:outline-none focus:ring-2 focus:ring-sky-400/60",
-                                            active
-                                                ? "border-sky-400/70 bg-sky-500/15 text-sky-50"
-                                                : "border-transparent bg-zinc-900/35 text-zinc-100",
-                                            enabled
-                                                ? "cursor-pointer hover:border-zinc-600/80 hover:bg-zinc-800/80"
-                                                : "cursor-not-allowed opacity-45"
-                                        )}
-                                        onClick={() => {
-                                            if (!enabled) return;
-                                            item.onSelect();
-                                        }}
-                                    >
-                                        <span
-                                            className={cn(
-                                                "flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border",
-                                                active
-                                                    ? "border-sky-400/70 bg-sky-500/20 text-sky-100"
-                                                    : "border-zinc-700/70 bg-zinc-900/80 text-zinc-300"
-                                            )}
-                                        >
-                                            {item.icon}
-                                        </span>
-                                        <span className="min-w-0 flex-1">
-                                            <span className="block truncate text-[12px] font-semibold tracking-wide">
-                                                {item.label}
-                                            </span>
-                                        </span>
-                                        {active && (
-                                            <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-sky-400/15 text-sky-200">
-                                                <FaCheck className="h-2.5 w-2.5" />
-                                            </span>
-                                        )}
-                                    </button>
-                                );
-                            })}
-                        </div>
-                    </div>
-
-                    <div
-                        className={cn(
-                            "rounded-xl border px-2 py-2",
-                            scriptingActive
-                                ? "border-sky-400/50 bg-sky-500/10"
-                                : "border-zinc-700/60 bg-zinc-900/35"
-                        )}
-                    >
-                        <div className="mb-1.5 flex items-center gap-2 px-1">
-                            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-xl border border-zinc-700/70 bg-zinc-900/80 text-zinc-300">
-                                <FaCode className="h-3 w-3" />
-                            </span>
-                            <div className="min-w-0 flex-1">
-                                <p className="text-[12px] font-semibold tracking-wide text-zinc-50">Scripting</p>
-                            </div>
-                            {scriptingActive && (
-                                <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-sky-400/15 text-sky-200">
-                                    <FaCheck className="h-3 w-3" />
-                                </span>
-                            )}
-                        </div>
-
-                        <div className="space-y-1 pl-2">
-                            {scriptingChildren.map((item) => {
-                                const enabled = typeof item.onSelect === "function";
-                                const active = scriptingActive && item.key === activeView;
-                                const itemKey = `scripting:${item.key}`;
-
-                                return (
-                                    <button
-                                        key={item.key}
-                                        ref={itemKey === focusKey ? focusItemRef : undefined}
-                                        type="button"
-                                        disabled={!enabled}
-                                        aria-current={active ? "page" : undefined}
-                                        className={cn(
-                                            "route-switcher-item flex w-full items-center gap-3 rounded-xl border px-3 py-2.5 text-left focus:outline-none focus:ring-2 focus:ring-sky-400/60",
-                                            active
-                                                ? "border-sky-400/70 bg-sky-500/15 text-sky-50"
-                                                : "border-transparent bg-zinc-900/35 text-zinc-100",
-                                            enabled
-                                                ? "cursor-pointer hover:border-zinc-600/80 hover:bg-zinc-800/80"
-                                                : "cursor-not-allowed opacity-45"
-                                        )}
-                                        onClick={() => {
-                                            if (!enabled) return;
-                                            item.onSelect();
-                                        }}
-                                    >
-                                        <span
-                                            className={cn(
-                                                "flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border",
-                                                active
-                                                    ? "border-sky-400/70 bg-sky-500/20 text-sky-100"
-                                                    : "border-zinc-700/70 bg-zinc-900/80 text-zinc-300"
-                                            )}
-                                        >
-                                            {item.icon}
-                                        </span>
-                                        <span className="min-w-0 flex-1">
-                                            <span className="block truncate text-[12px] font-semibold tracking-wide">
-                                                {item.label}
-                                            </span>
-                                        </span>
-                                        {active && (
-                                            <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-sky-400/15 text-sky-200">
-                                                <FaCheck className="h-2.5 w-2.5" />
-                                            </span>
-                                        )}
-                                    </button>
-                                );
-                            })}
-                        </div>
-                    </div>
-
-                    {topLevelItems.map((item) => {
-                        const enabled = typeof item.onSelect === "function";
-                        const active = item.key === activeView;
-
-                        return (
-                            <button
-                                key={item.key}
-                                ref={item.key === focusKey ? focusItemRef : undefined}
-                                type="button"
-                                disabled={!enabled}
-                                aria-current={active ? "page" : undefined}
-                                className={cn(
-                                    "route-switcher-item flex w-full items-center gap-3 rounded-xl border px-3 py-3 text-left focus:outline-none focus:ring-2 focus:ring-sky-400/60",
-                                    active
-                                        ? "border-sky-400/70 bg-sky-500/15 text-sky-50"
-                                        : "border-transparent bg-zinc-900/35 text-zinc-100",
-                                    enabled
-                                        ? "cursor-pointer hover:border-zinc-600/80 hover:bg-zinc-800/80"
-                                        : "cursor-not-allowed opacity-45"
-                                )}
-                                onClick={() => {
-                                    if (!enabled) return;
-                                    item.onSelect();
-                                }}
-                            >
-                                <span
-                                    className={cn(
-                                        "flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border",
-                                        active
-                                            ? "border-sky-400/70 bg-sky-500/20 text-sky-100"
-                                            : "border-zinc-700/70 bg-zinc-900/80 text-zinc-300"
-                                    )}
-                                >
-                                    {item.icon}
-                                </span>
-                                <span className="min-w-0 flex-1">
-                                    <span className="block truncate text-[13px] font-semibold tracking-wide">
-                                        {item.label}
-                                    </span>
-                                </span>
-                                {active && (
-                                    <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-sky-400/15 text-sky-200">
-                                        <FaCheck className="h-3 w-3" />
-                                    </span>
-                                )}
-                            </button>
-                        );
-                    })}
-                </div>
-            </div>
-        </div>
+                </Dialog.Content>
+            </Dialog.Portal>
+        </Dialog.Root>
     );
 }

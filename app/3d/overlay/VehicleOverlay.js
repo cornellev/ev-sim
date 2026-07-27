@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from "react";
+import { IconPower } from "@tabler/icons-react";
 import { DeviceOverlay } from "./DeviceOverlay";
 
 const EMPTY_VEHICLES = [];
@@ -18,6 +19,7 @@ export function VehicleOverlay({ data }) {
     const [selectedVehicleIndex, setSelectedVehicleIndex] = useState(null);
     const [selectedDeviceRef, setSelectedDeviceRef] = useState(null);
     const [deviceOverlayVisible, setDeviceOverlayVisible] = useState(false);
+    const [deviceEnabledOverrides, setDeviceEnabledOverrides] = useState({});
     const [, refreshDevices] = useState(0);
 
     const vehicles = useMemo(() => data?.vehicles?.()?.vehicles ?? EMPTY_VEHICLES, [data]);
@@ -63,13 +65,13 @@ export function VehicleOverlay({ data }) {
     return (
         <>
             <div
-                className="absolute top-3 left-3 z-30 w-[292px] rounded-2xl border border-zinc-700/80 bg-zinc-950/85 p-2.5 text-zinc-100 shadow-[0_30px_80px_rgba(0,0,0,0.45)] backdrop-blur-2xl pointer-events-auto"
+                className="absolute top-[58px] left-3 z-30 w-[292px] rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-950/85 p-2.5 text-zinc-100 shadow-[0_30px_80px_rgba(0,0,0,0.45)] pointer-events-auto"
                 onMouseDown={controls.disable}
                 onMouseUp={controls.enable}
                 onMouseLeave={controls.enable}
             >
-                <div className="rounded-xl border border-zinc-700/80 bg-zinc-900/70 p-2">
-                    <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-400">Hierarchy</p>
+                <div className="rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-900/70 p-2">
+                    <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-400">Hierarchy</p>
                     <div className="max-h-[58vh] space-y-1 overflow-auto pr-1">
                         {vehicles.map((vehicle, vehicleIndex) => {
                             const vehicleName = getVehicleName(vehicle, vehicleIndex);
@@ -82,7 +84,7 @@ export function VehicleOverlay({ data }) {
                                     <div className="flex items-center gap-1">
                                         <button
                                             type="button"
-                                            className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-zinc-700/80 bg-zinc-900/85 text-[11px] text-zinc-300 hover:bg-zinc-800/90"
+                                            className="inline-flex h-6 w-6 items-center justify-center rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-900/85 text-[11px] text-zinc-300 hover:bg-zinc-800/90"
                                             onClick={() => toggleVehicleExpand(vehicleIndex)}
                                             title={isExpanded ? "Collapse" : "Expand"}
                                             aria-label={isExpanded ? "Collapse" : "Expand"}
@@ -91,7 +93,7 @@ export function VehicleOverlay({ data }) {
                                         </button>
                                         <button
                                             type="button"
-                                            className={`flex-1 rounded-md border px-2 py-1 text-left text-[11px] font-medium transition-colors ${
+                                            className={`flex-1 rounded-[var(--radius)] border px-2 py-1 text-left text-[11px] font-medium transition-colors ${
                                                 isVehicleSelected
                                                     ? "border-sky-400/80 bg-sky-500/20 text-zinc-100"
                                                     : "border-zinc-700/80 bg-zinc-900/85 text-zinc-100 hover:bg-zinc-800/90"
@@ -99,17 +101,21 @@ export function VehicleOverlay({ data }) {
                                             onClick={() => setSelectedVehicleIndex(vehicleIndex)}
                                         >
                                             {vehicleName}
-                                            <span className="ml-2 text-[10px] text-zinc-400">({devices.length})</span>
+                                            <span className="ml-2 text-[11px] text-zinc-400">({devices.length})</span>
                                         </button>
                                     </div>
 
                                     {isExpanded && (
                                         <div className="ml-7 space-y-1 border-l border-zinc-700/80 pl-2">
                                             {!devices.length && (
-                                                <p className="px-1 py-0.5 text-[10px] text-zinc-500">No attached devices</p>
+                                                <p className="px-1 py-0.5 text-[11px] text-zinc-500">No attached devices</p>
                                             )}
 
                                             {devices.map((device, deviceIndex) => {
+                                                const deviceKey = `${vehicleIndex}:${deviceIndex}`;
+                                                const deviceEnabled = Object.hasOwn(deviceEnabledOverrides, deviceKey)
+                                                    ? deviceEnabledOverrides[deviceKey]
+                                                    : Boolean(device.enabled);
                                                 const selected =
                                                     selectedDeviceRef?.vehicleIndex === vehicleIndex &&
                                                     selectedDeviceRef?.deviceIndex === deviceIndex;
@@ -118,11 +124,10 @@ export function VehicleOverlay({ data }) {
                                                     <button
                                                         key={`${device.name}_${vehicleIndex}_${deviceIndex}`}
                                                         type="button"
-                                                        className={`flex w-full items-center justify-between rounded-md border px-2 py-1 text-left transition-colors ${
-                                                            selected
-                                                                ? "border-sky-400/80 bg-sky-500/20"
-                                                                : "border-zinc-700/80 bg-zinc-900/80 hover:bg-zinc-800/90"
-                                                        }`}
+                                                        className="sf-device-hierarchy-row"
+                                                        data-enabled={deviceEnabled}
+                                                        data-selected={selected || undefined}
+                                                        aria-label={`${device.name}, ${deviceEnabled ? "enabled" : "disabled"}`}
                                                         onClick={() => {
                                                             setSelectedVehicleIndex(vehicleIndex);
                                                             const isSameOpen =
@@ -142,13 +147,8 @@ export function VehicleOverlay({ data }) {
                                                             setDeviceOverlayVisible(true);
                                                         }}
                                                     >
-                                                        <span className="truncate text-[11px] text-zinc-100">{device.name}</span>
-                                                        <span
-                                                            className={`h-2 w-2 rounded-full ${
-                                                                device.enabled ? "bg-emerald-400" : "bg-zinc-500"
-                                                            }`}
-                                                            title={device.enabled ? "Active" : "Disabled"}
-                                                        />
+                                                        <IconPower className="sf-device-hierarchy-row__state" size={13} stroke={1.9} aria-hidden="true" />
+                                                        <span className="sf-device-hierarchy-row__name">{device.name}</span>
                                                     </button>
                                                 );
                                             })}
@@ -174,6 +174,10 @@ export function VehicleOverlay({ data }) {
                     }}
                     onDeviceEnabledChange={(enabled) => {
                         selectedDevice.setEnabled?.(enabled);
+                        setDeviceEnabledOverrides((current) => ({
+                            ...current,
+                            [`${selectedDeviceRef.vehicleIndex}:${selectedDeviceRef.deviceIndex}`]: Boolean(enabled),
+                        }));
                         refreshDevices((revision) => revision + 1);
                     }}
                     onDeviceSettingsChange={(settings) => {

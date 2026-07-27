@@ -23,7 +23,7 @@ export function Equality({ _uuid, initialData = "eq" }) {
             }>
 
             <div className="w-full h-full flex items-center justify-center">
-                <select value={type} onChange={e => setType(e.target.value)} className="bg-[#393939] p-2 rounded-lg">
+                <select value={type} onChange={e => setType(e.target.value)} className="rounded-[4px] border border-white/10 bg-[var(--slate-bg)] p-2 outline-none focus:border-white/30">
                     <option value="eq">==</option>
                     <option value="neq">!=</option>
                     <option value="gt">&gt;</option>
@@ -56,7 +56,7 @@ export function Conjugation({ _uuid, initialData = "and" }) {
             }>
 
             <div className="w-full h-full flex items-center justify-center">
-                <select value={type} onChange={e => setType(e.target.value)} className="bg-[#393939] p-2 rounded-lg">
+                <select value={type} onChange={e => setType(e.target.value)} className="rounded-[4px] border border-white/10 bg-[var(--slate-bg)] p-2 outline-none focus:border-white/30">
                     <option value="and">AND</option>
                     <option value="or">OR</option>
                     <option value="xor">XOR</option>

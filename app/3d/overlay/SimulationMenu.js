@@ -2,26 +2,26 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
-    FaPlay,
-    FaPause,
-    FaStepForward,
-    FaStop,
-    FaSlidersH,
-    FaCube,
-    FaTools,
-    FaEdit,
-    FaMicrochip,
-    FaGlobe,
-    FaBroadcastTower,
-    FaDatabase,
-    FaLayerGroup,
-    FaCircle,
-} from "react-icons/fa";
+    IconPlayerPlay as FaPlay,
+    IconPlayerPause as FaPause,
+    IconPlayerTrackNext as FaStepForward,
+    IconPlayerStop as FaStop,
+    IconAdjustmentsHorizontal as FaSlidersH,
+    IconCube as FaCube,
+    IconTool as FaTools,
+    IconPencil as FaEdit,
+    IconCpu as FaMicrochip,
+    IconWorld as FaGlobe,
+    IconBroadcast as FaBroadcastTower,
+    IconDatabase as FaDatabase,
+    IconStack2 as FaLayerGroup,
+    IconCircle as FaCircle,
+} from "@tabler/icons-react";
 import { FlyoutPanel } from "./ui/FlyoutPanel";
 import { MenuButton } from "./ui/MenuButton";
 import { MenuToggle } from "./ui/MenuToggle";
 import { PanelSection } from "./ui/PanelSection";
-import { BiWorld } from "react-icons/bi";
+import { IconMap2 as BiWorld } from "@tabler/icons-react";
 import { RecordingPanel } from "../../logging/RecordingPanel";
 import { getRecordingController } from "../../logging/RecordingController";
 import { getRunSessionController } from "../../simulation/RunSessionController";
@@ -212,19 +212,19 @@ export function SimulationMenu({ data, vehicleOverlayVisible = true, onVehicleOv
                     </div>
                 )}
 
-                <div className="flex max-w-[calc(100vw-1.5rem)] items-center gap-2 overflow-x-auto rounded-2xl border border-zinc-700/80 bg-zinc-950/90 p-2 text-zinc-100 shadow-[0_20px_70px_rgba(0,0,0,0.5)] backdrop-blur-xl">
+                <div className="flex max-w-[calc(100vw-1.5rem)] items-center gap-2 overflow-x-auto rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-950/90 p-2 text-zinc-100 shadow-[0_20px_70px_rgba(0,0,0,0.5)]">
 
                     <div className="hidden min-w-[118px] px-2 sm:block">
                         <div className="flex items-center gap-1.5">
                             <FaCircle className={`h-2 w-2 ${runtimeStatus.tone === "emerald" ? "text-emerald-400" : runtimeStatus.tone === "amber" ? "text-amber-400" : runtimeStatus.tone === "rose" ? "text-rose-400" : runtimeStatus.tone === "sky" ? "text-sky-400" : "text-zinc-500"}`} />
-                            <span className="truncate text-[10px] font-semibold text-zinc-200">{runtimeStatus.label}</span>
+                            <span className="truncate text-[11px] font-semibold text-zinc-200">{runtimeStatus.label}</span>
                         </div>
-                        <p className="mt-0.5 truncate font-mono text-[9px] tabular-nums text-zinc-500">step {simState?.steps ?? 0} / {formatSimulationTime(simState?.time)}</p>
+                        <p className="mt-0.5 truncate font-mono text-[11px] tabular-nums text-zinc-500">step {simState?.steps ?? 0} / {formatSimulationTime(simState?.time)}</p>
                     </div>
 
                     <div className="h-7 w-px shrink-0 bg-zinc-700/80" />
 
-                    <div className="flex items-center gap-1 rounded-xl border border-zinc-700/80 bg-zinc-900/80 p-1">
+                    <div className="flex items-center gap-1 rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-900/80 p-1">
                         <MenuButton
                             iconOnly
                             variant="primary"
@@ -266,7 +266,7 @@ export function SimulationMenu({ data, vehicleOverlayVisible = true, onVehicleOv
 
                     <div className="h-7 w-px bg-zinc-700/80" />
 
-                    <div className="flex items-center gap-1 rounded-xl border border-zinc-700/80 bg-zinc-900/80 p-1">
+                    <div className="flex items-center gap-1 rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-900/80 p-1">
                         <MenuButton
                             iconOnly
                             variant={recordingState.active ? "danger" : "default"}
@@ -281,7 +281,7 @@ export function SimulationMenu({ data, vehicleOverlayVisible = true, onVehicleOv
 
                     <div className="h-7 w-px bg-zinc-700/80" />
 
-                    <div className="flex items-center gap-1 rounded-xl border border-zinc-700/80 bg-zinc-900/80 p-1">
+                    <div className="flex items-center gap-1 rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-900/80 p-1">
                         <MenuButton
                             iconOnly
                             active={openPanel === "engine"}
@@ -322,7 +322,7 @@ export function SimulationMenu({ data, vehicleOverlayVisible = true, onVehicleOv
                         </MenuButton>
                     </div>
 
-                    <div className="flex shrink-0 items-center gap-1 rounded-lg border border-zinc-700/80 bg-zinc-900/80 px-2 py-1 font-mono text-[9px] font-medium tabular-nums text-zinc-300 select-none" title="Simulation clock">
+                    <div className="flex shrink-0 items-center gap-1 rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-900/80 px-2 py-1 font-mono text-[11px] font-medium tabular-nums text-zinc-300 select-none" title="Simulation clock">
                         <span className="text-zinc-500">t</span>
                         <span>{formatSimulationTime(simState?.time)}</span>
                     </div>

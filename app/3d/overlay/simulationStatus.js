@@ -38,10 +38,10 @@ export function deriveSimulationStatus(runState = {}, simState = {}) {
     }
 
     if (simulationStatus === "playing") {
-        return { label: "Scene running", detail: "Legacy scene runtime, no manifest", tone: "amber", source: "scene" };
+        return { label: "Scene running", detail: "No active manifest", tone: "amber", source: "scene" };
     }
     if (simulationStatus === "paused") {
-        return { label: "Scene paused", detail: "Legacy scene runtime, no manifest", tone: "zinc", source: "scene" };
+        return { label: "Scene paused", detail: "No active manifest", tone: "zinc", source: "scene" };
     }
     return { label: "Scene loaded", detail: "No run manifest is active", tone: "zinc", source: "scene" };
 }

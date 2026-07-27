@@ -444,7 +444,9 @@ export class BakeHarness {
                 channels: viewConfig.channels,
                 includeTags: viewConfig.includeTags ?? [],
                 excludeTags: viewConfig.excludeTags ?? [],
-                maxFramesPerChannel: viewConfig.maxFramesPerChannel ?? 240,
+                // Captures are uploaded/processed immediately; keeping a
+                // full-resolution history here can retain gigabytes.
+                maxFramesPerChannel: viewConfig.maxFramesPerChannel ?? 0,
             });
 
             view._localOffset = {
@@ -628,6 +630,29 @@ export class BakeHarness {
         this.processingSample = false;
         this._telemetrySnapshot = markBakeStopped(this._telemetrySnapshot);
         this._emitTelemetry();
+    }
+
+    dispose() {
+        this.running = false;
+        this.completed = true;
+        this.processingSample = false;
+
+        for (const view of this.views) {
+            view.dispose?.();
+        }
+        this.views = [];
+
+        this.projectedTextureManager?.dispose?.();
+        this.projectedTextureManager = null;
+        this.telemetryListeners.clear();
+
+        // Telemetry previews deliberately contain pixel arrays. Drop them
+        // when the editor runtime is released so reloads can reclaim memory.
+        this._telemetrySnapshot = {
+            ...this._telemetrySnapshot,
+            lastImage: null,
+            mask: null,
+        };
     }
 
     /**

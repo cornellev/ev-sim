@@ -2,16 +2,18 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
-    FaCube,
-    FaGlobeAmericas,
-    FaLayerGroup,
-    FaMap,
-    FaMousePointer,
-    FaPlay,
-    FaRoad,
-    FaStop,
-    FaTools,
-} from "react-icons/fa";
+    IconCube as FaCube,
+    IconWorld as FaGlobeAmericas,
+    IconStack2 as FaLayerGroup,
+    IconMap as FaMap,
+    IconPointer as FaMousePointer,
+    IconPlayerPlay as FaPlay,
+    IconRoad as FaRoad,
+    IconPlayerStop as FaStop,
+    IconTool as FaTools,
+    IconHierarchy3,
+    IconAdjustmentsHorizontal,
+} from "@tabler/icons-react";
 import { EDITOR_MODES, EDITOR_TOOLS } from "../editor/EditorState";
 import { PLACEMENT_CATALOG } from "../editor/placement/PlacementCatalog";
 import { EnvironmentSkyPanel, SkyToolIcon } from "./EnvironmentSkyPanel";
@@ -22,7 +24,7 @@ import { PanelSection } from "./ui/PanelSection";
 
 const MENU_CONTROL_LOCK = "environment-editor-menu";
 
-export function EnvironmentEditorMenu({ data }) {
+export function EnvironmentEditorMenu({ data, hierarchyOpen, inspectorOpen, onToggleHierarchy, onToggleInspector }) {
     const [openPanel, setOpenPanel] = useState(null);
     const [editorSnapshot, setEditorSnapshot] = useState(null);
     const [bakeRunning, setBakeRunning] = useState(false);
@@ -197,8 +199,8 @@ export function EnvironmentEditorMenu({ data }) {
                     </div>
                 )}
 
-                <div className="flex items-center gap-2 rounded-2xl border border-zinc-700/80 bg-zinc-950/70 p-2 text-zinc-100 shadow-[0_20px_70px_rgba(0,0,0,0.5)] backdrop-blur-2xl">
-                    <div className="flex items-center gap-1 rounded-xl border border-zinc-700/80 bg-zinc-900/80 p-1">
+                <div className="flex items-center gap-2 rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-950/70 p-2 text-zinc-100 shadow-[0_20px_70px_rgba(0,0,0,0.5)]">
+                    <div className="flex items-center gap-1 rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-900/80 p-1">
                         <MenuButton
                             iconOnly
                             variant={activeTool === EDITOR_TOOLS.SELECT ? "primary" : "default"}
@@ -230,6 +232,28 @@ export function EnvironmentEditorMenu({ data }) {
                         >
                             <FaLayerGroup className="h-3 w-3" />
                         </MenuButton>
+                        <span className="hidden max-[1023px]:inline-flex">
+                            <MenuButton
+                                iconOnly
+                                active={hierarchyOpen}
+                                onClick={onToggleHierarchy}
+                                title="Toggle scene hierarchy"
+                                ariaLabel="Scene hierarchy"
+                            >
+                                <IconHierarchy3 className="h-3 w-3" />
+                            </MenuButton>
+                        </span>
+                        <span className="hidden max-[1023px]:inline-flex">
+                            <MenuButton
+                                iconOnly
+                                active={inspectorOpen}
+                                onClick={onToggleInspector}
+                                title="Toggle object inspector"
+                                ariaLabel="Object inspector"
+                            >
+                                <IconAdjustmentsHorizontal className="h-3 w-3" />
+                            </MenuButton>
+                        </span>
                         <MenuButton
                             iconOnly
                             active={openPanel === "sky"}

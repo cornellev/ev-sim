@@ -6,6 +6,7 @@ import { parseLidarHits } from "../../devices/LidarHitDecoder";
 import { passFileRole } from "./BakePass";
 import { buildSensorRotationMatrix } from "./LidarSplatProjector";
 import { withPixelPackBufferUnbound } from "../../util/glReadback.js";
+import { rgbaBufferLength } from "./BakeCaptureMemory.js";
 
 /**
  * @param {THREE.Object3D} threeObject
@@ -100,7 +101,7 @@ export class BakeView {
             lidar = {},
             camera = {},
             channels = {},
-            maxFramesPerChannel = 120,
+            maxFramesPerChannel = 0,
             includeTags = [],
             excludeTags = [],
         } = settings;
@@ -134,13 +135,17 @@ export class BakeView {
             near: camera.near ?? 0.1,
             far: camera.far ?? Math.max(this.range, 500),
         };
+        this._cameraBufferLength = rgbaBufferLength(cameraWidth, cameraHeight);
 
         this.channels = {
             lidar: channels.lidar || `${this.name}/lidar3d`,
             camera: channels.camera || `${this.name}/camera`,
         };
 
-        this.maxFramesPerChannel = Math.max(1, maxFramesPerChannel);
+        // BakeHarness consumes each capture immediately. Frame history is
+        // opt-in because full-resolution RGB frames and decoded LiDAR hits are
+        // far too large for a frame-count-only default cache.
+        this.maxFramesPerChannel = Math.max(0, Math.floor(maxFramesPerChannel));
         this.includeTags = [...includeTags];
         this.excludeTags = [...excludeTags];
 
@@ -241,11 +246,12 @@ export class BakeView {
             }
         );
 
-        this.cameraPixelBuffer = new Uint8Array(
-            this.cameraSettings.width * this.cameraSettings.height * 4
-        );
-
         this.shader.setup(renderer);
+    }
+
+    _ensureCameraPixelBuffer() {
+        if (this.cameraPixelBuffer?.length === this._cameraBufferLength) return;
+        this.cameraPixelBuffer = new Uint8Array(this._cameraBufferLength);
     }
 
     getPosition() {
@@ -432,6 +438,7 @@ export class BakeView {
     }
 
     _renderCameraPixels() {
+        this._ensureCameraPixelBuffer();
         const previousRenderTarget = this.renderer.getRenderTarget();
         try {
             this.renderer.setRenderTarget(this.cameraRenderTarget);
@@ -659,7 +666,6 @@ export class BakeView {
             this._captureInFlight ||
             !this.sensorCamera ||
             !this.cameraRenderTarget ||
-            !this.cameraPixelBuffer ||
             !this.renderer ||
             !this.scene ||
             !Array.isArray(passes) ||
@@ -667,6 +673,8 @@ export class BakeView {
         ) {
             return null;
         }
+
+        this._ensureCameraPixelBuffer();
 
         this._captureInFlight = true;
         this.updateCameraPose();
@@ -808,9 +816,11 @@ export class BakeView {
         const bucket = this.recording[channelName];
         if (!bucket) return;
 
-        bucket.push(frame);
-        if (bucket.length > this.maxFramesPerChannel) {
-            bucket.splice(0, bucket.length - this.maxFramesPerChannel);
+        if (this.maxFramesPerChannel > 0) {
+            bucket.push(frame);
+            if (bucket.length > this.maxFramesPerChannel) {
+                bucket.splice(0, bucket.length - this.maxFramesPerChannel);
+            }
         }
 
         const callbacks = this.listeners[channelName] || [];
@@ -838,5 +848,35 @@ export class BakeView {
     clearChannel(channelName) {
         if (!this.recording[channelName]) return;
         this.recording[channelName] = [];
+    }
+
+    dispose() {
+        this._restoreMaskPass();
+        this._restoreCaptureMaterialBoost();
+        this._restoreVisibility();
+
+        this.sensorCamera?.removeFromParent?.();
+        this.cameraRenderTarget?.dispose?.();
+        this.shader?.dispose?.();
+        this._maskMaterial?.dispose?.();
+        this._depthMaterial?.dispose?.();
+
+        this.sensorCamera = null;
+        this.cameraRenderTarget = null;
+        this.cameraPixelBuffer = null;
+        this.buff = null;
+        this.hits = [];
+        this.distances = [];
+        this.scene = null;
+        this.renderer = null;
+        this.data = null;
+        this._captureInFlight = false;
+
+        for (const channelName of Object.keys(this.recording)) {
+            this.recording[channelName] = [];
+        }
+        for (const channelName of Object.keys(this.listeners)) {
+            this.listeners[channelName] = [];
+        }
     }
 }

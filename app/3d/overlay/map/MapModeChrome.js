@@ -2,16 +2,16 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
-    FaArrowsAlt,
-    FaBuilding,
-    FaHandPaper,
-    FaMap,
-    FaMousePointer,
-    FaRoad,
-    FaTh,
-    FaTimes,
-    FaTrafficLight,
-} from "react-icons/fa";
+    IconArrowsMove as FaArrowsAlt,
+    IconBuilding as FaBuilding,
+    IconHandStop as FaHandPaper,
+    IconMap as FaMap,
+    IconPointer as FaMousePointer,
+    IconRoad as FaRoad,
+    IconGridDots as FaTh,
+    IconX as FaTimes,
+    IconTrafficLights as FaTrafficLight,
+} from "@tabler/icons-react";
 import {
     EDITOR_LAYERS,
     EDITOR_MODES,
@@ -230,8 +230,8 @@ export function MapModeChrome({ data }) {
                         </div>
                     )}
 
-                    <div className="flex items-center gap-2 rounded-2xl border border-zinc-700/80 bg-zinc-950/70 p-2 text-zinc-100 shadow-[0_20px_70px_rgba(0,0,0,0.5)] backdrop-blur-2xl">
-                        <div className="flex items-center gap-1 rounded-xl border border-zinc-700/80 bg-zinc-900/80 p-1">
+                    <div className="flex items-center gap-2 rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-950/70 p-2 text-zinc-100 shadow-[0_20px_70px_rgba(0,0,0,0.5)]">
+                        <div className="flex items-center gap-1 rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-900/80 p-1">
                             <MenuButton
                                 iconOnly
                                 active={activeTool === MAP_TOOLS.SELECT}

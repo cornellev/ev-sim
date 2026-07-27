@@ -1,12 +1,13 @@
 'use client';
 
 import { useEffect, useMemo, useState } from "react";
+import Image from "next/image";
 import {
-    FaGlobeAmericas,
-    FaRoad,
-    FaTimes,
-    FaExpand,
-} from "react-icons/fa";
+    IconWorld as FaGlobeAmericas,
+    IconRoad as FaRoad,
+    IconX as FaTimes,
+    IconArrowsMaximize as FaExpand,
+} from "@tabler/icons-react";
 import {
     EARTH_IMPORT_STATUS,
     EDITOR_MODES,
@@ -40,7 +41,7 @@ function normalizeAttributionEntry(entry) {
 function NumberField({ label, value, onChange, step = "any", readOnly = false }) {
     return (
         <label className="grid gap-1">
-            <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-400">{label}</span>
+            <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-400">{label}</span>
             <input
                 type="number"
                 step={step}
@@ -48,7 +49,7 @@ function NumberField({ label, value, onChange, step = "any", readOnly = false })
                 readOnly={readOnly}
                 onChange={readOnly ? undefined : (event) => onChange(Number(event.target.value))}
                 className={[
-                    "rounded-lg border border-zinc-700/80 bg-zinc-900/90 px-2 py-1.5 text-[11px] text-zinc-100 outline-none focus:border-emerald-400/60",
+                    "rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-900/90 px-2 py-1.5 text-[11px] text-zinc-100 outline-none focus:border-emerald-400/60",
                     readOnly ? "cursor-default text-zinc-400" : "",
                 ].join(" ")}
             />
@@ -67,7 +68,7 @@ function StatusBadge({ status, message, busy = false }) {
     return (
         <div
             className={[
-                "rounded-xl border px-2.5 py-2 text-[10px]",
+                "rounded-[var(--radius)] border px-2.5 py-2 text-[11px]",
                 isError
                     ? "border-rose-500/50 bg-rose-500/10 text-rose-100"
                     : isLoading
@@ -214,7 +215,7 @@ export function EarthImportModeChrome({ data }) {
 
             <div className="fixed right-3 top-3 z-[20] flex w-[340px] flex-col gap-2 pointer-events-auto">
                 <div
-                    className="earth-import-map-shell rounded-2xl border border-zinc-700/80 bg-zinc-950/95 p-2.5 text-zinc-100 shadow-[0_30px_80px_rgba(0,0,0,0.45)]"
+                    className="earth-import-map-shell rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-950/95 p-2.5 text-zinc-100 shadow-[0_30px_80px_rgba(0,0,0,0.45)]"
                     onMouseDown={controls.disableMap}
                     onMouseUp={controls.enableMap}
                     onMouseLeave={controls.enableMap}
@@ -222,7 +223,7 @@ export function EarthImportModeChrome({ data }) {
                     <div className="mb-2 flex items-center justify-between gap-2 border-b border-zinc-700/80 pb-2">
                         <div>
                             <p className="text-[11px] font-semibold tracking-wide text-zinc-100">Import Area</p>
-                            <p className="mt-0.5 text-[10px] text-zinc-400">Draw bounds on OpenStreetMap</p>
+                            <p className="mt-0.5 text-[11px] text-zinc-400">Draw bounds on OpenStreetMap</p>
                         </div>
                         <MenuButton
                             compact
@@ -259,7 +260,7 @@ export function EarthImportModeChrome({ data }) {
                                 message={earthImport.statusMessage}
                                 busy={busy}
                             />
-                            <div className="rounded-lg border border-zinc-700/80 bg-zinc-900/70 px-2.5 py-2 text-[10px] text-zinc-300">
+                            <div className="rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-900/70 px-2.5 py-2 text-[11px] text-zinc-300">
                                 <p className="font-semibold uppercase tracking-[0.12em] text-zinc-400">API Key</p>
                                 <p className="mt-1">
                                     {apiKeyConfigured
@@ -268,7 +269,7 @@ export function EarthImportModeChrome({ data }) {
                                 </p>
                             </div>
                             {!boundsSummary.valid && (
-                                <p className="text-[10px] leading-snug text-rose-200">
+                                <p className="text-[11px] leading-snug text-rose-200">
                                     {boundsSummary.error}
                                 </p>
                             )}
@@ -289,7 +290,7 @@ export function EarthImportModeChrome({ data }) {
                                     step="0.0001"
                                 />
                             </div>
-                            <p className="text-[9px] leading-snug text-zinc-500">
+                            <p className="text-[11px] leading-snug text-zinc-500">
                                 Computed from the center of the selected bounds at preview/apply time.
                             </p>
                         </PanelSection>
@@ -346,13 +347,13 @@ export function EarthImportModeChrome({ data }) {
 
                         <PanelSection title="Road Network">
                             <label className="grid gap-1">
-                                <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-400">
+                                <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-400">
                                     Provider
                                 </span>
                                 <select
                                     value={earthImport.roadProvider}
                                     onChange={(event) => patch({ roadProvider: event.target.value })}
-                                    className="rounded-lg border border-zinc-700/80 bg-zinc-900/90 px-2 py-1.5 text-[11px] text-zinc-100 outline-none focus:border-emerald-400/60"
+                                    className="rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-900/90 px-2 py-1.5 text-[11px] text-zinc-100 outline-none focus:border-emerald-400/60"
                                 >
                                     <option value={ROAD_PROVIDER_IDS.OVERPASS}>OpenStreetMap (Overpass)</option>
                                     <option value={ROAD_PROVIDER_IDS.GOOGLE} disabled>Google Roads (coming soon)</option>
@@ -385,10 +386,10 @@ export function EarthImportModeChrome({ data }) {
 
                         {documentSnapshot?.earth && (
                             <PanelSection title="Applied Source">
-                                <p className="text-[10px] text-zinc-400">
+                                <p className="text-[11px] text-zinc-400">
                                     Last import: {documentSnapshot.earth.importedAt ?? "unknown"}
                                 </p>
-                                <p className="text-[10px] text-zinc-500">
+                                <p className="text-[11px] text-zinc-500">
                                     Layers: {documentSnapshot.earth.importedLayerIds.join(", ") || "none"}
                                 </p>
                             </PanelSection>
@@ -397,7 +398,7 @@ export function EarthImportModeChrome({ data }) {
                         <PanelSection title="Actions">
                             {(earthImport.previewActive
                                 || earthImport.status === EARTH_IMPORT_STATUS.PREVIEW) && (
-                                <p className="text-[9px] leading-snug text-zinc-500">
+                                <p className="text-[11px] leading-snug text-zinc-500">
                                     Red boundary marks the selected import area. Tiles may extend beyond it.
                                 </p>
                             )}
@@ -427,10 +428,13 @@ export function EarthImportModeChrome({ data }) {
 
             {attributionEntries.length > 0 && (
                 <div className="fixed bottom-3 left-3 right-[360px] z-[20] pointer-events-none">
-                    <div className="mx-auto flex max-w-4xl items-center justify-center gap-2 rounded-lg border border-zinc-700/70 bg-zinc-950/80 px-3 py-1.5 text-[10px] text-zinc-300 backdrop-blur-md">
+                    <div className="mx-auto flex max-w-4xl items-center justify-center gap-2 rounded-[var(--radius)] border border-zinc-700/70 bg-zinc-950/80 px-3 py-1.5 text-[11px] text-zinc-300">
                         {attributionImages.map((entry) => (
-                            <img
+                            <Image
                                 key={entry.value}
+                                unoptimized
+                                width={80}
+                                height={16}
                                 src={entry.value}
                                 alt={entry.alt ?? "Google"}
                                 className="h-4 w-auto rounded-sm bg-white px-1 py-0.5"
@@ -448,8 +452,8 @@ export function EarthImportModeChrome({ data }) {
                     onMouseUp={controls.enable}
                     onMouseLeave={controls.enable}
                 >
-                    <div className="flex items-center gap-2 rounded-2xl border border-zinc-700/80 bg-zinc-950/70 p-2 text-zinc-100 shadow-[0_20px_70px_rgba(0,0,0,0.5)] backdrop-blur-2xl">
-                        <div className="rounded-lg border border-sky-500/40 bg-sky-500/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-sky-100">
+                    <div className="flex items-center gap-2 rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-950/70 p-2 text-zinc-100 shadow-[0_20px_70px_rgba(0,0,0,0.5)]">
+                        <div className="rounded-[var(--radius)] border border-sky-500/40 bg-sky-500/10 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-sky-100">
                             Earth Import
                         </div>
                         <div className="h-7 w-px bg-zinc-700/80" />

@@ -8,14 +8,21 @@ function InputRow({ id = null, label="in", type="float64", parentID }) {
 
     return (
         <div className="mb-2 flex items-center">
-            {type !== "caption" && <div className={`w-3 h-3 rounded-full mr-2 input-${type.replace(/\[.*?\]/, '')} input parent-${parentID}`} style={{
+            {type !== "caption" && <div
+                className={`mr-2 h-3 w-3 rounded-full input-${type.replace(/\[.*?\]/, '')} input parent-${parentID}`}
+                style={{
                 backgroundColor: mainType ? mainType : "rgb(150,150,150)"
-            }} data-encoded={parentID + "|" + encodedLabel + "|" + type}>
+                }}
+                data-encoded={parentID + "|" + encodedLabel + "|" + type}
+                role="button"
+                tabIndex={0}
+                aria-label={`Connect input ${label}, ${type}`}
+            >
                 <div className={`w-1.5 h-1.5 rounded-full m-[3px]`} style={{
-                    backgroundColor: subType ? subType : "#393939"
+                    backgroundColor: subType ? subType : "var(--slate-surface-2)"
                 }}></div>
             </div>}
-            <span className={"text-xs select-none " + (type === "caption" ? "italic" : "")}>{label}</span>
+            <span className={"select-none text-xs text-zinc-300 " + (type === "caption" ? "italic" : "")}>{label}</span>
         </div>
     )
 }
@@ -27,12 +34,19 @@ function OutputRow({ id = null, label="out", type="float64", parentID }) {
 
     return (
         <div className="mb-2 flex items-center justify-end">
-            <span className={"text-xs select-none " + (type === "caption" ? "italic" : "")}>{label}</span>
-            {type !== "caption" && <div className={`w-3 h-3 rounded-full ml-2 output-${type.replace(/\[.*?\]/, '')} output parent-${parentID}`} style={{
+            <span className={"select-none text-xs text-zinc-300 " + (type === "caption" ? "italic" : "")}>{label}</span>
+            {type !== "caption" && <div
+                className={`ml-2 h-3 w-3 rounded-full output-${type.replace(/\[.*?\]/, '')} output parent-${parentID}`}
+                style={{
                 backgroundColor: mainType ? mainType : "rgb(150,150,150)"
-            }}  data-encoded={parentID + "|" + encodedLabel + "|" + type}>
+                }}
+                data-encoded={parentID + "|" + encodedLabel + "|" + type}
+                role="button"
+                tabIndex={0}
+                aria-label={`Connect output ${label}, ${type}`}
+            >
                 <div className={`w-1.5 h-1.5 rounded-full m-[3px]`} style={{
-                    backgroundColor: subType ? subType : "#2b2b2b"
+                    backgroundColor: subType ? subType : "var(--slate-surface-1)"
                 }}></div>
             </div>}
         </div>
@@ -109,12 +123,6 @@ export default function Unit({ children, title="default title", hasOptions=false
 
     useEffect(() => {
         if (ref.current === null) return;
-        if (selected) {
-            ref.current.style.boxShadow = "0 0 10px 2px rgba(81, 203, 238, 1)";
-        } else {
-            ref.current.style.boxShadow = "0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)";
-        }
-
         if (!selected) return;
 
         const onMouseClickOutside = (e) => {
@@ -124,12 +132,31 @@ export default function Unit({ children, title="default title", hasOptions=false
         }
 
         const onKeyPress = (e) => {
+            if (isEditableTarget(e.target)) return;
             if (e.key === "Escape") {
                 setSelected(false);
             } else if (e.key === "Delete" || e.key === "Backspace") {
-                if (isEditableTarget(e.target)) return;
+                e.preventDefault();
                 document.dispatchEvent(new CustomEvent('delete-unit', { detail: { uuid } }));
                 setSelected(false);
+            } else if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) {
+                e.preventDefault();
+                const step = e.shiftKey ? 10 : 2;
+                const delta = {
+                    ArrowLeft: { x: -step, y: 0 },
+                    ArrowRight: { x: step, y: 0 },
+                    ArrowUp: { x: 0, y: -step },
+                    ArrowDown: { x: 0, y: step }
+                }[e.key];
+                const nextPosition = {
+                    x: positionRef.current.x + delta.x,
+                    y: positionRef.current.y + delta.y
+                };
+                positionRef.current = nextPosition;
+                setPosition(nextPosition);
+                document.dispatchEvent(new CustomEvent('unit-position-changed', {
+                    detail: { uuid, position: nextPosition }
+                }));
             }
         }
 
@@ -167,6 +194,9 @@ export default function Unit({ children, title="default title", hasOptions=false
             const nextPosition = { x: newX, y: newY };
             positionRef.current = nextPosition;
             setPosition(nextPosition);
+            document.dispatchEvent(new CustomEvent('unit-position-preview', {
+                detail: { uuid, position: nextPosition }
+            }));
         }
         
         function onMouseUp() {
@@ -195,17 +225,31 @@ export default function Unit({ children, title="default title", hasOptions=false
     }, [position]);
 
     return (
-        <div className="absolute min-w-[160px] bg-[#393939] text-white rounded-md shadow-lg" ref={ref} data-uuid={uuid}>
-            <div className="bg-[#393939] border-b border-[#252525] rounded-t-md pb-2 pt-2 p-3" ref={titleRef}>
-                <h4 className="text-xs select-none">{title}</h4>
+        <div
+            className={`absolute min-w-[160px] rounded-[4px] border bg-[var(--slate-surface-2)] text-white shadow-[0_10px_30px_rgba(0,0,0,0.22)] outline-none transition-[border-color,box-shadow] duration-150 ${selected ? "border-white/35 shadow-[0_0_0_2px_rgba(255,255,255,0.08),0_10px_30px_rgba(0,0,0,0.22)]" : "border-white/10"}`}
+            ref={ref}
+            data-uuid={uuid}
+            tabIndex={0}
+            role="group"
+            aria-label={`${title} node. Use arrow keys to move, Shift plus arrow keys to move faster, and Delete to remove.`}
+            onFocus={() => setSelected(true)}
+            onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                    const firstPort = ref.current?.querySelector(".input, .output");
+                    firstPort?.focus();
+                }
+            }}
+        >
+            <div className="cursor-grab rounded-t-[4px] border-b border-white/8 bg-[var(--slate-surface-3)] p-3 py-2 active:cursor-grabbing" ref={titleRef}>
+                <h4 className="select-none text-xs font-medium text-zinc-100">{title}</h4>
             </div>
-            { (outputs.length > 0 || inputs.length > 0) && <div className={`mt-[0px] grid ${singleColumn ? 'grid-cols-1' : 'grid-cols-2'} gap-2 ${hasOptions ? 'border-b border-[#252525]' : 'rounded-b-md' }`}>
-                {inputs.length > 0 && <div className={`inputs bg-[#393939] pl-3 pt-2 ${hasOptions ? '' : 'rounded-bl-md'}`}>
+            { (outputs.length > 0 || inputs.length > 0) && <div className={`mt-[0px] grid ${singleColumn ? 'grid-cols-1' : 'grid-cols-2'} gap-2 ${hasOptions ? 'border-b border-white/8' : 'rounded-b-md' }`}>
+                {inputs.length > 0 && <div className={`inputs bg-[var(--slate-surface-2)] pl-3 pt-2 ${hasOptions ? '' : 'rounded-bl-[4px]'}`}>
                     {inputs.map((input, index) => (
                         <InputRow key={input.id || input.label || index} id={input.id} label={input.label} type={input.type} parentID={uuid} />
                     ))}
                 </div>}
-                {outputs.length > 0 && <div className={`outputs bg-[#2b2b2b] pr-3 pt-2 ${hasOptions ? '' : 'rounded-br-md'}`}>
+                {outputs.length > 0 && <div className={`outputs bg-[var(--slate-surface-1)] pr-3 pt-2 ${hasOptions ? '' : 'rounded-br-[4px]'}`}>
                     {outputs.map((output, index) => (
                         <OutputRow key={output.id || output.label || index} id={output.id} label={output.label} type={output.type} parentID={uuid} />
                     ))}
@@ -215,7 +259,7 @@ export default function Unit({ children, title="default title", hasOptions=false
                 hasOptions &&
                 <div onClick={() => {
                     setSelected(false);
-                }} className="bg-[#393939] rounded-b-md p-3">
+                }} className="rounded-b-[4px] bg-[var(--slate-surface-2)] p-3">
                     {children}
                 </div>
             }

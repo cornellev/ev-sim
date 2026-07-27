@@ -44,7 +44,7 @@ function RuntimeBadge({ runtime }) {
     return (
         <div
             className={cn(
-                "flex items-center justify-between gap-3 rounded-xl border px-2.5 py-2 transition-[background-color,border-color,color] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)]",
+                "flex items-center justify-between gap-3 rounded-[var(--radius)] border px-2.5 py-2 transition-[background-color,border-color,color] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)]",
                 isError
                     ? "border-rose-500/50 bg-rose-500/10 text-rose-100"
                     : isLoading
@@ -53,10 +53,10 @@ function RuntimeBadge({ runtime }) {
             )}
         >
             <div>
-                <p className="text-[10px] font-semibold uppercase tracking-[0.14em]">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.14em]">
                     {isError ? "Sky Error" : isLoading ? "Preparing Sky" : "Sky Ready"}
                 </p>
-                <p className="mt-0.5 text-[10px] text-zinc-300">
+                <p className="mt-0.5 text-[11px] text-zinc-300">
                     {runtime?.error || (isLoading ? "Loading atmosphere resources" : "Live environment preview")}
                 </p>
             </div>
@@ -73,12 +73,12 @@ function RuntimeBadge({ runtime }) {
 function FieldBlock({ label, helper, children, error }) {
     return (
         <label className="grid gap-1.5">
-            <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-400">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-400">
                 {label}
             </span>
             {children}
-            {helper && !error && <span className="text-[10px] leading-snug text-zinc-500">{helper}</span>}
-            {error && <span className="text-[10px] leading-snug text-rose-200">{error}</span>}
+            {helper && !error && <span className="text-[11px] leading-snug text-zinc-500">{helper}</span>}
+            {error && <span className="text-[11px] leading-snug text-rose-200">{error}</span>}
         </label>
     );
 }
@@ -96,7 +96,7 @@ function RangeControl({ label, helper, value, min, max, step, display, onChange 
                     onChange={(event) => onChange?.(Number(event.target.value))}
                     className="h-1.5 w-full cursor-pointer accent-sky-300"
                 />
-                <span className="min-w-12 rounded-md border border-zinc-700/80 bg-zinc-950/70 px-1.5 py-1 text-right font-mono text-[10px] text-zinc-200">
+                <span className="min-w-12 rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-950/70 px-1.5 py-1 text-right font-mono text-[11px] text-zinc-200">
                     {display ?? value}
                 </span>
             </div>
@@ -110,7 +110,7 @@ function SelectControl({ label, value, children, onChange }) {
             <select
                 value={value}
                 onChange={(event) => onChange?.(event.target.value)}
-                className="h-8 rounded-lg border border-zinc-700/80 bg-zinc-950/80 px-2 text-[11px] text-zinc-100 outline-none transition-[border-color,box-shadow] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] focus:border-sky-300/80 focus:ring-2 focus:ring-sky-400/30"
+                className="h-8 rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-950/80 px-2 text-[11px] text-zinc-100 outline-none transition-[border-color,box-shadow] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] focus:border-sky-300/80 focus:ring-2 focus:ring-sky-400/30"
             >
                 {children}
             </select>
@@ -124,7 +124,7 @@ function SkyModeButton({ active, children, onClick }) {
             type="button"
             onClick={onClick}
             className={cn(
-                "flex-1 rounded-lg border px-2.5 py-2 text-[11px] font-semibold tracking-wide transition-[background-color,border-color,color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.97]",
+                "flex-1 rounded-[var(--radius)] border px-2.5 py-2 text-[11px] font-semibold tracking-wide transition-[background-color,border-color,color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.97]",
                 active
                     ? "border-sky-300/80 bg-sky-500/25 text-sky-50"
                     : "border-zinc-700/80 bg-zinc-900/80 text-zinc-300 hover:bg-zinc-800/90",
@@ -157,7 +157,7 @@ export function EnvironmentSkyPanel({ data }) {
     if (!snapshot || !sky) {
         return (
             <PanelSection title="Sky System">
-                <div className="rounded-xl border border-zinc-700/80 bg-zinc-900/70 p-3">
+                <div className="rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-900/70 p-3">
                     <div className="h-2 w-24 animate-pulse rounded-full bg-zinc-700/80" />
                     <div className="mt-2 h-2 w-40 animate-pulse rounded-full bg-zinc-800/90" />
                 </div>
@@ -206,7 +206,7 @@ export function EnvironmentSkyPanel({ data }) {
     return (
         <>
             <PanelSection title="Sky System">
-                <div className="grid grid-cols-2 gap-1.5 rounded-xl border border-zinc-700/80 bg-zinc-900/70 p-1.5">
+                <div className="grid grid-cols-2 gap-1.5 rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-900/70 p-1.5">
                     <SkyModeButton
                         active={snapshot.mode === SKY_MODES.TAKRAM}
                         onClick={() => setMode(SKY_MODES.TAKRAM)}
@@ -307,7 +307,7 @@ export function EnvironmentSkyPanel({ data }) {
                                     if (event.key === "Enter") applyImageUrl();
                                 }}
                                 placeholder="assets/skybox/sky.exr"
-                                className="h-8 min-w-0 rounded-lg border border-zinc-700/80 bg-zinc-950/80 px-2 text-[11px] text-zinc-100 outline-none transition-[border-color,box-shadow] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] placeholder:text-zinc-600 focus:border-sky-300/80 focus:ring-2 focus:ring-sky-400/30"
+                                className="h-8 min-w-0 rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-950/80 px-2 text-[11px] text-zinc-100 outline-none transition-[border-color,box-shadow] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] placeholder:text-zinc-600 focus:border-sky-300/80 focus:ring-2 focus:ring-sky-400/30"
                             />
                             <MenuButton compact onClick={applyImageUrl} title="Apply image sky URL">
                                 Apply
@@ -323,15 +323,15 @@ export function EnvironmentSkyPanel({ data }) {
                         display={snapshot.image.exposure.toFixed(2)}
                         onChange={(exposure) => updateImage({ exposure })}
                     />
-                    <div className="rounded-xl border border-zinc-700/80 bg-zinc-950/55 p-2.5">
-                        <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-400">
+                    <div className="rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-950/55 p-2.5">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-400">
                             Local Preview
                         </p>
-                        <p className="mt-1 text-[10px] leading-snug text-zinc-500">
+                        <p className="mt-1 text-[11px] leading-snug text-zinc-500">
                             Choose a local equirectangular image to test it without writing a managed asset.
                         </p>
                         <div className="mt-2 flex items-center gap-1.5">
-                            <label className="inline-flex cursor-pointer items-center justify-center rounded-xl border border-zinc-700/90 bg-zinc-900/90 px-2.5 py-1.5 text-[11px] font-medium tracking-wide text-zinc-100 transition-[background-color,border-color,color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-zinc-800/90 active:scale-[0.97]">
+                            <label className="inline-flex cursor-pointer items-center justify-center rounded-[var(--radius)] border border-zinc-700/90 bg-zinc-900/90 px-2.5 py-1.5 text-[11px] font-medium tracking-wide text-zinc-100 transition-[background-color,border-color,color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-zinc-800/90 active:scale-[0.97]">
                                 Choose file
                                 <input
                                     type="file"
@@ -347,11 +347,11 @@ export function EnvironmentSkyPanel({ data }) {
                             )}
                         </div>
                         {snapshot.image.localPreviewName ? (
-                            <p className="mt-2 truncate font-mono text-[10px] text-sky-100">
+                            <p className="mt-2 truncate font-mono text-[11px] text-sky-100">
                                 {snapshot.image.localPreviewName}
                             </p>
                         ) : (
-                            <p className="mt-2 text-[10px] text-zinc-500">
+                            <p className="mt-2 text-[11px] text-zinc-500">
                                 No local preview selected.
                             </p>
                         )}

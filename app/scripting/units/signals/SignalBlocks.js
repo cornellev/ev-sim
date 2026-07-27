@@ -100,7 +100,7 @@ export {
     BindingStatusBlock
 } from "./SignalBlocks.block.js";
 
-const CONTROL_CLASS = "w-full rounded-sm border border-white/10 bg-[#2b2b2b] px-2.5 py-1.5 text-white outline-none transition-[border-color,box-shadow] duration-150 focus:border-white/30 focus:shadow-[0_0_0_3px_rgba(255,255,255,0.06)]";
+const CONTROL_CLASS = "w-full rounded-sm border border-white/10 bg-[var(--slate-bg)] px-2.5 py-1.5 text-white outline-none transition-[border-color,box-shadow] duration-150 focus:border-white/30 focus:shadow-[0_0_0_3px_rgba(255,255,255,0.06)]";
 
 const LABEL_CLASS = "flex flex-col gap-1.5";
 

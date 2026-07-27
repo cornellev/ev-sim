@@ -12,15 +12,15 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata = {
-  title: "cev",
-  description: "a cev app",
+  title: "cev-sim",
+  description: "Autonomous-driving simulation, visual scripting, replay, and analysis workbench.",
 };
 
 export default function RootLayout({ children }) {
   return (
     <html lang="en">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={`${geistSans.variable} ${geistMono.variable} sf-app antialiased`}
       >
         {children}
       </body>

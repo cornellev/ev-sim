@@ -282,6 +282,12 @@ export class ProjectedBuildingTextureManager {
         this.activeGeometries = [];
     }
 
+    dispose() {
+        this.reset();
+        this.overlayGroup.removeFromParent();
+        this.scene = null;
+    }
+
     /**
      * @param {Object} options
      * @param {{ data: Uint8Array|Uint8ClampedArray, width: number, height: number, colorSpace?: string }} options.image

@@ -1,12 +1,29 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FaBackward, FaChartLine, FaCheck, FaChevronLeft, FaChevronRight, FaDownload, FaEllipsisH, FaFileImport, FaFolderOpen, FaPause, FaPlay, FaRedo, FaSpinner, FaTrash } from "react-icons/fa";
+import {
+    IconAdjustmentsHorizontal,
+    IconChartLine,
+    IconCheck,
+    IconChevronLeft,
+    IconChevronRight,
+    IconDownload,
+    IconDots,
+    IconFileImport,
+    IconFolderOpen,
+    IconPlayerPause,
+    IconPlayerPlay,
+    IconRepeat,
+    IconTrash,
+    IconX,
+} from "@tabler/icons-react";
 import ReplayScene from "./ReplayScene";
 import { deleteLog, getLogDownloadUrl, importLog, listLogs, updateLog } from "../logging/LogClient.js";
 import { LogDataset } from "../logging/LogDataset.js";
 import { getTimelineStore } from "../logging/TimelineStore.js";
 import { subscribeStorageEvents } from "../client/storageEvents.js";
+import { AsyncState, Button, IconButton, NativeSelect, PopoverSurface, StatusMessage, TextInput, WorkspaceFrame, useShortcut } from "../ui";
+import styles from "./ReplayPage.module.css";
 
 function useTimeline(store) {
     const [state, setState] = useState(() => store.getSnapshot());
@@ -22,7 +39,7 @@ function formatTime(timeUs) {
     return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}.${String(millis).padStart(3, "0")}`;
 }
 
-export default function ReplayPage({ initialLogId, mcpCommand, onOpenAnalysis }) {
+export default function ReplayPage({ initialLogId, mcpCommand, onOpenAnalysis, onOpenWorkspace }) {
     const timeline = useMemo(() => getTimelineStore(), []);
     const timelineState = useTimeline(timeline);
     const [logs, setLogs] = useState([]);
@@ -35,6 +52,7 @@ export default function ReplayPage({ initialLogId, mcpCommand, onOpenAnalysis })
     const [nameDraft, setNameDraft] = useState("");
     const [tagsDraft, setTagsDraft] = useState("");
     const [deleteArmed, setDeleteArmed] = useState(false);
+    const [inspectorOpen, setInspectorOpen] = useState(false);
     const fileRef = useRef(null);
     const playRef = useRef({ timeUs: 0, stamp: 0 });
     const appliedMcpCommandRef = useRef(null);
@@ -136,16 +154,24 @@ export default function ReplayPage({ initialLogId, mcpCommand, onOpenAnalysis })
         if (event) timeline.seek(event.timeUs);
     }, [dataset, timeline, timelineState.timeUs]);
 
-    useEffect(() => {
-        const keydown = (event) => {
-            if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) return;
-            if (event.key === " ") { event.preventDefault(); timeline.togglePlaying(); }
-            if (event.key === "ArrowLeft") { event.preventDefault(); timeline.seek(timeline.getSnapshot().timeUs - 16667); }
-            if (event.key === "ArrowRight") { event.preventDefault(); timeline.seek(timeline.getSnapshot().timeUs + 16667); }
-        };
-        window.addEventListener("keydown", keydown);
-        return () => window.removeEventListener("keydown", keydown);
-    }, [timeline]);
+    useShortcut({
+        id: "replay-playback",
+        keys: ["Space", "ArrowLeft", "ArrowRight"],
+        priority: 20,
+        handler: (event) => {
+            if (event.target instanceof Element && event.target.closest("button, a, input, select, textarea, [contenteditable], [role='button'], [role='slider'], [role='combobox']")) return false;
+            if (event.key === " ") timeline.togglePlaying();
+            if (event.key === "ArrowLeft") timeline.seek(timeline.getSnapshot().timeUs - 16667);
+            if (event.key === "ArrowRight") timeline.seek(timeline.getSnapshot().timeUs + 16667);
+        },
+    });
+    useShortcut({
+        id: "replay-inspector-dismiss",
+        keys: "Escape",
+        enabled: inspectorOpen,
+        priority: 30,
+        handler: () => setInspectorOpen(false),
+    });
 
     const handleImport = async (event) => {
         const file = event.target.files?.[0];
@@ -168,86 +194,99 @@ export default function ReplayPage({ initialLogId, mcpCommand, onOpenAnalysis })
     const entityRows = entityPrefix ? Object.entries(exactSnapshot).filter(([path]) => path.startsWith(entityPrefix)).slice(0, 7) : [];
     const nearbyEvents = dataset?.eventsNear(timelineState.timeUs, 750000).slice(-5) || [];
 
+    const manageTrigger = (
+        <IconButton
+            label="Manage log"
+            disabled={!selectedLog}
+            onClick={() => {
+                setNameDraft(selectedLog?.name || "");
+                setTagsDraft((selectedLog?.tags || []).join(", "));
+                setDeleteArmed(false);
+            }}
+        >
+            <IconDots size={16} stroke={1.75} />
+        </IconButton>
+    );
+
     return (
-        <main className="fixed inset-0 z-10 flex min-h-0 flex-col overflow-hidden bg-zinc-950 text-zinc-100">
-            <header className="relative flex h-14 shrink-0 items-center gap-3 border-b border-zinc-800 px-4">
-                <div className="min-w-0">
-                    <h1 className="text-[13px] font-semibold tracking-wide">Replay</h1>
-                    <p className="text-[10px] text-zinc-500">Read-only state and event playback</p>
-                </div>
-                <div className="ml-4 flex min-w-0 flex-1 items-center gap-2">
-                    <FaFolderOpen className="shrink-0 text-zinc-500" />
-                    <select value={selectedId} onChange={(event) => setSelectedId(event.target.value)} className="h-8 min-w-0 max-w-sm flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-2 text-[11px] outline-none focus:border-sky-500">
-                        <option value="">Choose a log…</option>
-                        {logs.map((log) => <option key={log.id} value={log.id}>{log.name} · {formatTime(log.durationUs)}</option>)}
-                    </select>
-                    <button type="button" onClick={() => fileRef.current?.click()} className="workspace-button"><FaFileImport /> Import</button>
-                    <input ref={fileRef} hidden type="file" accept=".sflog,application/x-sflog" onChange={handleImport} />
-                </div>
-                <button type="button" disabled={!dataset} onClick={() => onOpenAnalysis?.(selectedId)} className="workspace-button"><FaChartLine /> Analyze</button>
-                <button type="button" disabled={!selectedLog} onClick={() => { setNameDraft(selectedLog?.name || ""); setTagsDraft((selectedLog?.tags || []).join(", ")); setDeleteArmed(false); setManageOpen((open) => !open); }} className="timeline-icon-button" aria-label="Manage log"><FaEllipsisH /></button>
-                <span className="hidden text-[9px] text-zinc-600 lg:block">Esc · workspaces</span>
-                {manageOpen && selectedLog && (
-                    <div className="absolute right-4 top-12 z-30 w-72 rounded-xl border border-zinc-700 bg-zinc-950 p-3 shadow-2xl">
-                        <p className="text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Manage log</p>
-                        <div className="mt-2 space-y-1.5">
-                            <input aria-label="Log name" value={nameDraft} onChange={(event) => setNameDraft(event.target.value)} className="h-8 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-2 text-[10px] outline-none focus:border-sky-500" />
-                            <div className="flex gap-1">
-                                <input aria-label="Log tags" placeholder="Tags, comma separated" value={tagsDraft} onChange={(event) => setTagsDraft(event.target.value)} className="h-8 min-w-0 flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-2 text-[10px] outline-none focus:border-sky-500" />
-                                <button type="button" aria-label="Save log details" className="timeline-icon-button" onClick={async () => { try { await updateLog(selectedId, { name: nameDraft, tags: tagsDraft.split(",").map((tag) => tag.trim()).filter(Boolean) }); await refreshLogs(); setManageOpen(false); } catch (caught) { setError(caught.message); } }}><FaCheck /></button>
-                            </div>
-                        </div>
-                        <div className="mt-2 grid grid-cols-2 gap-1.5">
-                            <a href={getLogDownloadUrl(selectedId)} download className="workspace-button"><FaDownload /> Download</a>
-                            <button type="button" className={`workspace-button ${deleteArmed ? "border-red-500/60 bg-red-500/15 text-red-200" : ""}`} onClick={async () => { if (!deleteArmed) { setDeleteArmed(true); return; } try { await deleteLog(selectedId); const catalog = await refreshLogs(); setManageOpen(false); setDataset(null); setSelectedId(catalog[0]?.id || ""); } catch (caught) { setError(caught.message); } }}><FaTrash /> {deleteArmed ? "Confirm delete" : "Delete"}</button>
-                        </div>
+        <WorkspaceFrame
+            title="Replay"
+            subtitle="Read-only state and event playback"
+            onOpenWorkspace={onOpenWorkspace}
+            contentClassName={styles.workspaceContent}
+            actions={(
+                <>
+                    <div className={styles.logSelector}>
+                        <IconFolderOpen size={15} stroke={1.75} aria-hidden="true" />
+                        <NativeSelect aria-label="Replay log" value={selectedId} onChange={(event) => setSelectedId(event.target.value)}>
+                            <option value="">Choose a log</option>
+                            {logs.map((log) => <option key={log.id} value={log.id}>{log.name} · {formatTime(log.durationUs)}</option>)}
+                        </NativeSelect>
                     </div>
-                )}
-            </header>
+                    <Button size="compact" onClick={() => fileRef.current?.click()}><IconFileImport size={15} stroke={1.75} /> Import</Button>
+                    <input ref={fileRef} hidden type="file" accept=".sflog,application/x-sflog" onChange={handleImport} />
+                    <Button size="compact" disabled={!dataset} onClick={() => onOpenAnalysis?.(selectedId)}><IconChartLine size={15} stroke={1.75} /> Analyze</Button>
+                    <PopoverSurface trigger={manageTrigger} open={manageOpen} onOpenChange={setManageOpen} align="end" className={styles.managePopover}>
+                        {selectedLog && <>
+                            <h2>Manage log</h2>
+                            <TextInput aria-label="Log name" value={nameDraft} onChange={(event) => setNameDraft(event.target.value)} />
+                            <div className={styles.manageRow}>
+                                <TextInput aria-label="Log tags" placeholder="Tags, comma separated" value={tagsDraft} onChange={(event) => setTagsDraft(event.target.value)} />
+                                <IconButton label="Save log details" onClick={async () => { try { await updateLog(selectedId, { name: nameDraft, tags: tagsDraft.split(",").map((tag) => tag.trim()).filter(Boolean) }); await refreshLogs(); setManageOpen(false); } catch (caught) { setError(caught.message); } }}><IconCheck size={16} stroke={1.75} /></IconButton>
+                            </div>
+                            <div className={styles.manageActions}>
+                                <Button asChild size="compact"><a href={getLogDownloadUrl(selectedId)} download><IconDownload size={15} stroke={1.75} /> Download</a></Button>
+                                <Button variant="danger" size="compact" onClick={async () => { if (!deleteArmed) { setDeleteArmed(true); return; } try { await deleteLog(selectedId); const catalog = await refreshLogs(); setManageOpen(false); setDataset(null); setSelectedId(catalog[0]?.id || ""); } catch (caught) { setError(caught.message); } }}><IconTrash size={15} stroke={1.75} /> {deleteArmed ? "Confirm delete" : "Delete"}</Button>
+                            </div>
+                        </>}
+                    </PopoverSurface>
+                </>
+            )}
+        >
+            <div className={styles.replayShell}>
+                <section className={styles.sceneRegion}>
+                    {dataset && <ReplayScene dataset={dataset} timeUs={timelineState.timeUs} selectedEntity={selectedEntity} onSelectEntity={setSelectedEntity} />}
+                    {status === "loading" && <div className={styles.stateOverlay}><AsyncState status="loading" title="Indexing log" detail="Preparing checkpoints and event data." /></div>}
+                    {!dataset && status !== "loading" && <div className={styles.stateOverlay}><AsyncState status="empty" title="Select or import an SFLog" detail="Replay seeks from indexed checkpoints, so moving backward does not rescan the session." /></div>}
+                    {error && <StatusMessage className={styles.errorMessage} tone="danger" title="Could not open this log">{error}</StatusMessage>}
 
-            <section className="relative min-h-0 flex-1">
-                {dataset && <ReplayScene dataset={dataset} timeUs={timelineState.timeUs} selectedEntity={selectedEntity} onSelectEntity={setSelectedEntity} />}
-                {status === "loading" && <div className="absolute inset-0 grid place-items-center bg-zinc-950"><div className="flex items-center gap-2 text-xs text-zinc-400"><FaSpinner className="animate-spin" /> Indexing log…</div></div>}
-                {!dataset && status !== "loading" && <div className="absolute inset-0 grid place-items-center"><div className="max-w-sm text-center"><FaBackward className="mx-auto mb-3 text-2xl text-zinc-700" /><p className="text-sm font-medium">Select or import an SFLog</p><p className="mt-1 text-xs leading-relaxed text-zinc-500">Replay seeks from indexed checkpoints, so moving backward does not rescan the entire session.</p></div></div>}
-                {error && <div className="absolute left-4 top-4 max-w-md rounded-xl border border-red-500/30 bg-red-950/80 p-3 text-[11px] text-red-100 backdrop-blur"><p className="font-semibold">Could not open this log</p><p className="mt-1 text-red-200/70">{error}</p></div>}
+                    {dataset && (
+                        <aside className={styles.inspector} data-open={inspectorOpen || undefined}>
+                            <div className={styles.inspectorHeader}><div><p>At cursor</p><strong>{formatTime(timelineState.timeUs)}</strong></div><IconButton className={styles.compactClose} label="Close inspector" onClick={() => setInspectorOpen(false)}><IconX size={16} stroke={1.75} /></IconButton></div>
+                            <div className={styles.metricGrid}><InspectorMetric label="Step" value={exactSnapshot["simulation.step"] ?? "N/A"} /><InspectorMetric label="Status" value={exactSnapshot["simulation.status"] ?? "N/A"} /></div>
+                            {dataset.runManifest && <div className={styles.inspectorSection}><p className={styles.sectionLabel}>Recorded run</p><p className={styles.emphasis}>{dataset.runManifest.name}</p><p className={styles.hash}>{dataset.metadata.resolvedHash || dataset.resolvedRun?.resolvedHash}</p>{dataset.runResults && <p className={dataset.runResults.passed ? styles.resultPassed : styles.resultFailed}>{dataset.runResults.passed ? "Assertions passed" : "Assertions failed"} · {dataset.runResults.assertions?.length || 0} checked</p>}</div>}
+                            <div className={styles.inspectorSection}>
+                                <p className={styles.sectionLabel}>Selected entity</p>
+                                <p className={styles.emphasis}>{selectedEntity || "No vehicle state"}</p>
+                                {entityRows.map(([path, value]) => <div key={path} className={styles.dataRow}><span>{path.slice(entityPrefix.length)}</span><code>{typeof value === "object" ? JSON.stringify(value) : String(value)}</code></div>)}
+                            </div>
+                            <div className={styles.inspectorSection}><p className={styles.sectionLabel}>Nearby events</p>{nearbyEvents.length === 0 ? <p className={styles.muted}>No events within ±0.75 s</p> : nearbyEvents.map((event) => <button key={event.id || `${event.timeUs}-${event.name}`} onClick={() => timeline.seek(event.timeUs)} className={styles.eventRow}><code>{formatTime(event.timeUs)}</code><span>{event.category} / {event.name}</span></button>)}</div>
+                        </aside>
+                    )}
+                </section>
 
-                {dataset && (
-                    <aside className="absolute right-3 top-3 w-[290px] overflow-hidden rounded-xl border border-zinc-700/80 bg-zinc-950/82 shadow-2xl backdrop-blur-xl">
-                        <div className="border-b border-zinc-800 px-3 py-2.5"><p className="text-[9px] uppercase tracking-[0.16em] text-zinc-500">At cursor</p><p className="mt-1 font-mono text-lg tabular-nums text-zinc-100">{formatTime(timelineState.timeUs)}</p></div>
-                        <div className="grid grid-cols-2 divide-x divide-zinc-800 border-b border-zinc-800"><InspectorMetric label="Step" value={exactSnapshot["simulation.step"] ?? "N/A"} /><InspectorMetric label="Status" value={exactSnapshot["simulation.status"] ?? "N/A"} /></div>
-                        {dataset.runManifest && <div className="border-b border-zinc-800 px-3 py-2.5"><p className="text-[9px] uppercase tracking-[0.14em] text-zinc-500">Recorded run</p><p className="mt-1 truncate text-[10px] font-semibold text-sky-200">{dataset.runManifest.name}</p><p className="mt-0.5 truncate font-mono text-[8px] text-zinc-600">{dataset.metadata.resolvedHash || dataset.resolvedRun?.resolvedHash}</p>{dataset.runResults && <p className={`mt-1 text-[9px] ${dataset.runResults.passed ? "text-emerald-300" : "text-red-300"}`}>{dataset.runResults.passed ? "Assertions passed" : "Assertions failed"} · {dataset.runResults.assertions?.length || 0} checked</p>}</div>}
-                        <div className="px-3 py-2.5">
-                            <p className="mb-1.5 text-[9px] uppercase tracking-[0.14em] text-zinc-500">Selected entity</p>
-                            <p className="mb-2 text-xs font-semibold text-sky-200">{selectedEntity || "No vehicle state"}</p>
-                            {entityRows.map(([path, value]) => <div key={path} className="flex gap-2 border-t border-zinc-800/70 py-1.5 text-[9px]"><span className="min-w-0 flex-1 truncate text-zinc-500">{path.slice(entityPrefix.length)}</span><span className="max-w-[150px] truncate font-mono text-zinc-300">{typeof value === "object" ? JSON.stringify(value) : String(value)}</span></div>)}
-                        </div>
-                        <div className="border-t border-zinc-800 px-3 py-2.5"><p className="mb-1.5 text-[9px] uppercase tracking-[0.14em] text-zinc-500">Nearby events</p>{nearbyEvents.length === 0 ? <p className="text-[9px] text-zinc-600">No events within ±0.75 s</p> : nearbyEvents.map((event) => <button key={event.id || `${event.timeUs}-${event.name}`} onClick={() => timeline.seek(event.timeUs)} className="flex w-full gap-2 py-1 text-left text-[9px]"><span className="font-mono text-zinc-600">{formatTime(event.timeUs)}</span><span className="truncate text-zinc-300">{event.category} / {event.name}</span></button>)}</div>
-                    </aside>
-                )}
-            </section>
-
-            <footer className="shrink-0 border-t border-zinc-800 bg-zinc-950 px-4 pb-3 pt-2.5">
-                <div className="mb-2 flex items-center gap-2">
-                    <button type="button" disabled={!dataset} onClick={() => timeline.togglePlaying()} className="timeline-icon-button" aria-label={timelineState.playing ? "Pause replay" : "Play replay"}>{timelineState.playing ? <FaPause /> : <FaPlay />}</button>
-                    <button type="button" disabled={!dataset} onClick={() => stepEvent(-1)} className="timeline-icon-button" title="Previous event"><FaChevronLeft /></button>
-                    <button type="button" disabled={!dataset} onClick={() => stepEvent(1)} className="timeline-icon-button" title="Next event"><FaChevronRight /></button>
-                    <select value={timelineState.speed} onChange={(event) => timeline.set({ speed: Number(event.target.value) })} className="h-8 rounded-lg border border-zinc-700 bg-zinc-900 px-2 text-[10px] outline-none">
-                        {[0.25, 0.5, 1, 2, 4].map((speed) => <option key={speed} value={speed}>{speed}×</option>)}
-                    </select>
-                    <button type="button" onClick={() => timeline.set({ loopEnabled: !timelineState.loopEnabled })} className={`workspace-button ${timelineState.loopEnabled ? "border-sky-500/50 bg-sky-500/15 text-sky-200" : ""}`}><FaRedo /> Loop</button>
-                    <button type="button" disabled={!dataset} onClick={() => timeline.set({ selection: { ...(timelineState.selection || {}), startUs: timelineState.timeUs } })} className="workspace-button">Mark in</button>
-                    <button type="button" disabled={!dataset} onClick={() => timeline.set({ selection: { ...(timelineState.selection || {}), endUs: timelineState.timeUs } })} className="workspace-button">Mark out</button>
-                    <span className="ml-auto font-mono text-[11px] tabular-nums text-zinc-300">{formatTime(timelineState.timeUs)} <span className="text-zinc-600">/ {formatTime(timelineState.durationUs)}</span></span>
-                </div>
-                <div className="relative h-8">
-                    <input aria-label="Replay timeline" type="range" min="0" max={Math.max(1, timelineState.durationUs)} step="1000" value={Math.min(timelineState.timeUs, Math.max(1, timelineState.durationUs))} disabled={!dataset} onChange={(event) => timeline.seek(Number(event.target.value))} className="timeline-range absolute inset-x-0 top-2 w-full" />
-                    {dataset?.events.map((event, index) => <button key={`${event.timeUs}-${index}`} type="button" title={`${event.category}: ${event.name}`} onClick={() => timeline.seek(event.timeUs)} className="absolute top-0 h-2 w-px bg-amber-400/80" style={{ left: `${dataset.durationUs ? (event.timeUs / dataset.durationUs) * 100 : 0}%` }} />)}
-                </div>
-            </footer>
-        </main>
+                <footer className={styles.transport}>
+                    <div className={styles.transportControls}>
+                        <IconButton disabled={!dataset} onClick={() => timeline.togglePlaying()} label={timelineState.playing ? "Pause replay" : "Play replay"}>{timelineState.playing ? <IconPlayerPause size={16} stroke={1.75} /> : <IconPlayerPlay size={16} stroke={1.75} />}</IconButton>
+                        <IconButton disabled={!dataset} onClick={() => stepEvent(-1)} label="Previous event"><IconChevronLeft size={16} stroke={1.75} /></IconButton>
+                        <IconButton disabled={!dataset} onClick={() => stepEvent(1)} label="Next event"><IconChevronRight size={16} stroke={1.75} /></IconButton>
+                        <NativeSelect aria-label="Playback speed" value={timelineState.speed} onChange={(event) => timeline.set({ speed: Number(event.target.value) })} className={styles.speedSelect}>{[0.25, 0.5, 1, 2, 4].map((speed) => <option key={speed} value={speed}>{speed}×</option>)}</NativeSelect>
+                        <Button size="compact" aria-pressed={timelineState.loopEnabled} className={timelineState.loopEnabled ? styles.activeControl : undefined} onClick={() => timeline.set({ loopEnabled: !timelineState.loopEnabled })}><IconRepeat size={15} stroke={1.75} /> Loop</Button>
+                        <Button size="compact" disabled={!dataset} onClick={() => timeline.set({ selection: { ...(timelineState.selection || {}), startUs: timelineState.timeUs } })}>Mark in</Button>
+                        <Button size="compact" disabled={!dataset} onClick={() => timeline.set({ selection: { ...(timelineState.selection || {}), endUs: timelineState.timeUs } })}>Mark out</Button>
+                        <Button size="compact" className={styles.compactInspectorButton} disabled={!dataset} onClick={() => setInspectorOpen(true)}><IconAdjustmentsHorizontal size={15} stroke={1.75} /> Inspector</Button>
+                        <span className={styles.clock}>{formatTime(timelineState.timeUs)} <span>/ {formatTime(timelineState.durationUs)}</span></span>
+                    </div>
+                    <div className={styles.timeline}>
+                        <input aria-label="Replay timeline" type="range" min="0" max={Math.max(1, timelineState.durationUs)} step="1000" value={Math.min(timelineState.timeUs, Math.max(1, timelineState.durationUs))} disabled={!dataset} onChange={(event) => timeline.seek(Number(event.target.value))} className="timeline-range" />
+                        {dataset?.events.map((event, index) => <button key={`${event.timeUs}-${index}`} type="button" aria-label={`${event.category}: ${event.name}`} onClick={() => timeline.seek(event.timeUs)} className={styles.eventMarker} style={{ left: `${dataset.durationUs ? (event.timeUs / dataset.durationUs) * 100 : 0}%` }} />)}
+                    </div>
+                </footer>
+            </div>
+        </WorkspaceFrame>
     );
 }
 
 function InspectorMetric({ label, value }) {
-    return <div className="px-3 py-2"><p className="text-[8px] uppercase tracking-[0.14em] text-zinc-600">{label}</p><p className="mt-0.5 truncate font-mono text-[10px] text-zinc-300">{String(value)}</p></div>;
+    return <div className={styles.metric}><p>{label}</p><code>{String(value)}</code></div>;
 }

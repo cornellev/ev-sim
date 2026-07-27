@@ -3,15 +3,15 @@
 import { useEffect, useMemo, useState } from "react";
 import * as THREE from "three";
 import {
-    FaArrowsAlt,
-    FaCrosshairs,
-    FaEye,
-    FaEyeSlash,
-    FaMousePointer,
-    FaRedo,
-    FaSlidersH,
-    FaTimes,
-} from "react-icons/fa";
+    IconArrowsMove as FaArrowsAlt,
+    IconCrosshair as FaCrosshairs,
+    IconEye as FaEye,
+    IconEyeOff as FaEyeSlash,
+    IconPointer as FaMousePointer,
+    IconRotateClockwise as FaRedo,
+    IconAdjustmentsHorizontal as FaSlidersH,
+    IconX as FaTimes,
+} from "@tabler/icons-react";
 import { EDITOR_TOOLS } from "../editor/EditorState";
 import { MenuButton } from "./ui/MenuButton";
 
@@ -71,8 +71,8 @@ function getAbsoluteTransform(object3D) {
 
 function Field({ label, value, mono = false }) {
     return (
-        <div className="rounded-lg border border-zinc-800/90 bg-zinc-950/45 px-2 py-1.5">
-            <p className="text-[9px] font-semibold uppercase tracking-[0.1em] text-zinc-500">{label}</p>
+        <div className="rounded-[var(--radius)] border border-zinc-800/90 bg-zinc-950/45 px-2 py-1.5">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-zinc-500">{label}</p>
             <p className={`${mono ? "font-mono" : ""} mt-0.5 truncate text-[11px] text-zinc-200`} title={String(value ?? "")}>
                 {value ?? "None"}
             </p>
@@ -80,7 +80,7 @@ function Field({ label, value, mono = false }) {
     );
 }
 
-export function ObjectInspector({ data }) {
+export function ObjectInspector({ data, compactOpen = false }) {
     const [editorSnapshot, setEditorSnapshot] = useState(null);
     const [registrySnapshot, setRegistrySnapshot] = useState({ entities: [] });
 
@@ -151,19 +151,19 @@ export function ObjectInspector({ data }) {
 
     return (
         <div
-            className="absolute right-3 top-3 z-30 w-[336px] rounded-2xl border border-zinc-700/80 bg-zinc-950/85 p-2.5 text-zinc-100 shadow-[0_30px_80px_rgba(0,0,0,0.45)] backdrop-blur-2xl pointer-events-auto max-[760px]:left-3 max-[760px]:right-auto max-[760px]:top-[536px] max-[760px]:w-[min(336px,calc(100vw-24px))]"
+            className={`absolute right-3 top-3 z-30 w-[336px] max-w-[calc(100vw-24px)] rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-950/85 p-2.5 text-zinc-100 shadow-[0_30px_80px_rgba(0,0,0,0.45)] pointer-events-auto max-[1023px]:top-[58px] ${compactOpen ? "" : "max-[1023px]:hidden"}`}
             onMouseDown={controls.disable}
             onMouseUp={controls.enable}
             onMouseLeave={controls.enable}
         >
-            <div className="mb-2 flex items-start justify-between rounded-xl border border-zinc-700/80 bg-zinc-900/70 p-2">
+            <div className="mb-2 flex items-start justify-between rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-900/70 p-2">
                 <div className="min-w-0">
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-400">Inspector</p>
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-400">Inspector</p>
                     <p className="mt-0.5 truncate text-[13px] font-semibold text-zinc-100">
                         {entitySummary?.label ?? "No object selected"}
                     </p>
                     {entitySummary && (
-                        <p className="truncate font-mono text-[10px] text-zinc-500" title={entitySummary.id}>
+                        <p className="truncate font-mono text-[11px] text-zinc-500" title={entitySummary.id}>
                             {entitySummary.id}
                         </p>
                     )}
@@ -172,7 +172,7 @@ export function ObjectInspector({ data }) {
                     <MenuButton
                         iconOnly
                         variant="ghost"
-                        className="h-7 w-7 rounded-lg"
+                        className="h-7 w-7 rounded-[var(--radius)]"
                         onClick={clearSelection}
                         title="Clear selection"
                         ariaLabel="Clear selection"
@@ -183,7 +183,7 @@ export function ObjectInspector({ data }) {
             </div>
 
             {!entitySummary ? (
-                <div className="rounded-xl border border-zinc-800/90 bg-zinc-900/45 p-3 text-[11px] text-zinc-400">
+                <div className="rounded-[var(--radius)] border border-zinc-800/90 bg-zinc-900/45 p-3 text-[11px] text-zinc-400">
                     No object is currently selected.
                 </div>
             ) : (
@@ -195,20 +195,20 @@ export function ObjectInspector({ data }) {
                         <Field label="Covered Chunks" value={(entitySummary.coveredChunks ?? []).join(" ") || "None"} mono />
                     </div>
 
-                    <div className="rounded-xl border border-zinc-800/90 bg-zinc-900/45 p-2">
+                    <div className="rounded-[var(--radius)] border border-zinc-800/90 bg-zinc-900/45 p-2">
                         <div className="mb-1.5 flex items-center justify-between gap-2">
-                            <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500">Transform</p>
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-500">Transform</p>
                             <div className="flex items-center gap-1">
-                                <MenuButton iconOnly active={activeTool === EDITOR_TOOLS.SELECT} className="h-7 w-7 rounded-lg" onClick={() => setTool(EDITOR_TOOLS.SELECT)} title="Select">
+                                <MenuButton iconOnly active={activeTool === EDITOR_TOOLS.SELECT} className="h-7 w-7 rounded-[var(--radius)]" onClick={() => setTool(EDITOR_TOOLS.SELECT)} title="Select">
                                     <FaMousePointer className="h-3 w-3" />
                                 </MenuButton>
-                                <MenuButton iconOnly active={activeTool === EDITOR_TOOLS.TRANSLATE} className="h-7 w-7 rounded-lg" onClick={() => setTool(EDITOR_TOOLS.TRANSLATE)} title="Move">
+                                <MenuButton iconOnly active={activeTool === EDITOR_TOOLS.TRANSLATE} className="h-7 w-7 rounded-[var(--radius)]" onClick={() => setTool(EDITOR_TOOLS.TRANSLATE)} title="Move">
                                     <FaArrowsAlt className="h-3 w-3" />
                                 </MenuButton>
-                                <MenuButton iconOnly active={activeTool === EDITOR_TOOLS.ROTATE} className="h-7 w-7 rounded-lg" onClick={() => setTool(EDITOR_TOOLS.ROTATE)} title="Rotate">
+                                <MenuButton iconOnly active={activeTool === EDITOR_TOOLS.ROTATE} className="h-7 w-7 rounded-[var(--radius)]" onClick={() => setTool(EDITOR_TOOLS.ROTATE)} title="Rotate">
                                     <FaRedo className="h-3 w-3" />
                                 </MenuButton>
-                                <MenuButton iconOnly active={activeTool === EDITOR_TOOLS.SCALE} className="h-7 w-7 rounded-lg" onClick={() => setTool(EDITOR_TOOLS.SCALE)} title="Scale">
+                                <MenuButton iconOnly active={activeTool === EDITOR_TOOLS.SCALE} className="h-7 w-7 rounded-[var(--radius)]" onClick={() => setTool(EDITOR_TOOLS.SCALE)} title="Scale">
                                     <FaSlidersH className="h-3 w-3" />
                                 </MenuButton>
                             </div>
@@ -221,11 +221,11 @@ export function ObjectInspector({ data }) {
                     </div>
 
                     {entitySummary.tags?.length > 0 && (
-                        <div className="rounded-xl border border-zinc-800/90 bg-zinc-900/45 p-2">
-                            <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500">Tags</p>
+                        <div className="rounded-[var(--radius)] border border-zinc-800/90 bg-zinc-900/45 p-2">
+                            <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-500">Tags</p>
                             <div className="flex flex-wrap gap-1">
                                 {entitySummary.tags.map((tag) => (
-                                    <span key={tag} className="rounded-md border border-zinc-700/80 bg-zinc-950/70 px-1.5 py-0.5 text-[10px] text-zinc-300">
+                                    <span key={tag} className="rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-950/70 px-1.5 py-0.5 text-[11px] text-zinc-300">
                                         {tag}
                                     </span>
                                 ))}
@@ -233,7 +233,7 @@ export function ObjectInspector({ data }) {
                         </div>
                     )}
 
-                    <div className="flex items-center justify-between gap-2 rounded-xl border border-zinc-800/90 bg-zinc-900/45 p-2">
+                    <div className="flex items-center justify-between gap-2 rounded-[var(--radius)] border border-zinc-800/90 bg-zinc-900/45 p-2">
                         <MenuButton compact variant="default" onClick={focusCamera} title="Focus camera on selection">
                             <FaCrosshairs className="h-3 w-3" />
                             Focus

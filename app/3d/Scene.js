@@ -54,6 +54,7 @@ import {
     setVehiclesVisible,
 } from "./runtimeVisibility";
 import { getRunSessionController } from "../simulation/RunSessionController.js";
+import { isInteractiveTarget } from "../ui/shortcutUtils";
 
 /** `?mini=q1` | `q2` | `q3` | `q4` | `fi1` | `fi2` | `fii1` | `fiii1` | `fiii2` | `fiii3` (default: q4) */
 const MINI_SCENARIOS = {
@@ -628,15 +629,22 @@ function setupBaking(data, scene) {
         splat: bakeConfig.splat,
     });
 
-    const splatAccumulator = new SplatAccumulator(scene, bakeConfig.splat);
-    data.setSplatAccumulator(splatAccumulator);
-
     const samplePath = new BakePath(bakeConfig.pathVertices);
-    samplePath.display(data);
-
     harness.addPath(samplePath);
-    harness.setup(scene);
-    data.setBakeHarness(harness);
+
+    try {
+        harness.setup(scene);
+
+        const splatAccumulator = new SplatAccumulator(scene, bakeConfig.splat);
+        data.setSplatAccumulator(splatAccumulator);
+        samplePath.display(data);
+        data.setBakeHarness(harness);
+    } catch (error) {
+        harness.dispose();
+        data.splats()?.dispose?.();
+        data.setSplatAccumulator(null);
+        throw error;
+    }
 
     return registerBakeKey(data, harness);
 }
@@ -677,6 +685,7 @@ export default function TotalScene({
     const [sceneReady, setSceneReady] = useState(false);
     const [loadPhase, setLoadPhase] = useState("atmosphere");
     const [loadError, setLoadError] = useState(null);
+    const [loadAttempt, setLoadAttempt] = useState(0);
 
     useEffect(() => {
         const scene = new THREE.Scene();
@@ -780,7 +789,7 @@ export default function TotalScene({
             console.error("Could not initialize the 3D environment:", error);
             if (!disposed) {
                 setLoadError(error?.message ?? "The environment could not be loaded.");
-                setSceneReady(true);
+                setSceneReady(false);
             }
         });
 
@@ -810,6 +819,11 @@ export default function TotalScene({
             runtime?.disposeSimulationControls?.();
             runtimeRef.current = null;
 
+            data.baking()?.dispose?.();
+            data.setBakeHarness(null);
+            data.splats()?.dispose?.();
+            data.setSplatAccumulator(null);
+
             data.simulation().dispose();
             data.client()?.dispose?.();
             data.environment().dispose();
@@ -828,7 +842,7 @@ export default function TotalScene({
             data.simulation()?.controls?.disposeEnvironmentKeys?.();
             renderer.dispose();
         };
-    }, [environmentId]);
+    }, [environmentId, loadAttempt]);
 
     // Live-sync: when an MCP agent writes the active environment, re-apply it.
     useEffect(() => {
@@ -896,7 +910,7 @@ export default function TotalScene({
 
     useEffect(() => {
         const kd = (e) => {
-            if (!visible) return;
+            if (!visible || isInteractiveTarget(e.target)) return;
             keyManagerRef.current.onKeyDown(e);
         };
         const ku = (e) => {
@@ -905,18 +919,22 @@ export default function TotalScene({
         };
         
         const kp = (e) => {
-            if (!visible) return;
+            if (!visible || isInteractiveTarget(e.target)) return;
             keyManagerRef.current.onKeyPress(e);
         };
+
+        const release = () => keyManagerRef.current.releaseAll?.();
 
         window.addEventListener("keydown", kd);
         window.addEventListener("keyup", ku);
         window.addEventListener("keypress", kp);
+        window.addEventListener("sf:release-held-keys", release);
         
         return () => {
             window.removeEventListener("keydown", kd);
             window.removeEventListener("keyup", ku);
             window.removeEventListener("keypress", kp);
+            window.removeEventListener("sf:release-held-keys", release);
         };
     }, [visible]);
 
@@ -954,18 +972,17 @@ export default function TotalScene({
 
     return (
         <>
-        <SceneLoadingScreen visible={visible && !sceneReady} mode={mode} phase={loadPhase} />
+        <SceneLoadingScreen
+            visible={visible && !sceneReady}
+            mode={mode}
+            phase={loadPhase}
+            error={loadError}
+            onRetry={() => {
+                setLoadError(null);
+                setLoadAttempt((attempt) => attempt + 1);
+            }}
+        />
         {sceneReady && sceneData && <McpLoggingBridge data={sceneData} onOpenReplay={onOpenReplay} />}
-        {visible && loadError && (
-            <div className="fixed inset-0 z-50 grid place-items-center bg-zinc-950 px-6 text-zinc-100">
-                <div className="max-w-md border-l-2 border-red-400 pl-5">
-                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-red-300">
-                        Environment load failed
-                    </p>
-                    <p className="mt-2 text-sm leading-relaxed text-zinc-400">{loadError}</p>
-                </div>
-            </div>
-        )}
         <div
             id="overlay"
             className={`fixed inset-0 z-20 select-none bg-transparent ${visible ? "pointer-events-none visible" : "pointer-events-none invisible"}`}
@@ -984,7 +1001,7 @@ export default function TotalScene({
         </div>
         <div
             id="canvas-container"
-            className={`fixed inset-0 z-0 h-[100vh] w-[100vw] transition-opacity duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] ${sceneReady && visible ? "visible opacity-100" : "invisible pointer-events-none opacity-0"}`}
+            className={`fixed inset-0 z-0 h-[100dvh] w-[100vw] transition-opacity duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] ${sceneReady && visible ? "block visible opacity-100" : "hidden pointer-events-none opacity-0"}`}
             ref={mountRef}
             aria-hidden={!sceneReady || !visible}
         />

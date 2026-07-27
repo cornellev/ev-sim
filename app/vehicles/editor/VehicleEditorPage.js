@@ -1,20 +1,21 @@
 'use client';
 
-import { useEffect, useRef, useState } from "react";
+import { cloneElement, isValidElement, useEffect, useRef, useState } from "react";
 import {
-    FaArrowsAlt,
-    FaCheck,
-    FaClone,
-    FaCube,
-    FaDownload,
-    FaExclamationTriangle,
-    FaFileImport,
-    FaPlus,
-    FaSave,
-    FaSyncAlt,
-    FaTrash,
-    FaUpload,
-} from "react-icons/fa";
+    IconArrowsMove,
+    IconCheck,
+    IconCopy,
+    IconCube,
+    IconDeviceFloppy,
+    IconDownload,
+    IconFileImport,
+    IconLayoutSidebarLeftCollapse,
+    IconLayoutSidebarRightCollapse,
+    IconPlus,
+    IconRefresh,
+    IconTrash,
+    IconUpload,
+} from "@tabler/icons-react";
 
 import {
     createDefaultVehicleManifest,
@@ -49,11 +50,30 @@ import {
 } from "../VehicleManifestClient.js";
 import { DragNumber } from "./DragNumber.js";
 import { VehicleStudio } from "./VehicleStudio.js";
+import {
+    AsyncState,
+    Button,
+    Field as SharedField,
+    IconButton,
+    SegmentedControl,
+    StatusMessage,
+    Switch as SharedSwitch,
+    TabsContent,
+    TabsList,
+    TabsRoot,
+    TabsTrigger,
+    useWorkspaceGuard,
+} from "../../ui";
 
 const TABS = ["Model", "LiDAR Zone", "Sensors", "Wheels", "Body", "JSON"];
 const HISTORY_LIMIT = 100;
 const EDIT_COALESCE_MS = 750;
 const SENSOR_TYPE_DEFINITIONS = listSensorTypes();
+const FaArrowsAlt = (props) => <IconArrowsMove size={14} stroke={1.75} {...props} />;
+const FaCube = (props) => <IconCube size={14} stroke={1.75} {...props} />;
+const FaPlus = (props) => <IconPlus size={14} stroke={1.75} {...props} />;
+const FaSyncAlt = (props) => <IconRefresh size={14} stroke={1.75} {...props} />;
+const FaUpload = (props) => <IconUpload size={14} stroke={1.75} {...props} />;
 
 function vehicleIdFromName(name) {
     return String(name || "vehicle")
@@ -88,7 +108,7 @@ function roundVec(vector) {
     return { x: round3(vector.x), y: round3(vector.y), z: round3(vector.z) };
 }
 
-export default function VehicleEditorPage() {
+export default function VehicleEditorPage({ onOpenWorkspace }) {
     const importRef = useRef(null);
     const modelFileRef = useRef(null);
     const viewportRef = useRef(null);
@@ -117,6 +137,8 @@ export default function VehicleEditorPage() {
     const [modelVisible, setModelVisible] = useState(true);
     const [voxelSize, setVoxelSize] = useState(0.2);
     const [fitTarget, setFitTarget] = useState({ length: 2.7, width: 1.25 });
+    const [catalogOpen, setCatalogOpen] = useState(false);
+    const [inspectorOpen, setInspectorOpen] = useState(false);
 
     const dirty = Boolean(saved && draft && differenceCount(normalizeVehicleManifest(saved), normalizeVehicleManifest(draft)) > 0);
     const readOnly = isBuiltInVehicleManifest(selectedId);
@@ -427,6 +449,13 @@ export default function VehicleEditorPage() {
         await loadCatalog(created.id);
     });
 
+    useWorkspaceGuard("vehicle-editor", {
+        dirty,
+        label: "Vehicle editor",
+        save,
+        discard: () => saved && applyDocument(selectedId, saved),
+    });
+
     // --- Model tab operations -------------------------------------------------
 
     const uploadModelFile = (event) => perform(async () => {
@@ -501,41 +530,44 @@ export default function VehicleEditorPage() {
     const derivedWheelbase = draft ? deriveWheelbase(draft.wheels) : null;
 
     return (
-        <main className="fixed inset-0 overflow-hidden bg-zinc-950 text-zinc-100">
-            <header className="flex h-16 items-center justify-between border-b border-zinc-800 bg-zinc-950/95 px-5">
-                <div>
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-sky-400">Vehicle authoring</p>
-                    <h1 className="mt-0.5 text-lg font-semibold">Vehicle editor</h1>
-                </div>
+        <main className="fixed inset-0 z-[1] overflow-hidden bg-[var(--slate-bg)] text-[var(--slate-fg)]">
+            <header className="flex h-10 items-center justify-between border-b border-[var(--slate-border)] bg-[var(--slate-surface-1)] px-3">
+                <button type="button" className="flex min-w-0 items-center gap-2 text-left" onClick={onOpenWorkspace}>
+                    <span className="text-[11px] font-medium text-[var(--slate-muted)]">cev-sim</span>
+                    <span aria-hidden="true" className="h-3 w-px bg-[var(--slate-border)]" />
+                    <span className="truncate text-[13px] font-semibold">Vehicle editor</span>
+                </button>
                 <div className="flex items-center gap-2">
-                    {readOnly && <span className="rounded-full border border-violet-400/30 bg-violet-400/10 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-violet-200">Built-in · read only</span>}
-                    {dirty && <span className="rounded-full border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-200">Unsaved</span>}
-                    <Action icon={<FaCheck />} label="Validate" onClick={validate} disabled={!draft || busy || readOnly} />
-                    <Action primary icon={<FaSave />} label="Save" onClick={save} disabled={!draft || !dirty || busy || readOnly} />
+                    {readOnly && <span className="text-[11px] font-medium text-[var(--slate-muted)]">Built-in · read only</span>}
+                    {dirty && <span className="text-[11px] font-medium text-[var(--slate-warning)]">Unsaved</span>}
+                    <span className="hidden max-[899px]:inline-flex"><IconButton label="Open vehicle catalog" onClick={() => setCatalogOpen((open) => !open)}><IconLayoutSidebarLeftCollapse size={15} stroke={1.75} /></IconButton></span>
+                    <span className="hidden max-[1199px]:inline-flex"><IconButton label="Open vehicle inspector" onClick={() => setInspectorOpen((open) => !open)}><IconLayoutSidebarRightCollapse size={15} stroke={1.75} /></IconButton></span>
+                    <Action icon={<IconCheck size={14} stroke={1.75} />} label="Validate" onClick={validate} disabled={!draft || busy || readOnly} />
+                    <Action primary icon={<IconDeviceFloppy size={14} stroke={1.75} />} label="Save" onClick={save} disabled={!draft || !dirty || busy || readOnly} />
                 </div>
             </header>
 
-            <div className="grid h-[calc(100vh-4rem)] grid-cols-[240px_minmax(0,1fr)_360px]">
-                <aside className="flex min-h-0 flex-col border-r border-zinc-800 bg-zinc-950">
-                    <div className="flex items-center gap-1.5 border-b border-zinc-800 p-3">
+            <div className="grid h-[calc(100dvh-2.5rem)] grid-cols-[240px_minmax(0,1fr)_360px] max-[1199px]:grid-cols-[240px_minmax(0,1fr)] max-[899px]:grid-cols-[minmax(0,1fr)]">
+                <aside className={`flex min-h-0 flex-col border-r border-[var(--slate-border)] bg-[var(--slate-surface-1)] max-[899px]:fixed max-[899px]:bottom-3 max-[899px]:left-3 max-[899px]:top-[52px] max-[899px]:z-[var(--layer-drawer)] max-[899px]:w-[min(320px,calc(100vw-24px))] max-[899px]:border max-[899px]:shadow-[var(--slate-shadow-overlay)] ${catalogOpen ? "max-[899px]:flex" : "max-[899px]:hidden"}`}>
+                    <div className="flex items-center gap-2 border-b border-[var(--slate-border)] p-3">
                         <Action icon={<FaPlus />} label="New" onClick={createNew} disabled={busy} compact />
-                        <Action icon={<FaFileImport />} label="Import" onClick={() => importRef.current?.click()} disabled={busy} compact />
+                        <Action icon={<IconFileImport size={14} stroke={1.75} />} label="Import" onClick={() => importRef.current?.click()} disabled={busy} compact />
                         <input ref={importRef} hidden type="file" accept=".json,application/json" onChange={importBundleFile} />
                     </div>
-                    <div className="min-h-0 flex-1 overflow-y-auto p-2">
+                    <div className="mod-scrollbar min-h-0 flex-1 overflow-y-auto p-2">
                         {catalog.map((entry, index) => (
                             <div key={entry.id}>
                                 {(index === 0 || catalog[index - 1]?.builtIn !== entry.builtIn) && (
-                                    <p className="px-2 pb-1 pt-2 text-[8px] font-semibold uppercase tracking-[0.16em] text-zinc-600">
+                                    <p className="px-2 pb-1 pt-2 text-[11px] font-medium text-[var(--slate-muted)]">
                                         {entry.builtIn ? "Built-in vehicles" : "Custom vehicles"}
                                     </p>
                                 )}
-                                <button type="button" onClick={() => select(entry.id)} className={`mb-1 w-full rounded-xl border px-3 py-2.5 text-left transition-colors ${entry.id === selectedId ? "border-sky-400/50 bg-sky-500/10" : "border-transparent hover:border-zinc-700 hover:bg-zinc-900"}`}>
+                                <button type="button" onClick={() => select(entry.id).finally(() => setCatalogOpen(false))} aria-current={entry.id === selectedId ? "page" : undefined} className={`mb-1 w-full rounded-[var(--radius)] border px-3 py-2.5 text-left transition-[background-color,border-color,color] duration-150 ${entry.id === selectedId ? "border-[var(--slate-border)] bg-[var(--slate-surface-3)]" : "border-transparent text-[var(--slate-fg-2)] hover:bg-[var(--slate-surface-2)]"}`}>
                                     <span className="flex items-center justify-between gap-2">
                                         <span className="block min-w-0 truncate text-xs font-semibold">{entry.name}</span>
-                                        {entry.builtIn && <span className="shrink-0 rounded border border-violet-400/20 bg-violet-400/10 px-1.5 py-0.5 text-[7px] font-semibold uppercase tracking-wide text-violet-300">Built-in</span>}
+                                        {entry.builtIn && <span className="shrink-0 text-[11px] text-[var(--slate-muted)]">Built-in</span>}
                                     </span>
-                                    <span className="mt-1 block truncate font-mono text-[9px] text-zinc-500">
+                                    <span className="mt-1 block truncate font-mono text-[11px] text-[var(--slate-muted)]">
                                         {entry.builtIn ? `${entry.id} · read only` : `${entry.id} · r${entry.revision}${entry.modelAsset ? "" : " · no model"}`}
                                     </span>
                                 </button>
@@ -546,116 +578,116 @@ export default function VehicleEditorPage() {
                         )}
                     </div>
                     {draft && (
-                        <div className="space-y-2 border-t border-zinc-800 p-3">
+                        <div className="space-y-2 border-t border-[var(--slate-border)] p-3">
                             <div className="flex gap-1.5">
-                                <Action compact icon={<FaClone />} label="Duplicate" onClick={duplicate} disabled={busy} />
-                                {!readOnly && <Action compact icon={<FaDownload />} label="Export" onClick={exportBundle} disabled={busy} />}
-                                {!readOnly && <button type="button" aria-label="Delete vehicle" onClick={remove} disabled={busy} className="grid h-8 w-8 place-items-center rounded-lg border border-red-500/30 text-red-300 hover:bg-red-500/10 disabled:opacity-50"><FaTrash className="h-3 w-3" /></button>}
+                                <Action compact icon={<IconCopy size={14} stroke={1.75} />} label="Duplicate" onClick={duplicate} disabled={busy} />
+                                {!readOnly && <Action compact icon={<IconDownload size={14} stroke={1.75} />} label="Export" onClick={exportBundle} disabled={busy} />}
+                                {!readOnly && <IconButton label="Delete vehicle" onClick={remove} disabled={busy} className="text-[var(--slate-danger)]"><IconTrash size={14} stroke={1.75} /></IconButton>}
                             </div>
-                            <p className="truncate font-mono text-[9px] text-zinc-600">{readOnly ? "Duplicate to create an editable copy" : saved?.definitionHash || "unsaved"}</p>
+                            <p className="truncate font-mono text-[11px] text-[var(--slate-muted)]">{readOnly ? "Duplicate to create an editable copy" : saved?.definitionHash || "Unsaved"}</p>
                         </div>
                     )}
                 </aside>
 
-                <section className="relative min-w-0 bg-zinc-950">
+                <section className="relative min-w-0 overflow-hidden bg-[var(--slate-bg)]">
                     {loadState === "loading" && <CenterState title="Loading vehicles…" detail="Reading the server-backed vehicle catalog." />}
                     {loadState === "error" && (
-                        <CenterState error title="Couldn’t load vehicles" detail={error || "The vehicle catalog is unavailable."} action={<Action icon={<FaSyncAlt />} label="Retry" onClick={() => loadCatalog(selectedId)} />} />
+                        <CenterState error title="Could not load vehicles" detail={error || "The vehicle catalog is unavailable."} action={<Action icon={<IconRefresh size={14} stroke={1.75} />} label="Retry" onClick={() => loadCatalog(selectedId)} />} />
                     )}
                     {loadState === "empty" && (
-                        <CenterState title="No vehicles" detail="Create the first vehicle manifest to open the studio." action={<Action primary icon={<FaPlus />} label="Create vehicle" onClick={createNew} disabled={busy} />} />
+                        <CenterState title="No vehicles" detail="Create the first vehicle manifest to open the studio." action={<Action primary icon={<IconPlus size={14} stroke={1.75} />} label="Create vehicle" onClick={createNew} disabled={busy} />} />
                     )}
                     {draft && (
                         <>
                             <div ref={viewportRef} className="absolute inset-0" />
                             <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between p-3">
                                 {readOnly ? (
-                                    <div className="rounded-lg border border-violet-400/20 bg-zinc-950/80 px-2.5 py-1.5 text-[9px] font-semibold uppercase tracking-[0.12em] text-violet-300 backdrop-blur">Read-only preview</div>
+                                    <div className="rounded-[var(--radius)] border border-[var(--slate-border)] bg-[var(--slate-floating)] px-2.5 py-1.5 text-[11px] font-medium text-[var(--slate-fg-2)]">Read-only preview</div>
                                 ) : (
-                                    <div className="pointer-events-auto flex rounded-lg border border-zinc-700/80 bg-zinc-950/80 p-0.5 backdrop-blur">
-                                        {[["translate", "Move"], ["rotate", "Rotate"]].map(([mode, label]) => (
-                                            <button key={mode} type="button" onClick={() => setGizmoMode(mode)} className={`rounded-md px-2.5 py-1.5 text-[10px] font-semibold transition-colors ${gizmoMode === mode ? "bg-sky-500/20 text-sky-100" : "text-zinc-400 hover:text-zinc-200"}`}>{label}</button>
-                                        ))}
+                                    <div className="pointer-events-auto rounded-[var(--radius)] border border-[var(--slate-border)] bg-[var(--slate-floating)] p-1">
+                                        <SegmentedControl value={gizmoMode} onValueChange={setGizmoMode} label="Gizmo mode" items={[{ value: "translate", label: "Move" }, { value: "rotate", label: "Rotate" }]} />
                                     </div>
                                 )}
                                 {selection && (
-                                    <div className="pointer-events-auto flex items-center gap-2 rounded-lg border border-zinc-700/80 bg-zinc-950/80 px-2.5 py-1.5 backdrop-blur">
-                                        <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-sky-300">{selection.kind}{selection.id ? ` · ${selection.id}` : ""}</span>
-                                        <button type="button" onClick={() => setSelection(null)} className="text-[10px] text-zinc-400 hover:text-zinc-100">Deselect</button>
+                                    <div className="pointer-events-auto flex items-center gap-2 rounded-[var(--radius)] border border-[var(--slate-border)] bg-[var(--slate-floating)] px-2.5 py-1.5">
+                                        <span className="text-[11px] font-medium text-[var(--slate-fg-2)]">{selection.kind}{selection.id ? ` · ${selection.id}` : ""}</span>
+                                        <button type="button" onClick={() => setSelection(null)} className="text-[11px] text-[var(--slate-muted)] hover:text-[var(--slate-fg)]">Deselect</button>
                                     </div>
                                 )}
                             </div>
-                            <p className="pointer-events-none absolute bottom-3 left-3 rounded-md border border-zinc-800/80 bg-zinc-950/70 px-2 py-1 text-[9px] uppercase tracking-[0.12em] text-zinc-500 backdrop-blur">
+                            <p className="pointer-events-none absolute bottom-3 left-3 rounded-[var(--radius)] border border-[var(--slate-border)] bg-[var(--slate-floating)] px-2 py-1 text-[11px] text-[var(--slate-muted)]">
                                 {readOnly ? "Orbit to inspect · duplicate to edit" : "Click a marker to select · drag gizmo to place"}
                             </p>
                         </>
                     )}
                 </section>
 
-                <aside className="flex min-h-0 flex-col border-l border-zinc-800 bg-zinc-950">
+                <aside className={`flex min-h-0 flex-col border-l border-[var(--slate-border)] bg-[var(--slate-surface-1)] max-[1199px]:fixed max-[1199px]:bottom-3 max-[1199px]:right-3 max-[1199px]:top-[52px] max-[1199px]:z-[var(--layer-drawer)] max-[1199px]:w-[min(380px,calc(100vw-24px))] max-[1199px]:border max-[1199px]:shadow-[var(--slate-shadow-overlay)] ${inspectorOpen ? "max-[1199px]:flex" : "max-[1199px]:hidden"}`}>
                     {draft && (
-                        <>
-                            <div className="border-b border-zinc-800 p-3">
-                                <div className="config-field mb-2">
-                                    <input aria-label="Vehicle name" value={draft.name} disabled={readOnly} onChange={(event) => update(["name"], event.target.value)} />
-                                </div>
-                                <p className="truncate font-mono text-[9px] text-zinc-600">{draft.id}</p>
+                        <TabsRoot value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col">
+                            <div className="border-b border-[var(--slate-border)] p-3">
+                                <input className="sf-input mb-2" aria-label="Vehicle name" value={draft.name} disabled={readOnly} onChange={(event) => update(["name"], event.target.value)} />
+                                <p className="truncate font-mono text-[11px] text-[var(--slate-muted)]">{draft.id}</p>
                             </div>
                             {readOnly && (
-                                <div className="border-b border-violet-400/15 bg-violet-400/5 px-3 py-2.5 text-[10px] leading-relaxed text-violet-200">
+                                <div className="border-b border-[var(--slate-border)] px-3 py-2.5 text-[11px] leading-relaxed text-[var(--slate-muted)]">
                                     This built-in vehicle is defined in code. Inspect its projected values here, or duplicate it to make an editable manifest.
                                 </div>
                             )}
-                            <nav className="flex gap-1 overflow-x-auto border-b border-zinc-800 p-1.5">
-                                {TABS.map((item) => <button key={item} type="button" onClick={() => setTab(item)} className={`whitespace-nowrap rounded-lg px-2.5 py-1.5 text-[10px] font-semibold transition-colors ${tab === item ? "bg-sky-500/20 text-sky-100" : "text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"}`}>{item}</button>)}
-                            </nav>
+                            <TabsList aria-label="Vehicle editor sections" className="overflow-x-auto border-b border-[var(--slate-border)] p-1.5">
+                                {TABS.map((item) => <TabsTrigger key={item} value={item} className="whitespace-nowrap">{item}</TabsTrigger>)}
+                            </TabsList>
 
                             {(error || rawError || validation?.issues?.length > 0) && (
-                                <div className="m-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-[11px] leading-relaxed text-amber-100">
-                                    <div className="flex items-start gap-2"><FaExclamationTriangle className="mt-0.5 shrink-0" /><pre className="whitespace-pre-wrap font-sans">{error || rawError || validation.issues.map((issue) => `${issue.path || "manifest"}: ${issue.message}`).join("\n")}</pre></div>
-                                </div>
+                                <StatusMessage className="m-3" tone="danger" title="Vehicle needs attention"><pre className="whitespace-pre-wrap font-sans">{error || rawError || validation.issues.map((issue) => `${issue.path || "manifest"}: ${issue.message}`).join("\n")}</pre></StatusMessage>
                             )}
-                            {validation?.ok && <div className="m-3 flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-[11px] text-emerald-200"><FaCheck /> Vehicle manifest is valid.</div>}
+                            {validation?.ok && <StatusMessage className="m-3" tone="success" title="Vehicle manifest is valid." />}
 
-                            <fieldset disabled={readOnly} className="min-h-0 flex-1 overflow-y-auto p-3">
-                                {tab === "Model" && (
-                                    <ModelTab
-                                        draft={draft}
-                                        update={update}
-                                        busy={busy}
-                                        modelFileRef={modelFileRef}
-                                        uploadModelFile={uploadModelFile}
-                                        selection={selection}
-                                        setSelection={setSelection}
-                                        modelVisible={modelVisible}
-                                        setModelVisible={setModelVisible}
-                                        fitTarget={fitTarget}
-                                        setFitTarget={setFitTarget}
-                                        fitModelToSize={fitModelToSize}
-                                    />
-                                )}
-                                {tab === "LiDAR Zone" && (
-                                    <LidarZoneTab
-                                        draft={draft}
-                                        update={update}
-                                        voxelSize={voxelSize}
-                                        setVoxelSize={setVoxelSize}
-                                        generateZone={generateZone}
-                                        zoneVisible={zoneVisible}
-                                        setZoneVisible={setZoneVisible}
-                                    />
-                                )}
-                                {tab === "Sensors" && <SensorsTab draft={draft} update={update} selection={selection} setSelection={setSelection} />}
-                                {tab === "Wheels" && <WheelsTab draft={draft} update={update} selection={selection} setSelection={setSelection} derivedWheelbase={derivedWheelbase} />}
-                                {tab === "Body" && <BodyTab draft={draft} update={update} selection={selection} setSelection={setSelection} fitBodyToModel={fitBodyToModel} />}
-                                {tab === "JSON" && (
-                                    <div className="space-y-2">
-                                        <textarea aria-label="Raw vehicle manifest JSON" spellCheck={false} value={raw} onChange={(event) => applyRaw(event.target.value)} className="min-h-[480px] w-full resize-y rounded-xl border border-zinc-700 bg-zinc-950 p-3 font-mono text-[10px] leading-relaxed text-zinc-200 outline-none focus:border-sky-500" />
-                                        <p className="text-[9px] leading-relaxed text-zinc-600">Applies on every valid parse. The LiDAR zone arrays are baked data; regenerate them from the LiDAR Zone tab after moving the model.</p>
-                                    </div>
-                                )}
-                            </fieldset>
-                        </>
+                            <div className="mod-scrollbar min-h-0 flex-1 overflow-y-auto" tabIndex={0} aria-label="Vehicle editor fields">
+                                <fieldset disabled={readOnly}>
+                                    {TABS.map((item) => (
+                                        <TabsContent key={item} value={item} forceMount className="p-3">
+                                            {item === "Model" && (
+                                                <ModelTab
+                                                    draft={draft}
+                                                    update={update}
+                                                    busy={busy}
+                                                    modelFileRef={modelFileRef}
+                                                    uploadModelFile={uploadModelFile}
+                                                    selection={selection}
+                                                    setSelection={setSelection}
+                                                    modelVisible={modelVisible}
+                                                    setModelVisible={setModelVisible}
+                                                    fitTarget={fitTarget}
+                                                    setFitTarget={setFitTarget}
+                                                    fitModelToSize={fitModelToSize}
+                                                />
+                                            )}
+                                            {item === "LiDAR Zone" && (
+                                                <LidarZoneTab
+                                                    draft={draft}
+                                                    update={update}
+                                                    voxelSize={voxelSize}
+                                                    setVoxelSize={setVoxelSize}
+                                                    generateZone={generateZone}
+                                                    zoneVisible={zoneVisible}
+                                                    setZoneVisible={setZoneVisible}
+                                                />
+                                            )}
+                                            {item === "Sensors" && <SensorsTab draft={draft} update={update} selection={selection} setSelection={setSelection} />}
+                                            {item === "Wheels" && <WheelsTab draft={draft} update={update} selection={selection} setSelection={setSelection} derivedWheelbase={derivedWheelbase} />}
+                                            {item === "Body" && <BodyTab draft={draft} update={update} selection={selection} setSelection={setSelection} fitBodyToModel={fitBodyToModel} />}
+                                            {item === "JSON" && (
+                                                <div className="space-y-2">
+                                                    <textarea aria-label="Raw vehicle manifest JSON" spellCheck={false} value={raw} onChange={(event) => applyRaw(event.target.value)} className="sf-input min-h-[480px] resize-y font-mono text-[12px] leading-relaxed" />
+                                                    <p className="text-[11px] leading-relaxed text-[var(--slate-muted)]">Applies on every valid parse. The LiDAR zone arrays are baked data; regenerate them from the LiDAR Zone tab after moving the model.</p>
+                                                </div>
+                                            )}
+                                        </TabsContent>
+                                    ))}
+                                </fieldset>
+                            </div>
+                        </TabsRoot>
                     )}
                 </aside>
             </div>
@@ -671,11 +703,11 @@ function ModelTab({ draft, update, busy, modelFileRef, uploadModelFile, selectio
                     <Action compact icon={<FaUpload />} label={draft.model.asset ? "Replace model" : "Import GLB / GLTF"} onClick={() => modelFileRef.current?.click()} disabled={busy} />
                     <input ref={modelFileRef} hidden type="file" accept=".glb,.gltf,model/gltf-binary,model/gltf+json" onChange={uploadModelFile} />
                     {draft.model.asset && (
-                        <button type="button" onClick={() => update(["model", "asset"], "")} className="text-[10px] text-red-300 hover:text-red-200">Detach</button>
+                        <button type="button" onClick={() => update(["model", "asset"], "")} className="text-[11px] text-[var(--slate-danger)]">Detach</button>
                     )}
                 </div>
-                <p className="mt-2 font-mono text-[9px] text-zinc-500">{draft.model.asset || "No model — a placeholder body is shown."}</p>
-                <p className="mt-1 text-[9px] leading-relaxed text-zinc-600">Use a self-contained .glb or .gltf. The file uploads immediately and is stored next to the manifest.</p>
+                <p className="mt-2 font-mono text-[11px] text-[var(--slate-muted)]">{draft.model.asset || "No model; a placeholder body is shown."}</p>
+                <p className="mt-1 text-[11px] leading-relaxed text-[var(--slate-muted)]">Use a self-contained .glb or .gltf. The file uploads immediately and is stored next to the manifest.</p>
             </Section>
 
             <Section title="Placement">
@@ -706,7 +738,7 @@ function ModelTab({ draft, update, busy, modelFileRef, uploadModelFile, selectio
                     </Field>
                 </div>
                 <div className="mt-2"><Action compact icon={<FaCube />} label="Rescale model" onClick={fitModelToSize} disabled={!draft.model.asset} /></div>
-                <p className="mt-2 text-[9px] leading-relaxed text-zinc-600">Sets the scale so the model footprint matches the target length and width, preserving aspect ratio.</p>
+                <p className="mt-2 text-[11px] leading-relaxed text-[var(--slate-muted)]">Sets the scale so the model footprint matches the target length and width, preserving aspect ratio.</p>
             </Section>
         </div>
     );
@@ -717,19 +749,19 @@ function LidarZoneTab({ draft, update, voxelSize, setVoxelSize, generateZone, zo
     return (
         <div className="space-y-4">
             <Section title="Reduced-polygon collision mesh">
-                <p className="text-[10px] leading-relaxed text-zinc-500">LiDAR and other GPU sensors raycast against this simplified mesh instead of the full model. Regenerate it after changing the model placement.</p>
+                <p className="text-[11px] leading-relaxed text-[var(--slate-muted)]">LiDAR and other GPU sensors raycast against this simplified mesh instead of the full model. Regenerate it after changing the model placement.</p>
                 <div className="mt-3">
                     <div className="mb-1.5 flex items-center justify-between">
-                        <span className="text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Voxel size</span>
-                        <span className="font-mono text-[10px] text-sky-300">{voxelSize.toFixed(2)} m</span>
+                        <span className="text-[11px] font-medium text-[var(--slate-fg-2)]">Voxel size</span>
+                        <span className="font-mono text-[11px] text-[var(--slate-fg-2)]">{voxelSize.toFixed(2)} m</span>
                     </div>
                     <input aria-label="Voxel size" type="range" min="0.05" max="1" step="0.05" value={voxelSize} onChange={(event) => setVoxelSize(Number(event.target.value))} className="timeline-range w-full" />
-                    <p className="mt-1 text-[9px] text-zinc-600">Larger voxels merge more vertices and produce fewer triangles.</p>
+                    <p className="mt-1 text-[11px] text-[var(--slate-muted)]">Larger voxels merge more vertices and produce fewer triangles.</p>
                 </div>
                 <div className="mt-3 flex items-center gap-2">
                     <Action compact primary icon={<FaSyncAlt />} label="Generate" onClick={generateZone} disabled={!draft.model.asset} />
                     {zone.triangles.length > 0 && (
-                        <button type="button" onClick={() => update(["lidarZone"], { params: { voxelSize }, vertices: [], triangles: [] })} className="text-[10px] text-red-300 hover:text-red-200">Clear</button>
+                        <button type="button" onClick={() => update(["lidarZone"], { params: { voxelSize }, vertices: [], triangles: [] })} className="text-[11px] text-[var(--slate-danger)]">Clear</button>
                     )}
                 </div>
             </Section>
@@ -738,7 +770,7 @@ function LidarZoneTab({ draft, update, voxelSize, setVoxelSize, generateZone, zo
                     <Stat label="Vertices" value={zone.vertices.length} />
                     <Stat label="Triangles" value={zone.triangles.length} />
                 </div>
-                <p className="mt-2 font-mono text-[9px] text-zinc-600">baked at voxel {zone.params.voxelSize} m</p>
+                <p className="mt-2 font-mono text-[11px] text-[var(--slate-muted)]">Baked at voxel {zone.params.voxelSize} m</p>
                 <div className="mt-2"><Toggle label="Show wireframe preview" value={zoneVisible} onChange={setZoneVisible} /></div>
             </Section>
         </div>
@@ -769,10 +801,10 @@ function SensorsTab({ draft, update, selection, setSelection }) {
                 const change = (parts, value) => update(["sensors", index, ...parts], value);
                 const definition = getSensorType(sensor.type);
                 return (
-                    <div key={`sensor-${index}`} className={`rounded-xl border p-3 transition-colors ${selected ? "border-sky-400/50 bg-sky-500/5" : "border-zinc-800 bg-zinc-950/50"}`}>
+                    <div key={`sensor-${index}`} className={`rounded-[var(--radius)] border p-3 transition-[background-color,border-color] ${selected ? "border-[var(--slate-border)] bg-[var(--slate-surface-3)]" : "border-[var(--slate-border-60)] bg-[var(--slate-surface-1)]"}`}>
                         <button type="button" onClick={() => setSelection(selected ? null : { kind: "sensor", id: sensor.id })} className="mb-2 flex w-full items-center justify-between text-left">
                             <span className="text-[11px] font-semibold">{sensor.id}</span>
-                            <span className={`text-[9px] font-semibold uppercase tracking-[0.12em] ${definition?.accentClass || "text-zinc-400"}`}>{definition?.label || sensor.type}</span>
+                            <span className="text-[11px] font-medium text-[var(--slate-muted)]">{definition?.label || sensor.type}</span>
                         </button>
                         <div className="grid grid-cols-2 gap-2">
                             <Field label="Stable ID">
@@ -799,8 +831,8 @@ function SensorsTab({ draft, update, selection, setSelection }) {
                                 <VehicleSensorDefinitionField key={field.path.join(".")} field={field} sensor={sensor} change={change} />
                             ))}
                         </div>
-                        {!definition && <p className="mt-3 text-[10px] text-amber-300">This sensor type is not registered. Its data is preserved, but this vehicle cannot run until a supported type is selected.</p>}
-                        <button type="button" onClick={() => update(["sensors"], draft.sensors.filter((_, candidate) => candidate !== index))} className="mt-3 text-[10px] text-red-300 hover:text-red-200">Remove sensor</button>
+                        {!definition && <p className="mt-3 text-[11px] text-[var(--slate-warning)]">This sensor type is not registered. Its data is preserved, but this vehicle cannot run until a supported type is selected.</p>}
+                        <button type="button" onClick={() => update(["sensors"], draft.sensors.filter((_, candidate) => candidate !== index))} className="mt-3 text-[11px] text-[var(--slate-danger)]">Remove sensor</button>
                     </div>
                 );
             })}
@@ -847,10 +879,10 @@ function WheelsTab({ draft, update, selection, setSelection, derivedWheelbase })
                 const selected = selection?.kind === "wheel" && selection.id === wheel.id;
                 const change = (parts, value) => update(["wheels", index, ...parts], value);
                 return (
-                    <div key={`wheel-${index}`} className={`rounded-xl border p-3 transition-colors ${selected ? "border-sky-400/50 bg-sky-500/5" : "border-zinc-800 bg-zinc-950/50"}`}>
+                    <div key={`wheel-${index}`} className={`rounded-[var(--radius)] border p-3 transition-[background-color,border-color] ${selected ? "border-[var(--slate-border)] bg-[var(--slate-surface-3)]" : "border-[var(--slate-border-60)] bg-[var(--slate-surface-1)]"}`}>
                         <button type="button" onClick={() => setSelection(selected ? null : { kind: "wheel", id: wheel.id })} className="mb-2 flex w-full items-center justify-between text-left">
                             <span className="text-[11px] font-semibold">{wheel.id}</span>
-                            {wheel.steerable && <span className="text-[9px] font-semibold uppercase tracking-[0.12em] text-sky-300">steerable</span>}
+                            {wheel.steerable && <span className="text-[11px] font-medium text-[var(--slate-muted)]">Steerable</span>}
                         </button>
                         <div className="grid grid-cols-2 gap-2">
                             <Field label="Stable ID">
@@ -869,8 +901,8 @@ function WheelsTab({ draft, update, selection, setSelection, derivedWheelbase })
                         </div>
                         <VectorFields label="Position (m)" value={wheel.position} onChange={(axis, value) => change(["position", axis], value)} scrub />
                         <div className="mt-3 flex items-center justify-between">
-                            <button type="button" onClick={() => update(["wheels", index, "position", "z"], -wheel.position.z)} className="text-[10px] text-zinc-400 hover:text-zinc-200">Mirror across X</button>
-                            <button type="button" onClick={() => update(["wheels"], draft.wheels.filter((_, candidate) => candidate !== index))} className="text-[10px] text-red-300 hover:text-red-200">Remove</button>
+                            <button type="button" onClick={() => update(["wheels", index, "position", "z"], -wheel.position.z)} className="text-[11px] text-[var(--slate-fg-2)]">Mirror across X</button>
+                            <button type="button" onClick={() => update(["wheels"], draft.wheels.filter((_, candidate) => candidate !== index))} className="text-[11px] text-[var(--slate-danger)]">Remove</button>
                         </div>
                     </div>
                 );
@@ -882,8 +914,8 @@ function WheelsTab({ draft, update, selection, setSelection, derivedWheelbase })
                 </div>
                 {derivedWheelbase !== null && (
                     <div className="mt-2 flex items-center justify-between">
-                        <p className="text-[9px] text-zinc-600">Derived from wheel placement: <span className="font-mono text-zinc-400">{derivedWheelbase.toFixed(3)} m</span></p>
-                        <button type="button" onClick={() => update(["kinematics", "wheelbase"], round3(derivedWheelbase))} className="text-[10px] text-sky-300 hover:text-sky-200">Use derived</button>
+                        <p className="text-[11px] text-[var(--slate-muted)]">Derived from wheel placement: <span className="font-mono text-[var(--slate-fg-2)]">{derivedWheelbase.toFixed(3)} m</span></p>
+                        <button type="button" onClick={() => update(["kinematics", "wheelbase"], round3(derivedWheelbase))} className="text-[11px] text-[var(--slate-fg-2)]">Use derived</button>
                     </div>
                 )}
             </Section>
@@ -897,7 +929,7 @@ function BodyTab({ draft, update, selection, setSelection, fitBodyToModel }) {
     return (
         <div className="space-y-4">
             <Section title="Bounding box">
-                <p className="text-[10px] leading-relaxed text-zinc-500">Drives the physics AABB. The translucent box in the viewport previews it.</p>
+                <p className="text-[11px] leading-relaxed text-[var(--slate-muted)]">Drives the physics AABB. The translucent box in the viewport previews it.</p>
                 <div className="mt-2 flex items-center gap-2">
                     <Action compact icon={<FaArrowsAlt />} label={bodySelected ? "Gizmo active" : "Move center with gizmo"} onClick={() => setSelection(bodySelected ? null : { kind: "body", id: null })} />
                     <Action compact icon={<FaCube />} label="Fit to model" onClick={fitBodyToModel} disabled={!draft.model.asset} />
@@ -906,7 +938,7 @@ function BodyTab({ draft, update, selection, setSelection, fitBodyToModel }) {
                 <VectorFields label="Center (m)" value={draft.boundingBox.center} onChange={(axis, value) => update(["boundingBox", "center", axis], value)} scrub />
             </Section>
             <Section title="Ego center">
-                <p className="text-[10px] leading-relaxed text-zinc-500">The reference point cameras follow and tooling focuses on, marked by the green axes.</p>
+                <p className="text-[11px] leading-relaxed text-[var(--slate-muted)]">The reference point cameras follow and tooling focuses on, marked by the green axes.</p>
                 <div className="mt-2">
                     <Action compact icon={<FaArrowsAlt />} label={egoSelected ? "Gizmo active" : "Move with gizmo"} onClick={() => setSelection(egoSelected ? null : { kind: "ego", id: null })} />
                 </div>
@@ -924,21 +956,21 @@ function nextId(entries, prefix, offset = 1) {
 }
 
 function CenterState({ title, detail, action = null, error = false }) {
-    return <div className="grid h-full place-items-center p-6"><div className={`max-w-md rounded-2xl border p-6 text-center ${error ? "border-red-500/30 bg-red-500/10" : "border-zinc-800 bg-zinc-900/35"}`}><h2 className={`text-sm font-semibold ${error ? "text-red-200" : "text-zinc-200"}`}>{title}</h2><p className="mt-2 text-xs leading-relaxed text-zinc-500">{detail}</p>{action && <div className="mt-4 flex justify-center">{action}</div>}</div></div>;
+    return <div className="grid h-full place-items-center p-6"><div><AsyncState status={error ? "error" : action ? "empty" : "loading"} title={title} detail={detail} />{action && <div className="mt-4 flex justify-center">{action}</div>}</div></div>;
 }
 
 function Section({ title, children }) {
-    return <div className="rounded-xl border border-zinc-800 bg-zinc-900/35 p-3"><p className="mb-2 text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-500">{title}</p>{children}</div>;
+    return <section className="border-t border-[var(--slate-border)] pt-3 first:border-t-0 first:pt-0"><h3 className="mb-3 text-[13px] font-semibold text-[var(--slate-fg-2)]">{title}</h3>{children}</section>;
 }
 
 function Stat({ label, value }) {
-    return <div className="rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-2"><p className="text-[9px] uppercase tracking-[0.14em] text-zinc-500">{label}</p><p className="mt-0.5 font-mono text-sm font-semibold text-zinc-100">{value.toLocaleString()}</p></div>;
+    return <div className="border-l border-[var(--slate-border)] px-3 py-2 first:border-l-0"><p className="text-[11px] text-[var(--slate-muted)]">{label}</p><p className="mt-0.5 font-mono text-sm font-semibold text-[var(--slate-fg)]">{value.toLocaleString()}</p></div>;
 }
 
 function VectorFields({ label, value, onChange, scrub = false, min, step = 0.01 }) {
     return (
         <div className="mt-3">
-            <p className="mb-1.5 text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-500">{label}</p>
+            <p className="mb-1.5 text-[13px] font-medium text-[var(--slate-fg-2)]">{label}</p>
             <div className="grid grid-cols-3 gap-2">
                 {["x", "y", "z"].map((axis) => (
                     <Field key={axis} label={axis.toUpperCase()}>
@@ -961,13 +993,16 @@ function VectorFields({ label, value, onChange, scrub = false, min, step = 0.01 
 }
 
 function Field({ label, children }) {
-    return <label><span className="mb-1 block text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-500">{label}</span><span className="config-field block">{children}</span></label>;
+    const control = isValidElement(children)
+        ? cloneElement(children, { className: [children.props.className, "sf-input"].filter(Boolean).join(" ") })
+        : children;
+    return <SharedField label={label}>{control}</SharedField>;
 }
 
 function Toggle({ label, value, onChange }) {
-    return <button type="button" onClick={() => onChange(!value)} className="flex w-full items-center justify-between rounded-xl border border-zinc-800 bg-zinc-950/60 px-3 py-2 text-[11px] text-zinc-200"><span>{label}</span><span className={`h-4 w-7 rounded-full border p-0.5 ${value ? "border-sky-400 bg-sky-500/40" : "border-zinc-700 bg-zinc-800"}`}><span className={`block h-2.5 w-2.5 rounded-full bg-white transition-transform ${value ? "translate-x-3" : ""}`} /></span></button>;
+    return <SharedSwitch label={label} checked={value} onCheckedChange={onChange} />;
 }
 
 function Action({ icon, label, onClick, disabled = false, primary = false, compact = false }) {
-    return <button type="button" disabled={disabled} onClick={() => Promise.resolve(onClick?.()).catch(() => {})} className={`inline-flex items-center justify-center gap-1.5 rounded-lg border font-semibold transition-colors active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 ${compact ? "h-8 px-2.5 text-[9px]" : "h-9 px-3 text-[10px]"} ${primary ? "border-sky-400/60 bg-sky-500/20 text-sky-100 hover:bg-sky-500/30" : "border-zinc-700 bg-zinc-900 text-zinc-300 hover:bg-zinc-800"}`}>{icon}{label}</button>;
+    return <Button disabled={disabled} size={compact ? "compact" : "default"} variant={primary ? "primary" : "default"} onClick={() => Promise.resolve(onClick?.()).catch(() => {})}>{icon}{label}</Button>;
 }

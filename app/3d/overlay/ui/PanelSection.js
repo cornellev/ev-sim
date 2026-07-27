@@ -1,7 +1,7 @@
 export function PanelSection({ title, children }) {
     return (
-        <section className="rounded-xl border border-zinc-700/80 bg-zinc-900/70 p-2.5">
-            <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-400">
+        <section className="border-b border-[var(--slate-border-60)] py-2.5 last:border-b-0">
+            <p className="mb-2 text-[12px] font-semibold text-[var(--slate-fg-2)]">
                 {title}
             </p>
             <div className="space-y-1.5">{children}</div>

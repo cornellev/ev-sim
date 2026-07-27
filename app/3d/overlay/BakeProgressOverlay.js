@@ -1,16 +1,17 @@
 'use client';
 
 import { useEffect, useMemo, useState } from "react";
+import Image from "next/image";
 import {
-    FaBroadcastTower,
-    FaChevronUp,
-    FaClock,
-    FaExclamationTriangle,
-    FaImage,
-    FaLayerGroup,
-    FaStop,
-    FaStepForward,
-} from "react-icons/fa";
+    IconBroadcast as FaBroadcastTower,
+    IconChevronUp as FaChevronUp,
+    IconClock as FaClock,
+    IconAlertTriangle as FaExclamationTriangle,
+    IconPhoto as FaImage,
+    IconStack2 as FaLayerGroup,
+    IconPlayerStop as FaStop,
+    IconPlayerTrackNext as FaStepForward,
+} from "@tabler/icons-react";
 import { prepareRgbaForPng } from "../environment/visualization/bakeUpload";
 import { cn } from "./ui/cn";
 
@@ -142,7 +143,7 @@ function useFrameObjectUrl(frame, options = {}) {
 function Metric({ label, value, tone = "default" }) {
     return (
         <div className="flex h-7 min-w-0 items-center justify-between gap-2 overflow-hidden border-b border-zinc-800/80 last:border-b-0">
-            <span className="min-w-0 truncate text-[10px] text-zinc-500">{label}</span>
+            <span className="min-w-0 truncate text-[11px] text-zinc-500">{label}</span>
             <span
                 className={cn(
                     "max-w-[62%] shrink truncate text-right text-[11px] font-semibold tabular-nums",
@@ -161,9 +162,9 @@ function Metric({ label, value, tone = "default" }) {
 
 function Section({ title, children, className }) {
     return (
-        <section className={cn("min-w-0 min-h-[325px] overflow-hidden rounded-xl border border-zinc-700/70 bg-zinc-900/65 p-2.5", className)}>
+        <section className={cn("min-w-0 min-h-[325px] overflow-hidden rounded-[var(--radius)] border border-zinc-700/70 bg-zinc-900/65 p-2.5", className)}>
             <div className="mb-1.5 flex items-center justify-between">
-                <p className="text-[10px] font-semibold tracking-wide text-zinc-300">{title}</p>
+                <p className="text-[11px] font-semibold tracking-wide text-zinc-300">{title}</p>
             </div>
             {children}
         </section>
@@ -188,19 +189,19 @@ function LidarPreview({ lidar }) {
         <div className="flex h-full flex-col justify-between bg-zinc-950/75 p-3">
             <div className="grid grid-cols-2 gap-2">
                 <div>
-                    <p className="text-[10px] text-zinc-500">Hits</p>
+                    <p className="text-[11px] text-zinc-500">Hits</p>
                     <p className="text-lg font-semibold tabular-nums text-zinc-100">{formatNumber(lidar?.hitCount)}</p>
                 </div>
                 <div>
-                    <p className="text-[10px] text-zinc-500">Hit ratio</p>
+                    <p className="text-[11px] text-zinc-500">Hit ratio</p>
                     <p className="text-lg font-semibold tabular-nums text-zinc-100">{formatPercent(hitRatio * 100)}</p>
                 </div>
                 <div>
-                    <p className="text-[10px] text-zinc-500">Filtered</p>
+                    <p className="text-[11px] text-zinc-500">Filtered</p>
                     <p className="text-lg font-semibold tabular-nums text-sky-200">{formatNumber(lidar?.filteredCount)}</p>
                 </div>
                 <div>
-                    <p className="text-[10px] text-zinc-500">Candidates</p>
+                    <p className="text-[11px] text-zinc-500">Candidates</p>
                     <p className="text-lg font-semibold tabular-nums text-sky-200">{formatNumber(lidar?.updateCandidateCount)}</p>
                 </div>
             </div>
@@ -216,12 +217,12 @@ function LidarPreview({ lidar }) {
                     {topTags.length > 0 ? topTags.map(([tag, count]) => (
                         <span
                             key={tag}
-                            className="rounded-md border border-zinc-700/80 bg-zinc-900 px-1.5 py-0.5 text-[10px] text-zinc-300"
+                            className="rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-900 px-1.5 py-0.5 text-[11px] text-zinc-300"
                         >
                             {tag}: {formatNumber(count)}
                         </span>
                     )) : (
-                        <span className="text-[10px] text-zinc-500">No tagged hits yet</span>
+                        <span className="text-[11px] text-zinc-500">No tagged hits yet</span>
                     )}
                 </div>
             </div>
@@ -256,7 +257,7 @@ function Preview({ snapshot }) {
 
     return (
         <Section title="Latest Frame">
-            <div className="mb-2 grid grid-cols-3 gap-1 rounded-lg border border-zinc-700/70 bg-zinc-950/70 p-1">
+            <div className="mb-2 grid grid-cols-3 gap-1 rounded-[var(--radius)] border border-zinc-700/70 bg-zinc-950/70 p-1">
                 {TABS.map((item) => {
                     const Icon = item.icon;
                     const active = tab === item.key;
@@ -266,7 +267,7 @@ function Preview({ snapshot }) {
                             key={item.key}
                             type="button"
                             className={cn(
-                                "flex h-7 items-center justify-center gap-1 rounded-md text-[10px] font-medium transition-[background-color,color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.98]",
+                                "flex h-7 items-center justify-center gap-1 rounded-[var(--radius)] text-[11px] font-medium transition-[background-color,color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.98]",
                                 active ? "bg-sky-500/25 text-sky-100" : "text-zinc-400 hover:bg-zinc-800/80 hover:text-zinc-100",
                             )}
                             onClick={() => setTab(item.key)}
@@ -278,17 +279,17 @@ function Preview({ snapshot }) {
                 })}
             </div>
 
-            <div className="aspect-video overflow-hidden rounded-lg border border-zinc-700/70 bg-zinc-950">
+            <div className="aspect-video overflow-hidden rounded-[var(--radius)] border border-zinc-700/70 bg-zinc-950">
                 {tab === "image" && (
                     imageUrl ? (
-                        <img src={imageUrl} alt="Latest baked frame" className="h-full w-full object-cover" />
+                        <Image unoptimized width={640} height={360} src={imageUrl} alt="Latest baked frame" className="h-full w-full object-cover" />
                     ) : (
                         <PreviewPlaceholder label="No image captured" />
                     )
                 )}
                 {tab === "mask" && (
                     maskUrl ? (
-                        <img src={maskUrl} alt="Latest process mask" className="h-full w-full object-cover" />
+                        <Image unoptimized width={640} height={360} src={maskUrl} alt="Latest process mask" className="h-full w-full object-cover" />
                     ) : (
                         <PreviewPlaceholder label="No mask captured" />
                     )
@@ -298,9 +299,9 @@ function Preview({ snapshot }) {
 
             <div className="mt-2 grid grid-cols-3 gap-1.5">
                 {metadata.map(([label, value]) => (
-                    <div key={label} className="min-w-0 rounded-md border border-zinc-800/80 bg-zinc-950/50 px-2 py-1">
-                        <p className="truncate text-[9px] text-zinc-500">{label}</p>
-                        <p className="truncate text-[10px] font-medium text-zinc-200">{value ?? "n/a"}</p>
+                    <div key={label} className="min-w-0 rounded-[var(--radius)] border border-zinc-800/80 bg-zinc-950/50 px-2 py-1">
+                        <p className="truncate text-[11px] text-zinc-500">{label}</p>
+                        <p className="truncate text-[11px] font-medium text-zinc-200">{value ?? "n/a"}</p>
                     </div>
                 ))}
             </div>
@@ -316,7 +317,7 @@ function EventLog({ events }) {
                     <div
                         key={event.id}
                         className={cn(
-                            "rounded-lg border px-2 py-1.5",
+                            "rounded-[var(--radius)] border px-2 py-1.5",
                             event.severity === "error" && "border-rose-500/50 bg-rose-500/10",
                             event.severity === "warning" && "border-amber-500/45 bg-amber-500/10",
                             event.severity !== "error" && event.severity !== "warning" && "border-zinc-800/80 bg-zinc-950/45",
@@ -327,13 +328,13 @@ function EventLog({ events }) {
                                 <FaExclamationTriangle className="mt-0.5 h-3 w-3 shrink-0 text-amber-300" />
                             )}
                             <div className="min-w-0">
-                                <p className="truncate text-[10px] font-medium text-zinc-100">{event.message}</p>
-                                {event.detail && <p className="truncate text-[9px] text-zinc-500">{event.detail}</p>}
+                                <p className="truncate text-[11px] font-medium text-zinc-100">{event.message}</p>
+                                {event.detail && <p className="truncate text-[11px] text-zinc-500">{event.detail}</p>}
                             </div>
                         </div>
                     </div>
                 )) : (
-                    <p className="rounded-lg border border-zinc-800/80 bg-zinc-950/45 px-2 py-2 text-[10px] text-zinc-500">
+                    <p className="rounded-[var(--radius)] border border-zinc-800/80 bg-zinc-950/45 px-2 py-2 text-[11px] text-zinc-500">
                         No bake events yet
                     </p>
                 )}
@@ -350,18 +351,18 @@ function PhotoStepper({ snapshot, manualAdvance, pendingManualSamples }) {
 
     return (
         <div className="mt-2 grid grid-cols-2 gap-2">
-            <div className="min-w-0 overflow-hidden rounded-xl border border-zinc-700/80 bg-zinc-950/55 p-2.5">
-                <p className="text-[10px] font-medium text-zinc-500">Current Photo</p>
+            <div className="min-w-0 overflow-hidden rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-950/55 p-2.5">
+                <p className="text-[11px] font-medium text-zinc-500">Current Photo</p>
                 <p className="mt-1 truncate text-2xl font-semibold leading-none tabular-nums text-zinc-50">
                     {currentFrame === null || currentFrame === undefined ? "None" : `#${formatNumber(currentFrame)}`}
                 </p>
-                <p className="mt-1 truncate text-[10px] text-zinc-500">{currentSample || "No frame captured yet"}</p>
+                <p className="mt-1 truncate text-[11px] text-zinc-500">{currentSample || "No frame captured yet"}</p>
             </div>
-            <div className="min-w-0 overflow-hidden rounded-xl border border-sky-400/50 bg-sky-500/[0.12] p-2.5">
+            <div className="min-w-0 overflow-hidden rounded-[var(--radius)] border border-sky-400/50 bg-sky-500/[0.12] p-2.5">
                 <div className="flex items-center justify-between gap-2">
-                    <p className="text-[10px] font-medium text-sky-200/80">Next Photo</p>
+                    <p className="text-[11px] font-medium text-sky-200/80">Next Photo</p>
                     {manualAdvance && (
-                        <span className="rounded-md border border-sky-300/45 bg-sky-400/15 px-1.5 py-0.5 text-[9px] font-semibold text-sky-100">
+                        <span className="rounded-[var(--radius)] border border-sky-300/45 bg-sky-400/15 px-1.5 py-0.5 text-[11px] font-semibold text-sky-100">
                             {pendingManualSamples > 0 ? "queued" : "manual"}
                         </span>
                     )}
@@ -369,7 +370,7 @@ function PhotoStepper({ snapshot, manualAdvance, pendingManualSamples }) {
                 <p className="mt-1 truncate text-2xl font-semibold leading-none tabular-nums text-sky-50">
                     {nextFrame === null || nextFrame === undefined ? "Done" : `#${formatNumber(nextFrame)}`}
                 </p>
-                <p className="mt-1 truncate text-[10px] text-sky-100/60">
+                <p className="mt-1 truncate text-[11px] text-sky-100/60">
                     {nextSample || "No next sample"}
                     {Number.isFinite(snapshot.nextDistance) ? ` at ${snapshot.nextDistance.toFixed(1)}m` : ""}
                 </p>
@@ -505,13 +506,13 @@ export function BakeProgressOverlay({ data }) {
                     setDrawerOpen(true);
                 }}
                 onPointerDown={stopEvent}
-                className="bake-progress-overlay fixed right-0 top-24 z-30 flex h-24 w-11 flex-col items-center justify-center gap-1 rounded-l-2xl border border-r-0 border-zinc-700/80 bg-zinc-950/90 text-zinc-100 shadow-[0_20px_60px_rgba(0,0,0,0.4)] backdrop-blur-2xl pointer-events-auto transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-zinc-900/95 focus:outline-none focus:ring-2 focus:ring-sky-400/60 active:scale-[0.98]"
+                className="bake-progress-overlay fixed right-0 top-24 z-30 flex h-24 w-11 flex-col items-center justify-center gap-1 rounded-l-[var(--radius)] border border-r-0 border-zinc-700/80 bg-zinc-950/90 text-zinc-100 shadow-[0_20px_60px_rgba(0,0,0,0.4)] pointer-events-auto transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-zinc-900/95 focus:outline-none focus:ring-2 focus:ring-sky-400/60 active:scale-[0.98]"
             >
                 <FaLayerGroup className="h-3.5 w-3.5 text-sky-300" />
-                <span className="[writing-mode:vertical-rl] text-[10px] font-semibold tracking-wide text-zinc-200">
+                <span className="[writing-mode:vertical-rl] text-[11px] font-semibold tracking-wide text-zinc-200">
                     Bake
                 </span>
-                <span className="text-[9px] tabular-nums text-sky-200">{formatPercent(snapshot.percent)}</span>
+                <span className="text-[11px] tabular-nums text-sky-200">{formatPercent(snapshot.percent)}</span>
             </button>
         );
     }
@@ -519,7 +520,7 @@ export function BakeProgressOverlay({ data }) {
     return (
         <aside
             className={cn(
-                "bake-progress-overlay fixed bottom-20 right-3 top-3 z-30 flex w-[380px] max-w-[calc(100vw-1.5rem)] flex-col overflow-hidden rounded-2xl border border-zinc-700/80 bg-zinc-950/85 p-2.5 text-zinc-100 shadow-[0_30px_90px_rgba(0,0,0,0.48)] backdrop-blur-2xl pointer-events-auto md:right-3 max-md:left-3 max-md:w-auto",
+                "bake-progress-overlay fixed bottom-20 right-3 top-3 z-30 flex w-[380px] max-w-[calc(100vw-1.5rem)] flex-col overflow-hidden rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-950/85 p-2.5 text-zinc-100 shadow-[0_30px_90px_rgba(0,0,0,0.48)] pointer-events-auto md:right-3 max-md:left-3 max-md:w-auto",
             )}
             onPointerDown={disablePanelControls}
             onPointerUp={enablePanelControls}
@@ -527,14 +528,14 @@ export function BakeProgressOverlay({ data }) {
             onPointerLeave={enablePanelControls}
             onClick={stopEvent}
         >
-            <div className="shrink-0 rounded-xl border border-zinc-700/80 bg-zinc-900/70 p-2.5">
+            <div className="shrink-0 rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-900/70 p-2.5">
                 <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                         <div className="mb-1.5 flex items-center gap-1.5">
-                            <span className={cn("rounded-md border px-1.5 py-0.5 text-[10px] font-semibold", statusTone(snapshot.status))}>
+                            <span className={cn("rounded-[var(--radius)] border px-1.5 py-0.5 text-[11px] font-semibold", statusTone(snapshot.status))}>
                                 {snapshot.status}
                             </span>
-                            <span className="truncate text-[10px] text-zinc-400">{snapshot.runId}</span>
+                            <span className="truncate text-[11px] text-zinc-400">{snapshot.runId}</span>
                         </div>
                         <h2 className="truncate text-sm font-semibold text-zinc-50">{snapshot.stage}</h2>
                     </div>
@@ -546,7 +547,7 @@ export function BakeProgressOverlay({ data }) {
                                 title="Stop bake"
                                 aria-label="Stop bake"
                                 onClick={stopBake}
-                                className="flex h-8 w-8 items-center justify-center rounded-lg border border-rose-500/70 bg-rose-500/20 text-rose-100 transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-rose-500/30 focus:outline-none focus:ring-2 focus:ring-rose-400/60 active:scale-[0.97]"
+                                className="flex h-8 w-8 items-center justify-center rounded-[var(--radius)] border border-rose-500/70 bg-rose-500/20 text-rose-100 transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-rose-500/30 focus:outline-none focus:ring-2 focus:ring-rose-400/60 active:scale-[0.97]"
                             >
                                 <FaStop className="h-3 w-3" />
                             </button>
@@ -559,7 +560,7 @@ export function BakeProgressOverlay({ data }) {
                                 controls.enable?.(BAKE_OVERLAY_CONTROL_LOCK);
                                 setDrawerOpen(false);
                             }}
-                            className="flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-700/80 bg-zinc-900/85 text-zinc-200 transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-zinc-800/90 focus:outline-none focus:ring-2 focus:ring-sky-400/60 active:scale-[0.97]"
+                            className="flex h-8 w-8 items-center justify-center rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-900/85 text-zinc-200 transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-zinc-800/90 focus:outline-none focus:ring-2 focus:ring-sky-400/60 active:scale-[0.97]"
                         >
                             <FaChevronUp className="h-3 w-3 rotate-90" />
                         </button>
@@ -580,12 +581,12 @@ export function BakeProgressOverlay({ data }) {
                             title="Queue the next bake photo"
                             aria-label="Next photo"
                             onClick={queueNextPhoto}
-                            className="flex h-8 min-w-0 items-center justify-center gap-1.5 rounded-lg border border-sky-400/70 bg-sky-500/20 px-2 text-[11px] font-semibold text-sky-100 transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-sky-500/30 focus:outline-none focus:ring-2 focus:ring-sky-400/60 active:scale-[0.98]"
+                            className="flex h-8 min-w-0 items-center justify-center gap-1.5 rounded-[var(--radius)] border border-sky-400/70 bg-sky-500/20 px-2 text-[11px] font-semibold text-sky-100 transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-sky-500/30 focus:outline-none focus:ring-2 focus:ring-sky-400/60 active:scale-[0.98]"
                         >
                             <FaStepForward className="h-3 w-3 shrink-0" />
                             <span className="truncate">Next Photo</span>
                             {pendingManualSamples > 0 && (
-                                <span className="rounded-md border border-sky-300/50 bg-sky-400/20 px-1 text-[9px] tabular-nums">
+                                <span className="rounded-[var(--radius)] border border-sky-300/50 bg-sky-400/20 px-1 text-[11px] tabular-nums">
                                     {pendingManualSamples}
                                 </span>
                             )}
@@ -596,7 +597,7 @@ export function BakeProgressOverlay({ data }) {
                                 title="Resume automatic bake advance"
                                 aria-label="Resume automatic bake advance"
                                 onClick={resumeAuto}
-                                className="flex h-8 items-center justify-center rounded-lg border border-zinc-700/80 bg-zinc-900/85 px-2 text-[11px] font-semibold text-zinc-200 transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-zinc-800/90 focus:outline-none focus:ring-2 focus:ring-sky-400/60 active:scale-[0.98]"
+                                className="flex h-8 items-center justify-center rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-900/85 px-2 text-[11px] font-semibold text-zinc-200 transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-zinc-800/90 focus:outline-none focus:ring-2 focus:ring-sky-400/60 active:scale-[0.98]"
                             >
                                 Auto
                             </button>
@@ -611,22 +612,22 @@ export function BakeProgressOverlay({ data }) {
                 />
 
                 <div className="mt-2 grid grid-cols-2 gap-1.5 min-[360px]:grid-cols-4">
-                    <div className="min-w-0 overflow-hidden rounded-lg border border-zinc-800/80 bg-zinc-950/55 px-2 py-1">
-                        <p className="text-[9px] text-zinc-500">Progress</p>
+                    <div className="min-w-0 overflow-hidden rounded-[var(--radius)] border border-zinc-800/80 bg-zinc-950/55 px-2 py-1">
+                        <p className="text-[11px] text-zinc-500">Progress</p>
                         <p className="truncate text-[11px] font-semibold tabular-nums text-zinc-100">{formatPercent(snapshot.percent)}</p>
                     </div>
-                    <div className="min-w-0 overflow-hidden rounded-lg border border-zinc-800/80 bg-zinc-950/55 px-2 py-1">
-                        <p className="text-[9px] text-zinc-500">Sample</p>
+                    <div className="min-w-0 overflow-hidden rounded-[var(--radius)] border border-zinc-800/80 bg-zinc-950/55 px-2 py-1">
+                        <p className="text-[11px] text-zinc-500">Sample</p>
                         <p className="truncate text-[11px] font-semibold tabular-nums text-zinc-100">
                             {formatNumber(snapshot.completedSamples)}/{formatNumber(snapshot.totalSamples)}
                         </p>
                     </div>
-                    <div className="min-w-0 overflow-hidden rounded-lg border border-zinc-800/80 bg-zinc-950/55 px-2 py-1">
-                        <p className="flex items-center gap-1 text-[9px] text-zinc-500"><FaClock className="h-2.5 w-2.5" />Elapsed</p>
+                    <div className="min-w-0 overflow-hidden rounded-[var(--radius)] border border-zinc-800/80 bg-zinc-950/55 px-2 py-1">
+                        <p className="flex items-center gap-1 text-[11px] text-zinc-500"><FaClock className="h-2.5 w-2.5" />Elapsed</p>
                         <p className="truncate text-[11px] font-semibold tabular-nums text-zinc-100">{formatMs(snapshot.elapsedMs)}</p>
                     </div>
-                    <div className="min-w-0 overflow-hidden rounded-lg border border-zinc-800/80 bg-zinc-950/55 px-2 py-1">
-                        <p className="text-[9px] text-zinc-500">ETA</p>
+                    <div className="min-w-0 overflow-hidden rounded-[var(--radius)] border border-zinc-800/80 bg-zinc-950/55 px-2 py-1">
+                        <p className="text-[11px] text-zinc-500">ETA</p>
                         <p className="truncate text-[11px] font-semibold tabular-nums text-zinc-100">{formatMs(snapshot.etaMs)}</p>
                     </div>
                 </div>

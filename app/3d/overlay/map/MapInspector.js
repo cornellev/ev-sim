@@ -2,14 +2,14 @@
 
 import { useMemo } from "react";
 import {
-    FaArrowsAlt,
-    FaBuilding,
-    FaRoad,
-    FaTh,
-    FaTimes,
-    FaTrafficLight,
-    FaTrash,
-} from "react-icons/fa";
+    IconArrowsMove as FaArrowsAlt,
+    IconBuilding as FaBuilding,
+    IconRoad as FaRoad,
+    IconGridDots as FaTh,
+    IconX as FaTimes,
+    IconTrafficLights as FaTrafficLight,
+    IconTrash as FaTrash,
+} from "@tabler/icons-react";
 import { MAP_SELECTION_TYPES } from "../../editor/EditorState";
 import {
     footprintDimensions,
@@ -35,8 +35,8 @@ function shortId(value) {
 
 function Field({ label, value, mono = false }) {
     return (
-        <div className="rounded-lg border border-zinc-800/90 bg-zinc-950/45 px-2 py-1.5">
-            <p className="text-[9px] font-semibold uppercase tracking-[0.1em] text-zinc-500">{label}</p>
+        <div className="rounded-[var(--radius)] border border-zinc-800/90 bg-zinc-950/45 px-2 py-1.5">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-zinc-500">{label}</p>
             <p className={`${mono ? "font-mono" : ""} mt-0.5 truncate text-[11px] text-zinc-200`} title={String(value ?? "")}>
                 {value ?? "None"}
             </p>
@@ -147,31 +147,31 @@ export function MapInspector({ data, editorSnapshot, documentSnapshot }) {
 
     return (
         <div
-            className="fixed right-3 top-3 z-[25] w-[320px] rounded-2xl border border-zinc-700/80 bg-zinc-950/88 p-2.5 text-zinc-100 shadow-[0_30px_80px_rgba(0,0,0,0.45)] backdrop-blur-2xl pointer-events-auto"
+            className="fixed right-3 top-3 z-[25] w-[320px] rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-950/88 p-2.5 text-zinc-100 shadow-[0_30px_80px_rgba(0,0,0,0.45)] pointer-events-auto"
             onMouseDown={controls.disable}
             onMouseUp={controls.enable}
             onMouseLeave={controls.enable}
         >
-            <div className="mb-2 flex items-start justify-between rounded-xl border border-zinc-700/80 bg-zinc-900/70 p-2">
+            <div className="mb-2 flex items-start justify-between rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-900/70 p-2">
                 <div className="min-w-0">
                     <div className="flex items-center gap-2">
-                        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-xl border border-sky-400/50 bg-sky-500/15 text-sky-100">
+                        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[var(--radius)] border border-sky-400/50 bg-sky-500/15 text-sky-100">
                             {meta.icon}
                         </span>
                         <div className="min-w-0">
-                            <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-400">Map Inspector</p>
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-400">Map Inspector</p>
                             <p className="truncate text-[13px] font-semibold text-zinc-100">{meta.title}</p>
-                            <p className="truncate text-[10px] text-zinc-500">{meta.subtitle}</p>
+                            <p className="truncate text-[11px] text-zinc-500">{meta.subtitle}</p>
                         </div>
                     </div>
-                    <p className="mt-2 truncate font-mono text-[10px] text-zinc-500" title={selection.id}>
+                    <p className="mt-2 truncate font-mono text-[11px] text-zinc-500" title={selection.id}>
                         {shortId(selection.id)}
                     </p>
                 </div>
                 <MenuButton
                     iconOnly
                     variant="ghost"
-                    className="h-7 w-7 rounded-lg"
+                    className="h-7 w-7 rounded-[var(--radius)]"
                     onClick={clearSelection}
                     title="Clear selection"
                     ariaLabel="Clear selection"
@@ -211,13 +211,13 @@ export function MapInspector({ data, editorSnapshot, documentSnapshot }) {
                 )}
 
                 {selection.type === MAP_SELECTION_TYPES.INTERSECTION && connectedRoads > 0 && (
-                    <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-2.5 py-2 text-[10px] text-amber-100/80">
+                    <div className="rounded-[var(--radius)] border border-amber-500/20 bg-amber-500/5 px-2.5 py-2 text-[11px] text-amber-100/80">
                         Deleting removes this intersection and all {connectedRoads} connected road segment{connectedRoads === 1 ? "" : "s"}.
                     </div>
                 )}
 
                 {meta.movable && (
-                    <div className="rounded-xl border border-zinc-800/90 bg-zinc-900/45 px-2.5 py-2 text-[10px] text-zinc-400">
+                    <div className="rounded-[var(--radius)] border border-zinc-800/90 bg-zinc-900/45 px-2.5 py-2 text-[11px] text-zinc-400">
                         <span className="inline-flex items-center gap-1.5 text-zinc-300">
                             <FaArrowsAlt className="h-3 w-3 text-sky-300" />
                             Drag the marker to reposition this prop.
@@ -225,7 +225,7 @@ export function MapInspector({ data, editorSnapshot, documentSnapshot }) {
                     </div>
                 )}
 
-                <div className="flex items-center justify-end gap-2 rounded-xl border border-zinc-800/90 bg-zinc-900/45 p-2">
+                <div className="flex items-center justify-end gap-2 rounded-[var(--radius)] border border-zinc-800/90 bg-zinc-900/45 p-2">
                     <MenuButton compact variant="danger" onClick={deleteSelection} title="Delete selection">
                         <FaTrash className="h-3 w-3" />
                         Delete

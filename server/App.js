@@ -15,8 +15,8 @@ app.prepare().then(async () => {
     const { createMcpRouter } = await import('./mcp/createMcpRouter.js');
     const { LogService } = await import('./logging/LogService.js');
     const { createLogRouter } = await import('./routes/logRouter.js');
-    const storageService = new StorageService();
-    const logService = new LogService();
+    const storageService = new StorageService(process.env.CEV_SIM_DATA_DIR);
+    const logService = new LogService(process.env.CEV_SIM_LOGS_DIR);
 
     // Parse JSON only for Express-owned routes. A global body parser locks the
     // request stream and breaks Next.js App Router handlers (e.g. POST

@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from "react";
-import { FaCompress, FaMapMarkedAlt } from "react-icons/fa";
+import { IconArrowsMinimize as FaCompress, IconMap2 as FaMapMarkedAlt } from "@tabler/icons-react";
 import {
     editorStateToGeoBounds,
     geoBoundsToEarthImportPatch,
@@ -16,7 +16,7 @@ function BoundsSummary({ bounds }) {
     return (
         <div
             className={[
-                "rounded-lg border px-2.5 py-2 text-[10px]",
+                "rounded-[var(--radius)] border px-2.5 py-2 text-[11px]",
                 summary.valid
                     ? "border-zinc-700/80 bg-zinc-900/70 text-zinc-300"
                     : "border-rose-500/50 bg-rose-500/10 text-rose-100",
@@ -75,7 +75,7 @@ export function EarthImportMapPicker({
     return (
         <div className={rootClassName}>
             <div className="flex items-center justify-between gap-2">
-                <p className="text-[10px] text-zinc-400">
+                <p className="text-[11px] text-zinc-400">
                     Drag on the map to define import bounds.
                 </p>
                 <MenuButton
@@ -92,7 +92,7 @@ export function EarthImportMapPicker({
 
             <div
                 className={[
-                    "overflow-hidden rounded-xl border border-zinc-700/80 bg-zinc-900",
+                    "overflow-hidden rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-900",
                     mapHeightClass,
                     drawMode ? "earth-import-map--draw-mode" : "",
                 ].join(" ")}
@@ -105,7 +105,7 @@ export function EarthImportMapPicker({
 
             <BoundsSummary bounds={bounds} />
 
-            <p className="text-[9px] leading-snug text-zinc-500">
+            <p className="text-[11px] leading-snug text-zinc-500">
                 Map data &copy; OpenStreetMap contributors. Preview loads Google Photorealistic 3D Tiles.
             </p>
         </div>
@@ -135,7 +135,7 @@ export function EarthImportMapPickerOverlay({
                         <p className="text-[11px] font-semibold tracking-wide text-zinc-100">
                             Select import area
                         </p>
-                        <p className="mt-0.5 text-[10px] text-zinc-400">
+                        <p className="mt-0.5 text-[11px] text-zinc-400">
                             Pan and zoom, then draw a rectangle for the import bounds.
                         </p>
                     </div>

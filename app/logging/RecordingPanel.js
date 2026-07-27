@@ -1,7 +1,13 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { FaCheck, FaExclamationTriangle, FaFileImport, FaSave, FaStopCircle } from "react-icons/fa";
+import {
+    IconCheck as FaCheck,
+    IconAlertTriangle as FaExclamationTriangle,
+    IconFileImport as FaFileImport,
+    IconDeviceFloppy as FaSave,
+    IconPlayerStop as FaStopCircle,
+} from "@tabler/icons-react";
 import { getRecordingController } from "./RecordingController.js";
 import { DEFAULT_REPLAY_PROFILE, DEFAULT_TELEMETRY_PROFILE, normalizeProfile, resolveProfileRule } from "./LogProfiles.js";
 import { getTelemetryStore } from "../telemetry/TelemetryRuntime.js";
@@ -161,20 +167,20 @@ export function RecordingPanel({ data, onOpenReplay }) {
 
     return (
         <div className="space-y-3">
-            <div className="grid grid-cols-3 divide-x divide-zinc-800 rounded-xl border border-zinc-800 bg-zinc-900/65">
+            <div className="grid grid-cols-3 divide-x divide-zinc-800 rounded-[var(--radius)] border border-zinc-800 bg-zinc-900/65">
                 <Metric label="Duration" value={formatDuration(recording.startedAt, now)} />
                 <Metric label="Written" value={formatBytes(recording.bytesWritten)} />
                 <Metric label="Queue" value={formatBytes(recording.queuedBytes)} />
             </div>
 
-            <div className="flex gap-1 rounded-xl border border-zinc-800 bg-zinc-900/65 p-1">
+            <div className="flex gap-1 rounded-[var(--radius)] border border-zinc-800 bg-zinc-900/65 p-1">
                 {["replay-safe", "telemetry"].map((mode) => (
                     <button
                         key={mode}
                         type="button"
                         disabled={recording.active}
                         onClick={() => updateMode(mode)}
-                        className={`flex-1 rounded-lg px-2 py-2 text-[10px] font-semibold tracking-wide transition-colors active:scale-[0.97] ${profile.mode === mode ? "bg-sky-500/20 text-sky-200" : "text-zinc-400 hover:bg-zinc-800"}`}
+                        className={`flex-1 rounded-[var(--radius)] px-2 py-2 text-[11px] font-semibold tracking-wide transition-colors active:scale-[0.97] ${profile.mode === mode ? "bg-sky-500/20 text-sky-200" : "text-zinc-400 hover:bg-zinc-800"}`}
                     >
                         {mode === "replay-safe" ? "Replay Safe" : "Telemetry"}
                     </button>
@@ -184,12 +190,12 @@ export function RecordingPanel({ data, onOpenReplay }) {
             {!recording.active && (
                 <div>
                     <div className="mb-1.5 flex items-center justify-between">
-                        <label htmlFor="log-signal-search" className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Signal rules</label>
-                        <button type="button" onClick={saveProfile} className="inline-flex items-center gap-1 text-[10px] text-zinc-400 hover:text-zinc-100"><FaSave /> Save</button>
+                        <label htmlFor="log-signal-search" className="text-[11px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Signal rules</label>
+                        <button type="button" onClick={saveProfile} className="inline-flex items-center gap-1 text-[11px] text-zinc-400 hover:text-zinc-100"><FaSave /> Save</button>
                     </div>
-                    <input id="log-signal-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter signals…" className="mb-1.5 h-8 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-2.5 text-[11px] text-zinc-100 outline-none focus:border-sky-500" />
-                    <div className="max-h-44 overflow-y-auto rounded-xl border border-zinc-800 bg-zinc-950/60">
-                        {visible.length === 0 && <p className="px-3 py-5 text-center text-[10px] text-zinc-500">Signals appear as the simulation initializes.</p>}
+                    <input id="log-signal-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter signals…" className="mb-1.5 h-8 w-full rounded-[var(--radius)] border border-zinc-700 bg-zinc-950 px-2.5 text-[11px] text-zinc-100 outline-none focus:border-sky-500" />
+                    <div className="max-h-44 overflow-y-auto rounded-[var(--radius)] border border-zinc-800 bg-zinc-950/60">
+                        {visible.length === 0 && <p className="px-3 py-5 text-center text-[11px] text-zinc-500">Signals appear as the simulation initializes.</p>}
                         {visible.map((descriptor) => {
                             const rule = resolveProfileRule(profile, descriptor);
                             const history = store.history(descriptor.path);
@@ -198,18 +204,18 @@ export function RecordingPanel({ data, onOpenReplay }) {
                                 <div key={descriptor.path} className="border-b border-zinc-800/80 px-2.5 py-2 last:border-0 hover:bg-zinc-900">
                                     <div className="flex items-center gap-2">
                                         <button type="button" aria-label={`${rule.enabled ? "Disable" : "Enable"} ${descriptor.path}`} onClick={() => toggleDescriptor(descriptor)} disabled={rule.locked} className={`grid h-4 w-4 shrink-0 place-items-center rounded border ${rule.enabled ? "border-sky-400 bg-sky-500/20 text-sky-200" : "border-zinc-700 text-transparent"} disabled:cursor-not-allowed`}><FaCheck className="h-2.5 w-2.5" /></button>
-                                        <span className="min-w-0 flex-1"><span className="block truncate text-[10px] text-zinc-200">{descriptor.path}</span><span className="block truncate text-[9px] text-zinc-500">{descriptor.type}{descriptor.unit ? ` · ${descriptor.unit}` : ""} · {rate} Hz · ~{formatBytes(estimatedBytesPerSecond(descriptor, rate))}/s</span></span>
-                                        <span className={`text-[8px] uppercase tracking-wide ${rule.locked ? "text-amber-300" : "text-zinc-600"}`}>{rule.locked ? "required" : descriptor.logClass}</span>
+                                        <span className="min-w-0 flex-1"><span className="block truncate text-[11px] text-zinc-200">{descriptor.path}</span><span className="block truncate text-[11px] text-zinc-500">{descriptor.type}{descriptor.unit ? ` · ${descriptor.unit}` : ""} · {rate} Hz · ~{formatBytes(estimatedBytesPerSecond(descriptor, rate))}/s</span></span>
+                                        <span className={`text-[11px] uppercase tracking-wide ${rule.locked ? "text-amber-300" : "text-zinc-600"}`}>{rule.locked ? "required" : descriptor.logClass}</span>
                                     </div>
                                     {!rule.locked && (
                                         <div className="mt-1.5 flex gap-1 pl-6">
-                                            <select aria-label={`${descriptor.path} sampling`} value={rule.enabled ? rule.sampling : "disabled"} onChange={(event) => setDescriptorRule(descriptor, { enabled: event.target.value !== "disabled", sampling: event.target.value, rateHz: event.target.value === "fixed-rate" ? (rule.rateHz || 10) : null })} className="h-6 min-w-0 flex-1 rounded-md border border-zinc-800 bg-zinc-950 px-1.5 text-[8px] text-zinc-400 outline-none focus:border-sky-500">
+                                            <select aria-label={`${descriptor.path} sampling`} value={rule.enabled ? rule.sampling : "disabled"} onChange={(event) => setDescriptorRule(descriptor, { enabled: event.target.value !== "disabled", sampling: event.target.value, rateHz: event.target.value === "fixed-rate" ? (rule.rateHz || 10) : null })} className="h-6 min-w-0 flex-1 rounded-[var(--radius)] border border-zinc-800 bg-zinc-950 px-1.5 text-[11px] text-zinc-400 outline-none focus:border-sky-500">
                                                 <option value="every-update">Every update</option>
                                                 <option value="on-change">On change</option>
                                                 <option value="fixed-rate">Fixed rate</option>
                                                 <option value="disabled">Disabled</option>
                                             </select>
-                                            {rule.enabled && rule.sampling === "fixed-rate" && <select aria-label={`${descriptor.path} rate`} value={rule.rateHz || 10} onChange={(event) => setDescriptorRule(descriptor, { enabled: true, sampling: "fixed-rate", rateHz: Number(event.target.value) })} className="h-6 rounded-md border border-zinc-800 bg-zinc-950 px-1 text-[8px] text-zinc-400 outline-none focus:border-sky-500">{[1, 5, 10, 20, 30, 60].map((hz) => <option key={hz} value={hz}>{hz} Hz</option>)}</select>}
+                                            {rule.enabled && rule.sampling === "fixed-rate" && <select aria-label={`${descriptor.path} rate`} value={rule.rateHz || 10} onChange={(event) => setDescriptorRule(descriptor, { enabled: true, sampling: "fixed-rate", rateHz: Number(event.target.value) })} className="h-6 rounded-[var(--radius)] border border-zinc-800 bg-zinc-950 px-1 text-[11px] text-zinc-400 outline-none focus:border-sky-500">{[1, 5, 10, 20, 30, 60].map((hz) => <option key={hz} value={hz}>{hz} Hz</option>)}</select>}
                                         </div>
                                     )}
                                 </div>
@@ -220,7 +226,7 @@ export function RecordingPanel({ data, onOpenReplay }) {
             )}
 
             {error && (
-                <button type="button" onClick={() => { setLocalError(null); controller.acknowledgeError(); }} className="flex w-full items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 p-2.5 text-left text-[10px] leading-relaxed text-amber-100">
+                <button type="button" onClick={() => { setLocalError(null); controller.acknowledgeError(); }} className="flex w-full items-start gap-2 rounded-[var(--radius)] border border-amber-500/30 bg-amber-500/10 p-2.5 text-left text-[11px] leading-relaxed text-amber-100">
                     <FaExclamationTriangle className="mt-0.5 shrink-0" />
                     <span className="flex-1">{error}</span>
                     <span className="text-amber-300">Dismiss</span>
@@ -228,18 +234,18 @@ export function RecordingPanel({ data, onOpenReplay }) {
             )}
 
             <div className="grid grid-cols-2 gap-1.5">
-                <button type="button" onClick={recording.active ? stop : start} disabled={recording.status === "starting" || recording.status === "stopping"} className={`inline-flex h-9 items-center justify-center gap-2 rounded-lg border text-[10px] font-semibold tracking-wide transition-colors active:scale-[0.97] disabled:opacity-50 ${recording.active ? "border-red-400/60 bg-red-500/20 text-red-100" : "border-red-500/40 bg-red-500/10 text-red-200 hover:bg-red-500/20"}`}>
+                <button type="button" onClick={recording.active ? stop : start} disabled={recording.status === "starting" || recording.status === "stopping"} className={`inline-flex h-9 items-center justify-center gap-2 rounded-[var(--radius)] border text-[11px] font-semibold tracking-wide transition-colors active:scale-[0.97] disabled:opacity-50 ${recording.active ? "border-red-400/60 bg-red-500/20 text-red-100" : "border-red-500/40 bg-red-500/10 text-red-200 hover:bg-red-500/20"}`}>
                     {recording.active ? <FaStopCircle /> : <span className="h-2.5 w-2.5 rounded-full bg-red-400" />}
                     {recording.active ? "Stop & open" : recording.status === "starting" ? "Starting…" : "Start logging"}
                 </button>
-                <button type="button" disabled={importing} onClick={() => fileRef.current?.click()} className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-zinc-700 bg-zinc-900 text-[10px] font-semibold text-zinc-200 hover:bg-zinc-800 active:scale-[0.97] disabled:opacity-50"><FaFileImport />{importing ? "Importing…" : "Open log"}</button>
+                <button type="button" disabled={importing} onClick={() => fileRef.current?.click()} className="inline-flex h-9 items-center justify-center gap-2 rounded-[var(--radius)] border border-zinc-700 bg-zinc-900 text-[11px] font-semibold text-zinc-200 hover:bg-zinc-800 active:scale-[0.97] disabled:opacity-50"><FaFileImport />{importing ? "Importing…" : "Open log"}</button>
             </div>
             <input ref={fileRef} type="file" accept=".sflog,application/x-sflog" hidden onChange={handleImport} />
-            {recording.session && <p className="truncate text-[9px] text-zinc-600">Session {recording.session.id}</p>}
+            {recording.session && <p className="truncate text-[11px] text-zinc-600">Session {recording.session.id}</p>}
         </div>
     );
 }
 
 function Metric({ label, value }) {
-    return <div className="px-2 py-2"><p className="text-[8px] uppercase tracking-[0.14em] text-zinc-600">{label}</p><p className="mt-0.5 font-mono text-[10px] text-zinc-200">{value}</p></div>;
+    return <div className="px-2 py-2"><p className="text-[11px] uppercase tracking-[0.14em] text-zinc-600">{label}</p><p className="mt-0.5 font-mono text-[11px] text-zinc-200">{value}</p></div>;
 }

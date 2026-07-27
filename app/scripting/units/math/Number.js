@@ -10,7 +10,7 @@ export default function NumberUnit(props) {
         if (value === "" || isNaN(value)) {
             return;
         }
-        
+
         const numericValue = parseFloat(value);
         if (isNaN(numericValue)) {
             return;
@@ -26,9 +26,9 @@ export default function NumberUnit(props) {
                 type: "float64"
             }
         ]} hasOptions={true} _uuid={props._uuid}>
-            <input 
-                value={isNaN(value) ? "" : value} 
-                className="w-full px-2 py-1 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:border-blue-500 hover:border-gray-400" 
+            <input
+                value={isNaN(value) ? "" : value}
+                className="w-full rounded-[var(--radius)] border border-white/10 bg-[var(--slate-bg)] px-2.5 py-1.5 text-white outline-none transition-[border-color,box-shadow] duration-150 hover:border-white/20 focus:border-white/30 focus:shadow-[0_0_0_3px_rgba(255,255,255,0.06)]"
                 id={props._uuid + "-input"}
                 type="number"
                 onChange={(e) => setValue(parseFloat(e.target.value))}

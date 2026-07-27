@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { IconArrowDown, IconArrowUp, IconChevronDown, IconChevronRight, IconX } from "@tabler/icons-react";
 import { listScriptDocuments } from "../ScriptStorage.js";
 import { summarizeScriptDocument } from "../EditorDocument.js";
 import { SIGNAL_PATHS } from "../runtime/SignalPaths.js";
@@ -27,6 +28,13 @@ import {
     listRunManifests,
     saveRunManifest,
 } from "../../simulation/RunManifestClient.js";
+import {
+    Field as SharedField,
+    NativeSelect,
+    SegmentedControl as SharedSegmentedControl,
+    Switch as SharedSwitch,
+    TextInput as SharedTextInput,
+} from "../../ui";
 
 const TRIGGER_SHORT_LABELS = {
     [TRIGGER_KINDS.TOPIC]: "Topic",
@@ -82,22 +90,15 @@ function previewValue(value) {
 // ----------------------------------------------------------------- primitives
 
 function Field({ label, hint, error, children }) {
-    return (
-        <label className="flex flex-col gap-1.5">
-            <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500">{label}</span>
-            {children}
-            {hint && !error && <span className="text-[11px] leading-relaxed text-zinc-500">{hint}</span>}
-            {error && <span className="text-[11px] leading-relaxed text-rose-300">{error}</span>}
-        </label>
-    );
+    return <SharedField label={label} hint={hint} error={error}>{children}</SharedField>;
 }
 
 function TextInput({ mono = false, className = "", value, ...props }) {
     return (
-        <input
+        <SharedTextInput
             {...props}
             value={value ?? ""}
-            className={`h-8 w-full rounded-md border border-white/10 bg-[#171717] px-2.5 text-[12px] text-zinc-100 placeholder:text-zinc-600 outline-none transition-[border-color,background-color] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] focus:border-emerald-400/40 focus:bg-[#191919] ${mono ? "font-mono" : ""} ${className}`}
+            className={`${mono ? "font-mono" : ""} ${className}`}
         />
     );
 }
@@ -108,76 +109,49 @@ function SignalPathInput(props) {
 
 function SelectInput({ className = "", value, children, ...props }) {
     return (
-        <select
+        <NativeSelect
             {...props}
             value={value ?? ""}
-            className={`h-8 w-full appearance-none rounded-md border border-white/10 bg-[#171717] px-2.5 text-[12px] text-zinc-100 outline-none transition-[border-color] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] focus:border-emerald-400/40 ${className}`}
+            className={className}
         >
             {children}
-        </select>
+        </NativeSelect>
     );
 }
 
 function Toggle({ checked, onChange, label }) {
     return (
-        <button
-            type="button"
-            role="switch"
-            aria-checked={checked}
-            aria-label={label}
-            onClick={() => onChange(!checked)}
-            className={`bnd-press relative h-[18px] w-[32px] shrink-0 rounded-full border transition-[background-color,border-color] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] ${checked ? "border-emerald-400/50 bg-emerald-400/25" : "border-white/15 bg-[#171717]"}`}
-        >
-            <span
-                className={`absolute top-[2px] left-[2px] h-[12px] w-[12px] rounded-full transition-transform duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] ${checked ? "translate-x-[14px] bg-emerald-200" : "translate-x-0 bg-zinc-500"}`}
-            />
-        </button>
+        <SharedSwitch checked={checked} onCheckedChange={onChange} aria-label={label} />
     );
 }
 
 function SegmentedControl({ value, options, onChange }) {
     return (
-        <div className="grid grid-cols-5 gap-0 overflow-hidden rounded-md border border-white/10 bg-[#171717]">
-            {options.map((option) => {
-                const active = option.value === value;
-                return (
-                    <button
-                        key={option.value}
-                        type="button"
-                        onClick={() => onChange(option.value)}
-                        aria-pressed={active}
-                        className={`bnd-press h-8 border-r border-white/10 px-1 text-[11px] font-medium transition-[background-color,color] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] last:border-r-0 ${active ? "bg-emerald-400/15 text-emerald-200" : "text-zinc-400 hover:bg-white/5 hover:text-zinc-200"}`}
-                    >
-                        {option.label}
-                    </button>
-                );
-            })}
-        </div>
+        <SharedSegmentedControl
+            value={value}
+            onValueChange={onChange}
+            items={options}
+            label="Choose trigger type"
+        />
     );
 }
 
 function StatusDot({ telemetry, enabled }) {
     const status = telemetry?.lastStatus;
     let color = "bg-zinc-600";
-    let pulse = false;
 
     if (!enabled) {
         color = "bg-zinc-700";
     } else if (status === "success") {
-        color = "bg-emerald-400";
-        pulse = true;
+        color = "bg-zinc-200";
     } else if (status === "failure" || status === "invalid") {
         color = "bg-rose-400";
     } else if (status === "loading") {
         color = "bg-amber-300";
-        pulse = true;
     }
 
     return (
-        <span className="relative flex h-2 w-2 shrink-0 items-center justify-center">
-            {pulse && <span className={`bnd-dot-pulse absolute inline-flex h-full w-full rounded-full ${color} opacity-60`} />}
-            <span className={`relative inline-flex h-1.5 w-1.5 rounded-full ${color}`} />
-        </span>
+        <span className={`h-3 w-0.5 shrink-0 rounded-full ${color}`} aria-hidden="true" />
     );
 }
 
@@ -186,43 +160,41 @@ function StatusDot({ telemetry, enabled }) {
 function BindingRow({ binding, folders, telemetry, selected, onSelect, onToggle, onMove }) {
     return (
         <div
-            role="button"
-            tabIndex={0}
             draggable
             onDragStart={(event) => {
                 event.dataTransfer.effectAllowed = "move";
                 event.dataTransfer.setData("application/x-binding-id", binding.id);
             }}
-            onClick={() => onSelect(binding.id)}
-            onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    onSelect(binding.id);
-                }
-            }}
-            className={`bnd-row flex w-full cursor-pointer items-center gap-3 px-4 py-3 text-left outline-none focus-visible:bg-white/5 ${selected ? "bg-emerald-400/[0.07]" : "hover:bg-white/[0.03]"}`}
+            className={`bnd-row flex w-full items-center gap-2 px-3 py-2 text-left ${selected ? "bg-white/[0.07]" : "hover:bg-white/[0.03]"}`}
         >
-            <StatusDot telemetry={telemetry} enabled={binding.enabled} />
-            <div className="min-w-0 flex-1">
-                <p className={`truncate text-[12px] font-medium ${binding.enabled ? "text-zinc-100" : "text-zinc-500"}`}>
-                    {binding.name}
-                </p>
-                <p className="mt-0.5 truncate font-mono text-[10px] text-zinc-500">
-                    {summarizeTrigger(binding.trigger)}
-                </p>
-            </div>
-            {telemetry?.runCount > 0 && (
-                <span className="shrink-0 font-mono text-[10px] tabular-nums text-zinc-500">
-                    {telemetry.runCount}
+            <button
+                type="button"
+                onClick={() => onSelect(binding.id)}
+                aria-current={selected ? "true" : undefined}
+                className="flex min-w-0 flex-1 items-center gap-3 rounded-[4px] px-1 py-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-white/45"
+            >
+                <StatusDot telemetry={telemetry} enabled={binding.enabled} />
+                <span className="min-w-0 flex-1">
+                    <span className={`block truncate text-[12px] font-medium ${binding.enabled ? "text-zinc-100" : "text-zinc-500"}`}>
+                        {binding.name}
+                    </span>
+                    <span className="mt-0.5 block truncate font-mono text-[11px] text-zinc-500">
+                        {summarizeTrigger(binding.trigger)}
+                    </span>
                 </span>
-            )}
-            <span onClick={(event) => event.stopPropagation()}>
+                {telemetry?.runCount > 0 && (
+                    <span className="shrink-0 font-mono text-[11px] tabular-nums text-zinc-500">
+                        {telemetry.runCount}
+                    </span>
+                )}
+            </button>
+            <div className="flex shrink-0 items-center gap-2">
                 <select
                     value={binding.folderId || ""}
                     onChange={(event) => onMove(binding.id, event.target.value || null)}
                     aria-label={`Move ${binding.name} to folder`}
                     title="Move to folder"
-                    className="mr-2 h-7 max-w-[96px] rounded border border-white/10 bg-[#171717] px-1.5 text-[10px] text-zinc-400 outline-none focus:border-emerald-400/40"
+                    className="h-8 max-w-[88px] rounded-[4px] border border-white/10 bg-[var(--slate-bg)] px-1.5 text-[11px] text-zinc-400 outline-none focus:border-white/30"
                 >
                     <option value="">Unfiled</option>
                     {folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
@@ -232,7 +204,7 @@ function BindingRow({ binding, folders, telemetry, selected, onSelect, onToggle,
                     onChange={(next) => onToggle(binding.id, next)}
                     label={`Enable ${binding.name}`}
                 />
-            </span>
+            </div>
         </div>
     );
 }
@@ -315,7 +287,7 @@ function BindingList({
     };
 
     return (
-        <aside className="flex w-[340px] shrink-0 flex-col border-r border-white/10 bg-[#202020]/60">
+        <aside className={`bnd-list flex w-[340px] shrink-0 flex-col border-r border-white/10 bg-[var(--slate-surface-1)] ${selectedId ? "bnd-list--detail-open" : ""}`}>
             <div className="flex items-center gap-2 border-b border-white/10 px-4 py-3">
                 <TextInput
                     value={query}
@@ -398,15 +370,17 @@ function BindingList({
                                 event.dataTransfer.effectAllowed = "move";
                                 event.dataTransfer.setData("application/x-folder-id", group.id);
                             }}
-                            className="sticky top-0 z-[1] flex min-h-8 items-center gap-2 border-b border-white/5 bg-[#232323] px-3"
+                            className="sticky top-0 z-[1] flex min-h-8 items-center gap-2 border-b border-white/5 bg-[var(--slate-surface-3)] px-3"
                         >
                             <button
                                 type="button"
                                 onClick={() => toggleCollapsed(group.id)}
-                                className="bnd-press h-6 w-5 text-[10px] text-zinc-500 hover:text-zinc-200"
+                                className="bnd-press h-6 w-5 text-[11px] text-zinc-500 hover:text-zinc-200"
                                 aria-label={`${isOpen ? "Collapse" : "Expand"} ${group.name}`}
                             >
-                                {isOpen ? "▾" : "▸"}
+                                {isOpen
+                                    ? <IconChevronDown size={14} stroke={1.75} aria-hidden="true" />
+                                    : <IconChevronRight size={14} stroke={1.75} aria-hidden="true" />}
                             </button>
                             {editingFolderId === group.id ? (
                                 <input
@@ -421,7 +395,7 @@ function BindingList({
                                             setEditingFolderId(null);
                                         }
                                     }}
-                                    className="h-6 min-w-0 flex-1 rounded border border-emerald-400/30 bg-[#171717] px-1.5 text-[10px] text-zinc-200 outline-none"
+                    className="h-7 min-w-0 flex-1 rounded-[4px] border border-white/20 bg-[var(--slate-bg)] px-1.5 text-[11px] text-zinc-200 outline-none focus:border-white/35"
                                     aria-label="Rename folder"
                                 />
                             ) : (
@@ -433,17 +407,17 @@ function BindingList({
                                         setFolderName(group.name);
                                     }}
                                     onClick={() => toggleCollapsed(group.id)}
-                                    className="min-w-0 flex-1 truncate text-left text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-500"
+                                    className="min-w-0 flex-1 truncate text-left text-[11px] font-medium text-zinc-500"
                                 >
                                     {group.name} <span className="font-mono text-zinc-600">{group.bindings.length}</span>
                                 </button>
                             )}
                             {!isUnfiled && editingFolderId !== group.id && (
                                 <div className="flex items-center text-zinc-600">
-                                    <button type="button" onClick={() => onMoveFolder(group.id, -1)} disabled={index === 0} className="bnd-press h-6 w-5 hover:text-zinc-300 disabled:opacity-25" aria-label={`Move ${group.name} up`}>↑</button>
-                                    <button type="button" onClick={() => onMoveFolder(group.id, 1)} disabled={index === manifest.folders.length - 1} className="bnd-press h-6 w-5 hover:text-zinc-300 disabled:opacity-25" aria-label={`Move ${group.name} down`}>↓</button>
-                                    <button type="button" onClick={() => { setEditingFolderId(group.id); setFolderName(group.name); }} className="bnd-press h-6 px-1 text-[9px] hover:text-zinc-300" aria-label={`Rename ${group.name}`}>Edit</button>
-                                    <button type="button" onClick={() => onDeleteFolder(group.id)} className="bnd-press h-6 w-5 hover:text-rose-300" aria-label={`Delete ${group.name}`}>×</button>
+                                    <button type="button" onClick={() => onMoveFolder(group.id, -1)} disabled={index === 0} className="bnd-press flex h-6 w-5 items-center justify-center hover:text-zinc-300 disabled:opacity-25" aria-label={`Move ${group.name} up`}><IconArrowUp size={13} stroke={1.75} aria-hidden="true" /></button>
+                                    <button type="button" onClick={() => onMoveFolder(group.id, 1)} disabled={index === manifest.folders.length - 1} className="bnd-press flex h-6 w-5 items-center justify-center hover:text-zinc-300 disabled:opacity-25" aria-label={`Move ${group.name} down`}><IconArrowDown size={13} stroke={1.75} aria-hidden="true" /></button>
+                                    <button type="button" onClick={() => { setEditingFolderId(group.id); setFolderName(group.name); }} className="bnd-press h-6 px-1 text-[11px] hover:text-zinc-300" aria-label={`Rename ${group.name}`}>Edit</button>
+                                    <button type="button" onClick={() => onDeleteFolder(group.id)} className="bnd-press flex h-6 w-5 items-center justify-center hover:text-rose-300" aria-label={`Delete ${group.name}`}><IconX size={13} stroke={1.75} aria-hidden="true" /></button>
                                 </div>
                             )}
                         </div>
@@ -461,7 +435,7 @@ function BindingList({
                                 />
                             ))}
                             {group.bindings.length === 0 && !query.trim() && (
-                                <p className="px-10 py-3 text-[10px] text-zinc-600">Drop bindings here</p>
+                                <p className="px-10 py-3 text-[11px] text-zinc-600">Drop bindings here</p>
                             )}
                         </div>}
                     </section>
@@ -479,7 +453,7 @@ function TriggerEditor({ binding, topics, onPatchTrigger }) {
 
     return (
         <section className="border-t border-white/10 pt-5">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500">Trigger</p>
+            <p className="text-[12px] font-medium text-zinc-400">Trigger</p>
             <div className="mt-3 flex flex-col gap-3">
                 <SegmentedControl
                     value={trigger.kind}
@@ -569,10 +543,10 @@ function ScriptPicker({ binding, scripts, scriptsLoading, onSelectScript }) {
 
     return (
         <section className="border-t border-white/10 pt-5">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500">Script</p>
+            <p className="text-[12px] font-medium text-zinc-400">Script</p>
             <div className="mt-3 flex flex-col gap-2">
                 {scriptsLoading ? (
-                    <div className="h-8 w-full animate-pulse rounded-md bg-white/5" />
+                    <div className="h-8 w-full animate-pulse rounded-[var(--radius)] bg-white/5" />
                 ) : (
                     <SelectInput
                         value={binding.scriptId || ""}
@@ -594,14 +568,14 @@ function ScriptPicker({ binding, scripts, scriptsLoading, onSelectScript }) {
                 )}
 
                 {selected && !selected.valid && (
-                    <p className="rounded-md border border-amber-300/15 bg-amber-400/10 px-2.5 py-2 text-[11px] leading-relaxed text-amber-200">
+                    <p className="rounded-[var(--radius)] border border-amber-300/15 bg-amber-400/10 px-2.5 py-2 text-[11px] leading-relaxed text-amber-200">
                         This script has no valid compiled artifact
                         {selected.error ? `: ${selected.error}` : "."} It will not run until it compiles.
                     </p>
                 )}
 
                 {selected?.valid && (
-                    <p className="font-mono text-[10px] text-zinc-500">
+                    <p className="font-mono text-[11px] text-zinc-500">
                         {selected.inputs} input{selected.inputs === 1 ? "" : "s"} / {selected.outputs} output{selected.outputs === 1 ? "" : "s"}
                     </p>
                 )}
@@ -615,8 +589,8 @@ function ActivationEditor({ binding, runManifests, loading, savingIds, onPatchSc
 
     return (
         <section className="border-t border-white/10 pt-5">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500">Active for</p>
-            <div className="mt-3 grid grid-cols-2 overflow-hidden rounded-md border border-white/10 bg-[#171717]">
+            <p className="text-[12px] font-medium text-zinc-400">Active for</p>
+            <div className="mt-3 grid grid-cols-2 overflow-hidden rounded-[var(--radius)] border border-white/10 bg-[var(--slate-bg)]">
                 {[
                     { value: BINDING_SCOPES.GLOBAL, label: "All manifests" },
                     { value: BINDING_SCOPES.SELECTED, label: "Selected manifests" },
@@ -628,7 +602,7 @@ function ActivationEditor({ binding, runManifests, loading, savingIds, onPatchSc
                             type="button"
                             onClick={() => onPatchScope(option.value)}
                             aria-pressed={active}
-                            className={`bnd-press h-9 border-r border-white/10 text-[11px] font-medium last:border-r-0 ${active ? "bg-emerald-400/15 text-emerald-200" : "text-zinc-400 hover:bg-white/5 hover:text-zinc-200"}`}
+                            className={`bnd-press h-9 border-r border-white/10 text-[11px] font-medium last:border-r-0 ${active ? "bg-white/10 text-zinc-100" : "text-zinc-400 hover:bg-white/5 hover:text-zinc-200"}`}
                         >
                             {option.label}
                         </button>
@@ -641,7 +615,7 @@ function ActivationEditor({ binding, runManifests, loading, savingIds, onPatchSc
                     This binding is included in every current and future run manifest.
                 </p>
             ) : (
-                <div className="mt-3 overflow-hidden rounded-md border border-white/10 bg-[#171717]">
+                <div className="mt-3 overflow-hidden rounded-[var(--radius)] border border-white/10 bg-[var(--slate-bg)]">
                     {loading && <div className="h-20 animate-pulse bg-white/[0.03]" />}
                     {!loading && runManifests.length === 0 && (
                         <p className="px-3 py-4 text-[11px] text-zinc-500">No run manifests are available.</p>
@@ -656,13 +630,13 @@ function ActivationEditor({ binding, runManifests, loading, savingIds, onPatchSc
                                     checked={checked}
                                     disabled={saving}
                                     onChange={(event) => onToggleManifest(entry.id, event.target.checked)}
-                                    className="h-3.5 w-3.5 accent-emerald-400"
+                                    className="h-3.5 w-3.5 accent-zinc-200"
                                 />
                                 <span className="min-w-0 flex-1">
                                     <span className="block truncate text-[11px] font-medium text-zinc-200">{entry.name}</span>
-                                    <span className="block truncate font-mono text-[9px] text-zinc-600">{entry.id}</span>
+                                    <span className="block truncate font-mono text-[11px] text-zinc-600">{entry.id}</span>
                                 </span>
-                                {saving && <span className="text-[9px] text-zinc-500">Saving</span>}
+                                {saving && <span className="text-[11px] text-zinc-500">Saving</span>}
                             </label>
                         );
                     })}
@@ -680,7 +654,7 @@ function InputMappingRows({ binding, artifact, onPatchInput }) {
 
     return (
         <section className="border-t border-white/10 pt-5">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500">Inputs</p>
+            <p className="text-[12px] font-medium text-zinc-400">Inputs</p>
             {interfaceInputs.length === 0 && (
                 <p className="mt-2 text-[11px] text-zinc-500">This script takes no inputs.</p>
             )}
@@ -693,7 +667,7 @@ function InputMappingRows({ binding, artifact, onPatchInput }) {
                         <div key={port.label} className="grid grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,1.4fr)] items-center gap-3 py-2.5">
                             <div className="min-w-0">
                                 <p className="truncate font-mono text-[11px] text-zinc-200">{port.label}</p>
-                                <p className="truncate font-mono text-[9px] text-zinc-600">{port.type}</p>
+                                <p className="truncate font-mono text-[11px] text-zinc-600">{port.type}</p>
                             </div>
                             <SelectInput
                                 value={mapping.source}
@@ -762,7 +736,7 @@ function OutputMappingRows({ binding, artifact, onPatchOutput }) {
 
     return (
         <section className="border-t border-white/10 pt-5">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500">Outputs</p>
+            <p className="text-[12px] font-medium text-zinc-400">Outputs</p>
             {interfaceOutputs.length === 0 && (
                 <p className="mt-2 text-[11px] text-zinc-500">This script produces no outputs.</p>
             )}
@@ -775,7 +749,7 @@ function OutputMappingRows({ binding, artifact, onPatchOutput }) {
                         <div key={port.label} className="grid grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,1.4fr)] items-center gap-3 py-2.5">
                             <div className="min-w-0">
                                 <p className="truncate font-mono text-[11px] text-zinc-200">{port.label}</p>
-                                <p className="truncate font-mono text-[9px] text-zinc-600">{port.type}</p>
+                                <p className="truncate font-mono text-[11px] text-zinc-600">{port.type}</p>
                             </div>
                             <SelectInput
                                 value={mapping.sink}
@@ -842,7 +816,7 @@ function RunFooter({ binding, telemetry, issues, onRunNow, onDelete, running }) 
             </div>
 
             {issues.length > 0 && (
-                <ul className="mt-3 flex flex-col gap-1 rounded-md border border-amber-300/15 bg-amber-400/10 px-3 py-2">
+                <ul className="mt-3 flex flex-col gap-1 rounded-[var(--radius)] border border-amber-300/15 bg-amber-400/10 px-3 py-2">
                     {issues.map((issue) => (
                         <li key={issue} className="text-[11px] leading-relaxed text-amber-200">{issue}</li>
                     ))}
@@ -850,9 +824,9 @@ function RunFooter({ binding, telemetry, issues, onRunNow, onDelete, running }) 
             )}
 
             {telemetry?.lastStatus && (
-                <div className="mt-3 rounded-md border border-white/10 bg-[#171717] px-3 py-2.5">
+                <div className="mt-3 rounded-[var(--radius)] border border-white/10 bg-[var(--slate-bg)] px-3 py-2.5">
                     <div className="flex items-center gap-2">
-                        <span className={`text-[11px] font-medium ${telemetry.lastStatus === "success" ? "text-emerald-200" : telemetry.lastStatus === "loading" ? "text-amber-200" : "text-rose-200"}`}>
+                        <span className={`text-[11px] font-medium ${telemetry.lastStatus === "success" ? "text-zinc-200" : telemetry.lastStatus === "loading" ? "text-amber-200" : "text-rose-200"}`}>
                             {telemetry.lastStatus === "success" ? "Last run succeeded"
                                 : telemetry.lastStatus === "loading" ? "Script still loading"
                                 : telemetry.lastStatus === "invalid" ? "Binding invalid"
@@ -860,7 +834,7 @@ function RunFooter({ binding, telemetry, issues, onRunNow, onDelete, running }) 
                         </span>
                         <div className="flex-1" />
                         {lastRanAt && (
-                            <span className="font-mono text-[10px] tabular-nums text-zinc-500">
+                            <span className="font-mono text-[11px] tabular-nums text-zinc-500">
                                 {telemetry.runCount || 0} runs · {lastRanAt}
                             </span>
                         )}
@@ -874,8 +848,8 @@ function RunFooter({ binding, telemetry, issues, onRunNow, onDelete, running }) 
                         <div className="mt-2 flex flex-col gap-1 border-t border-white/5 pt-2">
                             {Object.entries(telemetry.lastOutputs).map(([key, value]) => (
                                 <div key={key} className="flex items-baseline gap-2">
-                                    <span className="shrink-0 font-mono text-[10px] text-zinc-500">{key}</span>
-                                    <span className="truncate font-mono text-[10px] text-zinc-300">{previewValue(value)}</span>
+                                    <span className="shrink-0 font-mono text-[11px] text-zinc-500">{key}</span>
+                                    <span className="truncate font-mono text-[11px] text-zinc-300">{previewValue(value)}</span>
                                 </div>
                             ))}
                         </div>
@@ -906,11 +880,12 @@ function DetailPanel({
     onPatchOutput,
     onRunNow,
     onDelete,
-    running
+    running,
+    onBack
 }) {
     if (!binding) {
         return (
-            <div className="flex min-w-0 flex-1 items-center justify-center">
+            <div className="bnd-detail-empty flex min-w-0 flex-1 items-center justify-center">
                 <div className="max-w-[300px] text-center">
                     <p className="text-[13px] font-medium text-zinc-400">Select a binding</p>
                     <p className="mt-2 text-[11px] leading-relaxed text-zinc-600">
@@ -932,12 +907,15 @@ function DetailPanel({
                 {signalPaths.map((path) => <option key={path} value={path} />)}
             </datalist>
             <div className="mx-auto flex max-w-[640px] flex-col gap-5 px-8 py-8 pb-16">
+                <button type="button" onClick={onBack} className="bnd-btn bnd-mobile-back hidden self-start">
+                    Back to bindings
+                </button>
                 <div className="flex items-center gap-3">
                     <input
                         value={binding.name}
                         onChange={(event) => onPatch({ name: event.target.value })}
                         aria-label="Binding name"
-                        className="h-9 w-full min-w-0 flex-1 rounded-md border border-transparent bg-transparent px-1 text-[16px] font-semibold tracking-tight text-zinc-50 outline-none transition-[border-color,background-color] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:border-white/10 focus:border-emerald-400/40 focus:bg-[#171717]"
+                        className="h-9 w-full min-w-0 flex-1 rounded-[4px] border border-transparent bg-transparent px-1 text-[16px] font-semibold tracking-tight text-zinc-50 outline-none transition-[border-color,background-color] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:border-white/10 focus:border-white/30 focus:bg-[var(--slate-bg)]"
                     />
                     <Toggle
                         checked={binding.enabled}
@@ -978,7 +956,7 @@ function DetailPanel({
 
 // ----------------------------------------------------------------------- page
 
-export default function BindingsPage() {
+export default function BindingsPage({ onOpenWorkspace }) {
     const runtime = useMemo(() => getBindingRuntime(), []);
 
     const [snapshot, setSnapshot] = useState(null);
@@ -1333,12 +1311,14 @@ export default function BindingsPage() {
     const loading = !manifest;
 
     return (
-        <div className="bnd-page fixed inset-0 flex min-h-[100dvh] flex-col bg-[#292929] font-sans text-white">
-            <header className="flex h-14 shrink-0 items-center gap-4 border-b border-white/10 bg-[#202020]/95 px-5 backdrop-blur">
-                <div className="min-w-0">
-                    <h1 className="text-[14px] font-semibold tracking-tight text-zinc-50">Bindings</h1>
-                    <p className="text-[10px] text-zinc-500">Wire scripts to topics, ticks, signals, and timers</p>
-                </div>
+        <div className="bnd-page fixed inset-0 z-[1] flex min-h-[100dvh] flex-col bg-[var(--slate-bg)] font-sans text-white">
+            <header className="flex h-10 shrink-0 items-center gap-4 border-b border-white/8 bg-[var(--slate-surface-1)] px-4">
+                <button type="button" onClick={onOpenWorkspace} className="flex min-w-0 items-center gap-2 rounded-[4px] px-1 py-1 text-left outline-none hover:bg-white/5 focus-visible:ring-2 focus-visible:ring-white/45" aria-label="Open workspace switcher">
+                    <span className="text-[11px] font-semibold text-zinc-500">cev-sim</span>
+                    <span className="h-3 w-px bg-white/10" aria-hidden="true" />
+                    <span className="text-[13px] font-medium text-zinc-100">Bindings</span>
+                    <span className="hidden text-[11px] text-zinc-500 min-[900px]:inline">Wire scripts to topics, ticks, signals, and timers</span>
+                </button>
 
                 <div className="flex-1" />
 
@@ -1355,12 +1335,12 @@ export default function BindingsPage() {
 
             {loading ? (
                 <div className="flex flex-1">
-                    <div className="w-[340px] shrink-0 border-r border-white/10 bg-[#202020]/60 p-4">
+                    <div className="w-[340px] shrink-0 border-r border-white/10 bg-[var(--slate-surface-2)]/60 p-4">
                         <div className="flex flex-col gap-2">
-                            <div className="h-8 animate-pulse rounded-md bg-white/5" />
-                            <div className="mt-3 h-10 animate-pulse rounded-md bg-white/5" />
-                            <div className="h-10 animate-pulse rounded-md bg-white/[0.04]" />
-                            <div className="h-10 animate-pulse rounded-md bg-white/[0.03]" />
+                            <div className="h-8 animate-pulse rounded-[var(--radius)] bg-white/5" />
+                            <div className="mt-3 h-10 animate-pulse rounded-[var(--radius)] bg-white/5" />
+                            <div className="h-10 animate-pulse rounded-[var(--radius)] bg-white/[0.04]" />
+                            <div className="h-10 animate-pulse rounded-[var(--radius)] bg-white/[0.03]" />
                         </div>
                     </div>
                     <div className="flex-1" />
@@ -1404,12 +1384,13 @@ export default function BindingsPage() {
                         onRunNow={runNow}
                         onDelete={deleteSelected}
                         running={running}
+                        onBack={() => setSelectedId(null)}
                     />
                 </div>
             )}
 
             {feedback && (
-                <div className="bnd-toast fixed left-1/2 top-4 z-[60] -translate-x-1/2 rounded-md border border-white/10 bg-[#171717]/95 px-3 py-1.5 text-xs font-medium text-zinc-100 shadow-[0_12px_36px_rgba(0,0,0,0.28)] backdrop-blur">
+                <div className="bnd-toast fixed left-1/2 top-4 z-[60] -translate-x-1/2 rounded-[4px] border border-white/10 bg-[var(--slate-floating)] px-3 py-1.5 text-xs font-medium text-zinc-100 shadow-[0_12px_36px_rgba(0,0,0,0.28)] backdrop-blur-sm" role="status" aria-live="polite">
                     {feedback}
                 </div>
             )}
@@ -1418,9 +1399,9 @@ export default function BindingsPage() {
                 .bnd-page .bnd-btn {
                     height: 30px;
                     padding: 0 12px;
-                    border-radius: 6px;
+                    border-radius: 4px;
                     border: 1px solid rgba(255, 255, 255, 0.1);
-                    background: #171717;
+                    background: var(--slate-bg);
                     color: #d4d4d8;
                     font-size: 12px;
                     font-weight: 500;
@@ -1432,7 +1413,7 @@ export default function BindingsPage() {
                 }
 
                 .bnd-page .bnd-btn:hover:not(:disabled) {
-                    background: #1f1f1f;
+                    background: var(--slate-surface-2);
                     color: #fafafa;
                 }
 
@@ -1447,14 +1428,14 @@ export default function BindingsPage() {
                 }
 
                 .bnd-page .bnd-btn--primary {
-                    border-color: rgba(52, 211, 153, 0.25);
-                    background: rgba(52, 211, 153, 0.12);
-                    color: #a7f3d0;
+                    border-color: rgba(255, 255, 255, 0.82);
+                    background: #e9eaec;
+                    color: var(--slate-bg);
                 }
 
                 .bnd-page .bnd-btn--primary:hover:not(:disabled) {
-                    background: rgba(52, 211, 153, 0.18);
-                    color: #d1fae5;
+                    background: #f4f4f4;
+                    color: var(--slate-bg);
                 }
 
                 .bnd-page .bnd-btn--danger {
@@ -1492,22 +1473,6 @@ export default function BindingsPage() {
                         transform 150ms var(--ease-out-ui);
                 }
 
-                @keyframes bnd-dot-pulse {
-                    0%, 100% {
-                        transform: scale(1);
-                        opacity: 0.55;
-                    }
-                    50% {
-                        transform: scale(2);
-                        opacity: 0;
-                    }
-                }
-
-                .bnd-dot-pulse {
-                    animation: bnd-dot-pulse 2.2s var(--ease-in-out-ui) infinite;
-                    will-change: transform, opacity;
-                }
-
                 @starting-style {
                     .bnd-page .bnd-detail {
                         opacity: 0;
@@ -1534,8 +1499,28 @@ export default function BindingsPage() {
                         transform: none !important;
                     }
 
-                    .bnd-dot-pulse {
-                        animation: none;
+                }
+
+                @media (max-width: 899px) {
+                    .bnd-page .bnd-list {
+                        width: 100%;
+                        border-right: 0;
+                    }
+
+                    .bnd-page .bnd-list--detail-open {
+                        display: none;
+                    }
+
+                    .bnd-page .bnd-detail-empty {
+                        display: none;
+                    }
+
+                    .bnd-page .bnd-mobile-back {
+                        display: inline-flex;
+                    }
+
+                    .bnd-page .bnd-detail > div {
+                        padding: 20px 16px 48px;
                     }
                 }
             `}</style>
