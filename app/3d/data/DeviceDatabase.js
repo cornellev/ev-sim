@@ -1,10 +1,8 @@
 import Device from "../devices/Device";
 import { Database } from "./Database";
 import { validateDeviceTelemetryId } from "./DeviceTelemetryId";
-import { ManifestCamera } from "../devices/ManifestCamera.js";
-import { ManifestLidar3d } from "../devices/ManifestLidar3d.js";
-
-const DEVICE_SIGNAL_SUFFIXES = ["enabled", "pose", "output", "image", "cameraInfo", "pointCloud", "droppedFrames", "errors"];
+import { createRunSensorDevice } from "../devices/SensorRuntimeRegistry.js";
+import { getDeviceTelemetrySignals } from "./DeviceTelemetrySignals.js";
 
 export class DeviceDatabase extends Database {
     constructor(parent) {
@@ -43,14 +41,19 @@ export class DeviceDatabase extends Database {
     _defineDeviceSignals(device) {
         const telemetry = this.parent?.bindings?.()?.signalStore;
         const prefix = `devices.${device.telemetryId}`;
-        telemetry?.defineSignal?.({ path: `${prefix}.enabled`, type: "boolean", source: "devices", category: "devices", replayRole: "state", logClass: "standard" });
-        telemetry?.defineSignal?.({ path: `${prefix}.pose`, type: "pose3", source: "devices", category: "devices", replayRole: "state", logClass: "standard" });
-        telemetry?.defineSignal?.({ path: `${prefix}.output`, type: "bytes", source: "devices", category: "devices", replayRole: "derived", logClass: "heavy", metadata: { deviceType: device.constructor?.name || "Device" } });
-        telemetry?.defineSignal?.({ path: `${prefix}.image`, type: "bytes", source: "devices", category: "devices", replayRole: "derived", logClass: "heavy", metadata: { deviceType: device.constructor?.name || "Device", rosType: "sensor_msgs/Image" } });
-        telemetry?.defineSignal?.({ path: `${prefix}.cameraInfo`, type: "bytes", source: "devices", category: "devices", replayRole: "derived", logClass: "heavy", metadata: { deviceType: device.constructor?.name || "Device", rosType: "sensor_msgs/CameraInfo" } });
-        telemetry?.defineSignal?.({ path: `${prefix}.pointCloud`, type: "bytes", source: "devices", category: "devices", replayRole: "derived", logClass: "heavy", metadata: { deviceType: device.constructor?.name || "Device", rosType: "sensor_msgs/PointCloud2" } });
-        telemetry?.defineSignal?.({ path: `${prefix}.droppedFrames`, type: "uint64", source: "devices", category: "devices", replayRole: "state", logClass: "standard" });
-        telemetry?.defineSignal?.({ path: `${prefix}.errors`, type: "uint64", source: "devices", category: "devices", replayRole: "state", logClass: "standard" });
+        const signals = getDeviceTelemetrySignals(device);
+        for (const signal of signals) {
+            telemetry?.defineSignal?.({
+                path: `${prefix}.${signal.suffix}`,
+                type: signal.type,
+                source: "devices",
+                category: "devices",
+                replayRole: signal.replayRole,
+                logClass: signal.logClass,
+                ...(signal.metadata ? { metadata: signal.metadata } : {}),
+            });
+        }
+        device._telemetrySignalSuffixes = signals.map((signal) => signal.suffix);
     }
 
     renameTelemetryId(device, value) {
@@ -64,7 +67,9 @@ export class DeviceDatabase extends Database {
         if (validation.id === previousId) return previousId;
 
         const telemetry = this.parent?.bindings?.()?.signalStore;
-        for (const suffix of DEVICE_SIGNAL_SUFFIXES) telemetry?.removeSignal?.(`devices.${previousId}.${suffix}`);
+        for (const suffix of device._telemetrySignalSuffixes || getDeviceTelemetrySignals(device).map((signal) => signal.suffix)) {
+            telemetry?.removeSignal?.(`devices.${previousId}.${suffix}`);
+        }
         device.telemetryId = validation.id;
         if (device.settings && typeof device.settings === "object") device.settings.telemetryId = validation.id;
         this._defineDeviceSignals(device);
@@ -109,9 +114,7 @@ export class DeviceDatabase extends Database {
         const byId = new Map(vehicles.map((vehicle, index) => [vehicle.telemetryId || `vehicle-${index + 1}`, vehicle]));
         for (const config of [...(sensorRig.sensors || [])].sort((left, right) => left.id.localeCompare(right.id))) {
             if (config.enabled === false) continue;
-            const device = config.type === "camera"
-                ? new ManifestCamera(config, options)
-                : new ManifestLidar3d(config, options);
+            const device = createRunSensorDevice(config, options);
             const vehicle = byId.get(config.parentId);
             if (!vehicle) throw new Error(`Sensor "${config.id}" references unknown parent vehicle "${config.parentId}".`);
             this.addDevice(device);

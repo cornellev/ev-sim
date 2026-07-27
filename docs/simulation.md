@@ -58,6 +58,12 @@ The bottom simulation menu in `app/3d/overlay/SimulationMenu.js` exposes some of
 
 Vehicles live under `app/3d/vehicles/`. Sensors live under `app/3d/devices/`. New runtime behavior usually belongs in a vehicle/device class and then gets registered through the appropriate `Data` registry during scene setup.
 
+### Adding a sensor type
+
+Sensor types are modular definitions rather than conditionals in manifest or editor code. Add a definition with `registerSensorType` in `app/3d/devices/SensorTypeRegistry.js`; the definition owns its label, ID prefix, run and vehicle defaults, normalization, editor fields, output signals, ROS schemas, and display metadata. Then add the Three.js implementations with one `registerSensorRuntime` entry in `app/3d/devices/SensorRuntimeRegistry.js`, providing run-device, vehicle-device, and optional preview factories. The Config page, Vehicle Editor, manifest validation, telemetry signals, runtime construction, and previews consume those registries automatically.
+
+Keep the definition registry platform-neutral because run and vehicle manifests are normalized on both the browser and server. Runtime factories may import Three.js and device classes. Unknown type IDs are preserved for forward compatibility, but validation and runtime creation reject them until both registrations exist.
+
 Current orchestrator control input is handled in `app/3d/Scene.js`: updates on `/ackdrive` are read as `sensor_fusion_msgs/AckermannDrive`, then converted from mph/degrees to m/s/radians before being applied to the main car.
 
 ## Scenario Assets

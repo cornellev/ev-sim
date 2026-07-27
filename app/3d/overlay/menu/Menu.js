@@ -22,6 +22,16 @@ export default function Menu({
 
     const topLevelItems = useMemo(() => [
         {
+            key: APP_VIEWS.CONFIG,
+            label: "Config",
+            hint: "Settings panel",
+            icon: <FaCog className="h-4 w-4" />,
+            onSelect: onConfig,
+        },
+    ], [onConfig]);
+
+    const analysisChildren = useMemo(() => [
+        {
             key: APP_VIEWS.REPLAY,
             label: "Replay",
             hint: "Inspect recorded simulation state",
@@ -30,19 +40,12 @@ export default function Menu({
         },
         {
             key: APP_VIEWS.ANALYSIS,
-            label: "Analysis",
+            label: "Live Analysis",
             hint: "Graph live and recorded signals",
             icon: <FaChartLine className="h-4 w-4" />,
             onSelect: onAnalysis,
         },
-        {
-            key: APP_VIEWS.CONFIG,
-            label: "Config",
-            hint: "Settings panel",
-            icon: <FaCog className="h-4 w-4" />,
-            onSelect: onConfig,
-        },
-    ], [onAnalysis, onConfig, onReplay]);
+    ], [onAnalysis, onReplay]);
 
     const threeDChildren = useMemo(() => [
         {
@@ -94,6 +97,11 @@ export default function Menu({
             return `3d:${APP_VIEWS.VEHICLE_EDITOR}`;
         }
 
+        const activeAnalysisChild = analysisChildren.find((item) => item.key === activeView && typeof item.onSelect === "function");
+        if (activeAnalysisChild) {
+            return `analysis:${activeAnalysisChild.key}`;
+        }
+
         const activeScriptingChild = scriptingChildren.find((item) => item.key === activeView && typeof item.onSelect === "function");
         if (activeScriptingChild) {
             return `scripting:${activeScriptingChild.key}`;
@@ -104,7 +112,7 @@ export default function Menu({
         const firstEnabledTopLevel = topLevelItems.find((item) => typeof item.onSelect === "function");
 
         return activeItem?.key ?? firstEnabledChild?.key ?? firstEnabledTopLevel?.key;
-    }, [activeThreeDMode, activeView, scriptingChildren, threeDChildren, topLevelItems]);
+    }, [activeThreeDMode, activeView, analysisChildren, scriptingChildren, threeDChildren, topLevelItems]);
 
     useEffect(() => {
         const previousFocus = document.activeElement;
@@ -118,6 +126,7 @@ export default function Menu({
     }, []);
 
     const threeDActive = activeView === APP_VIEWS.THREE_D || activeView === APP_VIEWS.VEHICLE_EDITOR;
+    const analysisActive = activeView === APP_VIEWS.REPLAY || activeView === APP_VIEWS.ANALYSIS;
     const scriptingActive = activeView === APP_VIEWS.SCRIPTING || activeView === APP_VIEWS.BINDINGS;
 
     return (
@@ -138,11 +147,8 @@ export default function Menu({
             >
                 <div className="flex items-center justify-between gap-3 px-2 py-2">
                     <div className="min-w-0">
-                        <p id="route-switcher-title" className="text-[13px] font-semibold tracking-wide text-zinc-50">
-                            Switch workspace
-                        </p>
-                        <p className="mt-0.5 text-[11px] text-zinc-400">
-                            Choose where to work next.
+                        <p id="route-switcher-title" className="text-[12px] font-semibold tracking-wide text-zinc-50">
+                            Workspace
                         </p>
                     </div>
                     <button
@@ -166,12 +172,11 @@ export default function Menu({
                         )}
                     >
                         <div className="mb-1.5 flex items-center gap-2 px-1">
-                            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-zinc-700/70 bg-zinc-900/80 text-zinc-300">
-                                <FaCube className="h-4 w-4" />
+                            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-xl border border-zinc-700/70 bg-zinc-900/80 text-zinc-300">
+                                <FaCube className="h-3 w-3" />
                             </span>
                             <div className="min-w-0 flex-1">
-                                <p className="text-[13px] font-semibold tracking-wide text-zinc-50">3D</p>
-                                <p className="text-[11px] text-zinc-400">Simulation and environment workspaces</p>
+                                <p className="text-[12px] font-semibold tracking-wide text-zinc-50">3D</p>
                             </div>
                             {threeDActive && (
                                 <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-sky-400/15 text-sky-200">
@@ -223,8 +228,80 @@ export default function Menu({
                                             <span className="block truncate text-[12px] font-semibold tracking-wide">
                                                 {item.label}
                                             </span>
-                                            <span className="mt-0.5 block truncate text-[10px] text-zinc-400">
-                                                {enabled ? item.hint : "Not wired yet"}
+                                        </span>
+                                        {active && (
+                                            <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-sky-400/15 text-sky-200">
+                                                <FaCheck className="h-2.5 w-2.5" />
+                                            </span>
+                                        )}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
+
+                    <div
+                        className={cn(
+                            "rounded-xl border px-2 py-2",
+                            analysisActive
+                                ? "border-sky-400/50 bg-sky-500/10"
+                                : "border-zinc-700/60 bg-zinc-900/35"
+                        )}
+                    >
+                        <div className="mb-1.5 flex items-center gap-2 px-1">
+                            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-xl border border-zinc-700/70 bg-zinc-900/80 text-zinc-300">
+                                <FaChartLine className="h-3 w-3" />
+                            </span>
+                            <div className="min-w-0 flex-1">
+                                <p className="text-[12px] font-semibold tracking-wide text-zinc-50">Analysis</p>
+                            </div>
+                            {analysisActive && (
+                                <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-sky-400/15 text-sky-200">
+                                    <FaCheck className="h-3 w-3" />
+                                </span>
+                            )}
+                        </div>
+
+                        <div className="space-y-1 pl-2">
+                            {analysisChildren.map((item) => {
+                                const enabled = typeof item.onSelect === "function";
+                                const active = item.key === activeView;
+                                const itemKey = `analysis:${item.key}`;
+
+                                return (
+                                    <button
+                                        key={item.key}
+                                        ref={itemKey === focusKey ? focusItemRef : undefined}
+                                        type="button"
+                                        disabled={!enabled}
+                                        aria-current={active ? "page" : undefined}
+                                        className={cn(
+                                            "route-switcher-item flex w-full items-center gap-3 rounded-xl border px-3 py-2.5 text-left focus:outline-none focus:ring-2 focus:ring-sky-400/60",
+                                            active
+                                                ? "border-sky-400/70 bg-sky-500/15 text-sky-50"
+                                                : "border-transparent bg-zinc-900/35 text-zinc-100",
+                                            enabled
+                                                ? "cursor-pointer hover:border-zinc-600/80 hover:bg-zinc-800/80"
+                                                : "cursor-not-allowed opacity-45"
+                                        )}
+                                        onClick={() => {
+                                            if (!enabled) return;
+                                            item.onSelect();
+                                        }}
+                                    >
+                                        <span
+                                            className={cn(
+                                                "flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border",
+                                                active
+                                                    ? "border-sky-400/70 bg-sky-500/20 text-sky-100"
+                                                    : "border-zinc-700/70 bg-zinc-900/80 text-zinc-300"
+                                            )}
+                                        >
+                                            {item.icon}
+                                        </span>
+                                        <span className="min-w-0 flex-1">
+                                            <span className="block truncate text-[12px] font-semibold tracking-wide">
+                                                {item.label}
                                             </span>
                                         </span>
                                         {active && (
@@ -247,12 +324,11 @@ export default function Menu({
                         )}
                     >
                         <div className="mb-1.5 flex items-center gap-2 px-1">
-                            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-zinc-700/70 bg-zinc-900/80 text-zinc-300">
-                                <FaCode className="h-4 w-4" />
+                            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-xl border border-zinc-700/70 bg-zinc-900/80 text-zinc-300">
+                                <FaCode className="h-3 w-3" />
                             </span>
                             <div className="min-w-0 flex-1">
-                                <p className="text-[13px] font-semibold tracking-wide text-zinc-50">Scripting</p>
-                                <p className="text-[11px] text-zinc-400">All things to do with making the simulation tick</p>
+                                <p className="text-[12px] font-semibold tracking-wide text-zinc-50">Scripting</p>
                             </div>
                             {scriptingActive && (
                                 <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-sky-400/15 text-sky-200">
@@ -301,9 +377,6 @@ export default function Menu({
                                         <span className="min-w-0 flex-1">
                                             <span className="block truncate text-[12px] font-semibold tracking-wide">
                                                 {item.label}
-                                            </span>
-                                            <span className="mt-0.5 block truncate text-[10px] text-zinc-400">
-                                                {enabled ? item.hint : "Not wired yet"}
                                             </span>
                                         </span>
                                         {active && (
@@ -355,9 +428,6 @@ export default function Menu({
                                 <span className="min-w-0 flex-1">
                                     <span className="block truncate text-[13px] font-semibold tracking-wide">
                                         {item.label}
-                                    </span>
-                                    <span className="mt-0.5 block truncate text-[11px] text-zinc-400">
-                                        {enabled ? item.hint : "Not wired yet"}
                                     </span>
                                 </span>
                                 {active && (

@@ -1,3 +1,10 @@
+import {
+    createRunSensor,
+    listSensorTypes,
+    normalizeRunSensor,
+    validateRunSensorDefinition,
+} from "../3d/devices/SensorTypeRegistry.js";
+
 export const RUN_MANIFEST_KIND = "cev-sim.run-manifest";
 export const RUN_MANIFEST_VERSION = 1;
 export const RUN_BUNDLE_KIND = "cev-sim.run-bundle";
@@ -5,7 +12,7 @@ export const RUN_BUNDLE_VERSION = 1;
 
 export const RUN_LOGGING_POLICIES = Object.freeze(["required", "optional", "disabled"]);
 export const RUN_PACING_MODES = Object.freeze(["realtime", "unbounded"]);
-export const SENSOR_TYPES = Object.freeze(["camera", "lidar3d"]);
+export const SENSOR_TYPES = Object.freeze(listSensorTypes().map((definition) => definition.id));
 
 const DEFAULT_MODULES = Object.freeze({
     inputs: true,
@@ -74,61 +81,6 @@ function topic(value = {}, index = 0) {
     };
 }
 
-function sensor(value = {}, index = 0) {
-    const source = object(value);
-    const type = SENSOR_TYPES.includes(source.type) ? source.type : "lidar3d";
-    const id = text(source.id, `sensor-${index + 1}`);
-    const defaultCalibration = type === "camera"
-        ? {
-            width: 320,
-            height: 180,
-            encoding: "rgba8",
-            verticalFovDeg: 75,
-            near: 0.1,
-            far: 200,
-            distortionModel: "plumb_bob",
-            distortion: [0, 0, 0, 0, 0],
-        }
-        : {
-            range: 20,
-            azimuth: { startDeg: -180, endDeg: 180, stepDeg: 2 },
-            elevation: { startDeg: -20, endDeg: 20, stepDeg: 1 },
-        };
-    const defaultSchema = type === "camera"
-        ? { imageTopicId: "sensor_msgs/Image", cameraInfoTopicId: "sensor_msgs/CameraInfo" }
-        : { pointCloudTopicId: "sensor_msgs/PointCloud2" };
-    return {
-        id,
-        type,
-        enabled: source.enabled !== false,
-        parentId: text(source.parentId, "ego"),
-        frameId: text(source.frameId, `${id}_frame`),
-        pose: pose(source.pose),
-        rateHz: Math.max(0.001, finite(source.rateHz, type === "camera" ? 30 : 10)),
-        phaseNs: nonNegativeInteger(source.phaseNs, 0),
-        calibration: {
-            ...defaultCalibration,
-            ...object(source.calibration),
-        },
-        latency: {
-            fixedNs: nonNegativeInteger(source.latency?.fixedNs, 0),
-            jitterNs: nonNegativeInteger(source.latency?.jitterNs, 0),
-        },
-        noise: {
-            model: ["none", "gaussian"].includes(source.noise?.model) ? source.noise.model : "none",
-            standardDeviation: Math.max(0, finite(source.noise?.standardDeviation, 0)),
-            bias: finite(source.noise?.bias, 0),
-            dropoutProbability: Math.min(1, Math.max(0, finite(source.noise?.dropoutProbability, 0))),
-        },
-        outputs: object(source.outputs),
-        schema: { ...defaultSchema, ...object(source.schema) },
-        determinism: type === "camera"
-            ? { comparison: "semantic-tolerance", crossDeviceByteEquality: false }
-            : { comparison: "numeric-tolerance", crossDeviceByteEquality: true },
-        maxQueueFrames: positiveInteger(source.maxQueueFrames, 8),
-    };
-}
-
 function assertion(value = {}, index = 0) {
     const source = object(value);
     const assertionSource = source.source === "event" ? "event" : "signal";
@@ -185,17 +137,15 @@ export function createDefaultRunManifest(overrides = {}) {
         sensorRig: {
             rootFrameId: "base_link",
             sensors: [
-                sensor({
+                createRunSensor("camera", {
                     id: "front-camera",
-                    type: "camera",
                     parentId: "ego",
                     frameId: "front_camera_optical_frame",
                     pose: { position: { x: 1.5, y: 0.5, z: 0 } },
                     outputs: { imageTopicId: "front-camera-image", cameraInfoTopicId: "front-camera-info" },
                 }),
-                sensor({
+                createRunSensor("lidar3d", {
                     id: "front-lidar",
-                    type: "lidar3d",
                     parentId: "ego",
                     frameId: "front_lidar_frame",
                     pose: { position: { x: 0.35, y: 0.8, z: 0 } },
@@ -260,7 +210,8 @@ export function normalizeRunManifest(value, { allowMissingKind = false } = {}) {
         },
         sensorRig: {
             rootFrameId: text(source.sensorRig?.rootFrameId, "base_link"),
-            sensors: (Array.isArray(source.sensorRig?.sensors) ? source.sensorRig.sensors : []).map(sensor),
+            sensors: (Array.isArray(source.sensorRig?.sensors) ? source.sensorRig.sensors : [])
+                .map((entry, index) => normalizeRunSensor(entry, index)),
         },
         scripts: {
             enabled: scripts.enabled !== false,
@@ -303,6 +254,9 @@ export function validateRunManifest(value) {
     duplicateIssues(manifest.assertions, "assertions");
     const topics = new Map(manifest.topics.map((entry) => [entry.id, entry]));
     for (const [index, sensorEntry] of manifest.sensorRig.sensors.entries()) {
+        for (const issue of validateRunSensorDefinition(sensorEntry)) {
+            issues.push({ path: `sensorRig.sensors.${index}.${issue.path}`, message: issue.message });
+        }
         for (const [key, topicId] of Object.entries(sensorEntry.outputs)) {
             if (topicId && !topics.has(topicId)) {
                 issues.push({ path: `sensorRig.sensors.${index}.outputs.${key}`, message: `Unknown topic id \"${topicId}\".` });

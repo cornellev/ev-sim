@@ -15,6 +15,13 @@ import {
 
 import { listEnvironments } from "../3d/environment/EnvironmentCatalogClient.js";
 import {
+    changeRunSensorType,
+    createRunSensor,
+    getSensorFieldValue,
+    getSensorType,
+    listSensorTypes,
+} from "../3d/devices/SensorTypeRegistry.js";
+import {
     createDefaultRunManifest,
     normalizeRunManifest,
     validateRunManifest,
@@ -41,6 +48,7 @@ import {
 } from "./ConfigCatalogLoader.js";
 
 const TABS = ["Overview", "Initial State", "Clock", "Sensors", "Scripts", "Topics", "Assertions", "Logging", "JSON"];
+const SENSOR_TYPE_DEFINITIONS = listSensorTypes();
 
 function runIdFromName(name) {
     return String(name || "run")
@@ -528,17 +536,101 @@ function Clock({ draft, update }) {
 }
 
 function Sensors({ draft, update }) {
-    const add = () => update(["sensorRig", "sensors"], [...draft.sensorRig.sensors, { id: `sensor-${draft.sensorRig.sensors.length + 1}`, type: "lidar3d", parentId: "ego", frameId: `sensor_${draft.sensorRig.sensors.length + 1}_frame`, rateHz: 10, pose: {}, calibration: {}, latency: {}, noise: {}, outputs: {} }]);
-    return <div className="space-y-4"><div className="flex flex-wrap items-end justify-between gap-3"><Field label="Rig root frame"><input value={draft.sensorRig.rootFrameId} onChange={(event) => update(["sensorRig", "rootFrameId"], event.target.value)} /></Field><Action compact icon={<FaPlus />} label="Add sensor" onClick={add} /></div>{draft.sensorRig.sensors.map((sensor, index) => {
+    const add = (type) => {
+        const index = draft.sensorRig.sensors.length;
+        const id = `sensor-${index + 1}`;
+        const sensor = createRunSensor(type, { id, parentId: "ego", frameId: `sensor_${index + 1}_frame` }, index);
+        update(["sensorRig", "sensors"], [...draft.sensorRig.sensors, sensor]);
+    };
+    return <div className="space-y-4"><div className="flex flex-wrap items-end justify-between gap-3"><Field label="Rig root frame"><input value={draft.sensorRig.rootFrameId} onChange={(event) => update(["sensorRig", "rootFrameId"], event.target.value)} /></Field><div className="flex flex-wrap gap-1.5">{SENSOR_TYPE_DEFINITIONS.map((definition) => <Action key={definition.id} compact icon={<FaPlus />} label={definition.addLabel || `Add ${definition.label}`} onClick={() => add(definition.id)} />)}</div></div>{draft.sensorRig.sensors.map((sensor, index) => {
         const sensorPath = ["sensorRig", "sensors", index];
         const change = (parts, value) => update([...sensorPath, ...parts], value);
-        return <div key={`${sensor.id}-${index}`} className="rounded-xl border border-zinc-800 bg-zinc-950/50 p-4"><div className="grid gap-3 md:grid-cols-4"><Field label="Stable ID"><input value={sensor.id} onChange={(event) => change(["id"], event.target.value)} /></Field><Field label="Type"><select value={sensor.type} onChange={(event) => change(["type"], event.target.value)}><option value="camera">Camera</option><option value="lidar3d">3D LiDAR</option></select></Field><Field label="Parent vehicle"><input value={sensor.parentId} onChange={(event) => change(["parentId"], event.target.value)} /></Field><Field label="Frame ID"><input value={sensor.frameId} onChange={(event) => change(["frameId"], event.target.value)} /></Field><Field label="Rate (Hz)"><input type="number" min="0.001" step="0.001" value={sensor.rateHz} onChange={(event) => change(["rateHz"], Number(event.target.value))} /></Field><Field label="Phase (ns)"><input type="number" min="0" value={sensor.phaseNs} onChange={(event) => change(["phaseNs"], Number(event.target.value))} /></Field><Field label="Queue limit"><input type="number" min="1" value={sensor.maxQueueFrames} onChange={(event) => change(["maxQueueFrames"], Number(event.target.value))} /></Field><Toggle label="Enabled" value={sensor.enabled} onChange={(value) => change(["enabled"], value)} /></div><VectorFields label="Pose position (m)" value={sensor.pose.position} onChange={(axis, value) => change(["pose", "position", axis], value)} /><VectorFields label="Pose rotation (rad)" value={sensor.pose.rotation} onChange={(axis, value) => change(["pose", "rotation", axis], value)} /><div className="mt-4 grid gap-3 md:grid-cols-4"><Field label="Fixed latency (ns)"><input type="number" min="0" value={sensor.latency.fixedNs} onChange={(event) => change(["latency", "fixedNs"], Number(event.target.value))} /></Field><Field label="Latency jitter (ns)"><input type="number" min="0" value={sensor.latency.jitterNs} onChange={(event) => change(["latency", "jitterNs"], Number(event.target.value))} /></Field><Field label="Noise model"><select value={sensor.noise.model} onChange={(event) => change(["noise", "model"], event.target.value)}><option value="none">None</option><option value="gaussian">Gaussian</option></select></Field><Field label="Noise deviation"><input type="number" min="0" step="0.001" value={sensor.noise.standardDeviation} onChange={(event) => change(["noise", "standardDeviation"], Number(event.target.value))} /></Field><Field label="Noise bias"><input type="number" step="0.001" value={sensor.noise.bias} onChange={(event) => change(["noise", "bias"], Number(event.target.value))} /></Field><Field label="Dropout probability"><input type="number" min="0" max="1" step="0.001" value={sensor.noise.dropoutProbability} onChange={(event) => change(["noise", "dropoutProbability"], Number(event.target.value))} /></Field>{sensor.type === "camera" ? <><Field label="Image topic ID"><input value={sensor.outputs.imageTopicId || ""} onChange={(event) => change(["outputs", "imageTopicId"], event.target.value)} /></Field><Field label="Image ROS schema"><input value={sensor.schema.imageTopicId || ""} onChange={(event) => change(["schema", "imageTopicId"], event.target.value)} /></Field><Field label="CameraInfo topic ID"><input value={sensor.outputs.cameraInfoTopicId || ""} onChange={(event) => change(["outputs", "cameraInfoTopicId"], event.target.value)} /></Field><Field label="CameraInfo ROS schema"><input value={sensor.schema.cameraInfoTopicId || ""} onChange={(event) => change(["schema", "cameraInfoTopicId"], event.target.value)} /></Field><Field label="Width"><input type="number" min="1" value={sensor.calibration.width} onChange={(event) => change(["calibration", "width"], Number(event.target.value))} /></Field><Field label="Height"><input type="number" min="1" value={sensor.calibration.height} onChange={(event) => change(["calibration", "height"], Number(event.target.value))} /></Field><Field label="Vertical FOV (deg)"><input type="number" min="1" max="179" value={sensor.calibration.verticalFovDeg} onChange={(event) => change(["calibration", "verticalFovDeg"], Number(event.target.value))} /></Field><Field label="Encoding"><input value={sensor.calibration.encoding} disabled /></Field></> : <><Field label="PointCloud topic ID"><input value={sensor.outputs.pointCloudTopicId || ""} onChange={(event) => change(["outputs", "pointCloudTopicId"], event.target.value)} /></Field><Field label="PointCloud ROS schema"><input value={sensor.schema.pointCloudTopicId || ""} onChange={(event) => change(["schema", "pointCloudTopicId"], event.target.value)} /></Field><Field label="Range (m)"><input type="number" min="0.01" value={sensor.calibration.range} onChange={(event) => change(["calibration", "range"], Number(event.target.value))} /></Field><Field label="Azimuth step (deg)"><input type="number" min="0.01" value={sensor.calibration.azimuth?.stepDeg} onChange={(event) => change(["calibration", "azimuth", "stepDeg"], Number(event.target.value))} /></Field><Field label="Elevation step (deg)"><input type="number" min="0.01" value={sensor.calibration.elevation?.stepDeg} onChange={(event) => change(["calibration", "elevation", "stepDeg"], Number(event.target.value))} /></Field></>}</div><button type="button" onClick={() => update(["sensorRig", "sensors"], draft.sensorRig.sensors.filter((_, candidate) => candidate !== index))} className="mt-4 text-[10px] text-red-300 hover:text-red-200">Remove sensor</button></div>;
+        const definition = getSensorType(sensor.type);
+        return (
+            <div key={`${sensor.id}-${index}`} className="rounded-xl border border-zinc-800 bg-zinc-950/50 p-4">
+                <div className="grid gap-3 md:grid-cols-4">
+                    <Field label="Stable ID">
+                        <input value={sensor.id} onChange={(event) => change(["id"], event.target.value)} />
+                    </Field>
+                    <Field label="Type">
+                        <select value={sensor.type} onChange={(event) => update(sensorPath, changeRunSensorType(sensor, event.target.value))}>
+                            {SENSOR_TYPE_DEFINITIONS.map((entry) => <option key={entry.id} value={entry.id}>{entry.label}</option>)}
+                            {!definition && <option value={sensor.type}>{sensor.type} (unsupported)</option>}
+                        </select>
+                    </Field>
+                    <Field label="Parent vehicle">
+                        <input value={sensor.parentId} onChange={(event) => change(["parentId"], event.target.value)} />
+                    </Field>
+                    <Field label="Frame ID">
+                        <input value={sensor.frameId} onChange={(event) => change(["frameId"], event.target.value)} />
+                    </Field>
+                    <Field label="Rate (Hz)">
+                        <input type="number" min="0.001" step="0.001" value={sensor.rateHz} onChange={(event) => change(["rateHz"], Number(event.target.value))} />
+                    </Field>
+                    <Field label="Phase (ns)">
+                        <input type="number" min="0" value={sensor.phaseNs} onChange={(event) => change(["phaseNs"], Number(event.target.value))} />
+                    </Field>
+                    <Field label="Queue limit">
+                        <input type="number" min="1" value={sensor.maxQueueFrames} onChange={(event) => change(["maxQueueFrames"], Number(event.target.value))} />
+                    </Field>
+                    <Toggle label="Enabled" value={sensor.enabled} onChange={(value) => change(["enabled"], value)} />
+                </div>
+                <VectorFields label="Pose position (m)" value={sensor.pose.position} onChange={(axis, value) => change(["pose", "position", axis], value)} />
+                <VectorFields label="Pose rotation (rad)" value={sensor.pose.rotation} onChange={(axis, value) => change(["pose", "rotation", axis], value)} />
+                <div className="mt-4 grid gap-3 md:grid-cols-4">
+                    <Field label="Fixed latency (ns)">
+                    <input type="number" min="0" value={sensor.latency.fixedNs} onChange={(event) => change(["latency", "fixedNs"], Number(event.target.value))} />
+                    </Field>
+                    <Field label="Latency jitter (ns)">
+                        <input type="number" min="0" value={sensor.latency.jitterNs} onChange={(event) => change(["latency", "jitterNs"], Number(event.target.value))} />
+                    </Field>
+                    <Field label="Noise model">
+                        <select value={sensor.noise.model} onChange={(event) => change(["noise", "model"], event.target.value)}>
+                            <option value="none">None</option>
+                            <option value="gaussian">Gaussian</option>
+                        </select>
+                    </Field>
+                    <Field label="Noise deviation">
+                        <input type="number" min="0" step="0.001" value={sensor.noise.standardDeviation} onChange={(event) => change(["noise", "standardDeviation"], Number(event.target.value))} />
+                    </Field>
+                    <Field label="Noise bias">
+                        <input type="number" step="0.001" value={sensor.noise.bias} onChange={(event) => change(["noise", "bias"], Number(event.target.value))} />
+                    </Field>
+                    <Field label="Dropout probability">
+                        <input type="number" min="0" max="1" step="0.001" value={sensor.noise.dropoutProbability} onChange={(event) => change(["noise", "dropoutProbability"], Number(event.target.value))} />
+                    </Field>
+                    {definition?.run.fields.map((field) => (
+                        <SensorDefinitionField key={field.path.join(".")} field={field} sensor={sensor} change={change} />
+                    ))}
+                </div>
+                {!definition && <p className="mt-3 text-[10px] text-amber-300">This sensor type is not registered. Its data is preserved, but the run cannot launch until a supported type is selected.</p>}
+                <button type="button" onClick={() => update(["sensorRig", "sensors"], draft.sensorRig.sensors.filter((_, candidate) => candidate !== index))} className="mt-4 text-[10px] text-red-300 hover:text-red-200">Remove sensor</button>
+            </div>
+        );
     })}</div>;
+}
+
+function SensorDefinitionField({ field, sensor, change }) {
+    const value = getSensorFieldValue(sensor, field.path);
+    return (
+        <Field label={field.label}>
+            <input
+                type={field.control === "number" ? "number" : "text"}
+                min={field.min}
+                max={field.max}
+                step={field.step}
+                value={value ?? ""}
+                disabled={field.readOnly}
+                onChange={(event) => change(field.path, field.control === "number" ? Number(event.target.value) : event.target.value)}
+            />
+        </Field>
+    );
 }
 
 function Scripts({ draft, update }) {
     const addArtifact = () => update(["scripts", "artifacts"], [...draft.scripts.artifacts, { scriptId: "", expectedHash: null }]);
-    return <div className="space-y-4"><Toggle label="Run deterministic scripts" value={draft.scripts.enabled} onChange={(value) => update(["scripts", "enabled"], value)} /><div className="flex items-center justify-between"><p className="text-xs text-zinc-400">Artifact and binding hashes lock the exact controller dependencies.</p><Action compact icon={<FaPlus />} label="Add artifact" onClick={addArtifact} /></div>{draft.scripts.artifacts.map((artifact, index) => <div key={`${artifact.scriptId}-${index}`} className="grid gap-3 rounded-xl border border-zinc-800 bg-zinc-950/50 p-3 md:grid-cols-[1fr_2fr_auto]"><Field label="Script ID"><input value={artifact.scriptId} onChange={(event) => update(["scripts", "artifacts", index, "scriptId"], event.target.value)} /></Field><Field label="Expected SHA-256"><input value={artifact.expectedHash || ""} placeholder="Unlocked" onChange={(event) => update(["scripts", "artifacts", index, "expectedHash"], event.target.value || null)} /></Field><button type="button" onClick={() => update(["scripts", "artifacts"], draft.scripts.artifacts.filter((_, candidate) => candidate !== index))} className="self-end pb-2 text-[10px] text-red-300">Remove</button></div>)}<div className="grid gap-4 md:grid-cols-2"><Field label="Binding IDs (comma separated)"><input value={draft.scripts.bindingIds.join(", ")} onChange={(event) => update(["scripts", "bindingIds"], event.target.value.split(",").map((id) => id.trim()).filter(Boolean))} /></Field><Field label="Expected bindings SHA-256"><input value={draft.scripts.expectedBindingsHash || ""} placeholder="Unlocked" onChange={(event) => update(["scripts", "expectedBindingsHash"], event.target.value || null)} /></Field></div><Field label="Embedded portable bindings"><JsonField value={draft.scripts.embeddedBindings} onChange={(value) => update(["scripts", "embeddedBindings"], value)} rows={9} /></Field></div>;
+    return <div className="space-y-4">
+<Toggle label="Run deterministic scripts" value={draft.scripts.enabled} onChange={(value) => update(["scripts", "enabled"], value)} /><div className="flex items-center justify-between"><p className="text-xs text-zinc-400">Artifact and binding hashes lock the exact controller dependencies.</p><Action compact icon={<FaPlus />} label="Add artifact" onClick={addArtifact} /></div>{draft.scripts.artifacts.map((artifact, index) => <div key={`${artifact.scriptId}-${index}`} className="grid gap-3 rounded-xl border border-zinc-800 bg-zinc-950/50 p-3 md:grid-cols-[1fr_2fr_auto]"><Field label="Script ID"><input value={artifact.scriptId} onChange={(event) => update(["scripts", "artifacts", index, "scriptId"], event.target.value)} /></Field><Field label="Expected SHA-256"><input value={artifact.expectedHash || ""} placeholder="Unlocked" onChange={(event) => update(["scripts", "artifacts", index, "expectedHash"], event.target.value || null)} /></Field><button type="button" onClick={() => update(["scripts", "artifacts"], draft.scripts.artifacts.filter((_, candidate) => candidate !== index))} className="self-end pb-2 text-[10px] text-red-300">Remove</button></div>)}<div className="grid gap-4 md:grid-cols-2"><Field label="Binding IDs (comma separated)"><input value={draft.scripts.bindingIds.join(", ")} onChange={(event) => update(["scripts", "bindingIds"], event.target.value.split(",").map((id) => id.trim()).filter(Boolean))} /></Field><Field label="Expected bindings SHA-256"><input value={draft.scripts.expectedBindingsHash || ""} placeholder="Unlocked" onChange={(event) => update(["scripts", "expectedBindingsHash"], event.target.value || null)} /></Field></div><Field label="Embedded portable bindings"><JsonField value={draft.scripts.embeddedBindings} onChange={(value) => update(["scripts", "embeddedBindings"], value)} rows={9} /></Field></div>;
 }
 
 function Topics({ draft, update }) {

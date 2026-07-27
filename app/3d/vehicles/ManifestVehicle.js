@@ -2,8 +2,7 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader";
 
 import { PhysicalVehicle } from "./Vehicle";
-import { LiDAR3d } from "../devices/LiDAR3d";
-import { StereoCamera } from "../devices/StereoCamera";
+import { createVehicleSensorDevice } from "../devices/SensorRuntimeRegistry.js";
 import { Triangle } from "../data/objects/Triangle";
 import { normalizeVehicleManifest, resolveVehicleModelUrl } from "../../vehicles/VehicleManifest.js";
 
@@ -59,44 +58,7 @@ export class ManifestVehicle extends PhysicalVehicle {
 
     _setupManifestDevices() {
         for (const entry of this.manifest.sensors) {
-            const position = new THREE.Vector3(entry.pose.position.x, entry.pose.position.y, entry.pose.position.z);
-            const rotation = new THREE.Euler(
-                entry.pose.rotation.x,
-                entry.pose.rotation.y,
-                entry.pose.rotation.z,
-                entry.pose.rotation.order || "XYZ",
-            );
-            let device;
-            if (entry.type === "camera") {
-                device = new StereoCamera(entry.id, {
-                    position,
-                    rotation,
-                    range: entry.config.range,
-                    thetaStep: entry.config.thetaStep,
-                    phiStep: entry.config.phiStep,
-                    camera: {
-                        width: entry.config.width,
-                        height: entry.config.height,
-                        fov: entry.config.fov,
-                        near: entry.config.near,
-                        far: entry.config.far,
-                    },
-                    channels: {
-                        lidar: `${this.vehicleManifestId}/${entry.id}/lidar3d`,
-                        camera: `${this.vehicleManifestId}/${entry.id}/camera`,
-                    },
-                });
-            } else {
-                device = new LiDAR3d(
-                    position,
-                    rotation,
-                    entry.config.range,
-                    entry.config.thetaStep,
-                    [...entry.config.thetaRange],
-                    entry.config.phiStep,
-                    [...entry.config.phiRange],
-                );
-            }
+            const device = createVehicleSensorDevice(entry, { vehicleManifestId: this.vehicleManifestId });
             // Keep these enabled across DeviceDatabase.configureFromManifest —
             // the vehicle document is their source of truth, not the run sensorRig.
             device.vehicleOwned = true;

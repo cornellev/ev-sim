@@ -24,6 +24,13 @@ import {
     validateVehicleManifest,
 } from "../VehicleManifest.js";
 import {
+    changeVehicleSensorType,
+    createVehicleSensor,
+    getSensorFieldValue,
+    getSensorType,
+    listSensorTypes,
+} from "../../3d/devices/SensorTypeRegistry.js";
+import {
     getBuiltInVehicleManifest,
     isBuiltInVehicleManifest,
     listBuiltInVehicleManifests,
@@ -46,6 +53,7 @@ import { VehicleStudio } from "./VehicleStudio.js";
 const TABS = ["Model", "LiDAR Zone", "Sensors", "Wheels", "Body", "JSON"];
 const HISTORY_LIMIT = 100;
 const EDIT_COALESCE_MS = 750;
+const SENSOR_TYPE_DEFINITIONS = listSensorTypes();
 
 function vehicleIdFromName(name) {
     return String(name || "vehicle")
@@ -739,25 +747,32 @@ function LidarZoneTab({ draft, update, voxelSize, setVoxelSize, generateZone, zo
 
 function SensorsTab({ draft, update, selection, setSelection }) {
     const add = (type) => {
-        const id = nextId(draft.sensors, type === "camera" ? "camera" : "lidar");
-        update(["sensors"], [...draft.sensors, { id, type, pose: { position: { x: 0.3, y: 0.8, z: 0 }, rotation: { x: 0, y: 0, z: 0, order: "XYZ" } }, config: {} }]);
+        const definition = getSensorType(type);
+        const id = nextId(draft.sensors, definition?.idPrefix || "sensor");
+        const sensor = createVehicleSensor(type, {
+            id,
+            pose: { position: { x: 0.3, y: 0.8, z: 0 }, rotation: { x: 0, y: 0, z: 0, order: "XYZ" } },
+        }, draft.sensors.length);
+        update(["sensors"], [...draft.sensors, sensor]);
         setSelection({ kind: "sensor", id });
     };
     return (
         <div className="space-y-3">
-            <div className="flex gap-1.5">
-                <Action compact icon={<FaPlus />} label="Add LiDAR" onClick={() => add("lidar3d")} />
-                <Action compact icon={<FaPlus />} label="Add camera" onClick={() => add("camera")} />
+            <div className="flex flex-wrap gap-1.5">
+                {SENSOR_TYPE_DEFINITIONS.map((definition) => (
+                    <Action key={definition.id} compact icon={<FaPlus />} label={definition.addLabel || `Add ${definition.label}`} onClick={() => add(definition.id)} />
+                ))}
             </div>
             {draft.sensors.length === 0 && <p className="py-8 text-center text-[11px] text-zinc-600">No sensors on this vehicle.</p>}
             {draft.sensors.map((sensor, index) => {
                 const selected = selection?.kind === "sensor" && selection.id === sensor.id;
                 const change = (parts, value) => update(["sensors", index, ...parts], value);
+                const definition = getSensorType(sensor.type);
                 return (
                     <div key={`sensor-${index}`} className={`rounded-xl border p-3 transition-colors ${selected ? "border-sky-400/50 bg-sky-500/5" : "border-zinc-800 bg-zinc-950/50"}`}>
                         <button type="button" onClick={() => setSelection(selected ? null : { kind: "sensor", id: sensor.id })} className="mb-2 flex w-full items-center justify-between text-left">
                             <span className="text-[11px] font-semibold">{sensor.id}</span>
-                            <span className={`text-[9px] font-semibold uppercase tracking-[0.12em] ${sensor.type === "camera" ? "text-amber-300" : "text-sky-300"}`}>{sensor.type}</span>
+                            <span className={`text-[9px] font-semibold uppercase tracking-[0.12em] ${definition?.accentClass || "text-zinc-400"}`}>{definition?.label || sensor.type}</span>
                         </button>
                         <div className="grid grid-cols-2 gap-2">
                             <Field label="Stable ID">
@@ -770,36 +785,43 @@ function SensorsTab({ draft, update, selection, setSelection }) {
                                     }}
                                 />
                             </Field>
-                            <Field label="Type"><select value={sensor.type} onChange={(event) => change(["type"], event.target.value)}><option value="lidar3d">3D LiDAR</option><option value="camera">Camera</option></select></Field>
+                            <Field label="Type">
+                                <select value={sensor.type} onChange={(event) => update(["sensors", index], changeVehicleSensorType(sensor, event.target.value))}>
+                                    {SENSOR_TYPE_DEFINITIONS.map((entry) => <option key={entry.id} value={entry.id}>{entry.label}</option>)}
+                                    {!definition && <option value={sensor.type}>{sensor.type} (unsupported)</option>}
+                                </select>
+                            </Field>
                         </div>
                         <VectorFields label="Position (m)" value={sensor.pose.position} onChange={(axis, value) => change(["pose", "position", axis], value)} scrub />
                         <VectorFields label="Rotation (rad)" value={sensor.pose.rotation} onChange={(axis, value) => change(["pose", "rotation", axis], value)} />
                         <div className="mt-3 grid grid-cols-2 gap-2">
-                            <Field label="Range (m)"><input type="number" min="0.1" step="0.1" value={sensor.config.range} onChange={(event) => change(["config", "range"], Number(event.target.value))} /></Field>
-                            {sensor.type === "camera" ? (
-                                <>
-                                    <Field label="Vertical FOV (deg)"><input type="number" min="1" max="179" value={sensor.config.fov} onChange={(event) => change(["config", "fov"], Number(event.target.value))} /></Field>
-                                    <Field label="Width (px)"><input type="number" min="1" value={sensor.config.width} onChange={(event) => change(["config", "width"], Number(event.target.value))} /></Field>
-                                    <Field label="Height (px)"><input type="number" min="1" value={sensor.config.height} onChange={(event) => change(["config", "height"], Number(event.target.value))} /></Field>
-                                    <Field label="Theta step (deg)"><input type="number" min="0.01" step="0.01" value={sensor.config.thetaStep} onChange={(event) => change(["config", "thetaStep"], Number(event.target.value))} /></Field>
-                                    <Field label="Phi step (deg)"><input type="number" min="0.01" step="0.01" value={sensor.config.phiStep} onChange={(event) => change(["config", "phiStep"], Number(event.target.value))} /></Field>
-                                </>
-                            ) : (
-                                <>
-                                    <Field label="Theta step (deg)"><input type="number" min="0.01" step="0.01" value={sensor.config.thetaStep} onChange={(event) => change(["config", "thetaStep"], Number(event.target.value))} /></Field>
-                                    <Field label="Theta start (deg)"><input type="number" value={sensor.config.thetaRange?.[0]} onChange={(event) => change(["config", "thetaRange"], [Number(event.target.value), sensor.config.thetaRange?.[1] ?? 180])} /></Field>
-                                    <Field label="Theta end (deg)"><input type="number" value={sensor.config.thetaRange?.[1]} onChange={(event) => change(["config", "thetaRange"], [sensor.config.thetaRange?.[0] ?? -180, Number(event.target.value)])} /></Field>
-                                    <Field label="Phi step (deg)"><input type="number" min="0.01" step="0.01" value={sensor.config.phiStep} onChange={(event) => change(["config", "phiStep"], Number(event.target.value))} /></Field>
-                                    <Field label="Phi start (deg)"><input type="number" value={sensor.config.phiRange?.[0]} onChange={(event) => change(["config", "phiRange"], [Number(event.target.value), sensor.config.phiRange?.[1] ?? 20])} /></Field>
-                                    <Field label="Phi end (deg)"><input type="number" value={sensor.config.phiRange?.[1]} onChange={(event) => change(["config", "phiRange"], [sensor.config.phiRange?.[0] ?? -20, Number(event.target.value)])} /></Field>
-                                </>
-                            )}
+                            {definition?.vehicle.fields.map((field) => (
+                                <VehicleSensorDefinitionField key={field.path.join(".")} field={field} sensor={sensor} change={change} />
+                            ))}
                         </div>
+                        {!definition && <p className="mt-3 text-[10px] text-amber-300">This sensor type is not registered. Its data is preserved, but this vehicle cannot run until a supported type is selected.</p>}
                         <button type="button" onClick={() => update(["sensors"], draft.sensors.filter((_, candidate) => candidate !== index))} className="mt-3 text-[10px] text-red-300 hover:text-red-200">Remove sensor</button>
                     </div>
                 );
             })}
         </div>
+    );
+}
+
+function VehicleSensorDefinitionField({ field, sensor, change }) {
+    const value = getSensorFieldValue(sensor, field.path);
+    return (
+        <Field label={field.label}>
+            <input
+                type={field.control === "number" ? "number" : "text"}
+                min={field.min}
+                max={field.max}
+                step={field.step}
+                value={value ?? ""}
+                disabled={field.readOnly}
+                onChange={(event) => change(field.path, field.control === "number" ? Number(event.target.value) : event.target.value)}
+            />
+        </Field>
     );
 }
 

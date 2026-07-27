@@ -5,6 +5,10 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 
 import { TriangleOptimizer } from "../../optimization/TriangleOptimizer.js";
 import { applyModelPlacement } from "../../3d/vehicles/ManifestVehicle.js";
+import {
+    createSensorPreview,
+    getSensorPreviewSignature,
+} from "../../3d/devices/SensorRuntimeRegistry.js";
 
 const COLORS = {
     background: 0x09090b,
@@ -12,8 +16,6 @@ const COLORS = {
     gridCenter: 0x3f3f46,
     wheel: 0x18181b,
     wheelSteerable: 0x0c4a6e,
-    sensorLidar: 0x38bdf8,
-    sensorCamera: 0xf59e0b,
     boundingBox: 0x38bdf8,
     egoCenter: 0x34d399,
     zone: 0x34d399,
@@ -250,28 +252,7 @@ export class VehicleStudio {
     }
 
     _syncSensors(sensors) {
-        this._syncMarkerGroup(this.sensorsGroup, sensors, "sensor", (sensor) => {
-            if (sensor.type === "camera") {
-                const holder = new THREE.Group();
-                holder.add(buildCameraFrustum(sensor.config), new THREE.Mesh(
-                    new THREE.BoxGeometry(0.08, 0.08, 0.12),
-                    new THREE.MeshStandardMaterial({ color: COLORS.sensorCamera, roughness: 0.4 }),
-                ));
-                return holder;
-            }
-            const holder = new THREE.Group();
-            holder.add(
-                new THREE.Mesh(
-                    new THREE.CylinderGeometry(0.07, 0.07, 0.09, 20),
-                    new THREE.MeshStandardMaterial({ color: COLORS.sensorLidar, roughness: 0.35 }),
-                ),
-                new THREE.Mesh(
-                    new THREE.SphereGeometry(0.16, 12, 8),
-                    new THREE.MeshBasicMaterial({ color: COLORS.sensorLidar, wireframe: true, transparent: true, opacity: 0.35 }),
-                ),
-            );
-            return holder;
-        }, (object, sensor) => {
+        this._syncMarkerGroup(this.sensorsGroup, sensors, "sensor", createSensorPreview, (object, sensor) => {
             object.position.set(sensor.pose.position.x, sensor.pose.position.y, sensor.pose.position.z);
             object.rotation.set(
                 sensor.pose.rotation.x,
@@ -279,9 +260,7 @@ export class VehicleStudio {
                 sensor.pose.rotation.z,
             );
             if (sensor.pose.rotation.order) object.rotation.order = sensor.pose.rotation.order;
-            if (sensor.type !== "camera") return sensor.type;
-            const { fov, width, height } = sensor.config;
-            return `camera:${fov}:${width}:${height}`;
+            return getSensorPreviewSignature(sensor);
         });
     }
 
@@ -459,35 +438,6 @@ export class VehicleStudio {
             triangles: optimizer.triangles.map(([a, b, c]) => [a, b, c]),
         };
     }
-}
-
-const CAMERA_FRUSTUM_DEPTH = 0.26;
-
-/**
- * View frustum for a camera sensor: apex at the sensor origin, opening along
- * +X (vehicle forward) with the vertical extent from `fov` and the horizontal
- * extent from the image aspect ratio.
- */
-function buildCameraFrustum({ fov, width, height }) {
-    const halfHeight = CAMERA_FRUSTUM_DEPTH * Math.tan(THREE.MathUtils.degToRad(fov) / 2);
-    // A 4-segment cone is a pyramid; the quarter-turn theta start puts its faces
-    // on the up and lateral axes instead of on the diagonals.
-    const geometry = new THREE.ConeGeometry(
-        halfHeight * Math.SQRT2,
-        CAMERA_FRUSTUM_DEPTH,
-        4,
-        1,
-        true,
-        Math.PI / 4,
-    );
-    geometry.rotateZ(Math.PI / 2);
-    geometry.translate(CAMERA_FRUSTUM_DEPTH / 2, 0, 0);
-    const mesh = new THREE.Mesh(
-        geometry,
-        new THREE.MeshBasicMaterial({ color: COLORS.sensorCamera, wireframe: true }),
-    );
-    mesh.scale.z = width / height;
-    return mesh;
 }
 
 function zoneSignature(lidarZone) {

@@ -1,9 +1,16 @@
+import {
+    createVehicleSensor,
+    listSensorTypes,
+    normalizeVehicleSensor,
+    validateVehicleSensorDefinition,
+} from "../3d/devices/SensorTypeRegistry.js";
+
 export const VEHICLE_MANIFEST_KIND = "cev-sim.vehicle";
 export const VEHICLE_MANIFEST_VERSION = 1;
 export const VEHICLE_BUNDLE_KIND = "cev-sim.vehicle-bundle";
 export const VEHICLE_BUNDLE_VERSION = 1;
 
-export const VEHICLE_SENSOR_TYPES = Object.freeze(["lidar3d", "camera"]);
+export const VEHICLE_SENSOR_TYPES = Object.freeze(listSensorTypes().map((definition) => definition.id));
 
 /** Vehicle types implemented as hard-coded classes rather than manifests. */
 export const BUILT_IN_VEHICLE_TYPES = Object.freeze(["big-car", "igvc-car", "scenario-car"]);
@@ -60,62 +67,6 @@ function wheel(value = {}, index = 0) {
     };
 }
 
-const LIDAR_CONFIG_DEFAULTS = Object.freeze({
-    range: 20,
-    thetaStep: 2,
-    thetaRange: [-180, 180],
-    phiStep: 1,
-    phiRange: [-20, 20],
-});
-
-const CAMERA_CONFIG_DEFAULTS = Object.freeze({
-    range: 20,
-    thetaStep: 2,
-    phiStep: 1,
-    width: 320,
-    height: 180,
-    fov: 75,
-    near: 0.1,
-    far: 200,
-});
-
-function anglePair(value, fallback) {
-    if (!Array.isArray(value) || value.length !== 2) return [...fallback];
-    const low = finite(value[0], fallback[0]);
-    const high = finite(value[1], fallback[1]);
-    return high > low ? [low, high] : [...fallback];
-}
-
-function sensor(value = {}, index = 0) {
-    const source = object(value);
-    const type = VEHICLE_SENSOR_TYPES.includes(source.type) ? source.type : "lidar3d";
-    const config = object(source.config);
-    const normalizedConfig = type === "camera"
-        ? {
-            range: positive(config.range, CAMERA_CONFIG_DEFAULTS.range),
-            thetaStep: positive(config.thetaStep, CAMERA_CONFIG_DEFAULTS.thetaStep),
-            phiStep: positive(config.phiStep, CAMERA_CONFIG_DEFAULTS.phiStep),
-            width: Math.max(1, Math.floor(positive(config.width, CAMERA_CONFIG_DEFAULTS.width))),
-            height: Math.max(1, Math.floor(positive(config.height, CAMERA_CONFIG_DEFAULTS.height))),
-            fov: Math.min(179, positive(config.fov, CAMERA_CONFIG_DEFAULTS.fov)),
-            near: positive(config.near, CAMERA_CONFIG_DEFAULTS.near),
-            far: positive(config.far, CAMERA_CONFIG_DEFAULTS.far),
-        }
-        : {
-            range: positive(config.range, LIDAR_CONFIG_DEFAULTS.range),
-            thetaStep: positive(config.thetaStep, LIDAR_CONFIG_DEFAULTS.thetaStep),
-            thetaRange: anglePair(config.thetaRange, LIDAR_CONFIG_DEFAULTS.thetaRange),
-            phiStep: positive(config.phiStep, LIDAR_CONFIG_DEFAULTS.phiStep),
-            phiRange: anglePair(config.phiRange, LIDAR_CONFIG_DEFAULTS.phiRange),
-        };
-    return {
-        id: text(source.id, `sensor-${index + 1}`),
-        type,
-        pose: pose(source.pose),
-        config: normalizedConfig,
-    };
-}
-
 function lidarZone(value = {}) {
     const source = object(value);
     const vertices = (Array.isArray(source.vertices) ? source.vertices : [])
@@ -168,7 +119,7 @@ export function createDefaultVehicleManifest(overrides = {}) {
         ],
         kinematics: { wheelbase: 1.5, maxSteeringAngle: 0.6 },
         sensors: [
-            sensor({ id: "roof-lidar", type: "lidar3d", pose: { position: { x: 0.35, y: 0.8, z: 0 } } }),
+            createVehicleSensor("lidar3d", { id: "roof-lidar", pose: { position: { x: 0.35, y: 0.8, z: 0 } } }),
         ],
         lidarZone: lidarZone(),
     };
@@ -214,7 +165,8 @@ export function normalizeVehicleManifest(value, { allowMissingKind = false } = {
             wheelbase: positive(kinematics.wheelbase, deriveWheelbase(wheels) ?? 1.5),
             maxSteeringAngle: positive(kinematics.maxSteeringAngle, 0.6),
         },
-        sensors: (Array.isArray(source.sensors) ? source.sensors : []).map(sensor),
+        sensors: (Array.isArray(source.sensors) ? source.sensors : [])
+            .map((entry, index) => normalizeVehicleSensor(entry, index)),
         lidarZone: lidarZone(source.lidarZone),
     };
 }
@@ -240,6 +192,11 @@ export function validateVehicleManifest(value) {
     };
     duplicateIssues(manifest.wheels, "wheels");
     duplicateIssues(manifest.sensors, "sensors");
+    for (const [index, sensorEntry] of manifest.sensors.entries()) {
+        for (const issue of validateVehicleSensorDefinition(sensorEntry)) {
+            issues.push({ path: `sensors.${index}.${issue.path}`, message: issue.message });
+        }
+    }
     const vertexCount = manifest.lidarZone.vertices.length;
     for (const [index, triangle] of manifest.lidarZone.triangles.entries()) {
         if (triangle.some((vertexIndex) => vertexIndex < 0 || vertexIndex >= vertexCount)) {
