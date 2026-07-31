@@ -119,7 +119,7 @@ export function MatrixSection({ suite, plan, scenarios, manifests, onToggleExclu
     };
     return (
         <div className={styles.sectionStack}>
-            {heading("", "Case matrix", "", <div className={styles.matrixTotal}><strong>{plan.cases?.length || 0}</strong><span>cases</span></div>)}
+            {heading("", "Case matrix", "", <div className={styles.matrixTotal}><strong>{plan.cases?.length || 0}</strong><span>cases&nbsp;&nbsp;&nbsp;</span></div>)}
             {suite.scenarioIds.length === 0 || suite.manifestIds.length === 0 ? <div className={styles.largeEmpty}><IconFlask2 size={24} stroke={1.45} /><strong>Select scenarios and manifests first</strong><p>Add scenarios and manifests to see the case matrix.</p></div> : (
                 <div className={styles.matrixScroll}>
                     <table className={styles.matrixTable}>

@@ -795,7 +795,7 @@ function RunParameterDeclarations({ parameters, update }) {
     return (
         <section className="border-t border-[var(--slate-border)] pt-5">
             <div className="mb-3 flex items-start justify-between gap-3">
-                <div><h2 className="text-[13px] font-medium">Declared run parameters</h2><p className="mt-1 text-[11px] text-[var(--slate-muted)]">Experiment suites may override only these typed, validated targets.</p></div>
+                <div><h2 className="text-[13px] font-medium">Declared run parameters</h2><p className="mt-1 text-[11px] text-[var(--slate-muted)]">Experiment suites may override only these targets.</p></div>
                 <Action compact icon={<FaPlus />} label="Add parameter" onClick={add} />
             </div>
             {parameters.length === 0 ? <p className="text-[12px] text-[var(--slate-muted)]">This run configuration declares no sweepable parameters.</p> : (
