@@ -43,6 +43,7 @@ export function createEmptyGraph(outputNodeConfig = null) {
 export function createScriptDocument({
     id = createDocumentId(),
     name = "Untitled Script",
+    folderId = null,
     graph = createEmptyGraph(),
     latestValidArtifact = null,
     compileStatus = null,
@@ -57,6 +58,7 @@ export function createScriptDocument({
         version: EDITOR_DOCUMENT_VERSION,
         id,
         name: normalizeDocumentName(name),
+        folderId: normalizeFolderId(folderId),
         sourceType,
         editable: sourceType === "editable",
         createdAt,
@@ -71,7 +73,7 @@ export function createScriptDocument({
     };
 }
 
-export function createArtifactOnlyDocument(artifact, { id = createDocumentId(), name = null } = {}) {
+export function createArtifactOnlyDocument(artifact, { id = createDocumentId(), name = null, folderId = null } = {}) {
     if (!isCompiledArtifact(artifact)) {
         throw new Error("Cannot create an artifact-only document from an unsupported artifact.");
     }
@@ -80,6 +82,7 @@ export function createArtifactOnlyDocument(artifact, { id = createDocumentId(), 
     return createScriptDocument({
         id,
         name: name || artifact.name || "Imported Program",
+        folderId,
         graph: null,
         latestValidArtifact: artifact,
         sourceType: "artifact",
@@ -98,6 +101,11 @@ export function normalizeDocumentName(name) {
     return trimmed.length > 0 ? trimmed : "Untitled Script";
 }
 
+export function normalizeFolderId(folderId) {
+    const trimmed = String(folderId || "").trim();
+    return trimmed || null;
+}
+
 export function normalizeScriptDocument(document) {
     if (!isEditorDocument(document)) {
         throw new Error("Unsupported editable script document.");
@@ -107,6 +115,7 @@ export function normalizeScriptDocument(document) {
         ...document,
         id: document.id || createDocumentId(),
         name: document.name,
+        folderId: document.folderId,
         graph: document.editable === false ? null : (document.graph || createEmptyGraph()),
         sourceType: document.sourceType || (document.editable === false ? "artifact" : "editable"),
         createdAt: document.createdAt || nowIso(),
@@ -134,4 +143,3 @@ export function summarizeScriptDocument(document) {
         updatedAt
     };
 }
-

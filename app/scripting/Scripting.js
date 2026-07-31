@@ -23,11 +23,17 @@ import {
 import { registerBuiltInBlocks } from "./registerBuiltInBlocks";
 import { TYPES } from "./Constants";
 import {
+    IconChevronDown,
+    IconChevronRight,
     IconCircleCheck,
     IconCircleX,
+    IconFolder,
+    IconFolderPlus,
     IconLayoutGrid,
     IconLayoutSidebarRightCollapse,
     IconLayoutSidebarRightExpand,
+    IconPencil,
+    IconTrash,
 } from "@tabler/icons-react";
 import {
     createArtifactOnlyDocument,
@@ -51,6 +57,11 @@ import {
     putScriptSetting
 } from "./ScriptStorage";
 import { createCatalogUnitUUID, getUnitCatalogEntry } from "./UnitCatalog";
+import {
+    createScriptFolder,
+    normalizeScriptFolders,
+    SCRIPT_FOLDERS_SETTING
+} from "./ScriptLibrary";
 import { subscribeStorageEvents } from "../client/storageEvents";
 import { getBindingRuntime } from "./bindings/BindingRuntime";
 
@@ -497,9 +508,108 @@ function EditorToolbar({
     );
 }
 
+function ScriptLibraryCard({
+    document,
+    folders,
+    currentScriptId,
+    isScriptUsable,
+    onOpen,
+    onUse,
+    onDuplicate,
+    onRename,
+    onDelete,
+    onMove,
+    onDownloadEditable,
+    onDownloadCompiled
+}) {
+    const summary = getDocumentSummary(document);
+    const isCurrent = document.id === currentScriptId;
+    const editable = summary.editable;
+    const valid = summary.valid;
+    const usability = isScriptUsable(document);
+    const canUse = usability.usable;
+    const selectedFolderId = folders.some((folder) => folder.id === document.folderId)
+        ? document.folderId
+        : "";
+
+    return (
+        <div
+            draggable
+            onDragStart={(event) => {
+                event.dataTransfer.effectAllowed = "move";
+                event.dataTransfer.setData("application/x-script-id", document.id);
+            }}
+            className={`mb-2 rounded-[var(--radius)] border p-2.5 transition-[border-color,background-color] duration-150 ${isCurrent ? "border-white/24 bg-white/8" : "border-white/10 bg-[var(--slate-bg)] hover:border-white/18"}`}
+        >
+            <div className="mb-2 flex items-start justify-between gap-3">
+                <button
+                    type="button"
+                    disabled={!editable}
+                    onClick={() => editable && onOpen(document.id)}
+                    className="min-w-0 flex-1 text-left disabled:cursor-default"
+                >
+                    <div className="truncate text-sm font-medium text-white">{document.name}</div>
+                    <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-zinc-500">
+                        <span className={`rounded-[4px] px-1.5 py-0.5 ${valid ? "bg-white/8 text-zinc-300" : "bg-red-400/8 text-red-200"}`}>
+                            {valid ? "valid" : "invalid"}
+                        </span>
+                        <span>{summary.inputs} in</span>
+                        <span>/</span>
+                        <span>{summary.outputs} out</span>
+                        <span>/</span>
+                        <span>{editable ? "editable" : "artifact"}</span>
+                        <span>/</span>
+                        <span>{relativeTime(summary.updatedAt)}</span>
+                    </div>
+                </button>
+                <button
+                    type="button"
+                    disabled={!canUse}
+                    title={usability.reason || "Use as Block"}
+                    onClick={() => onUse(document)}
+                    className="rounded-sm border border-white/10 bg-white/8 px-2 py-1.5 text-xs text-zinc-200 transition-[transform,background-color,border-color] duration-150 hover:border-white/20 hover:bg-white/12 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-35"
+                >
+                    {usability.code === IMPORT_CODE.CYCLE ? "Dependent" : "Use"}
+                </button>
+            </div>
+
+            {summary.error && (
+                <div className="mb-2 line-clamp-2 rounded-sm border border-rose-300/10 bg-rose-400/8 px-2 py-1.5 text-[11px] text-rose-100">
+                    {compactError(summary.error)}
+                </div>
+            )}
+
+            <div className="mb-2 flex items-center gap-2">
+                <IconFolder size={13} stroke={1.75} className="shrink-0 text-zinc-600" aria-hidden="true" />
+                <select
+                    value={selectedFolderId}
+                    onChange={(event) => onMove(document.id, event.target.value || null)}
+                    aria-label={`Move ${document.name} to folder`}
+                    className="h-7 min-w-0 flex-1 rounded-sm border border-white/8 bg-[var(--slate-surface-2)] px-2 text-[11px] text-zinc-400 outline-none transition-[border-color] focus:border-white/25"
+                >
+                    <option value="">Unfiled</option>
+                    {folders.map((folder) => (
+                        <option key={folder.id} value={folder.id}>{folder.name}</option>
+                    ))}
+                </select>
+            </div>
+
+            <div className="flex flex-wrap gap-1.5">
+                <button type="button" disabled={!editable} onClick={() => onOpen(document.id)} className="mini-btn">Open</button>
+                <button type="button" onClick={() => onDuplicate(document)} className="mini-btn">Duplicate</button>
+                <button type="button" onClick={() => onRename(document)} className="mini-btn">Rename</button>
+                <button type="button" disabled={!editable} onClick={() => onDownloadEditable(document)} className="mini-btn">Export</button>
+                <button type="button" disabled={!document.latestValidArtifact} onClick={() => onDownloadCompiled(document)} className="mini-btn">Download Compiled</button>
+                <button type="button" onClick={() => onDelete(document)} className="mini-btn text-rose-200">Delete</button>
+            </div>
+        </div>
+    );
+}
+
 function ScriptLibraryDrawer({
     open,
     scripts,
+    folders,
     currentScriptId,
     isScriptUsable,
     search,
@@ -511,16 +621,74 @@ function ScriptLibraryDrawer({
     onDuplicate,
     onRename,
     onDelete,
+    onMove,
+    onCreateFolder,
+    onRenameFolder,
+    onDeleteFolder,
     onDownloadEditable,
     onDownloadCompiled,
     onImport
 }) {
+    const [collapsedFolders, setCollapsedFolders] = useState(() => new Set());
+    const [creatingFolder, setCreatingFolder] = useState(false);
+    const [editingFolderId, setEditingFolderId] = useState(null);
+    const [folderName, setFolderName] = useState("");
+
     const visibleScripts = useMemo(() => {
         const query = search.trim().toLowerCase();
         if (!query) return scripts;
 
-        return scripts.filter((document) => document.name.toLowerCase().includes(query));
-    }, [scripts, search]);
+        const folderNames = new Map(folders.map((folder) => [folder.id, folder.name.toLowerCase()]));
+        return scripts.filter((document) => (
+            document.name.toLowerCase().includes(query)
+            || (folderNames.get(document.folderId) || "unfiled").includes(query)
+        ));
+    }, [folders, scripts, search]);
+
+    const groups = useMemo(() => {
+        const folderIds = new Set(folders.map((folder) => folder.id));
+        return [
+            ...folders.map((folder) => ({
+                ...folder,
+                scripts: visibleScripts.filter((document) => document.folderId === folder.id)
+            })),
+            {
+                id: "__unfiled__",
+                name: "Unfiled",
+                scripts: visibleScripts.filter((document) => !document.folderId || !folderIds.has(document.folderId))
+            }
+        ];
+    }, [folders, visibleScripts]);
+
+    const toggleFolder = (folderId) => {
+        setCollapsedFolders((current) => {
+            const next = new Set(current);
+            if (next.has(folderId)) next.delete(folderId);
+            else next.add(folderId);
+            return next;
+        });
+    };
+
+    const cancelFolderEdit = () => {
+        setCreatingFolder(false);
+        setEditingFolderId(null);
+        setFolderName("");
+    };
+
+    const submitFolder = () => {
+        const name = folderName.trim();
+        if (!name) return;
+
+        if (editingFolderId) onRenameFolder(editingFolderId, name);
+        else onCreateFolder(name);
+        cancelFolderEdit();
+    };
+
+    const receiveDrop = (event, folderId) => {
+        event.preventDefault();
+        const scriptId = event.dataTransfer.getData("application/x-script-id");
+        if (scriptId) onMove(scriptId, folderId === "__unfiled__" ? null : folderId);
+    };
 
     if (!open) return null;
 
@@ -542,75 +710,147 @@ function ScriptLibraryDrawer({
                         className="min-w-0 flex-1 rounded-sm border border-white/10 bg-[var(--slate-bg)] px-3 py-2 text-sm text-white outline-none transition-[border-color,box-shadow] duration-150 placeholder:text-zinc-600 focus:border-white/30 focus:shadow-[0_0_0_3px_rgba(255,255,255,0.06)]"
                     />
                     <button type="button" onClick={onCreate} className="toolbar-btn">New</button>
+                    <button
+                        type="button"
+                        onClick={() => {
+                            setCreatingFolder(true);
+                            setEditingFolderId(null);
+                            setFolderName("");
+                        }}
+                        className="toolbar-btn px-2"
+                        aria-label="Create folder"
+                        title="Create folder"
+                    >
+                        <IconFolderPlus size={15} stroke={1.75} aria-hidden="true" />
+                    </button>
                     <button type="button" onClick={onImport} className="toolbar-btn">Import</button>
                 </div>
+                {creatingFolder && (
+                    <div className="mt-2 flex gap-2">
+                        <input
+                            autoFocus
+                            value={folderName}
+                            onChange={(event) => setFolderName(event.target.value)}
+                            onKeyDown={(event) => {
+                                if (event.key === "Enter") submitFolder();
+                                if (event.key === "Escape") cancelFolderEdit();
+                            }}
+                            placeholder="Folder name"
+                            aria-label="Folder name"
+                            className="min-w-0 flex-1 rounded-sm border border-white/10 bg-[var(--slate-bg)] px-3 py-1.5 text-sm text-white outline-none placeholder:text-zinc-600 focus:border-white/30"
+                        />
+                        <button type="button" onClick={submitFolder} className="toolbar-btn">Add</button>
+                    </div>
+                )}
             </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto p-2">
-                {visibleScripts.map((document) => {
-                    const summary = getDocumentSummary(document);
-                    const isCurrent = document.id === currentScriptId;
-                    const editable = summary.editable;
-                    const valid = summary.valid;
-                    const usability = isScriptUsable(document);
-                    const canUse = usability.usable;
+            <div className="min-h-0 flex-1 overflow-y-auto">
+                {groups.map((group) => {
+                    const isUnfiled = group.id === "__unfiled__";
+                    const isOpen = Boolean(search.trim()) || !collapsedFolders.has(group.id);
+                    if (search.trim() && group.scripts.length === 0) return null;
 
                     return (
-                        <div
-                            key={document.id}
-                            className={`mb-2 rounded-[var(--radius)] border p-2.5 transition-[border-color,background-color] duration-150 ${isCurrent ? "border-white/24 bg-white/8" : "border-white/10 bg-[var(--slate-bg)] hover:border-white/18"}`}
+                        <section
+                            key={group.id}
+                            onDragOver={(event) => event.preventDefault()}
+                            onDrop={(event) => receiveDrop(event, group.id)}
                         >
-                            <div className="mb-2 flex items-start justify-between gap-3">
+                            <div className="sticky top-0 z-[1] flex min-h-9 items-center gap-1 border-b border-white/8 bg-[var(--slate-surface-3)] px-2.5">
                                 <button
                                     type="button"
-                                    disabled={!editable}
-                                    onClick={() => editable && onOpen(document.id)}
-                                    className="min-w-0 flex-1 text-left disabled:cursor-default"
+                                    onClick={() => toggleFolder(group.id)}
+                                    className="flex h-7 w-6 items-center justify-center text-zinc-500 hover:text-zinc-200"
+                                    aria-label={`${isOpen ? "Collapse" : "Expand"} ${group.name}`}
                                 >
-                                    <div className="truncate text-sm font-medium text-white">{document.name}</div>
-                                    <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-zinc-500">
-                                        <span className={`rounded-[4px] px-1.5 py-0.5 ${valid ? "bg-white/8 text-zinc-300" : "bg-red-400/8 text-red-200"}`}>
-                                            {valid ? "valid" : "invalid"}
-                                        </span>
-                                        <span>{summary.inputs} in</span>
-                                        <span>/</span>
-                                        <span>{summary.outputs} out</span>
-                                        <span>/</span>
-                                        <span>{editable ? "editable" : "artifact"}</span>
-                                        <span>/</span>
-                                        <span>{relativeTime(summary.updatedAt)}</span>
+                                    {isOpen
+                                        ? <IconChevronDown size={14} stroke={1.75} aria-hidden="true" />
+                                        : <IconChevronRight size={14} stroke={1.75} aria-hidden="true" />}
+                                </button>
+                                <IconFolder size={14} stroke={1.75} className="shrink-0 text-zinc-500" aria-hidden="true" />
+                                {editingFolderId === group.id ? (
+                                    <input
+                                        autoFocus
+                                        value={folderName}
+                                        onChange={(event) => setFolderName(event.target.value)}
+                                        onBlur={submitFolder}
+                                        onKeyDown={(event) => {
+                                            if (event.key === "Enter") submitFolder();
+                                            if (event.key === "Escape") cancelFolderEdit();
+                                        }}
+                                        className="h-7 min-w-0 flex-1 rounded-sm border border-white/20 bg-[var(--slate-bg)] px-2 text-[11px] text-zinc-200 outline-none focus:border-white/35"
+                                        aria-label="Rename folder"
+                                    />
+                                ) : (
+                                    <button
+                                        type="button"
+                                        onClick={() => toggleFolder(group.id)}
+                                        onDoubleClick={() => {
+                                            if (isUnfiled) return;
+                                            setEditingFolderId(group.id);
+                                            setFolderName(group.name);
+                                        }}
+                                        className="min-w-0 flex-1 truncate text-left text-[11px] font-medium text-zinc-400"
+                                    >
+                                        {group.name} <span className="font-mono text-zinc-600">{group.scripts.length}</span>
+                                    </button>
+                                )}
+                                {!isUnfiled && editingFolderId !== group.id && (
+                                    <div className="flex items-center text-zinc-600">
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setEditingFolderId(group.id);
+                                                setFolderName(group.name);
+                                            }}
+                                            className="flex h-7 w-7 items-center justify-center hover:text-zinc-300"
+                                            aria-label={`Rename ${group.name}`}
+                                        >
+                                            <IconPencil size={13} stroke={1.75} aria-hidden="true" />
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => onDeleteFolder(group.id)}
+                                            className="flex h-7 w-7 items-center justify-center hover:text-rose-300"
+                                            aria-label={`Delete ${group.name}`}
+                                        >
+                                            <IconTrash size={13} stroke={1.75} aria-hidden="true" />
+                                        </button>
                                     </div>
-                                </button>
-                                <button
-                                    type="button"
-                                    disabled={!canUse}
-                                    title={usability.reason || "Use as Block"}
-                                    onClick={() => onUse(document)}
-                                    className="rounded-sm border border-white/10 bg-white/8 px-2 py-1.5 text-xs text-zinc-200 transition-[transform,background-color,border-color] duration-150 hover:border-white/20 hover:bg-white/12 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-35"
-                                >
-                                    {usability.code === IMPORT_CODE.CYCLE ? "Dependent" : "Use"}
-                                </button>
+                                )}
                             </div>
 
-                            {summary.error && (
-                                <div className="mb-2 line-clamp-2 rounded-sm border border-rose-300/10 bg-rose-400/8 px-2 py-1.5 text-[11px] text-rose-100">
-                                    {compactError(summary.error)}
+                            {isOpen && (
+                                <div className="p-2 pb-0">
+                                    {group.scripts.map((document) => (
+                                        <ScriptLibraryCard
+                                            key={document.id}
+                                            document={document}
+                                            folders={folders}
+                                            currentScriptId={currentScriptId}
+                                            isScriptUsable={isScriptUsable}
+                                            onOpen={onOpen}
+                                            onUse={onUse}
+                                            onDuplicate={onDuplicate}
+                                            onRename={onRename}
+                                            onDelete={onDelete}
+                                            onMove={onMove}
+                                            onDownloadEditable={onDownloadEditable}
+                                            onDownloadCompiled={onDownloadCompiled}
+                                        />
+                                    ))}
+                                    {group.scripts.length === 0 && !search.trim() && (
+                                        <p className="mb-2 rounded-sm border border-dashed border-white/8 px-3 py-3 text-center text-[11px] text-zinc-600">
+                                            Drag scripts here
+                                        </p>
+                                    )}
                                 </div>
                             )}
-
-                            <div className="flex flex-wrap gap-1.5">
-                                <button type="button" disabled={!editable} onClick={() => onOpen(document.id)} className="mini-btn">Open</button>
-                                <button type="button" onClick={() => onDuplicate(document)} className="mini-btn">Duplicate</button>
-                                <button type="button" onClick={() => onRename(document)} className="mini-btn">Rename</button>
-                                <button type="button" disabled={!editable} onClick={() => onDownloadEditable(document)} className="mini-btn">Export</button>
-                                <button type="button" disabled={!document.latestValidArtifact} onClick={() => onDownloadCompiled(document)} className="mini-btn">Download Compiled</button>
-                                <button type="button" onClick={() => onDelete(document)} className="mini-btn text-rose-200">Delete</button>
-                            </div>
-                        </div>
+                        </section>
                     );
                 })}
 
-                {visibleScripts.length === 0 && (
+                {visibleScripts.length === 0 && search.trim() && (
                     <div className="rounded-[var(--radius)] border border-white/10 bg-[var(--slate-bg)] px-3 py-8 text-center text-sm text-zinc-500">
                         No matching scripts.
                     </div>
@@ -665,6 +905,7 @@ export default function Scripting({ onOpenWorkspace }) {
     const [unitChildren, setUnitChildren] = useState([]);
     const [positions, setPositions] = useState({});
     const [scripts, setScripts] = useState([]);
+    const [scriptFolders, setScriptFolders] = useState([]);
     const [currentScriptId, setCurrentScriptId] = useState(null);
     const [currentDocument, setCurrentDocument] = useState(null);
     const [compileState, setCompileState] = useState({
@@ -1021,7 +1262,10 @@ export default function Scripting({ onOpenWorkspace }) {
         let mounted = true;
 
         async function boot() {
-            const stored = await listScriptDocuments();
+            const [stored, storedFolders] = await Promise.all([
+                listScriptDocuments(),
+                getScriptSetting(SCRIPT_FOLDERS_SETTING)
+            ]);
             const normalizedDocuments = stored
                 .map((document) => {
                     try {
@@ -1044,6 +1288,7 @@ export default function Scripting({ onOpenWorkspace }) {
 
             if (!mounted) return;
 
+            setScriptFolders(normalizeScriptFolders(storedFolders));
             setScriptsWithRef(documents);
             const preferredScriptId = await getScriptSetting(CURRENT_SCRIPT_SETTING);
             const current = documents.find((document) => document.id === preferredScriptId && document.editable)
@@ -1380,6 +1625,73 @@ export default function Scripting({ onOpenWorkspace }) {
         markGraphChanged();
     };
 
+    const createLibraryFolder = async (name) => {
+        const folder = createScriptFolder({ name });
+        const nextFolders = [...scriptFolders, folder];
+        await putScriptSetting(SCRIPT_FOLDERS_SETTING, nextFolders);
+        setScriptFolders(nextFolders);
+    };
+
+    const renameLibraryFolder = async (folderId, name) => {
+        const nextFolders = normalizeScriptFolders(scriptFolders.map((folder) => (
+            folder.id === folderId ? { ...folder, name } : folder
+        )));
+        await putScriptSetting(SCRIPT_FOLDERS_SETTING, nextFolders);
+        setScriptFolders(nextFolders);
+    };
+
+    const deleteLibraryFolder = async (folderId) => {
+        const folder = scriptFolders.find((item) => item.id === folderId);
+        if (!folder || !window.confirm(`Delete folder "${folder.name}"? Its scripts will move to Unfiled.`)) return;
+
+        if (currentDocumentRef.current?.folderId === folderId) {
+            await saveCurrentScript();
+        }
+
+        const nextFolders = scriptFolders.filter((item) => item.id !== folderId);
+        const changedDocuments = scriptsRef.current
+            .filter((document) => document.folderId === folderId)
+            .map((document) => ({ ...document, folderId: null }));
+        const changedById = new Map(changedDocuments.map((document) => [document.id, document]));
+
+        await Promise.all([
+            putScriptSetting(SCRIPT_FOLDERS_SETTING, nextFolders),
+            ...changedDocuments.map((document) => putScriptDocument(document))
+        ]);
+
+        setScriptFolders(nextFolders);
+        setScriptsWithRef((previous) => previous.map((document) => changedById.get(document.id) || document));
+
+        const currentReplacement = changedById.get(currentScriptIdRef.current);
+        if (currentReplacement) {
+            currentDocumentRef.current = currentReplacement;
+            setCurrentDocument(currentReplacement);
+        }
+    };
+
+    const moveScriptToFolder = async (scriptId, folderId) => {
+        const nextFolderId = folderId && scriptFolders.some((folder) => folder.id === folderId)
+            ? folderId
+            : null;
+        let document = scriptsRef.current.find((item) => item.id === scriptId);
+        if (!document || document.folderId === nextFolderId) return;
+
+        if (currentScriptIdRef.current === scriptId) {
+            document = await saveCurrentScript();
+        }
+
+        const nextDocument = { ...document, folderId: nextFolderId };
+        await putScriptDocument(nextDocument);
+        setScriptsWithRef((previous) => previous.map((item) => (
+            item.id === scriptId ? nextDocument : item
+        )));
+
+        if (currentScriptIdRef.current === scriptId) {
+            currentDocumentRef.current = nextDocument;
+            setCurrentDocument(nextDocument);
+        }
+    };
+
     const createNewScript = async () => {
         await saveCurrentScript();
         const created = createScriptDocument({
@@ -1448,7 +1760,8 @@ export default function Scripting({ onOpenWorkspace }) {
 
         if (document.editable === false) {
             duplicated = createArtifactOnlyDocument(document.latestValidArtifact, {
-                name: `${document.name} copy`
+                name: `${document.name} copy`,
+                folderId: document.folderId
             });
         } else {
             duplicated = createScriptDocument({
@@ -1671,6 +1984,7 @@ export default function Scripting({ onOpenWorkspace }) {
             <ScriptLibraryDrawer
                 open={libraryOpen}
                 scripts={scripts}
+                folders={scriptFolders}
                 currentScriptId={currentScriptId}
                 isScriptUsable={getScriptBlockUsability}
                 search={librarySearch}
@@ -1682,6 +1996,10 @@ export default function Scripting({ onOpenWorkspace }) {
                 onDuplicate={duplicateScript}
                 onRename={renameLibraryScript}
                 onDelete={deleteScript}
+                onMove={moveScriptToFolder}
+                onCreateFolder={createLibraryFolder}
+                onRenameFolder={renameLibraryFolder}
+                onDeleteFolder={deleteLibraryFolder}
                 onDownloadEditable={downloadEditableScript}
                 onDownloadCompiled={downloadCompiledArtifact}
                 onImport={importScriptFile}
