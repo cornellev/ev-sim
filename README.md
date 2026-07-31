@@ -4,6 +4,27 @@ This is our in-house simulation environment for testing and developing algorithm
 
 ## Quick Start
 
+One-liner (clones the repo and installs dependencies):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/cornellev/ev-sim/main/install.sh | bash
+```
+
+Then:
+
+```bash
+cd ev-sim
+npm run dev
+```
+
+Or install into a custom directory and start immediately:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/cornellev/ev-sim/main/install.sh | bash -s -- --dir ~/ev-sim --start
+```
+
+Already have the repo cloned?
+
 ```bash
 npm install
 npm run dev

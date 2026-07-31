@@ -10,6 +10,24 @@ cev-sim is a browser-based autonomous vehicle and cev-sim workbench. It uses Nex
 
 ## Install
 
+Fastest path — fetch and run the installer (requires git, Node.js 20+, and npm):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/cornellev/ev-sim/main/install.sh | bash
+```
+
+Options:
+
+```bash
+# custom directory
+curl -fsSL https://raw.githubusercontent.com/cornellev/ev-sim/main/install.sh | bash -s -- --dir ~/ev-sim
+
+# clone + install + start the dev server
+curl -fsSL https://raw.githubusercontent.com/cornellev/ev-sim/main/install.sh | bash -s -- --start
+```
+
+If you already cloned the repo:
+
 ```bash
 npm install
 ```
