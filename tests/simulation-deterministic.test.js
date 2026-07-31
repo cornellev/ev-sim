@@ -9,6 +9,7 @@ import { PhysicsEngine, sweepAabb } from "../app/physics/PhysicsEngine.js";
 
 function harness() {
     const calls = [];
+    const vehicleConfigurations = [];
     const store = new SignalStore({}, { sourceId: "deterministic-test" });
     const vehicle = {
         telemetryId: "ego",
@@ -37,9 +38,14 @@ function harness() {
         step() { calls.push("physics"); },
         syncAndPublishContacts() { calls.push("contacts"); },
     };
+    const vehicleDatabase = {
+        vehicles: [vehicle],
+        update: (dt) => vehicle.update(dt),
+        async configureFromManifest(...args) { vehicleConfigurations.push(args); },
+    };
     const data = {
         bindings: () => runtime,
-        vehicles: () => ({ vehicles: [vehicle], update: (dt) => vehicle.update(dt) }),
+        vehicles: () => vehicleDatabase,
         devices: () => devices,
         physics: () => physics,
         keys: () => ({ update: () => calls.push("keys") }),
@@ -48,7 +54,7 @@ function harness() {
         earthTilesManager: () => null,
         skyManager: () => null,
     };
-    return { engine: new SimulationEngine(data), data, store, runtime, vehicle, calls };
+    return { engine: new SimulationEngine(data), data, store, runtime, vehicle, calls, vehicleConfigurations };
 }
 
 function resolved(manifest) {
@@ -89,6 +95,47 @@ test("manifest clock uses exact integer nanoseconds and fixed module order", asy
     assert.deepEqual(calls.slice(-7), ["keys", "script", "vehicle", "physics", "contacts", "sensor", "delivery"]);
 });
 
+test("manifest application consumes frozen environment and vehicle dependencies", async () => {
+    const { engine, data, store, vehicleConfigurations } = harness();
+    const applyOrder = [];
+    data.environment = () => ({
+        environmentId: "igvc",
+        templateId: "igvc",
+        name: "Current",
+        roadStylePreset: "igvc",
+    });
+    const loader = {
+        manifest: { environmentId: "igvc", templateId: "igvc", document: { marker: "current" } },
+        apply(manifest) { applyOrder.push(`apply:${manifest.document.marker}`); },
+    };
+    engine.setEnvironmentRuntime({
+        loader,
+        persistence: {
+            suspendAutosave() { applyOrder.push("suspend"); },
+            resumeAutosave() { applyOrder.push("resume"); },
+        },
+    });
+    const manifest = createDefaultRunManifest({ sensorRig: { sensors: [] } });
+    const frozenEnvironment = {
+        environmentId: "igvc",
+        templateId: "igvc",
+        document: { marker: "frozen" },
+    };
+    const run = {
+        ...resolved(manifest),
+        environment: { hash: "environment-hash", manifest: frozenEnvironment },
+        vehicles: [{ actorId: "ego", vehicleId: "big-car", hash: "vehicle-hash", manifest: {}, assetHashes: {} }],
+    };
+
+    await engine.applyRunManifest(run);
+
+    assert.deepEqual(applyOrder, ["suspend", "apply:frozen", "resume"]);
+    assert.notEqual(loader.manifest, frozenEnvironment);
+    assert.equal(loader.manifest.document.marker, "frozen");
+    assert.deepEqual(vehicleConfigurations[0][2].resolvedVehicles, run.vehicles);
+    assert.equal(store.read("environment.manifest").value.document.marker, "frozen");
+});
+
 test("workspace deactivation pauses without resetting and returning stays paused", () => {
     const previousRequestAnimationFrame = globalThis.requestAnimationFrame;
     const previousCancelAnimationFrame = globalThis.cancelAnimationFrame;
@@ -119,6 +166,31 @@ test("workspace deactivation pauses without resetting and returning stays paused
         assert.equal(engine.time, 4);
         assert.equal(engine.steps, 240);
         assert.equal(store.getTimeUs(), 4_000_000);
+    } finally {
+        globalThis.requestAnimationFrame = previousRequestAnimationFrame;
+        globalThis.cancelAnimationFrame = previousCancelAnimationFrame;
+    }
+});
+
+test("hidden experiment diagnostics preserve authoritative playback", () => {
+    const previousRequestAnimationFrame = globalThis.requestAnimationFrame;
+    const previousCancelAnimationFrame = globalThis.cancelAnimationFrame;
+    let nextFrame = 1;
+    const cancelled = [];
+    globalThis.requestAnimationFrame = () => nextFrame++;
+    globalThis.cancelAnimationFrame = (id) => cancelled.push(id);
+    try {
+        const { engine } = harness();
+        engine.play();
+        const activeFrame = engine.rafId;
+
+        engine.setWorkspaceActive(false, { preservePlayback: true });
+
+        assert.equal(engine.viewportActive, false);
+        assert.equal(engine.status, "playing");
+        assert.equal(engine.looping, true);
+        assert.equal(engine.rafId, activeFrame);
+        assert.deepEqual(cancelled, []);
     } finally {
         globalThis.requestAnimationFrame = previousRequestAnimationFrame;
         globalThis.cancelAnimationFrame = previousCancelAnimationFrame;

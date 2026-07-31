@@ -6,6 +6,8 @@ import { registerScriptingTools } from "./scriptingTools.js";
 import { registerBindingTools } from "./bindingTools.js";
 import { registerLoggingTools } from "./loggingTools.js";
 import { registerRunManifestTools } from "./runManifestTools.js";
+import { registerScenarioTools } from "./scenarioTools.js";
+import { registerExperimentTools } from "./experimentTools.js";
 
 /**
  * Build an Express router that serves the cev-sim MCP endpoint.
@@ -62,6 +64,8 @@ export function createSensorFusionMcpServer(storage, logService) {
     registerScriptingTools(server, storage);
     registerBindingTools(server, storage);
     registerRunManifestTools(server, storage);
+    registerScenarioTools(server, storage);
+    registerExperimentTools(server, storage);
     registerLoggingTools(server, logService);
 
     return server;

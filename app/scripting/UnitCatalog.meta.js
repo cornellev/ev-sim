@@ -37,6 +37,11 @@ import {
 } from "./units/math/Randomization.block.js";
 import { OutputNodeBlock, ProgramInputBlock } from "./units/program/ProgramIO.block.js";
 import {
+    FollowRouteBlock,
+    FollowRouteSectionBlock,
+    RouteSectionCountBlock,
+} from "./units/mission/RouteBlocks.block.js";
+import {
     AdvanceWaypointBlock,
     AssertSignalBlock,
     BindInputBlock,
@@ -161,6 +166,9 @@ export const UNIT_CATALOG_META = [
     entry("mission", "Mission State", MissionStateBlock),
     entry("mission", "Set Mission State", SetMissionStateBlock),
     entry("mission", "Route Progress", RouteProgressBlock),
+    entry("mission", "Follow Route", FollowRouteBlock),
+    entry("mission", "Follow Route Section", FollowRouteSectionBlock),
+    entry("mission", "Route Section Count", RouteSectionCountBlock),
     entry("mission", "Scenario Flag Read", ScenarioFlagReadBlock),
     entry("mission", "Scenario Flag Write", ScenarioFlagWriteBlock),
     entry("bindings", "On Signal Update", OnSignalUpdateBlock),

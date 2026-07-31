@@ -36,6 +36,108 @@ export function createStorageRouter(service) {
     router.get("/bindings", handle(async () => service.getBindings()));
     router.put("/bindings", handle(async (req) => service.putBindings(req.body)));
 
+    // --- Scenarios ---
+    router.get("/scenario-catalog", handle(async () => service.getScenarioCatalog()));
+    router.put("/scenario-catalog", handle(async (req) => {
+        const catalog = await service.putScenarioCatalog(req.body ?? {});
+        storageEvents.publish({ domain: "scenario-catalog", action: "updated" });
+        return catalog;
+    }));
+    router.get("/scenarios", handle(async () => service.listScenarios()));
+    router.post("/scenarios", handle(async (req) => {
+        const scenario = await service.createScenario(req.body ?? {});
+        storageEvents.publish({ domain: "scenario", id: scenario.id, action: "created" });
+        return scenario;
+    }));
+    router.post("/scenarios/:id/duplicate", handle(async (req) => {
+        const scenario = await service.duplicateScenario(req.params.id, req.body ?? {});
+        storageEvents.publish({ domain: "scenario", id: scenario.id, action: "created" });
+        return scenario;
+    }));
+    router.post("/scenarios/:id/validate", handle(async (req) => service.validateScenario(req.params.id, req.body ?? null)));
+    router.post("/scenarios/:id/resolve", handle(async (req) => service.resolveScenario(req.params.id, req.body ?? null)));
+    router.post("/scenarios/:id/verify-route", handle(async (req) => service.verifyScenarioRoute(req.params.id, req.body ?? {})));
+    router.get("/scenarios/:id", handle(async (req) => service.getScenario(req.params.id)));
+    router.put("/scenarios/:id", handle(async (req) => {
+        const scenario = await service.putScenario(req.params.id, req.body ?? {});
+        storageEvents.publish({ domain: "scenario", id: scenario.id, action: "updated" });
+        return scenario;
+    }));
+    router.delete("/scenarios/:id", handle(async (req) => {
+        const deleted = await service.deleteScenario(req.params.id, req.query?.expectedRevision);
+        if (deleted) storageEvents.publish({ domain: "scenario", id: req.params.id, action: "deleted" });
+        return deleted;
+    }));
+
+    // --- Experiment suites, results, and immutable baselines ---
+    router.get("/experiment-suites", handle(async () => service.listExperimentSuites()));
+    router.post("/experiment-suites", handle(async (req) => {
+        const suite = await service.createExperimentSuite(req.body ?? {});
+        storageEvents.publish({ domain: "experiment-suite", id: suite.id, action: "created" });
+        return suite;
+    }));
+    router.post("/experiment-suites/:id/duplicate", handle(async (req) => {
+        const suite = await service.duplicateExperimentSuite(req.params.id, req.body ?? {});
+        storageEvents.publish({ domain: "experiment-suite", id: suite.id, action: "created" });
+        return suite;
+    }));
+    router.post("/experiment-suites/:id/validate", handle(async (req) => (
+        service.validateExperimentSuite(req.params.id, req.body ?? null)
+    )));
+    router.post("/experiment-suites/:id/resolve-case", handle(async (req) => (
+        service.resolveExperimentCase(req.params.id, req.body ?? {})
+    )));
+    router.get("/experiment-suites/:id", handle(async (req) => service.getExperimentSuite(req.params.id)));
+    router.put("/experiment-suites/:id", handle(async (req) => {
+        const suite = await service.putExperimentSuite(req.params.id, req.body ?? {});
+        storageEvents.publish({ domain: "experiment-suite", id: suite.id, action: "updated" });
+        return suite;
+    }));
+    router.delete("/experiment-suites/:id", handle(async (req) => {
+        const deleted = await service.deleteExperimentSuite(req.params.id, req.query?.expectedRevision);
+        if (deleted) storageEvents.publish({ domain: "experiment-suite", id: req.params.id, action: "deleted" });
+        return deleted;
+    }));
+
+    router.get("/experiment-results", handle(async () => service.listExperimentResults()));
+    router.post("/experiment-results", handle(async (req) => {
+        const result = await service.createExperimentResult(req.body ?? {});
+        storageEvents.publish({ domain: "experiment-result", id: result.id, action: "created" });
+        return result;
+    }));
+    router.get("/experiment-results/:id", handle(async (req) => service.getExperimentResult(req.params.id)));
+    router.post("/experiment-results/:id/validate", handle(async (req) => (
+        service.validateExperimentResult(req.params.id, req.body ?? null)
+    )));
+    router.put("/experiment-results/:id", handle(async (req) => {
+        const result = await service.putExperimentResult(req.params.id, req.body ?? {});
+        storageEvents.publish({ domain: "experiment-result", id: result.id, action: "updated" });
+        return result;
+    }));
+    router.delete("/experiment-results/:id", handle(async (req) => {
+        const deleted = await service.deleteExperimentResult(req.params.id, req.query?.expectedRevision);
+        if (deleted) storageEvents.publish({ domain: "experiment-result", id: req.params.id, action: "deleted" });
+        return deleted;
+    }));
+
+    router.get("/experiment-baselines", handle(async (req) => (
+        service.listExperimentBaselines(req.query?.suiteId || null)
+    )));
+    router.post("/experiment-baselines", handle(async (req) => {
+        const baseline = await service.createExperimentBaseline(req.body ?? {});
+        storageEvents.publish({ domain: "experiment-baseline", id: baseline.id, action: "created" });
+        return baseline;
+    }));
+    router.get("/experiment-baselines/:id", handle(async (req) => service.getExperimentBaseline(req.params.id)));
+    router.post("/experiment-baselines/:id/validate", handle(async (req) => (
+        service.validateExperimentBaseline(req.params.id, req.body ?? null)
+    )));
+    router.delete("/experiment-baselines/:id", handle(async (req) => {
+        const deleted = await service.deleteExperimentBaseline(req.params.id);
+        if (deleted) storageEvents.publish({ domain: "experiment-baseline", id: req.params.id, action: "deleted" });
+        return deleted;
+    }));
+
     // --- Simulation run manifests ---
     router.get("/run-manifests", handle(async () => service.listRunManifests()));
     router.post("/run-manifests", handle(async (req) => service.createRunManifest(req.body ?? {})));

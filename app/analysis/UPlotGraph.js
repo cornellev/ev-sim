@@ -81,5 +81,5 @@ export default function UPlotGraph({ data, series, onCursor, onUnlockLive, onWid
         }
     };
 
-    return <div className={styles.graph} onPointerUp={finishPointerGesture}><div ref={mountRef} className={styles.graphMount} />{!data?.[0]?.length && <div className={styles.graphEmpty}><div><p>Add numeric signals to graph</p><span>Use the add button, double-click, press Enter, or drag a signal here.</span></div></div>}</div>;
+    return <div className={styles.graph} onPointerUp={finishPointerGesture}><div ref={mountRef} className={styles.graphMount} />{!data?.[0]?.length && <div className={styles.graphEmpty}><div><p>Add a signal with data to graph to visualize it.</p><span>Use the add button, double-click, press Enter, or drag a signal here.</span></div></div>}</div>;
 }

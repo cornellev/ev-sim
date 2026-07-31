@@ -5,6 +5,7 @@ import {
     topicSignalPath
 } from "../runtime/SignalPaths.js";
 import { createLoadedScript, loadScript } from "../ScriptRuntime.js";
+import { SeededRNG } from "../../util/SeededRNG.js";
 import { getBindingManifest, putBindingManifest } from "./BindingStorage.js";
 import {
     BINDING_SCOPES,
@@ -74,6 +75,7 @@ export class BindingRuntime {
 
         this._scripts = new Map();
         this._scriptLoads = new Map();
+        this._scriptParameterInputs = new Map();
         this._timers = new Map();
         this._tickCounters = new Map();
         this._signalWatch = new Map();
@@ -225,13 +227,32 @@ export class BindingRuntime {
             });
     }
 
-    async prepareResolvedScripts(entries = []) {
+    async prepareResolvedScripts(entries = [], { seed = "42", parameterBindings = [] } = {}) {
+        this._scriptParameterInputs.clear();
+        const resolvedIds = new Set(entries.map((entry) => entry.scriptId));
+        for (const scriptId of this._scripts.keys()) {
+            if (!resolvedIds.has(scriptId)) this._scripts.delete(scriptId);
+        }
         if (entries.length === 0) return;
         const { registerBuiltInBlocks } = await import("../registerBuiltInBlocks.js");
         registerBuiltInBlocks();
         await Promise.all(entries.map((entry) => this._ensureScript(entry.scriptId).catch(() => null)));
+        for (const binding of parameterBindings) {
+            if (binding?.target?.kind !== "script-input") continue;
+            const inputs = this._scriptParameterInputs.get(binding.target.scriptId) ?? {};
+            inputs[binding.target.input] = structuredClone(binding.value);
+            this._scriptParameterInputs.set(binding.target.scriptId, inputs);
+        }
         for (const entry of [...entries].sort((left, right) => left.scriptId.localeCompare(right.scriptId))) {
-            this._scripts.set(entry.scriptId, createLoadedScript(entry.artifact, { signalStore: this.signalStore }));
+            const rng = new SeededRNG(`${seed}:visual-script:${entry.scriptId}`);
+            this._scripts.set(entry.scriptId, createLoadedScript(entry.artifact, {
+                signalStore: this.signalStore,
+                runtimeContext: {
+                    seed,
+                    scriptId: entry.scriptId,
+                    random: () => rng.next(),
+                },
+            }));
             this._scriptLoads.delete(entry.scriptId);
         }
     }
@@ -556,7 +577,7 @@ export class BindingRuntime {
     }
 
     _resolveInputs(binding, context) {
-        const inputs = {};
+        const inputs = { ...(this._scriptParameterInputs.get(binding.scriptId) ?? {}) };
 
         binding.inputs.forEach((mapping) => {
             switch (mapping.source) {

@@ -309,6 +309,34 @@ export class SignalStore {
         });
     }
 
+    /**
+     * Clear state that must never leak between deterministic run cases while
+     * retaining the signal catalog (and selected environment/config values).
+     */
+    resetRunState({ values = {}, preservePaths = ["environment.manifest"] } = {}) {
+        const preserved = new Map();
+        for (const rawPath of preservePaths ?? []) {
+            const path = normalizeSignalPath(rawPath);
+            const entry = path ? this._committed.get(path) : null;
+            if (entry) preserved.set(path, cloneValue(entry));
+        }
+        this._committed.clear();
+        this._previous.clear();
+        this._layers = [];
+        this._history.clear();
+        this._events = [];
+        this._sequence = 0;
+        this.sessionStartedAtMs = monotonicNowMs();
+        for (const [path, entry] of preserved) this._committed.set(path, entry);
+        for (const [rawPath, value] of Object.entries(values ?? {})) {
+            const path = normalizeSignalPath(rawPath);
+            if (!path) continue;
+            this._committed.set(path, normalizeSignalEntry(value, { now: this.now }));
+        }
+        this._notify({ kind: "reset", paths: this.paths() });
+        return this.snapshot();
+    }
+
     snapshot({ paths = null, includeHeavy = true } = {}) {
         const selectedPaths = Array.isArray(paths) ? new Set(paths.map(normalizeSignalPath).filter(Boolean)) : null;
         return Object.fromEntries(

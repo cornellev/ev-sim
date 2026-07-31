@@ -21,11 +21,47 @@ import {
     normalizeVehicleManifest,
     validateVehicleManifest,
 } from "../../app/vehicles/VehicleManifest.js";
+import { getBuiltInVehicleManifest } from "../../app/vehicles/BuiltInVehicleManifests.js";
+import { createBuiltInIGVCEnvironmentManifest } from "../../app/3d/igvc/IGVCEnvironmentDocument.js";
 import {
     BINDING_SCOPES,
     createBindingManifest,
     normalizeBindingManifest,
 } from "../../app/scripting/bindings/BindingDocument.js";
+import {
+    createDefaultScenario,
+    createScenarioCatalog,
+    normalizeScenario,
+    normalizeScenarioCatalog,
+    stripScenarioMetadata,
+    validateScalarParameterTarget,
+    validateScenario,
+} from "../../app/scenarios/ScenarioDocument.js";
+import {
+    createDefaultExperimentSuite,
+    experimentCaseKey,
+    normalizeExperimentSuite,
+    planExperimentCases,
+    validateExperimentSuite,
+} from "../../app/experiments/ExperimentSuite.js";
+import {
+    createExperimentResult as createExperimentResultDocument,
+    normalizeExperimentResult,
+    validateExperimentResult,
+} from "../../app/experiments/ExperimentResult.js";
+import {
+    createExperimentBaseline as createExperimentBaselineDocument,
+    normalizeExperimentBaseline,
+    validateExperimentBaseline,
+} from "../../app/experiments/BaselineComparison.js";
+import {
+    hashEnvironmentRoadNetwork,
+    validateRouteVerification,
+} from "../../app/scenarios/route/index.js";
+import {
+    SCENARIO_SCRIPT_CONTRACTS,
+    validateScriptContract,
+} from "../../app/scenarios/ScriptContracts.js";
 
 const LEGACY_BINDINGS_SETTING = "bindings:manifest";
 
@@ -34,6 +70,7 @@ const DEFAULT_DATA_DIR = path.join(
     "..",
     "data",
 );
+const PUBLIC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "public");
 const BUILT_IN_ENVIRONMENTS = Object.freeze([
     {
         id: "igvc",
@@ -43,6 +80,56 @@ const BUILT_IN_ENVIRONMENTS = Object.freeze([
     },
 ]);
 
+function publicAssetFilePath(assetUrl) {
+    const pathname = decodeURIComponent(String(assetUrl).split(/[?#]/, 1)[0]);
+    const filePath = path.resolve(PUBLIC_DIR, `.${pathname}`);
+    if (filePath !== PUBLIC_DIR && !filePath.startsWith(`${PUBLIC_DIR}${path.sep}`)) {
+        throw new Error(`Public vehicle asset path "${assetUrl}" escapes the public directory.`);
+    }
+    return filePath;
+}
+
+async function hashPublicVehicleAssets(manifest) {
+    const modelUrl = String(manifest?.model?.asset ?? "").trim();
+    if (!modelUrl.startsWith("/") || modelUrl.startsWith("/api/")) return {};
+
+    const urls = new Set([modelUrl.split(/[?#]/, 1)[0]]);
+    const modelBytes = await fs.readFile(publicAssetFilePath(modelUrl));
+    if (modelUrl.toLowerCase().split(/[?#]/, 1)[0].endsWith(".gltf")) {
+        let gltf;
+        try {
+            gltf = JSON.parse(modelBytes.toString("utf8"));
+        } catch (error) {
+            throw new Error(`Public vehicle model "${modelUrl}" is not valid glTF JSON: ${error.message}`);
+        }
+        const modelDirectory = path.posix.dirname(modelUrl.split(/[?#]/, 1)[0]);
+        for (const collection of [gltf.buffers, gltf.images]) {
+            for (const entry of Array.isArray(collection) ? collection : []) {
+                const uri = String(entry?.uri ?? "").trim();
+                if (!uri || /^(?:data:|blob:|https?:)/i.test(uri)) continue;
+                urls.add(uri.startsWith("/") ? uri : path.posix.normalize(path.posix.join(modelDirectory, uri)));
+            }
+        }
+    }
+
+    const hashes = {};
+    for (const assetUrl of [...urls].sort()) {
+        let bytes;
+        try {
+            bytes = assetUrl === modelUrl.split(/[?#]/, 1)[0]
+                ? modelBytes
+                : await fs.readFile(publicAssetFilePath(assetUrl));
+        } catch (error) {
+            if (error.code === "ENOENT") {
+                throw new Error(`Vehicle "${manifest.id}" is missing public model asset "${assetUrl}".`);
+            }
+            throw error;
+        }
+        hashes[assetUrl] = createHash("sha256").update(bytes).digest("hex");
+    }
+    return hashes;
+}
+
 /**
  * StorageService is the single owner of the on-disk layout. Routers and other
  * callers talk to this domain API and never touch file paths directly.
@@ -51,6 +138,11 @@ const BUILT_IN_ENVIRONMENTS = Object.freeze([
  *   environments/<environmentId>.json  full Environment.toManifest() output
  *   scripts/<scriptId>.json            one human-editable file per script
  *   run-manifests/<manifestId>.json    authored simulation run manifests
+ *   scenarios/<scenarioId>.json        authored reusable scenarios
+ *   scenario-catalog.json              ordered single-level scenario folders
+ *   experiment-suites/<suiteId>.json   authored deterministic experiment matrices
+ *   experiment-results/<resultId>.json resumable case execution records
+ *   experiment-baselines/<baselineId>.json immutable copied comparison values
  *   vehicles/<vehicleId>.json          authored vehicle manifests
  *   vehicle-assets/<vehicleId>/<file>  binary model assets (glb/gltf)
  *   bindings.json                      the binding manifest
@@ -66,6 +158,11 @@ export class StorageService {
         this.environmentsDir = path.join(dataDir, "environments");
         this.scriptsDir = path.join(dataDir, "scripts");
         this.runManifestsDir = path.join(dataDir, "run-manifests");
+        this.scenariosDir = path.join(dataDir, "scenarios");
+        this.scenarioCatalogPath = path.join(dataDir, "scenario-catalog.json");
+        this.experimentSuitesDir = path.join(dataDir, "experiment-suites");
+        this.experimentResultsDir = path.join(dataDir, "experiment-results");
+        this.experimentBaselinesDir = path.join(dataDir, "experiment-baselines");
         this.vehiclesDir = path.join(dataDir, "vehicles");
         this.vehicleAssetsDir = path.join(dataDir, "vehicle-assets");
         // Cache of one JsonFileStore per file path.
@@ -74,6 +171,11 @@ export class StorageService {
         this._environmentWriteChains = new Map();
         this._deletedEnvironmentIds = new Set();
         this._runManifestWriteChains = new Map();
+        this._scenarioWriteChains = new Map();
+        this._scenarioCatalogWriteChain = Promise.resolve();
+        this._experimentSuiteWriteChains = new Map();
+        this._experimentResultWriteChains = new Map();
+        this._experimentBaselineWriteChains = new Map();
         this._vehicleWriteChains = new Map();
     }
 
@@ -100,7 +202,9 @@ export class StorageService {
 
     /** @returns {Promise<object|null>} the saved manifest, or null if none. */
     async getEnvironment(environmentId) {
-        return this._fileStore(this._environmentPath(environmentId), null).read();
+        const stored = await this._fileStore(this._environmentPath(environmentId), null).read();
+        if (stored) return stored;
+        return environmentId === "igvc" ? createBuiltInIGVCEnvironmentManifest() : null;
     }
 
     /** Persist the full environment manifest for `environmentId`. */
@@ -257,6 +361,530 @@ export class StorageService {
             .write(normalizeBindingManifest(manifest));
     }
 
+    // --- Scenarios ---------------------------------------------------------
+
+    async listScenarios() {
+        const ids = await this._listJsonIds(this.scenariosDir);
+        const scenarios = (await Promise.all(ids.map((id) => this.getScenario(id)))).filter(Boolean);
+        return scenarios.map(scenarioSummary).sort((left, right) => left.name.localeCompare(right.name));
+    }
+
+    getScenario(scenarioId) {
+        return this._fileStore(this._scenarioPath(scenarioId), null).read();
+    }
+
+    async createScenario(input = {}) {
+        const requested = input.scenario ?? input;
+        const scenario = normalizeScenario(Object.keys(requested).length > 0
+            ? requested
+            : createDefaultScenario(), { allowMissingKind: true });
+        const id = safeSegment(scenario.id);
+        if (await this.getScenario(id)) throw new Error(`Scenario "${id}" already exists.`);
+        return this._writeScenario(id, scenario, { expectedRevision: 0, create: true });
+    }
+
+    async putScenario(scenarioId, input = {}) {
+        const requested = input.scenario ?? input;
+        const expectedRevision = input.expectedRevision ?? requested.revision;
+        const scenario = normalizeScenario({ ...requested, id: scenarioId }, { allowMissingKind: true });
+        return this._writeScenario(scenarioId, scenario, { expectedRevision });
+    }
+
+    async duplicateScenario(sourceId, input = {}) {
+        const source = await this.getScenario(sourceId);
+        if (!source) throw new Error(`Scenario "${sourceId}" does not exist.`);
+        const id = String(input.id || `${sourceId}-copy`).trim();
+        const duplicate = normalizeScenario({
+            ...stripScenarioMetadata(source),
+            id,
+            name: input.name || `${source.name} Copy`,
+            folderId: input.folderId ?? source.folderId,
+        }, { allowMissingKind: true });
+        return this.createScenario(duplicate);
+    }
+
+    deleteScenario(scenarioId, expectedRevision) {
+        return this._deleteRevisionedDocument({
+            id: scenarioId,
+            filePath: this._scenarioPath(scenarioId),
+            writeChains: this._scenarioWriteChains,
+            getCurrent: () => this.getScenario(scenarioId),
+            expectedRevision,
+            label: "Scenario",
+        });
+    }
+
+    async getScenarioCatalog() {
+        const store = this._fileStore(this.scenarioCatalogPath, null);
+        const stored = await store.read();
+        if (stored) return normalizeScenarioCatalog(stored);
+        const catalog = createScenarioCatalog();
+        return {
+            ...catalog,
+            revision: 0,
+            definitionHash: semanticHash(catalog),
+            createdAt: null,
+            updatedAt: null,
+        };
+    }
+
+    putScenarioCatalog(value = {}) {
+        const requested = value.catalog ?? value;
+        const expectedRevision = value.expectedRevision ?? requested.revision;
+        const operation = this._scenarioCatalogWriteChain.catch(() => {}).then(async () => {
+            const current = await this.getScenarioCatalog();
+            const currentRevision = Number(current.revision || 0);
+            if (expectedRevision !== undefined && Number(expectedRevision) !== currentRevision) {
+                throw new Error(`Scenario catalog revision conflict: expected ${expectedRevision}, current revision is ${currentRevision}.`);
+            }
+            const now = new Date().toISOString();
+            const normalized = normalizeScenarioCatalog(requested);
+            const definition = {
+                kind: normalized.kind,
+                version: normalized.version,
+                folders: normalized.folders,
+            };
+            return this._fileStore(this.scenarioCatalogPath, null).write({
+                ...definition,
+                revision: currentRevision + 1,
+                definitionHash: semanticHash(definition),
+                createdAt: current.createdAt ?? now,
+                updatedAt: now,
+            });
+        });
+        this._scenarioCatalogWriteChain = operation;
+        return operation;
+    }
+
+    async validateScenario(scenarioId, input = null) {
+        const source = input?.scenario ?? (input?.kind ? input : null) ?? await this.getScenario(scenarioId);
+        if (!source) throw new Error(`Scenario "${scenarioId}" does not exist.`);
+        const validation = validateScenario(source);
+        const dependencyIssues = validation.scenario
+            ? await this._validateScenarioDependencies(validation.scenario)
+            : [];
+        const issues = [...validation.issues, ...dependencyIssues];
+        return { ok: issues.length === 0, scenario: validation.scenario, issues };
+    }
+
+    async resolveScenario(scenarioId, input = null, options = {}) {
+        const source = input?.scenario ?? (input?.kind ? input : null) ?? await this.getScenario(scenarioId);
+        if (!source) throw new Error(`Scenario "${scenarioId}" does not exist.`);
+        const validation = validateScenario(source);
+        if (!validation.ok) throw scenarioValidationError(validation.issues);
+
+        const definitionHash = semanticHash(stripScenarioMetadata(validation.scenario));
+        const expectedHash = options.expectedHash ?? input?.expectedHash ?? null;
+        if (expectedHash && expectedHash !== definitionHash) {
+            throw new Error(`Scenario "${scenarioId}" changed: expected ${expectedHash}, received ${definitionHash}.`);
+        }
+
+        const parameterValues = {
+            ...objectValues(input?.parameterValues),
+            ...objectValues(options.parameterValues),
+        };
+        const parameterResolution = resolveDeclaredParameters(validation.scenario.parameters, parameterValues, "scenario");
+        let scenario = applyDocumentScalarParameters(
+            validation.scenario,
+            validation.scenario.parameters,
+            parameterResolution.values,
+            "scenario",
+        );
+        const parameterizedValidation = validateScenario(scenario);
+        if (!parameterizedValidation.ok) throw scenarioValidationError(parameterizedValidation.issues);
+        assertScalarParameterValuesPreserved(
+            parameterizedValidation.scenario,
+            validation.scenario.parameters,
+            parameterResolution.values,
+            "scenario",
+        );
+        scenario = parameterizedValidation.scenario;
+        const environment = await this._resolveEnvironment(scenario.environment.id);
+        const environmentHash = semanticHash(environment);
+        const roadNetworkHash = hashEnvironmentRoadNetwork(environment);
+        if (scenario.environment.expectedHash && scenario.environment.expectedHash !== environmentHash) {
+            throw new Error(`Environment "${scenario.environment.id}" changed: expected ${scenario.environment.expectedHash}, received ${environmentHash}.`);
+        }
+        for (const route of scenario.routes) {
+            const routeValidation = validateRouteVerification(route, environment);
+            if (!routeValidation.ok) {
+                throw new Error(`Route "${route.id}" must be re-verified: ${routeValidation.issues.map((issue) => issue.message).join(" ")}`);
+            }
+        }
+
+        const scriptIds = collectScenarioScriptIds(scenario);
+        const scripts = [];
+        for (const scriptId of scriptIds) {
+            const document = await this.getScript(scriptId);
+            if (!document) throw new Error(`Script "${scriptId}" does not exist.`);
+            const artifact = document.latestValidArtifact ?? document.artifact ?? document;
+            scripts.push({ scriptId, hash: semanticHash(artifact), artifact });
+        }
+        const artifactsById = new Map(scripts.map((entry) => [entry.scriptId, entry.artifact]));
+        for (const parameter of scenario.parameters.filter((entry) => entry.target.kind === "script-input")) {
+            const artifact = artifactsById.get(parameter.target.scriptId);
+            const port = artifact?.interface?.inputs?.find((entry) => entry.label === parameter.target.input);
+            if (!port) {
+                throw new Error(`Parameter "${parameter.id}" references missing script input "${parameter.target.input}".`);
+            }
+            if (port.type !== parameter.type) {
+                throw new Error(`Parameter "${parameter.id}" is ${parameter.type}, but its script input is ${port.type}.`);
+            }
+        }
+        for (const route of scenario.routes) {
+            if (!route.controller.scriptId) continue;
+            const artifact = artifactsById.get(route.controller.scriptId);
+            if (route.controller.kind === "script-with-route"
+                && !artifact?.interface?.inputs?.some((port) => port.label === "route" && port.type === "route")) {
+                throw new Error(`Route controller script "${route.controller.scriptId}" requires a route: route input.`);
+            }
+            const outputPorts = new Map((artifact?.interface?.outputs ?? []).map((port) => [port.label, port]));
+            for (const mapping of route.controller.outputs ?? []) {
+                const label = mapping?.output ?? mapping?.source ?? mapping?.port ?? mapping?.label ?? mapping?.name;
+                const target = mapping?.target ?? mapping?.command;
+                if (!["speed", "steering"].includes(target)) continue;
+                const port = outputPorts.get(label);
+                if (!port) {
+                    throw new Error(`Route controller script "${route.controller.scriptId}" has no mapped output "${label}".`);
+                }
+                if (port.type !== "float64") {
+                    throw new Error(`Route controller output "${label}" must be float64 for ${target}.`);
+                }
+            }
+        }
+        for (const completion of scenario.completion.conditions.filter((entry) => entry.kind === "script")) {
+            const contract = validateScriptContract(
+                artifactsById.get(completion.scriptId),
+                SCENARIO_SCRIPT_CONTRACTS.FINISH,
+            );
+            if (!contract.ok) throw new Error(`Finish script "${completion.scriptId}" has an invalid interface: ${contract.issues.join(" ")}`);
+        }
+        for (const outcome of scenario.expectedOutcomes.filter((entry) => entry.kind === "script")) {
+            const contract = validateScriptContract(
+                artifactsById.get(outcome.scriptId),
+                SCENARIO_SCRIPT_CONTRACTS.EXPECTED_OUTCOME,
+            );
+            if (!contract.ok) throw new Error(`Expected-outcome script "${outcome.scriptId}" has an invalid interface: ${contract.issues.join(" ")}`);
+        }
+
+        const vehicles = [];
+        for (const actor of scenario.actors.filter((entry) => entry.id !== "ego")) {
+            vehicles.push(await this._resolveVehicleDependency(actor.id, actor.vehicleId));
+        }
+
+        const resolved = {
+            kind: scenario.kind,
+            version: scenario.version,
+            scenario,
+            definitionHash,
+            environment: { hash: environmentHash, manifest: environment },
+            scripts,
+            vehicles,
+            parameters: parameterResolution,
+            dependencyHashes: {
+                scenario: definitionHash,
+                environment: environmentHash,
+                roadNetwork: roadNetworkHash,
+                scripts: Object.fromEntries(scripts.map((entry) => [entry.scriptId, entry.hash])),
+                vehicles: Object.fromEntries(vehicles.map((entry) => [entry.vehicleId, entry.hash])),
+                vehicleAssets: Object.fromEntries(vehicles.map((entry) => [entry.vehicleId, entry.assetHashes])),
+            },
+        };
+        resolved.resolvedHash = semanticHash(resolved);
+        return resolved;
+    }
+
+    async verifyScenarioRoute(scenarioId, input = {}) {
+        const source = input.scenario ?? await this.getScenario(scenarioId);
+        if (!source) throw new Error(`Scenario "${scenarioId}" does not exist.`);
+        const scenario = normalizeScenario(source, { allowMissingKind: true });
+        const route = scenario.routes.find((entry) => entry.id === input.routeId);
+        if (!route) throw new Error(`Route "${input.routeId}" does not exist.`);
+        const environment = await this._resolveEnvironment(scenario.environment.id);
+        const { verifyRoute } = await import("../../app/scenarios/route/index.js");
+        // Keep the environment envelope so the canonical road-network identity
+        // includes the stable environment id, exactly as scenario resolution does.
+        return verifyRoute(route.waypoints, environment);
+    }
+
+    // --- Experiment suites, results, and baselines ------------------------
+
+    async listExperimentSuites() {
+        const ids = await this._listJsonIds(this.experimentSuitesDir);
+        const suites = (await Promise.all(ids.map((id) => this.getExperimentSuite(id)))).filter(Boolean);
+        return suites.map(experimentSuiteSummary).sort((left, right) => left.name.localeCompare(right.name));
+    }
+
+    getExperimentSuite(suiteId) {
+        return this._fileStore(this._experimentSuitePath(suiteId), null).read();
+    }
+
+    async createExperimentSuite(input = {}) {
+        const requested = input.suite ?? input;
+        const suite = normalizeExperimentSuite(Object.keys(requested).length > 0
+            ? requested
+            : createDefaultExperimentSuite(), { allowMissingKind: true });
+        safeSegment(suite.id);
+        if (await this.getExperimentSuite(suite.id)) {
+            throw new Error(`Experiment suite "${suite.id}" already exists.`);
+        }
+        return this._writeExperimentSuite(suite.id, suite, { expectedRevision: 0, create: true });
+    }
+
+    async putExperimentSuite(suiteId, input = {}) {
+        const requested = input.suite ?? input;
+        const expectedRevision = input.expectedRevision ?? requested.revision;
+        const suite = normalizeExperimentSuite({ ...requested, id: suiteId }, { allowMissingKind: true });
+        return this._writeExperimentSuite(suiteId, suite, { expectedRevision });
+    }
+
+    async duplicateExperimentSuite(sourceId, input = {}) {
+        const source = await this.getExperimentSuite(sourceId);
+        if (!source) throw new Error(`Experiment suite "${sourceId}" does not exist.`);
+        const id = String(input.id || `${sourceId}-copy`).trim();
+        return this.createExperimentSuite({
+            ...source,
+            id,
+            name: input.name || `${source.name} Copy`,
+        });
+    }
+
+    deleteExperimentSuite(suiteId, expectedRevision) {
+        return this._deleteRevisionedDocument({
+            id: suiteId,
+            filePath: this._experimentSuitePath(suiteId),
+            writeChains: this._experimentSuiteWriteChains,
+            getCurrent: () => this.getExperimentSuite(suiteId),
+            expectedRevision,
+            label: "Experiment suite",
+        });
+    }
+
+    async validateExperimentSuite(suiteId, input = null) {
+        const source = input?.suite ?? (input?.kind ? input : null) ?? await this.getExperimentSuite(suiteId);
+        if (!source) throw new Error(`Experiment suite "${suiteId}" does not exist.`);
+        const suite = normalizeExperimentSuite(source, { allowMissingKind: true });
+        const context = await this._experimentPlanningContext(suite, { resolveDependencies: true });
+        return validateExperimentSuite(suite, context);
+    }
+
+    async resolveExperimentCase(suiteId, input = {}) {
+        const suite = await this.getExperimentSuite(suiteId);
+        if (!suite) throw new Error(`Experiment suite "${suiteId}" does not exist.`);
+        const context = await this._experimentPlanningContext(suite);
+        const plan = planExperimentCases(suite, context);
+        if (!plan.ok) throw experimentValidationError(plan.issues);
+
+        const requested = input.case && typeof input.case === "object" ? input.case : input;
+        const selected = requested.caseId
+            ? plan.cases.find((entry) => entry.id === requested.caseId)
+            : plan.cases.find((entry) => experimentCaseIdentityMatches(entry, requested));
+        if (!selected) throw new Error("The requested case is not part of the suite's current deterministic expansion.");
+
+        const scenario = context.scenarios.find((entry) => entry.id === selected.scenarioId);
+        const manifest = context.manifests.find((entry) => entry.id === selected.manifestId);
+        const scenarioIds = new Set((scenario?.parameters ?? scenario?.experimentParameters ?? []).map((entry) => entry.id));
+        const manifestIds = new Set((manifest?.parameters ?? manifest?.experimentParameters ?? []).map((entry) => entry.id));
+        const scenarioParameterValues = {};
+        const manifestParameterValues = {};
+        for (const [parameterId, value] of Object.entries(selected.parameters)) {
+            if (scenarioIds.has(parameterId)) scenarioParameterValues[parameterId] = value;
+            if (manifestIds.has(parameterId)) manifestParameterValues[parameterId] = value;
+        }
+
+        const resolvedRun = await this.resolveRunManifest(selected.manifestId, {
+            scenarioId: selected.scenarioId,
+            seed: selected.seed,
+            scenarioParameterValues,
+            manifestParameterValues,
+            egoVehicleId: requested.egoVehicleId,
+            sensorBindings: requested.sensorBindings,
+        });
+        return {
+            case: selected,
+            suite: {
+                id: suite.id,
+                revision: suite.revision,
+                definitionHash: suite.definitionHash,
+            },
+            resolvedRun,
+            resolvedHash: resolvedRun.resolvedHash,
+            dependencyHashes: resolvedRun.dependencyHashes,
+            realtimeWarning: resolvedRun.manifest?.clock?.pacing === "realtime"
+                && resolvedRun.scenario?.scenario?.routes?.some((route) => route.controller?.kind === "external-ros"),
+        };
+    }
+
+    async listExperimentResults() {
+        const ids = await this._listJsonIds(this.experimentResultsDir);
+        const results = (await Promise.all(ids.map((id) => this.getExperimentResult(id)))).filter(Boolean);
+        return results.map(experimentResultSummary).sort((left, right) => (
+            String(right.createdAt || "").localeCompare(String(left.createdAt || ""))
+        ));
+    }
+
+    getExperimentResult(resultId) {
+        return this._fileStore(this._experimentResultPath(resultId), null).read();
+    }
+
+    async createExperimentResult(input = {}) {
+        let requested = input.result ?? input;
+        if (input.suiteId && !requested.kind) {
+            const suite = await this.getExperimentSuite(input.suiteId);
+            if (!suite) throw new Error(`Experiment suite "${input.suiteId}" does not exist.`);
+            const context = await this._experimentPlanningContext(suite);
+            const plan = planExperimentCases(suite, context);
+            if (!plan.ok) throw experimentValidationError(plan.issues);
+            requested = createExperimentResultDocument(suite, plan.cases, input);
+        }
+        const validation = validateExperimentResult(requested);
+        if (!validation.ok) throw experimentResultValidationError(validation.issues);
+        safeSegment(validation.result.id);
+        if (await this.getExperimentResult(validation.result.id)) {
+            throw new Error(`Experiment result "${validation.result.id}" already exists.`);
+        }
+        return this._writeExperimentResult(validation.result.id, validation.result, { expectedRevision: 0, create: true });
+    }
+
+    async putExperimentResult(resultId, input = {}) {
+        const requested = input.result ?? input;
+        const expectedRevision = input.expectedRevision ?? requested.revision;
+        const validation = validateExperimentResult({ ...requested, id: resultId });
+        if (!validation.ok) throw experimentResultValidationError(validation.issues);
+        return this._writeExperimentResult(resultId, validation.result, { expectedRevision });
+    }
+
+    async validateExperimentResult(resultId, input = null) {
+        const source = input?.result ?? (input?.kind ? input : null) ?? await this.getExperimentResult(resultId);
+        if (!source) throw new Error(`Experiment result "${resultId}" does not exist.`);
+        return validateExperimentResult(source);
+    }
+
+    deleteExperimentResult(resultId, expectedRevision) {
+        return this._deleteRevisionedDocument({
+            id: resultId,
+            filePath: this._experimentResultPath(resultId),
+            writeChains: this._experimentResultWriteChains,
+            getCurrent: () => this.getExperimentResult(resultId),
+            expectedRevision,
+            label: "Experiment result",
+        });
+    }
+
+    async listExperimentBaselines(suiteId = null) {
+        const ids = await this._listJsonIds(this.experimentBaselinesDir);
+        const baselines = (await Promise.all(ids.map((id) => this.getExperimentBaseline(id))))
+            .filter((entry) => entry && (!suiteId || entry.suiteId === suiteId));
+        return baselines.map(experimentBaselineSummary).sort((left, right) => (
+            String(right.createdAt || "").localeCompare(String(left.createdAt || ""))
+        ));
+    }
+
+    getExperimentBaseline(baselineId) {
+        return this._fileStore(this._experimentBaselinePath(baselineId), null).read();
+    }
+
+    async createExperimentBaseline(input = {}) {
+        let requested = input.baseline ?? input;
+        if (input.resultId) {
+            const result = await this.getExperimentResult(input.resultId);
+            if (!result) throw new Error(`Experiment result "${input.resultId}" does not exist.`);
+            requested = createExperimentBaselineDocument(result, input);
+        }
+        const caseDependencies = Object.fromEntries((requested.cases ?? []).map((entry) => [
+            entry.key ?? experimentCaseKey(entry),
+            {
+                resolvedHash: entry.resolvedHash ?? null,
+                dependencyHashes: structuredClone(entry.dependencyHashes ?? {}),
+            },
+        ]));
+        requested = {
+            ...requested,
+            provenance: {
+                ...objectValues(requested.provenance),
+                appVersion: requested.provenance?.appVersion
+                    ?? process.env.NEXT_PUBLIC_APP_VERSION
+                    ?? process.env.npm_package_version
+                    ?? "0.1.0",
+                gitCommit: requested.provenance?.gitCommit
+                    ?? process.env.NEXT_PUBLIC_GIT_HASH
+                    ?? process.env.GIT_COMMIT
+                    ?? null,
+                dependencies: {
+                    ...objectValues(requested.provenance?.dependencies),
+                    cases: caseDependencies,
+                },
+            },
+        };
+        const validation = validateExperimentBaseline(requested);
+        if (!validation.ok) throw experimentBaselineValidationError(validation.issues);
+        safeSegment(validation.baseline.id);
+        const stored = {
+            ...normalizeExperimentBaseline(validation.baseline),
+            definitionHash: semanticHash(validation.baseline),
+        };
+        return this._writeExperimentBaseline(stored.id, stored);
+    }
+
+    async validateExperimentBaseline(baselineId, input = null) {
+        const source = input?.baseline ?? (input?.kind ? input : null) ?? await this.getExperimentBaseline(baselineId);
+        if (!source) throw new Error(`Experiment baseline "${baselineId}" does not exist.`);
+        return validateExperimentBaseline(source);
+    }
+
+    deleteExperimentBaseline(baselineId) {
+        return this._deleteRevisionedDocument({
+            id: baselineId,
+            filePath: this._experimentBaselinePath(baselineId),
+            writeChains: this._experimentBaselineWriteChains,
+            getCurrent: () => this.getExperimentBaseline(baselineId),
+            expectedRevision: undefined,
+            label: "Experiment baseline",
+        });
+    }
+
+    async _experimentPlanningContext(suiteValue, { resolveDependencies = false } = {}) {
+        const suite = normalizeExperimentSuite(suiteValue, { allowMissingKind: true });
+        const scenarios = (await Promise.all(suite.scenarioIds.map((id) => this.getScenario(id)))).filter(Boolean);
+        const manifests = (await Promise.all(suite.manifestIds.map((id) => this.getRunManifest(id)))).filter(Boolean);
+        const compatibility = new Map();
+        await Promise.all(scenarios.flatMap((scenario) => manifests.map(async (manifest) => {
+            const key = `${scenario.id}\u0000${manifest.id}`;
+            const egoVehicleId = manifest?.scenario?.egoVehicleId
+                || manifest?.initialState?.vehicles?.find((vehicle) => vehicle.id === "ego" || vehicle.role === "ego")?.type;
+            if (!egoVehicleId) {
+                compatibility.set(key, "The run manifest does not assign a concrete Ego vehicle.");
+                return;
+            }
+            if (!resolveDependencies) {
+                compatibility.set(key, true);
+                return;
+            }
+            try {
+                // Resolve the default parameter vector up front so the matrix
+                // reports missing assets, scripts, sensor aliases, topics, and
+                // stale route/environment hashes before a queue is started.
+                await this.resolveRunManifest(manifest.id, {
+                    scenarioId: scenario.id,
+                    egoVehicleId,
+                    sensorBindings: manifest?.scenario?.sensorBindings,
+                    seed: manifest.seed,
+                });
+                compatibility.set(key, true);
+            } catch (error) {
+                compatibility.set(key, error?.message || "Scenario and run manifest are incompatible.");
+            }
+        })));
+        return {
+            scenarios,
+            manifests,
+            isCompatible: ({ scenarioId, manifestId }) => (
+                compatibility.get(`${scenarioId}\u0000${manifestId}`)
+                ?? "Scenario or run manifest could not be loaded."
+            ),
+        };
+    }
+
     // --- Simulation run manifests -----------------------------------------
 
     async listRunManifests() {
@@ -324,8 +952,98 @@ export class StorageService {
         if (!source) throw new Error(`Run manifest "${manifestId}" does not exist.`);
         const validation = validateRunManifest(source);
         if (!validation.ok) throw validationError(validation.issues);
-        const manifest = validation.manifest;
-        const environment = await this._resolveEnvironment(manifest.environment.id);
+        const resolutionOptions = input?.kind ? {} : objectValues(input);
+        const runParameterValues = objectValues(
+            resolutionOptions.manifestParameterValues ?? resolutionOptions.parameterValues,
+        );
+        const runParameters = resolveDeclaredParameters(validation.manifest.parameters, runParameterValues, "run manifest");
+        let manifest = applyDocumentScalarParameters(
+            validation.manifest,
+            validation.manifest.parameters,
+            runParameters.values,
+            "run manifest",
+        );
+        const parameterizedValidation = validateRunManifest(manifest);
+        if (!parameterizedValidation.ok) throw validationError(parameterizedValidation.issues);
+        assertScalarParameterValuesPreserved(
+            parameterizedValidation.manifest,
+            validation.manifest.parameters,
+            runParameters.values,
+            "run manifest",
+        );
+        manifest = parameterizedValidation.manifest;
+        if (resolutionOptions.seed !== undefined) manifest.seed = resolutionOptions.seed;
+
+        const transientScenarioId = String(resolutionOptions.scenarioId ?? "").trim() || null;
+        const selectedScenario = transientScenarioId
+            ? {
+                ...(manifest.scenario ?? {}),
+                id: transientScenarioId,
+                expectedHash: resolutionOptions.scenarioExpectedHash ?? null,
+                egoVehicleId: resolutionOptions.egoVehicleId
+                    ?? manifest.scenario?.egoVehicleId
+                    ?? manifest.initialState.vehicles.find((entry) => entry.id === "ego")?.type
+                    ?? null,
+                sensorBindings: objectValues(resolutionOptions.sensorBindings ?? manifest.scenario?.sensorBindings),
+                parameterValues: objectValues(resolutionOptions.scenarioParameterValues),
+            }
+            : manifest.scenario;
+        let resolvedScenario = null;
+        let resolvedVehicles = [];
+        if (selectedScenario) {
+            const scenarioParameterValues = {
+                ...objectValues(selectedScenario.parameterValues),
+                ...objectValues(resolutionOptions.scenarioParameterValues),
+            };
+            resolvedScenario = await this.resolveScenario(selectedScenario.id, null, {
+                expectedHash: selectedScenario.expectedHash,
+                parameterValues: scenarioParameterValues,
+            });
+            manifest = normalizeRunManifest({
+                ...manifest,
+                scenario: {
+                    ...selectedScenario,
+                    parameterValues: scenarioParameterValues,
+                },
+                environment: {
+                    id: resolvedScenario.scenario.environment.id,
+                    expectedHash: resolvedScenario.environment.hash,
+                },
+                initialState: {
+                    ...manifest.initialState,
+                    vehicles: buildScenarioInitialVehicles(
+                        resolvedScenario.scenario,
+                        selectedScenario.egoVehicleId,
+                    ),
+                },
+                clock: scenarioUsesExternalController(resolvedScenario.scenario)
+                    ? { ...manifest.clock, pacing: "realtime" }
+                    : manifest.clock,
+            }, { allowMissingKind: true });
+
+            resolvedVehicles = [
+                await this._resolveVehicleDependency("ego", selectedScenario.egoVehicleId),
+                ...resolvedScenario.vehicles,
+            ];
+            validateScenarioSensorBindings(resolvedScenario.scenario, manifest);
+        }
+
+        const vehicleDependenciesByActor = new Map(resolvedVehicles.map((entry) => [entry.actorId, entry]));
+        resolvedVehicles = await Promise.all(manifest.initialState.vehicles.map(async (vehicle) => {
+            const existing = vehicleDependenciesByActor.get(vehicle.id);
+            return existing?.vehicleId === vehicle.type
+                ? existing
+                : this._resolveVehicleDependency(vehicle.id, vehicle.type);
+        }));
+        const vehicleIds = new Set(manifest.initialState.vehicles.map((entry) => entry.id));
+        for (const sensor of manifest.sensorRig.sensors) {
+            if (!vehicleIds.has(sensor.parentId)) {
+                throw new Error(`Sensor "${sensor.id}" references unknown run vehicle "${sensor.parentId}".`);
+            }
+        }
+
+        const environment = resolvedScenario?.environment.manifest
+            ?? await this._resolveEnvironment(manifest.environment.id);
         const environmentHash = semanticHash(environment);
         if (manifest.environment.expectedHash && manifest.environment.expectedHash !== environmentHash) {
             throw new Error(`Environment "${manifest.environment.id}" changed: expected ${manifest.environment.expectedHash}, received ${environmentHash}.`);
@@ -343,6 +1061,11 @@ export class StorageService {
         const artifactReferences = new Map(
             manifest.scripts.artifacts.map((reference) => [reference.scriptId, reference]),
         );
+        for (const script of resolvedScenario?.scripts ?? []) {
+            if (!artifactReferences.has(script.scriptId)) {
+                artifactReferences.set(script.scriptId, { scriptId: script.scriptId, expectedHash: script.hash });
+            }
+        }
         for (const binding of selectedBindings) {
             if (binding.scriptId && !artifactReferences.has(binding.scriptId)) {
                 artifactReferences.set(binding.scriptId, { scriptId: binding.scriptId, expectedHash: null });
@@ -360,6 +1083,17 @@ export class StorageService {
                 throw new Error(`Script "${reference.scriptId}" changed: expected ${reference.expectedHash}, received ${hash}.`);
             }
             scripts.push({ scriptId: reference.scriptId, hash, artifact });
+        }
+        const resolvedArtifacts = new Map(scripts.map((entry) => [entry.scriptId, entry.artifact]));
+        for (const parameter of runParameters.bindings.filter((entry) => entry.target.kind === "script-input")) {
+            const artifact = resolvedArtifacts.get(parameter.target.scriptId);
+            const port = artifact?.interface?.inputs?.find((entry) => entry.label === parameter.target.input);
+            if (!port) {
+                throw new Error(`Run parameter "${parameter.id}" references missing script input "${parameter.target.input}".`);
+            }
+            if (port.type !== parameter.type) {
+                throw new Error(`Run parameter "${parameter.id}" is ${parameter.type}, but its script input is ${port.type}.`);
+            }
         }
 
         const wallTimer = selectedBindings.find((binding) => binding.trigger?.kind === "timer");
@@ -385,11 +1119,20 @@ export class StorageService {
             environment: { hash: environmentHash, manifest: environment },
             scripts,
             bindings: { hash: bindingsHash, entries: selectedBindings },
+            scenario: resolvedScenario,
+            vehicles: resolvedVehicles,
+            parameters: {
+                manifest: runParameters,
+                scenario: resolvedScenario?.parameters ?? { values: {}, bindings: [] },
+            },
             schemas: standardRunSchemas(),
             dependencyHashes: {
                 environment: environmentHash,
                 scripts: Object.fromEntries(scripts.map((entry) => [entry.scriptId, entry.hash])),
                 bindings: bindingsHash,
+                ...(resolvedScenario ? { scenario: resolvedScenario.definitionHash } : {}),
+                vehicles: Object.fromEntries(resolvedVehicles.map((entry) => [entry.vehicleId, entry.hash])),
+                vehicleAssets: Object.fromEntries(resolvedVehicles.map((entry) => [entry.vehicleId, entry.assetHashes])),
             },
         };
         resolved.resolvedHash = semanticHash(resolved);
@@ -616,6 +1359,153 @@ export class StorageService {
         return operation;
     }
 
+    async _writeScenario(scenarioId, scenario, { expectedRevision, create = false } = {}) {
+        safeSegment(scenarioId);
+        const previous = this._scenarioWriteChains.get(scenarioId) ?? Promise.resolve();
+        const operation = previous.catch(() => {}).then(async () => {
+            const current = await this.getScenario(scenarioId);
+            const currentRevision = Number(current?.revision || 0);
+            if (create && current) throw new Error(`Scenario "${scenarioId}" already exists.`);
+            if (!create && expectedRevision !== undefined && Number(expectedRevision) !== currentRevision) {
+                throw new Error(`Scenario revision conflict: expected ${expectedRevision}, current revision is ${currentRevision}.`);
+            }
+            const now = new Date().toISOString();
+            const normalized = normalizeScenario({ ...scenario, id: scenarioId }, { allowMissingKind: true });
+            const stored = {
+                ...normalized,
+                revision: currentRevision + 1,
+                definitionHash: semanticHash(stripScenarioMetadata(normalized)),
+                createdAt: current?.createdAt ?? now,
+                updatedAt: now,
+            };
+            return this._fileStore(this._scenarioPath(scenarioId), null).write(stored);
+        });
+        this._scenarioWriteChains.set(scenarioId, operation);
+        operation.finally(() => {
+            if (this._scenarioWriteChains.get(scenarioId) === operation) this._scenarioWriteChains.delete(scenarioId);
+        }).catch(() => {});
+        return operation;
+    }
+
+    async _validateScenarioDependencies(scenario) {
+        try {
+            await this.resolveScenario(scenario.id, scenario);
+            return [];
+        } catch (error) {
+            return [{ path: "dependencies", message: error.message }];
+        }
+    }
+
+    async _writeExperimentSuite(suiteId, suite, { expectedRevision, create = false } = {}) {
+        safeSegment(suiteId);
+        const previous = this._experimentSuiteWriteChains.get(suiteId) ?? Promise.resolve();
+        const operation = previous.catch(() => {}).then(async () => {
+            const current = await this.getExperimentSuite(suiteId);
+            const currentRevision = Number(current?.revision || 0);
+            if (create && current) throw new Error(`Experiment suite "${suiteId}" already exists.`);
+            if (!create && expectedRevision !== undefined && Number(expectedRevision) !== currentRevision) {
+                throw new Error(`Experiment suite revision conflict: expected ${expectedRevision}, current revision is ${currentRevision}.`);
+            }
+            const now = new Date().toISOString();
+            const normalized = normalizeExperimentSuite({ ...suite, id: suiteId }, { allowMissingKind: true });
+            const stored = {
+                ...normalized,
+                revision: currentRevision + 1,
+                definitionHash: semanticHash(normalized),
+                createdAt: current?.createdAt ?? now,
+                updatedAt: now,
+            };
+            return this._fileStore(this._experimentSuitePath(suiteId), null).write(stored);
+        });
+        this._experimentSuiteWriteChains.set(suiteId, operation);
+        operation.finally(() => {
+            if (this._experimentSuiteWriteChains.get(suiteId) === operation) {
+                this._experimentSuiteWriteChains.delete(suiteId);
+            }
+        }).catch(() => {});
+        return operation;
+    }
+
+    async _writeExperimentResult(resultId, result, { expectedRevision, create = false } = {}) {
+        safeSegment(resultId);
+        const previous = this._experimentResultWriteChains.get(resultId) ?? Promise.resolve();
+        const operation = previous.catch(() => {}).then(async () => {
+            const current = await this.getExperimentResult(resultId);
+            const currentRevision = Number(current?.revision || 0);
+            if (create && current) throw new Error(`Experiment result "${resultId}" already exists.`);
+            if (!create && expectedRevision !== undefined && Number(expectedRevision) !== currentRevision) {
+                throw new Error(`Experiment result revision conflict: expected ${expectedRevision}, current revision is ${currentRevision}.`);
+            }
+            const now = new Date().toISOString();
+            const normalized = normalizeExperimentResult({ ...result, id: resultId }, { allowMissingKind: true });
+            const stored = {
+                ...normalized,
+                revision: currentRevision + 1,
+                definitionHash: semanticHash(normalized),
+                createdAt: normalized.createdAt ?? current?.createdAt ?? now,
+                updatedAt: now,
+            };
+            return this._fileStore(this._experimentResultPath(resultId), null).write(stored);
+        });
+        this._experimentResultWriteChains.set(resultId, operation);
+        operation.finally(() => {
+            if (this._experimentResultWriteChains.get(resultId) === operation) {
+                this._experimentResultWriteChains.delete(resultId);
+            }
+        }).catch(() => {});
+        return operation;
+    }
+
+    async _writeExperimentBaseline(baselineId, baseline) {
+        safeSegment(baselineId);
+        const previous = this._experimentBaselineWriteChains.get(baselineId) ?? Promise.resolve();
+        const operation = previous.catch(() => {}).then(async () => {
+            if (await this.getExperimentBaseline(baselineId)) {
+                throw new Error(`Experiment baseline "${baselineId}" already exists and is immutable.`);
+            }
+            return this._fileStore(this._experimentBaselinePath(baselineId), null).write(baseline);
+        });
+        this._experimentBaselineWriteChains.set(baselineId, operation);
+        operation.finally(() => {
+            if (this._experimentBaselineWriteChains.get(baselineId) === operation) {
+                this._experimentBaselineWriteChains.delete(baselineId);
+            }
+        }).catch(() => {});
+        return operation;
+    }
+
+    async _deleteStoredDocument(filePath) {
+        this._stores.get(filePath)?.invalidate();
+        this._stores.delete(filePath);
+        await fs.rm(filePath, { force: true });
+        return true;
+    }
+
+    _deleteRevisionedDocument({
+        id,
+        filePath,
+        writeChains,
+        getCurrent,
+        expectedRevision,
+        label,
+    }) {
+        const previous = writeChains.get(id) ?? Promise.resolve();
+        const operation = previous.catch(() => {}).then(async () => {
+            const current = await getCurrent();
+            if (!current) return false;
+            const currentRevision = Number(current.revision || 0);
+            if (expectedRevision !== undefined && Number(expectedRevision) !== currentRevision) {
+                throw new Error(`${label} revision conflict: expected ${expectedRevision}, current revision is ${currentRevision}.`);
+            }
+            return this._deleteStoredDocument(filePath);
+        });
+        writeChains.set(id, operation);
+        operation.finally(() => {
+            if (writeChains.get(id) === operation) writeChains.delete(id);
+        }).catch(() => {});
+        return operation;
+    }
+
     _vehiclePath(vehicleId) {
         return path.join(this.vehiclesDir, `${safeSegment(vehicleId)}.json`);
     }
@@ -664,19 +1554,35 @@ export class StorageService {
         }
     }
 
+    async _resolveVehicleDependency(actorId, vehicleId) {
+        const builtIn = getBuiltInVehicleManifest(vehicleId);
+        const manifest = builtIn ?? await this.getVehicleManifest(vehicleId);
+        if (!manifest) throw new Error(`Vehicle "${vehicleId}" does not exist.`);
+        const assetHashes = {};
+        if (!builtIn) {
+            for (const fileName of (await this.listVehicleAssets(vehicleId)).sort()) {
+                const bytes = await this.readVehicleAsset(vehicleId, fileName);
+                assetHashes[fileName] = createHash("sha256").update(bytes).digest("hex");
+            }
+            const modelAsset = String(manifest.model?.asset ?? "").trim();
+            if (modelAsset && !modelAsset.startsWith("/") && !/^https?:\/\//i.test(modelAsset)
+                && !Object.hasOwn(assetHashes, modelAsset)) {
+                throw new Error(`Vehicle "${vehicleId}" is missing model asset "${modelAsset}".`);
+            }
+        }
+        Object.assign(assetHashes, await hashPublicVehicleAssets(manifest));
+        return {
+            actorId,
+            vehicleId,
+            manifest,
+            assetHashes,
+            hash: semanticHash({ manifest, assetHashes }),
+        };
+    }
+
     async _resolveEnvironment(environmentId) {
         const stored = await this.getEnvironment(environmentId);
         if (stored) return stored;
-        if (environmentId === "igvc") {
-            return {
-                environmentId: "igvc",
-                name: "IGVC",
-                schemaVersion: 2,
-                templateId: "igvc",
-                roadStylePreset: "igvc",
-                roadsAuthored: false,
-            };
-        }
         throw new Error(`Environment "${environmentId}" does not exist.`);
     }
 
@@ -734,6 +1640,22 @@ export class StorageService {
         return path.join(this.runManifestsDir, `${safeSegment(manifestId)}.json`);
     }
 
+    _scenarioPath(scenarioId) {
+        return path.join(this.scenariosDir, `${safeSegment(scenarioId)}.json`);
+    }
+
+    _experimentSuitePath(suiteId) {
+        return path.join(this.experimentSuitesDir, `${safeSegment(suiteId)}.json`);
+    }
+
+    _experimentResultPath(resultId) {
+        return path.join(this.experimentResultsDir, `${safeSegment(resultId)}.json`);
+    }
+
+    _experimentBaselinePath(baselineId) {
+        return path.join(this.experimentBaselinesDir, `${safeSegment(baselineId)}.json`);
+    }
+
     /** Lazily create (and cache) a JsonFileStore for a given file path. */
     _fileStore(filePath, fallback) {
         let store = this._stores.get(filePath);
@@ -767,6 +1689,26 @@ function validationError(issues) {
     return new Error(`Run manifest validation failed: ${detail}`);
 }
 
+function scenarioValidationError(issues) {
+    const detail = issues.map((issue) => `${issue.path || "scenario"}: ${issue.message}`).join("; ");
+    return new Error(`Scenario validation failed: ${detail}`);
+}
+
+function experimentValidationError(issues) {
+    const detail = issues.map((issue) => `${issue.path || "suite"}: ${issue.message}`).join("; ");
+    return new Error(`Experiment suite validation failed: ${detail}`);
+}
+
+function experimentResultValidationError(issues) {
+    const detail = issues.map((issue) => `${issue.path || "result"}: ${issue.message}`).join("; ");
+    return new Error(`Experiment result validation failed: ${detail}`);
+}
+
+function experimentBaselineValidationError(issues) {
+    const detail = issues.map((issue) => `${issue.path || "baseline"}: ${issue.message}`).join("; ");
+    return new Error(`Experiment baseline validation failed: ${detail}`);
+}
+
 function vehicleValidationError(issues) {
     const detail = issues.map((issue) => `${issue.path || "manifest"}: ${issue.message}`).join("; ");
     return new Error(`Vehicle manifest validation failed: ${detail}`);
@@ -794,6 +1736,217 @@ function runManifestSummary(manifest) {
         environmentId: manifest.environment?.id,
         updatedAt: manifest.updatedAt,
     };
+}
+
+function scenarioSummary(scenario) {
+    return {
+        id: scenario.id,
+        name: scenario.name,
+        description: scenario.description,
+        folderId: scenario.folderId ?? null,
+        revision: scenario.revision,
+        definitionHash: scenario.definitionHash,
+        environmentId: scenario.environment?.id,
+        actorCount: scenario.actors?.length ?? 0,
+        updatedAt: scenario.updatedAt,
+    };
+}
+
+function experimentSuiteSummary(suite) {
+    return {
+        id: suite.id,
+        name: suite.name,
+        description: suite.description,
+        scenarioIds: suite.scenarioIds ?? [],
+        manifestIds: suite.manifestIds ?? [],
+        revision: suite.revision,
+        definitionHash: suite.definitionHash,
+        updatedAt: suite.updatedAt,
+    };
+}
+
+function experimentResultSummary(result) {
+    return {
+        id: result.id,
+        suiteId: result.suiteId,
+        status: result.status,
+        revision: result.revision,
+        definitionHash: result.definitionHash,
+        summary: result.summary,
+        createdAt: result.createdAt,
+        updatedAt: result.updatedAt,
+    };
+}
+
+function experimentBaselineSummary(baseline) {
+    return {
+        id: baseline.id,
+        name: baseline.name,
+        description: baseline.description,
+        suiteId: baseline.suiteId,
+        sourceResultId: baseline.sourceResultId,
+        definitionHash: baseline.definitionHash,
+        createdAt: baseline.createdAt,
+    };
+}
+
+function experimentCaseIdentityMatches(entry, requested = {}) {
+    if (requested.key) return requested.key === entry.key;
+    return requested.scenarioId === entry.scenarioId
+        && requested.manifestId === entry.manifestId
+        && canonicalStringify(requested.seed) === canonicalStringify(entry.seed)
+        && canonicalStringify(requested.parameters ?? requested.parameterValues ?? {})
+            === canonicalStringify(entry.parameters ?? {});
+}
+
+function objectValues(value) {
+    return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function collectScenarioScriptIds(scenario) {
+    const ids = new Set();
+    for (const route of scenario.routes) {
+        if (route.controller?.scriptId) ids.add(route.controller.scriptId);
+    }
+    for (const trigger of scenario.triggers) {
+        for (const action of trigger.actions) if (action.scriptId) ids.add(action.scriptId);
+    }
+    for (const completion of scenario.completion.conditions) if (completion.scriptId) ids.add(completion.scriptId);
+    for (const outcome of scenario.expectedOutcomes) if (outcome.scriptId) ids.add(outcome.scriptId);
+    return [...ids].sort((left, right) => left.localeCompare(right));
+}
+
+function parameterValueMatches(type, value) {
+    if (type === "boolean") return typeof value === "boolean";
+    if (type === "string") return typeof value === "string";
+    if (type === "int32") return Number.isInteger(value) && value >= -2147483648 && value <= 2147483647;
+    return typeof value === "number" && Number.isFinite(value);
+}
+
+function resolveDeclaredParameters(declarations = [], requested = {}, owner = "document") {
+    const values = {};
+    const bindings = [];
+    const known = new Set(declarations.map((entry) => entry.id));
+    for (const key of Object.keys(requested)) {
+        if (!known.has(key)) throw new Error(`Parameter "${key}" is not declared by this ${owner}.`);
+    }
+    for (const declaration of declarations) {
+        const value = Object.hasOwn(requested, declaration.id) ? requested[declaration.id] : declaration.default;
+        if (!parameterValueMatches(declaration.type, value)) {
+            throw new Error(`Parameter "${declaration.id}" requires a ${declaration.type} value.`);
+        }
+        values[declaration.id] = value;
+        bindings.push({
+            id: declaration.id,
+            type: declaration.type,
+            target: structuredClone(declaration.target),
+            value: structuredClone(value),
+        });
+    }
+    return { values, bindings };
+}
+
+function applyDocumentScalarParameters(source, declarations, values, owner = "document") {
+    const document = structuredClone(source);
+    for (const declaration of declarations) {
+        const target = declaration.target ?? {};
+        if (!["scalar", "scalar-field"].includes(target.kind)) continue;
+        const resolvedTarget = validateScalarParameterTarget(document, declaration, {
+            owner: owner === "scenario" ? "scenario" : "run",
+        });
+        if (!resolvedTarget.ok) throw new Error(`Parameter "${declaration.id}": ${resolvedTarget.message}`);
+        const pathParts = resolvedTarget.pathParts;
+        let parent = document;
+        for (const part of pathParts.slice(0, -1)) {
+            if (!parent || typeof parent !== "object" || !Object.hasOwn(parent, part)) {
+                throw new Error(`Parameter "${declaration.id}" targets missing field "${target.path}".`);
+            }
+            parent = parent[part];
+        }
+        const leaf = pathParts.at(-1);
+        if (!parent || typeof parent !== "object" || !Object.hasOwn(parent, leaf) || (parent[leaf] !== null && typeof parent[leaf] === "object")) {
+            throw new Error(`Parameter "${declaration.id}" must target an existing scalar field.`);
+        }
+        parent[leaf] = structuredClone(values[declaration.id]);
+    }
+    return document;
+}
+
+function assertScalarParameterValuesPreserved(document, declarations, values, owner) {
+    for (const declaration of declarations) {
+        if (declaration.target?.kind !== "scalar-field") continue;
+        const target = validateScalarParameterTarget(document, declaration, {
+            owner: owner === "scenario" ? "scenario" : "run",
+        });
+        if (!target.ok || !Object.is(target.value, values[declaration.id])) {
+            throw new Error(`Parameter "${declaration.id}" produced a value rejected or changed by ${owner} validation.`);
+        }
+    }
+}
+
+function scenarioUsesExternalController(scenario) {
+    return scenario.routes.some((route) => route.controller?.kind === "external-ros");
+}
+
+function buildScenarioInitialVehicles(scenario, egoVehicleId) {
+    const routes = new Map(scenario.routes.map((route) => [route.actorId, route]));
+    return scenario.actors.filter((actor) => actor.enabled !== false).map((actor) => {
+        const route = routes.get(actor.id);
+        const start = route?.waypoints?.[0];
+        const routeStart = route?.verification?.polyline?.[0];
+        const routeNext = route?.verification?.polyline?.[1];
+        // Vehicles move along local +X. Under Three.js yaw, local +X maps to
+        // world (cos(yaw), 0, -sin(yaw)), so world XZ route tangents require
+        // the negated atan2 used by the deterministic route follower.
+        const tangentHeading = routeStart && routeNext
+            ? -Math.atan2(Number(routeNext.z || 0) - Number(routeStart.z || 0), Number(routeNext.x || 0) - Number(routeStart.x || 0))
+            : 0;
+        const heading = Number.isFinite(Number(start?.heading)) && Number(start.heading) !== 0
+            ? Number(start.heading)
+            : tangentHeading;
+        const speed = Number(route?.initialSpeedMps || 0);
+        return {
+            id: actor.id,
+            role: actor.id === "ego" ? "ego" : actor.role,
+            type: actor.id === "ego" ? egoVehicleId : actor.vehicleId,
+            pose: {
+                position: {
+                    x: Number(start?.position?.x || 0),
+                    y: Number(start?.position?.y || 0),
+                    z: Number(start?.position?.z || 0),
+                },
+                rotation: { x: 0, y: heading, z: 0, order: "XYZ" },
+            },
+            linearVelocity: {
+                x: speed,
+                y: 0,
+                z: 0,
+            },
+            steeringAngle: 0,
+        };
+    });
+}
+
+function validateScenarioSensorBindings(scenario, manifest) {
+    const sensors = new Map(manifest.sensorRig.sensors.map((sensor) => [sensor.id, sensor]));
+    const bindings = manifest.scenario?.sensorBindings ?? {};
+    for (const alias of scenario.sensorAliases) {
+        const sensorId = bindings[alias.id];
+        if (!sensorId) throw new Error(`Scenario sensor alias "${alias.id}" is not bound by the run manifest.`);
+        const sensor = sensors.get(sensorId);
+        if (!sensor) throw new Error(`Scenario sensor alias "${alias.id}" references missing sensor "${sensorId}".`);
+        if (alias.type && sensor.type !== alias.type) {
+            throw new Error(`Scenario sensor alias "${alias.id}" requires ${alias.type}, received ${sensor.type}.`);
+        }
+    }
+    const topics = new Map(manifest.topics.map((topic) => [topic.id, topic]));
+    for (const route of scenario.routes) {
+        if (route.controller.kind !== "external-ros") continue;
+        const topic = topics.get(route.controller.topicId);
+        if (!topic || topic.direction !== "input") {
+            throw new Error(`External ROS route "${route.id}" requires an input command topic.`);
+        }
+    }
 }
 
 function standardRunSchemas() {

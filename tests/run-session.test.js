@@ -57,3 +57,68 @@ test("run recording options include immutable manifest attachment and provenance
     assert.equal(options.provenance.orchestratorCatalogHash, "catalog");
     assert.ok(options.attachments.some((attachment) => attachment.name === "run-manifest.json"));
 });
+
+test("prepare waits for a switched environment to mount and apply the resolved run", async () => {
+    const controller = new RunSessionController();
+    const applied = [];
+    const makeData = (environmentId) => {
+        const simulation = {
+            subscribe(listener) { listener({ status: "paused", assertions: [] }); return () => {}; },
+            async applyRunManifest(value) { applied.push(value.resolvedHash); },
+        };
+        return {
+            environment: () => ({ environmentId }),
+            simulation: () => simulation,
+        };
+    };
+    controller.attachData(makeData("yard"));
+    let requestedEnvironment = null;
+    controller.setEnvironmentHandler((environmentId) => { requestedEnvironment = environmentId; });
+    const manifest = createDefaultRunManifest({ environment: { id: "igvc" }, logging: { policy: "disabled" } });
+    const resolved = {
+        manifest,
+        resolvedHash: "resolved-environment-switch",
+        environment: { manifest: { environmentId: "igvc" } },
+        scripts: [],
+        bindings: { entries: [] },
+    };
+    let settled = false;
+    const readiness = controller.prepare(resolved, { autoplay: false }).then((value) => {
+        settled = true;
+        return value;
+    });
+
+    await Promise.resolve();
+    assert.equal(requestedEnvironment, "igvc");
+    assert.equal(settled, false);
+    assert.deepEqual(applied, []);
+
+    controller.attachData(makeData("igvc"));
+    const snapshot = await readiness;
+    assert.equal(snapshot.status, "ready");
+    assert.deepEqual(applied, ["resolved-environment-switch"]);
+    assert.equal(controller.getSnapshot().activeResolved.resolvedHash, "resolved-environment-switch");
+});
+
+test("scenario diagnostics preference is reapplied when a new simulation attaches", () => {
+    const controller = new RunSessionController();
+    controller.recording = { attachSimulation() {} };
+    const firstValues = [];
+    const secondValues = [];
+    const dataFor = (values) => ({
+        simulation: () => ({
+            setScenarioDiagnosticsEnabled(value) { values.push(value); },
+            subscribe() { return () => {}; },
+        }),
+    });
+
+    controller.attachData(dataFor(firstValues));
+    assert.deepEqual(firstValues, [false]);
+    assert.equal(controller.setScenarioDiagnosticsEnabled(true), true);
+    assert.deepEqual(firstValues, [false, true]);
+
+    controller.attachData(dataFor(secondValues));
+    assert.deepEqual(secondValues, [true]);
+    controller.setScenarioDiagnosticsEnabled(false);
+    assert.deepEqual(secondValues, [true, false]);
+});

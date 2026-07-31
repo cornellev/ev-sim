@@ -1,0 +1,1620 @@
+.workspace {
+    --scenario-line: rgb(255 255 255 / 0.075);
+    --scenario-soft: rgb(255 255 255 / 0.035);
+    --scenario-accent: #cbd5c8;
+}
+
+.workspaceContent {
+    overflow: hidden;
+    background: #181a1b;
+}
+
+.catalog {
+    display: grid;
+    grid-template-rows: auto auto auto auto minmax(0, 1fr);
+    width: 340px;
+    height: 100%;
+    min-height: 0;
+    background: #1b1d1f;
+}
+
+.catalogHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 18px 16px 14px;
+}
+
+.catalogHeader > div {
+    display: grid;
+    gap: 3px;
+}
+
+.catalogHeader strong {
+    color: var(--slate-fg);
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.eyebrow {
+    color: #969b99;
+    font-size: 10px;
+    font-weight: 650;
+    letter-spacing: 0.085em;
+    line-height: 1.2;
+    /* text-transform: uppercase; */
+}
+
+.search {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+    margin: 0 12px 12px;
+    border: 1px solid var(--scenario-line);
+    border-radius: var(--radius);
+    background: #202224;
+    padding: 0 9px;
+    color: var(--slate-muted);
+    transition: border-color var(--duration-fast) var(--ease-out-ui), background var(--duration-fast) var(--ease-out-ui);
+}
+
+.search:focus-within {
+    border-color: var(--slate-ring);
+    background: #232527;
+}
+
+.search input {
+    min-width: 0;
+    height: 32px;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    color: var(--slate-fg);
+    font-size: 12px;
+}
+
+.search kbd {
+    color: var(--slate-muted);
+    font-family: var(--font-geist-mono), monospace;
+    font-size: 9px;
+}
+
+.catalogTools {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-top: 1px solid var(--scenario-line);
+    padding: 11px 14px 6px;
+    color: #8f9492;
+    font-size: 10px;
+    font-weight: 650;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+}
+
+.catalogTools button,
+.removeButton,
+.inspectorTitle button {
+    display: grid;
+    place-items: center;
+    border: 0;
+    border-radius: 3px;
+    background: transparent;
+    color: var(--slate-muted);
+    cursor: pointer;
+    transition: color var(--duration-fast) var(--ease-out-ui), background var(--duration-fast) var(--ease-out-ui), transform var(--duration-fast) var(--ease-out-ui);
+}
+
+.catalogTools button {
+    width: 26px;
+    height: 26px;
+}
+
+.catalogTools button:hover,
+.inspectorTitle button:hover {
+    background: var(--scenario-soft);
+    color: var(--slate-fg);
+}
+
+.catalogTools button:active,
+.removeButton:active,
+.inspectorTitle button:active {
+    transform: scale(0.96);
+}
+
+.folderForm {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 6px;
+    padding: 4px 12px 10px;
+}
+
+.catalogScroll {
+    min-height: 0;
+    overflow-y: auto;
+    padding: 3px 8px 24px;
+}
+
+.catalogGroup + .catalogGroup {
+    margin-top: 5px;
+}
+
+.folderRow {
+    display: grid;
+    grid-template-columns: auto auto minmax(0, 1fr) auto;
+    width: 100%;
+    align-items: center;
+    gap: 7px;
+    min-height: 30px;
+    border: 0;
+    border-radius: 3px;
+    background: transparent;
+    padding: 4px 7px;
+    color: #a7aaa9;
+    text-align: left;
+    cursor: pointer;
+}
+
+.folderRow:hover {
+    background: var(--scenario-soft);
+    color: var(--slate-fg-2);
+}
+
+.folderRow span {
+    overflow: hidden;
+    font-size: 11px;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.folderRow small {
+    font-family: var(--font-geist-mono), monospace;
+    font-size: 9px;
+}
+
+.folderChevron {
+    transition: transform var(--duration-fast) var(--ease-out-ui);
+}
+
+.folderChevron[data-collapsed] {
+    transform: rotate(-90deg);
+}
+
+.scenarioRows {
+    display: grid;
+    gap: 2px;
+    padding: 2px 0 7px 14px;
+}
+
+.scenarioRow {
+    position: relative;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 9px;
+    min-height: 46px;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    background: transparent;
+    padding: 7px 9px;
+    color: #868b89;
+    text-align: left;
+    cursor: pointer;
+    transition: color var(--duration-fast) var(--ease-out-ui), background var(--duration-fast) var(--ease-out-ui), border-color var(--duration-fast) var(--ease-out-ui);
+}
+
+.scenarioRow:hover {
+    background: rgb(255 255 255 / 0.03);
+    color: var(--slate-fg-2);
+}
+
+.scenarioRow[data-selected] {
+    border-color: rgb(202 215 199 / 0.16);
+    background: rgb(202 215 199 / 0.075);
+    color: var(--scenario-accent);
+}
+
+.scenarioRow[data-selected]::before {
+    position: absolute;
+    inset: 8px auto 8px 2px;
+    width: 2px;
+    background: var(--scenario-accent);
+    content: "";
+}
+
+.scenarioRow > span {
+    display: grid;
+    min-width: 0;
+    gap: 2px;
+}
+
+.scenarioRow strong,
+.scenarioRow small {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.scenarioRow strong {
+    color: inherit;
+    font-size: 12px;
+    font-weight: 570;
+}
+
+.scenarioRow small {
+    color: #9ba09e;
+    font-size: 11px;
+}
+
+.emptyGroup,
+.catalogEmpty p {
+    margin: 0;
+    color: #9ba09e;
+    font-size: 11px;
+    line-height: 1.45;
+}
+
+.emptyGroup {
+    padding: 8px 9px 11px;
+}
+
+.catalogEmpty {
+    display: grid;
+    justify-items: center;
+    gap: 8px;
+    padding: 54px 28px;
+    color: #747977;
+    text-align: center;
+}
+
+.srOnly {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+}
+
+.centerState {
+    height: 100%;
+}
+
+.editorShell,
+.scenarioTabs {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    height: 100%;
+    min-height: 0;
+}
+
+.noticeRail {
+    position: absolute;
+    z-index: 4;
+    top: 51px;
+    right: 18px;
+    display: grid;
+    gap: 10px;
+    width: min(510px, calc(100% - 380px));
+    border: 1px solid var(--scenario-line);
+    border-radius: var(--radius);
+    background: rgb(27 29 31 / 0.97);
+    box-shadow: var(--slate-shadow-overlay);
+    padding: 12px;
+}
+
+.noticeClose {
+    position: absolute;
+    z-index: 1;
+    top: 7px;
+    right: 7px;
+    display: grid;
+    width: 28px;
+    height: 28px;
+    place-items: center;
+    border: 0;
+    border-radius: 3px;
+    background: transparent;
+    color: var(--slate-muted);
+    cursor: pointer;
+}
+
+.noticeClose:hover {
+    background: var(--scenario-soft);
+    color: var(--slate-fg);
+}
+
+.noticeRail :global(.sf-status__detail) button {
+    display: block;
+    margin-top: 5px;
+    border: 0;
+    background: transparent;
+    padding: 0;
+    color: var(--slate-fg-2);
+    font-size: 11px;
+    text-decoration: underline;
+    cursor: pointer;
+}
+
+.headerFeedback,
+.dirtyMark {
+    font-size: 10px;
+    white-space: nowrap;
+}
+
+.headerFeedback {
+    color: var(--slate-muted);
+}
+
+.headerFeedback[data-valid] {
+    color: var(--slate-success);
+}
+
+.dirtyMark {
+    border-left: 1px solid var(--slate-border);
+    padding-left: 9px;
+    color: var(--slate-warning);
+}
+
+.tabBar {
+    min-width: 0;
+    overflow-x: auto;
+    border-bottom: 1px solid var(--scenario-line);
+    background: #1b1d1e;
+    padding: 7px 14px;
+}
+
+.tabBar :global(.sf-tabs) {
+    border: 0;
+    background: transparent;
+    padding: 0;
+}
+
+.tabBar :global(.sf-tabs__trigger) {
+    height: 29px;
+    border-bottom: 1px solid transparent;
+    border-radius: 0;
+    padding: 0 12px;
+}
+
+.tabBar :global(.sf-tabs__trigger[data-state="active"]) {
+    border-bottom-color: var(--scenario-accent);
+    background: transparent;
+}
+
+.tabViewport {
+    position: relative;
+    min-height: 0;
+    overflow-y: auto;
+}
+
+.tabViewport > :global(.sf-tabs__content) {
+    min-height: 100%;
+}
+
+.sectionStack {
+    display: grid;
+    gap: 18px;
+    width: min(1120px, calc(100% - 48px));
+    margin: 0 auto;
+    padding: 34px 0 80px;
+}
+
+.sectionHeading {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 28px;
+    border-bottom: 1px solid var(--scenario-line);
+    padding-bottom: 20px;
+}
+
+.sectionHeading > div:first-child {
+    max-width: 700px;
+}
+
+.sectionHeading h2 {
+    margin: 5px 0 6px;
+    color: var(--slate-fg);
+    font-size: clamp(24px, 2.5vw, 34px);
+    font-weight: 580;
+    letter-spacing: -0.035em;
+    line-height: 1;
+}
+
+.sectionHeading p,
+.splitHeading p {
+    max-width: 65ch;
+    margin: 0;
+    color: #888d8b;
+    font-size: 12px;
+    line-height: 1.55;
+}
+
+.formPanel,
+.configCard,
+.routeCard,
+.actorCard,
+.triggerCard,
+.outcomeCard,
+.timelinePanel,
+.zoneMap {
+    border: 1px solid var(--scenario-line);
+    background: #1d1f20;
+}
+
+.formPanel {
+    border-radius: var(--radius);
+    padding: 20px;
+}
+
+.formGrid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+}
+
+.formStack {
+    display: grid;
+    gap: 12px;
+}
+
+.spanTwo {
+    grid-column: 1 / -1;
+}
+
+.splitHeading {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 20px;
+    margin-top: 8px;
+}
+
+.splitHeading h3 {
+    margin: 0 0 3px;
+    color: var(--slate-fg-2);
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.cardGrid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.configCard {
+    display: grid;
+    gap: 13px;
+    border-radius: var(--radius);
+    padding: 16px;
+}
+
+.cardTopline {
+    display: flex;
+    min-height: 24px;
+    align-items: center;
+    justify-content: space-between;
+    color: #8e9391;
+    font-family: var(--font-geist-mono), monospace;
+    font-size: 9px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.removeButton {
+    width: 26px;
+    height: 26px;
+}
+
+.removeButton:hover:not(:disabled) {
+    background: rgb(217 138 138 / 0.08);
+    color: var(--slate-danger);
+}
+
+.removeButton:disabled {
+    cursor: not-allowed;
+    opacity: 0.35;
+}
+
+.inlineRecord {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr auto;
+    align-items: end;
+    gap: 10px;
+    border-top: 1px solid var(--scenario-line);
+    padding: 13px 0 0;
+}
+
+.sectionEmpty {
+    display: grid;
+    justify-items: center;
+    gap: 7px;
+    border: 1px dashed rgb(255 255 255 / 0.12);
+    border-radius: var(--radius);
+    padding: 42px 24px;
+    color: #7e8381;
+    text-align: center;
+}
+
+.sectionEmpty strong {
+    color: var(--slate-fg-2);
+    font-size: 13px;
+    font-weight: 570;
+}
+
+.sectionEmpty p {
+    max-width: 50ch;
+    margin: 0 0 5px;
+    font-size: 11px;
+}
+
+.routeCards,
+.triggerList,
+.outcomeList,
+.conditionalList {
+    display: grid;
+    gap: 10px;
+}
+
+.routeCard {
+    border-radius: var(--radius);
+    padding: 18px;
+}
+
+.routeCard > header {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 18px;
+    border-bottom: 1px solid var(--scenario-line);
+    padding-bottom: 14px;
+}
+
+.roleMarker {
+    display: grid;
+    width: 40px;
+    height: 40px;
+    place-items: center;
+    border: 1px solid rgb(203 213 200 / 0.18);
+    border-radius: 3px;
+    background: rgb(203 213 200 / 0.06);
+    color: var(--scenario-accent);
+    font-family: var(--font-geist-mono), monospace;
+    font-size: 9px;
+}
+
+.routeCard h3,
+.actorCard h3 {
+    margin: 0;
+    color: var(--slate-fg);
+    font-size: 15px;
+    font-weight: 590;
+}
+
+.routeCard header p {
+    margin: 3px 0 0;
+    color: var(--slate-muted);
+    font-size: 10px;
+}
+
+.routeActions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.actorGrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    gap: 12px;
+}
+
+.actorCard {
+    min-height: 320px;
+    border-radius: var(--radius);
+    padding: 16px;
+}
+
+.actorCard[data-ego] {
+    border-color: rgb(203 213 200 / 0.22);
+    background: rgb(203 213 200 / 0.035);
+}
+
+.actorCard > header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 30px;
+    color: #929795;
+    font-size: 10px;
+    text-transform: uppercase;
+}
+
+.actorCard > header .removeButton {
+    margin-left: auto;
+}
+
+.actorCard h3 {
+    margin-bottom: 18px;
+    font-size: 22px;
+    letter-spacing: -0.03em;
+}
+
+.mutedNote {
+    margin: 0;
+    border-left: 1px solid var(--scenario-line);
+    padding-left: 10px;
+    color: var(--slate-muted);
+    font-size: 10px;
+    line-height: 1.5;
+}
+
+.vectorGrid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 7px;
+}
+
+.zoneMap {
+    position: relative;
+    overflow: hidden;
+    min-height: 390px;
+    border-radius: var(--radius);
+}
+
+.zoneMap > .scenarioMapViewport {
+    height: 390px;
+    min-height: 390px;
+}
+
+.zoneFullscreen {
+    position: fixed;
+    z-index: 5;
+    top: 40px;
+    right: 0;
+    bottom: 0;
+    left: 340px;
+    width: auto;
+    height: auto;
+    margin: 0;
+    background: #181a1b;
+    padding: 0;
+}
+
+.zoneFullscreen > :not(.zoneMap) {
+    display: none;
+}
+
+.zoneFullscreen .zoneMap {
+    position: absolute;
+    inset: 0;
+    height: 100%;
+    min-height: 100%;
+    border: 0;
+    border-radius: 0;
+}
+
+.zoneFullscreen .zoneMap > .scenarioMapViewport {
+    height: 100%;
+    min-height: 100%;
+}
+
+.zoneMapTools {
+    position: absolute;
+    z-index: 2;
+    top: 14px;
+    right: 14px;
+}
+
+.zoneShape rect {
+    fill: rgb(199 167 118 / 0.12);
+    stroke: rgb(199 167 118 / 0.7);
+    stroke-width: 1.5;
+}
+
+.zoneShape {
+    cursor: pointer;
+}
+
+.zoneShape[data-selected] rect {
+    fill: rgb(203 213 200 / 0.18);
+    stroke: var(--scenario-accent);
+    stroke-width: 2;
+}
+
+.zoneShape text {
+    fill: #d2c0a4;
+    font-size: 10px;
+    text-anchor: middle;
+}
+
+.zoneDraft {
+    fill: rgb(203 213 200 / .08);
+    stroke: var(--scenario-accent);
+    stroke-dasharray: 5 4;
+    stroke-width: 1.5;
+}
+
+.zoneHierarchy {
+    position: absolute;
+    top: 14px;
+    left: 14px;
+    display: grid;
+    min-width: 150px;
+    max-height: 220px;
+    gap: 3px;
+    overflow: auto;
+    border: 1px solid var(--scenario-line);
+    border-radius: 3px;
+    background: rgb(25 27 28 / .9);
+    padding: 7px;
+}
+
+.zoneHierarchyHeader {
+    display: flex;
+    min-height: 28px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 0 2px 2px 5px;
+}
+
+.zoneHierarchyHeader strong {
+    color: var(--slate-muted);
+    font-size: 8px;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+}
+
+.zoneHierarchyHeader button,
+.zoneHierarchy > button {
+    border: 0;
+    border-radius: 2px;
+    background: transparent;
+    color: var(--slate-muted);
+    cursor: pointer;
+    transition: background var(--duration-fast) var(--ease-out-ui), color var(--duration-fast) var(--ease-out-ui), transform 140ms var(--ease-out-ui);
+}
+
+.zoneHierarchyHeader button {
+    display: grid;
+    width: 26px;
+    height: 26px;
+    place-items: center;
+}
+
+.zoneHierarchy > button {
+    min-height: 25px;
+    padding-right: 8px;
+    color: var(--slate-fg-2);
+    font-size: 9px;
+    text-align: left;
+}
+
+.zoneHierarchyHeader button:hover,
+.zoneHierarchy > button:hover,
+.zoneHierarchy > button[data-selected] {
+    background: var(--scenario-soft);
+    color: var(--slate-fg);
+}
+
+.zoneHierarchyHeader button:active,
+.zoneHierarchy > button:active,
+.zoneInspectorActions button:active {
+    transform: scale(0.97);
+}
+
+.zoneHierarchy > p {
+    margin: 1px 5px 5px;
+    color: var(--slate-muted);
+    font-size: 9px;
+}
+
+.zoneInspector {
+    position: absolute;
+    z-index: 2;
+    right: 15px;
+    bottom: 14px;
+    display: grid;
+    min-width: 190px;
+    gap: 9px;
+    border: 1px solid var(--scenario-line);
+    border-radius: 3px;
+    background: rgb(25 27 28 / 0.9);
+    padding: 10px;
+}
+
+.zoneInspector > div:first-child {
+    display: grid;
+    gap: 2px;
+}
+
+.zoneInspector span {
+    color: var(--slate-muted);
+    font-size: 8px;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+}
+
+.zoneInspector strong {
+    overflow: hidden;
+    color: var(--slate-fg-2);
+    font-size: 11px;
+    font-weight: 580;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.zoneInspector p {
+    margin: 0;
+    color: var(--slate-muted);
+    font-size: 9px;
+}
+
+.zoneInspectorActions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px;
+}
+
+.zoneInspectorActions button {
+    display: inline-flex;
+    height: 27px;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    border: 1px solid var(--scenario-line);
+    border-radius: 2px;
+    background: transparent;
+    color: var(--slate-muted);
+    font-size: 9px;
+    cursor: pointer;
+    transition: background var(--duration-fast) var(--ease-out-ui), color var(--duration-fast) var(--ease-out-ui), transform 140ms var(--ease-out-ui);
+}
+
+.zoneInspectorActions button:hover {
+    background: var(--scenario-soft);
+    color: var(--slate-fg);
+}
+
+.triggerCard {
+    border-radius: var(--radius);
+    padding: 14px;
+}
+
+.triggerCard > header {
+    display: grid;
+    grid-template-columns: auto minmax(180px, 1fr) auto auto;
+    align-items: center;
+    gap: 10px;
+    border-bottom: 1px solid var(--scenario-line);
+    padding-bottom: 12px;
+}
+
+.triggerIndex {
+    display: grid;
+    width: 25px;
+    height: 25px;
+    place-items: center;
+    border: 1px solid var(--scenario-line);
+    color: var(--slate-muted);
+    font-family: var(--font-geist-mono), monospace;
+    font-size: 9px;
+}
+
+.triggerFlow {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    align-items: end;
+    gap: 10px;
+    padding-top: 13px;
+}
+
+.triggerFlow > div > span {
+    display: block;
+    margin-bottom: 5px;
+    color: #9ba09e;
+    font-family: var(--font-geist-mono), monospace;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+}
+
+.flowArrow {
+    align-self: center;
+    color: var(--slate-muted);
+    font-family: var(--font-geist-mono), monospace;
+    font-size: 8px;
+}
+
+.triggerActionsHeading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-top: 14px;
+    border-top: 1px solid var(--scenario-line);
+    padding-top: 12px;
+}
+
+.triggerActionsHeading > span,
+.triggerActionEditor > header > span {
+    color: #9ba09e;
+    font-family: var(--font-geist-mono), monospace;
+    font-size: 11px;
+    letter-spacing: .08em;
+}
+
+.triggerActions {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 9px;
+    margin-top: 9px;
+}
+
+.triggerActionEditor {
+    display: grid;
+    gap: 12px;
+    border: 1px solid rgb(255 255 255 / .09);
+    border-radius: 3px;
+    background: rgb(255 255 255 / .018);
+    padding: 12px;
+}
+
+.triggerActionEditor > header {
+    display: grid;
+    grid-template-columns: auto minmax(150px, 1fr) auto;
+    align-items: center;
+    gap: 9px;
+}
+
+.addBar {
+    display: grid;
+    grid-template-columns: minmax(200px, 360px) auto;
+    justify-content: end;
+    gap: 8px;
+    border-bottom: 1px solid var(--scenario-line);
+    padding-bottom: 14px;
+}
+
+.linkedCompletion {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    border: 1px dashed rgb(255 255 255 / 0.2);
+    border-radius: var(--radius);
+    padding: 14px;
+    color: var(--slate-warning);
+}
+
+.linkedCompletion > div {
+    display: grid;
+    gap: 2px;
+}
+
+.linkedCompletion span {
+    color: var(--slate-muted);
+    font-size: 9px;
+    text-transform: uppercase;
+}
+
+.linkedCompletion strong {
+    color: var(--slate-fg);
+    font-size: 13px;
+}
+
+.linkedCompletion p {
+    margin: 0;
+    color: var(--slate-muted);
+    font-size: 10px;
+}
+
+.outcomeCard {
+    display: grid;
+    grid-template-columns: 74px minmax(0, 1fr) auto auto;
+    align-items: center;
+    gap: 16px;
+    border-radius: var(--radius);
+    padding: 14px;
+}
+
+.outcomeStatus,
+.countBadge {
+    color: var(--slate-warning);
+    font-family: var(--font-geist-mono), monospace;
+    font-size: 8px;
+    letter-spacing: .08em;
+}
+
+.outcomeContract {
+    color: var(--slate-muted);
+    font-family: var(--font-geist-mono), monospace;
+    font-size: 8px;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+}
+
+.outcomeBody {
+    display: grid;
+    gap: 6px;
+}
+
+.outcomeBody p {
+    margin: 0;
+    color: var(--slate-muted);
+    font-size: 10px;
+}
+
+.timelinePanel {
+    overflow-x: auto;
+    min-height: 230px;
+    border-radius: var(--radius);
+    padding: 74px 54px 30px;
+}
+
+.timelineTrack {
+    position: relative;
+    display: flex;
+    min-width: 680px;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 24px;
+}
+
+.timelineTrack::before {
+    position: absolute;
+    top: 30px;
+    right: 20px;
+    left: 20px;
+    height: 1px;
+    background: rgb(255 255 255 / 0.18);
+    content: "";
+}
+
+.timelineOrigin,
+.timelineEvent,
+.timelineFinish {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    justify-items: center;
+    gap: 7px;
+    min-width: 64px;
+    text-align: center;
+}
+
+.timelineOrigin span,
+.timelineEvent span,
+.timelineFinish span {
+    color: var(--slate-muted);
+    font-family: var(--font-geist-mono), monospace;
+    font-size: 9px;
+}
+
+.timelineOrigin i,
+.timelineEvent i,
+.timelineFinish i {
+    display: grid;
+    width: 12px;
+    height: 12px;
+    place-items: center;
+    border: 2px solid #1d1f20;
+    border-radius: 50%;
+    background: #a8adaa;
+    box-shadow: 0 0 0 1px rgb(255 255 255 / 0.22);
+}
+
+.timelineFinish i {
+    width: 26px;
+    height: 26px;
+    margin-top: -7px;
+    background: #c5b08c;
+    color: #27231c;
+}
+
+.timelineEvent strong,
+.timelineFinish strong {
+    max-width: 110px;
+    color: var(--slate-fg-2);
+    font-size: 10px;
+    font-weight: 520;
+}
+
+.conditionalList article {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 11px;
+    border-bottom: 1px solid var(--scenario-line);
+    padding: 10px 2px;
+    color: #949997;
+}
+
+.conditionalList strong {
+    color: var(--slate-fg-2);
+    font-size: 12px;
+}
+
+.conditionalList p {
+    margin: 2px 0 0;
+    color: var(--slate-muted);
+    font-size: 10px;
+}
+
+.conditionalList article > span {
+    color: var(--slate-muted);
+    font-family: var(--font-geist-mono), monospace;
+    font-size: 8px;
+    text-transform: uppercase;
+}
+
+.routeEditor {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    height: 100%;
+    min-height: 600px;
+}
+
+.mapToolbar {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    border-bottom: 1px solid var(--scenario-line);
+    background: #1d1f20;
+    padding: 8px 12px;
+}
+
+.toolGroup {
+    display: flex;
+    gap: 3px;
+}
+
+.toolGroup button {
+    display: inline-flex;
+    height: 29px;
+    align-items: center;
+    gap: 6px;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    background: transparent;
+    padding: 0 9px;
+    color: var(--slate-muted);
+    font-size: 11px;
+    cursor: pointer;
+}
+
+.toolGroup button:hover {
+    background: var(--scenario-soft);
+    color: var(--slate-fg-2);
+}
+
+.toolGroup button[data-active] {
+    border-color: rgb(203 213 200 / 0.18);
+    background: rgb(203 213 200 / 0.07);
+    color: var(--scenario-accent);
+}
+
+.mapHint {
+    flex: 1;
+    color: var(--slate-muted);
+    font-size: 10px;
+}
+
+.mapActions {
+    display: flex;
+    gap: 6px;
+}
+
+.mapStage {
+    position: relative;
+    min-height: 0;
+    overflow: hidden;
+    background: #17191a;
+}
+
+.scenarioMapViewport {
+    position: relative;
+    display: block;
+    width: 100%;
+    height: 100%;
+    min-height: 560px;
+    overflow: hidden;
+    background: #09090b;
+    touch-action: none;
+    user-select: none;
+}
+
+.scenarioMapViewport[data-interaction="place"],
+.scenarioMapViewport[data-interaction="draw"] {
+    cursor: crosshair;
+}
+
+.scenarioMapViewport[data-interaction="pan"] {
+    cursor: grab;
+}
+
+.scenarioMapViewport:active {
+    cursor: grabbing;
+}
+
+.scenarioMapViewport > svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
+.scenarioMapHud {
+    position: absolute;
+    z-index: 2;
+    bottom: 14px;
+    left: 14px;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    border: 1px solid var(--scenario-line);
+    border-radius: 3px;
+    background: rgb(25 27 28 / 0.92);
+    padding: 5px 8px 5px 5px;
+    color: var(--slate-muted);
+    font-family: var(--font-geist-mono), monospace;
+    font-size: 8px;
+}
+
+.scenarioMapHud > div {
+    display: flex;
+    gap: 2px;
+}
+
+.scenarioMapHud button {
+    display: grid;
+    width: 25px;
+    height: 24px;
+    place-items: center;
+    border: 1px solid transparent;
+    border-radius: 2px;
+    background: transparent;
+    color: var(--slate-fg-2);
+    cursor: pointer;
+}
+
+.scenarioMapHud button:hover {
+    border-color: var(--scenario-line);
+    background: var(--scenario-soft);
+}
+
+.verifiedPath {
+    fill: none;
+    stroke: #b9c7b6;
+    stroke-linejoin: round;
+    stroke-width: 5;
+}
+
+.mapWaypoint {
+    cursor: pointer;
+}
+
+.mapWaypoint circle {
+    fill: #202322;
+    stroke: #d5dad3;
+    stroke-width: 2;
+    transition: transform var(--duration-fast) var(--ease-out-ui), fill var(--duration-fast) var(--ease-out-ui);
+    transform-box: fill-box;
+    transform-origin: center;
+}
+
+.mapWaypoint:hover circle,
+.mapWaypoint[data-selected] circle {
+    fill: #d2dbd0;
+    transform: scale(1.12);
+}
+
+.mapWaypoint[data-kind="finish"] circle {
+    stroke: #cbb58f;
+}
+
+.mapWaypoint text {
+    fill: #e8ebe7;
+    font-family: var(--font-geist-mono), monospace;
+    font-size: 10px;
+    font-weight: 700;
+    pointer-events: none;
+    text-anchor: middle;
+}
+
+.mapWaypoint:hover text,
+.mapWaypoint[data-selected] text {
+    fill: #202322;
+}
+
+.waypointInspector {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    display: grid;
+    gap: 11px;
+    width: 230px;
+    border: 1px solid rgb(255 255 255 / 0.12);
+    border-radius: var(--radius);
+    background: rgb(28 30 31 / 0.94);
+    box-shadow: 0 16px 38px rgb(0 0 0 / 0.28);
+    padding: 14px;
+    backdrop-filter: blur(12px);
+}
+
+.waypointInspector > p,
+.waypointInspector > small {
+    margin: 0;
+    color: var(--slate-muted);
+    font-size: 10px;
+    line-height: 1.45;
+}
+
+.inspectorTitle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    text-transform: capitalize;
+}
+
+.inspectorTitle strong {
+    color: var(--slate-fg);
+    font-size: 14px;
+    font-weight: 580;
+}
+
+.inspectorTitle button {
+    width: 26px;
+    height: 26px;
+}
+
+.coordinateList {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+    margin: 0;
+}
+
+.coordinateList div {
+    display: grid;
+    gap: 1px;
+    border-left: 1px solid var(--scenario-line);
+    padding-left: 7px;
+}
+
+.coordinateList div:last-child {
+    grid-column: 1 / -1;
+}
+
+.coordinateList dt {
+    color: var(--slate-muted);
+    font-size: 8px;
+    text-transform: uppercase;
+}
+
+.coordinateList dd {
+    margin: 0;
+    color: var(--slate-fg-2);
+    font-family: var(--font-geist-mono), monospace;
+    font-size: 10px;
+}
+
+.mapEmpty {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    display: grid;
+    justify-items: center;
+    gap: 6px;
+    max-width: 280px;
+    color: #7e8381;
+    text-align: center;
+    transform: translate(-50%, -50%);
+}
+
+.mapEmpty strong {
+    color: var(--slate-fg-2);
+    font-size: 13px;
+}
+
+.mapEmpty p {
+    margin: 0;
+    font-size: 10px;
+}
+
+.placementError {
+    position: absolute;
+    bottom: 16px;
+    left: 50%;
+    border: 1px solid var(--slate-danger-border);
+    border-radius: var(--radius);
+    background: rgb(67 37 37 / 0.94);
+    padding: 8px 11px;
+    color: #e3b2b2;
+    font-size: 11px;
+    transform: translateX(-50%);
+}
+
+.createStage {
+    display: grid;
+    grid-template-columns: minmax(460px, 620px) 260px;
+    width: min(980px, calc(100% - 64px));
+    min-height: 100%;
+    align-content: center;
+    justify-content: center;
+    gap: 66px;
+    margin: 0 auto;
+    padding: 60px 0 90px;
+}
+
+.createForm {
+    display: grid;
+    gap: 13px;
+}
+
+.createIcon {
+    display: grid;
+    width: 45px;
+    height: 45px;
+    place-items: center;
+    margin-bottom: 8px;
+    border: 1px solid rgb(203 213 200 / 0.2);
+    border-radius: var(--radius);
+    background: rgb(203 213 200 / 0.06);
+    color: var(--scenario-accent);
+}
+
+.createForm h1 {
+    max-width: 620px;
+    margin: 2px 0 0;
+    color: var(--slate-fg);
+    font-size: clamp(34px, 4vw, 52px);
+    font-weight: 560;
+    letter-spacing: -0.052em;
+    line-height: .98;
+    text-wrap: balance;
+}
+
+.createForm > p {
+    max-width: 58ch;
+    margin: 3px 0 17px;
+    color: #909593;
+    font-size: 13px;
+    line-height: 1.6;
+}
+
+.createButton {
+    justify-self: start;
+    margin-top: 6px;
+}
+
+.createGuide {
+    align-self: center;
+    border-left: 1px solid var(--scenario-line);
+    padding-left: 24px;
+}
+
+.createGuide > span {
+    color: var(--slate-muted);
+    font-size: 9px;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+}
+
+.createGuide ol {
+    display: grid;
+    gap: 23px;
+    margin: 24px 0 0;
+    padding: 0;
+    list-style: none;
+    counter-reset: guide;
+}
+
+.createGuide li {
+    position: relative;
+    display: grid;
+    gap: 3px;
+    padding-left: 29px;
+    counter-increment: guide;
+}
+
+.createGuide li::before {
+    position: absolute;
+    top: -2px;
+    left: 0;
+    display: grid;
+    width: 19px;
+    height: 19px;
+    place-items: center;
+    border: 1px solid var(--scenario-line);
+    color: var(--slate-muted);
+    content: counter(guide, decimal-leading-zero);
+    font-family: var(--font-geist-mono), monospace;
+    font-size: 8px;
+}
+
+.createGuide strong {
+    color: var(--slate-fg-2);
+    font-size: 12px;
+}
+
+.createGuide p {
+    margin: 0;
+    color: var(--slate-muted);
+    font-size: 10px;
+    line-height: 1.45;
+}
+
+.validationPanel {
+    display: flex;
+    align-items: flex-start;
+    gap: 9px;
+    color: var(--slate-warning);
+}
+
+.validationPanel strong {
+    color: var(--slate-fg-2);
+    font-size: 11px;
+}
+
+.issueList {
+    display: grid;
+    gap: 3px;
+    margin-top: 8px;
+}
+
+.issueList button {
+    display: grid;
+    grid-template-columns: minmax(100px, .7fr) minmax(0, 1.3fr);
+    gap: 8px;
+    border: 0;
+    border-radius: 2px;
+    background: transparent;
+    padding: 4px 5px;
+    color: var(--slate-muted);
+    text-align: left;
+    cursor: pointer;
+}
+
+.issueList button:hover {
+    background: var(--scenario-soft);
+}
+
+.issueList code {
+    overflow: hidden;
+    color: var(--slate-warning);
+    font-size: 9px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.issueList span {
+    font-size: 9px;
+}
+
+@media (max-width: 1120px) {
+    .catalog { width: 292px; }
+    .createStage { grid-template-columns: minmax(420px, 1fr); gap: 28px; }
+    .createGuide { display: none; }
+    .triggerFlow { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+    .flowArrow { display: none; }
+    .noticeRail { width: min(500px, calc(100% - 330px)); }
+}
+
+@media (max-height: 720px) {
+    .sectionStack { padding-top: 24px; }
+    .createStage { align-content: start; padding-top: 42px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .folderChevron,
+    .mapWaypoint circle,
+    .catalogTools button,
+    .removeButton {
+        transition: none;
+    }
+}

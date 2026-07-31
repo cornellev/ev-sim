@@ -41,7 +41,11 @@ import {
     checkScriptInterface,
 } from "../server/mcp/bindingTools.js";
 import { registerRunManifestTools } from "../server/mcp/runManifestTools.js";
+import { registerScenarioTools } from "../server/mcp/scenarioTools.js";
+import { registerExperimentTools } from "../server/mcp/experimentTools.js";
 import { createDefaultRunManifest } from "../app/simulation/RunManifest.js";
+import { createDefaultScenario } from "../app/scenarios/ScenarioDocument.js";
+import { createDefaultExperimentSuite } from "../app/experiments/ExperimentSuite.js";
 import { PLACEMENT_CATALOG } from "../app/3d/editor/placement/placementCatalogData.js";
 
 async function withTempStorage(fn) {
@@ -353,6 +357,192 @@ test("run manifest MCP tools preserve descriptions, enforce revisions, and publi
             assert.equal(launch.resolvedHash.length, 64);
             assert.equal(events.at(-1).action, "launch");
             assert.equal(events.at(-1).data.autoplay, false);
+        } finally {
+            storageEvents.off("change", onChange);
+        }
+    });
+});
+
+test("scenario MCP suite exposes catalog, lifecycle, validation, route, and resources", () => {
+    const tools = [];
+    const resources = [];
+    const server = {
+        registerTool(name) { tools.push(name); },
+        registerResource(name) { resources.push(name); },
+    };
+    registerScenarioTools(server, {});
+    assert.deepEqual(tools, [
+        "scenario_list",
+        "scenario_get",
+        "scenario_create",
+        "scenario_update",
+        "scenario_duplicate",
+        "scenario_delete",
+        "scenario_validate",
+        "scenario_resolve",
+        "scenario_verify_route",
+        "scenario_catalog_get",
+        "scenario_catalog_update",
+    ]);
+    assert.deepEqual(resources, ["scenario-catalog", "scenario-folder-catalog", "scenario"]);
+});
+
+test("scenario MCP tools enforce revisions and publish storage changes", async () => {
+    await withTempStorage(async (storage) => {
+        const tools = new Map();
+        const server = {
+            registerTool(name, _definition, handler) { tools.set(name, handler); },
+            registerResource() {},
+        };
+        registerScenarioTools(server, storage);
+        const events = [];
+        const onChange = (event) => {
+            if (["scenario", "scenario-catalog"].includes(event.domain)) events.push(event);
+        };
+        storageEvents.on("change", onChange);
+        try {
+            const createdResult = await tools.get("scenario_create")({
+                scenario: createDefaultScenario({ id: "mcp-scenario", name: "MCP Scenario" }),
+            });
+            const created = JSON.parse(createdResult.content[0].text).scenario;
+            assert.equal(created.revision, 1);
+
+            const updatedResult = await tools.get("scenario_update")({
+                scenarioId: created.id,
+                expectedRevision: created.revision,
+                scenario: { ...created, description: "Updated over MCP" },
+            });
+            const updated = JSON.parse(updatedResult.content[0].text).scenario;
+            assert.equal(updated.revision, 2);
+            assert.equal(updated.description, "Updated over MCP");
+
+            const catalogResult = await tools.get("scenario_catalog_get")({});
+            const catalog = JSON.parse(catalogResult.content[0].text).catalog;
+            const catalogUpdate = await tools.get("scenario_catalog_update")({
+                expectedRevision: catalog.revision,
+                catalog: { ...catalog, folders: [{ id: "safety", name: "Safety" }] },
+            });
+            assert.equal(JSON.parse(catalogUpdate.content[0].text).catalog.folders[0].name, "Safety");
+            assert.deepEqual(events.map((event) => event.action), ["created", "updated", "updated"]);
+        } finally {
+            storageEvents.off("change", onChange);
+        }
+    });
+});
+
+test("experiment MCP suite exposes planning, evidence, comparison, execution, and resources", () => {
+    const tools = [];
+    const resources = [];
+    const server = {
+        registerTool(name) { tools.push(name); },
+        registerResource(name) { resources.push(name); },
+    };
+    registerExperimentTools(server, {});
+    assert.deepEqual(tools, [
+        "experiment_suite_list",
+        "experiment_suite_get",
+        "experiment_suite_create",
+        "experiment_suite_update",
+        "experiment_suite_duplicate",
+        "experiment_suite_delete",
+        "experiment_suite_validate",
+        "experiment_case_resolve",
+        "experiment_result_list",
+        "experiment_result_get",
+        "experiment_result_create",
+        "experiment_result_update",
+        "experiment_result_validate",
+        "experiment_result_delete",
+        "experiment_baseline_list",
+        "experiment_baseline_get",
+        "experiment_baseline_create",
+        "experiment_baseline_validate",
+        "experiment_baseline_delete",
+        "experiment_compare",
+        "experiment_run_status",
+        "experiment_run_start",
+        "experiment_run_pause",
+        "experiment_run_resume",
+        "experiment_run_cancel",
+    ]);
+    assert.deepEqual(resources, [
+        "experiment-suite-catalog",
+        "experiment-result-catalog",
+        "experiment-baseline-catalog",
+        "experiment-suite",
+        "experiment-result",
+        "experiment-baseline",
+    ]);
+});
+
+test("experiment MCP tools preserve revisions, compare evidence, and publish browser commands", async () => {
+    await withTempStorage(async (storage) => {
+        const tools = new Map();
+        const server = {
+            registerTool(name, _definition, handler) { tools.set(name, handler); },
+            registerResource() {},
+        };
+        registerExperimentTools(server, storage);
+        const suiteResult = await tools.get("experiment_suite_create")({
+            suite: createDefaultExperimentSuite({ id: "mcp-suite", name: "MCP Suite" }),
+        });
+        const suite = JSON.parse(suiteResult.content[0].text).suite;
+        assert.equal(suite.revision, 1);
+        const updatedResult = await tools.get("experiment_suite_update")({
+            suiteId: suite.id,
+            expectedRevision: suite.revision,
+            suite: { ...suite, description: "Updated suite" },
+        });
+        assert.equal(JSON.parse(updatedResult.content[0].text).suite.revision, 2);
+
+        const now = new Date().toISOString();
+        const caseResult = {
+            id: "case-a",
+            scenarioId: "scenario-a",
+            manifestId: "manifest-a",
+            seed: "7",
+            parameters: {},
+            status: "completed",
+            completed: true,
+            passed: true,
+            finishedAt: now,
+            metrics: { passed: 1 },
+            dependencyHashes: { scenario: "a" },
+            resolvedHash: "resolved-a",
+        };
+        const createdEvidence = await storage.createExperimentResult({ result: {
+            id: "mcp-result",
+            suiteId: suite.id,
+            status: "completed",
+            createdAt: now,
+            finishedAt: now,
+            metricDefinitions: [{ id: "passed", name: "Passed", source: { kind: "builtin", metric: "passed" }, direction: "higher", tolerance: { absolute: 0, relative: 0 }, gated: true }],
+            cases: [caseResult],
+        } });
+        const baseline = await storage.createExperimentBaseline({
+            resultId: createdEvidence.id,
+            id: "mcp-baseline",
+            name: "MCP Baseline",
+        });
+        const comparisonResult = await tools.get("experiment_compare")({
+            resultId: createdEvidence.id,
+            baselineId: baseline.id,
+        });
+        const comparison = JSON.parse(comparisonResult.content[0].text).comparison;
+        assert.equal(comparison.status, "unchanged");
+        assert.equal(comparison.matchedCaseCount, 1);
+
+        const commands = [];
+        const onChange = (event) => {
+            if (event.domain === "experiment-run") commands.push(event);
+        };
+        storageEvents.on("change", onChange);
+        try {
+            const pauseResult = await tools.get("experiment_run_pause")({ resultId: createdEvidence.id, openWorkspace: false });
+            const pause = JSON.parse(pauseResult.content[0].text);
+            assert.equal(pause.browserRequiredForControl, true);
+            assert.equal(commands[0].action, "pause");
+            assert.equal(commands[0].data.resultId, createdEvidence.id);
         } finally {
             storageEvents.off("change", onChange);
         }

@@ -1,4 +1,5 @@
 import { BlockOutput, UnitBlock } from "../ScriptManager.js";
+import { runtimeRandom } from "../runtime/RuntimeRandom.js";
 
 export class ROSInputBlock extends UnitBlock {
     register() {
@@ -12,8 +13,8 @@ export class ROSInputBlock extends UnitBlock {
 
     execute() {
         return new BlockOutput()
-            .set("some float64", Math.random() * 100) // placeholder for actual ROS data
-            .set("some int32", Math.floor(Math.random() * 100)); // placeholder for actual ROS data
+            .set("some float64", runtimeRandom(this) * 100)
+            .set("some int32", Math.floor(runtimeRandom(this) * 100));
     }
 }
 

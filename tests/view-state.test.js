@@ -17,6 +17,8 @@ test("isThreeDMode accepts simulation and environment modes", () => {
 
 test("getActiveWorkspaceKey maps scripting and 3D submodes", () => {
     assert.equal(getActiveWorkspaceKey(APP_VIEWS.SCRIPTING, THREE_D_MODES.SIMULATION), "scripting");
+    assert.equal(getActiveWorkspaceKey(APP_VIEWS.SCENARIOS, THREE_D_MODES.SIMULATION), "scenarios");
+    assert.equal(getActiveWorkspaceKey(APP_VIEWS.EXPERIMENTS, THREE_D_MODES.SIMULATION), "experiments");
     assert.equal(getActiveWorkspaceKey(APP_VIEWS.THREE_D, THREE_D_MODES.SIMULATION), "3d:simulation");
     assert.equal(getActiveWorkspaceKey(APP_VIEWS.THREE_D, THREE_D_MODES.ENVIRONMENT), "3d:environment");
 });
@@ -32,6 +34,14 @@ test("parseWorkspaceKey round-trips 3D submodes", () => {
     });
     assert.deepEqual(parseWorkspaceKey("scripting"), {
         view: APP_VIEWS.SCRIPTING,
+        threeDMode: null,
+    });
+    assert.deepEqual(parseWorkspaceKey("scenarios"), {
+        view: APP_VIEWS.SCENARIOS,
+        threeDMode: null,
+    });
+    assert.deepEqual(parseWorkspaceKey("experiments"), {
+        view: APP_VIEWS.EXPERIMENTS,
         threeDMode: null,
     });
 });

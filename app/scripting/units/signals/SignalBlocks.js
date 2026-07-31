@@ -651,7 +651,7 @@ export function RouteProgressUnit(props) {
                 { label: "segment", type: "int32" }
             ]}
         >
-            {() => <span className="text-zinc-500">Returns nearest waypoint progress as 0..1.</span>}
+            {() => <span className="text-zinc-500">Projects onto route geometry and returns arc-length progress.</span>}
         </ConfigUnit>
     );
 }

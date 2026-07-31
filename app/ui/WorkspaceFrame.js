@@ -17,7 +17,7 @@ export function WorkspaceFrame({
     return (
         <div className={cx("sf-workspace", className)}>
             <header className="sf-workspace-header">
-                <button type="button" className="sf-workspace-identity" onClick={onOpenWorkspace}>
+                <button type="button" className="sf-workspace-identity" onClick={onOpenWorkspace} aria-label="Open workspace switcher">
                     <span className="sf-workspace-identity__product">cev-sim</span>
                     <span className="sf-workspace-identity__divider" aria-hidden="true" />
                     <IconLayoutGrid size={15} stroke={1.75} aria-hidden="true" />

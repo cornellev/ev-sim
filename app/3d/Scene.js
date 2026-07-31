@@ -674,12 +674,16 @@ export default function TotalScene({
     environmentId = "igvc",
     onEnvironmentChange,
     onOpenReplay,
+    embeddedViewport = null,
+    preservePlaybackWhenHidden = false,
 }) {
     const mountRef = useRef(null);
     const keyManagerRef = useRef(new KeyManager());
     const mouseManagerRef = useRef(new MouseManager());
     const runtimeRef = useRef(null);
     const modeRef = useRef(mode);
+    const embeddedViewportRef = useRef(embeddedViewport);
+    embeddedViewportRef.current = embeddedViewport;
 
     const [sceneData, setSceneData] = useState(null);
     const [sceneReady, setSceneReady] = useState(false);
@@ -689,13 +693,16 @@ export default function TotalScene({
 
     useEffect(() => {
         const scene = new THREE.Scene();
-        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const initialViewport = embeddedViewportRef.current;
+        const initialWidth = Math.max(1, Math.round(initialViewport?.width || window.innerWidth));
+        const initialHeight = Math.max(1, Math.round(initialViewport?.height || window.innerHeight));
+        const camera = new THREE.PerspectiveCamera(75, initialWidth / initialHeight, 0.1, 1000);
         const renderer = new THREE.WebGLRenderer({ antialias: true });
         let disposed = false;
         const mountNode = mountRef.current;
 
          // Set renderer size and append canvas to the referenced div
-        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setSize(initialWidth, initialHeight);
         mountNode.appendChild(renderer.domElement);
 
         const spark = new SparkRenderer({ renderer });
@@ -760,6 +767,10 @@ export default function TotalScene({
                 clientRevision: environmentLoader.manifest?.clientRevision,
             });
             environmentPersistence.attach();
+            data.simulation().setEnvironmentRuntime({
+                loader: environmentLoader,
+                persistence: environmentPersistence,
+            });
             const runtime = {
                 data,
                 scene,
@@ -796,10 +807,13 @@ export default function TotalScene({
 
         // --- 4. Handle Window Resize (Optional but Recommended) ---
         const handleResize = () => {
-            camera.aspect = window.innerWidth / window.innerHeight;
+            const viewport = embeddedViewportRef.current;
+            const width = Math.max(1, Math.round(viewport?.width || window.innerWidth));
+            const height = Math.max(1, Math.round(viewport?.height || window.innerHeight));
+            camera.aspect = width / height;
             camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            data.skyManager()?.resize?.(window.innerWidth, window.innerHeight);
+            renderer.setSize(width, height);
+            data.skyManager()?.resize?.(width, height);
             data.simulation()?.render?.();
         };
         window.addEventListener('resize', handleResize);
@@ -844,6 +858,18 @@ export default function TotalScene({
         };
     }, [environmentId, loadAttempt]);
 
+    useEffect(() => {
+        const runtime = runtimeRef.current;
+        if (!runtime) return;
+        const width = Math.max(1, Math.round(embeddedViewport?.width || window.innerWidth));
+        const height = Math.max(1, Math.round(embeddedViewport?.height || window.innerHeight));
+        runtime.camera.aspect = width / height;
+        runtime.camera.updateProjectionMatrix();
+        runtime.renderer.setSize(width, height);
+        runtime.data.skyManager()?.resize?.(width, height);
+        runtime.data.simulation()?.render?.();
+    }, [embeddedViewport, sceneReady]);
+
     // Live-sync: when an MCP agent writes the active environment, re-apply it.
     useEffect(() => {
         if (!sceneReady) return undefined;
@@ -854,6 +880,10 @@ export default function TotalScene({
 
             const runtime = runtimeRef.current;
             if (!runtime || runtime.disposed) return;
+            // A configured run owns a frozen environment document. Live storage
+            // updates are applied after the scene is recreated or a new run is
+            // resolved, never in the middle of deterministic execution.
+            if (runtime.data.simulation?.()?.resolvedRun) return;
 
             const persistence = runtime.environmentPersistence;
             const loader = runtime.environmentLoader;
@@ -899,9 +929,12 @@ export default function TotalScene({
 
     useEffect(() => {
         // Both Simulation and Environment Editor need the shared render loop and orbit.
-        runtimeRef.current?.data?.simulation?.()?.setWorkspaceActive?.(visible && isThreeDMode(mode));
+        runtimeRef.current?.data?.simulation?.()?.setWorkspaceActive?.(
+            visible && isThreeDMode(mode),
+            { preservePlayback: preservePlaybackWhenHidden },
+        );
         if (!visible) keyManagerRef.current.releaseAll?.();
-    }, [mode, visible, sceneReady]);
+    }, [mode, preservePlaybackWhenHidden, visible, sceneReady]);
 
     useEffect(() => {
         if (!sceneData) return undefined;
@@ -910,16 +943,16 @@ export default function TotalScene({
 
     useEffect(() => {
         const kd = (e) => {
-            if (!visible || isInteractiveTarget(e.target)) return;
+            if (!visible || embeddedViewportRef.current || isInteractiveTarget(e.target)) return;
             keyManagerRef.current.onKeyDown(e);
         };
         const ku = (e) => {
-            if (!visible) return;
+            if (!visible || embeddedViewportRef.current) return;
             keyManagerRef.current.onKeyUp(e);
         };
         
         const kp = (e) => {
-            if (!visible || isInteractiveTarget(e.target)) return;
+            if (!visible || embeddedViewportRef.current || isInteractiveTarget(e.target)) return;
             keyManagerRef.current.onKeyPress(e);
         };
 
@@ -941,20 +974,20 @@ export default function TotalScene({
     useEffect(() => {
         const mm = mouseManagerRef.current;
         const md = (e) => {
-            if (!visible) return;
+            if (!visible || embeddedViewportRef.current) return;
             mm.handleDown(e);
         };
         const mu = (e) => {
-            if (!visible) return;
+            if (!visible || embeddedViewportRef.current) return;
             mm.handleUp(e);
         };
         const mmove = (e) => {
-            if (!visible) return;
+            if (!visible || embeddedViewportRef.current) return;
             mm.handleMove(e);
         };
 
         const mc = (e) => {
-            if (!visible) return;
+            if (!visible || embeddedViewportRef.current) return;
             mm.handleClick(e);
         }
         
@@ -970,10 +1003,20 @@ export default function TotalScene({
         };
     }, [visible])
 
+    const embedded = Boolean(embeddedViewport);
+    const viewportStyle = embedded
+        ? {
+            top: `${Math.round(embeddedViewport.top)}px`,
+            left: `${Math.round(embeddedViewport.left)}px`,
+            width: `${Math.max(1, Math.round(embeddedViewport.width))}px`,
+            height: `${Math.max(1, Math.round(embeddedViewport.height))}px`,
+        }
+        : undefined;
+
     return (
         <>
         <SceneLoadingScreen
-            visible={visible && !sceneReady}
+            visible={visible && !sceneReady && !embedded}
             mode={mode}
             phase={loadPhase}
             error={loadError}
@@ -983,27 +1026,30 @@ export default function TotalScene({
             }}
         />
         {sceneReady && sceneData && <McpLoggingBridge data={sceneData} onOpenReplay={onOpenReplay} />}
-        <div
-            id="overlay"
-            className={`fixed inset-0 z-20 select-none bg-transparent ${visible ? "pointer-events-none visible" : "pointer-events-none invisible"}`}
-            aria-hidden={!sceneReady || !visible}
-        >
-            {visible && sceneReady && mode === THREE_D_MODES.SIMULATION && (
-                <SimulationChrome data={sceneData} onOpenReplay={onOpenReplay} />
-            )}
-            {visible && sceneReady && mode === THREE_D_MODES.ENVIRONMENT && (
-                <EnvironmentEditorChrome
-                    data={sceneData}
-                    activeEnvironmentId={environmentId}
-                    onEnvironmentChange={onEnvironmentChange}
-                />
-            )}
-        </div>
+        {!embedded && <div
+                id="overlay"
+                className={`fixed inset-0 z-20 select-none bg-transparent ${visible ? "pointer-events-none visible" : "pointer-events-none invisible"}`}
+                aria-hidden={!sceneReady || !visible}
+            >
+                {visible && sceneReady && mode === THREE_D_MODES.SIMULATION && (
+                    <SimulationChrome data={sceneData} onOpenReplay={onOpenReplay} />
+                )}
+                {visible && sceneReady && mode === THREE_D_MODES.ENVIRONMENT && (
+                    <EnvironmentEditorChrome
+                        data={sceneData}
+                        activeEnvironmentId={environmentId}
+                        onEnvironmentChange={onEnvironmentChange}
+                    />
+                )}
+            </div>}
         <div
             id="canvas-container"
-            className={`fixed inset-0 z-0 h-[100dvh] w-[100vw] transition-opacity duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] ${sceneReady && visible ? "block visible opacity-100" : "hidden pointer-events-none opacity-0"}`}
+            className={`fixed ${embedded ? "z-[2] overflow-hidden rounded-[var(--radius)] border border-white/10" : "inset-0 z-0 h-[100dvh] w-[100vw]"} transition-opacity duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] ${sceneReady && visible ? "block visible opacity-100" : "hidden pointer-events-none opacity-0"}`}
+            style={viewportStyle}
             ref={mountRef}
+            role={embedded ? "region" : undefined}
             aria-hidden={!sceneReady || !visible}
+            aria-label={embedded ? "Scenario diagnostics 3D viewport" : undefined}
         />
         </>
     )

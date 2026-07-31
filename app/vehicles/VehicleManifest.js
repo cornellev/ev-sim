@@ -214,14 +214,14 @@ export function vehicleAssetUrl(vehicleId, fileName) {
 
 /**
  * Resolve a manifest `model.asset` to a fetchable URL.
- * Absolute `/…` or `http(s)://…` paths (built-in public models) are kept as-is;
+ * Absolute `/…`, `http(s)://…`, blob, or data paths are kept as-is;
  * bare file names resolve against the vehicle's storage assets.
  */
 export function resolveVehicleModelUrl(vehicleId, asset, { cacheBust } = {}) {
     if (!asset) return null;
     const trimmed = String(asset).trim();
     if (!trimmed) return null;
-    const absolute = trimmed.startsWith("/") || /^https?:\/\//i.test(trimmed);
+    const absolute = trimmed.startsWith("/") || /^(?:https?:|blob:|data:)/i.test(trimmed);
     const url = absolute ? trimmed : vehicleAssetUrl(vehicleId, trimmed);
     if (!url || cacheBust == null) return url;
     return `${url}${url.includes("?") ? "&" : "?"}v=${cacheBust}`;

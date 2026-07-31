@@ -1,49 +1,12 @@
 'use client';
 
 import { useEffect, useMemo } from "react";
+import { runMcpCommandOnce } from "../client/mcpCommandClaim.js";
 import { subscribeStorageEvents } from "../client/storageEvents.js";
 import { getTelemetryStore } from "../telemetry/TelemetryRuntime.js";
 import { DEFAULT_REPLAY_PROFILE, DEFAULT_TELEMETRY_PROFILE, normalizeProfile } from "./LogProfiles.js";
 import { getRecordingController } from "./RecordingController.js";
 import { buildRecordingOptions } from "./RecordingOptions.js";
-
-const FALLBACK_CLAIM_TTL_MS = 60_000;
-
-async function runOnceAcrossTabs(requestId, task) {
-    const lockName = `fusion-mcp-command:${requestId}`;
-    const key = `fusion:mcp-command:${requestId}`;
-    const tabId = sessionStorage.getItem("fusion:mcp-tab-id") || crypto.randomUUID();
-    sessionStorage.setItem("fusion:mcp-tab-id", tabId);
-    const runClaimed = async () => {
-        if (localStorage.getItem(key)) return;
-        localStorage.setItem(key, JSON.stringify({ tabId, at: Date.now() }));
-        try {
-            await task();
-        } finally {
-            window.setTimeout(() => {
-                const current = JSON.parse(localStorage.getItem(key) || "null");
-                if (current?.tabId === tabId) localStorage.removeItem(key);
-            }, FALLBACK_CLAIM_TTL_MS);
-        }
-    };
-
-    if (navigator.locks?.request) {
-        await navigator.locks.request(lockName, { ifAvailable: true }, async (lock) => {
-            if (lock) await runClaimed();
-        });
-        return;
-    }
-
-    if (localStorage.getItem(key)) return;
-    localStorage.setItem(key, JSON.stringify({ tabId, at: Date.now() }));
-    await Promise.resolve();
-    const claim = JSON.parse(localStorage.getItem(key) || "null");
-    if (claim?.tabId === tabId && Date.now() - claim.at < FALLBACK_CLAIM_TTL_MS) await task();
-    window.setTimeout(() => {
-        const current = JSON.parse(localStorage.getItem(key) || "null");
-        if (current?.tabId === tabId) localStorage.removeItem(key);
-    }, FALLBACK_CLAIM_TTL_MS);
-}
 
 /** Executes MCP recording commands in exactly one initialized simulator tab. */
 export default function McpLoggingBridge({ data, onOpenReplay }) {
@@ -57,7 +20,7 @@ export default function McpLoggingBridge({ data, onOpenReplay }) {
     useEffect(() => subscribeStorageEvents((event) => {
         if (event.domain !== "logging" || !["start", "stop"].includes(event.action)) return;
         const requestId = event.requestId || `${event.action}:${event.at}`;
-        runOnceAcrossTabs(requestId, async () => {
+        runMcpCommandOnce(requestId, async () => {
             try {
                 if (event.action === "start") {
                     if (controller.getSnapshot().active) throw new Error("A log recording is already active.");

@@ -34,7 +34,6 @@ export function SimulationMenu({ data, vehicleOverlayVisible = true, onVehicleOv
     const [openPanel, setOpenPanel] = useState(null);
     const [toggles, setToggles] = useState({
         agents: true,
-        diagnostics: false,
         recording: false,
         overlay: false,
     });
@@ -152,6 +151,12 @@ export function SimulationMenu({ data, vehicleOverlayVisible = true, onVehicleOv
                                         icon={<FaDatabase className="h-3 w-3" />}
                                         checked={!!simState?.modules?.scripting}
                                         onChange={(v) => sim?.setModule("scripting", v)}
+                                    />
+                                    <MenuToggle
+                                        label="Scenario diagnostics"
+                                        icon={<FaLayerGroup className="h-3 w-3" />}
+                                        checked={!!simState?.scenarioDiagnostics?.enabled}
+                                        onChange={(value) => sim?.setScenarioDiagnosticsEnabled?.(value)}
                                     />
                                 </PanelSection>
                             </FlyoutPanel>

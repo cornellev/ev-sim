@@ -10,6 +10,8 @@ import {
     IconHistory,
     IconLink,
     IconPlayerPlay,
+    IconRoute,
+    IconFlask2,
     IconWorld,
     IconX,
 } from "@tabler/icons-react";
@@ -27,6 +29,8 @@ export default function Menu({
     onEnvironmentEditor,
     onConfig,
     onVehicleEditor,
+    onScenarios,
+    onExperiments,
     onScripting,
     onBindings,
     onReplay,
@@ -43,6 +47,8 @@ export default function Menu({
                 { key: "environment", label: "Environment Editor", hint: "Edit environments and scenes", icon: IconWorld, active: activeView === APP_VIEWS.THREE_D && activeThreeDMode === THREE_D_MODES.ENVIRONMENT, onSelect: onEnvironmentEditor },
                 { key: "vehicles", label: "Vehicle Editor", hint: "Create and inspect vehicle manifests", icon: IconCar, active: activeView === APP_VIEWS.VEHICLE_EDITOR, onSelect: onVehicleEditor },
                 { key: "config", label: "Run Configuration", hint: "Edit simulation manifests", icon: IconAdjustments, active: activeView === APP_VIEWS.CONFIG, onSelect: onConfig },
+                { key: "scenarios", label: "Scenarios", hint: "Create test scenarios", icon: IconRoute, active: activeView === APP_VIEWS.SCENARIOS, onSelect: onScenarios },
+                { key: "experiments", label: "Experiment Suite", hint: "Experiment with scenarios", icon: IconFlask2, active: activeView === APP_VIEWS.EXPERIMENTS, onSelect: onExperiments },
             ],
         },
         {
@@ -65,10 +71,12 @@ export default function Menu({
         onAnalysis,
         onBindings,
         onConfig,
+        onExperiments,
         onEnvironmentEditor,
         onReplay,
         onScripting,
         onSimulation,
+        onScenarios,
         onVehicleEditor,
     ]);
 

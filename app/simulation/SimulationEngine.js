@@ -1,6 +1,8 @@
 import { clamp } from "three/src/math/MathUtils.js";
 import { AssertionEngine } from "./AssertionEngine.js";
 import { TopicInputQueue } from "./TopicInputQueue.js";
+import { ScenarioRuntime } from "../scenarios/ScenarioRuntime.js";
+import { ScenarioDiagnostics } from "../scenarios/ScenarioDiagnostics.js";
 
 export class SimulationEngine {
     /**
@@ -57,6 +59,9 @@ export class SimulationEngine {
         this.resolvedRun = null;
         this.inputQueue = new TopicInputQueue();
         this.assertionEngine = new AssertionEngine([], this.telemetry);
+        this.scenarioRuntime = new ScenarioRuntime(this.data, { telemetry: this.telemetry });
+        this.scenarioDiagnostics = new ScenarioDiagnostics();
+        this.environmentRuntime = null;
         this.lastStepPhases = [];
 
         this._defineTelemetrySignals();
@@ -110,6 +115,42 @@ export class SimulationEngine {
         this.camera = camera;
         this.renderer = renderer;
         this.controls = controls;
+        this.scenarioDiagnostics.attach(scene, camera);
+    }
+
+    setEnvironmentRuntime({ loader = null, persistence = null } = {}) {
+        this.environmentRuntime = loader ? { loader, persistence } : null;
+    }
+
+    _applyResolvedEnvironment(resolvedEnvironment) {
+        const frozenManifest = resolvedEnvironment?.manifest;
+        const loader = this.environmentRuntime?.loader;
+        if (!frozenManifest || !loader) return;
+
+        const loadedTemplate = loader.manifest?.templateId ?? this.data.environment?.()?.templateId;
+        const frozenTemplate = frozenManifest.templateId ?? loadedTemplate;
+        if (loadedTemplate && frozenTemplate && loadedTemplate !== frozenTemplate) {
+            throw new Error("The environment template changed after this run was resolved; resolve the run again.");
+        }
+
+        const persistence = this.environmentRuntime?.persistence;
+        persistence?.suspendAutosave?.();
+        try {
+            const manifest = structuredClone(frozenManifest);
+            const environment = this.data.environment?.();
+            if (environment) {
+                environment.name = manifest.name ?? environment.name;
+                environment.templateId = frozenTemplate ?? environment.templateId;
+                environment.roadStylePreset = manifest.roadStylePreset ?? environment.roadStylePreset;
+            }
+            loader.apply(manifest);
+            loader.manifest = manifest;
+            const common = { timeUs: 0, cycle: 0, source: "resolved-run", replayRole: "input", logClass: "core" };
+            this.telemetry?.publishSignal?.("environment.id", environment?.environmentId ?? this.resolvedRun?.manifest?.environment?.id, { ...common, type: "string" });
+            this.telemetry?.publishSignal?.("environment.manifest", manifest, { ...common, type: "json" });
+        } finally {
+            persistence?.resumeAutosave?.();
+        }
     }
 
     getSnapshot() {
@@ -130,6 +171,8 @@ export class SimulationEngine {
                 resolvedHash: this.resolvedRun.resolvedHash,
             } : null,
             assertions: this.assertionEngine.snapshot(),
+            scenario: this.scenarioRuntime.getSnapshot(),
+            scenarioDiagnostics: { enabled: this.scenarioDiagnostics.enabled },
         }
     }
 
@@ -172,6 +215,8 @@ export class SimulationEngine {
         this.stopLoop();
 
         this.controls?.dispose();
+        this.scenarioRuntime.dispose();
+        this.scenarioDiagnostics.dispose();
         this.listeners.clear();
         this.resetHandlers.clear();
     }
@@ -212,6 +257,7 @@ export class SimulationEngine {
         this.accumulatorNs = 0;
         this.inputQueue.reset();
         this.assertionEngine.reset();
+        this.scenarioRuntime.reset();
         
         for (const handler of this.resetHandlers) {
             handler();
@@ -266,19 +312,34 @@ export class SimulationEngine {
         this._emit();
     }
 
-    setWorkspaceActive(active) {
+    setScenarioDiagnosticsEnabled(enabled) {
+        this.scenarioDiagnostics.setEnabled(enabled);
+        this.render();
+        this._emit();
+    }
+
+    setWorkspaceActive(active, { preservePlayback = false } = {}) {
         const nextActive = Boolean(active);
-        if (this.viewportActive === nextActive && (nextActive ? this.looping : !this.looping)) return;
-        this.viewportActive = nextActive;
-        if (!nextActive) {
-            if (this.status === "playing") this.pause();
-            this.stopLoop();
-            if (this.controls) this.controls.enabled = false;
+        if (nextActive) {
+            if (this.viewportActive && this.looping) return;
+            this.viewportActive = true;
+            this.startLoop();
+            this.render();
             this._emit();
             return;
         }
-        this.startLoop();
-        this.render();
+
+        if (!this.viewportActive && !this.looping && !preservePlayback) return;
+        this.viewportActive = false;
+        if (this.controls) this.controls.enabled = false;
+        if (preservePlayback) {
+            if (this.status === "playing") this.startLoop();
+            else this.stopLoop();
+            this._emit();
+            return;
+        }
+        if (this.status === "playing") this.pause();
+        this.stopLoop();
         this._emit();
     }
 
@@ -289,8 +350,12 @@ export class SimulationEngine {
     async applyRunManifest(resolved) {
         if (!resolved?.manifest) throw new Error("Resolved run manifest is required.");
         this.pause();
+        this.scenarioRuntime.configure(null);
+        this.scenarioDiagnostics.configure(null);
+        this.telemetry?.resetRunState?.();
         this.resolvedRun = structuredClone(resolved);
         const manifest = this.resolvedRun.manifest;
+        this._applyResolvedEnvironment(this.resolvedRun.environment);
         this.stepNs = Math.max(1, Math.floor(manifest.clock.stepNs));
         this.fixedDt = this.stepNs / 1e9;
         this.realtime = manifest.clock.pacing === "realtime";
@@ -304,7 +369,9 @@ export class SimulationEngine {
         this.assertionEngine = new AssertionEngine(manifest.assertions, this.telemetry);
         this.data.bindings?.()?.setTopicScheduler?.((info) => this.queueTopicInput(info));
 
-        await this.data.vehicles?.()?.configureFromManifest?.(manifest.initialState.vehicles, this.scene);
+        await this.data.vehicles?.()?.configureFromManifest?.(manifest.initialState.vehicles, this.scene, {
+            resolvedVehicles: this.resolvedRun.vehicles || [],
+        });
 
         const selectedBindings = resolved.bindings?.entries || [];
         await this.data.bindings?.()?.setManifest?.({
@@ -314,7 +381,13 @@ export class SimulationEngine {
             folders: [],
             bindings: selectedBindings,
         }, { persist: false });
-        await this.data.bindings?.()?.prepareResolvedScripts?.(resolved.scripts || []);
+        await this.data.bindings?.()?.prepareResolvedScripts?.(resolved.scripts || [], {
+            seed: manifest.seed,
+            parameterBindings: [
+                ...(resolved.parameters?.manifest?.bindings || []),
+                ...(resolved.parameters?.scenario?.bindings || []),
+            ],
+        });
         this.data.bindings?.()?.setTopicScheduler?.((info) => this.queueTopicInput(info));
         this.data.devices?.()?.configureFromManifest?.(manifest.sensorRig, {
             seed: manifest.seed,
@@ -325,6 +398,8 @@ export class SimulationEngine {
         for (const [path, value] of Object.entries(manifest.initialState.signals || {})) {
             this.telemetry?.publishSignal?.(path, value, { timeUs: 0, cycle: 0, source: "manifest", replayRole: "input", logClass: "core" });
         }
+        this.scenarioRuntime.configure(this.resolvedRun);
+        this.scenarioDiagnostics.configure(this.resolvedRun?.scenario?.scenario ?? null);
         this.status = "paused";
         this._publishClock();
         this._emitLifecycle("manifest-applied", { manifestId: manifest.id, resolvedHash: resolved.resolvedHash });
@@ -425,16 +500,28 @@ export class SimulationEngine {
             }
         });
 
+        let scenarioPreTerminal = false;
+        if (this.scenarioRuntime.active) {
+            phase("scenario-before-motion", () => {
+                const snapshot = this.scenarioRuntime.preMotion({ step: nextStep, timeNs: nextTimeNs, dt });
+                scenarioPreTerminal = Boolean(snapshot.terminal);
+            });
+        }
+
         this.data.physics?.()?.beginStep?.();
         phase("vehicles", () => {
-            if (this.modules.vehicles) this.data.vehicles()?.update?.(dt);
+            if (!scenarioPreTerminal && this.modules.vehicles) this.data.vehicles()?.update?.(dt);
         });
 
         phase("physics", () => {
-            if (this.modules.physics) this.data.physics()?.step?.(dt);
+            if (!scenarioPreTerminal && this.modules.physics) this.data.physics()?.step?.(dt);
         });
 
-        phase("contacts", () => this.data.physics?.()?.syncAndPublishContacts?.({ step: nextStep, timeNs: nextTimeNs }));
+        let contacts = null;
+        phase("contacts", () => {
+            contacts = this.data.physics?.()?.syncAndPublishContacts?.({ step: nextStep, timeNs: nextTimeNs }) ?? null;
+            return contacts;
+        });
 
         this.steps = nextStep;
         this.timeNs = nextTimeNs;
@@ -451,6 +538,21 @@ export class SimulationEngine {
 
         this._publishSimulationEntities();
         this._publishRuntimeState();
+        if (this.scenarioRuntime.active) {
+            phase("scenario-after-telemetry", () => {
+                const snapshot = this.scenarioRuntime.postTelemetry({
+                    step: this.steps,
+                    timeNs: this.timeNs,
+                    dt,
+                    contacts,
+                });
+                if (snapshot.terminal) {
+                    this.status = "paused";
+                    shouldContinue = false;
+                }
+                this.scenarioDiagnostics.update(snapshot);
+            });
+        }
         phase("assertions", () => {
             if (!this.resolvedRun || this.modules.assertions === false) return;
             const evaluated = this.assertionEngine.evaluate(this.steps);
@@ -462,6 +564,11 @@ export class SimulationEngine {
                 shouldContinue = false;
                 this._emitLifecycle("assertion-stop", { results: evaluated.results });
             }
+            const scenario = this.scenarioRuntime.observeAssertions(evaluated.results);
+            if (scenario.terminal) {
+                this.status = "paused";
+                shouldContinue = false;
+            }
         });
         return shouldContinue;
     }
@@ -469,7 +576,9 @@ export class SimulationEngine {
     _applyQueuedInputs(step) {
         for (const entry of this.inputQueue.drain(step)) {
             this.data.bindings?.()?.applyTopicUpdate?.(entry.info);
-            if (entry.info.name === "/ackdrive") {
+            const scenarioOwnsVehicleCommands = this.scenarioRuntime.active;
+            const handledByScenario = this.scenarioRuntime.applyExternalTopic(entry.info);
+            if (!scenarioOwnsVehicleCommands && !handledByScenario && entry.info.name === "/ackdrive") {
                 const vehicle = this.data.vehicles?.()?.vehicles?.find((candidate) => candidate.telemetryId === "ego")
                     ?? this.data.vehicles?.()?.vehicles?.[0];
                 if (vehicle) {

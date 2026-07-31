@@ -1,6 +1,6 @@
 # MCP Server
 
-cev-sim exposes a [Model Context Protocol](https://modelcontextprotocol.io) endpoint so AI agents can edit environments, visual scripts, simulation bindings, deterministic run manifests, recordings, and replay sessions without driving the browser UI by hand.
+cev-sim exposes a [Model Context Protocol](https://modelcontextprotocol.io) endpoint so AI agents can edit environments, visual scripts, simulation bindings, scenarios, deterministic run manifests, experiment suites, evidence, baselines, recordings, and replay sessions without driving the browser UI by hand.
 
 ## Connect
 
@@ -24,7 +24,7 @@ Example Cursor MCP config (`.cursor/mcp.json`):
 
 Start the app with `npm run dev` (or `npm start` after a build). The server logs the MCP URL on boot.
 
-Live sessions stay in sync: MCP writes and workspace commands publish Server-Sent Events on `GET /api/storage/events`. The open browser re-hydrates environments, scripts, bindings, log catalogs, and Replay controls automatically.
+Live sessions stay in sync: MCP writes and workspace commands publish Server-Sent Events on `GET /api/storage/events`. The open browser re-hydrates environments, scripts, bindings, and log catalogs; it also executes Replay, recording, run-manifest, and experiment commands in the authoritative simulation tab.
 
 ## Tool categories
 
@@ -80,6 +80,35 @@ Triggers (`topic`, `fixed-update`, `signal-update`, `timer`) are the run modes. 
 
 The resources `fusion://run-manifests` and `fusion://run-manifests/{manifestId}` expose the catalog and complete saved manifests. MCP mutations publish live-sync events, so an open Config workspace refreshes without overwriting a dirty local draft. Launching requires an initialized simulator browser tab; validation, resolution, import, and export are fully headless.
 
+### Scenarios
+
+| Tool | Purpose |
+|------|---------|
+| `scenario_list` / `scenario_get` | Discover and read complete scenario documents |
+| `scenario_create` / `scenario_update` / `scenario_duplicate` / `scenario_delete` | Scenario CRUD with optimistic revisions |
+| `scenario_validate` | Validate actors, routes, zones, triggers, completion, outcomes, sensors, scripts, and parameters |
+| `scenario_resolve` | Freeze environment, routes, scripts, vehicles, parameter values, and dependency hashes |
+| `scenario_verify_route` | Run deterministic directed A* for an authored route without implicitly saving it |
+| `scenario_catalog_get` / `scenario_catalog_update` | Read or replace the ordered folder catalog |
+
+Resources expose the catalogs and complete documents at `fusion://scenarios`, `fusion://scenario-folders`, and `fusion://scenarios/{scenarioId}`. Route verification accepts an optional unsaved scenario draft; apply the returned canonical verification to the route and save it with `scenario_update` using the current revision.
+
+### Experiment suites and evidence
+
+| Tool | Purpose |
+|------|---------|
+| `experiment_suite_list` / `experiment_suite_get` | Discover and read suite documents |
+| `experiment_suite_create` / `experiment_suite_update` / `experiment_suite_duplicate` / `experiment_suite_delete` | Suite CRUD with optimistic revisions |
+| `experiment_suite_validate` | Validate and return expanded cases, exclusions, and incompatible matrix cells |
+| `experiment_case_resolve` | Resolve one expanded case into its frozen deterministic run |
+| `experiment_result_list` / `experiment_result_get` / `experiment_result_create` / `experiment_result_update` / `experiment_result_validate` / `experiment_result_delete` | Manage persisted queue evidence |
+| `experiment_baseline_list` / `experiment_baseline_get` / `experiment_baseline_create` / `experiment_baseline_validate` / `experiment_baseline_delete` | Manage immutable named baselines |
+| `experiment_compare` | Classify metric deltas, gated regressions, improvements, dependency changes, and unmatched cases |
+| `experiment_run_status` | Inspect persisted queue progress |
+| `experiment_run_start` / `experiment_run_pause` / `experiment_run_resume` / `experiment_run_cancel` | Control sequential execution in one authoritative browser tab |
+
+Resources expose suites, results, and baselines through `fusion://experiment-suites`, `fusion://experiment-results`, and `fusion://experiment-baselines`, plus the corresponding `/{id}` document URIs. Suite planning, validation, case resolution, result inspection, baseline creation, and comparison work headlessly. Run control requires one initialized browser tab because the browser owns the authoritative simulation runtime; same-origin tabs elect exactly one command executor.
+
 ### Logging and replay
 
 | Tool | Purpose |
@@ -100,13 +129,18 @@ The resources `fusion://logs` and `fusion://logs/{logId}` expose the catalog and
 2. `script_create` → `unit_catalog` → `script_add_unit` → `script_connect` (wire into head `OutputNode` at `head-uuid`) → `script_lint`.
    Configure output ports with `script_update_unit` on the head uuid (`storedData`/`state`: `{ outputs: [{ id, label, type }] }`). Do not add `OutputNodeBlock` via `script_add_unit`.
 3. `binding_suggest` → `binding_create` with the compiled `scriptId`.
-4. `run_manifest_create` or `run_manifest_update` → `run_manifest_validate` → `run_manifest_launch` to start an exact deterministic configuration.
-5. `recording_start` → run the simulation → `recording_stop`, then use `replay_inspect`, `replay_series`, or `replay_open`.
+4. `scenario_create` / `scenario_update` → `scenario_verify_route` → `scenario_validate` for reusable scenario behavior.
+5. `run_manifest_create` or `run_manifest_update` → `run_manifest_validate` → `run_manifest_launch` to start one exact deterministic configuration.
+6. `experiment_suite_create` → `experiment_suite_validate` → `experiment_run_start` → `experiment_run_status` → `experiment_baseline_create` / `experiment_compare` for regression evidence.
+7. `recording_start` → run the simulation → `recording_stop`, then use `replay_inspect`, `replay_series`, or `replay_open`.
 
 ## Implementation map
 
 - Express mount: [`server/App.js`](../server/App.js) → `/mcp`
 - Tools: [`server/mcp/`](../server/mcp/)
+- Scenario tools: [`server/mcp/scenarioTools.js`](../server/mcp/scenarioTools.js)
+- Experiment tools: [`server/mcp/experimentTools.js`](../server/mcp/experimentTools.js)
+- Browser experiment command bridge: [`app/experiments/McpExperimentBridge.js`](../app/experiments/McpExperimentBridge.js)
 - Geometry feedback: [`app/3d/editor/document/documentGeometry.js`](../app/3d/editor/document/documentGeometry.js)
 - Compile / units API: [`app/api/scripting/`](../app/api/scripting/)
 - Live sync client: [`app/client/storageEvents.js`](../app/client/storageEvents.js)

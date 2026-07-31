@@ -239,7 +239,7 @@ export function updatePathRibbonGeometry(geometry, carObject3D, steeringAngleRad
 }
 
 export class BigCar extends PhysicalVehicle {
-    constructor(db, position=new THREE.Vector3(), rotation=new THREE.Euler()) {
+    constructor(db, position=new THREE.Vector3(), rotation=new THREE.Euler(), options = {}) {
         super(db, position, rotation);
 
         this.steeringAngle = 0; // in radians
@@ -248,6 +248,7 @@ export class BigCar extends PhysicalVehicle {
         this.path = null; // to be set up by subclasses
 
         this.offset = new THREE.Vector3(0, 0.15, 0); // intrinsic model offset
+        this.modelUrl = options.modelUrl || "/shell/shell.gltf";
         this.cameraFocusOffset = new THREE.Vector3();
 
         this.follower = new CameraFollower();
@@ -404,7 +405,7 @@ export class BigCar extends PhysicalVehicle {
         // gltf loader to load a car model
         const loader = new GLTFLoader();
         
-        const gltf = await loader.loadAsync("/shell/shell.gltf");
+        const gltf = await loader.loadAsync(this.modelUrl);
 
         gltf.scene.children[0].position.copy(this.offset);
 

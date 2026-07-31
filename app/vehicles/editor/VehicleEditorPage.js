@@ -533,7 +533,7 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
     return (
         <main className="fixed inset-0 z-[1] overflow-hidden bg-[var(--slate-bg)] text-[var(--slate-fg)]">
             <header className="flex h-10 items-center justify-between border-b border-[var(--slate-border)] bg-[var(--slate-surface-1)] px-3">
-                <button type="button" className="flex min-w-0 items-center gap-2 text-left" onClick={onOpenWorkspace}>
+                <button type="button" className="flex min-w-0 items-center gap-2 text-left" onClick={onOpenWorkspace} aria-label="Open workspace switcher">
                     <span className="text-[11px] font-medium text-[var(--slate-muted)]">cev-sim</span>
                     <span aria-hidden="true" className="h-3 w-px bg-[var(--slate-border)]" />
                     <IconLayoutGrid size={15} stroke={1.75} aria-hidden="true" />
@@ -709,7 +709,7 @@ function ModelTab({ draft, update, busy, modelFileRef, uploadModelFile, selectio
                     )}
                 </div>
                 <p className="mt-2 font-mono text-[11px] text-[var(--slate-muted)]">{draft.model.asset || "No model; a placeholder body is shown."}</p>
-                <p className="mt-1 text-[11px] leading-relaxed text-[var(--slate-muted)]">Use a self-contained .glb or .gltf. The file uploads immediately and is stored next to the manifest.</p>
+                <p className="mt-1 text-[11px] leading-relaxed text-[var(--slate-muted)]">Use a self-contained .glb or .gltf.</p>
             </Section>
 
             <Section title="Placement">
@@ -740,7 +740,7 @@ function ModelTab({ draft, update, busy, modelFileRef, uploadModelFile, selectio
                     </Field>
                 </div>
                 <div className="mt-2"><Action compact icon={<FaCube />} label="Rescale model" onClick={fitModelToSize} disabled={!draft.model.asset} /></div>
-                <p className="mt-2 text-[11px] leading-relaxed text-[var(--slate-muted)]">Sets the scale so the model footprint matches the target length and width, preserving aspect ratio.</p>
+                <p className="mt-2 text-[11px] leading-relaxed text-[var(--slate-muted)]">(Matches the target length and width, preserving aspect ratio)</p>
             </Section>
         </div>
     );

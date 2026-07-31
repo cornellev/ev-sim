@@ -4,15 +4,19 @@ import {
     normalizeRunSensor,
     validateRunSensorDefinition,
 } from "../3d/devices/SensorTypeRegistry.js";
+import { validateScalarParameterTarget } from "../scenarios/ScenarioDocument.js";
 
 export const RUN_MANIFEST_KIND = "cev-sim.run-manifest";
-export const RUN_MANIFEST_VERSION = 1;
+export const RUN_MANIFEST_VERSION = 2;
+export const LEGACY_RUN_MANIFEST_VERSION = 1;
 export const RUN_BUNDLE_KIND = "cev-sim.run-bundle";
 export const RUN_BUNDLE_VERSION = 1;
 
 export const RUN_LOGGING_POLICIES = Object.freeze(["required", "optional", "disabled"]);
 export const RUN_PACING_MODES = Object.freeze(["realtime", "unbounded"]);
 export const SENSOR_TYPES = Object.freeze(listSensorTypes().map((definition) => definition.id));
+export const RUN_PARAMETER_TYPES = Object.freeze(["float64", "int32", "boolean", "string"]);
+export const RUN_PARAMETER_TARGET_KINDS = Object.freeze(["scalar-field", "script-input", "scenario-signal"]);
 
 const DEFAULT_MODULES = Object.freeze({
     inputs: true,
@@ -107,6 +111,49 @@ function assertion(value = {}, index = 0) {
     };
 }
 
+function parameterDefault(type) {
+    if (type === "boolean") return false;
+    if (type === "string") return "";
+    return 0;
+}
+
+function parameter(value = {}, index = 0) {
+    const source = object(value);
+    const type = RUN_PARAMETER_TYPES.includes(source.type) ? source.type : "float64";
+    return {
+        id: text(source.id, `parameter-${index + 1}`),
+        name: text(source.name, `Parameter ${index + 1}`),
+        description: text(source.description),
+        type,
+        default: source.default ?? parameterDefault(type),
+        target: {
+            ...structuredClone(object(source.target)),
+            kind: RUN_PARAMETER_TARGET_KINDS.includes(source.target?.kind) ? source.target.kind : null,
+            path: text(source.target?.path),
+            scriptId: text(source.target?.scriptId) || null,
+            input: text(source.target?.input ?? source.target?.inputId),
+        },
+    };
+}
+
+function scenarioSelection(value) {
+    if (!value || typeof value !== "object") return null;
+    const source = object(value);
+    const id = text(source.id || source.scenarioId);
+    if (!id) return null;
+    return {
+        id,
+        expectedHash: text(source.expectedHash) || null,
+        egoVehicleId: text(source.egoVehicleId) || null,
+        sensorBindings: Object.fromEntries((Array.isArray(source.sensorBindings)
+            ? source.sensorBindings.map((entry) => [entry?.aliasId ?? entry?.id, entry?.sensorId])
+            : Object.entries(object(source.sensorBindings)))
+            .map(([aliasId, sensorId]) => [text(aliasId), text(sensorId)])
+            .filter(([aliasId, sensorId]) => aliasId && sensorId)),
+        parameterValues: structuredClone(object(source.parameterValues ?? source.parameterOverrides)),
+    };
+}
+
 export function createDefaultRunManifest(overrides = {}) {
     const base = {
         kind: RUN_MANIFEST_KIND,
@@ -114,6 +161,7 @@ export function createDefaultRunManifest(overrides = {}) {
         id: "igvc-default",
         name: "IGVC Default",
         description: "Deterministic IGVC simulation run.",
+        scenario: null,
         environment: { id: "igvc", expectedHash: null },
         seed: "42",
         initialState: {
@@ -162,6 +210,7 @@ export function createDefaultRunManifest(overrides = {}) {
             topic({ id: "front-lidar-points", name: "/sensors/front_lidar/points", direction: "output", type: "sensor_msgs/PointCloud2" }),
         ],
         assertions: [],
+        parameters: [],
         logging: { policy: "optional", profileId: "simulation-run-full-sensors" },
     };
     return normalizeRunManifest({ ...base, ...overrides }, { allowMissingKind: true });
@@ -172,8 +221,9 @@ export function normalizeRunManifest(value, { allowMissingKind = false } = {}) {
     if (!allowMissingKind && source.kind !== undefined && source.kind !== RUN_MANIFEST_KIND) {
         throw new Error(`Unsupported run manifest kind: ${JSON.stringify(source.kind)}.`);
     }
-    if (source.version !== undefined && Number(source.version) !== RUN_MANIFEST_VERSION) {
-        throw new Error(`Unsupported run manifest version ${source.version}; expected ${RUN_MANIFEST_VERSION}.`);
+    const sourceVersion = source.version === undefined ? RUN_MANIFEST_VERSION : Number(source.version);
+    if (![LEGACY_RUN_MANIFEST_VERSION, RUN_MANIFEST_VERSION].includes(sourceVersion)) {
+        throw new Error(`Unsupported run manifest version ${source.version}; expected version 1 or ${RUN_MANIFEST_VERSION}.`);
     }
     const initial = object(source.initialState);
     const clock = object(source.clock);
@@ -184,6 +234,7 @@ export function normalizeRunManifest(value, { allowMissingKind = false } = {}) {
         id: text(source.id, "untitled-run"),
         name: text(source.name, "Untitled Run"),
         description: text(source.description),
+        scenario: scenarioSelection(source.scenario),
         environment: {
             id: text(source.environment?.id, "igvc"),
             expectedHash: text(source.environment?.expectedHash) || null,
@@ -225,6 +276,7 @@ export function normalizeRunManifest(value, { allowMissingKind = false } = {}) {
         },
         topics: (Array.isArray(source.topics) ? source.topics : []).map(topic),
         assertions: (Array.isArray(source.assertions) ? source.assertions : []).map(assertion),
+        parameters: (Array.isArray(source.parameters) ? source.parameters : []).map(parameter),
         logging: {
             policy: RUN_LOGGING_POLICIES.includes(source.logging?.policy) ? source.logging.policy : "optional",
             profileId: text(source.logging?.profileId, "simulation-run-full-sensors"),
@@ -252,6 +304,7 @@ export function validateRunManifest(value) {
     duplicateIssues(manifest.sensorRig.sensors, "sensorRig.sensors");
     duplicateIssues(manifest.topics, "topics");
     duplicateIssues(manifest.assertions, "assertions");
+    duplicateIssues(manifest.parameters, "parameters");
     const topics = new Map(manifest.topics.map((entry) => [entry.id, entry]));
     for (const [index, sensorEntry] of manifest.sensorRig.sensors.entries()) {
         for (const issue of validateRunSensorDefinition(sensorEntry)) {
@@ -275,6 +328,30 @@ export function validateRunManifest(value) {
         }
         if (assertionEntry.window.endStep !== null && assertionEntry.window.endStep < assertionEntry.window.startStep) {
             issues.push({ path: `assertions.${index}.window`, message: "endStep must not precede startStep." });
+        }
+    }
+    if (manifest.scenario && !manifest.scenario.egoVehicleId) {
+        issues.push({ path: "scenario.egoVehicleId", message: "Scenario runs require an Ego vehicle assignment." });
+    }
+    const valueMatchesType = (type, value) => {
+        if (type === "boolean") return typeof value === "boolean";
+        if (type === "string") return typeof value === "string";
+        if (type === "int32") return Number.isInteger(value) && value >= -2147483648 && value <= 2147483647;
+        return typeof value === "number" && Number.isFinite(value);
+    };
+    for (const [index, entry] of manifest.parameters.entries()) {
+        if (!valueMatchesType(entry.type, entry.default)) {
+            issues.push({ path: `parameters.${index}.default`, message: `Default value does not match ${entry.type}.` });
+        }
+        if (!RUN_PARAMETER_TARGET_KINDS.includes(entry.target?.kind)) {
+            issues.push({ path: `parameters.${index}.target.kind`, message: "Target must be a scalar field, script input, or scenario signal." });
+        } else if (["scalar-field", "scenario-signal"].includes(entry.target.kind) && !entry.target.path) {
+            issues.push({ path: `parameters.${index}.target.path`, message: `${entry.target.kind} target requires a path.` });
+        } else if (entry.target.kind === "scalar-field") {
+            const target = validateScalarParameterTarget(manifest, entry, { owner: "run" });
+            if (!target.ok) issues.push({ path: `parameters.${index}.target.path`, message: target.message });
+        } else if (entry.target.kind === "script-input" && (!entry.target.scriptId || !entry.target.input)) {
+            issues.push({ path: `parameters.${index}.target`, message: "Script-input target requires a script and input port." });
         }
     }
     return { ok: issues.length === 0, manifest, issues };

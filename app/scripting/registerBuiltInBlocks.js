@@ -33,6 +33,11 @@ import { MultiplyTexBlock } from "./units/math/tex/Scale.block.js";
 import { StringBlock } from "./units/objects/String.block.js";
 import { OutputNodeBlock, ProgramInputBlock } from "./units/program/ProgramIO.block.js";
 import {
+    FollowRouteBlock,
+    FollowRouteSectionBlock,
+    RouteSectionCountBlock,
+} from "./units/mission/RouteBlocks.block.js";
+import {
     AdvanceWaypointBlock,
     AssertSignalBlock,
     BindInputBlock,
@@ -151,6 +156,9 @@ export function registerBuiltInBlocks() {
         MissionStateBlock,
         SetMissionStateBlock,
         RouteProgressBlock,
+        FollowRouteBlock,
+        FollowRouteSectionBlock,
+        RouteSectionCountBlock,
         ScenarioFlagReadBlock,
         ScenarioFlagWriteBlock,
         OnSignalUpdateBlock,

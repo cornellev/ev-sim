@@ -9,6 +9,10 @@ import ReplayPage from './replay/ReplayPage';
 import AnalysisPage from './analysis/AnalysisPage';
 import ConfigPage from './config/ConfigPage';
 import VehicleEditorPage from './vehicles/editor/VehicleEditorPage';
+import ScenarioPage from './scenarios/ScenarioPage';
+import ExperimentPage from './experiments/ExperimentPage';
+import McpExperimentBridge from './experiments/McpExperimentBridge';
+import { getExperimentRunController } from './experiments/ExperimentRunController';
 import Menu from './3d/overlay/menu/Menu';
 import { APP_VIEWS, THREE_D_MODES } from './3d/viewState';
 import {
@@ -52,6 +56,8 @@ function HomeContent() {
     const [selectedLogId, setSelectedLogId] = useState(null);
     const [replayCommand, setReplayCommand] = useState(null);
     const [desktopRequired, setDesktopRequired] = useState(false);
+    const [experimentDiagnosticsViewport, setExperimentDiagnosticsViewport] = useState(null);
+    const [experimentExecutionActive, setExperimentExecutionActive] = useState(false);
 
     useEffect(() => {
         const query = window.matchMedia("(max-width: 767px)");
@@ -68,6 +74,10 @@ function HomeContent() {
         const bridge = getTelemetryTabBridge();
         return () => bridge.stop();
     }, []);
+
+    useEffect(() => getExperimentRunController().subscribe((snapshot) => {
+        setExperimentExecutionActive(snapshot.status === "running");
+    }), []);
 
     useEffect(() => {
         const workspace = view === APP_VIEWS.THREE_D ? threeDMode : view;
@@ -148,6 +158,39 @@ function HomeContent() {
             setMenuVisible(false);
         });
     }, [requestWorkspace]);
+
+    const goToScenarios = useCallback(() => {
+        requestWorkspace(() => {
+            setView(APP_VIEWS.SCENARIOS);
+            setMenuVisible(false);
+        });
+    }, [requestWorkspace]);
+
+    const goToExperiments = useCallback(() => {
+        requestWorkspace(() => {
+            setView(APP_VIEWS.EXPERIMENTS);
+            setThreeDMode(THREE_D_MODES.SIMULATION);
+            setMenuVisible(false);
+        });
+    }, [requestWorkspace]);
+
+    const updateExperimentDiagnosticsViewport = useCallback((nextViewport) => {
+        setExperimentDiagnosticsViewport((current) => {
+            if (!nextViewport) return current ? null : current;
+            const next = {
+                top: Number(nextViewport.top) || 0,
+                left: Number(nextViewport.left) || 0,
+                width: Math.max(1, Number(nextViewport.width) || 1),
+                height: Math.max(1, Number(nextViewport.height) || 1),
+            };
+            if (current
+                && current.top === next.top
+                && current.left === next.left
+                && current.width === next.width
+                && current.height === next.height) return current;
+            return next;
+        });
+    }, []);
 
     const selectEnvironment = useCallback((environmentId) => {
         setActiveEnvironment(environmentId);
@@ -231,6 +274,7 @@ function HomeContent() {
             aria-hidden={desktopRequired || undefined}
             inert={desktopRequired || undefined}
         >
+        <McpExperimentBridge onOpenWorkspace={goToExperiments} />
         {
             menuVisible && (
                 <Menu
@@ -243,6 +287,8 @@ function HomeContent() {
                     onBindings={goToBindings}
                     onConfig={goToConfig}
                     onVehicleEditor={goToVehicleEditor}
+                    onScenarios={goToScenarios}
+                    onExperiments={goToExperiments}
                     onReplay={goToReplay}
                     onAnalysis={goToAnalysis}
                     instant={menuSource === "keyboard"}
@@ -254,7 +300,7 @@ function HomeContent() {
                 type="button"
                 className="sf-canvas-workspace-button"
                 onClick={() => openWorkspaceSwitcher("pointer")}
-                aria-label="Open workspaces"
+                aria-label="Open workspace switcher"
             >
                 <IconLayoutGrid size={15} stroke={1.75} aria-hidden="true" />
                 <span>{threeDMode === THREE_D_MODES.ENVIRONMENT ? "Environment Editor" : "Simulation"}</span>
@@ -283,13 +329,21 @@ function HomeContent() {
             view === APP_VIEWS.VEHICLE_EDITOR && <VehicleEditorPage onOpenWorkspace={() => openWorkspaceSwitcher("pointer")} />
         }
         {
+            view === APP_VIEWS.SCENARIOS && <ScenarioPage onOpenWorkspace={() => openWorkspaceSwitcher("pointer")} />
+        }
+        {
+            view === APP_VIEWS.EXPERIMENTS && <ExperimentPage onOpenWorkspace={() => openWorkspaceSwitcher("pointer")} onOpenReplay={goToReplay} onOpenAnalysis={goToAnalysis} onDiagnosticsViewportChange={updateExperimentDiagnosticsViewport} />
+        }
+        {
             activeEnvironmentId && (
                 <TotalScene
                     mode={threeDMode}
-                    visible={view === APP_VIEWS.THREE_D}
+                    visible={view === APP_VIEWS.THREE_D || (view === APP_VIEWS.EXPERIMENTS && Boolean(experimentDiagnosticsViewport))}
                     environmentId={activeEnvironmentId}
                     onEnvironmentChange={selectEnvironment}
                     onOpenReplay={goToReplay}
+                    embeddedViewport={view === APP_VIEWS.EXPERIMENTS ? experimentDiagnosticsViewport : null}
+                    preservePlaybackWhenHidden={experimentExecutionActive}
                 />
             )
         }

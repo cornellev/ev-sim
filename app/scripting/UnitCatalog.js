@@ -49,6 +49,14 @@ import {
 } from "./units/math/Randomization";
 import { ProgramInputBlock, ProgramInputUnit } from "./units/program/ProgramIO";
 import {
+    FollowRouteBlock,
+    FollowRouteSectionBlock,
+    RouteSectionCountBlock,
+    FollowRouteUnit,
+    FollowRouteSectionUnit,
+    RouteSectionCountUnit,
+} from "./units/mission/RouteBlocks";
+import {
     AdvanceWaypointBlock,
     AdvanceWaypointUnit,
     AssertSignalBlock,
@@ -219,6 +227,9 @@ export const UNIT_CATALOG = [
     entry("mission", "Mission State", MissionStateUnit, MissionStateBlock),
     entry("mission", "Set Mission State", SetMissionStateUnit, SetMissionStateBlock),
     entry("mission", "Route Progress", RouteProgressUnit, RouteProgressBlock),
+    entry("mission", "Follow Route", FollowRouteUnit, FollowRouteBlock),
+    entry("mission", "Follow Route Section", FollowRouteSectionUnit, FollowRouteSectionBlock),
+    entry("mission", "Route Section Count", RouteSectionCountUnit, RouteSectionCountBlock),
     entry("mission", "Scenario Flag Read", ScenarioFlagReadUnit, ScenarioFlagReadBlock),
     entry("mission", "Scenario Flag Write", ScenarioFlagWriteUnit, ScenarioFlagWriteBlock),
     entry("bindings", "On Signal Update", OnSignalUpdateUnit, OnSignalUpdateBlock),

@@ -2,6 +2,7 @@ import { BlockOutput, UnitBlock } from "../../ScriptManager.js";
 import { SIGNAL_NAMESPACES, SIGNAL_PATHS } from "../../runtime/SignalPaths.js";
 import { getByPath, setByPath } from "../../runtime/SignalStore.js";
 import { normalizeType, parseValueByType, SUPPORTED_TYPES } from "../program/ProgramTypes.js";
+import { routeProgress } from "../../../scenarios/route/Route.js";
 
 const JSON_TYPES = new Set(["json", "message", "route", "waypoint", "pose2d", "pose3d", "vec2", "vec3", "sim_event"]);
 
@@ -676,24 +677,10 @@ export class RouteProgressBlock extends ConfiguredBlock {
     execute() {
         const pose = this.getInput("pose");
         const route = this.getInput("route");
-        const list = Array.isArray(route) ? route : route?.waypoints || [];
-        if (list.length === 0) {
-            return new BlockOutput().set("progress", 0).set("segment", 0);
-        }
-
-        let nearestIndex = 0;
-        let nearestDistance = Number.POSITIVE_INFINITY;
-        list.forEach((waypoint, index) => {
-            const distance = distanceBetween(pose, waypoint);
-            if (distance < nearestDistance) {
-                nearestDistance = distance;
-                nearestIndex = index;
-            }
-        });
-
+        const result = routeProgress(route, pose);
         return new BlockOutput()
-            .set("progress", list.length <= 1 ? 1 : nearestIndex / (list.length - 1))
-            .set("segment", nearestIndex);
+            .set("progress", result.progress)
+            .set("segment", result.segment);
     }
 }
 

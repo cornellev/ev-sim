@@ -1,4 +1,5 @@
 import { BlockOutput, UnitBlock } from "../../ScriptManager.js";
+import { runtimeRandom } from "../../runtime/RuntimeRandom.js";
 
 function seededRandom(seed) {
     const x = Math.sin(seed * 12.9898) * 43758.5453;
@@ -25,7 +26,7 @@ export class RandomRangeBlock extends UnitBlock {
             max = tmp;
         }
 
-        const out = min + Math.random() * (max - min);
+        const out = min + runtimeRandom(this) * (max - min);
         return new BlockOutput().set("out", out);
     }
 }
@@ -61,8 +62,8 @@ export class GaussianNoiseBlock extends UnitBlock {
         const mean = this.getInput("mean") || 0;
         const stddev = Math.max(0, this.getInput("stddev") || 0);
 
-        const u1 = Math.max(Number.EPSILON, Math.random());
-        const u2 = Math.random();
+        const u1 = Math.max(Number.EPSILON, runtimeRandom(this));
+        const u2 = runtimeRandom(this);
         const z0 = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
         return new BlockOutput().set("out", mean + z0 * stddev);
     }
@@ -82,7 +83,7 @@ export class JitterBlock extends UnitBlock {
     execute() {
         const value = this.getInput("value") || 0;
         const amount = Math.max(0, this.getInput("amount") || 0);
-        const out = value + (Math.random() * 2 - 1) * amount;
+        const out = value + (runtimeRandom(this) * 2 - 1) * amount;
         return new BlockOutput().set("out", out);
     }
 }
@@ -103,7 +104,7 @@ export class WeightedSelectBlock extends UnitBlock {
         const a = this.getInput("a") || 0;
         const b = this.getInput("b") || 0;
         const probB = Math.max(0, Math.min(1, this.getInput("prob b") || 0.5));
-        return new BlockOutput().set("out", Math.random() < probB ? b : a);
+        return new BlockOutput().set("out", runtimeRandom(this) < probB ? b : a);
     }
 }
 

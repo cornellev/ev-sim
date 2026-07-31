@@ -304,13 +304,15 @@ export function MapSurfaceLayers({
         <>
             <rect width={size.width} height={size.height} fill="#09090b" />
             <GridLines viewport={viewport} size={size} visible={viewport.gridVisible} />
-            <RoadEdges
-                documentSnapshot={documentSnapshot}
-                viewport={viewport}
-                size={size}
-                layers={layers}
-                mapSelection={mapSelection}
-            />
+            <g data-map-layer="roads">
+                <RoadEdges
+                    documentSnapshot={documentSnapshot}
+                    viewport={viewport}
+                    size={size}
+                    layers={layers}
+                    mapSelection={mapSelection}
+                />
+            </g>
             <RoadConnectors
                 documentSnapshot={documentSnapshot}
                 viewport={viewport}
@@ -333,21 +335,25 @@ export function MapSurfaceLayers({
                 layers={layers}
                 showDetail={showDetail}
             />
-            <Buildings
-                documentSnapshot={documentSnapshot}
-                viewport={viewport}
-                size={size}
-                layers={layers}
-                mapSelection={mapSelection}
-            />
-            <Features
-                documentSnapshot={documentSnapshot}
-                viewport={viewport}
-                size={size}
-                layers={layers}
-                showDetail={showDetail}
-                mapSelection={mapSelection}
-            />
+            <g data-map-layer="buildings">
+                <Buildings
+                    documentSnapshot={documentSnapshot}
+                    viewport={viewport}
+                    size={size}
+                    layers={layers}
+                    mapSelection={mapSelection}
+                />
+            </g>
+            <g data-map-layer="features">
+                <Features
+                    documentSnapshot={documentSnapshot}
+                    viewport={viewport}
+                    size={size}
+                    layers={layers}
+                    showDetail={showDetail}
+                    mapSelection={mapSelection}
+                />
+            </g>
             <RoadPenDraft
                 documentSnapshot={documentSnapshot}
                 draft={draft}

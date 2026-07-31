@@ -530,7 +530,7 @@ function ScriptLibraryDrawer({
                 <div className="mb-3 flex items-center justify-between gap-3">
                     <div>
                         <h2 className="text-sm font-medium">Scripts</h2>
-                        <p className="text-[11px] text-zinc-500">Browser local to this origin</p>
+                        <p className="text-[11px] text-zinc-500">Locally-saved!</p>
                     </div>
                     <button type="button" onClick={onClose} className="toolbar-btn px-2">Close</button>
                 </div>
