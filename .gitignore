@@ -63,3 +63,6 @@ tests/__pycache__
 .cursor
 
 graphify-out
+
+# local experiment / controller scaffolding (non-upstream)
+.experiments

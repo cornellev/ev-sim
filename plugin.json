@@ -1,0 +1,6 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "cev-sim",
+  "version": "0.1.0",
+  "description": "Portable agent plugin for the cev-sim autonomous-driving simulator: project workflows, MCP tooling, and verification guidance."
+}

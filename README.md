@@ -48,6 +48,31 @@ The app opens to the simulation workspace by default. Press `Escape` to open the
 
 ![Vehicle editor](docs/screenshots/vehicle.png)
 
+## Agent plugin (portable skill + MCP)
+
+This repository is an [Agent Plugin](https://cursor.com/docs/plugins.md): root
+[`plugin.json`](plugin.json), [`mcp.json`](mcp.json), and
+[`skills/cev-sim/`](skills/cev-sim/). Importing it gives agents an auto-invoked
+**cev-sim** skill and registers the Streamable HTTP MCP endpoint
+`http://localhost:3000/mcp`.
+
+**Import does not start the app.** Run `npm run dev` (or `npm start`) before
+MCP discovery. Server id is always **`cev-sim`**.
+
+Ways to load the plugin:
+
+- Git URL / marketplace import of this repo
+- Cursor CLI: `agent --plugin-dir /path/to/this/repo`
+- Local copy or symlink into `~/.cursor/plugins/local/cev-sim`, then reload the window
+
+Manual MCP-only fallback (without the plugin): see [MCP Server](docs/mcp.md).
+
+Validate the portable bundle:
+
+```bash
+node skills/cev-sim/scripts/validate.mjs
+```
+
 ## Documentation
 
 - [Documentation index](docs/README.md)
@@ -60,6 +85,7 @@ The app opens to the simulation workspace by default. Press `Escape` to open the
 - [Simulation](docs/simulation.md)
 - [Telemetry, logging, replay, and analysis](docs/telemetry-logging.md)
 - [ROS integration](docs/ros-integration.md)
+- [MCP Server](docs/mcp.md) (agent tooling)
 - [Assets](docs/assets.md)
 - [Troubleshooting](docs/troubleshooting.md)
 

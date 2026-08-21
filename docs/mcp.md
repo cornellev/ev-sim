@@ -10,7 +10,22 @@ The MCP endpoint is mounted on the same Express process as the app:
 http://localhost:3000/mcp
 ```
 
-Example Cursor MCP config (`.cursor/mcp.json`):
+Server name: **`cev-sim`** (see `server/mcp/createMcpRouter.js`). Prefer this
+id in client configs.
+
+### Preferred: portable Agent Plugin
+
+This repo ships as an Agent Plugin (`plugin.json`, root `mcp.json`,
+`skills/cev-sim/`). Importing the plugin registers Streamable HTTP MCP at
+`http://localhost:3000/mcp` and loads the auto-invoked **cev-sim** skill.
+
+Import does **not** start Express. Always run `npm run dev` (or `npm start`)
+before agents discover tools. See the root README for Git URL, `--plugin-dir`,
+and local symlink/copy options.
+
+### Manual fallback (`.cursor/mcp.json`)
+
+If you are not using the plugin, configure Cursor locally:
 
 ```json
 {
@@ -21,6 +36,10 @@ Example Cursor MCP config (`.cursor/mcp.json`):
   }
 }
 ```
+
+Do not use ad-hoc aliases (for example a user-level `user-ev-sim` entry) unless
+you intentionally maintain a separate client config — the registered MCP server
+name and docs use **`cev-sim`**.
 
 Start the app with `npm run dev` (or `npm start` after a build). The server logs the MCP URL on boot.
 
