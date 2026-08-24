@@ -22,11 +22,13 @@ export default function ScenarioCatalog({
     onSelect,
     onCreate,
     onCreateFolder,
+    onMove,
 }) {
     const [query, setQuery] = useState("");
     const [newFolder, setNewFolder] = useState("");
     const [addingFolder, setAddingFolder] = useState(false);
     const [collapsed, setCollapsed] = useState(() => new Set());
+    const [dropTarget, setDropTarget] = useState(null);
 
     const filtered = useMemo(() => {
         const needle = query.trim().toLowerCase();
@@ -52,6 +54,13 @@ export default function ScenarioCatalog({
         onCreateFolder?.(value);
         setNewFolder("");
         setAddingFolder(false);
+    };
+
+    const receiveDrop = (event, folderId) => {
+        event.preventDefault();
+        setDropTarget(null);
+        const scenarioId = event.dataTransfer.getData("application/x-scenario-id");
+        if (scenarioId) onMove?.(scenarioId, folderId === UNFILED ? null : folderId);
     };
 
     return (
@@ -89,10 +98,21 @@ export default function ScenarioCatalog({
 
             <nav className={styles.catalogScroll} aria-label="Scenario catalog">
                 {groups.map((group) => {
-                    if (group.id === UNFILED && group.scenarios.length === 0) return null;
+                    if (group.id === UNFILED && group.scenarios.length === 0 && filtered.length === 0) return null;
                     const isCollapsed = collapsed.has(group.id);
                     return (
-                        <section className={styles.catalogGroup} key={group.id}>
+                        <section
+                            className={styles.catalogGroup}
+                            data-folder-id={group.id}
+                            data-drop-target={dropTarget === group.id || undefined}
+                            key={group.id}
+                            onDragOver={(event) => {
+                                event.preventDefault();
+                                event.dataTransfer.dropEffect = "move";
+                                if (dropTarget !== group.id) setDropTarget(group.id);
+                            }}
+                            onDrop={(event) => receiveDrop(event, group.id)}
+                        >
                             <button
                                 type="button"
                                 className={styles.folderRow}
@@ -107,20 +127,30 @@ export default function ScenarioCatalog({
                             {!isCollapsed && (
                                 <div className={styles.scenarioRows}>
                                     {group.scenarios.map((entry) => (
-                                        <button
-                                            type="button"
-                                            className={styles.scenarioRow}
-                                            data-selected={entry.id === selectedId || undefined}
-                                            aria-current={entry.id === selectedId ? "page" : undefined}
+                                        <div
+                                            draggable
+                                            data-scenario-id={entry.id}
                                             key={entry.id}
-                                            onClick={() => onSelect(entry.id)}
+                                            onDragStart={(event) => {
+                                                event.dataTransfer.effectAllowed = "move";
+                                                event.dataTransfer.setData("application/x-scenario-id", entry.id);
+                                            }}
+                                            onDragEnd={() => setDropTarget(null)}
                                         >
-                                            <IconFileDescription size={15} stroke={1.6} aria-hidden="true" />
-                                            <span>
-                                                <strong>{entry.name}</strong>
-                                                <small>{entry.description || "No description"}</small>
-                                            </span>
-                                        </button>
+                                            <button
+                                                type="button"
+                                                className={styles.scenarioRow}
+                                                data-selected={entry.id === selectedId || undefined}
+                                                aria-current={entry.id === selectedId ? "page" : undefined}
+                                                onClick={() => onSelect(entry.id)}
+                                            >
+                                                <IconFileDescription size={15} stroke={1.6} aria-hidden="true" />
+                                                <span>
+                                                    <strong>{entry.name}</strong>
+                                                    <small>{entry.description || "No description"}</small>
+                                                </span>
+                                            </button>
+                                        </div>
                                     ))}
                                     {group.scenarios.length === 0 && <p className={styles.emptyGroup}>Drop scenarios here when organizing the catalog.</p>}
                                 </div>

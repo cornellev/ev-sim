@@ -19,6 +19,9 @@ export function createStorageRouter(service) {
     router.post("/environments/:id/duplicate", handle(async (req) => (
         service.duplicateEnvironment(req.params.id, req.body ?? {})
     )));
+    router.patch("/environments/:id/id", handle(async (req) => (
+        service.changeEnvironmentId(req.params.id, req.body?.id)
+    )));
     router.patch("/environments/:id", handle(async (req) => (
         service.renameEnvironment(req.params.id, req.body?.name)
     )));

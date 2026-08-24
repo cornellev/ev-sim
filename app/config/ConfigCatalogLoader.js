@@ -1,5 +1,32 @@
 export const CONFIG_CATALOG_TIMEOUT_MS = 10_000;
 
+export function applyScenarioSelectionToManifest(manifest, scenarioSummary = null) {
+    if (!scenarioSummary?.id) {
+        return { ...manifest, scenario: null };
+    }
+
+    const environmentId = String(
+        scenarioSummary.environmentId ?? scenarioSummary.environment?.id ?? "",
+    ).trim();
+    const egoVehicleId = manifest.scenario?.egoVehicleId
+        || manifest.initialState?.vehicles?.find((entry) => entry.id === "ego")?.type
+        || "big-car";
+
+    return {
+        ...manifest,
+        scenario: {
+            id: scenarioSummary.id,
+            expectedHash: scenarioSummary.definitionHash || null,
+            egoVehicleId,
+            sensorBindings: {},
+            parameterValues: {},
+        },
+        environment: environmentId
+            ? { id: environmentId, expectedHash: null }
+            : manifest.environment,
+    };
+}
+
 export async function withConfigLoadTimeout(promise, message, timeoutMs = CONFIG_CATALOG_TIMEOUT_MS) {
     let timeout;
     try {

@@ -51,7 +51,11 @@ export function createLogRouter(service) {
         toUs: req.query.toUs === undefined ? Number.POSITIVE_INFINITY : Number(req.query.toUs),
         maxPoints: Number(req.query.maxPoints || 2000),
     })));
-    router.get("/:id/snapshot", handle(async (req) => service.readSnapshot(req.params.id, Number(req.query.timeUs || 0))));
+    router.get("/:id/snapshot", handle(async (req) => service.readSnapshot(
+        req.params.id,
+        Number(req.query.timeUs || 0),
+        { includeHeavy: req.query.includeHeavy !== "false" },
+    )));
     router.get("/:id/events", handle(async (req) => service.readEvents(req.params.id, {
         fromUs: Number(req.query.fromUs || 0),
         toUs: req.query.toUs === undefined ? Number.POSITIVE_INFINITY : Number(req.query.toUs),

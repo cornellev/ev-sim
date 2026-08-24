@@ -10,6 +10,7 @@ import {
     IconChevronRight,
     IconCircle,
     IconDownload,
+    IconEyeOff,
     IconFileImport,
     IconGripVertical,
     IconList,
@@ -29,6 +30,7 @@ import { importLog, listLogs } from "../logging/LogClient.js";
 import { storageGet, storagePut } from "../client/storageClient.js";
 import { subscribeStorageEvents } from "../client/storageEvents.js";
 import { downsampleMinMax } from "./downsample.js";
+import { eventTypeKey, eventTypeLabel, eventTypeLabelFromKey, filterEvents } from "./eventFilters.js";
 import { simulationTimeUsFromSnapshot } from "../telemetry/SimulationClock.js";
 import { Button, IconButton, NativeSelect, StatusMessage, TabsContent, TabsList, TabsRoot, TabsTrigger, TextInput, WorkspaceFrame } from "../ui";
 import styles from "./AnalysisPage.module.css";
@@ -41,7 +43,7 @@ const ANALYSIS_TABS = [
     { key: "events", name: "Events", viewType: "events", icon: IconCircle },
 ];
 
-function serializeLayout({ activeView, selected, liveWindow, leftWidth, rightWidth }) {
+function serializeLayout({ activeView, selected, liveWindow, leftWidth, rightWidth, excludedEventTypes }) {
     return {
         kind: "fusion-analysis-layout",
         version: 1,
@@ -51,6 +53,7 @@ function serializeLayout({ activeView, selected, liveWindow, leftWidth, rightWid
         liveWindow,
         leftWidth,
         rightWidth,
+        excludedEventTypes,
     };
 }
 
@@ -111,6 +114,7 @@ export default function AnalysisPage({ initialLogId, onOpenReplay, onOpenWorkspa
     const [liveWindow, setLiveWindow] = useState(30);
     const [leftWidth, setLeftWidth] = useState(280);
     const [rightWidth, setRightWidth] = useState(240);
+    const [excludedEventTypes, setExcludedEventTypes] = useState([]);
     const [error, setError] = useState(null);
     const [leftDrawerOpen, setLeftDrawerOpen] = useState(false);
     const [rightDrawerOpen, setRightDrawerOpen] = useState(false);
@@ -190,7 +194,7 @@ export default function AnalysisPage({ initialLogId, onOpenReplay, onOpenWorkspa
         if (!dataset || !sourceKey.startsWith("log:")) return undefined;
         let cancelled = false;
         const timer = setTimeout(() => {
-            dataset.loadSnapshot(timelineState.timeUs)
+            dataset.loadSnapshot(timelineState.timeUs, { includeHeavy: false })
                 .then((snapshot) => { if (!cancelled) setDatasetSnapshot(snapshot); })
                 .catch((caught) => { if (!cancelled) setError(caught.message); });
         }, 50);
@@ -223,16 +227,17 @@ export default function AnalysisPage({ initialLogId, onOpenReplay, onOpenWorkspa
                 if (Number.isFinite(layout.liveWindow)) setLiveWindow(layout.liveWindow);
                 if (Number.isFinite(layout.leftWidth)) setLeftWidth(layout.leftWidth);
                 if (Number.isFinite(layout.rightWidth)) setRightWidth(layout.rightWidth);
+                if (Array.isArray(layout.excludedEventTypes)) setExcludedEventTypes(layout.excludedEventTypes);
             })
             .catch(() => {});
         return () => { cancelled = true; };
     }, []);
     useEffect(() => {
         const timer = setTimeout(() => {
-            storagePut(`settings/${encodeURIComponent(LAYOUT_KEY)}`, { value: serializeLayout({ activeView, selected, liveWindow, leftWidth, rightWidth }) }).catch(() => {});
+            storagePut(`settings/${encodeURIComponent(LAYOUT_KEY)}`, { value: serializeLayout({ activeView, selected, liveWindow, leftWidth, rightWidth, excludedEventTypes }) }).catch(() => {});
         }, 350);
         return () => clearTimeout(timer);
-    }, [activeView, leftWidth, liveWindow, rightWidth, selected]);
+    }, [activeView, excludedEventTypes, leftWidth, liveWindow, rightWidth, selected]);
 
     const source = useMemo(() => {
         if (sourceKey === "live") return { descriptors: store.descriptors(), snapshot: store.snapshot({ includeHeavy: false }), events: store.events(), timeUs: localSimulationTimeUs(store), revision };
@@ -249,6 +254,10 @@ export default function AnalysisPage({ initialLogId, onOpenReplay, onOpenWorkspa
         for (const descriptor of source.descriptors || []) {
             const raw = source.snapshot?.[descriptor.path];
             const latest = raw?.value !== undefined && raw?.type ? raw.value : raw;
+            if (descriptor.type === "bytes" || descriptor.logClass === "heavy") {
+                rows.push({ descriptor, path: descriptor.path, field: "", value: undefined, numeric: false });
+                continue;
+            }
             const numeric = flattenNumericFields(latest);
             if (typeof latest === "number" || numeric.length === 0) rows.push({ descriptor, path: descriptor.path, field: "", value: latest, numeric: typeof latest === "number" });
             for (const child of numeric) {
@@ -327,7 +336,7 @@ export default function AnalysisPage({ initialLogId, onOpenReplay, onOpenWorkspa
     };
 
     const exportLayout = () => {
-        const layout = serializeLayout({ activeView, selected, liveWindow, leftWidth, rightWidth });
+        const layout = serializeLayout({ activeView, selected, liveWindow, leftWidth, rightWidth, excludedEventTypes });
         const url = URL.createObjectURL(new Blob([JSON.stringify(layout, null, 2)], { type: "application/json" }));
         const link = document.createElement("a");
         link.href = url;
@@ -346,6 +355,7 @@ export default function AnalysisPage({ initialLogId, onOpenReplay, onOpenWorkspa
             setSelected(Array.isArray(layout.selected) ? layout.selected : []);
             setActiveView(["graph", "table", "events"].includes(layout.activeView) ? layout.activeView : "graph");
             setLiveWindow(Number(layout.liveWindow) || 30);
+            setExcludedEventTypes(Array.isArray(layout.excludedEventTypes) ? layout.excludedEventTypes : []);
         } catch (caught) { setError(caught.message); }
     };
 
@@ -411,7 +421,7 @@ export default function AnalysisPage({ initialLogId, onOpenReplay, onOpenWorkspa
                         <div className={styles.visualization} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); try { addSignal(JSON.parse(event.dataTransfer.getData("application/x-fusion-signal"))); } catch {} }}>
                             {activeView === "graph" && <UPlotGraph data={graphData} series={selected} onWidth={setGraphPixelWidth} onCursor={(timeUs) => timeline.seek(timeUs)} onUnlockLive={() => { if (isLiveSource && timeline.getSnapshot().liveLocked) timeline.set({ liveLocked: false }); }} />}
                             {activeView === "table" && <SignalTable selected={selected} samplesFor={samplesFor} timeUs={timelineState.timeUs} />}
-                            {activeView === "events" && <EventView events={source.events || []} timeline={timeline} />}
+                            {activeView === "events" && <EventView events={source.events || []} timeline={timeline} excludedTypes={excludedEventTypes} onExcludedTypesChange={setExcludedEventTypes} />}
                         </div>
                         <div className={styles.timelinePanel}>
                             <div className={styles.timelineToolbar}>
@@ -495,10 +505,57 @@ function SignalTable({ selected, samplesFor, timeUs }) {
     return <div className={styles.tableWrap}><table><thead><tr>{["Signal", "Value", "Previous", "Delta", "Unit", "Age"].map((name) => <th key={name}>{name}</th>)}</tr></thead><tbody>{selected.map((item) => { const samples = samplesFor(item); const current = valueAtSamples(samples, timeUs); const index = current ? samples.indexOf(current) : -1; const previous = index > 0 ? samples[index - 1] : null; const delta = typeof current?.value === "number" && typeof previous?.value === "number" ? current.value - previous.value : undefined; return <tr key={selectionKey(item)}><td>{item.label}</td><td>{formatValue(current?.value)}</td><td>{formatValue(previous?.value)}</td><td>{formatValue(delta)}</td><td>{item.unit || "—"}</td><td>{current ? `${Math.max(0, (timeUs - current.timeUs) / 1e6).toFixed(3)}s` : "—"}</td></tr>; })}</tbody></table>{selected.length === 0 && <div className={styles.emptyCopy}>Add signals from the field tree.</div>}</div>;
 }
 
-function EventView({ events, timeline }) {
+function EventView({ events, timeline, excludedTypes, onExcludedTypesChange }) {
     const [filter, setFilter] = useState("");
-    const visible = events.filter((event) => `${event.category} ${event.name} ${event.severity}`.toLowerCase().includes(filter.toLowerCase()));
-    return <div className={styles.eventView}><div className={styles.eventFilter}><TextInput value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Filter event category, name, severity" aria-label="Filter events" /></div><div className={styles.eventList}>{visible.map((event, index) => <button key={event.id || index} onClick={() => timeline.seek(event.timeUs)}><code>{formatCursor(event.timeUs)}</code><span>{event.category}</span><span>{event.name}</span><span>{event.severity}</span></button>)}{visible.length === 0 && <div className={styles.emptyCopy}>No matching events.</div>}</div></div>;
+    const eventTypes = useMemo(() => [...new Map(events.map((event) => {
+        const key = eventTypeKey(event);
+        return [key, { key, label: eventTypeLabel(event) }];
+    })).values()].sort((a, b) => a.label.localeCompare(b.label)), [events]);
+    const excluded = useMemo(() => new Set(excludedTypes), [excludedTypes]);
+    const availableTypes = eventTypes.filter((type) => !excluded.has(type.key));
+    const visible = useMemo(() => filterEvents(events, filter, excludedTypes), [events, excludedTypes, filter]);
+    const excludeType = (key) => {
+        if (!key || excluded.has(key)) return;
+        onExcludedTypesChange([...excludedTypes, key]);
+    };
+    const includeType = (key) => onExcludedTypesChange(excludedTypes.filter((type) => type !== key));
+    return (
+        <div className={styles.eventView}>
+            <div className={styles.eventFilter}>
+                <div className={styles.eventFilterControls}>
+                    <TextInput value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Filter event category, name, severity" aria-label="Filter events" />
+                    <NativeSelect value="" onChange={(event) => excludeType(event.target.value)} aria-label="Exclude an event type" disabled={availableTypes.length === 0}>
+                        <option value="">{availableTypes.length > 0 ? "Exclude event type…" : "All event types excluded"}</option>
+                        {availableTypes.map((type) => <option key={type.key} value={type.key}>{type.label}</option>)}
+                    </NativeSelect>
+                    <span className={styles.eventCount}>{visible.length} / {events.length}</span>
+                </div>
+                {excludedTypes.length > 0 && (
+                    <div className={styles.eventExclusions} aria-label="Excluded event types">
+                        <span>Excluded</span>
+                        {excludedTypes.map((key) => <button type="button" key={key} onClick={() => includeType(key)} aria-label={`Include ${eventTypeLabelFromKey(key)} events`}>{eventTypeLabelFromKey(key)}<IconX size={12} stroke={1.75} /></button>)}
+                        <button type="button" className={styles.clearExclusions} onClick={() => onExcludedTypesChange([])}>Show all</button>
+                    </div>
+                )}
+            </div>
+            <div className={styles.eventList}>
+                {visible.map((event, index) => (
+                    <div key={event.id || index} className={styles.eventRow}>
+                        <button type="button" className={styles.eventJump} onClick={() => timeline.seek(event.timeUs)} aria-label={`Seek to ${event.name} at ${formatCursor(event.timeUs)}`}>
+                            <code>{formatCursor(event.timeUs)}</code>
+                            <span>{event.category}</span>
+                            <span>{event.name}</span>
+                            <span>{event.severity}</span>
+                        </button>
+                        <IconButton type="button" className={styles.excludeEventButton} onClick={() => excludeType(eventTypeKey(event))} label={`Exclude ${eventTypeLabel(event)} events`}>
+                            <IconEyeOff size={14} stroke={1.75} />
+                        </IconButton>
+                    </div>
+                ))}
+                {visible.length === 0 && <div className={styles.emptyCopy}>{events.length > 0 && excludedTypes.length > 0 ? "No events match the current filters." : "No matching events."}</div>}
+            </div>
+        </div>
+    );
 }
 
 function ResizeHandle({ side, onDelta }) {

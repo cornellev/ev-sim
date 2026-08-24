@@ -44,6 +44,7 @@ import { listVehicleManifests } from "../vehicles/VehicleManifestClient.js";
 import { subscribeStorageEvents } from "../client/storageEvents.js";
 import { getScenario, listScenarios } from "../scenarios/ScenarioClient.js";
 import {
+    applyScenarioSelectionToManifest,
     CONFIG_CATALOG_TIMEOUT_MS,
     loadRunManifestCatalog,
     withConfigLoadTimeout,
@@ -313,15 +314,17 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace }) {
 
     const update = (path, value) => {
         setDraft((current) => {
-            const next = structuredClone(current);
-            let cursor = next;
-            path.slice(0, -1).forEach((part) => { cursor = cursor[part]; });
-            cursor[path.at(-1)] = value;
+            const next = path.length === 0 ? structuredClone(value) : structuredClone(current);
+            if (path.length > 0) {
+                let cursor = next;
+                path.slice(0, -1).forEach((part) => { cursor = cursor[part]; });
+                cursor[path.at(-1)] = value;
+            }
             const normalized = normalizeRunManifest(next);
             // Keep the active string field verbatim while the user is typing.
             // Normalization supplies structural defaults, but its trimming
             // would otherwise remove a space before the next character arrives.
-            if (typeof value === "string") {
+            if (path.length > 0 && typeof value === "string") {
                 let normalizedCursor = normalized;
                 path.slice(0, -1).forEach((part) => { normalizedCursor = normalizedCursor[part]; });
                 normalizedCursor[path.at(-1)] = value;
@@ -609,20 +612,8 @@ function ScenarioSelection({
     }, [contractRequest, selectedId, selectedSummary?.definitionHash]);
 
     const selectScenario = (id) => {
-        if (!id) {
-            update(["scenario"], null);
-            return;
-        }
-        const summary = scenarios.find((entry) => entry.id === id);
-        update(["scenario"], {
-            id,
-            expectedHash: summary?.definitionHash || null,
-            egoVehicleId: draft.scenario?.egoVehicleId
-                || draft.initialState.vehicles.find((entry) => entry.id === "ego")?.type
-                || "big-car",
-            sensorBindings: {},
-            parameterValues: {},
-        });
+        const summary = scenarios.find((entry) => entry.id === id) ?? null;
+        update([], applyScenarioSelectionToManifest(draft, summary));
     };
     const vehicleOptions = [...BUILT_IN_VEHICLE_OPTIONS, ...vehicleCatalog]
         .filter((entry, index, entries) => entries.findIndex((candidate) => candidate.id === entry.id) === index);

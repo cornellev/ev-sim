@@ -180,6 +180,7 @@ test("storage router exposes authoring, result, baseline, and validation endpoin
         return Object.keys(layer.route.methods).map((method) => `${method.toUpperCase()} ${layer.route.path}`);
     }));
     for (const endpoint of [
+        "PATCH /environments/:id/id",
         "GET /scenario-catalog",
         "PUT /scenario-catalog",
         "POST /scenarios/:id/duplicate",

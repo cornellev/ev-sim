@@ -290,6 +290,61 @@ export class StorageService {
         });
     }
 
+    /** Move a user environment to a new stable id / filename. */
+    async changeEnvironmentId(environmentId, nextEnvironmentId) {
+        const currentId = String(environmentId ?? "").trim();
+        const nextId = validateEnvironmentId(nextEnvironmentId);
+        safeSegment(currentId);
+        if (currentId === nextId) {
+            const current = await this.getEnvironment(currentId);
+            if (!current) throw new Error(`Environment "${currentId}" does not exist.`);
+            return current;
+        }
+        if (BUILT_IN_ENVIRONMENTS.some((entry) => entry.id === currentId)) {
+            throw new Error(`Built-in environment "${currentId}" cannot change its id.`);
+        }
+        if (BUILT_IN_ENVIRONMENTS.some((entry) => entry.id === nextId)) {
+            throw new Error(`Environment "${nextId}" already exists.`);
+        }
+
+        const ids = [currentId, nextId].sort();
+        return this._withEnvironmentWrite(ids[0], () => (
+            this._withEnvironmentWrite(ids[1], async () => {
+                const current = await this.getEnvironment(currentId);
+                if (!current) throw new Error(`Environment "${currentId}" does not exist.`);
+                if (await this.getEnvironment(nextId)) {
+                    throw new Error(`Environment "${nextId}" already exists.`);
+                }
+
+                const moved = normalizeEnvironmentManifest(nextId, {
+                    ...current,
+                    document: current.document
+                        ? { ...current.document, environmentId: nextId }
+                        : current.document,
+                }, current);
+                const currentPath = this._environmentPath(currentId);
+                const nextPath = this._environmentPath(nextId);
+                const nextStore = this._fileStore(nextPath, null);
+
+                this._deletedEnvironmentIds.delete(nextId);
+                await nextStore.write(moved);
+                try {
+                    await fs.rm(currentPath);
+                } catch (error) {
+                    await fs.rm(nextPath, { force: true });
+                    nextStore.invalidate();
+                    this._stores.delete(nextPath);
+                    throw error;
+                }
+
+                this._stores.get(currentPath)?.invalidate();
+                this._stores.delete(currentPath);
+                this._deletedEnvironmentIds.add(currentId);
+                return moved;
+            })
+        ));
+    }
+
     /** Delete a user environment. Built-in templates remain available. */
     async deleteEnvironment(environmentId) {
         if (BUILT_IN_ENVIRONMENTS.some((entry) => entry.id === environmentId)) {
@@ -2007,6 +2062,14 @@ function emptyEnvironmentDocument(environmentId) {
 function cleanName(value, fallback) {
     const text = String(value ?? "").trim();
     return text || String(fallback);
+}
+
+function validateEnvironmentId(value) {
+    const text = String(value ?? "").trim();
+    if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(text)) {
+        throw new Error("Environment id must contain only lowercase letters, numbers, and single hyphens.");
+    }
+    return text;
 }
 
 /**

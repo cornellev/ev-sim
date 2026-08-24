@@ -1,6 +1,5 @@
-import { DeviceDatabase } from "../data/DeviceDatabase";
 import { Euler, Quaternion, Vector3 } from "three";
-import { Object } from "../data/objects/Object";
+import { Object } from "../data/objects/Object.js";
 
 export default class Device extends Object {
     constructor(name, settings={ position: new Vector3(0, 0, 0), rotation: new Euler(0, 0, 0) }) {
@@ -23,6 +22,11 @@ export default class Device extends Object {
 
     setEnabled(enabled) {
         this.enabled = Boolean(enabled);
+        this.onEnabledChanged(this.enabled);
+    }
+
+    onEnabledChanged() {
+        // Override in subclasses that expose scene objects.
     }
 
     getPosition() {
@@ -75,6 +79,11 @@ export default class Device extends Object {
 
     setup(scene) {
         // Override in subclasses
+    }
+
+    dispose() {
+        this.parent = null;
+        this.parentVehicle = null;
     }
 
 }

@@ -4,11 +4,14 @@ import { useEffect, useMemo, useState } from "react";
 import {
     IconChevronDown as FaChevronDown,
     IconCopy as FaCopy,
+    IconId as FaId,
+    IconInfoCircle as FaInfoCircle,
     IconPencil as FaPen,
     IconPlus as FaPlus,
     IconTrash as FaTrash,
 } from "@tabler/icons-react";
 import {
+    changeEnvironmentId,
     createEnvironment,
     deleteEnvironment,
     duplicateEnvironment,
@@ -21,6 +24,7 @@ export function EnvironmentSwitcher({ data, activeEnvironmentId, onEnvironmentCh
     const [open, setOpen] = useState(false);
     const [environments, setEnvironments] = useState([]);
     const [name, setName] = useState("");
+    const [environmentId, setEnvironmentId] = useState("");
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState(null);
 
@@ -39,8 +43,10 @@ export function EnvironmentSwitcher({ data, activeEnvironmentId, onEnvironmentCh
     }, []);
 
     useEffect(() => {
-        if (open) setName(active?.name ?? "");
-    }, [active?.name, open]);
+        if (!open) return;
+        setName(active?.name ?? "");
+        setEnvironmentId(active?.id ?? "");
+    }, [active?.id, active?.name, open]);
 
     const run = async (operation) => {
         setBusy(true);
@@ -90,6 +96,27 @@ export function EnvironmentSwitcher({ data, activeEnvironmentId, onEnvironmentCh
             const renamed = await renameEnvironment(active.id, name.trim());
             if (data?.environment?.() && renamed?.name) {
                 data.environment().name = renamed.name;
+            }
+        });
+    };
+
+    const changeActiveId = () => {
+        const nextId = environmentId.trim();
+        if (!active || nextId === active.id || !isValidEnvironmentId(nextId)) return;
+        run(async () => {
+            const persistence = data?.environment?.()?.persistence;
+            await persistence?.flush?.({ throwOnError: true });
+            await persistence?.discard?.();
+            try {
+                const moved = await changeEnvironmentId(active.id, nextId);
+                onEnvironmentChange?.(moved?.environmentId ?? nextId);
+                setOpen(false);
+            } catch (changeError) {
+                persistence?.attach?.();
+                if (persistence && data?.environment?.()) {
+                    data.environment().persistence = persistence;
+                }
+                throw changeError;
             }
         });
     };
@@ -164,6 +191,31 @@ export function EnvironmentSwitcher({ data, activeEnvironmentId, onEnvironmentCh
                             placeholder="Environment name"
                             disabled={busy}
                         />
+                        <div className="mt-3 flex gap-2 rounded-[var(--radius)] border border-sky-900/60 bg-sky-950/30 px-2.5 py-2 text-[11px] leading-relaxed text-sky-200/80">
+                            <FaInfoCircle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
+                            <p id="environment-id-help">
+                                The ID is the stable storage key. Changing it moves this environment; existing scenario and run references are not updated.
+                            </p>
+                        </div>
+                        <label className="mt-3 block text-[11px] font-medium uppercase tracking-[0.14em] text-zinc-500">
+                            Environment ID
+                        </label>
+                        <input
+                            value={environmentId}
+                            onChange={(event) => setEnvironmentId(event.target.value.toLowerCase())}
+                            className="mt-1.5 w-full rounded-[var(--radius)] border border-zinc-700 bg-zinc-900 px-3 py-2 font-mono text-[12px] text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-sky-500/70 focus:ring-2 focus:ring-sky-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+                            placeholder="environment-id"
+                            disabled={busy || !active || active.builtIn}
+                            aria-describedby="environment-id-help"
+                            autoCapitalize="none"
+                            autoCorrect="off"
+                            spellCheck={false}
+                        />
+                        {environmentId && !isValidEnvironmentId(environmentId.trim()) && (
+                            <p className="mt-1.5 text-[11px] leading-relaxed text-amber-300">
+                                Use lowercase letters, numbers, and single hyphens.
+                            </p>
+                        )}
                         {error && <p className="mt-2 text-[11px] leading-relaxed text-red-300">{error}</p>}
 
                         <div className="mt-3 grid grid-cols-2 gap-1.5">
@@ -171,11 +223,24 @@ export function EnvironmentSwitcher({ data, activeEnvironmentId, onEnvironmentCh
                             <ActionButton icon={FaCopy} label="Duplicate" onClick={duplicateActive} disabled={busy || !active} />
                             <ActionButton icon={FaPen} label="Rename" onClick={renameActive} disabled={busy || !active || !name.trim()} />
                             <ActionButton
+                                icon={FaId}
+                                label="Change ID"
+                                onClick={changeActiveId}
+                                disabled={
+                                    busy
+                                    || !active
+                                    || active.builtIn
+                                    || environmentId.trim() === active.id
+                                    || !isValidEnvironmentId(environmentId.trim())
+                                }
+                            />
+                            <ActionButton
                                 icon={FaTrash}
                                 label="Delete"
                                 onClick={removeActive}
                                 disabled={busy || !active || active.builtIn}
                                 destructive
+                                wide
                             />
                         </div>
                     </div>
@@ -185,13 +250,13 @@ export function EnvironmentSwitcher({ data, activeEnvironmentId, onEnvironmentCh
     );
 }
 
-function ActionButton({ icon: Icon, label, onClick, disabled, destructive = false }) {
+function ActionButton({ icon: Icon, label, onClick, disabled, destructive = false, wide = false }) {
     return (
         <button
             type="button"
             onClick={onClick}
             disabled={disabled}
-            className={`flex items-center justify-center gap-2 rounded-[var(--radius)] border px-2 py-2 text-[11px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-35 ${
+            className={`flex items-center justify-center gap-2 rounded-[var(--radius)] border px-2 py-2 text-[11px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-35 ${wide ? "col-span-2" : ""} ${
                 destructive
                     ? "border-red-900/60 bg-red-950/30 text-red-300 hover:bg-red-950/60"
                     : "border-zinc-700 bg-zinc-900 text-zinc-300 hover:border-zinc-600 hover:bg-zinc-800 hover:text-white"
@@ -201,4 +266,8 @@ function ActionButton({ icon: Icon, label, onClick, disabled, destructive = fals
             {label}
         </button>
     );
+}
+
+function isValidEnvironmentId(value) {
+    return /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value);
 }

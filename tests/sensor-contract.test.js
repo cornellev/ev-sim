@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+    MAX_TOPIC_NAME_LEN,
+    buildTopicData,
     decodeValue,
     encodeTopicValue,
     registerMsgDefinition,
@@ -22,6 +24,28 @@ function registerSensorSchemas() {
     registerMsgDefinition("sensor_msgs/PointField", "string name\nuint32 offset\nuint8 datatype\nuint32 count\n");
     registerMsgDefinition("sensor_msgs/PointCloud2", "std_msgs/Header header\nuint32 height\nuint32 width\nsensor_msgs/PointField[] fields\nbool is_bigendian\nuint32 point_step\nuint32 row_step\nuint8[] data\nbool is_dense\n");
 }
+
+test("orchestrator primitive framing matches upstream protocol vectors", () => {
+    const encodedString = encodeTopicValue("std_msgs/String", "hello");
+    assert.equal(Buffer.from(encodedString).toString("hex"), "01090000000500000068656c6c6f");
+
+    const encodedChar = encodeTopicValue("std_msgs/Char", "A");
+    assert.equal(Buffer.from(encodedChar).toString("hex"), "0a0100000041");
+    assert.equal(decodeValue(encodedChar, 0).value, "A");
+});
+
+test("orchestrator client rejects oversized topics and truncated payloads", () => {
+    const valid = buildTopicData("x".repeat(MAX_TOPIC_NAME_LEN), "std_msgs/Int32", 1);
+    assert.equal(valid[0], MAX_TOPIC_NAME_LEN);
+    assert.throws(
+        () => buildTopicData("x".repeat(MAX_TOPIC_NAME_LEN + 1), "std_msgs/Int32", 1),
+        /Topic name exceeds/
+    );
+    assert.throws(
+        () => decodeValue(Uint8Array.from([0x01, 0x09, 0x00, 0x00, 0x00, 0x05, 0x00]), 0),
+        /Truncated typed payload/
+    );
+});
 
 test("camera rows are flipped to ROS top-left order", () => {
     const bottomUp = new Uint8Array([

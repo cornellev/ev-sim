@@ -192,7 +192,10 @@ export default function ReplayPage({ initialLogId, mcpCommand, onOpenAnalysis, o
     const selectedLog = logs.find((log) => log.id === selectedId) || null;
     const entityPrefix = selectedEntity ? `vehicles.${selectedEntity}.` : null;
     const entityRows = entityPrefix ? Object.entries(exactSnapshot).filter(([path]) => path.startsWith(entityPrefix)).slice(0, 7) : [];
-    const nearbyEvents = dataset?.eventsNear(timelineState.timeUs, 750000).slice(-5) || [];
+    const nearbyEvents = dataset?.events
+        .map((event, index) => ({ event, index }))
+        .filter(({ event }) => Math.abs(event.timeUs - timelineState.timeUs) <= 750000)
+        .slice(-5) || [];
 
     const manageTrigger = (
         <IconButton
@@ -262,7 +265,7 @@ export default function ReplayPage({ initialLogId, mcpCommand, onOpenAnalysis, o
                                 <p className={styles.emphasis}>{selectedEntity || "No vehicle state"}</p>
                                 {entityRows.map(([path, value]) => <div key={path} className={styles.dataRow}><span>{path.slice(entityPrefix.length)}</span><code>{typeof value === "object" ? JSON.stringify(value) : String(value)}</code></div>)}
                             </div>
-                            <div className={styles.inspectorSection}><p className={styles.sectionLabel}>Nearby events</p>{nearbyEvents.length === 0 ? <p className={styles.muted}>No events within ±0.75 s</p> : nearbyEvents.map((event) => <button key={event.id || `${event.timeUs}-${event.name}`} onClick={() => timeline.seek(event.timeUs)} className={styles.eventRow}><code>{formatTime(event.timeUs)}</code><span>{event.category} / {event.name}</span></button>)}</div>
+                            <div className={styles.inspectorSection}><p className={styles.sectionLabel}>Nearby events</p>{nearbyEvents.length === 0 ? <p className={styles.muted}>No events within ±0.75 s</p> : nearbyEvents.map(({ event, index }) => <button key={`${event.id || "event"}-${index}`} onClick={() => timeline.seek(event.timeUs)} className={styles.eventRow}><code>{formatTime(event.timeUs)}</code><span>{event.category} / {event.name}</span></button>)}</div>
                         </aside>
                     )}
                 </section>

@@ -32,6 +32,12 @@ export function renameEnvironment(environmentId, name) {
     return storagePatch(`environments/${encodeURIComponent(environmentId)}`, { name });
 }
 
+export function changeEnvironmentId(environmentId, nextEnvironmentId) {
+    return storagePatch(`environments/${encodeURIComponent(environmentId)}/id`, {
+        id: nextEnvironmentId,
+    });
+}
+
 export function deleteEnvironment(environmentId) {
     return storageDelete(`environments/${encodeURIComponent(environmentId)}`);
 }

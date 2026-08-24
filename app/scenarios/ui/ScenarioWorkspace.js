@@ -268,6 +268,44 @@ export default function ScenarioWorkspace({ onOpenWorkspace }) {
         }
     };
 
+    const moveScenarioToFolder = async (scenarioId, folderId) => {
+        if (busy) return;
+        const nextFolderId = folderId && folders.some((folder) => folder.id === folderId) ? folderId : null;
+        const entry = entries.find((candidate) => candidate.id === scenarioId);
+        if (!entry || entry.folderId === nextFolderId) return;
+        if (selectedId === scenarioId && dirty) {
+            setError("Save or discard the current scenario before moving it.");
+            return;
+        }
+
+        setBusy(true);
+        setError(null);
+        try {
+            const current = selectedId === scenarioId && saved
+                ? saved
+                : scenarioDocument(await getScenario(scenarioId));
+            if (!current) throw new Error(`Scenario "${scenarioId}" does not exist.`);
+            const stored = await saveScenario(
+                scenarioId,
+                normalizeScenario({ ...current, folderId: nextFolderId }),
+                current.revision,
+            );
+            const document = scenarioDocument(stored);
+            setEntries((currentEntries) => currentEntries.map((candidate) => (
+                candidate.id === scenarioId
+                    ? { ...candidate, folderId: document.folderId }
+                    : candidate
+            )));
+            if (selectedId === scenarioId) applyDocument(scenarioId, stored);
+            const folderName = folders.find((folder) => folder.id === document.folderId)?.name || "Unfiled";
+            setFeedback(`Scenario moved to ${folderName}`);
+        } catch (moveError) {
+            setError(moveError?.message || "Could not move the scenario.");
+        } finally {
+            setBusy(false);
+        }
+    };
+
     const validate = async () => {
         if (!draft) return;
         setBusy(true);
@@ -370,7 +408,7 @@ export default function ScenarioWorkspace({ onOpenWorkspace }) {
             actions={actions}
             className={styles.workspace}
             contentClassName={styles.workspaceContent}
-            sidebar={<ScenarioCatalog scenarios={entries} folders={folders} selectedId={selectedId} onSelect={select} onCreate={startCreating} onCreateFolder={addFolder} />}
+            sidebar={<ScenarioCatalog scenarios={entries} folders={folders} selectedId={selectedId} onSelect={select} onCreate={startCreating} onCreateFolder={addFolder} onMove={moveScenarioToFolder} />}
         >
             {loading ? <AsyncState status="loading" title="Loading scenario library" detail="Reading scenario documents and the folder catalog." className={styles.centerState} /> : creating ? (
                 <ScenarioCreateForm environments={environments} folders={folders} onCreate={submitCreate} busy={busy} />

@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { createReplayVehicleGeometry } from "./ReplayVehicleGeometry.js";
 
 function labelSprite(text) {
     const canvas = document.createElement("canvas");
@@ -108,7 +109,7 @@ export default function ReplayScene({ dataset, timeUs, selectedEntity, onSelectE
             let mesh = runtime.meshes.get(entityId);
             if (!mesh) {
                 mesh = new THREE.Mesh(
-                    new THREE.BoxGeometry(1.8, 0.8, 3.4),
+                    createReplayVehicleGeometry(),
                     new THREE.MeshStandardMaterial({ color: 0x38bdf8, roughness: 0.58, metalness: 0.18 }),
                 );
                 mesh.position.y = 0.45;

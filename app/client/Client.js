@@ -1,5 +1,4 @@
 
-
 const WebSocketImpl = typeof WebSocket !== "undefined" ? WebSocket : require("ws");
 
 const OP_CODES = {
@@ -14,6 +13,7 @@ const RESP_CODES = {
 	0x81: "echo_new",
 	0x82: "update",
 	0x83: "big_update",
+	0x84: "error",
 };
 
 const TYPE_ENCODERS = {
@@ -37,6 +37,7 @@ const TYPE_DECODERS = Object.entries(TYPE_ENCODERS).reduce((acc, [k, v]) => {
 }, {});
 
 const DYNAMIC_TYPE_BYTE = 0xff;
+const MAX_TOPIC_NAME_LEN = 255;
 const DYNAMIC_SCHEMAS = new Map();
 const STD_ALIASES = {
 	"std_msgs/String": "string",
@@ -113,11 +114,18 @@ function registerMsgDefinition(typeName, msgText) {
 	registerMessageSchema(typeName, fields);
 }
 
-async function _requestJson(method, url, body = undefined) {
+function _authHeaders(token, includeJson = false) {
+	const headers = {};
+	if (includeJson) headers["Content-Type"] = "application/json";
+	if (token) headers.Authorization = `Bearer ${token}`;
+	return headers;
+}
+
+async function _requestJson(method, url, body = undefined, token = undefined) {
 	if (typeof fetch === "function") {
 		const response = await fetch(url, {
 			method,
-			headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+			headers: _authHeaders(token, body !== undefined),
 			body: body === undefined ? undefined : JSON.stringify(body),
 		});
 		if (!response.ok) {
@@ -141,7 +149,7 @@ async function _requestJson(method, url, body = undefined) {
 			url,
 			{
 				method,
-				headers: body === undefined ? {} : { "Content-Type": "application/json" },
+				headers: _authHeaders(token, body !== undefined),
 			},
 			(res) => {
 				let data = "";
@@ -172,9 +180,9 @@ async function _requestJson(method, url, body = undefined) {
 	});
 }
 
-async function syncTypesFromServer({ apiBase = "http://localhost:8090", since } = {}) {
+async function syncTypesFromServer({ apiBase = "http://localhost:8090", since, token } = {}) {
 	const query = since ? `?since=${encodeURIComponent(since)}` : "";
-	const payload = await _requestJson("GET", `${apiBase.replace(/\/$/, "")}/api/types${query}`);
+	const payload = await _requestJson("GET", `${apiBase.replace(/\/$/, "")}/api/types${query}`, undefined, token);
 	const loaded = [];
 	for (const item of payload.types || []) {
 		if (!item || typeof item.type !== "string" || typeof item.definition !== "string") continue;
@@ -184,7 +192,7 @@ async function syncTypesFromServer({ apiBase = "http://localhost:8090", since } 
 	return { count: loaded.length, types: loaded, catalogHash: payload.catalogHash || payload.hash || null };
 }
 
-async function syncTypesToServer(types, { apiBase = "http://localhost:8090" } = {}) {
+async function syncTypesToServer(types, { apiBase = "http://localhost:8090", token } = {}) {
 	const entries = Array.isArray(types)
 		? types
 		: Object.entries(types || {}).map(([type, definition]) => ({ type, definition }));
@@ -195,7 +203,13 @@ async function syncTypesToServer(types, { apiBase = "http://localhost:8090" } = 
 			.map((item) => ({ type: item.type, definition: item.definition })),
 	};
 
-	return _requestJson("POST", `${apiBase.replace(/\/$/, "")}/api/types/sync`, payload);
+	return _requestJson("POST", `${apiBase.replace(/\/$/, "")}/api/types/sync`, payload, token);
+}
+
+function _requireBytes(bytes, offset, size, label) {
+	if (offset < 0 || size < 0 || offset + size > bytes.length) {
+		throw new Error(`Truncated ${label}: need ${size} bytes at offset ${offset}, have ${bytes.length - offset}`);
+	}
 }
 
 function _decodePrimitive(typeName, bytes, offset) {
@@ -203,41 +217,61 @@ function _decodePrimitive(typeName, bytes, offset) {
 	const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 	switch (t) {
 		case "string": {
+			_requireBytes(bytes, offset, 4, "string length");
 			const n = dv.getUint32(offset, true);
 			const start = offset + 4;
+			_requireBytes(bytes, start, n, "string payload");
 			const end = start + n;
 			return { value: decoder.decode(bytes.subarray(start, end)), next: end };
 		}
 		case "bool":
+			_requireBytes(bytes, offset, 1, "bool");
 			return { value: bytes[offset] !== 0, next: offset + 1 };
 		case "int8":
-		case "char":
+			_requireBytes(bytes, offset, 1, "int8");
 			return { value: dv.getInt8(offset), next: offset + 1 };
+		case "char": {
+			_requireBytes(bytes, offset, 1, "char");
+			const code = dv.getInt8(offset);
+			if (code < 0 || code > 127) throw new Error("char payload must be an ASCII codepoint (0-127)");
+			return { value: String.fromCharCode(code), next: offset + 1 };
+		}
 		case "uint8":
 		case "byte":
+			_requireBytes(bytes, offset, 1, "byte");
 			return { value: dv.getUint8(offset), next: offset + 1 };
 		case "int16":
+			_requireBytes(bytes, offset, 2, "int16");
 			return { value: dv.getInt16(offset, true), next: offset + 2 };
 		case "uint16":
+			_requireBytes(bytes, offset, 2, "uint16");
 			return { value: dv.getUint16(offset, true), next: offset + 2 };
 		case "int32":
+			_requireBytes(bytes, offset, 4, "int32");
 			return { value: dv.getInt32(offset, true), next: offset + 4 };
 		case "uint32":
+			_requireBytes(bytes, offset, 4, "uint32");
 			return { value: dv.getUint32(offset, true), next: offset + 4 };
 		case "int64":
+			_requireBytes(bytes, offset, 8, "int64");
 			return { value: dv.getBigInt64(offset, true), next: offset + 8 };
 		case "uint64":
+			_requireBytes(bytes, offset, 8, "uint64");
 			return { value: dv.getBigUint64(offset, true), next: offset + 8 };
 		case "float32":
+			_requireBytes(bytes, offset, 4, "float32");
 			return { value: dv.getFloat32(offset, true), next: offset + 4 };
 		case "float64":
+			_requireBytes(bytes, offset, 8, "float64");
 			return { value: dv.getFloat64(offset, true), next: offset + 8 };
 		case "duration": {
+			_requireBytes(bytes, offset, 8, "duration");
 			const sec = dv.getInt32(offset, true);
 			const nsec = dv.getInt32(offset + 4, true);
 			return { value: sec + nsec / 1e9, next: offset + 8 };
 		}
 		case "time": {
+			_requireBytes(bytes, offset, 8, "time");
 			const sec = dv.getUint32(offset, true);
 			const nsec = dv.getUint32(offset + 4, true);
 			return { value: { sec, nsec }, next: offset + 8 };
@@ -261,11 +295,13 @@ function _decodeTypedValue(typeName, bytes, offset = 0) {
 		if (field.isArray) {
 			let count = field.arrayLen;
 			if (count == null) {
+				_requireBytes(bytes, cursor, 4, `array length for '${field.name}'`);
 				count = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(cursor, true);
 				cursor += 4;
 			}
 
 			if ((field.typeName === "uint8" || field.typeName === "byte") && Number.isInteger(count)) {
+				_requireBytes(bytes, cursor, count, `byte array '${field.name}'`);
 				obj[field.name] = bytes.subarray(cursor, cursor + count);
 				cursor += count;
 				continue;
@@ -314,10 +350,25 @@ function _encodePrimitive(typeName, value) {
 		}
 		case "bool":
 			return new Uint8Array([value ? 1 : 0]);
-		case "int8":
-		case "char": {
+		case "int8": {
 			const out = new Uint8Array(1);
 			new DataView(out.buffer).setInt8(0, value ?? 0);
+			return out;
+		}
+		case "char": {
+			let code;
+			if (typeof value === "string") {
+				if (value.length !== 1) throw new Error("char value must be a single character");
+				code = value.charCodeAt(0);
+				if (code > 127) throw new Error("char value must be a single ASCII character (0-127)");
+			} else {
+				code = Number(value ?? 0);
+				if (!Number.isInteger(code) || code < -128 || code > 127) {
+					throw new Error("char value must fit in signed int8");
+				}
+			}
+			const out = new Uint8Array(1);
+			new DataView(out.buffer).setInt8(0, code);
 			return out;
 		}
 		case "uint8":
@@ -460,41 +511,34 @@ function encodeValue(typeStr, value) {
 	let payload;
 	switch (typeStr) {
 		case "std_msgs/String":
-			payload = encoder.encode(value ?? "");
+			payload = _encodePrimitive("string", value);
 			break;
 		case "std_msgs/Int32":
-			payload = new Uint8Array(4);
-			new DataView(payload.buffer).setInt32(0, value ?? 0, true);
+			payload = _encodePrimitive("int32", value);
 			break;
 		case "std_msgs/Float32":
-			payload = new Uint8Array(4);
-			new DataView(payload.buffer).setFloat32(0, value ?? 0, true);
+			payload = _encodePrimitive("float32", value);
 			break;
 		case "std_msgs/Bool":
-			payload = new Uint8Array([value ? 1 : 0]);
+			payload = _encodePrimitive("bool", value);
 			break;
 		case "std_msgs/Float64":
-			payload = new Uint8Array(8);
-			new DataView(payload.buffer).setFloat64(0, value ?? 0, true);
+			payload = _encodePrimitive("float64", value);
 			break;
 		case "std_msgs/Int64":
-			payload = new Uint8Array(8);
-			new DataView(payload.buffer).setBigInt64(0, BigInt(value ?? 0), true);
+			payload = _encodePrimitive("int64", value);
 			break;
 		case "std_msgs/UInt32":
-			payload = new Uint8Array(4);
-			new DataView(payload.buffer).setUint32(0, value ?? 0, true);
+			payload = _encodePrimitive("uint32", value);
 			break;
 		case "std_msgs/UInt64":
-			payload = new Uint8Array(8);
-			new DataView(payload.buffer).setBigUint64(0, BigInt(value ?? 0), true);
+			payload = _encodePrimitive("uint64", value);
 			break;
 		case "std_msgs/Byte":
 			payload = value instanceof Uint8Array ? value : new Uint8Array(value ?? []);
 			break;
 		case "std_msgs/Char":
-			if (!value || value.length !== 1) throw new Error("Char must be length 1");
-			payload = encoder.encode(value);
+			payload = _encodePrimitive("char", value);
 			break;
 		case "std_msgs/ColorRGBA":
 			if (!Array.isArray(value) || value.length !== 4) throw new Error("ColorRGBA needs [r,g,b,a]");
@@ -506,12 +550,7 @@ function encodeValue(typeStr, value) {
 			dv.setFloat32(12, value[3], true);
 			break;
 		case "std_msgs/Duration":
-			payload = new Uint8Array(8);
-			const dvDur = new DataView(payload.buffer);
-			const sec = Math.trunc(value ?? 0);
-			const nsec = Math.trunc(((value ?? 0) - sec) * 1e9);
-			dvDur.setInt32(0, sec, true);
-			dvDur.setInt32(4, nsec, true);
+			payload = _encodePrimitive("duration", value);
 			break;
 		default:
 			throw new Error(`Unhandled type ${typeStr}`);
@@ -529,20 +568,26 @@ export function encodeTopicValue(typeStr, value) {
 }
 
 function decodeValue(view, offset) {
+	_requireBytes(view, offset, 5, "typed envelope");
 	const typeByte = view[offset];
-	const count = new DataView(view.buffer, view.byteOffset).getUint32(offset + 1, true);
+	const count = new DataView(view.buffer, view.byteOffset, view.byteLength).getUint32(offset + 1, true);
 	const start = offset + 5;
+	_requireBytes(view, start, count, "typed payload");
 	const slice = view.subarray(start, start + count);
 
 	if (typeByte === DYNAMIC_TYPE_BYTE) {
+		_requireBytes(slice, 0, 2, "dynamic type name length");
 		const nameLen = new DataView(slice.buffer, slice.byteOffset, slice.byteLength).getUint16(0, true);
 		const nameStart = 2;
+		_requireBytes(slice, nameStart, nameLen, "dynamic type name");
 		const nameEnd = nameStart + nameLen;
 		const typeStr = decoder.decode(slice.subarray(nameStart, nameEnd));
 		const valueBytes = slice.subarray(nameEnd);
 		const decoded = _decodeTypedValue(typeStr, valueBytes, 0);
-		const readable = decoded && decoded.next === valueBytes.length ? decoded.value : valueBytes;
-		return { type: typeStr, value: readable, next: start + count };
+		if (!decoded || decoded.next !== valueBytes.length) {
+			throw new Error(`Failed to fully decode dynamic type '${typeStr}'`);
+		}
+		return { type: typeStr, value: decoded.value, next: start + count };
 	}
 
 	const typeStr = TYPE_DECODERS[typeByte];
@@ -550,42 +595,43 @@ function decodeValue(view, offset) {
 	let value;
 	switch (typeStr) {
 		case "std_msgs/String":
-			value = decoder.decode(slice);
+			value = _decodePrimitive("string", slice, 0).value;
 			break;
 		case "std_msgs/Int32":
-			value = new DataView(slice.buffer, slice.byteOffset, slice.byteLength).getInt32(0, true);
+			value = _decodePrimitive("int32", slice, 0).value;
 			break;
 		case "std_msgs/Float32":
-			value = new DataView(slice.buffer, slice.byteOffset, slice.byteLength).getFloat32(0, true);
+			value = _decodePrimitive("float32", slice, 0).value;
 			break;
 		case "std_msgs/Bool":
-			value = slice[0] !== 0;
+			value = _decodePrimitive("bool", slice, 0).value;
 			break;
 		case "std_msgs/Float64":
-			value = new DataView(slice.buffer, slice.byteOffset, slice.byteLength).getFloat64(0, true);
+			value = _decodePrimitive("float64", slice, 0).value;
 			break;
 		case "std_msgs/Int64":
-			value = new DataView(slice.buffer, slice.byteOffset, slice.byteLength).getBigInt64(0, true);
+			value = _decodePrimitive("int64", slice, 0).value;
 			break;
 		case "std_msgs/UInt32":
-			value = new DataView(slice.buffer, slice.byteOffset, slice.byteLength).getUint32(0, true);
+			value = _decodePrimitive("uint32", slice, 0).value;
 			break;
 		case "std_msgs/UInt64":
-			value = new DataView(slice.buffer, slice.byteOffset, slice.byteLength).getBigUint64(0, true);
+			value = _decodePrimitive("uint64", slice, 0).value;
 			break;
 		case "std_msgs/Byte":
 			value = slice;
 			break;
 		case "std_msgs/Char":
-			value = decoder.decode(slice);
+			value = _decodePrimitive("char", slice, 0).value;
 			break;
-		case "std_msgs/ColorRGBA":
+		case "std_msgs/ColorRGBA": {
+			_requireBytes(slice, 0, 16, "ColorRGBA");
 			const dv = new DataView(slice.buffer, slice.byteOffset, slice.byteLength);
 			value = [dv.getFloat32(0, true), dv.getFloat32(4, true), dv.getFloat32(8, true), dv.getFloat32(12, true)];
 			break;
+		}
 		case "std_msgs/Duration":
-			const dvDur = new DataView(slice.buffer, slice.byteOffset, slice.byteLength);
-			value = dvDur.getInt32(0, true) + dvDur.getInt32(4, true) / 1e9;
+			value = _decodePrimitive("duration", slice, 0).value;
 			break;
 		default:
 			throw new Error(`Unhandled type ${typeStr}`);
@@ -595,11 +641,17 @@ function decodeValue(view, offset) {
 
 function buildTopicData(topicName, typeStr, value) {
 	const encodedName = encoder.encode(topicName);
+	if (encodedName.length > MAX_TOPIC_NAME_LEN) {
+		throw new Error(`Topic name exceeds ${MAX_TOPIC_NAME_LEN} UTF-8 bytes`);
+	}
 	const payload = encodeValue(typeStr, value);
 	return buildTopicDataFromEncodedName(encodedName, payload);
 }
 
 function buildTopicDataFromEncodedName(encodedName, payload) {
+	if (encodedName.length > MAX_TOPIC_NAME_LEN) {
+		throw new Error(`Topic name exceeds ${MAX_TOPIC_NAME_LEN} UTF-8 bytes`);
+	}
 	const out = new Uint8Array(1 + encodedName.length + payload.length);
 	out[0] = encodedName.length;
 	out.set(encodedName, 1);
@@ -608,16 +660,20 @@ function buildTopicDataFromEncodedName(encodedName, payload) {
 }
 
 function parseTopicInfo(view, offset) {
-	const topicId = new DataView(view.buffer, view.byteOffset).getUint32(offset, false);
+	_requireBytes(view, offset, 7, "topic info header");
+	const dv = new DataView(view.buffer, view.byteOffset, view.byteLength);
+	const topicId = dv.getUint32(offset, false);
 	const typeByte = view[offset + 4];
-	const dynamicLen = new DataView(view.buffer, view.byteOffset).getUint16(offset + 5, true);
+	const dynamicLen = dv.getUint16(offset + 5, true);
 	const dynamicStart = offset + 7;
+	_requireBytes(view, dynamicStart, dynamicLen + 5, "topic info body");
 	const dynamicEnd = dynamicStart + dynamicLen;
 	const typeStr =
 		typeByte === DYNAMIC_TYPE_BYTE ? decoder.decode(view.subarray(dynamicStart, dynamicEnd)) : TYPE_DECODERS[typeByte];
-	const count = new DataView(view.buffer, view.byteOffset).getUint32(dynamicEnd, true);
+	const count = dv.getUint32(dynamicEnd, true);
 	const nameLen = view[dynamicEnd + 4];
 	const nameStart = dynamicEnd + 5;
+	_requireBytes(view, nameStart, nameLen, "topic name");
 	const nameEnd = nameStart + nameLen;
 	const name = decoder.decode(view.subarray(nameStart, nameEnd));
 	return { topicId, typeStr, count, name, next: nameEnd };
@@ -629,6 +685,9 @@ function parseUpdate(view) {
 
 	if (view.length > info.next) {
 		const decoded = decodeValue(view, info.next);
+		if (decoded.type !== info.typeStr) {
+			throw new Error(`Mismatched update type for topic '${info.name}': ${decoded.type} != ${info.typeStr}`);
+		}
 		value = decoded.value;
 		info.next = decoded.next;
 	}
@@ -637,11 +696,14 @@ function parseUpdate(view) {
 }
 
 function parseBigUpdate(view) {
-	const total = new DataView(view.buffer, view.byteOffset).getUint32(0, true);
+	_requireBytes(view, 0, 4, "big_update count");
+	const total = new DataView(view.buffer, view.byteOffset, view.byteLength).getUint32(0, true);
 	let offset = 4;
 	const out = {};
 	for (let i = 0; i < total; i += 1) {
+		_requireBytes(view, offset, 1, "big_update topic length");
 		const nameLen = view[offset];
+		_requireBytes(view, offset + 1, nameLen, "big_update topic name");
 		const name = decoder.decode(view.subarray(offset + 1, offset + 1 + nameLen));
 		offset += 1 + nameLen;
 		const { type, value, next } = decodeValue(view, offset);
@@ -651,6 +713,16 @@ function parseBigUpdate(view) {
 	return out;
 }
 
+function parseError(view) {
+	_requireBytes(view, 0, 4, "error header");
+	const dv = new DataView(view.buffer, view.byteOffset, view.byteLength);
+	const code = dv.getUint16(0, true);
+	const length = dv.getUint16(2, true);
+	_requireBytes(view, 4, length, "error message");
+	const message = decoder.decode(view.subarray(4, 4 + length));
+	return { code, message };
+}
+
 class Client {
 	constructor({
 		url = "ws://localhost:8080",
@@ -658,10 +730,12 @@ class Client {
 		backoff = 500,
 		backoffMax = 8000,
 		autoSubscribe = true,
+		debug = false,
 		onEcho,
 		onNewTopic,
 		onUpdate,
 		onBigUpdate,
+		onError,
 		onOpen,
 		onClose,
 	} = {}) {
@@ -670,19 +744,23 @@ class Client {
 		this.backoff = backoff;
 		this.backoffMax = backoffMax;
 		this.autoSubscribe = autoSubscribe;
+		this.debug = debug;
 
 		this.onEcho = onEcho;
 		this.onNewTopic = onNewTopic;
 		this.onUpdate = onUpdate;
 		this.onBigUpdate = onBigUpdate;
+		this.onError = onError;
 		this.onOpen = onOpen;
 		this.onClose = onClose;
 
 		this.ws = null;
 		this.stopped = false;
 		this._connected = false;
+		this._startPromise = null;
 		this._ready = Promise.resolve();
 		this._readyResolve = () => {};
+		this._readyReject = () => {};
 	}
 
 	isOpen() {
@@ -690,16 +768,33 @@ class Client {
 	}
 
 	async start() {
+		if (this._startPromise) return this._startPromise;
 		this.stopped = false;
+		this._startPromise = this._runStartLoop();
+		try {
+			await this._startPromise;
+		} finally {
+			this._startPromise = null;
+		}
+	}
+
+	async _runStartLoop() {
 		let delay = this.backoff;
+		let connectedOnce = false;
 		while (!this.stopped) {
 			try {
 				await this._connect();
+				connectedOnce = true;
 				delay = this.backoff;
 				await this._listen();
 			} catch (err) {
 				this._connected = false;
-				if (this.stopped || !this.reconnect) break;
+				this._rejectReady(err);
+				if (this.stopped) break;
+				if (!this.reconnect) {
+					if (!connectedOnce) throw err;
+					break;
+				}
 				await wait(delay);
 				delay = Math.min(this.backoffMax, delay * 2);
 			}
@@ -708,7 +803,22 @@ class Client {
 
 	async stop() {
 		this.stopped = true;
-		if (this.ws) this.ws.close();
+		this._connected = false;
+		this._rejectReady(new Error("Client stopped"));
+		if (this.ws) {
+			try {
+				this.ws.close();
+			} catch (_) {
+				/* ignore */
+			}
+		}
+		if (this._startPromise) {
+			try {
+				await this._startPromise;
+			} catch (_) {
+				/* ignore */
+			}
+		}
 	}
 
 	async echo() {
@@ -748,16 +858,29 @@ class Client {
 		return syncTypesToServer(types, options);
 	}
 
+	_rejectReady(err) {
+		try {
+			this._readyReject(err instanceof Error ? err : new Error(String(err)));
+		} catch (_) {
+			/* already settled */
+		}
+	}
+
 	async _connect() {
 		await new Promise((resolve, reject) => {
 			const ws = new WebSocketImpl(this.url);
 			this.ws = ws;
 			ws.binaryType = "arraybuffer";
-			this._ready = new Promise((r) => (this._readyResolve = r));
+			this._ready = new Promise((res, rej) => {
+				this._readyResolve = res;
+				this._readyReject = rej;
+			});
+			// Prevent unhandled rejection if nobody awaits yet.
+			this._ready.catch(() => {});
 			ws.onopen = () => {
 				this._connected = true;
 				this._readyResolve();
-				if (this.autoSubscribe) this.subscribe();
+				if (this.autoSubscribe) this.subscribe().catch((e) => console.error("autoSubscribe failed", e));
 				if (this.onOpen) {
 					try {
 						this.onOpen();
@@ -769,11 +892,16 @@ class Client {
 			};
 			ws.onerror = (err) => {
 				this._connected = false;
-				reject(err);
+				this._rejectReady(err instanceof Error ? err : new Error("WebSocket error"));
+				reject(err instanceof Error ? err : new Error("WebSocket error"));
 			};
 			ws.onclose = () => {
 				this._connected = false;
-				if (!this.stopped && !this.reconnect) reject(new Error("closed"));
+				if (!this.stopped && !this.reconnect) {
+					const err = new Error("closed");
+					this._rejectReady(err);
+					reject(err);
+				}
 			};
 		});
 	}
@@ -788,7 +916,7 @@ class Client {
 				const code = buf[0];
 				const view = buf.subarray(1);
 				const kind = RESP_CODES[code];
-				// console.log("Received message of kind", kind);
+				if (this.debug) console.log("Received message of kind", kind);
 				try {
 					if (kind === "echo") {
 						const topics = this._handleEcho(view);
@@ -802,6 +930,10 @@ class Client {
 					} else if (kind === "big_update") {
 						const updates = parseBigUpdate(view);
 						if (this.onBigUpdate) await this.onBigUpdate(updates);
+					} else if (kind === "error") {
+						const info = parseError(view);
+						if (this.onError) await this.onError(info);
+						else if (this.debug) console.warn("Protocol error", info);
 					}
 				} catch (err) {
 					console.error("Failed to handle message", err);
@@ -809,6 +941,7 @@ class Client {
 			};
 			ws.onclose = () => {
 				this._connected = false;
+				this._rejectReady(new Error("WebSocket closed"));
 				if (this.onClose) {
 					try {
 						this.onClose();
@@ -820,6 +953,8 @@ class Client {
 			};
 			ws.onerror = (err) => {
 				this._connected = false;
+				const error = err instanceof Error ? err : new Error("WebSocket error");
+				this._rejectReady(error);
 				if (this.onClose) {
 					try {
 						this.onClose();
@@ -827,13 +962,14 @@ class Client {
 						console.error("onClose handler failed", e);
 					}
 				}
-				reject(err);
+				reject(error);
 			};
 		});
 	}
 
 	_handleEcho(view) {
-		const total = new DataView(view.buffer, view.byteOffset).getUint32(0, true);
+		_requireBytes(view, 0, 4, "echo count");
+		const total = new DataView(view.buffer, view.byteOffset, view.byteLength).getUint32(0, true);
 		let offset = 4;
 		const out = [];
 		for (let i = 0; i < total; i += 1) {
@@ -846,8 +982,10 @@ class Client {
 
 	async _send(data) {
 		if (data === undefined) return; // ignore empty sends
+		if (this.stopped) throw new Error("Client stopped");
 
 		await this._ready;
+		if (this.stopped) throw new Error("Client stopped");
 		if (!this.ws || this.ws.readyState !== WebSocketImpl.OPEN) throw new Error("WebSocket not open");
 		this.ws.send(data);
 	}
@@ -859,6 +997,7 @@ function wait(ms) {
 
 export {
 	Client,
+	MAX_TOPIC_NAME_LEN,
 	buildTopicData,
 	decodeValue,
 	registerMessageSchema,
@@ -872,6 +1011,7 @@ export {
 if (typeof module !== "undefined" && module.exports) {
 	module.exports = {
 		Client,
+		MAX_TOPIC_NAME_LEN,
 		buildTopicData,
 		encodeValue,
 		decodeValue,
@@ -886,6 +1026,7 @@ if (typeof module !== "undefined" && module.exports) {
 if (typeof window !== "undefined") {
 	window.ROSClient = {
 		Client,
+		MAX_TOPIC_NAME_LEN,
 		buildTopicData,
 		encodeValue,
 		decodeValue,

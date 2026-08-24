@@ -40,6 +40,85 @@ async function postJson(request, path, body) {
     return response.json();
 }
 
+async function putJson(request, path, body) {
+    const response = await request.put(path, { data: body });
+    expect(response.ok(), `${path}: ${response.status()} ${await response.text()}`).toBeTruthy();
+    return response.json();
+}
+
+test("scenario library drags scenarios between folders", async ({ page, request }) => {
+    const suffix = Date.now().toString(36);
+    const scenarioId = `pw-drag-scenario-${suffix}`;
+    const sourceFolderId = `pw-drag-source-${suffix}`;
+    const targetFolderId = `pw-drag-target-${suffix}`;
+    let originalCatalog = null;
+
+    try {
+        const catalogResponse = await request.get("/api/storage/scenario-catalog");
+        expect(catalogResponse.ok()).toBeTruthy();
+        originalCatalog = await catalogResponse.json();
+        await putJson(request, "/api/storage/scenario-catalog", {
+            catalog: {
+                ...originalCatalog,
+                folders: [
+                    ...originalCatalog.folders,
+                    { id: sourceFolderId, name: `Drag source ${suffix}` },
+                    { id: targetFolderId, name: `Drag target ${suffix}` },
+                ],
+            },
+            expectedRevision: originalCatalog.revision,
+        });
+        await postJson(request, "/api/storage/scenarios", {
+            kind: "cev-sim.scenario",
+            version: 1,
+            id: scenarioId,
+            name: `Drag scenario ${suffix}`,
+            description: "Scenario library drag-and-drop fixture.",
+            folderId: sourceFolderId,
+            environment: { id: "igvc", expectedHash: null },
+            actors: [{ id: "ego", name: "Ego", role: "ego", vehicleId: null, enabled: true }],
+            routes: [],
+            zones: [],
+            triggers: [],
+            completion: { conditions: [] },
+            expectedOutcomes: [],
+            sensorAliases: [],
+            parameters: [],
+        });
+
+        await page.goto("/");
+        await openWorkspace(page, "Scenarios");
+        const scenario = page.locator(`[data-scenario-id="${scenarioId}"]`);
+        const targetFolder = page.locator(`[data-folder-id="${targetFolderId}"]`);
+        const unfiled = page.locator('[data-folder-id="__unfiled__"]');
+        await expect(scenario).toBeVisible();
+
+        await scenario.dragTo(targetFolder);
+        await expect(targetFolder.locator(`[data-scenario-id="${scenarioId}"]`)).toBeVisible();
+        let storedResponse = await request.get(`/api/storage/scenarios/${scenarioId}`);
+        expect(storedResponse.ok()).toBeTruthy();
+        expect((await storedResponse.json()).folderId).toBe(targetFolderId);
+
+        await page.locator(`[data-scenario-id="${scenarioId}"]`).dragTo(unfiled);
+        await expect(unfiled.locator(`[data-scenario-id="${scenarioId}"]`)).toBeVisible();
+        storedResponse = await request.get(`/api/storage/scenarios/${scenarioId}`);
+        expect(storedResponse.ok()).toBeTruthy();
+        expect((await storedResponse.json()).folderId).toBeNull();
+    } finally {
+        await request.delete(`/api/storage/scenarios/${scenarioId}`);
+        if (originalCatalog) {
+            const currentResponse = await request.get("/api/storage/scenario-catalog");
+            if (currentResponse.ok()) {
+                const current = await currentResponse.json();
+                await putJson(request, "/api/storage/scenario-catalog", {
+                    catalog: originalCatalog,
+                    expectedRevision: current.revision,
+                });
+            }
+        }
+    }
+});
+
 test("scenario authoring rejects off-road points, supports keyboard editing, and validates a zone finish", async ({ page, request }) => {
     test.setTimeout(240_000);
     await page.emulateMedia({ reducedMotion: "reduce" });

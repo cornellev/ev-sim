@@ -162,7 +162,7 @@ test("StorageService rejects ids that could escape the data directory", async ()
     await assert.rejects(() => service.getScript("a/b"));
 });
 
-test("StorageService environment catalog supports create, duplicate, rename, and delete", async () => {
+test("StorageService environment catalog supports create, duplicate, rename, id changes, and delete", async () => {
     const dir = await tempDir();
     const service = new StorageService(dir);
 
@@ -172,13 +172,21 @@ test("StorageService environment catalog supports create, duplicate, rename, and
 
     await service.createEnvironment({ id: "yard", name: "Test Yard", templateId: "blank" });
     await service.renameEnvironment("yard", "North Yard");
-    await service.duplicateEnvironment("yard", { id: "yard-copy", name: "North Yard Copy" });
+    assert.equal((await service.getEnvironment("yard")).environmentId, "yard");
 
-    assert.equal((await service.getEnvironment("yard")).name, "North Yard");
+    const moved = await service.changeEnvironmentId("yard", "north-yard");
+    await service.duplicateEnvironment("north-yard", { id: "yard-copy", name: "North Yard Copy" });
+
+    assert.equal(await service.getEnvironment("yard"), null);
+    assert.equal(moved.environmentId, "north-yard");
+    assert.equal(moved.document.environmentId, "north-yard");
+    assert.equal((await service.getEnvironment("north-yard")).name, "North Yard");
+    await assert.rejects(() => fs.access(path.join(dir, "environments", "yard.json")));
+    await fs.access(path.join(dir, "environments", "north-yard.json"));
     assert.equal((await service.getEnvironment("yard-copy")).templateId, "blank");
     assert.deepEqual(
         (await service.listEnvironments()).map(({ id }) => id).sort(),
-        ["igvc", "yard", "yard-copy"],
+        ["igvc", "north-yard", "yard-copy"],
     );
 
     await service.deleteEnvironment("yard-copy");
@@ -193,6 +201,21 @@ test("StorageService protects built-in environments and duplicate ids", async ()
     await assert.rejects(
         () => service.createEnvironment({ id: "igvc", name: "Other IGVC" }),
         /already exists/,
+    );
+    await assert.rejects(
+        () => service.changeEnvironmentId("igvc", "renamed-igvc"),
+        /cannot change its id/,
+    );
+
+    await service.createEnvironment({ id: "yard", name: "Yard" });
+    await service.createEnvironment({ id: "field", name: "Field" });
+    await assert.rejects(
+        () => service.changeEnvironmentId("yard", "field"),
+        /already exists/,
+    );
+    await assert.rejects(
+        () => service.changeEnvironmentId("yard", "Not Valid"),
+        /lowercase letters/,
     );
 });
 

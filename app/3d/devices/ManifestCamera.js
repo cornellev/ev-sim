@@ -98,5 +98,9 @@ export class ManifestCamera extends Device {
     dispose() {
         this.sensorCamera?.removeFromParent?.();
         this.renderTarget?.dispose?.();
+        this.sensorCamera = null;
+        this.renderTarget = null;
+        this.pixelBuffer = null;
+        super.dispose();
     }
 }

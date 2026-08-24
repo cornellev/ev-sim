@@ -162,6 +162,11 @@
     color: var(--slate-fg-2);
 }
 
+.catalogGroup[data-drop-target] > .folderRow {
+    background: rgb(202 215 199 / 0.09);
+    color: var(--scenario-accent);
+}
+
 .folderRow span {
     overflow: hidden;
     font-size: 11px;
@@ -189,10 +194,15 @@
     padding: 2px 0 7px 14px;
 }
 
+.scenarioRows > div {
+    min-width: 0;
+}
+
 .scenarioRow {
     position: relative;
     display: grid;
     grid-template-columns: auto minmax(0, 1fr);
+    width: 100%;
     align-items: center;
     gap: 9px;
     min-height: 46px;
@@ -202,8 +212,12 @@
     padding: 7px 9px;
     color: #868b89;
     text-align: left;
-    cursor: pointer;
+    cursor: grab;
     transition: color var(--duration-fast) var(--ease-out-ui), background var(--duration-fast) var(--ease-out-ui), border-color var(--duration-fast) var(--ease-out-ui);
+}
+
+.scenarioRow:active {
+    cursor: grabbing;
 }
 
 .scenarioRow:hover {

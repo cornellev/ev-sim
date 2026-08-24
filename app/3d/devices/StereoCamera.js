@@ -201,4 +201,14 @@ export class StereoCamera extends LiDAR3d {
         if (!this.recording[channelName]) return;
         this.recording[channelName] = [];
     }
+
+    dispose() {
+        this.sensorCamera?.removeFromParent?.();
+        this.cameraRenderTarget?.dispose?.();
+        this.sensorCamera = null;
+        this.cameraRenderTarget = null;
+        this.cameraPixelBuffer = null;
+        this._cameraCaptureInFlight = false;
+        super.dispose();
+    }
 }

@@ -43,7 +43,7 @@ export async function storagePost(path, body) {
     return storageWrite("POST", path, body);
 }
 
-/** Partially update a resource (used for environment display names). */
+/** Partially update a resource. */
 export async function storagePatch(path, body) {
     return storageWrite("PATCH", path, body);
 }

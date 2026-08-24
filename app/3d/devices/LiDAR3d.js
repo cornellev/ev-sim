@@ -1,8 +1,9 @@
-import { Shader, standardVTX } from "../shaders/Shader";
-import Device from "./Device";
-import { parseLidarHits } from "./LidarHitDecoder";
-import { frag3d } from "../shaders/Lidar3dShader";
+import { Shader, standardVTX } from "../shaders/Shader.js";
+import Device from "./Device.js";
+import { parseLidarHits } from "./LidarHitDecoder.js";
+import { frag3d } from "../shaders/Lidar3dShader.js";
 import * as THREE from "three";
+import { disposeObject3D, setDeviceVisualsEnabled, syncDeviceVisuals } from "./DeviceVisuals.js";
 
 export class LiDAR3d extends Device {
     constructor(position, rotation, range=10, thetaStep=1, thetaRange=[0,360], phiStep=1, phiRange=[-20,20]) {
@@ -68,17 +69,11 @@ export class LiDAR3d extends Device {
 
     onParentUpdate() {
         if (!this.pointsGroup) return;
+        syncDeviceVisuals(this, [this.pointsGroup, this.lines]);
+    }
 
-        const worldPosition = this.getPosition();
-        const worldRotation = this.getRotation();
-
-        this.pointsGroup.position.copy(worldPosition);
-        this.pointsGroup.rotation.copy(worldRotation);
-
-        if (this.lines) {
-            this.lines.position.copy(worldPosition);
-            this.lines.rotation.copy(worldRotation);
-        }
+    onEnabledChanged(enabled) {
+        setDeviceVisualsEnabled(enabled, [this.pointsGroup, this.lines]);
     }
 
     setup(scene) {
@@ -88,6 +83,7 @@ export class LiDAR3d extends Device {
         this.pointsGroup.position.copy(this.getPosition());
         this.pointsGroup.rotation.copy(this.getRotation());
         this.pointsGroup.add(new THREE.Mesh(geometry, material));
+        this.pointsGroup.visible = this.enabled;
         
         scene.add(this.pointsGroup);
 
@@ -135,6 +131,7 @@ export class LiDAR3d extends Device {
 
         lineGroup.position.copy(this.getPosition());
         lineGroup.rotation.copy(this.getRotation());
+        lineGroup.visible = this.enabled;
 
         scene.add(lineGroup);
         this.lines = lineGroup;
@@ -246,6 +243,16 @@ export class LiDAR3d extends Device {
             positions[5] = z;
             line.geometry.attributes.position.needsUpdate = true;
         }
+    }
+
+    dispose() {
+        disposeObject3D(this.pointsGroup);
+        disposeObject3D(this.lines);
+        this.shader?.dispose?.();
+        this.pointsGroup = null;
+        this.lines = null;
+        this.buff = null;
+        super.dispose();
     }
         
 }

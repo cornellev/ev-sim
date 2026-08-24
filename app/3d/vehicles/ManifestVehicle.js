@@ -59,7 +59,9 @@ export class ManifestVehicle extends PhysicalVehicle {
     _setupManifestDevices() {
         for (const entry of this.manifest.sensors) {
             const device = createVehicleSensorDevice(entry, { vehicleManifestId: this.vehicleManifestId });
-            // Keep these enabled across DeviceDatabase.configureFromManifest —
+            if (typeof device.setEnabled === "function") device.setEnabled(entry.enabled !== false);
+            else device.enabled = entry.enabled !== false;
+            // Preserve this state across DeviceDatabase.configureFromManifest —
             // the vehicle document is their source of truth, not the run sensorRig.
             device.vehicleOwned = true;
             this.addDevice(device);
@@ -220,14 +222,7 @@ export class ManifestVehicle extends PhysicalVehicle {
             data?.objects?.()?.replaceTriangles?.((triangle) => mine.has(triangle), []);
             this._zoneTriangles = [];
         }
-        const deviceDb = data?.devices?.();
-        if (deviceDb) {
-            for (const device of this.devices) {
-                device.dispose?.();
-                deviceDb.devices = deviceDb.devices.filter((candidate) => candidate !== device);
-            }
-        }
-        this.devices = [];
+        super.dispose();
     }
 }
 

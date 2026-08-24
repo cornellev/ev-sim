@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { downsampleMinMax } from "../app/analysis/downsample.js";
+import { eventTypeKey, filterEvents } from "../app/analysis/eventFilters.js";
 import { simulationTimeUsFromSnapshot } from "../app/telemetry/SimulationClock.js";
 
 test("min/max downsampling is bounded and preserves endpoint values and spikes", () => {
@@ -31,4 +32,25 @@ test("analysis source time comes only from the published simulation counter", ()
         "simulation.time": { value: 12.5 },
         "simulation.timeNs": { value: 12_500_000_000 },
     }), 12_500_000);
+});
+
+test("event filters exclude every occurrence of a selected event type", () => {
+    const events = [
+        { category: "simulation", name: "started", severity: "info" },
+        { category: "simulation", name: "started", severity: "warning" },
+        { category: "logging", name: "started", severity: "info" },
+    ];
+    const excluded = [eventTypeKey(events[0])];
+
+    assert.deepEqual(filterEvents(events, "", excluded), [events[2]]);
+});
+
+test("event text filtering is combined with event type exclusions", () => {
+    const events = [
+        { category: "simulation", name: "started", severity: "info" },
+        { category: "simulation", name: "stopped", severity: "warning" },
+        { category: "logging", name: "stopped", severity: "warning" },
+    ];
+
+    assert.deepEqual(filterEvents(events, "warning", [eventTypeKey(events[1])]), [events[2]]);
 });

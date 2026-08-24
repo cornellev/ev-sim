@@ -56,8 +56,8 @@ export class LogDataset {
         return (await getLogSeries(this.id, { path, field, ...options })).samples;
     }
 
-    async loadSnapshot(timeUs) {
-        return (await getLogSnapshot(this.id, timeUs)).snapshot;
+    async loadSnapshot(timeUs, options = {}) {
+        return (await getLogSnapshot(this.id, timeUs, options)).snapshot;
     }
 
     async loadEvents(options = {}) {

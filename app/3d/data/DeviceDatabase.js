@@ -31,6 +31,29 @@ export class DeviceDatabase extends Database {
         telemetry?.emitTelemetryEvent?.({ category: "devices", name: "device-added", payload: { id: device.telemetryId, type: device.constructor?.name || "Device" } });
     }
 
+    removeDevice(device) {
+        const index = this.devices.indexOf(device);
+        if (index < 0) return false;
+
+        const parentVehicle = device.parentVehicle;
+        device.dispose?.();
+        this.devices.splice(index, 1);
+        if (parentVehicle) {
+            parentVehicle.devices = parentVehicle.devices.filter((candidate) => candidate !== device);
+        }
+
+        const telemetry = this.parent?.bindings?.()?.signalStore;
+        for (const suffix of device._telemetrySignalSuffixes || getDeviceTelemetrySignals(device).map((signal) => signal.suffix)) {
+            telemetry?.removeSignal?.(`devices.${device.telemetryId}.${suffix}`);
+        }
+        telemetry?.emitTelemetryEvent?.({
+            category: "devices",
+            name: "device-removed",
+            payload: { id: device.telemetryId, type: device.constructor?.name || "Device" },
+        });
+        return true;
+    }
+
     _nextTelemetryId() {
         const used = new Set(this.devices.map((device) => device.telemetryId));
         let index = this.devices.length + 1;
@@ -97,16 +120,13 @@ export class DeviceDatabase extends Database {
     configureFromManifest(sensorRig = {}, options = {}) {
         const previous = this.devices.filter((device) => device.manifestManaged);
         for (const device of previous) {
-            device.dispose?.();
-            if (device.parentVehicle) {
-                device.parentVehicle.devices = device.parentVehicle.devices.filter((candidate) => candidate !== device);
-            }
-            this.devices = this.devices.filter((candidate) => candidate !== device);
+            this.removeDevice(device);
         }
         for (const device of this.devices) {
             if (!device.manifestManaged && !device.vehicleOwned) {
                 device._legacyEnabledBeforeRun ??= device.enabled;
-                device.enabled = false;
+                if (typeof device.setEnabled === "function") device.setEnabled(false);
+                else device.enabled = false;
             }
         }
 

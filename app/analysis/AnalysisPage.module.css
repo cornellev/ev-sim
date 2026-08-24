@@ -145,12 +145,24 @@
 
 .eventView { display: flex; height: 100%; min-height: 0; flex-direction: column; }
 .eventFilter { flex: none; border-bottom: 1px solid var(--slate-border-60); padding: 8px; }
+.eventFilterControls { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(190px, 280px) auto; align-items: center; gap: 8px; }
+.eventCount { color: var(--slate-muted); font-family: var(--font-geist-mono), monospace; font-size: 11px; white-space: nowrap; }
+.eventExclusions { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-top: 7px; }
+.eventExclusions > span { margin-right: 2px; color: var(--slate-muted); font-size: 11px; font-weight: 600; }
+.eventExclusions button { display: inline-flex; min-width: 0; align-items: center; gap: 4px; border: 1px solid var(--slate-border-70); border-radius: 999px; background: var(--slate-surface-2); padding: 3px 7px; color: var(--slate-fg-2); font-size: 11px; cursor: pointer; }
+.eventExclusions button:hover { border-color: var(--slate-border); background: var(--slate-surface-3); }
+.eventExclusions .clearExclusions { border-color: transparent; background: transparent; color: var(--slate-muted); }
 .eventList { min-height: 0; flex: 1; overflow: auto; }
-.eventList > button { display: grid; width: 100%; grid-template-columns: 90px 110px minmax(0, 1fr) 80px; gap: 12px; border: 0; border-bottom: 1px solid var(--slate-border-60); background: transparent; padding: 8px 12px; color: var(--slate-fg-2); font-size: 12px; text-align: left; cursor: pointer; }
-.eventList > button:hover { background: var(--slate-surface-1); }
+.eventRow { display: grid; grid-template-columns: minmax(0, 1fr) 34px; align-items: center; border-bottom: 1px solid var(--slate-border-60); }
+.eventRow:hover,
+.eventRow:focus-within { background: var(--slate-surface-1); }
+.eventJump { display: grid; width: 100%; min-width: 0; grid-template-columns: 90px 110px minmax(0, 1fr) 80px; gap: 12px; border: 0; background: transparent; padding: 8px 12px; color: var(--slate-fg-2); font-size: 12px; text-align: left; cursor: pointer; }
+.excludeEventButton { opacity: 0; }
+.eventRow:hover .excludeEventButton,
+.eventRow:focus-within .excludeEventButton { opacity: 1; }
 .eventList code { color: var(--slate-muted); font-size: 11px; }
 .eventList span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.eventList span:last-child { color: var(--slate-muted); }
+.eventJump span:last-child { color: var(--slate-muted); }
 
 .resizeHandle { position: absolute; top: 0; bottom: 0; z-index: var(--layer-inspector); width: 5px; cursor: col-resize; transition: background-color var(--duration-fast) var(--ease-out-ui); }
 .resizeHandle:hover { background: var(--slate-ring); }
@@ -168,6 +180,12 @@
     .sourceSelector { width: 230px; }
     .headerClock { display: none; }
     .viewToolbar { overflow-x: auto; }
+    .eventFilterControls { grid-template-columns: minmax(0, 1fr) auto; }
+    .eventFilterControls select { grid-column: 1 / -1; grid-row: 2; }
+}
+
+@media (hover: none) {
+    .excludeEventButton { opacity: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -74,8 +74,11 @@ export async function getLogSeries(id, { path, field = "", fromUs = 0, toUs, max
     return (await assertOk(await fetch(`${BASE_URL}/${encodeURIComponent(id)}/series?${params}`), "Log series load")).json();
 }
 
-export async function getLogSnapshot(id, timeUs) {
-    const params = new URLSearchParams({ timeUs: String(Math.max(0, Number(timeUs) || 0)) });
+export async function getLogSnapshot(id, timeUs, { includeHeavy = true } = {}) {
+    const params = new URLSearchParams({
+        timeUs: String(Math.max(0, Number(timeUs) || 0)),
+        includeHeavy: String(includeHeavy),
+    });
     return (await assertOk(await fetch(`${BASE_URL}/${encodeURIComponent(id)}/snapshot?${params}`), "Log snapshot load")).json();
 }
 

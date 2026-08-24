@@ -270,8 +270,20 @@ test("LogService finalizes indexed chunks, retries batches idempotently, imports
     assert.equal(first.duplicate, false);
     assert.equal(duplicate.duplicate, true);
     encoder.addUpdate({ path: "simulation.time", timeUs: 3_000_000, cycle: 180, entry: { type: "float64", value: 3 }, descriptor: { path: "simulation.time", type: "float64", replayRole: "state", logClass: "core" } });
+    encoder.addUpdate({
+        path: "devices.camera.image",
+        timeUs: 3_000_000,
+        cycle: 180,
+        entry: { type: "bytes", value: new Uint8Array([1, 2, 3]) },
+        descriptor: { path: "devices.camera.image", type: "bytes", replayRole: "sample", logClass: "heavy" },
+    });
+    encoder.addCheckpoint(
+        { "simulation.time": { type: "float64", value: 3 } },
+        [{ path: "simulation.time", type: "float64", replayRole: "state", logClass: "core" }],
+        3_000_000,
+    );
     const secondBatch = encoder.flush();
-    await service.appendBatch(session.id, { sequence: 1, startUs: 3_000_000, endUs: 3_000_000, bytes: secondBatch.bytes });
+    await service.appendBatch(session.id, { sequence: 1, startUs: 0, endUs: 3_000_000, bytes: secondBatch.bytes });
     const metadata = await service.finalize(session.id);
     assert.equal(metadata.status, "complete");
     const index = await service.getIndex(session.id);
@@ -282,7 +294,10 @@ test("LogService finalizes indexed chunks, retries batches idempotently, imports
     assert.equal(decoded.updates[0].value, 2);
     assert.equal(decoded.updates[1].value, 3);
     const exactChunk = decodeRecordStream(await service.readChunk(session.id, 1), new Map(index.schemas.map((schema) => [schema.id, schema])));
-    assert.deepEqual(exactChunk.updates.map((update) => update.value), [3]);
+    assert.deepEqual(exactChunk.updates.map((update) => [update.path, update.value]), [
+        ["simulation.time", 3],
+        ["devices.camera.image", new Uint8Array([1, 2, 3])],
+    ]);
     const iterated = [];
     for await (const chunk of service.iterateChunks(session.id, { fromUs: 2_500_000 })) iterated.push(chunk.index);
     assert.deepEqual(iterated, [0, 1]);
@@ -290,6 +305,9 @@ test("LogService finalizes indexed chunks, retries batches idempotently, imports
     assert.deepEqual(series.samples.map((sample) => sample.value), [2, 3]);
     const snapshot = await service.readSnapshot(session.id, 3_000_000);
     assert.equal(snapshot.snapshot["simulation.time"], 3);
+    assert.deepEqual(snapshot.snapshot["devices.camera.image"], new Uint8Array([1, 2, 3]));
+    const lightSnapshot = await service.readSnapshot(session.id, 3_000_000, { includeHeavy: false });
+    assert.equal(Object.hasOwn(lightSnapshot.snapshot, "devices.camera.image"), false);
 
     const file = await readFile(service.getFilePath(session.id));
     const imported = await service.importLog(file, { name: "Imported Copy" });

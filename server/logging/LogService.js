@@ -349,9 +349,9 @@ export class LogService {
         const id = safeSegment(idValue);
         const index = await this.getIndex(id);
         let startIndex = 0;
-        for (let candidate = 0; candidate < index.chunks.length; candidate += 1) {
-            const chunk = index.chunks[candidate];
-            if (chunk.hasCheckpoint && chunk.startUs <= fromUs) startIndex = candidate;
+        for (const checkpoint of index.checkpoints || []) {
+            if (checkpoint.timeUs > fromUs) break;
+            startIndex = checkpoint.chunkIndex;
         }
         for (const chunk of index.chunks.slice(startIndex)) {
             if (chunk.startUs > toUs) break;
@@ -387,10 +387,16 @@ export class LogService {
         };
     }
 
-    async readSnapshot(idValue, timeUs = 0) {
+    async readSnapshot(idValue, timeUs = 0, { includeHeavy = true } = {}) {
         const index = await this.getIndex(idValue);
         const cursorUs = Math.min(index.durationUs, Math.max(0, Number(timeUs) || 0));
         const schemas = new Map(index.schemas.map((schema) => [schema.id, schema]));
+        const heavyPaths = includeHeavy
+            ? new Set()
+            : new Set(index.schemas
+                .filter((schema) => schema.type === "bytes" || schema.logClass === "heavy")
+                .map((schema) => schema.path));
+        const shouldInclude = (signalPath) => includeHeavy || !heavyPaths.has(signalPath);
         const updates = [];
         let checkpoint = null;
         for await (const chunk of this.iterateChunks(idValue, { fromUs: cursorUs, toUs: cursorUs })) {
@@ -400,10 +406,15 @@ export class LogService {
                 if (candidate.timeUs <= cursorUs && (!checkpoint || candidate.timeUs >= checkpoint.timeUs)) checkpoint = candidate;
             }
         }
-        const snapshot = checkpoint ? structuredClone(checkpoint.values) : {};
+        const snapshot = {};
+        for (const [signalPath, value] of Object.entries(checkpoint?.values ?? {})) {
+            if (shouldInclude(signalPath)) snapshot[signalPath] = structuredClone(value);
+        }
         const checkpointUs = checkpoint?.timeUs || 0;
         for (const update of updates.sort((a, b) => a.timeUs - b.timeUs)) {
-            if (update.timeUs >= checkpointUs) snapshot[update.path] = structuredClone(update.value);
+            if (update.timeUs >= checkpointUs && shouldInclude(update.path)) {
+                snapshot[update.path] = structuredClone(update.value);
+            }
         }
         return { timeUs: cursorUs, snapshot };
     }

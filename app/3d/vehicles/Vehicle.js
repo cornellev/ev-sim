@@ -102,6 +102,17 @@ export class Vehicle {
             device.onParentUpdate();
         }
     }
+
+    dispose() {
+        const deviceDatabase = this.db?.getParent?.()?.devices?.();
+        for (const device of [...this.devices]) {
+            if (!deviceDatabase?.removeDevice?.(device)) {
+                device.dispose?.();
+            }
+        }
+        this.devices = [];
+        this.sceneObject?.removeFromParent?.();
+    }
 }
 
 

@@ -143,6 +143,7 @@ export class VehicleDatabase extends Database {
         const index = this.vehicles.indexOf(vehicle);
         if (index < 0) return false;
         this.vehicles.splice(index, 1);
+        vehicle.dispose?.();
         this.parent?.bindings?.()?.signalStore?.emitTelemetryEvent?.({
             category: "vehicles",
             name: "vehicle-despawned",
@@ -161,8 +162,6 @@ export class VehicleDatabase extends Database {
         const desiredIds = new Set(desired.map((entry) => entry.id));
         for (const vehicle of [...this.vehicles]) {
             if (desiredIds.has(vehicle.telemetryId)) continue;
-            vehicle.sceneObject?.removeFromParent?.();
-            vehicle.dispose?.();
             this.removeVehicle(vehicle);
         }
 
@@ -171,8 +170,6 @@ export class VehicleDatabase extends Database {
             const dependency = dependencies.get(entry.id);
             if (vehicle && (!matchesVehicleType(vehicle, entry.type)
                 || (dependency?.hash && vehicle.resolvedVehicleHash !== dependency.hash))) {
-                vehicle.sceneObject?.removeFromParent?.();
-                vehicle.dispose?.();
                 this.removeVehicle(vehicle);
                 vehicle = null;
             }
