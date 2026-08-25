@@ -538,19 +538,24 @@ export class SimulationEngine {
 
         this._publishSimulationEntities();
         this._publishRuntimeState();
-        if (this.scenarioRuntime.active) {
+        if (this.scenarioRuntime.active || this.scenarioDiagnostics.enabled) {
             phase("scenario-after-telemetry", () => {
-                const snapshot = this.scenarioRuntime.postTelemetry({
-                    step: this.steps,
-                    timeNs: this.timeNs,
-                    dt,
-                    contacts,
-                });
+                const snapshot = this.scenarioRuntime.active
+                    ? this.scenarioRuntime.postTelemetry({
+                        step: this.steps,
+                        timeNs: this.timeNs,
+                        dt,
+                        contacts,
+                    })
+                    : {};
                 if (snapshot.terminal) {
                     this.status = "paused";
                     shouldContinue = false;
                 }
-                this.scenarioDiagnostics.update(snapshot);
+                this.scenarioDiagnostics.update({
+                    ...snapshot,
+                    actorPoses: this._actorPoses(),
+                });
             });
         }
         phase("assertions", () => {
@@ -625,6 +630,20 @@ export class SimulationEngine {
             const client = this.data.client?.()?.get?.();
             if (topic && client?.isOpen?.()) client.publish(topic.name, topic.type, { clock: stamp }).catch?.(() => {});
         }
+    }
+
+    _actorPoses() {
+        const poses = {};
+        const vehicles = this.data.vehicles?.()?.vehicles || [];
+        vehicles.forEach((vehicle, index) => {
+            const id = vehicle.telemetryId || `vehicle-${index + 1}`;
+            poses[id] = {
+                x: Number(vehicle.position?.x || 0),
+                y: Number(vehicle.position?.y || 0),
+                z: Number(vehicle.position?.z || 0),
+            };
+        });
+        return poses;
     }
 
     _publishSimulationEntities() {

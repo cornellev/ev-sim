@@ -55,7 +55,13 @@ test("run recording options include immutable manifest attachment and provenance
     assert.equal(options.resolvedHash, "resolved");
     assert.equal(options.timeBase, "simulation");
     assert.equal(options.provenance.orchestratorCatalogHash, "catalog");
+    assert.equal(options.haltSimulationOnError, true);
     assert.ok(options.attachments.some((attachment) => attachment.name === "run-manifest.json"));
+
+    let optionalOptions;
+    const optional = controllerFor("optional", async (value) => { optionalOptions = value; });
+    await optional._ensureRecording();
+    assert.equal(optionalOptions.haltSimulationOnError, false);
 });
 
 test("prepare waits for a switched environment to mount and apply the resolved run", async () => {
@@ -121,4 +127,58 @@ test("scenario diagnostics preference is reapplied when a new simulation attache
     assert.deepEqual(secondValues, [true]);
     controller.setScenarioDiagnosticsEnabled(false);
     assert.deepEqual(secondValues, [true, false]);
+});
+
+test("transient logging override skips recording and speed override applies immediately", async () => {
+    let startCount = 0;
+    const speeds = [];
+    const controller = controllerFor("required", async () => { startCount += 1; });
+    controller.data = {
+        ...controller.data,
+        simulation: () => ({
+            getSnapshot: () => ({ status: "paused" }),
+            setSpeed(value) { speeds.push(value); },
+            play() {},
+        }),
+    };
+
+    controller.setLoggingPolicyOverride("disabled");
+    controller.setSpeedOverride(4);
+    await controller.play();
+    assert.equal(startCount, 0);
+    assert.equal(controller._recordingRunId, "run-test");
+    assert.ok(speeds.includes(4));
+
+    controller.clear();
+    assert.equal(controller._loggingPolicyOverride, null);
+    assert.equal(controller._speedOverride, null);
+});
+
+test("external-ros realtime cases force 1x regardless of speed override", () => {
+    const speeds = [];
+    const controller = controllerFor("disabled", async () => {});
+    controller.data = {
+        ...controller.data,
+        simulation: () => ({
+            getSnapshot: () => ({ status: "paused" }),
+            setSpeed(value) { speeds.push(value); },
+        }),
+    };
+    controller.snapshot.activeResolved = {
+        ...controller.snapshot.activeResolved,
+        manifest: {
+            ...controller.snapshot.activeResolved.manifest,
+            clock: { pacing: "realtime", speed: 1 },
+            logging: { policy: "disabled", profileId: "simulation-run-full-sensors" },
+        },
+        scenario: {
+            scenario: {
+                routes: [{ controller: { kind: "external-ros", topicId: "/ackdrive" } }],
+            },
+        },
+    };
+    controller.setSpeedOverride(4);
+    speeds.length = 0;
+    controller.applyRuntimeOverrides();
+    assert.deepEqual(speeds, [1]);
 });

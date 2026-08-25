@@ -148,6 +148,8 @@ export default function ExperimentWorkspace({ onOpenWorkspace, onOpenReplay, onO
     const [selectedResult, setSelectedResult] = useState(null);
     const [selectedBaseline, setSelectedBaseline] = useState(null);
     const [snapshot, setSnapshot] = useState(() => runController.getSnapshot());
+    const [runSpeed, setRunSpeed] = useState(1);
+    const [disableLogging, setDisableLogging] = useState(false);
     const [tab, setTab] = useState("setup");
     const [creating, setCreating] = useState(false);
     const [loading, setLoading] = useState(true);
@@ -388,10 +390,25 @@ export default function ExperimentWorkspace({ onOpenWorkspace, onOpenReplay, onO
             const executableCases = serverValidation?.matrix?.cases || plan.cases;
             if (executableCases.length === 0) throw new Error("The suite has no compatible cases to run.");
             const resultId = `${draft.id}-result-${Date.now().toString(36)}`;
-            await runController.start({ suite: executableSuite, cases: executableCases, resultId });
+            await runController.start({
+                suite: executableSuite,
+                cases: executableCases,
+                resultId,
+                runSpeed,
+                disableLogging,
+            });
+            setDisableLogging(false);
             setFeedback(`Running ${executableCases.length} cases sequentially`);
         } catch (runError) { setError(runError?.message || "Could not start the experiment."); }
         finally { setBusy(false); }
+    };
+
+    const changeRunSpeed = (speed) => {
+        const next = Math.max(0, Number(speed) || 0);
+        setRunSpeed(next);
+        if (["running", "paused"].includes(runController.getSnapshot().status)) {
+            runController.setRunSpeed(next);
+        }
     };
 
     const pauseRun = async () => {
@@ -467,7 +484,7 @@ export default function ExperimentWorkspace({ onOpenWorkspace, onOpenReplay, onO
                             <TabsContent value="setup"><SetupSection suite={draft} scenarios={scenarios} manifests={manifests} parameters={parameters} onUpdate={update} /></TabsContent>
                             <TabsContent value="matrix"><MatrixSection suite={draft} plan={plan} scenarios={scenarios} manifests={manifests} onToggleExclusion={toggleExclusion} /></TabsContent>
                             <TabsContent value="metrics"><MetricsSection suite={draft} onUpdate={update} /></TabsContent>
-                            <TabsContent value="run"><RunSection plan={plan} result={selectedResult} snapshot={snapshot} results={suiteResults} diagnosticsEnabled={diagnosticsEnabled} onDiagnosticsEnabledChange={changeDiagnostics} onDiagnosticsViewportChange={onDiagnosticsViewportChange} onSelectResult={chooseResult} onStart={startRun} onPause={pauseRun} onResume={resumeRun} onCancel={cancelRun} /></TabsContent>
+                            <TabsContent value="run"><RunSection plan={plan} result={selectedResult} snapshot={snapshot} results={suiteResults} diagnosticsEnabled={diagnosticsEnabled} onDiagnosticsEnabledChange={changeDiagnostics} onDiagnosticsViewportChange={onDiagnosticsViewportChange} onSelectResult={chooseResult} runSpeed={runSpeed} disableLogging={disableLogging} onRunSpeedChange={changeRunSpeed} onDisableLoggingChange={setDisableLogging} onStart={startRun} onPause={pauseRun} onResume={resumeRun} onCancel={cancelRun} onReplay={onOpenReplay} onAnalysis={onOpenAnalysis} /></TabsContent>
                             <TabsContent value="compare"><CompareSection results={suiteResults} baselines={baselines.filter((entry) => entry.suiteId === selectedId)} result={selectedResult} baseline={selectedBaseline} comparison={comparison} onResult={chooseResult} onBaseline={chooseBaseline} onSaveBaseline={saveBaseline} /></TabsContent>
                             <TabsContent value="review"><ReviewSection result={selectedResult} results={suiteResults} onResult={chooseResult} onReplay={onOpenReplay} onAnalysis={onOpenAnalysis} /></TabsContent>
                         </div>

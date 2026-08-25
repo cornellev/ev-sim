@@ -18,9 +18,11 @@ import {
     IconTrash,
 } from "@tabler/icons-react";
 
-import { Button, Field, NativeSelect, Switch, Textarea, TextInput } from "../../ui";
+import { Button, DialogSurface, Field, NativeSelect, Switch, Textarea, TextInput } from "../../ui";
 import { BUILT_IN_METRIC_IDS, METRIC_DIRECTIONS, METRIC_REDUCER_KINDS } from "../MetricReducers.js";
 import styles from "./ExperimentWorkspace.module.css";
+
+const RUN_SPEEDS = [1, 2, 4];
 
 function heading(kicker, title, description, action = null) {
     return <header className={styles.sectionHeading}><div><span>{kicker}</span><h2>{title}</h2><p>{description}</p></div>{action}</header>;
@@ -52,8 +54,121 @@ function displayName(entries, id) {
 
 function displayRuntimeValue(value) {
     if (value === null || value === undefined || value === "") return "—";
-    if (typeof value === "string" || typeof value === "number") return String(value);
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value);
     return value.name || value.id || value.reason || JSON.stringify(value);
+}
+
+function formatJson(value) {
+    if (value === null || value === undefined) return "—";
+    try {
+        return JSON.stringify(value, null, 2);
+    } catch {
+        return String(value);
+    }
+}
+
+function inspectableCase(entry, snapshot = null, isActive = false) {
+    if (!entry) return null;
+    if (!isActive || !snapshot?.run) return entry;
+    const run = snapshot.run;
+    const liveAssertions = run.assertionResults || run.simulation?.assertions || [];
+    const liveOutcomes = run.simulation?.scenario?.outcomes || run.runResult?.outcomes || [];
+    const liveMetrics = run.runResult?.metrics || {};
+    return {
+        ...entry,
+        status: entry.status === "running" ? (run.status || entry.status) : entry.status,
+        failureReason: entry.failureReason || run.error || run.runResult?.failureReason || null,
+        terminationReason: entry.terminationReason || run.runResult?.terminationReason || null,
+        terminalEvent: entry.terminalEvent || run.runResult?.terminalEvent || null,
+        assertions: (entry.assertions || []).length ? entry.assertions : liveAssertions,
+        outcomes: (entry.outcomes || []).length ? entry.outcomes : liveOutcomes,
+        metrics: Object.keys(entry.metrics || {}).length ? entry.metrics : liveMetrics,
+        dependencyHashes: Object.keys(entry.dependencyHashes || {}).length
+            ? entry.dependencyHashes
+            : (run.activeResolved?.dependencyHashes || {}),
+        resolvedHash: entry.resolvedHash || run.activeResolved?.resolvedHash || null,
+        logId: entry.logId || run.runResult?.logId || null,
+        runError: run.error || null,
+        degraded: Boolean(run.degraded),
+    };
+}
+
+function CaseDetailDialog({ open, onOpenChange, entry, index = 0, onReplay, onAnalysis }) {
+    if (!entry) return null;
+    const failedAssertions = (entry.assertions || []).filter((assertion) => assertion.status === "failed");
+    const failedOutcomes = (entry.outcomes || []).filter((outcome) => outcome.passed !== true);
+    const title = `Case ${String(index + 1).padStart(3, "0")}`;
+    const description = `${entry.scenarioId} · ${entry.manifestId} · seed ${String(entry.seed)}`;
+    return (
+        <DialogSurface
+            open={open}
+            onOpenChange={onOpenChange}
+            title={title}
+            description={description}
+            className={styles.caseDialog}
+            footer={(
+                <div className={styles.caseDialogActions}>
+                    <Button size="compact" disabled={!entry.logId} onClick={() => onReplay?.(entry.logId)}><IconPlayerPlay size={13} /> Replay</Button>
+                    <Button size="compact" disabled={!entry.logId} onClick={() => onAnalysis?.(entry.logId)}><IconChartDots size={13} /> Analysis</Button>
+                </div>
+            )}
+        >
+            <dl className={styles.caseDialogMeta}>
+                <div><dt>Status</dt><dd data-status={entry.status}>{entry.status || "pending"}</dd></div>
+                <div><dt>Passed</dt><dd>{entry.passed == null ? "—" : entry.passed ? "yes" : "no"}</dd></div>
+                <div><dt>Resolved hash</dt><dd><code>{entry.resolvedHash || "—"}</code></dd></div>
+                <div><dt>Log</dt><dd><code>{entry.logId || "—"}</code></dd></div>
+            </dl>
+            {(entry.failureReason || entry.runError || entry.degraded) && (
+                <section className={styles.caseDialogBlock} data-tone="danger">
+                    <h3>Failure / run error</h3>
+                    <p>{entry.failureReason || entry.runError || (entry.degraded ? "Recording degraded" : "—")}</p>
+                    {entry.runError && entry.failureReason && entry.runError !== entry.failureReason && <p>{entry.runError}</p>}
+                </section>
+            )}
+            <section className={styles.caseDialogBlock}>
+                <h3>Termination</h3>
+                <p>{entry.terminationReason || "—"}</p>
+                <pre>{formatJson(entry.terminalEvent)}</pre>
+            </section>
+            <div className={styles.caseDialogSplit}>
+                <section className={styles.caseDialogBlock}>
+                    <h3>Assertions <span>{(entry.assertions || []).length}</span></h3>
+                    {(entry.assertions || []).length
+                        ? (entry.assertions || []).map((assertion) => (
+                            <p key={assertion.id || assertion.name} data-status={assertion.status}>
+                                <strong>{assertion.name || assertion.id}</strong>
+                                <span>{assertion.status}{assertion.message ? ` · ${assertion.message}` : ""}</span>
+                            </p>
+                        ))
+                        : <em>None recorded</em>}
+                    {failedAssertions.length > 0 && <small>{failedAssertions.length} failed</small>}
+                </section>
+                <section className={styles.caseDialogBlock}>
+                    <h3>Outcomes <span>{(entry.outcomes || []).length}</span></h3>
+                    {(entry.outcomes || []).length
+                        ? (entry.outcomes || []).map((outcome) => (
+                            <p key={outcome.id || outcome.name} data-status={outcome.status || (outcome.passed ? "passed" : "failed")}>
+                                <strong>{outcome.name || outcome.id}</strong>
+                                <span>{displayRuntimeValue(outcome.detail) || outcome.status || (outcome.passed ? "passed" : "failed")}</span>
+                            </p>
+                        ))
+                        : <em>None recorded</em>}
+                    {failedOutcomes.length > 0 && <small>{failedOutcomes.length} failed</small>}
+                </section>
+            </div>
+            <section className={styles.caseDialogBlock}>
+                <h3>Metrics</h3>
+                {Object.keys(entry.metrics || {}).length
+                    ? <dl>{Object.entries(entry.metrics || {}).map(([id, value]) => <div key={id}><dt>{id}</dt><dd>{String(value ?? "—")}</dd></div>)}</dl>
+                    : <em>None recorded</em>}
+            </section>
+            <section className={styles.caseDialogBlock}>
+                <h3>Dependency hashes</h3>
+                <pre>{formatJson(entry.dependencyHashes || {})}</pre>
+            </section>
+        </DialogSurface>
+    );
 }
 
 export function SetupSection({ suite, scenarios, manifests, parameters, onUpdate }) {
@@ -80,7 +195,7 @@ export function SetupSection({ suite, scenarios, manifests, parameters, onUpdate
 
             <div className={styles.splitHeading}><div><h3>Seeds and sweeps</h3></div>{parameters.length > suite.sweeps.length && <Button size="compact" onClick={addSweep}><IconPlus size={14} stroke={1.75} /> Add sweep</Button>}</div>
             <section className={styles.sweepPanel}>
-                <Field label="Seeds" hint="Use comma-separated seeds"><TextInput value={suite.seeds.join(", ")} onChange={(event) => onUpdate(["seeds"], event.target.value.split(",").map((entry) => entry.trim()).filter(Boolean))} /></Field>
+                <Field label="Seeds"><TextInput value={suite.seeds.join(", ")} onChange={(event) => onUpdate(["seeds"], event.target.value.split(",").map((entry) => entry.trim()).filter(Boolean))} /></Field>
                 <Switch label="Continue after a failed case" description="Run every compatible case instead of stopping at the first failure." checked={suite.execution.failurePolicy !== "fail-fast"} onCheckedChange={(value) => onUpdate(["execution"], { failurePolicy: value ? "continue" : "fail-fast", continueOnFailure: value })} />
             </section>
             {suite.sweeps.map((sweep, index) => (
@@ -161,8 +276,28 @@ export function MetricsSection({ suite, onUpdate }) {
     );
 }
 
-export function RunSection({ plan, result, snapshot, results, diagnosticsEnabled, onDiagnosticsEnabledChange, onDiagnosticsViewportChange, onSelectResult, onStart, onPause, onResume, onCancel }) {
+export function RunSection({
+    plan,
+    result,
+    snapshot,
+    results,
+    diagnosticsEnabled,
+    onDiagnosticsEnabledChange,
+    onDiagnosticsViewportChange,
+    onSelectResult,
+    runSpeed = 1,
+    disableLogging = false,
+    onRunSpeedChange,
+    onDisableLoggingChange,
+    onStart,
+    onPause,
+    onResume,
+    onCancel,
+    onReplay,
+    onAnalysis,
+}) {
     const diagnosticsViewportRef = useRef(null);
+    const [inspectIndex, setInspectIndex] = useState(null);
     const controllerOwnsResult = Boolean(snapshot?.result?.id && snapshot.result.id === result?.id);
     const liveResult = controllerOwnsResult ? snapshot.result : result;
     const status = controllerOwnsResult ? snapshot.status : liveResult?.status || "idle";
@@ -178,6 +313,15 @@ export function RunSection({ plan, result, snapshot, results, diagnosticsEnabled
     const outcomes = scenario?.outcomes || active?.outcomes || [];
     const canResume = cases.some((entry) => entry.status === "pending")
         && ["paused", "interrupted", "error"].includes(status);
+    const queueActive = ["running", "paused"].includes(status);
+    const effectiveSpeed = snapshot?.realtimeWarning ? 1 : runSpeed;
+    const inspectEntry = inspectIndex == null
+        ? null
+        : inspectableCase(
+            cases[inspectIndex],
+            controllerOwnsResult ? snapshot : null,
+            Boolean(active && cases[inspectIndex] && (cases[inspectIndex].id === active.id || cases[inspectIndex].key === active.key)),
+        );
 
     useEffect(() => {
         const element = diagnosticsViewportRef.current;
@@ -220,15 +364,66 @@ export function RunSection({ plan, result, snapshot, results, diagnosticsEnabled
     return (
         <div className={styles.sectionStack}>
             {heading("", "Run & monitor", "", <div className={styles.runActions}><Button aria-pressed={diagnosticsEnabled} variant={diagnosticsEnabled ? "primary" : "default"} onClick={() => onDiagnosticsEnabledChange?.(!diagnosticsEnabled)}><IconRoute size={14} /> 3D diagnostics</Button>{status === "running" ? <Button onClick={onPause}><IconPlayerPause size={14} /> Pause</Button> : canResume || status === "paused" ? <Button variant="primary" onClick={onResume}><IconPlayerPlay size={14} /> Resume</Button> : <Button variant="primary" disabled={!plan.ok || plan.cases.length === 0} onClick={onStart}><IconPlayerPlay size={14} /> Run suite</Button>}<Button disabled={!['running', 'paused'].includes(status)} onClick={onCancel}><IconSquare size={13} /> Cancel</Button></div>)}
+            <section className={styles.runOptions} aria-label="Run options">
+                <div className={styles.speedGroup}>
+                    <span>Speed</span>
+                    <div className={styles.speedToggle} role="group" aria-label="Simulation speed">
+                        {RUN_SPEEDS.map((speed) => (
+                            <button
+                                key={speed}
+                                type="button"
+                                aria-pressed={runSpeed === speed}
+                                data-active={runSpeed === speed || undefined}
+                                onClick={() => onRunSpeedChange?.(speed)}
+                            >
+                                {speed}×
+                            </button>
+                        ))}
+                    </div>
+                    {snapshot?.realtimeWarning && <small>Effective {effectiveSpeed}× while external ROS is active</small>}
+                </div>
+                <Switch
+                    label="Disable logs for this run"
+                    description="(Temporary)"
+                    checked={disableLogging}
+                    disabled={queueActive}
+                    onCheckedChange={(value) => onDisableLoggingChange?.(Boolean(value))}
+                />
+            </section>
             <div className={styles.resultPicker}><Field label="Experiment result"><NativeSelect value={result?.id || ""} onChange={(event) => onSelectResult(event.target.value)}><option value="">Current / new result</option>{results.map((entry) => <option key={entry.id} value={entry.id}>{entry.id} · {entry.status}</option>)}</NativeSelect></Field><span data-status={status}>{status}</span></div>
-            {controllerOwnsResult && snapshot?.realtimeWarning && <div className={styles.runtimeWarning}><IconAlertTriangle size={15} /><p>External ROS requires realtime pacing. Determinism depends on the timing and contents of external commands.</p></div>}
+            {controllerOwnsResult && snapshot?.realtimeWarning && <div className={styles.runtimeWarning}><IconAlertTriangle size={15} /><p>External ROS requires realtime pacing. Effective speed is {effectiveSpeed}×{runSpeed !== effectiveSpeed ? ` (selected ${runSpeed}× ignored)` : ""}. Determinism depends on the timing and contents of external commands.</p></div>}
             {diagnosticsEnabled && <section className={styles.diagnosticsPanel}><header><div><span>OPERATOR VIEW</span><h3>Scenario diagnostics</h3></div><p>Render-only layer 31 · excluded from physics, sensors, and LiDAR</p></header><div ref={diagnosticsViewportRef} className={styles.diagnosticsViewport}><span>Preparing the mounted 3D scene…</span></div></section>}
             <section className={styles.monitorPanel}>
                 <div className={styles.progressHeader}><div><span>Queue progress</span><strong>{complete} / {cases.length}</strong></div><p>{Math.round(progress)}%</p></div>
                 <div className={styles.progressTrack}><i style={{ transform: `scaleX(${progress / 100})` }} /></div>
                 {active ? <><div className={styles.activeCase}><div><span>ACTIVE CASE</span><strong>{active.scenarioId}</strong><p>{active.manifestId} · seed {String(active.seed)}{Object.keys(active.parameters || {}).length ? ` · ${JSON.stringify(active.parameters)}` : ""}</p></div><dl><div><dt>Sim time</dt><dd>{Number(simulation?.time ?? ((scenario?.timeNs || 0) / 1e9)).toFixed(2)}s</dd></div><div><dt>Step</dt><dd>{simulation?.steps ?? scenario?.step ?? 0}</dd></div><div><dt>Latest trigger</dt><dd>{displayRuntimeValue(scenario?.latestTrigger || active.latestTrigger)}</dd></div><div><dt>Next event</dt><dd>{displayRuntimeValue(scenario?.nextTimedEvent)}</dd></div></dl></div><div className={styles.liveChecks}><section><header>Assertions <span>{assertions.length}</span></header>{assertions.length ? assertions.map((assertion) => <p key={assertion.id} data-status={assertion.status}><strong>{assertion.name || assertion.id}</strong><span>{assertion.status}</span></p>) : <em>No assertions configured</em>}</section><section><header>End-only outcomes <span>{outcomes.length}</span></header>{outcomes.length ? outcomes.map((outcome) => <p key={outcome.id} data-status={outcome.status}><strong>{outcome.name || outcome.id}</strong><span>{outcome.status}</span></p>) : <em>No expected outcomes configured</em>}</section></div></> : <div className={styles.monitorIdle}><IconFlask2 size={22} /><strong>{status === "completed" ? "Experiment complete" : "No active case"}</strong><p>{status === "completed" ? "Open Compare or Review to inspect the result." : status === "interrupted" ? "Resume the compatible pending cases when ready." : "Start the suite when the matrix validates."}</p></div>}
             </section>
-            <div className={styles.queueList}>{cases.map((entry, index) => { const Icon = statusIcon(entry.status); return <article key={entry.id || entry.key || index} data-status={entry.status || "pending"}><span>{String(index + 1).padStart(3, "0")}</span><Icon size={15} stroke={1.7} /><div><strong>{entry.scenarioId}</strong><p>{entry.manifestId} · seed {String(entry.seed)}{Object.keys(entry.parameters || {}).length ? ` · ${JSON.stringify(entry.parameters)}` : ""}</p></div><em>{entry.status || "pending"}</em></article>; })}</div>
+            <div className={styles.queueList}>{cases.map((entry, index) => {
+                const Icon = statusIcon(entry.status);
+                return (
+                    <button
+                        type="button"
+                        key={entry.id || entry.key || index}
+                        className={styles.caseRowButton}
+                        data-status={entry.status || "pending"}
+                        aria-label={`Inspect case ${String(index + 1).padStart(3, "0")}: ${entry.scenarioId}`}
+                        onClick={() => setInspectIndex(index)}
+                    >
+                        <span>{String(index + 1).padStart(3, "0")}</span>
+                        <Icon size={15} stroke={1.7} />
+                        <div><strong>{entry.scenarioId}</strong><p>{entry.manifestId} · seed {String(entry.seed)}{Object.keys(entry.parameters || {}).length ? ` · ${JSON.stringify(entry.parameters)}` : ""}</p></div>
+                        <em>{entry.status || "pending"}</em>
+                    </button>
+                );
+            })}</div>
+            <CaseDetailDialog
+                open={inspectIndex != null}
+                onOpenChange={(open) => { if (!open) setInspectIndex(null); }}
+                entry={inspectEntry}
+                index={inspectIndex ?? 0}
+                onReplay={onReplay}
+                onAnalysis={onAnalysis}
+            />
         </div>
     );
 }
@@ -249,6 +444,8 @@ export function CompareSection({ results, baselines, result, baseline, compariso
 }
 
 export function ReviewSection({ result, results, onResult, onReplay, onAnalysis }) {
+    const [inspectIndex, setInspectIndex] = useState(null);
+    const inspectEntry = inspectIndex == null ? null : inspectableCase(result?.cases?.[inspectIndex]);
     return (
         <div className={styles.sectionStack}>
             {heading("", "Review", "")}
@@ -260,8 +457,34 @@ export function ReviewSection({ result, results, onResult, onReplay, onAnalysis 
                     const failedAssertions = (entry.assertions || []).filter((assertion) => assertion.status === "failed");
                     const failedOutcomes = (entry.outcomes || []).filter((outcome) => outcome.passed !== true);
                     const hasEvidence = failedAssertions.length > 0 || failedOutcomes.length > 0 || Object.keys(entry.metrics || {}).length > 0;
-                    return <article key={entry.id}><Icon size={17} stroke={1.65} /><div className={styles.reviewIdentity}><span>CASE {String(index + 1).padStart(3, "0")}</span><strong>{entry.scenarioId}</strong><p>{entry.manifestId} · seed {String(entry.seed)}</p></div><div className={styles.reviewReason}><span>{entry.passed ? "passed" : entry.status}</span><p>{entry.failureReason || entry.terminationReason || displayRuntimeValue(entry.terminalEvent) || "No terminal reason recorded"}</p></div><div className={styles.reviewActions}><Button size="compact" disabled={!entry.logId} onClick={() => onReplay?.(entry.logId)}><IconPlayerPlay size={13} /> Replay</Button><Button size="compact" disabled={!entry.logId} onClick={() => onAnalysis?.(entry.logId)}><IconChartDots size={13} /> Analysis</Button></div>{hasEvidence && <details className={styles.reviewEvidence}><summary>Terminal evidence · {failedAssertions.length} assertion failures · {failedOutcomes.length} outcome failures</summary><div>{failedAssertions.map((assertion) => <p key={assertion.id}><strong>{assertion.name || assertion.id}</strong><span>{assertion.message || "Failed"}</span></p>)}{failedOutcomes.map((outcome) => <p key={outcome.id}><strong>{outcome.name || outcome.id}</strong><span>{displayRuntimeValue(outcome.detail) || outcome.status}</span></p>)}<dl>{Object.entries(entry.metrics || {}).map(([id, value]) => <div key={id}><dt>{id}</dt><dd>{String(value ?? "—")}</dd></div>)}</dl></div></details>}</article>;
+                    return (
+                        <article key={entry.id} className={styles.reviewCase}>
+                            <button
+                                type="button"
+                                className={styles.reviewCaseButton}
+                                aria-label={`Inspect case ${String(index + 1).padStart(3, "0")}: ${entry.scenarioId}`}
+                                onClick={() => setInspectIndex(index)}
+                            >
+                                <Icon size={17} stroke={1.65} />
+                                <div className={styles.reviewIdentity}><span>CASE {String(index + 1).padStart(3, "0")}</span><strong>{entry.scenarioId}</strong><p>{entry.manifestId} · seed {String(entry.seed)}</p></div>
+                                <div className={styles.reviewReason}><span>{entry.passed ? "passed" : entry.status}</span><p>{entry.failureReason || entry.terminationReason || displayRuntimeValue(entry.terminalEvent) || "No terminal reason recorded"}</p></div>
+                            </button>
+                            <div className={styles.reviewActions}>
+                                <Button size="compact" disabled={!entry.logId} onClick={() => onReplay?.(entry.logId)}><IconPlayerPlay size={13} /> Replay</Button>
+                                <Button size="compact" disabled={!entry.logId} onClick={() => onAnalysis?.(entry.logId)}><IconChartDots size={13} /> Analysis</Button>
+                            </div>
+                            {hasEvidence && <details className={styles.reviewEvidence}><summary>Terminal evidence · {failedAssertions.length} assertion failures · {failedOutcomes.length} outcome failures</summary><div>{failedAssertions.map((assertion) => <p key={assertion.id}><strong>{assertion.name || assertion.id}</strong><span>{assertion.message || "Failed"}</span></p>)}{failedOutcomes.map((outcome) => <p key={outcome.id}><strong>{outcome.name || outcome.id}</strong><span>{displayRuntimeValue(outcome.detail) || outcome.status}</span></p>)}<dl>{Object.entries(entry.metrics || {}).map(([id, value]) => <div key={id}><dt>{id}</dt><dd>{String(value ?? "—")}</dd></div>)}</dl></div></details>}
+                        </article>
+                    );
                 })}</div>
+                <CaseDetailDialog
+                    open={inspectIndex != null}
+                    onOpenChange={(open) => { if (!open) setInspectIndex(null); }}
+                    entry={inspectEntry}
+                    index={inspectIndex ?? 0}
+                    onReplay={onReplay}
+                    onAnalysis={onAnalysis}
+                />
             </>}
         </div>
     );

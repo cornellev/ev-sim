@@ -136,15 +136,23 @@ test("scenario diagnostics use an operator-only, non-colliding render layer", ()
     diagnostics.group.traverse((object) => {
         if (object.isLine || object.isLineSegments || object.isSprite) renderables.push(object);
     });
-    assert.equal(renderables.length, 2);
+    assert.ok(renderables.length >= 2);
     for (const object of renderables) {
         assert.equal(object.userData.scenarioDiagnostic, true);
         assert.equal(object.layers.test(diagnosticLayer), true);
         assert.equal(object.layers.test(defaultLayer), false);
     }
 
-    diagnostics.update({ latestTrigger: { id: "finish-trigger" } });
+    const egoLabel = diagnostics.roleObjects.get("ego");
+    assert.ok(egoLabel);
+    assert.equal(egoLabel.layers.test(diagnosticLayer), true);
+    assert.deepEqual([egoLabel.position.x, egoLabel.position.y, egoLabel.position.z], [0, 1.8, 0]);
+    diagnostics.update({
+        latestTrigger: { id: "finish-trigger" },
+        actorPoses: { ego: { x: 4, y: 0.5, z: 2 } },
+    });
     assert.equal(diagnostics.zoneObjects.get("finish-zone").material.color.getHex(), 0xffb454);
+    assert.deepEqual([egoLabel.position.x, egoLabel.position.y, egoLabel.position.z], [4, 2.3, 2]);
     diagnostics.dispose();
     assert.equal(diagnostics.group.parent, null);
 });

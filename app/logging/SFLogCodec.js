@@ -336,6 +336,75 @@ function encodeSchemaRecord(writer, id, descriptor) {
     }));
 }
 
+function estimateVaruintBytes(value) {
+    let remaining = Math.max(0, Math.floor(Number(value) || 0));
+    let size = 1;
+    while (remaining >= 0x80) {
+        remaining = Math.floor(remaining / 0x80);
+        size += 1;
+    }
+    return size;
+}
+
+function estimateSizedBytes(byteLength) {
+    return estimateVaruintBytes(byteLength) + byteLength;
+}
+
+function estimateStringBytes(value) {
+    return estimateSizedBytes(textEncoder.encode(String(value ?? "")).byteLength);
+}
+
+function estimateRecordBytes(record, schemas) {
+    if (record.kind === "schema") {
+        const descriptor = record.descriptor || {};
+        return 2
+            + estimateVaruintBytes(record.id)
+            + estimateStringBytes(descriptor.path)
+            + estimateStringBytes(descriptor.unit || "")
+            + estimateStringBytes(jsonStringify({
+                source: descriptor.source || null,
+                category: descriptor.category || null,
+                replayRole: descriptor.replayRole || "derived",
+                logClass: descriptor.logClass || "standard",
+                description: descriptor.description || null,
+                metadata: descriptor.metadata || {},
+            }));
+    }
+    if (record.kind === "update") {
+        const schema = schemas.get(record.id);
+        const encoded = encodeSignalValue(schema?.type || "json", record.value);
+        // CYCLE framing amortized: tag + timestamp + cycle + count + id + sized payload
+        return 1 + 10 + estimateVaruintBytes(record.cycle || 0) + 1
+            + estimateVaruintBytes(record.id)
+            + estimateSizedBytes(encoded.byteLength);
+    }
+    if (record.kind === "event") {
+        return 1
+            + estimateVaruintBytes(record.event.timeUs)
+            + estimateStringBytes(record.event.category)
+            + estimateStringBytes(record.event.name)
+            + estimateStringBytes(record.event.severity)
+            + estimateStringBytes(jsonStringify(record.event.payload ?? null));
+    }
+    if (record.kind === "checkpoint") {
+        let size = 1 + estimateVaruintBytes(record.timeUs) + estimateVaruintBytes(record.values.length);
+        for (const value of record.values) {
+            const schema = schemas.get(value.id);
+            const encoded = encodeSignalValue(schema?.type || "json", value.value);
+            size += estimateVaruintBytes(value.id) + estimateSizedBytes(encoded.byteLength);
+        }
+        return size;
+    }
+    if (record.kind === "attachment") {
+        return 1
+            + estimateVaruintBytes(record.timeUs)
+            + estimateStringBytes(record.name)
+            + estimateStringBytes(record.mime)
+            + estimateSizedBytes(record.bytes?.byteLength || 0);
+    }
+    return 48;
+}
+
 export class SFLogBatchEncoder {
     constructor() {
         this.schemaIds = new Map();
@@ -344,6 +413,7 @@ export class SFLogBatchEncoder {
         this.records = [];
         this.startUs = null;
         this.endUs = null;
+        this._byteEstimate = 0;
     }
 
     _schema(descriptor) {
@@ -353,8 +423,15 @@ export class SFLogBatchEncoder {
         id = this.nextSchemaId++;
         this.schemaIds.set(key, id);
         this.schemas.set(id, { ...descriptor, type: normalizeType(descriptor.type) });
-        this.records.push({ kind: "schema", id, descriptor: this.schemas.get(id) });
+        this._pushRecord({ kind: "schema", id, descriptor: this.schemas.get(id) });
         return id;
+    }
+
+    _pushRecord(record) {
+        const estimatedBytes = estimateRecordBytes(record, this.schemas);
+        record.estimatedBytes = estimatedBytes;
+        this.records.push(record);
+        this._byteEstimate += estimatedBytes;
     }
 
     addUpdate(message) {
@@ -363,7 +440,7 @@ export class SFLogBatchEncoder {
         const id = this._schema(descriptor);
         const timeUs = Math.max(0, Math.round(message.timeUs ?? message.entry.timeUs ?? 0));
         this._range(timeUs);
-        this.records.push({
+        this._pushRecord({
             kind: "update",
             id,
             timeUs,
@@ -376,7 +453,7 @@ export class SFLogBatchEncoder {
         if (!event) return;
         const timeUs = Math.max(0, Math.round(event.timeUs || 0));
         this._range(timeUs);
-        this.records.push({ kind: "event", event: { ...event, timeUs } });
+        this._pushRecord({ kind: "event", event: { ...event, timeUs } });
     }
 
     addCheckpoint(snapshot, descriptors, timeUs) {
@@ -388,12 +465,18 @@ export class SFLogBatchEncoder {
         }
         const normalizedTime = Math.max(0, Math.round(timeUs || 0));
         this._range(normalizedTime);
-        this.records.push({ kind: "checkpoint", timeUs: normalizedTime, values });
+        this._pushRecord({ kind: "checkpoint", timeUs: normalizedTime, values });
     }
 
     addAttachment({ name, mime = "application/octet-stream", bytes, timeUs = 0 }) {
         this._range(timeUs);
-        this.records.push({ kind: "attachment", name, mime, bytes: bytes instanceof Uint8Array ? bytes : textEncoder.encode(String(bytes || "")), timeUs });
+        this._pushRecord({
+            kind: "attachment",
+            name,
+            mime,
+            bytes: bytes instanceof Uint8Array ? bytes : textEncoder.encode(String(bytes || "")),
+            timeUs,
+        });
     }
 
     _range(timeUs) {
@@ -402,78 +485,129 @@ export class SFLogBatchEncoder {
     }
 
     get byteEstimate() {
-        return this.records.length * 48;
+        return this._byteEstimate;
+    }
+
+    get pendingRecordCount() {
+        return this.records.length;
+    }
+
+    /**
+     * Encode and remove records until adding the next group would exceed maxBytes.
+     * Returns null when empty. Throws when a single unsplittable record exceeds maxBytes.
+     */
+    flushUpTo(maxBytes = Number.POSITIVE_INFINITY) {
+        if (this.records.length === 0) return null;
+        const limit = Math.max(1, Math.floor(Number(maxBytes) || 0));
+        let takeCount = 0;
+        let estimated = 0;
+        while (takeCount < this.records.length) {
+            const record = this.records[takeCount];
+            const nextCost = Number(record.estimatedBytes || estimateRecordBytes(record, this.schemas));
+            if (takeCount > 0 && estimated + nextCost > limit) break;
+            if (takeCount === 0 && nextCost > limit) {
+                throw new Error(`Log record exceeds the ${limit} byte batch limit and cannot be split.`);
+            }
+            estimated += nextCost;
+            takeCount += 1;
+        }
+        const batchRecords = this.records.splice(0, takeCount);
+        this._byteEstimate = Math.max(0, this._byteEstimate - estimated);
+        const startUs = batchRecords.reduce((min, record) => {
+            const timeUs = record.timeUs ?? record.event?.timeUs ?? 0;
+            return Math.min(min, timeUs);
+        }, Number.POSITIVE_INFINITY);
+        const endUs = batchRecords.reduce((max, record) => {
+            const timeUs = record.timeUs ?? record.event?.timeUs ?? 0;
+            return Math.max(max, timeUs);
+        }, 0);
+        if (this.records.length === 0) {
+            this.startUs = null;
+            this.endUs = null;
+        } else {
+            this.startUs = this.records.reduce((min, record) => {
+                const timeUs = record.timeUs ?? record.event?.timeUs ?? 0;
+                return Math.min(min, timeUs);
+            }, Number.POSITIVE_INFINITY);
+            this.endUs = this.records.reduce((max, record) => {
+                const timeUs = record.timeUs ?? record.event?.timeUs ?? 0;
+                return Math.max(max, timeUs);
+            }, 0);
+        }
+        return {
+            bytes: encodeRecords(batchRecords, this.schemas),
+            startUs: Number.isFinite(startUs) ? startUs : 0,
+            endUs,
+        };
     }
 
     flush() {
-        if (this.records.length === 0) return null;
-        const writer = new ByteWriter(Math.max(1024, this.records.length * 48));
-        let index = 0;
-        let lastCycleTimeUs = null;
-        while (index < this.records.length) {
-            const record = this.records[index];
-            if (record.kind === "schema") {
-                encodeSchemaRecord(writer, record.id, record.descriptor);
-                index += 1;
-                continue;
-            }
-            if (record.kind === "update") {
-                const group = [record];
-                index += 1;
-                while (index < this.records.length) {
-                    const next = this.records[index];
-                    if (next.kind !== "update" || next.timeUs !== record.timeUs || next.cycle !== record.cycle) break;
-                    group.push(next);
-                    index += 1;
-                }
-                writer.uint8(RECORD_TAGS.CYCLE);
-                const timestampCode = lastCycleTimeUs === null || record.timeUs < lastCycleTimeUs
-                    ? record.timeUs * 2 + 1
-                    : (record.timeUs - lastCycleTimeUs) * 2;
-                writer.varuint(timestampCode);
-                lastCycleTimeUs = record.timeUs;
-                writer.varuint(record.cycle || 0);
-                writer.varuint(group.length);
-                for (const update of group) {
-                    const schema = this.schemas.get(update.id);
-                    const encoded = encodeSignalValue(schema.type, update.value);
-                    writer.varuint(update.id);
-                    writer.sizedBytes(encoded);
-                }
-                continue;
-            }
-            if (record.kind === "event") {
-                writer.uint8(RECORD_TAGS.EVENT);
-                writer.varuint(record.event.timeUs);
-                writer.string(record.event.category);
-                writer.string(record.event.name);
-                writer.string(record.event.severity);
-                writer.string(jsonStringify(record.event.payload ?? null));
-            } else if (record.kind === "checkpoint") {
-                writer.uint8(RECORD_TAGS.CHECKPOINT);
-                writer.varuint(record.timeUs);
-                writer.varuint(record.values.length);
-                for (const value of record.values) {
-                    const schema = this.schemas.get(value.id);
-                    writer.varuint(value.id);
-                    writer.sizedBytes(encodeSignalValue(schema.type, value.value));
-                }
-            } else if (record.kind === "attachment") {
-                writer.uint8(RECORD_TAGS.ATTACHMENT);
-                writer.varuint(record.timeUs);
-                writer.string(record.name);
-                writer.string(record.mime);
-                writer.sizedBytes(record.bytes);
-            }
-            index += 1;
-        }
-
-        const result = { bytes: writer.finish(), startUs: this.startUs || 0, endUs: this.endUs || 0 };
-        this.records = [];
-        this.startUs = null;
-        this.endUs = null;
-        return result;
+        return this.flushUpTo(Number.POSITIVE_INFINITY);
     }
+}
+
+function encodeRecords(records, schemas) {
+    const writer = new ByteWriter(Math.max(1024, records.length * 48));
+    let index = 0;
+    let lastCycleTimeUs = null;
+    while (index < records.length) {
+        const record = records[index];
+        if (record.kind === "schema") {
+            encodeSchemaRecord(writer, record.id, record.descriptor);
+            index += 1;
+            continue;
+        }
+        if (record.kind === "update") {
+            const group = [record];
+            index += 1;
+            while (index < records.length) {
+                const next = records[index];
+                if (next.kind !== "update" || next.timeUs !== record.timeUs || next.cycle !== record.cycle) break;
+                group.push(next);
+                index += 1;
+            }
+            writer.uint8(RECORD_TAGS.CYCLE);
+            const timestampCode = lastCycleTimeUs === null || record.timeUs < lastCycleTimeUs
+                ? record.timeUs * 2 + 1
+                : (record.timeUs - lastCycleTimeUs) * 2;
+            writer.varuint(timestampCode);
+            lastCycleTimeUs = record.timeUs;
+            writer.varuint(record.cycle || 0);
+            writer.varuint(group.length);
+            for (const update of group) {
+                const schema = schemas.get(update.id);
+                const encoded = encodeSignalValue(schema.type, update.value);
+                writer.varuint(update.id);
+                writer.sizedBytes(encoded);
+            }
+            continue;
+        }
+        if (record.kind === "event") {
+            writer.uint8(RECORD_TAGS.EVENT);
+            writer.varuint(record.event.timeUs);
+            writer.string(record.event.category);
+            writer.string(record.event.name);
+            writer.string(record.event.severity);
+            writer.string(jsonStringify(record.event.payload ?? null));
+        } else if (record.kind === "checkpoint") {
+            writer.uint8(RECORD_TAGS.CHECKPOINT);
+            writer.varuint(record.timeUs);
+            writer.varuint(record.values.length);
+            for (const value of record.values) {
+                const schema = schemas.get(value.id);
+                writer.varuint(value.id);
+                writer.sizedBytes(encodeSignalValue(schema.type, value.value));
+            }
+        } else if (record.kind === "attachment") {
+            writer.uint8(RECORD_TAGS.ATTACHMENT);
+            writer.varuint(record.timeUs);
+            writer.string(record.name);
+            writer.string(record.mime);
+            writer.sizedBytes(record.bytes);
+        }
+        index += 1;
+    }
+    return writer.finish();
 }
 
 export function decodeRecordStream(bytes, initialSchemas = new Map()) {

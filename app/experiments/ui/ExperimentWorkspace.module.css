@@ -731,6 +731,238 @@
     gap: 6px;
 }
 
+.runOptions {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 18px;
+    border: 1px solid var(--exp-line);
+    border-radius: var(--radius);
+    background: rgb(255 255 255 / .015);
+    padding: 12px 14px;
+}
+
+.speedGroup {
+    display: grid;
+    gap: 6px;
+}
+
+.speedGroup > span,
+.speedGroup small {
+    color: var(--slate-muted);
+    font-family: var(--font-geist-mono), monospace;
+    font-size: 9px;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+}
+
+.speedGroup small {
+    text-transform: none;
+    letter-spacing: 0;
+}
+
+.speedToggle {
+    display: inline-flex;
+    gap: 4px;
+}
+
+.speedToggle button {
+    min-width: 42px;
+    height: 28px;
+    border: 1px solid var(--exp-line);
+    border-radius: calc(var(--radius) - 2px);
+    background: transparent;
+    color: var(--slate-fg-2);
+    font-family: var(--font-geist-mono), monospace;
+    font-size: 11px;
+    cursor: pointer;
+}
+
+.speedToggle button[data-active] {
+    border-color: rgb(120 185 141 / .45);
+    background: rgb(120 185 141 / .08);
+    color: var(--slate-success);
+}
+
+.caseRowButton {
+    display: grid;
+    grid-template-columns: 42px auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    min-height: 48px;
+    border: 0;
+    border-bottom: 1px solid var(--exp-line);
+    border-radius: 0;
+    background: transparent;
+    padding: 6px 8px;
+    color: #767d81;
+    text-align: left;
+    cursor: pointer;
+}
+
+.caseRowButton:hover,
+.caseRowButton:focus-visible {
+    background: rgb(255 255 255 / .03);
+    outline: none;
+}
+
+.caseRowButton:focus-visible {
+    box-shadow: inset 0 0 0 1px rgb(120 185 141 / .35);
+}
+
+.caseRowButton > span,
+.caseRowButton em {
+    font-family: var(--font-geist-mono), monospace;
+    font-size: 8px;
+    font-style: normal;
+    text-transform: uppercase;
+}
+
+.caseRowButton > div {
+    display: grid;
+    gap: 2px;
+}
+
+.caseRowButton strong {
+    color: var(--slate-fg-2);
+    font-size: 11px;
+    font-weight: 550;
+}
+
+.caseRowButton p {
+    margin: 0;
+    color: var(--slate-muted);
+    font-size: 9px;
+}
+
+.caseRowButton[data-status="running"] { color: var(--slate-success); background: rgb(120 185 141 / .035); }
+.caseRowButton[data-status="failed"],
+.caseRowButton[data-status="error"] { color: var(--slate-danger); }
+
+.caseDialog {
+    width: min(720px, calc(100vw - 32px));
+}
+
+.caseDialogMeta {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px 16px;
+    margin: 0 0 14px;
+}
+
+.caseDialogMeta div {
+    display: grid;
+    gap: 3px;
+}
+
+.caseDialogMeta dt,
+.caseDialogBlock h3 {
+    margin: 0;
+    color: var(--slate-muted);
+    font-family: var(--font-geist-mono), monospace;
+    font-size: 9px;
+    font-weight: 500;
+    letter-spacing: .07em;
+    text-transform: uppercase;
+}
+
+.caseDialogMeta dd {
+    margin: 0;
+    color: var(--slate-fg-2);
+    font-size: 12px;
+    word-break: break-word;
+}
+
+.caseDialogMeta code,
+.caseDialogBlock pre {
+    font-family: var(--font-geist-mono), monospace;
+    font-size: 10px;
+}
+
+.caseDialogSplit {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.caseDialogBlock {
+    display: grid;
+    gap: 8px;
+    margin-bottom: 12px;
+    border: 1px solid var(--exp-line);
+    border-radius: var(--radius);
+    padding: 10px 12px;
+}
+
+.caseDialogBlock[data-tone="danger"] {
+    border-color: rgb(214 120 120 / .28);
+    background: rgb(214 120 120 / .05);
+}
+
+.caseDialogBlock h3 {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.caseDialogBlock p,
+.caseDialogBlock em,
+.caseDialogBlock small {
+    margin: 0;
+    color: var(--slate-fg-2);
+    font-size: 11px;
+    line-height: 1.4;
+}
+
+.caseDialogBlock em,
+.caseDialogBlock small {
+    color: var(--slate-muted);
+    font-style: normal;
+}
+
+.caseDialogBlock p {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.caseDialogBlock pre {
+    margin: 0;
+    overflow: auto;
+    max-height: 160px;
+    color: var(--slate-muted);
+    white-space: pre-wrap;
+}
+
+.caseDialogBlock dl {
+    display: grid;
+    gap: 4px;
+    margin: 0;
+}
+
+.caseDialogBlock dl div {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.caseDialogBlock dt {
+    color: var(--slate-muted);
+}
+
+.caseDialogBlock dd {
+    margin: 0;
+    color: var(--slate-fg-2);
+}
+
+.caseDialogActions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 6px;
+}
+
 .resultPicker {
     display: flex;
     align-items: flex-end;
@@ -1312,13 +1544,39 @@
     gap: 8px;
 }
 
-.reviewList article {
+.reviewList article,
+.reviewCase {
     display: grid;
-    grid-template-columns: auto minmax(190px, .8fr) minmax(220px, 1.2fr) auto;
+    grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
     gap: 14px;
     padding: 13px;
     color: #858c90;
+}
+
+.reviewCaseButton {
+    display: grid;
+    grid-template-columns: auto minmax(190px, .8fr) minmax(220px, 1.2fr);
+    align-items: center;
+    gap: 14px;
+    width: 100%;
+    border: 0;
+    background: transparent;
+    padding: 0;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.reviewCaseButton:hover,
+.reviewCaseButton:focus-visible {
+    color: var(--slate-fg-2);
+    outline: none;
+}
+
+.reviewCaseButton:focus-visible {
+    box-shadow: 0 0 0 1px rgb(120 185 141 / .35);
+    border-radius: 4px;
 }
 
 .reviewIdentity,
@@ -1353,7 +1611,7 @@
 }
 
 .reviewEvidence {
-    grid-column: 2 / -1;
+    grid-column: 1 / -1;
     border-top: 1px solid var(--exp-line);
     padding-top: 9px;
     color: var(--slate-muted);

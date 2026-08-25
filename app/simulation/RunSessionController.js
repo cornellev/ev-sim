@@ -43,6 +43,8 @@ export class RunSessionController {
         this._autoFinalizing = false;
         this._pendingPrepare = null;
         this._scenarioDiagnosticsEnabled = false;
+        this._loggingPolicyOverride = null;
+        this._speedOverride = null;
     }
 
     getSnapshot() {
@@ -196,6 +198,7 @@ export class RunSessionController {
     async play() {
         if (!this.data || !this.snapshot.activeResolved) return null;
         await this._ensureRecording();
+        this.applyRuntimeOverrides(this.snapshot.activeResolved);
         this.data.simulation?.()?.play?.();
         this._set({ status: "running" });
         return this.getSnapshot();
@@ -212,6 +215,43 @@ export class RunSessionController {
         if (!simulation?.setScenarioDiagnosticsEnabled) return false;
         simulation.setScenarioDiagnosticsEnabled(this._scenarioDiagnosticsEnabled);
         return true;
+    }
+
+    setLoggingPolicyOverride(policy = null) {
+        if (policy === null || policy === undefined || policy === "") {
+            this._loggingPolicyOverride = null;
+            return null;
+        }
+        const normalized = String(policy);
+        if (!["required", "optional", "disabled"].includes(normalized)) {
+            throw new Error(`Unsupported logging policy override "${policy}".`);
+        }
+        this._loggingPolicyOverride = normalized;
+        return this._loggingPolicyOverride;
+    }
+
+    setSpeedOverride(speed = null) {
+        if (speed === null || speed === undefined || speed === "") {
+            this._speedOverride = null;
+            return null;
+        }
+        const next = Math.max(0, Number(speed) || 0);
+        this._speedOverride = next;
+        this.data?.simulation?.()?.setSpeed?.(next);
+        return this._speedOverride;
+    }
+
+    applyRuntimeOverrides(resolved = this.snapshot.activeResolved) {
+        const simulation = this.data?.simulation?.();
+        if (!simulation) return;
+        const requiresRealtime = Boolean(
+            resolved?.manifest?.clock?.pacing === "realtime"
+            && resolved?.scenario?.scenario?.routes?.some((route) => route.controller?.kind === "external-ros"),
+        );
+        const speed = requiresRealtime
+            ? 1
+            : (this._speedOverride ?? resolved?.manifest?.clock?.speed ?? 1);
+        simulation.setSpeed?.(speed);
     }
 
     async step(count = 1) {
@@ -305,8 +345,11 @@ export class RunSessionController {
         const resolved = this.snapshot.activeResolved;
         const runId = this.snapshot.activeRunId;
         if (!resolved || !runId || this._recordingRunId === runId) return;
-        const policy = resolved.manifest.logging.policy;
-        if (policy === "disabled") return;
+        const policy = this._loggingPolicyOverride ?? resolved.manifest.logging.policy;
+        if (policy === "disabled") {
+            this._recordingRunId = runId;
+            return;
+        }
         const renderer = this.data?.renderer;
         const gl = renderer?.getContext?.();
         const debugInfo = gl?.getExtension?.("WEBGL_debug_renderer_info");
@@ -328,6 +371,7 @@ export class RunSessionController {
                 runId,
                 resolvedRun: resolved,
                 provenance,
+                haltSimulationOnError: policy === "required",
             }));
             this._recordingRunId = runId;
         } catch (error) {
@@ -346,6 +390,8 @@ export class RunSessionController {
     clear() {
         this._launchSequence += 1;
         this._rejectPendingPrepare(new Error("Run preparation was cleared."));
+        this._loggingPolicyOverride = null;
+        this._speedOverride = null;
         this._set({
             status: "idle",
             pendingResolved: null,

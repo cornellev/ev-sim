@@ -123,6 +123,8 @@ export class ExperimentRunController {
         this._executionPromise = null;
         this._metricSubscription = null;
         this._metricAccumulator = null;
+        this._runSpeed = 1;
+        this._disableLogging = false;
         this._runSnapshot = this.runSession.getSnapshot?.() ?? { status: "idle" };
         this.snapshot = {
             status: "idle",
@@ -131,6 +133,8 @@ export class ExperimentRunController {
             currentCase: null,
             progress: progressFor(null),
             realtimeWarning: false,
+            runSpeed: 1,
+            disableLogging: false,
             error: null,
         };
         this._unsubscribeRunSession = this.runSession.subscribe?.((value) => this._onRunSnapshot(value)) ?? null;
@@ -158,31 +162,48 @@ export class ExperimentRunController {
         this._failurePolicy = failurePolicy(suite, input.failFast ?? options.failFast);
         this._paused = false;
         this._cancelRequested = false;
+        this._runSpeed = Math.max(0, Number(input.runSpeed ?? options.runSpeed ?? 1) || 1);
+        this._disableLogging = Boolean(input.disableLogging ?? options.disableLogging);
+        this.runSession.setSpeedOverride?.(this._runSpeed);
+        this.runSession.setLoggingPolicyOverride?.(this._disableLogging ? "disabled" : null);
 
-        const suppliedResult = input.result ?? options.result;
-        if (suppliedResult) {
-            const raw = documentFrom(suppliedResult, "result");
-            this.revision = input.expectedRevision ?? options.expectedRevision ?? raw?.revision ?? null;
-            this.result = normalizeExperimentResult(raw, { allowMissingKind: true });
-        } else {
-            const cases = input.cases ?? options.cases ?? [];
-            const pending = createExperimentResultDocument(suite, cases, {
-                id: input.resultId ?? options.resultId,
-                createdAt: nowIso(this.now),
-                status: "pending",
-            });
-            const stored = documentFrom(await this.createResult(pending), "result");
-            this.revision = stored?.revision ?? null;
-            this.result = normalizeExperimentResult(stored, { allowMissingKind: true });
-        }
-        if (this.result.suiteId !== suite.id) {
-            throw new Error(`Result "${this.result.id}" belongs to suite "${this.result.suiteId}", not "${suite.id}".`);
+        try {
+            const suppliedResult = input.result ?? options.result;
+            if (suppliedResult) {
+                const raw = documentFrom(suppliedResult, "result");
+                this.revision = input.expectedRevision ?? options.expectedRevision ?? raw?.revision ?? null;
+                this.result = normalizeExperimentResult(raw, { allowMissingKind: true });
+            } else {
+                const cases = input.cases ?? options.cases ?? [];
+                const pending = createExperimentResultDocument(suite, cases, {
+                    id: input.resultId ?? options.resultId,
+                    createdAt: nowIso(this.now),
+                    status: "pending",
+                });
+                const stored = documentFrom(await this.createResult(pending), "result");
+                this.revision = stored?.revision ?? null;
+                this.result = normalizeExperimentResult(stored, { allowMissingKind: true });
+            }
+            if (this.result.suiteId !== suite.id) {
+                throw new Error(`Result "${this.result.id}" belongs to suite "${this.result.suiteId}", not "${suite.id}".`);
+            }
+        } catch (error) {
+            this.runSession.setLoggingPolicyOverride?.(null);
+            throw error;
         }
 
-        this._set({ status: "running", error: null });
+        this._set({ status: "running", error: null, runSpeed: this._runSpeed, disableLogging: this._disableLogging });
         this._executionPromise = this._drainQueue().finally(() => {
             this._executionPromise = null;
+            this.runSession.setLoggingPolicyOverride?.(null);
         });
+        return this.getSnapshot();
+    }
+
+    setRunSpeed(speed) {
+        this._runSpeed = Math.max(0, Number(speed) || 0);
+        this.runSession.setSpeedOverride?.(this._runSpeed);
+        this._set({ runSpeed: this._runSpeed });
         return this.getSnapshot();
     }
 
@@ -229,9 +250,11 @@ export class ExperimentRunController {
             this._paused = false;
             this.result = normalizeExperimentResult({ ...this.result, status: "running", finishedAt: null }, { allowMissingKind: true });
             await this._persist();
+            this.runSession.setSpeedOverride?.(this._runSpeed);
+            this.runSession.applyRuntimeOverrides?.();
             await this.runSession.play?.();
             this._releasePauseWaiters();
-            this._set({ status: "running", error: null });
+            this._set({ status: "running", error: null, runSpeed: this._runSpeed, disableLogging: this._disableLogging });
             return this.getSnapshot();
         }
 
@@ -240,11 +263,14 @@ export class ExperimentRunController {
         }
         this._paused = false;
         this._cancelRequested = false;
+        this.runSession.setSpeedOverride?.(this._runSpeed);
+        this.runSession.setLoggingPolicyOverride?.(this._disableLogging ? "disabled" : null);
         this.result = normalizeExperimentResult({ ...this.result, status: "running", finishedAt: null }, { allowMissingKind: true });
         await this._persist();
-        this._set({ status: "running", error: null });
+        this._set({ status: "running", error: null, runSpeed: this._runSpeed, disableLogging: this._disableLogging });
         this._executionPromise = this._drainQueue().finally(() => {
             this._executionPromise = null;
+            this.runSession.setLoggingPolicyOverride?.(null);
         });
         return this.getSnapshot();
     }
@@ -362,6 +388,7 @@ export class ExperimentRunController {
             // Subscribe after that reset so reducers observe the case itself,
             // rather than setup events or the tail of the previous case.
             await this.runSession.prepare(resolvedRun, { autoplay: false });
+            this.runSession.applyRuntimeOverrides?.(resolvedRun);
             this._startMetricCollection(this.result.metricDefinitions);
             const terminalRun = this._waitForTerminalRun(resolvedRun.resolvedHash);
             await this.runSession.play();

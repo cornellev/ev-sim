@@ -1,11 +1,12 @@
 import express from "express";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { MAX_LOG_BATCH_BYTES } from "../../app/logging/LogLimits.js";
 
 export function createLogRouter(service) {
     const router = express.Router();
     const json = express.json({ limit: "2mb" });
-    const batch = express.raw({ type: "application/octet-stream", limit: "8mb" });
+    const batch = express.raw({ type: "application/octet-stream", limit: MAX_LOG_BATCH_BYTES });
 
     router.get("/", handle(async () => service.listLogs()));
     router.post("/sessions", json, handle(async (req) => service.createSession(req.body || {})));

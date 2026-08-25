@@ -2,6 +2,7 @@ import { SFLogBatchEncoder } from "./SFLogCodec.js";
 import { DEFAULT_REPLAY_PROFILE, normalizeProfile, resolveProfileRule } from "./LogProfiles.js";
 import { createLogSession, finalizeLogSession, uploadLogBatch } from "./LogClient.js";
 import { getTelemetryStore } from "../telemetry/TelemetryRuntime.js";
+import { SAFE_LOG_BATCH_BYTES, TARGET_LOG_BATCH_BYTES } from "./LogLimits.js";
 
 const FLUSH_INTERVAL_MS = 250;
 const MAX_QUEUE_BYTES = 16 * 1024 * 1024;
@@ -50,6 +51,7 @@ export class RecordingController {
         this._lastValues = new Map();
         this._lastSamples = new Map();
         this._simulation = null;
+        this.haltSimulationOnError = true;
     }
 
     attachSimulation(simulation) {
@@ -91,6 +93,8 @@ export class RecordingController {
         this.status = "starting";
         this.error = null;
         this.profile = normalizeProfile(options.profile || DEFAULT_REPLAY_PROFILE);
+        this.haltSimulationOnError = options.haltSimulationOnError
+            ?? (this.profile.mode === "replay-safe");
         this._emit();
         try {
             const created = await createLogSession({
@@ -179,7 +183,7 @@ export class RecordingController {
             this.encoder.addCheckpoint(this.store.snapshot(), this.store.descriptors(), recordingTimeUs);
             this.lastCheckpointUs = recordingTimeUs;
         }
-        if (this.encoder.byteEstimate >= 256 * 1024) this._flush();
+        if (this.encoder.byteEstimate >= TARGET_LOG_BATCH_BYTES) this._flush();
     }
 
     _recordingTimeUs(value) {
@@ -187,12 +191,9 @@ export class RecordingController {
         return this.timeBase === "simulation" ? timeUs : Math.max(0, timeUs - this.recordingTimeOriginUs);
     }
 
-    _flush() {
-        if (!this.encoder || !this.session || !["recording", "stopping"].includes(this.status)) return;
-        const batch = this.encoder.flush();
-        if (!batch) return;
+    _enqueueBatch(batch) {
         if (this.queuedBytes + batch.bytes.byteLength > MAX_QUEUE_BYTES) {
-            if (this.profile.mode === "replay-safe") {
+            if (this.haltSimulationOnError) {
                 this._simulation?.pause?.();
                 this.error = "Recording paused the simulation because the backend queue is full.";
                 this.status = "error";
@@ -201,7 +202,7 @@ export class RecordingController {
                 this.error = "Optional telemetry was dropped because the backend queue is full.";
             }
             this._emit();
-            return;
+            return false;
         }
         const sequence = this.sequence++;
         this.queuedBytes += batch.bytes.byteLength;
@@ -216,10 +217,28 @@ export class RecordingController {
             .catch((error) => {
                 this.error = error.message;
                 this.status = "error";
-                this._simulation?.pause?.();
+                if (this.haltSimulationOnError) this._simulation?.pause?.();
                 this._emit();
                 throw error;
             });
+        return true;
+    }
+
+    _flush() {
+        if (!this.encoder || !this.session || !["recording", "stopping"].includes(this.status)) return;
+        try {
+            while (this.encoder.pendingRecordCount > 0) {
+                const batch = this.encoder.flushUpTo(SAFE_LOG_BATCH_BYTES);
+                if (!batch) break;
+                if (!this._enqueueBatch(batch)) break;
+                if (!["recording", "stopping"].includes(this.status)) break;
+            }
+        } catch (error) {
+            this.error = error.message;
+            this.status = "error";
+            if (this.haltSimulationOnError) this._simulation?.pause?.();
+            this._emit();
+        }
     }
 
     addAttachment(attachment) {

@@ -468,7 +468,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace }) {
                     </select>
                     <Action icon={<IconCheck size={14} stroke={1.75} />} label="Validate" onClick={validate} disabled={!draft || busy} />
                     <Action icon={<IconDeviceFloppy size={14} stroke={1.75} />} label="Save" onClick={save} disabled={!draft || !dirty || busy} />
-                    <Action primary icon={<IconPlayerPlay size={14} stroke={1.75} />} label="Validate and run" onClick={launch} disabled={!draft || busy} />
+                    <Action primary icon={<IconPlayerPlay size={14} stroke={1.75} />} label="Launch" onClick={launch} disabled={!draft || busy} />
                 </div>
             </header>
 

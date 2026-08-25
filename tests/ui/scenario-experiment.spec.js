@@ -355,6 +355,10 @@ test("experiment matrix, baseline comparison, and Replay/Analysis handoff use pe
         await expect(page.getByText("Suite saved")).toBeVisible();
 
         await page.getByRole("tab", { name: "Run" }).click();
+        await expect(page.getByRole("group", { name: "Simulation speed" })).toBeVisible();
+        await page.getByRole("button", { name: "2×" }).click();
+        await expect(page.getByRole("button", { name: "2×" })).toHaveAttribute("aria-pressed", "true");
+        await expect(page.getByText("Disable logs for this run")).toBeVisible();
         const diagnostics = page.getByRole("button", { name: "3D diagnostics" });
         await diagnostics.click();
         await expect(diagnostics).toHaveAttribute("aria-pressed", "true");
@@ -371,6 +375,12 @@ test("experiment matrix, baseline comparison, and Replay/Analysis handoff use pe
 
         await page.getByRole("tab", { name: "Review" }).click();
         await page.getByRole("combobox", { name: "Experiment result" }).selectOption(resultId);
+        await page.getByRole("button", { name: new RegExp(`Inspect case 001: ${scenarioId}`) }).click();
+        await expect(page.getByRole("dialog")).toBeVisible();
+        await expect(page.getByRole("heading", { name: "Case 001" })).toBeVisible();
+        await expect(page.getByText("Dependency hashes")).toBeVisible();
+        await page.getByRole("button", { name: "Close" }).click();
+        await expect(page.getByRole("dialog")).toHaveCount(0);
         await page.getByRole("button", { name: "Replay" }).click();
         await expect(page.getByRole("combobox", { name: "Replay log" })).toBeVisible();
 

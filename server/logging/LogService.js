@@ -5,6 +5,7 @@ import { gzipSync, gunzipSync } from "node:zlib";
 
 import { ByteReader, ByteWriter, SFLOG_VERSION, decodeRecordStream } from "../../app/logging/SFLogCodec.js";
 import { downsampleMinMax } from "../../app/analysis/downsample.js";
+import { MAX_LOG_BATCH_BYTES } from "../../app/logging/LogLimits.js";
 
 const DEFAULT_LOGS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "data", "logs");
 const textEncoder = new TextEncoder();
@@ -209,7 +210,7 @@ export class LogService {
         if (seq !== session.lastSequence + 1) throw new Error(`Expected batch ${session.lastSequence + 1}, received ${seq}.`);
 
         const payload = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []);
-        if (payload.byteLength > 8 * 1024 * 1024) throw new Error("Log batch exceeds the 8 MiB limit.");
+        if (payload.byteLength > MAX_LOG_BATCH_BYTES) throw new Error(`Log batch exceeds the ${MAX_LOG_BATCH_BYTES} byte limit.`);
         session.lastSequence = seq;
         session.pending.push(payload);
         session.pendingBytes += payload.byteLength;

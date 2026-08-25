@@ -9,6 +9,7 @@ const COLORS = Object.freeze({
     actor: 0xaab4c3,
 });
 export const SCENARIO_DIAGNOSTIC_LAYER = 31;
+const ROLE_LABEL_OFFSET_Y = 1.8;
 
 function disableRaycast(object) {
     object.raycast = () => {};
@@ -27,7 +28,7 @@ function disposeObject(object) {
 }
 
 function roleLabel(text, color) {
-    const anchor = new THREE.Object3D();
+    const anchor = disableRaycast(new THREE.Object3D());
     anchor.userData.label = text;
     if (typeof document === "undefined") return anchor;
     const canvas = document.createElement("canvas");
@@ -69,6 +70,7 @@ export class ScenarioDiagnostics {
         this.enabled = false;
         this.scenario = null;
         this.zoneObjects = new Map();
+        this.roleObjects = new Map();
     }
 
     attach(scene, operatorCamera = null) {
@@ -135,7 +137,8 @@ export class ScenarioDiagnostics {
         if (!start) return;
         const label = roleLabel(actor.name || actor.id, actor.id === "ego" ? COLORS.ego : COLORS.actor);
         label.name = `scenario-role:${actor.id}`;
-        label.position.set(Number(start.x || 0), Number(start.y || 0) + 1.8, Number(start.z || 0));
+        label.position.set(Number(start.x || 0), Number(start.y || 0) + ROLE_LABEL_OFFSET_Y, Number(start.z || 0));
+        this.roleObjects.set(actor.id, label);
         this.group.add(label);
     }
 
@@ -147,10 +150,21 @@ export class ScenarioDiagnostics {
             object.material.color.setHex(zoneId === activeZone ? COLORS.zoneActive : COLORS.zone);
             object.material.opacity = zoneId === activeZone ? 1 : 0.72;
         }
+        const actorPoses = snapshot.actorPoses || {};
+        for (const [actorId, label] of this.roleObjects) {
+            const pose = actorPoses[actorId];
+            if (!pose) continue;
+            label.position.set(
+                Number(pose.x || 0),
+                Number(pose.y || 0) + ROLE_LABEL_OFFSET_Y,
+                Number(pose.z || 0),
+            );
+        }
     }
 
     clear() {
         this.zoneObjects.clear();
+        this.roleObjects.clear();
         for (const child of [...this.group.children]) {
             child.traverse(disposeObject);
             child.removeFromParent();

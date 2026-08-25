@@ -18,12 +18,49 @@ import {
     globMatches,
     resolveProfileRule,
 } from "../app/logging/LogProfiles.js";
+import { RecordingController } from "../app/logging/RecordingController.js";
 import { LogDataset, flattenNumericFields } from "../app/logging/LogDataset.js";
 import { SignalStore } from "../app/scripting/runtime/SignalStore.js";
 import { TimelineStore } from "../app/logging/TimelineStore.js";
 import { TelemetryTabBridge } from "../app/telemetry/TelemetryRuntime.js";
 import { LogService } from "../server/logging/LogService.js";
 import { validateDeviceTelemetryId } from "../app/3d/data/DeviceTelemetryId.js";
+
+test("SFLog batch encoder tracks payload size and splits before the transport ceiling", () => {
+    const encoder = new SFLogBatchEncoder();
+    const huge = new Uint8Array(3 * 1024 * 1024);
+    encoder.addUpdate({
+        path: "devices.camera.image",
+        timeUs: 1_000,
+        cycle: 1,
+        entry: { type: "bytes", value: huge },
+        descriptor: { path: "devices.camera.image", type: "bytes", replayRole: "sample", logClass: "heavy" },
+    });
+    encoder.addUpdate({
+        path: "devices.camera.image",
+        timeUs: 2_000,
+        cycle: 2,
+        entry: { type: "bytes", value: huge },
+        descriptor: { path: "devices.camera.image", type: "bytes", replayRole: "sample", logClass: "heavy" },
+    });
+    encoder.addUpdate({
+        path: "devices.camera.image",
+        timeUs: 3_000,
+        cycle: 3,
+        entry: { type: "bytes", value: huge },
+        descriptor: { path: "devices.camera.image", type: "bytes", replayRole: "sample", logClass: "heavy" },
+    });
+    assert.ok(encoder.byteEstimate > 8 * 1024 * 1024);
+    const first = encoder.flushUpTo(7.5 * 1024 * 1024);
+    assert.ok(first.bytes.byteLength <= 8 * 1024 * 1024);
+    assert.ok(encoder.pendingRecordCount > 0);
+    const second = encoder.flushUpTo(7.5 * 1024 * 1024);
+    assert.ok(second.bytes.byteLength <= 8 * 1024 * 1024);
+    while (encoder.pendingRecordCount > 0) {
+        const next = encoder.flushUpTo(7.5 * 1024 * 1024);
+        assert.ok(next.bytes.byteLength <= 8 * 1024 * 1024);
+    }
+});
 
 test("SFLog varints, zigzag values, primitives, vectors, arrays, and JSON round-trip", () => {
     const writer = new ByteWriter();
@@ -139,6 +176,36 @@ test("SignalStore retains only the latest heavy sample", () => {
     store.publishSignal("sensors.camera.frame", new Uint8Array([3]), { timeUs: 3 });
     assert.equal(store.history("sensors.camera.frame").length, 1);
     assert.deepEqual([...store.history("sensors.camera.frame")[0].value], [3]);
+});
+
+test("optional recording backpressure drops telemetry without pausing the simulation", () => {
+    const oversizedBatch = { bytes: new Uint8Array((16 * 1024 * 1024) + 1) };
+    const flushWithPolicy = (haltSimulationOnError) => {
+        let pauses = 0;
+        const controller = new RecordingController({});
+        controller.session = { id: "overflow-test" };
+        controller.encoder = {
+            pendingRecordCount: 1,
+            flushUpTo: () => {
+                controller.encoder.pendingRecordCount = 0;
+                return oversizedBatch;
+            },
+        };
+        controller.status = "recording";
+        controller.haltSimulationOnError = haltSimulationOnError;
+        controller.attachSimulation({ pause: () => { pauses += 1; } });
+        controller._flush();
+        return { controller, pauses };
+    };
+
+    const optional = flushWithPolicy(false);
+    assert.equal(optional.pauses, 0);
+    assert.equal(optional.controller.status, "recording");
+    assert.equal(optional.controller.droppedSamples, 1);
+
+    const required = flushWithPolicy(true);
+    assert.equal(required.pauses, 1);
+    assert.equal(required.controller.status, "error");
 });
 
 test("SignalStore uses simulation time as its source clock while paused", () => {

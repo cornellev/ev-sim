@@ -3,7 +3,16 @@
  * MCP control bridge. Keeping attachment construction here prevents the two
  * recording entry points from drifting apart.
  */
-export function buildRecordingOptions({ data, store, profile, name, runId = null, resolvedRun = null, provenance = null }) {
+export function buildRecordingOptions({
+    data,
+    store,
+    profile,
+    name,
+    runId = null,
+    resolvedRun = null,
+    provenance = null,
+    haltSimulationOnError,
+}) {
     const runtime = data?.bindings?.();
     const attachments = [
         { name: "signal-catalog.json", mime: "application/json", bytes: JSON.stringify(store.descriptors()) },
@@ -29,6 +38,7 @@ export function buildRecordingOptions({ data, store, profile, name, runId = null
         definitionHash: resolvedRun?.definitionHash ?? null,
         resolvedHash: resolvedRun?.resolvedHash ?? null,
         provenance,
+        haltSimulationOnError,
         timeBase: resolvedRun ? "simulation" : "wall",
         attachments,
     };

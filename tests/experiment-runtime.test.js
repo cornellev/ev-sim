@@ -219,6 +219,10 @@ class FakeRunSession {
         this.activeCount = 0;
         this.maximumActive = 0;
         this.prepared = [];
+        this.speedOverride = null;
+        this.loggingOverride = null;
+        this.appliedOverrides = 0;
+        this.liveSpeeds = [];
     }
 
     getSnapshot() {
@@ -229,6 +233,21 @@ class FakeRunSession {
         this.listeners.add(listener);
         listener(this.getSnapshot());
         return () => this.listeners.delete(listener);
+    }
+
+    setSpeedOverride(speed = null) {
+        this.speedOverride = speed;
+        this.liveSpeeds.push(speed);
+        return this.speedOverride;
+    }
+
+    setLoggingPolicyOverride(policy = null) {
+        this.loggingOverride = policy;
+        return this.loggingOverride;
+    }
+
+    applyRuntimeOverrides() {
+        this.appliedOverrides += 1;
     }
 
     async prepare(resolved, { autoplay }) {
@@ -519,4 +538,39 @@ test("reload audit interrupts stale active results across every suite", async ()
         assert.deepEqual(result.cases.map((entry) => entry.status), ["interrupted", "pending"]);
         assert.equal(result.finishedAt, "2026-07-30T10:00:00.000Z");
     }
+});
+
+test("ExperimentRunController applies transient speed and disable-logging overrides without mutating the suite", async () => {
+    const telemetry = new FakeTelemetry();
+    const runSession = new FakeRunSession(telemetry, [
+        { status: "completed", completed: true, passed: true, logId: null },
+    ]);
+    const suite = experimentSuite({ seeds: [1] });
+    const cases = [pendingCase({ id: "case-speed", seed: 1 })];
+    let revision = 0;
+    const controller = new ExperimentRunController({
+        telemetry,
+        runSession,
+        createResult: async (result) => ({ ...result, revision: ++revision }),
+        saveResult: async (_id, result) => ({ ...result, revision: ++revision }),
+        resolveCase: async (_suiteId, { case: entry }) => ({
+            resolvedHash: `hash-${entry.seed}`,
+            dependencyHashes: {},
+            resolvedRun: { resolvedHash: `hash-${entry.seed}`, manifest: { id: entry.manifestId } },
+        }),
+    });
+
+    await controller.start({ suite, cases, runSpeed: 2, disableLogging: true });
+    assert.equal(controller.getSnapshot().runSpeed, 2);
+    assert.equal(controller.getSnapshot().disableLogging, true);
+    assert.equal(runSession.speedOverride, 2);
+    assert.equal(runSession.loggingOverride, "disabled");
+    controller.setRunSpeed(4);
+    assert.equal(runSession.speedOverride, 4);
+    assert.equal(controller.getSnapshot().runSpeed, 4);
+    await controller.waitForCompletion();
+    assert.ok(runSession.appliedOverrides >= 1);
+    assert.equal(runSession.loggingOverride, null);
+    assert.equal(suite.execution?.logging, undefined);
+    controller.destroy();
 });
