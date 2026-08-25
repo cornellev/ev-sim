@@ -82,6 +82,24 @@ function slug(value, fallback = "experiment-suite") {
     return String(value || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || `${fallback}-${Date.now().toString(36)}`;
 }
 
+function createRandomRunNickname(suiteId) {
+    const token = globalThis.crypto?.randomUUID?.().slice(0, 8)
+        ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    return `${String(suiteId || "experiment").trim()}-run-${token}`;
+}
+
+function validateRunNickname(value, results) {
+    const id = String(value || "").trim();
+    if (!id) return "Enter a nickname before launching the suite.";
+    if (id === "." || id === ".." || /[\\/]/.test(id)) {
+        return "The nickname cannot be “.”, “..”, or contain a slash.";
+    }
+    if (results.some((entry) => entry.id === id)) {
+        return `A run with the ID “${id}” already exists.`;
+    }
+    return null;
+}
+
 function listFrom(value, key) {
     return Array.isArray(value) ? value : value?.[key] || value?.items || [];
 }
@@ -150,6 +168,7 @@ export default function ExperimentWorkspace({ onOpenWorkspace, onOpenReplay, onO
     const [snapshot, setSnapshot] = useState(() => runController.getSnapshot());
     const [runSpeed, setRunSpeed] = useState(1);
     const [disableLogging, setDisableLogging] = useState(false);
+    const [runNickname, setRunNickname] = useState("");
     const [tab, setTab] = useState("setup");
     const [creating, setCreating] = useState(false);
     const [loading, setLoading] = useState(true);
@@ -160,6 +179,14 @@ export default function ExperimentWorkspace({ onOpenWorkspace, onOpenReplay, onO
     const [diagnosticsEnabled, setDiagnosticsEnabled] = useState(false);
 
     const dirty = Boolean(saved && draft && stable(saved) !== stable(draft));
+    const runNicknameError = useMemo(
+        () => validateRunNickname(runNickname, results),
+        [results, runNickname],
+    );
+
+    useEffect(() => {
+        if (selectedId) setRunNickname(createRandomRunNickname(selectedId));
+    }, [selectedId]);
 
     const applySuite = useCallback((value) => {
         const document = suiteDocument(value);
@@ -372,6 +399,10 @@ export default function ExperimentWorkspace({ onOpenWorkspace, onOpenReplay, onO
 
     const startRun = async () => {
         if (!draft || !plan.ok) return;
+        if (runNicknameError) {
+            setError(runNicknameError);
+            return;
+        }
         setBusy(true);
         setError(null);
         try {
@@ -389,7 +420,7 @@ export default function ExperimentWorkspace({ onOpenWorkspace, onOpenReplay, onO
             }
             const executableCases = serverValidation?.matrix?.cases || plan.cases;
             if (executableCases.length === 0) throw new Error("The suite has no compatible cases to run.");
-            const resultId = `${draft.id}-result-${Date.now().toString(36)}`;
+            const resultId = runNickname.trim();
             await runController.start({
                 suite: executableSuite,
                 cases: executableCases,
@@ -398,7 +429,7 @@ export default function ExperimentWorkspace({ onOpenWorkspace, onOpenReplay, onO
                 disableLogging,
             });
             setDisableLogging(false);
-            setFeedback(`Running ${executableCases.length} cases sequentially`);
+            setFeedback(`Running ${executableCases.length} cases as ${resultId}`);
         } catch (runError) { setError(runError?.message || "Could not start the experiment."); }
         finally { setBusy(false); }
     };
@@ -484,7 +515,7 @@ export default function ExperimentWorkspace({ onOpenWorkspace, onOpenReplay, onO
                             <TabsContent value="setup"><SetupSection suite={draft} scenarios={scenarios} manifests={manifests} parameters={parameters} onUpdate={update} /></TabsContent>
                             <TabsContent value="matrix"><MatrixSection suite={draft} plan={plan} scenarios={scenarios} manifests={manifests} onToggleExclusion={toggleExclusion} /></TabsContent>
                             <TabsContent value="metrics"><MetricsSection suite={draft} onUpdate={update} /></TabsContent>
-                            <TabsContent value="run"><RunSection plan={plan} result={selectedResult} snapshot={snapshot} results={suiteResults} diagnosticsEnabled={diagnosticsEnabled} onDiagnosticsEnabledChange={changeDiagnostics} onDiagnosticsViewportChange={onDiagnosticsViewportChange} onSelectResult={chooseResult} runSpeed={runSpeed} disableLogging={disableLogging} onRunSpeedChange={changeRunSpeed} onDisableLoggingChange={setDisableLogging} onStart={startRun} onPause={pauseRun} onResume={resumeRun} onCancel={cancelRun} onReplay={onOpenReplay} onAnalysis={onOpenAnalysis} /></TabsContent>
+                            <TabsContent value="run"><RunSection plan={plan} result={selectedResult} snapshot={snapshot} results={suiteResults} diagnosticsEnabled={diagnosticsEnabled} onDiagnosticsEnabledChange={changeDiagnostics} onDiagnosticsViewportChange={onDiagnosticsViewportChange} onSelectResult={chooseResult} runNickname={runNickname} runNicknameError={runNicknameError} onRunNicknameChange={setRunNickname} runSpeed={runSpeed} disableLogging={disableLogging} onRunSpeedChange={changeRunSpeed} onDisableLoggingChange={setDisableLogging} onStart={startRun} onPause={pauseRun} onResume={resumeRun} onCancel={cancelRun} onReplay={onOpenReplay} onAnalysis={onOpenAnalysis} /></TabsContent>
                             <TabsContent value="compare"><CompareSection results={suiteResults} baselines={baselines.filter((entry) => entry.suiteId === selectedId)} result={selectedResult} baseline={selectedBaseline} comparison={comparison} onResult={chooseResult} onBaseline={chooseBaseline} onSaveBaseline={saveBaseline} /></TabsContent>
                             <TabsContent value="review"><ReviewSection result={selectedResult} results={suiteResults} onResult={chooseResult} onReplay={onOpenReplay} onAnalysis={onOpenAnalysis} /></TabsContent>
                         </div>

@@ -448,6 +448,71 @@ test("ExperimentRunController seeds reducers with deterministic t=0 signals and 
     controller.destroy();
 });
 
+test("scenario built-in metrics persist from run summaries and stay unavailable when absent", async () => {
+    const telemetry = new FakeTelemetry();
+    const runSession = new FakeRunSession(telemetry, [
+        {
+            status: "completed",
+            completed: true,
+            passed: true,
+            metrics: {
+                passed: 1,
+                "route-progress": 12.5,
+                "route-progress-ratio": 0.625,
+                "off-road": 0,
+                "wrong-way": 0,
+                "kinematic-infeasibility": 0,
+                acceleration: 3.1,
+                jerk: 1.2,
+                "log-divergence": 0.4,
+                failure: 0,
+            },
+        },
+        {
+            status: "completed",
+            completed: true,
+            passed: true,
+            metrics: { passed: 1 },
+        },
+    ]);
+    const suite = experimentSuite({
+        seeds: [1, 2],
+        metrics: [
+            { id: "passed", source: { kind: "builtin", metric: "passed" } },
+            { id: "route-progress", source: { kind: "builtin", metric: "route-progress" } },
+            { id: "failure", source: { kind: "builtin", metric: "failure" } },
+            { id: "log-divergence", source: { kind: "builtin", metric: "log-divergence" } },
+        ],
+    });
+    const controller = new ExperimentRunController({
+        telemetry,
+        runSession,
+        createResult: async (result) => ({ ...result, revision: 1 }),
+        saveResult: async (_id, result) => ({ ...result, revision: 2 }),
+        resolveCase: async () => ({
+            resolvedHash: "scenario-metric-hash",
+            dependencyHashes: {},
+            resolvedRun: { resolvedHash: "scenario-metric-hash", manifest: { id: "controller-a" } },
+        }),
+    });
+
+    await controller.start({
+        suite,
+        cases: [
+            pendingCase({ id: "with-metrics", seed: 1 }),
+            pendingCase({ id: "without-metrics", seed: 2 }),
+        ],
+    });
+    const finalSnapshot = await controller.waitForCompletion();
+    assert.equal(finalSnapshot.result.cases[0].metrics["route-progress"], 12.5);
+    assert.equal(finalSnapshot.result.cases[0].metrics.failure, 0);
+    assert.equal(finalSnapshot.result.cases[0].metrics["log-divergence"], 0.4);
+    assert.equal(finalSnapshot.result.cases[1].metrics["route-progress"], null);
+    assert.equal(finalSnapshot.result.cases[1].metrics.failure, null);
+    assert.equal(finalSnapshot.result.cases[1].metrics["log-divergence"], null);
+    controller.destroy();
+});
+
 test("ExperimentRunController marks stale running cases interrupted and resumes pending work", async () => {
     const telemetry = new FakeTelemetry();
     const runSession = new FakeRunSession(telemetry, [
@@ -560,7 +625,14 @@ test("ExperimentRunController applies transient speed and disable-logging overri
         }),
     });
 
-    await controller.start({ suite, cases, runSpeed: 2, disableLogging: true });
+    await controller.start({
+        suite,
+        cases,
+        resultId: "corridor-acceptance-01",
+        runSpeed: 2,
+        disableLogging: true,
+    });
+    assert.equal(controller.getSnapshot().result.id, "corridor-acceptance-01");
     assert.equal(controller.getSnapshot().runSpeed, 2);
     assert.equal(controller.getSnapshot().disableLogging, true);
     assert.equal(runSession.speedOverride, 2);

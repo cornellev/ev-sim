@@ -493,6 +493,21 @@ export class SFLogBatchEncoder {
     }
 
     /**
+     * Re-emit every known schema before pending records. Call this after an
+     * encoded batch is intentionally dropped so future updates remain decodable.
+     */
+    repeatSchemas() {
+        const records = [...this.schemas.entries()].map(([id, descriptor]) => ({
+            kind: "schema",
+            id,
+            descriptor,
+        }));
+        for (const record of records) record.estimatedBytes = estimateRecordBytes(record, this.schemas);
+        this.records.unshift(...records);
+        this._byteEstimate += records.reduce((total, record) => total + record.estimatedBytes, 0);
+    }
+
+    /**
      * Encode and remove records until adding the next group would exceed maxBytes.
      * Returns null when empty. Throws when a single unsplittable record exceeds maxBytes.
      */

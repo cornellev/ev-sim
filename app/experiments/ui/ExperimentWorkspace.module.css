@@ -732,14 +732,18 @@
 }
 
 .runOptions {
-    display: flex;
+    display: grid;
+    grid-template-columns: minmax(190px, 1.2fr) auto minmax(250px, 1fr);
     align-items: flex-end;
-    justify-content: space-between;
     gap: 18px;
     border: 1px solid var(--exp-line);
     border-radius: var(--radius);
     background: rgb(255 255 255 / .015);
     padding: 12px 14px;
+}
+
+.runNickname {
+    min-width: 0;
 }
 
 .speedGroup {
@@ -1737,6 +1741,8 @@
 
 @media (max-width: 1120px) {
     .catalog { width: 282px; }
+    .runOptions { grid-template-columns: minmax(190px, 1fr) auto; }
+    .runOptions > :last-child { grid-column: 1 / -1; }
     .metricFields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .compareControls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .saveBaseline { grid-column: 1 / -1; }

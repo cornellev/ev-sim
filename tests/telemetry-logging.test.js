@@ -7,6 +7,7 @@ import os from "node:os";
 import {
     ByteReader,
     ByteWriter,
+    RECORD_TAGS,
     SFLogBatchEncoder,
     decodeRecordStream,
     decodeSignalValue,
@@ -208,6 +209,53 @@ test("optional recording backpressure drops telemetry without pausing the simula
     assert.equal(required.controller.status, "error");
 });
 
+test("dropped optional batches re-emit schemas before later updates", () => {
+    const encoder = new SFLogBatchEncoder();
+    for (let id = 1; id <= 46; id += 1) {
+        encoder.addUpdate({
+            path: `signal.${id}`,
+            timeUs: 0,
+            entry: { type: "float64", value: id },
+            descriptor: { path: `signal.${id}`, type: "float64" },
+        });
+    }
+    const initial = decodeRecordStream(encoder.flush().bytes);
+    const controller = new RecordingController({});
+    controller.encoder = encoder;
+    controller.session = { id: "schema-recovery" };
+    controller.status = "recording";
+    controller.haltSimulationOnError = false;
+    controller.queuedBytes = 16 * 1024 * 1024;
+
+    encoder.addUpdate({
+        path: "dynamic.signal",
+        timeUs: 1,
+        entry: { type: "float64", value: 1 },
+        descriptor: { path: "dynamic.signal", type: "float64" },
+    });
+    controller._flush();
+    assert.equal(controller.droppedSamples, 1);
+    assert.ok(encoder.pendingRecordCount >= 47);
+
+    let recoveredBatch = null;
+    controller.queuedBytes = 0;
+    controller._enqueueBatch = (batch) => {
+        recoveredBatch = batch;
+        return true;
+    };
+    encoder.addUpdate({
+        path: "dynamic.signal",
+        timeUs: 2,
+        entry: { type: "float64", value: 2 },
+        descriptor: { path: "dynamic.signal", type: "float64" },
+    });
+    controller._flush();
+
+    const recovered = decodeRecordStream(recoveredBatch.bytes, initial.schemas);
+    assert.equal(recovered.schemas.get(47).path, "dynamic.signal");
+    assert.deepEqual(recovered.updates.map((update) => [update.path, update.value]), [["dynamic.signal", 2]]);
+});
+
 test("SignalStore uses simulation time as its source clock while paused", () => {
     const store = new SignalStore({}, { sourceId: "simulation-clock-source", sessionStartedAtMs: -1_000_000 });
     assert.equal(store.getSimulationTimeUs(), null);
@@ -382,6 +430,38 @@ test("LogService finalizes indexed chunks, retries batches idempotently, imports
     assert.equal((await service.listLogs()).length, 2);
     await assert.rejects(service.importLog(new Uint8Array([1, 2, 3])), /SFLog|end/i);
     await assert.rejects(service.getMetadata("../escape"), /Invalid log id/);
+});
+
+test("LogService validates a batch before accepting its sequence number", async (context) => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "fusion-sflog-validation-"));
+    context.after(() => rm(directory, { recursive: true, force: true }));
+    const service = new LogService(directory);
+    const session = await service.createSession({ id: "schema-validation" });
+    const invalid = new ByteWriter();
+    invalid.uint8(RECORD_TAGS.CYCLE);
+    invalid.varuint(1);
+    invalid.varuint(0);
+    invalid.varuint(1);
+    invalid.varuint(47);
+    invalid.sizedBytes(encodeSignalValue("float64", 1));
+    const input = { sequence: 0, startUs: 0, endUs: 0, bytes: invalid.finish() };
+
+    await assert.rejects(service.appendBatch(session.id, input), /unknown schema 47/);
+    await assert.rejects(service.appendBatch(session.id, input), /unknown schema 47/);
+    assert.equal(service.active.get(session.id).lastSequence, -1);
+    assert.equal(service.active.get(session.id).pending.length, 0);
+
+    const encoder = new SFLogBatchEncoder();
+    encoder.addUpdate({
+        path: "simulation.time",
+        timeUs: 0,
+        entry: { type: "float64", value: 0 },
+        descriptor: { path: "simulation.time", type: "float64" },
+    });
+    const valid = encoder.flush();
+    const appended = await service.appendBatch(session.id, { sequence: 0, ...valid });
+    assert.equal(appended.duplicate, false);
+    assert.equal((await service.finalize(session.id)).status, "complete");
 });
 
 test("LogService recovers valid chunks from interrupted partial recordings", async (context) => {

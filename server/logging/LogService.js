@@ -194,6 +194,7 @@ export class LogService {
             pendingStartUs: null,
             pendingEndUs: null,
             writeChain: Promise.resolve(),
+            ingestSchemas: new Map(),
         });
         return { id, metadata };
     }
@@ -211,6 +212,8 @@ export class LogService {
 
         const payload = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []);
         if (payload.byteLength > MAX_LOG_BATCH_BYTES) throw new Error(`Log batch exceeds the ${MAX_LOG_BATCH_BYTES} byte limit.`);
+        const validated = decodeRecordStream(payload, session.ingestSchemas);
+        session.ingestSchemas = validated.schemas;
         session.lastSequence = seq;
         session.pending.push(payload);
         session.pendingBytes += payload.byteLength;

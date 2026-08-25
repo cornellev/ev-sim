@@ -343,6 +343,17 @@ test("experiment matrix, baseline comparison, and Replay/Analysis handoff use pe
         await catalog.getByRole("button", { name: new RegExp(suiteName, "i") }).click();
         await page.getByRole("textbox", { name: "Seeds" }).fill("17, 23");
         await expect(page.getByText("2 cases", { exact: true }).first()).toBeVisible();
+        const seeds = page.getByRole("textbox", { name: "Seeds" });
+        await seeds.click();
+        await seeds.press("End");
+        await seeds.pressSequentially(", 0.5");
+        await expect(seeds).toHaveValue("17, 23, 0.5");
+        await seeds.blur();
+        await expect(seeds).toHaveValue("17, 23, 0.5");
+        await expect(page.getByText("3 cases", { exact: true }).first()).toBeVisible();
+        await seeds.fill("17, 23");
+        await seeds.blur();
+        await expect(page.getByText("2 cases", { exact: true }).first()).toBeVisible();
 
         await page.getByRole("tab", { name: /Matrix/ }).click();
         const matrixCell = page.getByRole("button", { name: /2 cases/i });
@@ -356,6 +367,26 @@ test("experiment matrix, baseline comparison, and Replay/Analysis handoff use pe
 
         await page.getByRole("tab", { name: "Run" }).click();
         await expect(page.getByRole("group", { name: "Simulation speed" })).toBeVisible();
+        const runButton = page.getByRole("button", { name: "Run suite" });
+        const runNickname = page.getByRole("textbox", { name: "Run nickname" });
+        await expect(runNickname).toHaveValue(new RegExp(`^${suiteId}-run-`));
+        await expect(runButton).toBeEnabled();
+        await runNickname.fill(`corridor-acceptance-${suffix}`);
+        await expect(runButton).toBeEnabled();
+
+        await page.getByRole("tab", { name: "Metrics" }).click();
+        await page.getByRole("combobox", { name: "Metric to add" }).selectOption("route-progress");
+        await page.getByRole("button", { name: "Add metric" }).click();
+        await expect(page.getByText("Route progress", { exact: true }).first()).toBeVisible();
+        await page.getByRole("combobox", { name: "Metric to add" }).selectOption("failure");
+        await page.getByRole("button", { name: "Add metric" }).click();
+        await expect(page.getByText("Failure", { exact: true }).first()).toBeVisible();
+        await page.getByRole("button", { name: "Save" }).click();
+        await expect(page.getByText("Suite saved")).toBeVisible();
+
+        await page.getByRole("tab", { name: "Run" }).click();
+        await expect(page.getByRole("textbox", { name: "Run nickname" })).toHaveValue(`corridor-acceptance-${suffix}`);
+        await expect(runButton).toBeEnabled();
         await page.getByRole("button", { name: "2×" }).click();
         await expect(page.getByRole("button", { name: "2×" })).toHaveAttribute("aria-pressed", "true");
         await expect(page.getByText("Disable logs for this run")).toBeVisible();

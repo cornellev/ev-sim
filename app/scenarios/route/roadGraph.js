@@ -178,6 +178,9 @@ function projectionSort(left, right) {
  * Project a world XZ point onto a paved road/intersection footprint.
  * Returns null when the point is outside all footprints; no screen-pixel
  * tolerance is added unless the caller explicitly supplies `tolerance`.
+ *
+ * Pass `options.graph` (from {@link buildDirectedRoadGraph}) to avoid
+ * rebuilding the directed graph on every call.
  */
 export function projectPointToRoadNetwork(value, environment, options = {}) {
     const valueLooksEnvironment = Boolean(value?.roads || value?.document?.roads || value?.manifest?.document?.roads);
@@ -186,7 +189,9 @@ export function projectPointToRoadNetwork(value, environment, options = {}) {
     const environmentValue = valueLooksEnvironment && environmentLooksPoint ? value : environment;
     const point = pointFrom(pointValue);
     if (!point) return null;
-    const graph = buildDirectedRoadGraph(environmentValue);
+    const graph = options.graph?.adjacency instanceof Map
+        ? options.graph
+        : buildDirectedRoadGraph(environmentValue);
     const tolerance = Math.max(0, finiteNumber(options.tolerance, 0));
     const intersections = [];
     const roads = [];
@@ -239,6 +244,16 @@ export function projectPointToRoadNetwork(value, environment, options = {}) {
     if (intersections.length) return intersections.sort(projectionSort)[0];
     if (roads.length) return roads.sort(projectionSort)[0];
     return null;
+}
+
+/** True when every supplied XZ point lies on a paved road or intersection. */
+export function arePointsOnRoadNetwork(points, environment, options = {}) {
+    const list = Array.isArray(points) ? points : [];
+    if (list.length === 0) return false;
+    const graph = options.graph?.adjacency instanceof Map
+        ? options.graph
+        : buildDirectedRoadGraph(environment);
+    return list.every((point) => Boolean(projectPointToRoadNetwork(point, environment, { ...options, graph })));
 }
 
 export const projectWaypointToRoadNetwork = projectPointToRoadNetwork;

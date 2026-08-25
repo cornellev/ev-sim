@@ -34,6 +34,7 @@ export {
     METRIC_DIRECTIONS,
     METRIC_REDUCER_KINDS,
     MetricAccumulator,
+    builtInMetricDefaults,
     createStreamingReducer,
     extractBuiltInMetric,
     extractBuiltInMetrics,

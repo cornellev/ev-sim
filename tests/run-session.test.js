@@ -47,6 +47,32 @@ test("optional logging marks a run degraded while disabled logging does not open
     assert.equal(disabledAttempts, 0);
 });
 
+test("optional log finalization failures degrade rather than fail a completed run", async () => {
+    const controller = controllerFor("optional", async () => {});
+    controller._recordingRunId = "run-test";
+    controller.recording = {
+        session: { id: "log-pending" },
+        addAttachment() {},
+        async stop() { throw new Error("schema validation failed"); },
+    };
+    controller.data = {
+        ...controller.data,
+        simulation: () => ({
+            steps: 10,
+            timeNs: 1_000_000_000,
+            assertionEngine: { finalize: () => ({ results: [] }) },
+            stop() {},
+        }),
+    };
+
+    const result = await controller.stop({ status: "completed" });
+    assert.equal(result.completed, true);
+    assert.equal(result.passed, true);
+    assert.equal(result.logId, null);
+    assert.equal(controller.snapshot.degraded, true);
+    assert.match(controller.snapshot.error, /Optional log finalization failed/);
+});
+
 test("run recording options include immutable manifest attachment and provenance", async () => {
     let options;
     const controller = controllerFor("required", async (value) => { options = value; });

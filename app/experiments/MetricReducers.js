@@ -26,6 +26,15 @@ export const BUILT_IN_METRIC_IDS = Object.freeze([
     "final-waypoint-distance",
     "assertion-failures",
     "expected-outcome-failures",
+    "route-progress",
+    "route-progress-ratio",
+    "off-road",
+    "wrong-way",
+    "kinematic-infeasibility",
+    "acceleration",
+    "jerk",
+    "log-divergence",
+    "failure",
 ]);
 
 const BUILT_IN_DEFAULTS = Object.freeze({
@@ -36,7 +45,20 @@ const BUILT_IN_DEFAULTS = Object.freeze({
     "final-waypoint-distance": { name: "Final waypoint distance", unit: "m", direction: "lower" },
     "assertion-failures": { name: "Assertion failures", unit: "count", direction: "lower" },
     "expected-outcome-failures": { name: "Expected outcome failures", unit: "count", direction: "lower" },
+    "route-progress": { name: "Route progress", unit: "m", direction: "higher" },
+    "route-progress-ratio": { name: "Route progress ratio", unit: "ratio", direction: "higher" },
+    "off-road": { name: "Off road", unit: "boolean", direction: "lower" },
+    "wrong-way": { name: "Wrong way", unit: "boolean", direction: "lower" },
+    "kinematic-infeasibility": { name: "Kinematic infeasibility", unit: "boolean", direction: "lower" },
+    acceleration: { name: "Peak acceleration", unit: "m/s^2", direction: "lower" },
+    jerk: { name: "Peak jerk", unit: "m/s^3", direction: "lower" },
+    "log-divergence": { name: "Log divergence", unit: "m", direction: "lower" },
+    failure: { name: "Failure", unit: "boolean", direction: "lower" },
 });
+
+export function builtInMetricDefaults(metricId) {
+    return BUILT_IN_DEFAULTS[metricId] ? { ...BUILT_IN_DEFAULTS[metricId] } : null;
+}
 
 function toMetricNumber(value) {
     if (typeof value === "boolean") return value ? 1 : 0;
@@ -256,6 +278,18 @@ function failureCount(entries) {
     )).length;
 }
 
+function optionalMetric(result, metricId, aliases = []) {
+    const metrics = asObject(result.metrics);
+    const direct = toMetricNumber(metrics[metricId]);
+    if (direct !== null) return direct;
+    for (const alias of aliases) {
+        const value = toMetricNumber(result[alias] ?? metrics[alias]);
+        if (value !== null) return value;
+    }
+    // Absent scenario metrics stay unavailable (null), never coerced to zero.
+    return null;
+}
+
 export function extractBuiltInMetrics(value = {}) {
     const result = asObject(value);
     const explicitCompleted = typeof result.completed === "boolean" ? result.completed : null;
@@ -280,6 +314,15 @@ export function extractBuiltInMetrics(value = {}) {
         "final-waypoint-distance": finalWaypointDistance,
         "assertion-failures": assertionFailures ?? failureCount(result.assertionResults ?? result.assertions),
         "expected-outcome-failures": outcomeFailures ?? failureCount(result.outcomeResults ?? result.outcomes),
+        "route-progress": optionalMetric(result, "route-progress", ["routeProgress"]),
+        "route-progress-ratio": optionalMetric(result, "route-progress-ratio", ["routeProgressRatio"]),
+        "off-road": optionalMetric(result, "off-road", ["offRoad"]),
+        "wrong-way": optionalMetric(result, "wrong-way", ["wrongWay"]),
+        "kinematic-infeasibility": optionalMetric(result, "kinematic-infeasibility", ["kinematicInfeasibility"]),
+        acceleration: optionalMetric(result, "acceleration", ["peakAcceleration"]),
+        jerk: optionalMetric(result, "jerk", ["peakJerk"]),
+        "log-divergence": optionalMetric(result, "log-divergence", ["logDivergence"]),
+        failure: optionalMetric(result, "failure"),
     };
 }
 

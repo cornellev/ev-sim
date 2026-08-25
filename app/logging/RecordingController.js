@@ -120,6 +120,7 @@ export class RecordingController {
             this.queuedBytes = 0;
             this.droppedSamples = 0;
             this.sequence = 0;
+            this._uploadChain = Promise.resolve();
             this.lastCheckpointUs = 0;
             this.recordingTimeOriginUs = this.store.getTimeUs();
             this.timeBase = options.timeBase === "simulation" ? "simulation" : "wall";
@@ -230,7 +231,10 @@ export class RecordingController {
             while (this.encoder.pendingRecordCount > 0) {
                 const batch = this.encoder.flushUpTo(SAFE_LOG_BATCH_BYTES);
                 if (!batch) break;
-                if (!this._enqueueBatch(batch)) break;
+                if (!this._enqueueBatch(batch)) {
+                    this.encoder.repeatSchemas?.();
+                    break;
+                }
                 if (!["recording", "stopping"].includes(this.status)) break;
             }
         } catch (error) {
@@ -266,10 +270,16 @@ export class RecordingController {
         this._flush();
         this._emit();
         try {
-            await this._uploadChain;
+            let uploadError = null;
+            try {
+                await this._uploadChain;
+            } catch (error) {
+                uploadError = error;
+            }
             const metadata = await finalizeLogSession(this.session.id, {
                 ...finalizePatch,
-                incomplete: Boolean(finalizePatch.incomplete || this.error || this.droppedSamples),
+                incomplete: Boolean(finalizePatch.incomplete || this.error || this.droppedSamples || uploadError),
+                loggingError: uploadError?.message || finalizePatch.loggingError || null,
             });
             this.status = "idle";
             this.session = null;
@@ -277,6 +287,7 @@ export class RecordingController {
             this.error = null;
             this.startedAt = null;
             this._emit();
+            if (uploadError && this.haltSimulationOnError) throw uploadError;
             return metadata;
         } catch (error) {
             this.status = "error";

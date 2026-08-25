@@ -42,6 +42,26 @@ Logging policies are:
 
 Run logs contain `run-manifest.json` at start and `run-results.json` at finalization, plus manifest identity, hashes, run ID, and browser/WebGL/runtime provenance in metadata. Replay reads recorded state and sensor bytes instead of rerunning sensors on the replay GPU.
 
+## Scenario episode metrics
+
+When a run selects a scenario, `ScenarioRuntime` collects ego-only episode metrics each fixed step and merges them into `finalize().metrics` (and `run-results.json`). Built-ins:
+
+| Metric | Unit | Direction | Aggregation | Notes |
+| --- | --- | --- | --- | --- |
+| `route-progress` | m | higher | max | Arc distance past the ego’s initial route projection; never negative. |
+| `route-progress-ratio` | ratio | higher | max | `route-progress` divided by route distance remaining at the start projection. |
+| `off-road` | boolean | lower | any | `1` if any corner of the yaw-oriented ground footprint leaves the paved road/intersection union. |
+| `wrong-way` | boolean | lower | any | Realized planar motion opposed to the assigned verified route’s local directed tangent. Near-zero speed samples are ignored. |
+| `kinematic-infeasibility` | boolean | lower | any | `1` when absolute longitudinal acceleration exceeds `10.4 m/s²` or absolute curvature exceeds `0.3 m⁻¹`. |
+| `acceleration` | m/s² | lower | peak abs | Peak absolute longitudinal acceleration from consecutive poses. |
+| `jerk` | m/s³ | lower | peak abs | Peak absolute longitudinal jerk. |
+| `log-divergence` | m | lower | mean | Mean L2 XZ distance to time-aligned, linearly interpolated `initialState.vehicles[].keyframes`. |
+| `failure` | boolean | lower | episode | `egoCollision \|\| offRoad`. Metric-only — it does **not** change `passed`, outcomes, completion, or case status. |
+
+Missing prerequisites (route, road network, footprint dimensions, keyframes / coverage) yield `null`, not zero. Non-scenario runs expose the same built-ins as unavailable (`null`) through experiment extraction. Selecting a newly added metric against an older baseline that lacks it remains `incomplete` under the existing comparison rules. Suite/result/baseline document versions are unchanged.
+
+Signals are published live under `scenario.metrics.<id>`.
+
 ## MCP
 
 The simulator MCP endpoint exposes the complete manifest lifecycle through `run_manifest_*` tools: catalog CRUD, optimistic updates, validation, immutable resolution, portable import/export, and browser-backed launch. Read-only catalog and document resources are available at `fusion://run-manifests` and `fusion://run-manifests/{manifestId}`.

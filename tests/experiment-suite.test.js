@@ -296,7 +296,22 @@ test("built-in metric extraction supports run summaries, timestamps, events, ass
         "final-waypoint-distance": 1.25,
         "assertion-failures": 1,
         "expected-outcome-failures": 2,
+        "route-progress": null,
+        "route-progress-ratio": null,
+        "off-road": null,
+        "wrong-way": null,
+        "kinematic-infeasibility": null,
+        acceleration: null,
+        jerk: null,
+        "log-divergence": null,
+        failure: null,
     });
+
+    assert.equal(validateMetricDefinition({ source: { kind: "builtin", metric: "route-progress" } }).ok, true);
+    assert.equal(normalizeMetricDefinition({ source: { kind: "builtin", metric: "log-divergence" } }).unit, "m");
+    assert.equal(normalizeMetricDefinition({ source: { kind: "builtin", metric: "failure" } }).direction, "lower");
+    assert.equal(extractBuiltInMetrics({ metrics: { "route-progress": 4.5, failure: 1 } })["route-progress"], 4.5);
+    assert.equal(extractBuiltInMetrics({ metrics: { failure: 1 } }).failure, 1);
 });
 
 test("experiment result documents normalize terminal records and interrupt only an active case", () => {

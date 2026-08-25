@@ -322,10 +322,33 @@ export class RunSessionController {
             failureReason,
             logId: this.recording?.session?.id ?? null,
         };
+        const loggingPolicy = this._loggingPolicyOverride
+            ?? this.snapshot.activeResolved?.manifest?.logging?.policy
+            ?? "optional";
         if (this._recordingRunId === this.snapshot.activeRunId) {
-            this.recording.addAttachment({ name: "run-results.json", mime: "application/json", bytes: JSON.stringify(runResult) });
-            const metadata = await this.recording.stop({ runResult });
-            runResult = { ...runResult, logId: metadata?.id ?? runResult.logId };
+            if (loggingPolicy !== "disabled") {
+                this.recording.addAttachment({ name: "run-results.json", mime: "application/json", bytes: JSON.stringify(runResult) });
+                try {
+                    const metadata = await this.recording.stop({ runResult });
+                    runResult = { ...runResult, logId: metadata?.id ?? runResult.logId };
+                    if (metadata?.incomplete && loggingPolicy === "optional") {
+                        this._set({
+                            degraded: true,
+                            error: `Optional logging incomplete${metadata.loggingError ? `: ${metadata.loggingError}` : "."}`,
+                        });
+                    }
+                } catch (error) {
+                    if (loggingPolicy === "required") throw error;
+                    runResult = { ...runResult, logId: null };
+                    this._set({ degraded: true, error: `Optional log finalization failed: ${error.message}` });
+                    getTelemetryStore().emitTelemetryEvent({
+                        category: "logging",
+                        name: "optional-recording-finalization-failed",
+                        severity: "warning",
+                        payload: { runId: this.snapshot.activeRunId, error: error.message },
+                    });
+                }
+            }
             this._recordingRunId = null;
         }
         simulation?.stop?.({ reset: false });

@@ -516,3 +516,96 @@ test("run finalization records scenario semantics and finalized log id", async (
     assert.equal(result.terminationReason, "trigger");
     assert.equal(result.logId, "log-final");
 });
+
+test("scenario metrics publish deterministically, finalize idempotently, and resolve ego collisions by actor id", () => {
+    const environment = {
+        environmentId: "metrics-corridor",
+        roads: {
+            nodes: [
+                { id: "a", x: 0, y: 0, z: 0 },
+                { id: "b", x: 40, y: 0, z: 0 },
+            ],
+            edges: [
+                { id: "ab", startNodeId: "a", endNodeId: "b", width: 8, bidirectional: true },
+            ],
+        },
+    };
+    const ego = vehicle("hero-1", 0, 0);
+    ego.collisionDimensions = { x: 4, y: 1.5, z: 2 };
+    const definition = scenario({
+        actors: [{ id: "hero-1", role: "ego", name: "Hero" }],
+        routes: [route("hero-1")],
+        completion: { conditions: [{ id: "limit", name: "Limit", kind: "max-duration", durationNs: 10_000_000_000 }] },
+    });
+    const store = new SignalStore({}, { sourceId: "scenario-metrics-runtime" });
+    const data = {
+        bindings: () => ({ signalStore: store }),
+        vehicles: () => ({ vehicles: [ego] }),
+        devices: () => ({ devices: [] }),
+        environment: () => ({
+            environmentId: "metrics-corridor",
+            toManifest: () => environment,
+            getDocument: () => environment,
+        }),
+    };
+    const runtime = new ScenarioRuntime(data, { telemetry: store });
+    runtime.configure({
+        manifest: {
+            seed: "17",
+            initialState: {
+                vehicles: [{
+                    id: "hero-1",
+                    type: "scenario-car",
+                    keyframes: [
+                        { t: 0, x: 0, y: 0 },
+                        { t: 1, x: 10, y: 0 },
+                    ],
+                }],
+            },
+            topics: [],
+        },
+        environment: { manifest: environment },
+        scenario: { scenario: definition, parameters: { bindings: [] } },
+        scripts: [],
+    });
+
+    runtime.preMotion({ step: 1, timeNs: 0, dt: 0.1 });
+    runtime.postTelemetry({ step: 1, timeNs: 0, dt: 0.1, contacts: { started: [] } });
+    ego.position.x = 5;
+    runtime.preMotion({ step: 2, timeNs: 100_000_000, dt: 0.1 });
+    runtime.postTelemetry({
+        step: 2,
+        timeNs: 100_000_000,
+        dt: 0.1,
+        contacts: { started: ["hero-1|barrel-1"] },
+    });
+
+    assert.equal(runtime.getSnapshot().egoCollisionCount, 1);
+    assert.equal(store.read("scenario.metrics.route-progress").value, 5);
+    assert.equal(store.read("scenario.metrics.failure").value, 1);
+    assert.ok(Number.isFinite(store.read("scenario.metrics.log-divergence").value));
+
+    const first = runtime.finalize();
+    const second = runtime.finalize();
+    assert.deepEqual(first.metrics, second.metrics);
+    assert.equal(first.passed, first.completed && first.metrics["expected-outcome-failures"] === 0);
+    assert.equal(first.metrics.failure, 1);
+    assert.equal(first.metrics["route-progress"], 5);
+    // failure is metric-only and does not force passed=false by itself when outcomes/assertions are clean
+    // (this scenario has empty expected outcomes and no assertions).
+});
+
+test("scenario metrics stay unavailable when road and keyframe prerequisites are missing", () => {
+    const { runtime, store } = runtimeHarness(scenario({
+        routes: [],
+        completion: { conditions: [] },
+    }));
+    runtime.preMotion({ step: 1, timeNs: 0, dt: 0.1 });
+    runtime.postTelemetry({ step: 1, timeNs: 0, dt: 0.1, contacts: { started: [] } });
+    assert.equal(store.read("scenario.metrics.off-road").value, null);
+    assert.equal(store.read("scenario.metrics.wrong-way").value, null);
+    assert.equal(store.read("scenario.metrics.log-divergence").value, null);
+    const result = runtime.finalize();
+    assert.equal(result.metrics["off-road"], null);
+    assert.equal(result.metrics.failure, null);
+});

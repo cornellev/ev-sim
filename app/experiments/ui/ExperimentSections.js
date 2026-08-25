@@ -19,7 +19,7 @@ import {
 } from "@tabler/icons-react";
 
 import { Button, DialogSurface, Field, NativeSelect, Switch, Textarea, TextInput } from "../../ui";
-import { BUILT_IN_METRIC_IDS, METRIC_DIRECTIONS, METRIC_REDUCER_KINDS } from "../MetricReducers.js";
+import { BUILT_IN_METRIC_IDS, METRIC_DIRECTIONS, METRIC_REDUCER_KINDS, builtInMetricDefaults } from "../MetricReducers.js";
 import styles from "./ExperimentWorkspace.module.css";
 
 const RUN_SPEEDS = [1, 2, 4];
@@ -32,13 +32,68 @@ function toggle(values, value) {
     return values.includes(value) ? values.filter((entry) => entry !== value) : [...values, value];
 }
 
+function parseSeedList(value) {
+    return String(value ?? "")
+        .split(",")
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+}
+
 function parseValues(value) {
-    return value.split(",").map((entry) => entry.trim()).filter(Boolean).map((entry) => {
+    return parseSeedList(value).map((entry) => {
         if (entry === "true") return true;
         if (entry === "false") return false;
         const number = Number(entry);
         return Number.isFinite(number) ? number : entry;
     });
+}
+
+function serializeList(values = []) {
+    return values.map((entry) => String(entry)).join(", ");
+}
+
+/**
+ * Freeform comma-separated editors must keep the raw draft while focused.
+ * Parsing into the suite model on every keystroke (then joining back) eats
+ * commas, spaces, and in-progress decimals like "1.".
+ */
+function CommaSeparatedInput({
+    values,
+    parse,
+    onCommit,
+    ...inputProps
+}) {
+    const serialized = serializeList(values);
+    const [text, setText] = useState(serialized);
+    const focusedRef = useRef(false);
+
+    useEffect(() => {
+        if (!focusedRef.current) setText(serialized);
+    }, [serialized]);
+
+    return (
+        <TextInput
+            {...inputProps}
+            value={text}
+            onFocus={(event) => {
+                focusedRef.current = true;
+                inputProps.onFocus?.(event);
+            }}
+            onChange={(event) => {
+                const next = event.target.value;
+                setText(next);
+                onCommit(parse(next));
+                inputProps.onChange?.(event);
+            }}
+            onBlur={(event) => {
+                focusedRef.current = false;
+                const parsed = parse(text);
+                onCommit(parsed);
+                setText(serializeList(parsed));
+                inputProps.onBlur?.(event);
+            }}
+        />
+    );
 }
 
 function statusIcon(status) {
@@ -195,14 +250,28 @@ export function SetupSection({ suite, scenarios, manifests, parameters, onUpdate
 
             <div className={styles.splitHeading}><div><h3>Seeds and sweeps</h3></div>{parameters.length > suite.sweeps.length && <Button size="compact" onClick={addSweep}><IconPlus size={14} stroke={1.75} /> Add sweep</Button>}</div>
             <section className={styles.sweepPanel}>
-                <Field label="Seeds"><TextInput value={suite.seeds.join(", ")} onChange={(event) => onUpdate(["seeds"], event.target.value.split(",").map((entry) => entry.trim()).filter(Boolean))} /></Field>
+                <Field label="Seeds">
+                    <CommaSeparatedInput
+                        aria-label="Seeds"
+                        values={suite.seeds}
+                        parse={parseSeedList}
+                        onCommit={(seeds) => onUpdate(["seeds"], seeds)}
+                    />
+                </Field>
                 <Switch label="Continue after a failed case" description="Run every compatible case instead of stopping at the first failure." checked={suite.execution.failurePolicy !== "fail-fast"} onCheckedChange={(value) => onUpdate(["execution"], { failurePolicy: value ? "continue" : "fail-fast", continueOnFailure: value })} />
             </section>
             {suite.sweeps.map((sweep, index) => (
                 <article className={styles.sweepRow} key={`${sweep.parameterId}-${index}`}>
                     <span>SWEEP {String(index + 1).padStart(2, "0")}</span>
                     <Field label="Declared parameter"><NativeSelect value={sweep.parameterId} onChange={(event) => onUpdate(["sweeps", index, "parameterId"], event.target.value)}>{parameters.map((parameter) => <option key={parameter.id} value={parameter.id}>{parameter.name || parameter.id} · {parameter.type}</option>)}</NativeSelect></Field>
-                    <Field label="Values" hint="Comma-separated"><TextInput value={sweep.values.join(", ")} onChange={(event) => onUpdate(["sweeps", index], { ...sweep, values: parseValues(event.target.value), range: null })} /></Field>
+                    <Field label="Values" hint="Comma-separated">
+                        <CommaSeparatedInput
+                            aria-label={`Sweep ${sweep.parameterId} values`}
+                            values={sweep.values}
+                            parse={parseValues}
+                            onCommit={(values) => onUpdate(["sweeps", index], { ...sweep, values, range: null })}
+                        />
+                    </Field>
                     <button type="button" aria-label={`Remove sweep ${sweep.parameterId}`} onClick={() => onUpdate(["sweeps"], suite.sweeps.filter((_, candidate) => candidate !== index))}><IconTrash size={14} stroke={1.7} /></button>
                 </article>
             ))}
@@ -252,8 +321,19 @@ export function MetricsSection({ suite, onUpdate }) {
     const [metricKind, setMetricKind] = useState("collision-count");
     const addMetric = () => {
         const builtin = BUILT_IN_METRIC_IDS.includes(metricKind);
+        const defaults = builtin ? builtInMetricDefaults(metricKind) : null;
         const id = builtin ? metricKind : `custom-metric-${suite.metrics.length + 1}`;
-        onUpdate(["metrics"], [...suite.metrics, { id, name: builtin ? metricKind.replaceAll("-", " ") : "Custom metric", source: builtin ? { kind: "builtin", metric: metricKind } : { kind: "signal", path: "" }, reducer: "last", unit: "", direction: builtin && ["collision-count", "duration", "final-waypoint-distance", "assertion-failures", "expected-outcome-failures"].includes(metricKind) ? "lower" : "higher", target: null, tolerance: { absolute: 0, relative: 0 }, gated: true }]);
+        onUpdate(["metrics"], [...suite.metrics, {
+            id,
+            name: defaults?.name || (builtin ? metricKind.replaceAll("-", " ") : "Custom metric"),
+            source: builtin ? { kind: "builtin", metric: metricKind } : { kind: "signal", path: "" },
+            reducer: "last",
+            unit: defaults?.unit || "",
+            direction: defaults?.direction || "informational",
+            target: null,
+            tolerance: { absolute: 0, relative: 0 },
+            gated: true,
+        }]);
     };
     return (
         <div className={styles.sectionStack}>
@@ -285,6 +365,9 @@ export function RunSection({
     onDiagnosticsEnabledChange,
     onDiagnosticsViewportChange,
     onSelectResult,
+    runNickname = "",
+    runNicknameError = null,
+    onRunNicknameChange,
     runSpeed = 1,
     disableLogging = false,
     onRunSpeedChange,
@@ -363,8 +446,21 @@ export function RunSection({
 
     return (
         <div className={styles.sectionStack}>
-            {heading("", "Run & monitor", "", <div className={styles.runActions}><Button aria-pressed={diagnosticsEnabled} variant={diagnosticsEnabled ? "primary" : "default"} onClick={() => onDiagnosticsEnabledChange?.(!diagnosticsEnabled)}><IconRoute size={14} /> 3D diagnostics</Button>{status === "running" ? <Button onClick={onPause}><IconPlayerPause size={14} /> Pause</Button> : canResume || status === "paused" ? <Button variant="primary" onClick={onResume}><IconPlayerPlay size={14} /> Resume</Button> : <Button variant="primary" disabled={!plan.ok || plan.cases.length === 0} onClick={onStart}><IconPlayerPlay size={14} /> Run suite</Button>}<Button disabled={!['running', 'paused'].includes(status)} onClick={onCancel}><IconSquare size={13} /> Cancel</Button></div>)}
+            {heading("", "Run & monitor", "", <div className={styles.runActions}><Button aria-pressed={diagnosticsEnabled} variant={diagnosticsEnabled ? "primary" : "default"} onClick={() => onDiagnosticsEnabledChange?.(!diagnosticsEnabled)}><IconRoute size={14} /> 3D diagnostics</Button>{status === "running" ? <Button onClick={onPause}><IconPlayerPause size={14} /> Pause</Button> : canResume || status === "paused" ? <Button variant="primary" onClick={onResume}><IconPlayerPlay size={14} /> Resume</Button> : <Button variant="primary" disabled={!plan.ok || plan.cases.length === 0 || Boolean(runNicknameError)} onClick={onStart}><IconPlayerPlay size={14} /> Run suite</Button>}<Button disabled={!['running', 'paused'].includes(status)} onClick={onCancel}><IconSquare size={13} /> Cancel</Button></div>)}
             <section className={styles.runOptions} aria-label="Run options">
+                <Field
+                    label="Run nickname"
+                    hint={!runNickname ? "Required" : runNicknameError ? null : "Used as the experiment result ID."}
+                    error={runNickname ? runNicknameError : null}
+                    className={styles.runNickname}
+                >
+                    <TextInput
+                        value={runNickname}
+                        disabled={queueActive}
+                        placeholder="corridor-acceptance-01"
+                        onChange={(event) => onRunNicknameChange?.(event.target.value)}
+                    />
+                </Field>
                 <div className={styles.speedGroup}>
                     <span>Speed</span>
                     <div className={styles.speedToggle} role="group" aria-label="Simulation speed">
@@ -396,7 +492,7 @@ export function RunSection({
             <section className={styles.monitorPanel}>
                 <div className={styles.progressHeader}><div><span>Queue progress</span><strong>{complete} / {cases.length}</strong></div><p>{Math.round(progress)}%</p></div>
                 <div className={styles.progressTrack}><i style={{ transform: `scaleX(${progress / 100})` }} /></div>
-                {active ? <><div className={styles.activeCase}><div><span>ACTIVE CASE</span><strong>{active.scenarioId}</strong><p>{active.manifestId} · seed {String(active.seed)}{Object.keys(active.parameters || {}).length ? ` · ${JSON.stringify(active.parameters)}` : ""}</p></div><dl><div><dt>Sim time</dt><dd>{Number(simulation?.time ?? ((scenario?.timeNs || 0) / 1e9)).toFixed(2)}s</dd></div><div><dt>Step</dt><dd>{simulation?.steps ?? scenario?.step ?? 0}</dd></div><div><dt>Latest trigger</dt><dd>{displayRuntimeValue(scenario?.latestTrigger || active.latestTrigger)}</dd></div><div><dt>Next event</dt><dd>{displayRuntimeValue(scenario?.nextTimedEvent)}</dd></div></dl></div><div className={styles.liveChecks}><section><header>Assertions <span>{assertions.length}</span></header>{assertions.length ? assertions.map((assertion) => <p key={assertion.id} data-status={assertion.status}><strong>{assertion.name || assertion.id}</strong><span>{assertion.status}</span></p>) : <em>No assertions configured</em>}</section><section><header>End-only outcomes <span>{outcomes.length}</span></header>{outcomes.length ? outcomes.map((outcome) => <p key={outcome.id} data-status={outcome.status}><strong>{outcome.name || outcome.id}</strong><span>{outcome.status}</span></p>) : <em>No expected outcomes configured</em>}</section></div></> : <div className={styles.monitorIdle}><IconFlask2 size={22} /><strong>{status === "completed" ? "Experiment complete" : "No active case"}</strong><p>{status === "completed" ? "Open Compare or Review to inspect the result." : status === "interrupted" ? "Resume the compatible pending cases when ready." : "Start the suite when the matrix validates."}</p></div>}
+                {active ? <><div className={styles.activeCase}><div><span>ACTIVE CASE</span><strong>{active.scenarioId}</strong><p>{active.manifestId} · seed {String(active.seed)}{Object.keys(active.parameters || {}).length ? ` · ${JSON.stringify(active.parameters)}` : ""}</p></div><dl><div><dt>Sim time</dt><dd>{Number(simulation?.time ?? ((scenario?.timeNs || 0) / 1e9)).toFixed(2)}s</dd></div><div><dt>Step</dt><dd>{simulation?.steps ?? scenario?.step ?? 0}</dd></div><div><dt>Latest trigger</dt><dd>{displayRuntimeValue(scenario?.latestTrigger || active.latestTrigger)}</dd></div><div><dt>Next event</dt><dd>{displayRuntimeValue(scenario?.nextTimedEvent)}</dd></div></dl></div><div className={styles.liveChecks}><section><header>Assertions <span>{assertions.length}</span></header>{assertions.length ? assertions.map((assertion) => <p key={assertion.id} data-status={assertion.status}><strong>{assertion.name || assertion.id}</strong><span>{assertion.status}</span></p>) : <em>No assertions configured</em>}</section><section><header>End-only outcomes <span>{outcomes.length}</span></header>{outcomes.length ? outcomes.map((outcome) => <p key={outcome.id} data-status={outcome.status}><strong>{outcome.name || outcome.id}</strong><span>{outcome.status}</span></p>) : <em>No expected outcomes configured</em>}</section></div></> : <div className={styles.monitorIdle}><IconFlask2 size={22} /><strong>{status === "completed" ? "Experiment complete" : "No active case"}</strong><p>{status === "completed" ? "Open Compare or Review to inspect the result." : status === "interrupted" ? "Resume the compatible pending cases when ready." : "Start the suite in order to populate."}</p></div>}
             </section>
             <div className={styles.queueList}>{cases.map((entry, index) => {
                 const Icon = statusIcon(entry.status);
@@ -434,7 +530,7 @@ export function CompareSection({ results, baselines, result, baseline, compariso
         <div className={styles.sectionStack}>
             {heading("", "Compare to Baseline", "")}
             <div className={styles.compareControls}><Field label="Current result"><NativeSelect value={result?.id || ""} onChange={(event) => onResult(event.target.value)}><option value="">Select result</option>{results.map((entry) => <option key={entry.id} value={entry.id}>{entry.id} · {entry.status}</option>)}</NativeSelect></Field><Field label="Saved baseline"><NativeSelect value={baseline?.id || ""} onChange={(event) => onBaseline(event.target.value)}><option value="">Select baseline</option>{baselines.map((entry) => <option key={entry.id} value={entry.id}>{entry.name || entry.id}</option>)}</NativeSelect></Field><div className={styles.saveBaseline}><TextInput aria-label="New baseline name" value={name} onChange={(event) => setName(event.target.value)} /><Button disabled={!result || result.status !== "completed" || !name.trim()} onClick={() => onSaveBaseline(name)}><IconDatabase size={14} /> Save baseline</Button></div></div>
-            {!comparison ? <div className={styles.largeEmpty}><IconChartDots size={24} /><strong>Choose a result and baseline</strong><p>Choose a comparison to show deltas and gated regressions.</p></div> : <>
+            {!comparison ? <div className={styles.largeEmpty}><IconChartDots size={24} /><strong>Choose a result and baseline</strong></div> : <>
                 <div className={styles.comparisonSummary} data-status={comparison.status}><div><span>VERDICT</span><strong>{comparison.status}</strong></div><dl><div><dt>Matched</dt><dd>{comparison.matchedCaseCount}</dd></div><div><dt>Current only</dt><dd>{comparison.unmatchedCurrent.length}</dd></div><div><dt>Baseline only</dt><dd>{comparison.unmatchedBaseline.length}</dd></div></dl></div>
                 <div className={styles.comparisonList}>{comparison.cases.map((entry) => <article key={entry.key} data-status={entry.classification}><header><div><strong>{entry.scenarioId}</strong><p>{entry.manifestId} · seed {String(entry.seed)}{entry.dependencyChanged ? " · dependencies changed" : ""}</p></div><span>{entry.classification}</span></header><table><thead><tr><th>Metric</th><th>Current</th><th>Baseline</th><th>Delta</th><th>Classification</th></tr></thead><tbody>{entry.metrics.map((metric) => <tr key={metric.id}><th>{metric.name}</th><td>{String(metric.current ?? "—")}</td><td>{String(metric.baseline ?? "—")}</td><td>{metric.delta === null ? "—" : `${metric.delta > 0 ? "+" : ""}${metric.delta.toFixed(4)}`}</td><td data-status={metric.classification}>{metric.classification}</td></tr>)}</tbody></table><details className={styles.dependencyDiff}><summary>Dependency hashes</summary><div><section><span>Current</span><pre>{JSON.stringify(entry.currentDependencyHashes, null, 2)}</pre></section><section><span>Baseline</span><pre>{JSON.stringify(entry.baselineDependencyHashes, null, 2)}</pre></section></div></details></article>)}</div>
                 {(comparison.unmatchedCurrent.length > 0 || comparison.unmatchedBaseline.length > 0) && <section className={styles.unmatchedCases}><header><IconAlertTriangle size={15} /><div><strong>Comparison is incomplete</strong><p>Unmatched cases cannot be classified as improvements or regressions.</p></div></header><div>{comparison.unmatchedCurrent.map((entry) => <p key={`current-${entry.key}`}><span>Current only</span>{entry.scenarioId} · {entry.manifestId} · seed {String(entry.seed)}</p>)}{comparison.unmatchedBaseline.map((entry) => <p key={`baseline-${entry.key}`}><span>Baseline only</span>{entry.scenarioId} · {entry.manifestId} · seed {String(entry.seed)}</p>)}</div></section>}
@@ -450,7 +546,7 @@ export function ReviewSection({ result, results, onResult, onReplay, onAnalysis 
         <div className={styles.sectionStack}>
             {heading("", "Review", "")}
             <Field label="Experiment result"><NativeSelect value={result?.id || ""} onChange={(event) => onResult(event.target.value)}><option value="">Select result</option>{results.map((entry) => <option key={entry.id} value={entry.id}>{entry.id} · {entry.status}</option>)}</NativeSelect></Field>
-            {!result ? <div className={styles.largeEmpty}><IconClock size={24} /><strong>No result selected</strong><p>Run a suite or choose a persisted result.</p></div> : <>
+            {!result ? <div className={styles.largeEmpty}><IconClock size={24} /><strong>No result selected</strong></div> : <>
                 <div className={styles.reviewSummary}><div><span>STATUS</span><strong>{result.status}</strong></div>{Object.entries(result.summary || {}).filter(([key]) => ["total", "passed", "failed", "error", "interrupted"].includes(key)).map(([key, value]) => <dl key={key}><dt>{key}</dt><dd>{value}</dd></dl>)}</div>
                 <div className={styles.reviewList}>{result.cases.map((entry, index) => {
                     const Icon = statusIcon(entry.status);

@@ -569,6 +569,20 @@ export function projectPoseToRoute(route, pose) {
     return { ...projection, section: projection.segment };
 }
 
+/**
+ * Directed route tangent at the closest projection of `pose`.
+ * Uses the verified polyline travel direction (not the ambient road edge).
+ */
+export function routeTangentAtPose(route, pose) {
+    const projection = projectPoseToRoute(route, pose);
+    if (!projection) return null;
+    return {
+        projection,
+        heading: Number.isFinite(projection.heading) ? projection.heading : 0,
+        tangent: projection.tangent ?? { x: Math.sin(projection.heading || 0), z: Math.cos(projection.heading || 0) },
+    };
+}
+
 export function routeProgress(route, pose) {
     const projection = projectPoseToRoute(route, pose);
     return projection

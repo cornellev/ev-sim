@@ -1,5 +1,10 @@
 import { createLoadedScript } from "../scripting/ScriptRuntime.js";
 import {
+    createScenarioMetricCollector,
+    resolveVehicleFootprint,
+    SCENARIO_METRIC_IDS,
+} from "./ScenarioMetrics.js";
+import {
     distanceToRouteEnd,
     projectPoseToRoute,
     sampleRoute,
@@ -121,6 +126,9 @@ export class ScenarioRuntime {
         define("scenario.nextTimedEvent", { type: "json" });
         define("scenario.outcomes", { type: "json" });
         define("scenario.terminal", { type: "json" });
+        for (const metricId of SCENARIO_METRIC_IDS) {
+            define(`scenario.metrics.${metricId}`, { type: "number" });
+        }
     }
 
     _clearState() {
@@ -145,6 +153,8 @@ export class ScenarioRuntime {
         this.scriptErrors = [];
         this.outcomes = [];
         this._finalized = null;
+        this._metricCollector = createScenarioMetricCollector();
+        this._metricCurrent = null;
     }
 
     configure(resolvedRun) {
@@ -179,6 +189,7 @@ export class ScenarioRuntime {
         this._captureSensorBaselines();
         this._buildRunners();
         this._applyParameterSignals();
+        this._configureMetrics();
         this._publish();
         this._emit();
     }
@@ -190,6 +201,7 @@ export class ScenarioRuntime {
             const path = flagPath(value);
             if (path) paths.add(path);
         };
+        for (const metricId of SCENARIO_METRIC_IDS) paths.add(`scenario.metrics.${metricId}`);
         for (const route of scenario.routes ?? []) addFlag(route.controller?.activation?.flag);
         for (const trigger of scenario.triggers ?? []) {
             addFlag(trigger.condition?.flag);
@@ -237,6 +249,8 @@ export class ScenarioRuntime {
             outcomes: clone(this.outcomes),
             collisionCount: this.collisionCount,
             egoCollisionCount: this.egoCollisionCount,
+            metrics: clone(this._metricCurrent ?? this._metricCollector?.current?.() ?? null),
+            metricEpisode: clone(this._metricCollector?.episode?.() ?? null),
             activeEffects: this.effects.map((effect) => ({
                 id: effect.id,
                 kind: effect.kind,
@@ -268,6 +282,16 @@ export class ScenarioRuntime {
         this.telemetry.publishSignal?.("scenario.nextTimedEvent", this._nextTimedEvent(), { ...options, type: "json" });
         this.telemetry.publishSignal?.("scenario.outcomes", this.outcomes, { ...options, type: "json" });
         this.telemetry.publishSignal?.("scenario.terminal", this.terminal, { ...options, type: "json" });
+        const metrics = this._metricCurrent ?? this._metricCollector?.current?.() ?? null;
+        if (metrics) {
+            for (const metricId of SCENARIO_METRIC_IDS) {
+                this.telemetry.publishSignal?.(
+                    `scenario.metrics.${metricId}`,
+                    metrics[metricId],
+                    { ...options, type: "number" },
+                );
+            }
+        }
     }
 
     _event(name, payload = {}, severity = "info") {
@@ -348,6 +372,80 @@ export class ScenarioRuntime {
             ?? (actorId === "ego" ? this._vehicles()[0] : null);
     }
 
+    _egoActor() {
+        return this.scenario?.actors?.find((actor) => actor.id === "ego" || actor.role === "ego")
+            ?? this.scenario?.actors?.[0]
+            ?? null;
+    }
+
+    _egoVehicle() {
+        const actor = this._egoActor();
+        return this._vehicle(actor?.id || "ego");
+    }
+
+    _egoIdentityKeys() {
+        const keys = new Set(["ego"]);
+        const actor = this._egoActor();
+        if (actor?.id) keys.add(String(actor.id));
+        const vehicle = this._egoVehicle();
+        if (vehicle?.telemetryId) keys.add(String(vehicle.telemetryId));
+        if (vehicle?.id) keys.add(String(vehicle.id));
+        return keys;
+    }
+
+    _environmentDocument() {
+        return this.resolvedRun?.environment?.manifest
+            ?? this.resolvedRun?.environment
+            ?? this.data?.environment?.()?.toManifest?.()
+            ?? this.data?.environment?.()?.getDocument?.()
+            ?? null;
+    }
+
+    _configureMetrics() {
+        this._metricCollector = this._metricCollector ?? createScenarioMetricCollector();
+        this._metricCollector.reset();
+        this._metricCurrent = null;
+        if (!this.active) return;
+
+        const egoVehicle = this._egoVehicle();
+        const egoActor = this._egoActor();
+        const route = this._route(egoActor?.id || "ego");
+        const environment = this._environmentDocument();
+        const vehicleEntry = (this.resolvedRun?.manifest?.initialState?.vehicles ?? [])
+            .find((entry) => entry.id === egoVehicle?.telemetryId || entry.id === egoActor?.id || entry.id === "ego")
+            ?? null;
+        const footprint = resolveVehicleFootprint(egoVehicle, {
+            type: vehicleEntry?.type || egoVehicle?.type || egoVehicle?.vehicleManifestId,
+        });
+        this._metricCollector.configure({
+            route: route?.verification ? { ...route, ...route.verification, totalLength: route.totalLength ?? route.verification.totalLength } : route,
+            environment,
+            footprint,
+            keyframes: vehicleEntry?.keyframes ?? egoVehicle?.keyframes ?? [],
+        });
+    }
+
+    _observeMetrics({ dt = 0 } = {}) {
+        if (!this.active || !this._metricCollector) return null;
+        const vehicle = this._egoVehicle();
+        if (!vehicle) {
+            this._metricCurrent = this._metricCollector.current();
+            return this._metricCurrent;
+        }
+        this._metricCurrent = this._metricCollector.observe({
+            timeNs: this.timeNs,
+            dt,
+            pose: {
+                position: vehicle.position,
+                rotation: vehicle.rotation,
+            },
+            velocity: vehicle.velocity,
+            steeringAngle: vehicle.steeringAngle,
+            egoCollision: this.egoCollisionCount > 0,
+        });
+        return this._metricCurrent;
+    }
+
     _route(actorId) {
         return this.scenario?.routes?.find((route) => route.actorId === actorId) ?? null;
     }
@@ -394,6 +492,7 @@ export class ScenarioRuntime {
             this._evaluateTriggers(new Set(["zone-enter", "zone-exit", "signal", "flag", "actor-distance"]), transitions);
             this._evaluateCompletion(finite(dt, 0));
         }
+        this._observeMetrics({ dt: finite(dt, 0) });
         this._publish();
         this._emit();
         return this.getSnapshot();
@@ -702,8 +801,10 @@ export class ScenarioRuntime {
     _observeContacts(contacts) {
         const started = [...(contacts?.started ?? [])].sort();
         this.collisionCount += started.length;
+        const egoKeys = this._egoIdentityKeys();
         for (const key of started) {
-            if (String(key).split("|").includes("ego")) this.egoCollisionCount += 1;
+            const parts = String(key).split("|");
+            if (parts.some((part) => egoKeys.has(part))) this.egoCollisionCount += 1;
         }
     }
 
@@ -833,6 +934,8 @@ export class ScenarioRuntime {
         const completed = Boolean(this.terminal?.completed);
         const finalDistance = this._finalWaypointDistance("ego", null);
         const passed = completed && requiredOutcomeFailures.length === 0 && assertionFailures.length === 0;
+        if (this.egoCollisionCount > 0) this._metricCollector?.observeEgoCollision?.(true);
+        const episodeMetrics = this._metricCollector?.finalize?.() ?? {};
         this._finalized = {
             completed,
             passed,
@@ -849,6 +952,7 @@ export class ScenarioRuntime {
                 "final-waypoint-distance": Number.isFinite(finalDistance) ? finalDistance : null,
                 "assertion-failures": assertionFailures.length,
                 "expected-outcome-failures": requiredOutcomeFailures.length,
+                ...episodeMetrics,
             },
             step: this.step,
             timeNs: this.timeNs,
