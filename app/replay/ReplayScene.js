@@ -36,17 +36,24 @@ export default function ReplayScene({ dataset, timeUs, selectedEntity, onSelectE
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(0x17181a);
         scene.fog = new THREE.FogExp2(0x17181a, 0.012);
-        const camera = new THREE.PerspectiveCamera(52, 1, 0.1, 5000);
-        camera.position.set(16, 13, 18);
+        const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 5000);
+        camera.position.set(14, 9, 16);
         const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
         renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
         renderer.outputColorSpace = THREE.SRGBColorSpace;
+        renderer.domElement.style.display = "block";
+        renderer.domElement.style.width = "100%";
+        renderer.domElement.style.height = "100%";
         mount.appendChild(renderer.domElement);
         const controls = new OrbitControls(camera, renderer.domElement);
         controls.enableDamping = true;
         controls.dampingFactor = 0.08;
+        controls.minDistance = 3;
+        controls.maxDistance = 400;
+        controls.minPolarAngle = 0.18;
         controls.maxPolarAngle = Math.PI / 2.03;
         controls.target.set(0, 0.6, 0);
+        controls.update();
         const grid = new THREE.GridHelper(400, 200, 0x3b3e41, 0x242628);
         scene.add(grid);
         scene.add(new THREE.HemisphereLight(0xdde7ec, 0x17181a, 1.7));
@@ -58,9 +65,13 @@ export default function ReplayScene({ dataset, timeUs, selectedEntity, onSelectE
         const meshes = new Map();
         const resize = () => {
             const { width, height } = mount.getBoundingClientRect();
-            camera.aspect = Math.max(1, width) / Math.max(1, height);
+            const nextWidth = Math.max(1, Math.round(width));
+            const nextHeight = Math.max(1, Math.round(height));
+            camera.aspect = nextWidth / nextHeight;
             camera.updateProjectionMatrix();
-            renderer.setSize(Math.max(1, width), Math.max(1, height), false);
+            // Keep CSS size in sync with the mount. Passing false here on retina
+            // DPRs left the canvas 2× oversized and clipped, which flattened the view.
+            renderer.setSize(nextWidth, nextHeight, true);
         };
         const observer = new ResizeObserver(resize);
         observer.observe(mount);

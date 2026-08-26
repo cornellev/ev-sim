@@ -88,13 +88,13 @@ function createRandomRunNickname(suiteId) {
     return `${String(suiteId || "experiment").trim()}-run-${token}`;
 }
 
-function validateRunNickname(value, results) {
+function validateRunNickname(value, results, activeResultId = null) {
     const id = String(value || "").trim();
     if (!id) return "Enter a nickname before launching the suite.";
     if (id === "." || id === ".." || /[\\/]/.test(id)) {
         return "The nickname cannot be “.”, “..”, or contain a slash.";
     }
-    if (results.some((entry) => entry.id === id)) {
+    if (id !== activeResultId && results.some((entry) => entry.id === id)) {
         return `A run with the ID “${id}” already exists.`;
     }
     return null;
@@ -179,9 +179,12 @@ export default function ExperimentWorkspace({ onOpenWorkspace, onOpenReplay, onO
     const [diagnosticsEnabled, setDiagnosticsEnabled] = useState(false);
 
     const dirty = Boolean(saved && draft && stable(saved) !== stable(draft));
+    const activeResultId = ["running", "paused"].includes(snapshot.status)
+        ? snapshot.result?.id ?? null
+        : null;
     const runNicknameError = useMemo(
-        () => validateRunNickname(runNickname, results),
-        [results, runNickname],
+        () => validateRunNickname(runNickname, results, activeResultId),
+        [activeResultId, results, runNickname],
     );
 
     useEffect(() => {
