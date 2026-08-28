@@ -140,7 +140,7 @@ Resources expose suites, results, and baselines through `fusion://experiment-sui
 | `replay_inspect` | Read exact state and nearby events at a timestamp, with optional path globs |
 | `replay_series` | Read a bounded, downsampled signal or nested-field series |
 
-The resources `fusion://logs` and `fusion://logs/{logId}` expose the catalog and per-log metadata/signal catalog. Headless inspection tools read directly from the backend and do not require a browser. Recording and visual Replay controls require one initialized simulator browser tab; same-origin tabs elect exactly one command executor.
+The resources `fusion://logs` and `fusion://logs/{logId}` expose the catalog and per-log metadata/signal catalog. Headless inspection tools read directly from the backend and do not require a browser. Recording and visual Replay controls require one initialized simulator browser tab; same-origin tabs elect exactly one command executor. See [SFLog](sflog.md) for the file format and recording pipeline.
 
 ## Typical agent workflow
 

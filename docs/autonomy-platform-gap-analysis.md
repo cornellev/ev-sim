@@ -120,7 +120,7 @@ Every later feature depends on stable message meaning, timestamps, frames, and o
 
 **Done when:** Frame checker resolves every sensor to `base_link`/`map` at capture time; repeated runs produce identical transform/calibration bundles.
 
-#### 3. Add the localization sensor suite
+#### 3. Add the localization sensor suite ✅ (implemented)
 
 **Work:**
 
@@ -130,7 +130,9 @@ Every later feature depends on stable message meaning, timestamps, frames, and o
 - Derive measurements from vehicle state + deterministic noise; never publish raw truth as measured channel.
 - Noise/fault parameters in run manifests for experiment sweeps.
 
-**Touchpoints:** `SensorTypeRegistry.js`, `SensorRuntimeRegistry.js`, new device classes, `SensorMessages.js`.
+**Touchpoints:** `SensorTypeRegistry.js`, `SensorRuntimeRegistry.js`, `ManifestImu.js`, `ManifestGnss.js`, `ManifestWheelOdometry.js`, `LocalizationMeasurements.js`, `LocalizationTruthPublisher.js`, `SensorMessages.js`, `RunManifest.js` v5, `AutonomyContractCatalog.js` v3.
+
+**Evidence:** Default manifests declare live IMU/GNSS/wheel odometry/truth topics; oracle odometry publishes in the transform phase; `/localization/odometry` routes candidate returns; `tests/localization-sensors.test.js` covers determinism, truth isolation, and loopback; two identical seeded runs produce identical measured bytes while oracle truth stays seed-invariant.
 
 **Done when:** External EKF runs on simulated measurements only; estimate publishback scorable against namespaced truth.
 

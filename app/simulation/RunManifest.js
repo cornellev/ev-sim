@@ -4,11 +4,24 @@ import {
     normalizeRunSensor,
     validateRunSensorDefinition,
 } from "../3d/devices/SensorTypeRegistry.js";
+import {
+    catalogMetadata,
+    defaultManifestTopics,
+    migrateLegacyTopic,
+    schemaClosureForManifest,
+    validateManifestTopicAuthority,
+    validateTopicAgainstCatalog,
+} from "../autonomy/AutonomyContractCatalog.js";
+import { threePoseToRep103 } from "../autonomy/CoordinateFrames.js";
+import { validateSensorRigFrames, validateSyncGroups } from "../simulation/TransformRuntime.js";
 import { validateScalarParameterTarget } from "../scenarios/ScenarioDocument.js";
 
 export const RUN_MANIFEST_KIND = "cev-sim.run-manifest";
-export const RUN_MANIFEST_VERSION = 2;
+export const RUN_MANIFEST_VERSION = 5;
 export const LEGACY_RUN_MANIFEST_VERSION = 1;
+export const RUN_MANIFEST_V2 = 2;
+export const RUN_MANIFEST_V3 = 3;
+export const RUN_MANIFEST_V4 = 4;
 export const RUN_BUNDLE_KIND = "cev-sim.run-bundle";
 export const RUN_BUNDLE_VERSION = 1;
 
@@ -74,15 +87,7 @@ function pose(value = {}) {
 }
 
 function topic(value = {}, index = 0) {
-    const source = object(value);
-    const direction = ["input", "output"].includes(source.direction) ? source.direction : "output";
-    return {
-        id: text(source.id, `topic-${index + 1}`),
-        name: text(source.name, `/topic-${index + 1}`),
-        direction,
-        type: text(source.type, "std_msgs/String"),
-        required: source.required === true,
-    };
+    return migrateLegacyTopic(value, index);
 }
 
 function assertion(value = {}, index = 0) {
@@ -136,6 +141,155 @@ function parameter(value = {}, index = 0) {
     };
 }
 
+function syncGroup(value = {}, index = 0) {
+    const source = object(value);
+    return {
+        id: text(source.id, `sync-${index + 1}`),
+        description: text(source.description),
+        topicIds: (Array.isArray(source.topicIds) ? source.topicIds : []).map((entry) => text(entry)).filter(Boolean),
+    };
+}
+
+function migrateSensorToV4(sensor, sourceVersion) {
+    const normalized = normalizeRunSensor(sensor);
+    if (sourceVersion >= RUN_MANIFEST_VERSION) return normalized;
+    const migrated = {
+        ...normalized,
+        pose: threePoseToRep103(normalized.pose),
+    };
+    if (normalized.type === "camera") {
+        const optical = normalized.frameId?.includes("optical")
+            ? normalized.frameId
+            : `${normalized.id.replace(/-camera$/, "")}_camera_optical_frame`.replace(/^([^_]+)$/, "$1_camera_optical_frame");
+        const mount = optical.replace(/_optical_frame$/, "_link").replace(/_optical$/, "_link");
+        migrated.mountFrameId = text(sensor.mountFrameId, mount);
+        migrated.measurementFrameId = text(sensor.measurementFrameId, optical);
+        migrated.frameId = migrated.measurementFrameId;
+    } else {
+        const frame = text(normalized.frameId, `${normalized.id}_frame`);
+        migrated.mountFrameId = text(sensor.mountFrameId, frame);
+        migrated.measurementFrameId = text(sensor.measurementFrameId, frame);
+        migrated.frameId = frame;
+    }
+    if (!migrated.syncGroupId && sourceVersion < RUN_MANIFEST_VERSION && normalized.type !== "unknown") {
+        migrated.syncGroupId = "perception-primary";
+    }
+    return migrated;
+}
+
+function normalizeSensorRig(source = {}, sourceVersion = RUN_MANIFEST_VERSION) {
+    const rig = object(source);
+    const sensors = (Array.isArray(rig.sensors) ? rig.sensors : [])
+        .map((entry) => migrateSensorToV4(entry, sourceVersion));
+    let syncGroups = Array.isArray(rig.syncGroups) ? rig.syncGroups.map(syncGroup) : [];
+    if (sourceVersion < RUN_MANIFEST_VERSION && sensors.length > 0 && syncGroups.length === 0) {
+        syncGroups = defaultSyncGroups();
+    }
+    return {
+        mapFrameId: text(rig.mapFrameId, "map"),
+        odomFrameId: text(rig.odomFrameId, "odom"),
+        rootFrameId: text(rig.rootFrameId, "base_link"),
+        vehicleId: text(rig.vehicleId, "ego"),
+        syncGroups,
+        sensors,
+    };
+}
+
+function defaultSyncGroups(topicIds = []) {
+    return [
+        {
+            id: "perception-primary",
+            description: "Front camera and LiDAR captured on the same simulation step.",
+            topicIds: topicIds.filter((id) => ["front-camera-image", "front-camera-info", "front-lidar-points"].includes(id)),
+        },
+        {
+            id: "localization-primary",
+            description: "Localization sensors captured on the same simulation step.",
+            topicIds: topicIds.filter((id) => ["imu", "gnss", "wheel-odometry"].includes(id)),
+        },
+    ];
+}
+
+function defaultLocalizationSensors() {
+    return [
+        createRunSensor("imu", {
+            id: "imu",
+            parentId: "ego",
+            mountFrameId: "imu_link",
+            measurementFrameId: "imu_link",
+            frameId: "imu_link",
+            syncGroupId: "localization-primary",
+            rateHz: 100,
+            outputs: { imuTopicId: "imu" },
+        }),
+        createRunSensor("gnss", {
+            id: "gnss",
+            parentId: "ego",
+            mountFrameId: "gnss_link",
+            measurementFrameId: "gnss_link",
+            frameId: "gnss_link",
+            syncGroupId: "localization-primary",
+            rateHz: 10,
+            pose: { position: { x: 0, y: 0, z: 0.5 } },
+            outputs: { gnssTopicId: "gnss" },
+            calibration: {
+                datum: { latitude: 42.4430, longitude: -76.4840, altitude: 200 },
+            },
+        }),
+        createRunSensor("wheel-odometry", {
+            id: "wheel-odometry",
+            parentId: "ego",
+            mountFrameId: "wheel_odom_link",
+            measurementFrameId: "wheel_odom_link",
+            frameId: "wheel_odom_link",
+            syncGroupId: "localization-primary",
+            rateHz: 50,
+            outputs: { odometryTopicId: "wheel-odometry" },
+            calibration: {
+                odomFrameId: "odom",
+                childFrameId: "base_link",
+                wheelRadius: 0.15,
+                ticksPerRevolution: 1024,
+                trackWidth: 1.2,
+            },
+        }),
+    ];
+}
+
+function reconcileSyncGroups(sensorRig, topics = []) {
+    const declaredTopicIds = new Set((topics || []).map((topic) => topic.id));
+    const sensors = sensorRig?.sensors || [];
+    const sensorOutputTopicIds = [...new Set(
+        sensors.flatMap((sensor) => Object.values(sensor.outputs || {}).map((id) => text(id)).filter(Boolean)),
+    )].filter((id) => declaredTopicIds.has(id)).sort();
+
+    let syncGroups = (sensorRig?.syncGroups || []).map((group) => {
+        const filtered = (group.topicIds || []).map((id) => text(id)).filter((id) => declaredTopicIds.has(id));
+        if (filtered.length === 0 && group.id === "perception-primary" && sensorOutputTopicIds.length > 0) {
+            return { ...group, topicIds: sensorOutputTopicIds };
+        }
+        return { ...group, topicIds: filtered };
+    });
+
+    const groupIds = new Set(syncGroups.map((group) => group.id));
+    if (!groupIds.has("perception-primary") && sensors.some((sensor) => sensor.syncGroupId === "perception-primary")) {
+        syncGroups.push({
+            id: "perception-primary",
+            description: "Sensors captured on the same simulation step.",
+            topicIds: sensorOutputTopicIds.filter((id) => ["front-camera-image", "front-camera-info", "front-lidar-points"].includes(id)),
+        });
+    }
+    if (!groupIds.has("localization-primary") && sensors.some((sensor) => sensor.syncGroupId === "localization-primary")) {
+        syncGroups.push({
+            id: "localization-primary",
+            description: "Localization sensors captured on the same simulation step.",
+            topicIds: sensorOutputTopicIds.filter((id) => ["imu", "gnss", "wheel-odometry"].includes(id)),
+        });
+    }
+
+    return { ...sensorRig, syncGroups };
+}
+
 function scenarioSelection(value) {
     if (!value || typeof value !== "object") return null;
     const source = object(value);
@@ -183,32 +337,38 @@ export function createDefaultRunManifest(overrides = {}) {
             modules: { ...DEFAULT_MODULES },
         },
         sensorRig: {
+            mapFrameId: "map",
+            odomFrameId: "odom",
             rootFrameId: "base_link",
+            vehicleId: "ego",
+            syncGroups: defaultSyncGroups(),
             sensors: [
                 createRunSensor("camera", {
                     id: "front-camera",
                     parentId: "ego",
+                    mountFrameId: "front_camera_link",
+                    measurementFrameId: "front_camera_optical_frame",
                     frameId: "front_camera_optical_frame",
-                    pose: { position: { x: 1.5, y: 0.5, z: 0 } },
+                    syncGroupId: "perception-primary",
+                    pose: { position: { x: 1.5, y: 0, z: 0.5 } },
                     outputs: { imageTopicId: "front-camera-image", cameraInfoTopicId: "front-camera-info" },
                 }),
                 createRunSensor("lidar3d", {
                     id: "front-lidar",
                     parentId: "ego",
+                    mountFrameId: "front_lidar_frame",
+                    measurementFrameId: "front_lidar_frame",
                     frameId: "front_lidar_frame",
-                    pose: { position: { x: 0.35, y: 0.8, z: 0 } },
+                    syncGroupId: "perception-primary",
+                    pose: { position: { x: 0.35, y: 0, z: 0.8 } },
                     outputs: { pointCloudTopicId: "front-lidar-points" },
                 }),
+                ...defaultLocalizationSensors(),
             ],
         },
         scripts: { enabled: true, artifacts: [], bindingIds: [], expectedBindingsHash: null, embeddedBindings: [] },
-        topics: [
-            topic({ id: "ackdrive", name: "/ackdrive", direction: "input", type: "sensor_fusion_msgs/AckermannDrive" }),
-            topic({ id: "clock", name: "/clock", direction: "output", type: "rosgraph_msgs/Clock" }),
-            topic({ id: "front-camera-image", name: "/sensors/front_camera/image_raw", direction: "output", type: "sensor_msgs/Image" }),
-            topic({ id: "front-camera-info", name: "/sensors/front_camera/camera_info", direction: "output", type: "sensor_msgs/CameraInfo" }),
-            topic({ id: "front-lidar-points", name: "/sensors/front_lidar/points", direction: "output", type: "sensor_msgs/PointCloud2" }),
-        ],
+        topics: defaultManifestTopics(),
+        autonomyCatalog: catalogMetadata(),
         assertions: [],
         parameters: [],
         logging: { policy: "optional", profileId: "simulation-run-full-sensors" },
@@ -222,12 +382,14 @@ export function normalizeRunManifest(value, { allowMissingKind = false } = {}) {
         throw new Error(`Unsupported run manifest kind: ${JSON.stringify(source.kind)}.`);
     }
     const sourceVersion = source.version === undefined ? RUN_MANIFEST_VERSION : Number(source.version);
-    if (![LEGACY_RUN_MANIFEST_VERSION, RUN_MANIFEST_VERSION].includes(sourceVersion)) {
-        throw new Error(`Unsupported run manifest version ${source.version}; expected version 1 or ${RUN_MANIFEST_VERSION}.`);
+    if (![LEGACY_RUN_MANIFEST_VERSION, RUN_MANIFEST_V2, RUN_MANIFEST_V3, RUN_MANIFEST_V4, RUN_MANIFEST_VERSION].includes(sourceVersion)) {
+        throw new Error(`Unsupported run manifest version ${source.version}; expected version 1, 2, 3, 4, or ${RUN_MANIFEST_VERSION}.`);
     }
     const initial = object(source.initialState);
     const clock = object(source.clock);
     const scripts = object(source.scripts);
+    const topics = (Array.isArray(source.topics) ? source.topics : []).map(topic);
+    const sensorRig = reconcileSyncGroups(normalizeSensorRig(source.sensorRig, sourceVersion), topics);
     return {
         kind: RUN_MANIFEST_KIND,
         version: RUN_MANIFEST_VERSION,
@@ -259,11 +421,7 @@ export function normalizeRunManifest(value, { allowMissingKind = false } = {}) {
             publishClock: clock.publishClock !== false,
             modules: { ...DEFAULT_MODULES, ...object(clock.modules) },
         },
-        sensorRig: {
-            rootFrameId: text(source.sensorRig?.rootFrameId, "base_link"),
-            sensors: (Array.isArray(source.sensorRig?.sensors) ? source.sensorRig.sensors : [])
-                .map((entry, index) => normalizeRunSensor(entry, index)),
-        },
+        sensorRig,
         scripts: {
             enabled: scripts.enabled !== false,
             artifacts: (Array.isArray(scripts.artifacts) ? scripts.artifacts : []).map((entry) => ({
@@ -274,13 +432,16 @@ export function normalizeRunManifest(value, { allowMissingKind = false } = {}) {
             expectedBindingsHash: text(scripts.expectedBindingsHash) || null,
             embeddedBindings: Array.isArray(scripts.embeddedBindings) ? structuredClone(scripts.embeddedBindings) : [],
         },
-        topics: (Array.isArray(source.topics) ? source.topics : []).map(topic),
+        topics,
         assertions: (Array.isArray(source.assertions) ? source.assertions : []).map(assertion),
         parameters: (Array.isArray(source.parameters) ? source.parameters : []).map(parameter),
         logging: {
             policy: RUN_LOGGING_POLICIES.includes(source.logging?.policy) ? source.logging.policy : "optional",
             profileId: text(source.logging?.profileId, "simulation-run-full-sensors"),
         },
+        autonomyCatalog: source.autonomyCatalog?.version
+            ? { ...catalogMetadata(), ...object(source.autonomyCatalog) }
+            : catalogMetadata(),
     };
 }
 
@@ -314,11 +475,19 @@ export function validateRunManifest(value) {
             if (topicId && !topics.has(topicId)) {
                 issues.push({ path: `sensorRig.sensors.${index}.outputs.${key}`, message: `Unknown topic id \"${topicId}\".` });
             }
-            if (topicId && topics.has(topicId) && sensorEntry.schema[key] !== topics.get(topicId).type) {
-                issues.push({ path: `sensorRig.sensors.${index}.schema.${key}`, message: `Schema must match topic type "${topics.get(topicId).type}".` });
+            const linked = topics.get(topicId);
+            const linkedType = linked?.schema?.type || linked?.type;
+            if (topicId && linked && sensorEntry.schema[key] !== linkedType) {
+                issues.push({ path: `sensorRig.sensors.${index}.schema.${key}`, message: `Schema must match topic type "${linkedType}".` });
             }
         }
     }
+    issues.push(...validateSensorRigFrames(manifest));
+    issues.push(...validateSyncGroups(manifest));
+    for (const [index, topicEntry] of manifest.topics.entries()) {
+        issues.push(...validateTopicAgainstCatalog(topicEntry, index));
+    }
+    issues.push(...validateManifestTopicAuthority(manifest));
     for (const [index, assertionEntry] of manifest.assertions.entries()) {
         if (assertionEntry.source === "signal" && !assertionEntry.path) {
             issues.push({ path: `assertions.${index}.path`, message: "Signal assertions require a path." });

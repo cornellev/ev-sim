@@ -16,7 +16,7 @@ import { normalizeRunManifest, validateRunManifest } from "../app/simulation/Run
 import { normalizeVehicleManifest, validateVehicleManifest } from "../app/vehicles/VehicleManifest.js";
 
 test("built-in sensor definitions own defaults, fields, outputs, and determinism metadata", () => {
-    assert.deepEqual(listSensorTypes().map((definition) => definition.id), ["camera", "lidar3d"]);
+    assert.deepEqual(listSensorTypes().map((definition) => definition.id), ["camera", "lidar3d", "imu", "gnss", "wheel-odometry"]);
 
     const camera = normalizeRunSensor({ type: "camera" });
     assert.equal(camera.rateHz, 30);

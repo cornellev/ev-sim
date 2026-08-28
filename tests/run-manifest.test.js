@@ -20,26 +20,30 @@ async function temporaryService() {
 test("run manifest normalization supplies deterministic professional defaults", () => {
     const manifest = createDefaultRunManifest();
     assert.equal(manifest.kind, "cev-sim.run-manifest");
-    assert.equal(manifest.version, 2);
+    assert.equal(manifest.version, 5);
     assert.equal(manifest.scenario, null);
     assert.equal(manifest.clock.stepNs, 16_666_667);
     assert.equal(manifest.clock.pacing, "realtime");
     assert.equal(manifest.seed, "42");
-    assert.deepEqual(manifest.sensorRig.sensors.map((sensor) => [sensor.id, sensor.rateHz]), [
-        ["front-camera", 30],
-        ["front-lidar", 10],
+    assert.deepEqual(manifest.sensorRig.sensors.map((sensor) => sensor.id), [
+        "front-camera",
+        "front-lidar",
+        "imu",
+        "gnss",
+        "wheel-odometry",
     ]);
     assert.equal(validateRunManifest(manifest).ok, true);
 });
 
-test("run manifest v2 migrates v1 and rejects future versions and duplicate stable ids", () => {
+test("run manifest v4 migrates v1-v3 and rejects future versions and duplicate stable ids", () => {
     const migrated = normalizeRunManifest({
         ...createDefaultRunManifest(),
         version: 1,
     });
-    assert.equal(migrated.version, 2);
+    assert.equal(migrated.version, 5);
+    assert.ok(migrated.autonomyCatalog?.hash);
     assert.equal(migrated.scenario, null);
-    assert.throws(() => normalizeRunManifest({ kind: "cev-sim.run-manifest", version: 3 }), /version 3/);
+    assert.throws(() => normalizeRunManifest({ kind: "cev-sim.run-manifest", version: 6 }), /version 6/);
     const manifest = createDefaultRunManifest();
     manifest.topics.push({ ...manifest.topics[0] });
     const validation = validateRunManifest(manifest);
@@ -80,6 +84,8 @@ test("run manifests resolve dependencies and portable bundles round-trip", async
         assert.equal(resolved.resolvedHash.length, 64);
         assert.equal(resolved.environment.manifest.environmentId, "igvc");
         assert.ok(resolved.schemas["sensor_msgs/Image"].includes("uint8[] data"));
+        assert.ok(resolved.schemas["sensor_fusion_msgs/AckermannDrive"]);
+        assert.equal(resolved.autonomyCatalog.kind, "cev-sim.autonomy-contract-catalog");
 
         const bundle = await left.service.exportRunManifest("igvc-default");
         assert.equal(bundle.kind, RUN_BUNDLE_KIND);

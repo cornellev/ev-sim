@@ -121,6 +121,46 @@ export function simplifyLatLngPolyline(points, anchor, toleranceMeters) {
     return localPoints.filter((_, index) => keep[index]).map(({ lat, lng }) => ({ lat, lng }));
 }
 
+/**
+ * Convert ENU offset (meters) from a WGS84 datum to geodetic coordinates.
+ * Map/odom REP-103 axes are treated as East (x), North (y), Up (z).
+ * @param {number} east
+ * @param {number} north
+ * @param {number} up
+ * @param {{ lat: number, lng: number, altitude?: number }} datum
+ */
+export function enuOffsetToWgs84(east, north, up, datum) {
+    const matrix = makeLocalToECEFMatrix(datum.lat, datum.lng);
+    const local = new THREE.Vector3(Number(east) || 0, Number(up) || 0, Number(north) || 0);
+    const ecef = local.applyMatrix4(matrix);
+    return ecefToLatLngHeight(ecef);
+}
+
+/**
+ * @param {THREE.Vector3} ecef
+ */
+export function ecefToLatLngHeight(ecef) {
+    const x = ecef.x;
+    const y = ecef.y;
+    const z = ecef.z;
+    const b = WGS84_A * Math.sqrt(1 - WGS84_E2);
+    const ep = Math.sqrt((WGS84_A * WGS84_A - b * b) / (b * b));
+    const p = Math.hypot(x, y);
+    const th = Math.atan2(WGS84_A * z, b * p);
+    const sinTh = Math.sin(th);
+    const cosTh = Math.cos(th);
+    const lat = Math.atan2(z + ep * ep * b * sinTh * sinTh * sinTh, p - WGS84_E2 * WGS84_A * cosTh * cosTh * cosTh);
+    const lng = Math.atan2(y, x);
+    const sinLat = Math.sin(lat);
+    const n = WGS84_A / Math.sqrt(1 - WGS84_E2 * sinLat * sinLat);
+    const alt = p / Math.cos(lat) - n;
+    return {
+        lat: THREE.MathUtils.radToDeg(lat),
+        lng: THREE.MathUtils.radToDeg(lng),
+        alt,
+    };
+}
+
 function perpendicularDistance(point, lineStart, lineEnd) {
     const dx = lineEnd.x - lineStart.x;
     const dz = lineEnd.z - lineStart.z;

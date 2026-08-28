@@ -1,3 +1,5 @@
+import { lidarDirectionRep103 } from "../../autonomy/CoordinateFrames.js";
+
 export function simulationStamp(timeNs) {
     const normalized = Math.max(0, Math.floor(Number(timeNs) || 0));
     return { sec: Math.floor(normalized / 1e9), nanosec: normalized % 1e9 };
@@ -48,6 +50,106 @@ export function buildCameraInfo({ width, height, verticalFovDeg, timeNs, frameId
     };
 }
 
+export function buildImuMessage({
+    timeNs,
+    frameId,
+    angularVelocity = { x: 0, y: 0, z: 0 },
+    linearAcceleration = { x: 0, y: 0, z: 0 },
+    orientationCovariance = null,
+    angularVelocityCovariance = null,
+    linearAccelerationCovariance = null,
+}) {
+    const unavailable = new Array(9).fill(0);
+    unavailable[0] = -1;
+    return {
+        header: sensorHeader(timeNs, frameId),
+        orientation: { x: 0, y: 0, z: 0, w: 1 },
+        orientation_covariance: orientationCovariance || unavailable,
+        angular_velocity: {
+            x: Number(angularVelocity.x || 0),
+            y: Number(angularVelocity.y || 0),
+            z: Number(angularVelocity.z || 0),
+        },
+        angular_velocity_covariance: angularVelocityCovariance || new Array(9).fill(0),
+        linear_acceleration: {
+            x: Number(linearAcceleration.x || 0),
+            y: Number(linearAcceleration.y || 0),
+            z: Number(linearAcceleration.z || 0),
+        },
+        linear_acceleration_covariance: linearAccelerationCovariance || new Array(9).fill(0),
+    };
+}
+
+export function buildNavSatFixMessage({
+    timeNs,
+    frameId,
+    status = 0,
+    service = 1,
+    latitude = 0,
+    longitude = 0,
+    altitude = 0,
+    positionCovariance = null,
+    positionCovarianceType = 2,
+}) {
+    return {
+        header: sensorHeader(timeNs, frameId),
+        status: { status: Number(status), service: Number(service) },
+        latitude: Number(latitude),
+        longitude: Number(longitude),
+        altitude: Number(altitude),
+        position_covariance: positionCovariance || new Array(9).fill(0),
+        position_covariance_type: Number(positionCovarianceType),
+    };
+}
+
+export function buildOdometryMessage({
+    timeNs,
+    frameId,
+    childFrameId = "base_link",
+    position = { x: 0, y: 0, z: 0 },
+    orientation = { x: 0, y: 0, z: 0, w: 1 },
+    linearVelocity = { x: 0, y: 0, z: 0 },
+    angularVelocity = { x: 0, y: 0, z: 0 },
+    poseCovariance = null,
+    twistCovariance = null,
+}) {
+    return {
+        header: sensorHeader(timeNs, frameId),
+        child_frame_id: String(childFrameId || "base_link"),
+        pose: {
+            pose: {
+                position: {
+                    x: Number(position.x || 0),
+                    y: Number(position.y || 0),
+                    z: Number(position.z || 0),
+                },
+                orientation: {
+                    x: Number(orientation.x || 0),
+                    y: Number(orientation.y || 0),
+                    z: Number(orientation.z || 0),
+                    w: Number(orientation.w ?? 1),
+                },
+            },
+            covariance: poseCovariance || new Array(36).fill(0),
+        },
+        twist: {
+            twist: {
+                linear: {
+                    x: Number(linearVelocity.x || 0),
+                    y: Number(linearVelocity.y || 0),
+                    z: Number(linearVelocity.z || 0),
+                },
+                angular: {
+                    x: Number(angularVelocity.x || 0),
+                    y: Number(angularVelocity.y || 0),
+                    z: Number(angularVelocity.z || 0),
+                },
+            },
+            covariance: twistCovariance || new Array(36).fill(0),
+        },
+    };
+}
+
 export function buildPointCloud2({ buffer, calibration, timeNs, frameId, sampleRange = (range) => range, shouldDrop = () => false }) {
     const rangeLimit = Number(calibration.range || 20);
     const azimuth = calibration.azimuth || { startDeg: -180, endDeg: 180, stepDeg: 2 };
@@ -65,10 +167,11 @@ export function buildPointCloud2({ buffer, calibration, timeNs, frameId, sampleR
         const theta = thetaDeg * Math.PI / 180;
         const phi = phiDeg * Math.PI / 180;
         const measured = Math.max(0, Math.min(rangeLimit, sampleRange((1 - buffer[offset]) * rangeLimit, index)));
+        const direction = lidarDirectionRep103(theta, phi);
         points.push({
-            x: measured * Math.cos(phi) * Math.cos(theta),
-            y: measured * Math.sin(phi),
-            z: measured * Math.cos(phi) * Math.sin(theta),
+            x: measured * direction.x,
+            y: measured * direction.y,
+            z: measured * direction.z,
             intensity: Math.max(0, Math.min(1, Number(buffer[offset]) || 0)),
         });
     }

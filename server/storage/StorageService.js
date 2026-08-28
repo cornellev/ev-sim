@@ -16,6 +16,11 @@ import {
     validateRunManifest,
 } from "../../app/simulation/RunManifest.js";
 import {
+    catalogMetadata,
+    schemaClosureForManifest,
+} from "../../app/autonomy/AutonomyContractCatalog.js";
+import { buildCalibrationBundle } from "../../app/autonomy/CalibrationBundle.js";
+import {
     VEHICLE_BUNDLE_KIND,
     VEHICLE_BUNDLE_VERSION,
     normalizeVehicleManifest,
@@ -1166,11 +1171,13 @@ export class StorageService {
         }
 
         const definitionHash = semanticHash(manifest);
+        const calibration = buildCalibrationBundle(manifest);
         const resolved = {
             kind: RUN_MANIFEST_KIND,
             version: RUN_MANIFEST_VERSION,
             manifest,
             definitionHash,
+            calibration,
             environment: { hash: environmentHash, manifest: environment },
             scripts,
             bindings: { hash: bindingsHash, entries: selectedBindings },
@@ -1180,9 +1187,20 @@ export class StorageService {
                 manifest: runParameters,
                 scenario: resolvedScenario?.parameters ?? { values: {}, bindings: [] },
             },
-            schemas: standardRunSchemas(),
+            schemas: schemaClosureForManifest(manifest),
+            autonomyCatalog: catalogMetadata(),
+            contracts: (manifest.topics || []).map((topic) => ({
+                id: topic.id,
+                contractId: topic.contractId,
+                name: topic.name,
+                direction: topic.direction,
+                type: topic.schema?.type || topic.type,
+                producer: topic.producer,
+                authority: topic.authority,
+            })),
             dependencyHashes: {
                 environment: environmentHash,
+                calibration: calibration.hash,
                 scripts: Object.fromEntries(scripts.map((entry) => [entry.scriptId, entry.hash])),
                 bindings: bindingsHash,
                 ...(resolvedScenario ? { scenario: resolvedScenario.definitionHash } : {}),
@@ -2005,15 +2023,7 @@ function validateScenarioSensorBindings(scenario, manifest) {
 }
 
 function standardRunSchemas() {
-    return {
-        "builtin_interfaces/Time": "int32 sec\nuint32 nanosec\n",
-        "std_msgs/Header": "builtin_interfaces/Time stamp\nstring frame_id\n",
-        "sensor_msgs/Image": "std_msgs/Header header\nuint32 height\nuint32 width\nstring encoding\nuint8 is_bigendian\nuint32 step\nuint8[] data\n",
-        "sensor_msgs/CameraInfo": "std_msgs/Header header\nuint32 height\nuint32 width\nstring distortion_model\nfloat64[] d\nfloat64[9] k\nfloat64[9] r\nfloat64[12] p\nuint32 binning_x\nuint32 binning_y\n",
-        "sensor_msgs/PointField": "uint8 INT8=1\nuint8 UINT8=2\nuint8 INT16=3\nuint8 UINT16=4\nuint8 INT32=5\nuint8 UINT32=6\nuint8 FLOAT32=7\nuint8 FLOAT64=8\nstring name\nuint32 offset\nuint8 datatype\nuint32 count\n",
-        "sensor_msgs/PointCloud2": "std_msgs/Header header\nuint32 height\nuint32 width\nsensor_msgs/PointField[] fields\nbool is_bigendian\nuint32 point_step\nuint32 row_step\nuint8[] data\nbool is_dense\n",
-        "rosgraph_msgs/Clock": "builtin_interfaces/Time clock\n",
-    };
+    return schemaClosureForManifest(createDefaultRunManifest());
 }
 
 function environmentSummary(manifest, { builtIn = false, fallbackName = null } = {}) {

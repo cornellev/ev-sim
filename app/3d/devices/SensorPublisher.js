@@ -2,11 +2,14 @@ import { encodeTopicValue } from "../../client/Client.js";
 import { SeededRNG } from "../../util/SeededRNG.js";
 
 export class SensorPublisher {
-    constructor(device, config, { seed = "42", topics = [] } = {}) {
+    constructor(device, config, { seed = "42", topics = [], topicRouter = null, calibrationHash = null, stepNs = null } = {}) {
         this.device = device;
         this.config = config;
         this.seed = seed;
         this.topics = new Map(topics.map((topic) => [topic.id, topic]));
+        this.topicRouter = topicRouter;
+        this.calibrationHash = calibrationHash;
+        this.manifestStepNs = stepNs;
         this.periodNs = Math.max(1, Math.round(1e9 / config.rateHz));
         this.queue = [];
         this.sampleIndex = 0;
@@ -49,13 +52,28 @@ export class SensorPublisher {
     enqueue(messages, captureTimeNs, sampleIndex, rng) {
         const jitter = Number(this.config.latency?.jitterNs || 0);
         const signedJitter = jitter > 0 ? Math.round((rng.next() * 2 - 1) * jitter) : 0;
-        const deliveryTimeNs = Math.max(captureTimeNs, captureTimeNs + Number(this.config.latency?.fixedNs || 0) + signedJitter);
+        const fixedLatency = Number(this.config.latency?.fixedNs || 0);
+        const scheduledDeliveryTimeNs = captureTimeNs + fixedLatency;
+        const deliveryTimeNs = Math.max(captureTimeNs, scheduledDeliveryTimeNs + signedJitter);
+        const stepNs = this.stepNs || this.manifestStepNs || 16_666_667;
+        const captureStep = Math.round(captureTimeNs / stepNs);
+        const scheduledDeliveryStep = Math.round(scheduledDeliveryTimeNs / stepNs);
         if (this.queue.length >= this.config.maxQueueFrames) {
             this.droppedFrames += 1;
             this._event("frame-dropped", "warning", { sampleIndex, reason: "delivery-queue-full" });
             return;
         }
-        this.queue.push({ captureTimeNs, deliveryTimeNs, sampleIndex, messages });
+        this.queue.push({
+            captureTimeNs,
+            scheduledDeliveryTimeNs,
+            deliveryTimeNs,
+            captureStep,
+            scheduledDeliveryStep,
+            sampleIndex,
+            sequence: sampleIndex,
+            syncGroupKey: this.config.syncGroupId ? `${this.config.syncGroupId}:${captureStep}` : null,
+            messages,
+        });
     }
 
     deliver(clock) {
@@ -74,7 +92,7 @@ export class SensorPublisher {
         }
         let encoded;
         try {
-            encoded = encodeTopicValue(topic.type, message.value);
+            encoded = encodeTopicValue(topic.schema?.type || topic.type, message.value);
         } catch (error) {
             this._event("publish-failed", "error", { sampleIndex: frame.sampleIndex, topic: topic.name, reason: error.message });
             return;
@@ -86,13 +104,22 @@ export class SensorPublisher {
         const metadata = {
             rosType: topic.type,
             topic: topic.name,
-            frameId: this.config.frameId,
+            frameId: message.frameId || this.config.measurementFrameId || this.config.frameId,
+            mountFrameId: this.config.mountFrameId || null,
+            measurementFrameId: message.frameId || this.config.measurementFrameId || this.config.frameId,
             captureTimeNs: frame.captureTimeNs,
+            scheduledDeliveryTimeNs: frame.scheduledDeliveryTimeNs,
             deliveryTimeNs: frame.deliveryTimeNs,
+            captureStep: frame.captureStep,
+            scheduledDeliveryStep: frame.scheduledDeliveryStep,
+            actualDeliveryStep: clock.step,
+            sequenceId: frame.sequence,
+            syncGroupKey: frame.syncGroupKey,
+            calibrationHash: this.calibrationHash,
             calibration: this.config.calibration,
         };
         telemetry?.publishSignal?.(path, encoded, {
-            timeUs,
+            timeUs: Math.round(frame.deliveryTimeNs / 1000),
             cycle: clock.step,
             source: "sensors",
             type: "bytes",
@@ -102,7 +129,13 @@ export class SensorPublisher {
             descriptorMetadata: metadata,
         });
         telemetry?.publishSignal?.(`devices.${this.device.telemetryId}.output`, encoded, {
-            timeUs, cycle: clock.step, source: "sensors", type: "bytes", category: "devices", replayRole: "derived", logClass: "heavy",
+            timeUs: Math.round(frame.deliveryTimeNs / 1000),
+            cycle: clock.step,
+            source: "sensors",
+            type: "bytes",
+            category: "devices",
+            replayRole: "derived",
+            logClass: "heavy",
         });
         const client = data?.client?.()?.get?.();
         if (!client?.isOpen?.()) {
@@ -111,6 +144,21 @@ export class SensorPublisher {
         }
         client.publishEncoded(topic.name, encoded).catch((error) => {
             this._event("publish-failed", topic.required ? "error" : "warning", { topic: topic.name, sampleIndex: frame.sampleIndex, reason: error.message });
+        });
+        this.topicRouter?.routeOutbound(topic.id, { value: message.value, typeStr: topic.schema?.type || topic.type }, {
+            producer: "simulator",
+            captureTimeNs: frame.captureTimeNs,
+            scheduledDeliveryTimeNs: frame.scheduledDeliveryTimeNs,
+            deliveryTimeNs: frame.deliveryTimeNs,
+            captureStep: frame.captureStep,
+            scheduledDeliveryStep: frame.scheduledDeliveryStep,
+            actualDeliveryStep: clock.step,
+            cycle: clock.step,
+            logClass: "heavy",
+            frameId: message.frameId || this.config.measurementFrameId || this.config.frameId,
+            sequenceId: frame.sequence,
+            syncGroupKey: frame.syncGroupKey,
+            calibrationHash: this.calibrationHash,
         });
     }
 

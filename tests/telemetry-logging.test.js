@@ -287,6 +287,20 @@ test("nested numeric extraction and dataset interpolation do not duplicate paren
     assert.equal(dataset.snapshotAt(500)["vehicles.ego.pose"].position.x, 0);
 });
 
+test("LogDataset exposes calibration artifacts and resolved manifest metadata", () => {
+    const encoder = new SFLogBatchEncoder();
+    const calibration = { kind: "cev-sim.calibration-bundle", version: 1, hash: "deadbeef".repeat(8) };
+    encoder.addAttachment({ name: "run-manifest.json", mime: "application/json", bytes: JSON.stringify({ resolvedHash: "abc", manifest: { id: "golden", name: "Golden Run" }, calibration }) });
+    encoder.addAttachment({ name: "calibration.json", mime: "application/json", bytes: JSON.stringify(calibration) });
+    encoder.addAttachment({ name: "run-results.json", mime: "application/json", bytes: JSON.stringify({ passed: true, assertions: [{ id: "clear" }] }) });
+    const decoded = decodeRecordStream(encoder.flush().bytes);
+    const dataset = new LogDataset("run-log", { metadata: { resolvedHash: "abc" }, durationUs: 0 }, decoded);
+    assert.equal(dataset.runManifest.id, "golden");
+    assert.equal(dataset.calibration.hash, calibration.hash);
+    assert.equal(dataset.runResults.passed, true);
+    assert.equal(dataset.runResults.assertions[0].id, "clear");
+});
+
 test("LogDataset exposes the recorded resolved manifest and assertion report", () => {
     const encoder = new SFLogBatchEncoder();
     encoder.addAttachment({ name: "run-manifest.json", mime: "application/json", bytes: JSON.stringify({ resolvedHash: "abc", manifest: { id: "golden", name: "Golden Run" } }) });

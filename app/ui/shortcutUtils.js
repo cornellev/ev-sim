@@ -9,15 +9,20 @@ export function isInteractiveTarget(target) {
 }
 
 export function normalizeShortcutKey(key) {
+    if (typeof key !== "string" || key.length === 0) return "";
     if (key === " ") return "Space";
     if (key === "Esc") return "Escape";
     return key.length === 1 ? key.toLowerCase() : key;
 }
 
 export function matchesShortcut(event, shortcut) {
+    const eventKey = normalizeShortcutKey(event?.key);
+    if (!eventKey) return false;
     const keys = Array.isArray(shortcut) ? shortcut : [shortcut];
-    const eventKey = normalizeShortcutKey(event.key);
-    return keys.some((key) => normalizeShortcutKey(key) === eventKey);
+    return keys.some((key) => {
+        const normalized = normalizeShortcutKey(key);
+        return normalized !== "" && normalized === eventKey;
+    });
 }
 
 export function getShortcutCandidates(entries, event, { overlayOpen = false } = {}) {

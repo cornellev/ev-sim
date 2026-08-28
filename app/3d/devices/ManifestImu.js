@@ -1,0 +1,76 @@
+import * as THREE from "three";
+
+import Device from "./Device.js";
+import { SensorPublisher } from "./SensorPublisher.js";
+import { buildImuMessage } from "./SensorMessages.js";
+import {
+    buildImuMeasurement,
+    captureVehicleSnapshot,
+    createMeasurementSeedState,
+} from "../../autonomy/LocalizationMeasurements.js";
+import { rep103PoseToThree } from "../../autonomy/CoordinateFrames.js";
+
+export class ManifestImu extends Device {
+    constructor(config, options = {}) {
+        const threePose = rep103PoseToThree(config.pose);
+        super("Manifest IMU", {
+            telemetryId: config.id,
+            position: new THREE.Vector3(threePose.position.x, threePose.position.y, threePose.position.z),
+            rotation: new THREE.Euler(threePose.rotation.x, threePose.rotation.y, threePose.rotation.z, threePose.rotation.order || "XYZ"),
+        });
+        this.telemetryId = config.id;
+        this.config = config;
+        this.transformRuntime = options.transformRuntime ?? null;
+        this.calibrationHash = options.calibrationHash ?? null;
+        this.contractPublisher = new SensorPublisher(this, config, options);
+        this.manifestManaged = true;
+        this.measurementState = null;
+    }
+
+    resetMeasurementState(seedRng) {
+        this.measurementState = createMeasurementSeedState(this.config, seedRng);
+    }
+
+    captureAt({ captureTimeNs, sampleIndex, rng }) {
+        const data = this.getParent()?.getParent?.();
+        const vehicles = data?.vehicles?.()?.vehicles || [];
+        const frameResolution = this.transformRuntime?.resolveCaptureFrames?.(this.config, vehicles, captureTimeNs);
+        if (frameResolution && frameResolution.ok === false) {
+            this.contractPublisher?._event?.("frame-invalid", "error", { reason: frameResolution.message });
+            return [];
+        }
+        const vehicle = vehicles.find((entry) => (entry.telemetryId || entry.id) === this.config.parentId) || vehicles[0];
+        if (!vehicle) return [];
+
+        if (!this.measurementState) {
+            this.resetMeasurementState(rng);
+        }
+
+        const snapshot = captureVehicleSnapshot(
+            vehicle,
+            captureTimeNs,
+            this.measurementState.vehicleSnapshot,
+            this.contractPublisher?.stepNs || 16_666_667,
+        );
+        this.measurementState.vehicleSnapshot = snapshot;
+
+        const { measurement, nextState } = buildImuMeasurement(snapshot, this.config, rng, this.measurementState);
+        this.measurementState = { ...this.measurementState, ...nextState };
+
+        if (nextState.saturated) {
+            this.contractPublisher?._event?.("measurement-saturated", "warning", { sampleIndex });
+        }
+
+        const frameId = this.config.measurementFrameId || this.config.frameId;
+        return [{
+            topicId: this.config.outputs.imuTopicId,
+            signal: "imu",
+            frameId,
+            value: buildImuMessage({
+                timeNs: captureTimeNs,
+                frameId,
+                ...measurement,
+            }),
+        }];
+    }
+}

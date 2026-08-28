@@ -4,6 +4,9 @@ import { getSensorType } from "./SensorTypeRegistry.js";
 import { SensorRuntimeFactoryRegistry } from "./SensorRuntimeFactoryRegistry.js";
 import { ManifestCamera } from "./ManifestCamera.js";
 import { ManifestLidar3d } from "./ManifestLidar3d.js";
+import { ManifestImu } from "./ManifestImu.js";
+import { ManifestGnss } from "./ManifestGnss.js";
+import { ManifestWheelOdometry } from "./ManifestWheelOdometry.js";
 import { LiDAR3d } from "./LiDAR3d.js";
 import { StereoCamera } from "./StereoCamera.js";
 
@@ -99,6 +102,78 @@ registerSensorRuntime("lidar3d", {
                 new THREE.MeshBasicMaterial({ color, wireframe: true, transparent: true, opacity: 0.35 }),
             ),
         );
+        return holder;
+    },
+    previewSignature: (sensor) => sensor.type,
+});
+
+registerSensorRuntime("imu", {
+    createRunDevice: (config, options) => new ManifestImu(config, options),
+    createVehicleDevice(entry) {
+        return {
+            id: entry.id,
+            type: "imu",
+            config: entry.config,
+            enabled: true,
+            getPosition: () => toVector3(entry.pose.position),
+            getRotation: () => toEuler(entry.pose.rotation),
+        };
+    },
+    createPreview(sensor) {
+        const color = getSensorType(sensor.type)?.color ?? 0xa78bfa;
+        const holder = new THREE.Group();
+        holder.add(new THREE.Mesh(
+            new THREE.BoxGeometry(0.06, 0.04, 0.08),
+            new THREE.MeshStandardMaterial({ color, roughness: 0.45 }),
+        ));
+        return holder;
+    },
+    previewSignature: (sensor) => sensor.type,
+});
+
+registerSensorRuntime("gnss", {
+    createRunDevice: (config, options) => new ManifestGnss(config, options),
+    createVehicleDevice(entry) {
+        return {
+            id: entry.id,
+            type: "gnss",
+            config: entry.config,
+            enabled: true,
+            getPosition: () => toVector3(entry.pose.position),
+            getRotation: () => toEuler(entry.pose.rotation),
+        };
+    },
+    createPreview(sensor) {
+        const color = getSensorType(sensor.type)?.color ?? 0x34d399;
+        const holder = new THREE.Group();
+        holder.add(new THREE.Mesh(
+            new THREE.SphereGeometry(0.05, 12, 8),
+            new THREE.MeshStandardMaterial({ color, roughness: 0.35 }),
+        ));
+        return holder;
+    },
+    previewSignature: (sensor) => sensor.type,
+});
+
+registerSensorRuntime("wheel-odometry", {
+    createRunDevice: (config, options) => new ManifestWheelOdometry(config, options),
+    createVehicleDevice(entry) {
+        return {
+            id: entry.id,
+            type: "wheel-odometry",
+            config: entry.config,
+            enabled: true,
+            getPosition: () => toVector3(entry.pose.position),
+            getRotation: () => toEuler(entry.pose.rotation),
+        };
+    },
+    createPreview(sensor) {
+        const color = getSensorType(sensor.type)?.color ?? 0xfb923c;
+        const holder = new THREE.Group();
+        holder.add(new THREE.Mesh(
+            new THREE.CylinderGeometry(0.05, 0.05, 0.03, 16),
+            new THREE.MeshStandardMaterial({ color, roughness: 0.5 }),
+        ));
         return holder;
     },
     previewSignature: (sensor) => sensor.type,

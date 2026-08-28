@@ -44,13 +44,16 @@ The orchestrator defaults are:
 
 ## cev-sim Side
 
-`app/3d/managers/ClientManager.js` does three things during setup:
+`app/3d/managers/ClientManager.js` does four things during setup:
 
 1. Tries to sync dynamic message definitions from `http://localhost:8090/api/types`.
-2. Registers local fallback `.msg` files from `public/messages/`.
-3. Creates a `Client` for `ws://localhost:8080`.
+2. Registers the full autonomy catalog from `app/autonomy/AutonomyContractCatalog.js` and local `.msg` fallbacks from `public/messages/`.
+3. Pushes the catalog to the orchestrator types API.
+4. Creates a `Client` for `ws://localhost:8080` and tracks orchestrator topic advertisements for run preflight.
 
-`app/client/Client.js` implements the orchestrator protocol, including standard type encoders, dynamic `.msg` schemas, `syncTypesFromServer`, `syncTypesToServer`, `subscribe`, `publish`, `echo`, and `request_all`.
+`app/client/Client.js` implements the orchestrator protocol, including standard type encoders, dynamic `.msg` schemas, `syncTypesFromServer`, `syncTypesToServer`, `fetchTopicCatalog`, schema introspection helpers, `subscribe`, `publish`, `echo`, and `request_all`.
+
+Before a resolved run is applied, `ClientManager.preflight(resolved)` validates schema registration, catalog hash parity, transport connectivity, and required return topics. See [Autonomy interface contracts](./autonomy-interface-contracts.md).
 
 ## Message Ownership
 
@@ -77,6 +80,12 @@ Current fallback definitions include:
 Browser and orchestrator topic names use ROS-style strings such as `/ackdrive`. Message type names use `package/Message`, for example `sensor_fusion_msgs/AckermannDrive`.
 
 The orchestrator converts ROS 2 names like `package/msg/Message` as needed on its side.
+
+## Simulation time, frames, and calibration
+
+Deterministic runs publish `/clock` with the integer simulation timestamp (`use_sim_time` on the ROS side). `/tf_static` carries mount and optical extrinsics from the resolved calibration bundle; `/tf` publishes reference `map → odom → base_link` after vehicle motion. Oracle truth odometry (`/oracle/vehicle/odometry`) publishes in the same transform phase before measured sensors. Sensor message headers use capture time; SFLog sample timestamps use actual delivery time.
+
+PointCloud2 points are meters in the declared LiDAR frame (+X forward at azimuth zero). Camera `Image` and `CameraInfo` headers use the optical measurement frame with identical capture stamps. Localization sensors publish on `/sensors/imu/data` (SI units, gravity-inclusive acceleration, unavailable orientation), `/sensors/gnss/fix` (WGS84 from manifest datum), and `/sensors/wheel/odometry` (encoder-derived dead reckoning). External filters return estimates on `/localization/odometry`; the simulator routes them through `candidate.*` without mixing oracle truth into measured topics. Recorded runs attach `calibration.json` alongside `run-manifest.json` in SFLog datasets.
 
 ## Current Runtime Usage
 

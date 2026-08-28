@@ -101,6 +101,7 @@ test("prepare waits for a switched environment to mount and apply the resolved r
         return {
             environment: () => ({ environmentId }),
             simulation: () => simulation,
+            client: () => ({ preflight: async () => ({ ok: true, issues: [] }) }),
         };
     };
     controller.attachData(makeData("yard"));

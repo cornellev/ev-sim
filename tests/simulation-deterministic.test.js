@@ -91,7 +91,7 @@ test("manifest clock uses exact integer nanoseconds and fixed module order", asy
     assert.equal(engine.steps, 3);
     assert.equal(engine.timeNs, 60_000_000);
     assert.equal(engine.time, 0.06);
-    assert.deepEqual(engine.lastStepPhases, ["inputs", "scripts", "vehicles", "physics", "contacts", "clock", "sensors", "delivery", "assertions"]);
+    assert.deepEqual(engine.lastStepPhases, ["inputs", "scripts", "vehicles", "physics", "contacts", "clock", "transforms", "sensors", "delivery", "assertions"]);
     assert.deepEqual(calls.slice(-7), ["keys", "script", "vehicle", "physics", "contacts", "sensor", "delivery"]);
 });
 

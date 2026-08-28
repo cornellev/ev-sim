@@ -154,6 +154,12 @@ export class RunSessionController {
         if (this.data.environment?.()?.environmentId !== resolved.manifest.environment.id) return null;
         try {
             const simulation = this.data.simulation?.();
+            const clientManager = this.data.client?.();
+            const preflight = await clientManager?.preflight?.(resolved);
+            if (preflight && preflight.ok === false) {
+                const detail = preflight.issues?.map((issue) => issue.message).join(" ") || "Run preflight failed.";
+                throw new Error(detail);
+            }
             await simulation?.applyRunManifest?.(resolved);
             if (expectedSequence !== this._launchSequence) return null;
             const runId = `run-${new Date().toISOString().replace(/[-:.]/g, "").replace("Z", "Z")}-${resolved.resolvedHash.slice(0, 8)}`;

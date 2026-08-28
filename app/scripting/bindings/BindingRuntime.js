@@ -83,6 +83,8 @@ export class BindingRuntime {
         this._attachedClients = new WeakSet();
         this._clientManager = null;
         this._topicScheduler = null;
+        this._runTopics = new Map();
+        this._topicRouter = null;
         this._lastEmit = 0;
         this._emitTimeout = null;
         this._ready = false;
@@ -304,6 +306,25 @@ export class BindingRuntime {
         clientManager.onUpdate((info) => this._onTopicUpdate(info));
     }
 
+    setTopicRouter(topicRouter = null, topics = []) {
+        this._topicRouter = topicRouter;
+        this._runTopics = new Map((topics || []).map((topic) => [topic.name, topic]));
+    }
+
+    _validateTopicSink(mapping) {
+        const topic = this._runTopics.get(mapping.topic);
+        if (!topic) {
+            throw new Error(`Cannot publish "${mapping.topic}" because it is not declared in the run manifest.`);
+        }
+        const expectedType = topic.schema?.type || topic.type;
+        if (mapping.type && expectedType && mapping.type !== expectedType) {
+            throw new Error(`Cannot publish "${mapping.topic}" as ${mapping.type}; manifest expects ${expectedType}.`);
+        }
+        if (topic.direction !== "output") {
+            throw new Error(`Cannot publish "${mapping.topic}" because manifest direction is ${topic.direction}.`);
+        }
+    }
+
     _onTopicUpdate(info) {
         if (this._topicScheduler) {
             this._topicScheduler(info);
@@ -331,8 +352,17 @@ export class BindingRuntime {
             category: "topics",
             replayRole: "input",
             logClass: "standard",
-            metadata: { typeStr: info.typeStr ?? null, count: info.count ?? null },
-            descriptorMetadata: { rosType: info.typeStr ?? null, schema: info.schema ?? null },
+            metadata: {
+                typeStr: info.typeStr ?? null,
+                count: info.count ?? null,
+                routerSequence: info.routerSequence ?? null,
+                contractId: info.contractId ?? null,
+            },
+            descriptorMetadata: {
+                rosType: info.typeStr ?? null,
+                schema: info.schema ?? null,
+                contractId: info.contractId ?? null,
+            },
         });
 
         if (!this.manifest.enabled) return;
@@ -617,6 +647,10 @@ export class BindingRuntime {
             if (mapping.sink === OUTPUT_SINKS.SIGNAL) {
                 this.signalStore.set(mapping.path, value, { source: "binding" });
                 return;
+            }
+
+            if (this._runTopics.size > 0) {
+                this._validateTopicSink(mapping);
             }
 
             const client = this._clientManager?.get?.();

@@ -24,6 +24,9 @@ export function buildRecordingOptions({
     }
     if (resolvedRun) {
         attachments.push({ name: "run-manifest.json", mime: "application/json", bytes: JSON.stringify(resolvedRun) });
+        if (resolvedRun.calibration) {
+            attachments.push({ name: "calibration.json", mime: "application/json", bytes: JSON.stringify(resolvedRun.calibration) });
+        }
     }
     return {
         name,

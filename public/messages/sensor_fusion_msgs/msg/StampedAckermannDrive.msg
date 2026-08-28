@@ -1,0 +1,9 @@
+std_msgs/Header header
+uint32 sequence
+string mode
+float64 deadline_ns
+float64 steering_angle
+float64 steering_angle_velocity
+float64 speed
+float64 acceleration
+float64 jerk

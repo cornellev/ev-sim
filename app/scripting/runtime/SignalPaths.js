@@ -1,5 +1,9 @@
 export const SIGNAL_NAMESPACES = Object.freeze({
     TOPICS: "topics",
+    CANDIDATE: "candidate",
+    REFERENCE: "reference",
+    ORACLE: "oracle",
+    ACTIVE: "active",
     VEHICLE: "vehicle",
     MISSION: "mission",
     SCENARIO: "scenario",
@@ -39,6 +43,27 @@ export const KNOWN_SIGNAL_PATHS = Object.freeze(
 );
 
 export const TOPIC_SIGNAL_PREFIX = `${SIGNAL_NAMESPACES.TOPICS}.`;
+
+export function contractSignalPath(namespace, contractId) {
+    const normalized = normalizeSignalPath(contractId);
+    return normalized ? `${namespace}.topics.${normalized}` : "";
+}
+
+export function candidateTopicSignalPath(contractId) {
+    return contractSignalPath(SIGNAL_NAMESPACES.CANDIDATE, contractId);
+}
+
+export function referenceTopicSignalPath(contractId) {
+    return contractSignalPath(SIGNAL_NAMESPACES.REFERENCE, contractId);
+}
+
+export function oracleTopicSignalPath(contractId) {
+    return contractSignalPath(SIGNAL_NAMESPACES.ORACLE, contractId);
+}
+
+export function activeTopicSignalPath(contractId) {
+    return contractSignalPath(SIGNAL_NAMESPACES.ACTIVE, contractId);
+}
 
 export function normalizeSignalPath(path) {
     return String(path || "").trim();

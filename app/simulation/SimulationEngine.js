@@ -1,6 +1,9 @@
 import { clamp } from "three/src/math/MathUtils.js";
 import { AssertionEngine } from "./AssertionEngine.js";
 import { TopicInputQueue } from "./TopicInputQueue.js";
+import { TopicContractRouter } from "./TopicContractRouter.js";
+import { TransformRuntime } from "./TransformRuntime.js";
+import { createLocalizationTruthPublisher } from "./LocalizationTruthPublisher.js";
 import { ScenarioRuntime } from "../scenarios/ScenarioRuntime.js";
 import { ScenarioDiagnostics } from "../scenarios/ScenarioDiagnostics.js";
 
@@ -58,6 +61,8 @@ export class SimulationEngine {
         this.telemetry = this.data.bindings?.()?.signalStore ?? null;
         this.resolvedRun = null;
         this.inputQueue = new TopicInputQueue();
+        this.topicRouter = null;
+        this.localizationTruthPublisher = null;
         this.assertionEngine = new AssertionEngine([], this.telemetry);
         this.scenarioRuntime = new ScenarioRuntime(this.data, { telemetry: this.telemetry });
         this.scenarioDiagnostics = new ScenarioDiagnostics();
@@ -258,12 +263,14 @@ export class SimulationEngine {
         this.inputQueue.reset();
         this.assertionEngine.reset();
         this.scenarioRuntime.reset();
+        this.localizationTruthPublisher?.reset?.();
         
         for (const handler of this.resetHandlers) {
             handler();
         }
         this._emitLifecycle("reset");
         if (this.resolvedRun) this._applyInitialState(this.resolvedRun.manifest.initialState);
+        this.transformRuntime?.publishStaticTransforms?.(0);
     }
 
     step(count = 1) {
@@ -366,6 +373,14 @@ export class SimulationEngine {
             if (name in this.modules) this.modules[name] = Boolean(enabled);
         }
         this.inputQueue = new TopicInputQueue(manifest.topics);
+        this.topicRouter = new TopicContractRouter(manifest, { telemetry: this.telemetry });
+        this.localizationTruthPublisher = createLocalizationTruthPublisher(manifest, this.topicRouter);
+        this.localizationTruthPublisher.stepNs = manifest.clock.stepNs;
+        this.transformRuntime = resolved.calibration
+            ? new TransformRuntime(resolved.calibration, this.topicRouter, {
+                client: this.data.client?.()?.get?.(),
+            })
+            : null;
         this.assertionEngine = new AssertionEngine(manifest.assertions, this.telemetry);
         this.data.bindings?.()?.setTopicScheduler?.((info) => this.queueTopicInput(info));
 
@@ -389,12 +404,18 @@ export class SimulationEngine {
             ],
         });
         this.data.bindings?.()?.setTopicScheduler?.((info) => this.queueTopicInput(info));
+        this.data.bindings?.()?.setTopicRouter?.(this.topicRouter, manifest.topics);
         this.data.devices?.()?.configureFromManifest?.(manifest.sensorRig, {
             seed: manifest.seed,
             topics: manifest.topics,
+            topicRouter: this.topicRouter,
+            transformRuntime: this.transformRuntime,
+            calibrationHash: resolved.calibration?.hash ?? null,
+            stepNs: manifest.clock.stepNs,
         });
         await this.data.physics?.()?.configureRun?.(manifest, resolved.environment?.manifest);
         this.reset();
+        this.transformRuntime?.publishStaticTransforms?.(0);
         for (const [path, value] of Object.entries(manifest.initialState.signals || {})) {
             this.telemetry?.publishSignal?.(path, value, { timeUs: 0, cycle: 0, source: "manifest", replayRole: "input", logClass: "core" });
         }
@@ -413,7 +434,8 @@ export class SimulationEngine {
             this.data.bindings?.()?.applyTopicUpdate?.(info);
             return null;
         }
-        return this.inputQueue.enqueue(info, this.steps + 1);
+        const arrivalTimeNs = this.timeNs;
+        return this.inputQueue.enqueue(info, this.steps + 1, { arrivalTimeNs });
     }
 
     _frame(nowMs) {
@@ -528,6 +550,14 @@ export class SimulationEngine {
         this.time = this.timeNs / 1e9;
         phase("clock", () => this._publishClock());
 
+        phase("transforms", () => {
+            if (this.transformRuntime) {
+                const vehicles = this.data.vehicles?.()?.vehicles || [];
+                this.transformRuntime.publishDynamicTransforms(this.timeNs, this.steps, vehicles);
+                this.localizationTruthPublisher?.publish(this.timeNs, this.steps, vehicles);
+            }
+        });
+
         phase("sensors", () => {
             if (this.modules.sensors) this.data.devices()?.update?.(dt, { step: this.steps, timeNs: this.timeNs });
         });
@@ -579,11 +609,25 @@ export class SimulationEngine {
     }
 
     _applyQueuedInputs(step) {
-        for (const entry of this.inputQueue.drain(step)) {
+        const applyTimeNs = step * this.stepNs;
+        for (const entry of this.inputQueue.drain(step, applyTimeNs)) {
+            const routed = this.topicRouter?.routeInbound(entry.info, {
+                applyStep: step,
+                applyTimeNs,
+                arrivalTimeNs: entry.arrivalTimeNs,
+            });
+            if (routed && routed.ok === false && routed.code !== "stale") {
+                continue;
+            }
             this.data.bindings?.()?.applyTopicUpdate?.(entry.info);
             const scenarioOwnsVehicleCommands = this.scenarioRuntime.active;
             const handledByScenario = this.scenarioRuntime.applyExternalTopic(entry.info);
-            if (!scenarioOwnsVehicleCommands && !handledByScenario && entry.info.name === "/ackdrive") {
+            const controlTopic = this.resolvedRun?.manifest?.topics?.find((topic) =>
+                topic.direction === "input" && (topic.name === entry.info.name || topic.id === "ackdrive")
+            );
+            const isLegacyAck = controlTopic?.contractId === "ackdrive-legacy"
+                || entry.info.name === "/ackdrive";
+            if (!scenarioOwnsVehicleCommands && !handledByScenario && isLegacyAck) {
                 const vehicle = this.data.vehicles?.()?.vehicles?.find((candidate) => candidate.telemetryId === "ego")
                     ?? this.data.vehicles?.()?.vehicles?.[0];
                 if (vehicle) {
@@ -592,10 +636,10 @@ export class SimulationEngine {
                 }
             }
             this.telemetry?.emitTelemetryEvent?.({
-                timeUs: Math.round(((step - 1) * this.stepNs) / 1000),
+                timeUs: Math.round(applyTimeNs / 1000),
                 category: "topics",
                 name: "input-applied",
-                payload: { topic: entry.info.name, step, sequence: entry.sequence },
+                payload: { topic: entry.info.name, step, sequence: entry.sequence, routed: routed?.ok ?? null },
             });
         }
     }
@@ -627,8 +671,17 @@ export class SimulationEngine {
         });
         if (this.resolvedRun?.manifest.clock.publishClock) {
             const topic = this.resolvedRun.manifest.topics.find((candidate) => candidate.id === "clock");
-            const client = this.data.client?.()?.get?.();
-            if (topic && client?.isOpen?.()) client.publish(topic.name, topic.type, { clock: stamp }).catch?.(() => {});
+            if (topic) {
+                this.topicRouter?.routeOutbound?.("clock", {
+                    value: { clock: stamp },
+                    typeStr: topic.schema?.type || topic.type,
+                }, {
+                    producer: "simulator",
+                    captureTimeNs: this.timeNs,
+                    deliveryTimeNs: this.timeNs,
+                    cycle: this.steps,
+                });
+            }
         }
     }
 

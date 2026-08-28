@@ -88,6 +88,15 @@ function registerMessageSchema(typeName, fields) {
 	DYNAMIC_SCHEMAS.set(normalizedType, normalizedFields);
 }
 
+function listRegisteredSchemaTypes() {
+	return [...new Set([...DYNAMIC_SCHEMAS.keys(), ...Object.keys(TYPE_ENCODERS)])];
+}
+
+function hasRegisteredSchema(typeStr) {
+	const normalized = normalizeTypeName(typeStr, null);
+	return TYPE_ENCODERS[normalized] !== undefined || DYNAMIC_SCHEMAS.has(normalized);
+}
+
 async function registerMsgDefinitionFromFile(typeName, fileText) {
 	const data = await fetch(fileText);
 	if (!data.ok) throw new Error(`Failed to load message definition from ${fileText}: ${data.status} ${data.statusText}`);
@@ -858,6 +867,28 @@ class Client {
 		return syncTypesToServer(types, options);
 	}
 
+	async fetchTopicCatalog(timeoutMs = 5000) {
+		if (!this.isOpen()) throw new Error("WebSocket not open");
+		return new Promise((resolve, reject) => {
+			const previousEcho = this.onEcho;
+			const timeout = setTimeout(() => {
+				this.onEcho = previousEcho;
+				reject(new Error("Timed out waiting for orchestrator topic catalog."));
+			}, timeoutMs);
+			this.onEcho = async (topics) => {
+				clearTimeout(timeout);
+				this.onEcho = previousEcho;
+				if (previousEcho) await previousEcho(topics);
+				resolve(topics);
+			};
+			this.echo().catch((error) => {
+				clearTimeout(timeout);
+				this.onEcho = previousEcho;
+				reject(error);
+			});
+		});
+	}
+
 	_rejectReady(err) {
 		try {
 			this._readyReject(err instanceof Error ? err : new Error(String(err)));
@@ -1000,6 +1031,8 @@ export {
 	MAX_TOPIC_NAME_LEN,
 	buildTopicData,
 	decodeValue,
+	hasRegisteredSchema,
+	listRegisteredSchemaTypes,
 	registerMessageSchema,
 	registerMsgDefinition,
 	registerMsgDefinitionFromFile,
@@ -1015,6 +1048,8 @@ if (typeof module !== "undefined" && module.exports) {
 		buildTopicData,
 		encodeValue,
 		decodeValue,
+		hasRegisteredSchema,
+		listRegisteredSchemaTypes,
 		registerMessageSchema,
 		registerMsgDefinition,
 		registerMsgDefinitionFromFile,
@@ -1030,6 +1065,8 @@ if (typeof window !== "undefined") {
 		buildTopicData,
 		encodeValue,
 		decodeValue,
+		hasRegisteredSchema,
+		listRegisteredSchemaTypes,
 		registerMessageSchema,
 		registerMsgDefinition,
 		registerMsgDefinitionFromFile,

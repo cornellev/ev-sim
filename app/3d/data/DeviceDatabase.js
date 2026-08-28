@@ -135,6 +135,8 @@ export class DeviceDatabase extends Database {
         for (const config of [...(sensorRig.sensors || [])].sort((left, right) => left.id.localeCompare(right.id))) {
             if (config.enabled === false) continue;
             const device = createRunSensorDevice(config, options);
+            device.transformRuntime = options.transformRuntime ?? null;
+            device.calibrationHash = options.calibrationHash ?? null;
             const vehicle = byId.get(config.parentId);
             if (!vehicle) throw new Error(`Sensor "${config.id}" references unknown parent vehicle "${config.parentId}".`);
             this.addDevice(device);
@@ -146,7 +148,10 @@ export class DeviceDatabase extends Database {
     }
 
     resetSchedule() {
-        for (const device of this.devices) device.contractPublisher?.reset?.();
+        for (const device of this.devices) {
+            device.contractPublisher?.reset?.();
+            device.resetMeasurementState?.();
+        }
     }
 
     update(dt, clock = null) {

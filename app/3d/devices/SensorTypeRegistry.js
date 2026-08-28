@@ -102,7 +102,69 @@ export function listSensorTypes() {
     return sensorTypeRegistry.list();
 }
 
+function axisCalibration(source = {}, fallback = 0) {
+    if (Array.isArray(source)) {
+        return { x: finite(source[0], fallback), y: finite(source[1], fallback), z: finite(source[2], fallback) };
+    }
+    const obj = object(source);
+    return { x: finite(obj.x, fallback), y: finite(obj.y, fallback), z: finite(obj.z, fallback) };
+}
+
+const imuRunFields = [
+    { label: "Mount frame", path: ["mountFrameId"], control: "text" },
+    { label: "Measurement frame", path: ["measurementFrameId"], control: "text" },
+    { label: "Sync group", path: ["syncGroupId"], control: "text" },
+    { label: "IMU topic ID", path: ["outputs", "imuTopicId"], control: "text" },
+    { label: "Gravity (m/s²)", path: ["calibration", "gravity"], control: "number", min: 0, step: 0.001 },
+    { label: "Angular velocity σ (rad/s)", path: ["calibration", "angularVelocityStdDev", "x"], control: "number", min: 0, step: 0.0001 },
+    { label: "Linear acceleration σ (m/s²)", path: ["calibration", "linearAccelerationStdDev", "z"], control: "number", min: 0, step: 0.001 },
+    { label: "Angular saturation (rad/s)", path: ["calibration", "angularVelocitySaturation"], control: "number", min: 0 },
+    { label: "Acceleration saturation (m/s²)", path: ["calibration", "linearAccelerationSaturation"], control: "number", min: 0 },
+];
+
+const gnssRunFields = [
+    { label: "Frame ID", path: ["measurementFrameId"], control: "text" },
+    { label: "Sync group", path: ["syncGroupId"], control: "text" },
+    { label: "GNSS topic ID", path: ["outputs", "gnssTopicId"], control: "text" },
+    { label: "Datum latitude (deg)", path: ["calibration", "datum", "latitude"], control: "number" },
+    { label: "Datum longitude (deg)", path: ["calibration", "datum", "longitude"], control: "number" },
+    { label: "Datum altitude (m)", path: ["calibration", "datum", "altitude"], control: "number" },
+    { label: "Position noise E (m)", path: ["calibration", "positionNoiseEnu", "x"], control: "number", min: 0, step: 0.001 },
+    { label: "Position noise N (m)", path: ["calibration", "positionNoiseEnu", "y"], control: "number", min: 0, step: 0.001 },
+    { label: "Dropout probability", path: ["calibration", "faults", "dropoutProbability"], control: "number", min: 0, max: 1, step: 0.001 },
+    { label: "Outage probability", path: ["calibration", "faults", "outageProbability"], control: "number", min: 0, max: 1, step: 0.001 },
+];
+
+const wheelOdometryRunFields = [
+    { label: "Odom frame", path: ["calibration", "odomFrameId"], control: "text" },
+    { label: "Sync group", path: ["syncGroupId"], control: "text" },
+    { label: "Odometry topic ID", path: ["outputs", "odometryTopicId"], control: "text" },
+    { label: "Wheel radius (m)", path: ["calibration", "wheelRadius"], control: "number", min: 0.01, step: 0.001 },
+    { label: "Ticks per revolution", path: ["calibration", "ticksPerRevolution"], control: "number", min: 1 },
+    { label: "Track width (m)", path: ["calibration", "trackWidth"], control: "number", min: 0.01, step: 0.001 },
+    { label: "Slip factor", path: ["calibration", "slipFactor"], control: "number", min: 0, max: 1, step: 0.001 },
+    { label: "Pose noise σ (m)", path: ["calibration", "poseNoise", "x"], control: "number", min: 0, step: 0.001 },
+    { label: "Twist noise σ (m/s)", path: ["calibration", "twistNoise", "x"], control: "number", min: 0, step: 0.001 },
+];
+
+const imuVehicleFields = [
+    { label: "Gravity (m/s²)", path: ["config", "gravity"], control: "number", min: 0, step: 0.001 },
+];
+
+const gnssVehicleFields = [
+    { label: "Datum latitude (deg)", path: ["config", "datum", "latitude"], control: "number" },
+    { label: "Datum longitude (deg)", path: ["config", "datum", "longitude"], control: "number" },
+];
+
+const wheelVehicleFields = [
+    { label: "Wheel radius (m)", path: ["config", "wheelRadius"], control: "number", min: 0.01, step: 0.001 },
+    { label: "Track width (m)", path: ["config", "trackWidth"], control: "number", min: 0.01, step: 0.001 },
+];
+
 const cameraRunFields = [
+    { label: "Mount frame", path: ["mountFrameId"], control: "text" },
+    { label: "Measurement frame", path: ["measurementFrameId"], control: "text" },
+    { label: "Sync group", path: ["syncGroupId"], control: "text" },
     { label: "Image topic ID", path: ["outputs", "imageTopicId"], control: "text" },
     { label: "Image ROS schema", path: ["schema", "imageTopicId"], control: "text" },
     { label: "CameraInfo topic ID", path: ["outputs", "cameraInfoTopicId"], control: "text" },
@@ -114,6 +176,8 @@ const cameraRunFields = [
 ];
 
 const lidarRunFields = [
+    { label: "Frame ID", path: ["mountFrameId"], control: "text" },
+    { label: "Sync group", path: ["syncGroupId"], control: "text" },
     { label: "PointCloud topic ID", path: ["outputs", "pointCloudTopicId"], control: "text" },
     { label: "PointCloud ROS schema", path: ["schema", "pointCloudTopicId"], control: "text" },
     { label: "Range (m)", path: ["calibration", "range"], control: "number", min: 0.01 },
@@ -242,6 +306,145 @@ registerSensorType({
     },
 });
 
+registerSensorType({
+    id: "imu",
+    label: "IMU",
+    addLabel: "Add IMU",
+    idPrefix: "imu",
+    accentClass: "text-violet-300",
+    color: 0xa78bfa,
+    run: {
+        defaultRateHz: 100,
+        fields: imuRunFields,
+        outputs: [{ key: "imuTopicId", signal: "imu", rosType: "sensor_msgs/Imu" }],
+        normalize(source) {
+            const calibration = object(source.calibration);
+            return {
+                calibration: {
+                    gravity: 9.80665,
+                    angularVelocityStdDev: axisCalibration(calibration.angularVelocityStdDev, 0.002),
+                    linearAccelerationStdDev: axisCalibration(calibration.linearAccelerationStdDev, 0.02),
+                    angularVelocitySaturation: positive(calibration.angularVelocitySaturation, 35),
+                    linearAccelerationSaturation: positive(calibration.linearAccelerationSaturation, 156),
+                    angularDriftTauSec: positive(calibration.angularDriftTauSec, 100),
+                    accelerationDriftTauSec: positive(calibration.accelerationDriftTauSec, 100),
+                    angularRandomWalk: axisCalibration(calibration.angularRandomWalk, 0.0001),
+                    accelerationRandomWalk: axisCalibration(calibration.accelerationRandomWalk, 0.001),
+                    turnOnBias: {
+                        angular: axisCalibration(calibration.turnOnBias?.angular, 0),
+                        acceleration: axisCalibration(calibration.turnOnBias?.acceleration, 0),
+                    },
+                    noise: object(calibration.noise),
+                    ...calibration,
+                },
+                schema: { imuTopicId: "sensor_msgs/Imu", ...object(source.schema) },
+                determinism: { comparison: "numeric-tolerance", crossDeviceByteEquality: true },
+            };
+        },
+        validate: () => [],
+    },
+    vehicle: {
+        fields: imuVehicleFields,
+        normalize: (source) => ({ gravity: positive(object(source.config).gravity, 9.80665) }),
+        validate: () => [],
+    },
+});
+
+registerSensorType({
+    id: "gnss",
+    label: "GNSS",
+    addLabel: "Add GNSS",
+    idPrefix: "gnss",
+    accentClass: "text-emerald-300",
+    color: 0x34d399,
+    run: {
+        defaultRateHz: 10,
+        fields: gnssRunFields,
+        outputs: [{ key: "gnssTopicId", signal: "gnss", rosType: "sensor_msgs/NavSatFix" }],
+        normalize(source) {
+            const calibration = object(source.calibration);
+            return {
+                calibration: {
+                    datum: {
+                        latitude: finite(calibration.datum?.latitude, 42.4430),
+                        longitude: finite(calibration.datum?.longitude, -76.4840),
+                        altitude: finite(calibration.datum?.altitude, 200),
+                    },
+                    positionNoiseEnu: axisCalibration(calibration.positionNoiseEnu, 0.05),
+                    faults: {
+                        dropoutProbability: Math.min(1, Math.max(0, finite(calibration.faults?.dropoutProbability, 0))),
+                        outageProbability: Math.min(1, Math.max(0, finite(calibration.faults?.outageProbability, 0))),
+                        multipathTauSec: positive(calibration.faults?.multipathTauSec, 30),
+                        multipathStdDev: axisCalibration(calibration.faults?.multipathStdDev, 0.1),
+                        ...object(calibration.faults),
+                    },
+                    ...calibration,
+                },
+                schema: { gnssTopicId: "sensor_msgs/NavSatFix", ...object(source.schema) },
+                determinism: { comparison: "numeric-tolerance", crossDeviceByteEquality: true },
+            };
+        },
+        validate: () => [],
+    },
+    vehicle: {
+        fields: gnssVehicleFields,
+        normalize(source) {
+            const config = object(source.config);
+            return {
+                datum: {
+                    latitude: finite(config.datum?.latitude, 42.4430),
+                    longitude: finite(config.datum?.longitude, -76.4840),
+                },
+            };
+        },
+        validate: () => [],
+    },
+});
+
+registerSensorType({
+    id: "wheel-odometry",
+    label: "Wheel odometry",
+    addLabel: "Add wheel odometry",
+    idPrefix: "wheel",
+    accentClass: "text-orange-300",
+    color: 0xfb923c,
+    run: {
+        defaultRateHz: 50,
+        fields: wheelOdometryRunFields,
+        outputs: [{ key: "odometryTopicId", signal: "odometry", rosType: "nav_msgs/Odometry" }],
+        normalize(source) {
+            const calibration = object(source.calibration);
+            return {
+                calibration: {
+                    odomFrameId: text(calibration.odomFrameId, "odom"),
+                    childFrameId: text(calibration.childFrameId, "base_link"),
+                    wheelRadius: positive(calibration.wheelRadius, 0.15),
+                    ticksPerRevolution: positiveInteger(calibration.ticksPerRevolution, 1024),
+                    trackWidth: positive(calibration.trackWidth, 1.2),
+                    slipFactor: Math.min(1, Math.max(0, finite(calibration.slipFactor, 0))),
+                    poseNoise: axisCalibration(calibration.poseNoise, 0.01),
+                    twistNoise: axisCalibration(calibration.twistNoise, 0.02),
+                    ...calibration,
+                },
+                schema: { odometryTopicId: "nav_msgs/Odometry", ...object(source.schema) },
+                determinism: { comparison: "numeric-tolerance", crossDeviceByteEquality: true },
+            };
+        },
+        validate: (sensor) => (sensor.calibration.wheelRadius > 0 ? [] : [{ path: "calibration.wheelRadius", message: "Wheel radius must be positive." }]),
+    },
+    vehicle: {
+        fields: wheelVehicleFields,
+        normalize(source) {
+            const config = object(source.config);
+            return {
+                wheelRadius: positive(config.wheelRadius, 0.15),
+                trackWidth: positive(config.trackWidth, 1.2),
+            };
+        },
+        validate: () => [],
+    },
+});
+
 function resolveType(source, registry) {
     const requested = text(source.type);
     return requested || (registry.get(DEFAULT_SENSOR_TYPE) ? DEFAULT_SENSOR_TYPE : registry.list()[0]?.id || "");
@@ -257,12 +460,22 @@ export function normalizeRunSensor(value = {}, index = 0, registry = sensorTypeR
         schema: cloneObject(source.schema),
         determinism: cloneObject(source.determinism),
     };
+    const isCamera = type === "camera";
+    const defaultMount = isCamera
+        ? `${id.replace(/-camera$/, "")}_camera_link`.replace(/^([^-]+)$/, "$1_camera_link")
+        : text(source.frameId, `${id}_frame`);
+    const defaultMeasurement = isCamera
+        ? text(source.frameId, `${defaultMount.replace(/_link$/, "")}_optical_frame`)
+        : defaultMount;
     return {
         id,
         type,
         enabled: source.enabled !== false,
         parentId: text(source.parentId, "ego"),
-        frameId: text(source.frameId, `${id}_frame`),
+        frameId: text(source.frameId, defaultMeasurement),
+        mountFrameId: text(source.mountFrameId, defaultMount),
+        measurementFrameId: text(source.measurementFrameId, defaultMeasurement),
+        syncGroupId: text(source.syncGroupId) || null,
         pose: pose(source.pose),
         rateHz: Math.max(0.001, finite(source.rateHz, definition?.run.defaultRateHz ?? 10)),
         phaseNs: nonNegativeInteger(source.phaseNs, 0),

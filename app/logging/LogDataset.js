@@ -24,6 +24,7 @@ export class LogDataset {
         this.attachments = decoded.attachments;
         this.resolvedRun = this.jsonAttachment("run-manifest.json");
         this.runManifest = this.resolvedRun?.manifest || this.resolvedRun || null;
+        this.calibration = this.jsonAttachment("calibration.json") || this.resolvedRun?.calibration || null;
         this.runResults = this.jsonAttachment("run-results.json");
         this.series = new Map();
         for (const update of this.updates) {

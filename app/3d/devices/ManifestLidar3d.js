@@ -3,6 +3,7 @@ import * as THREE from "three";
 import { LiDAR3d } from "./LiDAR3d.js";
 import { SensorPublisher } from "./SensorPublisher.js";
 import { buildPointCloud2 } from "./SensorMessages.js";
+import { rep103PoseToThree } from "../../autonomy/CoordinateFrames.js";
 
 function gaussian(rng) {
     const left = Math.max(Number.EPSILON, rng.next());
@@ -12,9 +13,10 @@ function gaussian(rng) {
 export class ManifestLidar3d extends LiDAR3d {
     constructor(config, options = {}) {
         const calibration = config.calibration;
+        const threePose = rep103PoseToThree(config.pose);
         super(
-            new THREE.Vector3(config.pose.position.x, config.pose.position.y, config.pose.position.z),
-            new THREE.Euler(config.pose.rotation.x, config.pose.rotation.y, config.pose.rotation.z, config.pose.rotation.order || "XYZ"),
+            new THREE.Vector3(threePose.position.x, threePose.position.y, threePose.position.z),
+            new THREE.Euler(threePose.rotation.x, threePose.rotation.y, threePose.rotation.z, threePose.rotation.order || "XYZ"),
             calibration.range,
             calibration.azimuth.stepDeg,
             [calibration.azimuth.startDeg, calibration.azimuth.endDeg],
@@ -25,6 +27,8 @@ export class ManifestLidar3d extends LiDAR3d {
         this.telemetryId = config.id;
         this.settings.telemetryId = config.id;
         this.config = config;
+        this.transformRuntime = options.transformRuntime ?? null;
+        this.calibrationHash = options.calibrationHash ?? null;
         this.contractPublisher = new SensorPublisher(this, config, options);
         this.manifestManaged = true;
         this.captureContext = null;
@@ -32,6 +36,13 @@ export class ManifestLidar3d extends LiDAR3d {
     }
 
     captureAt(context) {
+        const data = this.getParent?.()?.getParent?.();
+        const vehicles = data?.vehicles?.()?.vehicles || [];
+        const frameResolution = this.transformRuntime?.resolveCaptureFrames?.(this.config, vehicles, context.captureTimeNs);
+        if (frameResolution && frameResolution.ok === false) {
+            this.contractPublisher?._event?.("frame-invalid", "error", { reason: frameResolution.message });
+            return [];
+        }
         this.captureContext = context;
         this.captureMessages = [];
         super.execute(context.captureTimeNs / 1e9);
@@ -48,7 +59,7 @@ export class ManifestLidar3d extends LiDAR3d {
             buffer,
             calibration: this.config.calibration,
             timeNs: captureTimeNs,
-            frameId: this.config.frameId,
+            frameId: this.config.measurementFrameId || this.config.frameId,
             sampleRange: (range) => range + noise.bias + (noise.model === "gaussian" ? gaussian(rng) * noise.standardDeviation : 0),
             shouldDrop: () => noise.dropoutProbability > 0 && rng.next() < noise.dropoutProbability,
         });

@@ -50,86 +50,11 @@ Profiles are versioned, human-readable JSON persisted under the `logging-profile
 
 Replay-safe profiles force all `input` signals and `core` state signals on at every update. Telemetry profiles permit disabling and rate-limiting every descriptor. The singleton `RecordingController` owns recording across workspace changes, batches at 250 ms or 256 KiB, retries uploads idempotently, and maintains a 16 MiB client queue. Queue exhaustion pauses the simulator for replay-safe recordings.
 
-## SFLog v1
+## SFLog
 
-All multibyte numbers are little-endian. The file is self-contained; the `.json` sidecar is only a catalog cache and the editable name/tag store.
+Recordings persist as native SFLog v1 files (`SFLG`) under `server/data/logs/`. The `.sflog` is self-contained; the `.json` sidecar is only a catalog cache and the editable name/tag store. The browser encodes uncompressed record batches; `LogService` gzip-chunks them, writes an `INDX` footer, and recovers interrupted `.partial` files on startup.
 
-### Header
-
-| Field | Encoding |
-| --- | --- |
-| Magic | ASCII `SFLG` |
-| Version | `uint16`, currently `1` |
-| Flags | `uint16`; bit 0 little-endian, bit 1 gzip chunks |
-| Metadata length | `uint32` |
-| Metadata | UTF-8 JSON |
-
-Metadata includes the session identity, wall-clock start, environment, simulator snapshot, profile, application version, and optional git hash.
-
-### Chunks
-
-Each independently validated chunk starts with:
-
-| Field | Encoding |
-| --- | --- |
-| Magic | ASCII `CHNK` |
-| Start time | `uint64`, session-relative microseconds |
-| End time | `uint64`, session-relative microseconds |
-| Uncompressed length | `uint32` |
-| Compressed length | `uint32` |
-| CRC32 | `uint32`, over uncompressed records |
-| Reserved | `uint32`, zero in v1 |
-| Payload | gzip-compressed record stream |
-
-Chunks are normally about one second. Readers reject oversized chunks, length mismatches, gzip errors, and CRC mismatches.
-
-### Records
-
-Unsigned integers, IDs, and lengths use base-128 varints. Signed integers use zigzag varints. A schema definition establishes the type for later values, so individual updates carry no type tag.
-
-| Tag | Record |
-| --- | --- |
-| `0x01` | Schema ID, type code, path, unit, descriptor metadata |
-| `0x02` | Delta timestamp, cycle number, changed signal count, then ID/value pairs |
-| `0x03` | Timestamp, category, name, severity, JSON payload |
-| `0x04` | Timestamp and the current replayable ID/value state |
-| `0x05` | Timestamp, attachment name, MIME type, bytes |
-
-Primitive codecs cover booleans, signed and unsigned integers, floats, strings, bytes, vectors, poses, and typed numeric arrays. JSON is the explicit fallback for structured values. Checkpoints are written every five seconds and at start/stop.
-
-The first cycle record in each uploaded record stream carries an absolute timestamp marker. Later cycle records use a delta from the previous cycle; a clock regression starts a new absolute base. This keeps record streams independently decodable while preserving compact deltas across normal cycles.
-
-### Index and recovery
-
-Finalized files end with `INDX`, an entry count, and fixed-size entries containing start time, end time, file offset, and checkpoint presence. The final 12 bytes are the index offset followed by `SEND`. Import validates the locator, exact index length, chunk count, entry boundaries, gzip payloads, CRCs, and schemas.
-
-Active sessions use `.partial`. On restart, the service scans complete chunk headers and valid CRCs, truncates an interrupted tail, builds a new index, and catalogs the result as incomplete. This permits analysis and state replay of the valid prefix.
-
-Files live under `server/data/logs/`:
-
-```text
-<id>.sflog    finalized binary log
-<id>.json     catalog metadata, editable name and tags
-<id>.partial  active or interrupted recording
-```
-
-## HTTP API
-
-The binary router is mounted before JSON storage middleware.
-
-- `GET /api/logs`
-- `POST /api/logs/sessions`
-- `POST /api/logs/sessions/:id/batches`
-- `POST /api/logs/sessions/:id/finalize`
-- `GET /api/logs/:id/metadata`
-- `GET /api/logs/:id/index`
-- `GET /api/logs/:id/chunks?fromUs=&toUs=`
-- `GET /api/logs/:id/file` with HTTP Range support
-- `POST /api/logs/import` for streaming native `.sflog` import
-- `PATCH /api/logs/:id`
-- `DELETE /api/logs/:id`
-
-Batch sequence numbers are monotonic and accepted retries are idempotent.
+The binary layout, record tags, value codecs, recording pipeline, run-manifest policies, HTTP API, Replay/Analysis consumers, and MCP tools are specified in [SFLog](sflog.md).
 
 ## Workspaces
 

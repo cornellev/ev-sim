@@ -30,6 +30,20 @@ test("editable targets suppress shortcuts unless explicitly allowed", () => {
     assert.deepEqual(getShortcutCandidates(entries, event).map((entry) => entry.id), ["allowed"]);
 });
 
+test("keydown events without a key do not crash shortcut matching", () => {
+    const entries = [
+        { id: "escape", keys: "Escape", priority: 0 },
+        { id: "missing", keys: undefined, priority: 10 },
+        { id: "partial", keys: ["Space", undefined], priority: 5 },
+    ];
+    const event = { key: undefined, defaultPrevented: false, target: targetInside(false) };
+    assert.deepEqual(getShortcutCandidates(entries, event), []);
+    assert.deepEqual(
+        getShortcutCandidates(entries, { key: "Escape", defaultPrevented: false, target: targetInside(false) }).map((entry) => entry.id),
+        ["escape"],
+    );
+});
+
 test("workspace guards select the first dirty registration", () => {
     const clean = { id: "clean", dirty: false };
     const dirty = { id: "dirty", dirty: true };

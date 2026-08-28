@@ -1,0 +1,187 @@
+/**
+ * REP-103/105 coordinate helpers and Three.js scene ↔ ROS frame conversions.
+ * Scene/vehicle coordinates remain Three.js (+X forward, +Y up, +Z left).
+ * Manifest extrinsics and ROS payloads use REP-103 (+X forward, +Y left, +Z up).
+ */
+
+export function simulationStamp(timeNs) {
+    const normalized = Math.max(0, Math.floor(Number(timeNs) || 0));
+    return { sec: Math.floor(normalized / 1e9), nanosec: normalized % 1e9 };
+}
+
+/** Fixed basis change: REP-103 vector → Three.js vehicle-local vector. */
+export function rep103ToThreeVector({ x = 0, y = 0, z = 0 } = {}) {
+    return { x: Number(x), y: Number(z), z: Number(y) };
+}
+
+/** Fixed basis change: Three.js vehicle-local vector → REP-103. */
+export function threeToRep103Vector({ x = 0, y = 0, z = 0 } = {}) {
+    return { x: Number(x), y: Number(z), z: Number(y) };
+}
+
+/** REP-103 Euler XYZ (radians) → Three.js Euler XYZ (same axis order, basis-mapped components). */
+export function rep103EulerToThree(euler = {}) {
+    const rep = {
+        x: Number(euler.x || 0),
+        y: Number(euler.y || 0),
+        z: Number(euler.z || 0),
+        order: euler.order || "XYZ",
+    };
+    return { x: rep.x, y: rep.z, z: rep.y, order: rep.order };
+}
+
+export function threeEulerToRep103(euler = {}) {
+    const three = {
+        x: Number(euler.x || 0),
+        y: Number(euler.y || 0),
+        z: Number(euler.z || 0),
+        order: euler.order || "XYZ",
+    };
+    return { x: three.x, y: three.z, z: three.y, order: three.order };
+}
+
+export function rep103PoseToThree(pose = {}) {
+    return {
+        position: rep103ToThreeVector(pose.position),
+        rotation: rep103EulerToThree(pose.rotation),
+    };
+}
+
+export function threePoseToRep103(pose = {}) {
+    return {
+        position: threeToRep103Vector(pose.position),
+        rotation: threeEulerToRep103(pose.rotation),
+    };
+}
+
+export function eulerToQuaternion(euler = {}) {
+    const x = Number(euler.x || 0) / 2;
+    const y = Number(euler.y || 0) / 2;
+    const z = Number(euler.z || 0) / 2;
+    const cx = Math.cos(x);
+    const sx = Math.sin(x);
+    const cy = Math.cos(y);
+    const sy = Math.sin(y);
+    const cz = Math.cos(z);
+    const sz = Math.sin(z);
+    const order = euler.order || "XYZ";
+    if (order !== "XYZ") {
+        // Manifest authoring uses XYZ; other orders fall back to sequential XYZ composition.
+    }
+    const qx = sx * cy * cz + cx * sy * sz;
+    const qy = cx * sy * cz - sx * cy * sz;
+    const qz = cx * cy * sz + sx * sy * cz;
+    const qw = cx * cy * cz - sx * sy * sz;
+    return { x: qx, y: qy, z: qz, w: qw };
+}
+
+export function quaternionMultiply(a, b) {
+    return {
+        x: a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
+        y: a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+        z: a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w,
+        w: a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z,
+    };
+}
+
+export function quaternionInverse(q) {
+    const norm = q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w;
+    if (norm <= Number.EPSILON) return { x: 0, y: 0, z: 0, w: 1 };
+    return { x: -q.x / norm, y: -q.y / norm, z: -q.z / norm, w: q.w / norm };
+}
+
+export function rotateVectorByQuaternion(v, q) {
+    const qv = { x: v.x, y: v.y, z: v.z, w: 0 };
+    const qi = quaternionInverse(q);
+    const rotated = quaternionMultiply(quaternionMultiply(q, qv), qi);
+    return { x: rotated.x, y: rotated.y, z: rotated.z };
+}
+
+/** Standard REP-105 camera_link → camera_optical rotation (fixed, no translation). */
+export function cameraLinkToOpticalRotation() {
+    return eulerToQuaternion({ x: -Math.PI / 2, y: 0, z: -Math.PI / 2, order: "XYZ" });
+}
+
+export function buildTransformStamped({
+    timeNs = 0,
+    parentFrameId = "",
+    childFrameId = "",
+    translation = { x: 0, y: 0, z: 0 },
+    rotation = null,
+    euler = null,
+}) {
+    const rot = rotation || eulerToQuaternion(euler || { x: 0, y: 0, z: 0, order: "XYZ" });
+    return {
+        header: { stamp: simulationStamp(timeNs), frame_id: String(parentFrameId) },
+        child_frame_id: String(childFrameId),
+        transform: {
+            translation: {
+                x: Number(translation.x || 0),
+                y: Number(translation.y || 0),
+                z: Number(translation.z || 0),
+            },
+            rotation: {
+                x: Number(rot.x),
+                y: Number(rot.y),
+                z: Number(rot.z),
+                w: Number(rot.w),
+            },
+        },
+    };
+}
+
+export function buildTFMessage(transforms = []) {
+    return { transforms: [...transforms] };
+}
+
+/** Compose REP-103 poses: parent * child (child rotation as euler or quaternion). */
+export function composeRep103Poses(parent, child) {
+    const pQ = parent.rotation?.w !== undefined
+        ? parent.rotation
+        : eulerToQuaternion(parent.rotation || {});
+    const cQ = child.rotation?.w !== undefined
+        ? child.rotation
+        : eulerToQuaternion(child.rotation || {});
+    const q = quaternionMultiply(pQ, cQ);
+    const rotated = rotateVectorByQuaternion(child.position || { x: 0, y: 0, z: 0 }, pQ);
+    return {
+        position: {
+            x: Number(parent.position?.x || 0) + rotated.x,
+            y: Number(parent.position?.y || 0) + rotated.y,
+            z: Number(parent.position?.z || 0) + rotated.z,
+        },
+        rotation: q,
+    };
+}
+
+/** LiDAR spherical directions in REP-103 sensor frame (+X forward at az=0, el=0). */
+export function lidarDirectionRep103(thetaRad, phiRad) {
+    const cosPhi = Math.cos(phiRad);
+    return {
+        x: cosPhi * Math.cos(thetaRad),
+        y: cosPhi * Math.sin(thetaRad),
+        z: Math.sin(phiRad),
+    };
+}
+
+/** Convert Three.js shader-local direction to REP-103 sensor frame. */
+export function lidarShaderDirectionToRep103(thetaRad, phiRad) {
+    const three = {
+        x: Math.cos(phiRad) * Math.cos(thetaRad),
+        y: Math.sin(phiRad),
+        z: Math.cos(phiRad) * Math.sin(thetaRad),
+    };
+    return threeToRep103Vector(three);
+}
+
+export function stampToTimeNs(stamp = {}) {
+    const sec = Number(stamp.sec || 0);
+    const nanosec = Number(stamp.nanosec || 0);
+    return sec * 1e9 + nanosec;
+}
+
+export function extractHeaderCaptureTimeNs(value) {
+    const header = value?.header;
+    if (!header?.stamp) return null;
+    return stampToTimeNs(header.stamp);
+}

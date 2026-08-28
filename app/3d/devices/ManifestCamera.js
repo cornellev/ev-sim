@@ -4,6 +4,7 @@ import Device from "./Device.js";
 import { SensorPublisher } from "./SensorPublisher.js";
 import { buildCameraInfo, buildImageMessage, flipRgbaRows } from "./SensorMessages.js";
 import { withPixelPackBufferUnbound } from "../util/glReadback.js";
+import { rep103PoseToThree } from "../../autonomy/CoordinateFrames.js";
 
 function gaussian(rng) {
     const left = Math.max(Number.EPSILON, rng.next());
@@ -12,17 +13,21 @@ function gaussian(rng) {
 
 export class ManifestCamera extends Device {
     constructor(config, options = {}) {
+        const threePose = rep103PoseToThree(config.pose);
         super("Manifest Camera", {
             telemetryId: config.id,
-            position: new THREE.Vector3(config.pose.position.x, config.pose.position.y, config.pose.position.z),
-            rotation: new THREE.Euler(config.pose.rotation.x, config.pose.rotation.y, config.pose.rotation.z, config.pose.rotation.order || "XYZ"),
+            position: new THREE.Vector3(threePose.position.x, threePose.position.y, threePose.position.z),
+            rotation: new THREE.Euler(threePose.rotation.x, threePose.rotation.y, threePose.rotation.z, threePose.rotation.order || "XYZ"),
         });
         this.telemetryId = config.id;
         this.config = config;
+        this.transformRuntime = options.transformRuntime ?? null;
+        this.calibrationHash = options.calibrationHash ?? null;
         this.contractPublisher = new SensorPublisher(this, config, options);
         this.sensorCamera = null;
         this.renderTarget = null;
         this.pixelBuffer = null;
+        this.opticalQuaternion = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, -Math.PI / 2, "XYZ"));
         this.manifestManaged = true;
     }
 
@@ -49,9 +54,17 @@ export class ManifestCamera extends Device {
         const renderer = data?.renderer;
         const scene = data?.scene;
         if (!renderer || !scene || !this.sensorCamera || !this.renderTarget) return [];
+        const vehicles = data?.vehicles?.()?.vehicles || [];
+        const frameResolution = this.transformRuntime?.resolveCaptureFrames?.(this.config, vehicles, captureTimeNs);
+        if (frameResolution && frameResolution.ok === false) {
+            this.contractPublisher?._event?.("frame-invalid", "error", { reason: frameResolution.message });
+            return [];
+        }
         this.sensorCamera.position.copy(this.getPosition());
-        this.sensorCamera.rotation.copy(this.getRotation());
+        const mountQuaternion = new THREE.Quaternion().setFromEuler(this.getRotation());
+        this.sensorCamera.quaternion.copy(mountQuaternion.multiply(this.opticalQuaternion));
         this.sensorCamera.updateMatrixWorld(true);
+        const frameId = this.config.measurementFrameId || this.config.frameId;
         const previousTarget = renderer.getRenderTarget();
         renderer.setRenderTarget(this.renderTarget);
         renderer.render(scene, this.sensorCamera);
@@ -79,7 +92,7 @@ export class ManifestCamera extends Device {
                     width: this.config.calibration.width,
                     height: this.config.calibration.height,
                     timeNs: captureTimeNs,
-                    frameId: this.config.frameId,
+                    frameId,
                     encoding: this.config.calibration.encoding,
                 }),
             },
@@ -89,7 +102,7 @@ export class ManifestCamera extends Device {
                 value: buildCameraInfo({
                     ...this.config.calibration,
                     timeNs: captureTimeNs,
-                    frameId: this.config.frameId,
+                    frameId,
                 }),
             },
         ];

@@ -28,6 +28,12 @@ import {
     validateRunManifest,
 } from "../simulation/RunManifest.js";
 import {
+    AUTHORITY_MODES,
+    listAutonomyContracts,
+    PRODUCER_NAMESPACES,
+    topicFromContract,
+} from "../autonomy/AutonomyContractCatalog.js";
+import {
     createRunManifest,
     deleteRunManifest,
     duplicateRunManifest,
@@ -106,6 +112,82 @@ function parseInputValue(value) {
     try { return JSON.parse(value); } catch { return value; }
 }
 
+function validationIssueLocation(path = "") {
+    if (path.startsWith("sensorRig")) return "Sensors";
+    if (path.startsWith("topics")) return "Topics";
+    if (path.startsWith("scenario")) return "Scenario";
+    if (path.startsWith("initialState")) return "Initial State";
+    if (path.startsWith("clock")) return "Clock";
+    if (path.startsWith("scripts")) return "Scripts";
+    if (path.startsWith("assertions")) return "Assertions";
+    if (path.startsWith("logging")) return "Logging";
+    if (path.startsWith("parameters") || path.startsWith("environment")) return "Overview";
+    if (path === "dependencies") return "Overview";
+    return null;
+}
+
+function formatValidationIssue(issue) {
+    const path = issue?.path ? String(issue.path) : "manifest";
+    const location = validationIssueLocation(path);
+    const locationHint = location ? ` (${location})` : "";
+    return `${path}${locationHint}: ${issue?.message || "Invalid value."}`;
+}
+
+function formatValidationIssues(issues = [], { prefix = "Manifest validation failed" } = {}) {
+    if (!issues.length) return prefix;
+    if (issues.length === 1) return `${prefix}: ${formatValidationIssue(issues[0])}`;
+    return `${prefix} (${issues.length} issues):\n${issues.map(formatValidationIssue).join("\n")}`;
+}
+
+function buildConfigurationAttention({ error, environmentError, rawError, validation }) {
+    const sections = [];
+    const validationIssues = validation?.issues || [];
+
+    if (environmentError) {
+        sections.push({
+            key: "environment",
+            label: "Environment catalog",
+            text: environmentError,
+        });
+    }
+    if (rawError) {
+        sections.push({
+            key: "json",
+            label: "JSON editor",
+            text: rawError,
+        });
+    }
+    if (validationIssues.length > 0) {
+        sections.push({
+            key: "validation",
+            label: validationIssues.length === 1 ? "Validation issue" : `${validationIssues.length} validation issues`,
+            issues: validationIssues,
+        });
+    }
+    if (error && validationIssues.length === 0) {
+        sections.unshift({
+            key: "operation",
+            label: "Operation failed",
+            text: error,
+        });
+    }
+
+    let title = "Configuration needs attention";
+    if (validationIssues.length > 0) {
+        title = validationIssues.length === 1
+            ? "1 validation issue blocks this run"
+            : `${validationIssues.length} validation issues block this run`;
+    } else if (rawError) {
+        title = "Manifest JSON is invalid";
+    } else if (environmentError) {
+        title = "Environment catalog is unavailable";
+    } else if (error) {
+        title = "Configuration action failed";
+    }
+
+    return { title, sections };
+}
+
 export default function ConfigPage({ onLaunch, onOpenWorkspace }) {
     const controller = useMemo(() => getRunSessionController(), []);
     const importRef = useRef(null);
@@ -142,6 +224,10 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace }) {
     const normalizedDiff = useMemo(() => saved && draft
         ? diffEntries(normalizeRunManifest(saved), normalizeRunManifest(draft))
         : [], [draft, saved]);
+    const configurationAttention = useMemo(
+        () => buildConfigurationAttention({ error, environmentError, rawError, validation }),
+        [error, environmentError, rawError, validation],
+    );
 
     const applyManifestDocument = (id, document) => {
         const normalized = normalizeRunManifest(document);
@@ -351,7 +437,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace }) {
         const local = validateRunManifest(draft);
         if (!local.ok) {
             setValidation(local);
-            throw new Error("Fix validation errors before saving.");
+            throw new Error(formatValidationIssues(local.issues, { prefix: "Fix validation errors before saving" }));
         }
         const stored = await saveRunManifest(selectedId, local.manifest, saved.revision);
         setSaved(stored);
@@ -366,7 +452,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace }) {
     const validate = async () => perform(async () => {
         const result = await validateRunManifestOnServer(selectedId, draft);
         setValidation(result);
-        if (!result.ok) throw new Error("Manifest validation found issues.");
+        if (!result.ok) throw new Error(formatValidationIssues(result.issues));
         return result;
     });
 
@@ -375,7 +461,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace }) {
         if (dirty) current = await save();
         const result = await validateRunManifestOnServer(selectedId, current);
         setValidation(result);
-        if (!result.ok) throw new Error("Manifest validation found issues.");
+        if (!result.ok) throw new Error(formatValidationIssues(result.issues, { prefix: "Cannot launch until validation passes" }));
         const resolved = await resolveRunManifest(selectedId);
         await controller.prepare(resolved, { autoplay: true });
         onLaunch?.(resolved);
@@ -400,7 +486,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace }) {
             const parsed = JSON.parse(value);
             const local = validateRunManifest(parsed);
             if (!local.ok) {
-                setRawError(local.issues.map((issue) => `${issue.path || "manifest"}: ${issue.message}`).join("\n"));
+                setRawError(formatValidationIssues(local.issues, { prefix: "Manifest JSON is invalid" }));
                 return;
             }
             setRawError(null);
@@ -519,11 +605,39 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace }) {
                                 </div>
                             </div>
 
-                            {(error || environmentError || rawError || validation?.issues?.length > 0) && (
-                                <StatusMessage className="mb-4" tone="danger" title="Configuration needs attention">
-                                    <div className="flex items-start justify-between gap-3">
-                                        <pre className="min-w-0 whitespace-pre-wrap font-sans">{error || environmentError || rawError || validation.issues.map((issue) => `${issue.path || "manifest"}: ${issue.message}`).join("\n")}</pre>
-                                        {environmentError && !error && <Action compact label="Retry environments" onClick={loadEnvironmentCatalog} />}
+                            {configurationAttention.sections.length > 0 && (
+                                <StatusMessage className="mb-4" tone="danger" title={configurationAttention.title}>
+                                    <div className="space-y-3">
+                                        {configurationAttention.sections.map((section) => (
+                                            <div key={section.key}>
+                                                {section.label && section.text && (
+                                                    <p className="text-[12px] font-medium text-[var(--slate-fg-2)]">{section.label}</p>
+                                                )}
+                                                {section.text && (
+                                                    <p className="mt-1 whitespace-pre-wrap text-[13px]">{section.text}</p>
+                                                )}
+                                                {section.issues && (
+                                                    <ul className="mt-1 space-y-1.5 text-[13px]">
+                                                        {section.issues.map((issue, index) => {
+                                                            const path = issue.path ? String(issue.path) : "manifest";
+                                                            const location = validationIssueLocation(path);
+                                                            return (
+                                                                <li key={`${path}-${index}`} className="rounded-[var(--radius)] border border-[var(--slate-border-60)] bg-[var(--slate-surface-2)] px-3 py-2">
+                                                                    <p className="font-mono text-[11px] text-[var(--slate-muted)]">
+                                                                        {path}
+                                                                        {location ? ` · open ${location}` : ""}
+                                                                    </p>
+                                                                    <p className="mt-1 text-[var(--slate-fg)]">{issue.message}</p>
+                                                                </li>
+                                                            );
+                                                        })}
+                                                    </ul>
+                                                )}
+                                            </div>
+                                        ))}
+                                        {environmentError && !error && (
+                                            <Action compact label="Retry environments" onClick={loadEnvironmentCatalog} />
+                                        )}
                                     </div>
                                 </StatusMessage>
                             )}
@@ -881,7 +995,7 @@ function Sensors({ draft, update }) {
         const sensor = createRunSensor(type, { id, parentId: "ego", frameId: `sensor_${index + 1}_frame` }, index);
         update(["sensorRig", "sensors"], [...draft.sensorRig.sensors, sensor]);
     };
-    return <div className="space-y-4"><div className="flex flex-wrap items-end justify-between gap-3"><Field label="Rig root frame"><input value={draft.sensorRig.rootFrameId} onChange={(event) => update(["sensorRig", "rootFrameId"], event.target.value)} /></Field><div className="flex flex-wrap gap-1.5">{SENSOR_TYPE_DEFINITIONS.map((definition) => <Action key={definition.id} compact icon={<FaPlus />} label={definition.addLabel || `Add ${definition.label}`} onClick={() => add(definition.id)} />)}</div></div>{draft.sensorRig.sensors.map((sensor, index) => {
+    return <div className="space-y-4"><div className="grid gap-3 md:grid-cols-4"><Field label="Map frame"><input value={draft.sensorRig.mapFrameId || "map"} onChange={(event) => update(["sensorRig", "mapFrameId"], event.target.value)} /></Field><Field label="Odom frame"><input value={draft.sensorRig.odomFrameId || "odom"} onChange={(event) => update(["sensorRig", "odomFrameId"], event.target.value)} /></Field><Field label="Base link frame"><input value={draft.sensorRig.rootFrameId} onChange={(event) => update(["sensorRig", "rootFrameId"], event.target.value)} /></Field><Field label="Owning vehicle"><input value={draft.sensorRig.vehicleId || "ego"} onChange={(event) => update(["sensorRig", "vehicleId"], event.target.value)} /></Field></div><div className="flex flex-wrap items-end justify-between gap-3"><div className="flex flex-wrap gap-1.5">{SENSOR_TYPE_DEFINITIONS.map((definition) => <Action key={definition.id} compact icon={<FaPlus />} label={definition.addLabel || `Add ${definition.label}`} onClick={() => add(definition.id)} />)}</div></div>{draft.sensorRig.sensors.map((sensor, index) => {
         const sensorPath = ["sensorRig", "sensors", index];
         const change = (parts, value) => update([...sensorPath, ...parts], value);
         const definition = getSensorType(sensor.type);
@@ -900,7 +1014,16 @@ function Sensors({ draft, update }) {
                     <Field label="Parent vehicle">
                         <input value={sensor.parentId} onChange={(event) => change(["parentId"], event.target.value)} />
                     </Field>
-                    <Field label="Frame ID">
+                    <Field label="Measurement frame">
+                        <input value={sensor.measurementFrameId || sensor.frameId} onChange={(event) => change(["measurementFrameId"], event.target.value)} />
+                    </Field>
+                    <Field label="Mount frame">
+                        <input value={sensor.mountFrameId || ""} onChange={(event) => change(["mountFrameId"], event.target.value)} />
+                    </Field>
+                    <Field label="Sync group">
+                        <input value={sensor.syncGroupId || ""} onChange={(event) => change(["syncGroupId"], event.target.value)} />
+                    </Field>
+                    <Field label="Legacy frame ID">
                         <input value={sensor.frameId} onChange={(event) => change(["frameId"], event.target.value)} />
                     </Field>
                     <Field label="Rate (Hz)">
@@ -914,8 +1037,8 @@ function Sensors({ draft, update }) {
                     </Field>
                     <Toggle label="Enabled" value={sensor.enabled} onChange={(value) => change(["enabled"], value)} />
                 </div>
-                <VectorFields label="Pose position (m)" value={sensor.pose.position} onChange={(axis, value) => change(["pose", "position", axis], value)} />
-                <VectorFields label="Pose rotation (rad)" value={sensor.pose.rotation} onChange={(axis, value) => change(["pose", "rotation", axis], value)} />
+                <VectorFields label="REP-103 pose position (m)" value={sensor.pose.position} onChange={(axis, value) => change(["pose", "position", axis], value)} />
+                <VectorFields label="REP-103 pose rotation (rad)" value={sensor.pose.rotation} onChange={(axis, value) => change(["pose", "rotation", axis], value)} />
                 <div className="mt-4 grid gap-3 md:grid-cols-4">
                     <Field label="Fixed latency (ns)">
                     <input type="number" min="0" value={sensor.latency.fixedNs} onChange={(event) => change(["latency", "fixedNs"], Number(event.target.value))} />
@@ -973,36 +1096,113 @@ function Scripts({ draft, update }) {
 }
 
 function Topics({ draft, update }) {
-    const add = () => update(["topics"], [...draft.topics, { id: `topic-${draft.topics.length + 1}`, name: `/topic-${draft.topics.length + 1}`, direction: "output", type: "std_msgs/String", required: false }]);
+    const contracts = useMemo(() => listAutonomyContracts(), []);
+    const addFromContract = (contractId) => {
+        if (!contractId) return;
+        update(["topics"], [...draft.topics, topicFromContract(contractId)]);
+    };
     return (
         <div className="space-y-3">
-            <div className="flex justify-end">
-                <Action compact icon={<FaPlus />} label="Add topic" onClick={add} />
+            <div className="flex flex-wrap items-center justify-end gap-2">
+                <select
+                    className="rounded-[var(--radius)] border border-[var(--slate-border-60)] bg-[var(--slate-surface-1)] px-2 py-1 text-xs"
+                    defaultValue=""
+                    onChange={(event) => {
+                        addFromContract(event.target.value);
+                        event.target.value = "";
+                    }}
+                >
+                    <option value="" disabled>Add from catalog…</option>
+                    {contracts.map((contract) => (
+                        <option key={contract.id} value={contract.id}>{contract.id} ({contract.direction})</option>
+                    ))}
+                </select>
             </div>
-            {draft.topics.map((topic, index) => <div key={`${topic.id}-${index}`} className="grid gap-3 rounded-[var(--radius)] border border-[var(--slate-border-60)] bg-[var(--slate-surface-1)] p-3 md:grid-cols-[1fr_1.4fr_1fr_1.5fr_.8fr_auto]">
-                <Field label="ID">
-                    <input value={topic.id} onChange={(event) => update(["topics", index, "id"], event.target.value)} />
-                </Field>
-                <Field label="Topic">
-                    <input value={topic.name} onChange={(event) => update(["topics", index, "name"], event.target.value)} />
-                </Field>
-                <Field label="Direction">
-                    <select value={topic.direction} onChange={(event) => update(["topics", index, "direction"], event.target.value)}>
-                        <option value="input">Input</option>
-                        <option value="output">Output</option>
-                    </select>
-                </Field>
-                <Field label="ROS type">
-                    <input value={topic.type} onChange={(event) => update(["topics", index, "type"], event.target.value)} />
-                </Field>
-                <div className="h-[100%] flex items-center justify-center flex-col gap-6 border-l border-r border-[var(--slate-border-60)] px-3 text-center text-[11px] text-[var(--slate-fg-2)]">
-                    <div></div>
-                    <Toggle label="Required" value={topic.required} onChange={(value) => update(["topics", index, "required"], value)} />
-                </div>
-                <button type="button" onClick={() => update(["topics"], draft.topics.filter((_, candidate) => candidate !== index))} className="self-end pb-2 text-[11px] text-[var(--slate-danger)]">
-                    Remove
-                </button>
-            </div>)}
+            {draft.topics.map((topic, index) => {
+                const rosType = topic.schema?.type || topic.type || "";
+                return (
+                    <div key={`${topic.id}-${index}`} className="grid gap-3 rounded-[var(--radius)] border border-[var(--slate-border-60)] bg-[var(--slate-surface-1)] p-3 md:grid-cols-2 xl:grid-cols-3">
+                        <Field label="Stable ID">
+                            <input value={topic.id} onChange={(event) => update(["topics", index, "id"], event.target.value)} />
+                        </Field>
+                        <Field label="Catalog contract">
+                            <select
+                                value={topic.contractId || ""}
+                                onChange={(event) => {
+                                    const contractId = event.target.value;
+                                    if (!contractId) return;
+                                    const next = topicFromContract(contractId, { id: topic.id, name: topic.name });
+                                    update(["topics", index], next);
+                                }}
+                            >
+                                <option value="">Custom / legacy</option>
+                                {contracts.map((contract) => (
+                                    <option key={contract.id} value={contract.id}>{contract.id}</option>
+                                ))}
+                            </select>
+                        </Field>
+                        <Field label="Wire name">
+                            <input value={topic.name} onChange={(event) => update(["topics", index, "name"], event.target.value)} />
+                        </Field>
+                        <Field label="Direction">
+                            <select value={topic.direction} onChange={(event) => update(["topics", index, "direction"], event.target.value)}>
+                                <option value="input">Input (team return)</option>
+                                <option value="output">Output (simulator)</option>
+                            </select>
+                        </Field>
+                        <Field label="ROS type">
+                            <input
+                                value={rosType}
+                                onChange={(event) => update(["topics", index], {
+                                    ...topic,
+                                    type: event.target.value,
+                                    schema: { ...(topic.schema || {}), type: event.target.value, version: topic.schema?.version || 1 },
+                                })}
+                            />
+                        </Field>
+                        <Field label="Producer">
+                            <select value={topic.producer || "simulator"} onChange={(event) => update(["topics", index, "producer"], event.target.value)}>
+                                {PRODUCER_NAMESPACES.map((namespace) => (
+                                    <option key={namespace} value={namespace}>{namespace}</option>
+                                ))}
+                            </select>
+                        </Field>
+                        <Field label="Authority">
+                            <select value={topic.authority || "reference"} onChange={(event) => update(["topics", index, "authority"], event.target.value)}>
+                                {AUTHORITY_MODES.map((mode) => (
+                                    <option key={mode} value={mode}>{mode}</option>
+                                ))}
+                            </select>
+                        </Field>
+                        <Field label="Timeout (ns)">
+                            <input
+                                type="number"
+                                min="0"
+                                value={topic.timeoutNs ?? ""}
+                                placeholder="None"
+                                onChange={(event) => update(["topics", index, "timeoutNs"], event.target.value ? Number(event.target.value) : null)}
+                            />
+                        </Field>
+                        <Field label="Fallback contract">
+                            <select
+                                value={topic.fallback?.contractId || ""}
+                                onChange={(event) => update(["topics", index, "fallback"], event.target.value ? { contractId: event.target.value } : null)}
+                            >
+                                <option value="">None</option>
+                                {contracts.filter((contract) => contract.direction === "input").map((contract) => (
+                                    <option key={contract.id} value={contract.id}>{contract.id}</option>
+                                ))}
+                            </select>
+                        </Field>
+                        <div className="flex items-center gap-4 border-t border-[var(--slate-border-60)] pt-3 md:col-span-2 xl:col-span-3">
+                            <Toggle label="Required" value={topic.required} onChange={(value) => update(["topics", index, "required"], value)} />
+                            <button type="button" onClick={() => update(["topics"], draft.topics.filter((_, candidate) => candidate !== index))} className="text-[11px] text-[var(--slate-danger)]">
+                                Remove topic
+                            </button>
+                        </div>
+                    </div>
+                );
+            })}
         </div>
     );
 }
