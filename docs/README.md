@@ -11,6 +11,7 @@ This folder is the contributor guide for cev-sim. Start here when you need to ru
 - Visual scripting work: [Scripting Overview](scripting/README.md), then [Scripting Architecture](scripting/architecture.md) and [Extension Guide](scripting/extension-guide.md).
 - Running scripts on live data: [Script Bindings](script-bindings.md) (topics, fixed updates, signals, timers).
 - Agent tooling: [MCP Server](mcp.md) — environment, scripting, binding, logging, and replay tools for AI agents. Portable skill + MCP config: root `plugin.json` / `mcp.json` and [`skills/cev-sim/`](../skills/cev-sim/).
+- Autonomy platform roadmap (agents): [Autonomy platform gap analysis and action plan](autonomy-platform-gap-analysis.md) — full-stack whiteboard vs cev-sim gaps, dataflow-first priorities, and step-by-step simulator work.
 - IGVC/domain work: [IGVC Overview](igvc/overview.md) and [Competition Rules](igvc/competition-rules.md).
 - Asset setup: [Assets](assets.md).
 - Broken local setup: [Troubleshooting](troubleshooting.md).

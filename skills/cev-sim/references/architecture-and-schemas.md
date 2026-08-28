@@ -87,6 +87,7 @@ flowchart LR
 
 ## Deep docs (link, do not copy)
 
+- [docs/autonomy-platform-gap-analysis.md](../../../docs/autonomy-platform-gap-analysis.md) — full AV stack gaps, dataflow-first action plan (agent canonical)
 - [docs/architecture.md](../../../docs/architecture.md)
 - [docs/simulation.md](../../../docs/simulation.md)
 - [docs/run-manifests.md](../../../docs/run-manifests.md)

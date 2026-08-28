@@ -102,6 +102,19 @@ Full sequencing, resources, failure modes:
 Schemas, entry points, doc authority:
 [references/architecture-and-schemas.md](references/architecture-and-schemas.md).
 
+## Autonomy platform roadmap
+
+When scoping simulator work for perception, localization, planning, or control
+teams, read the canonical agent reference first:
+
+- [docs/autonomy-platform-gap-analysis.md](../../docs/autonomy-platform-gap-analysis.md)
+
+It defines the stage-harness model (candidate / reference / oracle / shadow),
+**dataflow-first priorities** (sensors → perception/EKF → control return path
+before planning), and a numbered action plan with touchpoints and completion
+gates. Do not treat the whiteboard as in-repo algorithms to implement—cev-sim
+supplies I/O, truth, references, and verification.
+
 ## Verification
 
 ```bash

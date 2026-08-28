@@ -64,32 +64,27 @@ function CommaSeparatedInput({
     ...inputProps
 }) {
     const serialized = serializeList(values);
-    const [text, setText] = useState(serialized);
-    const focusedRef = useRef(false);
-
-    useEffect(() => {
-        if (!focusedRef.current) setText(serialized);
-    }, [serialized]);
+    const [draft, setDraft] = useState(null);
+    const text = draft ?? serialized;
 
     return (
         <TextInput
             {...inputProps}
             value={text}
             onFocus={(event) => {
-                focusedRef.current = true;
+                setDraft(event.target.value);
                 inputProps.onFocus?.(event);
             }}
             onChange={(event) => {
                 const next = event.target.value;
-                setText(next);
+                setDraft(next);
                 onCommit(parse(next));
                 inputProps.onChange?.(event);
             }}
             onBlur={(event) => {
-                focusedRef.current = false;
-                const parsed = parse(text);
+                const parsed = parse(event.target.value);
                 onCommit(parsed);
-                setText(serializeList(parsed));
+                setDraft(null);
                 inputProps.onBlur?.(event);
             }}
         />
