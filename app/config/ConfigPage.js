@@ -20,8 +20,10 @@ import {
     getSensorFieldValue,
     getSensorType,
     listSensorTypes,
+    ORACLE_PRODUCT_TOGGLES,
 } from "../3d/devices/SensorTypeRegistry.js";
 import {
+    applyManifestOracleProduct,
     createDefaultRunManifest,
     normalizeRunManifest,
     RUN_MANIFEST_VERSION,
@@ -56,6 +58,10 @@ import {
     withConfigLoadTimeout,
 } from "./ConfigCatalogLoader.js";
 import {
+    AdvancedFields,
+    AdvancedSwitch,
+    AdvancedValidationBanner,
+    AuthoringModeProvider,
     AsyncState,
     Button,
     Field as SharedField,
@@ -66,6 +72,7 @@ import {
     TabsList,
     TabsRoot,
     TabsTrigger,
+    useAuthoringMode,
     useWorkspaceGuard,
 } from "../ui";
 
@@ -534,6 +541,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace }) {
     });
 
     return (
+        <AuthoringModeProvider>
         <main className="fixed inset-0 z-[1] overflow-hidden bg-[var(--slate-bg)] text-[var(--slate-fg)]">
             <header className="flex h-12 items-center justify-between border-b border-[var(--slate-border)] bg-[var(--slate-surface-1)] px-3">
                 <button type="button" className="flex min-w-0 cursor-pointer items-center gap-2 rounded-[var(--radius)] px-1.5 py-1 text-left outline-none transition-colors duration-150 hover:bg-[var(--slate-surface-hover)] focus-visible:ring-2 focus-visible:ring-[var(--slate-ring)]" onClick={onOpenWorkspace} aria-label="Open workspace switcher">
@@ -542,7 +550,8 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace }) {
                     <IconLayoutGrid size={15} stroke={1.75} aria-hidden="true" />
                     <span className="truncate text-[13px]/[13px] font-semibold">Run Configuration</span>
                 </button>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                    <AdvancedSwitch />
                     <select
                         aria-label="Select run manifest"
                         className="sf-input hidden max-w-48 max-[1023px]:block"
@@ -607,6 +616,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace }) {
 
                             {configurationAttention.sections.length > 0 && (
                                 <StatusMessage className="mb-4" tone="danger" title={configurationAttention.title}>
+                                    <AdvancedValidationBanner issues={validation?.issues || []} />
                                     <div className="space-y-3">
                                         {configurationAttention.sections.map((section) => (
                                             <div key={section.key}>
@@ -642,7 +652,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace }) {
                                 </StatusMessage>
                             )}
                             {validation?.ok && <StatusMessage className="mb-4" tone="success" title="Manifest and dependencies are valid." />}
-                            {migrationPending && <StatusMessage className="mb-4" tone="info" title={`Run manifest v${saved.version} is ready to migrate`}>Saving will write the normalized v{RUN_MANIFEST_VERSION} document without changing the configured run.</StatusMessage>}
+                            {migrationPending && <StatusMessage className="mb-4" tone="info" title={`Run manifest v${saved.version} is ready to migrate`}>Saving writes the normalized v{RUN_MANIFEST_VERSION} document. Manifests before v8 also gain missing candidate perception and localization return topics.</StatusMessage>}
 
                             <TabsList aria-label="Run manifest sections" className="mb-5 overflow-x-auto">
                                 {TABS.map((item) => <TabsTrigger key={item} value={item}>{item}</TabsTrigger>)}
@@ -679,6 +689,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace }) {
                 </section>
             </div>
         </main>
+        </AuthoringModeProvider>
     );
 }
 
@@ -918,9 +929,11 @@ function RunParameterDeclarations({ parameters, update }) {
                                     if (parameter.type === "boolean") value = rawValue === true || rawValue === "true";
                                     replace(index, { ...parameter, default: value });
                                 }} /></Field>
+                                <AdvancedFields label="Parameter targeting">
                                 <Field label="Target"><select value={parameter.target.kind || ""} onChange={(event) => changeTargetKind(index, parameter, event.target.value)}><option value="">Select a target</option><option value="scalar-field">Scalar field</option><option value="script-input">Script input</option><option value="scenario-signal">Scenario signal</option></select></Field>
                                 {parameter.target.kind === "script-input" ? <><Field label="Script ID"><input value={parameter.target.scriptId || ""} onChange={(event) => replace(index, { ...parameter, target: { ...parameter.target, scriptId: event.target.value } })} /></Field><Field label="Input port"><input value={parameter.target.input || ""} onChange={(event) => replace(index, { ...parameter, target: { ...parameter.target, input: event.target.value } })} /></Field></> : <Field label="Target path"><input value={parameter.target.path || ""} placeholder={parameter.target.kind === "scenario-signal" ? "scenario.custom_flag" : "clock.speed"} onChange={(event) => replace(index, { ...parameter, target: { ...parameter.target, path: event.target.value } })} /></Field>}
                                 <Field wide label="Description"><input value={parameter.description || ""} onChange={(event) => replace(index, { ...parameter, description: event.target.value })} /></Field>
+                                </AdvancedFields>
                             </div>
                             <button type="button" className="mt-3 text-[11px] text-[var(--slate-danger)]" onClick={() => update(["parameters"], parameters.filter((_, candidate) => candidate !== index))}>Remove parameter</button>
                         </div>
@@ -985,7 +998,27 @@ function InitialState({ draft, update, vehicleCatalog = [] }) {
 
 function Clock({ draft, update }) {
     const modules = draft.clock.modules;
-    return <div className="space-y-5"><div className="grid gap-4 md:grid-cols-3"><Field label="Step (nanoseconds)"><input type="number" min="1" value={draft.clock.stepNs} onChange={(event) => update(["clock", "stepNs"], Number(event.target.value))} /></Field><Field label="Pacing"><select value={draft.clock.pacing} onChange={(event) => update(["clock", "pacing"], event.target.value)}><option value="realtime">Realtime</option><option value="unbounded">Unbounded</option></select></Field><Field label="Speed"><input type="number" min="0" step="0.1" value={draft.clock.speed} onChange={(event) => update(["clock", "speed"], Number(event.target.value))} /></Field><Field label="Maximum steps"><input type="number" min="1" value={draft.clock.maxSteps ?? ""} placeholder="Unlimited" onChange={(event) => update(["clock", "maxSteps"], event.target.value ? Number(event.target.value) : null)} /></Field><Toggle label="Publish /clock" value={draft.clock.publishClock} onChange={(value) => update(["clock", "publishClock"], value)} /></div><div><p className="mb-2 text-[13px] font-medium text-[var(--slate-fg-2)]">Deterministic modules</p><div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{Object.entries(modules).map(([name, enabled]) => <Toggle key={name} label={name} value={enabled} onChange={(value) => update(["clock", "modules", name], value)} />)}</div></div></div>;
+    return (
+        <div className="space-y-5">
+            <div className="grid gap-4 md:grid-cols-3">
+                <Field label="Step (nanoseconds)"><input type="number" min="1" value={draft.clock.stepNs} onChange={(event) => update(["clock", "stepNs"], Number(event.target.value))} /></Field>
+                <Field label="Pacing"><select value={draft.clock.pacing} onChange={(event) => update(["clock", "pacing"], event.target.value)}><option value="realtime">Realtime</option><option value="unbounded">Unbounded</option></select></Field>
+                <Field label="Speed"><input type="number" min="0" step="0.1" value={draft.clock.speed} onChange={(event) => update(["clock", "speed"], Number(event.target.value))} /></Field>
+                <Field label="Maximum steps"><input type="number" min="1" value={draft.clock.maxSteps ?? ""} placeholder="Unlimited" onChange={(event) => update(["clock", "maxSteps"], event.target.value ? Number(event.target.value) : null)} /></Field>
+            </div>
+            <AdvancedFields label="Clock publishing">
+                <div className="grid gap-4 md:grid-cols-3">
+                    <Toggle label="Publish /clock" value={draft.clock.publishClock} onChange={(value) => update(["clock", "publishClock"], value)} />
+                </div>
+                <div>
+                    <p className="mb-2 text-[13px] font-medium text-[var(--slate-fg-2)]">Deterministic modules</p>
+                    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                        {Object.entries(modules).map(([name, enabled]) => <Toggle key={name} label={name} value={enabled} onChange={(value) => update(["clock", "modules", name], value)} />)}
+                    </div>
+                </div>
+            </AdvancedFields>
+        </div>
+    );
 }
 
 function Sensors({ draft, update }) {
@@ -995,84 +1028,132 @@ function Sensors({ draft, update }) {
         const sensor = createRunSensor(type, { id, parentId: "ego", frameId: `sensor_${index + 1}_frame` }, index);
         update(["sensorRig", "sensors"], [...draft.sensorRig.sensors, sensor]);
     };
-    return <div className="space-y-4"><div className="grid gap-3 md:grid-cols-4"><Field label="Map frame"><input value={draft.sensorRig.mapFrameId || "map"} onChange={(event) => update(["sensorRig", "mapFrameId"], event.target.value)} /></Field><Field label="Odom frame"><input value={draft.sensorRig.odomFrameId || "odom"} onChange={(event) => update(["sensorRig", "odomFrameId"], event.target.value)} /></Field><Field label="Base link frame"><input value={draft.sensorRig.rootFrameId} onChange={(event) => update(["sensorRig", "rootFrameId"], event.target.value)} /></Field><Field label="Owning vehicle"><input value={draft.sensorRig.vehicleId || "ego"} onChange={(event) => update(["sensorRig", "vehicleId"], event.target.value)} /></Field></div><div className="flex flex-wrap items-end justify-between gap-3"><div className="flex flex-wrap gap-1.5">{SENSOR_TYPE_DEFINITIONS.map((definition) => <Action key={definition.id} compact icon={<FaPlus />} label={definition.addLabel || `Add ${definition.label}`} onClick={() => add(definition.id)} />)}</div></div>{draft.sensorRig.sensors.map((sensor, index) => {
-        const sensorPath = ["sensorRig", "sensors", index];
-        const change = (parts, value) => update([...sensorPath, ...parts], value);
-        const definition = getSensorType(sensor.type);
-        return (
-            <div key={`${sensor.id}-${index}`} className="rounded-[var(--radius)] border border-[var(--slate-border-60)] bg-[var(--slate-surface-1)] p-4">
+    return (
+        <div className="space-y-4">
+            <AdvancedFields label="Rig frames">
                 <div className="grid gap-3 md:grid-cols-4">
-                    <Field label="Stable ID">
-                        <input value={sensor.id} onChange={(event) => change(["id"], event.target.value)} />
-                    </Field>
-                    <Field label="Type">
-                        <select value={sensor.type} onChange={(event) => update(sensorPath, changeRunSensorType(sensor, event.target.value))}>
-                            {SENSOR_TYPE_DEFINITIONS.map((entry) => <option key={entry.id} value={entry.id}>{entry.label}</option>)}
-                            {!definition && <option value={sensor.type}>{sensor.type} (unsupported)</option>}
-                        </select>
-                    </Field>
-                    <Field label="Parent vehicle">
-                        <input value={sensor.parentId} onChange={(event) => change(["parentId"], event.target.value)} />
-                    </Field>
-                    <Field label="Measurement frame">
-                        <input value={sensor.measurementFrameId || sensor.frameId} onChange={(event) => change(["measurementFrameId"], event.target.value)} />
-                    </Field>
-                    <Field label="Mount frame">
-                        <input value={sensor.mountFrameId || ""} onChange={(event) => change(["mountFrameId"], event.target.value)} />
-                    </Field>
-                    <Field label="Sync group">
-                        <input value={sensor.syncGroupId || ""} onChange={(event) => change(["syncGroupId"], event.target.value)} />
-                    </Field>
-                    <Field label="Legacy frame ID">
-                        <input value={sensor.frameId} onChange={(event) => change(["frameId"], event.target.value)} />
-                    </Field>
-                    <Field label="Rate (Hz)">
-                        <input type="number" min="0.001" step="0.001" value={sensor.rateHz} onChange={(event) => change(["rateHz"], Number(event.target.value))} />
-                    </Field>
-                    <Field label="Phase (ns)">
-                        <input type="number" min="0" value={sensor.phaseNs} onChange={(event) => change(["phaseNs"], Number(event.target.value))} />
-                    </Field>
-                    <Field label="Queue limit">
-                        <input type="number" min="1" value={sensor.maxQueueFrames} onChange={(event) => change(["maxQueueFrames"], Number(event.target.value))} />
-                    </Field>
-                    <Toggle label="Enabled" value={sensor.enabled} onChange={(value) => change(["enabled"], value)} />
+                    <Field label="Map frame"><input value={draft.sensorRig.mapFrameId || "map"} onChange={(event) => update(["sensorRig", "mapFrameId"], event.target.value)} /></Field>
+                    <Field label="Odom frame"><input value={draft.sensorRig.odomFrameId || "odom"} onChange={(event) => update(["sensorRig", "odomFrameId"], event.target.value)} /></Field>
+                    <Field label="Base link frame"><input value={draft.sensorRig.rootFrameId} onChange={(event) => update(["sensorRig", "rootFrameId"], event.target.value)} /></Field>
+                    <Field label="Owning vehicle"><input value={draft.sensorRig.vehicleId || "ego"} onChange={(event) => update(["sensorRig", "vehicleId"], event.target.value)} /></Field>
                 </div>
-                <VectorFields label="REP-103 pose position (m)" value={sensor.pose.position} onChange={(axis, value) => change(["pose", "position", axis], value)} />
-                <VectorFields label="REP-103 pose rotation (rad)" value={sensor.pose.rotation} onChange={(axis, value) => change(["pose", "rotation", axis], value)} />
-                <div className="mt-4 grid gap-3 md:grid-cols-4">
-                    <Field label="Fixed latency (ns)">
-                    <input type="number" min="0" value={sensor.latency.fixedNs} onChange={(event) => change(["latency", "fixedNs"], Number(event.target.value))} />
-                    </Field>
-                    <Field label="Latency jitter (ns)">
-                        <input type="number" min="0" value={sensor.latency.jitterNs} onChange={(event) => change(["latency", "jitterNs"], Number(event.target.value))} />
-                    </Field>
-                    <Field label="Noise model">
-                        <select value={sensor.noise.model} onChange={(event) => change(["noise", "model"], event.target.value)}>
-                            <option value="none">None</option>
-                            <option value="gaussian">Gaussian</option>
-                        </select>
-                    </Field>
-                    <Field label="Noise deviation">
-                        <input type="number" min="0" step="0.001" value={sensor.noise.standardDeviation} onChange={(event) => change(["noise", "standardDeviation"], Number(event.target.value))} />
-                    </Field>
-                    <Field label="Noise bias">
-                        <input type="number" step="0.001" value={sensor.noise.bias} onChange={(event) => change(["noise", "bias"], Number(event.target.value))} />
-                    </Field>
-                    <Field label="Dropout probability">
-                        <input type="number" min="0" max="1" step="0.001" value={sensor.noise.dropoutProbability} onChange={(event) => change(["noise", "dropoutProbability"], Number(event.target.value))} />
-                    </Field>
-                    {definition?.run.fields.map((field) => (
-                        <SensorDefinitionField key={field.path.join(".")} field={field} sensor={sensor} change={change} />
-                    ))}
+            </AdvancedFields>
+            <div className="flex flex-wrap items-end justify-between gap-3">
+                <div className="flex flex-wrap gap-1.5">
+                    {SENSOR_TYPE_DEFINITIONS.map((definition) => <Action key={definition.id} compact icon={<FaPlus />} label={definition.addLabel || `Add ${definition.label}`} onClick={() => add(definition.id)} />)}
                 </div>
-                {!definition && <p className="mt-3 text-[11px] text-[var(--slate-warning)]">This sensor type is not registered. Its data is preserved, but the run cannot launch until a supported type is selected.</p>}
-                <button type="button" onClick={() => update(["sensorRig", "sensors"], draft.sensorRig.sensors.filter((_, candidate) => candidate !== index))} className="mt-4 text-[11px] text-[var(--slate-danger)]">Remove sensor</button>
             </div>
-        );
-    })}</div>;
+            {draft.sensorRig.sensors.map((sensor, index) => {
+                const sensorPath = ["sensorRig", "sensors", index];
+                const change = (parts, value) => update([...sensorPath, ...parts], value);
+                const definition = getSensorType(sensor.type);
+                const simpleFields = definition?.run.fields.filter((field) => !field.advanced) ?? [];
+                const advancedFields = definition?.run.fields.filter((field) => field.advanced) ?? [];
+                return (
+                    <div key={`${sensor.id}-${index}`} className="rounded-[var(--radius)] border border-[var(--slate-border-60)] bg-[var(--slate-surface-1)] p-4">
+                        <div className="grid gap-3 md:grid-cols-4">
+                            <Toggle label="Enabled" value={sensor.enabled} onChange={(value) => change(["enabled"], value)} />
+                            <Field label="Stable ID">
+                                <input value={sensor.id} onChange={(event) => change(["id"], event.target.value)} />
+                            </Field>
+                            <Field label="Type">
+                                <select value={sensor.type} onChange={(event) => update(sensorPath, changeRunSensorType(sensor, event.target.value))}>
+                                    {SENSOR_TYPE_DEFINITIONS.map((entry) => <option key={entry.id} value={entry.id}>{entry.label}</option>)}
+                                    {!definition && <option value={sensor.type}>{sensor.type} (unsupported)</option>}
+                                </select>
+                            </Field>
+                            <Field label="Parent vehicle">
+                                <input value={sensor.parentId} onChange={(event) => change(["parentId"], event.target.value)} />
+                            </Field>
+                            <Field label="Rate (Hz)">
+                                <input type="number" min="0.001" step="0.001" value={sensor.rateHz} onChange={(event) => change(["rateHz"], Number(event.target.value))} />
+                            </Field>
+                            {simpleFields.map((field) => (
+                                <SensorDefinitionField key={field.path.join(".")} field={field} sensor={sensor} change={change} />
+                            ))}
+                        </div>
+                        <OracleProductToggles draft={draft} sensor={sensor} index={index} update={update} />
+                        <VectorFields label="REP-103 pose position (m)" value={sensor.pose.position} onChange={(axis, value) => change(["pose", "position", axis], value)} />
+                        <VectorFields label="REP-103 pose rotation (rad)" value={sensor.pose.rotation} onChange={(axis, value) => change(["pose", "rotation", axis], value)} />
+                        <AdvancedFields label="Frames, timing, and noise">
+                            <div className="grid gap-3 md:grid-cols-4">
+                                <Field label="Measurement frame">
+                                    <input value={sensor.measurementFrameId || sensor.frameId} onChange={(event) => change(["measurementFrameId"], event.target.value)} />
+                                </Field>
+                                <Field label="Mount frame">
+                                    <input value={sensor.mountFrameId || ""} onChange={(event) => change(["mountFrameId"], event.target.value)} />
+                                </Field>
+                                <Field label="Sync group">
+                                    <input value={sensor.syncGroupId || ""} onChange={(event) => change(["syncGroupId"], event.target.value)} />
+                                </Field>
+                                <Field label="Legacy frame ID">
+                                    <input value={sensor.frameId} onChange={(event) => change(["frameId"], event.target.value)} />
+                                </Field>
+                                <Field label="Phase (ns)">
+                                    <input type="number" min="0" value={sensor.phaseNs} onChange={(event) => change(["phaseNs"], Number(event.target.value))} />
+                                </Field>
+                                <Field label="Queue limit">
+                                    <input type="number" min="1" value={sensor.maxQueueFrames} onChange={(event) => change(["maxQueueFrames"], Number(event.target.value))} />
+                                </Field>
+                                <Field label="Fixed latency (ns)">
+                                    <input type="number" min="0" value={sensor.latency.fixedNs} onChange={(event) => change(["latency", "fixedNs"], Number(event.target.value))} />
+                                </Field>
+                                <Field label="Latency jitter (ns)">
+                                    <input type="number" min="0" value={sensor.latency.jitterNs} onChange={(event) => change(["latency", "jitterNs"], Number(event.target.value))} />
+                                </Field>
+                                <Field label="Noise model">
+                                    <select value={sensor.noise.model} onChange={(event) => change(["noise", "model"], event.target.value)}>
+                                        <option value="none">None</option>
+                                        <option value="gaussian">Gaussian</option>
+                                    </select>
+                                </Field>
+                                <Field label="Noise deviation">
+                                    <input type="number" min="0" step="0.001" value={sensor.noise.standardDeviation} onChange={(event) => change(["noise", "standardDeviation"], Number(event.target.value))} />
+                                </Field>
+                                <Field label="Noise bias">
+                                    <input type="number" step="0.001" value={sensor.noise.bias} onChange={(event) => change(["noise", "bias"], Number(event.target.value))} />
+                                </Field>
+                                <Field label="Dropout probability">
+                                    <input type="number" min="0" max="1" step="0.001" value={sensor.noise.dropoutProbability} onChange={(event) => change(["noise", "dropoutProbability"], Number(event.target.value))} />
+                                </Field>
+                                {advancedFields.map((field) => (
+                                    <SensorDefinitionField key={field.path.join(".")} field={field} sensor={sensor} change={change} />
+                                ))}
+                            </div>
+                        </AdvancedFields>
+                        {!definition && <p className="mt-3 text-[11px] text-[var(--slate-warning)]">This sensor type is not registered. Its data is preserved, but the run cannot launch until a supported type is selected.</p>}
+                        <button type="button" onClick={() => update(["sensorRig", "sensors"], draft.sensorRig.sensors.filter((_, candidate) => candidate !== index))} className="mt-4 text-[11px] text-[var(--slate-danger)]">Remove sensor</button>
+                    </div>
+                );
+            })}
+        </div>
+    );
+}
+
+function OracleProductToggles({ draft, sensor, index, update }) {
+    const toggles = ORACLE_PRODUCT_TOGGLES[sensor.type];
+    if (!toggles?.length) return null;
+    return (
+        <div className="mt-4">
+            <p className="mb-1 text-[13px] font-medium text-[var(--slate-fg-2)]">Oracle products</p>
+            <p className="mb-2 text-[11px] text-[var(--slate-muted)]">Ground-truth outputs for this sensor. Save, then Validate &amp; Run to capture them.</p>
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                {toggles.map((entry) => (
+                    <Toggle
+                        key={entry.product}
+                        label={entry.label}
+                        value={sensor.calibration?.products?.[entry.product] === true}
+                        onChange={(value) => update([], applyManifestOracleProduct(draft, index, entry.product, value))}
+                    />
+                ))}
+            </div>
+        </div>
+    );
 }
 
 function SensorDefinitionField({ field, sensor, change }) {
+    const { advanced } = useAuthoringMode();
+    if (field.advanced && !advanced) return null;
     const value = getSensorFieldValue(sensor, field.path);
     return (
         <Field label={field.label}>
@@ -1091,19 +1172,73 @@ function SensorDefinitionField({ field, sensor, change }) {
 
 function Scripts({ draft, update }) {
     const addArtifact = () => update(["scripts", "artifacts"], [...draft.scripts.artifacts, { scriptId: "", expectedHash: null }]);
-    return <div className="space-y-4">
-<Toggle label="Run deterministic scripts" value={draft.scripts.enabled} onChange={(value) => update(["scripts", "enabled"], value)} /><div className="flex items-center justify-between"><p className="text-xs text-zinc-400">Artifact and binding hashes lock the exact controller dependencies.</p><Action compact icon={<FaPlus />} label="Add artifact" onClick={addArtifact} /></div>{draft.scripts.artifacts.map((artifact, index) => <div key={`${artifact.scriptId}-${index}`} className="grid gap-3 rounded-[var(--radius)] border border-[var(--slate-border-60)] bg-[var(--slate-surface-1)] p-3 md:grid-cols-[1fr_2fr_auto]"><Field label="Script ID"><input value={artifact.scriptId} onChange={(event) => update(["scripts", "artifacts", index, "scriptId"], event.target.value)} /></Field><Field label="Expected SHA-256"><input value={artifact.expectedHash || ""} placeholder="Unlocked" onChange={(event) => update(["scripts", "artifacts", index, "expectedHash"], event.target.value || null)} /></Field><button type="button" onClick={() => update(["scripts", "artifacts"], draft.scripts.artifacts.filter((_, candidate) => candidate !== index))} className="self-end pb-2 text-[11px] text-[var(--slate-danger)]">Remove</button></div>)}<div className="grid gap-4 md:grid-cols-2"><Field label="Binding IDs (comma separated)"><input value={draft.scripts.bindingIds.join(", ")} onChange={(event) => update(["scripts", "bindingIds"], event.target.value.split(",").map((id) => id.trim()).filter(Boolean))} /></Field><Field label="Expected bindings SHA-256"><input value={draft.scripts.expectedBindingsHash || ""} placeholder="Unlocked" onChange={(event) => update(["scripts", "expectedBindingsHash"], event.target.value || null)} /></Field></div><Field label="Embedded portable bindings"><JsonField value={draft.scripts.embeddedBindings} onChange={(value) => update(["scripts", "embeddedBindings"], value)} rows={9} /></Field></div>;
+    return (
+        <div className="space-y-4">
+            <Toggle label="Run deterministic scripts" value={draft.scripts.enabled} onChange={(value) => update(["scripts", "enabled"], value)} />
+            <Field label="Binding IDs (comma separated)"><input value={draft.scripts.bindingIds.join(", ")} onChange={(event) => update(["scripts", "bindingIds"], event.target.value.split(",").map((id) => id.trim()).filter(Boolean))} /></Field>
+            <AdvancedFields label="Script artifacts and hashes">
+                <div className="flex items-center justify-between">
+                    <p className="text-xs text-zinc-400">Artifact and binding hashes lock the exact controller dependencies.</p>
+                    <Action compact icon={<FaPlus />} label="Add artifact" onClick={addArtifact} />
+                </div>
+                {draft.scripts.artifacts.map((artifact, index) => (
+                    <div key={`${artifact.scriptId}-${index}`} className="grid gap-3 rounded-[var(--radius)] border border-[var(--slate-border-60)] bg-[var(--slate-surface-1)] p-3 md:grid-cols-[1fr_2fr_auto]">
+                        <Field label="Script ID"><input value={artifact.scriptId} onChange={(event) => update(["scripts", "artifacts", index, "scriptId"], event.target.value)} /></Field>
+                        <Field label="Expected SHA-256"><input value={artifact.expectedHash || ""} placeholder="Unlocked" onChange={(event) => update(["scripts", "artifacts", index, "expectedHash"], event.target.value || null)} /></Field>
+                        <button type="button" onClick={() => update(["scripts", "artifacts"], draft.scripts.artifacts.filter((_, candidate) => candidate !== index))} className="self-end pb-2 text-[11px] text-[var(--slate-danger)]">Remove</button>
+                    </div>
+                ))}
+                <Field label="Expected bindings SHA-256"><input value={draft.scripts.expectedBindingsHash || ""} placeholder="Unlocked" onChange={(event) => update(["scripts", "expectedBindingsHash"], event.target.value || null)} /></Field>
+                <Field label="Embedded portable bindings"><JsonField value={draft.scripts.embeddedBindings} onChange={(value) => update(["scripts", "embeddedBindings"], value)} rows={9} /></Field>
+            </AdvancedFields>
+        </div>
+    );
 }
 
 function Topics({ draft, update }) {
     const contracts = useMemo(() => listAutonomyContracts(), []);
+    const [filter, setFilter] = useState("all");
     const addFromContract = (contractId) => {
         if (!contractId) return;
         update(["topics"], [...draft.topics, topicFromContract(contractId)]);
     };
+    const indexed = draft.topics.map((topic, index) => ({ topic, index }));
+    const inputs = indexed.filter(({ topic }) => topic.direction === "input");
+    const outputs = indexed.filter(({ topic }) => topic.direction !== "input");
+    const groups = filter === "input"
+        ? [{ title: "Team returns", items: inputs }]
+        : filter === "output"
+            ? [{ title: "Simulator outputs", items: outputs }]
+            : [
+                { title: "Team returns", items: inputs },
+                { title: "Simulator outputs", items: outputs },
+            ];
+    const inputContracts = contracts.filter((contract) => contract.direction === "input");
+    const outputContracts = contracts.filter((contract) => contract.direction !== "input");
     return (
-        <div className="space-y-3">
-            <div className="flex flex-wrap items-center justify-end gap-2">
+        <div className="space-y-6">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex rounded-[var(--radius)] border border-[var(--slate-border-60)] bg-[var(--slate-surface-1)] p-0.5" role="group" aria-label="Topic direction filter">
+                    {[
+                        ["all", "All"],
+                        ["input", "Team returns"],
+                        ["output", "Simulator outputs"],
+                    ].map(([value, label]) => (
+                        <button
+                            key={value}
+                            type="button"
+                            aria-pressed={filter === value}
+                            onClick={() => setFilter(value)}
+                            className={`rounded-[calc(var(--radius)-2px)] px-2.5 py-1 text-[11px] font-medium ${
+                                filter === value
+                                    ? "bg-[var(--slate-surface-3)] text-[var(--slate-fg)]"
+                                    : "text-[var(--slate-muted)] hover:text-[var(--slate-fg)]"
+                            }`}
+                        >
+                            {label}
+                        </button>
+                    ))}
+                </div>
                 <select
                     className="rounded-[var(--radius)] border border-[var(--slate-border-60)] bg-[var(--slate-surface-1)] px-2 py-1 text-xs"
                     defaultValue=""
@@ -1113,103 +1248,191 @@ function Topics({ draft, update }) {
                     }}
                 >
                     <option value="" disabled>Add from catalog…</option>
-                    {contracts.map((contract) => (
-                        <option key={contract.id} value={contract.id}>{contract.id} ({contract.direction})</option>
-                    ))}
+                    <optgroup label="Team returns">
+                        {inputContracts.map((contract) => (
+                            <option key={contract.id} value={contract.id}>{contract.id} ({contract.direction})</option>
+                        ))}
+                    </optgroup>
+                    <optgroup label="Simulator outputs">
+                        {outputContracts.map((contract) => (
+                            <option key={contract.id} value={contract.id}>{contract.id} ({contract.direction})</option>
+                        ))}
+                    </optgroup>
                 </select>
             </div>
-            {draft.topics.map((topic, index) => {
-                const rosType = topic.schema?.type || topic.type || "";
-                return (
-                    <div key={`${topic.id}-${index}`} className="grid gap-3 rounded-[var(--radius)] border border-[var(--slate-border-60)] bg-[var(--slate-surface-1)] p-3 md:grid-cols-2 xl:grid-cols-3">
-                        <Field label="Stable ID">
-                            <input value={topic.id} onChange={(event) => update(["topics", index, "id"], event.target.value)} />
-                        </Field>
-                        <Field label="Catalog contract">
-                            <select
-                                value={topic.contractId || ""}
-                                onChange={(event) => {
-                                    const contractId = event.target.value;
-                                    if (!contractId) return;
-                                    const next = topicFromContract(contractId, { id: topic.id, name: topic.name });
-                                    update(["topics", index], next);
-                                }}
-                            >
-                                <option value="">Custom / legacy</option>
-                                {contracts.map((contract) => (
-                                    <option key={contract.id} value={contract.id}>{contract.id}</option>
-                                ))}
-                            </select>
-                        </Field>
-                        <Field label="Wire name">
-                            <input value={topic.name} onChange={(event) => update(["topics", index, "name"], event.target.value)} />
-                        </Field>
-                        <Field label="Direction">
-                            <select value={topic.direction} onChange={(event) => update(["topics", index, "direction"], event.target.value)}>
-                                <option value="input">Input (team return)</option>
-                                <option value="output">Output (simulator)</option>
-                            </select>
-                        </Field>
-                        <Field label="ROS type">
-                            <input
-                                value={rosType}
-                                onChange={(event) => update(["topics", index], {
-                                    ...topic,
-                                    type: event.target.value,
-                                    schema: { ...(topic.schema || {}), type: event.target.value, version: topic.schema?.version || 1 },
-                                })}
-                            />
-                        </Field>
-                        <Field label="Producer">
-                            <select value={topic.producer || "simulator"} onChange={(event) => update(["topics", index, "producer"], event.target.value)}>
-                                {PRODUCER_NAMESPACES.map((namespace) => (
-                                    <option key={namespace} value={namespace}>{namespace}</option>
-                                ))}
-                            </select>
-                        </Field>
-                        <Field label="Authority">
-                            <select value={topic.authority || "reference"} onChange={(event) => update(["topics", index, "authority"], event.target.value)}>
-                                {AUTHORITY_MODES.map((mode) => (
-                                    <option key={mode} value={mode}>{mode}</option>
-                                ))}
-                            </select>
-                        </Field>
-                        <Field label="Timeout (ns)">
-                            <input
-                                type="number"
-                                min="0"
-                                value={topic.timeoutNs ?? ""}
-                                placeholder="None"
-                                onChange={(event) => update(["topics", index, "timeoutNs"], event.target.value ? Number(event.target.value) : null)}
-                            />
-                        </Field>
-                        <Field label="Fallback contract">
-                            <select
-                                value={topic.fallback?.contractId || ""}
-                                onChange={(event) => update(["topics", index, "fallback"], event.target.value ? { contractId: event.target.value } : null)}
-                            >
-                                <option value="">None</option>
-                                {contracts.filter((contract) => contract.direction === "input").map((contract) => (
-                                    <option key={contract.id} value={contract.id}>{contract.id}</option>
-                                ))}
-                            </select>
-                        </Field>
-                        <div className="flex items-center gap-4 border-t border-[var(--slate-border-60)] pt-3 md:col-span-2 xl:col-span-3">
-                            <Toggle label="Required" value={topic.required} onChange={(value) => update(["topics", index, "required"], value)} />
-                            <button type="button" onClick={() => update(["topics"], draft.topics.filter((_, candidate) => candidate !== index))} className="text-[11px] text-[var(--slate-danger)]">
-                                Remove topic
-                            </button>
-                        </div>
-                    </div>
-                );
-            })}
+            {groups.map((group) => (
+                <section key={group.title} className="space-y-3">
+                    <h3 className="text-[11px] font-medium uppercase tracking-[0.08em] text-[var(--slate-muted)]">
+                        {group.title}
+                        <span className="ml-2 font-normal normal-case tracking-normal">({group.items.length})</span>
+                    </h3>
+                    {group.items.length === 0 && group.title === "Team returns" && (
+                        <p className="rounded-[var(--radius)] border border-dashed border-[var(--slate-border-60)] px-3 py-4 text-center text-xs text-[var(--slate-muted)]">
+                            No team return topics. Add <span className="font-mono">perception-detections-2d</span> from the catalog to ingest candidate overlays.
+                        </p>
+                    )}
+                    {group.items.length === 0 && group.title !== "Team returns" && (
+                        <p className="py-6 text-center text-xs text-[var(--slate-muted)]">No simulator output topics in this filter.</p>
+                    )}
+                    {group.items.map(({ topic, index }) => (
+                        <TopicCard
+                            key={`${topic.id}-${index}`}
+                            topic={topic}
+                            index={index}
+                            contracts={contracts}
+                            update={update}
+                            onRemove={() => update(["topics"], draft.topics.filter((_, candidate) => candidate !== index))}
+                        />
+                    ))}
+                </section>
+            ))}
+        </div>
+    );
+}
+
+function TopicCard({ topic, index, contracts, update, onRemove }) {
+    const rosType = topic.schema?.type || topic.type || "";
+    const isInput = topic.direction === "input";
+    return (
+        <div className="grid gap-3 rounded-[var(--radius)] border border-[var(--slate-border-60)] bg-[var(--slate-surface-1)] p-3 md:grid-cols-2 xl:grid-cols-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 md:col-span-2 xl:col-span-3">
+                <p className="font-mono text-[12px] text-[var(--slate-fg)]">{topic.name}</p>
+                <span className="rounded-full border border-[var(--slate-border-60)] px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.06em] text-[var(--slate-muted)]">
+                    {isInput ? "Team return" : "Simulator output"}
+                </span>
+            </div>
+            <Field label="Stable ID">
+                <input value={topic.id} onChange={(event) => update(["topics", index, "id"], event.target.value)} />
+            </Field>
+            <Field label="Catalog contract">
+                <select
+                    value={topic.contractId || ""}
+                    onChange={(event) => {
+                        const contractId = event.target.value;
+                        if (!contractId) return;
+                        const next = topicFromContract(contractId, { id: topic.id, name: topic.name });
+                        update(["topics", index], next);
+                    }}
+                >
+                    <option value="">Custom / legacy</option>
+                    {contracts.map((contract) => (
+                        <option key={contract.id} value={contract.id}>{contract.id}</option>
+                    ))}
+                </select>
+            </Field>
+            <Field label="Wire name">
+                <input value={topic.name} onChange={(event) => update(["topics", index, "name"], event.target.value)} />
+            </Field>
+            <Toggle label="Required" value={topic.required} onChange={(value) => update(["topics", index, "required"], value)} />
+            {isInput && (
+                <Toggle
+                    label="Route downstream (active.*)"
+                    value={topic.routeDownstream === true}
+                    onChange={(value) => update(["topics", index, "routeDownstream"], value)}
+                />
+            )}
+            <AdvancedFields label="Topic contract details">
+                <Field label="Direction">
+                    <select value={topic.direction} onChange={(event) => update(["topics", index, "direction"], event.target.value)}>
+                        <option value="input">Input (team return)</option>
+                        <option value="output">Output (simulator)</option>
+                    </select>
+                </Field>
+                <Field label="ROS type">
+                    <input
+                        value={rosType}
+                        onChange={(event) => update(["topics", index], {
+                            ...topic,
+                            type: event.target.value,
+                            schema: { ...(topic.schema || {}), type: event.target.value, version: topic.schema?.version || 1 },
+                        })}
+                    />
+                </Field>
+                <Field label="Producer">
+                    <select value={topic.producer || "simulator"} onChange={(event) => update(["topics", index, "producer"], event.target.value)}>
+                        {PRODUCER_NAMESPACES.map((namespace) => (
+                            <option key={namespace} value={namespace}>{namespace}</option>
+                        ))}
+                    </select>
+                </Field>
+                <Field label="Authority">
+                    <select value={topic.authority || "reference"} onChange={(event) => update(["topics", index, "authority"], event.target.value)}>
+                        {AUTHORITY_MODES.map((mode) => (
+                            <option key={mode} value={mode}>{mode}</option>
+                        ))}
+                    </select>
+                </Field>
+                <Field label="Timeout (ns)">
+                    <input
+                        type="number"
+                        min="0"
+                        value={topic.timeoutNs ?? ""}
+                        placeholder="None"
+                        onChange={(event) => update(["topics", index, "timeoutNs"], event.target.value ? Number(event.target.value) : null)}
+                    />
+                </Field>
+                <Field label="Fallback contract">
+                    <select
+                        value={topic.fallback?.contractId || ""}
+                        onChange={(event) => update(["topics", index, "fallback"], event.target.value ? { contractId: event.target.value } : null)}
+                    >
+                        <option value="">None</option>
+                        {contracts.filter((contract) => contract.direction === "input").map((contract) => (
+                            <option key={contract.id} value={contract.id}>{contract.id}</option>
+                        ))}
+                    </select>
+                </Field>
+            </AdvancedFields>
+            <div className="flex items-center gap-4 border-t border-[var(--slate-border-60)] pt-3 md:col-span-2 xl:col-span-3">
+                <button type="button" onClick={onRemove} className="text-[11px] text-[var(--slate-danger)]">
+                    Remove topic
+                </button>
+            </div>
         </div>
     );
 }
 
 function Assertions({ draft, update }) {
     const add = () => update(["assertions"], [...draft.assertions, { id: `assertion-${draft.assertions.length + 1}`, name: "New assertion", source: "signal", path: "simulation.time", operator: "gte", expected: 0, mode: "at-end", window: { startStep: 0, endStep: null }, severity: "error", onFailure: "stop" }]);
-    return <div className="space-y-3"><div className="flex justify-end"><Action compact icon={<FaPlus />} label="Add assertion" onClick={add} /></div>{draft.assertions.length === 0 && <p className="py-10 text-center text-xs text-zinc-600">No assertions configured.</p>}{draft.assertions.map((assertion, index) => <div key={`${assertion.id}-${index}`} className="rounded-[var(--radius)] border border-[var(--slate-border-60)] bg-[var(--slate-surface-1)] p-4"><div className="grid gap-3 md:grid-cols-4"><Field label="Stable ID"><input value={assertion.id} onChange={(event) => update(["assertions", index, "id"], event.target.value)} /></Field><Field label="Name"><input value={assertion.name} onChange={(event) => update(["assertions", index, "name"], event.target.value)} /></Field><Field label="Source"><select value={assertion.source} onChange={(event) => update(["assertions", index, "source"], event.target.value)}><option value="signal">Signal</option><option value="event">Event</option></select></Field><Field label="Mode"><select value={assertion.mode} onChange={(event) => update(["assertions", index, "mode"], event.target.value)}><option value="always">Always</option><option value="eventually">Eventually</option><option value="at-end">At end</option></select></Field>{assertion.source === "signal" ? <><Field label="Signal path"><input value={assertion.path || ""} onChange={(event) => update(["assertions", index, "path"], event.target.value)} /></Field><Field label="Selector"><input value={assertion.selector || ""} placeholder="Optional nested.path" onChange={(event) => update(["assertions", index, "selector"], event.target.value)} /></Field></> : <><Field label="Event category"><input value={assertion.category || ""} onChange={(event) => update(["assertions", index, "category"], event.target.value)} /></Field><Field label="Event name"><input value={assertion.event || ""} onChange={(event) => update(["assertions", index, "event"], event.target.value)} /></Field></>}<Field label="Operator"><select value={assertion.operator} onChange={(event) => update(["assertions", index, "operator"], event.target.value)}>{["eq", "neq", "lt", "lte", "gt", "gte", "within", "count"].map((operator) => <option key={operator}>{operator}</option>)}</select></Field><Field label="Expected value"><input value={typeof assertion.expected === "string" ? assertion.expected : JSON.stringify(assertion.expected)} onChange={(event) => update(["assertions", index, "expected"], parseInputValue(event.target.value))} /></Field><Field label="Tolerance"><input type="number" min="0" step="0.0001" value={assertion.tolerance} onChange={(event) => update(["assertions", index, "tolerance"], Number(event.target.value))} /></Field><Field label="Start step"><input type="number" min="0" value={assertion.window.startStep} onChange={(event) => update(["assertions", index, "window", "startStep"], Number(event.target.value))} /></Field><Field label="End step"><input type="number" min="0" value={assertion.window.endStep ?? ""} placeholder="No limit" onChange={(event) => update(["assertions", index, "window", "endStep"], event.target.value ? Number(event.target.value) : null)} /></Field><Field label="Severity"><select value={assertion.severity} onChange={(event) => update(["assertions", index, "severity"], event.target.value)}><option value="error">Error</option><option value="warning">Warning</option></select></Field><Field label="On failure"><select value={assertion.onFailure} onChange={(event) => update(["assertions", index, "onFailure"], event.target.value)}><option value="stop">Stop run</option><option value="continue">Continue</option></select></Field></div><button type="button" onClick={() => update(["assertions"], draft.assertions.filter((_, candidate) => candidate !== index))} className="mt-4 text-left text-[11px] text-[var(--slate-danger)]">Remove assertion</button></div>)}</div>;
+    return (
+        <div className="space-y-3">
+            <div className="flex justify-end"><Action compact icon={<FaPlus />} label="Add assertion" onClick={add} /></div>
+            {draft.assertions.length === 0 && <p className="py-10 text-center text-xs text-zinc-600">No assertions configured.</p>}
+            {draft.assertions.map((assertion, index) => (
+                <div key={`${assertion.id}-${index}`} className="rounded-[var(--radius)] border border-[var(--slate-border-60)] bg-[var(--slate-surface-1)] p-4">
+                    <div className="grid gap-3 md:grid-cols-4">
+                        <Field label="Stable ID"><input value={assertion.id} onChange={(event) => update(["assertions", index, "id"], event.target.value)} /></Field>
+                        <Field label="Name"><input value={assertion.name} onChange={(event) => update(["assertions", index, "name"], event.target.value)} /></Field>
+                        <Field label="Source"><select value={assertion.source} onChange={(event) => update(["assertions", index, "source"], event.target.value)}><option value="signal">Signal</option><option value="event">Event</option></select></Field>
+                        {assertion.source === "signal" ? (
+                            <Field label="Signal path"><input value={assertion.path || ""} onChange={(event) => update(["assertions", index, "path"], event.target.value)} /></Field>
+                        ) : (
+                            <>
+                                <Field label="Event category"><input value={assertion.category || ""} onChange={(event) => update(["assertions", index, "category"], event.target.value)} /></Field>
+                                <Field label="Event name"><input value={assertion.event || ""} onChange={(event) => update(["assertions", index, "event"], event.target.value)} /></Field>
+                            </>
+                        )}
+                        <Field label="Operator"><select value={assertion.operator} onChange={(event) => update(["assertions", index, "operator"], event.target.value)}>{["eq", "neq", "lt", "lte", "gt", "gte", "within", "count"].map((operator) => <option key={operator}>{operator}</option>)}</select></Field>
+                        <Field label="Expected value"><input value={typeof assertion.expected === "string" ? assertion.expected : JSON.stringify(assertion.expected)} onChange={(event) => update(["assertions", index, "expected"], parseInputValue(event.target.value))} /></Field>
+                    </div>
+                    <AdvancedFields label="Assertion timing and failure policy">
+                        <div className="grid gap-3 md:grid-cols-4">
+                            <Field label="Mode"><select value={assertion.mode} onChange={(event) => update(["assertions", index, "mode"], event.target.value)}><option value="always">Always</option><option value="eventually">Eventually</option><option value="at-end">At end</option></select></Field>
+                            {assertion.source === "signal" && (
+                                <Field label="Selector"><input value={assertion.selector || ""} placeholder="Optional nested.path" onChange={(event) => update(["assertions", index, "selector"], event.target.value)} /></Field>
+                            )}
+                            <Field label="Tolerance"><input type="number" min="0" step="0.0001" value={assertion.tolerance} onChange={(event) => update(["assertions", index, "tolerance"], Number(event.target.value))} /></Field>
+                            <Field label="Start step"><input type="number" min="0" value={assertion.window.startStep} onChange={(event) => update(["assertions", index, "window", "startStep"], Number(event.target.value))} /></Field>
+                            <Field label="End step"><input type="number" min="0" value={assertion.window.endStep ?? ""} placeholder="No limit" onChange={(event) => update(["assertions", index, "window", "endStep"], event.target.value ? Number(event.target.value) : null)} /></Field>
+                            <Field label="Severity"><select value={assertion.severity} onChange={(event) => update(["assertions", index, "severity"], event.target.value)}><option value="error">Error</option><option value="warning">Warning</option></select></Field>
+                            <Field label="On failure"><select value={assertion.onFailure} onChange={(event) => update(["assertions", index, "onFailure"], event.target.value)}><option value="stop">Stop run</option><option value="continue">Continue</option></select></Field>
+                        </div>
+                    </AdvancedFields>
+                    <button type="button" onClick={() => update(["assertions"], draft.assertions.filter((_, candidate) => candidate !== index))} className="mt-4 text-left text-[11px] text-[var(--slate-danger)]">Remove assertion</button>
+                </div>
+            ))}
+        </div>
+    );
 }
 
 function Logging({ draft, update }) {

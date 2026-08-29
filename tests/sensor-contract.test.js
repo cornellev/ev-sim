@@ -14,7 +14,7 @@ import {
     buildPointCloud2,
     flipRgbaRows,
 } from "../app/3d/devices/SensorMessages.js";
-import { SensorPublisher } from "../app/3d/devices/SensorPublisher.js";
+import { SensorPublisher, normalizeCaptureResult } from "../app/3d/devices/SensorPublisher.js";
 
 function registerSensorSchemas() {
     registerMsgDefinition("builtin_interfaces/Time", "int32 sec\nuint32 nanosec\n");
@@ -161,4 +161,55 @@ test("sensor RNG streams are stable per seed, sensor id, and sample index", () =
     assert.deepEqual(samplesFor(42, "front"), samplesFor(42, "front"));
     assert.notDeepEqual(samplesFor(42, "front"), samplesFor(43, "front"));
     assert.notDeepEqual(samplesFor(42, "front"), samplesFor(42, "rear"));
+});
+
+test("publisher capture results can delay GPU sample timestamps by one period", () => {
+    const captured = [];
+    const fakeDevice = {
+        telemetryId: "sensor",
+        captureAt({ captureTimeNs, sampleIndex }) {
+            captured.push({ captureTimeNs, sampleIndex });
+            if (sampleIndex === 0) {
+                return { messages: [], captureTimeNs, sampleIndex };
+            }
+            return {
+                messages: [{ topicId: "out", signal: "output", value: { data: "late" } }],
+                captureTimeNs: captured[sampleIndex - 1].captureTimeNs,
+                sampleIndex: sampleIndex - 1,
+            };
+        },
+        getParent() { return { getParent: () => null }; },
+    };
+    const publisher = new SensorPublisher(fakeDevice, {
+        id: "sensor",
+        frameId: "sensor_frame",
+        rateHz: 10,
+        phaseNs: 0,
+        latency: { fixedNs: 50_000_000, jitterNs: 0 },
+        maxQueueFrames: 4,
+    }, { seed: 42, topics: [{ id: "out", name: "/out", type: "std_msgs/String" }] });
+    for (let step = 1; step <= 18; step += 1) publisher.update({ step, timeNs: step * 16_666_667 });
+    assert.equal(publisher.health.capturedFrames, 2);
+    assert.equal(publisher.queue[0].captureTimeNs, 100_000_002);
+    assert.equal(publisher.queue[0].sampleIndex, 0);
+    assert.equal(publisher.queue[0].deliveryTimeNs, 150_000_002);
+    assert.equal(publisher.queue[1].captureTimeNs, 200_000_004);
+    assert.equal(publisher.queue[1].sampleIndex, 1);
+});
+
+test("normalizeCaptureResult keeps array returns on the current sample stamp", () => {
+    const array = normalizeCaptureResult([{ topicId: "a" }], 10, 3);
+    assert.deepEqual(array.messages, [{ topicId: "a" }]);
+    assert.equal(array.captureTimeNs, 10);
+    assert.equal(array.sampleIndex, 3);
+    const delayed = normalizeCaptureResult({
+        messages: [{ topicId: "b" }],
+        captureTimeNs: 5,
+        sampleIndex: 1,
+        rng: { next: () => 0 },
+    }, 10, 3);
+    assert.equal(delayed.captureTimeNs, 5);
+    assert.equal(delayed.sampleIndex, 1);
+    assert.equal(delayed.messages[0].topicId, "b");
+    assert.ok(delayed.rng);
 });

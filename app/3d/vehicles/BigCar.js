@@ -10,6 +10,7 @@ import { CameraFollower } from "../tools/CameraFollower";
 import { wait, waitFor } from "@/app/util/Wait";
 import { StopSign } from "../city/objects/StopSign";
 import { Barrel } from "../city/objects/Barrel";
+import { applyModelPlacement } from "./ModelPlacement.js";
 
 // ---------- constants ----------
 const WHEELBASE = new Unit(49, Unit.Type.INCH).getValue(Unit.Type.METER);          // meters (set to your car)
@@ -247,9 +248,10 @@ export class BigCar extends PhysicalVehicle {
 
         this.path = null; // to be set up by subclasses
 
-        this.offset = new THREE.Vector3(0, 0.15, 0); // intrinsic model offset
+        // Kinematic pose lives on sceneObject; model offset is applied via placement only.
+        this.offset = new THREE.Vector3(0, 0, 0);
         this.modelUrl = options.modelUrl || "/shell/shell.gltf";
-        this.cameraFocusOffset = new THREE.Vector3();
+        this.cameraFocusOffset = new THREE.Vector3(0, 0.7, 0);
 
         this.follower = new CameraFollower();
         this.follower.cameraOffset.set(-5, 4, 0); // default offset behind and above the car
@@ -401,68 +403,63 @@ export class BigCar extends PhysicalVehicle {
     }
 
     async addToScene(scene) {
-        console.log("Loading BigCar model...");
-        // gltf loader to load a car model
         const loader = new GLTFLoader();
-        
         const gltf = await loader.loadAsync(this.modelUrl);
+        const model = gltf.scene;
 
-        gltf.scene.children[0].position.copy(this.offset);
-
-        // scale down by 100x
-        gltf.scene.scale.set(0.0015, 0.0015, 0.0015);
-
-        gltf.scene.position.copy(this.position);
-        gltf.scene.rotation.copy(this.rotation);
-
-        // rotate it -90
-        gltf.scene.rotateX(-Math.PI / 2);
-        gltf.scene.rotateZ(Math.PI);
-        // translate the object along the y axis by -0.5 units
-
-
+        // Kinematic pose belongs on sceneObject only — never double-apply onto the GLTF.
         this.sceneObject = new THREE.Group();
-        this.sceneObject.add(gltf.scene);
+        this.sceneObject.position.copy(this.position);
+        this.sceneObject.rotation.copy(this.rotation);
         scene.add(this.sceneObject);
 
-        const boundingBox = new THREE.Box3().setFromObject(gltf.scene);
-        const size = new THREE.Vector3();
-        boundingBox.getSize(size);
+        // Place while unparented so AABB math is in local space, then attach.
+        const modelRotation = { x: -Math.PI / 2, y: 0, z: Math.PI, order: "XYZ" };
+        const baseScale = 0.0015;
+        model.scale.setScalar(baseScale);
+        model.rotation.set(modelRotation.x, modelRotation.y, modelRotation.z);
+        model.rotation.order = modelRotation.order;
+        model.position.set(0, 0, 0);
+        model.updateMatrixWorld(true);
 
-        const actualScale = {
-            width: new Unit(49, Unit.Type.INCH),
-            length: new Unit(106, Unit.Type.INCH),
-        }
+        const measured = new THREE.Box3().setFromObject(model);
+        const size = measured.getSize(new THREE.Vector3());
+        const targetLength = new Unit(106, Unit.Type.INCH).getValue(Unit.Type.METER);
+        const targetWidth = new Unit(49, Unit.Type.INCH).getValue(Unit.Type.METER);
+        const fitScale = Math.min(targetLength / Math.max(size.x, 1e-9), targetWidth / Math.max(size.z, 1e-9));
+        const bodyCenter = { x: 0, y: 0.7, z: 0 };
 
-        // use the bounding box size to determine the scale factor to match the actual car dimensions
-        const scaleX = actualScale.length.getValue(Unit.Type.METER) / size.x;
-        const scaleY = actualScale.width.getValue(Unit.Type.METER) / size.z; // width is along Z in the model
-        const scale = Math.min(scaleX, scaleY);
+        applyModelPlacement(model, {
+            scale: baseScale * fitScale,
+            rotation: modelRotation,
+            offset: { x: 0, y: 0, z: 0 },
+        }, { center: bodyCenter });
 
-        this.sceneObject.scale.set(scale, scale, scale);
+        this.sceneObject.add(model);
+        this.offset.set(0, 0, 0);
+
+        // Debug: bright plate at the kinematic origin (vehicle local 0,0,0).
+        const originMarker = new THREE.Mesh(
+            new THREE.BoxGeometry(0.35, 0.04, 0.35),
+            new THREE.MeshBasicMaterial({ color: 0xff2d55, depthTest: false }),
+        );
+        originMarker.position.set(0, 0.02, 0);
+        originMarker.renderOrder = 10;
+        originMarker.name = "vehicle-origin-debug";
+        this.sceneObject.add(originMarker);
+        this._originDebugMarker = originMarker;
+
         this.sceneObject.updateMatrixWorld(true);
-
-        const worldBounds = new THREE.Box3().setFromObject(this.sceneObject);
-        const worldCenter = worldBounds.getCenter(new THREE.Vector3());
-        const worldSize = worldBounds.getSize(new THREE.Vector3());
-        const sceneWorldPosition = this.sceneObject.getWorldPosition(new THREE.Vector3());
-
-        this.cameraFocusOffset.copy(worldCenter).sub(sceneWorldPosition);
-        this.cameraFocusOffset.y += worldSize.y * 0.2;
+        const alignedSize = new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3());
+        this.cameraFocusOffset.set(bodyCenter.x, bodyCenter.y + alignedSize.y * 0.2, bodyCenter.z);
         this.follower.lookAtOffset.copy(this.cameraFocusOffset);
 
-        console.log("BigCar added to scene");
-        
         const curve = createPathRibbonMesh();
-        // rotate curve 90 degrees to align with car's forward direction
+        // Sibling of the model so fit-scale does not shrink the path ribbon.
         curve.rotation.y = Math.PI / 2;
-        // curve.position.x = 0.2;
-        
         this.sceneObject.add(curve);
-
         this.path = curve;
 
-        //debug utils
         window.getPositionAndRotationOfBigCar = () => {
             const pos = this.position.clone();
             const rot = this.rotation.clone();

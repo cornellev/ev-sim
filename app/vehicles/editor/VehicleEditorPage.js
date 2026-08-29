@@ -52,6 +52,9 @@ import {
 import { DragNumber } from "./DragNumber.js";
 import { VehicleStudio } from "./VehicleStudio.js";
 import {
+    AdvancedFields,
+    AdvancedSwitch,
+    AuthoringModeProvider,
     AsyncState,
     Button,
     Field as SharedField,
@@ -63,6 +66,7 @@ import {
     TabsList,
     TabsRoot,
     TabsTrigger,
+    useAuthoringMode,
     useWorkspaceGuard,
 } from "../../ui";
 
@@ -332,7 +336,16 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
         } else if (pick.kind === "ego") {
             update(["egoCenter"], position, { coalesce: true });
         } else if (pick.kind === "model") {
-            update(["model"], { ...draft.model, offset: position, rotation }, { coalesce: true });
+            const alignment = studioRef.current?.getModelAlignment?.() || { x: 0, y: 0, z: 0 };
+            update(["model"], {
+                ...draft.model,
+                offset: {
+                    x: position.x - alignment.x,
+                    y: position.y - alignment.y,
+                    z: position.z - alignment.z,
+                },
+                rotation,
+            }, { coalesce: true });
         }
     };
 
@@ -531,6 +544,7 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
     const derivedWheelbase = draft ? deriveWheelbase(draft.wheels) : null;
 
     return (
+        <AuthoringModeProvider>
         <main className="fixed inset-0 z-[1] overflow-hidden bg-[var(--slate-bg)] text-[var(--slate-fg)]">
             <header className="flex h-10 items-center justify-between border-b border-[var(--slate-border)] bg-[var(--slate-surface-1)] px-3">
                 <button type="button" className="flex min-w-0 items-center gap-2 text-left" onClick={onOpenWorkspace} aria-label="Open workspace switcher">
@@ -539,7 +553,8 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
                     <IconLayoutGrid size={15} stroke={1.75} aria-hidden="true" />
                     <span className="truncate text-[13px] font-semibold">Vehicle Editor</span>
                 </button>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                    <AdvancedSwitch />
                     {readOnly && <span className="text-[11px] font-medium text-[var(--slate-muted)]">Built-in · read only</span>}
                     {dirty && <span className="text-[11px] font-medium text-[var(--slate-warning)]">Unsaved</span>}
                     <span className="hidden max-[899px]:inline-flex"><IconButton label="Open vehicle catalog" onClick={() => setCatalogOpen((open) => !open)}><IconLayoutSidebarLeftCollapse size={15} stroke={1.75} /></IconButton></span>
@@ -694,6 +709,7 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
                 </aside>
             </div>
         </main>
+        </AuthoringModeProvider>
     );
 }
 
@@ -827,12 +843,19 @@ function SensorsTab({ draft, update, selection, setSelection }) {
                             </Field>
                         </div>
                         <VectorFields label="Position (m)" value={sensor.pose.position} onChange={(axis, value) => change(["pose", "position", axis], value)} scrub />
-                        <VectorFields label="Rotation (rad)" value={sensor.pose.rotation} onChange={(axis, value) => change(["pose", "rotation", axis], value)} />
                         <div className="mt-3 grid grid-cols-2 gap-2">
-                            {definition?.vehicle.fields.map((field) => (
+                            {definition?.vehicle.fields.filter((field) => !field.advanced).map((field) => (
                                 <VehicleSensorDefinitionField key={field.path.join(".")} field={field} sensor={sensor} change={change} />
                             ))}
                         </div>
+                        <AdvancedFields label="Sensor orientation and calibration">
+                            <VectorFields label="Rotation (rad)" value={sensor.pose.rotation} onChange={(axis, value) => change(["pose", "rotation", axis], value)} />
+                            <div className="mt-3 grid grid-cols-2 gap-2">
+                                {definition?.vehicle.fields.filter((field) => field.advanced).map((field) => (
+                                    <VehicleSensorDefinitionField key={field.path.join(".")} field={field} sensor={sensor} change={change} />
+                                ))}
+                            </div>
+                        </AdvancedFields>
                         {!definition && <p className="mt-3 text-[11px] text-[var(--slate-warning)]">This sensor type is not registered. Its data is preserved, but this vehicle cannot run until a supported type is selected.</p>}
                         <button type="button" onClick={() => update(["sensors"], draft.sensors.filter((_, candidate) => candidate !== index))} className="mt-3 text-[11px] text-[var(--slate-danger)]">Remove sensor</button>
                     </div>
@@ -843,6 +866,8 @@ function SensorsTab({ draft, update, selection, setSelection }) {
 }
 
 function VehicleSensorDefinitionField({ field, sensor, change }) {
+    const { advanced } = useAuthoringMode();
+    if (field.advanced && !advanced) return null;
     const value = getSensorFieldValue(sensor, field.path);
     return (
         <Field label={field.label}>
@@ -899,9 +924,13 @@ function WheelsTab({ draft, update, selection, setSelection, derivedWheelbase })
                             </Field>
                             <Toggle label="Steerable" value={wheel.steerable} onChange={(value) => change(["steerable"], value)} />
                             <Field label="Radius (m)"><input type="number" min="0.01" step="0.01" value={wheel.radius} onChange={(event) => change(["radius"], Number(event.target.value))} /></Field>
-                            <Field label="Width (m)"><input type="number" min="0.01" step="0.01" value={wheel.width} onChange={(event) => change(["width"], Number(event.target.value))} /></Field>
                         </div>
                         <VectorFields label="Position (m)" value={wheel.position} onChange={(axis, value) => change(["position", axis], value)} scrub />
+                        <AdvancedFields label="Wheel geometry">
+                            <div className="grid grid-cols-2 gap-2">
+                                <Field label="Width (m)"><input type="number" min="0.01" step="0.01" value={wheel.width} onChange={(event) => change(["width"], Number(event.target.value))} /></Field>
+                            </div>
+                        </AdvancedFields>
                         <div className="mt-3 flex items-center justify-between">
                             <button type="button" onClick={() => update(["wheels", index, "position", "z"], -wheel.position.z)} className="text-[11px] text-[var(--slate-fg-2)]">Mirror across X</button>
                             <button type="button" onClick={() => update(["wheels"], draft.wheels.filter((_, candidate) => candidate !== index))} className="text-[11px] text-[var(--slate-danger)]">Remove</button>
@@ -909,6 +938,7 @@ function WheelsTab({ draft, update, selection, setSelection, derivedWheelbase })
                     </div>
                 );
             })}
+            <AdvancedFields label="Vehicle kinematics">
             <Section title="Kinematics">
                 <div className="grid grid-cols-2 gap-2">
                     <Field label="Wheelbase (m)"><input type="number" min="0.01" step="0.01" value={draft.kinematics.wheelbase} onChange={(event) => update(["kinematics", "wheelbase"], Number(event.target.value))} /></Field>
@@ -921,6 +951,7 @@ function WheelsTab({ draft, update, selection, setSelection, derivedWheelbase })
                     </div>
                 )}
             </Section>
+            </AdvancedFields>
         </div>
     );
 }

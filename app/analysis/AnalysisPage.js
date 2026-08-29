@@ -41,6 +41,7 @@ const ANALYSIS_TABS = [
     { key: "graph", name: "Graph", viewType: "graph", icon: IconChartLine },
     { key: "table", name: "Table", viewType: "table", icon: IconTable },
     { key: "events", name: "Events", viewType: "events", icon: IconCircle },
+    { key: "spatial", name: "Autonomy", viewType: "spatial", icon: IconMovie },
 ];
 
 function serializeLayout({ activeView, selected, liveWindow, leftWidth, rightWidth, excludedEventTypes }) {
@@ -121,7 +122,17 @@ export default function AnalysisPage({ initialLogId, onOpenReplay, onOpenWorkspa
     const leftDrawerTriggerRef = useRef(null);
     const rightDrawerTriggerRef = useRef(null);
     const [graphPixelWidth, setGraphPixelWidth] = useState(1000);
-    const [expandedGroups, setExpandedGroups] = useState(() => new Set(["devices", "simulation", "topics", "vehicles"]));
+    const [expandedGroups, setExpandedGroups] = useState(() => new Set([
+        "devices",
+        "simulation",
+        "topics",
+        "vehicles",
+        "candidate",
+        "oracle",
+        "visualization",
+        "diagnostics",
+    ]));
+    const [exactSync, setExactSync] = useState(false);
 
     const loadCatalog = useCallback(() => listLogs().then(setLogs).catch((caught) => setError(caught.message)), []);
     useEffect(() => { loadCatalog(); }, [loadCatalog]);
@@ -223,7 +234,7 @@ export default function AnalysisPage({ initialLogId, onOpenReplay, onOpenWorkspa
                 const layout = result?.value;
                 if (cancelled || layout?.version !== 1) return;
                 if (Array.isArray(layout.selected)) setSelected(layout.selected);
-                if (["graph", "table", "events"].includes(layout.activeView)) setActiveView(layout.activeView);
+                if (["graph", "table", "events", "spatial"].includes(layout.activeView)) setActiveView(layout.activeView);
                 if (Number.isFinite(layout.liveWindow)) setLiveWindow(layout.liveWindow);
                 if (Number.isFinite(layout.leftWidth)) setLeftWidth(layout.leftWidth);
                 if (Number.isFinite(layout.rightWidth)) setRightWidth(layout.rightWidth);
@@ -353,7 +364,7 @@ export default function AnalysisPage({ initialLogId, onOpenReplay, onOpenWorkspa
             const layout = JSON.parse(await file.text());
             if (layout.kind !== "fusion-analysis-layout" || layout.version !== 1) throw new Error("Unsupported analysis layout.");
             setSelected(Array.isArray(layout.selected) ? layout.selected : []);
-            setActiveView(["graph", "table", "events"].includes(layout.activeView) ? layout.activeView : "graph");
+            setActiveView(["graph", "table", "events", "spatial"].includes(layout.activeView) ? layout.activeView : "graph");
             setLiveWindow(Number(layout.liveWindow) || 30);
             setExcludedEventTypes(Array.isArray(layout.excludedEventTypes) ? layout.excludedEventTypes : []);
         } catch (caught) { setError(caught.message); }
@@ -422,6 +433,17 @@ export default function AnalysisPage({ initialLogId, onOpenReplay, onOpenWorkspa
                             {activeView === "graph" && <UPlotGraph data={graphData} series={selected} onWidth={setGraphPixelWidth} onCursor={(timeUs) => timeline.seek(timeUs)} onUnlockLive={() => { if (isLiveSource && timeline.getSnapshot().liveLocked) timeline.set({ liveLocked: false }); }} />}
                             {activeView === "table" && <SignalTable selected={selected} samplesFor={samplesFor} timeUs={timelineState.timeUs} />}
                             {activeView === "events" && <EventView events={source.events || []} timeline={timeline} excludedTypes={excludedEventTypes} onExcludedTypesChange={setExcludedEventTypes} />}
+                            {activeView === "spatial" && (
+                                <AutonomySpatialView
+                                    source={source}
+                                    dataset={dataset}
+                                    sourceKey={sourceKey}
+                                    timeUs={timelineState.timeUs}
+                                    exactSync={exactSync}
+                                    onExactSyncChange={setExactSync}
+                                    store={store}
+                                />
+                            )}
                         </div>
                         <div className={styles.timelinePanel}>
                             <div className={styles.timelineToolbar}>
@@ -444,6 +466,83 @@ export default function AnalysisPage({ initialLogId, onOpenReplay, onOpenWorkspa
                 <input ref={layoutFileRef} hidden type="file" accept="application/json,.json" onChange={importLayout} />
             </div>
         </WorkspaceFrame>
+    );
+}
+
+function AutonomySpatialView({ source, dataset, sourceKey, timeUs, exactSync, onExactSyncChange, store }) {
+    const snap = useMemo(() => {
+        if (dataset && sourceKey.startsWith("log:")) {
+            return dataset.autonomySnapshotAt(timeUs, { exactSync });
+        }
+        const candidate = store.read("visualization.perception.candidate")?.value;
+        const oracle = store.read("visualization.perception.oracle")?.value;
+        const localization = store.read("visualization.localization.candidate")?.value;
+        const error = store.read("visualization.localization.error")?.value;
+        const status = store.read("visualization.perception.status")?.value;
+        return {
+            perception: {
+                ...(candidate || {}),
+                oracle: oracle || { detections2d: [], detections3d: [], lanes: [] },
+                status: status?.status || candidate?.status || "ok",
+                ageNs: status?.ageNs ?? candidate?.ageNs ?? null,
+            },
+            localization: {
+                ...(localization || {}),
+                error,
+            },
+            ages: {
+                perceptionNs: status?.ageNs ?? candidate?.ageNs ?? null,
+                localizationNs: localization?.ageNs ?? null,
+            },
+        };
+    }, [dataset, exactSync, sourceKey, store, timeUs, source]);
+
+    return (
+        <div className={styles.eventView}>
+            <div className={styles.eventFilter}>
+                <div className={styles.eventFilterControls}>
+                    <Button size="compact" aria-pressed={exactSync} onClick={() => onExactSyncChange(!exactSync)}>
+                        {exactSync ? "Exact sync on" : "Lookback"}
+                    </Button>
+                    <span className={styles.eventCount}>
+                        capture-aligned · age {Number.isFinite(snap?.ages?.perceptionNs) ? `${(snap.ages.perceptionNs / 1e6).toFixed(0)} ms` : "—"}
+                    </span>
+                </div>
+            </div>
+            <div className={styles.eventList}>
+                <div className={styles.eventRow}>
+                    <div className={styles.eventJump}>
+                        <span>Candidate 3D boxes</span>
+                        <code>{snap?.perception?.detections3d?.length || 0}</code>
+                        <span>2D</span>
+                        <code>{snap?.perception?.detections2d?.length || 0}</code>
+                    </div>
+                </div>
+                <div className={styles.eventRow}>
+                    <div className={styles.eventJump}>
+                        <span>Oracle 3D boxes</span>
+                        <code>{snap?.perception?.oracle?.detections3d?.length || 0}</code>
+                        <span>lanes</span>
+                        <code>{(snap?.perception?.lanes?.length || 0) + (snap?.perception?.oracle?.lanes?.length || 0)}</code>
+                    </div>
+                </div>
+                <div className={styles.eventRow}>
+                    <div className={styles.eventJump}>
+                        <span>EKF estimate</span>
+                        <code>{snap?.localization?.estimate ? "present" : "missing"}</code>
+                        <span>|err|</span>
+                        <code>{snap?.localization?.error ? `${Number(snap.localization.error.positionM || 0).toFixed(3)} m` : "—"}</code>
+                    </div>
+                </div>
+                <div className={styles.eventRow}>
+                    <div className={styles.eventJump}>
+                        <span>Status</span>
+                        <code>{snap?.perception?.status || "ok"}</code>
+                        <span>{snap?.perception?.statusCode || ""}</span>
+                    </div>
+                </div>
+            </div>
+        </div>
     );
 }
 

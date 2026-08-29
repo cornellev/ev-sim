@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { createReplayVehicleGeometry } from "./ReplayVehicleGeometry.js";
+import { AutonomyOverlay } from "../3d/overlay/AutonomyOverlay.js";
 
 function labelSprite(text) {
     const canvas = document.createElement("canvas");
@@ -26,7 +27,14 @@ function labelSprite(text) {
     return sprite;
 }
 
-export default function ReplayScene({ dataset, timeUs, selectedEntity, onSelectEntity }) {
+export default function ReplayScene({
+    dataset,
+    timeUs,
+    selectedEntity,
+    onSelectEntity,
+    exactSync = false,
+    autonomyLayers = { oracle: true, candidate: true, ekf: true, lanes: true },
+}) {
     const mountRef = useRef(null);
     const runtimeRef = useRef(null);
 
@@ -38,6 +46,7 @@ export default function ReplayScene({ dataset, timeUs, selectedEntity, onSelectE
         scene.fog = new THREE.FogExp2(0x17181a, 0.012);
         const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 5000);
         camera.position.set(14, 9, 16);
+        camera.layers.enable(31);
         const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
         renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
         renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -60,6 +69,8 @@ export default function ReplayScene({ dataset, timeUs, selectedEntity, onSelectE
         const sun = new THREE.DirectionalLight(0xffffff, 2.2);
         sun.position.set(12, 25, 8);
         scene.add(sun);
+        const autonomyOverlay = new AutonomyOverlay();
+        autonomyOverlay.attach(scene, camera);
         const raycaster = new THREE.Raycaster();
         const pointer = new THREE.Vector2();
         const meshes = new Map();
@@ -69,8 +80,6 @@ export default function ReplayScene({ dataset, timeUs, selectedEntity, onSelectE
             const nextHeight = Math.max(1, Math.round(height));
             camera.aspect = nextWidth / nextHeight;
             camera.updateProjectionMatrix();
-            // Keep CSS size in sync with the mount. Passing false here on retina
-            // DPRs left the canvas 2× oversized and clipped, which flattened the view.
             renderer.setSize(nextWidth, nextHeight, true);
         };
         const observer = new ResizeObserver(resize);
@@ -92,12 +101,13 @@ export default function ReplayScene({ dataset, timeUs, selectedEntity, onSelectE
             if (hit?.object?.userData?.entityId) onSelectEntity?.(hit.object.userData.entityId);
         };
         renderer.domElement.addEventListener("click", click);
-        runtimeRef.current = { scene, meshes };
+        runtimeRef.current = { scene, meshes, autonomyOverlay };
         return () => {
             cancelAnimationFrame(frame);
             observer.disconnect();
             renderer.domElement.removeEventListener("click", click);
             controls.dispose();
+            autonomyOverlay.dispose();
             for (const mesh of meshes.values()) {
                 mesh.geometry.dispose();
                 mesh.material.dispose();
@@ -112,7 +122,9 @@ export default function ReplayScene({ dataset, timeUs, selectedEntity, onSelectE
     useEffect(() => {
         const runtime = runtimeRef.current;
         if (!runtime || !dataset) return;
-        const posePaths = dataset.descriptors.filter((item) => item.type === "pose3" && item.path.startsWith("vehicles.")).map((item) => item.path);
+        const posePaths = dataset.descriptors
+            .filter((item) => item.type === "pose3" && item.path.startsWith("vehicles."))
+            .map((item) => item.path);
         const active = new Set();
         for (const path of posePaths) {
             const entityId = path.split(".")[1] || path;
@@ -143,7 +155,13 @@ export default function ReplayScene({ dataset, timeUs, selectedEntity, onSelectE
             mesh.geometry.dispose();
             mesh.material.dispose();
         }
-    }, [dataset, selectedEntity, timeUs]);
+
+        const autonomy = dataset.autonomySnapshotAt?.(timeUs, { exactSync }) || {
+            perception: {},
+            localization: {},
+        };
+        runtime.autonomyOverlay.updateFromSnapshot(autonomy, autonomyLayers);
+    }, [autonomyLayers, dataset, exactSync, selectedEntity, timeUs]);
 
     return <div ref={mountRef} className="absolute inset-0" aria-label="Read-only replay scene" />;
 }

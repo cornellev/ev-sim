@@ -81,6 +81,38 @@ function valuesEqual(a, b) {
     }
 }
 
+/** True for Image / PointCloud2-shaped payloads that must not be cloned or retained. */
+export function isHeavyValue(value) {
+    if (!isPlainObject(value)) return false;
+    if (ArrayBuffer.isView(value.data) || value.data instanceof ArrayBuffer) {
+        if (Number.isFinite(Number(value.width)) && Number.isFinite(Number(value.height)) && value.encoding != null) {
+            return true;
+        }
+        if (Number.isFinite(Number(value.width)) && Number.isFinite(Number(value.point_step)) && Array.isArray(value.fields)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function isHeavyDescriptor(descriptor) {
+    return descriptor?.logClass === "heavy";
+}
+
+function isHeavyPath(store, path) {
+    return isHeavyDescriptor(store._descriptors.get(path));
+}
+
+function cloneEntryShallowHeavy(entry) {
+    if (!entry) return entry;
+    return {
+        ...entry,
+        value: entry.value,
+        metadata: entry.metadata,
+        validation: entry.validation,
+    };
+}
+
 export function createSignalEntry(value, options = {}) {
     const type = options.type || inferSignalType(value);
 
@@ -186,6 +218,11 @@ export class SignalStore {
         if (!path) throw new Error("Signal descriptors require a path.");
 
         const current = this._descriptors.get(path);
+        const nextLogClass = descriptor.logClass || current?.logClass || "standard";
+        // Promote to heavy even when type is unchanged — later publishes may discover size.
+        const logClass = current?.logClass === "heavy" || nextLogClass === "heavy"
+            ? "heavy"
+            : nextLogClass;
         const normalized = {
             path,
             type: descriptor.type || current?.type || "json",
@@ -193,7 +230,7 @@ export class SignalStore {
             source: descriptor.source || current?.source || "local",
             category: descriptor.category || current?.category || path.split(".")[0] || "signals",
             replayRole: descriptor.replayRole || current?.replayRole || "derived",
-            logClass: descriptor.logClass || current?.logClass || "standard",
+            logClass,
             description: descriptor.description ?? current?.description ?? null,
             metadata: {
                 ...(current?.metadata || {}),
@@ -257,6 +294,8 @@ export class SignalStore {
             paths,
             includeEvents: resolvedOptions?.includeEvents !== false,
             includeCatalog: resolvedOptions?.includeCatalog !== false,
+            // Default off: heavy Image/PointCloud2 must be opted into (or listed in paths).
+            includeHeavy: resolvedOptions?.includeHeavy === true,
         };
         this._listeners.add(subscription);
         return () => this._listeners.delete(subscription);
@@ -268,10 +307,20 @@ export class SignalStore {
             sequence: ++this._sequence,
             ...message,
         };
-        for (const subscription of this._listeners) {
+        const path = envelope.path ? normalizeSignalPath(envelope.path) : null;
+        const heavyUpdate = envelope.kind === "update" && path && isHeavyPath(this, path);
+        // Snapshot so a listener that setStates/resubscribes cannot extend this pass.
+        for (const subscription of [...this._listeners]) {
             if (envelope.kind === "event" && !subscription.includeEvents) continue;
             if (envelope.kind === "catalog" && !subscription.includeCatalog) continue;
-            if (envelope.path && subscription.paths && !subscription.paths.has(envelope.path)) continue;
+            if (path && subscription.paths && !subscription.paths.has(path)) continue;
+            if (heavyUpdate) {
+                const pathAllowed = Boolean(subscription.paths?.has(path));
+                if (!subscription.includeHeavy && !pathAllowed) continue;
+                // Pass by reference — cloning PointCloud2/Image is the memory leak.
+                subscription.listener(envelope);
+                continue;
+            }
             subscription.listener(cloneValue(envelope));
         }
     }
@@ -374,13 +423,16 @@ export class SignalStore {
     _commitEntries(entries) {
         entries.forEach((entry, path) => {
             const previous = this._committed.get(path);
-            if (previous) {
+            const heavy = isHeavyDescriptor(this._descriptors.get(path)) || isHeavyValue(entry?.value);
+            if (previous && !heavy) {
                 this._previous.set(path, cloneValue(previous));
+            } else if (heavy) {
+                this._previous.delete(path);
             }
 
-            this._committed.set(path, cloneValue(entry));
+            this._committed.set(path, heavy ? entry : cloneValue(entry));
             this._appendHistory(path, entry);
-            this._publishUpdate(path, entry, previous);
+            this._publishUpdate(path, entry, heavy ? null : previous);
         });
     }
 
@@ -422,7 +474,8 @@ export class SignalStore {
 
         const currentDescriptor = this._descriptors.get(normalizedPath);
         const type = options.type || currentDescriptor?.type || inferSignalType(value);
-        if (!currentDescriptor || currentDescriptor.type !== type) {
+        const inferredHeavy = options.logClass === "heavy" || isHeavyValue(value);
+        if (!currentDescriptor || currentDescriptor.type !== type || (inferredHeavy && currentDescriptor.logClass !== "heavy")) {
             this.defineSignal({
                 path: normalizedPath,
                 type,
@@ -430,26 +483,41 @@ export class SignalStore {
                 source: options.source,
                 category: options.category,
                 replayRole: options.replayRole,
-                logClass: options.logClass,
+                logClass: inferredHeavy ? "heavy" : options.logClass,
                 description: options.description,
                 metadata: options.descriptorMetadata,
             });
         }
-        const entry = normalizeSignalEntry(value, {
-            ...options,
-            type,
-            timeUs: options.timeUs ?? this.getTimeUs(),
-            now: options.now || this.now,
-        });
+        const heavy = isHeavyDescriptor(this._descriptors.get(normalizedPath)) || inferredHeavy;
+        const entry = heavy
+            ? {
+                value,
+                type,
+                updatedAt: normalizeUpdatedAt(options.updatedAt, options.now || this.now),
+                source: options.source || "local",
+                timeUs: Number.isFinite(Number(options.timeUs)) ? Math.max(0, Math.round(Number(options.timeUs))) : this.getTimeUs(),
+                cycle: Number.isFinite(Number(options.cycle)) ? Math.max(0, Math.round(Number(options.cycle))) : null,
+                staleAfter: normalizeStaleAfter(options.staleAfter),
+                metadata: isPlainObject(options.metadata) ? options.metadata : (isPlainObject(options.descriptorMetadata) ? options.descriptorMetadata : null),
+                validation: isPlainObject(options.validation) ? options.validation : null,
+            }
+            : normalizeSignalEntry(value, {
+                ...options,
+                type,
+                timeUs: options.timeUs ?? this.getTimeUs(),
+                now: options.now || this.now,
+            });
         const previous = this._committed.get(normalizedPath);
-        if (previous) {
+        if (previous && !heavy) {
             this._previous.set(normalizedPath, cloneValue(previous));
+        } else if (heavy) {
+            this._previous.delete(normalizedPath);
         }
 
         this._committed.set(normalizedPath, entry);
-        this._appendHistory(normalizedPath, entry);
-        this._publishUpdate(normalizedPath, entry, previous);
-        return cloneValue(entry);
+        this._appendHistory(normalizedPath, entry, options.maxSamples, { skip: options.history === false });
+        this._publishUpdate(normalizedPath, entry, heavy ? null : previous);
+        return heavy ? cloneEntryShallowHeavy(entry) : cloneValue(entry);
     }
 
     publishSignal(path, value, options = {}) {
@@ -457,13 +525,14 @@ export class SignalStore {
     }
 
     _publishUpdate(path, entry, previous) {
+        const heavy = isHeavyDescriptor(this._descriptors.get(path)) || isHeavyValue(entry?.value);
         this._notify({
             kind: "update",
             path,
             timeUs: entry.timeUs ?? this.getTimeUs(),
             cycle: entry.cycle ?? null,
-            entry: cloneValue(entry),
-            previous: previous ? cloneValue(previous) : null,
+            entry: heavy ? entry : cloneValue(entry),
+            previous: heavy || !previous ? null : cloneValue(previous),
             descriptor: this.descriptor(path),
         });
     }
@@ -571,7 +640,10 @@ export class SignalStore {
     history(path) {
         const buffer = this._history.get(normalizeSignalPath(path));
         if (!buffer) return [];
-        return buffer.items.slice(buffer.head).map((entry) => cloneValue(entry));
+        const heavy = isHeavyPath(this, normalizeSignalPath(path));
+        return buffer.items.slice(buffer.head).map((entry) => (
+            heavy ? cloneEntryShallowHeavy(entry) : cloneValue(entry)
+        ));
     }
 
     series(path, { fromUs = 0, toUs = Number.POSITIVE_INFINITY } = {}) {
@@ -581,16 +653,31 @@ export class SignalStore {
         });
     }
 
-    _appendHistory(path, entry, maxSamples = null) {
+    _appendHistory(path, entry, maxSamples = null, { skip = false } = {}) {
         const normalizedPath = normalizeSignalPath(path);
-        if (!normalizedPath) return;
+        if (!normalizedPath || skip) return;
 
-        const buffer = this._history.get(normalizedPath) || { items: [], head: 0 };
-        buffer.items.push(cloneValue(entry));
         const descriptor = this._descriptors.get(normalizedPath);
+        const heavy = isHeavyDescriptor(descriptor) || isHeavyValue(entry?.value);
         const limit = maxSamples !== null && maxSamples !== undefined && Number.isFinite(Number(maxSamples))
             ? Math.max(1, Number(maxSamples))
-            : descriptor?.logClass === "heavy" ? 1 : this.historySampleLimit;
+            : heavy ? 1 : this.historySampleLimit;
+
+        let buffer = this._history.get(normalizedPath);
+        if (!buffer) {
+            buffer = { items: [], head: 0 };
+            this._history.set(normalizedPath, buffer);
+        }
+
+        if (heavy || limit === 1) {
+            // Reuse the same ring object — allocating {items,head} every tick was a heap storm.
+            buffer.items[0] = heavy ? entry : cloneValue(entry);
+            if (buffer.items.length !== 1) buffer.items.length = 1;
+            buffer.head = 0;
+            return;
+        }
+
+        buffer.items.push(cloneValue(entry));
         const newestTimeUs = entry?.timeUs ?? this.getTimeUs();
         const oldestTimeUs = Math.max(0, newestTimeUs - this.historyDurationUs);
         while (buffer.head < buffer.items.length) {
@@ -599,10 +686,9 @@ export class SignalStore {
             if (activeLength <= limit && sampleTimeUs >= oldestTimeUs) break;
             buffer.head += 1;
         }
-        if (buffer.head > 1024 && buffer.head * 2 >= buffer.items.length) {
+        if (buffer.head > 0 && (buffer.head > 64 || buffer.head * 2 >= buffer.items.length)) {
             buffer.items = buffer.items.slice(buffer.head);
             buffer.head = 0;
         }
-        this._history.set(normalizedPath, buffer);
     }
 }

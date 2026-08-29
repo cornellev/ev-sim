@@ -1,7 +1,11 @@
 import { createHash } from "node:crypto";
 
+import { PERCEPTION_LABEL_CATALOG_VERSION } from "./PerceptionLabelCatalog.js";
+
 export const AUTONOMY_CATALOG_KIND = "cev-sim.autonomy-contract-catalog";
-export const AUTONOMY_CATALOG_VERSION = 3;
+export const AUTONOMY_CATALOG_VERSION = 5;
+
+export { PERCEPTION_LABEL_CATALOG_VERSION };
 
 export const PRODUCER_NAMESPACES = Object.freeze([
     "simulator",
@@ -60,6 +64,22 @@ export const ROS_SCHEMA_DEFINITIONS = Object.freeze({
     "sensor_fusion_msgs/LaneBounds": "geometry_msgs/Point32[] points\n",
     "sensor_fusion_msgs/Lanes": "sensor_fusion_msgs/LaneBounds[] lanes\n",
     "sensor_fusion_msgs/CarPosition": "geometry_msgs/Point32 position\ngeometry_msgs/Point32 rotation\n",
+    "sensor_fusion_msgs/StampedLanes": "std_msgs/Header header\nuint32 sequence\nstring sync_group_key\nstring calibration_hash\nsensor_fusion_msgs/LaneBounds[] lanes\n",
+    "sensor_fusion_msgs/TrafficControlState": "int32 instance_id\nstring class_id\nstring kind\nstring state\ngeometry_msgs/Point32 position\nfloat64 visibility\nfloat64 occlusion\n",
+    "sensor_fusion_msgs/TrafficControlStates": "std_msgs/Header header\nuint32 sequence\nstring sync_group_key\nstring calibration_hash\nsensor_fusion_msgs/TrafficControlState[] controls\n",
+    "vision_msgs/Point2D": "float64 x\nfloat64 y\n",
+    "vision_msgs/Pose2D": "vision_msgs/Point2D position\nfloat64 theta\n",
+    "vision_msgs/ObjectHypothesis": "string class_id\nfloat64 score\n",
+    "vision_msgs/ObjectHypothesisWithPose": "vision_msgs/ObjectHypothesis hypothesis\ngeometry_msgs/PoseWithCovariance pose\n",
+    "vision_msgs/BoundingBox2D": "vision_msgs/Pose2D center\nfloat64 size_x\nfloat64 size_y\n",
+    "vision_msgs/BoundingBox3D": "geometry_msgs/Pose center\ngeometry_msgs/Vector3 size\n",
+    "vision_msgs/Detection2D": "std_msgs/Header header\nvision_msgs/ObjectHypothesisWithPose[] results\nvision_msgs/BoundingBox2D bbox\nstring id\nfloat64 visibility\nfloat64 occlusion\n",
+    "vision_msgs/Detection2DArray": "std_msgs/Header header\nvision_msgs/Detection2D[] detections\n",
+    "vision_msgs/Detection3D": "std_msgs/Header header\nvision_msgs/ObjectHypothesisWithPose[] results\nvision_msgs/BoundingBox3D bbox\nstring id\nfloat64 visibility\nfloat64 occlusion\n",
+    "vision_msgs/Detection3DArray": "std_msgs/Header header\nvision_msgs/Detection3D[] detections\n",
+    "diagnostic_msgs/KeyValue": "string key\nstring value\n",
+    "diagnostic_msgs/DiagnosticStatus": "byte OK=0\nbyte WARN=1\nbyte ERROR=2\nbyte STALE=3\nbyte level\nstring name\nstring message\nstring hardware_id\ndiagnostic_msgs/KeyValue[] values\n",
+    "diagnostic_msgs/DiagnosticArray": "std_msgs/Header header\ndiagnostic_msgs/DiagnosticStatus[] status\n",
 });
 
 const CONTRACT_DEFINITIONS = Object.freeze([
@@ -133,6 +153,129 @@ const CONTRACT_DEFINITIONS = Object.freeze([
         defaultAuthority: "reference",
     },
     {
+        id: "front-camera-depth",
+        stage: "perception",
+        direction: "output",
+        defaultName: "/oracle/front_camera/depth",
+        schema: { type: "sensor_msgs/Image", version: 1 },
+        required: false,
+        implementation: "live",
+        defaultProducer: "oracle",
+        defaultAuthority: "oracle",
+        timestampPolicy: "capture",
+        units: "meters-32FC1",
+    },
+    {
+        id: "front-camera-semantic",
+        stage: "perception",
+        direction: "output",
+        defaultName: "/oracle/front_camera/semantic",
+        schema: { type: "sensor_msgs/Image", version: 1 },
+        required: false,
+        implementation: "live",
+        defaultProducer: "oracle",
+        defaultAuthority: "oracle",
+        timestampPolicy: "capture",
+        units: "class-id-16UC1",
+    },
+    {
+        id: "front-camera-instance",
+        stage: "perception",
+        direction: "output",
+        defaultName: "/oracle/front_camera/instance",
+        schema: { type: "sensor_msgs/Image", version: 1 },
+        required: false,
+        implementation: "live",
+        defaultProducer: "oracle",
+        defaultAuthority: "oracle",
+        timestampPolicy: "capture",
+        units: "instance-id-32SC1",
+    },
+    {
+        id: "front-lidar-semantic",
+        stage: "perception",
+        direction: "output",
+        defaultName: "/oracle/front_lidar/points_semantic",
+        schema: { type: "sensor_msgs/PointCloud2", version: 1 },
+        required: false,
+        implementation: "live",
+        defaultProducer: "oracle",
+        defaultAuthority: "oracle",
+        timestampPolicy: "capture",
+    },
+    {
+        id: "oracle-detections-2d",
+        stage: "perception",
+        direction: "output",
+        defaultName: "/oracle/perception/detections_2d",
+        schema: { type: "vision_msgs/Detection2DArray", version: 1 },
+        required: false,
+        implementation: "live",
+        defaultProducer: "oracle",
+        defaultAuthority: "oracle",
+        timestampPolicy: "capture",
+    },
+    {
+        id: "oracle-detections-3d",
+        stage: "perception",
+        direction: "output",
+        defaultName: "/oracle/perception/detections_3d",
+        schema: { type: "vision_msgs/Detection3DArray", version: 1 },
+        required: false,
+        implementation: "live",
+        defaultProducer: "oracle",
+        defaultAuthority: "oracle",
+        timestampPolicy: "capture",
+    },
+    {
+        id: "oracle-lanes",
+        stage: "perception",
+        direction: "output",
+        defaultName: "/oracle/perception/lanes",
+        schema: { type: "sensor_fusion_msgs/StampedLanes", version: 1 },
+        required: false,
+        implementation: "live",
+        defaultProducer: "oracle",
+        defaultAuthority: "oracle",
+        timestampPolicy: "capture",
+    },
+    {
+        id: "oracle-traffic-controls",
+        stage: "perception",
+        direction: "output",
+        defaultName: "/oracle/perception/traffic_controls",
+        schema: { type: "sensor_fusion_msgs/TrafficControlStates", version: 1 },
+        required: false,
+        implementation: "live",
+        defaultProducer: "oracle",
+        defaultAuthority: "oracle",
+        timestampPolicy: "capture",
+    },
+    {
+        id: "front-camera-diagnostics",
+        stage: "perception",
+        direction: "output",
+        defaultName: "/diagnostics/front_camera",
+        schema: { type: "diagnostic_msgs/DiagnosticArray", version: 1 },
+        required: false,
+        implementation: "live",
+        defaultProducer: "simulator",
+        defaultAuthority: "reference",
+        timestampPolicy: "delivery",
+    },
+    {
+        id: "front-lidar-diagnostics",
+        stage: "perception",
+        direction: "output",
+        defaultName: "/diagnostics/front_lidar",
+        schema: { type: "diagnostic_msgs/DiagnosticArray", version: 1 },
+        required: false,
+        implementation: "live",
+        defaultProducer: "simulator",
+        defaultAuthority: "reference",
+        timestampPolicy: "delivery",
+    },
+    {
         id: "imu",
         stage: "localization",
         direction: "output",
@@ -193,6 +336,67 @@ const CONTRACT_DEFINITIONS = Object.freeze([
         defaultAuthority: "oracle",
     },
     {
+        id: "perception-detections-2d",
+        stage: "perception",
+        direction: "input",
+        defaultName: "/perception/detections_2d",
+        schema: { type: "vision_msgs/Detection2DArray", version: 1 },
+        required: false,
+        implementation: "live",
+        defaultProducer: "candidate",
+        defaultAuthority: "candidate",
+        defaultRouteDownstream: false,
+        timeoutNs: 200_000_000,
+        validityNs: 500_000_000,
+        timestampPolicy: "capture",
+    },
+    {
+        id: "perception-detections-3d",
+        stage: "perception",
+        direction: "input",
+        defaultName: "/perception/detections_3d",
+        schema: { type: "vision_msgs/Detection3DArray", version: 1 },
+        required: false,
+        implementation: "live",
+        defaultProducer: "candidate",
+        defaultAuthority: "candidate",
+        defaultRouteDownstream: false,
+        timeoutNs: 200_000_000,
+        validityNs: 500_000_000,
+        timestampPolicy: "capture",
+    },
+    {
+        id: "perception-lanes",
+        stage: "perception",
+        direction: "input",
+        defaultName: "/perception/lanes",
+        schema: { type: "sensor_fusion_msgs/StampedLanes", version: 1 },
+        required: false,
+        implementation: "live",
+        defaultProducer: "candidate",
+        defaultAuthority: "candidate",
+        defaultRouteDownstream: false,
+        timeoutNs: 200_000_000,
+        validityNs: 500_000_000,
+        timestampPolicy: "capture",
+    },
+    {
+        id: "perception-semantic",
+        stage: "perception",
+        direction: "input",
+        defaultName: "/perception/semantic",
+        schema: { type: "sensor_msgs/Image", version: 1 },
+        required: false,
+        implementation: "live",
+        defaultProducer: "candidate",
+        defaultAuthority: "candidate",
+        defaultRouteDownstream: false,
+        units: "class-id-16UC1",
+        timeoutNs: 200_000_000,
+        validityNs: 500_000_000,
+        timestampPolicy: "capture",
+    },
+    {
         id: "perception-detections",
         stage: "perception",
         direction: "input",
@@ -202,19 +406,21 @@ const CONTRACT_DEFINITIONS = Object.freeze([
         implementation: "catalog-only",
         defaultProducer: "candidate",
         defaultAuthority: "candidate",
+        defaultRouteDownstream: false,
         timeoutNs: 200_000_000,
         validityNs: 500_000_000,
     },
     {
-        id: "perception-lanes",
+        id: "perception-lanes-legacy",
         stage: "perception",
         direction: "input",
-        defaultName: "/perception/lanes",
+        defaultName: "/perception/lanes_legacy",
         schema: { type: "sensor_fusion_msgs/Lanes", version: 1 },
         required: false,
         implementation: "catalog-only",
         defaultProducer: "candidate",
         defaultAuthority: "candidate",
+        defaultRouteDownstream: false,
         timeoutNs: 200_000_000,
     },
     {
@@ -228,8 +434,10 @@ const CONTRACT_DEFINITIONS = Object.freeze([
         implementation: "live",
         defaultProducer: "candidate",
         defaultAuthority: "candidate",
+        defaultRouteDownstream: false,
         timeoutNs: 100_000_000,
         validityNs: 500_000_000,
+        timestampPolicy: "capture",
     },
     {
         id: "controls-command",
@@ -242,6 +450,7 @@ const CONTRACT_DEFINITIONS = Object.freeze([
         implementation: "catalog-only",
         defaultProducer: "candidate",
         defaultAuthority: "candidate",
+        defaultRouteDownstream: true,
         timeoutNs: 100_000_000,
         validityNs: 200_000_000,
         fallback: { contractId: "ackdrive-legacy", mode: "legacy-adapter" },
@@ -257,6 +466,7 @@ const CONTRACT_DEFINITIONS = Object.freeze([
         implementation: "live",
         defaultProducer: "candidate",
         defaultAuthority: "candidate",
+        defaultRouteDownstream: true,
         timeoutNs: 100_000_000,
     },
 ]);
@@ -366,6 +576,7 @@ export function catalogHash() {
         implementation: contract.implementation,
         defaultProducer: contract.defaultProducer,
         defaultAuthority: contract.defaultAuthority,
+        defaultRouteDownstream: contract.defaultRouteDownstream ?? null,
         timeoutNs: contract.timeoutNs ?? null,
         validityNs: contract.validityNs ?? null,
         framePolicy: contract.framePolicy ?? null,
@@ -382,6 +593,14 @@ export function catalogHash() {
     return createHash("sha256").update(payload).digest("hex");
 }
 
+export const DEFAULT_CANDIDATE_RETURN_CONTRACT_IDS = Object.freeze([
+    "perception-detections-2d",
+    "perception-detections-3d",
+    "perception-lanes",
+    "perception-semantic",
+    "localization-estimate",
+]);
+
 export function defaultManifestTopics() {
     const liveDefaults = [
         ["clock", {}],
@@ -390,14 +609,40 @@ export function defaultManifestTopics() {
         ["front-camera-image", {}],
         ["front-camera-info", {}],
         ["front-lidar-points", {}],
+        ["front-camera-depth", {}],
+        ["front-camera-semantic", {}],
+        ["front-camera-instance", {}],
+        ["front-lidar-semantic", {}],
+        ["oracle-detections-2d", {}],
+        ["oracle-detections-3d", {}],
+        ["oracle-lanes", {}],
+        ["oracle-traffic-controls", {}],
+        ["front-camera-diagnostics", {}],
+        ["front-lidar-diagnostics", {}],
         ["imu", {}],
         ["gnss", {}],
         ["wheel-odometry", {}],
         ["truth-odometry", {}],
-        ["localization-estimate", {}],
+        ...DEFAULT_CANDIDATE_RETURN_CONTRACT_IDS.map((contractId) => [contractId, {}]),
         ["ackdrive-legacy", { id: "ackdrive" }],
     ];
     return liveDefaults.map(([contractId, overrides]) => topicFromContract(contractId, overrides));
+}
+
+/** Append missing observational candidate return contracts without duplicating existing ids or wire names. */
+export function ensureCandidateReturnTopics(topics = []) {
+    const next = Array.isArray(topics) ? [...topics] : [];
+    for (const contractId of DEFAULT_CANDIDATE_RETURN_CONTRACT_IDS) {
+        const contract = getAutonomyContract(contractId);
+        if (!contract) continue;
+        const exists = next.some((entry) => (
+            entry.contractId === contractId
+            || entry.id === contractId
+            || entry.name === contract.defaultName
+        ));
+        if (!exists) next.push(topicFromContract(contractId));
+    }
+    return next;
 }
 
 export function topicFromContract(contractId, overrides = {}) {
@@ -405,6 +650,7 @@ export function topicFromContract(contractId, overrides = {}) {
     if (!contract) throw new Error(`Unknown autonomy contract "${contractId}".`);
     const producer = overrides.producer || contract.defaultProducer;
     const authority = overrides.authority || contract.defaultAuthority;
+    const routeDownstream = overrides.routeDownstream ?? contract.defaultRouteDownstream ?? (contract.direction === "input" && contract.stage === "controls");
     return {
         id: overrides.id || contract.id,
         contractId: contract.id,
@@ -415,6 +661,7 @@ export function topicFromContract(contractId, overrides = {}) {
         required: overrides.required ?? contract.required,
         producer,
         authority,
+        routeDownstream: Boolean(routeDownstream),
         timeoutNs: overrides.timeoutNs ?? contract.timeoutNs ?? null,
         validityNs: overrides.validityNs ?? contract.validityNs ?? null,
         fallback: overrides.fallback ?? contract.fallback ?? null,
@@ -432,9 +679,18 @@ export function migrateLegacyTopic(source = {}, index = 0) {
         const match = CONTRACT_DEFINITIONS.find((entry) => entry.defaultName === name && (entry.schema.type === type || !type));
         contractId = match?.id || (name === "/ackdrive" ? "ackdrive-legacy" : "");
     }
+    // Legacy unstamped /perception/lanes → stamped contract when type matches StampedLanes or is absent.
+    if (contractId === "perception-lanes" && type === "sensor_fusion_msgs/Lanes") {
+        contractId = "perception-lanes-legacy";
+    }
+    if (!contractId && name === "/perception/lanes" && type === "sensor_fusion_msgs/Lanes") {
+        contractId = "perception-lanes-legacy";
+    }
     const contract = contractId ? getAutonomyContract(contractId) : null;
     const direction = ["input", "output"].includes(source.direction) ? source.direction : (contract?.direction || "output");
     const defaultProducer = direction === "input" ? "candidate" : "simulator";
+    const defaultRouteDownstream = contract?.defaultRouteDownstream
+        ?? (direction === "input" && (contract?.stage === "controls" || contractId === "ackdrive-legacy"));
     return {
         id: String(source.id || `topic-${index + 1}`).trim(),
         contractId: contractId || null,
@@ -448,6 +704,7 @@ export function migrateLegacyTopic(source = {}, index = 0) {
         required: source.required === true || contract?.required === true,
         producer: PRODUCER_NAMESPACES.includes(source.producer) ? source.producer : (contract?.defaultProducer || defaultProducer),
         authority: AUTHORITY_MODES.includes(source.authority) ? source.authority : (contract?.defaultAuthority || (direction === "input" ? "candidate" : "reference")),
+        routeDownstream: source.routeDownstream === undefined ? Boolean(defaultRouteDownstream) : Boolean(source.routeDownstream),
         timeoutNs: source.timeoutNs ?? contract?.timeoutNs ?? null,
         validityNs: source.validityNs ?? contract?.validityNs ?? null,
         fallback: source.fallback ?? contract?.fallback ?? null,
@@ -571,6 +828,16 @@ export function fixturePayloadForType(typeStr) {
             return { lanes: [] };
         case "sensor_fusion_msgs/CarPosition":
             return { position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0 } };
+        case "sensor_fusion_msgs/StampedLanes":
+            return { header, sequence: 0, sync_group_key: "", calibration_hash: "", lanes: [] };
+        case "sensor_fusion_msgs/TrafficControlStates":
+            return { header, sequence: 0, sync_group_key: "", calibration_hash: "", controls: [] };
+        case "vision_msgs/Detection2DArray":
+            return { header, detections: [] };
+        case "vision_msgs/Detection3DArray":
+            return { header, detections: [] };
+        case "diagnostic_msgs/DiagnosticArray":
+            return { header, status: [] };
         default:
             return {};
     }
@@ -607,5 +874,21 @@ export function msgFilePathsForCatalog() {
         "sensor_fusion_msgs/LaneBounds": "/messages/sensor_fusion_msgs/msg/LaneBounds.msg",
         "sensor_fusion_msgs/Lanes": "/messages/sensor_fusion_msgs/msg/Lanes.msg",
         "sensor_fusion_msgs/CarPosition": "/messages/sensor_fusion_msgs/msg/CarPosition.msg",
+        "sensor_fusion_msgs/StampedLanes": "/messages/sensor_fusion_msgs/msg/StampedLanes.msg",
+        "sensor_fusion_msgs/TrafficControlState": "/messages/sensor_fusion_msgs/msg/TrafficControlState.msg",
+        "sensor_fusion_msgs/TrafficControlStates": "/messages/sensor_fusion_msgs/msg/TrafficControlStates.msg",
+        "vision_msgs/Point2D": "/messages/vision_msgs/msg/Point2D.msg",
+        "vision_msgs/Pose2D": "/messages/vision_msgs/msg/Pose2D.msg",
+        "vision_msgs/ObjectHypothesis": "/messages/vision_msgs/msg/ObjectHypothesis.msg",
+        "vision_msgs/ObjectHypothesisWithPose": "/messages/vision_msgs/msg/ObjectHypothesisWithPose.msg",
+        "vision_msgs/BoundingBox2D": "/messages/vision_msgs/msg/BoundingBox2D.msg",
+        "vision_msgs/BoundingBox3D": "/messages/vision_msgs/msg/BoundingBox3D.msg",
+        "vision_msgs/Detection2D": "/messages/vision_msgs/msg/Detection2D.msg",
+        "vision_msgs/Detection2DArray": "/messages/vision_msgs/msg/Detection2DArray.msg",
+        "vision_msgs/Detection3D": "/messages/vision_msgs/msg/Detection3D.msg",
+        "vision_msgs/Detection3DArray": "/messages/vision_msgs/msg/Detection3DArray.msg",
+        "diagnostic_msgs/KeyValue": "/messages/diagnostic_msgs/msg/KeyValue.msg",
+        "diagnostic_msgs/DiagnosticStatus": "/messages/diagnostic_msgs/msg/DiagnosticStatus.msg",
+        "diagnostic_msgs/DiagnosticArray": "/messages/diagnostic_msgs/msg/DiagnosticArray.msg",
     };
 }

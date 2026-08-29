@@ -42,7 +42,7 @@ function Metric({ icon, label, value, valueClassName = "text-zinc-100", classNam
     );
 }
 
-export function SimulationRunStatus({ simState, runState, recordingState }) {
+export function SimulationRunStatus({ simState, runState, recordingState, sensorPanelVisible = false }) {
     const presentation = deriveSimulationStatus(runState, simState);
     const resolved = runState?.activeResolved;
     const manifest = resolved?.manifest;
@@ -68,7 +68,12 @@ export function SimulationRunStatus({ simState, runState, recordingState }) {
     return (
         <header
             aria-label="Simulation run status"
-            className="pointer-events-none fixed left-[320px] right-3 top-3 z-20 select-none max-md:hidden"
+            className="pointer-events-none fixed left-[320px] top-3 z-20 select-none max-md:hidden"
+            style={{
+                right: sensorPanelVisible
+                    ? "calc(1.5rem + min(420px, calc(100vw - 1.5rem)))"
+                    : "0.75rem",
+            }}
         >
             <div className="grid min-h-14 grid-cols-[minmax(170px,0.85fr)_minmax(220px,1.5fr)_110px_120px] items-center divide-x divide-zinc-800 overflow-hidden rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-950/90 text-zinc-100 shadow-[0_16px_45px_rgba(0,0,0,0.38)] max-lg:grid-cols-[minmax(150px,1fr)_minmax(180px,1.2fr)_100px]">
                 <div className="min-w-0 px-3.5 py-2">

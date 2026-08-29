@@ -111,40 +111,34 @@ function axisCalibration(source = {}, fallback = 0) {
 }
 
 const imuRunFields = [
-    { label: "Mount frame", path: ["mountFrameId"], control: "text" },
-    { label: "Measurement frame", path: ["measurementFrameId"], control: "text" },
-    { label: "Sync group", path: ["syncGroupId"], control: "text" },
-    { label: "IMU topic ID", path: ["outputs", "imuTopicId"], control: "text" },
     { label: "Gravity (m/s²)", path: ["calibration", "gravity"], control: "number", min: 0, step: 0.001 },
-    { label: "Angular velocity σ (rad/s)", path: ["calibration", "angularVelocityStdDev", "x"], control: "number", min: 0, step: 0.0001 },
-    { label: "Linear acceleration σ (m/s²)", path: ["calibration", "linearAccelerationStdDev", "z"], control: "number", min: 0, step: 0.001 },
-    { label: "Angular saturation (rad/s)", path: ["calibration", "angularVelocitySaturation"], control: "number", min: 0 },
-    { label: "Acceleration saturation (m/s²)", path: ["calibration", "linearAccelerationSaturation"], control: "number", min: 0 },
+    { label: "IMU topic ID", path: ["outputs", "imuTopicId"], control: "text", advanced: true },
+    { label: "Angular velocity σ (rad/s)", path: ["calibration", "angularVelocityStdDev", "x"], control: "number", min: 0, step: 0.0001, advanced: true },
+    { label: "Linear acceleration σ (m/s²)", path: ["calibration", "linearAccelerationStdDev", "z"], control: "number", min: 0, step: 0.001, advanced: true },
+    { label: "Angular saturation (rad/s)", path: ["calibration", "angularVelocitySaturation"], control: "number", min: 0, advanced: true },
+    { label: "Acceleration saturation (m/s²)", path: ["calibration", "linearAccelerationSaturation"], control: "number", min: 0, advanced: true },
 ];
 
 const gnssRunFields = [
-    { label: "Frame ID", path: ["measurementFrameId"], control: "text" },
-    { label: "Sync group", path: ["syncGroupId"], control: "text" },
-    { label: "GNSS topic ID", path: ["outputs", "gnssTopicId"], control: "text" },
     { label: "Datum latitude (deg)", path: ["calibration", "datum", "latitude"], control: "number" },
     { label: "Datum longitude (deg)", path: ["calibration", "datum", "longitude"], control: "number" },
-    { label: "Datum altitude (m)", path: ["calibration", "datum", "altitude"], control: "number" },
-    { label: "Position noise E (m)", path: ["calibration", "positionNoiseEnu", "x"], control: "number", min: 0, step: 0.001 },
-    { label: "Position noise N (m)", path: ["calibration", "positionNoiseEnu", "y"], control: "number", min: 0, step: 0.001 },
-    { label: "Dropout probability", path: ["calibration", "faults", "dropoutProbability"], control: "number", min: 0, max: 1, step: 0.001 },
-    { label: "Outage probability", path: ["calibration", "faults", "outageProbability"], control: "number", min: 0, max: 1, step: 0.001 },
+    { label: "GNSS topic ID", path: ["outputs", "gnssTopicId"], control: "text", advanced: true },
+    { label: "Datum altitude (m)", path: ["calibration", "datum", "altitude"], control: "number", advanced: true },
+    { label: "Position noise E (m)", path: ["calibration", "positionNoiseEnu", "x"], control: "number", min: 0, step: 0.001, advanced: true },
+    { label: "Position noise N (m)", path: ["calibration", "positionNoiseEnu", "y"], control: "number", min: 0, step: 0.001, advanced: true },
+    { label: "Dropout probability", path: ["calibration", "faults", "dropoutProbability"], control: "number", min: 0, max: 1, step: 0.001, advanced: true },
+    { label: "Outage probability", path: ["calibration", "faults", "outageProbability"], control: "number", min: 0, max: 1, step: 0.001, advanced: true },
 ];
 
 const wheelOdometryRunFields = [
-    { label: "Odom frame", path: ["calibration", "odomFrameId"], control: "text" },
-    { label: "Sync group", path: ["syncGroupId"], control: "text" },
-    { label: "Odometry topic ID", path: ["outputs", "odometryTopicId"], control: "text" },
     { label: "Wheel radius (m)", path: ["calibration", "wheelRadius"], control: "number", min: 0.01, step: 0.001 },
-    { label: "Ticks per revolution", path: ["calibration", "ticksPerRevolution"], control: "number", min: 1 },
     { label: "Track width (m)", path: ["calibration", "trackWidth"], control: "number", min: 0.01, step: 0.001 },
-    { label: "Slip factor", path: ["calibration", "slipFactor"], control: "number", min: 0, max: 1, step: 0.001 },
-    { label: "Pose noise σ (m)", path: ["calibration", "poseNoise", "x"], control: "number", min: 0, step: 0.001 },
-    { label: "Twist noise σ (m/s)", path: ["calibration", "twistNoise", "x"], control: "number", min: 0, step: 0.001 },
+    { label: "Odom frame", path: ["calibration", "odomFrameId"], control: "text", advanced: true },
+    { label: "Odometry topic ID", path: ["outputs", "odometryTopicId"], control: "text", advanced: true },
+    { label: "Ticks per revolution", path: ["calibration", "ticksPerRevolution"], control: "number", min: 1, advanced: true },
+    { label: "Slip factor", path: ["calibration", "slipFactor"], control: "number", min: 0, max: 1, step: 0.001, advanced: true },
+    { label: "Pose noise σ (m)", path: ["calibration", "poseNoise", "x"], control: "number", min: 0, step: 0.001, advanced: true },
+    { label: "Twist noise σ (m/s)", path: ["calibration", "twistNoise", "x"], control: "number", min: 0, step: 0.001, advanced: true },
 ];
 
 const imuVehicleFields = [
@@ -162,47 +156,156 @@ const wheelVehicleFields = [
 ];
 
 const cameraRunFields = [
-    { label: "Mount frame", path: ["mountFrameId"], control: "text" },
-    { label: "Measurement frame", path: ["measurementFrameId"], control: "text" },
-    { label: "Sync group", path: ["syncGroupId"], control: "text" },
-    { label: "Image topic ID", path: ["outputs", "imageTopicId"], control: "text" },
-    { label: "Image ROS schema", path: ["schema", "imageTopicId"], control: "text" },
-    { label: "CameraInfo topic ID", path: ["outputs", "cameraInfoTopicId"], control: "text" },
-    { label: "CameraInfo ROS schema", path: ["schema", "cameraInfoTopicId"], control: "text" },
     { label: "Width", path: ["calibration", "width"], control: "number", min: 1 },
     { label: "Height", path: ["calibration", "height"], control: "number", min: 1 },
     { label: "Vertical FOV (deg)", path: ["calibration", "verticalFovDeg"], control: "number", min: 1, max: 179 },
-    { label: "Encoding", path: ["calibration", "encoding"], control: "text", readOnly: true },
+    { label: "fx", path: ["calibration", "intrinsics", "fx"], control: "number", min: 0.01, advanced: true },
+    { label: "fy", path: ["calibration", "intrinsics", "fy"], control: "number", min: 0.01, advanced: true },
+    { label: "cx", path: ["calibration", "intrinsics", "cx"], control: "number", advanced: true },
+    { label: "cy", path: ["calibration", "intrinsics", "cy"], control: "number", advanced: true },
+    { label: "Distortion model", path: ["calibration", "distortionModel"], control: "text", advanced: true },
+    { label: "Image topic ID", path: ["outputs", "imageTopicId"], control: "text", advanced: true },
+    { label: "Image ROS schema", path: ["schema", "imageTopicId"], control: "text", advanced: true },
+    { label: "CameraInfo topic ID", path: ["outputs", "cameraInfoTopicId"], control: "text", advanced: true },
+    { label: "CameraInfo ROS schema", path: ["schema", "cameraInfoTopicId"], control: "text", advanced: true },
+    { label: "Depth topic ID", path: ["outputs", "depthTopicId"], control: "text", advanced: true },
+    { label: "Semantic topic ID", path: ["outputs", "semanticTopicId"], control: "text", advanced: true },
+    { label: "Instance topic ID", path: ["outputs", "instanceTopicId"], control: "text", advanced: true },
+    { label: "Detections 2D topic ID", path: ["outputs", "detections2dTopicId"], control: "text", advanced: true },
+    { label: "Detections 3D topic ID", path: ["outputs", "detections3dTopicId"], control: "text", advanced: true },
+    { label: "Lanes topic ID", path: ["outputs", "lanesTopicId"], control: "text", advanced: true },
+    { label: "Traffic controls topic ID", path: ["outputs", "trafficControlsTopicId"], control: "text", advanced: true },
+    { label: "Diagnostics topic ID", path: ["outputs", "diagnosticsTopicId"], control: "text", advanced: true },
+    { label: "Encoding", path: ["calibration", "encoding"], control: "text", readOnly: true, advanced: true },
+    { label: "Frame dropout probability", path: ["noise", "dropoutProbability"], control: "number", min: 0, max: 1, step: 0.001, advanced: true },
+    { label: "Deadline (ns)", path: ["health", "deadlineNs"], control: "number", min: 0, advanced: true },
 ];
 
 const lidarRunFields = [
-    { label: "Frame ID", path: ["mountFrameId"], control: "text" },
-    { label: "Sync group", path: ["syncGroupId"], control: "text" },
-    { label: "PointCloud topic ID", path: ["outputs", "pointCloudTopicId"], control: "text" },
-    { label: "PointCloud ROS schema", path: ["schema", "pointCloudTopicId"], control: "text" },
     { label: "Range (m)", path: ["calibration", "range"], control: "number", min: 0.01 },
-    { label: "Azimuth step (deg)", path: ["calibration", "azimuth", "stepDeg"], control: "number", min: 0.01 },
-    { label: "Elevation step (deg)", path: ["calibration", "elevation", "stepDeg"], control: "number", min: 0.01 },
+    { label: "PointCloud topic ID", path: ["outputs", "pointCloudTopicId"], control: "text", advanced: true },
+    { label: "PointCloud ROS schema", path: ["schema", "pointCloudTopicId"], control: "text", advanced: true },
+    { label: "Semantic PointCloud topic ID", path: ["outputs", "semanticPointCloudTopicId"], control: "text", advanced: true },
+    { label: "Diagnostics topic ID", path: ["outputs", "diagnosticsTopicId"], control: "text", advanced: true },
+    { label: "Azimuth step (deg)", path: ["calibration", "azimuth", "stepDeg"], control: "number", min: 0.01, advanced: true },
+    { label: "Elevation step (deg)", path: ["calibration", "elevation", "stepDeg"], control: "number", min: 0.01, advanced: true },
+    { label: "Frame dropout probability", path: ["noise", "dropoutProbability"], control: "number", min: 0, max: 1, step: 0.001, advanced: true },
+    { label: "Point dropout probability", path: ["noise", "pointDropoutProbability"], control: "number", min: 0, max: 1, step: 0.001, advanced: true },
+    { label: "Deadline (ns)", path: ["health", "deadlineNs"], control: "number", min: 0, advanced: true },
 ];
 
 const cameraVehicleFields = [
-    { label: "Range (m)", path: ["config", "range"], control: "number", min: 0.1, step: 0.1 },
     { label: "Vertical FOV (deg)", path: ["config", "fov"], control: "number", min: 1, max: 179 },
     { label: "Width (px)", path: ["config", "width"], control: "number", min: 1 },
     { label: "Height (px)", path: ["config", "height"], control: "number", min: 1 },
-    { label: "Theta step (deg)", path: ["config", "thetaStep"], control: "number", min: 0.01, step: 0.01 },
-    { label: "Phi step (deg)", path: ["config", "phiStep"], control: "number", min: 0.01, step: 0.01 },
+    { label: "Range (m)", path: ["config", "range"], control: "number", min: 0.1, step: 0.1, advanced: true },
+    { label: "Theta step (deg)", path: ["config", "thetaStep"], control: "number", min: 0.01, step: 0.01, advanced: true },
+    { label: "Phi step (deg)", path: ["config", "phiStep"], control: "number", min: 0.01, step: 0.01, advanced: true },
 ];
 
 const lidarVehicleFields = [
     { label: "Range (m)", path: ["config", "range"], control: "number", min: 0.1, step: 0.1 },
-    { label: "Theta step (deg)", path: ["config", "thetaStep"], control: "number", min: 0.01, step: 0.01 },
-    { label: "Theta start (deg)", path: ["config", "thetaRange", 0], control: "number" },
-    { label: "Theta end (deg)", path: ["config", "thetaRange", 1], control: "number" },
-    { label: "Phi step (deg)", path: ["config", "phiStep"], control: "number", min: 0.01, step: 0.01 },
-    { label: "Phi start (deg)", path: ["config", "phiRange", 0], control: "number" },
-    { label: "Phi end (deg)", path: ["config", "phiRange", 1], control: "number" },
+    { label: "Theta step (deg)", path: ["config", "thetaStep"], control: "number", min: 0.01, step: 0.01, advanced: true },
+    { label: "Theta start (deg)", path: ["config", "thetaRange", 0], control: "number", advanced: true },
+    { label: "Theta end (deg)", path: ["config", "thetaRange", 1], control: "number", advanced: true },
+    { label: "Phi step (deg)", path: ["config", "phiStep"], control: "number", min: 0.01, step: 0.01, advanced: true },
+    { label: "Phi start (deg)", path: ["config", "phiRange", 0], control: "number", advanced: true },
+    { label: "Phi end (deg)", path: ["config", "phiRange", 1], control: "number", advanced: true },
 ];
+
+export const ORACLE_PRODUCT_TOGGLES = Object.freeze({
+    camera: Object.freeze([
+        { product: "depth", label: "Depth", outputKey: "depthTopicId", contractId: "front-camera-depth" },
+        { product: "semantic", label: "Semantic", outputKey: "semanticTopicId", contractId: "front-camera-semantic" },
+        { product: "instance", label: "Instance", outputKey: "instanceTopicId", contractId: "front-camera-instance" },
+        { product: "detections2d", label: "2D detections", outputKey: "detections2dTopicId", contractId: "oracle-detections-2d" },
+        { product: "detections3d", label: "3D detections", outputKey: "detections3dTopicId", contractId: "oracle-detections-3d" },
+        { product: "lanes", label: "Lanes", outputKey: "lanesTopicId", contractId: "oracle-lanes" },
+        { product: "trafficControls", label: "Traffic controls", outputKey: "trafficControlsTopicId", contractId: "oracle-traffic-controls" },
+    ]),
+    lidar3d: Object.freeze([
+        { product: "semanticPointCloud", label: "Semantic point cloud", outputKey: "semanticPointCloudTopicId", contractId: "front-lidar-semantic" },
+    ]),
+});
+
+export function applySensorOracleProduct(sensor, productKey, enabled) {
+    const toggle = (ORACLE_PRODUCT_TOGGLES[sensor?.type] || []).find((entry) => entry.product === productKey);
+    if (!toggle) return sensor;
+    const outputs = { ...object(sensor.outputs) };
+    if (enabled && !outputs[toggle.outputKey]) outputs[toggle.outputKey] = toggle.contractId;
+    return {
+        ...sensor,
+        calibration: {
+            ...object(sensor.calibration),
+            products: {
+                ...object(sensor.calibration?.products),
+                [productKey]: enabled === true,
+            },
+        },
+        outputs,
+    };
+}
+
+function normalizeDistortion(value) {
+    if (!Array.isArray(value) || value.length === 0) return [0, 0, 0, 0, 0];
+    const coeffs = value.map((entry) => finite(entry, 0)).slice(0, 8);
+    while (coeffs.length < 5) coeffs.push(0);
+    return coeffs;
+}
+
+function cameraIntrinsics(calibration, width, height, verticalFovDeg) {
+    const source = object(calibration.intrinsics);
+    const fyDefault = height / (2 * Math.tan((Number(verticalFovDeg) || 75) * Math.PI / 360));
+    return {
+        fx: positive(source.fx, fyDefault),
+        fy: positive(source.fy, fyDefault),
+        cx: finite(source.cx, (width - 1) / 2),
+        cy: finite(source.cy, (height - 1) / 2),
+    };
+}
+
+function validateCameraCalibration(sensor) {
+    const issues = [];
+    const calibration = object(sensor.calibration);
+    const width = Math.floor(finite(calibration.width, 0));
+    const height = Math.floor(finite(calibration.height, 0));
+    if (width < 1) issues.push({ path: "calibration.width", message: "Camera width must be a positive integer." });
+    if (height < 1) issues.push({ path: "calibration.height", message: "Camera height must be a positive integer." });
+    const fov = finite(calibration.verticalFovDeg, 0);
+    if (!(fov > 0 && fov < 180)) issues.push({ path: "calibration.verticalFovDeg", message: "Vertical FOV must be in (0, 180)." });
+    const distortion = calibration.distortion;
+    if (Array.isArray(distortion) && (distortion.length < 4 || distortion.length > 8)) {
+        issues.push({ path: "calibration.distortion", message: "plumb_bob distortion requires 4–8 coefficients." });
+    }
+    if (calibration.distortionModel && calibration.distortionModel !== "plumb_bob") {
+        issues.push({ path: "calibration.distortionModel", message: "Only plumb_bob distortion is supported." });
+    }
+    const outputs = object(sensor.outputs);
+    const oracleKeys = ["depthTopicId", "semanticTopicId", "instanceTopicId", "detections2dTopicId", "detections3dTopicId", "lanesTopicId", "trafficControlsTopicId"];
+    for (const key of oracleKeys) {
+        if (outputs[key] && sensor.schema?.[key] && !String(sensor.schema[key]).startsWith("sensor_msgs/") && !String(sensor.schema[key]).startsWith("vision_msgs/") && !String(sensor.schema[key]).startsWith("sensor_fusion_msgs/") && !String(sensor.schema[key]).startsWith("diagnostic_msgs/")) {
+            issues.push({ path: `schema.${key}`, message: `Unsupported schema for oracle camera product "${key}".` });
+        }
+    }
+    return issues;
+}
+
+function validateLidarCalibration(sensor) {
+    const issues = [];
+    const calibration = object(sensor.calibration);
+    if (!(finite(calibration.range, 0) > 0)) issues.push({ path: "calibration.range", message: "LiDAR range must be positive." });
+    for (const axis of ["azimuth", "elevation"]) {
+        const scan = object(calibration[axis]);
+        const start = finite(scan.startDeg, NaN);
+        const end = finite(scan.endDeg, NaN);
+        const step = finite(scan.stepDeg, NaN);
+        if (!(Number.isFinite(start) && Number.isFinite(end) && end > start)) {
+            issues.push({ path: `calibration.${axis}`, message: `${axis} bounds must satisfy endDeg > startDeg.` });
+        }
+        if (!(step > 0)) issues.push({ path: `calibration.${axis}.stepDeg`, message: `${axis} stepDeg must be positive.` });
+    }
+    return issues;
+}
 
 registerSensorType({
     id: "camera",
@@ -215,31 +318,69 @@ registerSensorType({
         defaultRateHz: 30,
         fields: cameraRunFields,
         outputs: [
-            { key: "imageTopicId", signal: "image", rosType: "sensor_msgs/Image" },
-            { key: "cameraInfoTopicId", signal: "cameraInfo", rosType: "sensor_msgs/CameraInfo" },
+            { key: "imageTopicId", signal: "image", rosType: "sensor_msgs/Image", measured: true },
+            { key: "cameraInfoTopicId", signal: "cameraInfo", rosType: "sensor_msgs/CameraInfo", measured: true },
+            { key: "depthTopicId", signal: "depth", rosType: "sensor_msgs/Image", oracle: true },
+            { key: "semanticTopicId", signal: "semantic", rosType: "sensor_msgs/Image", oracle: true },
+            { key: "instanceTopicId", signal: "instance", rosType: "sensor_msgs/Image", oracle: true },
+            { key: "detections2dTopicId", signal: "detections2d", rosType: "vision_msgs/Detection2DArray", oracle: true },
+            { key: "detections3dTopicId", signal: "detections3d", rosType: "vision_msgs/Detection3DArray", oracle: true },
+            { key: "lanesTopicId", signal: "lanes", rosType: "sensor_fusion_msgs/StampedLanes", oracle: true },
+            { key: "trafficControlsTopicId", signal: "trafficControls", rosType: "sensor_fusion_msgs/TrafficControlStates", oracle: true },
+            { key: "diagnosticsTopicId", signal: "diagnostics", rosType: "diagnostic_msgs/DiagnosticArray", measured: true },
         ],
         normalize(source) {
+            const calibrationSource = object(source.calibration);
+            const width = Math.max(1, Math.floor(positive(calibrationSource.width, 320)));
+            const height = Math.max(1, Math.floor(positive(calibrationSource.height, 180)));
+            const verticalFovDeg = Math.min(179, positive(calibrationSource.verticalFovDeg, 75));
+            const products = object(calibrationSource.products);
             return {
                 calibration: {
-                    width: 320,
-                    height: 180,
+                    width,
+                    height,
                     encoding: "rgba8",
-                    verticalFovDeg: 75,
-                    near: 0.1,
-                    far: 200,
-                    distortionModel: "plumb_bob",
-                    distortion: [0, 0, 0, 0, 0],
-                    ...object(source.calibration),
+                    verticalFovDeg,
+                    near: positive(calibrationSource.near, 0.1),
+                    far: positive(calibrationSource.far, 200),
+                    distortionModel: text(calibrationSource.distortionModel, "plumb_bob"),
+                    distortion: normalizeDistortion(calibrationSource.distortion),
+                    intrinsics: cameraIntrinsics(calibrationSource, width, height, verticalFovDeg),
+                    products: {
+                        rgb: products.rgb !== false,
+                        cameraInfo: products.cameraInfo !== false,
+                        depth: products.depth === true,
+                        semantic: products.semantic === true,
+                        instance: products.instance === true,
+                        detections2d: products.detections2d === true,
+                        detections3d: products.detections3d === true,
+                        lanes: products.lanes === true,
+                        trafficControls: products.trafficControls === true,
+                        diagnostics: products.diagnostics !== false,
+                    },
+                    labelCatalogVersion: positiveInteger(calibrationSource.labelCatalogVersion, 1),
                 },
                 schema: {
                     imageTopicId: "sensor_msgs/Image",
                     cameraInfoTopicId: "sensor_msgs/CameraInfo",
+                    depthTopicId: "sensor_msgs/Image",
+                    semanticTopicId: "sensor_msgs/Image",
+                    instanceTopicId: "sensor_msgs/Image",
+                    detections2dTopicId: "vision_msgs/Detection2DArray",
+                    detections3dTopicId: "vision_msgs/Detection3DArray",
+                    lanesTopicId: "sensor_fusion_msgs/StampedLanes",
+                    trafficControlsTopicId: "sensor_fusion_msgs/TrafficControlStates",
+                    diagnosticsTopicId: "diagnostic_msgs/DiagnosticArray",
                     ...object(source.schema),
+                },
+                health: {
+                    deadlineNs: nonNegativeInteger(source.health?.deadlineNs, Math.round(1e9 / 30)),
+                    observationalOracle: source.health?.observationalOracle !== false,
                 },
                 determinism: { comparison: "semantic-tolerance", crossDeviceByteEquality: false },
             };
         },
-        validate: () => [],
+        validate: validateCameraCalibration,
     },
     vehicle: {
         fields: cameraVehicleFields,
@@ -271,24 +412,47 @@ registerSensorType({
         defaultRateHz: 10,
         fields: lidarRunFields,
         outputs: [
-            { key: "pointCloudTopicId", signal: "pointCloud", rosType: "sensor_msgs/PointCloud2" },
+            { key: "pointCloudTopicId", signal: "pointCloud", rosType: "sensor_msgs/PointCloud2", measured: true },
+            { key: "semanticPointCloudTopicId", signal: "semanticPointCloud", rosType: "sensor_msgs/PointCloud2", oracle: true },
+            { key: "diagnosticsTopicId", signal: "diagnostics", rosType: "diagnostic_msgs/DiagnosticArray", measured: true },
         ],
         normalize(source) {
+            const calibrationSource = object(source.calibration);
+            const products = object(calibrationSource.products);
             return {
                 calibration: {
-                    range: 20,
-                    azimuth: { startDeg: -180, endDeg: 180, stepDeg: 2 },
-                    elevation: { startDeg: -20, endDeg: 20, stepDeg: 1 },
-                    ...object(source.calibration),
+                    range: positive(calibrationSource.range, 20),
+                    azimuth: {
+                        startDeg: finite(calibrationSource.azimuth?.startDeg, -180),
+                        endDeg: finite(calibrationSource.azimuth?.endDeg, 180),
+                        stepDeg: positive(calibrationSource.azimuth?.stepDeg, 2),
+                    },
+                    elevation: {
+                        startDeg: finite(calibrationSource.elevation?.startDeg, -20),
+                        endDeg: finite(calibrationSource.elevation?.endDeg, 20),
+                        stepDeg: positive(calibrationSource.elevation?.stepDeg, 1),
+                    },
+                    products: {
+                        pointCloud: products.pointCloud !== false,
+                        semanticPointCloud: products.semanticPointCloud === true,
+                        diagnostics: products.diagnostics !== false,
+                    },
+                    labelCatalogVersion: positiveInteger(calibrationSource.labelCatalogVersion, 1),
                 },
                 schema: {
                     pointCloudTopicId: "sensor_msgs/PointCloud2",
+                    semanticPointCloudTopicId: "sensor_msgs/PointCloud2",
+                    diagnosticsTopicId: "diagnostic_msgs/DiagnosticArray",
                     ...object(source.schema),
+                },
+                health: {
+                    deadlineNs: nonNegativeInteger(source.health?.deadlineNs, Math.round(1e9 / 10)),
+                    observationalOracle: source.health?.observationalOracle !== false,
                 },
                 determinism: { comparison: "numeric-tolerance", crossDeviceByteEquality: true },
             };
         },
-        validate: () => [],
+        validate: validateLidarCalibration,
     },
     vehicle: {
         fields: lidarVehicleFields,
@@ -489,9 +653,14 @@ export function normalizeRunSensor(value = {}, index = 0, registry = sensorTypeR
             standardDeviation: Math.max(0, finite(source.noise?.standardDeviation, 0)),
             bias: finite(source.noise?.bias, 0),
             dropoutProbability: Math.min(1, Math.max(0, finite(source.noise?.dropoutProbability, 0))),
+            pointDropoutProbability: Math.min(1, Math.max(0, finite(source.noise?.pointDropoutProbability, 0))),
         },
         outputs: cloneObject(source.outputs),
         schema: specific.schema,
+        health: specific.health || {
+            deadlineNs: nonNegativeInteger(source.health?.deadlineNs, Math.round(1e9 / Math.max(0.001, finite(source.rateHz, definition?.run.defaultRateHz ?? 10)))),
+            observationalOracle: source.health?.observationalOracle !== false,
+        },
         determinism: specific.determinism,
         maxQueueFrames: positiveInteger(source.maxQueueFrames, 8),
     };

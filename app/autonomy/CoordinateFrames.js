@@ -102,6 +102,21 @@ export function cameraLinkToOpticalRotation() {
     return eulerToQuaternion({ x: -Math.PI / 2, y: 0, z: -Math.PI / 2, order: "XYZ" });
 }
 
+/**
+ * Three.js PerspectiveCamera looks along local -Z with +Y up.
+ * Vehicle/mount forward is +X. Yaw -90° about +Y so the camera looks along
+ * mount forward. Do not apply {@link cameraLinkToOpticalRotation} in Three.js
+ * space — that quaternion is REP-103 TF only. Applied here it aims the
+ * camera backward into the vehicle.
+ */
+export function threeCameraLookAlongMountForwardEuler() {
+    return { x: 0, y: -Math.PI / 2, z: 0, order: "XYZ" };
+}
+
+export function threeCameraLookAlongMountForwardRotation() {
+    return eulerToQuaternion(threeCameraLookAlongMountForwardEuler());
+}
+
 export function buildTransformStamped({
     timeNs = 0,
     parentFrameId = "",

@@ -5,6 +5,9 @@ import { PhysicalVehicle } from "./Vehicle";
 import { createVehicleSensorDevice } from "../devices/SensorRuntimeRegistry.js";
 import { Triangle } from "../data/objects/Triangle";
 import { normalizeVehicleManifest, resolveVehicleModelUrl } from "../../vehicles/VehicleManifest.js";
+import { applyModelPlacement } from "./ModelPlacement.js";
+
+export { applyModelPlacement } from "./ModelPlacement.js";
 
 const POSE_EPSILON = 1e-6;
 
@@ -79,7 +82,7 @@ export class ManifestVehicle extends PhysicalVehicle {
             try {
                 const loader = new GLTFLoader();
                 const gltf = await loader.loadAsync(modelUrl);
-                applyModelPlacement(gltf.scene, this.manifest.model);
+                applyModelPlacement(gltf.scene, this.manifest.model, this.manifest.boundingBox);
                 this.sceneObject.add(gltf.scene);
             } catch (error) {
                 console.warn(`Could not load model for vehicle "${this.vehicleManifestId}":`, error);
@@ -88,6 +91,16 @@ export class ManifestVehicle extends PhysicalVehicle {
         } else {
             this.sceneObject.add(this._buildPlaceholderBody());
         }
+
+        // Debug plate at the kinematic origin (vehicle-local 0,0,0).
+        const originMarker = new THREE.Mesh(
+            new THREE.BoxGeometry(0.35, 0.04, 0.35),
+            new THREE.MeshBasicMaterial({ color: 0xff2d55, depthTest: false }),
+        );
+        originMarker.position.set(0, 0.02, 0);
+        originMarker.renderOrder = 10;
+        originMarker.name = "vehicle-origin-debug";
+        this.sceneObject.add(originMarker);
 
         this._buildWheels();
         this._registerLidarZone();
@@ -224,12 +237,4 @@ export class ManifestVehicle extends PhysicalVehicle {
         }
         super.dispose();
     }
-}
-
-/** Place a loaded model inside the vehicle-local frame per the manifest. */
-export function applyModelPlacement(object3d, model) {
-    object3d.scale.setScalar(model.scale);
-    object3d.rotation.set(model.rotation.x, model.rotation.y, model.rotation.z);
-    if (model.rotation.order) object3d.rotation.order = model.rotation.order;
-    object3d.position.set(model.offset.x, model.offset.y, model.offset.z);
 }

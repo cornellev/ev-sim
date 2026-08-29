@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { withPixelPackBufferUnbound } from '../util/glReadback.js';
+import { getWebGL2Context, PixelPackSlot, withPixelPackBufferUnbound } from '../util/glReadback.js';
 
 export function common() {
     return `` +
@@ -54,8 +54,10 @@ export class Shader {
         this._quad = null;
         this._renderTarget = null;
         this._renderer = null;
-        this._busy = false;
+        this._inPass = false;
         this._pixelBuffer = null;
+        this._pack = null;
+        this._asyncDisabled = false;
 
         //console.log(fragmentSource);
     }
@@ -110,62 +112,101 @@ export class Shader {
         this._renderTarget = rt;
     }
 
-    /**
-     * Perform one shader pass, update uniforms, render to the
-     * internal render target and notify listeners with the pixel data.
-     * Call this once per frame from your render loop.
-     * @param {Object} uniforms THREE-style uniform descriptors, e.g. { foo: { value: ... } }
-     */
-    update(uniforms = {}) {
-        if (!this._mat || !this._renderer || !this._renderTarget || this._busy) return;
-
-        // console.log(uniforms)
-
-        this._busy = true;
-
+    _ensurePixelBuffer() {
         const { w, h } = this.size;
         const pixelBufferLength = 4 * w * h;
         if (this._pixelBuffer?.length !== pixelBufferLength) {
             this._pixelBuffer = new Float32Array(pixelBufferLength);
         }
+        return this._pixelBuffer;
+    }
 
-        // update time uniform
-        const currentTime = Date.now();
-        if (this._mat.uniforms.u_time) {
-            this._mat.uniforms.u_time.value = (currentTime - this.startTime) / 1000;
+    _ensurePack() {
+        if (this._asyncDisabled) return null;
+        const gl = getWebGL2Context(this._renderer);
+        if (!gl) return null;
+        const byteLength = this.size.w * this.size.h * 16;
+        if (this._pack && this._pack.byteLength === byteLength) return this._pack;
+        this._pack?.dispose?.();
+        this._pack = new PixelPackSlot(gl, byteLength);
+        return this._pack;
+    }
+
+    get usesAsyncReadback() {
+        return !this._asyncDisabled && Boolean(getWebGL2Context(this._renderer));
+    }
+
+    /**
+     * Copy a completed PIXEL_PACK read into the CPU buffer and notify listeners.
+     * Returns false when a previous GPU read is still in flight (timeout 0).
+     */
+    completePending() {
+        if (!this._pack?.pending) return true;
+        this._ensurePixelBuffer();
+        if (!this._pack.poll(this._pixelBuffer)) return false;
+        for (const listener of this.listeners) listener(this._pixelBuffer);
+        return true;
+    }
+
+    /**
+     * Perform one shader pass, update uniforms, render to the
+     * internal render target and notify listeners with the pixel data.
+     * On WebGL2, `readPixels` is issued into a PIXEL_PACK buffer and listeners
+     * receive the previous pass (typically one sensor period later).
+     * @param {Object} uniforms THREE-style uniform descriptors, e.g. { foo: { value: ... } }
+     */
+    update(uniforms = {}) {
+        if (!this._mat || !this._renderer || !this._renderTarget || this._inPass) return false;
+        this._inPass = true;
+        try {
+            if (!this.completePending()) return false;
+            return this._submit(uniforms);
+        } finally {
+            this._inPass = false;
         }
+    }
 
-        // update custom uniforms: assign full descriptors, same as in R3F code
-        // (mat.uniforms[key] = uniforms[key])
+    _submit(uniforms = {}) {
+        const { w, h } = this.size;
+        this._ensurePixelBuffer();
+
         for (const key in uniforms) {
             this._mat.uniforms[key] = uniforms[key];
         }
 
-        // render to offscreen target
-        this._renderer.setRenderTarget(this._renderTarget);
-        this._renderer.render(this._scene, this._camera);
-        this._renderer.setRenderTarget(null);
+        const previousTarget = this._renderer.getRenderTarget();
+        try {
+            this._renderer.setRenderTarget(this._renderTarget);
+            this._renderer.render(this._scene, this._camera);
 
-        // read back pixels (synchronously in three.js). Unbind any PIXEL_PACK
-        // buffer first: Spark's SparkRenderer can leave a PBO bound across
-        // frames, which makes this readPixels throw INVALID_OPERATION.
-        withPixelPackBufferUnbound(this._renderer, () => {
-            this._renderer.readRenderTargetPixels(
-                this._renderTarget,
-                0,
-                0,
-                w,
-                h,
-                this._pixelBuffer,
-            );
-        });
+            const pack = this._ensurePack();
+            if (pack) {
+                try {
+                    const gl = pack.gl;
+                    pack.begin(0, 0, w, h, gl.RGBA, gl.FLOAT);
+                    return true;
+                } catch {
+                    this._asyncDisabled = true;
+                    this._pack?.dispose?.();
+                    this._pack = null;
+                }
+            }
 
-        // notify listeners
-        for (const listener of this.listeners) {
-            listener(this._pixelBuffer);
+            withPixelPackBufferUnbound(this._renderer, () => {
+                this._renderer.readRenderTargetPixels(
+                    this._renderTarget,
+                    0,
+                    0,
+                    w,
+                    h,
+                    this._pixelBuffer,
+                );
+            });
+            for (const listener of this.listeners) listener(this._pixelBuffer);
+            return true;
+        } finally {
+            this._renderer.setRenderTarget(previousTarget);
         }
-
-        this._busy = false;
     }
 
     /**
@@ -201,7 +242,10 @@ export class Shader {
         this._renderTarget = null;
         this._renderer = null;
         this._pixelBuffer = null;
-        this._busy = false;
+        this._pack?.dispose?.();
+        this._pack = null;
+        this._asyncDisabled = false;
+        this._inPass = false;
         this.listeners = [];
     }
 }

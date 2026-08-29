@@ -16,6 +16,7 @@ import {
 } from "@tabler/icons-react";
 
 import {
+    AdvancedFields,
     Button,
     Field,
     NativeSelect,
@@ -170,6 +171,7 @@ export function OverviewSection({ scenario, environments, folders, onUpdate }) {
                                     </NativeSelect>
                                 </Field>
                                 <Field label="Default value"><TextInput value={String(parameter.default ?? "")} onChange={(event) => onUpdate(["parameters", index, "default"], parameter.type === "boolean" ? event.target.value === "true" : ["float64", "int32"].includes(parameter.type) ? Number(event.target.value) : event.target.value)} /></Field>
+                                <AdvancedFields label="Parameter targeting">
                                 <Field label="Target kind">
                                     <NativeSelect value={parameter.target?.kind || "scenario-signal"} onChange={(event) => onUpdate(["parameters", index, "target"], { ...parameter.target, kind: event.target.value })}>
                                         <option value="scenario-signal">Scenario signal</option><option value="script-input">Script input</option><option value="scalar-field">Scalar field</option>
@@ -177,6 +179,7 @@ export function OverviewSection({ scenario, environments, folders, onUpdate }) {
                                 </Field>
                                 {parameter.target?.kind === "script-input" ? <><Field label="Script ID"><TextInput value={parameter.target?.scriptId || ""} onChange={(event) => onUpdate(["parameters", index, "target"], { ...parameter.target, scriptId: event.target.value })} /></Field><Field label="Input label"><TextInput value={parameter.target?.input || ""} onChange={(event) => onUpdate(["parameters", index, "target"], { ...parameter.target, input: event.target.value })} /></Field></> : <Field label="Target path" className={styles.spanTwo}><TextInput value={parameter.target?.path || ""} placeholder={parameter.target?.kind === "scenario-signal" ? "scenario.custom_flag" : "routes.0.initialSpeedMps"} onChange={(event) => onUpdate(["parameters", index, "target"], { ...parameter.target, path: event.target.value })} /></Field>}
                                 {["float64", "int32"].includes(parameter.type) && <><Field label="Minimum"><TextInput type="number" value={parameter.minimum ?? ""} onChange={(event) => onUpdate(["parameters", index, "minimum"], event.target.value === "" ? null : Number(event.target.value))} /></Field><Field label="Maximum"><TextInput type="number" value={parameter.maximum ?? ""} onChange={(event) => onUpdate(["parameters", index, "maximum"], event.target.value === "" ? null : Number(event.target.value))} /></Field></>}
+                                </AdvancedFields>
                             </div>
                         </article>
                     ))}
@@ -281,6 +284,7 @@ function TriggerActionEditor({ action, index, scenario, onChange, onRemove, canR
     return (
         <article className={styles.triggerActionEditor}>
             <header><span>ACTION {index + 1}</span><NativeSelect aria-label={`Trigger action ${index + 1}`} value={action.kind} onChange={(event) => set("kind", event.target.value)}>{TRIGGER_ACTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</NativeSelect><RemoveButton label={`Remove action ${index + 1}`} disabled={!canRemove} onClick={onRemove} /></header>
+            <AdvancedFields label="Action parameters">
             <div className={styles.formGrid}>
                 {action.kind === "set-flag" && <><Field label="Scenario flag"><TextInput value={action.flag || ""} onChange={(event) => set("flag", event.target.value)} /></Field><Field label="Value"><NativeSelect value={String(action.value ?? true)} onChange={(event) => set("value", event.target.value === "true")}><option value="true">True</option><option value="false">False</option></NativeSelect></Field></>}
                 {action.kind === "set-signal" && <><Field label="Signal path"><TextInput value={action.path || ""} onChange={(event) => set("path", event.target.value)} /></Field><Field label="Value"><TextInput value={String(action.value ?? "")} onChange={(event) => set("value", parseTypedValue(event.target.value))} /></Field></>}
@@ -289,6 +293,7 @@ function TriggerActionEditor({ action, index, scenario, onChange, onRemove, canR
                 {action.kind === "sensor-state" && <><Field label="Sensor alias"><NativeSelect value={action.sensorAlias || ""} onChange={(event) => set("sensorAlias", event.target.value)}><option value="">Select alias</option>{scenario.sensorAliases.map((alias) => <option key={alias.id} value={alias.id}>{alias.name}</option>)}</NativeSelect></Field><Field label="Duration (seconds)"><TextInput type="number" min="0" step="0.1" value={(action.durationNs || 0) / 1e9} onChange={(event) => set("durationNs", Number(event.target.value) * 1e9)} /></Field><Field label="Sensor state"><NativeSelect value={action.enabled === false ? "disabled" : "enabled"} onChange={(event) => set("enabled", event.target.value === "enabled")}><option value="enabled">Enabled</option><option value="disabled">Disabled</option></NativeSelect></Field><Field label="Dropout probability"><TextInput type="number" min="0" max="1" step="0.05" value={action.dropoutProbability || 0} onChange={(event) => set("dropoutProbability", Number(event.target.value))} /></Field></>}
                 {action.kind === "finish" && <p className={styles.mutedNote}>This will cause the scenario to end.</p>}
             </div>
+            </AdvancedFields>
         </article>
     );
 }

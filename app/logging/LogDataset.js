@@ -121,6 +121,79 @@ export class LogDataset {
         return clone(before.value);
     }
 
+    /**
+     * Look up by captureTimeNs embedded in visualization/status envelopes.
+     * Default mode is latest-at-or-before; exactSync requires equal capture stamps.
+     */
+    valueAtCaptureTime(path, captureTimeNs, { exactSync = false } = {}) {
+        const samples = this.series.get(path) || [];
+        if (samples.length === 0) return { value: undefined, ageNs: null, matched: false };
+        const target = Number(captureTimeNs);
+        let best = null;
+        for (const sample of samples) {
+            const stamp = Number(
+                sample.value?.captureTimeNs
+                ?? sample.value?.estimate?.captureTimeNs
+                ?? sample.value?.applyTimeNs
+                ?? (sample.timeUs * 1000),
+            );
+            if (!Number.isFinite(stamp)) continue;
+            if (exactSync) {
+                if (stamp === target) {
+                    return {
+                        value: clone(sample.value),
+                        ageNs: 0,
+                        matched: true,
+                        sampleTimeUs: sample.timeUs,
+                        captureTimeNs: stamp,
+                    };
+                }
+                continue;
+            }
+            if (stamp <= target) best = { sample, stamp };
+            else break;
+        }
+        if (exactSync || !best) {
+            return { value: undefined, ageNs: null, matched: false };
+        }
+        return {
+            value: clone(best.sample.value),
+            ageNs: Math.max(0, target - best.stamp),
+            matched: true,
+            sampleTimeUs: best.sample.timeUs,
+            captureTimeNs: best.stamp,
+        };
+    }
+
+    autonomySnapshotAt(timeUs, { exactSync = false, captureTimeNs = null } = {}) {
+        const cursorNs = Number.isFinite(captureTimeNs) ? captureTimeNs : Math.round(Number(timeUs) * 1000);
+        const perception = this.valueAtCaptureTime("visualization.perception.candidate", cursorNs, { exactSync });
+        const oracle = this.valueAtCaptureTime("visualization.perception.oracle", cursorNs, { exactSync });
+        const localization = this.valueAtCaptureTime("visualization.localization.candidate", cursorNs, { exactSync });
+        const localizationError = this.valueAtCaptureTime("visualization.localization.error", cursorNs, { exactSync });
+        const status = this.valueAtCaptureTime("visualization.perception.status", cursorNs, { exactSync });
+        return {
+            captureTimeNs: cursorNs,
+            exactSync,
+            perception: {
+                ...(perception.value || {}),
+                oracle: oracle.value || { detections2d: [], detections3d: [], lanes: [] },
+                status: status.value?.status || perception.value?.status || "ok",
+                statusCode: status.value?.statusCode || perception.value?.statusCode || null,
+                ageNs: perception.ageNs,
+            },
+            localization: {
+                ...(localization.value || {}),
+                error: localizationError.value ?? localization.value?.error ?? null,
+                ageNs: localization.ageNs,
+            },
+            ages: {
+                perceptionNs: perception.ageNs,
+                localizationNs: localization.ageNs,
+            },
+        };
+    }
+
     snapshotAt(timeUs) {
         let snapshot = {};
         let startUs = 0;

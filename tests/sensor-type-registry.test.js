@@ -8,6 +8,7 @@ import {
     listSensorTypes,
     normalizeRunSensor,
     normalizeVehicleSensor,
+    ORACLE_PRODUCT_TOGGLES,
     validateRunSensorDefinition,
 } from "../app/3d/devices/SensorTypeRegistry.js";
 import { SensorRuntimeFactoryRegistry } from "../app/3d/devices/SensorRuntimeFactoryRegistry.js";
@@ -21,16 +22,46 @@ test("built-in sensor definitions own defaults, fields, outputs, and determinism
     const camera = normalizeRunSensor({ type: "camera" });
     assert.equal(camera.rateHz, 30);
     assert.equal(camera.calibration.encoding, "rgba8");
-    assert.deepEqual(camera.schema, {
-        imageTopicId: "sensor_msgs/Image",
-        cameraInfoTopicId: "sensor_msgs/CameraInfo",
-    });
+    assert.equal(camera.schema.imageTopicId, "sensor_msgs/Image");
+    assert.equal(camera.schema.cameraInfoTopicId, "sensor_msgs/CameraInfo");
+    assert.equal(camera.schema.depthTopicId, "sensor_msgs/Image");
+    assert.equal(camera.calibration.products.depth, false);
+    assert.equal(camera.calibration.distortionModel, "plumb_bob");
+    assert.equal(camera.calibration.distortion.length, 5);
+    assert.ok(camera.calibration.intrinsics.fx > 0);
     assert.equal(camera.determinism.comparison, "semantic-tolerance");
-    assert.deepEqual(getSensorType("camera").run.outputs.map((output) => output.signal), ["image", "cameraInfo"]);
+    assert.deepEqual(
+        getSensorType("camera").run.outputs.map((output) => output.signal),
+        ["image", "cameraInfo", "depth", "semantic", "instance", "detections2d", "detections3d", "lanes", "trafficControls", "diagnostics"],
+    );
     assert.ok(getSensorType("camera").run.fields.some((field) => field.path.join(".") === "calibration.width"));
 
-    const lidar = normalizeVehicleSensor({ type: "lidar3d" });
-    assert.deepEqual(lidar.config.thetaRange, [-180, 180]);
+    const cameraFields = getSensorType("camera").run.fields;
+    const lidarFields = getSensorType("lidar3d").run.fields;
+    const imuFields = getSensorType("imu").run.fields;
+    const gnssFields = getSensorType("gnss").run.fields;
+
+    assert.ok(cameraFields.some((field) => field.path.join(".") === "calibration.verticalFovDeg" && !field.advanced));
+    assert.ok(lidarFields.some((field) => field.path.join(".") === "calibration.range" && !field.advanced));
+    assert.ok(lidarFields.some((field) => field.path.join(".") === "noise.pointDropoutProbability"));
+    assert.ok(imuFields.some((field) => field.path.join(".") === "calibration.gravity" && !field.advanced));
+    assert.ok(imuFields.some((field) => field.path.join(".") === "outputs.imuTopicId" && field.advanced));
+    assert.ok(gnssFields.some((field) => field.path.join(".") === "calibration.datum.latitude" && !field.advanced));
+    assert.ok(gnssFields.every((field) => !field.path.join(".").includes("mountFrameId")));
+    assert.ok(gnssFields.every((field) => !field.path.join(".").includes("measurementFrameId")));
+    assert.ok(gnssFields.every((field) => !field.path.join(".").includes("syncGroupId")));
+    assert.ok(ORACLE_PRODUCT_TOGGLES.camera.some((entry) => entry.product === "depth" && entry.contractId === "front-camera-depth"));
+    assert.ok(ORACLE_PRODUCT_TOGGLES.lidar3d.some((entry) => entry.product === "semanticPointCloud"));
+
+    const lidar = normalizeRunSensor({ type: "lidar3d" });
+    assert.equal(lidar.calibration.products.semanticPointCloud, false);
+    assert.deepEqual(
+        getSensorType("lidar3d").run.outputs.map((output) => output.signal),
+        ["pointCloud", "semanticPointCloud", "diagnostics"],
+    );
+
+    const vehicleLidar = normalizeVehicleSensor({ type: "lidar3d" });
+    assert.deepEqual(vehicleLidar.config.thetaRange, [-180, 180]);
     assert.ok(getSensorType("lidar3d").vehicle.fields.some((field) => field.path.join(".") === "config.phiRange.1"));
 });
 
@@ -81,7 +112,28 @@ test("an isolated third sensor type drives normalization and runtime factories w
         constructor: { name: "RadarDevice" },
         config: { type: "radar", schema: { detectionsTopicId: "custom/Detections" } },
     }, definitions);
-    assert.deepEqual(signals.map((signal) => signal.suffix), ["enabled", "pose", "output", "droppedFrames", "errors", "detections"]);
+    assert.deepEqual(signals.map((signal) => signal.suffix), [
+        "enabled",
+        "pose",
+        "output",
+        "captureAttempts",
+        "capturedFrames",
+        "deliveredFrames",
+        "droppedFrames",
+        "pointDrops",
+        "missedDeadlines",
+        "shaderBusyDrops",
+        "queueDepth",
+        "queueHighWaterMark",
+        "captureTimeNs",
+        "captureTimeTotalNs",
+        "encodeTimeNs",
+        "encodeTimeTotalNs",
+        "transportTimeNs",
+        "transportTimeTotalNs",
+        "errors",
+        "detections",
+    ]);
     assert.equal(signals.at(-1).metadata.rosType, "custom/Detections");
 });
 

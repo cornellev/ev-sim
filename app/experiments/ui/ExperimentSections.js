@@ -18,7 +18,7 @@ import {
     IconTrash,
 } from "@tabler/icons-react";
 
-import { Button, DialogSurface, Field, NativeSelect, Switch, Textarea, TextInput } from "../../ui";
+import { AdvancedFields, Button, DialogSurface, Field, NativeSelect, Switch, Textarea, TextInput } from "../../ui";
 import { BUILT_IN_METRIC_IDS, METRIC_DIRECTIONS, METRIC_REDUCER_KINDS, builtInMetricDefaults } from "../MetricReducers.js";
 import styles from "./ExperimentWorkspace.module.css";
 
@@ -340,10 +340,13 @@ export function MetricsSection({ suite, onUpdate }) {
                     <div className={styles.metricFields}>
                         <Field label="Name"><TextInput value={metric.name} onChange={(event) => onUpdate(["metrics", index, "name"], event.target.value)} /></Field>
                         <Field label="Direction"><NativeSelect value={metric.direction} onChange={(event) => onUpdate(["metrics", index, "direction"], event.target.value)}>{METRIC_DIRECTIONS.map((direction) => <option key={direction} value={direction}>{direction}</option>)}</NativeSelect></Field>
-                        {metric.source.kind !== "builtin" && <><Field label="Source kind"><NativeSelect value={metric.source.kind} onChange={(event) => onUpdate(["metrics", index, "source"], { kind: event.target.value, path: "", name: "", category: "" })}><option value="signal">Signal</option><option value="event">Event</option></NativeSelect></Field><Field label={metric.source.kind === "signal" ? "Signal path" : "Event name"}><TextInput value={metric.source.kind === "signal" ? metric.source.path || "" : metric.source.name || ""} onChange={(event) => onUpdate(["metrics", index, "source", metric.source.kind === "signal" ? "path" : "name"], event.target.value)} /></Field><Field label="Reducer"><NativeSelect value={metric.reducer} onChange={(event) => onUpdate(["metrics", index, "reducer"], event.target.value)}>{METRIC_REDUCER_KINDS.map((reducer) => <option key={reducer}>{reducer}</option>)}</NativeSelect></Field></>}
+                        {metric.source.kind !== "builtin" && <><Field label="Source kind"><NativeSelect value={metric.source.kind} onChange={(event) => onUpdate(["metrics", index, "source"], { kind: event.target.value, path: "", name: "", category: "" })}><option value="signal">Signal</option><option value="event">Event</option></NativeSelect></Field><Field label={metric.source.kind === "signal" ? "Signal path" : "Event name"}><TextInput value={metric.source.kind === "signal" ? metric.source.path || "" : metric.source.name || ""} onChange={(event) => onUpdate(["metrics", index, "source", metric.source.kind === "signal" ? "path" : "name"], event.target.value)} /></Field></>}
+                        <AdvancedFields label="Metric comparison settings">
+                        {metric.source.kind !== "builtin" && <Field label="Reducer"><NativeSelect value={metric.reducer} onChange={(event) => onUpdate(["metrics", index, "reducer"], event.target.value)}>{METRIC_REDUCER_KINDS.map((reducer) => <option key={reducer}>{reducer}</option>)}</NativeSelect></Field>}
                         <Field label="Unit"><TextInput value={metric.unit || ""} onChange={(event) => onUpdate(["metrics", index, "unit"], event.target.value)} /></Field>
                         <Field label="Absolute tolerance"><TextInput type="number" min="0" step="0.001" value={metric.tolerance.absolute} onChange={(event) => onUpdate(["metrics", index, "tolerance", "absolute"], Number(event.target.value))} /></Field>
                         <Field label="Relative tolerance"><TextInput type="number" min="0" step="0.001" value={metric.tolerance.relative} onChange={(event) => onUpdate(["metrics", index, "tolerance", "relative"], Number(event.target.value))} /></Field>
+                        </AdvancedFields>
                     </div>
                 </article>
             ))}</div>

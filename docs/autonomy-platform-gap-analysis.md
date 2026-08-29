@@ -6,7 +6,7 @@
 
 **Related:** team whiteboard architecture (Lucidchart export). **Visual companion:** [autonomy-platform-gap-analysis.canvas.tsx](/Users/jgrimminck/.cursor/projects/Users-jgrimminck-Coding-js-sensor-fusion/canvases/autonomy-platform-gap-analysis.canvas.tsx) (Cursor canvas; same content, interactive).
 
-**Last reviewed:** 2026-08-27.
+**Last reviewed:** 2026-08-29.
 
 ---
 
@@ -71,15 +71,15 @@ Every logical stage in a run manifest should support:
 | Area | Status | Notes |
 |------|--------|-------|
 | Deterministic sim loop | Strong | Fixed-step order in `SimulationEngine.js` |
-| Run manifests | Strong | Camera + LiDAR, `/clock`, `/ackdrive` |
-| Camera / LiDAR | Partial | Manifest path; LiDAR frame semantics need lock-down |
-| IMU / GNSS / odometry | Missing | Message stubs only |
-| TF / extrinsics | Partial | `rootFrameId` stored; not fully published at runtime |
-| Perception return path | Missing | No ingest/visualization of team detections |
-| EKF return path | Missing | Truth in telemetry only |
+| Run manifests | Strong | Camera + LiDAR, `/clock`, `/ackdrive`, candidate returns |
+| Camera / LiDAR | Strong | Manifest path with measured + oracle products (Step 4) |
+| TF / extrinsics | Strong | `/tf`, `/tf_static`, capture-time lookup history |
+| IMU / GNSS / odometry | Strong | Live measured suite + oracle truth (Step 3) |
+| Perception return path | Strong | Ingest + overlays + capture scrub (Step 5); scoring deferred to Step 9 |
+| EKF return path | Strong | Estimate ingest + viz vs truth (Step 5); metrics deferred |
 | Controls return | Partial | `/ackdrive` (legacy units); ideal setpoints |
 | Planning references | Partial | A* + route follower for scenarios, not stage harness |
-| Logging / replay | Partial | SFLog strong; spatial replay is pose-only |
+| Logging / replay | Partial | SFLog + visualization scrub; full bidirectional decode is Step 8 |
 | CI / headless | Weak | Lint + unit tests; sim requires browser tab |
 
 Evidence paths: see [Repository evidence](#repository-evidence) below.
@@ -146,11 +146,13 @@ Every later feature depends on stable message meaning, timestamps, frames, and o
 - Truth-aligned boxes, lane masks/polylines, sign/light state, visibility/occlusion.
 - Sensor health: queue depth, drops, capture/encode/transport duration, missed deadlines.
 
-**Touchpoints:** `ManifestCamera.js`, `ManifestLidar3d.js`, `Lidar3dShader.js`, `SensorPublisher.js`.
+**Touchpoints:** `ManifestCamera.js`, `ManifestLidar3d.js`, `Lidar3dShader.js`, `SensorPublisher.js`, `CameraRenderProducts.js`, `PerceptionTruthIndex.js`.
 
-**Done when:** Synchronized capture bundle is self-describing (image, calib, cloud, optional depth/labels, transforms, timestamps, health).
+**Evidence:** Catalog v4 + run manifest v6 declare measured and oracle perception contracts; defaults enable the full perception sync group while v5 migration keeps oracle products off; LiDAR metric-v2 hit frame feeds measured vs semantic clouds; `tests/perception-sensors.test.js` covers encoding/intrinsics/distortion, stable IDs, REP-103 geometry, measured/oracle isolation, coherent dropout, seeded noise, and health metrics with injected clocks.
 
-#### 5. Ingest and visualize perception and EKF outputs
+**Done when:** Synchronized capture bundle is self-describing (image, calib, cloud, optional depth/labels, transforms, timestamps, health). ✅
+
+#### 5. Ingest and visualize perception and EKF outputs ✅ (implemented)
 
 **Work:**
 
@@ -160,9 +162,11 @@ Every later feature depends on stable message meaning, timestamps, frames, and o
 - Non-authoritative by default (visualization only unless manifest routes downstream).
 - Log candidate outputs to telemetry/SFLog for Analysis/replay parity.
 
-**Touchpoints:** `ClientManager.js`, `TopicInputQueue.js`, `TelemetryRuntime.js`, overlay layers, `AnalysisPage.js`, `ReplayScene.js`.
+**Touchpoints:** `ClientManager.js`, `TopicInputQueue.js`, `TopicContractRouter.js`, `CandidateOutputRuntime.js`, `AutonomyVisualizationModel.js`, `AutonomyOverlay.js`, `SensorProductPanel.js`, `TelemetryRuntime.js`, `AnalysisPage.js`, `ReplayScene.js`, `LogDataset.js`.
 
-**Done when:** Teams return results externally and scrub them beside sensors and truth at the same sim timestamp.
+**Evidence:** Catalog v5 + run manifest v8 declare live stamped candidate perception/localization return contracts with `routeDownstream: false` by default; v7 documents gain missing returns on normalize; router publishes `diagnostics.topics.*` and gates `active.*`; visualization signals scrub by capture time (lookback + exact-sync); `tests/candidate-output-runtime.test.js` and extended loopback/catalog tests cover validation, observational routing, stale ghosts, and capture-age lookback; UI specs cover catalog listing and Analysis Autonomy tab.
+
+**Done when:** Teams return results externally and scrub them beside sensors and truth at the same sim timestamp. ✅
 
 #### 6. Complete the controls return path and command visualization
 

@@ -30,7 +30,14 @@ import { deriveSimulationStatus, formatSimulationTime } from "./simulationStatus
 
 const SIMULATION_MENU_CONTROL_LOCK = "simulation-menu";
 
-export function SimulationMenu({ data, vehicleOverlayVisible = true, onVehicleOverlayVisibleChange, onOpenReplay }) {
+export function SimulationMenu({
+    data,
+    vehicleOverlayVisible = true,
+    onVehicleOverlayVisibleChange,
+    sensorPanelVisible = true,
+    onSensorPanelVisibleChange,
+    onOpenReplay,
+}) {
     const [openPanel, setOpenPanel] = useState(null);
     const [toggles, setToggles] = useState({
         agents: true,
@@ -82,7 +89,12 @@ export function SimulationMenu({ data, vehicleOverlayVisible = true, onVehicleOv
     };
 
     return (<>
-        <SimulationRunStatus simState={simState} runState={runState} recordingState={recordingState} />
+        <SimulationRunStatus
+            simState={simState}
+            runState={runState}
+            recordingState={recordingState}
+            sensorPanelVisible={sensorPanelVisible}
+        />
         <div className="fixed bottom-0 left-0 right-0 z-20 px-3 pb-3 pointer-events-auto">
             <div
                 className="relative mx-auto w-fit"
@@ -157,6 +169,36 @@ export function SimulationMenu({ data, vehicleOverlayVisible = true, onVehicleOv
                                         icon={<FaLayerGroup className="h-3 w-3" />}
                                         checked={!!simState?.scenarioDiagnostics?.enabled}
                                         onChange={(value) => sim?.setScenarioDiagnosticsEnabled?.(value)}
+                                    />
+                                    <MenuToggle
+                                        label="Oracle overlays"
+                                        icon={<FaLayerGroup className="h-3 w-3" />}
+                                        checked={simState?.autonomyOverlay?.oracle !== false}
+                                        onChange={(value) => sim?.setAutonomyOverlayEnabled?.({ oracle: value })}
+                                    />
+                                    <MenuToggle
+                                        label="Candidate overlays"
+                                        icon={<FaBroadcastTower className="h-3 w-3" />}
+                                        checked={simState?.autonomyOverlay?.candidate !== false}
+                                        onChange={(value) => sim?.setAutonomyOverlayEnabled?.({ candidate: value })}
+                                    />
+                                    <MenuToggle
+                                        label="EKF estimate"
+                                        icon={<FaMicrochip className="h-3 w-3" />}
+                                        checked={simState?.autonomyOverlay?.ekf !== false}
+                                        onChange={(value) => sim?.setAutonomyOverlayEnabled?.({ ekf: value })}
+                                    />
+                                    <MenuToggle
+                                        label="Lane overlays"
+                                        icon={<FaGlobe className="h-3 w-3" />}
+                                        checked={simState?.autonomyOverlay?.lanes !== false}
+                                        onChange={(value) => sim?.setAutonomyOverlayEnabled?.({ lanes: value })}
+                                    />
+                                    <MenuToggle
+                                        label="Sensor product panel"
+                                        icon={<FaSlidersH className="h-3 w-3" />}
+                                        checked={sensorPanelVisible}
+                                        onChange={(value) => onSensorPanelVisibleChange?.(value)}
                                     />
                                 </PanelSection>
                             </FlyoutPanel>

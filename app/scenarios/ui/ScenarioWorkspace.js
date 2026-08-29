@@ -32,6 +32,8 @@ import {
     validateScenario,
 } from "../ScenarioDocument.js";
 import {
+    AdvancedSwitch,
+    AuthoringModeProvider,
     AsyncState,
     Button,
     Field,
@@ -392,6 +394,7 @@ export default function ScenarioWorkspace({ onOpenWorkspace }) {
 
     const actions = draft ? (
         <>
+            <AdvancedSwitch />
             {feedback && <span className={styles.headerFeedback} data-valid={validation?.ok || undefined}>{feedback}</span>}
             {dirty && <span className={styles.dirtyMark}>Unsaved</span>}
             <Button size="compact" onClick={duplicate} disabled={busy || dirty}><IconCopy size={14} stroke={1.75} /> Duplicate</Button>
@@ -401,6 +404,7 @@ export default function ScenarioWorkspace({ onOpenWorkspace }) {
     ) : null;
 
     return (
+        <AuthoringModeProvider>
         <WorkspaceFrame
             title="Scenarios"
             subtitle={draft?.name}
@@ -460,6 +464,7 @@ export default function ScenarioWorkspace({ onOpenWorkspace }) {
                 </div>
             )}
         </WorkspaceFrame>
+        </AuthoringModeProvider>
     );
 }
 

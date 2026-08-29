@@ -100,7 +100,7 @@ export class TelemetryTabBridge {
         this.channel = new BroadcastChannel(this.channelName);
         this.channel.addEventListener("message", (event) => this._onMessage(event.data));
         this._unsubscribe = this.store.subscribeSignals(
-            { includeEvents: true, includeCatalog: true },
+            { includeEvents: true, includeCatalog: true, includeHeavy: true },
             (message) => this._onLocalMessage(message),
         );
         this._post("announce", this._catalogPayload());

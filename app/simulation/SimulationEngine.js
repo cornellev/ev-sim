@@ -4,8 +4,11 @@ import { TopicInputQueue } from "./TopicInputQueue.js";
 import { TopicContractRouter } from "./TopicContractRouter.js";
 import { TransformRuntime } from "./TransformRuntime.js";
 import { createLocalizationTruthPublisher } from "./LocalizationTruthPublisher.js";
+import { CandidateOutputRuntime } from "../autonomy/CandidateOutputRuntime.js";
 import { ScenarioRuntime } from "../scenarios/ScenarioRuntime.js";
 import { ScenarioDiagnostics } from "../scenarios/ScenarioDiagnostics.js";
+import { AutonomyOverlay } from "../3d/overlay/AutonomyOverlay.js";
+import { initSensorKernels } from "../native/SensorKernels.js";
 
 export class SimulationEngine {
     /**
@@ -18,6 +21,8 @@ export class SimulationEngine {
         this.fixedDt = this.stepNs / 1e9;
         this.maxFrameDt = options.maxFrameDt ?? 0.1; // cap delta time to avoid instability
         this.maxSubSteps = options.maxSubSteps ?? 10; // cap sub-steps to avoid spiral of death
+        this.gpuCaptureEnabled = true;
+        this._displayPixelRatio = null;
 
         this.status = 'stopped'; // ['stopped', 'playing', 'paused']
         this.time = 0;
@@ -66,8 +71,16 @@ export class SimulationEngine {
         this.assertionEngine = new AssertionEngine([], this.telemetry);
         this.scenarioRuntime = new ScenarioRuntime(this.data, { telemetry: this.telemetry });
         this.scenarioDiagnostics = new ScenarioDiagnostics();
+        this.autonomyOverlay = new AutonomyOverlay();
+        this.candidateOutputRuntime = null;
         this.environmentRuntime = null;
         this.lastStepPhases = [];
+        this._autonomyOverlayEnabled = {
+            oracle: true,
+            candidate: true,
+            ekf: true,
+            lanes: true,
+        };
 
         this._defineTelemetrySignals();
 
@@ -121,6 +134,7 @@ export class SimulationEngine {
         this.renderer = renderer;
         this.controls = controls;
         this.scenarioDiagnostics.attach(scene, camera);
+        this.autonomyOverlay?.attach?.(scene, camera);
     }
 
     setEnvironmentRuntime({ loader = null, persistence = null } = {}) {
@@ -178,6 +192,7 @@ export class SimulationEngine {
             assertions: this.assertionEngine.snapshot(),
             scenario: this.scenarioRuntime.getSnapshot(),
             scenarioDiagnostics: { enabled: this.scenarioDiagnostics.enabled },
+            autonomyOverlay: { ...this._autonomyOverlayEnabled },
         }
     }
 
@@ -222,6 +237,7 @@ export class SimulationEngine {
         this.controls?.dispose();
         this.scenarioRuntime.dispose();
         this.scenarioDiagnostics.dispose();
+        this.autonomyOverlay?.dispose?.();
         this.listeners.clear();
         this.resetHandlers.clear();
     }
@@ -264,6 +280,8 @@ export class SimulationEngine {
         this.assertionEngine.reset();
         this.scenarioRuntime.reset();
         this.localizationTruthPublisher?.reset?.();
+        this.candidateOutputRuntime?.reset?.();
+        this.autonomyOverlay?.clear?.();
         
         for (const handler of this.resetHandlers) {
             handler();
@@ -325,6 +343,16 @@ export class SimulationEngine {
         this._emit();
     }
 
+    setAutonomyOverlayEnabled(patch = {}) {
+        this._autonomyOverlayEnabled = {
+            ...this._autonomyOverlayEnabled,
+            ...patch,
+        };
+        this.autonomyOverlay?.setLayers?.(this._autonomyOverlayEnabled);
+        this.render();
+        this._emit();
+    }
+
     setWorkspaceActive(active, { preservePlayback = false } = {}) {
         const nextActive = Boolean(active);
         if (nextActive) {
@@ -357,6 +385,8 @@ export class SimulationEngine {
     async applyRunManifest(resolved) {
         if (!resolved?.manifest) throw new Error("Resolved run manifest is required.");
         this.pause();
+        // Warm WASM LiDAR packers; falls back to JS if unavailable.
+        void initSensorKernels();
         this.scenarioRuntime.configure(null);
         this.scenarioDiagnostics.configure(null);
         this.telemetry?.resetRunState?.();
@@ -381,6 +411,12 @@ export class SimulationEngine {
                 client: this.data.client?.()?.get?.(),
             })
             : null;
+        this.candidateOutputRuntime = new CandidateOutputRuntime({
+            telemetry: this.telemetry,
+            transformRuntime: this.transformRuntime,
+            manifest,
+        });
+        this.candidateOutputRuntime.setTransformRuntime(this.transformRuntime);
         this.assertionEngine = new AssertionEngine(manifest.assertions, this.telemetry);
         this.data.bindings?.()?.setTopicScheduler?.((info) => this.queueTopicInput(info));
 
@@ -470,6 +506,7 @@ export class SimulationEngine {
     _advanceSimulation(frameDt) {
         const scaledDt = frameDt * this.speed;
 
+        this.gpuCaptureEnabled = true;
         if (!this.deterministic) {
             this._fixedStep(scaledDt);
             return;
@@ -488,6 +525,7 @@ export class SimulationEngine {
             if (this.steps > previousStep) this.accumulatorNs -= this.stepNs;
             this.accumulator = this.accumulatorNs / 1e9;
             subSteps++;
+            this.gpuCaptureEnabled = false;
             if (shouldContinue === false) break;
         }
 
@@ -564,6 +602,11 @@ export class SimulationEngine {
 
         phase("delivery", () => this.data.devices?.()?.deliver?.({ step: this.steps, timeNs: this.timeNs }));
 
+        phase("candidate-viz", () => {
+            this.candidateOutputRuntime?.refreshOracle?.({ applyStep: this.steps, applyTimeNs: this.timeNs });
+            this.autonomyOverlay?.updateFromRuntime?.(this.candidateOutputRuntime, this._autonomyOverlayEnabled);
+        });
+
         if (this.modules.baking) this.data.baking()?.update?.(dt);
 
         this._publishSimulationEntities();
@@ -616,7 +659,11 @@ export class SimulationEngine {
                 applyTimeNs,
                 arrivalTimeNs: entry.arrivalTimeNs,
             });
-            if (routed && routed.ok === false && routed.code !== "stale") {
+            this.candidateOutputRuntime?.ingestRouted?.(routed, { applyStep: step, applyTimeNs });
+            if (routed && routed.ok === false && routed.code !== "stale" && routed.code !== "invalid") {
+                continue;
+            }
+            if (routed && routed.ok === false) {
                 continue;
             }
             this.data.bindings?.()?.applyTopicUpdate?.(entry.info);
@@ -737,9 +784,27 @@ export class SimulationEngine {
         });
     }
 
+    _applyDisplayPerformance() {
+        const playing = this.status === "playing";
+        this.data.skyManager?.()?.setPerformanceTier?.(playing ? "high-performance" : "quality");
+        if (!this.renderer || typeof window === "undefined") return;
+        const cap = playing ? 1 : 1.25;
+        const ratio = Math.min(window.devicePixelRatio || 1, cap);
+        if (this._displayPixelRatio === ratio) return;
+        this._displayPixelRatio = ratio;
+        this.renderer.setPixelRatio(ratio);
+        const width = this.renderer.domElement?.clientWidth || 0;
+        const height = this.renderer.domElement?.clientHeight || 0;
+        if (width > 0 && height > 0) {
+            this.renderer.setSize(width, height, false);
+            this.data.skyManager?.()?.resize?.(width, height);
+        }
+    }
+
     render() {
         if (!this.scene || !this.camera || !this.renderer) return;
 
+        this._applyDisplayPerformance();
         this.data.earthTilesManager?.()?.update?.();
 
         if (this.data.skyManager?.()?.render?.()) {

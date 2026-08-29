@@ -4,7 +4,7 @@ import { TransformControls } from "three/examples/jsm/controls/TransformControls
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 
 import { TriangleOptimizer } from "../../optimization/TriangleOptimizer.js";
-import { applyModelPlacement } from "../../3d/vehicles/ManifestVehicle.js";
+import { applyModelPlacement } from "../../3d/vehicles/ModelPlacement.js";
 import {
     createSensorPreview,
     getSensorPreviewSignature,
@@ -113,6 +113,9 @@ export class VehicleStudio {
         this._zoneSignature = null;
         this._modelUrl = null;
         this._modelObject = null;
+        this._modelAlignment = { x: 0, y: 0, z: 0 };
+        this._pendingBoundingBox = null;
+        this._pendingModel = null;
         this._loadToken = 0;
         this._disposed = false;
 
@@ -183,6 +186,7 @@ export class VehicleStudio {
     }
 
     _syncModel(model, modelUrl, boundingBox) {
+        this._pendingBoundingBox = boundingBox;
         if (modelUrl !== this._modelUrl) {
             this._modelUrl = modelUrl;
             this.modelRoot.clear();
@@ -195,7 +199,11 @@ export class VehicleStudio {
                     this.modelRoot.clear();
                     this._placeholder = null;
                     this._modelObject = gltf.scene;
-                    applyModelPlacement(this._modelObject, this._pendingModel ?? model);
+                    this._modelAlignment = applyModelPlacement(
+                        this._modelObject,
+                        this._pendingModel ?? model,
+                        this._pendingBoundingBox,
+                    );
                     this.modelRoot.add(this._modelObject);
                     if (this._selection?.kind === "model") this.setSelection(this._selection);
                 }).catch((error) => {
@@ -211,8 +219,17 @@ export class VehicleStudio {
         }
         this._pendingModel = model;
         if (this._modelObject && !this._isDragging(this._modelObject)) {
-            applyModelPlacement(this._modelObject, model);
+            this._modelAlignment = applyModelPlacement(
+                this._modelObject,
+                model,
+                this._pendingBoundingBox,
+            );
         }
+    }
+
+    /** AABB alignment used by the last applyModelPlacement (before model.offset). */
+    getModelAlignment() {
+        return this._modelAlignment ? { ...this._modelAlignment } : { x: 0, y: 0, z: 0 };
     }
 
     /** Solid body used when a vehicle has no GLTF (built-in IGVC / Scenario, or detach). */

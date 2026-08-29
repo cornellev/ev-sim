@@ -1,6 +1,25 @@
 export const PROFILE_KIND = "fusion-log-profile";
 export const PROFILE_VERSION = 1;
 
+export const SIMULATION_RUN_SENSOR_PROFILE = Object.freeze({
+    kind: PROFILE_KIND,
+    version: PROFILE_VERSION,
+    id: "simulation-run-full-sensors",
+    name: "Simulation Run: Full Sensors",
+    mode: "replay-safe",
+    rules: [
+        { pattern: "**", enabled: true, sampling: "on-change", rateHz: null },
+        { pattern: "simulation.**", enabled: true, sampling: "every-update", rateHz: null },
+        { pattern: "vehicles.**", enabled: true, sampling: "every-update", rateHz: null },
+        { pattern: "devices.**", enabled: true, sampling: "every-update", rateHz: null },
+        { pattern: "candidate.**", enabled: true, sampling: "every-update", rateHz: null },
+        { pattern: "active.**", enabled: true, sampling: "every-update", rateHz: null },
+        { pattern: "oracle.**", enabled: true, sampling: "every-update", rateHz: null },
+        { pattern: "diagnostics.**", enabled: true, sampling: "every-update", rateHz: null },
+        { pattern: "visualization.**", enabled: true, sampling: "every-update", rateHz: null },
+    ],
+});
+
 export const DEFAULT_REPLAY_PROFILE = Object.freeze({
     kind: PROFILE_KIND,
     version: PROFILE_VERSION,
@@ -11,6 +30,9 @@ export const DEFAULT_REPLAY_PROFILE = Object.freeze({
         { pattern: "**", enabled: true, sampling: "on-change", rateHz: null },
         { pattern: "simulation.**", enabled: true, sampling: "every-update", rateHz: null },
         { pattern: "vehicles.**", enabled: true, sampling: "every-update", rateHz: null },
+        { pattern: "candidate.**", enabled: true, sampling: "every-update", rateHz: null },
+        { pattern: "diagnostics.**", enabled: true, sampling: "every-update", rateHz: null },
+        { pattern: "visualization.**", enabled: true, sampling: "every-update", rateHz: null },
         { pattern: "devices.**", enabled: false, sampling: "on-change", rateHz: null },
     ],
 });
@@ -24,20 +46,6 @@ export const DEFAULT_TELEMETRY_PROFILE = Object.freeze({
     rules: [
         { pattern: "**", enabled: true, sampling: "on-change", rateHz: null },
         { pattern: "devices.**", enabled: false, sampling: "on-change", rateHz: null },
-    ],
-});
-
-export const SIMULATION_RUN_SENSOR_PROFILE = Object.freeze({
-    kind: PROFILE_KIND,
-    version: PROFILE_VERSION,
-    id: "simulation-run-full-sensors",
-    name: "Simulation Run: Full Sensors",
-    mode: "replay-safe",
-    rules: [
-        { pattern: "**", enabled: true, sampling: "on-change", rateHz: null },
-        { pattern: "simulation.**", enabled: true, sampling: "every-update", rateHz: null },
-        { pattern: "vehicles.**", enabled: true, sampling: "every-update", rateHz: null },
-        { pattern: "devices.**", enabled: true, sampling: "every-update", rateHz: null },
     ],
 });
 

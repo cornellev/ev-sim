@@ -5,6 +5,7 @@ import * as THREE from "three";
 import { Triangle } from "./objects/Triangle";
 import { getDefaultTagId } from "./ObjectTagRegistry";
 import Values from "@/app/util/Values";
+import { stableInstanceIdFromSource } from "../../autonomy/PerceptionTruthIndex.js";
 
 const MAX_BOXES = 2000;
 const MAX_TRIANGLES = 5000;
@@ -96,6 +97,15 @@ function getObjectTagId(object) {
     return object?.tagId ?? getDefaultTagId();
 }
 
+function getObjectInstanceId(object) {
+    const sourceId = object?.perceptionSourceId
+        ?? object?._vehicleId
+        ?? object?._buildingId
+        ?? object?._roadId
+        ?? object?._uuid;
+    return sourceId ? stableInstanceIdFromSource(sourceId) : 0;
+}
+
 /**
  * @param {ObjectDatabase} database
  * @param {Box} box
@@ -116,7 +126,7 @@ function writeBoxTextureSlot(database, box, index) {
 
     const tagId = getObjectTagId(box);
     database.textures.data._boxTagData[dataIndex + 0] = tagId;
-    database.textures.data._boxTagData[dataIndex + 1] = 0.0;
+    database.textures.data._boxTagData[dataIndex + 1] = getObjectInstanceId(box);
     database.textures.data._boxTagData[dataIndex + 2] = 0.0;
     database.textures.data._boxTagData[dataIndex + 3] = 1.0;
 
@@ -151,7 +161,7 @@ function writeTriangleTextureSlot(database, triangle, index) {
 
     const tagId = getObjectTagId(triangle);
     database.textures.data._triangleTagData[tagIndex + 0] = tagId;
-    database.textures.data._triangleTagData[tagIndex + 1] = 0.0;
+    database.textures.data._triangleTagData[tagIndex + 1] = getObjectInstanceId(triangle);
     database.textures.data._triangleTagData[tagIndex + 2] = 0.0;
     database.textures.data._triangleTagData[tagIndex + 3] = 1.0;
 

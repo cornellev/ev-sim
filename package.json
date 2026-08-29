@@ -2,9 +2,10 @@
   "name": "cev-sim",
   "version": "0.1.0",
   "private": true,
-  "scripts": {
+    "scripts": {
     "dev": "node server/App.js",
     "build": "next build",
+    "build:kernels": "wasm-pack build native/sensor-kernels --target web --out-dir ../../app/native/sensor_kernels --release && cp app/native/sensor_kernels/sensor_kernels_bg.wasm public/native/sensor_kernels_bg.wasm",
     "start": "node server/App.js",
     "lint": "eslint",
     "test": "node --experimental-default-type=module --test tests/*.test.js",

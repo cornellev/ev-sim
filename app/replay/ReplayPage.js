@@ -53,6 +53,7 @@ export default function ReplayPage({ initialLogId, mcpCommand, onOpenAnalysis, o
     const [tagsDraft, setTagsDraft] = useState("");
     const [deleteArmed, setDeleteArmed] = useState(false);
     const [inspectorOpen, setInspectorOpen] = useState(false);
+    const [exactSync, setExactSync] = useState(false);
     const fileRef = useRef(null);
     const playRef = useRef({ timeUs: 0, stamp: 0 });
     const appliedMcpCommandRef = useRef(null);
@@ -196,6 +197,7 @@ export default function ReplayPage({ initialLogId, mcpCommand, onOpenAnalysis, o
         .map((event, index) => ({ event, index }))
         .filter(({ event }) => Math.abs(event.timeUs - timelineState.timeUs) <= 750000)
         .slice(-5) || [];
+    const autonomySnap = dataset?.autonomySnapshotAt?.(timelineState.timeUs, { exactSync }) || null;
 
     const manageTrigger = (
         <IconButton
@@ -250,7 +252,7 @@ export default function ReplayPage({ initialLogId, mcpCommand, onOpenAnalysis, o
         >
             <div className={styles.replayShell}>
                 <section className={styles.sceneRegion}>
-                    {dataset && <ReplayScene dataset={dataset} timeUs={timelineState.timeUs} selectedEntity={selectedEntity} onSelectEntity={setSelectedEntity} />}
+                    {dataset && <ReplayScene dataset={dataset} timeUs={timelineState.timeUs} selectedEntity={selectedEntity} onSelectEntity={setSelectedEntity} exactSync={exactSync} />}
                     {status === "loading" && <div className={styles.stateOverlay}><AsyncState status="loading" title="Indexing log" detail="Preparing checkpoints and event data." /></div>}
                     {!dataset && status !== "loading" && <div className={styles.stateOverlay}><AsyncState status="empty" title="Select or import an SFLog" detail="Replay seeks from indexed checkpoints, so moving backward does not rescan the session." /></div>}
                     {error && <StatusMessage className={styles.errorMessage} tone="danger" title="Could not open this log">{error}</StatusMessage>}
@@ -264,6 +266,25 @@ export default function ReplayPage({ initialLogId, mcpCommand, onOpenAnalysis, o
                                 <p className={styles.sectionLabel}>Selected entity</p>
                                 <p className={styles.emphasis}>{selectedEntity || "No vehicle state"}</p>
                                 {entityRows.map(([path, value]) => <div key={path} className={styles.dataRow}><span>{path.slice(entityPrefix.length)}</span><code>{typeof value === "object" ? JSON.stringify(value) : String(value)}</code></div>)}
+                            </div>
+                            <div className={styles.inspectorSection}>
+                                <p className={styles.sectionLabel}>Autonomy at cursor</p>
+                                <p className={styles.muted}>
+                                    {exactSync ? "Exact capture sync" : "Lookback"}
+                                    {autonomySnap?.ages?.perceptionNs != null
+                                        ? ` · perception age ${(autonomySnap.ages.perceptionNs / 1e6).toFixed(0)} ms`
+                                        : ""}
+                                </p>
+                                <p className={styles.emphasis}>
+                                    boxes {autonomySnap?.perception?.detections3d?.length || 0}
+                                    {" · "}lanes {autonomySnap?.perception?.lanes?.length || 0}
+                                    {" · "}EKF {autonomySnap?.localization?.estimate ? "yes" : "no"}
+                                </p>
+                                {autonomySnap?.localization?.error && (
+                                    <p className={styles.muted}>
+                                        |err| {Number(autonomySnap.localization.error.positionM || 0).toFixed(3)} m
+                                    </p>
+                                )}
                             </div>
                             <div className={styles.inspectorSection}><p className={styles.sectionLabel}>Nearby events</p>{nearbyEvents.length === 0 ? <p className={styles.muted}>No events within ±0.75 s</p> : nearbyEvents.map(({ event, index }) => <button key={`${event.id || "event"}-${index}`} onClick={() => timeline.seek(event.timeUs)} className={styles.eventRow}><code>{formatTime(event.timeUs)}</code><span>{event.category} / {event.name}</span></button>)}</div>
                         </aside>
@@ -279,6 +300,7 @@ export default function ReplayPage({ initialLogId, mcpCommand, onOpenAnalysis, o
                         <Button size="compact" aria-pressed={timelineState.loopEnabled} className={timelineState.loopEnabled ? styles.activeControl : undefined} onClick={() => timeline.set({ loopEnabled: !timelineState.loopEnabled })}><IconRepeat size={15} stroke={1.75} /> Loop</Button>
                         <Button size="compact" disabled={!dataset} onClick={() => timeline.set({ selection: { ...(timelineState.selection || {}), startUs: timelineState.timeUs } })}>Mark in</Button>
                         <Button size="compact" disabled={!dataset} onClick={() => timeline.set({ selection: { ...(timelineState.selection || {}), endUs: timelineState.timeUs } })}>Mark out</Button>
+                        <Button size="compact" aria-pressed={exactSync} className={exactSync ? styles.activeControl : undefined} onClick={() => setExactSync((value) => !value)}>Exact sync</Button>
                         <Button size="compact" className={styles.compactInspectorButton} disabled={!dataset} onClick={() => setInspectorOpen(true)}><IconAdjustmentsHorizontal size={15} stroke={1.75} /> Inspector</Button>
                         <span className={styles.clock}>{formatTime(timelineState.timeUs)} <span>/ {formatTime(timelineState.durationUs)}</span></span>
                     </div>

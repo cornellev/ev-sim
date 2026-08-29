@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 
+import { PERCEPTION_LABEL_CATALOG_VERSION } from "./AutonomyContractCatalog.js";
 import {
     buildTransformStamped,
     cameraLinkToOpticalRotation,
@@ -113,6 +114,8 @@ export function buildCalibrationBundle(manifest, options = {}) {
                 calibration: structuredClone(sensor.calibration || {}),
                 outputs: structuredClone(sensor.outputs || {}),
                 schema: structuredClone(sensor.schema || {}),
+                health: structuredClone(sensor.health || {}),
+                noise: structuredClone(sensor.noise || {}),
                 schedule,
             };
         });
@@ -139,11 +142,12 @@ export function buildCalibrationBundle(manifest, options = {}) {
 
     const bundle = {
         kind: "cev-sim.calibration-bundle",
-        version: 1,
+        version: 2,
         manifestId: manifest.id,
         manifestVersion: manifest.version,
         seed: manifest.seed,
         stepNs,
+        labelCatalogVersion: PERCEPTION_LABEL_CATALOG_VERSION,
         frames: {
             map: mapFrameId,
             odom: odomFrameId,

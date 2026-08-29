@@ -1,0 +1,9 @@
+# Keep generated wasm-pack artifacts committed so CI does not need rustc.
+*
+!.gitignore
+!package.json
+!sensor_kernels.js
+!sensor_kernels.d.ts
+!sensor_kernels_bg.wasm
+!sensor_kernels_bg.wasm.d.ts
+!LICENSE*

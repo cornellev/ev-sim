@@ -1,5 +1,18 @@
 export { Button, IconButton } from "./Button";
 export {
+    AdvancedFields,
+    AdvancedSwitch,
+    AdvancedValidationBanner,
+    AuthoringModeProvider,
+    useAuthoringMode,
+} from "./AuthoringMode.js";
+export {
+    readAdvancedAuthoringPreference,
+    validationIssueRequiresAdvanced,
+    validationIssuesRequireAdvanced,
+    writeAdvancedAuthoringPreference,
+} from "./authoringModeStorage.js";
+export {
     Field,
     NativeSelect,
     SegmentedControl,

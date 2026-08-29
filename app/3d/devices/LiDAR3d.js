@@ -145,7 +145,7 @@ export class LiDAR3d extends Device {
             new THREE.Matrix4().makeRotationFromEuler(this.getRotation())
         );
 
-        this.shader.update({
+        return this.shader.update({
             ...(simulationTimeSeconds === null ? {} : { u_time: { value: simulationTimeSeconds } }),
             u_origin: { value: this.getPosition() },
             u_sensorRotation: { value: sensorRotationMatrix },
@@ -204,11 +204,10 @@ export class LiDAR3d extends Device {
         if (!this.debug) return;
 
         for (let i = 0; i < buffer.length; i += 4) {
-            // buffer[i] contains grayscale intensity (0–255) where
-            // intensity = 1.0 - (distance / range)
-            // so distance = (1.0 - intensity) * range
-            const intensity = buffer[i];
-            const dist = (1.0 - intensity) * this.settings.range;
+            // Metric-v2 shader layout: distance, incidence, semantic, instance.
+            const dist = buffer[i] > 0 && buffer[i + 3] > 0
+                ? buffer[i]
+                : this.settings.range;
             const index = i / 4;
 
             if (index >= maxLines) break;

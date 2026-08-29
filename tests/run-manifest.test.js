@@ -20,7 +20,7 @@ async function temporaryService() {
 test("run manifest normalization supplies deterministic professional defaults", () => {
     const manifest = createDefaultRunManifest();
     assert.equal(manifest.kind, "cev-sim.run-manifest");
-    assert.equal(manifest.version, 5);
+    assert.equal(manifest.version, 8);
     assert.equal(manifest.scenario, null);
     assert.equal(manifest.clock.stepNs, 16_666_667);
     assert.equal(manifest.clock.pacing, "realtime");
@@ -40,10 +40,10 @@ test("run manifest v4 migrates v1-v3 and rejects future versions and duplicate s
         ...createDefaultRunManifest(),
         version: 1,
     });
-    assert.equal(migrated.version, 5);
+    assert.equal(migrated.version, 8);
     assert.ok(migrated.autonomyCatalog?.hash);
     assert.equal(migrated.scenario, null);
-    assert.throws(() => normalizeRunManifest({ kind: "cev-sim.run-manifest", version: 6 }), /version 6/);
+    assert.throws(() => normalizeRunManifest({ kind: "cev-sim.run-manifest", version: 9 }), /version 9/);
     const manifest = createDefaultRunManifest();
     manifest.topics.push({ ...manifest.topics[0] });
     const validation = validateRunManifest(manifest);

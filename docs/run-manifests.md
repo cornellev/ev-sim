@@ -1,12 +1,12 @@
 # Deterministic simulation runs
 
-Every professional simulation launch is defined by a saved `cev-sim.run-manifest` version 5 document. The server normalizes and validates the authoring document, resolves its environment, scripts, bindings, autonomy catalog metadata, deterministic calibration bundle, ROS schema closure, and contract endpoints, then computes SHA-256 definition and resolved hashes. A running session holds that resolved snapshot and never applies Config edits in place.
+Every professional simulation launch is defined by a saved `cev-sim.run-manifest` version 8 document. The server normalizes and validates the authoring document, resolves its environment, scripts, bindings, autonomy catalog metadata, deterministic calibration bundle, ROS schema closure, and contract endpoints, then computes SHA-256 definition and resolved hashes. A running session holds that resolved snapshot and never applies Config edits in place.
 
 Binding resolution includes every global library binding plus the ids listed in `scripts.bindingIds`. The Bindings workspace manages those ids through manifest checkboxes. Scripts referenced by effective bindings are resolved automatically; entries in `scripts.artifacts` remain optional hash locks. Portable manifests with `embeddedBindings` use only their frozen embedded set.
 
 ## Operator workflow
 
-Open **Config** from the workspace switcher. The page supports catalog create, duplicate, delete, bundle import/export, structured editing, raw JSON editing, server validation, optimistic revision saves, and **Validate & Run**. Unsaved edits are protected during catalog changes and browser navigation.
+Open **Config** from the workspace switcher. The page supports catalog create, duplicate, delete, bundle import/export, structured editing, raw JSON editing, server validation, optimistic revision saves, and **Validate & Run**. Unsaved edits are protected during catalog changes and browser navigation. Use the header **Advanced** switch to reveal frames, noise, latency, and contract fields while keeping essential sensor and topic settings visible by default; the preference persists across Config and Vehicle Editor.
 
 Reset finalizes the active result and SFLog, resolves the newest saved revision, rebuilds run-scoped resources, and leaves the replacement run paused at step zero. If the environment changed, the workspace loads that environment before applying the pending run.
 
@@ -34,13 +34,15 @@ Simulation time is `stepIndex * stepNs`, using integer nanoseconds. Realtime spe
 
 ## Frames, calibration, and synchronization
 
-Manifest version 5 stores sensor extrinsics in REP-103 (`+X` forward, `+Y` left, `+Z` up) relative to `base_link`. Cameras declare a mount frame (`*_link`) and an optical measurement frame (`*_optical_frame`, `+Z` forward, `+X` right, `+Y` down). LiDAR mount and measurement frames are identical. Localization sensors use mount/measurement frames (`imu_link`, `gnss_link`, `wheel_odom_link`). Scene/vehicle coordinates remain internal Three.js coordinates; conversion happens only at the ROS/TF boundary.
+Manifest version 8 stores sensor extrinsics in REP-103 (`+X` forward, `+Y` left, `+Z` up) relative to `base_link`. v7 and earlier documents gain missing candidate perception/localization return topics on normalize. Cameras declare a mount frame (`*_link`) and an optical measurement frame (`*_optical_frame`, `+Z` forward, `+X` right, `+Y` down). LiDAR mount and measurement frames are identical. Localization sensors use mount/measurement frames (`imu_link`, `gnss_link`, `wheel_odom_link`). Scene/vehicle coordinates remain internal Three.js coordinates; conversion happens only at the ROS/TF boundary.
 
-`sensorRig` also declares canonical `map`, `odom`, and `base_link` frame ids, the owning vehicle id, and optional synchronization groups keyed by declared topic ids. Default manifests include `perception-primary` (camera + LiDAR) and `localization-primary` (IMU, GNSS, wheel odometry). Sensors in the same group captured on the same simulation step share a synchronization key in telemetry metadata.
+`sensorRig` also declares canonical `map`, `odom`, and `base_link` frame ids, the owning vehicle id, and optional synchronization groups keyed by declared topic ids. Default manifests include `perception-primary` (camera + LiDAR measured and optional oracle products) and `localization-primary` (IMU, GNSS, wheel odometry). Sensors in the same group captured on the same simulation step share a synchronization key in telemetry metadata.
 
-Resolution builds a deterministic `cev-sim.calibration-bundle` artifact (sorted frames, static transforms, intrinsics/distortion, scan geometry, schedules, and output topic ids). Its SHA-256 hash is included in `resolvedHash`, portable run bundles, and SFLog attachments as `calibration.json`. The full provenance source remains `run-manifest.json`.
+Resolution builds a deterministic `cev-sim.calibration-bundle` artifact (sorted frames, static transforms, intrinsics/distortion, product selection, scan geometry, label-catalog version, schedules/deadlines, and output topic ids). Its SHA-256 hash is included in `resolvedHash`, portable run bundles, and SFLog attachments as `calibration.json`. The full provenance source remains `run-manifest.json`.
 
-Manifest sensors schedule captures on integer steps. Message headers contain capture simulation time; latency changes delivery time only. Encoded ROS bytes are shared by transport and SFLog telemetry. Sensor random streams derive from the global seed, sensor ID, and sample index.
+Manifest sensors schedule captures on integer steps. Message headers contain capture simulation time; latency changes delivery time only. Encoded ROS bytes are shared by transport and SFLog telemetry. Sensor random streams derive from the global seed, sensor ID, and sample index. Wall-clock capture/encode/transport timings are diagnostics only and never change scheduling or payloads.
+
+Camera `calibration.products` and LiDAR `calibration.products` gate expensive oracle render products. Frame dropout drops the entire capture bundle coherently; LiDAR point dropout applies only to the measured cloud.
 
 ### Localization sensor parameters (defaults)
 
@@ -52,7 +54,7 @@ Manifest sensors schedule captures on integer steps. Message headers contain cap
 
 GNSS treats map/odom position as ENU offset from the manifest datum. Wheel odometry integrates an independent measured `odom → base_link` estimate; oracle truth on `/oracle/vehicle/odometry` remains isolated for scoring.
 
-Topic contracts are edited in the Config **Topics** tab (catalog picker, producer, authority, timeout, fallback) or normalized from legacy JSON. See [Autonomy interface contracts](./autonomy-interface-contracts.md) for namespace and preflight rules. Preparation fails before the run reaches `ready` when preflight detects schema or orchestrator mismatches.
+Topic contracts are edited in the Config **Topics** tab (catalog picker, producer, authority, route-downstream, timeout, fallback) or normalized from legacy JSON. Perception and localization candidate returns default to observational (`routeDownstream: false`). See [Autonomy interface contracts](./autonomy-interface-contracts.md) for namespace and preflight rules. Preparation fails before the run reaches `ready` when preflight detects schema or orchestrator mismatches.
 
 Logging writes a native SFLog (see [SFLog](sflog.md)). Policies are:
 

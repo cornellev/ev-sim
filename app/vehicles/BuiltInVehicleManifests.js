@@ -8,7 +8,7 @@ const BIG_CAR_MODEL = Object.freeze({
     // BigCar applies 0.0015 then a fit-scale (~0.582) so the footprint matches 106" × 49".
     scale: 0.000873,
     rotation: { x: -Math.PI / 2, y: 0, z: Math.PI, order: "XYZ" },
-    offset: { x: 0, y: 0.15, z: 0 },
+    offset: { x: 0, y: 0, z: 0 },
 });
 
 const definitions = {

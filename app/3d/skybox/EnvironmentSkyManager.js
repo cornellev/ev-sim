@@ -127,6 +127,7 @@ export class EnvironmentSkyManager {
         this.imageTexture = null;
         this.loadedTextures = [];
         this.handleCloudChange = null;
+        this.performanceTier = "quality";
 
         this.sunDirection = new THREE.Vector3();
         this.moonDirection = new THREE.Vector3();
@@ -184,8 +185,9 @@ export class EnvironmentSkyManager {
 
     patchTakramSky(config) {
         if (this.cloudsEffect) {
-            this.cloudsEffect.qualityPreset = config.takram.cloudQuality;
-            this.cloudsEffect.resolutionScale = this.getCloudResolutionScale(config.takram.cloudQuality);
+            const quality = this.effectiveCloudQuality();
+            this.cloudsEffect.qualityPreset = quality;
+            this.cloudsEffect.resolutionScale = this.getCloudResolutionScale(quality);
             this.cloudsEffect.coverage = config.takram.cloudCoverage;
             this.cloudsEffect.haze = config.takram.haze;
             this.cloudsEffect.lightShafts = config.takram.lightShafts;
@@ -242,10 +244,11 @@ export class EnvironmentSkyManager {
 
         const atmosphereEffects = [this.aerialPerspective];
         if (config.takram.cloudsEnabled) {
+            const quality = this.effectiveCloudQuality();
             this.cloudsEffect = new CloudsEffect(this.camera, {
-                resolutionScale: this.getCloudResolutionScale(config.takram.cloudQuality),
+                resolutionScale: this.getCloudResolutionScale(quality),
             });
-            this.cloudsEffect.qualityPreset = config.takram.cloudQuality;
+            this.cloudsEffect.qualityPreset = quality;
             this.cloudsEffect.coverage = config.takram.cloudCoverage;
             this.cloudsEffect.haze = config.takram.haze;
             this.cloudsEffect.lightShafts = config.takram.lightShafts;
@@ -499,6 +502,24 @@ export class EnvironmentSkyManager {
             this.cloudsEffect.worldToECEFMatrix.copy(this.worldToECEFMatrix);
             this.syncCloudComposition();
         }
+    }
+
+    effectiveCloudQuality() {
+        const authored = this.config?.takram?.cloudQuality || "high";
+        if (this.performanceTier !== "high-performance") return authored;
+        if (authored === "ultra" || authored === "high") return "low";
+        return authored;
+    }
+
+    setPerformanceTier(tier) {
+        const next = tier === "high-performance" ? "high-performance" : "quality";
+        if (this.performanceTier === next) return;
+        this.performanceTier = next;
+        if (!this.cloudsEffect || this.activeMode !== SKY_MODES.TAKRAM) return;
+        const quality = this.effectiveCloudQuality();
+        this.cloudsEffect.qualityPreset = quality;
+        this.cloudsEffect.resolutionScale = this.getCloudResolutionScale(quality);
+        this.resetCloudTemporalHistory();
     }
 
     getCloudResolutionScale(quality) {

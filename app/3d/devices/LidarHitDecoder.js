@@ -1,32 +1,34 @@
 import { denormalizeTagId, tagNameFromId } from "../data/ObjectTagRegistry.js";
 
-/** @typedef {{ distance: number, tagId: number, tagName: string, objectKind: "triangle"|"box"|null, objectIndex: number, hit: boolean }} LidarHit */
+/** @typedef {{ distance: number, incidence: number, semanticId: number, instanceId: number, tagId: number, tagName: string, objectKind: null, objectIndex: number, hit: boolean }} LidarHit */
 
 /**
  * @param {Float32Array} buffer
  * @param {number} range
  * @returns {LidarHit[]}
  */
-export function parseLidarHits(buffer, range) {
+export function parseLidarHits(buffer, range, { encoding = "metric-v2" } = {}) {
     if (!buffer) return [];
 
     const hits = [];
     for (let i = 0; i < buffer.length; i += 4) {
-        const intensity = buffer[i];
-        const normalizedTag = buffer[i + 1];
-        const objectKindValue = buffer[i + 2];
-        const hitFlag = buffer[i + 3];
-
-        const hit = hitFlag > 0.5;
-        const distance = hit ? (1.0 - intensity) * range : range;
-        const tagId = denormalizeTagId(normalizedTag);
-        const objectKind = hit ? decodeObjectKind(objectKindValue) : null;
+        const legacy = encoding === "legacy-normalized";
+        const hit = legacy ? buffer[i + 3] > 0.5 : buffer[i] > 0 && buffer[i + 3] > 0;
+        const distance = hit
+            ? (legacy ? (1.0 - buffer[i]) * range : buffer[i])
+            : range;
+        const incidence = hit ? (legacy ? buffer[i] : buffer[i + 1]) : 0;
+        const tagId = legacy ? denormalizeTagId(buffer[i + 1]) : Math.round(buffer[i + 2]);
+        const instanceId = hit ? (legacy ? 0 : Math.round(buffer[i + 3]) >>> 0) : 0;
 
         hits.push({
             distance,
+            incidence,
+            semanticId: tagId,
+            instanceId,
             tagId,
             tagName: tagNameFromId(tagId),
-            objectKind,
+            objectKind: null,
             objectIndex: -1,
             hit,
         });

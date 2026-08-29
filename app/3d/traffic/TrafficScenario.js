@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { Data } from "../data/Data";
 import { ScenarioCar } from "../vehicles/ScenarioCar";
+import { annotatePerceptionObject } from "../../autonomy/PerceptionTruthIndex.js";
 
 const VEHICLE_OBSTACLE_TYPES = new Set([
     "bicycle",
@@ -743,6 +744,16 @@ function addLanelets(root, lanelets, h) {
     for (const lanelet of lanelets) {
         const g = new THREE.Group();
         g.name = `Lanelet_${lanelet.id}`;
+        g.userData.perceptionLane = {
+            id: String(lanelet.id),
+            left: lanelet.left.map((point) => ({ x: point.x, y: point.y })),
+            right: lanelet.right.map((point) => ({ x: point.x, y: point.y })),
+        };
+        annotatePerceptionObject(g, {
+            sourceId: `lane:${lanelet.id}`,
+            semanticClass: "lane",
+            kind: "lane",
+        });
 
         const fill = h.makeFilledLane(lanelet.left, lanelet.right);
         if (fill) g.add(fill);
@@ -780,6 +791,17 @@ function addTrafficLights(root, lanelets, trafficLights, h) {
 
             const obj = new THREE.Group();
             obj.name = `TrafficLight_${ref}`;
+            obj.userData.perceptionControl = {
+                kind: "traffic_light",
+                state: "unknown",
+                position: { x: p.x, y: p.y, z: 2.5 },
+            };
+            annotatePerceptionObject(obj, {
+                sourceId: `traffic-light:${ref}`,
+                semanticClass: "traffic_light",
+                kind: "traffic_light",
+                state: "unknown",
+            });
 
             h.addCylinder(obj, p.x, p.y, 0.08, 2.6, poleMat);
             const head = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.5, 0.25), poleMat);
@@ -817,6 +839,17 @@ function addTrafficSigns(root, lanelets, trafficSigns, h) {
 
             const obj = new THREE.Group();
             obj.name = `TrafficSign_${ref}`;
+            obj.userData.perceptionControl = {
+                kind: "sign",
+                state: "unknown",
+                position: { x: p.x, y: p.y, z: 2.0 },
+            };
+            annotatePerceptionObject(obj, {
+                sourceId: `traffic-sign:${ref}`,
+                semanticClass: "sign",
+                kind: "sign",
+                state: "unknown",
+            });
 
             h.addCylinder(obj, p.x, p.y, 0.06, 2.2, poleMat);
             const plate = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 0.04, 24), signMat);

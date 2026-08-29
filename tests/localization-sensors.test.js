@@ -174,13 +174,13 @@ test("localization estimate loopback routes through candidate namespace", () => 
     assert.equal(store.read("candidate.topics.localization-estimate")?.value?.pose?.pose?.position?.x, 1);
 });
 
-test("default manifest v5 includes localization sensors without migrating v4 runs", () => {
+test("default manifest v6 includes localization sensors without migrating v4 runs", () => {
     const defaults = createDefaultRunManifest();
-    assert.equal(defaults.version, 5);
+    assert.equal(defaults.version, 8);
     assert.ok(defaults.sensorRig.sensors.some((sensor) => sensor.type === "imu"));
     assert.ok(defaults.topics.some((topic) => topic.contractId === "truth-odometry"));
     const migrated = normalizeRunManifest({ ...createDefaultRunManifest({ sensorRig: { sensors: [] } }), version: 4 });
-    assert.equal(migrated.version, 5);
+    assert.equal(migrated.version, 8);
     assert.equal(migrated.sensorRig.sensors.length, 0);
 });
 

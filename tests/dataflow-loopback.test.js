@@ -81,25 +81,95 @@ test("topic router routes valid team returns through producer and active paths",
         name: ack.name,
         typeStr: ack.schema.type,
         value: payload,
-    }, { applyStep: 0, applyTimeNs: 0, arrivalTimeNs: 0 });
+    }, { applyStep: 1, applyTimeNs: 16_666_667, arrivalTimeNs: 16_666_667 });
     assert.equal(routed.ok, true);
-    assert.equal(store.read("active.topics.ackdrive-legacy").value.speed, payload.speed);
+    assert.ok(store.read("candidate.topics.ackdrive-legacy")?.value);
+    assert.ok(store.read("active.topics.ackdrive-legacy")?.value);
+});
+
+test("perception returns preserve capture stamps without writing active paths", () => {
+    registerCatalogSchemas();
+    const store = new SignalStore({}, { sourceId: "perception-return" });
+    const manifest = createDefaultRunManifest();
+    const router = new TopicContractRouter(manifest, { telemetry: store });
+    const topic = manifest.topics.find((entry) => entry.contractId === "perception-detections-2d");
+    const payload = fixturePayloadForType(topic.schema.type);
+    payload.header.stamp = { sec: 2, nanosec: 0 };
+    const routed = router.routeInbound({
+        name: topic.name,
+        typeStr: topic.schema.type,
+        value: payload,
+    }, { applyStep: 3, applyTimeNs: 50_000_000, arrivalTimeNs: 49_000_000 });
+    assert.equal(routed.ok, true);
+    assert.equal(routed.envelope.captureTimeNs, 2_000_000_000);
+    assert.equal(routed.envelope.arrivalTimeNs, 49_000_000);
+    assert.equal(routed.envelope.applyTimeNs, 50_000_000);
+    assert.ok(store.read("candidate.topics.perception-detections-2d")?.value);
+    assert.equal(store.read("active.topics.perception-detections-2d")?.exists, false);
+    assert.equal(store.read("diagnostics.topics.perception-detections-2d")?.value?.status, "ok");
 });
 
 test("full-catalog fixture manifest declares live outputs and legacy control return", () => {
     const topics = defaultManifestTopics();
     assert.ok(topics.some((topic) => topic.contractId === "front-camera-image"));
+    assert.ok(topics.some((topic) => topic.contractId === "front-camera-depth"));
+    assert.ok(topics.some((topic) => topic.contractId === "front-lidar-semantic"));
+    assert.ok(topics.some((topic) => topic.contractId === "oracle-detections-2d"));
     assert.ok(topics.some((topic) => topic.contractId === "imu"));
     assert.ok(topics.some((topic) => topic.contractId === "truth-odometry"));
     assert.ok(topics.some((topic) => topic.contractId === "localization-estimate"));
+    assert.ok(topics.some((topic) => topic.contractId === "perception-detections-3d"));
+    assert.ok(topics.some((topic) => topic.contractId === "perception-lanes"));
     assert.ok(topics.some((topic) => topic.contractId === "tf"));
     assert.ok(topics.some((topic) => topic.contractId === "tf-static"));
     assert.ok(topics.some((topic) => topic.contractId === "ackdrive-legacy"));
+    const depth = topics.find((topic) => topic.contractId === "front-camera-depth");
+    assert.equal(depth.producer, "oracle");
+    assert.equal(depth.authority, "oracle");
     const outputTypes = topics.filter((topic) => topic.direction === "output").map((topic) => topic.schema.type);
     for (const type of outputTypes) {
         assert.ok(hasRegisteredSchema(type), type);
         assert.ok(fixturePayloadForType(type) !== undefined);
     }
+});
+
+test("perception sync-group topics share calibration hash and encode through loopback fixtures", () => {
+    registerCatalogSchemas();
+    const store = new SignalStore({}, { sourceId: "perception-loopback" });
+    const published = [];
+    const original = store.publishSignal.bind(store);
+    store.publishSignal = (path, value, options) => {
+        published.push({ path, value, options });
+        return original(path, value, options);
+    };
+    const manifest = createDefaultRunManifest();
+    const bundle = buildCalibrationBundle(manifest);
+    const router = new TopicContractRouter(manifest, { telemetry: store });
+    const stamp = 1_000_000_000;
+    const syncGroupKey = "perception-primary:60";
+    for (const topicId of ["front-camera-image", "front-camera-info", "front-lidar-points", "front-camera-depth"]) {
+        const topic = manifest.topics.find((entry) => entry.id === topicId);
+        const payload = fixturePayloadForType(topic.schema.type);
+        router.routeOutbound(topic.id, { value: payload, typeStr: topic.schema.type }, {
+            producer: topic.producer,
+            observationalOracle: topic.producer === "oracle",
+            captureTimeNs: stamp,
+            deliveryTimeNs: stamp,
+            syncGroupKey,
+            calibrationHash: bundle.hash,
+            sequenceId: 0,
+            cycle: 60,
+        });
+    }
+    const imageRoute = published.find((entry) => entry.path.includes("front-camera-image") || entry.options?.descriptorMetadata?.topic === "/sensors/front_camera/image_raw");
+    const depthRoute = published.find((entry) => entry.path.startsWith("oracle.topics."));
+    assert.ok(imageRoute);
+    assert.ok(depthRoute);
+    assert.ok(!published.some((entry) => entry.path.startsWith("active.topics.front-camera-depth") || entry.path === "active.topics.front-camera-depth"));
+    const metadataEntries = published.filter((entry) => entry.options?.descriptorMetadata?.syncGroupKey);
+    assert.ok(metadataEntries.every((entry) => entry.options.descriptorMetadata.syncGroupKey === syncGroupKey));
+    assert.ok(metadataEntries.every((entry) => entry.options.descriptorMetadata.calibrationHash === bundle.hash));
+    assert.ok(metadataEntries.every((entry) => entry.options.descriptorMetadata.captureTimeNs === stamp));
 });
 
 test("transform runtime publishes live TF fixtures through the contract router", () => {

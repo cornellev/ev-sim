@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { EDITOR_LAYERS } from "./EditorState.js";
+import { annotatePerceptionObject } from "../../autonomy/PerceptionTruthIndex.js";
 
 function shortId(value) {
     const text = String(value ?? "");
@@ -153,6 +154,11 @@ export class EnvironmentRegistry {
         if (next.object3D) {
             tagObjectTree(next.object3D, next.id);
             next.object3D.userData.environmentLayer = next.layer;
+            annotatePerceptionObject(next.object3D, {
+                sourceId: next.sourceId ?? next.id,
+                semanticClass: next.kind,
+                kind: next.kind,
+            });
         }
 
         const membership = this.chunkManager?.assignEntity?.(next);

@@ -1,5 +1,13 @@
 
-const WebSocketImpl = typeof WebSocket !== "undefined" ? WebSocket : require("ws");
+let WebSocketImpl = typeof WebSocket !== "undefined" ? WebSocket : null;
+
+function getWebSocketImpl() {
+	if (WebSocketImpl) return WebSocketImpl;
+	// Node-only fallback; keep out of worker top-level evaluation.
+	// eslint-disable-next-line global-require
+	WebSocketImpl = require("ws");
+	return WebSocketImpl;
+}
 
 const OP_CODES = {
 	echo: 0x00,
@@ -576,6 +584,21 @@ export function encodeTopicValue(typeStr, value) {
 	return encodeValue(typeStr, value);
 }
 
+export function decodeTopicValue(encoded) {
+	if (!encoded) return null;
+	const view = encoded instanceof Uint8Array
+		? encoded
+		: ArrayBuffer.isView(encoded)
+			? new Uint8Array(encoded.buffer, encoded.byteOffset, encoded.byteLength)
+			: null;
+	if (!view) return null;
+	try {
+		return decodeValue(view, 0);
+	} catch {
+		return null;
+	}
+}
+
 function decodeValue(view, offset) {
 	_requireBytes(view, offset, 5, "typed envelope");
 	const typeByte = view[offset];
@@ -773,7 +796,7 @@ class Client {
 	}
 
 	isOpen() {
-		return !!this.ws && this.ws.readyState === WebSocketImpl.OPEN;
+		return !!this.ws && this.ws.readyState === getWebSocketImpl().OPEN;
 	}
 
 	async start() {
@@ -899,7 +922,7 @@ class Client {
 
 	async _connect() {
 		await new Promise((resolve, reject) => {
-			const ws = new WebSocketImpl(this.url);
+			const ws = new (getWebSocketImpl())(this.url);
 			this.ws = ws;
 			ws.binaryType = "arraybuffer";
 			this._ready = new Promise((res, rej) => {
@@ -1017,7 +1040,7 @@ class Client {
 
 		await this._ready;
 		if (this.stopped) throw new Error("Client stopped");
-		if (!this.ws || this.ws.readyState !== WebSocketImpl.OPEN) throw new Error("WebSocket not open");
+		if (!this.ws || this.ws.readyState !== getWebSocketImpl().OPEN) throw new Error("WebSocket not open");
 		this.ws.send(data);
 	}
 }
@@ -1047,7 +1070,9 @@ if (typeof module !== "undefined" && module.exports) {
 		MAX_TOPIC_NAME_LEN,
 		buildTopicData,
 		encodeValue,
+		encodeTopicValue,
 		decodeValue,
+		decodeTopicValue,
 		hasRegisteredSchema,
 		listRegisteredSchemaTypes,
 		registerMessageSchema,
@@ -1064,7 +1089,9 @@ if (typeof window !== "undefined") {
 		MAX_TOPIC_NAME_LEN,
 		buildTopicData,
 		encodeValue,
+		encodeTopicValue,
 		decodeValue,
+		decodeTopicValue,
 		hasRegisteredSchema,
 		listRegisteredSchemaTypes,
 		registerMessageSchema,

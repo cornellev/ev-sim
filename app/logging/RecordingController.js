@@ -28,6 +28,26 @@ function valuesEqual(a, b) {
     try { return JSON.stringify(a) === JSON.stringify(b); } catch { return false; }
 }
 
+/** Snapshot an entry so a later store overwrite cannot mutate a queued log batch. */
+function copyCaptureEntry(entry) {
+    if (!entry) return entry;
+    const value = entry.value;
+    if (ArrayBuffer.isView(value)) {
+        return { ...entry, value: value.slice() };
+    }
+    if (value && typeof value === "object" && ArrayBuffer.isView(value.data)) {
+        return { ...entry, value: { ...value, data: value.data.slice() } };
+    }
+    if (typeof structuredClone === "function") {
+        try {
+            return structuredClone(entry);
+        } catch {
+            // Fall through.
+        }
+    }
+    return { ...entry };
+}
+
 export class RecordingController {
     constructor(store = getTelemetryStore()) {
         this.store = store;
@@ -140,7 +160,7 @@ export class RecordingController {
             this.encoder.addCheckpoint(initialSnapshot, descriptors, initialTimeUs);
             this.lastCheckpointUs = initialTimeUs;
             this.store.emitTelemetryEvent({ timeUs: this.timeBase === "simulation" ? 0 : undefined, category: "logging", name: "recording-started", payload: { id: created.id, profile: this.profile.id } });
-            this._unsubscribe = this.store.subscribeSignals({ includeEvents: true, includeCatalog: false }, (message) => this._capture(message));
+            this._unsubscribe = this.store.subscribeSignals({ includeEvents: true, includeCatalog: false, includeHeavy: true }, (message) => this._capture(message));
             this._flushTimer = setInterval(() => this._flush(), FLUSH_INTERVAL_MS);
             this._emit();
             return created;
@@ -175,10 +195,11 @@ export class RecordingController {
         }
         this._lastValues.set(message.path, message.entry.value);
         this._lastSamples.set(message.path, recordingTimeUs);
+        const entry = copyCaptureEntry({ ...message.entry, timeUs: recordingTimeUs });
         this.encoder.addUpdate({
             ...message,
             timeUs: recordingTimeUs,
-            entry: { ...message.entry, timeUs: recordingTimeUs },
+            entry,
         });
         if (recordingTimeUs - this.lastCheckpointUs >= CHECKPOINT_INTERVAL_US) {
             this.encoder.addCheckpoint(this.store.snapshot(), this.store.descriptors(), recordingTimeUs);

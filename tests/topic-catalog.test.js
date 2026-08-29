@@ -8,6 +8,7 @@ import {
     catalogMetadata,
     catalogSchemas,
     defaultManifestTopics,
+    DEFAULT_CANDIDATE_RETURN_CONTRACT_IDS,
     fixturePayloadForType,
     getAutonomyContract,
     listAutonomyContracts,
@@ -27,7 +28,7 @@ import { registerMsgDefinition } from "../app/client/Client.js";
 test("autonomy catalog exposes versioned contracts and schema closure includes AckermannDrive", () => {
     const metadata = catalogMetadata();
     assert.equal(metadata.kind, "cev-sim.autonomy-contract-catalog");
-    assert.equal(metadata.version, 3);
+    assert.equal(metadata.version, 5);
     assert.equal(metadata.hash, catalogHash());
     assert.ok(listAutonomyContracts().some((contract) => contract.id === "ackdrive-legacy"));
 
@@ -84,6 +85,55 @@ test("topic contract router writes producer and active namespaces deterministica
     assert.ok(store.read("candidate.topics.ackdrive-legacy").value);
 });
 
+test("observational candidate returns skip active namespace by default", () => {
+    const store = new SignalStore({}, { sourceId: "observe-test" });
+    const manifest = createDefaultRunManifest();
+    const router = new TopicContractRouter(manifest, { telemetry: store });
+    const topic = manifest.topics.find((entry) => entry.contractId === "localization-estimate");
+    assert.equal(topic.routeDownstream, false);
+    const routed = router.routeInbound({
+        name: topic.name,
+        typeStr: topic.schema.type,
+        value: fixturePayloadForType(topic.schema.type),
+    }, { applyStep: 1, applyTimeNs: 16_666_667, arrivalTimeNs: 16_666_667 });
+    assert.equal(routed.ok, true);
+    assert.ok(store.read("candidate.topics.localization-estimate")?.value);
+    assert.equal(store.read("active.topics.localization-estimate")?.exists, false);
+    assert.equal(store.read("diagnostics.topics.localization-estimate")?.value?.status, "ok");
+});
+
+test("default manifest includes live perception return contracts", () => {
+    const topics = defaultManifestTopics();
+    for (const id of DEFAULT_CANDIDATE_RETURN_CONTRACT_IDS) {
+        const topic = topics.find((entry) => entry.contractId === id);
+        assert.ok(topic, id);
+        assert.equal(topic.routeDownstream, false);
+        assert.equal(topic.implementation, "live");
+    }
+});
+
+test("v7 manifests without candidate returns gain them on normalize", () => {
+    const source = createDefaultRunManifest();
+    source.version = 7;
+    source.topics = source.topics.filter((entry) => !DEFAULT_CANDIDATE_RETURN_CONTRACT_IDS.includes(entry.contractId));
+    const migrated = normalizeRunManifest(source);
+    assert.equal(migrated.version, 8);
+    for (const id of DEFAULT_CANDIDATE_RETURN_CONTRACT_IDS) {
+        const topic = migrated.topics.find((entry) => entry.contractId === id);
+        assert.ok(topic, id);
+        assert.equal(topic.routeDownstream, false);
+    }
+});
+
+test("v8 manifests can omit candidate return topics", () => {
+    const source = createDefaultRunManifest();
+    source.topics = source.topics.filter((entry) => !DEFAULT_CANDIDATE_RETURN_CONTRACT_IDS.includes(entry.contractId));
+    const kept = normalizeRunManifest({ ...source, version: 8 });
+    for (const id of DEFAULT_CANDIDATE_RETURN_CONTRACT_IDS) {
+        assert.ok(!kept.topics.some((entry) => entry.contractId === id), id);
+    }
+});
+
 test("topic input queue rejects undeclared topics and preserves arrival ordering", () => {
     const manifest = createDefaultRunManifest();
     const queue = new TopicInputQueue(manifest.topics);
@@ -111,7 +161,7 @@ test("v2 manifests normalize to v4 with autonomy catalog metadata", () => {
             required: true,
         }],
     });
-    assert.equal(legacy.version, 5);
+    assert.equal(legacy.version, 8);
     assert.equal(legacy.topics[0].contractId, "ackdrive-legacy");
     assert.equal(validateRunManifest(legacy).ok, true);
     for (const topic of legacy.topics) {

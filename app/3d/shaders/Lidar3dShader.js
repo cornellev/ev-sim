@@ -71,12 +71,43 @@ float rayTriangleIntersect(vec3 orig, vec3 dir, vec3 v0, vec3 v1, vec3 v2) {
     return t;
 }
 
+// Exact slab intersection for the axis-aligned boxes stored by ObjectDatabase.
+// This replaces the old SDF marcher and has only the shader's 1e-6 parallel-ray
+// tolerance; distance is the metric ray parameter because dir is normalized.
+float rayBoxIntersect(vec3 orig, vec3 dir, vec3 center, vec3 size, out vec3 normal) {
+    vec3 halfSize = size * 0.5;
+    vec3 safeDir = vec3(
+        abs(dir.x) < 1e-6 ? (dir.x < 0.0 ? -1e-6 : 1e-6) : dir.x,
+        abs(dir.y) < 1e-6 ? (dir.y < 0.0 ? -1e-6 : 1e-6) : dir.y,
+        abs(dir.z) < 1e-6 ? (dir.z < 0.0 ? -1e-6 : 1e-6) : dir.z
+    );
+    vec3 t0 = (center - halfSize - orig) / safeDir;
+    vec3 t1 = (center + halfSize - orig) / safeDir;
+    vec3 tMin = min(t0, t1);
+    vec3 tMax = max(t0, t1);
+    float nearT = max(tMin.x, max(tMin.y, tMin.z));
+    float farT = min(tMax.x, min(tMax.y, tMax.z));
+    if (farT < max(nearT, 0.0)) return -1.0;
+    float hitT = nearT > 1e-4 ? nearT : farT;
+    if (hitT < 1e-4) return -1.0;
+    vec3 local = (orig + dir * hitT - center) / max(halfSize, vec3(1e-6));
+    vec3 absoluteLocal = abs(local);
+    if (absoluteLocal.x >= absoluteLocal.y && absoluteLocal.x >= absoluteLocal.z) {
+        normal = vec3(sign(local.x), 0.0, 0.0);
+    } else if (absoluteLocal.y >= absoluteLocal.z) {
+        normal = vec3(0.0, sign(local.y), 0.0);
+    } else {
+        normal = vec3(0.0, 0.0, sign(local.z));
+    }
+    return hitT;
+}
+
 struct Hit {
     bool hit;
     float distance;
+    float incidence;
     float tagId;
-    float objectKind;
-    float objectIndex;
+    float instanceId;
 };
 
 Hit raycast(float theta, float phi) {
@@ -93,6 +124,7 @@ Hit raycast(float theta, float phi) {
     // shallow angle can step over the surface without ever triggering the
     // hit threshold. Analytical intersection has no such problem.
     float triHitDist = -1.0;
+    float triHitIncidence = 0.0;
     int triHitIndex = -1;
     int tb = 0;
     for (int j = 0; j < MAX_TRIANGLES; j++) {
@@ -114,82 +146,59 @@ Hit raycast(float theta, float phi) {
             if (triHitDist < 0.0 || t < triHitDist) {
                 triHitDist = t;
                 triHitIndex = j;
+                triHitIncidence = abs(dot(-dir, normalize(cross(vb - va, vc - va))));
             }
         }
 
         ++tb;
     }
 
-    // --- SDF march for boxes ---
-    float totalDistance = 0.0;
-    float maxDistance = u_range;
-    float hitThreshold = 0.01;
-    bool boxHit = false;
+    // --- Exact analytic intersections for axis-aligned boxes ---
+    float boxHitDist = -1.0;
+    float boxHitIncidence = 0.0;
     int boxHitIndex = -1;
-    
-    for (int i = 0; i < 256; i++) {
-        vec3 currentPos = u_origin + dir * totalDistance;
-        
-        float minDist = 10000.0;
-        int closestBox = -1;
-        int bb = 0;
-        for (int j = 0; j < MAX_BOXES; j++) {
-            if (bb >= boxCount) break;
-            float idx = float(j);
-            float texWidth = float(MAX_BOXES);
-            float uCoord = (idx + 0.5) / texWidth;
-            vec2 uv = vec2(uCoord, 0.5);
-
-            if (texture2D(u_boxPosTex, uv).w == 0.0) {
-                continue;
-            }
-
-            Box box;
-            box.position = texture2D(u_boxPosTex, uv).xyz;
-            box.scale = texture2D(u_boxScaleTex, uv).xyz;
-
-            float dist = sdBox(currentPos, box);
-            if (dist < minDist) {
-                minDist = dist;
-                closestBox = j;
-            }
-
-            ++bb;
+    int bb = 0;
+    for (int j = 0; j < MAX_BOXES; j++) {
+        if (bb >= boxCount) break;
+        float idx = float(j);
+        float texWidth = float(MAX_BOXES);
+        vec2 uv = vec2((idx + 0.5) / texWidth, 0.5);
+        if (texture2D(u_boxPosTex, uv).w == 0.0) continue;
+        vec3 center = texture2D(u_boxPosTex, uv).xyz;
+        vec3 size = texture2D(u_boxScaleTex, uv).xyz;
+        vec3 normal;
+        float distance = rayBoxIntersect(u_origin, dir, center, size, normal);
+        if (distance > 0.0 && distance <= u_range && (boxHitDist < 0.0 || distance < boxHitDist)) {
+            boxHitDist = distance;
+            boxHitIndex = j;
+            boxHitIncidence = abs(dot(-dir, normal));
         }
-        
-        if (minDist < hitThreshold) {
-            boxHit = true;
-            boxHitIndex = closestBox;
-            break;
-        }
-        
-        totalDistance += minDist * 0.9;
-        if (totalDistance > maxDistance) {
-            break;
-        }
+        ++bb;
     }
 
     Hit result;
     result.hit = false;
-    result.distance = totalDistance;
+    result.distance = 0.0;
+    result.incidence = 0.0;
     result.tagId = 0.0;
-    result.objectKind = -1.0;
-    result.objectIndex = -1.0;
+    result.instanceId = 0.0;
 
-    if (boxHit && (triHitDist < 0.0 || totalDistance <= triHitDist)) {
+    if (boxHitDist > 0.0 && (triHitDist < 0.0 || boxHitDist <= triHitDist)) {
         result.hit = true;
-        result.distance = totalDistance;
-        result.objectKind = 1.0;
-        result.objectIndex = float(boxHitIndex);
+        result.distance = boxHitDist;
+        result.incidence = boxHitIncidence;
         float uCoord = (float(boxHitIndex) + 0.5) / float(MAX_BOXES);
-        result.tagId = texture2D(u_boxTagTex, vec2(uCoord, 0.5)).x;
+        vec4 tag = texture2D(u_boxTagTex, vec2(uCoord, 0.5));
+        result.tagId = tag.x;
+        result.instanceId = tag.y;
     } else if (triHitDist > 0.0) {
         result.hit = true;
         result.distance = triHitDist;
-        result.objectKind = 0.0;
-        result.objectIndex = float(triHitIndex);
+        result.incidence = triHitIncidence;
         float uCoord = (float(triHitIndex) + 0.5) / float(MAX_TRIANGLES);
-        result.tagId = texture2D(u_triTagTex, vec2(uCoord, 0.5)).x;
+        vec4 tag = texture2D(u_triTagTex, vec2(uCoord, 0.5));
+        result.tagId = tag.x;
+        result.instanceId = tag.y;
     }
 
     return result;
@@ -211,10 +220,9 @@ void main() {
     Hit hitResult = raycast(thetaRad, phiRad);
     
     if (hitResult.hit) {
-        float intensity = 1.0 - (hitResult.distance / u_range);
-        float normalizedTag = hitResult.tagId / 255.0;
-        gl_FragColor = vec4(intensity, normalizedTag, hitResult.objectKind, hitResult.hit ? 1.0 : 0.0);
+        gl_FragColor = vec4(hitResult.distance, hitResult.incidence, hitResult.tagId, hitResult.instanceId);
     } else {
+        // All-zero is the explicit no-hit sentinel.
         gl_FragColor = vec4(0.0, 0.0, 0.0, 0.0);
     }
 }

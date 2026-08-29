@@ -7,6 +7,8 @@ export const TAG_IDS = {
     road: 4,
     barrel: 5,
     tire: 6,
+    lane: 7,
+    traffic_light: 8,
 };
 
 export const MAX_TAG_ID = 255;

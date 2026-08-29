@@ -7,10 +7,13 @@ import {
     lidarDirectionRep103,
     quaternionInverse,
     quaternionMultiply,
+    cameraLinkToOpticalRotation,
     rep103PoseToThree,
     rep103ToThreeVector,
+    rotateVectorByQuaternion,
     simulationStamp,
     stampToTimeNs,
+    threeCameraLookAlongMountForwardRotation,
     threePoseToRep103,
     threeToRep103Vector,
 } from "../app/autonomy/CoordinateFrames.js";
@@ -22,6 +25,18 @@ test("Three.js and REP-103 basis conversion preserves forward placement", () => 
     const rep103 = threePoseToRep103(threePose);
     assert.deepEqual(rep103.position, { x: 1.5, y: 0, z: 0.5 });
     assert.deepEqual(rep103PoseToThree(rep103).position, threePose.position);
+});
+
+test("Three.js camera looks along mount forward instead of ROS optical in scene space", () => {
+    const look = rotateVectorByQuaternion({ x: 0, y: 0, z: -1 }, threeCameraLookAlongMountForwardRotation());
+    assert.ok(Math.abs(look.x - 1) < 1e-10);
+    assert.ok(Math.abs(look.y) < 1e-10);
+    assert.ok(Math.abs(look.z) < 1e-10);
+    const up = rotateVectorByQuaternion({ x: 0, y: 1, z: 0 }, threeCameraLookAlongMountForwardRotation());
+    assert.ok(Math.abs(up.y - 1) < 1e-10);
+
+    const rosAppliedInThree = rotateVectorByQuaternion({ x: 0, y: 0, z: -1 }, cameraLinkToOpticalRotation());
+    assert.ok(rosAppliedInThree.y < -0.5);
 });
 
 test("vector basis mapping matches vehicle axis conventions", () => {
@@ -70,7 +85,7 @@ test("v3 manifests migrate sensor poses to REP-103 without changing physical pla
             }],
         },
     });
-    assert.equal(migrated.version, 5);
+    assert.equal(migrated.version, 8);
     assert.deepEqual(migrated.sensorRig.sensors[0].pose.position, { x: 1.5, y: 0, z: 0.5 });
     assert.equal(migrated.sensorRig.sensors[0].mountFrameId, "front_camera_link");
 });

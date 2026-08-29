@@ -1,14 +1,18 @@
 import {
+    applySensorOracleProduct,
     createRunSensor,
     listSensorTypes,
     normalizeRunSensor,
+    ORACLE_PRODUCT_TOGGLES,
     validateRunSensorDefinition,
 } from "../3d/devices/SensorTypeRegistry.js";
 import {
     catalogMetadata,
     defaultManifestTopics,
+    ensureCandidateReturnTopics,
     migrateLegacyTopic,
     schemaClosureForManifest,
+    topicFromContract,
     validateManifestTopicAuthority,
     validateTopicAgainstCatalog,
 } from "../autonomy/AutonomyContractCatalog.js";
@@ -17,11 +21,14 @@ import { validateSensorRigFrames, validateSyncGroups } from "../simulation/Trans
 import { validateScalarParameterTarget } from "../scenarios/ScenarioDocument.js";
 
 export const RUN_MANIFEST_KIND = "cev-sim.run-manifest";
-export const RUN_MANIFEST_VERSION = 5;
+export const RUN_MANIFEST_VERSION = 8;
 export const LEGACY_RUN_MANIFEST_VERSION = 1;
 export const RUN_MANIFEST_V2 = 2;
 export const RUN_MANIFEST_V3 = 3;
 export const RUN_MANIFEST_V4 = 4;
+export const RUN_MANIFEST_V5 = 5;
+export const RUN_MANIFEST_V6 = 6;
+export const RUN_MANIFEST_V7 = 7;
 export const RUN_BUNDLE_KIND = "cev-sim.run-bundle";
 export const RUN_BUNDLE_VERSION = 1;
 
@@ -152,10 +159,10 @@ function syncGroup(value = {}, index = 0) {
 
 function migrateSensorToV4(sensor, sourceVersion) {
     const normalized = normalizeRunSensor(sensor);
-    if (sourceVersion >= RUN_MANIFEST_VERSION) return normalized;
+    if (sourceVersion >= RUN_MANIFEST_V7) return normalized;
     const migrated = {
         ...normalized,
-        pose: threePoseToRep103(normalized.pose),
+        pose: sourceVersion < RUN_MANIFEST_V5 ? threePoseToRep103(normalized.pose) : normalized.pose,
     };
     if (normalized.type === "camera") {
         const optical = normalized.frameId?.includes("optical")
@@ -171,8 +178,61 @@ function migrateSensorToV4(sensor, sourceVersion) {
         migrated.measurementFrameId = text(sensor.measurementFrameId, frame);
         migrated.frameId = frame;
     }
-    if (!migrated.syncGroupId && sourceVersion < RUN_MANIFEST_VERSION && normalized.type !== "unknown") {
+    if (!migrated.syncGroupId && sourceVersion < RUN_MANIFEST_V5 && normalized.type !== "unknown") {
         migrated.syncGroupId = "perception-primary";
+    }
+    // v5 → v6 / v6 → v7: preserve measured RGB/CameraInfo/PointCloud2; do not silently enable oracle products.
+    if (sourceVersion < RUN_MANIFEST_V7 && migrated.type === "camera") {
+        migrated.calibration = {
+            ...migrated.calibration,
+            products: {
+                rgb: true,
+                cameraInfo: true,
+                depth: false,
+                semantic: false,
+                instance: false,
+                detections2d: false,
+                detections3d: false,
+                lanes: false,
+                trafficControls: false,
+                diagnostics: migrated.calibration?.products?.diagnostics !== false,
+                ...object(sensor.calibration?.products),
+                depth: sensor.calibration?.products?.depth === true,
+                semantic: sensor.calibration?.products?.semantic === true,
+                instance: sensor.calibration?.products?.instance === true,
+                detections2d: sensor.calibration?.products?.detections2d === true,
+                detections3d: sensor.calibration?.products?.detections3d === true,
+                lanes: sensor.calibration?.products?.lanes === true,
+                trafficControls: sensor.calibration?.products?.trafficControls === true,
+            },
+        };
+        const outputs = { ...migrated.outputs };
+        delete outputs.depthTopicId;
+        delete outputs.semanticTopicId;
+        delete outputs.instanceTopicId;
+        delete outputs.detections2dTopicId;
+        delete outputs.detections3dTopicId;
+        delete outputs.lanesTopicId;
+        delete outputs.trafficControlsTopicId;
+        if (sensor.outputs) {
+            for (const key of Object.keys(sensor.outputs)) {
+                if (sensor.outputs[key]) outputs[key] = sensor.outputs[key];
+            }
+        }
+        migrated.outputs = outputs;
+    }
+    if (sourceVersion < RUN_MANIFEST_V7 && migrated.type === "lidar3d") {
+        migrated.calibration = {
+            ...migrated.calibration,
+            products: {
+                pointCloud: true,
+                semanticPointCloud: sensor.calibration?.products?.semanticPointCloud === true,
+                diagnostics: migrated.calibration?.products?.diagnostics !== false,
+            },
+        };
+        const outputs = { ...migrated.outputs };
+        if (!sensor.outputs?.semanticPointCloudTopicId) delete outputs.semanticPointCloudTopicId;
+        migrated.outputs = outputs;
     }
     return migrated;
 }
@@ -182,7 +242,7 @@ function normalizeSensorRig(source = {}, sourceVersion = RUN_MANIFEST_VERSION) {
     const sensors = (Array.isArray(rig.sensors) ? rig.sensors : [])
         .map((entry) => migrateSensorToV4(entry, sourceVersion));
     let syncGroups = Array.isArray(rig.syncGroups) ? rig.syncGroups.map(syncGroup) : [];
-    if (sourceVersion < RUN_MANIFEST_VERSION && sensors.length > 0 && syncGroups.length === 0) {
+    if (sourceVersion < RUN_MANIFEST_V7 && sensors.length > 0 && syncGroups.length === 0) {
         syncGroups = defaultSyncGroups();
     }
     return {
@@ -196,11 +256,24 @@ function normalizeSensorRig(source = {}, sourceVersion = RUN_MANIFEST_VERSION) {
 }
 
 function defaultSyncGroups(topicIds = []) {
+    const perceptionIds = [
+        "front-camera-image",
+        "front-camera-info",
+        "front-lidar-points",
+        "front-camera-depth",
+        "front-camera-semantic",
+        "front-camera-instance",
+        "front-lidar-semantic",
+        "oracle-detections-2d",
+        "oracle-detections-3d",
+        "oracle-lanes",
+        "oracle-traffic-controls",
+    ];
     return [
         {
             id: "perception-primary",
-            description: "Front camera and LiDAR captured on the same simulation step.",
-            topicIds: topicIds.filter((id) => ["front-camera-image", "front-camera-info", "front-lidar-points"].includes(id)),
+            description: "Front camera and LiDAR perception sync group (measured + optional oracle products).",
+            topicIds: topicIds.filter((id) => perceptionIds.includes(id)),
         },
         {
             id: "localization-primary",
@@ -276,7 +349,19 @@ function reconcileSyncGroups(sensorRig, topics = []) {
         syncGroups.push({
             id: "perception-primary",
             description: "Sensors captured on the same simulation step.",
-            topicIds: sensorOutputTopicIds.filter((id) => ["front-camera-image", "front-camera-info", "front-lidar-points"].includes(id)),
+            topicIds: sensorOutputTopicIds.filter((id) => [
+                "front-camera-image",
+                "front-camera-info",
+                "front-lidar-points",
+                "front-camera-depth",
+                "front-camera-semantic",
+                "front-camera-instance",
+                "front-lidar-semantic",
+                "oracle-detections-2d",
+                "oracle-detections-3d",
+                "oracle-lanes",
+                "oracle-traffic-controls",
+            ].includes(id)),
         });
     }
     if (!groupIds.has("localization-primary") && sensors.some((sensor) => sensor.syncGroupId === "localization-primary")) {
@@ -305,6 +390,46 @@ function scenarioSelection(value) {
             .map(([aliasId, sensorId]) => [text(aliasId), text(sensorId)])
             .filter(([aliasId, sensorId]) => aliasId && sensorId)),
         parameterValues: structuredClone(object(source.parameterValues ?? source.parameterOverrides)),
+    };
+}
+
+export function applyManifestOracleProduct(manifest, sensorIndex, productKey, enabled) {
+    const source = object(manifest);
+    const sensors = Array.isArray(source.sensorRig?.sensors) ? [...source.sensorRig.sensors] : [];
+    const sensor = sensors[sensorIndex];
+    if (!sensor) return source;
+    const toggle = (ORACLE_PRODUCT_TOGGLES[sensor.type] || []).find((entry) => entry.product === productKey);
+    if (!toggle) return source;
+    const nextSensor = applySensorOracleProduct(sensor, productKey, enabled);
+    sensors[sensorIndex] = nextSensor;
+    const topicId = nextSensor.outputs?.[toggle.outputKey];
+    let topics = Array.isArray(source.topics) ? [...source.topics] : [];
+    if (enabled && topicId && !topics.some((topic) => topic.id === topicId)) {
+        topics = [...topics, topicFromContract(toggle.contractId, { id: topicId })];
+    }
+    const syncGroups = Array.isArray(source.sensorRig?.syncGroups)
+        ? source.sensorRig.syncGroups.map((group) => ({
+            ...group,
+            topicIds: [...(group.topicIds || [])],
+        }))
+        : [];
+    if (enabled && topicId && sensor.syncGroupId) {
+        const groupIndex = syncGroups.findIndex((group) => group.id === sensor.syncGroupId);
+        if (groupIndex >= 0 && !syncGroups[groupIndex].topicIds.includes(topicId)) {
+            syncGroups[groupIndex] = {
+                ...syncGroups[groupIndex],
+                topicIds: [...syncGroups[groupIndex].topicIds, topicId],
+            };
+        }
+    }
+    return {
+        ...source,
+        sensorRig: {
+            ...object(source.sensorRig),
+            sensors,
+            syncGroups,
+        },
+        topics,
     };
 }
 
@@ -351,7 +476,32 @@ export function createDefaultRunManifest(overrides = {}) {
                     frameId: "front_camera_optical_frame",
                     syncGroupId: "perception-primary",
                     pose: { position: { x: 1.5, y: 0, z: 0.5 } },
-                    outputs: { imageTopicId: "front-camera-image", cameraInfoTopicId: "front-camera-info" },
+                    outputs: {
+                        imageTopicId: "front-camera-image",
+                        cameraInfoTopicId: "front-camera-info",
+                        depthTopicId: "front-camera-depth",
+                        semanticTopicId: "front-camera-semantic",
+                        instanceTopicId: "front-camera-instance",
+                        detections2dTopicId: "oracle-detections-2d",
+                        detections3dTopicId: "oracle-detections-3d",
+                        lanesTopicId: "oracle-lanes",
+                        trafficControlsTopicId: "oracle-traffic-controls",
+                        diagnosticsTopicId: "front-camera-diagnostics",
+                    },
+                    calibration: {
+                        products: {
+                            rgb: true,
+                            cameraInfo: true,
+                            depth: true,
+                            semantic: true,
+                            instance: true,
+                            detections2d: true,
+                            detections3d: true,
+                            lanes: true,
+                            trafficControls: true,
+                            diagnostics: true,
+                        },
+                    },
                 }),
                 createRunSensor("lidar3d", {
                     id: "front-lidar",
@@ -361,7 +511,18 @@ export function createDefaultRunManifest(overrides = {}) {
                     frameId: "front_lidar_frame",
                     syncGroupId: "perception-primary",
                     pose: { position: { x: 0.35, y: 0, z: 0.8 } },
-                    outputs: { pointCloudTopicId: "front-lidar-points" },
+                    outputs: {
+                        pointCloudTopicId: "front-lidar-points",
+                        semanticPointCloudTopicId: "front-lidar-semantic",
+                        diagnosticsTopicId: "front-lidar-diagnostics",
+                    },
+                    calibration: {
+                        products: {
+                            pointCloud: true,
+                            semanticPointCloud: true,
+                            diagnostics: true,
+                        },
+                    },
                 }),
                 ...defaultLocalizationSensors(),
             ],
@@ -382,13 +543,16 @@ export function normalizeRunManifest(value, { allowMissingKind = false } = {}) {
         throw new Error(`Unsupported run manifest kind: ${JSON.stringify(source.kind)}.`);
     }
     const sourceVersion = source.version === undefined ? RUN_MANIFEST_VERSION : Number(source.version);
-    if (![LEGACY_RUN_MANIFEST_VERSION, RUN_MANIFEST_V2, RUN_MANIFEST_V3, RUN_MANIFEST_V4, RUN_MANIFEST_VERSION].includes(sourceVersion)) {
-        throw new Error(`Unsupported run manifest version ${source.version}; expected version 1, 2, 3, 4, or ${RUN_MANIFEST_VERSION}.`);
+    if (![LEGACY_RUN_MANIFEST_VERSION, RUN_MANIFEST_V2, RUN_MANIFEST_V3, RUN_MANIFEST_V4, RUN_MANIFEST_V5, RUN_MANIFEST_V6, RUN_MANIFEST_V7, RUN_MANIFEST_VERSION].includes(sourceVersion)) {
+        throw new Error(`Unsupported run manifest version ${source.version}; expected version 1, 2, 3, 4, 5, 6, 7, or ${RUN_MANIFEST_VERSION}.`);
     }
     const initial = object(source.initialState);
     const clock = object(source.clock);
     const scripts = object(source.scripts);
-    const topics = (Array.isArray(source.topics) ? source.topics : []).map(topic);
+    const migratedTopics = (Array.isArray(source.topics) ? source.topics : []).map(topic);
+    const topics = sourceVersion < RUN_MANIFEST_VERSION
+        ? ensureCandidateReturnTopics(migratedTopics)
+        : migratedTopics;
     const sensorRig = reconcileSyncGroups(normalizeSensorRig(source.sensorRig, sourceVersion), topics);
     return {
         kind: RUN_MANIFEST_KIND,

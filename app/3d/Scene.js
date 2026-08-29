@@ -697,7 +697,13 @@ export default function TotalScene({
         const initialWidth = Math.max(1, Math.round(initialViewport?.width || window.innerWidth));
         const initialHeight = Math.max(1, Math.round(initialViewport?.height || window.innerHeight));
         const camera = new THREE.PerspectiveCamera(75, initialWidth / initialHeight, 0.1, 1000);
-        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        const renderer = new THREE.WebGLRenderer({
+            antialias: false,
+            powerPreference: "high-performance",
+            stencil: false,
+        });
+        renderer.outputColorSpace = THREE.SRGBColorSpace;
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.25));
         let disposed = false;
         const mountNode = mountRef.current;
 

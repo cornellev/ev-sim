@@ -36,6 +36,9 @@ export class TransformRuntime {
         this.frames = calibrationBundle?.frames || {};
         this.staticPublished = false;
         this._tree = buildFrameTree(calibrationBundle);
+        this._staticLinks = buildStaticLinks(calibrationBundle);
+        this._history = [];
+        this._historyLimit = Math.max(8, Number(options.historyLimit) || 240);
     }
 
     publishStaticTransforms(timeNs = 0) {
@@ -67,9 +70,99 @@ export class TransformRuntime {
                 euler: basePose.rotation,
             }),
         ];
+        this._history.push({
+            timeNs,
+            step,
+            mapToOdom: { position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0, w: 1 } },
+            odomToBase: {
+                position: { ...basePose.position },
+                rotation: eulerToQuaternion(basePose.rotation),
+            },
+        });
+        if (this._history.length > this._historyLimit) {
+            this._history.splice(0, this._history.length - this._historyLimit);
+        }
         const payload = buildTFMessage(transforms);
         this._routeOutbound("tf", payload, { captureTimeNs: timeNs, deliveryTimeNs: timeNs, cycle: step });
         return payload;
+    }
+
+    /**
+     * Resolve child→parent transform chain at-or-before captureTimeNs.
+     * Returns parent←child links ordered from target toward child so callers
+     * can compose parent*child repeatedly.
+     */
+    lookupTransformChain(childFrameId, parentFrameId = "map", captureTimeNs = 0) {
+        const child = String(childFrameId || "");
+        const parent = String(parentFrameId || this.frames.map || "map");
+        if (!child) {
+            return { ok: false, code: "missing-frame", message: "Child frame id is required." };
+        }
+        if (child === parent) {
+            return { ok: true, transforms: [] };
+        }
+        const sample = this._sampleAt(captureTimeNs);
+        const path = [];
+        let current = child;
+        const guard = new Set();
+        while (current && current !== parent) {
+            if (guard.has(current)) {
+                return { ok: false, code: "cycle", message: `Frame cycle at "${current}".` };
+            }
+            guard.add(current);
+            const staticLink = this._staticLinks.get(current);
+            if (staticLink) {
+                path.push({
+                    position: { ...staticLink.translation },
+                    rotation: { ...staticLink.rotation },
+                    parentFrameId: staticLink.parentFrameId,
+                    childFrameId: current,
+                });
+                current = staticLink.parentFrameId;
+                continue;
+            }
+            if (current === this.frames.baseLink && sample) {
+                path.push({
+                    position: { ...sample.odomToBase.position },
+                    rotation: { ...sample.odomToBase.rotation },
+                    parentFrameId: this.frames.odom,
+                    childFrameId: current,
+                });
+                current = this.frames.odom;
+                continue;
+            }
+            if (current === this.frames.odom && sample) {
+                path.push({
+                    position: { ...sample.mapToOdom.position },
+                    rotation: { ...sample.mapToOdom.rotation },
+                    parentFrameId: this.frames.map,
+                    childFrameId: current,
+                });
+                current = this.frames.map;
+                continue;
+            }
+            return {
+                ok: false,
+                code: "missing-frame",
+                message: `No transform from "${child}" to "${parent}" at capture time (stuck at "${current}").`,
+            };
+        }
+        if (current !== parent) {
+            return { ok: false, code: "missing-frame", message: `Could not reach parent frame "${parent}".` };
+        }
+        // Compose expects parent*child; reverse so root-most parent is applied first.
+        return { ok: true, transforms: path.reverse(), captureTimeNs: sample?.timeNs ?? captureTimeNs };
+    }
+
+    _sampleAt(captureTimeNs) {
+        if (this._history.length === 0) return null;
+        const target = Number(captureTimeNs) || 0;
+        let chosen = this._history[0];
+        for (const sample of this._history) {
+            if (sample.timeNs <= target) chosen = sample;
+            else break;
+        }
+        return chosen;
     }
 
     resolveCaptureFrames(sensorConfig, vehicles = [], captureTimeNs = 0) {
@@ -119,6 +212,31 @@ function buildFrameTree(bundle) {
     parents.set(bundle?.frames?.baseLink, bundle?.frames?.odom);
     parents.set(bundle?.frames?.odom, bundle?.frames?.map);
     return parents;
+}
+
+function buildStaticLinks(bundle) {
+    const links = new Map();
+    for (const entry of bundle?.staticTransforms || []) {
+        const child = entry.childFrameId;
+        if (!child) continue;
+        links.set(child, {
+            parentFrameId: entry.parentFrameId,
+            translation: {
+                x: Number(entry.translation?.x || 0),
+                y: Number(entry.translation?.y || 0),
+                z: Number(entry.translation?.z || 0),
+            },
+            rotation: entry.rotation?.w !== undefined
+                ? {
+                    x: Number(entry.rotation.x || 0),
+                    y: Number(entry.rotation.y || 0),
+                    z: Number(entry.rotation.z || 0),
+                    w: Number(entry.rotation.w ?? 1),
+                }
+                : eulerToQuaternion(entry.rotation || entry.euler || {}),
+        });
+    }
+    return links;
 }
 
 export function validateMeasurementFrame(tree, sensorConfig, frames = {}) {

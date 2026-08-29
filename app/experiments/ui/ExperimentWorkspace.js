@@ -45,6 +45,9 @@ import {
     normalizeExperimentBaseline,
 } from "../BaselineComparison.js";
 import {
+    AdvancedFields,
+    AdvancedSwitch,
+    AuthoringModeProvider,
     AsyncState,
     Button,
     Field,
@@ -505,9 +508,10 @@ export default function ExperimentWorkspace({ onOpenWorkspace, onOpenReplay, onO
         finally { setBusy(false); }
     };
 
-    const actions = draft ? <><span className={styles.caseCount}>{plan.cases.length} cases</span>{feedback && <span className={styles.headerFeedback}>{feedback}</span>}{dirty && <span className={styles.dirty}>Unsaved</span>}<Button size="compact" onClick={duplicate} disabled={dirty || busy}><IconCopy size={14} /> Duplicate</Button><Button size="compact" onClick={validate} loading={busy}><IconShieldCheck size={14} /> Validate</Button><Button size="compact" variant="primary" disabled={!dirty} loading={busy} onClick={() => save().catch(() => {})}><IconDeviceFloppy size={14} /> Save</Button></> : null;
+    const actions = draft ? <><AdvancedSwitch /><span className={styles.caseCount}>{plan.cases.length} cases</span>{feedback && <span className={styles.headerFeedback}>{feedback}</span>}{dirty && <span className={styles.dirty}>Unsaved</span>}<Button size="compact" onClick={duplicate} disabled={dirty || busy}><IconCopy size={14} /> Duplicate</Button><Button size="compact" onClick={validate} loading={busy}><IconShieldCheck size={14} /> Validate</Button><Button size="compact" variant="primary" disabled={!dirty} loading={busy} onClick={() => save().catch(() => {})}><IconDeviceFloppy size={14} /> Save</Button></> : null;
 
     return (
+        <AuthoringModeProvider>
         <WorkspaceFrame title="Experiment Suite" subtitle={draft?.name} onOpenWorkspace={onOpenWorkspace} actions={actions} className={styles.workspace} contentClassName={styles.workspaceContent} sidebar={<ExperimentCatalog suites={suites} selectedId={selectedId} onSelect={selectSuite} onCreate={() => { if (dirty) setError("Save or discard the current suite before creating another one."); else { setCreating(true); setDraft(null); setSaved(null); setSelectedId(null); } }} />}>
             {loading ? <AsyncState status="loading" title="Loading experiment library" detail="Reading" className={styles.centerState} /> : creating ? <CreateSuite busy={busy} onCreate={createSuite} /> : !draft ? <AsyncState status={error ? "error" : "empty"} title={error ? "Experiment Suite unavailable" : "No suite selected"} detail={error || "Select or create an experiment suite."} className={styles.centerState} /> : (
                 <div className={styles.editor}>
@@ -526,6 +530,7 @@ export default function ExperimentWorkspace({ onOpenWorkspace, onOpenReplay, onO
                 </div>
             )}
         </WorkspaceFrame>
+        </AuthoringModeProvider>
     );
 }
 

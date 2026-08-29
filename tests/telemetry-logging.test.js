@@ -169,6 +169,19 @@ test("SignalStore publishes typed updates, schema changes, events, and bounded t
     assert.ok(messages.some((message) => message.kind === "catalog" && message.action === "removed" && message.path === "imu.accel"));
 });
 
+test("SignalStore notify does not invoke listeners added during the same pass", () => {
+    const store = new SignalStore({}, { sourceId: "notify-snapshot" });
+    let count = 0;
+    store.subscribeSignals({ paths: ["imu.accel"], includeEvents: false, includeCatalog: false }, () => {
+        count += 1;
+        store.subscribeSignals({ paths: ["imu.accel"], includeEvents: false, includeCatalog: false }, () => {
+            count += 1;
+        });
+    });
+    store.publishSignal("imu.accel", 1, { type: "float64", timeUs: 0 });
+    assert.equal(count, 1);
+});
+
 test("SignalStore retains only the latest heavy sample", () => {
     const store = new SignalStore({}, { sourceId: "heavy-source" });
     store.defineSignal({ path: "sensors.camera.frame", type: "bytes", logClass: "heavy" });
@@ -177,6 +190,48 @@ test("SignalStore retains only the latest heavy sample", () => {
     store.publishSignal("sensors.camera.frame", new Uint8Array([3]), { timeUs: 3 });
     assert.equal(store.history("sensors.camera.frame").length, 1);
     assert.deepEqual([...store.history("sensors.camera.frame")[0].value], [3]);
+    // Internal ring must compact immediately — not just logical head.
+    assert.equal(store._history.get("sensors.camera.frame").items.length, 1);
+    const ring = store._history.get("sensors.camera.frame");
+    store.publishSignal("sensors.camera.frame", new Uint8Array([4]), { timeUs: 4 });
+    assert.equal(store._history.get("sensors.camera.frame"), ring);
+});
+
+test("SignalStore skips heavy updates for default subscribers and promotes logClass", () => {
+    const store = new SignalStore({}, { sourceId: "heavy-filter" });
+    const defaultMsgs = [];
+    const pathMsgs = [];
+    const includeMsgs = [];
+    store.subscribeSignals({ includeEvents: false, includeCatalog: false }, (message) => defaultMsgs.push(message));
+    store.subscribeSignals({ paths: ["topics./sensors/points"], includeEvents: false, includeCatalog: false }, (message) => pathMsgs.push(message));
+    store.subscribeSignals({ includeHeavy: true, includeEvents: false, includeCatalog: false }, (message) => includeMsgs.push(message));
+
+    store.publishSignal("topics./sensors/points", {
+        header: { stamp: { sec: 0, nanosec: 0 }, frame_id: "lidar" },
+        height: 1,
+        width: 1,
+        fields: [{ name: "x", offset: 0, datatype: 7, count: 1 }],
+        is_bigendian: false,
+        point_step: 4,
+        row_step: 4,
+        data: new Uint8Array(4),
+        is_dense: true,
+    }, { type: "json", logClass: "standard", timeUs: 1 });
+
+    assert.equal(store.descriptor("topics./sensors/points").logClass, "heavy");
+    assert.equal(defaultMsgs.length, 0);
+    assert.equal(pathMsgs.length, 1);
+    assert.equal(includeMsgs.length, 1);
+    assert.equal(store._history.get("topics./sensors/points").items.length, 1);
+});
+
+test("SignalStore can skip history rings for latest-only publishes", () => {
+    const store = new SignalStore({}, { sourceId: "no-history" });
+    store.publishSignal("devices.lidar.captureAttempts", 1, { type: "uint64", history: false, timeUs: 1 });
+    store.publishSignal("devices.lidar.captureAttempts", 2, { type: "uint64", history: false, timeUs: 2 });
+    assert.equal(store.read("devices.lidar.captureAttempts").value, 2);
+    assert.equal(store.history("devices.lidar.captureAttempts").length, 0);
+    assert.equal(store._history.has("devices.lidar.captureAttempts"), false);
 });
 
 test("optional recording backpressure drops telemetry without pausing the simulation", () => {
