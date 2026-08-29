@@ -16,16 +16,20 @@ import {
 import {
     DEFAULT_REPLAY_PROFILE,
     DEFAULT_TELEMETRY_PROFILE,
+    SIMULATION_RUN_SENSOR_PROFILE,
     globMatches,
     resolveProfileRule,
+    shouldSkipHeavyAlias,
 } from "../app/logging/LogProfiles.js";
 import { RecordingController } from "../app/logging/RecordingController.js";
 import { LogDataset, flattenNumericFields } from "../app/logging/LogDataset.js";
-import { SignalStore } from "../app/scripting/runtime/SignalStore.js";
+import { SignalStore, summarizeBindingValue } from "../app/scripting/runtime/SignalStore.js";
 import { TimelineStore } from "../app/logging/TimelineStore.js";
 import { TelemetryTabBridge } from "../app/telemetry/TelemetryRuntime.js";
 import { LogService } from "../server/logging/LogService.js";
 import { validateDeviceTelemetryId } from "../app/3d/data/DeviceTelemetryId.js";
+import { TopicContractRouter } from "../app/simulation/TopicContractRouter.js";
+import { createDefaultRunManifest } from "../app/simulation/RunManifest.js";
 
 test("SFLog batch encoder tracks payload size and splits before the transport ceiling", () => {
     const encoder = new SFLogBatchEncoder();
@@ -188,13 +192,16 @@ test("SignalStore retains only the latest heavy sample", () => {
     store.publishSignal("sensors.camera.frame", new Uint8Array([1]), { timeUs: 1 });
     store.publishSignal("sensors.camera.frame", new Uint8Array([2]), { timeUs: 2 });
     store.publishSignal("sensors.camera.frame", new Uint8Array([3]), { timeUs: 3 });
+    assert.equal(store.descriptor("sensors.camera.frame").retention, "latest");
     assert.equal(store.history("sensors.camera.frame").length, 1);
     assert.deepEqual([...store.history("sensors.camera.frame")[0].value], [3]);
-    // Internal ring must compact immediately — not just logical head.
-    assert.equal(store._history.get("sensors.camera.frame").items.length, 1);
-    const ring = store._history.get("sensors.camera.frame");
-    store.publishSignal("sensors.camera.frame", new Uint8Array([4]), { timeUs: 4 });
-    assert.equal(store._history.get("sensors.camera.frame"), ring);
+    // Latest retention synthesizes history from `_committed` — no ring allocation.
+    assert.equal(store._history.has("sensors.camera.frame"), false);
+    const latest = new Uint8Array([5]);
+    store.publishSignal("sensors.camera.frame", latest, { timeUs: 5 });
+    assert.equal(store.read("sensors.camera.frame").value, latest);
+    assert.equal(store.snapshot()["sensors.camera.frame"].value, latest);
+    assert.ok(store.revision("sensors.camera.frame") >= 4);
 });
 
 test("SignalStore skips heavy updates for default subscribers and promotes logClass", () => {
@@ -222,7 +229,8 @@ test("SignalStore skips heavy updates for default subscribers and promotes logCl
     assert.equal(defaultMsgs.length, 0);
     assert.equal(pathMsgs.length, 1);
     assert.equal(includeMsgs.length, 1);
-    assert.equal(store._history.get("topics./sensors/points").items.length, 1);
+    assert.equal(store._history.has("topics./sensors/points"), false);
+    assert.equal(store.history("topics./sensors/points").length, 1);
 });
 
 test("SignalStore can skip history rings for latest-only publishes", () => {
@@ -548,4 +556,142 @@ test("LogService recovers valid chunks from interrupted partial recordings", asy
     assert.equal(catalog[0].id, "interrupted");
     assert.equal(catalog[0].status, "incomplete");
     assert.equal((await restarted.getIndex("interrupted")).chunks.length, 1);
+});
+
+test("route status records stay constant-depth with flat lastGood scalars", () => {
+    const store = new SignalStore({}, { sourceId: "route-status" });
+    const manifest = createDefaultRunManifest();
+    const topic = manifest.topics.find((entry) => entry.direction === "input") || manifest.topics[0];
+    const router = new TopicContractRouter(manifest, { telemetry: store });
+    for (let index = 0; index < 40; index += 1) {
+        router._publishStatus(topic, {
+            code: index % 5 === 0 ? "stale" : "ok",
+            status: index % 5 === 0 ? "stale" : "ok",
+            captureTimeNs: index * 1e6,
+            arrivalTimeNs: index * 1e6,
+            applyTimeNs: index * 1e6 + 1000,
+            applyStep: index,
+            sequence: index,
+            routeDownstream: false,
+            lastGoodSequence: index,
+        });
+    }
+    const status = router.lastStatus.get(topic.contractId || topic.id);
+    assert.equal(typeof status.lastGoodSequence === "number" || status.lastGoodSequence === null, true);
+    assert.equal(Object.prototype.hasOwnProperty.call(status, "lastGood"), false);
+    let depth = 0;
+    let cursor = status;
+    while (cursor && typeof cursor === "object" && depth < 8) {
+        if (cursor.lastGood) depth += 1;
+        cursor = cursor.lastGood;
+    }
+    assert.equal(depth, 0);
+    assert.equal(store.descriptor(`diagnostics.topics.${topic.contractId || topic.id}`)?.retention || "none", "none");
+});
+
+test("full-sensor profile skips heavy aliases when canonical device path is enabled", () => {
+    assert.equal(shouldSkipHeavyAlias(SIMULATION_RUN_SENSOR_PROFILE, {
+        path: "oracle.topics.front-camera-depth",
+        type: "json",
+        logClass: "heavy",
+        metadata: { canonicalSignalPath: "devices.front-camera.depth" },
+    }, { isHeavy: true }), true);
+    assert.equal(shouldSkipHeavyAlias(SIMULATION_RUN_SENSOR_PROFILE, {
+        path: "devices.front-camera.depth",
+        type: "bytes",
+        logClass: "heavy",
+    }, { isHeavy: true }), false);
+    assert.equal(shouldSkipHeavyAlias(DEFAULT_REPLAY_PROFILE, {
+        path: "oracle.topics.front-camera-depth",
+        type: "json",
+        logClass: "heavy",
+        metadata: { canonicalSignalPath: "devices.front-camera.depth" },
+    }, { isHeavy: true }), false);
+});
+
+test("binding value summaries never retain Image buffers", () => {
+    const image = {
+        width: 2,
+        height: 2,
+        encoding: "rgba8",
+        data: new Uint8Array(16),
+    };
+    const summary = summarizeBindingValue({ frame: image, ok: true });
+    assert.equal(summary.ok, true);
+    assert.equal(summary.frame.type, "image");
+    assert.equal(summary.frame.byteLength, 16);
+    assert.equal(summary.frame.data, undefined);
+});
+
+test("TelemetryTabBridge keeps remote heavy series latest-only and prunes on unsubscribe", async () => {
+    const originalBroadcastChannel = globalThis.BroadcastChannel;
+    class FakeBroadcastChannel {
+        static rooms = new Map();
+        constructor(name) {
+            this.name = name;
+            this.listeners = new Set();
+            const room = FakeBroadcastChannel.rooms.get(name) || new Set();
+            room.add(this);
+            FakeBroadcastChannel.rooms.set(name, room);
+        }
+        addEventListener(type, listener) { if (type === "message") this.listeners.add(listener); }
+        postMessage(data) {
+            for (const channel of FakeBroadcastChannel.rooms.get(this.name) || []) {
+                if (channel === this) continue;
+                for (const listener of channel.listeners) listener({ data });
+            }
+        }
+        close() { FakeBroadcastChannel.rooms.get(this.name)?.delete(this); }
+    }
+    globalThis.BroadcastChannel = FakeBroadcastChannel;
+
+    const sourceA = new SignalStore({}, { sourceId: "heavy-a" });
+    const sourceB = new SignalStore({}, { sourceId: "heavy-b" });
+    sourceA.defineSignal({ path: "devices.cam.image", type: "bytes", logClass: "heavy" });
+    const bridgeA = new TelemetryTabBridge(sourceA, { channelName: "heavy-telemetry" }).start();
+    const bridgeB = new TelemetryTabBridge(sourceB, { channelName: "heavy-telemetry" }).start();
+    try {
+        bridgeB.requestSource("heavy-a", ["devices.cam.image"]);
+        for (let index = 0; index < 12; index += 1) {
+            sourceA.publishSignal("devices.cam.image", new Uint8Array([index]), {
+                type: "bytes",
+                logClass: "heavy",
+                timeUs: index + 1,
+            });
+        }
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        const series = bridgeB.getSeries("heavy-a", "devices.cam.image");
+        assert.ok(series.length <= 1);
+        bridgeB.requestSource("heavy-a", []);
+        assert.equal(bridgeA.remoteSubscriptions.has("devices.cam.image"), false);
+        assert.equal(bridgeA.remoteSeries.get("heavy-b")?.has("devices.cam.image") || false, false);
+    } finally {
+        bridgeA.stop();
+        bridgeB.stop();
+        globalThis.BroadcastChannel = originalBroadcastChannel;
+    }
+});
+
+test("SFLogCodec does not expand typed arrays into JSON number lists", () => {
+    const encoder = new SFLogBatchEncoder();
+    const huge = new Uint8Array(64 * 1024);
+    huge.fill(7);
+    encoder.addUpdate({
+        path: "topics./sensors/image",
+        timeUs: 1,
+        cycle: 1,
+        entry: {
+            type: "json",
+            value: {
+                width: 128,
+                height: 128,
+                encoding: "rgba8",
+                data: huge,
+            },
+        },
+        descriptor: { path: "topics./sensors/image", type: "json", logClass: "heavy" },
+    });
+    assert.ok(encoder.byteEstimate < huge.byteLength);
+    const batch = encoder.flush();
+    assert.ok(batch.bytes.byteLength < huge.byteLength);
 });

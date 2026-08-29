@@ -95,6 +95,62 @@ export function isHeavyValue(value) {
     return false;
 }
 
+const RETENTION_POLICIES = new Set(["none", "latest", "window"]);
+
+export function resolveRetentionPolicy(descriptor = {}, options = {}) {
+    const explicit = options.retention ?? descriptor?.retention ?? null;
+    if (RETENTION_POLICIES.has(explicit)) return explicit;
+    if (options.history === false) return "none";
+    if (descriptor?.logClass === "heavy" || options.logClass === "heavy") return "latest";
+    if (descriptor?.category === "diagnostics"
+        || descriptor?.category === "health"
+        || /(?:^|\.)(health|summary|status)$/i.test(String(descriptor?.path || ""))) {
+        return "none";
+    }
+    return "window";
+}
+
+/** Compact summary for status/telemetry — never retain Image/PointCloud payloads. */
+export function summarizeBindingValue(value, depth = 0) {
+    if (value == null) return value;
+    if (typeof value !== "object") return value;
+    if (ArrayBuffer.isView(value) || value instanceof ArrayBuffer) {
+        const bytes = ArrayBuffer.isView(value) ? value.byteLength : value.byteLength;
+        return { type: "bytes", byteLength: bytes };
+    }
+    if (isHeavyValue(value)) {
+        return {
+            type: value.encoding != null ? "image" : "pointcloud",
+            width: value.width ?? null,
+            height: value.height ?? null,
+            encoding: value.encoding ?? null,
+            point_step: value.point_step ?? null,
+            byteLength: ArrayBuffer.isView(value.data)
+                ? value.data.byteLength
+                : (value.data instanceof ArrayBuffer ? value.data.byteLength : null),
+        };
+    }
+    if (depth >= 2) {
+        if (Array.isArray(value)) return { type: "array", length: value.length };
+        return { type: "object", keys: Object.keys(value).slice(0, 8) };
+    }
+    if (Array.isArray(value)) {
+        if (value.length > 8) {
+            return {
+                type: "array",
+                length: value.length,
+                sample: value.slice(0, 4).map((item) => summarizeBindingValue(item, depth + 1)),
+            };
+        }
+        return value.map((item) => summarizeBindingValue(item, depth + 1));
+    }
+    const out = {};
+    for (const [key, child] of Object.entries(value)) {
+        out[key] = summarizeBindingValue(child, depth + 1);
+    }
+    return out;
+}
+
 function isHeavyDescriptor(descriptor) {
     return descriptor?.logClass === "heavy";
 }
@@ -192,6 +248,7 @@ export class SignalStore {
         this._previous = new Map();
         this._layers = [];
         this._history = new Map();
+        this._revisions = new Map();
         this._descriptors = new Map();
         this._listeners = new Set();
         this._events = [];
@@ -223,6 +280,10 @@ export class SignalStore {
         const logClass = current?.logClass === "heavy" || nextLogClass === "heavy"
             ? "heavy"
             : nextLogClass;
+        const retention = resolveRetentionPolicy(
+            { ...current, path, logClass, category: descriptor.category || current?.category },
+            { retention: descriptor.retention, history: descriptor.history, logClass },
+        );
         const normalized = {
             path,
             type: descriptor.type || current?.type || "json",
@@ -231,6 +292,7 @@ export class SignalStore {
             category: descriptor.category || current?.category || path.split(".")[0] || "signals",
             replayRole: descriptor.replayRole || current?.replayRole || "derived",
             logClass,
+            retention,
             description: descriptor.description ?? current?.description ?? null,
             metadata: {
                 ...(current?.metadata || {}),
@@ -240,6 +302,9 @@ export class SignalStore {
 
         const typeChanged = Boolean(current && current.type !== normalized.type);
         this._descriptors.set(path, normalized);
+        if (retention === "none" || retention === "latest") {
+            this._history.delete(path);
+        }
         if (typeChanged) {
             this.emitTelemetryEvent({
                 category: "schema",
@@ -273,6 +338,7 @@ export class SignalStore {
         this._committed.delete(normalizedPath);
         this._previous.delete(normalizedPath);
         this._history.delete(normalizedPath);
+        this._revisions.delete(normalizedPath);
         this._notify({ kind: "catalog", action: "removed", path: normalizedPath, descriptor: descriptor ? cloneValue(descriptor) : null });
         return true;
     }
@@ -373,6 +439,7 @@ export class SignalStore {
         this._previous.clear();
         this._layers = [];
         this._history.clear();
+        this._revisions.clear();
         this._events = [];
         this._sequence = 0;
         this.sessionStartedAtMs = monotonicNowMs();
@@ -392,7 +459,10 @@ export class SignalStore {
             [...this._committed.entries()]
                 .filter(([path]) => !selectedPaths || selectedPaths.has(path))
                 .filter(([path]) => includeHeavy || this._descriptors.get(path)?.logClass !== "heavy")
-                .map(([path, entry]) => [path, cloneValue(entry)])
+                .map(([path, entry]) => {
+                    const heavy = isHeavyDescriptor(this._descriptors.get(path)) || isHeavyValue(entry?.value);
+                    return [path, heavy ? cloneEntryShallowHeavy(entry) : cloneValue(entry)];
+                })
         );
     }
 
@@ -431,6 +501,7 @@ export class SignalStore {
             }
 
             this._committed.set(path, heavy ? entry : cloneValue(entry));
+            this._bumpRevision(path);
             this._appendHistory(path, entry);
             this._publishUpdate(path, entry, heavy ? null : previous);
         });
@@ -475,7 +546,14 @@ export class SignalStore {
         const currentDescriptor = this._descriptors.get(normalizedPath);
         const type = options.type || currentDescriptor?.type || inferSignalType(value);
         const inferredHeavy = options.logClass === "heavy" || isHeavyValue(value);
-        if (!currentDescriptor || currentDescriptor.type !== type || (inferredHeavy && currentDescriptor.logClass !== "heavy")) {
+        const retention = resolveRetentionPolicy(
+            { ...currentDescriptor, path: normalizedPath, logClass: inferredHeavy ? "heavy" : (options.logClass || currentDescriptor?.logClass) },
+            { retention: options.retention, history: options.history, logClass: inferredHeavy ? "heavy" : options.logClass },
+        );
+        if (!currentDescriptor
+            || currentDescriptor.type !== type
+            || (inferredHeavy && currentDescriptor.logClass !== "heavy")
+            || currentDescriptor.retention !== retention) {
             this.defineSignal({
                 path: normalizedPath,
                 type,
@@ -484,6 +562,7 @@ export class SignalStore {
                 category: options.category,
                 replayRole: options.replayRole,
                 logClass: inferredHeavy ? "heavy" : options.logClass,
+                retention,
                 description: options.description,
                 metadata: options.descriptorMetadata,
             });
@@ -515,7 +594,11 @@ export class SignalStore {
         }
 
         this._committed.set(normalizedPath, entry);
-        this._appendHistory(normalizedPath, entry, options.maxSamples, { skip: options.history === false });
+        this._bumpRevision(normalizedPath);
+        this._appendHistory(normalizedPath, entry, options.maxSamples, {
+            skip: options.history === false || retention === "none",
+            retention,
+        });
         this._publishUpdate(normalizedPath, entry, heavy ? null : previous);
         return heavy ? cloneEntryShallowHeavy(entry) : cloneValue(entry);
     }
@@ -592,10 +675,14 @@ export class SignalStore {
 
         const age = entryAgeSeconds(entry, now);
         const staleAfter = normalizeStaleAfter(options.staleAfter ?? entry.staleAfter);
+        const heavy = isHeavyPath(this, normalizedPath) || isHeavyValue(entry.value);
+        const materialized = heavy && options.clone !== true
+            ? cloneEntryShallowHeavy(entry)
+            : cloneValue(entry);
 
         return {
             path: normalizedPath,
-            ...cloneValue(entry),
+            ...materialized,
             staleAfter,
             exists: true,
             age,
@@ -611,9 +698,29 @@ export class SignalStore {
         return this.read(path).age;
     }
 
+    revision(path) {
+        const normalizedPath = normalizeSignalPath(path);
+        if (!normalizedPath) return 0;
+        return this._revisions.get(normalizedPath) || 0;
+    }
+
+    _bumpRevision(path) {
+        const normalizedPath = normalizeSignalPath(path);
+        if (!normalizedPath) return 0;
+        const next = (this._revisions.get(normalizedPath) || 0) + 1;
+        this._revisions.set(normalizedPath, next);
+        return next;
+    }
+
     changed(path) {
         const normalizedPath = normalizeSignalPath(path);
-        if (!normalizedPath || !this._committed.has(normalizedPath) || !this._previous.has(normalizedPath)) {
+        if (!normalizedPath || !this._committed.has(normalizedPath)) {
+            return false;
+        }
+        if (isHeavyPath(this, normalizedPath) || isHeavyValue(this._committed.get(normalizedPath)?.value)) {
+            return this.revision(normalizedPath) > 0;
+        }
+        if (!this._previous.has(normalizedPath)) {
             return false;
         }
 
@@ -633,14 +740,26 @@ export class SignalStore {
             timeUs: options.timeUs ?? this.getTimeUs(),
             now: options.now || this.now
         });
-        this._appendHistory(normalizedPath, entry, options.maxSamples);
+        this._appendHistory(normalizedPath, entry, options.maxSamples, {
+            retention: resolveRetentionPolicy(this._descriptors.get(normalizedPath), options),
+            skip: options.history === false,
+        });
         return this.history(normalizedPath);
     }
 
     history(path) {
-        const buffer = this._history.get(normalizeSignalPath(path));
+        const normalizedPath = normalizeSignalPath(path);
+        const descriptor = this._descriptors.get(normalizedPath);
+        const retention = resolveRetentionPolicy(descriptor);
+        const heavy = isHeavyPath(this, normalizedPath);
+        if (retention === "none") return [];
+        if (retention === "latest") {
+            const entry = this._committed.get(normalizedPath);
+            if (!entry) return [];
+            return [heavy ? cloneEntryShallowHeavy(entry) : cloneValue(entry)];
+        }
+        const buffer = this._history.get(normalizedPath);
         if (!buffer) return [];
-        const heavy = isHeavyPath(this, normalizeSignalPath(path));
         return buffer.items.slice(buffer.head).map((entry) => (
             heavy ? cloneEntryShallowHeavy(entry) : cloneValue(entry)
         ));
@@ -653,11 +772,24 @@ export class SignalStore {
         });
     }
 
-    _appendHistory(path, entry, maxSamples = null, { skip = false } = {}) {
+    _appendHistory(path, entry, maxSamples = null, { skip = false, retention = null } = {}) {
         const normalizedPath = normalizeSignalPath(path);
         if (!normalizedPath || skip) return;
 
         const descriptor = this._descriptors.get(normalizedPath);
+        const policy = retention || resolveRetentionPolicy(descriptor, {
+            logClass: isHeavyValue(entry?.value) ? "heavy" : descriptor?.logClass,
+        });
+        if (policy === "none") {
+            this._history.delete(normalizedPath);
+            return;
+        }
+        if (policy === "latest") {
+            // Latest-only: synthesize history() from `_committed`; do not allocate rings.
+            this._history.delete(normalizedPath);
+            return;
+        }
+
         const heavy = isHeavyDescriptor(descriptor) || isHeavyValue(entry?.value);
         const limit = maxSamples !== null && maxSamples !== undefined && Number.isFinite(Number(maxSamples))
             ? Math.max(1, Number(maxSamples))
@@ -686,7 +818,7 @@ export class SignalStore {
             if (activeLength <= limit && sampleTimeUs >= oldestTimeUs) break;
             buffer.head += 1;
         }
-        if (buffer.head > 0 && (buffer.head > 64 || buffer.head * 2 >= buffer.items.length)) {
+        if (buffer.head > 0 && (buffer.head > 16 || buffer.head * 2 >= buffer.items.length)) {
             buffer.items = buffer.items.slice(buffer.head);
             buffer.head = 0;
         }

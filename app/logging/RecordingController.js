@@ -1,8 +1,14 @@
 import { SFLogBatchEncoder } from "./SFLogCodec.js";
-import { DEFAULT_REPLAY_PROFILE, normalizeProfile, resolveProfileRule } from "./LogProfiles.js";
+import {
+    DEFAULT_REPLAY_PROFILE,
+    normalizeProfile,
+    resolveProfileRule,
+    shouldSkipHeavyAlias,
+} from "./LogProfiles.js";
 import { createLogSession, finalizeLogSession, uploadLogBatch } from "./LogClient.js";
 import { getTelemetryStore } from "../telemetry/TelemetryRuntime.js";
 import { SAFE_LOG_BATCH_BYTES, TARGET_LOG_BATCH_BYTES } from "./LogLimits.js";
+import { isHeavyValue } from "../scripting/runtime/SignalStore.js";
 
 const FLUSH_INTERVAL_MS = 250;
 const MAX_QUEUE_BYTES = 16 * 1024 * 1024;
@@ -25,6 +31,19 @@ async function uploadWithRetry(id, sequence, batch) {
 
 function valuesEqual(a, b) {
     if (Object.is(a, b)) return true;
+    if (ArrayBuffer.isView(a) || ArrayBuffer.isView(b)) {
+        if (!(ArrayBuffer.isView(a) && ArrayBuffer.isView(b))) return false;
+        if (a.byteLength !== b.byteLength) return false;
+        // Identity/length only — never content-stringify heavy byte buffers.
+        return a === b;
+    }
+    if (isHeavyValue(a) || isHeavyValue(b)) {
+        return a === b
+            || (a?.width === b?.width
+                && a?.height === b?.height
+                && a?.encoding === b?.encoding
+                && a?.data === b?.data);
+    }
     try { return JSON.stringify(a) === JSON.stringify(b); } catch { return false; }
 }
 
@@ -46,6 +65,10 @@ function copyCaptureEntry(entry) {
         }
     }
     return { ...entry };
+}
+
+function lightSnapshot(store) {
+    return store.snapshot({ includeHeavy: false });
 }
 
 export class RecordingController {
@@ -148,13 +171,14 @@ export class RecordingController {
             this._lastSamples.clear();
             for (const attachment of options.attachments || []) this.encoder.addAttachment(attachment);
             const initialTimeUs = 0;
-            const initialSnapshot = this.store.snapshot();
+            const initialSnapshot = lightSnapshot(this.store);
             const descriptors = this.store.descriptors();
             for (const [path, entry] of Object.entries(initialSnapshot)) {
                 const descriptor = descriptors.find((item) => item.path === path) || { path, type: entry.type || "json" };
                 if (!resolveProfileRule(this.profile, descriptor).enabled) continue;
+                if (shouldSkipHeavyAlias(this.profile, descriptor, { isHeavy: isHeavyValue(entry.value) })) continue;
                 this.encoder.addUpdate({ path, entry, descriptor, timeUs: initialTimeUs, cycle: entry.cycle || 0 });
-                this._lastValues.set(path, entry.value);
+                this._rememberValue(path, entry.value, descriptor);
                 this._lastSamples.set(path, initialTimeUs);
             }
             this.encoder.addCheckpoint(initialSnapshot, descriptors, initialTimeUs);
@@ -167,9 +191,40 @@ export class RecordingController {
         } catch (error) {
             this.status = "error";
             this.error = error.message;
+            this._clearCaptureState();
             this._emit();
             throw error;
         }
+    }
+
+    _rememberValue(path, value, descriptor) {
+        const heavy = descriptor?.logClass === "heavy" || descriptor?.type === "bytes" || isHeavyValue(value);
+        if (heavy) {
+            if (ArrayBuffer.isView(value)) {
+                this._lastValues.set(path, { heavy: true, byteLength: value.byteLength, identity: value });
+                return;
+            }
+            this._lastValues.set(path, {
+                heavy: true,
+                width: value?.width ?? null,
+                height: value?.height ?? null,
+                encoding: value?.encoding ?? null,
+                identity: value?.data ?? value,
+            });
+            return;
+        }
+        this._lastValues.set(path, value);
+    }
+
+    _heavyChanged(previous, value) {
+        if (!previous?.heavy) return true;
+        if (ArrayBuffer.isView(value)) {
+            return previous.identity !== value || previous.byteLength !== value.byteLength;
+        }
+        return previous.identity !== (value?.data ?? value)
+            || previous.width !== (value?.width ?? null)
+            || previous.height !== (value?.height ?? null)
+            || previous.encoding !== (value?.encoding ?? null);
     }
 
     _capture(message) {
@@ -184,33 +239,55 @@ export class RecordingController {
         if (message.kind !== "update") return;
         const recordingTimeUs = this._recordingTimeUs(message.timeUs);
         const descriptor = message.descriptor || { path: message.path, type: message.entry?.type || "json" };
+        const heavy = descriptor.logClass === "heavy" || descriptor.type === "bytes" || isHeavyValue(message.entry?.value);
+        if (shouldSkipHeavyAlias(this.profile, descriptor, { isHeavy: heavy })) return;
         const rule = resolveProfileRule(this.profile, descriptor);
         if (!rule.enabled) return;
         const previous = this._lastValues.get(message.path);
-        if (rule.sampling === "on-change" && valuesEqual(previous, message.entry.value)) return;
+        if (rule.sampling === "on-change") {
+            if (heavy) {
+                if (previous && !this._heavyChanged(previous, message.entry.value)) return;
+            } else if (valuesEqual(previous, message.entry.value)) {
+                return;
+            }
+        }
         if (rule.sampling === "fixed-rate" && rule.rateHz) {
             const intervalUs = 1e6 / rule.rateHz;
             const last = this._lastSamples.get(message.path) ?? Number.NEGATIVE_INFINITY;
             if (recordingTimeUs - last < intervalUs) return;
         }
-        this._lastValues.set(message.path, message.entry.value);
+        this._rememberValue(message.path, message.entry.value, descriptor);
         this._lastSamples.set(message.path, recordingTimeUs);
-        const entry = copyCaptureEntry({ ...message.entry, timeUs: recordingTimeUs });
+        const entry = heavy && ArrayBuffer.isView(message.entry.value)
+            ? copyCaptureEntry({ ...message.entry, timeUs: recordingTimeUs })
+            : (heavy ? { ...message.entry, timeUs: recordingTimeUs, value: message.entry.value } : copyCaptureEntry({ ...message.entry, timeUs: recordingTimeUs }));
         this.encoder.addUpdate({
             ...message,
             timeUs: recordingTimeUs,
             entry,
+            descriptor,
         });
         if (recordingTimeUs - this.lastCheckpointUs >= CHECKPOINT_INTERVAL_US) {
-            this.encoder.addCheckpoint(this.store.snapshot(), this.store.descriptors(), recordingTimeUs);
+            this.encoder.addCheckpoint(lightSnapshot(this.store), this.store.descriptors(), recordingTimeUs);
             this.lastCheckpointUs = recordingTimeUs;
         }
-        if (this.encoder.byteEstimate >= TARGET_LOG_BATCH_BYTES) this._flush();
+        // Flush heavy frames immediately so encoder queue bytes stay bounded.
+        if (heavy || this.encoder.byteEstimate >= TARGET_LOG_BATCH_BYTES) this._flush();
     }
 
     _recordingTimeUs(value) {
         const timeUs = Math.max(0, Number(value || 0));
         return this.timeBase === "simulation" ? timeUs : Math.max(0, timeUs - this.recordingTimeOriginUs);
+    }
+
+    _clearCaptureState() {
+        this._lastValues.clear();
+        this._lastSamples.clear();
+        this.queuedBytes = 0;
+        if (this.encoder) {
+            this.encoder.records = [];
+            this.encoder._byteEstimate = 0;
+        }
     }
 
     _enqueueBatch(batch) {
@@ -219,6 +296,7 @@ export class RecordingController {
                 this._simulation?.pause?.();
                 this.error = "Recording paused the simulation because the backend queue is full.";
                 this.status = "error";
+                this._clearCaptureState();
             } else {
                 this.droppedSamples += 1;
                 this.error = "Optional telemetry was dropped because the backend queue is full.";
@@ -239,6 +317,7 @@ export class RecordingController {
             .catch((error) => {
                 this.error = error.message;
                 this.status = "error";
+                this._clearCaptureState();
                 if (this.haltSimulationOnError) this._simulation?.pause?.();
                 this._emit();
                 throw error;
@@ -261,6 +340,7 @@ export class RecordingController {
         } catch (error) {
             this.error = error.message;
             this.status = "error";
+            this._clearCaptureState();
             if (this.haltSimulationOnError) this._simulation?.pause?.();
             this._emit();
         }
@@ -284,7 +364,7 @@ export class RecordingController {
             : Math.max(0, this.store.getTimeUs() - this.recordingTimeOriginUs);
         this.store.emitTelemetryEvent({ timeUs: finalTimeUs, category: "logging", name: "recording-stopped", payload: { id: this.session.id } });
         this.encoder?.addCheckpoint(
-            this.store.snapshot(),
+            lightSnapshot(this.store),
             this.store.descriptors(),
             finalTimeUs,
         );
@@ -307,12 +387,14 @@ export class RecordingController {
             this.encoder = null;
             this.error = null;
             this.startedAt = null;
+            this._clearCaptureState();
             this._emit();
             if (uploadError && this.haltSimulationOnError) throw uploadError;
             return metadata;
         } catch (error) {
             this.status = "error";
             this.error = error.message;
+            this._clearCaptureState();
             this._emit();
             throw error;
         }

@@ -151,7 +151,7 @@ async function _requestJson(method, url, body = undefined, token = undefined) {
 		return response.json();
 	}
 
-	if (typeof window !== "undefined") {
+	if (globalThis.window === globalThis) {
 		throw new Error("No fetch implementation available in browser environment");
 	}
 
@@ -763,6 +763,7 @@ class Client {
 		backoffMax = 8000,
 		autoSubscribe = true,
 		debug = false,
+		maxBufferedAmount = 8 * 1024 * 1024,
 		onEcho,
 		onNewTopic,
 		onUpdate,
@@ -770,6 +771,7 @@ class Client {
 		onError,
 		onOpen,
 		onClose,
+		onBackpressure,
 	} = {}) {
 		this.url = url;
 		this.reconnect = reconnect;
@@ -777,6 +779,7 @@ class Client {
 		this.backoffMax = backoffMax;
 		this.autoSubscribe = autoSubscribe;
 		this.debug = debug;
+		this.maxBufferedAmount = Math.max(1024, Number(maxBufferedAmount) || 8 * 1024 * 1024);
 
 		this.onEcho = onEcho;
 		this.onNewTopic = onNewTopic;
@@ -785,6 +788,7 @@ class Client {
 		this.onError = onError;
 		this.onOpen = onOpen;
 		this.onClose = onClose;
+		this.onBackpressure = onBackpressure;
 
 		this.ws = null;
 		this.stopped = false;
@@ -793,6 +797,8 @@ class Client {
 		this._ready = Promise.resolve();
 		this._readyResolve = () => {};
 		this._readyReject = () => {};
+		this.droppedPublishBytes = 0;
+		this.backpressureEvents = 0;
 	}
 
 	isOpen() {
@@ -865,21 +871,27 @@ class Client {
 		await this._send(new Uint8Array([OP_CODES.request_all]));
 	}
 
-	async publish(topic, typeStr, value) {
+	async publish(topic, typeStr, value, options = {}) {
 		const payload = buildTopicData(topic, typeStr, value);
 		const out = new Uint8Array(1 + payload.length);
 		out[0] = OP_CODES.publish;
 		out.set(payload, 1);
-		await this._send(out);
+		await this._send(out, options);
 	}
 
-	async publishEncoded(topic, encodedValue) {
+	async publishEncoded(topic, encodedValue, options = {}) {
 		const encodedName = encoder.encode(topic);
-		const payload = buildTopicDataFromEncodedName(encodedName, encodedValue);
-		const out = new Uint8Array(1 + payload.length);
+		const encodedBytes = encodedValue instanceof Uint8Array
+			? encodedValue
+			: new Uint8Array(encodedValue || []);
+		const packetBytes = 1 + 1 + encodedName.length + encodedBytes.length;
+		this._assertSendBudget(packetBytes, options);
+		const out = new Uint8Array(packetBytes);
 		out[0] = OP_CODES.publish;
-		out.set(payload, 1);
-		await this._send(out);
+		out[1] = encodedName.length;
+		out.set(encodedName, 2);
+		out.set(encodedBytes, 2 + encodedName.length);
+		await this._send(out, { ...options, prechecked: true });
 	}
 
 	async syncTypesFromServer(options = {}) {
@@ -1034,13 +1046,39 @@ class Client {
 		return out;
 	}
 
-	async _send(data) {
+	bufferedAmount() {
+		return Number(this.ws?.bufferedAmount || 0);
+	}
+
+	_assertSendBudget(packetBytes, options = {}) {
+		const buffered = this.bufferedAmount();
+		if (buffered + packetBytes <= this.maxBufferedAmount) return;
+		this.backpressureEvents += 1;
+		this.droppedPublishBytes += packetBytes;
+		const error = new Error("websocket-backpressure");
+		error.code = "websocket-backpressure";
+		error.bufferedAmount = buffered;
+		error.packetBytes = packetBytes;
+		error.maxBufferedAmount = this.maxBufferedAmount;
+		error.required = options.required === true;
+		try {
+			this.onBackpressure?.(error);
+		} catch {
+			/* ignore listener failures */
+		}
+		throw error;
+	}
+
+	async _send(data, options = {}) {
 		if (data === undefined) return; // ignore empty sends
 		if (this.stopped) throw new Error("Client stopped");
 
 		await this._ready;
 		if (this.stopped) throw new Error("Client stopped");
 		if (!this.ws || this.ws.readyState !== getWebSocketImpl().OPEN) throw new Error("WebSocket not open");
+		if (!options.prechecked) {
+			this._assertSendBudget(data?.byteLength || data?.length || 0, options);
+		}
 		this.ws.send(data);
 	}
 }
@@ -1083,8 +1121,12 @@ if (typeof module !== "undefined" && module.exports) {
 	};
 }
 
-if (typeof window !== "undefined") {
-	window.ROSClient = {
+// Property access on globalThis — never a bare `window` identifier. Bundlers
+// can fold `typeof window !== "undefined"` to true in client chunks, which
+// then throws inside Web Workers (`window is not defined`).
+const browserWindow = globalThis.window;
+if (browserWindow && browserWindow === globalThis) {
+	browserWindow.ROSClient = {
 		Client,
 		MAX_TOPIC_NAME_LEN,
 		buildTopicData,

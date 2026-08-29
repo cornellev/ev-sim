@@ -100,6 +100,12 @@ export class ManifestCamera extends Device {
         const { captureTimeNs, sampleIndex, rng } = stamp;
         const noise = this.config.noise;
         const frameId = this.config.measurementFrameId || this.config.frameId;
+        // World AABBs / lane polylines are map geometry. Stamping them as the
+        // camera optical frame makes overlay TF treat map meters as optical
+        // and scatter boxes into the void.
+        const mapFrameId = this.transformRuntime?.frames?.map
+            || this.transformRuntime?.bundle?.frames?.map
+            || "map";
         const calibration = this.config.calibration;
         const products = calibration.products || {};
         const outputs = this.config.outputs || {};
@@ -218,19 +224,23 @@ export class ManifestCamera extends Device {
             messages.push({
                 topicId: outputs.detections3dTopicId,
                 signal: "detections3d",
-                frameId,
-                value: buildDetection3DArray({ detections: truth, timeNs: captureTimeNs, frameId }),
+                frameId: mapFrameId,
+                value: buildDetection3DArray({
+                    detections: imageDetections,
+                    timeNs: captureTimeNs,
+                    frameId: mapFrameId,
+                }),
             });
         }
         if (products.lanes === true && outputs.lanesTopicId) {
             messages.push({
                 topicId: outputs.lanesTopicId,
                 signal: "lanes",
-                frameId,
+                frameId: mapFrameId,
                 value: buildStampedLanes({
                     lanes: truth.filter((record) => record.lane).map((record) => record.lane),
                     timeNs: captureTimeNs,
-                    frameId,
+                    frameId: mapFrameId,
                     sequence,
                     syncGroupKey,
                     calibrationHash: this.calibrationHash,
@@ -241,14 +251,14 @@ export class ManifestCamera extends Device {
             messages.push({
                 topicId: outputs.trafficControlsTopicId,
                 signal: "trafficControls",
-                frameId,
+                frameId: mapFrameId,
                 value: buildTrafficControlStates({
                     controls: truth.filter((record) => record.control).map((record) => ({
                         ...record,
                         ...record.control,
                     })),
                     timeNs: captureTimeNs,
-                    frameId,
+                    frameId: mapFrameId,
                     sequence,
                     syncGroupKey,
                     calibrationHash: this.calibrationHash,
@@ -344,6 +354,8 @@ export class ManifestCamera extends Device {
     }
 
     dispose() {
+        this._issuedCapture = null;
+        this.contractPublisher?.dispose?.();
         this.sensorCamera?.removeFromParent?.();
         this.renderProducts?.dispose?.();
         this.sensorCamera = null;

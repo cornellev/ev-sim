@@ -17,11 +17,21 @@ function clone(value) {
     return JSON.parse(JSON.stringify(value));
 }
 
+function isHeavyDescriptor(descriptor) {
+    return descriptor?.logClass === "heavy" || descriptor?.type === "bytes";
+}
+
 function createRing() {
     return { items: [], head: 0 };
 }
 
-function appendRing(ring, value, { maxSamples = HISTORY_SAMPLE_LIMIT, durationUs = HISTORY_DURATION_US } = {}) {
+function appendRing(ring, value, { maxSamples = HISTORY_SAMPLE_LIMIT, durationUs = HISTORY_DURATION_US, latestOnly = false } = {}) {
+    if (latestOnly) {
+        ring.items[0] = value;
+        if (ring.items.length !== 1) ring.items.length = 1;
+        ring.head = 0;
+        return;
+    }
     ring.items.push(clone(value));
     const newestTimeUs = Number(value?.timeUs || 0);
     const oldestTimeUs = Math.max(0, newestTimeUs - durationUs);
@@ -31,7 +41,7 @@ function appendRing(ring, value, { maxSamples = HISTORY_SAMPLE_LIMIT, durationUs
         if (activeLength <= maxSamples && sampleTimeUs >= oldestTimeUs) break;
         ring.head += 1;
     }
-    if (ring.head > 1024 && ring.head * 2 >= ring.items.length) {
+    if (ring.head > 0 && (ring.head > 16 || ring.head * 2 >= ring.items.length)) {
         ring.items = ring.items.slice(ring.head);
         ring.head = 0;
     }
@@ -41,7 +51,7 @@ function ringValues(ring, { fromUs = 0, toUs = Number.POSITIVE_INFINITY } = {}) 
     if (!ring) return [];
     return ring.items.slice(ring.head)
         .filter((sample) => Number(sample.timeUs || 0) >= fromUs && Number(sample.timeUs || 0) <= toUs)
-        .map(clone);
+        .map((sample) => (ArrayBuffer.isView(sample?.value) ? sample : clone(sample)));
 }
 
 function boundedBacklog(samples, limit = BACKLOG_SAMPLE_LIMIT) {
@@ -87,12 +97,14 @@ export class TelemetryTabBridge {
         this.consumerSubscriptions = new Map();
         this.remoteSubscriptions = new Map();
         this.consumerSequences = new Map();
+        this.pendingHeavyUpdates = new Map();
         this.previewSentAt = new Map();
         this.context = { workspace: "unknown", environmentId: null };
         this._unsubscribe = null;
         this._heartbeat = null;
         this._expiry = null;
         this._emitTimer = null;
+        this._heavyFlushTimer = null;
     }
 
     start() {
@@ -116,9 +128,11 @@ export class TelemetryTabBridge {
         clearInterval(this._heartbeat);
         clearInterval(this._expiry);
         clearTimeout(this._emitTimer);
+        clearTimeout(this._heavyFlushTimer);
         this._heartbeat = null;
         this._expiry = null;
         this._emitTimer = null;
+        this._heavyFlushTimer = null;
         this.channel?.close();
         this.channel = null;
         this.remoteSources.clear();
@@ -126,6 +140,7 @@ export class TelemetryTabBridge {
         this.consumerSubscriptions.clear();
         this.remoteSubscriptions.clear();
         this.consumerSequences.clear();
+        this.pendingHeavyUpdates.clear();
     }
 
     setContext(patch = {}) {
@@ -197,6 +212,28 @@ export class TelemetryTabBridge {
         });
     }
 
+    _queueHeavyUpdate(consumerId, message) {
+        const key = `${consumerId}\u0000${message.path}`;
+        this.pendingHeavyUpdates.set(key, { consumerId, message });
+        if (this._heavyFlushTimer) return;
+        this._heavyFlushTimer = setTimeout(() => {
+            this._heavyFlushTimer = null;
+            const pending = [...this.pendingHeavyUpdates.values()];
+            this.pendingHeavyUpdates.clear();
+            for (const item of pending) {
+                const paths = this.consumerSubscriptions.get(item.consumerId);
+                if (!paths?.has(item.message.path)) continue;
+                const updateSequence = (this.consumerSequences.get(item.consumerId) || 0) + 1;
+                this.consumerSequences.set(item.consumerId, updateSequence);
+                this._post("update", {
+                    targetSourceId: item.consumerId,
+                    message: item.message,
+                    updateSequence,
+                });
+            }
+        }, 0);
+    }
+
     _onLocalMessage(message) {
         if (!this.channel) return;
         if (message.kind === "catalog") {
@@ -205,13 +242,18 @@ export class TelemetryTabBridge {
         }
 
         if (message.kind === "update") {
+            const heavy = isHeavyDescriptor(message.descriptor);
             for (const [consumerId, paths] of this.consumerSubscriptions) {
                 if (!paths.has(message.path)) continue;
+                if (heavy) {
+                    this._queueHeavyUpdate(consumerId, message);
+                    continue;
+                }
                 const updateSequence = (this.consumerSequences.get(consumerId) || 0) + 1;
                 this.consumerSequences.set(consumerId, updateSequence);
                 this._post("update", { targetSourceId: consumerId, message, updateSequence });
             }
-            if (message.descriptor?.logClass === "heavy") return;
+            if (heavy) return;
             const now = Date.now();
             if (now - (this.previewSentAt.get(message.path) || 0) < PREVIEW_INTERVAL_MS) return;
             this.previewSentAt.set(message.path, now);
@@ -222,11 +264,22 @@ export class TelemetryTabBridge {
     }
 
     _replaceConsumerSubscription(consumerId, paths) {
+        const previous = this.consumerSubscriptions.get(consumerId) || new Set();
         if (paths.length > 0) this.consumerSubscriptions.set(consumerId, new Set(paths));
         else this.consumerSubscriptions.delete(consumerId);
         this.remoteSubscriptions.clear();
         for (const subscribed of this.consumerSubscriptions.values()) {
             for (const path of subscribed) this.remoteSubscriptions.set(path, (this.remoteSubscriptions.get(path) || 0) + 1);
+        }
+        for (const key of [...this.pendingHeavyUpdates.keys()]) {
+            if (!key.startsWith(`${consumerId}\u0000`)) continue;
+            const path = key.slice(consumerId.length + 1);
+            if (!paths.includes(path)) this.pendingHeavyUpdates.delete(key);
+        }
+        for (const path of previous) {
+            if (paths.includes(path)) continue;
+            if ((this.remoteSubscriptions.get(path) || 0) > 0) continue;
+            for (const byPath of this.remoteSeries.values()) byPath.delete(path);
         }
     }
 
@@ -235,7 +288,13 @@ export class TelemetryTabBridge {
         const newest = this._sourceTimeUs();
         const fromUs = Math.max(0, newest - HISTORY_DURATION_US);
         for (const path of paths) {
-            series[path] = boundedBacklog(this.store.series(path, { fromUs }));
+            const descriptor = this.store.descriptor(path);
+            if (isHeavyDescriptor(descriptor)) {
+                const latest = this.store.history(path).at(-1);
+                series[path] = latest ? [latest] : [];
+            } else {
+                series[path] = boundedBacklog(this.store.series(path, { fromUs }));
+            }
         }
         return {
             ...this._catalogPayload({ paths }),
@@ -310,9 +369,16 @@ export class TelemetryTabBridge {
             source.metadata = message.metadata || source.metadata;
             if (message.series) {
                 const byPath = this.remoteSeries.get(message.sourceId) || new Map();
+                const nextPaths = new Set(Object.keys(message.series));
+                for (const path of [...byPath.keys()]) {
+                    if (!nextPaths.has(path)) byPath.delete(path);
+                }
                 for (const [path, samples] of Object.entries(message.series)) {
+                    const descriptor = source.descriptors.find((item) => item.path === path);
+                    const heavy = isHeavyDescriptor(descriptor);
                     const ring = createRing();
-                    for (const sample of samples || []) appendRing(ring, sample);
+                    const list = heavy ? (samples || []).slice(-1) : (samples || []);
+                    for (const sample of list) appendRing(ring, sample, { latestOnly: heavy });
                     byPath.set(path, ring);
                 }
                 this.remoteSeries.set(message.sourceId, byPath);
@@ -330,9 +396,12 @@ export class TelemetryTabBridge {
             source.snapshot[message.message.path] = message.message.entry;
             source.timeUs = message.timeUs ?? source.timeUs;
             if (message.type === "update") {
+                const descriptor = message.message.descriptor
+                    || source.descriptors.find((item) => item.path === message.message.path);
+                const heavy = isHeavyDescriptor(descriptor);
                 const byPath = this.remoteSeries.get(message.sourceId) || new Map();
                 const ring = byPath.get(message.message.path) || createRing();
-                appendRing(ring, message.message.entry);
+                appendRing(ring, message.message.entry, { latestOnly: heavy });
                 byPath.set(message.message.path, ring);
                 this.remoteSeries.set(message.sourceId, byPath);
                 source.lastUpdateSequence = Math.max(source.lastUpdateSequence || 0, Number(message.updateSequence || 0));

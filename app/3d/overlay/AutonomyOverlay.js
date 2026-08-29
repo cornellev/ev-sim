@@ -194,6 +194,15 @@ export class AutonomyOverlay {
                 z: det.box3d?.center?.y || 0,
             };
             lines.position.set(center.x, center.y, center.z);
+            const rotation = det.box3d?.threeRotation;
+            if (rotation) {
+                lines.rotation.set(
+                    Number(rotation.x || 0),
+                    Number(rotation.y || 0),
+                    Number(rotation.z || 0),
+                    rotation.order || "XYZ",
+                );
+            }
             lines.renderOrder = 1100;
             this._boxes.add(lines);
             if (det.status && det.status !== "ok") {

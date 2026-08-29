@@ -81,9 +81,19 @@ export function warpBrownConrady({
     distortion = [],
     channels = 1,
     interpolation = "nearest",
+    output = null,
 }) {
     if (!data || distortion.every((value) => Number(value) === 0)) return data;
-    const output = new data.constructor(data.length);
+    const dest = output && output.length >= data.length
+        ? output
+        : new data.constructor(data.length);
+    if (dest === data) {
+        throw new Error("warpBrownConrady requires a separate output buffer.");
+    }
+    dest.fill?.(0);
+    if (!dest.fill) {
+        for (let index = 0; index < dest.length; index += 1) dest[index] = 0;
+    }
     const fx = finite(intrinsics?.fx, 1);
     const fy = finite(intrinsics?.fy, 1);
     const cx = finite(intrinsics?.cx);
@@ -100,13 +110,13 @@ export function warpBrownConrady({
             if (sourceX < 0 || sourceX > width - 1 || sourceY < 0 || sourceY > height - 1) continue;
             for (let channel = 0; channel < channels; channel += 1) {
                 const value = sampler(data, width, height, channels, sourceX, sourceY, channel);
-                output[(y * width + x) * channels + channel] = interpolation === "linear"
+                dest[(y * width + x) * channels + channel] = interpolation === "linear"
                     ? Math.round(value)
                     : value;
             }
         }
     }
-    return output;
+    return dest;
 }
 
 export function flipRows(data, width, height, channels = 1, output = new data.constructor(data.length)) {
@@ -131,10 +141,21 @@ export function unpackRgbDepth(r, g, b, a) {
         + a * downscale;
 }
 
-export function rgbaDepthToMetric(rgba, width, height, near, far) {
-    const flipped = flipRows(rgba, width, height, 4);
-    const output = new Float32Array(width * height);
-    for (let index = 0; index < output.length; index += 1) {
+export function rgbaDepthToMetric(rgba, width, height, near, far, {
+    flipScratch = null,
+    output = null,
+} = {}) {
+    const flipped = flipRows(
+        rgba,
+        width,
+        height,
+        4,
+        flipScratch && flipScratch.length >= rgba.length ? flipScratch : undefined,
+    );
+    const dest = output && output.length >= width * height
+        ? output
+        : new Float32Array(width * height);
+    for (let index = 0; index < dest.length; index += 1) {
         const offset = index * 4;
         const depth = unpackRgbDepth(
             flipped[offset] / 255,
@@ -143,13 +164,13 @@ export function rgbaDepthToMetric(rgba, width, height, near, far) {
             flipped[offset + 3] / 255,
         );
         if (depth >= 1 - 1e-7) {
-            output[index] = Number.NaN;
+            dest[index] = Number.NaN;
             continue;
         }
         const viewZ = near * far / ((far - near) * depth - far);
-        output[index] = -viewZ;
+        dest[index] = -viewZ;
     }
-    return output;
+    return dest;
 }
 
 function packedMaterial(value, bytes) {
@@ -171,17 +192,28 @@ function packedMaterial(value, bytes) {
     });
 }
 
-function decodePackedIds(rgba, width, height, bytes, ArrayType) {
-    const flipped = flipRows(rgba, width, height, 4);
-    const output = new ArrayType(width * height);
-    for (let index = 0; index < output.length; index += 1) {
+function decodePackedIds(rgba, width, height, bytes, ArrayType, {
+    flipScratch = null,
+    output = null,
+} = {}) {
+    const flipped = flipRows(
+        rgba,
+        width,
+        height,
+        4,
+        flipScratch && flipScratch.length >= rgba.length ? flipScratch : undefined,
+    );
+    const dest = output && output.length >= width * height
+        ? output
+        : new ArrayType(width * height);
+    for (let index = 0; index < dest.length; index += 1) {
         const offset = index * 4;
         let value = flipped[offset] | (flipped[offset + 1] << 8);
         if (bytes > 2) value |= flipped[offset + 2] << 16;
         if (bytes > 3) value = (value | (flipped[offset + 3] << 24)) >>> 0;
-        output[index] = value;
+        dest[index] = value;
     }
-    return output;
+    return dest;
 }
 
 function isRenderable(object) {
@@ -222,6 +254,10 @@ export class CameraRenderProducts {
         this._slots = Object.create(null);
         this._inflight = null;
         this._asyncDisabled = false;
+        this._depthScratch = new Float32Array(width * height);
+        this._semanticScratch = new Uint16Array(width * height);
+        this._instanceScratch = new Uint32Array(width * height);
+        this._decodeFlipScratch = new Uint8Array(width * height * 4);
     }
 
     _ensureSlot(key) {
@@ -278,6 +314,7 @@ export class CameraRenderProducts {
                 this.target.texture.colorSpace = THREE.NoColorSpace;
                 this.scene.background = null;
                 this.renderer.setClearColor(0x000000, 0);
+                const usedMaterials = new Set();
                 this.scene.traverse((object) => {
                     if (shouldExcludeFromSensorView(object, mode) && object.visible) {
                         states.push({
@@ -307,10 +344,14 @@ export class CameraRenderProducts {
                     const bytes = mode === "semantic" ? 2 : 4;
                     const key = `${mode}:${value}`;
                     if (!this.materials.has(key)) this.materials.set(key, packedMaterial(value, bytes));
+                    usedMaterials.add(key);
                     object.material = mode === "depth" ? this.depthMaterial : this.materials.get(key);
                     object.castShadow = false;
                     object.receiveShadow = false;
                 });
+                if (mode === "semantic" || mode === "instance") {
+                    this._pruneMaterials(usedMaterials, mode);
+                }
             }
             this.renderer.clear?.();
             this.renderer.render(this.scene, this.camera);
@@ -336,11 +377,35 @@ export class CameraRenderProducts {
         }
     }
 
+    _pruneMaterials(usedKeys, modePrefix) {
+        for (const [key, material] of [...this.materials.entries()]) {
+            if (!key.startsWith(`${modePrefix}:`)) continue;
+            if (usedKeys.has(key)) continue;
+            material.dispose?.();
+            this.materials.delete(key);
+        }
+    }
+
     _decodeProduct(key, rgba) {
         if (key === "rgb") return flipRows(rgba, this.width, this.height, 4, this.flipBuffer);
-        if (key === "depth") return rgbaDepthToMetric(rgba, this.width, this.height, this.near, this.far);
-        if (key === "semantic") return decodePackedIds(rgba, this.width, this.height, 2, Uint16Array);
-        if (key === "instance") return decodePackedIds(rgba, this.width, this.height, 4, Uint32Array);
+        if (key === "depth") {
+            return rgbaDepthToMetric(rgba, this.width, this.height, this.near, this.far, {
+                flipScratch: this._decodeFlipScratch,
+                output: this._depthScratch,
+            });
+        }
+        if (key === "semantic") {
+            return decodePackedIds(rgba, this.width, this.height, 2, Uint16Array, {
+                flipScratch: this._decodeFlipScratch,
+                output: this._semanticScratch,
+            });
+        }
+        if (key === "instance") {
+            return decodePackedIds(rgba, this.width, this.height, 4, Uint32Array, {
+                flipScratch: this._decodeFlipScratch,
+                output: this._instanceScratch,
+            });
+        }
         return rgba;
     }
 
@@ -348,7 +413,13 @@ export class CameraRenderProducts {
         if (!this._inflight) return null;
         for (const key of this._inflight) {
             const slot = this._slots[key];
-            if (!slot?.pack.poll(slot.cpu)) return null;
+            if (!slot?.pack.poll(slot.cpu)) {
+                if (slot?.pack?.isStale?.()) {
+                    slot.pack.reset?.();
+                    this._inflight = null;
+                }
+                return null;
+            }
         }
         const result = {};
         for (const key of this._inflight) {
@@ -395,15 +466,30 @@ export class CameraRenderProducts {
     _captureSync(products = {}) {
         const result = {};
         if (products.rgb) result.rgb = flipRows(this._render({ mode: "rgb" }), this.width, this.height, 4, this.flipBuffer);
-        if (products.depth) result.depth = rgbaDepthToMetric(
-            this._render({ mode: "depth" }), this.width, this.height, this.near, this.far,
-        );
-        if (products.semantic) result.semantic = decodePackedIds(
-            this._render({ mode: "semantic" }), this.width, this.height, 2, Uint16Array,
-        );
-        if (products.instance) result.instance = decodePackedIds(
-            this._render({ mode: "instance" }), this.width, this.height, 4, Uint32Array,
-        );
+        if (products.depth) {
+            result.depth = rgbaDepthToMetric(
+                this._render({ mode: "depth" }), this.width, this.height, this.near, this.far, {
+                    flipScratch: this._decodeFlipScratch,
+                    output: this._depthScratch,
+                },
+            );
+        }
+        if (products.semantic) {
+            result.semantic = decodePackedIds(
+                this._render({ mode: "semantic" }), this.width, this.height, 2, Uint16Array, {
+                    flipScratch: this._decodeFlipScratch,
+                    output: this._semanticScratch,
+                },
+            );
+        }
+        if (products.instance) {
+            result.instance = decodePackedIds(
+                this._render({ mode: "instance" }), this.width, this.height, 4, Uint32Array, {
+                    flipScratch: this._decodeFlipScratch,
+                    output: this._instanceScratch,
+                },
+            );
+        }
         return result;
     }
 
@@ -417,6 +503,10 @@ export class CameraRenderProducts {
         this._inflight = null;
         this.pixelBuffer = null;
         this.flipBuffer = null;
+        this._depthScratch = null;
+        this._semanticScratch = null;
+        this._instanceScratch = null;
+        this._decodeFlipScratch = null;
         this._asyncDisabled = false;
     }
 }

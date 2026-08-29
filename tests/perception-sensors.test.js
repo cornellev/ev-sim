@@ -18,6 +18,7 @@ import {
     buildSemanticPointCloud2,
 } from "../app/3d/devices/SensorMessages.js";
 import { SensorPublisher } from "../app/3d/devices/SensorPublisher.js";
+import { ManifestCamera } from "../app/3d/devices/ManifestCamera.js";
 import {
     distortNormalizedPoint,
     undistortNormalizedPoint,
@@ -137,6 +138,23 @@ test("zero distortion warp reuses the source buffer", () => {
         channels: 4,
     });
     assert.equal(warped, rgb);
+});
+
+test("warpBrownConrady can reuse an explicit output buffer", () => {
+    const rgb = new Uint8Array(4 * 4 * 4);
+    rgb[0] = 255;
+    const output = new Uint8Array(rgb.length);
+    const warped = warpBrownConrady({
+        data: rgb,
+        width: 4,
+        height: 4,
+        intrinsics: { fx: 2, fy: 2, cx: 1.5, cy: 1.5 },
+        distortion: [0.1, 0, 0, 0, 0],
+        channels: 4,
+        interpolation: "nearest",
+        output,
+    });
+    assert.equal(warped, output);
 });
 
 test("known LiDAR range maps into REP-103 sensor-frame coordinates", () => {
@@ -329,6 +347,59 @@ test("GPU sensor captures are skipped when the display frame has no remaining bu
     publisher.update({ step: 4, timeNs: 66_666_668 });
     assert.equal(captures, 1);
     assert.equal(publisher.health.capturedFrames, 1);
+});
+
+test("oracle 3D detections stamp map and only include in-view objects", () => {
+    const camera = new ManifestCamera({
+        id: "front-camera",
+        type: "camera",
+        measurementFrameId: "front_camera_optical_frame",
+        frameId: "front_camera_optical_frame",
+        pose: { position: { x: 1.5, y: 0, z: 0.5 }, rotation: { x: 0, y: 0, z: 0, order: "XYZ" } },
+        noise: {},
+        outputs: {
+            detections2dTopicId: "oracle-detections-2d",
+            detections3dTopicId: "oracle-detections-3d",
+            lanesTopicId: "oracle-lanes",
+        },
+        calibration: {
+            width: 8,
+            height: 8,
+            products: { detections2d: true, detections3d: true, lanes: true },
+        },
+    }, { transformRuntime: { frames: { map: "map" } } });
+
+    const inView = {
+        instanceId: 11,
+        semanticId: 2,
+        semanticClass: "vehicle",
+        visible: true,
+        worldBounds: { center: { x: 8, y: 1, z: 0.6 }, size: { x: 4, y: 2, z: 1.4 } },
+    };
+    const outOfView = {
+        instanceId: 12,
+        semanticId: 2,
+        semanticClass: "vehicle",
+        visible: true,
+        worldBounds: { center: { x: 80, y: 0, z: 0.6 }, size: { x: 4, y: 2, z: 1.4 } },
+    };
+    const messages = camera._buildMessages({
+        captureTimeNs: 1e9,
+        sampleIndex: 0,
+        rng: { next: () => 0.5 },
+        truth: [inView, outOfView, { lane: { points: [{ x: 1, y: 2, z: 0 }] } }],
+        imageDetections: [inView],
+    }, {});
+
+    const det3d = messages.find((entry) => entry.signal === "detections3d");
+    assert.equal(det3d.frameId, "map");
+    assert.equal(det3d.value.header.frame_id, "map");
+    assert.equal(det3d.value.detections.length, 1);
+    assert.equal(det3d.value.detections[0].bbox.center.position.x, 8);
+    const lanes = messages.find((entry) => entry.signal === "lanes");
+    assert.equal(lanes.value.header.frame_id, "map");
+    const det2d = messages.find((entry) => entry.signal === "detections2d");
+    assert.equal(det2d.frameId, "front_camera_optical_frame");
 });
 
 test("oracle topics stay under oracle.* and do not populate active.*", () => {

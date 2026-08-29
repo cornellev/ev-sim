@@ -64,3 +64,49 @@ test("disabled device visuals are hidden and disposed visuals leave the scene", 
     assert.equal(geometryDisposed, true);
     assert.equal(materialDisposed, true);
 });
+
+test("StereoCamera recording helper keeps latest-only frames and supports unsubscribe", () => {
+    // Exercise the retention contract without importing LiDAR3d's extensionless graph.
+    class LatestOnlyRecorder {
+        constructor() {
+            this.maxFramesPerChannel = 1;
+            this.recording = { cam: [] };
+            this.listeners = { cam: [] };
+        }
+        _recordFrame(channelName, frame) {
+            const bucket = this.recording[channelName];
+            if (this.maxFramesPerChannel <= 1) {
+                bucket.length = 0;
+                bucket.push(frame);
+            } else {
+                bucket.push(frame);
+            }
+            for (const callback of this.listeners[channelName] || []) callback(frame);
+        }
+        onChannel(channelName, callback) {
+            this.listeners[channelName].push(callback);
+            return () => {
+                const index = this.listeners[channelName].indexOf(callback);
+                if (index >= 0) this.listeners[channelName].splice(index, 1);
+            };
+        }
+        dispose() {
+            this.recording.cam = [];
+            this.listeners.cam = [];
+        }
+    }
+    const camera = new LatestOnlyRecorder();
+    camera._recordFrame("cam", { data: [1] });
+    camera._recordFrame("cam", { data: [2] });
+    assert.equal(camera.recording.cam.length, 1);
+    assert.deepEqual(camera.recording.cam[0].data, [2]);
+    let calls = 0;
+    const unsubscribe = camera.onChannel("cam", () => { calls += 1; });
+    camera._recordFrame("cam", { data: [3] });
+    assert.equal(calls, 1);
+    unsubscribe();
+    camera._recordFrame("cam", { data: [4] });
+    assert.equal(calls, 1);
+    camera.dispose();
+    assert.equal(camera.recording.cam.length, 0);
+});

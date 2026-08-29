@@ -471,6 +471,7 @@ test("SimulationEngine exposes the two scenario phases only for scenario runs", 
         "transforms",
         "sensors",
         "delivery",
+        "candidate-viz",
         "scenario-after-telemetry",
         "assertions",
     ]);

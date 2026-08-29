@@ -663,6 +663,7 @@ export function normalizeRunSensor(value = {}, index = 0, registry = sensorTypeR
         },
         determinism: specific.determinism,
         maxQueueFrames: positiveInteger(source.maxQueueFrames, 8),
+        maxQueueBytes: positiveInteger(source.maxQueueBytes, 64 * 1024 * 1024),
     };
 }
 

@@ -7,6 +7,9 @@ export const SIMULATION_RUN_SENSOR_PROFILE = Object.freeze({
     id: "simulation-run-full-sensors",
     name: "Simulation Run: Full Sensors",
     mode: "replay-safe",
+    // Canonical heavy samples are devices.<sensor>.<signal> encoded bytes.
+    // Raw topic/oracle/active Image/PointCloud aliases are skipped when that
+    // canonical path is enabled (see shouldSkipHeavyAlias).
     rules: [
         { pattern: "**", enabled: true, sampling: "on-change", rateHz: null },
         { pattern: "simulation.**", enabled: true, sampling: "every-update", rateHz: null },
@@ -19,6 +22,57 @@ export const SIMULATION_RUN_SENSOR_PROFILE = Object.freeze({
         { pattern: "visualization.**", enabled: true, sampling: "every-update", rateHz: null },
     ],
 });
+
+const HEAVY_ALIAS_PREFIXES = Object.freeze([
+    "topics.",
+    "active.topics.",
+    "oracle.topics.",
+    "candidate.topics.",
+    "reference.topics.",
+]);
+
+const DEVICE_HEAVY_SUFFIX_BLOCKLIST = Object.freeze([
+    "output",
+    "health",
+    "summary",
+    "droppedFrames",
+    "errors",
+    "diagnostics",
+]);
+
+export function isCanonicalDeviceHeavyPath(path) {
+    const parts = String(path || "").split(".");
+    if (parts.length < 3 || parts[0] !== "devices") return false;
+    const suffix = parts[parts.length - 1];
+    return !DEVICE_HEAVY_SUFFIX_BLOCKLIST.includes(suffix);
+}
+
+export function isHeavyAliasPath(path) {
+    const normalized = String(path || "");
+    return HEAVY_ALIAS_PREFIXES.some((prefix) => normalized.startsWith(prefix));
+}
+
+export function shouldSkipHeavyAlias(profileValue, descriptor, { isHeavy = false } = {}) {
+    if (!isHeavy && descriptor?.logClass !== "heavy" && descriptor?.type !== "bytes") return false;
+    const path = descriptor?.path;
+    if (!path || isCanonicalDeviceHeavyPath(path)) return false;
+    if (!isHeavyAliasPath(path) && descriptor?.type !== "bytes" && descriptor?.logClass !== "heavy") return false;
+    const canonical = descriptor?.metadata?.canonicalSignalPath;
+    if (!canonical || !isCanonicalDeviceHeavyPath(canonical)) {
+        // Full-sensor profile: skip raw heavy topic/oracle/active aliases by default
+        // whenever any devices.** rule is enabled.
+        if (!isHeavyAliasPath(path)) return false;
+        const devicesRule = resolveProfileRule(profileValue, { path: "devices.__canonical__", replayRole: "derived", logClass: "heavy" });
+        return devicesRule.enabled;
+    }
+    const canonicalRule = resolveProfileRule(profileValue, {
+        path: canonical,
+        type: "bytes",
+        logClass: "heavy",
+        replayRole: "derived",
+    });
+    return canonicalRule.enabled;
+}
 
 export const DEFAULT_REPLAY_PROFILE = Object.freeze({
     kind: PROFILE_KIND,

@@ -11,9 +11,12 @@ import {
     validateInboundPayload,
     VISUALIZATION_STATUS,
 } from "../app/autonomy/AutonomyVisualizationModel.js";
+import { composeRep103Poses } from "../app/autonomy/CoordinateFrames.js";
 import { CandidateOutputRuntime } from "../app/autonomy/CandidateOutputRuntime.js";
+import { buildCalibrationBundle } from "../app/autonomy/CalibrationBundle.js";
 import { createDefaultRunManifest } from "../app/simulation/RunManifest.js";
 import { TopicContractRouter } from "../app/simulation/TopicContractRouter.js";
+import { TransformRuntime } from "../app/simulation/TransformRuntime.js";
 import { SignalStore } from "../app/scripting/runtime/SignalStore.js";
 import { LogDataset } from "../app/logging/LogDataset.js";
 
@@ -53,6 +56,76 @@ test("normalizeDetections3D maps REP-103 centers into three-space", () => {
     assert.equal(box.box3d.threeCenter.y, 0.5);
     assert.equal(box.box3d.threeCenter.z, 1);
     assert.equal(box.classId, "vehicle");
+});
+
+function detection3dPayload({ frameId, position, size = { x: 1, y: 1, z: 1 } }) {
+    const payload = fixturePayloadForType("vision_msgs/Detection3DArray");
+    payload.header.frame_id = frameId;
+    payload.detections = [{
+        header: payload.header,
+        results: [{ hypothesis: { class_id: "vehicle", score: 1 }, pose: { pose: { position: { x: 0, y: 0, z: 0 }, orientation: { x: 0, y: 0, z: 0, w: 1 } }, covariance: new Array(36).fill(0) } }],
+        bbox: {
+            center: { position, orientation: { x: 0, y: 0, z: 0, w: 1 } },
+            size,
+        },
+        id: "1",
+        visibility: 1,
+        occlusion: 0,
+    }];
+    return payload;
+}
+
+test("map-frame 3D detections keep world centers when TF is applied", () => {
+    const bundle = buildCalibrationBundle(createDefaultRunManifest());
+    const tf = new TransformRuntime(bundle, { routeOutbound() {}, getTopic() { return null; } });
+    tf.publishDynamicTransforms(0, 0, [{
+        telemetryId: "ego",
+        position: { x: 10, y: 0, z: 0 },
+        rotation: { x: 0, y: 0, z: 0, order: "XYZ" },
+    }]);
+    const runtime = new CandidateOutputRuntime({ transformRuntime: tf });
+    const transformToMap = runtime._transformToMapBinder(0);
+    const [box] = normalizeDetections3D(
+        detection3dPayload({ frameId: "map", position: { x: 12, y: -3, z: 0.7 } }),
+        { source: "oracle", transformToMap },
+    );
+    assert.equal(box.status, VISUALIZATION_STATUS.OK);
+    assert.equal(box.box3d.center.x, 12);
+    assert.equal(box.box3d.center.y, -3);
+    assert.equal(box.box3d.center.z, 0.7);
+    assert.equal(box.box3d.threeCenter.x, 12);
+    assert.equal(box.box3d.threeCenter.y, 0.7);
+    assert.equal(box.box3d.threeCenter.z, -3);
+});
+
+test("optical-frame 3D detections compose child-most-first into map", () => {
+    const bundle = buildCalibrationBundle(createDefaultRunManifest());
+    const tf = new TransformRuntime(bundle, { routeOutbound() {}, getTopic() { return null; } });
+    tf.publishDynamicTransforms(0, 0, [{
+        telemetryId: "ego",
+        position: { x: 10, y: 0, z: 0 },
+        rotation: { x: 0, y: 0, z: 0, order: "XYZ" },
+    }]);
+    const chain = tf.lookupTransformChain("front_camera_optical_frame", "map", 0);
+    assert.equal(chain.ok, true);
+    let pose = { position: { x: 0, y: 0, z: 2 }, rotation: { x: 0, y: 0, z: 0, w: 1 } };
+    for (const link of chain.transforms) {
+        pose = composeRep103Poses(link, pose);
+    }
+    // Ego at Three (10,0,0) = REP (10,0,0). Camera mount (1.5,0,0.5).
+    // Optical +Z is mount +X, so 2 m along optical Z lands at x=13.5, z=0.5.
+    assert.ok(Math.abs(pose.position.x - 13.5) < 1e-6, JSON.stringify(pose.position));
+    assert.ok(Math.abs(pose.position.y) < 1e-6, JSON.stringify(pose.position));
+    assert.ok(Math.abs(pose.position.z - 0.5) < 1e-6, JSON.stringify(pose.position));
+
+    const runtime = new CandidateOutputRuntime({ transformRuntime: tf });
+    const [box] = normalizeDetections3D(
+        detection3dPayload({ frameId: "front_camera_optical_frame", position: { x: 0, y: 0, z: 2 } }),
+        { source: "candidate", transformToMap: runtime._transformToMapBinder(0) },
+    );
+    assert.equal(box.status, VISUALIZATION_STATUS.OK);
+    assert.ok(Math.abs(box.box3d.center.x - 13.5) < 1e-6);
+    assert.ok(Math.abs(box.box3d.center.z - 0.5) < 1e-6);
 });
 
 test("normalizeOdometry exposes covariance ellipse radii", () => {

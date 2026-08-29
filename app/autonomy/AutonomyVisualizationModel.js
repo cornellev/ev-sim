@@ -6,7 +6,9 @@
 import {
     composeRep103Poses,
     extractHeaderCaptureTimeNs,
+    rep103OrientationToThreeEuler,
     rep103PoseToThree,
+    rep103ToThreeVector,
     rotateVectorByQuaternion,
 } from "./CoordinateFrames.js";
 
@@ -210,33 +212,24 @@ export function normalizeDetections3D(payload, {
         };
         let mapPose = { position: center, rotation: orientation };
         let transformOk = true;
+        const sourceFrameId = String(det.header?.frame_id || frameId);
         if (typeof transformToMap === "function") {
             const resolved = transformToMap({
                 position: center,
                 rotation: orientation,
-                frameId: det.header?.frame_id || frameId,
+                frameId: sourceFrameId,
                 captureTimeNs: extractHeaderCaptureTimeNs(det) ?? stampNs,
             });
             if (resolved?.ok) mapPose = resolved.pose;
             else transformOk = false;
         }
-        const three = rep103PoseToThree({
-            position: mapPose.position,
-            rotation: mapPose.rotation?.w !== undefined
-                ? { x: 0, y: 0, z: 0 }
-                : mapPose.rotation,
-        });
-        // Prefer quaternion path for Three orientation when available.
-        const threeCenter = {
-            x: Number(mapPose.position.x || 0),
-            y: Number(mapPose.position.z || 0),
-            z: Number(mapPose.position.y || 0),
-        };
+        const threeCenter = rep103ToThreeVector(mapPose.position);
+        const threeRotation = rep103OrientationToThreeEuler(mapPose.rotation);
         return {
             id: String(det.id || `${source}-3d-${index}`),
             source,
             status: transformOk ? status : VISUALIZATION_STATUS.MISSING_FRAME,
-            frameId: String(det.header?.frame_id || frameId),
+            frameId: sourceFrameId,
             captureTimeNs: extractHeaderCaptureTimeNs(det) ?? stampNs,
             ...classFromResults(det.results),
             box3d: {
@@ -245,6 +238,7 @@ export function normalizeDetections3D(payload, {
                 orientation: mapPose.rotation,
                 threeCenter,
                 threeSize: { x: size.x, y: size.z, z: size.y },
+                threeRotation,
             },
             visibility: Number(det.visibility ?? 1),
             occlusion: Number(det.occlusion ?? 0),
@@ -275,6 +269,7 @@ export function normalizeLegacyBoxes(payload, { source = "candidate", status = V
                 y: Number(box.size?.z || 0),
                 z: Number(box.size?.y || 0),
             },
+            threeRotation: { x: 0, y: 0, z: 0, order: "XYZ" },
         },
         visibility: 1,
         occlusion: 0,

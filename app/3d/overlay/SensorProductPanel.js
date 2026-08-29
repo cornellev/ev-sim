@@ -10,9 +10,9 @@ import { oracleTopicSignalPath } from "../../scripting/runtime/SignalPaths.js";
 const PANEL_COLLAPSED_KEY = "sf.sensor-product-panel.collapsed";
 
 const PANEL_PATHS = Object.freeze([
-    "topics./sensors/front_camera/image_raw",
     "devices.front-camera.image",
     "devices.front_camera.image",
+    "topics./sensors/front_camera/image_raw",
     oracleTopicSignalPath("front-camera-depth"),
     oracleTopicSignalPath("front-camera-semantic"),
     "visualization.perception.candidate",
@@ -20,6 +20,16 @@ const PANEL_PATHS = Object.freeze([
     "visualization.perception.status",
     "diagnostics.topics.perception-detections-2d",
 ]);
+
+function clearPaintCache(cache) {
+    if (!cache) return;
+    cache.stamp = "";
+    cache.pixels = null;
+    cache.rgb = null;
+    cache.lastPath = "";
+    cache.width = 0;
+    cache.height = 0;
+}
 
 const PRODUCT_MODES = [
     { id: "rgb", label: "RGB" },
@@ -214,14 +224,14 @@ function readStatus(store) {
 }
 
 function paintProduct(canvas, store, mode, cache) {
-    const ctx = canvas?.getContext("2d", { alpha: false });
+    const ctx = canvas?.getContext("2d", { alpha: false, willReadFrequently: true });
     if (!canvas || !ctx) return readStatus(store);
 
     const rgb = mode === "rgb" && (!cache?.lastPath || isCameraProductPath(cache.lastPath) || !cache.rgb)
         ? readFirstImage(store, [
-            "topics./sensors/front_camera/image_raw",
             "devices.front-camera.image",
             "devices.front_camera.image",
+            "topics./sensors/front_camera/image_raw",
         ])
         : cache?.rgb || null;
     const depth = mode === "depth"
@@ -304,31 +314,34 @@ export function SensorProductPanel({
     const paintCacheRef = useRef({ stamp: "", pixels: null, rgb: null, width: 0, height: 0, lastPath: "" });
     const store = useMemo(() => getTelemetryStore(), []);
     const [mode, setMode] = useState("rgb");
-    const [collapsed, setCollapsed] = useState(false);
+    const [collapsed, setCollapsed] = useState(() => readCollapsedPreference());
     const [status, setStatus] = useState({ ageNs: null, code: null });
-    modeRef.current = mode;
-    collapsedRef.current = collapsed;
 
     useEffect(() => {
-        setCollapsed(readCollapsedPreference());
-    }, []);
+        modeRef.current = mode;
+        collapsedRef.current = collapsed;
+    }, [mode, collapsed]);
 
-    paintRef.current = () => {
-        if (collapsedRef.current && !canvasRef.current) {
-            const next = readStatus(store);
+    useEffect(() => {
+        paintRef.current = () => {
+            if (collapsedRef.current && !canvasRef.current) {
+                clearPaintCache(paintCacheRef.current);
+                const next = readStatus(store);
+                setStatus((previous) => (
+                    previous.ageNs === next.ageNs && previous.code === next.code ? previous : next
+                ));
+                return;
+            }
+            const next = paintProduct(canvasRef.current, store, modeRef.current, paintCacheRef.current);
             setStatus((previous) => (
                 previous.ageNs === next.ageNs && previous.code === next.code ? previous : next
             ));
-            return;
-        }
-        const next = paintProduct(canvasRef.current, store, modeRef.current, paintCacheRef.current);
-        setStatus((previous) => (
-            previous.ageNs === next.ageNs && previous.code === next.code ? previous : next
-        ));
-    };
+        };
+    }, [store]);
 
     useEffect(() => {
         let frame = 0;
+        const cache = paintCacheRef.current;
         const schedule = () => {
             if (frame) return;
             frame = requestAnimationFrame(() => {
@@ -340,20 +353,21 @@ export function SensorProductPanel({
             paths: PANEL_PATHS,
             includeEvents: false,
             includeCatalog: false,
+            includeHeavy: true,
         }, (message) => {
-            paintCacheRef.current.lastPath = message?.path;
+            cache.lastPath = message?.path;
             schedule();
         });
         paintRef.current();
         return () => {
             unsubscribe();
             if (frame) cancelAnimationFrame(frame);
+            clearPaintCache(cache);
         };
     }, [store]);
 
     useEffect(() => {
-        paintCacheRef.current.stamp = "";
-        paintCacheRef.current.lastPath = "";
+        clearPaintCache(paintCacheRef.current);
         paintRef.current();
     }, [mode, collapsed]);
 

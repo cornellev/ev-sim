@@ -42,7 +42,16 @@ function jsonStringify(value) {
     return JSON.stringify(value, (_key, item) => {
         if (typeof item === "bigint") return { __sflogBigInt: item.toString() };
         if (ArrayBuffer.isView(item)) {
-            return { __sflogTypedArray: item.constructor.name, values: Array.from(item) };
+            // Never expand typed arrays into JSON number lists — that can turn one
+            // Image/PointCloud into tens of megabytes of temporary text.
+            return {
+                __sflogTypedArray: item.constructor.name,
+                byteOffset: item.byteOffset,
+                byteLength: item.byteLength,
+            };
+        }
+        if (item instanceof ArrayBuffer) {
+            return { __sflogArrayBuffer: true, byteLength: item.byteLength };
         }
         return item;
     });
@@ -54,6 +63,12 @@ function jsonParse(value) {
         if (item?.__sflogTypedArray && Array.isArray(item.values)) {
             const ctor = globalThis[item.__sflogTypedArray];
             return typeof ctor === "function" ? new ctor(item.values) : item.values;
+        }
+        if (item?.__sflogTypedArray && Number.isFinite(item.byteLength)) {
+            return { type: item.__sflogTypedArray, byteLength: item.byteLength };
+        }
+        if (item?.__sflogArrayBuffer && Number.isFinite(item.byteLength)) {
+            return { type: "ArrayBuffer", byteLength: item.byteLength };
         }
         return item;
     });
@@ -371,12 +386,13 @@ function estimateRecordBytes(record, schemas) {
             }));
     }
     if (record.kind === "update") {
-        const schema = schemas.get(record.id);
-        const encoded = encodeSignalValue(schema?.type || "json", record.value);
+        const encodedLength = record.encodedValue instanceof Uint8Array
+            ? record.encodedValue.byteLength
+            : encodeSignalValue(schemas.get(record.id)?.type || "json", record.value).byteLength;
         // CYCLE framing amortized: tag + timestamp + cycle + count + id + sized payload
         return 1 + 10 + estimateVaruintBytes(record.cycle || 0) + 1
             + estimateVaruintBytes(record.id)
-            + estimateSizedBytes(encoded.byteLength);
+            + estimateSizedBytes(encodedLength);
     }
     if (record.kind === "event") {
         return 1
@@ -389,9 +405,10 @@ function estimateRecordBytes(record, schemas) {
     if (record.kind === "checkpoint") {
         let size = 1 + estimateVaruintBytes(record.timeUs) + estimateVaruintBytes(record.values.length);
         for (const value of record.values) {
-            const schema = schemas.get(value.id);
-            const encoded = encodeSignalValue(schema?.type || "json", value.value);
-            size += estimateVaruintBytes(value.id) + estimateSizedBytes(encoded.byteLength);
+            const encodedLength = value.encodedValue instanceof Uint8Array
+                ? value.encodedValue.byteLength
+                : encodeSignalValue(schemas.get(value.id)?.type || "json", value.value).byteLength;
+            size += estimateVaruintBytes(value.id) + estimateSizedBytes(encodedLength);
         }
         return size;
     }
@@ -440,12 +457,17 @@ export class SFLogBatchEncoder {
         const id = this._schema(descriptor);
         const timeUs = Math.max(0, Math.round(message.timeUs ?? message.entry.timeUs ?? 0));
         this._range(timeUs);
+        const type = this.schemas.get(id)?.type || normalizeType(descriptor.type);
+        const encodedValue = message.encodedValue instanceof Uint8Array
+            ? message.encodedValue
+            : encodeSignalValue(type, message.entry.value);
         this._pushRecord({
             kind: "update",
             id,
             timeUs,
             cycle: message.cycle ?? message.entry.cycle ?? 0,
-            value: message.entry.value,
+            encodedValue,
+            value: null,
         });
     }
 
@@ -461,7 +483,14 @@ export class SFLogBatchEncoder {
         for (const [path, entry] of Object.entries(snapshot || {})) {
             const descriptor = descriptors.find((item) => item.path === path) || { path, type: entry.type || "json" };
             if (!['input', 'state'].includes(descriptor.replayRole)) continue;
-            values.push({ id: this._schema(descriptor), value: entry.value });
+            if (descriptor.logClass === "heavy") continue;
+            const id = this._schema(descriptor);
+            const type = this.schemas.get(id)?.type || normalizeType(descriptor.type);
+            values.push({
+                id,
+                encodedValue: encodeSignalValue(type, entry.value),
+                value: null,
+            });
         }
         const normalizedTime = Math.max(0, Math.round(timeUs || 0));
         this._range(normalizedTime);
@@ -591,7 +620,9 @@ function encodeRecords(records, schemas) {
             writer.varuint(group.length);
             for (const update of group) {
                 const schema = schemas.get(update.id);
-                const encoded = encodeSignalValue(schema.type, update.value);
+                const encoded = update.encodedValue instanceof Uint8Array
+                    ? update.encodedValue
+                    : encodeSignalValue(schema.type, update.value);
                 writer.varuint(update.id);
                 writer.sizedBytes(encoded);
             }
@@ -610,8 +641,11 @@ function encodeRecords(records, schemas) {
             writer.varuint(record.values.length);
             for (const value of record.values) {
                 const schema = schemas.get(value.id);
+                const encoded = value.encodedValue instanceof Uint8Array
+                    ? value.encodedValue
+                    : encodeSignalValue(schema.type, value.value);
                 writer.varuint(value.id);
-                writer.sizedBytes(encodeSignalValue(schema.type, value.value));
+                writer.sizedBytes(encoded);
             }
         } else if (record.kind === "attachment") {
             writer.uint8(RECORD_TAGS.ATTACHMENT);

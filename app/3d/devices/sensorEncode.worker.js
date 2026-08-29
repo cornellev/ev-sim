@@ -7,7 +7,6 @@ import {
 	encodeTopicValue,
 	registerMsgDefinition,
 } from "../../client/Client.js";
-import { initSensorKernels } from "../../native/SensorKernels.js";
 
 let schemasReady = false;
 
@@ -25,7 +24,6 @@ self.onmessage = async (event) => {
 	try {
 		if (init) {
 			ensureSchemas(schemas);
-			await initSensorKernels();
 			self.postMessage({ id, ok: true, kind: "init" });
 			return;
 		}

@@ -618,7 +618,7 @@ export class ScriptManager {
                     status: "success",
                     result: null,
                     outputs: this.getExternalOutputs(),
-                    signals: this.signalStore.snapshot(),
+                    signals: this.signalStore.snapshot({ includeHeavy: false }),
                     e: null
                 };
             }
@@ -629,7 +629,7 @@ export class ScriptManager {
                 status: "success",
                 result,
                 outputs: this.getExternalOutputs(),
-                signals: this.signalStore.snapshot(),
+                signals: this.signalStore.snapshot({ includeHeavy: false }),
                 e: null
             };
         } catch (err) {
@@ -638,7 +638,7 @@ export class ScriptManager {
                 status: "failure",
                 result: null,
                 outputs: {},
-                signals: this.signalStore.snapshot(),
+                signals: this.signalStore.snapshot({ includeHeavy: false }),
                 e: {
                     name: err?.name || "Error",
                     message: err?.message || String(err),

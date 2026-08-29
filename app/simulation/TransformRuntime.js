@@ -150,8 +150,9 @@ export class TransformRuntime {
         if (current !== parent) {
             return { ok: false, code: "missing-frame", message: `Could not reach parent frame "${parent}".` };
         }
-        // Compose expects parent*child; reverse so root-most parent is applied first.
-        return { ok: true, transforms: path.reverse(), captureTimeNs: sample?.timeNs ?? captureTimeNs };
+        // Links are parent←child walked from the child. Compose parent*child
+        // from the child frame outward: p_map = T_map_a * … * T_b_child * p_child.
+        return { ok: true, transforms: path, captureTimeNs: sample?.timeNs ?? captureTimeNs };
     }
 
     _sampleAt(captureTimeNs) {

@@ -1,4 +1,4 @@
-import { SignalStore, getByPath } from "../runtime/SignalStore.js";
+import { SignalStore, getByPath, summarizeBindingValue } from "../runtime/SignalStore.js";
 import {
     SIGNAL_PATHS,
     listSignalPaths,
@@ -430,10 +430,18 @@ export class BindingRuntime {
                 if (!entry.exists) return;
 
                 let valueKey;
-                try {
-                    valueKey = JSON.stringify(entry.value);
-                } catch {
-                    valueKey = String(entry.value);
+                const revision = this.signalStore.revision?.(binding.trigger.path);
+                if (Number.isFinite(revision) && revision > 0
+                    && (entry.type === "bytes" || this.signalStore.descriptor?.(binding.trigger.path)?.logClass === "heavy"
+                        || (entry.value && typeof entry.value === "object"
+                            && (ArrayBuffer.isView(entry.value?.data) || entry.value?.data instanceof ArrayBuffer)))) {
+                    valueKey = `rev:${revision}`;
+                } else {
+                    try {
+                        valueKey = JSON.stringify(entry.value);
+                    } catch {
+                        valueKey = String(entry.value);
+                    }
                 }
 
                 const previous = this._signalWatch.get(binding.id);
@@ -527,6 +535,7 @@ export class BindingRuntime {
                 category: "bindings",
                 replayRole: "derived",
                 logClass: "standard",
+                retention: "none",
             });
             if (["failure", "invalid"].includes(patch.lastStatus)) {
                 this.signalStore.emitTelemetryEvent({
@@ -572,7 +581,7 @@ export class BindingRuntime {
                 runCount: previous.runCount + 1,
                 lastStatus: "failure",
                 lastError: run.e?.message || "Script execution failed.",
-                lastInputs: inputs,
+                lastInputs: summarizeBindingValue(inputs),
                 lastOutputs: null
             });
             return { status: "failure", error: run.e?.message, inputs };
@@ -589,16 +598,17 @@ export class BindingRuntime {
             runCount: previous.runCount + 1,
             lastStatus: publishError ? "failure" : "success",
             lastError: publishError,
-            lastInputs: inputs,
-            lastOutputs: run.outputs || {}
+            lastInputs: summarizeBindingValue(inputs),
+            lastOutputs: summarizeBindingValue(run.outputs || {})
         });
 
-        this.signalStore.publishSignal(`bindings.${binding.id}.outputs`, run.outputs || {}, {
+        this.signalStore.publishSignal(`bindings.${binding.id}.outputs`, summarizeBindingValue(run.outputs || {}), {
             source: "bindings",
             type: "json",
             category: "bindings",
             replayRole: "derived",
             logClass: "standard",
+            retention: "none",
         });
 
         if (manual) this._emit();

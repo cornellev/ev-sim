@@ -28,10 +28,16 @@ export async function initSensorKernels() {
     initPromise = (async () => {
         try {
             const mod = await import("./sensor_kernels/sensor_kernels.js");
-            // Prefer a static public URL so Next/webpack do not need wasm loaders.
-            const wasmUrl = typeof window !== "undefined"
-                ? "/native/sensor_kernels_bg.wasm"
-                : undefined;
+            // Workers cannot fetch relative URLs. Resolve against the page origin.
+            let wasmUrl;
+            try {
+                const origin = globalThis.location?.origin;
+                if (origin && origin !== "null") {
+                    wasmUrl = new URL("/native/sensor_kernels_bg.wasm", origin).href;
+                }
+            } catch {
+                wasmUrl = undefined;
+            }
             await mod.default(wasmUrl ? { module_or_path: wasmUrl } : undefined);
             wasmModule = mod;
             return mod;

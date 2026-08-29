@@ -7,6 +7,7 @@ import {
     lidarDirectionRep103,
     quaternionInverse,
     quaternionMultiply,
+    quaternionToEuler,
     cameraLinkToOpticalRotation,
     rep103PoseToThree,
     rep103ToThreeVector,
@@ -36,7 +37,8 @@ test("Three.js camera looks along mount forward instead of ROS optical in scene 
     assert.ok(Math.abs(up.y - 1) < 1e-10);
 
     const rosAppliedInThree = rotateVectorByQuaternion({ x: 0, y: 0, z: -1 }, cameraLinkToOpticalRotation());
-    assert.ok(rosAppliedInThree.y < -0.5);
+    // ROS optical maps optical +Z to mount +X, so Three's look (-Z) maps to -X.
+    assert.ok(rosAppliedInThree.x < -0.5);
 });
 
 test("vector basis mapping matches vehicle axis conventions", () => {
@@ -51,6 +53,14 @@ test("quaternion composition and inversion are consistent", () => {
     const restored = quaternionMultiply(product, quaternionInverse(b));
     assert.ok(Math.abs(restored.x - a.x) < 1e-12);
     assert.ok(Math.abs(restored.w - a.w) < 1e-12);
+});
+
+test("XYZ euler round-trips through quaternion", () => {
+    const euler = { x: 0.2, y: -0.3, z: 0.4, order: "XYZ" };
+    const back = quaternionToEuler(eulerToQuaternion(euler));
+    assert.ok(Math.abs(back.x - euler.x) < 1e-10);
+    assert.ok(Math.abs(back.y - euler.y) < 1e-10);
+    assert.ok(Math.abs(back.z - euler.z) < 1e-10);
 });
 
 test("LiDAR cardinal directions use REP-103 axes", () => {
@@ -99,6 +109,18 @@ test("calibration bundles are deterministic and hash-stable", () => {
     assert.ok(left.staticTransforms.some((entry) => entry.childFrameId === "front_camera_optical_frame"));
 });
 
+test("camera_link to optical maps optical +Z to mount forward", () => {
+    const q = cameraLinkToOpticalRotation();
+    const forward = rotateVectorByQuaternion({ x: 0, y: 0, z: 1 }, q);
+    const right = rotateVectorByQuaternion({ x: 1, y: 0, z: 0 }, q);
+    const down = rotateVectorByQuaternion({ x: 0, y: 1, z: 0 }, q);
+    assert.ok(Math.abs(forward.x - 1) < 1e-10);
+    assert.ok(Math.abs(forward.y) < 1e-10);
+    assert.ok(Math.abs(forward.z) < 1e-10);
+    assert.ok(Math.abs(right.y + 1) < 1e-10);
+    assert.ok(Math.abs(down.z + 1) < 1e-10);
+});
+
 test("camera mount and optical transforms compose to measurement pose", () => {
     const mount = {
         position: { x: 1, y: 0, z: 0.5 },
@@ -106,7 +128,7 @@ test("camera mount and optical transforms compose to measurement pose", () => {
     };
     const optical = {
         position: { x: 0, y: 0, z: 0 },
-        rotation: eulerToQuaternion({ x: -Math.PI / 2, y: 0, z: -Math.PI / 2, order: "XYZ" }),
+        rotation: cameraLinkToOpticalRotation(),
     };
     const composed = composeRep103Poses(mount, optical);
     assert.ok(composed.position.x > 0.99 && composed.position.x < 1.01);

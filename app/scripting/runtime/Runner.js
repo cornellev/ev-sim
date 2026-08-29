@@ -222,7 +222,7 @@ export class VisualScriptRunner {
                 status: "success",
                 outputs: { ...this.externalOutputs },
                 result,
-                signals: this.signalStore.snapshot(),
+                signals: this.signalStore.snapshot({ includeHeavy: false }),
                 e: null
             };
         } catch (error) {
@@ -233,7 +233,7 @@ export class VisualScriptRunner {
                 status: "failure",
                 outputs: {},
                 result: null,
-                signals: this.signalStore.snapshot(),
+                signals: this.signalStore.snapshot({ includeHeavy: false }),
                 e: createRuntimeError(error)
             };
         }

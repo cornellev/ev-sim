@@ -1,4 +1,4 @@
-import { LiDAR3d } from "./LiDAR3d";
+import { LiDAR3d } from "./LiDAR3d.js";
 import * as THREE from "three";
 import { withPixelPackBufferUnbound } from "../util/glReadback.js";
 
@@ -15,7 +15,9 @@ export class StereoCamera extends LiDAR3d {
             phiRange,
             camera = {},
             channels = {},
-            maxFramesPerChannel = 120,
+            // Latest-only by default; opt into history with maxFramesPerChannel > 1.
+            maxFramesPerChannel = 1,
+            recordHistory = false,
         } = settings;
 
         const cameraWidth = camera.width ?? 320;
@@ -46,7 +48,10 @@ export class StereoCamera extends LiDAR3d {
             camera: channels.camera || `${this.name}/camera`,
         };
 
-        this.maxFramesPerChannel = Math.max(1, maxFramesPerChannel);
+        this.recordHistory = recordHistory === true || Number(maxFramesPerChannel) > 1;
+        this.maxFramesPerChannel = this.recordHistory
+            ? Math.max(1, Number(maxFramesPerChannel) || 1)
+            : 1;
 
         this.recording = {
             [this.channels.lidar]: [],
@@ -169,9 +174,14 @@ export class StereoCamera extends LiDAR3d {
         const bucket = this.recording[channelName];
         if (!bucket) return;
 
-        bucket.push(frame);
-        if (bucket.length > this.maxFramesPerChannel) {
-            bucket.splice(0, bucket.length - this.maxFramesPerChannel);
+        if (this.maxFramesPerChannel <= 1) {
+            bucket.length = 0;
+            bucket.push(frame);
+        } else {
+            bucket.push(frame);
+            if (bucket.length > this.maxFramesPerChannel) {
+                bucket.splice(0, bucket.length - this.maxFramesPerChannel);
+            }
         }
 
         const callbacks = this.listeners[channelName] || [];
@@ -186,6 +196,12 @@ export class StereoCamera extends LiDAR3d {
         }
 
         this.listeners[channelName].push(callback);
+        return () => {
+            const list = this.listeners[channelName];
+            if (!list) return;
+            const index = list.indexOf(callback);
+            if (index >= 0) list.splice(index, 1);
+        };
     }
 
     getChannelFrames(channelName) {
@@ -203,6 +219,8 @@ export class StereoCamera extends LiDAR3d {
     }
 
     dispose() {
+        for (const key of Object.keys(this.recording)) this.recording[key] = [];
+        for (const key of Object.keys(this.listeners)) this.listeners[key] = [];
         this.sensorCamera?.removeFromParent?.();
         this.cameraRenderTarget?.dispose?.();
         this.sensorCamera = null;

@@ -70,10 +70,27 @@ export class PixelPackSlot {
         gl.bufferData(gl.PIXEL_PACK_BUFFER, this.byteLength, gl.STREAM_READ);
         gl.bindBuffer(gl.PIXEL_PACK_BUFFER, previous);
         this.sync = null;
+        this.pollAttempts = 0;
+        this.begunAtMs = 0;
+        this.maxPollAttempts = 240;
+        this.maxAgeMs = 2000;
     }
 
     get pending() {
         return Boolean(this.sync);
+    }
+
+    isStale() {
+        if (!this.sync) return false;
+        if (this.pollAttempts >= this.maxPollAttempts) return true;
+        if (this.begunAtMs > 0 && Date.now() - this.begunAtMs > this.maxAgeMs) return true;
+        return false;
+    }
+
+    reset() {
+        this._deleteSync();
+        this.pollAttempts = 0;
+        this.begunAtMs = 0;
     }
 
     /**
@@ -83,6 +100,8 @@ export class PixelPackSlot {
     begin(x, y, width, height, format, type) {
         const gl = this.gl;
         this._deleteSync();
+        this.pollAttempts = 0;
+        this.begunAtMs = Date.now();
         const previous = gl.getParameter(gl.PIXEL_PACK_BUFFER_BINDING);
         gl.bindBuffer(gl.PIXEL_PACK_BUFFER, this.pbo);
         const previousAlignment = gl.getParameter(gl.PACK_ALIGNMENT);
@@ -101,9 +120,17 @@ export class PixelPackSlot {
     poll(dest) {
         if (!this.sync) return false;
         const gl = this.gl;
+        this.pollAttempts += 1;
         const status = gl.clientWaitSync(this.sync, 0, 0);
-        if (status === gl.TIMEOUT_EXPIRED) return false;
+        if (status === gl.TIMEOUT_EXPIRED) {
+            if (this.isStale()) {
+                this.reset();
+            }
+            return false;
+        }
         this._deleteSync();
+        this.pollAttempts = 0;
+        this.begunAtMs = 0;
         if (status === gl.WAIT_FAILED) return false;
         const previous = gl.getParameter(gl.PIXEL_PACK_BUFFER_BINDING);
         gl.bindBuffer(gl.PIXEL_PACK_BUFFER, this.pbo);
@@ -113,7 +140,7 @@ export class PixelPackSlot {
     }
 
     dispose() {
-        this._deleteSync();
+        this.reset();
         if (this.pbo) {
             this.gl.deleteBuffer(this.pbo);
             this.pbo = null;

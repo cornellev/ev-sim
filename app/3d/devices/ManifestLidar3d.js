@@ -183,4 +183,12 @@ export class ManifestLidar3d extends LiDAR3d {
             });
         }
     }
+
+    dispose() {
+        this._issuedCapture = null;
+        this.captureContext = null;
+        this.captureMessages = [];
+        this.contractPublisher?.dispose?.();
+        super.dispose();
+    }
 }

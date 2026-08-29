@@ -23,9 +23,9 @@ function resolvePayloadLogClass(value, metadataLogClass) {
 }
 
 function shouldRouteDownstream(topic) {
+    if (topic?.routeDownstream === false) return false;
+    if (topic?.routeDownstream === true) return true;
     if (topic?.direction !== "input") return AUTHORITY_MODES.includes(topic?.authority);
-    if (topic.routeDownstream === false) return false;
-    if (topic.routeDownstream === true) return true;
     // Controls default on; perception/localization observational by default.
     return topic.stage === "controls";
 }
@@ -206,47 +206,87 @@ export class TopicContractRouter {
         const producer = metadata.producer || topic.producer || "simulator";
         const producerPath = this.producerPath(topic, producer);
         const logClass = resolvePayloadLogClass(info.value, metadata.logClass);
-        this._publish(producerPath, info.value, {
-            ...metadata,
-            type: "json",
-            source: producer,
-            category: "topics",
-            replayRole: producer === "oracle" ? "derived" : "state",
-            logClass,
-            descriptorMetadata: {
-                rosType: topicRosType(topic),
+        const observationalOracle = producer === "oracle" && metadata.observationalOracle === true;
+        const routeActive = !observationalOracle && shouldRouteDownstream(topic);
+        // Publish producer once. When intentionally routing active, `_writeActive`
+        // owns the producer write so the same payload is not stored twice.
+        if (!routeActive) {
+            this._publish(producerPath, info.value, {
+                ...metadata,
+                type: "json",
+                source: producer,
+                category: "topics",
+                replayRole: producer === "oracle" ? "derived" : "state",
+                logClass,
+                history: logClass === "heavy" ? undefined : false,
+                descriptorMetadata: {
+                    rosType: topicRosType(topic),
+                    topic: topic.name,
+                    contractId: topic.contractId,
+                    producer,
+                    authority: topic.authority,
+                    captureTimeNs: metadata.captureTimeNs ?? null,
+                    scheduledDeliveryTimeNs: metadata.scheduledDeliveryTimeNs ?? null,
+                    deliveryTimeNs: metadata.deliveryTimeNs ?? null,
+                    captureStep: metadata.captureStep ?? null,
+                    scheduledDeliveryStep: metadata.scheduledDeliveryStep ?? null,
+                    actualDeliveryStep: metadata.actualDeliveryStep ?? metadata.cycle ?? null,
+                    sequenceId: metadata.sequenceId ?? null,
+                    syncGroupKey: metadata.syncGroupKey ?? null,
+                    calibrationHash: metadata.calibrationHash ?? null,
+                    canonicalSignalPath: metadata.canonicalSignalPath ?? null,
+                },
+            });
+            this.lastProducer.set(topic.contractId || topic.id, {
+                value: info.value,
                 topic: topic.name,
+                typeStr: info.typeStr ?? topicRosType(topic),
                 contractId: topic.contractId,
                 producer,
-                authority: topic.authority,
+                sequence: metadata.sequenceId ?? null,
                 captureTimeNs: metadata.captureTimeNs ?? null,
-                scheduledDeliveryTimeNs: metadata.scheduledDeliveryTimeNs ?? null,
                 deliveryTimeNs: metadata.deliveryTimeNs ?? null,
-                captureStep: metadata.captureStep ?? null,
-                scheduledDeliveryStep: metadata.scheduledDeliveryStep ?? null,
-                actualDeliveryStep: metadata.actualDeliveryStep ?? metadata.cycle ?? null,
-                syncGroupKey: metadata.syncGroupKey ?? null,
-                calibrationHash: metadata.calibrationHash ?? null,
-                sequenceId: metadata.sequenceId ?? null,
-            },
-        });
-        // Observational oracle products are ground-truth references, not an
-        // authority selection. Keep them exclusively under oracle.topics.*.
-        if (!(producer === "oracle" && metadata.observationalOracle === true)
-            && shouldRouteDownstream(topic)) {
-            this._writeActive(topic, info, {
+            });
+            this._publishStatus(topic, {
+                code: "ok",
+                status: "ok",
+                captureTimeNs: metadata.captureTimeNs ?? null,
+                arrivalTimeNs: metadata.deliveryTimeNs ?? metadata.captureTimeNs ?? 0,
+                applyTimeNs: metadata.deliveryTimeNs ?? metadata.captureTimeNs ?? 0,
+                applyStep: metadata.cycle ?? 0,
+                sequence: metadata.sequenceId ?? null,
+                usedFallback: false,
+                routeDownstream: false,
+                lastGoodSequence: metadata.sequenceId ?? null,
+            });
+        } else {
+            this._writeActive(topic, {
+                ...info,
+                captureTimeNs: metadata.captureTimeNs ?? info.captureTimeNs ?? null,
+            }, {
                 applyTimeNs: metadata.deliveryTimeNs ?? metadata.captureTimeNs ?? 0,
                 arrivalTimeNs: metadata.deliveryTimeNs ?? metadata.captureTimeNs ?? 0,
                 applyStep: metadata.cycle ?? 0,
                 logClass,
+                producerOverride: producer,
+                metadata,
             });
         }
         return { ok: true, producerPath };
     }
 
-    _writeActive(topic, info, { applyStep, applyTimeNs, arrivalTimeNs, usedFallback = false, logClass = null } = {}) {
+    _writeActive(topic, info, {
+        applyStep,
+        applyTimeNs,
+        arrivalTimeNs,
+        usedFallback = false,
+        logClass = null,
+        producerOverride = null,
+        metadata = null,
+    } = {}) {
         const sequence = ++this.sequence;
         const payloadLogClass = resolvePayloadLogClass(info.value, logClass);
+        const producer = producerOverride || topic.producer;
         // Keep one last envelope by reference for heavy payloads — do not structuredClone clouds.
         const value = payloadLogClass === "heavy"
             ? info.value
@@ -256,7 +296,7 @@ export class TopicContractRouter {
             topic: topic.name,
             typeStr: info.typeStr ?? topicRosType(topic),
             contractId: topic.contractId,
-            producer: topic.producer,
+            producer,
             authority: topic.authority,
             routeDownstream: shouldRouteDownstream(topic),
             sequence,
@@ -266,24 +306,25 @@ export class TopicContractRouter {
             applyTimeNs,
             usedFallback,
         };
-        const producerPath = this.producerPath(topic, topic.producer);
+        const producerPath = this.producerPath(topic, producer);
         this._publish(producerPath, envelope.value, {
             timeUs: Math.round(applyTimeNs / 1000),
             cycle: applyStep,
-            source: topic.producer,
+            source: producer,
             type: "json",
             category: "topics",
-            replayRole: "input",
+            replayRole: topic.direction === "input" ? "input" : (producer === "oracle" ? "derived" : "state"),
             logClass: payloadLogClass,
             descriptorMetadata: {
                 rosType: envelope.typeStr,
                 topic: topic.name,
                 contractId: topic.contractId,
-                producer: topic.producer,
+                producer,
                 sequenceId: sequence,
                 captureTimeNs: envelope.captureTimeNs,
                 arrivalTimeNs,
                 applyTimeNs,
+                canonicalSignalPath: metadata?.canonicalSignalPath ?? null,
             },
         });
         this.lastProducer.set(topic.contractId || topic.id, envelope);
@@ -305,6 +346,7 @@ export class TopicContractRouter {
                     topic: topic.name,
                     sequenceId: sequence,
                     routeDownstream: true,
+                    canonicalSignalPath: metadata?.canonicalSignalPath ?? null,
                 },
             });
             this.lastActive.set(topic.contractId || topic.id, envelope);
@@ -323,19 +365,21 @@ export class TopicContractRouter {
             lastGoodSequence: sequence,
         });
 
-        this._emitEvent(usedFallback ? "topic-fallback-applied" : "topic-routed", "info", {
-            topic: topic.name,
-            contractId: topic.contractId,
-            authority: topic.authority,
-            sequence,
-            routeDownstream: shouldRouteDownstream(topic),
-        });
         return { ok: true, topic, envelope, activePath, producerPath, usedFallback };
     }
 
     _publishStatus(topic, status) {
         const path = this.diagnosticsPath(topic);
         const previous = this.lastStatus.get(topic.contractId || topic.id);
+        const lastGoodSequence = status.status === "ok" || status.status === "fallback"
+            ? (status.lastGoodSequence ?? status.sequence ?? null)
+            : (previous?.lastGoodSequence ?? null);
+        const lastGoodCaptureTimeNs = status.status === "ok" || status.status === "fallback"
+            ? (status.captureTimeNs ?? null)
+            : (previous?.lastGoodCaptureTimeNs ?? null);
+        const lastGoodApplyTimeNs = status.status === "ok" || status.status === "fallback"
+            ? (status.applyTimeNs ?? null)
+            : (previous?.lastGoodApplyTimeNs ?? null);
         const record = {
             topic: topic.name,
             contractId: topic.contractId || topic.id,
@@ -343,9 +387,16 @@ export class TopicContractRouter {
             ageNs: Number.isFinite(status.captureTimeNs) && Number.isFinite(status.applyTimeNs)
                 ? Math.max(0, status.applyTimeNs - status.captureTimeNs)
                 : null,
-            lastGood: previous?.status === "ok" ? previous : (previous?.lastGood || null),
+            // Flat scalars only — never nest prior status records.
+            lastGoodSequence,
+            lastGoodCaptureTimeNs,
+            lastGoodApplyTimeNs,
         };
         this.lastStatus.set(topic.contractId || topic.id, record);
+        const statusChanged = !previous
+            || previous.status !== record.status
+            || previous.code !== record.code
+            || previous.sequence !== record.sequence;
         this._publish(path, record, {
             timeUs: Math.round((status.applyTimeNs || 0) / 1000),
             cycle: status.applyStep || 0,
@@ -354,13 +405,37 @@ export class TopicContractRouter {
             category: "diagnostics",
             replayRole: "derived",
             logClass: "standard",
+            history: false,
             descriptorMetadata: {
                 contractId: topic.contractId,
                 topic: topic.name,
                 status: status.status,
                 code: status.code,
+                retention: "none",
             },
         });
+        if (statusChanged) {
+            const eventName = status.status === "ok"
+                ? "topic-routed"
+                : status.status === "fallback"
+                    ? "topic-fallback-applied"
+                    : status.status === "stale"
+                        ? "topic-stale"
+                        : status.status === "invalid"
+                            ? "topic-invalid"
+                            : status.status === "rejected"
+                                ? "topic-rejected"
+                                : "topic-status";
+            if (["topic-routed", "topic-fallback-applied"].includes(eventName)) {
+                this._emitEvent(eventName, "info", {
+                    topic: topic.name,
+                    contractId: topic.contractId,
+                    authority: topic.authority,
+                    sequence: status.sequence ?? null,
+                    routeDownstream: Boolean(status.routeDownstream),
+                });
+            }
+        }
     }
 
     _defineContractSignals() {
@@ -394,6 +469,7 @@ export class TopicContractRouter {
                 category: "diagnostics",
                 replayRole: "derived",
                 logClass: "standard",
+                retention: "none",
                 metadata: { contractId, topic: topic.name },
             });
         }

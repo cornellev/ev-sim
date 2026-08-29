@@ -236,7 +236,8 @@ export class CandidateOutputRuntime {
         const runtime = this.transformRuntime;
         if (!runtime?.lookupTransformChain) return null;
         return ({ position, rotation, frameId }) => {
-            const chain = runtime.lookupTransformChain(frameId, "map", captureTimeNs);
+            const mapFrameId = runtime.frames?.map || "map";
+            const chain = runtime.lookupTransformChain(frameId, mapFrameId, captureTimeNs);
             if (!chain?.ok) return { ok: false, code: chain?.code, message: chain?.message };
             let pose = { position, rotation };
             for (const link of chain.transforms) {

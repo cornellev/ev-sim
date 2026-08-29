@@ -75,6 +75,44 @@ export function eulerToQuaternion(euler = {}) {
     return { x: qx, y: qy, z: qz, w: qw };
 }
 
+/** Inverse of {@link eulerToQuaternion} for XYZ (intrinsic Rx Ry Rz). */
+export function quaternionToEuler(q = {}, order = "XYZ") {
+    const x = Number(q.x || 0);
+    const y = Number(q.y || 0);
+    const z = Number(q.z || 0);
+    const w = Number(q.w ?? 1);
+    const m00 = 1 - 2 * (y * y + z * z);
+    const m01 = 2 * (x * y - z * w);
+    const m02 = 2 * (x * z + y * w);
+    const m11 = 1 - 2 * (x * x + z * z);
+    const m12 = 2 * (y * z - x * w);
+    const m21 = 2 * (y * z + x * w);
+    const m22 = 1 - 2 * (x * x + y * y);
+    const pitch = Math.asin(Math.max(-1, Math.min(1, m02)));
+    if (Math.abs(m02) < 0.9999999) {
+        return {
+            x: Math.atan2(-m12, m22),
+            y: pitch,
+            z: Math.atan2(-m01, m00),
+            order,
+        };
+    }
+    return {
+        x: Math.atan2(m21, m11),
+        y: pitch,
+        z: 0,
+        order,
+    };
+}
+
+/** REP-103 orientation (quaternion or XYZ euler) → Three.js Euler XYZ. */
+export function rep103OrientationToThreeEuler(rotation = {}) {
+    const euler = rotation?.w !== undefined
+        ? quaternionToEuler(rotation)
+        : { x: Number(rotation?.x || 0), y: Number(rotation?.y || 0), z: Number(rotation?.z || 0), order: rotation?.order || "XYZ" };
+    return rep103EulerToThree(euler);
+}
+
 export function quaternionMultiply(a, b) {
     return {
         x: a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
@@ -97,9 +135,20 @@ export function rotateVectorByQuaternion(v, q) {
     return { x: rotated.x, y: rotated.y, z: rotated.z };
 }
 
-/** Standard REP-105 camera_link → camera_optical rotation (fixed, no translation). */
+/** ROS RPY: R = Rz(yaw) * Ry(pitch) * Rx(roll). Not the same as XYZ euler. */
+export function rpyToQuaternion({ roll = 0, pitch = 0, yaw = 0 } = {}) {
+    return quaternionMultiply(
+        eulerToQuaternion({ x: 0, y: 0, z: yaw, order: "XYZ" }),
+        quaternionMultiply(
+            eulerToQuaternion({ x: 0, y: pitch, z: 0, order: "XYZ" }),
+            eulerToQuaternion({ x: roll, y: 0, z: 0, order: "XYZ" }),
+        ),
+    );
+}
+
+/** Standard REP-103 camera_link → camera_optical rotation (fixed, no translation). */
 export function cameraLinkToOpticalRotation() {
-    return eulerToQuaternion({ x: -Math.PI / 2, y: 0, z: -Math.PI / 2, order: "XYZ" });
+    return rpyToQuaternion({ roll: -Math.PI / 2, pitch: 0, yaw: -Math.PI / 2 });
 }
 
 /**

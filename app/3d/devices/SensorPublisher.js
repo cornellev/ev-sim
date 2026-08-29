@@ -1,7 +1,16 @@
 import { encodeTopicValue } from "../../client/Client.js";
 import { SeededRNG } from "../../util/SeededRNG.js";
 import { buildDiagnosticArray } from "./SensorMessages.js";
-import { encodeTopicValueAsync, isHeavySensorValue } from "./SensorEncodePool.js";
+import {
+    bumpEncodeOwnerGeneration,
+    cancelEncodeOwner,
+    encodePoolHasCapacity,
+    encodeTopicValueAsync,
+    estimateEncodeBytes,
+    isHeavySensorValue,
+} from "./SensorEncodePool.js";
+
+const DEFAULT_MAX_QUEUE_BYTES = 64 * 1024 * 1024;
 
 export function normalizeCaptureResult(captured, captureTimeNs, sampleIndex) {
     if (captured == null) {
@@ -17,6 +26,14 @@ export function normalizeCaptureResult(captured, captureTimeNs, sampleIndex) {
         sampleIndex: Number.isFinite(captured.sampleIndex) ? captured.sampleIndex : sampleIndex,
         rng: captured.rng,
     };
+}
+
+function estimateFrameBytes(messages = []) {
+    let total = 0;
+    for (const message of messages) {
+        total += estimateEncodeBytes(message?.value) || 256;
+    }
+    return total;
 }
 
 export class SensorPublisher {
@@ -40,15 +57,25 @@ export class SensorPublisher {
             || monotonicClock?.nowNs?.bind(monotonicClock)
             || (() => Math.round((globalThis.performance?.now?.() ?? 0) * 1e6));
         this.periodNs = Math.max(1, Math.round(1e9 / config.rateHz));
+        this.maxQueueFrames = Math.max(1, Number(config.maxQueueFrames || 8));
+        this.maxQueueBytes = Math.max(1024, Number(config.maxQueueBytes || DEFAULT_MAX_QUEUE_BYTES));
+        this.encodeOwnerId = `sensor:${config.id || device?.telemetryId || "unknown"}`;
+        this.encodeGeneration = bumpEncodeOwnerGeneration(this.encodeOwnerId);
         this.queue = [];
+        this.queuedBytes = 0;
         this.sampleIndex = 0;
         this.droppedFrames = 0;
         this.errors = 0;
+        this._lastTransportNoticeNs = 0;
+        this._lastTransportNoticeName = null;
         this.reset();
     }
 
     reset() {
+        cancelEncodeOwner(this.encodeOwnerId);
+        this.encodeGeneration = bumpEncodeOwnerGeneration(this.encodeOwnerId);
         this.queue = [];
+        this.queuedBytes = 0;
         this.sampleIndex = 0;
         this.droppedFrames = 0;
         this.errors = 0;
@@ -62,6 +89,9 @@ export class SensorPublisher {
             shaderBusyDrops: 0,
             queueDepth: 0,
             queueHighWaterMark: 0,
+            queueBytes: 0,
+            queueBytesHighWaterMark: 0,
+            encodeRejected: 0,
             captureTimeNs: 0,
             captureTimeTotalNs: 0,
             encodeTimeNs: 0,
@@ -72,6 +102,13 @@ export class SensorPublisher {
         this.stepNs = null;
         this.periodSteps = null;
         this.nextCaptureStep = null;
+    }
+
+    dispose() {
+        cancelEncodeOwner(this.encodeOwnerId);
+        this.encodeGeneration = bumpEncodeOwnerGeneration(this.encodeOwnerId);
+        this.queue = [];
+        this.queuedBytes = 0;
     }
 
     update(clock) {
@@ -120,11 +157,6 @@ export class SensorPublisher {
         const stepNs = this.stepNs || this.manifestStepNs || 16_666_667;
         const captureStep = Math.round(captureTimeNs / stepNs);
         const scheduledDeliveryStep = Math.round(scheduledDeliveryTimeNs / stepNs);
-        if (this.queue.length >= this.config.maxQueueFrames) {
-            this._incrementFrameDrop();
-            this._event("frame-dropped", "warning", { sampleIndex, reason: "delivery-queue-full" });
-            return;
-        }
         const frameMessages = [...messages];
         const diagnosticsTopicId = this.config.outputs?.diagnosticsTopicId;
         const diagnosticsEnabled = this.config.calibration?.products?.diagnostics === true;
@@ -143,6 +175,17 @@ export class SensorPublisher {
                 }),
             });
         }
+        const frameBytes = estimateFrameBytes(frameMessages);
+        if (this.queue.length >= this.maxQueueFrames || this.queuedBytes + frameBytes > this.maxQueueBytes) {
+            this._incrementFrameDrop();
+            this._event("frame-dropped", "warning", {
+                sampleIndex,
+                reason: this.queue.length >= this.maxQueueFrames ? "delivery-queue-full" : "delivery-queue-bytes",
+                queueBytes: this.queuedBytes,
+                frameBytes,
+            });
+            return;
+        }
         this.queue.push({
             captureTimeNs,
             scheduledDeliveryTimeNs,
@@ -156,11 +199,17 @@ export class SensorPublisher {
             encodedByTopic: new Map(),
             encodeReady: false,
             encodeFailed: false,
+            encodeCancelled: false,
+            bytes: frameBytes,
+            zeroLatency: fixedLatency <= 0 && jitter <= 0,
         });
         const frame = this.queue[this.queue.length - 1];
+        this.queuedBytes += frameBytes;
         this._beginEncode(frame);
         this.health.queueDepth = this.queue.length;
+        this.health.queueBytes = this.queuedBytes;
         this.health.queueHighWaterMark = Math.max(this.health.queueHighWaterMark, this.queue.length);
+        this.health.queueBytesHighWaterMark = Math.max(this.health.queueBytesHighWaterMark, this.queuedBytes);
     }
 
     _beginEncode(frame) {
@@ -168,23 +217,45 @@ export class SensorPublisher {
             const topic = this.topics.get(message.topicId);
             return topic && isHeavySensorValue(message.value);
         });
-        if (heavy.length === 0) {
+        if (heavy.length === 0 || frame.zeroLatency) {
+            // Zero-latency frames deliver same-tick; skip speculative async encode.
             frame.encodeReady = true;
             return;
         }
+        const bytesNeeded = estimateFrameBytes(heavy);
+        if (!encodePoolHasCapacity(bytesNeeded)) {
+            this.health.encodeRejected += 1;
+            frame.encodeReady = true;
+            return;
+        }
+        const generation = this.encodeGeneration;
         const jobs = heavy.map(async (message) => {
             const topic = this.topics.get(message.topicId);
-            const encoded = await encodeTopicValueAsync(topic.schema?.type || topic.type, message.value);
+            const encoded = await encodeTopicValueAsync(topic.schema?.type || topic.type, message.value, {
+                ownerId: this.encodeOwnerId,
+                ownerGeneration: generation,
+            });
+            if (generation !== this.encodeGeneration || frame.encodeCancelled) {
+                throw new Error("encode cancelled");
+            }
             frame.encodedByTopic.set(message.topicId, encoded);
         });
         Promise.all(jobs).then(() => {
+            if (generation !== this.encodeGeneration || frame.encodeCancelled) return;
             frame.encodeReady = true;
         }).catch((error) => {
-            frame.encodeFailed = true;
+            // Worker/timeout/cancel are best-effort. Deliver falls through to sync encode.
+            const reason = String(error?.message || error);
             frame.encodeReady = true;
-            this._event("publish-failed", "error", {
+            if (reason.includes("cancelled")
+                || reason.includes("encode-pool-full")
+                || reason.includes("timeout")
+                || reason.includes("encode worker")) {
+                return;
+            }
+            this._event("publish-failed", "warning", {
                 sampleIndex: frame.sampleIndex,
-                reason: error?.message || String(error),
+                reason,
             });
         });
     }
@@ -192,15 +263,19 @@ export class SensorPublisher {
     deliver(clock) {
         const ready = this.queue.filter((frame) => frame.deliveryTimeNs <= clock.timeNs);
         this.queue = this.queue.filter((frame) => frame.deliveryTimeNs > clock.timeNs);
+        this.queuedBytes = this.queue.reduce((sum, frame) => sum + (Number(frame.bytes) || 0), 0);
         this.health.queueDepth = this.queue.length;
+        this.health.queueBytes = this.queuedBytes;
         for (const frame of ready) {
-            if (frame.encodeFailed) continue;
-            // Worker encode is best-effort. If it is not ready by delivery (common when
-            // latency is 0 and delivery is same-tick), fall through to sync encode in
-            // _deliverMessage instead of dropping the frame.
+            if (frame.encodeFailed) {
+                frame.messages = null;
+                frame.encodedByTopic = null;
+                continue;
+            }
             const deadlineNs = Number(this.config.health?.deadlineNs);
             if (Number.isFinite(deadlineNs) && deadlineNs > 0 && clock.timeNs - frame.captureTimeNs > deadlineNs) {
                 this.health.missedDeadlines += 1;
+                frame.encodeCancelled = true;
                 this._event("deadline-missed", "warning", {
                     sampleIndex: frame.sampleIndex,
                     deadlineNs,
@@ -208,11 +283,15 @@ export class SensorPublisher {
                 });
             }
             const transportStartNs = this._time();
-            for (const message of frame.messages) this._deliverMessage(message, frame, clock);
+            for (const message of frame.messages || []) this._deliverMessage(message, frame, clock);
             const transportDurationNs = Math.max(0, this._time() - transportStartNs);
             this.health.transportTimeNs = transportDurationNs;
             this.health.transportTimeTotalNs += transportDurationNs;
             this.health.deliveredFrames += 1;
+            // Drop frame references immediately after delivery so Image/PointCloud buffers can GC.
+            frame.messages = null;
+            frame.encodedByTopic?.clear?.();
+            frame.encodedByTopic = null;
         }
         this._publishHealth(clock);
     }
@@ -237,7 +316,6 @@ export class SensorPublisher {
         }
         const data = this.device.getParent?.()?.getParent?.();
         const telemetry = data?.bindings?.()?.signalStore;
-        const timeUs = Math.round(clock.timeNs / 1000);
         const path = `devices.${this.device.telemetryId}.${message.signal}`;
         const metadata = {
             rosType: topic.type,
@@ -255,6 +333,7 @@ export class SensorPublisher {
             syncGroupKey: frame.syncGroupKey,
             calibrationHash: this.calibrationHash,
             calibration: this.config.calibration,
+            canonicalSignalPath: path,
         };
         telemetry?.publishSignal?.(path, encoded, {
             timeUs: Math.round(frame.deliveryTimeNs / 1000),
@@ -264,6 +343,7 @@ export class SensorPublisher {
             category: "devices",
             replayRole: "derived",
             logClass: "heavy",
+            retention: "latest",
             descriptorMetadata: metadata,
         });
         // Lightweight summary only — do not duplicate the full PointCloud2/Image bytes.
@@ -283,15 +363,37 @@ export class SensorPublisher {
             category: "devices",
             replayRole: "derived",
             logClass: "standard",
+            history: false,
+            retention: "none",
         });
         const client = data?.client?.()?.get?.();
         if (!client?.isOpen?.()) {
-            if (topic.required) this._event("required-topic-unavailable", "error", { topic: topic.name, sampleIndex: frame.sampleIndex });
-            return;
+            if (topic.required) {
+                this._noteTransportIssue("required-topic-unavailable", {
+                    topic: topic.name,
+                    sampleIndex: frame.sampleIndex,
+                    reason: "orchestrator-disconnected",
+                });
+            }
+        } else {
+            client.publishEncoded(topic.name, encoded, { required: topic.required === true }).catch((error) => {
+                const reason = error?.message || String(error);
+                if (reason.includes("websocket-backpressure")) {
+                    this._incrementFrameDrop();
+                    this._noteTransportIssue("frame-dropped", {
+                        topic: topic.name,
+                        sampleIndex: frame.sampleIndex,
+                        reason: "websocket-backpressure",
+                    });
+                    return;
+                }
+                this._event("publish-failed", topic.required ? "error" : "warning", {
+                    topic: topic.name,
+                    sampleIndex: frame.sampleIndex,
+                    reason,
+                });
+            });
         }
-        client.publishEncoded(topic.name, encoded).catch((error) => {
-            this._event("publish-failed", topic.required ? "error" : "warning", { topic: topic.name, sampleIndex: frame.sampleIndex, reason: error.message });
-        });
         this.topicRouter?.routeOutbound(topic.id, { value: message.value, typeStr: topic.schema?.type || topic.type }, {
             producer: topic.producer || "simulator",
             observationalOracle: topic.producer === "oracle" && this.config.health?.observationalOracle !== false,
@@ -307,6 +409,7 @@ export class SensorPublisher {
             sequenceId: frame.sequence,
             syncGroupKey: frame.syncGroupKey,
             calibrationHash: this.calibrationHash,
+            canonicalSignalPath: path,
         });
     }
 
@@ -318,6 +421,14 @@ export class SensorPublisher {
     _incrementFrameDrop() {
         this.droppedFrames += 1;
         this.health.droppedFrames += 1;
+    }
+
+    _noteTransportIssue(name, payload) {
+        const now = this._time();
+        if (this._lastTransportNoticeName === name && now - this._lastTransportNoticeNs < 1e9) return;
+        this._lastTransportNoticeNs = now;
+        this._lastTransportNoticeName = name;
+        this._event(name, "warning", payload);
     }
 
     recordFrameDrop(reason = "sensor-dropout", sampleIndex = this.sampleIndex) {
@@ -341,7 +452,9 @@ export class SensorPublisher {
         return {
             ...this.health,
             queueDepth: this.queue.length,
+            queueBytes: this.queuedBytes,
             queueHighWaterMark: this.health.queueHighWaterMark,
+            queueBytesHighWaterMark: this.health.queueBytesHighWaterMark,
             errors: this.errors,
         };
     }
@@ -360,6 +473,7 @@ export class SensorPublisher {
             replayRole: "state",
             logClass: "standard",
             history: false,
+            retention: "none",
         };
         for (const [suffix, value] of Object.entries(this.getHealthSnapshot())) {
             telemetry.publishSignal?.(
@@ -376,8 +490,8 @@ export class SensorPublisher {
         const telemetry = data?.bindings?.()?.signalStore;
         if (severity === "error") this.errors += 1;
         const timeUs = Math.round(Number(simulation?.timeNs || 0) / 1000);
-        telemetry?.publishSignal?.(`devices.${this.device.telemetryId}.droppedFrames`, this.droppedFrames, { timeUs, cycle: simulation?.steps || 0, source: "sensors", type: "uint64", category: "devices", replayRole: "state", logClass: "standard", history: false });
-        telemetry?.publishSignal?.(`devices.${this.device.telemetryId}.errors`, this.errors, { timeUs, cycle: simulation?.steps || 0, source: "sensors", type: "uint64", category: "devices", replayRole: "state", logClass: "standard", history: false });
+        telemetry?.publishSignal?.(`devices.${this.device.telemetryId}.droppedFrames`, this.droppedFrames, { timeUs, cycle: simulation?.steps || 0, source: "sensors", type: "uint64", category: "devices", replayRole: "state", logClass: "standard", history: false, retention: "none" });
+        telemetry?.publishSignal?.(`devices.${this.device.telemetryId}.errors`, this.errors, { timeUs, cycle: simulation?.steps || 0, source: "sensors", type: "uint64", category: "devices", replayRole: "state", logClass: "standard", history: false, retention: "none" });
         telemetry?.emitTelemetryEvent?.({
             timeUs,
             category: "sensors",
@@ -385,6 +499,7 @@ export class SensorPublisher {
             severity,
             payload: { sensorId: this.config.id, ...payload },
         });
-        if (severity === "error") simulation?.pause?.();
+        const halt = severity === "error" && (name === "capture-failed" || name === "frame-invalid");
+        if (halt) simulation?.pause?.();
     }
 }
