@@ -8,7 +8,6 @@ import { CandidateOutputRuntime } from "../autonomy/CandidateOutputRuntime.js";
 import { ScenarioRuntime } from "../scenarios/ScenarioRuntime.js";
 import { ScenarioDiagnostics } from "../scenarios/ScenarioDiagnostics.js";
 import { AutonomyOverlay } from "../3d/overlay/AutonomyOverlay.js";
-import { initSensorKernels } from "../native/SensorKernels.js";
 
 export class SimulationEngine {
     /**
@@ -385,8 +384,6 @@ export class SimulationEngine {
     async applyRunManifest(resolved) {
         if (!resolved?.manifest) throw new Error("Resolved run manifest is required.");
         this.pause();
-        // Warm WASM LiDAR packers; falls back to JS if unavailable.
-        void initSensorKernels();
         this.scenarioRuntime.configure(null);
         this.scenarioDiagnostics.configure(null);
         this.telemetry?.resetRunState?.();

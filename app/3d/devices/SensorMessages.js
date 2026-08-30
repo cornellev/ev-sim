@@ -1,11 +1,4 @@
 import { lidarDirectionRep103 } from "../../autonomy/CoordinateFrames.js";
-import {
-    initSensorKernels,
-    tryPackPointCloud2Wasm,
-    tryPackSemanticPointCloud2Wasm,
-} from "../../native/SensorKernels.js";
-
-export { initSensorKernels };
 
 export function simulationStamp(timeNs) {
     const normalized = Math.max(0, Math.floor(Number(timeNs) || 0));
@@ -304,23 +297,14 @@ export function buildPointCloud2(options = {}) {
         onPointDrop = () => {},
         bufferEncoding = "legacy-normalized",
     } = options;
-    // WASM has no RNG hooks — only use it when callers omit noise callbacks.
-    const noiseFree = options.sampleRange == null
-        && options.shouldDrop == null
-        && options.onPointDrop == null;
-    let packed = noiseFree
-        ? tryPackPointCloud2Wasm(buffer, calibration, bufferEncoding)
-        : null;
-    if (!packed) {
-        packed = packPointCloud2DataJs({
-            buffer,
-            calibration,
-            sampleRange,
-            shouldDrop,
-            onPointDrop,
-            bufferEncoding,
-        });
-    }
+    const packed = packPointCloud2DataJs({
+        buffer,
+        calibration,
+        sampleRange,
+        shouldDrop,
+        onPointDrop,
+        bufferEncoding,
+    });
     return {
         header: sensorHeader(timeNs, frameId),
         height: 1,
@@ -335,8 +319,7 @@ export function buildPointCloud2(options = {}) {
 }
 
 export function buildSemanticPointCloud2({ buffer, calibration, timeNs, frameId, bufferEncoding = "metric-v2" }) {
-    const packed = tryPackSemanticPointCloud2Wasm(buffer, calibration, bufferEncoding)
-        || packSemanticPointCloud2DataJs({ buffer, calibration, bufferEncoding });
+    const packed = packSemanticPointCloud2DataJs({ buffer, calibration, bufferEncoding });
     return {
         header: sensorHeader(timeNs, frameId),
         height: 1,
