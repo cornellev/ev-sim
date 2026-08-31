@@ -7,6 +7,7 @@ import process from "node:process";
 import { createPhysicsBackendSelection } from "../../app/physics/PhysicsBackend.js";
 import { getHeadlessProfileCapabilities } from "../../app/simulation/headless/ProfileRegistry.js";
 import { createStateSensorBackendSelection, STATE_SENSOR_TYPES } from "../../app/simulation/sensors/StateSensorBackend.js";
+import { createCpuLidarBackendSelection } from "../../app/simulation/sensors/CpuLidarBackend.js";
 import { computeEpisodeHash } from "../../app/simulation/kernel/SimulationHashes.js";
 import { canonicalStringify } from "../../app/simulation/RunManifest.js";
 import { verifyRunBundle } from "./RunBundle.js";
@@ -207,6 +208,7 @@ export class HeadlessSupervisor {
         const profiles = getHeadlessProfileCapabilities();
         const physics = createPhysicsBackendSelection();
         const sensors = createStateSensorBackendSelection();
+        const lidar = createCpuLidarBackendSelection();
         return {
             protocol: HEADLESS_PROTOCOL,
             runtimeName: "cev-sim",
@@ -216,6 +218,7 @@ export class HeadlessSupervisor {
             backends: [
                 { id: physics.capabilityId, version: physics.version, kind: physics.kind, description: "Deterministic swept-prism Rapier backend.", sensorTypes: [], features: ["fixed-step", "continuous-collision"], available: true, unavailableReason: "", determinismScope: "same-runtime-version" },
                 { id: sensors.capabilityId, version: sensors.version, kind: sensors.kind, description: "Deterministic measured state sensors.", sensorTypes: [...STATE_SENSOR_TYPES], features: ["packed-protobuf"], available: true, unavailableReason: "", determinismScope: "same-runtime-version" },
+                { id: lidar.capabilityId, version: lidar.version, kind: lidar.kind, description: "Deterministic CPU/BVH 3D LiDAR.", sensorTypes: ["lidar3d"], features: ["pointcloud2", "semantic-pointcloud2", "fixed-step"], available: true, unavailableReason: "", determinismScope: "same-build-platform-seed-action-tape" },
             ],
             observationProfiles: profiles.observationProfiles,
             rewardProfiles: profiles.rewardProfiles,

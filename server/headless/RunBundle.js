@@ -9,6 +9,7 @@ import {
 import { computeSimulationSemanticHash } from "../../app/simulation/kernel/SimulationHashes.js";
 import { HeadlessEpisodeError } from "../../app/simulation/headless/HeadlessErrors.js";
 import { assertWorldResource } from "../../app/simulation/world/WorldDescription.js";
+import { assertLidarGeometryResource } from "../../app/simulation/lidar/LidarGeometry.js";
 
 function invalid(code, message, details = null) {
     throw new HeadlessEpisodeError(code, message, details);
@@ -42,6 +43,30 @@ export function verifyRunBundle(bundle) {
     }
     if (resolved.dependencyHashes?.world !== resolved.world.hash) {
         invalid("BUNDLE_HASH_MISMATCH", "The resolved world dependency hash does not match the world resource.");
+    }
+    const requestsLidar = resolved.manifest.sensorRig?.sensors?.some(
+        (sensor) => sensor.enabled !== false && sensor.type === "lidar3d",
+    );
+    if (requestsLidar && !resolved.lidarGeometry) {
+        invalid(
+            "BUNDLE_INVALID",
+            "This LiDAR run bundle predates persisted geometry twins; re-resolve and export the run manifest.",
+        );
+    }
+    if (resolved.lidarGeometry) {
+        if (!requestsLidar) {
+            invalid("BUNDLE_INVALID", "A non-LiDAR bundle must not persist LiDAR geometry twins.");
+        }
+        try {
+            assertLidarGeometryResource(resolved.lidarGeometry);
+        } catch (error) {
+            invalid("BUNDLE_HASH_MISMATCH", error.message);
+        }
+        if (resolved.dependencyHashes?.lidarGeometry !== resolved.lidarGeometry.hash) {
+            invalid("BUNDLE_HASH_MISMATCH", "The resolved LiDAR geometry dependency hash does not match the geometry resource.");
+        }
+    } else if (resolved.dependencyHashes?.lidarGeometry) {
+        invalid("BUNDLE_INVALID", "A non-LiDAR bundle must not declare a LiDAR geometry dependency hash.");
     }
     if (!Array.isArray(resolved.backendSelections) || resolved.backendSelections.length === 0) {
         invalid("BUNDLE_INVALID", "The resolved run is missing backend selections.");

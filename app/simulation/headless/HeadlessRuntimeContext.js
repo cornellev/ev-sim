@@ -3,7 +3,7 @@ import { ScenarioRuntime } from "../../scenarios/ScenarioRuntime.js";
 import { BindingRuntime } from "../../scripting/bindings/BindingRuntime.js";
 import { SignalStore } from "../../scripting/runtime/SignalStore.js";
 import { createSimulationRuntimeContext } from "../kernel/SimulationRuntimeContext.js";
-import { HeadlessStateSensorManager } from "../sensors/StateSensorBackend.js";
+import { HeadlessSensorManager } from "../sensors/HeadlessSensorManager.js";
 import { HeadlessVehicleManager } from "./HeadlessVehicleManager.js";
 import { HeadlessWorldRuntime } from "./HeadlessWorldRuntime.js";
 
@@ -32,7 +32,7 @@ export function createHeadlessRuntimeContext(options = {}) {
     const world = options.world ?? new HeadlessWorldRuntime();
     const vehicles = options.vehicles ?? new HeadlessVehicleManager();
     const inputs = options.inputs ?? nullLifecycleService();
-    const devices = options.devices ?? new HeadlessStateSensorManager(() => vehicles);
+    const devices = options.devices ?? new HeadlessSensorManager(() => vehicles, { telemetry: signalStore });
     const data = {
         bindings: () => bindings,
         environment: () => world,

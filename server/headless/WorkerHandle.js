@@ -126,7 +126,11 @@ export class WorkerHandle {
                 failUncertain(supervisorError("WORKER_CRASHED", `Worker ${this.pid} IPC dispatch failed: ${error.message}`, { pid: this.pid, command }));
                 return;
             }
-            if (!accepted) {
+            // Resolved LiDAR geometry can exceed Node's immediate IPC
+            // high-water mark. Initialization is side-effect-free until the
+            // worker replies, and the send callback still reports a real
+            // transport failure, so allow that one immutable request to drain.
+            if (!accepted && command !== "initialize") {
                 failUncertain(supervisorError("RESOURCE_LIMIT", `Worker ${this.pid} IPC backpressure made ${command} dispatch uncertain.`, { pid: this.pid, command, ipcBytes: bytes }));
             }
         });

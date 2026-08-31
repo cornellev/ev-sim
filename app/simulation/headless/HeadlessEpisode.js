@@ -21,6 +21,11 @@ import {
     getStateSensorModel,
 } from "../sensors/StateSensorBackend.js";
 import {
+    assertCpuLidarBackendSelection,
+    CPU_LIDAR_BACKEND_KIND,
+    createCpuLidarBackendSelection,
+} from "../sensors/CpuLidarBackend.js";
+import {
     ACTION_SPACE,
     compareUtf8,
     hashSpace,
@@ -67,9 +72,14 @@ function compareBackends(left, right) {
 }
 
 function normalizeEpisodeSpec(resolvedRun, spec = {}) {
-    const backends = (spec.backendSelections || spec.backend_selections || [
+    const requestsLidar = resolvedRun.manifest.sensorRig?.sensors?.some(
+        (sensor) => sensor.enabled !== false && sensor.type === "lidar3d",
+    );
+    const requestedBackends = spec.backendSelections ?? spec.backend_selections;
+    const backends = ((Array.isArray(requestedBackends) && requestedBackends.length > 0) ? requestedBackends : [
         ...(resolvedRun.backendSelections || []),
         createStateSensorBackendSelection(),
+        ...(requestsLidar ? [createCpuLidarBackendSelection()] : []),
     ]).map(normalizedBackend);
     return {
         protocolMajor: 1,
@@ -199,24 +209,32 @@ export class HeadlessEpisode {
         }
         const physics = normalized.find((entry) => entry.kind === 1);
         const stateSensors = normalized.find((entry) => entry.kind === 2);
+        const cpuLidar = normalized.find((entry) => entry.kind === CPU_LIDAR_BACKEND_KIND);
+        const enabledSensors = (resolvedRun.manifest.sensorRig?.sensors || []).filter((sensor) => sensor.enabled !== false);
+        const lidarSensors = enabledSensors.filter((sensor) => sensor.type === "lidar3d");
+        const stateSensorConfigs = enabledSensors.filter((sensor) => getStateSensorModel(sensor.type));
         try {
             assertPhysicsBackendSelection(physics);
             assertStateSensorBackendSelection(stateSensors);
+            if (lidarSensors.length > 0) assertCpuLidarBackendSelection(cpuLidar);
         } catch (error) {
             throw new HeadlessEpisodeError("UNSUPPORTED_CAPABILITY", error.message);
         }
         if (normalized.filter((entry) => entry.kind === 1).length !== 1
             || normalized.filter((entry) => entry.kind === 2).length !== 1
-            || normalized.some((entry) => ![1, 2].includes(entry.kind))) {
-            throw new HeadlessEpisodeError("UNSUPPORTED_CAPABILITY", "PR 5 supports exactly one physics and one state-sensor backend.");
+            || normalized.filter((entry) => entry.kind === CPU_LIDAR_BACKEND_KIND).length !== (lidarSensors.length > 0 ? 1 : 0)
+            || normalized.some((entry) => ![1, 2, CPU_LIDAR_BACKEND_KIND].includes(entry.kind))) {
+            throw new HeadlessEpisodeError("UNSUPPORTED_CAPABILITY", "Headless execution requires exactly one physics and state backend, plus one CPU LiDAR backend iff lidar3d is enabled.");
         }
-        const enabledSensors = (resolvedRun.manifest.sensorRig?.sensors || []).filter((sensor) => sensor.enabled !== false);
-        if (enabledSensors.length === 0) {
+        const unsupported = enabledSensors.filter((sensor) => !getStateSensorModel(sensor.type) && sensor.type !== "lidar3d");
+        if (unsupported.length) {
+            throw new HeadlessEpisodeError("UNSUPPORTED_CAPABILITY", `Unsupported headless sensor(s): ${unsupported.map((sensor) => `${sensor.id}:${sensor.type}`).sort().join(", ")}.`);
+        }
+        if (stateSensorConfigs.length === 0) {
             throw new HeadlessEpisodeError("BUNDLE_INVALID", "At least one enabled state sensor is required.");
         }
-        const unsupported = enabledSensors.filter((sensor) => !getStateSensorModel(sensor.type));
-        if (unsupported.length) {
-            throw new HeadlessEpisodeError("UNSUPPORTED_CAPABILITY", `Unsupported state observation sensor(s): ${unsupported.map((sensor) => `${sensor.id}:${sensor.type}`).sort().join(", ")}.`);
+        if (lidarSensors.length > 0 && !resolvedRun.lidarGeometry) {
+            throw new HeadlessEpisodeError("BUNDLE_INVALID", "LiDAR geometry twins are missing; re-resolve and export the run manifest.");
         }
         const sensorIds = new Set();
         const vehicleIds = new Set((resolvedRun.manifest.initialState?.vehicles || []).map((vehicle) => vehicle.id));
@@ -248,7 +266,7 @@ export class HeadlessEpisode {
         if (!initialVehicle || !vehicleDependency?.manifest?.boundingBox?.size || !vehicleDependency.manifest.kinematics?.wheelbase) {
             throw new HeadlessEpisodeError("BUNDLE_INVALID", "The ego vehicle requires resolved footprint and kinematics data.");
         }
-        const descriptors = enabledSensors.map((sensor) => ({ id: sensor.id, type: sensor.type }));
+        const descriptors = stateSensorConfigs.map((sensor) => ({ id: sensor.id, type: sensor.type }));
         const spaces = {
             actionSpace: ACTION_SPACE,
             observationSpace: createMeasuredStateObservationSpace(descriptors),

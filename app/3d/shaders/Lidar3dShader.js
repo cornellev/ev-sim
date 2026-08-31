@@ -44,6 +44,7 @@ uniform float u_phiEnd;
 uniform float u_phiStep;
 
 uniform float u_range;
+uniform float u_excludedInstanceId;
 
 // obx
 ${new Box().getSDF()}
@@ -140,6 +141,11 @@ Hit raycast(float theta, float phi) {
         vec3 va = texture2D(u_triPosTex, uvA).xyz;
         vec3 vb = texture2D(u_triPosTex, vec2((idx + 1.5) / texWidth, 0.5)).xyz;
         vec3 vc = texture2D(u_triPosTex, vec2((idx + 2.5) / texWidth, 0.5)).xyz;
+        vec4 triTag = texture2D(u_triTagTex, vec2((float(j) + 0.5) / float(MAX_TRIANGLES), 0.5));
+        if (u_excludedInstanceId > 0.0 && triTag.y == u_excludedInstanceId) {
+            ++tb;
+            continue;
+        }
 
         float t = rayTriangleIntersect(u_origin, dir, va, vb, vc);
         if (t > 0.0 && t < u_range) {
@@ -164,6 +170,11 @@ Hit raycast(float theta, float phi) {
         float texWidth = float(MAX_BOXES);
         vec2 uv = vec2((idx + 0.5) / texWidth, 0.5);
         if (texture2D(u_boxPosTex, uv).w == 0.0) continue;
+        vec4 boxTag = texture2D(u_boxTagTex, uv);
+        if (u_excludedInstanceId > 0.0 && boxTag.y == u_excludedInstanceId) {
+            ++bb;
+            continue;
+        }
         vec3 center = texture2D(u_boxPosTex, uv).xyz;
         vec3 size = texture2D(u_boxScaleTex, uv).xyz;
         vec3 normal;

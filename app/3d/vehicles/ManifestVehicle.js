@@ -156,7 +156,7 @@ export class ManifestVehicle extends PhysicalVehicle {
 
         this._zoneBaseVertices = zone.vertices.map(([x, y, z]) => new THREE.Vector3(x, y, z));
         this._zoneWorldVertices = this._zoneBaseVertices.map((vertex) => vertex.clone());
-        this._zoneTriangles = zone.triangles.map(([a, b, c]) => {
+        this._zoneTriangles = zone.triangles.map(([a, b, c], triangleIndex) => {
             const triangle = new Triangle(
                 this._zoneWorldVertices[a],
                 this._zoneWorldVertices[b],
@@ -165,6 +165,8 @@ export class ManifestVehicle extends PhysicalVehicle {
             triangle.visible = false;
             triangle.setTags(["vehicle"]);
             triangle._vehicleId = this.telemetryId;
+            triangle.lidarTwinId = `actor:${this.telemetryId}:lidar-zone:${triangleIndex}`;
+            triangle.lidarTriangleIndex = triangleIndex;
             return triangle;
         });
         objects.addObjects(this._zoneTriangles);

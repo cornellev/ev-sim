@@ -443,9 +443,11 @@ function generateBuildingMeshes(scene, data, footprints, params, rng, presetReco
         meshes.push(mesh);
 
         const triangles = trianglesFromBuildingMesh(mesh);
-        triangles.forEach((triangle) => {
+        triangles.forEach((triangle, triangleIndex) => {
             triangle.environmentGeometryType = "building";
             triangle.environmentSourceId = buildingId;
+            triangle.lidarTwinId = `building:${buildingId}:${triangleIndex}`;
+            triangle.lidarTriangleIndex = triangleIndex;
         });
         if (data?.objects?.()) {
             data.objects().addObjects(triangles);

@@ -7,8 +7,8 @@ language-neutral API authority is
 
 ## Status
 
-- Current milestone: **PR 9 — complete**
-- Next planned milestone: **PR 10 — Deterministic CPU/BVH LiDAR**
+- Current milestone: **PR 10 — complete**
+- Next planned milestone: **PR 11 — Pooled offscreen GPU sensors and large-payload transport**
 - Default implementation/review reasoning level: **Extra High**
 - Last updated: **2026-08-31**
 
@@ -23,7 +23,7 @@ Progress:
 - [x] PR 7 — Process-isolated batch supervisor and gRPC
 - [x] PR 8 — Python Gymnasium and Stable-Baselines3 package
 - [x] PR 9 — MCP, experiment, result, and logging integration
-- [ ] PR 10 — Deterministic CPU/BVH LiDAR
+- [x] PR 10 — Deterministic CPU/BVH LiDAR
 - [ ] PR 11 — Pooled offscreen GPU sensors and large-payload transport
 - [ ] PR 12 — CI, parity, performance, distribution, and release gates
 
@@ -384,6 +384,15 @@ Gate:
 - CPU-only macOS/Linux runs produce deterministic point clouds.
 - Simple-scene results meet declared GPU-fixture tolerances.
 
+Completed 2026-08-31. Resolved LiDAR bundles now persist portable canonical
+geometry twins and conditionally include their dependency hash. Backend kind 3
+is `deterministic-cpu-bvh-lidar` version `1`, with configuration hash
+`488de17bbf8ecf635c18841cd64a9638e011a94a8d9fbb93e4a53943f38bd96d`.
+The migration intentionally changes resolved, simulation-semantic, episode,
+and trajectory hashes for newly resolved LiDAR runs; world hashes, non-LiDAR
+bundle hashes, physics, manifest v9, run-bundle v1, protocol 1.1, and the
+measured-state observation contract remain unchanged.
+
 ### PR 11 — Pooled offscreen GPU sensors and large payloads
 
 Deliver:
@@ -673,3 +682,32 @@ aborts uncertain dispatch, waits for worker exit, removes staging directories,
 and cancels remaining cases. Startup reconciliation interrupts only stale
 headless-owned results. Existing result, baseline, log, replay-inspect, and
 replay-series surfaces consume the outputs.
+
+### 2026-08-31 — PR 10 deterministic CPU/BVH LiDAR
+
+Add `cev-sim.lidar-geometry` version 1 as a conditional resolved-run resource.
+It contains canonical UTF-8-ordered box and triangle twins for buildings,
+features, road corridors, 64-segment intersections, and actor-local vehicle
+geometry. Instance IDs are collision checked in the exact Float32-safe range.
+The browser object database and GLSL primitives use the same twin constructors
+and update registry. Workers verify the resource and dependency hash, then
+rebuild static and reusable actor-local `three-mesh-bvh` indexes rather than
+serializing implementation-specific BVH data.
+
+Backend kind 3 is `deterministic-cpu-bvh-lidar` version 1 with configuration
+hash `488de17bbf8ecf635c18841cd64a9638e011a94a8d9fbb93e4a53943f38bd96d`.
+It performs double-sided, elevation-major scans with capture-time poses,
+deterministic hit ties, parent exclusion, measured-only noise/dropout, and the
+existing metric-v2 PointCloud2 products and fixed-step publisher delivery.
+The composite headless sensor manager routes LiDAR to scripts, telemetry,
+topics, and SFLog while measured-state Gym observations remain state-only.
+
+CLI, supervisor, Python, and managed MCP defaults select the locked backend
+only when enabled `lidar3d` sensors are present. Capability validation rejects
+missing, duplicate, mismatched, unused, and unavailable selections, including
+legacy LiDAR bundles without persisted twins. `GetCapabilities` advertises the
+backend without a Protobuf revision. Cameras and unknown sensors remain
+unsupported until PR 11. Newly resolved LiDAR runs intentionally receive new
+resolved, simulation-semantic, episode, and trajectory hashes; world hashes,
+physics, non-LiDAR compatibility, manifest v9, run-bundle v1, protocol 1.1,
+reward and observation profiles, and PointCloud2 schemas do not change.

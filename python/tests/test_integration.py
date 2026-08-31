@@ -117,6 +117,24 @@ def test_single_env_returns_real_termination_transition(
         assert env.observation_space.contains(terminal_observation)
 
 
+def test_lidar_bundle_auto_selects_cpu_backend_without_changing_observations(
+    repository_root: Path,
+    headless_fixture: dict[str, Any],
+    tmp_path: Path,
+) -> None:
+    with CevSimEnv(
+        headless_fixture["lidarBundlePath"],
+        output_dir=tmp_path / "lidar",
+        launch=launch(repository_root),
+        artifact_policy=ArtifactPolicy(profile="disabled"),
+    ) as env:
+        observation, _ = env.reset(seed=123)
+        assert_observation_bytes(observation, headless_fixture["resetObservation"])
+        stepped, _, terminated, truncated, _ = env.step(np.zeros(2, dtype=np.float32))
+        assert not terminated and not truncated
+        assert env.observation_space.contains(stepped)
+
+
 def test_external_supervisor_is_not_terminated_by_environment_close(
     repository_root: Path,
     headless_fixture: dict[str, Any],

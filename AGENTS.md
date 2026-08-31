@@ -13,10 +13,10 @@ code, read:
 3. [`docs/run-manifests.md`](docs/run-manifests.md)
 4. [`docs/architecture.md`](docs/architecture.md)
 
-PR 1 establishes the contract and characterization baseline. PRs 2–8 are
-complete; the next implementation milestone is PR 9, MCP, experiment, result,
-and logging integration. Work on one numbered PR at a time; do not pull later
-LiDAR, GPU, distribution, or release scope into an earlier milestone.
+PR 1 establishes the contract and characterization baseline. PRs 2–10 are
+complete; the next implementation milestone is PR 11, pooled offscreen GPU
+sensors and large-payload transport. Work on one numbered PR at a time; do not
+pull later GPU, distribution, or release scope into an earlier milestone.
 
 Update the progress and decision log in
 `docs/headless-simulation-plan.md` whenever a roadmap PR changes a contract,

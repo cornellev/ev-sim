@@ -5,7 +5,8 @@ import path from "node:path";
 import { measuredStateProfileRef, routeSafetyProfileRef } from "../../app/simulation/headless/ProfileRegistry.js";
 import { createStateSensorBackendSelection } from "../../app/simulation/sensors/StateSensorBackend.js";
 import { HeadlessRunner } from "../../server/headless/HeadlessRunner.js";
-import { createPortableHeadlessBundle } from "./headlessRunnerBundle.js";
+import { StorageService } from "../../server/storage/StorageService.js";
+import { createHeadlessImu, createPortableHeadlessBundle } from "./headlessRunnerBundle.js";
 
 function runCli(args, input) {
     return new Promise((resolve, reject) => {
@@ -77,8 +78,25 @@ async function main() {
     const directReset = directEvents.find((event) => event.kind === "cev-sim.headless.reset");
     const directStep = directEvents.find((event) => event.kind === "cev-sim.headless.transition");
     const cliStep = cliEvents.find((event) => event.kind === "cev-sim.headless.transition");
+    const defaultResolved = await new StorageService().resolveRunManifest("igvc-default");
+    const lidar = structuredClone(defaultResolved.manifest.sensorRig.sensors.find((sensor) => sensor.type === "lidar3d"));
+    lidar.rateHz = 60;
+    lidar.phaseNs = 0;
+    lidar.calibration.azimuth = { startDeg: 0, endDeg: 1, stepDeg: 1 };
+    lidar.calibration.elevation = { startDeg: 0, endDeg: 1, stepDeg: 1 };
+    lidar.noise = {
+        ...lidar.noise,
+        dropoutProbability: 0,
+        pointDropoutProbability: 0,
+        bias: 0,
+        standardDeviation: 0,
+    };
+    const lidarBundle = await createPortableHeadlessBundle({ sensors: [createHeadlessImu(), lidar] });
+    const lidarBundlePath = path.join(outputRoot, "lidar-bundle.json");
+    await fs.writeFile(lidarBundlePath, JSON.stringify(lidarBundle));
     const fixture = {
         bundlePath,
+        lidarBundlePath,
         episodeHash: directReset.info.episodeHash,
         trajectoryHash: directStep.info.trajectoryHash,
         cliTrajectoryHash: cliStep.info.trajectoryHash,

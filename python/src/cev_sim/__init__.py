@@ -1,4 +1,9 @@
 from .config import (
+    CPU_LIDAR_CAPABILITY,
+    CPU_LIDAR_CONFIG_HASH,
+    CPU_LIDAR_KIND,
+    CPU_LIDAR_VERSION,
+    DEFAULT_CPU_LIDAR_BACKEND,
     ArtifactPolicy,
     BackendSelection,
     EpisodeConfig,
@@ -20,6 +25,10 @@ from .errors import (
 __all__ = [
     "ArtifactPolicy",
     "BackendSelection",
+    "CPU_LIDAR_CAPABILITY",
+    "CPU_LIDAR_CONFIG_HASH",
+    "CPU_LIDAR_KIND",
+    "CPU_LIDAR_VERSION",
     "CevSimCompatibilityError",
     "CevSimConfigurationError",
     "CevSimEnv",
@@ -28,6 +37,7 @@ __all__ = [
     "CevSimLaunchError",
     "CevSimSupervisorError",
     "CevSimTransportError",
+    "DEFAULT_CPU_LIDAR_BACKEND",
     "EpisodeConfig",
     "ProfileRef",
     "ResourceLimits",

@@ -4,6 +4,7 @@ import { parseLidarHits } from "./LidarHitDecoder.js";
 import { frag3d } from "../shaders/Lidar3dShader.js";
 import * as THREE from "three";
 import { disposeObject3D, setDeviceVisualsEnabled, syncDeviceVisuals } from "./DeviceVisuals.js";
+import { stableInstanceIdFromSource } from "../../simulation/lidar/LidarInstanceIds.js";
 
 export class LiDAR3d extends Device {
     constructor(position, rotation, range=10, thetaStep=1, thetaRange=[0,360], phiStep=1, phiRange=[-20,20]) {
@@ -51,6 +52,7 @@ export class LiDAR3d extends Device {
                 u_triPosTex: { value: null },
                 u_triTagTex: { value: null },
                 u_sensorRotation: { value: new THREE.Matrix3() },
+                u_excludedInstanceId: { value: 0 },
             }
         );
 
@@ -138,8 +140,9 @@ export class LiDAR3d extends Device {
     }
 
     execute(simulationTimeSeconds = null) {
-        const { posTexture, scaleTexture, tagTexture: boxTagTexture, count } = this.getParent().getParent().objects().t_boxes();
-        const { posTexture: triPosTexture, tagTexture: triTagTexture, count: triCount } = this.getParent().getParent().objects().t_triangles();
+        const objects = this.getParent().getParent().objects();
+        const { posTexture, scaleTexture, tagTexture: boxTagTexture, count } = objects.t_boxes();
+        const { posTexture: triPosTexture, tagTexture: triTagTexture, count: triCount } = objects.t_triangles();
 
         const sensorRotationMatrix = new THREE.Matrix3().setFromMatrix4(
             new THREE.Matrix4().makeRotationFromEuler(this.getRotation())
@@ -149,6 +152,10 @@ export class LiDAR3d extends Device {
             ...(simulationTimeSeconds === null ? {} : { u_time: { value: simulationTimeSeconds } }),
             u_origin: { value: this.getPosition() },
             u_sensorRotation: { value: sensorRotationMatrix },
+            u_excludedInstanceId: { value: this.config?.parentId
+                ? objects.lidarInstanceIdForSource?.(this.config.parentId)
+                    ?? stableInstanceIdFromSource(this.config.parentId)
+                : 0 },
             boxCount: { value: count },
             u_boxPosTex: { value: posTexture },
             u_boxScaleTex: { value: scaleTexture },

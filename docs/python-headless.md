@@ -55,7 +55,11 @@ actual final observation; callers must reset before stepping again.
 are frozen configuration values exported by `cev_sim`. The default episode
 uses one fixed step per action, no policy-step bound, the measured-state and
 default route-safety profiles, bundle-selected physics, and deterministic
-state sensors.
+state sensors. If the bundle manifest enables `lidar3d`, the client also adds
+the locked `DEFAULT_CPU_LIDAR_BACKEND` selection and verifies that the
+supervisor advertises `deterministic-cpu-bvh-lidar` version `1`. CPU point
+clouds are published to topics and SFLog; the Python observation remains the
+same flat measured-state dictionary.
 
 To connect without owning the supervisor:
 
@@ -108,9 +112,11 @@ is retained in `info["cev_sim.final_result"]`.
 
 The client validates protocol 1.1, runtime name, profile schemas, backend
 versions, space layouts, tensor names, dtype, shape, endianness, packed length,
-boolean representation, and bounds. PR 8 accepts inline state-only Box tensors
-and flat Dict observations. Shared memory, rendered sensors, and wire layouts
-for discrete or nested spaces fail explicitly.
+boolean representation, and bounds. The CPU LiDAR kind, capability, version,
+config hash, and `DEFAULT_CPU_LIDAR_BACKEND` are public package exports. Inline
+observations remain state-only Box tensors in flat Dict observations. Shared
+memory, camera products, and wire layouts for discrete or nested spaces fail
+explicitly.
 
 Malformed requests and infrastructure failures raise typed `CevSimError`
 subclasses: `CevSimConfigurationError`, `CevSimLaunchError`,

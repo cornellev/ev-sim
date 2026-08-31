@@ -2,14 +2,9 @@ import * as THREE from "three";
 
 import { LiDAR3d } from "./LiDAR3d.js";
 import { SensorPublisher } from "./SensorPublisher.js";
-import { buildPointCloud2, buildSemanticPointCloud2 } from "./SensorMessages.js";
 import { rep103PoseToThree } from "../../autonomy/CoordinateFrames.js";
 import { getSharedPerceptionTruthIndex } from "../../autonomy/PerceptionTruthIndex.js";
-
-function gaussian(rng) {
-    const left = Math.max(Number.EPSILON, rng.next());
-    return Math.sqrt(-2 * Math.log(left)) * Math.cos(2 * Math.PI * rng.next());
-}
+import { buildLidarMessages } from "../../simulation/sensors/LidarProducts.js";
 
 export class ManifestLidar3d extends LiDAR3d {
     constructor(config, options = {}) {
@@ -138,50 +133,13 @@ export class ManifestLidar3d extends LiDAR3d {
         super.onShaderUpdate(buffer);
         if (!this.captureContext) return;
         const { captureTimeNs, rng } = this.captureContext;
-        const noise = this.config.noise;
-        const products = this.config.calibration.products || {};
-        const frameId = this.config.measurementFrameId || this.config.frameId;
-        if (products.pointCloud === true && this.config.outputs.pointCloudTopicId) {
-            let pointDrops = 0;
-            const hasRangeNoise = Number(noise.bias) !== 0
-                || (noise.model === "gaussian" && Number(noise.standardDeviation) > 0);
-            const hasPointDropout = Number(noise.pointDropoutProbability) > 0;
-            const pointCloud = buildPointCloud2({
-                buffer,
-                bufferEncoding: "metric-v2",
-                calibration: this.config.calibration,
-                timeNs: captureTimeNs,
-                frameId,
-                ...(hasRangeNoise ? {
-                    sampleRange: (range) => range + noise.bias + (noise.model === "gaussian" ? gaussian(rng) * noise.standardDeviation : 0),
-                } : {}),
-                ...(hasPointDropout ? {
-                    shouldDrop: () => rng.next() < noise.pointDropoutProbability,
-                    onPointDrop: () => { pointDrops += 1; },
-                } : {}),
-            });
-            this.contractPublisher?.recordPointDrops?.(pointDrops);
-            this.captureMessages.push({
-                topicId: this.config.outputs.pointCloudTopicId,
-                signal: "pointCloud",
-                frameId,
-                value: pointCloud,
-            });
-        }
-        if (products.semanticPointCloud === true && this.config.outputs.semanticPointCloudTopicId) {
-            this.captureMessages.push({
-                topicId: this.config.outputs.semanticPointCloudTopicId,
-                signal: "semanticPointCloud",
-                frameId,
-                value: buildSemanticPointCloud2({
-                    buffer,
-                    bufferEncoding: "metric-v2",
-                    calibration: this.config.calibration,
-                    timeNs: captureTimeNs,
-                    frameId,
-                }),
-            });
-        }
+        this.captureMessages.push(...buildLidarMessages({
+            buffer,
+            config: this.config,
+            captureTimeNs,
+            rng,
+            publisher: this.contractPublisher,
+        }));
     }
 
     resetRunState() {

@@ -80,7 +80,8 @@ presentation adapters over the same numeric state used by
 `HeadlessVehicleManager`; GLTF models, wheels, paths, cameras, lane visuals,
 and devices remain browser services. `createHeadlessRuntimeContext` composes a
 non-global binding runtime, signal store, scenario runtime, world, vehicle
-manager, injected physics, state-sensor manager, and null browser services.
+manager, injected physics, composite state/LiDAR sensor manager, and null
+browser services.
 The direct sensor-disabled PR 4 kernel path remains supported.
 
 PR 5 adds a Three.js-independent state-sensor seam. Browser devices and
@@ -90,7 +91,7 @@ measurement models. The headless backend capability is
 `deterministic-state-sensors` version `1`, backend kind `STATE_SENSOR`; its
 configuration hash is
 `dc27525458e0f720321213cd0a1abac8842266ae86f3d82172d8cda518924cf5`.
-Camera, LiDAR, and unknown enabled sensor types remain explicit unsupported
+Camera and unknown enabled sensor types remain explicit unsupported
 capabilities, while the sensor-disabled PR 4 kernel path remains valid.
 
 `HeadlessEpisode` is the policy-facing facade over `SimulationKernel`. It
@@ -147,6 +148,22 @@ run/semantic/episode/trajectory hashes and retained artifacts; SFLogs are
 identity-checked and imported into the shared `LogService`. Browser experiment
 execution and `run_manifest_launch` remain the defaults, while persisted
 execution ownership routes headless status and cancellation.
+
+PR 10 adds a portable `cev-sim.lidar-geometry` v1 resource to resolved runs
+only when an enabled `lidar3d` sensor exists. Canonical box and triangle twins
+cover static world surfaces and actor-local vehicle geometry; the browser GLSL
+object database and headless CPU backend share their constructors and stable
+semantic/instance registry. The resource hash participates in resolved and
+simulation-semantic identity, but the existing world hash and physics contract
+do not change. Workers verify portable records and rebuild BVHs locally.
+
+The `deterministic-cpu-bvh-lidar` v1 backend lazily imports Three.js and
+`three-mesh-bvh`, keeps one immutable static index and reusable actor-local
+indexes, and performs instantaneous fixed-step scans from capture-time poses.
+LiDAR products use the existing metric-v2 and PointCloud2 paths and flow to
+scripts, telemetry, topics, and SFLog. `MeasuredStateObservationBuilder`
+continues to consume only IMU, GNSS, wheel odometry, and task signals. Camera,
+shared-memory transport, and GPU pooling remain PR 11 scope.
 
 Physics pins Rapier `0.19.3` under capability
 `rapier3d-swept-prism-v1`. Rapier owns fixed and kinematic bodies, while

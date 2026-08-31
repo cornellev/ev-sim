@@ -1,0 +1,23 @@
+{
+  "kind": "cev-sim.lidar-gpu-reference",
+  "version": 1,
+  "description": "Simple-scene browser GLSL metric-v2 reference for CPU tolerance checks.",
+  "sensor": {
+    "range": 20,
+    "azimuth": { "startDeg": -45, "endDeg": 46, "stepDeg": 45 },
+    "elevation": { "startDeg": 0, "endDeg": 1, "stepDeg": 1 }
+  },
+  "box": {
+    "id": "reference-wall",
+    "sourceId": "wall",
+    "center": { "x": 5, "y": 0, "z": 0 },
+    "size": { "x": 0.1, "y": 20, "z": 20 },
+    "semanticId": 1,
+    "instanceId": 73
+  },
+  "rays": [
+    { "rayIndex": 0, "hit": true, "distance": 7.00035713374682, "incidence": 0.707106781186548, "semanticId": 1, "instanceId": 73 },
+    { "rayIndex": 1, "hit": true, "distance": 4.95, "incidence": 1, "semanticId": 1, "instanceId": 73 },
+    { "rayIndex": 2, "hit": true, "distance": 7.00035713374682, "incidence": 0.707106781186548, "semanticId": 1, "instanceId": 73 }
+  ]
+}

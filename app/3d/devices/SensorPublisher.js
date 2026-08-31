@@ -49,6 +49,7 @@ export class SensorPublisher {
         stepNs = null,
         monotonicClock = null,
         nowNs = null,
+        runtimeData = null,
     } = {}) {
         this.device = device;
         this.config = config;
@@ -56,6 +57,7 @@ export class SensorPublisher {
         this.topics = new Map(topics.map((topic) => [topic.id, topic]));
         this.topicRouter = topicRouter;
         this.calibrationHash = calibrationHash;
+        this.runtimeData = runtimeData;
         this.manifestStepNs = stepNs;
         this.nowNs = nowNs
             || monotonicClock?.nowNs?.bind(monotonicClock)
@@ -359,7 +361,7 @@ export class SensorPublisher {
             this._event("publish-failed", "error", { sampleIndex: frame.sampleIndex, topic: topic.name, reason: error.message });
             return;
         }
-        const data = this.device.getParent?.()?.getParent?.();
+        const data = this._data();
         const telemetry = data?.bindings?.()?.signalStore;
         const path = `devices.${this.device.telemetryId}.${message.signal}`;
         const metadata = {
@@ -463,6 +465,10 @@ export class SensorPublisher {
         return Number.isFinite(value) ? value : 0;
     }
 
+    _data() {
+        return this.runtimeData ?? this.device.getParent?.()?.getParent?.();
+    }
+
     _incrementFrameDrop() {
         this.droppedFrames += 1;
         this.health.droppedFrames += 1;
@@ -505,7 +511,7 @@ export class SensorPublisher {
     }
 
     _publishHealth(clock = null) {
-        const data = this.device.getParent?.()?.getParent?.();
+        const data = this._data();
         const telemetry = data?.bindings?.()?.signalStore;
         if (!telemetry) return;
         const timeUs = Math.round(Number(clock?.timeNs || data?.simulation?.()?.timeNs || 0) / 1000);
@@ -530,7 +536,7 @@ export class SensorPublisher {
     }
 
     _event(name, severity, payload) {
-        const data = this.device.getParent?.()?.getParent?.();
+        const data = this._data();
         const simulation = data?.simulation?.();
         const telemetry = data?.bindings?.()?.signalStore;
         if (severity === "error") this.errors += 1;

@@ -209,7 +209,7 @@ export class HeadlessSession {
         const memory = process.memoryUsage();
         const sensorQueueBytes = (this.episode?.runtime?.devices?.devices || []).reduce((total, device) => {
             try {
-                return total + serialize(device.queue || []).byteLength;
+                return total + serialize(device.queue ?? device.contractPublisher?.queue ?? []).byteLength;
             } catch {
                 return total;
             }

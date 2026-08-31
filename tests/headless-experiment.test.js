@@ -10,6 +10,8 @@ import { createExperimentResult } from "../app/experiments/ExperimentResult.js";
 import { createDefaultScenario } from "../app/scenarios/ScenarioDocument.js";
 import { verifyRoute } from "../app/scenarios/route/index.js";
 import { createDefaultRunManifest } from "../app/simulation/RunManifest.js";
+import { createRunSensor } from "../app/3d/devices/SensorTypeRegistry.js";
+import { managedEpisodeIdentity } from "../server/headless/ManagedHeadlessSession.js";
 import { HeadlessExperimentService } from "../server/headless/HeadlessExperimentService.js";
 import { inspectReplay, readReplaySeries } from "../server/mcp/loggingTools.js";
 import { LogService } from "../server/logging/LogService.js";
@@ -221,6 +223,43 @@ test("headless start atomically rejects candidate and unbounded suites without c
     );
     assert.equal(await unbounded.storage.getExperimentResult("unbounded-result"), null);
     await unboundedService.close();
+});
+
+test("managed experiments accept persisted CPU LiDAR and continue rejecting cameras", async (t) => {
+    const lidar = await fixture(t, {
+        suiteId: "lidar-suite",
+        scenarioId: "lidar-scenario",
+        manifestId: "lidar-manifest",
+        sensors: [createRunSensor("lidar3d", { id: "managed-lidar", parentId: "ego" })],
+        loggingPolicy: "disabled",
+    });
+    const lidarValidation = await lidar.storage.validateExperimentSuite(lidar.suite.id);
+    const resolved = (await lidar.storage.resolveExperimentCase(lidar.suite.id, {
+        case: lidarValidation.matrix.cases[0],
+    })).resolvedRun;
+    assert.ok(resolved.lidarGeometry);
+    assert.deepEqual(managedEpisodeIdentity(resolved).backendSelections.map((entry) => entry.kind), [1, 3]);
+    const lidarService = new HeadlessExperimentService(lidar.storage, lidar.logs, {
+        supervisor: new FakeSupervisor(), artifactRoot: path.join(lidar.root, "artifacts"),
+    });
+    const started = await lidarService.start({ suiteId: lidar.suite.id, resultId: "lidar-result", artifactProfile: "disabled" });
+    assert.equal((await lidarService.waitForCompletion(started.resultId)).status, "completed");
+    await lidarService.close();
+
+    const camera = await fixture(t, {
+        suiteId: "camera-suite",
+        scenarioId: "camera-scenario",
+        manifestId: "camera-manifest",
+        sensors: [createRunSensor("camera", { id: "managed-camera", parentId: "ego" })],
+    });
+    const cameraService = new HeadlessExperimentService(camera.storage, camera.logs, {
+        supervisor: new FakeSupervisor(), artifactRoot: path.join(camera.root, "artifacts"),
+    });
+    await assert.rejects(
+        cameraService.start({ suiteId: camera.suite.id, resultId: "camera-result" }),
+        /do not support sensor.*camera/i,
+    );
+    await cameraService.close();
 });
 
 test("required log import failures error a case while optional failures retain artifact warnings", async (t) => {

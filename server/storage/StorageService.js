@@ -22,6 +22,7 @@ import {
 import { buildCalibrationBundle } from "../../app/autonomy/CalibrationBundle.js";
 import { computeSimulationSemanticHash } from "../../app/simulation/kernel/SimulationHashes.js";
 import { createWorldResource } from "../../app/simulation/world/WorldDescription.js";
+import { createLidarGeometryResource } from "../../app/simulation/lidar/LidarGeometry.js";
 import {
     createPhysicsBackendSelection,
     sortBackendSelections,
@@ -1121,6 +1122,9 @@ export class StorageService {
             ?? await this._resolveEnvironment(manifest.environment.id);
         const environmentHash = semanticHash(environment);
         const world = createWorldResource(environment);
+        const lidarGeometry = manifest.sensorRig.sensors.some(
+            (sensor) => sensor.enabled !== false && sensor.type === "lidar3d",
+        ) ? createLidarGeometryResource(world, resolvedVehicles) : null;
         if (manifest.environment.expectedHash && manifest.environment.expectedHash !== environmentHash) {
             throw new Error(`Environment "${manifest.environment.id}" changed: expected ${manifest.environment.expectedHash}, received ${environmentHash}.`);
         }
@@ -1196,6 +1200,7 @@ export class StorageService {
             calibration,
             environment: { hash: environmentHash, manifest: environment },
             world,
+            ...(lidarGeometry ? { lidarGeometry } : {}),
             backendSelections: sortBackendSelections([createPhysicsBackendSelection()]),
             scripts,
             bindings: { hash: bindingsHash, entries: selectedBindings },
@@ -1219,6 +1224,7 @@ export class StorageService {
             dependencyHashes: {
                 environment: environmentHash,
                 world: world.hash,
+                ...(lidarGeometry ? { lidarGeometry: lidarGeometry.hash } : {}),
                 calibration: calibration.hash,
                 scripts: Object.fromEntries(scripts.map((entry) => [entry.scriptId, entry.hash])),
                 bindings: bindingsHash,

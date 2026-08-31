@@ -4,8 +4,13 @@ import numpy as np
 import pytest
 
 from cev_sim import CevSimCompatibilityError, CevSimEnvironmentError, CevSimSupervisorError
-from cev_sim.client import SupervisorClient, _decode_json, _error_from_status, _raise_status
+from cev_sim.bundle import LoadedBundle
+from cev_sim.client import SupervisorClient, _decode_json, _error_from_status, _raise_status, _resolved_backends
 from cev_sim.config import (
+    CPU_LIDAR_CAPABILITY,
+    CPU_LIDAR_KIND,
+    CPU_LIDAR_VERSION,
+    DEFAULT_CPU_LIDAR_BACKEND,
     MEASURED_STATE_PROFILE,
     MEASURED_STATE_PROFILE_VERSION,
     MEASURED_STATE_SCHEMA_HASH,
@@ -17,6 +22,7 @@ from cev_sim.config import (
     STATE_SENSOR_CAPABILITY,
     STATE_SENSOR_KIND,
     STATE_SENSOR_VERSION,
+    EpisodeConfig,
 )
 from cev_sim.env import CevSimEnv
 from cev_sim.headless.v1 import headless_pb2 as pb
@@ -49,7 +55,13 @@ def capabilities() -> pb.GetCapabilitiesResponse:
                 version=STATE_SENSOR_VERSION,
                 kind=STATE_SENSOR_KIND,
                 available=True,
-            )
+            ),
+            pb.BackendCapability(
+                id=CPU_LIDAR_CAPABILITY,
+                version=CPU_LIDAR_VERSION,
+                kind=CPU_LIDAR_KIND,
+                available=True,
+            ),
         ],
     )
 
@@ -102,6 +114,31 @@ def test_capability_negotiation_checks_transport_profiles_and_backend() -> None:
     incompatible.backends[0].unavailable_reason = "disabled"
     with pytest.raises(CevSimCompatibilityError, match="disabled"):
         client._validate_capabilities(incompatible)
+
+
+def test_lidar_bundles_auto_select_the_locked_cpu_backend() -> None:
+    bundle = LoadedBundle(
+        document={
+            "resolved": {
+                "backendSelections": [
+                    {
+                        "kind": 1,
+                        "capabilityId": "physics",
+                        "version": "1",
+                        "configHash": "0" * 64,
+                    }
+                ],
+                "manifest": {"sensorRig": {"sensors": [{"id": "lidar", "type": "lidar3d", "enabled": True}]}},
+            }
+        },
+        canonical_json=b"{}",
+        bundle_id="1" * 64,
+        resolved_hash="1" * 64,
+        simulation_semantic_hash="2" * 64,
+    )
+    backends = _resolved_backends(bundle, EpisodeConfig())
+    assert DEFAULT_CPU_LIDAR_BACKEND in backends
+    assert [entry.kind for entry in backends] == [1, STATE_SENSOR_KIND, CPU_LIDAR_KIND]
 
 
 def test_unseeded_seed_streams_are_reproducible() -> None:

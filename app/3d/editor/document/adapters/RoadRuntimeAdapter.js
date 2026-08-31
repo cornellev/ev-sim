@@ -104,10 +104,14 @@ export function syncRoadsFromDocument(data, scene, document) {
         for (const intersection of result.intersections) {
             city.addIntersection(intersection);
         }
-        const roadTriangles = result.roads.flatMap((road) => road.triangles ?? []);
-        roadTriangles.forEach((triangle) => {
+        const roadTriangles = result.roads.flatMap((road) => (road.triangles ?? []).map((triangle, triangleIndex) => {
+            const sourceId = road.network?.edgeId ?? "road";
             triangle.environmentGeometryType = "road";
-        });
+            triangle.environmentSourceId = sourceId;
+            triangle.lidarTwinId = `road:${sourceId}:${triangleIndex}`;
+            triangle.lidarTriangleIndex = triangleIndex;
+            return triangle;
+        }));
         data.objects?.()?.replaceTriangles?.(
             (triangle) => triangle.environmentGeometryType === "road",
             roadTriangles,

@@ -12,6 +12,10 @@ import {
     createStateSensorBackendSelection,
     getStateSensorModel,
 } from "../../app/simulation/sensors/StateSensorBackend.js";
+import {
+    assertCpuLidarBackendSelection,
+    createCpuLidarBackendSelection,
+} from "../../app/simulation/sensors/CpuLidarBackend.js";
 import { createHeadlessArtifactSink, resolveArtifactPolicy } from "./HeadlessArtifactSink.js";
 import { HeadlessRunnerError } from "./HeadlessRunnerErrors.js";
 import { verifyRunBundle } from "./RunBundle.js";
@@ -59,26 +63,36 @@ export function validateManagedRun(resolved) {
         invalid("UNSUPPORTED_CAPABILITY", `Managed experiments do not support route controller(s): ${unsupportedControllers.map((route) => `${route.id}:${route.controller?.kind || "unknown"}`).sort().join(", ")}.`);
     }
     const sensors = enabledSensors(resolved);
-    const unsupportedSensors = sensors.filter((sensor) => !getStateSensorModel(sensor.type));
+    const unsupportedSensors = sensors.filter((sensor) => !getStateSensorModel(sensor.type) && sensor.type !== "lidar3d");
     if (unsupportedSensors.length > 0) {
         invalid("UNSUPPORTED_CAPABILITY", `Managed experiments do not support sensor(s): ${unsupportedSensors.map((sensor) => `${sensor.id}:${sensor.type}`).sort().join(", ")}.`);
     }
     if (sensors.length > 0 && resolved.manifest.clock?.modules?.sensors === false) {
-        invalid("UNSUPPORTED_CAPABILITY", "Managed experiments cannot run enabled state sensors while the sensors clock module is disabled.");
+        invalid("UNSUPPORTED_CAPABILITY", "Managed experiments cannot run enabled sensors while the sensors clock module is disabled.");
+    }
+    const lidarSensors = sensors.filter((sensor) => sensor.type === "lidar3d");
+    if (lidarSensors.length > 0 && !resolved.lidarGeometry) {
+        invalid("BUNDLE_INVALID", "LiDAR geometry twins are missing; re-resolve and export the run manifest.");
     }
     const physics = (resolved.backendSelections || []).filter((entry) => Number(entry.kind) === 1);
     const state = (resolved.backendSelections || []).filter((entry) => Number(entry.kind) === 2);
-    const unknown = (resolved.backendSelections || []).filter((entry) => ![1, 2].includes(Number(entry.kind)));
+    const lidar = (resolved.backendSelections || []).filter((entry) => Number(entry.kind) === 3);
+    const unknown = (resolved.backendSelections || []).filter((entry) => ![1, 2, 3].includes(Number(entry.kind)));
     try {
         if (physics.length !== 1) throw new Error("Exactly one physics backend selection is required.");
         assertPhysicsBackendSelection(physics[0]);
         if (state.length > 1) throw new Error("At most one state-sensor backend selection is supported.");
         if (state.length === 1) assertStateSensorBackendSelection(state[0]);
+        if (lidar.length > 1) throw new Error("At most one CPU LiDAR backend selection is supported.");
+        if (lidar.length === 1) assertCpuLidarBackendSelection(lidar[0]);
     } catch (error) {
         invalid("UNSUPPORTED_CAPABILITY", error.message);
     }
     if (unknown.length > 0) {
         invalid("UNSUPPORTED_CAPABILITY", `Managed experiments do not support backend kind(s): ${unknown.map((entry) => entry.kind).join(", ")}.`);
+    }
+    if (lidarSensors.length === 0 && lidar.length > 0) {
+        invalid("UNSUPPORTED_CAPABILITY", "A CPU LiDAR backend was selected but the manifest has no enabled lidar3d sensor.");
     }
     if (!hasSemanticBound(resolved)) {
         invalid("INVALID_REQUEST", "Managed experiments require a positive clock.maxSteps, max-duration completion, or finite time/step finish trigger.");
@@ -89,8 +103,13 @@ export function validateManagedRun(resolved) {
 export function managedEpisodeIdentity(resolved) {
     const sensors = enabledSensors(resolved);
     const backends = [...(resolved.backendSelections || [])];
-    if (sensors.length > 0 && !backends.some((entry) => Number(entry.kind) === 2)) {
+    if (sensors.some((sensor) => getStateSensorModel(sensor.type))
+        && !backends.some((entry) => Number(entry.kind) === 2)) {
         backends.push(createStateSensorBackendSelection());
+    }
+    if (sensors.some((sensor) => sensor.type === "lidar3d")
+        && !backends.some((entry) => Number(entry.kind) === 3)) {
+        backends.push(createCpuLidarBackendSelection());
     }
     return defaultEpisodeIdentity(resolved, {
         resetSeed: String(resolved.manifest.seed ?? "0"),
@@ -243,7 +262,7 @@ export class ManagedHeadlessSession {
             queueBytes = 0;
         }
         const sensorQueueBytes = (this.runtime?.devices?.devices || []).reduce((total, device) => {
-            try { return total + serialize(device.queue || []).byteLength; }
+            try { return total + serialize(device.queue ?? device.contractPublisher?.queue ?? []).byteLength; }
             catch { return total; }
         }, 0);
         const recordingQueueBytes = Number(this.artifactSink?.recording?.queuedBytes || 0);

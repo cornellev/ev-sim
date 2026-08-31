@@ -12,7 +12,7 @@ Reset finalizes the active result and SFLog, resolves the newest saved revision,
 
 ## Portable bundles
 
-`cev-sim.run-bundle` version 1 includes the authoring manifest and its resolved environment, normalized `world: { description, hash }`, sorted backend selections, exact compiled script artifacts and bindings, ROS schemas, autonomy catalog metadata, contract endpoints, dependency hashes, full `resolvedHash`, and `simulationSemanticHash`. `dependencyHashes.world` repeats the canonical world SHA-256. Import verifies old and new bundles in the exact form received; re-resolution of an old bundle derives world/backend fields without changing the v1 bundle or v9 manifest schemas. `resolvedHash` protects the entire portable bundle. `simulationSemanticHash` uses the world hash—not the authored environment hash—as environment identity, and projects out logging, artifact/resource policy, wall pacing, and presentation-only settings before feeding `episodeHash`. Existing dependencies are reused only when hashes match; conflicting resources receive an eight-character hash suffix and all references are remapped.
+`cev-sim.run-bundle` version 1 includes the authoring manifest and its resolved environment, normalized `world: { description, hash }`, sorted backend selections, exact compiled script artifacts and bindings, ROS schemas, autonomy catalog metadata, contract endpoints, dependency hashes, full `resolvedHash`, and `simulationSemanticHash`. `dependencyHashes.world` repeats the canonical world SHA-256. Runs with enabled `lidar3d` additionally contain `lidarGeometry: { description, hash }` and `dependencyHashes.lidarGeometry`; non-LiDAR runs omit both. Import verifies old and new bundles in the exact form received; a pre-PR10 LiDAR bundle must be re-resolved because its portable geometry is unavailable. The additive fields do not change the v1 bundle or v9 manifest schemas. `resolvedHash` protects the entire portable bundle. `simulationSemanticHash` uses the world hash—not the authored environment hash—as environment identity, and projects out logging, artifact/resource policy, wall pacing, and presentation-only settings before feeding `episodeHash`. Existing dependencies are reused only when hashes match; conflicting resources receive an eight-character hash suffix and all references are remapped.
 
 ## HTTP API
 
@@ -73,6 +73,14 @@ and Protobuf v1 unchanged. Episode-local profile presets are selected only by
 The state-sensor backend is kind `STATE_SENSOR`, capability
 `deterministic-state-sensors`, version `1`, with config hash
 `dc27525458e0f720321213cd0a1abac8842266ae86f3d82172d8cda518924cf5`.
+
+The CPU LiDAR backend is kind `CPU_LIDAR`, capability
+`deterministic-cpu-bvh-lidar`, version `1`, with config hash
+`488de17bbf8ecf635c18841cd64a9638e011a94a8d9fbb93e4a53943f38bd96d`.
+Exactly one locked selection is required when `lidar3d` is enabled and is
+forbidden when it is unused. Point clouds retain the existing metric-v2
+Float32 and PointCloud2 schemas; they route through telemetry/topics/SFLog and
+are not added to the measured-state policy observation.
 
 - Observation `measured-state` v1 has one preset. Its config hash is
   `5c81866540bbdf0031f6c700554d65c7becc6fe76b5abaa5e81a20f14aa99e6d`
@@ -177,9 +185,10 @@ fresh worker before that environment can continue.
 portable run bundles before creating evidence. Managed cases require
 `controls.authority: "reference"` and route-follower, script, or
 script-with-route controllers. Candidate authority, external ROS controllers,
-camera, LiDAR, unknown sensor backends, and suites without a provable semantic
-bound are rejected atomically. Supported cases may use no sensors or the
-deterministic IMU, GNSS, and wheel-odometry backend.
+camera and unknown sensor backends, unavailable LiDAR geometry, and suites
+without a provable semantic bound are rejected atomically. Supported cases may
+use no sensors, the deterministic IMU/GNSS/wheel-odometry backend, and
+deterministic CPU LiDAR.
 
 The worker uses the default episode identity with the authored reset seed,
 action repeat one, manifest bound, and sorted backend selections. It runs the

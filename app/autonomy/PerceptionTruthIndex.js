@@ -4,25 +4,11 @@ import {
     normalizePerceptionClassName,
     perceptionClassId,
 } from "./PerceptionLabelCatalog.js";
+import { stableInstanceIdFromSource } from "../simulation/lidar/LidarInstanceIds.js";
+
+export { stableInstanceIdFromSource } from "../simulation/lidar/LidarInstanceIds.js";
 
 const sharedIndexes = new WeakMap();
-
-function fnv1a32(value) {
-    let hash = 0x811c9dc5;
-    const bytes = new TextEncoder().encode(String(value));
-    for (const byte of bytes) {
-        hash ^= byte;
-        hash = Math.imul(hash, 0x01000193);
-    }
-    return hash >>> 0;
-}
-
-/** Stable non-zero ID suitable for sensor_msgs fields and packed RGBA labels. */
-export function stableInstanceIdFromSource(sourceId) {
-    // The LiDAR float render target preserves every integer through 24 bits.
-    const hash = fnv1a32(String(sourceId ?? "")) & 0x00ffffff;
-    return hash === 0 ? 1 : hash;
-}
 
 function plainVector(vector = {}) {
     return {

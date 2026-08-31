@@ -278,6 +278,11 @@ test("insecure TCP requires opt-in for remote hosts and works on loopback", asyn
     const response = await clientCall(client, "getCapabilities", { clientProtocol: { major: 1, minor: 0 } });
     assert.equal(response.error.code, 0);
     assert.deepEqual(response.protocol, { major: 1, minor: 1 });
+    const lidar = response.backends.find((backend) => backend.kind === 3);
+    assert.equal(lidar.id, "deterministic-cpu-bvh-lidar");
+    assert.equal(lidar.version, "1");
+    assert.equal(lidar.available, true);
+    assert.deepEqual(lidar.sensorTypes, ["lidar3d"]);
 });
 
 test("multiple batches coexist and malformed requests fail in response envelopes", { timeout: 30_000 }, async (t) => {

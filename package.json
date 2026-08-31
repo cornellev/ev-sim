@@ -12,6 +12,7 @@
     "lint": "eslint",
     "test": "node --experimental-default-type=module --test tests/*.test.js",
     "test:headless": "node --experimental-default-type=module --test tests/headless-*.test.js",
+    "test:lidar": "node --experimental-default-type=module --test tests/lidar-*.test.js tests/headless-lidar.test.js",
     "test:supervisor": "node --experimental-default-type=module --test tests/headless-supervisor.test.js",
     "test:cli": "node --experimental-default-type=module --test tests/headless-runner.test.js tests/headless-cli.test.js",
     "test:python": "python3 -m pytest python/tests",

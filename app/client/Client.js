@@ -1121,10 +1121,9 @@ if (typeof module !== "undefined" && module.exports) {
 	};
 }
 
-// Property access on globalThis — never a bare `window` identifier. Bundlers
-// can fold `typeof window !== "undefined"` to true in client chunks, which
-// then throws inside Web Workers (`window is not defined`).
-const browserWindow = globalThis.window;
+// Preserve the legacy browser global without evaluating a `window` getter.
+// Headless kernel imports deliberately probe with throwing browser globals.
+const browserWindow = Object.getOwnPropertyDescriptor(globalThis, "window")?.value;
 if (browserWindow && browserWindow === globalThis) {
 	browserWindow.ROSClient = {
 		Client,

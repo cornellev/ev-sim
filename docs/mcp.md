@@ -133,8 +133,10 @@ Resources expose suites, results, and baselines through `fusion://experiment-sui
 Browser execution remains the default and uses same-origin executor election.
 Headless start first validates the suite revision and complete deterministic
 expansion, resolves every case, and rejects the request without creating a
-result if any case uses candidate control, external ROS, camera/LiDAR/unknown
-sensors, or lacks a finite semantic bound. The Express process admits one
+result if any case uses candidate control, external ROS, camera/unknown
+sensors, unavailable LiDAR geometry, or lacks a finite semantic bound. Managed
+LiDAR cases use the locked deterministic CPU/BVH backend and include it in
+episode identity and provenance. The Express process admits one
 headless queue globally and runs cases sequentially in isolated workers.
 Status and cancellation use the result's persisted `execution.backend`;
 headless queues cannot pause or resume. Headless results retain run,

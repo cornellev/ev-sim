@@ -10,6 +10,8 @@ import grpc
 
 from .bundle import BundleInput, LoadedBundle, load_bundle
 from .config import (
+    CPU_LIDAR_KIND,
+    DEFAULT_CPU_LIDAR_BACKEND,
     DEFAULT_STATE_SENSOR_BACKEND,
     MEASURED_STATE_PROFILE,
     MEASURED_STATE_PROFILE_VERSION,
@@ -142,6 +144,15 @@ def _resolved_backends(bundle: LoadedBundle, configuration: EpisodeConfig) -> tu
                 raise CevSimConfigurationError(f"Invalid run-bundle backend selection: {error}") from error
         if not any(entry.kind == STATE_SENSOR_KIND for entry in backends):
             backends.append(DEFAULT_STATE_SENSOR_BACKEND)
+        manifest = resolved.get("manifest")
+        sensor_rig = manifest.get("sensorRig", {}) if isinstance(manifest, Mapping) else {}
+        sensors = sensor_rig.get("sensors", []) if isinstance(sensor_rig, Mapping) else []
+        requests_lidar = isinstance(sensors, list) and any(
+            isinstance(sensor, Mapping) and sensor.get("enabled", True) is not False and sensor.get("type") == "lidar3d"
+            for sensor in sensors
+        )
+        if requests_lidar and not any(entry.kind == CPU_LIDAR_KIND for entry in backends):
+            backends.append(DEFAULT_CPU_LIDAR_BACKEND)
     backends.sort(key=lambda entry: (entry.kind, entry.capability_id.encode("utf-8")))
     return tuple(backends)
 
@@ -342,9 +353,9 @@ class SupervisorClient:
                 raise CevSimCompatibilityError(f"Unsupported profile {requested.id}@{requested.version}")
         for requested in backends:
             if requested.kind == STATE_SENSOR_KIND and requested != DEFAULT_STATE_SENSOR_BACKEND:
-                raise CevSimCompatibilityError(
-                    "PR 8 requires the locked deterministic state-sensor backend identity"
-                )
+                raise CevSimCompatibilityError("The locked deterministic state-sensor backend identity is required")
+            if requested.kind == CPU_LIDAR_KIND and requested != DEFAULT_CPU_LIDAR_BACKEND:
+                raise CevSimCompatibilityError("The locked deterministic CPU LiDAR backend identity is required")
             capability = next(
                 (
                     entry

@@ -8,9 +8,9 @@ transport and insecure TCP must be selected explicitly.
 The supervisor does not resolve authoring manifests. `CreateBatch` accepts
 canonical immutable `cev-sim.run-bundle` version 1 bytes and `EpisodeSpec`
 records from the authoritative
-[`headless.proto`](../proto/cev_sim/headless/v1/headless.proto). Python, MCP,
-rendered sensors, shared memory, and distributed scheduling remain later
-milestones.
+[`headless.proto`](../proto/cev_sim/headless/v1/headless.proto). Python and MCP
+clients are supported. Camera/GPU sensors, shared memory, and distributed
+scheduling remain later milestones.
 
 ## Starting and stopping
 
@@ -56,6 +56,14 @@ JavaScript loads the checked-in proto dynamically with
 `@grpc/grpc-js` 1.14.4 and `@grpc/proto-loader` 0.8.1. Loader values use camel
 case, numeric enums, decimal-string uint64 values, `Buffer` bytes, defaults,
 and oneof markers. There are no generated JavaScript bindings.
+
+`GetCapabilities.backends` advertises physics, deterministic state sensors,
+and backend kind 3 `deterministic-cpu-bvh-lidar` version `1`. Its locked local
+configuration hash is
+`488de17bbf8ecf635c18841cd64a9638e011a94a8d9fbb93e4a53943f38bd96d`.
+LiDAR episodes require exactly one matching selection and a verified persisted
+geometry resource; missing, duplicate, mismatched, and unused CPU LiDAR
+selections fail batch preparation. Protocol 1.1 and Protobuf v1 are unchanged.
 
 ## Configuration
 

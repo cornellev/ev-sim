@@ -3,14 +3,20 @@ import { Box } from "./objects/Box";
 import { GLSLObject, Object } from "./objects/Object";
 import * as THREE from "three";
 import { Triangle } from "./objects/Triangle";
-import { getDefaultTagId } from "./ObjectTagRegistry";
 import Values from "@/app/util/Values";
-import { stableInstanceIdFromSource } from "../../autonomy/PerceptionTruthIndex.js";
+import { lidarTwinFromGlslObject } from "../../simulation/lidar/LidarGeometry.js";
+import { allocateLidarInstanceIds, stableInstanceIdFromSource } from "../../simulation/lidar/LidarInstanceIds.js";
+import { compareUtf8 } from "../../simulation/world/WorldDescription.js";
 
 const MAX_BOXES = 2000;
 const MAX_TRIANGLES = 5000;
 
 export { MAX_BOXES, MAX_TRIANGLES };
+
+function lidarSourceId(object) {
+    return String(object.perceptionSourceId ?? object.environmentSourceId
+        ?? object._vehicleId ?? object._buildingId ?? object._roadId ?? object._uuid);
+}
 
 class ObjectEvent {
     static TYPES = ["add", "remove", "update"];
@@ -90,43 +96,26 @@ function setupTextures(obj) {
 }
 
 /**
- * @param {Object} object
- * @returns {number}
- */
-function getObjectTagId(object) {
-    return object?.tagId ?? getDefaultTagId();
-}
-
-function getObjectInstanceId(object) {
-    const sourceId = object?.perceptionSourceId
-        ?? object?._vehicleId
-        ?? object?._buildingId
-        ?? object?._roadId
-        ?? object?._uuid;
-    return sourceId ? stableInstanceIdFromSource(sourceId) : 0;
-}
-
-/**
  * @param {ObjectDatabase} database
  * @param {Box} box
  * @param {number} index
  */
 function writeBoxTextureSlot(database, box, index) {
     const dataIndex = index * 4;
+    const twin = database.updateLidarTwin(box);
 
-    database.textures.data._boxPosData[dataIndex + 0] = box.position.x;
-    database.textures.data._boxPosData[dataIndex + 1] = box.position.y;
-    database.textures.data._boxPosData[dataIndex + 2] = box.position.z;
+    database.textures.data._boxPosData[dataIndex + 0] = twin.center.x;
+    database.textures.data._boxPosData[dataIndex + 1] = twin.center.y;
+    database.textures.data._boxPosData[dataIndex + 2] = twin.center.z;
     database.textures.data._boxPosData[dataIndex + 3] = 1.0;
 
-    database.textures.data._boxScaleData[dataIndex + 0] = box.scale.x;
-    database.textures.data._boxScaleData[dataIndex + 1] = box.scale.y;
-    database.textures.data._boxScaleData[dataIndex + 2] = box.scale.z;
+    database.textures.data._boxScaleData[dataIndex + 0] = twin.size.x;
+    database.textures.data._boxScaleData[dataIndex + 1] = twin.size.y;
+    database.textures.data._boxScaleData[dataIndex + 2] = twin.size.z;
     database.textures.data._boxScaleData[dataIndex + 3] = 1.0;
 
-    const tagId = getObjectTagId(box);
-    database.textures.data._boxTagData[dataIndex + 0] = tagId;
-    database.textures.data._boxTagData[dataIndex + 1] = getObjectInstanceId(box);
+    database.textures.data._boxTagData[dataIndex + 0] = twin.semanticId;
+    database.textures.data._boxTagData[dataIndex + 1] = twin.instanceId;
     database.textures.data._boxTagData[dataIndex + 2] = 0.0;
     database.textures.data._boxTagData[dataIndex + 3] = 1.0;
 
@@ -143,25 +132,25 @@ function writeBoxTextureSlot(database, box, index) {
 function writeTriangleTextureSlot(database, triangle, index) {
     const dataIndex = index * 12;
     const tagIndex = index * 4;
+    const twin = database.updateLidarTwin(triangle);
 
-    database.textures.data._trianglePosData[dataIndex + 0] = triangle.a.x;
-    database.textures.data._trianglePosData[dataIndex + 1] = triangle.a.y;
-    database.textures.data._trianglePosData[dataIndex + 2] = triangle.a.z;
+    database.textures.data._trianglePosData[dataIndex + 0] = twin.vertices[0].x;
+    database.textures.data._trianglePosData[dataIndex + 1] = twin.vertices[0].y;
+    database.textures.data._trianglePosData[dataIndex + 2] = twin.vertices[0].z;
     database.textures.data._trianglePosData[dataIndex + 3] = 1.0;
 
-    database.textures.data._trianglePosData[dataIndex + 4] = triangle.b.x;
-    database.textures.data._trianglePosData[dataIndex + 5] = triangle.b.y;
-    database.textures.data._trianglePosData[dataIndex + 6] = triangle.b.z;
+    database.textures.data._trianglePosData[dataIndex + 4] = twin.vertices[1].x;
+    database.textures.data._trianglePosData[dataIndex + 5] = twin.vertices[1].y;
+    database.textures.data._trianglePosData[dataIndex + 6] = twin.vertices[1].z;
     database.textures.data._trianglePosData[dataIndex + 7] = 1.0;
 
-    database.textures.data._trianglePosData[dataIndex + 8] = triangle.c.x;
-    database.textures.data._trianglePosData[dataIndex + 9] = triangle.c.y;
-    database.textures.data._trianglePosData[dataIndex + 10] = triangle.c.z;
+    database.textures.data._trianglePosData[dataIndex + 8] = twin.vertices[2].x;
+    database.textures.data._trianglePosData[dataIndex + 9] = twin.vertices[2].y;
+    database.textures.data._trianglePosData[dataIndex + 10] = twin.vertices[2].z;
     database.textures.data._trianglePosData[dataIndex + 11] = 1.0;
 
-    const tagId = getObjectTagId(triangle);
-    database.textures.data._triangleTagData[tagIndex + 0] = tagId;
-    database.textures.data._triangleTagData[tagIndex + 1] = getObjectInstanceId(triangle);
+    database.textures.data._triangleTagData[tagIndex + 0] = twin.semanticId;
+    database.textures.data._triangleTagData[tagIndex + 1] = twin.instanceId;
     database.textures.data._triangleTagData[tagIndex + 2] = 0.0;
     database.textures.data._triangleTagData[tagIndex + 3] = 1.0;
 
@@ -174,6 +163,9 @@ export class ObjectDatabase extends Database {
         super(parent);
         this.objects = [];
         this.inScene = [];
+        this.lidarTwinRegistry = new Map();
+        this.lidarInstanceBySource = new Map();
+        this.lidarSourceByInstance = new Map();
 
         this._maxX = 50;
         this._maxY = 50;
@@ -200,6 +192,42 @@ export class ObjectDatabase extends Database {
 
     }
 
+    updateLidarTwin(object) {
+        object.lidarInstanceId ??= this.lidarInstanceIdForSource(lidarSourceId(object));
+        const twin = lidarTwinFromGlslObject(object);
+        this.lidarTwinRegistry.set(object._uuid, twin);
+        return twin;
+    }
+
+    lidarTwins() {
+        return this.objects.map((object) => (
+            this.lidarTwinRegistry.get(object._uuid) ?? this.updateLidarTwin(object)
+        ));
+    }
+
+    lidarInstanceIdForSource(sourceId) {
+        const source = String(sourceId);
+        const existing = this.lidarInstanceBySource.get(source);
+        if (existing) return existing;
+        let salt = 0;
+        let instanceId = stableInstanceIdFromSource(source);
+        while (this.lidarSourceByInstance.has(instanceId)
+            && this.lidarSourceByInstance.get(instanceId) !== source) {
+            salt += 1;
+            instanceId = stableInstanceIdFromSource(`${source}#${salt}`);
+        }
+        this.lidarInstanceBySource.set(source, instanceId);
+        this.lidarSourceByInstance.set(instanceId, source);
+        return instanceId;
+    }
+
+    rebuildLidarInstanceRegistry() {
+        const allocations = allocateLidarInstanceIds(this.objects.map(lidarSourceId), compareUtf8);
+        this.lidarInstanceBySource = allocations;
+        this.lidarSourceByInstance = new Map([...allocations].map(([sourceId, instanceId]) => [instanceId, sourceId]));
+        for (const object of this.objects) object.lidarInstanceId = allocations.get(lidarSourceId(object));
+    }
+
     /**
      * @param {Object} object
      */
@@ -207,6 +235,19 @@ export class ObjectDatabase extends Database {
         if (!object) return;
         if (this.objects.includes(object)) return;
         if (!(object instanceof Object)) return;
+        if (!object.lidarTwinId) {
+            const sourceId = lidarSourceId(object);
+            const shape = object instanceof Triangle ? "triangle" : "box";
+            const index = this.objects.filter((entry) => {
+                const entrySource = entry.perceptionSourceId ?? entry.environmentSourceId
+                    ?? entry._vehicleId ?? entry._buildingId ?? entry._roadId ?? entry._uuid;
+                return String(entrySource) === String(sourceId)
+                    && (entry instanceof Triangle ? "triangle" : "box") === shape;
+            }).length;
+            object.lidarTwinId = `${sourceId}:${shape}:${index}`;
+            if (shape === "triangle") object.lidarTriangleIndex = index;
+        }
+        object.lidarInstanceId = this.lidarInstanceIdForSource(lidarSourceId(object));
         this.objects.push(object);
 
         if (object instanceof Box) {
@@ -247,6 +288,8 @@ export class ObjectDatabase extends Database {
     rebuildTextureData() {
         const textureData = this.textures.data;
         Values(textureData).forEach((array) => array.fill(0));
+        this.lidarTwinRegistry.clear();
+        this.rebuildLidarInstanceRegistry();
         this.textures.counts.boxCount = 0;
         this.textures.counts.triCount = 0;
 

@@ -10,6 +10,30 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  cpu-lidar:
+    name: CPU LiDAR (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test deterministic CPU LiDAR
+        run: npm run test:lidar
+
   lint-and-test:
     name: Lint & Test
     runs-on: ubuntu-latest

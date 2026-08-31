@@ -342,17 +342,21 @@ export class SimulationKernel {
         });
         this.context.scripts.setTopicScheduler((info) => this.queueTopicInput(info));
         this.context.scripts.setTopicRouter(this.topicRouter, manifest.topics);
-        this.context.devices.configureFromManifest(manifest.sensorRig, {
+        await this.context.devices.configureFromManifest(manifest.sensorRig, {
             seed: manifest.seed,
             topics: manifest.topics,
             topicRouter: this.topicRouter,
             transformRuntime: this.transformRuntime,
             calibrationHash: this.resolvedRun.calibration?.hash ?? null,
+            schemas: this.resolvedRun.schemas ?? {},
             stepNs: manifest.clock.stepNs,
             enabled: this.modules.sensors,
             requireStateSensors,
-            backendSelection: (episode?.backendSelections ?? episode?.backend_selections ?? this.resolvedRun.backendSelections ?? [])
-                .find((entry) => Number(entry.kind) === 2) ?? null,
+            backendSelections: episode?.backendSelections
+                ?? episode?.backend_selections
+                ?? this.resolvedRun.backendSelections
+                ?? [],
+            lidarGeometry: this.resolvedRun.lidarGeometry ?? null,
         });
         await this.context.physics.configureRun({
             manifest,
