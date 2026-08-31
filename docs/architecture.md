@@ -184,6 +184,16 @@ semantic/instance IDs, detections, and other oracle products remain excluded.
 GPU crashes, timeouts, context loss, and invalid arena state use the existing
 infrastructure-failure and reset-required boundary.
 
+PR 12 adds an operational release layer without changing the kernel or any
+versioned simulation contract. `ReleaseReports.js` defines machine-readable
+parity, benchmark, soak, and release-manifest records. Cross-platform CI
+drives the same resolved state/CPU-LiDAR cases through the browser adapter,
+direct session, CLI, UDS supervisor, and Python client. Scheduled lanes own
+long reset/memory/process/log soaks, 1/8/16/32-environment benchmarks, and
+capability-gated x64 NVIDIA/Jetson hardware checks. A staging builder produces
+an installable headless npm tarball and pure-Python wheel/sdist while the
+browser application root remains private. See [Headless release and CI gates](headless-release.md).
+
 Physics pins Rapier `0.19.3` under capability
 `rapier3d-swept-prism-v1`. Rapier owns fixed and kinematic bodies, while
 authoritative first impact/contact transitions use shared continuous XZ SAT

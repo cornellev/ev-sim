@@ -48,10 +48,13 @@ function serializedError(error) {
 }
 
 function health() {
+    const cpu = process.cpuUsage();
     return session?.health() ?? {
         state: "idle",
         rssBytes: process.memoryUsage().rss,
         heapBytes: process.memoryUsage().heapUsed,
+        cpuUserMicros: cpu.user,
+        cpuSystemMicros: cpu.system,
         lastCompletedStep: 0,
         queueBytes: 0,
         sensorQueueBytes: 0,

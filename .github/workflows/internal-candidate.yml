@@ -1,0 +1,45 @@
+name: Internal headless candidate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-candidate:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.14
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: npm ci
+      - run: python -m pip install -e './python[sb3,test]'
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+      - run: npm run proto:python
+      - run: npm run lint:python
+      - run: npm run test:python
+      - run: npm run test:parity -- --output artifacts/parity-linux.json
+      - run: npm run test:soak -- --output artifacts/headless-soak.json
+      - run: npm run benchmark:headless -- --output artifacts/headless-benchmark.json
+      - run: npm run dist:headless -- --output artifacts/headless
+      - run: npm run release:check -- --dist artifacts/headless
+      - run: npm run dist:verify -- --dist artifacts/headless
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cev-sim-headless-0.1.0-${{ github.sha }}
+          path: |
+            artifacts/headless/*
+            artifacts/*.json
+          if-no-files-found: error
+          retention-days: 90

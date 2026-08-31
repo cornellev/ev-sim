@@ -143,6 +143,13 @@ headless queues cannot pause or resume. Headless results retain run,
 simulation-semantic, episode, and trajectory hashes plus artifacts and import
 warnings. Baselines preserve the hashes but do not depend on retained files.
 
+The PR 12 npm/Python candidate artifacts do not start Express or add a second
+MCP server. MCP remains part of the full browser application at `/mcp`, and
+`release:check` only enforces that its advertised `cev-sim` version matches
+the CLI/worker, plugin, and Python adapter. Installing a headless artifact
+therefore exposes the CLI/supervisor or Python client, not MCP authoring and
+storage tools. See [Headless release and CI gates](headless-release.md).
+
 ### Logging and replay
 
 | Tool | Purpose |

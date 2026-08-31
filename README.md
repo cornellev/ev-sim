@@ -30,6 +30,16 @@ npm install
 npm run dev
 ```
 
+## Headless simulation artifacts
+
+The deterministic headless CLI/worker and Python Gymnasium adapter are built
+as coordinated internal artifacts rather than published to npm or PyPI. Run
+`npm run dist:headless` to produce the npm tarball, Python wheel/sdist,
+compatibility manifest, and SHA-256 checksums. Teammates can download the
+manual `Internal headless candidate` workflow artifact and install it without
+the browser application. See [Headless release and CI gates](docs/headless-release.md)
+and [Jetson deployment](docs/jetson-headless.md).
+
 The app opens to the simulation workspace by default. Press `Escape` to open the app menu, where you can see options such as:
 
 ### Environment Editor
@@ -78,6 +88,8 @@ node skills/cev-sim/scripts/validate.mjs
 - [Documentation index](docs/README.md)
 - [Getting started](docs/getting-started.md)
 - [Architecture](docs/architecture.md)
+- [Headless release and CI gates](docs/headless-release.md)
+- [Jetson headless deployment](docs/jetson-headless.md)
 - [Environment editor](docs/environment-editor.md)
 - [Earth import](docs/earth-import.md)
 - [Development workflow](docs/development.md)
@@ -100,6 +112,11 @@ Example browser path:
 ```
 
 See [Assets](docs/assets.md) for asset policy and setup details.
+
+## License
+
+The repository, headless npm artifact, and Python distribution are licensed
+under the [Apache License 2.0](LICENSE).
 
 ## References
 

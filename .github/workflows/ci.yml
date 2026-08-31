@@ -5,72 +5,139 @@ on:
     branches: [main, master]
   pull_request:
 
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  cpu-lidar:
-    name: CPU LiDAR (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Test deterministic CPU LiDAR
-        run: npm run test:lidar
-
-  lint-and-test:
-    name: Lint & Test
+  hosted-cpu:
+    name: Hosted CPU gate
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-
+    timeout-minutes: 30
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 22.14
           cache: npm
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Install Python dependencies
-        run: python -m pip install -e './python[sb3,test]'
-
-      - name: Lint
-        run: npm run lint
-
-      - name: Test
-        run: npm run test
-
-      - name: Check Python generated bindings and lint
+      - run: npm ci
+      - run: python -m pip install -e './python[sb3,test]'
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+      - name: Verify characterization fixture drift
+        run: |
+          npm run fixtures:headless
+          git diff --exit-code -- tests/fixtures/headless/characterization.v1.json
+      - name: Verify generated protocol and Python
         run: |
           npm run proto:python
           npm run lint:python
+          python -m pytest -m 'not integration' python/tests
+      - run: npm run release:check
 
-      - name: Test Python Gymnasium and SB3 adapters
-        run: npm run test:python
+  cross-platform-headless:
+    name: Headless parity (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            report: linux
+          - os: macos-latest
+            report: macos
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.14
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: npm ci
+      - run: python -m pip install -e './python[test]'
+      - run: npm run test:headless
+      - run: npm run test:cli
+      - run: npm run test:lidar
+      - name: Generate parity report
+        run: npm run test:parity -- --output artifacts/parity-${{ matrix.report }}.json
+      - name: Build and inspect installable artifacts
+        run: |
+          npm run dist:headless -- --output artifacts/dist
+          npm run release:check -- --dist artifacts/dist
+          npm run dist:verify -- --dist artifacts/dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: parity-${{ matrix.report }}
+          path: artifacts/parity-${{ matrix.report }}.json
+          retention-days: 14
+
+  parity-aggregation:
+    name: macOS/Linux semantic parity
+    needs: cross-platform-headless
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.14
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: parity-*
+          path: artifacts/parity
+      - run: >-
+          node --experimental-default-type=module scripts/compare-headless-parity.mjs
+          artifacts/parity/parity-linux/parity-linux.json
+          artifacts/parity/parity-macos/parity-macos.json
+
+  python-matrix:
+    name: Python ${{ matrix.python }} unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - run: python -m pip install -e './python[test]'
+      - run: python -m pytest -m 'not integration' python/tests
+
+  python-integration:
+    name: Python Gymnasium/SB3 (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.14
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: npm ci
+      - run: python -m pip install -e './python[sb3,test]'
+      - run: python -m pytest -m integration python/tests

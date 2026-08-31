@@ -7,6 +7,7 @@ name = "cev-sim"
 version = "0.1.0"
 description = "Gymnasium and Stable-Baselines3 adapters for the cev-sim headless supervisor"
 readme = "README.md"
+license = "Apache-2.0"
 requires-python = ">=3.10,<3.14"
 dependencies = [
     "gymnasium>=1.3,<2",
@@ -19,11 +20,14 @@ dependencies = [
 [project.optional-dependencies]
 sb3 = ["stable-baselines3>=2.9,<3"]
 test = [
+    "build>=1.2,<2",
     "grpcio-tools==1.83.1",
     "psutil>=6,<8",
     "pytest>=8,<9",
     "pytest-timeout>=2.3,<3",
     "ruff>=0.12,<1",
+    "setuptools>=77",
+    "twine>=6,<7",
 ]
 
 [tool.setuptools.packages.find]

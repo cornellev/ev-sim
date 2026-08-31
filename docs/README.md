@@ -6,6 +6,7 @@ This folder is the contributor guide for cev-sim. Start here when you need to ru
 
 - New contributors: [Getting Started](getting-started.md), then [Development](development.md).
 - Architecture work: [Architecture](architecture.md), [Simulation](simulation.md), [Autonomy interface contracts](autonomy-interface-contracts.md), and [ROS Integration](ros-integration.md).
+- Headless operation: [Headless CLI](headless-cli.md), [Headless supervisor](headless-supervisor.md), [Python adapter](python-headless.md), [Release and CI gates](headless-release.md), and [Jetson deployment](jetson-headless.md).
 - Telemetry work: [Telemetry, Logging, Replay, and Analysis](telemetry-logging.md), then [SFLog](sflog.md) for the binary format, recording pipeline, recovery, and HTTP API.
 - Environment authoring: [Environment Editor](environment-editor.md), then [Earth Import](earth-import.md) for geographic imports.
 - Visual scripting work: [Scripting Overview](scripting/README.md), then [Scripting Architecture](scripting/architecture.md) and [Extension Guide](scripting/extension-guide.md).
@@ -25,9 +26,9 @@ This folder is the contributor guide for cev-sim. Start here when you need to ru
 - `app/3d/` contains Three.js scenes, vehicles, devices, overlays, and IGVC scenarios.
 - `app/3d/editor/` and `app/3d/environment/` contain the environment editor document model, tools, and baking.
 - `app/3d/earth/` contains Earth Import (tiles, roads, geospatial transforms).
-- `app/simulation/SimulationEngine.js` owns the simulation loop and module toggles.
+- `app/simulation/SimulationEngine.js` is the browser adapter over the shared deterministic kernel; `server/headless/` owns direct, CLI, supervisor, worker, report, and artifact paths.
 - `app/client/Client.js` implements the orchestrator WebSocket protocol used for ROS-style topics.
 - `server/App.js` runs the Next app behind Express (both `dev` and `start`), hosts the storage API at `/api/storage`, and the MCP endpoint at `/mcp`.
 - `server/mcp/` contains the MCP tool suites for environments, scripts, and bindings.
 - `public/` stores browser-served assets and fallback message definitions.
-- `tests/` contains Node test-runner tests for scripting, editor, bake, and earth-import behavior.
+- `tests/` contains Node test-runner tests for browser systems and headless contracts; `scripts/headless-*.mjs` produce parity, soak, and benchmark evidence.

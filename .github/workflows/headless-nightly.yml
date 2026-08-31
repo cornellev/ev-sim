@@ -1,0 +1,50 @@
+name: Headless nightly soak
+
+on:
+  schedule:
+    - cron: "17 4 * * 2,5"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: headless-nightly-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  soak-and-benchmark:
+    if: github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, cev-sim-gpu-x64]
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.14
+          cache: npm
+      - run: npm ci
+      - uses: actions/cache/restore@v4
+        with:
+          path: .ci-baselines/headless
+          key: headless-benchmark-${{ runner.os }}-${{ runner.arch }}-${{ runner.name }}-${{ github.run_id }}
+          restore-keys: headless-benchmark-${{ runner.os }}-${{ runner.arch }}-${{ runner.name }}-
+      - name: Supervisor reset/memory/process/log soak
+        run: npm run test:soak -- --output artifacts/headless-soak.json
+      - name: Headless performance benchmark
+        run: >-
+          npm run benchmark:headless --
+          --output artifacts/headless-benchmark.json
+          --baseline .ci-baselines/headless/baseline.json
+          --promote-baseline
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: .ci-baselines/headless
+          key: headless-benchmark-${{ runner.os }}-${{ runner.arch }}-${{ runner.name }}-${{ github.run_id }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: headless-nightly-${{ github.run_id }}
+          path: artifacts/*.json
+          retention-days: 30

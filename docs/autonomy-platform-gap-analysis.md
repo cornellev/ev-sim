@@ -8,7 +8,7 @@
 
 **Visual companion:** [autonomy-platform-gap-analysis.canvas.tsx](/Users/jgrimminck/.cursor/projects/Users-jgrimminck-Coding-js-sensor-fusion/canvases/autonomy-platform-gap-analysis.canvas.tsx).
 
-**Last reviewed:** 2026-08-30.
+**Last reviewed:** 2026-08-31.
 
 ---
 
@@ -24,17 +24,17 @@ Its strongest capabilities are:
 - Candidate perception and localization return paths with visualization and logging.
 - Stamped SI controls input with authority selection, delay, limits, watchdog behavior, and requested/applied/achieved telemetry.
 - Scenario and experiment authoring, deterministic case expansion, SFLog provenance, and scalar baseline comparison.
+- Authoritative browser/headless shared-kernel execution, process-isolated UDS batches, Gymnasium/SB3 clients, deterministic CPU LiDAR, pooled rendered sensors, and machine-readable CI/release gates.
 
 Its most consequential gaps are:
 
-- No authoritative headless runner for CI, batch execution, or reliable unattended campaigns.
 - Incomplete heavy-sensor and bidirectional replay; no full cross-stage trace reconstruction.
 - No professional autonomy scoring such as mAP/IoU, ATE/RPE/NEES, planning safety metrics, or controller tracking/stability metrics.
 - Kinematic vehicle motion and swept-AABB collision rather than calibrated vehicle, tire, actuator, and contact dynamics.
 - Prototype dynamic-world support: no integrated responsive traffic, pedestrians, cyclists, or physical weather.
 - No machine-readable ODD, requirement traceability, scenario coverage, or safety-case evidence workflow.
 - No OpenSCENARIO, OpenDRIVE/OpenCRG, OSI, OpenODD, or FMI interoperability layer.
-- Single-browser sequential execution, local log storage, and no distributed worker scheduler.
+- Local 1–32-environment process isolation and sequential managed campaigns, but no distributed worker scheduler, quotas, or remote evidence store.
 - No SIL/HIL/VIL runtime with target hardware, real networks, rest-bus simulation, or real-time guarantees.
 
 The highest-leverage next investment is the **verification spine**: headless execution, complete replay, traceability, metrics, and closed-loop CI. Adding more autonomy breadth or photorealism before those capabilities would create harder-to-reproduce failures rather than trustworthy evidence.
@@ -101,13 +101,13 @@ This architecture is directionally correct, but a professional system also needs
 
 | Capability area | Current level | What exists | Professional gap |
 | --- | --- | --- | --- |
-| Deterministic kernel and contracts | Strong development foundation | Fixed phase order, integer-nanosecond clock, seeded inputs/noise, versioned manifests/catalog, authority router, schema preflight | Browser ownership, GPU catch-up compromises, and no cross-platform determinism or capacity report |
+| Deterministic kernel and contracts | Strong development foundation | Shared browser/headless kernel, fixed phase order, integer-nanosecond clock, seeded inputs/noise, versioned manifests/catalog, authority router, schema preflight, parity reports | Cross-platform equality is tolerance-scoped; GPU catch-up and physical fidelity remain bounded by declared profiles |
 | Sensor I/O and truth | Usable team harness | Camera, LiDAR, IMU, GNSS, wheel/truth odometry, TF/calibration, oracle labels, candidate returns | Models are not field-calibrated; radar, ultrasonic, thermal, and adverse-weather physics are absent |
 | Vehicle and collision physics | Prototype | Kinematic bicycle motion, actuator limits/delay, Rapier world, swept-AABB collision events | No tire, suspension, powertrain, road-surface, multibody, rollover, or mesh-accurate contact dynamics |
 | Dynamic world and traffic | Prototype | Road authoring, route graph, CommonRoad parser/keyframes, traffic-control metadata, visual atmosphere/clouds | No integrated responsive traffic, pedestrians/cyclists, physical weather, wet friction, or behavior diversity |
 | Scenario V&V and metrics | Good authoring, weak validation authority | Triggers, disturbances, assertions, sweeps, baselines, route/collision/kinematic metrics | No ODD/requirement coverage, critical-scenario search, autonomy metrics, or safety-case evidence graph |
 | Logging, replay, and diagnosis | Partial | SFLog with hashes/attachments, analysis series, autonomy snapshots, replay controls | No complete sensor replay-as-fixture, end-to-end trace graph, remote evidence lifecycle, or audit governance |
-| Automation and scale | Partial | MCP/HTTP lifecycle APIs, a sequential browser queue, and one server-owned process-isolated headless experiment queue | No parallel experiment scheduling, quotas, cloud/on-prem execution fabric, or CI closed loop |
+| Automation and scale | Good local foundation | MCP/HTTP lifecycle APIs, direct CLI, UDS gRPC batches, one process per environment, Gym/SB3, cross-platform CI, nightly soaks/benchmarks, internal artifacts | No distributed scheduling, quotas, cloud/on-prem execution fabric, or governed remote promotion |
 | Standards and X-in-the-loop | Early | ROS-style contracts, CommonRoad import, external orchestrator boundary | No OpenX/FMI adapters, real-time scheduler, CAN/Ethernet rest bus, SIL/HIL/VIL topology, or ECU synchronization |
 
 ### What tests establish
@@ -157,14 +157,14 @@ Status meanings:
 | Localization | Kalman state estimate | Partial | External estimate return is validated, logged, and visualized against truth | Replaceable reference EKF, bias-state contract, ATE/RPE/NEES/innovation metrics, covariance views, replay fixtures, recovery tests |
 | Planning | Behavior FSM / signs / events | Partial | Scenario triggers/events and oracle traffic-control state; not a driving behavior planner | Behavior contract, reference FSM/tree, right-of-way semantics, intent/prediction, transition coverage, rule and response-time metrics |
 | Planning | Planning | Partial | Directed road-graph A* and verified scenario routes; no registered global/local planning stage | HD-map/dynamic-object inputs, path/trajectory outputs, stage authority, replanning deadlines, feasibility/TTC/collision metrics, replay |
-| Planning | AI / RL waypoints | Partial | Scenario/script waypoints; no training interface | Policy/waypoint contracts, headless episodes, Gym-style reset/observe/act/step, vector workers, rewards/terminations, curriculum and policy evaluation |
+| Planning | AI / RL waypoints | Partial | Scenario/script waypoints plus deterministic Gymnasium reset/step and eight-environment SB3/PPO smoke | Waypoint-policy contracts, curriculum, large-scale training, richer rewards, policy registry and evaluation governance |
 | Planning | Spline-fitted path | Partial | Road splines, route polylines, and control-arc visualization | Timed trajectory schema, reference spline and speed profile, continuity/curvature/jerk checks, collision envelope, horizon visualization |
 | Control | Controller | Partial | Stamped SI control return, route/script references, authority, watchdog, delay, limits, requested/applied/achieved telemetry | Reference PID/LQR/Stanley fixtures, lifecycle/heartbeat, trajectory feedback, tracking/stability metrics, end-to-end CI |
 | Control | MPC | Missing | No solver, horizon, constraint, or plant-model interface | Controller-neutral horizon contract, model/constraint configuration, deterministic reference MPC/fixture, deadline fallback, overlays, constraint metrics |
 | Control | System identification | Missing | Kinematic limits only; no parameter-fit workflow | Identifiable plant parameters, excitation scenarios, high-rate I/O export, fit artifacts, residual/holdout metrics, calibrated-model promotion |
 | Control | Car controls / plant | Partial | Stamped commands reach a kinematic bicycle plant through rate, jerk, steering, delay, and stale-command policies | Selectable dynamic plants, tire/slip/friction, mass/inertia, suspension, powertrain/brakes, actuator buses, mesh contact, calibration, HIL parity |
 | Platform | Simulation outputs / sensors | Available | Fixed-step schedules, clock, TF, calibration, sync groups, seeded noise, latency queues, contract routing, schema preflight | QoS and clock-domain contracts, transport faults, OSI adapters, capacity guarantees, headless sensor profiles, validation reports |
-| Platform | Hardware acceleration | Partial | WebGL camera/LiDAR, asynchronous GL readback, bounded encoding worker | Offscreen/headless GPU workers, multi-worker encode, performance budgets, deterministic fallbacks, render-farm scheduling, HIL stimulus timing |
+| Platform | Hardware acceleration | Partial | Browser WebGL plus capability-gated pooled headless Chromium/WebGL2 camera/LiDAR, shared-memory tensors, bounded GPU allocation and hardware preflight | Cross-GPU fidelity envelopes, render-farm scheduling, native target validation breadth, and HIL stimulus timing |
 | Platform | Logger on NAS | Partial | SFLog records resolved provenance, sensor bytes, candidate outputs, controls snapshots, and results to local storage | NAS/S3 backend, indexing/retention/RBAC, resumable upload, immutable evidence, rosbag2/MCAP and ML-dataset export, fleet-log ingestion |
 | Platform | Visualization / monitoring | Partial | Live, Analysis, and Replay surfaces show telemetry, autonomy outputs, controls, and pose paths | Full sensor/cloud/grid/path/horizon replay, endpoint health and traces, resource/real-time-factor monitoring, multi-run dashboards, report export |
 
@@ -176,7 +176,10 @@ Status meanings:
 
 #### 1. Authoritative headless execution
 
-**Current:** The fixed-step kernel is deterministic at unit level, but real runs and experiments are owned by a browser tab.
+**Current:** Complete for the local PR 1–12 scope. Browser, direct CLI, UDS
+supervisor, and Python clients share the authoritative JavaScript kernel;
+process, resource, parity, soak, benchmark, internal distribution, and
+capability-gated hardware lanes are defined.
 
 **Add:**
 
@@ -187,7 +190,11 @@ Status meanings:
 - Enforce resource limits and publish capacity/deadline diagnostics.
 - Produce machine-readable results, logs, hashes, and execution provenance.
 
-**Complete when:** A resolved manifest runs unattended in CI and produces consistent state, contract, calibration, and result hashes under a declared execution profile.
+**Implementation complete; external evidence pending:** The workflows run a
+resolved manifest unattended and produce same-platform exact evidence plus
+tolerance-scoped macOS/Linux semantic parity under a declared backend. The
+first hosted aggregate and both dedicated hardware reports are still required
+before candidate acceptance. Distributed scheduling remains Gate C scope.
 
 #### 2. Complete replay and cross-stage tracing
 
@@ -436,8 +443,10 @@ Deliver:
 | Sequential browser and server-owned headless experiment queues | `app/experiments/ExperimentRunController.js`, `server/headless/HeadlessExperimentService.js` |
 | Baseline comparison | `app/experiments/BaselineComparison.js` |
 | SFLog provenance and partial replay | `app/logging/`, `app/replay/ReplayScene.js`, `app/logging/LogDataset.js` |
-| CI currently runs lint and Node tests | `.github/workflows/ci.yml` |
-| Package maturity | `package.json` (`cev-sim` version `0.1.0`) |
+| Cross-platform CI, nightly soak/benchmark, hardware lanes, and internal candidate | `.github/workflows/` |
+| Machine-readable parity/benchmark/soak/release reports | `server/headless/ReleaseReports.js`, `scripts/headless-*.mjs` |
+| Release-ready internal npm/Python artifacts | `scripts/build-headless-dist.mjs`, `python/pyproject.toml` |
+| Package maturity | coordinated `cev-sim` version `0.1.0`, Apache-2.0, no registry publication |
 
 ---
 

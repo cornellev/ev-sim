@@ -255,14 +255,16 @@ export class ManagedHeadlessSession {
 
     health() {
         const memory = process.memoryUsage();
-        let queueBytes = 0;
-        try {
-            queueBytes = serialize(this.kernel?.inputQueue?.getDeterministicState?.() ?? null).byteLength;
-        } catch {
-            queueBytes = 0;
-        }
+        const cpu = process.cpuUsage();
+        const queueBytes = Number(this.kernel?.inputQueue?.queuedBytes || 0);
         const sensorQueueBytes = (this.runtime?.devices?.devices || []).reduce((total, device) => {
-            try { return total + serialize(device.queue ?? device.contractPublisher?.queue ?? []).byteLength; }
+            try {
+                if (Number.isFinite(Number(device.contractPublisher?.queuedBytes))) {
+                    return total + Number(device.contractPublisher.queuedBytes);
+                }
+                const deviceQueue = device.queue ?? [];
+                return total + (deviceQueue.length > 0 ? serialize(deviceQueue).byteLength : 0);
+            }
             catch { return total; }
         }, 0);
         const recordingQueueBytes = Number(this.artifactSink?.recording?.queuedBytes || 0);
@@ -270,6 +272,8 @@ export class ManagedHeadlessSession {
             state: this.state,
             rssBytes: memory.rss,
             heapBytes: memory.heapUsed,
+            cpuUserMicros: cpu.user,
+            cpuSystemMicros: cpu.system,
             lastCompletedStep: this.kernel?.steps ?? 0,
             queueBytes: queueBytes + sensorQueueBytes + recordingQueueBytes,
             sensorQueueBytes,

@@ -7,8 +7,8 @@ language-neutral API authority is
 
 ## Status
 
-- Current milestone: **PR 11 — complete**
-- Next planned milestone: **PR 12 — CI, parity, performance, distribution, and release gates**
+- Current milestone: **PR 12 — implementation complete; external hardware acceptance pending**
+- Next planned milestone: **None — the numbered headless implementation roadmap is complete**
 - Default implementation/review reasoning level: **Extra High**
 - Last updated: **2026-08-31**
 
@@ -25,7 +25,7 @@ Progress:
 - [x] PR 9 — MCP, experiment, result, and logging integration
 - [x] PR 10 — Deterministic CPU/BVH LiDAR
 - [x] PR 11 — Pooled offscreen GPU sensors and large-payload transport
-- [ ] PR 12 — CI, parity, performance, distribution, and release gates
+- [x] PR 12 — CI, parity, performance, distribution, and release gates
 
 ## Locked decisions
 
@@ -430,6 +430,14 @@ characterization fixture has no delta.
 
 ### PR 12 — CI, parity, performance, distribution, and release
 
+Status: **Implementation complete (2026-08-31); candidate acceptance awaits
+the dedicated x64 NVIDIA and Jetson ARM64 reports.** Hosted CPU and
+cross-platform workflows, semantic parity aggregation, scheduled soak and
+benchmark gates, capability-gated hardware workflows, and the manual internal
+candidate workflow are defined. The release builder emits one dependency-
+closed Apache-2.0 npm tarball plus a licensed pure-Python wheel and sdist,
+compatibility manifest, and checksums without publishing to a registry.
+
 Deliver:
 
 - Linux/macOS headless smoke and parity CI, Python/protocol checks, reset and
@@ -782,3 +790,33 @@ python/tests` reports 42 passed. Focused shared-memory, LiDAR, CLI, supervisor,
 protocol-generation, and Python lint checks pass. `npm run lint` has no errors
 (two pre-existing warnings), and `npm run fixtures:headless` produces no
 characterization delta.
+
+### 2026-08-31 — PR 12 release gates and internal distribution
+
+Keep PR 12 operational: protocol 1.2, Protobuf v1, run-manifest v9,
+run-bundle v1, SFLog v1, all backend/profile identities, and semantic hash
+algorithms remain unchanged. Add version-1 parity, benchmark, soak, host, and
+release-manifest evidence; private worker IPC gains cumulative CPU counters,
+while public `HealthResponse` remains unchanged. Cross-platform reports apply
+exact discrete/hash comparisons, Float64/Float32 tolerances, the CPU-LiDAR
+`max(1e-4, 1e-5 × distance)` range rule, and exact ray/semantic/instance IDs.
+
+Local final evidence on macOS ARM64 with Node 22.14.0 is: `npm test` 592
+passed with two expected hardware-only skips; the production build succeeded;
+Python 3.12 reported 42 passed; lint reported zero errors and two pre-existing
+warnings; generated Python Protobuf checks passed; and the PR 1 fixture
+regenerated with no delta. All five parity paths matched exactly for both
+state-only and CPU-LiDAR cases. The full 1/8/16/32 soak passed 5 warm-up plus
+25 measured cycles with zero queues, bounded final-window RSS, readable
+sampled/full artifacts, no staging/shared-memory residue, and all workers
+exited. The full 1/8/16/32 benchmark passed 32 warm-up plus 256 measured steps
+across five repetitions; machine-specific output remains uncommitted.
+
+The coordinated 0.1.0 artifacts clean-installed from the npm tarball, wheel,
+and sdist. The final local npm tarball was 379,989 bytes, below the 10 MiB
+ceiling; both Python archives included Protobuf stubs, `py.typed`, and the
+Apache-2.0 license, and `twine check` passed. The hosted macOS/Linux aggregate
+and dedicated `cev-sim-gpu-x64` / `cev-sim-jetson-arm64` reports are not
+claimed by this local run; they remain mandatory candidate evidence from the
+new workflows. No simulator contract, characterization byte, or semantic hash
+changed.

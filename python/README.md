@@ -7,3 +7,5 @@ usage.
 
 The Python package is a client only. The authoritative simulator remains the
 JavaScript `cev-sim` worker.
+
+The package and coordinated npm runtime are licensed under Apache-2.0.

@@ -215,6 +215,20 @@ or disabled; disabled logging stays disabled unless explicitly upgraded.
 These operational choices do not enter simulation, episode, or trajectory
 identity. `run_manifest_launch` remains browser-backed.
 
+## PR 12 parity and release evidence
+
+Parity, benchmark, soak, host-validation, and release-manifest reports are
+operational evidence. Their timestamps, machine identity, CPU/RSS values,
+artifact paths, runner labels, and baseline comparisons never enter
+`definitionHash`, `resolvedHash`, `simulationSemanticHash`, `episodeHash`, or
+`trajectoryHash`. PR 12 keeps run-manifest v9 and run-bundle v1 unchanged.
+
+Cross-platform parity reports record the already-resolved bundle hashes and
+backend/profile identities, then compare a semantic projection under the
+declared Float64/Float32/CPU-LiDAR tolerances. They do not re-resolve or mutate
+the bundle. Same-platform paths still require exact episode/trajectory hashes
+and tensor bytes. See [Headless release and CI gates](headless-release.md).
+
 ## Scenario episode metrics
 
 When a run selects a scenario, `ScenarioRuntime` collects ego-only episode metrics each fixed step and merges them into `finalize().metrics` (and `run-results.json`). Built-ins:

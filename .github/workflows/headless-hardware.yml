@@ -1,0 +1,91 @@
+name: Headless rendered-sensor hardware
+
+on:
+  schedule:
+    - cron: "43 5 * * 3"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: headless-hardware-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  nvidia-x64:
+    if: github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, cev-sim-gpu-x64]
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.14
+          cache: npm
+      - run: npm ci
+      - name: Validate x64 NVIDIA host and production WebGL2
+        run: >-
+          npm run host:validate --
+          --role x64-nvidia
+          --config /etc/cev-sim/supervisor.json
+          --require-gpu
+          --output artifacts/host-x64-nvidia.json
+      - name: Resolve configured Chromium
+        id: chromium
+        run: echo "executable=$(jq -r '.renderer.chromiumExecutable' /etc/cev-sim/supervisor.json)" >> "$GITHUB_OUTPUT"
+      - name: Production rendered sensors
+        env:
+          CEV_SIM_CHROMIUM_EXECUTABLE: ${{ steps.chromium.outputs.executable }}
+        run: |
+          npm run test:gpu-sensors
+          npm run test:shared-memory
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hardware-x64-${{ github.run_id }}
+          path: artifacts/*.json
+          retention-days: 30
+
+  jetson-arm64:
+    if: github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, cev-sim-jetson-arm64]
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.14
+          cache: npm
+      - run: npm ci
+      - run: |
+          python3 -m venv .ci-venv
+          .ci-venv/bin/python -m pip install -e './python[sb3,test]'
+      - name: Validate Jetson host and capability-gated WebGL2
+        run: >-
+          npm run host:validate --
+          --role jetson-arm64
+          --config /etc/cev-sim/supervisor.json
+          --output artifacts/host-jetson-arm64.json
+      - run: npm run test:headless
+      - run: npm run test:lidar
+      - run: .ci-venv/bin/python -m pytest python/tests
+      - name: Resolve Jetson GPU capability
+        id: gpu
+        run: |
+          echo "available=$(jq -r '.gpuPreflight.available' artifacts/host-jetson-arm64.json)" >> "$GITHUB_OUTPUT"
+          echo "executable=$(jq -r '.renderer.chromiumExecutable' /etc/cev-sim/supervisor.json)" >> "$GITHUB_OUTPUT"
+      - name: Capability-gated rendered sensors
+        if: steps.gpu.outputs.available == 'true'
+        env:
+          CEV_SIM_CHROMIUM_EXECUTABLE: ${{ steps.gpu.outputs.executable }}
+        run: npm run test:gpu-sensors
+      - name: Explicit unsupported rendered-sensor path
+        if: steps.gpu.outputs.available != 'true'
+        run: npm run test:gpu-sensors
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hardware-jetson-${{ github.run_id }}
+          path: artifacts/*.json
+          retention-days: 30

@@ -233,24 +233,26 @@ export class HeadlessSession {
 
     health() {
         const memory = process.memoryUsage();
+        const cpu = process.cpuUsage();
         const sensorQueueBytes = (this.episode?.runtime?.devices?.devices || []).reduce((total, device) => {
             try {
-                return total + serialize(device.queue ?? device.contractPublisher?.queue ?? []).byteLength;
+                if (Number.isFinite(Number(device.contractPublisher?.queuedBytes))) {
+                    return total + Number(device.contractPublisher.queuedBytes);
+                }
+                const queue = device.queue ?? [];
+                return total + (queue.length > 0 ? serialize(queue).byteLength : 0);
             } catch {
                 return total;
             }
         }, 0);
-        let inputQueueBytes = 0;
-        try {
-            inputQueueBytes = serialize(this.episode?.kernel?.inputQueue?.getDeterministicState?.() ?? null).byteLength;
-        } catch {
-            inputQueueBytes = 0;
-        }
+        const inputQueueBytes = Number(this.episode?.kernel?.inputQueue?.queuedBytes || 0);
         const recordingQueueBytes = Number(this.artifactSink?.recording?.queuedBytes || 0);
         return {
             state: this.state,
             rssBytes: memory.rss,
             heapBytes: memory.heapUsed,
+            cpuUserMicros: cpu.user,
+            cpuSystemMicros: cpu.system,
             lastCompletedStep: this.episode?.kernel?.steps ?? 0,
             queueBytes: sensorQueueBytes + inputQueueBytes + recordingQueueBytes,
             sensorQueueBytes,

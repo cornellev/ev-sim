@@ -34,6 +34,12 @@ The local repository executable is `./bin/cev-sim.js`. Installed packages
 expose the `cev-sim` bin. JSON and JSONL are written to stdout; diagnostics are
 written to stderr.
 
+PR 12 distributes the CLI as a verified internal npm tarball rather than a
+registry package. Download the coordinated candidate artifact and install it
+with `npm run artifacts:install`; the staged package requires Node 22.14 or
+newer on Linux/macOS x64 or ARM64 and excludes browser assets and persisted
+data. See [Headless release and CI gates](headless-release.md).
+
 ## Streaming actions and output
 
 Each non-empty JSONL input line contains one normalized policy action:

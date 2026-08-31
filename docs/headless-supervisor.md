@@ -232,6 +232,12 @@ commands and on the configured polling interval (250 ms by default). V8 old
 space is also bounded with the worker's heap option. A wall watchdog wraps
 every step, and the episode watchdog starts only after a successful reset.
 
+Workers also report cumulative user/system CPU microseconds over private IPC
+for PR 12 performance reports. Those counters are intentionally absent from
+the public Protobuf `HealthResponse`, so protocol 1.2 and its field numbers do
+not change. Scheduled soaks require true pending queue bytes to return to zero
+after finalization. See [Headless release and CI gates](headless-release.md).
+
 These checks are operational safeguards, not a substitute for an operating
 system hard boundary. On Linux, add cgroup-v2 or container constraints sized
 for the supervisor plus all selected workers. Examples:
@@ -246,6 +252,9 @@ supervisor and runtime overhead. A cgroup OOM kill is observed as a worker
 crash and follows the same no-replay recovery policy. macOS has no equivalent
 per-child cgroup boundary here; RSS polling, V8 heap bounds, watchdogs, and
 signal escalation are best-effort enforcement.
+
+Jetson service, device-permission, UDS, cgroup/systemd, and artifact-install
+guidance is in [Jetson headless deployment](jetson-headless.md).
 
 ## GPU preflight
 

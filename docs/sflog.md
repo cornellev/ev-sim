@@ -510,6 +510,16 @@ Headless tools read the backend files directly. Recording start/stop and visual 
 
 Resources: `fusion://logs` and `fusion://logs/{logId}`.
 
+## Release soak and throughput evidence
+
+PR 12 keeps SFLog version 1 unchanged. Scheduled headless soaks verify that
+evaluation, training-sampled/failure-promoted, and disabled policies retain
+their existing meaning, that finalized artifact digests are readable, and
+that no `.partial` or staging output survives successful cleanup. Performance
+reports measure evaluation-SFLog bytes per second separately from fixed-step
+throughput; logging policy and measured wall time remain operational and do
+not affect episode or trajectory identity. See [Headless release and CI gates](headless-release.md).
+
 ## Implementation map
 
 | File | Role |

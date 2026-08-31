@@ -13,10 +13,11 @@ code, read:
 3. [`docs/run-manifests.md`](docs/run-manifests.md)
 4. [`docs/architecture.md`](docs/architecture.md)
 
-PR 1 establishes the contract and characterization baseline. PRs 2–10 are
-complete; the next implementation milestone is PR 11, pooled offscreen GPU
-sensors and large-payload transport. Work on one numbered PR at a time; do not
-pull later GPU, distribution, or release scope into an earlier milestone.
+PR 1 establishes the contract and characterization baseline. PRs 2–12 are
+implemented. The roadmap implementation is complete; candidate acceptance now
+requires the PR 12 hosted, soak, x64 NVIDIA, and Jetson ARM64 workflow evidence
+recorded in the roadmap. Do not infer a PR 13 or pull distributed scheduling,
+TLS/authentication, native WebGPU, or registry publication into maintenance.
 
 Update the progress and decision log in
 `docs/headless-simulation-plan.md` whenever a roadmap PR changes a contract,
