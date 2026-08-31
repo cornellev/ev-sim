@@ -1,5 +1,10 @@
 import * as THREE from "three";
 import { SCENARIO_DIAGNOSTIC_LAYER } from "../../scenarios/ScenarioDiagnostics.js";
+import {
+    createControlsPathRibbonGeometry,
+    updateControlsPathRibbon,
+} from "../../autonomy/ControlsPathArc.js";
+import { rep103SteeringToThree } from "../../autonomy/ControlCommandAdapter.js";
 
 export const AUTONOMY_OVERLAY_LAYER = SCENARIO_DIAGNOSTIC_LAYER;
 
@@ -10,6 +15,8 @@ const COLORS = Object.freeze({
     invalid: 0xfb7185,
     truth: 0xffffff,
     error: 0xfbbf24,
+    commanded: 0xa78bfa,
+    achieved: 0x22d3ee,
 });
 
 function disableRaycast(object) {
@@ -109,11 +116,13 @@ export class AutonomyOverlay {
             candidate: true,
             ekf: true,
             lanes: true,
+            controls: true,
         };
         this._boxes = new THREE.Group();
         this._lanes = new THREE.Group();
         this._ekf = new THREE.Group();
-        this.group.add(this._boxes, this._lanes, this._ekf);
+        this._controls = new THREE.Group();
+        this.group.add(this._boxes, this._lanes, this._ekf, this._controls);
     }
 
     attach(scene, operatorCamera = null) {
@@ -129,10 +138,11 @@ export class AutonomyOverlay {
         this._boxes.visible = this.layers.oracle || this.layers.candidate;
         this._lanes.visible = this.layers.lanes;
         this._ekf.visible = this.layers.ekf;
+        this._controls.visible = this.layers.controls !== false;
     }
 
     clear() {
-        for (const group of [this._boxes, this._lanes, this._ekf]) {
+        for (const group of [this._boxes, this._lanes, this._ekf, this._controls]) {
             for (const child of [...group.children]) {
                 child.traverse(disposeObject);
                 child.removeFromParent();
@@ -140,12 +150,12 @@ export class AutonomyOverlay {
         }
     }
 
-    updateFromRuntime(runtime, layers = null) {
+    updateFromRuntime(runtime, layers = null, { controlRuntime = null, vehiclePose = null } = {}) {
         if (layers) this.setLayers(layers);
         this.clear();
-        if (!runtime) return;
-        const perception = runtime.lastPerception || {};
-        const localization = runtime.lastLocalization || {};
+        if (!runtime && !controlRuntime) return;
+        const perception = runtime?.lastPerception || {};
+        const localization = runtime?.lastLocalization || {};
 
         if (this.layers.oracle) {
             this._drawBoxes(perception.oracle?.detections3d || [], "oracle");
@@ -158,9 +168,12 @@ export class AutonomyOverlay {
         if (this.layers.ekf) {
             this._drawEstimate(localization);
         }
+        if (this.layers.controls !== false && controlRuntime) {
+            this._drawControls(controlRuntime.getSnapshot(), vehiclePose);
+        }
     }
 
-    updateFromSnapshot({ perception, localization } = {}, layers = null) {
+    updateFromSnapshot({ perception, localization, controls, vehiclePose } = {}, layers = null) {
         if (layers) this.setLayers(layers);
         this.clear();
         if (this.layers.oracle) {
@@ -174,6 +187,61 @@ export class AutonomyOverlay {
         if (this.layers.ekf) {
             this._drawEstimate(localization || {});
         }
+        if (this.layers.controls !== false && controls) {
+            this._drawControls(controls, vehiclePose);
+        }
+    }
+
+    _drawControls(snapshot, vehiclePose = null) {
+        if (!snapshot) return;
+        const pose = vehiclePose || {
+            position: { x: 0, y: 0, z: 0 },
+            yaw: 0,
+        };
+        const wheelbase = Number(snapshot.wheelbase) || 1.5;
+        if (snapshot.applied) {
+            this._addControlArc(
+                pose,
+                rep103SteeringToThree(snapshot.applied.steeringRad),
+                COLORS.commanded,
+                wheelbase,
+                0.45,
+            );
+        }
+        if (snapshot.achieved) {
+            this._addControlArc(
+                pose,
+                rep103SteeringToThree(snapshot.achieved.steeringRad),
+                COLORS.achieved,
+                wheelbase,
+                0.25,
+            );
+        }
+        const badges = [];
+        if (snapshot.flags?.timedOut) badges.push("TIMEOUT");
+        if (snapshot.flags?.saturated) badges.push("SAT");
+        if (snapshot.flags?.fallbackActive) badges.push("FALLBACK");
+        if (snapshot.flags?.rateLimited) badges.push("RATE");
+        if (badges.length) {
+            const color = snapshot.flags.timedOut ? COLORS.invalid : COLORS.stale;
+            const badge = statusBadge(badges.join(" · "), color);
+            badge.position.set(pose.position?.x || 0, (pose.position?.y || 0) + 2.4, pose.position?.z || 0);
+            this._controls.add(badge);
+        }
+    }
+
+    _addControlArc(pose, steeringRadThree, color, wheelbase, opacity) {
+        const geometry = createControlsPathRibbonGeometry(20);
+        updateControlsPathRibbon(geometry, pose, steeringRadThree, { wheelbase, lookahead: 7, segments: 20, pathWidth: 0.28 });
+        const material = new THREE.MeshBasicMaterial({
+            color,
+            transparent: true,
+            opacity,
+            depthTest: false,
+            side: THREE.DoubleSide,
+        });
+        const mesh = disableRaycast(new THREE.Mesh(geometry, material));
+        this._controls.add(mesh);
     }
 
     _drawBoxes(detections, source) {

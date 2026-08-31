@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import {
     IconAbc, IconActivity, IconArrowsExchange, IconBinaryTree2, IconBox, IconBug,
-    IconCar, IconCategory, IconCode, IconDatabase, IconDice, IconFunction,
-    IconLayoutSidebarLeftCollapse, IconLayoutSidebarLeftExpand, IconMathFunction,
-    IconMessage, IconMountain, IconPlugConnected, IconPlus, IconRoute, IconSearch,
-    IconVector, IconX,
+    IconCar, IconCategory, IconChevronDown, IconChevronRight, IconCode, IconDatabase,
+    IconDice, IconFunction, IconLayoutSidebarLeftCollapse, IconLayoutSidebarLeftExpand,
+    IconMathFunction, IconMessage, IconMountain, IconPlugConnected, IconPlus, IconRoute,
+    IconSearch, IconVector, IconX,
 } from "@tabler/icons-react";
 import { createCatalogUnitUUID, groupedUnitCatalog } from "./UnitCatalog";
 
@@ -129,6 +129,62 @@ function CategoryButton({
     );
 }
 
+function CategoryFilterPanel({
+    categoryOrder,
+    categoryCounts,
+    activeCategory,
+    collapsed,
+    onToggle,
+    onSelect,
+}) {
+    const activeMeta = categoryMeta(activeCategory);
+
+    return (
+        <div className="border-b border-white/8">
+            <button
+                type="button"
+                aria-expanded={!collapsed}
+                aria-label={collapsed ? `Expand categories, ${activeMeta.label}` : "Collapse categories"}
+                className="group flex w-full items-center gap-2 px-3 py-2 text-left transition-[background-color,color] duration-150 hover:bg-white/6"
+                onClick={onToggle}
+            >
+                {collapsed
+                    ? <IconChevronRight className="h-3.5 w-3.5 shrink-0 text-zinc-500 transition-colors duration-150 group-hover:text-zinc-300" stroke={1.75} aria-hidden="true" />
+                    : <IconChevronDown className="h-3.5 w-3.5 shrink-0 text-zinc-500 transition-colors duration-150 group-hover:text-zinc-300" stroke={1.75} aria-hidden="true" />}
+                <span className="text-[11px] font-medium text-zinc-400 transition-colors duration-150 group-hover:text-zinc-200">
+                    Categories
+                </span>
+                <span className="h-px flex-1 bg-white/8" />
+                {collapsed && (
+                    <span className="flex min-w-0 items-center gap-1.5">
+                        <span className="truncate text-[11px] text-zinc-500">{activeMeta.label}</span>
+                        <span className="font-mono text-[11px] text-zinc-600">{categoryCounts[activeCategory] || 0}</span>
+                    </span>
+                )}
+            </button>
+            {!collapsed && (
+                <div className="grid grid-cols-2 gap-1 px-2 pb-2">
+                    <CategoryButton
+                        category="all"
+                        count={categoryCounts.all || 0}
+                        active={activeCategory === "all"}
+                        onClick={() => onSelect("all")}
+                    />
+                    {categoryOrder.map((category) => (
+                        <CategoryButton
+                            key={category}
+                            category={category}
+                            count={categoryCounts[category] || 0}
+                            active={activeCategory === category}
+                            onClick={() => onSelect(category)}
+                        />
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+}
+
 function BlockRow({ unit, onAdd }) {
     const meta = categoryMeta(unit.category);
     const Icon = meta.icon;
@@ -155,6 +211,7 @@ export function AddMenu({ onAddUnit = () => {} }) {
     const [open, setOpen] = useState(false);
     const [query, setQuery] = useState("");
     const [activeCategory, setActiveCategory] = useState("all");
+    const [categoriesCollapsed, setCategoriesCollapsed] = useState(false);
     const [lastCanvasPointer, setLastCanvasPointer] = useState({ x: 420, y: 180 });
     const groupedUnits = useMemo(() => groupedUnitCatalog(), []);
     const allUnits = useMemo(() => flattenCatalogGroups(groupedUnits), [groupedUnits]);
@@ -314,25 +371,14 @@ export function AddMenu({ onAddUnit = () => {} }) {
                     </label>
                 </div>
 
-                <div className="border-b border-white/8 p-2">
-                    <div className="grid grid-cols-2 gap-1">
-                        <CategoryButton
-                            category="all"
-                            count={categoryCounts.all || 0}
-                            active={activeCategory === "all"}
-                            onClick={() => setActiveCategory("all")}
-                        />
-                        {categoryOrder.map((category) => (
-                            <CategoryButton
-                                key={category}
-                                category={category}
-                                count={categoryCounts[category] || 0}
-                                active={activeCategory === category}
-                                onClick={() => setActiveCategory(category)}
-                            />
-                        ))}
-                    </div>
-                </div>
+                <CategoryFilterPanel
+                    categoryOrder={categoryOrder}
+                    categoryCounts={categoryCounts}
+                    activeCategory={activeCategory}
+                    collapsed={categoriesCollapsed}
+                    onToggle={() => setCategoriesCollapsed((value) => !value)}
+                    onSelect={setActiveCategory}
+                />
 
                 <div className="min-h-0 flex-1 overflow-y-auto p-2 mod-scrollbar">
                     {visibleUnits.length === 0 ? (

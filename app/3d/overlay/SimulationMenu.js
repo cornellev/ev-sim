@@ -195,6 +195,12 @@ export function SimulationMenu({
                                         onChange={(value) => sim?.setAutonomyOverlayEnabled?.({ lanes: value })}
                                     />
                                     <MenuToggle
+                                        label="Controls arcs"
+                                        icon={<FaSlidersH className="h-3 w-3" />}
+                                        checked={simState?.autonomyOverlay?.controls !== false}
+                                        onChange={(value) => sim?.setAutonomyOverlayEnabled?.({ controls: value })}
+                                    />
+                                    <MenuToggle
                                         label="Sensor product panel"
                                         icon={<FaSlidersH className="h-3 w-3" />}
                                         checked={sensorPanelVisible}

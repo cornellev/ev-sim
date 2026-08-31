@@ -58,8 +58,11 @@ import {
     TabsTrigger,
     Textarea,
     TextInput,
+    pickLastOpenCatalogId,
+    readLastOpenWorkspaceId,
     useWorkspaceGuard,
     WorkspaceFrame,
+    writeLastOpenWorkspaceId,
 } from "../../ui";
 import ExperimentCatalog from "./ExperimentCatalog.js";
 import {
@@ -239,7 +242,10 @@ export default function ExperimentWorkspace({ onOpenWorkspace, onOpenReplay, onO
         setScenarioDocuments(scenarioDocs.filter(Boolean));
         setManifestDocuments(manifestDocs.filter(Boolean));
 
-        const nextId = preferredId || suiteEntries[0]?.id;
+        const nextId = pickLastOpenCatalogId(
+            suiteEntries,
+            preferredId || readLastOpenWorkspaceId("experiment-suite"),
+        );
         if (nextId) {
             const storedSuite = suiteDocument(await getExperimentSuite(nextId));
             applySuite(storedSuite);
@@ -313,9 +319,14 @@ export default function ExperimentWorkspace({ onOpenWorkspace, onOpenReplay, onO
     const discard = useCallback(() => saved && setDraft(normalizeExperimentSuite(saved)), [saved]);
     useWorkspaceGuard("experiment-suite", { dirty, save, discard, label: draft?.name || "Experiment suite" });
 
+    useEffect(() => {
+        if (selectedId) writeLastOpenWorkspaceId("experiment-suite", selectedId);
+    }, [selectedId]);
+
     const selectSuite = async (id) => {
         if (id === selectedId) return;
         if (dirty) { setError("Save or discard the current suite before opening another one."); return; }
+        writeLastOpenWorkspaceId("experiment-suite", id);
         setBusy(true);
         try { applySuite(await getExperimentSuite(id)); }
         catch (loadError) { setError(loadError?.message || "Could not open the suite."); }

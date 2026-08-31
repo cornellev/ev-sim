@@ -200,7 +200,7 @@ test("external-ros realtime cases force 1x regardless of speed override", () => 
         },
         scenario: {
             scenario: {
-                routes: [{ controller: { kind: "external-ros", topicId: "/ackdrive" } }],
+                routes: [{ controller: { kind: "external-ros", topicId: "/controls/command" } }],
             },
         },
     };

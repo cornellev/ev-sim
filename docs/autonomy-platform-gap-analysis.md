@@ -71,13 +71,13 @@ Every logical stage in a run manifest should support:
 | Area | Status | Notes |
 |------|--------|-------|
 | Deterministic sim loop | Strong | Fixed-step order in `SimulationEngine.js` |
-| Run manifests | Strong | Camera + LiDAR, `/clock`, `/ackdrive`, candidate returns |
+| Run manifests | Strong | Camera + LiDAR, `/clock`, `/controls/command`, candidate returns |
+| Controls return | Strong | Stamped SI `/controls/command`; delay/limits/watchdog; requested/applied/achieved viz |
 | Camera / LiDAR | Strong | Manifest path with measured + oracle products (Step 4) |
 | TF / extrinsics | Strong | `/tf`, `/tf_static`, capture-time lookup history |
 | IMU / GNSS / odometry | Strong | Live measured suite + oracle truth (Step 3) |
 | Perception return path | Strong | Ingest + overlays + capture scrub (Step 5); scoring deferred to Step 9 |
 | EKF return path | Strong | Estimate ingest + viz vs truth (Step 5); metrics deferred |
-| Controls return | Partial | `/ackdrive` (legacy units); ideal setpoints |
 | Planning references | Partial | A* + route follower for scenarios, not stage harness |
 | Logging / replay | Partial | SFLog + visualization scrub; full bidirectional decode is Step 8 |
 | CI / headless | Weak | Lint + unit tests; sim requires browser tab |
@@ -172,15 +172,17 @@ Every later feature depends on stable message meaning, timestamps, frames, and o
 
 **Work:**
 
-- Stamped SI-unit control command (sequence, mode, deadline, steer/speed/accel). Adapter for legacy `/ackdrive` mph/degrees.
-- Apply at step boundaries; stale-command policy (hold, stop, manifest fallback).
+- Stamped SI-unit control command (sequence, mode, deadline, steer/speed/accel) on `/controls/command`.
+- Apply at step boundaries; stale-command policy (stop default, hold, fallback).
 - Separate commanded vs achieved state; rate limits, saturation, delay, watchdog.
 - Visualize command, predicted arc, achieved motion, age, saturation, heartbeat.
 - Simulator reference path/controller for controls testing before planning exists.
 
-**Touchpoints:** `SimulationEngine.js` `_applyQueuedInputs`, `ScenarioRuntime.js`, vehicle classes, run manifest topics.
+**Touchpoints:** `ControlCommandAdapter.js`, `ControlRuntime.js`, `SimulationEngine.js`, `ScenarioRuntime.js`, `AutonomyOverlay.js`, `ControlsHud.js`, vehicle manifests v2, run manifest v9 `controls` block.
 
-**Done when:** Controls process closes loop; UI shows requested vs achieved with timeout/limit events.
+**Evidence:** Catalog v6 promotes `controls-command` to live and retires `ackdrive-legacy`; run manifest v9 migrates `/ackdrive` → `/controls/command` without a runtime alias; `ControlRuntime` enforces sequence/deadline/watchdog/delay/limits and publishes `visualization.controls.*`; live HUD + commanded/achieved arcs scrub in Analysis/Replay; `tests/control-runtime.test.js` plus extended catalog/manifest/deterministic/loopback/UI coverage.
+
+**Done when:** Controls process closes loop; UI shows requested vs achieved with timeout/limit events. ✅
 
 ### Next (steps 7–10)
 

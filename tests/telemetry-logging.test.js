@@ -348,6 +348,9 @@ test("nested numeric extraction and dataset interpolation do not duplicate paren
     });
     assert.equal(dataset.valueAt("vehicles.ego.pose", 500, { interpolate: true }).position.x, 5);
     assert.equal(dataset.snapshotAt(500)["vehicles.ego.pose"].position.x, 0);
+    assert.deepEqual([...dataset.paths()], ["vehicles.ego.pose"]);
+    const posePath = [...dataset.paths()].find((path) => path.startsWith("vehicles.") && path.endsWith(".pose"));
+    assert.equal(posePath, "vehicles.ego.pose");
 });
 
 test("LogDataset exposes calibration artifacts and resolved manifest metadata", () => {

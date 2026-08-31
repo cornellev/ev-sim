@@ -34,10 +34,12 @@ async function temporaryService() {
 test("vehicle manifest normalization supplies human-editable defaults", () => {
     const manifest = createDefaultVehicleManifest();
     assert.equal(manifest.kind, VEHICLE_MANIFEST_KIND);
-    assert.equal(manifest.version, 1);
+    assert.equal(manifest.version, 2);
     assert.equal(manifest.wheels.length, 4);
     assert.equal(manifest.wheels.filter((wheel) => wheel.steerable).length, 2);
     assert.equal(manifest.kinematics.wheelbase, 1.5);
+    assert.equal(manifest.kinematics.maxSpeed, 15);
+    assert.equal(manifest.kinematics.responseDelayNs, 0);
     assert.equal(manifest.sensors[0].type, "lidar3d");
     assert.deepEqual(manifest.sensors[0].config.thetaRange, [-180, 180]);
     assert.equal(manifest.model.asset, null);
@@ -63,7 +65,7 @@ test("vehicle manifest normalization derives wheelbase and drops malformed zone 
 });
 
 test("vehicle manifest validation rejects future versions, reserved ids, duplicates, and bad triangles", () => {
-    assert.throws(() => normalizeVehicleManifest({ kind: VEHICLE_MANIFEST_KIND, version: 2 }), /version 2/);
+    assert.throws(() => normalizeVehicleManifest({ kind: VEHICLE_MANIFEST_KIND, version: 3 }), /version 3/);
     assert.throws(() => normalizeVehicleManifest({ kind: "cev-sim.run-manifest" }), /Unsupported vehicle manifest kind/);
 
     const reserved = validateVehicleManifest(createDefaultVehicleManifest({ id: "big-car" }));
@@ -80,6 +82,23 @@ test("vehicle manifest validation rejects future versions, reserved ids, duplica
     assert.match(messages, /Duplicate id "front-left"/);
     assert.match(messages, /Duplicate id "roof-lidar"/);
     assert.match(messages, /vertex outside/);
+});
+
+test("vehicle manifest v1 migrates with permissive zero-delay actuator defaults", () => {
+    const migrated = normalizeVehicleManifest({
+        kind: VEHICLE_MANIFEST_KIND,
+        version: 1,
+        id: "legacy-car",
+        wheels: [
+            { id: "fl", position: { x: 1, y: 0.3, z: 0.5 }, steerable: true },
+            { id: "rl", position: { x: -1, y: 0.3, z: 0.5 } },
+        ],
+        kinematics: { wheelbase: 2, maxSteeringAngle: 0.5 },
+    });
+    assert.equal(migrated.version, 2);
+    assert.equal(migrated.kinematics.responseDelayNs, 0);
+    assert.ok(migrated.kinematics.maxSpeed >= 15);
+    assert.ok(migrated.kinematics.maxSteeringRate > 0);
 });
 
 test("built-in vehicles expose read-only manifest projections that can be copied", () => {

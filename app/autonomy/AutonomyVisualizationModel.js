@@ -49,6 +49,74 @@ export function emptyLocalizationSnapshot(meta = {}) {
     };
 }
 
+export function emptyControlsSnapshot(meta = {}) {
+    return {
+        vehicleId: meta.vehicleId || "ego",
+        captureTimeNs: meta.captureTimeNs ?? null,
+        arrivalTimeNs: meta.arrivalTimeNs ?? null,
+        applyTimeNs: meta.applyTimeNs ?? null,
+        status: meta.status || VISUALIZATION_STATUS.OK,
+        statusCode: meta.statusCode || null,
+        ageNs: meta.ageNs ?? null,
+        sequence: meta.sequence ?? 0,
+        mode: meta.mode || "stop",
+        authority: meta.authority || "candidate",
+        heartbeatAgeNs: meta.heartbeatAgeNs ?? null,
+        delayNs: meta.delayNs ?? 0,
+        flags: {
+            timedOut: false,
+            saturated: false,
+            rateLimited: false,
+            fallbackActive: false,
+            delayed: false,
+            ...(meta.flags || {}),
+        },
+        requested: null,
+        applied: null,
+        achieved: null,
+        deltas: {
+            requestedVsAppliedSpeed: 0,
+            appliedVsAchievedSpeed: 0,
+            requestedVsAppliedSteer: 0,
+            appliedVsAchievedSteer: 0,
+        },
+        referenceShadow: null,
+        wheelbase: meta.wheelbase ?? 1.5,
+    };
+}
+
+export function normalizeControlsSnapshot(source = {}) {
+    const base = emptyControlsSnapshot(source);
+    const finitePair = (entry) => (entry && typeof entry === "object" ? {
+        speedMps: Number(entry.speedMps) || 0,
+        steeringRad: Number(entry.steeringRad) || 0,
+        accelerationMps2: Number(entry.accelerationMps2) || 0,
+    } : null);
+    return {
+        ...base,
+        sequence: Math.max(0, Math.floor(Number(source.sequence) || 0)),
+        mode: String(source.mode || base.mode),
+        authority: String(source.authority || base.authority),
+        heartbeatAgeNs: finiteNumber(source.heartbeatAgeNs),
+        delayNs: Math.max(0, Math.floor(Number(source.delayNs) || 0)),
+        flags: { ...base.flags, ...(source.flags || {}) },
+        requested: finitePair(source.requested),
+        applied: finitePair(source.applied),
+        achieved: finitePair(source.achieved),
+        deltas: {
+            requestedVsAppliedSpeed: Number(source.deltas?.requestedVsAppliedSpeed) || 0,
+            appliedVsAchievedSpeed: Number(source.deltas?.appliedVsAchievedSpeed) || 0,
+            requestedVsAppliedSteer: Number(source.deltas?.requestedVsAppliedSteer) || 0,
+            appliedVsAchievedSteer: Number(source.deltas?.appliedVsAchievedSteer) || 0,
+        },
+        referenceShadow: source.referenceShadow ? {
+            speedMps: Number(source.referenceShadow.speedMps) || 0,
+            steeringRad: Number(source.referenceShadow.steeringRad) || 0,
+        } : null,
+        wheelbase: Number(source.wheelbase) > 0 ? Number(source.wheelbase) : base.wheelbase,
+    };
+}
+
 function finiteNumber(value) {
     const n = Number(value);
     return Number.isFinite(n) ? n : null;
@@ -149,9 +217,23 @@ export function validateInboundPayload(contractId, typeStr, value) {
             }
             return { ok: true };
         }
-        case "sensor_fusion_msgs/AckermannDrive":
-        case "sensor_fusion_msgs/StampedAckermannDrive":
+        case "sensor_fusion_msgs/StampedAckermannDrive": {
+            if (!value.header?.stamp) return { ok: false, code: "missing-stamp", message: "StampedAckermannDrive requires header.stamp." };
+            const mode = String(value.mode || "velocity");
+            if (!["velocity", "acceleration", "stop"].includes(mode)) {
+                return { ok: false, code: "invalid-mode", message: `Invalid control mode "${mode}".` };
+            }
+            const sequence = Number(value.sequence);
+            if (!Number.isInteger(sequence) || sequence < 0) {
+                return { ok: false, code: "invalid-sequence", message: "sequence must be a non-negative integer." };
+            }
+            for (const field of ["steering_angle", "steering_angle_velocity", "speed", "acceleration", "jerk", "deadline_ns"]) {
+                if (value[field] !== undefined && value[field] !== null && !Number.isFinite(Number(value[field]))) {
+                    return { ok: false, code: "non-finite", message: `${field} must be finite.` };
+                }
+            }
             return { ok: true };
+        }
         default:
             return { ok: true };
     }

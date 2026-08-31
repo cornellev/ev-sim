@@ -28,7 +28,16 @@ const definitions = {
             { id: "rear-left", position: { x: -0.75, y: 0.25, z: 0.55 }, radius: 0.25, width: 0.15, steerable: false },
             { id: "rear-right", position: { x: -0.75, y: 0.25, z: -0.55 }, radius: 0.25, width: 0.15, steerable: false },
         ],
-        kinematics: { wheelbase: 49 * INCH, maxSteeringAngle: Math.PI * 0.49 },
+        kinematics: {
+            wheelbase: 49 * INCH,
+            maxSteeringAngle: Math.PI * 0.49,
+            maxSpeed: 20,
+            maxAcceleration: 3.5,
+            maxDeceleration: 6,
+            maxJerk: 12,
+            maxSteeringRate: 1.5,
+            responseDelayNs: 0,
+        },
         sensors: [
             {
                 id: "roof-lidar",
@@ -56,7 +65,16 @@ const definitions = {
         },
         egoCenter: { x: 0, y: 9 * INCH, z: 0 },
         wheels: [],
-        kinematics: { wheelbase: 1.5, maxSteeringAngle: 0.6 },
+        kinematics: {
+            wheelbase: 1.5,
+            maxSteeringAngle: 0.6,
+            maxSpeed: 8,
+            maxAcceleration: 2.5,
+            maxDeceleration: 4,
+            maxJerk: 8,
+            maxSteeringRate: 1.0,
+            responseDelayNs: 0,
+        },
         sensors: [
             {
                 id: "roof-lidar",
@@ -83,7 +101,16 @@ const definitions = {
             { id: "rear-left", position: { x: -1.26, y: 0.24, z: 0.96 }, radius: 0.24, width: 0.24, steerable: false },
             { id: "rear-right", position: { x: -1.26, y: 0.24, z: -0.96 }, radius: 0.24, width: 0.24, steerable: false },
         ],
-        kinematics: { wheelbase: 2.52, maxSteeringAngle: 0.6 },
+        kinematics: {
+            wheelbase: 2.52,
+            maxSteeringAngle: 0.6,
+            maxSpeed: 25,
+            maxAcceleration: 4,
+            maxDeceleration: 7,
+            maxJerk: 15,
+            maxSteeringRate: 1.8,
+            responseDelayNs: 0,
+        },
         sensors: [],
         lidarZone: {},
     },

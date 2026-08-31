@@ -13,6 +13,13 @@ export {
     writeAdvancedAuthoringPreference,
 } from "./authoringModeStorage.js";
 export {
+    LAST_OPEN_WORKSPACE_KEYS,
+    lastOpenWorkspaceStorageKey,
+    pickLastOpenCatalogId,
+    readLastOpenWorkspaceId,
+    writeLastOpenWorkspaceId,
+} from "./lastOpenWorkspaceStorage.js";
+export {
     Field,
     NativeSelect,
     SegmentedControl,

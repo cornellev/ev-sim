@@ -33,7 +33,7 @@ test("orchestrator loopback preflight rejects wrong return types and accepts val
         schemas: schemaClosureForManifest(manifest),
         autonomyCatalog: manifest.autonomyCatalog,
     };
-    const ack = manifest.topics.find((topic) => topic.id === "ackdrive");
+    const ack = manifest.topics.find((topic) => topic.contractId === "controls-command");
 
     const loopback = createOrchestratorLoopback({
         topics: [{ name: ack.name, typeStr: "std_msgs/String" }],
@@ -75,7 +75,7 @@ test("topic router routes valid team returns through producer and active paths",
     const store = new SignalStore({}, { sourceId: "loopback-router" });
     const manifest = createDefaultRunManifest();
     const router = new TopicContractRouter(manifest, { telemetry: store });
-    const ack = manifest.topics.find((topic) => topic.id === "ackdrive");
+    const ack = manifest.topics.find((topic) => topic.contractId === "controls-command");
     const payload = fixturePayloadForType(ack.schema.type);
     const routed = router.routeInbound({
         name: ack.name,
@@ -83,8 +83,8 @@ test("topic router routes valid team returns through producer and active paths",
         value: payload,
     }, { applyStep: 1, applyTimeNs: 16_666_667, arrivalTimeNs: 16_666_667 });
     assert.equal(routed.ok, true);
-    assert.ok(store.read("candidate.topics.ackdrive-legacy")?.value);
-    assert.ok(store.read("active.topics.ackdrive-legacy")?.value);
+    assert.ok(store.read("candidate.topics.controls-command")?.value);
+    assert.ok(store.read("active.topics.controls-command")?.value);
 });
 
 test("perception returns preserve capture stamps without writing active paths", () => {
@@ -109,7 +109,7 @@ test("perception returns preserve capture stamps without writing active paths", 
     assert.equal(store.read("diagnostics.topics.perception-detections-2d")?.value?.status, "ok");
 });
 
-test("full-catalog fixture manifest declares live outputs and legacy control return", () => {
+test("full-catalog fixture manifest declares live outputs and stamped controls return", () => {
     const topics = defaultManifestTopics();
     assert.ok(topics.some((topic) => topic.contractId === "front-camera-image"));
     assert.ok(topics.some((topic) => topic.contractId === "front-camera-depth"));
@@ -122,7 +122,8 @@ test("full-catalog fixture manifest declares live outputs and legacy control ret
     assert.ok(topics.some((topic) => topic.contractId === "perception-lanes"));
     assert.ok(topics.some((topic) => topic.contractId === "tf"));
     assert.ok(topics.some((topic) => topic.contractId === "tf-static"));
-    assert.ok(topics.some((topic) => topic.contractId === "ackdrive-legacy"));
+    assert.ok(topics.some((topic) => topic.contractId === "controls-command"));
+    assert.ok(!topics.some((topic) => topic.contractId === "ackdrive-legacy"));
     const depth = topics.find((topic) => topic.contractId === "front-camera-depth");
     assert.equal(depth.producer, "oracle");
     assert.equal(depth.authority, "oracle");

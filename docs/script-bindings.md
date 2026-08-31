@@ -36,7 +36,7 @@ Bindings connect compiled visual scripts to live triggers: ROS topics, fixed sim
       "folderId": "controllers",
       "scope": "selected",
       "scriptId": "abc-123",
-      "trigger": { "kind": "topic", "topic": "/ackdrive" },
+      "trigger": { "kind": "topic", "topic": "/controls/command" },
       "inputs": [
         { "input": "speed", "source": "message", "field": "speed" },
         { "input": "gain", "source": "constant", "value": 1.5 },
@@ -45,7 +45,7 @@ Bindings connect compiled visual scripts to live triggers: ROS topics, fixed sim
       ],
       "outputs": [
         { "output": "steering", "sink": "signal", "path": "vehicle.ego.steering" },
-        { "output": "cmd", "sink": "publish", "topic": "/cmd_out", "type": "sensor_fusion_msgs/AckermannDrive" }
+        { "output": "cmd", "sink": "publish", "topic": "/cmd_out", "type": "sensor_fusion_msgs/StampedAckermannDrive" }
       ]
     }
   ]

@@ -10,6 +10,7 @@ import {
     catalogHash,
     catalogMetadata,
     catalogSchemas,
+    inputTopicRequiresOrchestrator,
     msgFilePathsForCatalog,
     schemaClosureForManifest,
 } from "../../autonomy/AutonomyContractCatalog.js";
@@ -133,10 +134,23 @@ export class ClientManager {
             });
         }
 
+        const scenario = resolved.scenario?.scenario
+            ?? (resolved.scenario?.kind === "cev-sim.scenario" ? resolved.scenario : null);
+        const preflightContext = {
+            controlsAuthority: manifest.controls?.authority || (manifest.scenario ? "reference" : "candidate"),
+            scenario,
+            scenarioSelected: Boolean(manifest.scenario),
+        };
+        const needsOrchestrator = (manifest.topics || []).some((topic) => (
+            inputTopicRequiresOrchestrator(topic, preflightContext)
+        ));
+
         const client = this.client;
         if (!client?.isOpen?.()) {
-            issues.push({ path: "transport", message: "ROS orchestrator transport is not connected." });
-            return { ok: false, issues };
+            if (needsOrchestrator) {
+                issues.push({ path: "transport", message: "ROS orchestrator transport is not connected." });
+            }
+            return { ok: issues.length === 0, issues };
         }
 
         let catalogTopics = [];
@@ -144,8 +158,11 @@ export class ClientManager {
             catalogTopics = await client.fetchTopicCatalog();
             for (const info of catalogTopics) this._trackOrchestratorTopic(info);
         } catch (error) {
-            issues.push({ path: "transport.echo", message: error.message || "Could not read orchestrator topic catalog." });
-            return { ok: false, issues };
+            if (needsOrchestrator) {
+                issues.push({ path: "transport.echo", message: error.message || "Could not read orchestrator topic catalog." });
+                return { ok: false, issues };
+            }
+            return { ok: issues.length === 0, issues };
         }
 
         const catalogByName = new Map(catalogTopics.map((info) => [info.name, info.typeStr ?? info.type ?? null]));
@@ -159,7 +176,7 @@ export class ClientManager {
                     path: `topics.${index}.schema.type`,
                     message: `Topic "${topic.name}" expected ${expectedType}, orchestrator advertises ${knownType}.`,
                 });
-            } else if (topic.required && !knownType) {
+            } else if (inputTopicRequiresOrchestrator(topic, preflightContext) && !knownType) {
                 issues.push({
                     path: `topics.${index}.name`,
                     message: `Required return topic "${topic.name}" is not available on the orchestrator.`,

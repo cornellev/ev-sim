@@ -53,7 +53,7 @@ The orchestrator defaults are:
 
 `app/client/Client.js` implements the orchestrator protocol, including standard type encoders, dynamic `.msg` schemas, `syncTypesFromServer`, `syncTypesToServer`, `fetchTopicCatalog`, schema introspection helpers, `subscribe`, `publish`, `echo`, and `request_all`.
 
-Before a resolved run is applied, `ClientManager.preflight(resolved)` validates schema registration, catalog hash parity, transport connectivity, and required return topics. See [Autonomy interface contracts](./autonomy-interface-contracts.md).
+Before a resolved run is applied, `ClientManager.preflight(resolved)` validates schema registration, catalog hash parity, and orchestrator return topics that the run actually needs. Scenario route-follower / script baselines with `controls.authority: reference` do not require `/controls/command` to be advertised. `external-ros` runs still do. See [Autonomy interface contracts](./autonomy-interface-contracts.md).
 
 ## Message Ownership
 
@@ -77,7 +77,7 @@ Current fallback definitions include:
 
 ## Topic Naming
 
-Browser and orchestrator topic names use ROS-style strings such as `/ackdrive`. Message type names use `package/Message`, for example `sensor_fusion_msgs/AckermannDrive`.
+Browser and orchestrator topic names use ROS-style strings such as `/controls/command`. Message type names use `package/Message`, for example `sensor_fusion_msgs/StampedAckermannDrive`.
 
 The orchestrator converts ROS 2 names like `package/msg/Message` as needed on its side.
 
@@ -85,14 +85,11 @@ The orchestrator converts ROS 2 names like `package/msg/Message` as needed on it
 
 Deterministic runs publish `/clock` with the integer simulation timestamp (`use_sim_time` on the ROS side). `/tf_static` carries mount and optical extrinsics from the resolved calibration bundle; `/tf` publishes reference `map → odom → base_link` after vehicle motion. Oracle truth odometry (`/oracle/vehicle/odometry`) publishes in the same transform phase before measured sensors. Sensor message headers use capture time; SFLog sample timestamps use actual delivery time.
 
-PointCloud2 points are meters in the declared LiDAR frame (+X forward at azimuth zero). Measured clouds carry `x/y/z/intensity` only. Oracle semantic clouds add `cos_incidence`, `instance_id`, `semantic_id`, and `ray_index` and must never be mixed into candidate-safe measured topics. Camera `Image` and `CameraInfo` headers use the optical measurement frame with identical capture stamps. Supported image encodings: measured `rgba8`; oracle depth `32FC1` (meters), semantic `16UC1`, instance `32SC1`. Distortion uses Brown–Conrady `plumb_bob` applied consistently across RGB (linear) and labels/depth (nearest). Localization sensors publish on `/sensors/imu/data` (SI units, gravity-inclusive acceleration, unavailable orientation), `/sensors/gnss/fix` (WGS84 from manifest datum), and `/sensors/wheel/odometry` (encoder-derived dead reckoning). External modules return perception on `/perception/detections_2d`, `/perception/detections_3d`, `/perception/lanes`, `/perception/semantic` and localization estimates on `/localization/odometry`. The simulator ingests them through the deterministic input queue into `candidate.*` (and `diagnostics.topics.*`), keeps them observational unless `routeDownstream` is enabled, and publishes capture-aligned `visualization.*` overlays for live, Analysis, and Replay scrubbing beside sensors and oracle truth. Recorded runs attach `calibration.json` alongside `run-manifest.json` in SFLog datasets. Sensor diagnostics publish queue depth, drops, capture/encode/transport duration, and missed deadlines after delivery.
+PointCloud2 points are meters in the declared LiDAR frame (+X forward at azimuth zero). Measured clouds carry `x/y/z/intensity` only. Oracle semantic clouds add `cos_incidence`, `instance_id`, `semantic_id`, and `ray_index` and must never be mixed into candidate-safe measured topics. Camera `Image` and `CameraInfo` headers use the optical measurement frame with identical capture stamps. Supported image encodings: measured `rgba8`; oracle depth `32FC1` (meters), semantic `16UC1`, instance `32SC1`. Distortion uses Brown–Conrady `plumb_bob` applied consistently across RGB (linear) and labels/depth (nearest). Localization sensors publish on `/sensors/imu/data` (SI units, gravity-inclusive acceleration, unavailable orientation), `/sensors/gnss/fix` (WGS84 from manifest datum), and `/sensors/wheel/odometry` (encoder-derived dead reckoning). External modules return perception on `/perception/detections_2d`, `/perception/detections_3d`, `/perception/lanes`, `/perception/semantic` and localization estimates on `/localization/odometry`. Teams return stamped SI controls on `/controls/command`. The simulator ingests returns through the deterministic input queue into `candidate.*` (and `diagnostics.topics.*`), keeps observational contracts off `active.*` unless `routeDownstream` is enabled, and publishes capture-aligned `visualization.*` overlays for live, Analysis, and Replay scrubbing beside sensors and oracle truth. Recorded runs attach `calibration.json` alongside `run-manifest.json` in SFLog datasets. Sensor diagnostics publish queue depth, drops, capture/encode/transport duration, and missed deadlines after delivery.
 
 ## Current Runtime Usage
 
-The main 3D scene currently consumes `/ackdrive`. When a message arrives, `app/3d/Scene.js` reads:
-
-- `speed` in mph, converted to meters per second.
-- `steering_angle` in degrees, converted to radians and applied to the car steering angle.
+Managed runs consume `/controls/command` (`sensor_fusion_msgs/StampedAckermannDrive`) through `TopicContractRouter` → `ControlRuntime` at fixed-step boundaries. Fields are SI (m/s, rad, m/s²); `deadline_ns` is absolute simulation time; modes are `velocity`, `acceleration`, and `stop`. REP-103 steering (positive left) is converted once at the actuator boundary. Unmanaged scene integrations use the same endpoint without the legacy mph/deg `/ackdrive` path.
 
 The scripting ROS units in `app/scripting/units/ROSUnit.js` are placeholders. They do not yet publish or subscribe to live orchestrator topics.
 

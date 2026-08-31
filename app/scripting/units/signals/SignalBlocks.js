@@ -221,7 +221,7 @@ export function ReadSignalUnit(props) {
         >
             {(data, commit) => (
                 <>
-                    <TextField label="Path" value={data.path} onChange={(path) => commit({ path })} placeholder={SIGNAL_PATHS.ACKDRIVE_TOPIC} />
+                    <TextField label="Path" value={data.path} onChange={(path) => commit({ path })} placeholder={SIGNAL_PATHS.CONTROLS_COMMAND_TOPIC} />
                     <SelectField label="Value type" value={typedOutput(data.type)} onChange={(type) => commit({ type })} options={SUPPORTED_TYPES} />
                     <TextField label="Stale after seconds" value={data.staleAfter} onChange={(staleAfter) => commit({ staleAfter })} placeholder="0.5" />
                     <TextField label="Fallback" value={data.fallback} onChange={(fallback) => commit({ fallback })} />
@@ -377,7 +377,7 @@ export function TopicSnapshotUnit(props) {
         >
             {(data, commit) => (
                 <>
-                    <TextField label="Topic" value={data.topic} onChange={(topic) => commit({ topic })} placeholder="/ackdrive" />
+                    <TextField label="Topic" value={data.topic} onChange={(topic) => commit({ topic })} placeholder="/controls/command" />
                     <TextField label="Stale after seconds" value={data.staleAfter} onChange={(staleAfter) => commit({ staleAfter })} />
                 </>
             )}
@@ -443,9 +443,9 @@ export function StagePublishUnit(props) {
         >
             {(data, commit) => (
                 <>
-                    <TextField label="Topic" value={data.topic} onChange={(topic) => commit({ topic })} placeholder="/ackdrive_cmd" />
+                    <TextField label="Topic" value={data.topic} onChange={(topic) => commit({ topic })} placeholder="/controls/command" />
                     <TextField label="Message type" value={data.messageType} onChange={(messageType) => commit({ messageType })} />
-                    <TextField label="Store path" value={data.path} onChange={(path) => commit({ path })} placeholder={SIGNAL_PATHS.ACKDRIVE_COMMAND} />
+                    <TextField label="Store path" value={data.path} onChange={(path) => commit({ path })} placeholder={SIGNAL_PATHS.CONTROLS_COMMAND_PUBLISH} />
                 </>
             )}
         </ConfigUnit>
@@ -712,8 +712,8 @@ export function BindInputUnit(props) {
         <BindingUnit {...props} title="Bind Input" defaults={BindInputBlock.defaults}>
             {(data, commit) => (
                 <>
-                    <TextField label="External source" value={data.source} onChange={(source) => commit({ source })} placeholder="/ackdrive" />
-                    <TextField label="Store path" value={data.path} onChange={(path) => commit({ path })} placeholder={SIGNAL_PATHS.ACKDRIVE_TOPIC} />
+                    <TextField label="External source" value={data.source} onChange={(source) => commit({ source })} placeholder="/controls/command" />
+                    <TextField label="Store path" value={data.path} onChange={(path) => commit({ path })} placeholder={SIGNAL_PATHS.CONTROLS_COMMAND_TOPIC} />
                     <TextField label="Type" value={data.type} onChange={(type) => commit({ type })} placeholder="ackermann_msgs/AckermannDrive" />
                 </>
             )}
@@ -726,8 +726,8 @@ export function BindOutputUnit(props) {
         <BindingUnit {...props} title="Bind Output" defaults={BindOutputBlock.defaults}>
             {(data, commit) => (
                 <>
-                    <TextField label="Store path" value={data.path} onChange={(path) => commit({ path })} placeholder={SIGNAL_PATHS.ACKDRIVE_COMMAND} />
-                    <TextField label="External sink" value={data.sink} onChange={(sink) => commit({ sink })} placeholder="/ackdrive_cmd" />
+                    <TextField label="Store path" value={data.path} onChange={(path) => commit({ path })} placeholder={SIGNAL_PATHS.CONTROLS_COMMAND_PUBLISH} />
+                    <TextField label="External sink" value={data.sink} onChange={(sink) => commit({ sink })} placeholder="/controls/command" />
                     <TextField label="Type" value={data.type} onChange={(type) => commit({ type })} />
                 </>
             )}
@@ -740,7 +740,7 @@ export function BindTriggerUnit(props) {
         <BindingUnit {...props} title="Bind Trigger" defaults={BindTriggerBlock.defaults}>
             {(data, commit) => (
                 <>
-                    <TextField label="Store path" value={data.path} onChange={(path) => commit({ path })} placeholder={SIGNAL_PATHS.ACKDRIVE_TOPIC} />
+                    <TextField label="Store path" value={data.path} onChange={(path) => commit({ path })} placeholder={SIGNAL_PATHS.CONTROLS_COMMAND_TOPIC} />
                     <SelectField label="Mode" value={data.mode} onChange={(mode) => commit({ mode })} options={["update", "change", "fresh"]} />
                 </>
             )}

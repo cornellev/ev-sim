@@ -479,6 +479,7 @@ function AutonomySpatialView({ source, dataset, sourceKey, timeUs, exactSync, on
         const localization = store.read("visualization.localization.candidate")?.value;
         const error = store.read("visualization.localization.error")?.value;
         const status = store.read("visualization.perception.status")?.value;
+        const controls = store.read("visualization.controls.snapshot")?.value;
         return {
             perception: {
                 ...(candidate || {}),
@@ -490,9 +491,11 @@ function AutonomySpatialView({ source, dataset, sourceKey, timeUs, exactSync, on
                 ...(localization || {}),
                 error,
             },
+            controls: controls || null,
             ages: {
                 perceptionNs: status?.ageNs ?? candidate?.ageNs ?? null,
                 localizationNs: localization?.ageNs ?? null,
+                controlsNs: controls?.ageNs ?? controls?.heartbeatAgeNs ?? null,
             },
         };
     }, [dataset, exactSync, sourceKey, store, timeUs, source]);
@@ -532,6 +535,19 @@ function AutonomySpatialView({ source, dataset, sourceKey, timeUs, exactSync, on
                         <code>{snap?.localization?.estimate ? "present" : "missing"}</code>
                         <span>|err|</span>
                         <code>{snap?.localization?.error ? `${Number(snap.localization.error.positionM || 0).toFixed(3)} m` : "—"}</code>
+                    </div>
+                </div>
+                <div className={styles.eventRow} data-testid="controls-analysis-summary">
+                    <div className={styles.eventJump}>
+                        <span>Controls</span>
+                        <code>{snap?.controls?.mode || "—"}</code>
+                        <span>req/app/ach v</span>
+                        <code>
+                            {Number(snap?.controls?.requested?.speedMps ?? NaN).toFixed?.(2) || "—"}/
+                            {Number(snap?.controls?.applied?.speedMps ?? NaN).toFixed?.(2) || "—"}/
+                            {Number(snap?.controls?.achieved?.speedMps ?? NaN).toFixed?.(2) || "—"}
+                        </code>
+                        <span>{snap?.controls?.flags?.timedOut ? "timeout" : snap?.controls?.flags?.saturated ? "sat" : ""}</span>
                     </div>
                 </div>
                 <div className={styles.eventRow}>

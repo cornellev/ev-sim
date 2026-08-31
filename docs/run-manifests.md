@@ -1,12 +1,12 @@
 # Deterministic simulation runs
 
-Every professional simulation launch is defined by a saved `cev-sim.run-manifest` version 8 document. The server normalizes and validates the authoring document, resolves its environment, scripts, bindings, autonomy catalog metadata, deterministic calibration bundle, ROS schema closure, and contract endpoints, then computes SHA-256 definition and resolved hashes. A running session holds that resolved snapshot and never applies Config edits in place.
+Every professional simulation launch is defined by a saved `cev-sim.run-manifest` version 9 document. The server normalizes and validates the authoring document, resolves its environment, scripts, bindings, autonomy catalog metadata, deterministic calibration bundle, ROS schema closure, and contract endpoints, then computes SHA-256 definition and resolved hashes. A running session holds that resolved snapshot and never applies Config edits in place.
 
 Binding resolution includes every global library binding plus the ids listed in `scripts.bindingIds`. The Bindings workspace manages those ids through manifest checkboxes. Scripts referenced by effective bindings are resolved automatically; entries in `scripts.artifacts` remain optional hash locks. Portable manifests with `embeddedBindings` use only their frozen embedded set.
 
 ## Operator workflow
 
-Open **Config** from the workspace switcher. The page supports catalog create, duplicate, delete, bundle import/export, structured editing, raw JSON editing, server validation, optimistic revision saves, and **Validate & Run**. Unsaved edits are protected during catalog changes and browser navigation. Use the header **Advanced** switch to reveal frames, noise, latency, and contract fields while keeping essential sensor and topic settings visible by default; the preference persists across Config and Vehicle Editor.
+Open **Config** from the workspace switcher. The page supports catalog create, duplicate, delete, bundle import/export, structured editing, raw JSON editing, server validation, optimistic revision saves, and **Validate & Run**. Unsaved edits are protected during catalog changes and browser navigation. Use the header **Advanced** switch to reveal frames, noise, latency, and contract fields while keeping essential sensor and topic settings visible by default; the preference persists across Config and Vehicle Editor. The **Controls** tab authors the target vehicle, authority (`candidate` / `reference`), watchdog, stale policy (`stop` default, or `hold` / `fallback`), and per-run actuator overrides.
 
 Reset finalizes the active result and SFLog, resolves the newest saved revision, rebuilds run-scoped resources, and leaves the replacement run paused at step zero. If the environment changed, the workspace loads that environment before applying the pending run.
 
@@ -30,11 +30,11 @@ The storage service exposes these endpoints under `/api/storage`:
 
 ## Runtime guarantees
 
-Simulation time is `stepIndex * stepNs`, using integer nanoseconds. Realtime speed changes pacing only. Each fixed step applies inputs, scripts, vehicle motion, physics, contacts, clock, transforms (`/tf`, `/tf_static`, and oracle odometry), sensor capture, delayed delivery, assertions, and telemetry in that order. Stable IDs order topics, bindings, vehicles, sensors, colliders, and contact events.
+Simulation time is `stepIndex * stepNs`, using integer nanoseconds. Realtime speed changes pacing only. Each fixed step applies inputs, scripts, scenario pre-motion, **controls** (actuator selection/delay/limits), vehicle motion, physics, contacts, clock, transforms (`/tf`, `/tf_static`, and oracle odometry), sensor capture, delayed delivery, assertions, and telemetry in that order. Stable IDs order topics, bindings, vehicles, sensors, colliders, and contact events. Managed runs never write `vehicle.velocity` / `steeringAngle` from raw topic handlers; only `ControlRuntime` applied setpoints reach the plant.
 
 ## Frames, calibration, and synchronization
 
-Manifest version 8 stores sensor extrinsics in REP-103 (`+X` forward, `+Y` left, `+Z` up) relative to `base_link`. v7 and earlier documents gain missing candidate perception/localization return topics on normalize. Cameras declare a mount frame (`*_link`) and an optical measurement frame (`*_optical_frame`, `+Z` forward, `+X` right, `+Y` down). LiDAR mount and measurement frames are identical. Localization sensors use mount/measurement frames (`imu_link`, `gnss_link`, `wheel_odom_link`). Scene/vehicle coordinates remain internal Three.js coordinates; conversion happens only at the ROS/TF boundary.
+Manifest version 9 stores sensor extrinsics in REP-103 (`+X` forward, `+Y` left, `+Z` up) relative to `base_link`. v8 and earlier documents normalize to v9; saved `/ackdrive` topics rewrite to `/controls/command`. Cameras declare a mount frame (`*_link`) and an optical measurement frame (`*_optical_frame`, `+Z` forward, `+X` right, `+Y` down). LiDAR mount and measurement frames are identical. Localization sensors use mount/measurement frames (`imu_link`, `gnss_link`, `wheel_odom_link`). Scene/vehicle coordinates remain internal Three.js coordinates; conversion happens only at the ROS/TF boundary.
 
 `sensorRig` also declares canonical `map`, `odom`, and `base_link` frame ids, the owning vehicle id, and optional synchronization groups keyed by declared topic ids. Default manifests include `perception-primary` (camera + LiDAR measured and optional oracle products) and `localization-primary` (IMU, GNSS, wheel odometry). Sensors in the same group captured on the same simulation step share a synchronization key in telemetry metadata.
 
@@ -54,7 +54,7 @@ Camera `calibration.products` and LiDAR `calibration.products` gate expensive or
 
 GNSS treats map/odom position as ENU offset from the manifest datum. Wheel odometry integrates an independent measured `odom → base_link` estimate; oracle truth on `/oracle/vehicle/odometry` remains isolated for scoring.
 
-Topic contracts are edited in the Config **Topics** tab (catalog picker, producer, authority, route-downstream, timeout, fallback) or normalized from legacy JSON. Perception and localization candidate returns default to observational (`routeDownstream: false`). See [Autonomy interface contracts](./autonomy-interface-contracts.md) for namespace and preflight rules. Preparation fails before the run reaches `ready` when preflight detects schema or orchestrator mismatches.
+Topic contracts are edited in the Config **Topics** tab (catalog picker, producer, authority, route-downstream, timeout, fallback) or normalized from legacy JSON. Perception and localization candidate returns default to observational (`routeDownstream: false`). Controls default to `/controls/command` with `routeDownstream: true`. See [Autonomy interface contracts](./autonomy-interface-contracts.md) for namespace and preflight rules. Preparation fails before the run reaches `ready` when preflight detects schema mismatches or missing orchestrator returns that the run actually consumes. Local reference controllers (scenario route follower or script) do not need `/controls/command` advertised.
 
 Logging writes a native SFLog (see [SFLog](sflog.md)). Policies are:
 
@@ -62,7 +62,7 @@ Logging writes a native SFLog (see [SFLog](sflog.md)). Policies are:
 - `optional`: logging starts automatically; the run continues with degraded status if storage is unavailable.
 - `disabled`: no SFLog session is created.
 
-Run logs contain `run-manifest.json` at start and `run-results.json` at finalization, plus manifest identity, hashes, run ID, and browser/WebGL/runtime provenance in metadata. Replay reads recorded state and sensor bytes instead of rerunning sensors on the replay GPU.
+Run logs contain `run-manifest.json` at start and `run-results.json` at finalization, plus manifest identity, hashes, run ID, and browser/WebGL/runtime provenance in metadata. Replay reads recorded state and sensor bytes instead of rerunning sensors on the replay GPU. Capture-aligned `visualization.controls.snapshot` scrubs requested/applied/achieved with arcs in Analysis and Replay.
 
 ## Scenario episode metrics
 
@@ -82,7 +82,7 @@ When a run selects a scenario, `ScenarioRuntime` collects ego-only episode metri
 
 Missing prerequisites (route, road network, footprint dimensions, keyframes / coverage) yield `null`, not zero. Non-scenario runs expose the same built-ins as unavailable (`null`) through experiment extraction. Selecting a newly added metric against an older baseline that lacks it remains `incomplete` under the existing comparison rules. Suite/result/baseline document versions are unchanged.
 
-Signals are published live under `scenario.metrics.<id>`.
+Signals are published live under `scenario.metrics.<id>`. Scenario route followers, scripts, external-ros, and disturbances submit normalized commands to `ControlRuntime` (reference or bypass) rather than writing the plant directly when a managed run is active. Scenario-enabled runs default controls authority to `reference` so the built-in route follower can close the loop.
 
 ## MCP
 

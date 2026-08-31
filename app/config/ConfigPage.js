@@ -24,6 +24,8 @@ import {
 } from "../3d/devices/SensorTypeRegistry.js";
 import {
     applyManifestOracleProduct,
+    CONTROL_AUTHORITY_MODES,
+    CONTROL_STALE_POLICIES,
     createDefaultRunManifest,
     normalizeRunManifest,
     RUN_MANIFEST_VERSION,
@@ -74,9 +76,11 @@ import {
     TabsTrigger,
     useAuthoringMode,
     useWorkspaceGuard,
+    readLastOpenWorkspaceId,
+    writeLastOpenWorkspaceId,
 } from "../ui";
 
-const TABS = ["Overview", "Scenario", "Initial State", "Clock", "Sensors", "Scripts", "Topics", "Assertions", "Logging", "JSON"];
+const TABS = ["Overview", "Scenario", "Initial State", "Clock", "Controls", "Sensors", "Scripts", "Topics", "Assertions", "Logging", "JSON"];
 const SENSOR_TYPE_DEFINITIONS = listSensorTypes();
 const FaPlus = (props) => <IconPlus size={14} stroke={1.75} {...props} />;
 
@@ -125,6 +129,7 @@ function validationIssueLocation(path = "") {
     if (path.startsWith("scenario")) return "Scenario";
     if (path.startsWith("initialState")) return "Initial State";
     if (path.startsWith("clock")) return "Clock";
+    if (path.startsWith("controls")) return "Controls";
     if (path.startsWith("scripts")) return "Scripts";
     if (path.startsWith("assertions")) return "Assertions";
     if (path.startsWith("logging")) return "Logging";
@@ -255,7 +260,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace }) {
             const result = await loadRunManifestCatalog({
                 listManifests: listRunManifests,
                 getManifest: getRunManifest,
-                preferredId,
+                preferredId: preferredId || readLastOpenWorkspaceId("run-config"),
             });
             if (requestId !== manifestLoadRequest.current) return;
             setCatalog(result.catalog);
@@ -328,6 +333,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace }) {
 
     const select = async (id, { force = false } = {}) => {
         if (!force && dirty && !window.confirm("Discard unsaved manifest changes?")) return;
+        writeLastOpenWorkspaceId("run-config", id);
         setBusy(true);
         setError(null);
         try {
@@ -360,6 +366,10 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace }) {
         // The initial catalog load intentionally runs once.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
+
+    useEffect(() => {
+        if (selectedId) writeLastOpenWorkspaceId("run-config", selectedId);
+    }, [selectedId]);
 
     useEffect(() => {
         if (!dirty) return undefined;
@@ -665,6 +675,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace }) {
                                         {item === "Scenario" && <ScenarioSelection draft={draft} scenarios={scenarioCatalog} scenarioCatalogState={scenarioCatalogState} scenarioCatalogError={scenarioCatalogError} retryScenarios={loadScenarioCatalog} vehicleCatalog={vehicleCatalog} update={update} />}
                                         {item === "Initial State" && <InitialState draft={draft} update={update} vehicleCatalog={vehicleCatalog} />}
                                         {item === "Clock" && <Clock draft={draft} update={update} />}
+                                        {item === "Controls" && <Controls draft={draft} update={update} />}
                                         {item === "Sensors" && <Sensors draft={draft} update={update} />}
                                         {item === "Scripts" && <Scripts draft={draft} update={update} />}
                                         {item === "Topics" && <Topics draft={draft} update={update} />}
@@ -1021,6 +1032,149 @@ function Clock({ draft, update }) {
     );
 }
 
+function Controls({ draft, update }) {
+    const controls = draft.controls || {};
+    const overrides = controls.actuatorOverrides || {};
+    const controlTopics = (draft.topics || []).filter((topic) => topic.contractId === "controls-command" || topic.stage === "controls");
+    const setOverride = (key, value) => {
+        const next = { ...overrides };
+        if (value === "" || value === null || Number.isNaN(Number(value))) delete next[key];
+        else next[key] = Number(value);
+        update(["controls", "actuatorOverrides"], next);
+    };
+    return (
+        <div className="space-y-5" data-testid="controls-config">
+            <p className="text-[12px] leading-relaxed text-[var(--slate-muted)]">
+                Canonical plant input is <code className="font-mono">/controls/command</code> ({controlTopics.length === 1 ? "declared" : controlTopics.length === 0 ? "missing — add controls-command from Topics" : "multiple declared — keep exactly one"}).
+                Empty max-speed / steer-rate fields keep the vehicle defaults; fill them to override this run only. Stale policy defaults to safe stop. Reference authority with a scenario route-follower or script closes the loop in-sim and does not need that topic advertised on the orchestrator.
+            </p>
+            <div className="grid gap-4 md:grid-cols-3">
+                <Field label="Target vehicle">
+                    <select
+                        value={controls.targetVehicleId || "ego"}
+                        onChange={(event) => update(["controls", "targetVehicleId"], event.target.value)}
+                    >
+                        {(draft.initialState?.vehicles || []).map((vehicle) => (
+                            <option key={vehicle.id} value={vehicle.id}>{vehicle.id}</option>
+                        ))}
+                    </select>
+                </Field>
+                <Field label="Authority">
+                    <select
+                        value={controls.authority || "candidate"}
+                        onChange={(event) => update(["controls", "authority"], event.target.value)}
+                    >
+                        {CONTROL_AUTHORITY_MODES.map((mode) => (
+                            <option key={mode} value={mode}>{mode}</option>
+                        ))}
+                    </select>
+                </Field>
+                <Field label="Stale policy">
+                    <select
+                        value={controls.stalePolicy || "stop"}
+                        onChange={(event) => update(["controls", "stalePolicy"], event.target.value)}
+                    >
+                        {CONTROL_STALE_POLICIES.map((policy) => (
+                            <option key={policy} value={policy}>{policy}</option>
+                        ))}
+                    </select>
+                </Field>
+                <Field label="Watchdog (ns)">
+                    <input
+                        type="number"
+                        min="0"
+                        value={controls.watchdogNs ?? 100_000_000}
+                        onChange={(event) => update(["controls", "watchdogNs"], Number(event.target.value))}
+                    />
+                </Field>
+                <Toggle
+                    label="Reference shadow"
+                    value={controls.referenceShadow !== false}
+                    onChange={(value) => update(["controls", "referenceShadow"], value)}
+                />
+            </div>
+            {controls.stalePolicy === "fallback" && (
+                <AdvancedFields label="SI fallback command">
+                    <div className="grid gap-3 md:grid-cols-3">
+                        <Field label="Mode">
+                            <select
+                                value={controls.fallbackCommand?.mode || "stop"}
+                                onChange={(event) => update(["controls", "fallbackCommand"], {
+                                    ...(controls.fallbackCommand || {}),
+                                    mode: event.target.value,
+                                })}
+                            >
+                                <option value="stop">stop</option>
+                                <option value="velocity">velocity</option>
+                                <option value="acceleration">acceleration</option>
+                            </select>
+                        </Field>
+                        <Field label="Speed (m/s)">
+                            <input
+                                type="number"
+                                step="0.1"
+                                value={controls.fallbackCommand?.speed ?? 0}
+                                onChange={(event) => update(["controls", "fallbackCommand"], {
+                                    ...(controls.fallbackCommand || { mode: "velocity" }),
+                                    speed: Number(event.target.value),
+                                })}
+                            />
+                        </Field>
+                        <Field label="Steering (rad, REP-103)">
+                            <input
+                                type="number"
+                                step="0.01"
+                                value={controls.fallbackCommand?.steering_angle ?? 0}
+                                onChange={(event) => update(["controls", "fallbackCommand"], {
+                                    ...(controls.fallbackCommand || { mode: "velocity" }),
+                                    steering_angle: Number(event.target.value),
+                                })}
+                            />
+                        </Field>
+                    </div>
+                </AdvancedFields>
+            )}
+            <div className="grid gap-4 md:grid-cols-3">
+                {[
+                    ["maxSpeed", "Max speed (m/s)"],
+                    ["maxSteeringAngle", "Max steer (rad)"],
+                    ["maxSteeringRate", "Max steer rate (rad/s)"],
+                ].map(([key, label]) => (
+                    <Field key={key} label={label}>
+                        <input
+                            type="number"
+                            step="any"
+                            value={overrides[key] ?? ""}
+                            placeholder="Vehicle default"
+                            onChange={(event) => setOverride(key, event.target.value)}
+                        />
+                    </Field>
+                ))}
+            </div>
+            <AdvancedFields label="More actuator overrides">
+                <div className="grid gap-3 md:grid-cols-3">
+                    {[
+                        ["maxAcceleration", "Max accel (m/s²)"],
+                        ["maxDeceleration", "Max decel (m/s²)"],
+                        ["maxJerk", "Max jerk (m/s³)"],
+                        ["responseDelayNs", "Response delay (ns)"],
+                    ].map(([key, label]) => (
+                        <Field key={key} label={label}>
+                            <input
+                                type="number"
+                                step="any"
+                                value={overrides[key] ?? ""}
+                                placeholder="Vehicle default"
+                                onChange={(event) => setOverride(key, event.target.value)}
+                            />
+                        </Field>
+                    ))}
+                </div>
+            </AdvancedFields>
+        </div>
+    );
+}
+
 function Sensors({ draft, update }) {
     const add = (type) => {
         const index = draft.sensorRig.sensors.length;
@@ -1297,7 +1451,7 @@ function TopicCard({ topic, index, contracts, update, onRemove }) {
         <div className="grid gap-3 rounded-[var(--radius)] border border-[var(--slate-border-60)] bg-[var(--slate-surface-1)] p-3 md:grid-cols-2 xl:grid-cols-3">
             <div className="flex flex-wrap items-center justify-between gap-2 md:col-span-2 xl:col-span-3">
                 <p className="font-mono text-[12px] text-[var(--slate-fg)]">{topic.name}</p>
-                <span className="rounded-full border border-[var(--slate-border-60)] px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.06em] text-[var(--slate-muted)]">
+                <span className="rounded-full border border-[var(--slate-border-60)] px-2 py-0.5 text-[11px] font-medium uppercase tracking-[0.06em] text-[var(--slate-muted)]">
                     {isInput ? "Team return" : "Simulator output"}
                 </span>
             </div>

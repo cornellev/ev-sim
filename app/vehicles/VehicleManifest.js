@@ -6,7 +6,8 @@ import {
 } from "../3d/devices/SensorTypeRegistry.js";
 
 export const VEHICLE_MANIFEST_KIND = "cev-sim.vehicle";
-export const VEHICLE_MANIFEST_VERSION = 1;
+export const VEHICLE_MANIFEST_VERSION = 2;
+export const LEGACY_VEHICLE_MANIFEST_VERSION = 1;
 export const VEHICLE_BUNDLE_KIND = "cev-sim.vehicle-bundle";
 export const VEHICLE_BUNDLE_VERSION = 1;
 
@@ -14,6 +15,17 @@ export const VEHICLE_SENSOR_TYPES = Object.freeze(listSensorTypes().map((definit
 
 /** Vehicle types implemented as hard-coded classes rather than manifests. */
 export const BUILT_IN_VEHICLE_TYPES = Object.freeze(["big-car", "igvc-car", "scenario-car"]);
+
+/** Default actuator limits for new v2 manifests (SI). */
+export const DEFAULT_ACTUATOR_LIMITS = Object.freeze({
+    maxSpeed: 15,
+    maxAcceleration: 3,
+    maxDeceleration: 5,
+    maxJerk: 10,
+    maxSteeringAngle: 0.6,
+    maxSteeringRate: 1.2,
+    responseDelayNs: 0,
+});
 
 function object(value) {
     return value && typeof value === "object" && !Array.isArray(value) ? value : {};
@@ -32,6 +44,11 @@ function finite(value, fallback) {
 function positive(value, fallback) {
     const normalized = finite(value, fallback);
     return normalized > 0 ? normalized : fallback;
+}
+
+function nonNegative(value, fallback) {
+    const normalized = finite(value, fallback);
+    return normalized >= 0 ? normalized : fallback;
 }
 
 function vec3(value = {}, fallback = {}) {
@@ -98,6 +115,35 @@ export function deriveWheelbase(wheels = []) {
     return distance > 0.01 ? distance : null;
 }
 
+/**
+ * Normalize actuator kinematics. v1 manifests migrate with permissive zero-delay
+ * defaults so recorded replays remain compatible until authors opt into dynamics.
+ */
+export function normalizeActuatorKinematics(source = {}, { migrateFromV1 = false } = {}) {
+    const kinematics = object(source);
+    const defaults = migrateFromV1
+        ? {
+            ...DEFAULT_ACTUATOR_LIMITS,
+            maxSpeed: 40,
+            maxAcceleration: 40,
+            maxDeceleration: 40,
+            maxJerk: 1e6,
+            maxSteeringRate: 1e6,
+            responseDelayNs: 0,
+        }
+        : DEFAULT_ACTUATOR_LIMITS;
+    return {
+        wheelbase: positive(kinematics.wheelbase, 1.5),
+        maxSteeringAngle: positive(kinematics.maxSteeringAngle, defaults.maxSteeringAngle),
+        maxSpeed: positive(kinematics.maxSpeed, defaults.maxSpeed),
+        maxAcceleration: positive(kinematics.maxAcceleration, defaults.maxAcceleration),
+        maxDeceleration: positive(kinematics.maxDeceleration, defaults.maxDeceleration),
+        maxJerk: positive(kinematics.maxJerk, defaults.maxJerk),
+        maxSteeringRate: positive(kinematics.maxSteeringRate, defaults.maxSteeringRate),
+        responseDelayNs: Math.floor(nonNegative(kinematics.responseDelayNs, defaults.responseDelayNs)),
+    };
+}
+
 export function createDefaultVehicleManifest(overrides = {}) {
     const base = {
         kind: VEHICLE_MANIFEST_KIND,
@@ -117,7 +163,10 @@ export function createDefaultVehicleManifest(overrides = {}) {
             wheel({ id: "rear-left", position: { x: -0.75, y: 0.25, z: 0.55 } }),
             wheel({ id: "rear-right", position: { x: -0.75, y: 0.25, z: -0.55 } }),
         ],
-        kinematics: { wheelbase: 1.5, maxSteeringAngle: 0.6 },
+        kinematics: {
+            wheelbase: 1.5,
+            ...DEFAULT_ACTUATOR_LIMITS,
+        },
         sensors: [
             createVehicleSensor("lidar3d", { id: "roof-lidar", pose: { position: { x: 0.35, y: 0.8, z: 0 } } }),
         ],
@@ -131,18 +180,22 @@ export function normalizeVehicleManifest(value, { allowMissingKind = false } = {
     if (!allowMissingKind && source.kind !== undefined && source.kind !== VEHICLE_MANIFEST_KIND) {
         throw new Error(`Unsupported vehicle manifest kind: ${JSON.stringify(source.kind)}.`);
     }
-    if (source.version !== undefined && Number(source.version) !== VEHICLE_MANIFEST_VERSION) {
-        throw new Error(`Unsupported vehicle manifest version ${source.version}; expected ${VEHICLE_MANIFEST_VERSION}.`);
+    const sourceVersion = source.version === undefined ? VEHICLE_MANIFEST_VERSION : Number(source.version);
+    if (![LEGACY_VEHICLE_MANIFEST_VERSION, VEHICLE_MANIFEST_VERSION].includes(sourceVersion)) {
+        throw new Error(`Unsupported vehicle manifest version ${source.version}; expected version 1 or ${VEHICLE_MANIFEST_VERSION}.`);
     }
     const model = object(source.model);
     const boundingBox = object(source.boundingBox);
-    const kinematics = object(source.kinematics);
     const wheels = (Array.isArray(source.wheels) ? source.wheels : []).map(wheel);
     const size = {
         x: positive(object(boundingBox.size).x, 2.7),
         y: positive(object(boundingBox.size).y, 1.4),
         z: positive(object(boundingBox.size).z, 1.25),
     };
+    const kinematics = normalizeActuatorKinematics({
+        ...object(source.kinematics),
+        wheelbase: object(source.kinematics).wheelbase ?? (deriveWheelbase(wheels) ?? 1.5),
+    }, { migrateFromV1: sourceVersion < VEHICLE_MANIFEST_VERSION });
     return {
         kind: VEHICLE_MANIFEST_KIND,
         version: VEHICLE_MANIFEST_VERSION,
@@ -161,10 +214,7 @@ export function normalizeVehicleManifest(value, { allowMissingKind = false } = {
         },
         egoCenter: vec3(source.egoCenter, { x: 0, y: size.y / 2, z: 0 }),
         wheels,
-        kinematics: {
-            wheelbase: positive(kinematics.wheelbase, deriveWheelbase(wheels) ?? 1.5),
-            maxSteeringAngle: positive(kinematics.maxSteeringAngle, 0.6),
-        },
+        kinematics,
         sensors: (Array.isArray(source.sensors) ? source.sensors : [])
             .map((entry, index) => normalizeVehicleSensor(entry, index)),
         lidarZone: lidarZone(source.lidarZone),
@@ -203,6 +253,13 @@ export function validateVehicleManifest(value) {
             issues.push({ path: `lidarZone.triangles.${index}`, message: "Triangle references a vertex outside the vertices array." });
         }
     }
+    const k = manifest.kinematics;
+    if (!(k.maxSpeed > 0)) issues.push({ path: "kinematics.maxSpeed", message: "maxSpeed must be positive." });
+    if (!(k.maxAcceleration > 0)) issues.push({ path: "kinematics.maxAcceleration", message: "maxAcceleration must be positive." });
+    if (!(k.maxDeceleration > 0)) issues.push({ path: "kinematics.maxDeceleration", message: "maxDeceleration must be positive." });
+    if (!(k.maxJerk > 0)) issues.push({ path: "kinematics.maxJerk", message: "maxJerk must be positive." });
+    if (!(k.maxSteeringRate > 0)) issues.push({ path: "kinematics.maxSteeringRate", message: "maxSteeringRate must be positive." });
+    if (k.responseDelayNs < 0) issues.push({ path: "kinematics.responseDelayNs", message: "responseDelayNs must be non-negative." });
     return { ok: issues.length === 0, manifest, issues };
 }
 

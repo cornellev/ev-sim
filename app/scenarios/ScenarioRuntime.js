@@ -107,9 +107,14 @@ export class ScenarioRuntime {
         this.resolvedRun = null;
         this.scenario = null;
         this.active = false;
+        this.controlRuntime = options.controlRuntime ?? null;
         this._scriptEntries = [];
         this._defineSignals();
         this._clearState();
+    }
+
+    setControlRuntime(controlRuntime) {
+        this.controlRuntime = controlRuntime ?? null;
     }
 
     _defineSignals() {
@@ -527,11 +532,26 @@ export class ScenarioRuntime {
             return true;
         }
         const value = info.value ?? {};
-        const legacy = route.actorId === "ego" && info.name === "/ackdrive";
-        const speed = value.speedMps ?? value.speed_mps ?? (legacy ? finite(value.speed) * 0.44704 : value.speed);
-        const steering = value.steeringRad ?? value.steering_rad
-            ?? (value.steering_angle !== undefined ? finite(value.steering_angle) * Math.PI / 180 : value.steering);
-        this._setControllerCommand(route.actorId, finite(speed), -finite(steering));
+        const hasStamp = value.header?.stamp != null;
+        const isStampedSi = hasStamp || (
+            (topic?.contractId === "controls-command" || info.name === "/controls/command")
+            && (value.mode != null || value.sequence != null || value.steering_angle != null || value.deadline_ns != null)
+            && value.speedMps == null && value.steeringRad == null
+        );
+        let speed;
+        let steeringRep103;
+        if (isStampedSi) {
+            const mode = String(value.mode || "velocity");
+            speed = mode === "stop" ? 0 : finite(value.speed);
+            steeringRep103 = mode === "stop" ? 0 : finite(value.steering_angle);
+        } else {
+            // Scenario/script SI helpers (speedMps + steeringRad in plant or REP-103 radians).
+            speed = value.speedMps ?? value.speed_mps ?? value.speed;
+            steeringRep103 = value.steeringRad ?? value.steering_rad
+                ?? (value.steering_angle !== undefined ? finite(value.steering_angle) : value.steering);
+        }
+        // Controller command stores Three.js plant steering (positive right).
+        this._setControllerCommand(route.actorId, finite(speed), -finite(steeringRep103));
         return true;
     }
 
@@ -611,9 +631,21 @@ export class ScenarioRuntime {
         }
     }
 
-    _applyVehicleCommand(actorId, speedMps, steeringRad) {
+    _applyVehicleCommand(actorId, speedMps, steeringRad, { producer = "reference", source = "scenario" } = {}) {
         const vehicle = this._vehicle(actorId);
         if (!vehicle) return false;
+        if (this.controlRuntime) {
+            // Controllers publish as reference (authority or shadow). Disturbances use bypass.
+            this.controlRuntime.submitSiSpeedSteer(actorId, {
+                speedMps: finite(speedMps),
+                steeringRadRep103: -finite(steeringRad),
+                mode: "velocity",
+                captureTimeNs: this.timeNs,
+                producer,
+                source,
+            });
+            return true;
+        }
         if (vehicle.velocity) vehicle.velocity.x = finite(speedMps);
         vehicle.steeringAngle = finite(steeringRad);
         return true;
@@ -678,7 +710,10 @@ export class ScenarioRuntime {
             if (effect.kind === "actor-command") latest.set(effect.actorId, effect);
         }
         for (const effect of latest.values()) {
-            this._applyVehicleCommand(effect.actorId, effect.speedMps, effect.steeringRad);
+            this._applyVehicleCommand(effect.actorId, effect.speedMps, effect.steeringRad, {
+                producer: "bypass",
+                source: "disturbance",
+            });
         }
     }
 

@@ -938,11 +938,12 @@ function WheelsTab({ draft, update, selection, setSelection, derivedWheelbase })
                     </div>
                 );
             })}
-            <AdvancedFields label="Vehicle kinematics">
-            <Section title="Kinematics">
+            <Section title="Actuator limits">
                 <div className="grid grid-cols-2 gap-2">
                     <Field label="Wheelbase (m)"><input type="number" min="0.01" step="0.01" value={draft.kinematics.wheelbase} onChange={(event) => update(["kinematics", "wheelbase"], Number(event.target.value))} /></Field>
                     <Field label="Max steering (rad)"><input type="number" min="0.01" step="0.01" value={draft.kinematics.maxSteeringAngle} onChange={(event) => update(["kinematics", "maxSteeringAngle"], Number(event.target.value))} /></Field>
+                    <Field label="Max speed (m/s)"><input type="number" min="0.01" step="0.1" value={draft.kinematics.maxSpeed ?? 15} onChange={(event) => update(["kinematics", "maxSpeed"], Number(event.target.value))} /></Field>
+                    <Field label="Max steer rate (rad/s)"><input type="number" min="0.01" step="0.1" value={draft.kinematics.maxSteeringRate ?? 1.2} onChange={(event) => update(["kinematics", "maxSteeringRate"], Number(event.target.value))} /></Field>
                 </div>
                 {derivedWheelbase !== null && (
                     <div className="mt-2 flex items-center justify-between">
@@ -951,6 +952,13 @@ function WheelsTab({ draft, update, selection, setSelection, derivedWheelbase })
                     </div>
                 )}
             </Section>
+            <AdvancedFields label="Acceleration, jerk, and delay">
+                <div className="grid grid-cols-2 gap-2">
+                    <Field label="Max accel (m/s²)"><input type="number" min="0.01" step="0.1" value={draft.kinematics.maxAcceleration ?? 3} onChange={(event) => update(["kinematics", "maxAcceleration"], Number(event.target.value))} /></Field>
+                    <Field label="Max decel (m/s²)"><input type="number" min="0.01" step="0.1" value={draft.kinematics.maxDeceleration ?? 5} onChange={(event) => update(["kinematics", "maxDeceleration"], Number(event.target.value))} /></Field>
+                    <Field label="Max jerk (m/s³)"><input type="number" min="0.01" step="0.1" value={draft.kinematics.maxJerk ?? 10} onChange={(event) => update(["kinematics", "maxJerk"], Number(event.target.value))} /></Field>
+                    <Field label="Response delay (ns)"><input type="number" min="0" step="1000000" value={draft.kinematics.responseDelayNs ?? 0} onChange={(event) => update(["kinematics", "responseDelayNs"], Number(event.target.value))} /></Field>
+                </div>
             </AdvancedFields>
         </div>
     );

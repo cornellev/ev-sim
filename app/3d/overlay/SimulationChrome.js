@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { SimulationMenu } from "./SimulationMenu";
 import { VehicleOverlay } from "./VehicleOverlay";
 import { SensorProductPanel } from "./SensorProductPanel";
+import { ControlsHud } from "./ControlsHud";
 import { useShortcut } from "../../ui";
 
 export function SimulationChrome({ data, onOpenReplay }) {
@@ -47,6 +48,7 @@ export function SimulationChrome({ data, onOpenReplay }) {
                     <SensorProductPanel compact={compact} />
                 </div>
             )}
+            <ControlsHud data={data} />
             <SimulationMenu
                 data={data}
                 vehicleOverlayVisible={vehicleOverlayVisible}

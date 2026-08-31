@@ -309,7 +309,7 @@ export class StoreNamespaceBlock extends ConfiguredBlock {
 }
 
 export class TopicSnapshotBlock extends ConfiguredBlock {
-    static defaults = { topic: "/ackdrive", staleAfter: "" };
+    static defaults = { topic: "/controls/command", staleAfter: "" };
 
     register() {
         this.state = this.config();
@@ -374,7 +374,7 @@ export class BuildTopicMessageBlock extends ConfiguredBlock {
 }
 
 export class StagePublishBlock extends ConfiguredBlock {
-    static defaults = { topic: "/ackdrive_cmd", messageType: "message", path: "" };
+    static defaults = { topic: "/controls/command", messageType: "message", path: "" };
 
     register() {
         this.state = this.config();
@@ -426,7 +426,7 @@ export class TopicStaleGateBlock extends ConfiguredBlock {
 }
 
 export class TopicMetadataBlock extends ConfiguredBlock {
-    static defaults = { topic: "/ackdrive" };
+    static defaults = { topic: "/controls/command" };
 
     register() {
         this.state = this.config();
@@ -754,17 +754,17 @@ export class BindingBlock extends ConfiguredBlock {
 }
 
 export class BindInputBlock extends BindingBlock {
-    static defaults = { sourceKind: "topic", source: "/ackdrive", path: SIGNAL_PATHS.ACKDRIVE_TOPIC, type: "message" };
+    static defaults = { sourceKind: "topic", source: "/controls/command", path: SIGNAL_PATHS.CONTROLS_COMMAND_TOPIC, type: "message" };
     bindingKind = "input";
 }
 
 export class BindOutputBlock extends BindingBlock {
-    static defaults = { sinkKind: "topic", sink: "/ackdrive_cmd", path: SIGNAL_PATHS.ACKDRIVE_COMMAND, type: "message" };
+    static defaults = { sinkKind: "topic", sink: "/controls/command", path: SIGNAL_PATHS.CONTROLS_COMMAND_PUBLISH, type: "message" };
     bindingKind = "output";
 }
 
 export class BindTriggerBlock extends BindingBlock {
-    static defaults = { path: SIGNAL_PATHS.ACKDRIVE_TOPIC, mode: "update" };
+    static defaults = { path: SIGNAL_PATHS.CONTROLS_COMMAND_TOPIC, mode: "update" };
     bindingKind = "trigger";
 }
 
@@ -793,7 +793,7 @@ export class EntrypointBlock extends ConfiguredBlock {
 }
 
 export class OnSignalUpdateBlock extends EntrypointBlock {
-    static defaults = { path: SIGNAL_PATHS.ACKDRIVE_TOPIC };
+    static defaults = { path: SIGNAL_PATHS.CONTROLS_COMMAND_TOPIC };
     entrypointKind = "signal-update";
 }
 

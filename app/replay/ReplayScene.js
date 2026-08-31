@@ -159,8 +159,20 @@ export default function ReplayScene({
         const autonomy = dataset.autonomySnapshotAt?.(timeUs, { exactSync }) || {
             perception: {},
             localization: {},
+            controls: null,
         };
-        runtime.autonomyOverlay.updateFromSnapshot(autonomy, autonomyLayers);
+        let vehiclePose = null;
+        const egoPath = posePaths.find((path) => path === "vehicles.ego.pose") || posePaths[0] || null;
+        if (egoPath) {
+            const pose = dataset.valueAt(egoPath, timeUs, { interpolate: true });
+            if (pose?.position) {
+                vehiclePose = {
+                    position: pose.position,
+                    yaw: Number(pose.rotation?.y) || 0,
+                };
+            }
+        }
+        runtime.autonomyOverlay.updateFromSnapshot({ ...autonomy, vehiclePose }, autonomyLayers);
     }, [autonomyLayers, dataset, exactSync, selectedEntity, timeUs]);
 
     return <div ref={mountRef} className="absolute inset-0" aria-label="Read-only replay scene" />;

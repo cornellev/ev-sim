@@ -153,8 +153,8 @@ test("normalizeBinding clamps trigger fields per kind", () => {
     const fixed = normalizeBinding({ trigger: { kind: "fixed-update", everyN: "0" } });
     assert.equal(fixed.trigger.everyN, 1);
 
-    const topic = normalizeBinding({ trigger: { kind: "topic", topic: "  /ackdrive " } });
-    assert.equal(topic.trigger.topic, "/ackdrive");
+    const topic = normalizeBinding({ trigger: { kind: "topic", topic: "  /controls/command " } });
+    assert.equal(topic.trigger.topic, "/controls/command");
 
     const signal = normalizeBinding({ trigger: { kind: "signal-update", path: " vehicle.ego " } });
     assert.equal(signal.trigger.path, "vehicle.ego");
@@ -190,7 +190,7 @@ test("validateBinding flags message inputs on non-topic triggers", () => {
 });
 
 test("summarizeTrigger renders human-readable summaries", () => {
-    assert.equal(summarizeTrigger({ kind: "topic", topic: "/ackdrive" }), "on /ackdrive");
+    assert.equal(summarizeTrigger({ kind: "topic", topic: "/controls/command" }), "on /controls/command");
     assert.equal(summarizeTrigger({ kind: "fixed-update", everyN: 1 }), "every tick");
     assert.equal(summarizeTrigger({ kind: "fixed-update", everyN: 4 }), "every 4 ticks");
     assert.equal(summarizeTrigger({ kind: "signal-update", path: "a.b" }), "when a.b changes");
@@ -205,8 +205,8 @@ test("suggestTriggerFromArtifact maps entrypoints and trigger bindings", () => {
     );
 
     assert.deepEqual(
-        suggestTriggerFromArtifact({ entrypoints: [{ kind: "signal-update", path: "topics./ackdrive" }] }),
-        { kind: TRIGGER_KINDS.TOPIC, topic: "/ackdrive" }
+        suggestTriggerFromArtifact({ entrypoints: [{ kind: "signal-update", path: "topics./controls/command" }] }),
+        { kind: TRIGGER_KINDS.TOPIC, topic: "/controls/command" }
     );
 
     assert.deepEqual(
@@ -241,7 +241,7 @@ test("signal paths have one normalized, deduplicated suggestion source", () => {
 
     assert.ok(KNOWN_SIGNAL_PATHS.includes(SIGNAL_PATHS.VEHICLE_EGO_POSE));
     assert.equal(paths.filter((path) => path === "custom.path").length, 1);
-    assert.equal(topicSignalPath(" /ackdrive "), SIGNAL_PATHS.ACKDRIVE_TOPIC);
+    assert.equal(topicSignalPath(" /controls/command "), SIGNAL_PATHS.CONTROLS_COMMAND_TOPIC);
 });
 
 // ----------------------------------------------------------------- runtime
@@ -265,24 +265,24 @@ test("topic updates populate the signal store and dispatch matching bindings", a
             id: "b1",
             name: "Drive handler",
             scriptId: "script-1",
-            trigger: { kind: "topic", topic: "/ackdrive" },
+            trigger: { kind: "topic", topic: "/controls/command" },
             inputs: [{ input: "speed", source: "message", field: "speed" }],
             outputs: [{ output: "doubled", sink: "signal", path: "debug.doubled" }]
         }]
     }, { persist: false });
     await flush();
 
-    clientManager.emit({ name: "/ackdrive", typeStr: "pkg/AckermannDrive", value: { speed: 4, steering_angle: 1 } });
+    clientManager.emit({ name: "/controls/command", typeStr: "pkg/AckermannDrive", value: { speed: 4, steering_angle: 1 } });
 
     assert.deepEqual(runs, [{ speed: 4 }]);
-    assert.deepEqual(runtime.signalStore.read("topics./ackdrive").value, { speed: 4, steering_angle: 1 });
+    assert.deepEqual(runtime.signalStore.read("topics./controls/command").value, { speed: 4, steering_angle: 1 });
     assert.equal(runtime.signalStore.read("debug.doubled").value, 8);
 
     const snapshot = runtime.getSnapshot();
     assert.equal(snapshot.telemetry.b1.lastStatus, "success");
     assert.equal(snapshot.telemetry.b1.runCount, 1);
-    assert.deepEqual(snapshot.topics, ["/ackdrive"]);
-    assert.ok(snapshot.signalPaths.includes(SIGNAL_PATHS.ACKDRIVE_TOPIC));
+    assert.deepEqual(snapshot.topics, ["/controls/command"]);
+    assert.ok(snapshot.signalPaths.includes(SIGNAL_PATHS.CONTROLS_COMMAND_TOPIC));
     assert.ok(snapshot.signalPaths.includes("debug.doubled"));
 });
 
@@ -299,7 +299,7 @@ test("topic updates do not dispatch bindings for other topics", async () => {
         bindings: [{
             id: "b1",
             scriptId: "script-1",
-            trigger: { kind: "topic", topic: "/ackdrive" }
+            trigger: { kind: "topic", topic: "/controls/command" }
         }]
     }, { persist: false });
     await flush();
@@ -307,7 +307,7 @@ test("topic updates do not dispatch bindings for other topics", async () => {
     clientManager.emit({ name: "/other", value: 1 });
     assert.equal(runs.length, 0);
 
-    clientManager.emit({ name: "/ackdrive", value: 1 });
+    clientManager.emit({ name: "/controls/command", value: 1 });
     assert.equal(runs.length, 1);
 });
 
@@ -603,13 +603,13 @@ test("runBindingNow executes manually with the last topic message as context", a
         bindings: [{
             id: "b1",
             scriptId: "script-1",
-            trigger: { kind: "topic", topic: "/ackdrive" },
+            trigger: { kind: "topic", topic: "/controls/command" },
             inputs: [{ input: "msg", source: "message" }]
         }]
     }, { persist: false });
     await flush();
 
-    runtime.signalStore.set("topics./ackdrive", { speed: 7 });
+    runtime.signalStore.set("topics./controls/command", { speed: 7 });
 
     const result = await runtime.runBindingNow("b1");
     assert.equal(result.status, "success");

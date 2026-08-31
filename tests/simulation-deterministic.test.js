@@ -91,7 +91,7 @@ test("manifest clock uses exact integer nanoseconds and fixed module order", asy
     assert.equal(engine.steps, 3);
     assert.equal(engine.timeNs, 60_000_000);
     assert.equal(engine.time, 0.06);
-    assert.deepEqual(engine.lastStepPhases, ["inputs", "scripts", "vehicles", "physics", "contacts", "clock", "transforms", "sensors", "delivery", "candidate-viz", "assertions"]);
+    assert.deepEqual(engine.lastStepPhases, ["inputs", "scripts", "controls", "vehicles", "physics", "controls-achieved", "contacts", "clock", "transforms", "sensors", "delivery", "candidate-viz", "assertions"]);
     assert.deepEqual(calls.slice(-7), ["keys", "script", "vehicle", "physics", "contacts", "sensor", "delivery"]);
 });
 
@@ -197,17 +197,48 @@ test("hidden experiment diagnostics preserve authoritative playback", () => {
     }
 });
 
-test("queued ackdrive is applied only at a step boundary", async () => {
+test("queued controls/command is applied only at a step boundary", async () => {
     const { engine, runtime, vehicle, store } = harness();
-    const manifest = createDefaultRunManifest({ sensorRig: { sensors: [] } });
+    const manifest = createDefaultRunManifest({
+        sensorRig: { sensors: [] },
+        controls: {
+            actuatorOverrides: {
+                maxAcceleration: 1e6,
+                maxDeceleration: 1e6,
+                maxSteeringRate: 1e6,
+                maxJerk: 1e6,
+                maxSpeed: 40,
+            },
+        },
+    });
     await engine.applyRunManifest(resolved(manifest));
-    runtime.scheduler({ name: "/ackdrive", value: { speed: 10, steering_angle: 5 } });
+    runtime.scheduler({
+        name: "/controls/command",
+        typeStr: "sensor_fusion_msgs/StampedAckermannDrive",
+        value: {
+            header: { stamp: { sec: 0, nanosec: 0 }, frame_id: "base_link" },
+            sequence: 1,
+            mode: "velocity",
+            deadline_ns: 0,
+            steering_angle: 0.0872665,
+            steering_angle_velocity: 0,
+            speed: 4.4704,
+            acceleration: 0,
+            jerk: 0,
+        },
+    });
     assert.equal(vehicle.velocity.x, 0);
     engine.step();
-    assert.ok(Math.abs(vehicle.velocity.x - 4.4704) < 1e-12);
+    assert.ok(Math.abs(vehicle.velocity.x - 4.4704) < 1e-6);
+    assert.ok(Math.abs(vehicle.steeringAngle - (-0.0872665)) < 1e-6);
     const applied = store.events().find((event) => event.name === "input-applied");
     assert.equal(applied.name, "input-applied");
     assert.equal(applied.payload.step, 1);
+    // Legacy /ackdrive is not accepted at runtime.
+    runtime.scheduler({ name: "/ackdrive", value: { speed: 10, steering_angle: 5 } });
+    const before = vehicle.velocity.x;
+    engine.step();
+    assert.equal(vehicle.velocity.x, before);
 });
 
 test("signal assertions stop a run deterministically", async () => {

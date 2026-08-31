@@ -328,8 +328,8 @@ class BindingConfigBlock extends UnitBlock {
         return {
             kind: "input",
             sourceKind: "topic",
-            source: "/ackdrive",
-            path: "topics./ackdrive",
+            source: "/controls/command",
+            path: "topics./controls/command",
             type: "message"
         };
     }
@@ -351,7 +351,7 @@ class EntrypointConfigBlock extends UnitBlock {
     getEntrypointDefinition() {
         return {
             kind: "signal-update",
-            path: "topics./ackdrive"
+            path: "topics./controls/command"
         };
     }
 
@@ -632,7 +632,7 @@ test("persistent runners preserve runtime state across runs", () => {
 test("signal store reads expose value, age, stale status, and changed status", () => {
     const now = Date.parse("2026-06-09T00:00:10.000Z");
     const store = new SignalStore({
-        "topics./ackdrive": {
+        "topics./controls/command": {
             value: { speed: 4 },
             type: "message",
             updatedAt: "2026-06-09T00:00:08.000Z",
@@ -643,22 +643,22 @@ test("signal store reads expose value, age, stale status, and changed status", (
         now: () => now
     });
 
-    const fresh = store.read("topics./ackdrive");
+    const fresh = store.read("topics./controls/command");
     assert.deepEqual(fresh.value, { speed: 4 });
     assert.equal(fresh.age, 2);
     assert.equal(fresh.stale, false);
     assert.equal(fresh.source, "mock-ros");
-    assert.equal(store.changed("topics./ackdrive"), false);
+    assert.equal(store.changed("topics./controls/command"), false);
 
-    store.set("topics./ackdrive", { speed: 6 }, {
+    store.set("topics./controls/command", { speed: 6 }, {
         type: "message",
         updatedAt: "2026-06-09T00:00:01.000Z",
         staleAfter: 5
     });
 
-    const stale = store.read("topics./ackdrive");
+    const stale = store.read("topics./controls/command");
     assert.equal(stale.stale, true);
-    assert.equal(store.changed("topics./ackdrive"), true);
+    assert.equal(store.changed("topics./controls/command"), true);
 });
 
 test("signal writes are staged and only committed after successful execution", () => {
@@ -714,15 +714,15 @@ test("compiler emits binding and entrypoint metadata from config units", () => {
         blockType: "BindingConfigBlock",
         kind: "input",
         sourceKind: "topic",
-        source: "/ackdrive",
-        path: "topics./ackdrive",
+        source: "/controls/command",
+        path: "topics./controls/command",
         type: "message"
     }]);
     assert.deepEqual(artifact.entrypoints, [{
         uuid: "entrypoint",
         blockType: "EntrypointConfigBlock",
         kind: "signal-update",
-        path: "topics./ackdrive"
+        path: "topics./controls/command"
     }]);
 });
 

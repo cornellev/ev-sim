@@ -5,6 +5,8 @@ import { TopicContractRouter } from "./TopicContractRouter.js";
 import { TransformRuntime } from "./TransformRuntime.js";
 import { createLocalizationTruthPublisher } from "./LocalizationTruthPublisher.js";
 import { CandidateOutputRuntime } from "../autonomy/CandidateOutputRuntime.js";
+import { ControlRuntime } from "../autonomy/ControlRuntime.js";
+import { getBuiltInVehicleManifest } from "../vehicles/BuiltInVehicleManifests.js";
 import { ScenarioRuntime } from "../scenarios/ScenarioRuntime.js";
 import { ScenarioDiagnostics } from "../scenarios/ScenarioDiagnostics.js";
 import { AutonomyOverlay } from "../3d/overlay/AutonomyOverlay.js";
@@ -72,6 +74,7 @@ export class SimulationEngine {
         this.scenarioDiagnostics = new ScenarioDiagnostics();
         this.autonomyOverlay = new AutonomyOverlay();
         this.candidateOutputRuntime = null;
+        this.controlRuntime = null;
         this.environmentRuntime = null;
         this.lastStepPhases = [];
         this._autonomyOverlayEnabled = {
@@ -79,6 +82,7 @@ export class SimulationEngine {
             candidate: true,
             ekf: true,
             lanes: true,
+            controls: true,
         };
 
         this._defineTelemetrySignals();
@@ -280,6 +284,7 @@ export class SimulationEngine {
         this.scenarioRuntime.reset();
         this.localizationTruthPublisher?.reset?.();
         this.candidateOutputRuntime?.reset?.();
+        this.controlRuntime?.reset?.();
         this.autonomyOverlay?.clear?.();
         
         for (const handler of this.resetHandlers) {
@@ -414,12 +419,18 @@ export class SimulationEngine {
             manifest,
         });
         this.candidateOutputRuntime.setTransformRuntime(this.transformRuntime);
+        this.controlRuntime = new ControlRuntime({
+            telemetry: this.telemetry,
+            manifest,
+            controls: manifest.controls,
+        });
         this.assertionEngine = new AssertionEngine(manifest.assertions, this.telemetry);
         this.data.bindings?.()?.setTopicScheduler?.((info) => this.queueTopicInput(info));
 
         await this.data.vehicles?.()?.configureFromManifest?.(manifest.initialState.vehicles, this.scene, {
             resolvedVehicles: this.resolvedRun.vehicles || [],
         });
+        this._configureControlRuntimeLimits(manifest);
 
         const selectedBindings = resolved.bindings?.entries || [];
         await this.data.bindings?.()?.setManifest?.({
@@ -453,6 +464,7 @@ export class SimulationEngine {
             this.telemetry?.publishSignal?.(path, value, { timeUs: 0, cycle: 0, source: "manifest", replayRole: "input", logClass: "core" });
         }
         this.scenarioRuntime.configure(this.resolvedRun);
+        this.scenarioRuntime.setControlRuntime?.(this.controlRuntime);
         this.scenarioDiagnostics.configure(this.resolvedRun?.scenario?.scenario ?? null);
         this.status = "paused";
         this._publishClock();
@@ -565,6 +577,12 @@ export class SimulationEngine {
             });
         }
 
+        phase("controls", () => {
+            if (!this.controlRuntime || this.modules.controls === false) return;
+            const applied = this.controlRuntime.step({ step: nextStep, timeNs: nextTimeNs, dt });
+            this._applyControlSetpoints(applied);
+        });
+
         this.data.physics?.()?.beginStep?.();
         phase("vehicles", () => {
             if (!scenarioPreTerminal && this.modules.vehicles) this.data.vehicles()?.update?.(dt);
@@ -573,6 +591,12 @@ export class SimulationEngine {
         phase("physics", () => {
             if (!scenarioPreTerminal && this.modules.physics) this.data.physics()?.step?.(dt);
         });
+
+        if (this.controlRuntime) {
+            phase("controls-achieved", () => {
+                this._sampleControlAchieved();
+            });
+        }
 
         let contacts = null;
         phase("contacts", () => {
@@ -601,7 +625,22 @@ export class SimulationEngine {
 
         phase("candidate-viz", () => {
             this.candidateOutputRuntime?.refreshOracle?.({ applyStep: this.steps, applyTimeNs: this.timeNs });
-            this.autonomyOverlay?.updateFromRuntime?.(this.candidateOutputRuntime, this._autonomyOverlayEnabled);
+            const targetId = this.resolvedRun?.manifest?.controls?.targetVehicleId || "ego";
+            const vehicle = (this.data.vehicles?.()?.vehicles || [])
+                .find((candidate) => candidate.telemetryId === targetId)
+                ?? this.data.vehicles?.()?.vehicles?.[0];
+            const vehiclePose = vehicle ? {
+                position: {
+                    x: Number(vehicle.position?.x) || 0,
+                    y: Number(vehicle.position?.y) || 0,
+                    z: Number(vehicle.position?.z) || 0,
+                },
+                yaw: Number(vehicle.rotation?.y) || 0,
+            } : null;
+            this.autonomyOverlay?.updateFromRuntime?.(this.candidateOutputRuntime, this._autonomyOverlayEnabled, {
+                controlRuntime: this.controlRuntime,
+                vehiclePose,
+            });
         });
 
         if (this.modules.baking) this.data.baking()?.update?.(dt);
@@ -664,20 +703,19 @@ export class SimulationEngine {
                 continue;
             }
             this.data.bindings?.()?.applyTopicUpdate?.(entry.info);
-            const scenarioOwnsVehicleCommands = this.scenarioRuntime.active;
             const handledByScenario = this.scenarioRuntime.applyExternalTopic(entry.info);
             const controlTopic = this.resolvedRun?.manifest?.topics?.find((topic) =>
-                topic.direction === "input" && (topic.name === entry.info.name || topic.id === "ackdrive")
+                topic.direction === "input"
+                && (topic.contractId === "controls-command" || topic.name === entry.info.name || topic.id === entry.info.name)
             );
-            const isLegacyAck = controlTopic?.contractId === "ackdrive-legacy"
-                || entry.info.name === "/ackdrive";
-            if (!scenarioOwnsVehicleCommands && !handledByScenario && isLegacyAck) {
-                const vehicle = this.data.vehicles?.()?.vehicles?.find((candidate) => candidate.telemetryId === "ego")
-                    ?? this.data.vehicles?.()?.vehicles?.[0];
-                if (vehicle) {
-                    vehicle.velocity.x = Number(entry.info.value?.speed || 0) * 0.44704;
-                    vehicle.steeringAngle = -Number(entry.info.value?.steering_angle || 0) * Math.PI / 180;
-                }
+            const isControlsCommand = controlTopic?.contractId === "controls-command"
+                || entry.info.name === "/controls/command";
+            if (!handledByScenario && isControlsCommand && this.controlRuntime) {
+                this.controlRuntime.ingestStampedCommand(entry.info, {
+                    vehicleId: this.resolvedRun?.manifest?.controls?.targetVehicleId || "ego",
+                    producer: controlTopic?.producer || "candidate",
+                    applyTimeNs,
+                });
             }
             this.telemetry?.emitTelemetryEvent?.({
                 timeUs: Math.round(applyTimeNs / 1000),
@@ -686,6 +724,56 @@ export class SimulationEngine {
                 payload: { topic: entry.info.name, step, sequence: entry.sequence, routed: routed?.ok ?? null },
             });
         }
+    }
+
+    _configureControlRuntimeLimits(manifest) {
+        if (!this.controlRuntime) return;
+        const vehicleLimits = {};
+        const resolvedByActor = new Map((this.resolvedRun?.vehicles || []).map((entry) => [entry.actorId, entry]));
+        for (const entry of manifest.initialState?.vehicles || []) {
+            const resolved = resolvedByActor.get(entry.id);
+            const kinematics = resolved?.manifest?.kinematics
+                || getBuiltInVehicleManifest(entry.type)?.kinematics
+                || {};
+            vehicleLimits[entry.id] = { ...kinematics };
+        }
+        this.controlRuntime.configure({
+            manifest,
+            controls: manifest.controls,
+            vehicleLimits,
+        });
+    }
+
+    _applyControlSetpoints(appliedMap) {
+        if (!appliedMap) return;
+        const vehicles = this.data.vehicles?.()?.vehicles || [];
+        for (const [vehicleId, setpoint] of appliedMap) {
+            if (!setpoint || setpoint.passthrough) continue;
+            const vehicle = vehicles.find((candidate) => candidate.telemetryId === vehicleId)
+                ?? (vehicleId === "ego" ? vehicles[0] : null);
+            if (!vehicle) continue;
+            if (vehicle.velocity) vehicle.velocity.x = setpoint.speedMps;
+            vehicle.steeringAngle = setpoint.steeringRadThree;
+        }
+    }
+
+    _sampleControlAchieved() {
+        if (!this.controlRuntime) return;
+        const target = this.resolvedRun?.manifest?.controls?.targetVehicleId || "ego";
+        const vehicles = this.data.vehicles?.()?.vehicles || [];
+        const vehicle = vehicles.find((candidate) => candidate.telemetryId === target) ?? vehicles[0];
+        if (!vehicle) return;
+        this.controlRuntime.sampleAchieved(target, {
+            speedMps: Number(vehicle.velocity?.x) || 0,
+            steeringRadThree: Number(vehicle.steeringAngle) || 0,
+            accelerationMps2: Number(vehicle.acceleration?.x) || 0,
+        });
+        // Refresh snapshot after achieved sampling.
+        this.controlRuntime._publishSnapshot(
+            this.controlRuntime.getSnapshot(target, { applyTimeNs: this.timeNs }),
+            this.steps,
+            this.timeNs,
+        );
     }
 
     _applyInitialState(initialState = {}) {

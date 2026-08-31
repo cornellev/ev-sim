@@ -20,7 +20,7 @@ async function temporaryService() {
 test("run manifest normalization supplies deterministic professional defaults", () => {
     const manifest = createDefaultRunManifest();
     assert.equal(manifest.kind, "cev-sim.run-manifest");
-    assert.equal(manifest.version, 8);
+    assert.equal(manifest.version, 9);
     assert.equal(manifest.scenario, null);
     assert.equal(manifest.clock.stepNs, 16_666_667);
     assert.equal(manifest.clock.pacing, "realtime");
@@ -40,15 +40,44 @@ test("run manifest v4 migrates v1-v3 and rejects future versions and duplicate s
         ...createDefaultRunManifest(),
         version: 1,
     });
-    assert.equal(migrated.version, 8);
+    assert.equal(migrated.version, 9);
     assert.ok(migrated.autonomyCatalog?.hash);
     assert.equal(migrated.scenario, null);
-    assert.throws(() => normalizeRunManifest({ kind: "cev-sim.run-manifest", version: 9 }), /version 9/);
+    assert.ok(migrated.controls);
+    assert.equal(migrated.controls.stalePolicy, "stop");
+    assert.throws(() => normalizeRunManifest({ kind: "cev-sim.run-manifest", version: 10 }), /version 10/);
     const manifest = createDefaultRunManifest();
     manifest.topics.push({ ...manifest.topics[0] });
     const validation = validateRunManifest(manifest);
     assert.equal(validation.ok, false);
     assert.match(validation.issues.map((issue) => issue.message).join(" "), /Duplicate id/);
+});
+
+test("run manifest migrates /ackdrive to /controls/command and validates controls block", () => {
+    const migrated = normalizeRunManifest({
+        kind: "cev-sim.run-manifest",
+        version: 8,
+        id: "legacy-ack",
+        name: "Legacy Ack",
+        topics: [{
+            id: "ackdrive",
+            name: "/ackdrive",
+            direction: "input",
+            type: "sensor_fusion_msgs/AckermannDrive",
+            required: true,
+        }],
+        initialState: { vehicles: [{ id: "ego", type: "big-car" }] },
+    });
+    assert.equal(migrated.version, 9);
+    assert.equal(migrated.topics[0].name, "/controls/command");
+    assert.equal(migrated.topics[0].contractId, "controls-command");
+    assert.equal(migrated.controls.targetVehicleId, "ego");
+    assert.equal(validateRunManifest(migrated).ok, true);
+
+    const bad = createDefaultRunManifest();
+    bad.controls.stalePolicy = "fallback";
+    bad.controls.fallbackCommand = null;
+    assert.equal(validateRunManifest(bad).ok, false);
 });
 
 test("run manifest storage creates a default catalog and enforces optimistic revisions", async () => {
@@ -84,7 +113,7 @@ test("run manifests resolve dependencies and portable bundles round-trip", async
         assert.equal(resolved.resolvedHash.length, 64);
         assert.equal(resolved.environment.manifest.environmentId, "igvc");
         assert.ok(resolved.schemas["sensor_msgs/Image"].includes("uint8[] data"));
-        assert.ok(resolved.schemas["sensor_fusion_msgs/AckermannDrive"]);
+        assert.ok(resolved.schemas["sensor_fusion_msgs/StampedAckermannDrive"]);
         assert.equal(resolved.autonomyCatalog.kind, "cev-sim.autonomy-contract-catalog");
 
         const bundle = await left.service.exportRunManifest("igvc-default");

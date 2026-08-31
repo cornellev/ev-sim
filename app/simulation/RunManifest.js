@@ -21,7 +21,7 @@ import { validateSensorRigFrames, validateSyncGroups } from "../simulation/Trans
 import { validateScalarParameterTarget } from "../scenarios/ScenarioDocument.js";
 
 export const RUN_MANIFEST_KIND = "cev-sim.run-manifest";
-export const RUN_MANIFEST_VERSION = 8;
+export const RUN_MANIFEST_VERSION = 9;
 export const LEGACY_RUN_MANIFEST_VERSION = 1;
 export const RUN_MANIFEST_V2 = 2;
 export const RUN_MANIFEST_V3 = 3;
@@ -29,6 +29,7 @@ export const RUN_MANIFEST_V4 = 4;
 export const RUN_MANIFEST_V5 = 5;
 export const RUN_MANIFEST_V6 = 6;
 export const RUN_MANIFEST_V7 = 7;
+export const RUN_MANIFEST_V8 = 8;
 export const RUN_BUNDLE_KIND = "cev-sim.run-bundle";
 export const RUN_BUNDLE_VERSION = 1;
 
@@ -37,6 +38,9 @@ export const RUN_PACING_MODES = Object.freeze(["realtime", "unbounded"]);
 export const SENSOR_TYPES = Object.freeze(listSensorTypes().map((definition) => definition.id));
 export const RUN_PARAMETER_TYPES = Object.freeze(["float64", "int32", "boolean", "string"]);
 export const RUN_PARAMETER_TARGET_KINDS = Object.freeze(["scalar-field", "script-input", "scenario-signal"]);
+export const CONTROL_AUTHORITY_MODES = Object.freeze(["candidate", "reference"]);
+export const CONTROL_STALE_POLICIES = Object.freeze(["stop", "hold", "fallback"]);
+export const CONTROL_COMMAND_MODES = Object.freeze(["velocity", "acceleration", "stop"]);
 
 const DEFAULT_MODULES = Object.freeze({
     inputs: true,
@@ -45,6 +49,17 @@ const DEFAULT_MODULES = Object.freeze({
     physics: true,
     sensors: true,
     assertions: true,
+});
+
+const DEFAULT_CONTROLS = Object.freeze({
+    targetVehicleId: "ego",
+    authority: "candidate",
+    referenceShadow: true,
+    watchdogNs: 100_000_000,
+    stalePolicy: "stop",
+    fallbackCommand: null,
+    referenceSource: "scenario-route-follower",
+    actuatorOverrides: {},
 });
 
 function object(value) {
@@ -95,6 +110,55 @@ function pose(value = {}) {
 
 function topic(value = {}, index = 0) {
     return migrateLegacyTopic(value, index);
+}
+
+function normalizeSiCommand(value = null) {
+    if (value == null) return null;
+    const source = object(value);
+    const mode = CONTROL_COMMAND_MODES.includes(source.mode) ? source.mode : "stop";
+    return {
+        mode,
+        steering_angle: finite(source.steering_angle ?? source.steeringAngle, 0),
+        steering_angle_velocity: finite(source.steering_angle_velocity ?? source.steeringAngleVelocity, 0),
+        speed: finite(source.speed, 0),
+        acceleration: finite(source.acceleration, 0),
+        jerk: finite(source.jerk, 0),
+    };
+}
+
+function normalizeActuatorOverrides(value = {}) {
+    const source = object(value);
+    const out = {};
+    for (const key of [
+        "maxSpeed",
+        "maxAcceleration",
+        "maxDeceleration",
+        "maxJerk",
+        "maxSteeringAngle",
+        "maxSteeringRate",
+        "responseDelayNs",
+    ]) {
+        if (source[key] === undefined || source[key] === null || source[key] === "") continue;
+        const number = Number(source[key]);
+        if (!Number.isFinite(number)) continue;
+        out[key] = key === "responseDelayNs" ? Math.max(0, Math.floor(number)) : number;
+    }
+    return out;
+}
+
+export function normalizeControlsConfig(value = {}, { targetVehicleId = "ego" } = {}) {
+    const source = object(value);
+    const stalePolicy = CONTROL_STALE_POLICIES.includes(source.stalePolicy) ? source.stalePolicy : DEFAULT_CONTROLS.stalePolicy;
+    return {
+        targetVehicleId: text(source.targetVehicleId, targetVehicleId || DEFAULT_CONTROLS.targetVehicleId),
+        authority: CONTROL_AUTHORITY_MODES.includes(source.authority) ? source.authority : DEFAULT_CONTROLS.authority,
+        referenceShadow: source.referenceShadow !== false,
+        watchdogNs: Math.max(0, Math.floor(finite(source.watchdogNs, DEFAULT_CONTROLS.watchdogNs))),
+        stalePolicy,
+        fallbackCommand: stalePolicy === "fallback" ? normalizeSiCommand(source.fallbackCommand) : normalizeSiCommand(source.fallbackCommand),
+        referenceSource: text(source.referenceSource, DEFAULT_CONTROLS.referenceSource) || null,
+        actuatorOverrides: normalizeActuatorOverrides(source.actuatorOverrides),
+    };
 }
 
 function assertion(value = {}, index = 0) {
@@ -529,6 +593,7 @@ export function createDefaultRunManifest(overrides = {}) {
         },
         scripts: { enabled: true, artifacts: [], bindingIds: [], expectedBindingsHash: null, embeddedBindings: [] },
         topics: defaultManifestTopics(),
+        controls: { ...DEFAULT_CONTROLS },
         autonomyCatalog: catalogMetadata(),
         assertions: [],
         parameters: [],
@@ -543,38 +608,58 @@ export function normalizeRunManifest(value, { allowMissingKind = false } = {}) {
         throw new Error(`Unsupported run manifest kind: ${JSON.stringify(source.kind)}.`);
     }
     const sourceVersion = source.version === undefined ? RUN_MANIFEST_VERSION : Number(source.version);
-    if (![LEGACY_RUN_MANIFEST_VERSION, RUN_MANIFEST_V2, RUN_MANIFEST_V3, RUN_MANIFEST_V4, RUN_MANIFEST_V5, RUN_MANIFEST_V6, RUN_MANIFEST_V7, RUN_MANIFEST_VERSION].includes(sourceVersion)) {
-        throw new Error(`Unsupported run manifest version ${source.version}; expected version 1, 2, 3, 4, 5, 6, 7, or ${RUN_MANIFEST_VERSION}.`);
+    const supported = [
+        LEGACY_RUN_MANIFEST_VERSION,
+        RUN_MANIFEST_V2,
+        RUN_MANIFEST_V3,
+        RUN_MANIFEST_V4,
+        RUN_MANIFEST_V5,
+        RUN_MANIFEST_V6,
+        RUN_MANIFEST_V7,
+        RUN_MANIFEST_V8,
+        RUN_MANIFEST_VERSION,
+    ];
+    if (!supported.includes(sourceVersion)) {
+        throw new Error(`Unsupported run manifest version ${source.version}; expected version 1–${RUN_MANIFEST_VERSION}.`);
     }
     const initial = object(source.initialState);
     const clock = object(source.clock);
     const scripts = object(source.scripts);
     const migratedTopics = (Array.isArray(source.topics) ? source.topics : []).map(topic);
-    const topics = sourceVersion < RUN_MANIFEST_VERSION
+    // Ensure candidate returns for pre-v8 and always rewrite legacy ackdrive via migrateLegacyTopic.
+    const topics = sourceVersion < RUN_MANIFEST_V8
         ? ensureCandidateReturnTopics(migratedTopics)
         : migratedTopics;
+    const vehicles = (Array.isArray(initial.vehicles) ? initial.vehicles : []).map((vehicle, index) => ({
+        ...object(vehicle),
+        id: text(vehicle?.id, `vehicle-${index + 1}`),
+        type: text(vehicle?.type, "big-car"),
+        pose: pose(vehicle?.pose),
+        linearVelocity: vec3(vehicle?.linearVelocity),
+        steeringAngle: finite(vehicle?.steeringAngle, 0),
+    }));
+    const defaultTarget = vehicles[0]?.id || "ego";
     const sensorRig = reconcileSyncGroups(normalizeSensorRig(source.sensorRig, sourceVersion), topics);
+    const scenario = scenarioSelection(source.scenario);
+    const controlsSource = {
+        ...object(source.controls),
+        authority: source.controls?.authority
+            ?? (scenario ? "reference" : DEFAULT_CONTROLS.authority),
+    };
     return {
         kind: RUN_MANIFEST_KIND,
         version: RUN_MANIFEST_VERSION,
         id: text(source.id, "untitled-run"),
         name: text(source.name, "Untitled Run"),
         description: text(source.description),
-        scenario: scenarioSelection(source.scenario),
+        scenario,
         environment: {
             id: text(source.environment?.id, "igvc"),
             expectedHash: text(source.environment?.expectedHash) || null,
         },
         seed: typeof source.seed === "number" ? source.seed : text(source.seed, "42"),
         initialState: {
-            vehicles: (Array.isArray(initial.vehicles) ? initial.vehicles : []).map((vehicle, index) => ({
-                ...object(vehicle),
-                id: text(vehicle?.id, `vehicle-${index + 1}`),
-                type: text(vehicle?.type, "big-car"),
-                pose: pose(vehicle?.pose),
-                linearVelocity: vec3(vehicle?.linearVelocity),
-                steeringAngle: finite(vehicle?.steeringAngle, 0),
-            })),
+            vehicles,
             signals: object(initial.signals),
         },
         clock: {
@@ -597,6 +682,7 @@ export function normalizeRunManifest(value, { allowMissingKind = false } = {}) {
             embeddedBindings: Array.isArray(scripts.embeddedBindings) ? structuredClone(scripts.embeddedBindings) : [],
         },
         topics,
+        controls: normalizeControlsConfig(controlsSource, { targetVehicleId: defaultTarget }),
         assertions: (Array.isArray(source.assertions) ? source.assertions : []).map(assertion),
         parameters: (Array.isArray(source.parameters) ? source.parameters : []).map(parameter),
         logging: {
@@ -652,6 +738,35 @@ export function validateRunManifest(value) {
         issues.push(...validateTopicAgainstCatalog(topicEntry, index));
     }
     issues.push(...validateManifestTopicAuthority(manifest));
+    const controlsTopics = (manifest.topics || []).filter((topic) => topic.stage === "controls" || topic.contractId === "controls-command");
+    if (controlsTopics.length > 1) {
+        issues.push({ path: "topics", message: "Only one canonical controls-command input is allowed." });
+    }
+    if (controlsTopics.some((topic) => topic.name === "/ackdrive" || topic.contractId === "ackdrive-legacy")) {
+        issues.push({ path: "topics", message: "Legacy /ackdrive is not accepted; use /controls/command." });
+    }
+    const vehicleIds = new Set(manifest.initialState.vehicles.map((vehicle) => vehicle.id));
+    if (manifest.controls?.targetVehicleId && !vehicleIds.has(manifest.controls.targetVehicleId) && vehicleIds.size > 0) {
+        issues.push({ path: "controls.targetVehicleId", message: `Unknown target vehicle "${manifest.controls.targetVehicleId}".` });
+    }
+    if (!CONTROL_AUTHORITY_MODES.includes(manifest.controls?.authority)) {
+        issues.push({ path: "controls.authority", message: "Authority must be candidate or reference." });
+    }
+    if (!CONTROL_STALE_POLICIES.includes(manifest.controls?.stalePolicy)) {
+        issues.push({ path: "controls.stalePolicy", message: "Stale policy must be stop, hold, or fallback." });
+    }
+    if (manifest.controls?.stalePolicy === "fallback" && !manifest.controls.fallbackCommand) {
+        issues.push({ path: "controls.fallbackCommand", message: "Fallback stale policy requires an SI fallback command." });
+    }
+    for (const [key, value] of Object.entries(manifest.controls?.actuatorOverrides || {})) {
+        if (!Number.isFinite(Number(value))) {
+            issues.push({ path: `controls.actuatorOverrides.${key}`, message: "Actuator overrides must be finite numbers." });
+        } else if (key !== "responseDelayNs" && Number(value) <= 0) {
+            issues.push({ path: `controls.actuatorOverrides.${key}`, message: "Actuator limit overrides must be positive." });
+        } else if (key === "responseDelayNs" && Number(value) < 0) {
+            issues.push({ path: `controls.actuatorOverrides.${key}`, message: "responseDelayNs must be non-negative." });
+        }
+    }
     for (const [index, assertionEntry] of manifest.assertions.entries()) {
         if (assertionEntry.source === "signal" && !assertionEntry.path) {
             issues.push({ path: `assertions.${index}.path`, message: "Signal assertions require a path." });

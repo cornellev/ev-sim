@@ -6,18 +6,18 @@ Step 1 locks the first-wave perception, localization, and control dataflow as ve
 
 `app/autonomy/AutonomyContractCatalog.js` is the single source of truth for:
 
-- Catalog kind/version/hash (`cev-sim.autonomy-contract-catalog` v5)
+- Catalog kind/version/hash (`cev-sim.autonomy-contract-catalog` v6)
 - Logical contract IDs and default wire names
 - ROS schema definitions (`.msg` text)
 - Producer namespaces (`simulator`, `candidate`, `reference`, `oracle`, `replay`, `bypass`)
 - Authority modes (same set minus `simulator`)
 - Timeout, validity, fallback, units, `routeDownstream`, and implementation mode (`live`, `catalog-only`, `stub`)
 
-Resolved runs embed `autonomyCatalog` metadata and a transitive `schemas` closure derived from manifest topics. The closure always includes dependencies such as `sensor_fusion_msgs/AckermannDrive` when the default legacy control return is declared.
+Resolved runs embed `autonomyCatalog` metadata and a transitive `schemas` closure derived from manifest topics. The closure includes `sensor_fusion_msgs/StampedAckermannDrive` when the default controls return is declared.
 
 The catalog hash covers all compatibility-relevant contract metadata (stage, implementation, frame/timestamp policies, timeout/validity, routeDownstream defaults, schema version, and fallback), not only id/type/direction.
 
-## Run manifest v8 topics
+## Run manifest v9 topics
 
 Each topic record includes:
 
@@ -28,14 +28,14 @@ Each topic record includes:
 | `name` | Orchestrator wire name |
 | `direction` | `output` (simulator → team) or `input` (team → simulator) |
 | `schema.type` / `schema.version` | Required ROS type |
-| `required` | Preflight fails when a required input is missing on the orchestrator |
+| `required` | Preflight fails when a required **input** is missing on the orchestrator. Catalog defaults may be `true` (including `/controls/command`); the Config Required toggle can set `false` and that value is preserved on normalize. `/controls/command` is also exempt from orchestrator advertisement when controls authority is `reference` and the scenario is not `external-ros` |
 | `producer` | Namespace that may write the producer path |
 | `authority` | Which producer wins on `active.*` when routed downstream |
 | `routeDownstream` | When `true`, router also writes `active.*`; perception/EKF defaults `false` |
 | `timeoutNs` / `validityNs` | Stale detection at step boundaries |
 | `fallback` | Structured fallback target (`contractId`, optional mode) |
 
-v1–v7 topic rows migrate through `migrateLegacyTopic`. Normalization always emits manifest version 8. v7 and earlier documents that omit candidate perception/localization returns receive those observational contracts on migrate. New defaults declare the full perception sync group (measured RGB/CameraInfo/PointCloud2 plus optional oracle depth/labels/semantic LiDAR/detections/lanes/traffic-controls and diagnostics) plus observational candidate return topics for perception and localization.
+v1–v8 topic rows migrate through `migrateLegacyTopic`. Normalization always emits manifest version 9. Saved manifests that still declare `/ackdrive` or `ackdrive-legacy` rewrite once to `/controls/command` + `controls-command` (stamped SI). There is no runtime `/ackdrive` alias afterward. v7 and earlier documents that omit candidate perception/localization returns receive those observational contracts on migrate. New defaults declare the full perception sync group plus observational candidate return topics and the live `controls-command` input.
 
 ## Namespaces and routing
 
@@ -46,9 +46,19 @@ Only `TopicContractRouter` may write `active.*`. Producers write:
 
 The router validates direction/type/payload geometry, extracts stamped header capture time for inbound contracts, records arrival and apply timestamps, assigns deterministic sequence ids, applies authority/fallback, enforces `validityNs` separately from transport `timeoutNs`, and emits telemetry events (`topic-routed`, `topic-rejected`, `topic-stale`, `topic-invalid`, `topic-fallback-applied`). Every inbound outcome also publishes a replayable `diagnostics.topics.<contractId>` status record (sequence, capture/arrival/apply times, age, code, last-good).
 
-**`routeDownstream`:** Candidate perception and EKF returns default to `routeDownstream: false` (visualize + log only). Control returns (`ackdrive-legacy`, `controls-command`) default to `true` so the plant still consumes them via `active.*`. Observational oracle perception products (`producer: oracle` with `observationalOracle`) populate `oracle.topics.*` only and never become `active.*`.
+**`routeDownstream`:** Candidate perception and EKF returns default to `routeDownstream: false` (visualize + log only). Control returns (`controls-command`) default to `true` so the plant consumes them via `active.*` and `ControlRuntime`. Observational oracle perception products (`producer: oracle` with `observationalOracle`) populate `oracle.topics.*` only and never become `active.*`.
 
-Live platform outputs now include `/clock`, `/tf`, `/tf_static`, default perception sensors, optional oracle perception products, and the localization suite (`/sensors/imu/data`, `/sensors/gnss/fix`, `/sensors/wheel/odometry`, `/oracle/vehicle/odometry`). Candidate return paths are live **inputs** under `candidate.*` (and `active.*` only when `routeDownstream` is enabled). Oracle truth is never mixed into measured sensor topics.
+Live platform outputs now include `/clock`, `/tf`, `/tf_static`, default perception sensors, optional oracle perception products, and the localization suite. Candidate return paths are live **inputs** under `candidate.*` (and `active.*` only when `routeDownstream` is enabled). Oracle truth is never mixed into measured sensor topics.
+
+### Controls contract (Step 6)
+
+| Contract | Wire name | Type | Producer | Notes |
+| --- | --- | --- | --- | --- |
+| `controls-command` | `/controls/command` | `sensor_fusion_msgs/StampedAckermannDrive` | `candidate` | Stamped SI Ackermann; modes `velocity`, `acceleration`, `stop`; `deadline_ns` is absolute simulation time; sequence must increase |
+
+`ControlCommandAdapter` validates finite fields and converts REP-103 steering (positive left) to Three.js plant steering once at the actuator boundary. `ControlRuntime` is the sole managed-run actuator sink: it tracks requested / selected / applied / achieved, enforces watchdog + `stop|hold|fallback` stale policy, simulation-time delay, and accel/jerk/steer-rate limits, and publishes `visualization.controls.*` plus transition events (`command-timeout`, `command-recovered`, `command-fallback`, `command-saturated`, `command-rate-limited`, `command-rejected`).
+
+Run manifests carry a `controls` block (target vehicle, authority `candidate|reference`, reference shadow, watchdog, stale policy, optional SI fallback, actuator overrides). Vehicle manifests v2 own speed/accel/decel/jerk/steer-rate/delay defaults; v1 migrates with permissive zero-delay values.
 
 ### Candidate return contracts (Step 5)
 
@@ -81,10 +91,6 @@ Live platform outputs now include `/clock`, `/tf`, `/tf_static`, default percept
 | `oracle-traffic-controls` | `/oracle/perception/traffic_controls` | `sensor_fusion_msgs/TrafficControlStates` | `oracle` | Sign/light state for the capture |
 | `front-camera-diagnostics` / `front-lidar-diagnostics` | `/diagnostics/...` | `diagnostic_msgs/DiagnosticArray` | `simulator` | Queue depth, drops, capture/encode/transport timings, missed deadlines |
 
-Label catalog version is hashed into the calibration bundle. Visibility is the projected box area fraction remaining after image clipping; occlusion is reserved for future depth/instance occupancy scoring and defaults to `0` when unknown.
-
-One camera or LiDAR capture is a logical bundle sharing capture stamp, sequence, sync-group key, calibration hash, and health—not a single copy-heavy custom message.
-
 ### Localization contracts (Step 3)
 
 | Contract | Wire name | Type | Producer | Notes |
@@ -95,24 +101,22 @@ One camera or LiDAR capture is a logical bundle sharing capture stamp, sequence,
 | `truth-odometry` | `/oracle/vehicle/odometry` | `nav_msgs/Odometry` | `oracle` | Exact vehicle state for scoring; published in the transform phase before measured sensors |
 | `localization-estimate` | `/localization/odometry` | `nav_msgs/Odometry` | `candidate` | External EKF/filter return with stamped capture time for later ATE/RPE/NEES scoring |
 
-Measured localization sensors derive per-axis noise, turn-on bias, correlated drift, saturation, GNSS multipath/outage, and wheel slip/quantization from manifest `calibration` fields. Random streams are deterministic: `seed:sensor:<id>:sample:<index>`.
-
 ## Preflight
 
 Before `SimulationEngine.applyRunManifest`, `RunSessionController` calls `ClientManager.preflight(resolved)`:
 
 1. Every schema in the resolved closure must be registered locally.
 2. The resolved catalog hash must match the runtime catalog hash when present.
-3. The orchestrator WebSocket must be connected.
-4. Echo/read of the orchestrator catalog must succeed.
-5. A known topic with the wrong type fails immediately.
-6. Missing **required** input topics fail; absent optional inputs remain valid.
+3. If any input requires orchestrator advertisement, the orchestrator WebSocket must be connected and catalog echo/read must succeed.
+4. A known topic with the wrong type fails immediately.
+5. Missing **required** input topics fail; absent optional inputs remain valid.
+6. `/controls/command` does **not** require orchestrator advertisement when controls authority is `reference` and the scenario uses a local controller (`route-follower`, `script`, or `script-with-route`). An `external-ros` controller still requires the topic on the wire, including saved scenarios that still name the topic `ackdrive`.
 
 ## External orchestrator requirements
 
 Mirror custom definitions from `public/messages/` into the orchestrator `custom_types/` directory (or sync through the types API). The simulator pushes the full autonomy catalog on startup via `syncTypesToServer`.
 
-Legacy `/ackdrive` remains available through the `ackdrive-legacy` contract (mph/deg adapter in `SimulationEngine`). The authoritative SI controls contract is `controls-command` (`sensor_fusion_msgs/StampedAckermannDrive`).
+The only live controls return is `/controls/command` (`sensor_fusion_msgs/StampedAckermannDrive`). Legacy `/ackdrive` is not registered and is not accepted at runtime; old manifests migrate on normalize.
 
 ## Related docs
 

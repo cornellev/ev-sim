@@ -44,8 +44,11 @@ import {
     TabsTrigger,
     Textarea,
     TextInput,
+    pickLastOpenCatalogId,
+    readLastOpenWorkspaceId,
     useWorkspaceGuard,
     WorkspaceFrame,
+    writeLastOpenWorkspaceId,
 } from "../../ui";
 import ScenarioCatalog from "./ScenarioCatalog.js";
 import RouteMapEditor from "./RouteMapEditor.js";
@@ -140,7 +143,10 @@ export default function ScenarioWorkspace({ onOpenWorkspace }) {
         setVehicles([...builtIns, ...(vehicleList || [])].filter((entry, index, entries) => (
             entries.findIndex((candidate) => candidate.id === entry.id) === index
         )));
-        const nextId = preferredId || selectedId || nextEntries[0]?.id;
+        const nextId = pickLastOpenCatalogId(
+            nextEntries,
+            preferredId || selectedId || readLastOpenWorkspaceId("scenarios"),
+        );
         if (nextId) applyDocument(nextId, await getScenario(nextId));
         else {
             setSelectedId(null);
@@ -211,12 +217,17 @@ export default function ScenarioWorkspace({ onOpenWorkspace }) {
         label: draft?.name || "Scenario",
     });
 
+    useEffect(() => {
+        if (selectedId) writeLastOpenWorkspaceId("scenarios", selectedId);
+    }, [selectedId]);
+
     const select = async (id) => {
         if (id === selectedId) return;
         if (dirty) {
             setError("Save or discard the current scenario before opening another one.");
             return;
         }
+        writeLastOpenWorkspaceId("scenarios", id);
         setBusy(true);
         try {
             applyDocument(id, await getScenario(id), "overview");

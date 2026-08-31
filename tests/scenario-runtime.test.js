@@ -305,11 +305,11 @@ test("inactive flag-started External ROS controllers consume commands and hold t
         })],
     });
     const { runtime, vehicles } = runtimeHarness(definition, {
-        topics: [{ id: "ego-command", name: "/ackdrive", direction: "input" }],
+        topics: [{ id: "ego-command", name: "/controls/command", direction: "input" }],
     });
 
     assert.equal(runtime.applyExternalTopic({
-        name: "/ackdrive",
+        name: "/controls/command",
         value: { speedMps: 5, steeringRad: 0.2 },
     }), true);
     assert.equal(vehicles[0].velocity.x, 0);
@@ -317,7 +317,7 @@ test("inactive flag-started External ROS controllers consume commands and hold t
 
     runtime.setFlag("external-enabled", true);
     runtime.applyExternalTopic({
-        name: "/ackdrive",
+        name: "/controls/command",
         value: { speedMps: 5, steeringRad: 0.2 },
     });
     assert.equal(vehicles[0].velocity.x, 5);
@@ -328,7 +328,7 @@ test("inactive flag-started External ROS controllers consume commands and hold t
     assert.equal(vehicles[0].velocity.x, 0);
     assert.equal(vehicles[0].steeringAngle, 0);
     runtime.applyExternalTopic({
-        name: "/ackdrive",
+        name: "/controls/command",
         value: { speedMps: 9, steeringRad: -0.4 },
     });
     assert.equal(vehicles[0].velocity.x, 0);
@@ -358,11 +358,11 @@ test("actor-command expiry restores the latest External ROS command deterministi
         }],
     });
     const { runtime, vehicles } = runtimeHarness(definition, {
-        topics: [{ id: "ego-command", name: "/ackdrive", direction: "input" }],
+        topics: [{ id: "ego-command", name: "/controls/command", direction: "input" }],
     });
 
     runtime.applyExternalTopic({
-        name: "/ackdrive",
+        name: "/controls/command",
         value: { speedMps: 3, steeringRad: 0.1 },
     });
     runtime.preMotion({ step: 1, timeNs: 1, dt: 0.01 });
@@ -370,7 +370,7 @@ test("actor-command expiry restores the latest External ROS command deterministi
     assert.equal(vehicles[0].steeringAngle, 0.25);
 
     runtime.applyExternalTopic({
-        name: "/ackdrive",
+        name: "/controls/command",
         value: { speedMps: 4, steeringRad: 0.15 },
     });
     assert.equal(vehicles[0].velocity.x, 7);
@@ -390,7 +390,7 @@ test("actor-command expiry restores the latest External ROS command deterministi
     assert.equal(vehicles[0].steeringAngle, 0);
 });
 
-test("scenario-rejected Ego commands never fall through to the legacy direct /ackdrive path", () => {
+test("scenario-rejected Ego commands and legacy /ackdrive never drive the plant", () => {
     const ego = vehicle("ego");
     ego.velocity.x = 1.5;
     ego.steeringAngle = 0.05;
@@ -400,7 +400,7 @@ test("scenario-rejected Ego commands never fall through to the legacy direct /ac
         vehicles: () => ({ vehicles: [ego] }),
     };
     const engine = new SimulationEngine(data);
-    engine.resolvedRun = { manifest: { id: "scenario-run" } };
+    engine.resolvedRun = { manifest: { id: "scenario-run", topics: [] } };
     engine.scenarioRuntime.active = true;
     engine.scenarioRuntime.applyExternalTopic = () => false;
     engine.inputQueue.enqueue({
@@ -418,8 +418,9 @@ test("scenario-rejected Ego commands never fall through to the legacy direct /ac
         value: { speed: 20, steering_angle: 30 },
     }, 2);
     engine._applyQueuedInputs(2);
-    assert.equal(ego.velocity.x, 20 * 0.44704);
-    assert.equal(ego.steeringAngle, -30 * Math.PI / 180);
+    // Legacy /ackdrive is not a runtime alias.
+    assert.equal(ego.velocity.x, 1.5);
+    assert.equal(ego.steeringAngle, 0.05);
 });
 
 test("SimulationEngine exposes the two scenario phases only for scenario runs", async () => {
@@ -464,8 +465,10 @@ test("SimulationEngine exposes the two scenario phases only for scenario runs", 
         "inputs",
         "scripts",
         "scenario-before-motion",
+        "controls",
         "vehicles",
         "physics",
+        "controls-achieved",
         "contacts",
         "clock",
         "transforms",

@@ -1,3 +1,7 @@
+# Canonical stamped SI Ackermann command for /controls/command.
+# Units follow REP-103: meters, radians, seconds. Steering is positive left.
+# deadline_ns is absolute simulation time (integer nanoseconds since run start).
+# Modes: velocity | acceleration | stop
 std_msgs/Header header
 uint32 sequence
 string mode

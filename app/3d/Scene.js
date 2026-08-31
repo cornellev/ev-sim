@@ -408,15 +408,15 @@ async function setupVehicles(scene, data, camera) {
         // }
         // console.log(info)
 
-        if (info.name == "/ackdrive") {
+        if (info.name === "/controls/command") {
             if (data.simulation()?.resolvedRun) return;
-            const raw_speed = info.value.speed; // mph
-            const raw_angle = info.value.steering_angle; // degrees
-            const speed = raw_speed * 0.44704; // convert to m/s
-            const angle = raw_angle * (Math.PI / 180); // convert to radians
-
+            const value = info.value || {};
+            const mode = String(value.mode || "velocity");
+            const speed = mode === "stop" ? 0 : Number(value.speed || 0);
+            const angle = mode === "stop" ? 0 : Number(value.steering_angle || 0);
             car.velocity.x = speed;
-            car.steeringAngle = -angle; // invert angle if necessary based on your coordinate system
+            // REP-103 positive-left → Three.js plant steering.
+            car.steeringAngle = -angle;
         }
     }));
 

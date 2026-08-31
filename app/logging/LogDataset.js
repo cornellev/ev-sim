@@ -71,6 +71,10 @@ export class LogDataset {
         return (this.series.get(path) || []).map((sample) => ({ ...sample, value: getNested(sample.value, field) }));
     }
 
+    paths() {
+        return this.descriptors.map((item) => item.path);
+    }
+
     attachment(name) {
         return this.attachments.find((attachment) => attachment.name === name) || null;
     }
@@ -172,6 +176,7 @@ export class LogDataset {
         const localization = this.valueAtCaptureTime("visualization.localization.candidate", cursorNs, { exactSync });
         const localizationError = this.valueAtCaptureTime("visualization.localization.error", cursorNs, { exactSync });
         const status = this.valueAtCaptureTime("visualization.perception.status", cursorNs, { exactSync });
+        const controls = this.valueAtCaptureTime("visualization.controls.snapshot", cursorNs, { exactSync });
         return {
             captureTimeNs: cursorNs,
             exactSync,
@@ -187,9 +192,11 @@ export class LogDataset {
                 error: localizationError.value ?? localization.value?.error ?? null,
                 ageNs: localization.ageNs,
             },
+            controls: controls.value || null,
             ages: {
                 perceptionNs: perception.ageNs,
                 localizationNs: localization.ageNs,
+                controlsNs: controls.ageNs,
             },
         };
     }

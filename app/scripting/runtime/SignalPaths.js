@@ -34,8 +34,8 @@ export const SIGNAL_PATHS = Object.freeze({
     DEBUG_VALUE: "debug.value",
     DEBUG_RECORDED: "debug.recorded",
     DEBUG_BINDING_STATUS: "debug.bindings.default",
-    ACKDRIVE_TOPIC: "topics./ackdrive",
-    ACKDRIVE_COMMAND: "publish./ackdrive_cmd"
+    CONTROLS_COMMAND_TOPIC: "topics./controls/command",
+    CONTROLS_COMMAND_PUBLISH: "publish./controls/command"
 });
 
 export const KNOWN_SIGNAL_PATHS = Object.freeze(

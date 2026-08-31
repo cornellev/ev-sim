@@ -82,6 +82,108 @@ test("run configuration tabs show only the selected section", async ({ page }) =
     await expect(stepField).toBeVisible();
 });
 
+test("scenario, experiment, and run configuration restore the last open document after switching workspaces", async ({ page, request }) => {
+    test.setTimeout(180_000);
+    const suffix = Date.now().toString(36);
+    const scenarioId = `pw-last-open-scenario-${suffix}`;
+    const scenarioName = `Last-open scenario ${suffix}`;
+    const suiteId = `pw-last-open-suite-${suffix}`;
+    const suiteName = `Last-open suite ${suffix}`;
+    const manifestId = `pw-last-open-run-${suffix}`;
+    const manifestName = `Last-open run ${suffix}`;
+
+    async function postJson(path, body) {
+        const response = await request.post(path, { data: body });
+        expect(response.ok(), `${path}: ${response.status()} ${await response.text()}`).toBeTruthy();
+        return response.json();
+    }
+
+    const manifestResponse = await request.get("/api/storage/run-manifests");
+    expect(manifestResponse.ok()).toBeTruthy();
+    const manifestList = await manifestResponse.json();
+    const sourceManifest = (Array.isArray(manifestList) ? manifestList : manifestList.manifests || [])[0];
+    expect(sourceManifest?.id).toBeTruthy();
+
+    try {
+        await postJson("/api/storage/scenarios", {
+            kind: "cev-sim.scenario",
+            version: 1,
+            id: scenarioId,
+            name: scenarioName,
+            description: "Last-open workspace restoration fixture.",
+            environment: { id: "igvc", expectedHash: null },
+            actors: [{ id: "ego", name: "Ego", role: "ego", vehicleId: null, enabled: true }],
+            routes: [],
+            zones: [],
+            triggers: [],
+            completion: { conditions: [] },
+            expectedOutcomes: [],
+            sensorAliases: [],
+            parameters: [],
+        });
+        await postJson(`/api/storage/run-manifests/${sourceManifest.id}/duplicate`, {
+            id: manifestId,
+            name: manifestName,
+        });
+        await postJson("/api/storage/experiment-suites", {
+            kind: "cev-sim.experiment-suite",
+            version: 1,
+            id: suiteId,
+            name: suiteName,
+            description: "Last-open workspace restoration fixture.",
+            scenarioIds: [scenarioId],
+            manifestIds: [manifestId],
+            exclusions: [],
+            seeds: ["42"],
+            sweeps: [],
+            metrics: [
+                { id: "passed", source: { kind: "builtin", metric: "passed" } },
+                { id: "duration", source: { kind: "builtin", metric: "duration" } },
+            ],
+            execution: { failurePolicy: "continue" },
+        });
+
+        await page.goto("/");
+
+        await openWorkspace(page, "Scenarios");
+        const scenarioRow = page.locator(`[data-scenario-id="${scenarioId}"]`).getByRole("button");
+        await expect(scenarioRow).toBeVisible({ timeout: 30_000 });
+        await scenarioRow.click();
+        await expect(scenarioRow).toHaveAttribute("aria-current", "page");
+        await expect.poll(() => page.evaluate((key) => localStorage.getItem(key), "cev-sim.ui.lastOpen.scenarios")).toBe(scenarioId);
+        await openWorkspace(page, "Simulation");
+        await openWorkspace(page, "Scenarios");
+        await expect(page.locator(`[data-scenario-id="${scenarioId}"]`).getByRole("button")).toHaveAttribute("aria-current", "page");
+        await expect(page.getByRole("button", { name: "Open workspace switcher" })).toContainText(scenarioName);
+
+        await openWorkspace(page, "Experiment suite");
+        const suiteButton = page.getByRole("navigation", { name: "Experiment suites" }).getByRole("button", { name: new RegExp(suiteName) });
+        await expect(suiteButton).toBeVisible({ timeout: 60_000 });
+        await suiteButton.click();
+        await expect(suiteButton).toHaveAttribute("aria-current", "page");
+        await expect.poll(() => page.evaluate((key) => localStorage.getItem(key), "cev-sim.ui.lastOpen.experiment-suite")).toBe(suiteId);
+        await openWorkspace(page, "Simulation");
+        await openWorkspace(page, "Experiment suite");
+        await expect(page.getByRole("navigation", { name: "Experiment suites" }).getByRole("button", { name: new RegExp(suiteName) })).toHaveAttribute("aria-current", "page");
+        await expect(page.getByRole("button", { name: "Open workspace switcher" })).toContainText(suiteName);
+
+        await openWorkspace(page, "Run configuration");
+        const manifestButton = page.getByRole("button", { name: new RegExp(`${manifestName}[\\s\\S]*${manifestId}`) });
+        await expect(manifestButton).toBeVisible({ timeout: 30_000 });
+        await manifestButton.click();
+        await expect(manifestButton).toHaveAttribute("aria-current", "page");
+        await expect.poll(() => page.evaluate((key) => localStorage.getItem(key), "cev-sim.ui.lastOpen.run-config")).toBe(manifestId);
+        await openWorkspace(page, "Simulation");
+        await openWorkspace(page, "Run configuration");
+        await expect(page.getByRole("button", { name: new RegExp(`${manifestName}[\\s\\S]*${manifestId}`) })).toHaveAttribute("aria-current", "page");
+        await expect(page.getByRole("heading", { name: manifestName })).toBeVisible();
+    } finally {
+        await request.delete(`/api/storage/experiment-suites/${suiteId}`);
+        await request.delete(`/api/storage/scenarios/${scenarioId}`);
+        await request.delete(`/api/storage/run-manifests/${manifestId}`);
+    }
+});
+
 test("phone widths show the deliberate desktop requirement", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto("/");

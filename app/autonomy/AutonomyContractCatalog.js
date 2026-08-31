@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { PERCEPTION_LABEL_CATALOG_VERSION } from "./PerceptionLabelCatalog.js";
 
 export const AUTONOMY_CATALOG_KIND = "cev-sim.autonomy-contract-catalog";
-export const AUTONOMY_CATALOG_VERSION = 5;
+export const AUTONOMY_CATALOG_VERSION = 6;
 
 export { PERCEPTION_LABEL_CATALOG_VERSION };
 
@@ -57,7 +57,6 @@ export const ROS_SCHEMA_DEFINITIONS = Object.freeze({
     "nav_msgs/Odometry": "std_msgs/Header header\nstring child_frame_id\ngeometry_msgs/PoseWithCovariance pose\ngeometry_msgs/TwistWithCovariance twist\n",
     "tf2_msgs/TFMessage": "geometry_msgs/TransformStamped[] transforms\n",
     "rosgraph_msgs/Clock": "builtin_interfaces/Time clock\n",
-    "sensor_fusion_msgs/AckermannDrive": "float32 steering_angle\nfloat32 steering_angle_velocity\nfloat32 speed\nfloat32 acceleration\nfloat32 jerk\n",
     "sensor_fusion_msgs/StampedAckermannDrive": "std_msgs/Header header\nuint32 sequence\nstring mode\nfloat64 deadline_ns\nfloat64 steering_angle\nfloat64 steering_angle_velocity\nfloat64 speed\nfloat64 acceleration\nfloat64 jerk\n",
     "sensor_fusion_msgs/Box": "int32 id\ngeometry_msgs/Point32 center\ngeometry_msgs/Point32 size\ngeometry_msgs/Point32 rotation\n",
     "sensor_fusion_msgs/Boxes": "sensor_fusion_msgs/Box[] boxes\n",
@@ -446,28 +445,14 @@ const CONTRACT_DEFINITIONS = Object.freeze([
         defaultName: "/controls/command",
         schema: { type: "sensor_fusion_msgs/StampedAckermannDrive", version: 1 },
         units: "SI",
-        required: false,
-        implementation: "catalog-only",
-        defaultProducer: "candidate",
-        defaultAuthority: "candidate",
-        defaultRouteDownstream: true,
-        timeoutNs: 100_000_000,
-        validityNs: 200_000_000,
-        fallback: { contractId: "ackdrive-legacy", mode: "legacy-adapter" },
-    },
-    {
-        id: "ackdrive-legacy",
-        stage: "controls",
-        direction: "input",
-        defaultName: "/ackdrive",
-        schema: { type: "sensor_fusion_msgs/AckermannDrive", version: 1 },
-        units: "legacy-mph-deg",
         required: true,
         implementation: "live",
         defaultProducer: "candidate",
         defaultAuthority: "candidate",
         defaultRouteDownstream: true,
         timeoutNs: 100_000_000,
+        validityNs: 200_000_000,
+        timestampPolicy: "capture",
     },
 ]);
 
@@ -624,7 +609,7 @@ export function defaultManifestTopics() {
         ["wheel-odometry", {}],
         ["truth-odometry", {}],
         ...DEFAULT_CANDIDATE_RETURN_CONTRACT_IDS.map((contractId) => [contractId, {}]),
-        ["ackdrive-legacy", { id: "ackdrive" }],
+        ["controls-command", {}],
     ];
     return liveDefaults.map(([contractId, overrides]) => topicFromContract(contractId, overrides));
 }
@@ -675,9 +660,17 @@ export function migrateLegacyTopic(source = {}, index = 0) {
     const name = String(source.name || "").trim();
     const type = String(source.type || source.schema?.type || "").trim();
     let contractId = String(source.contractId || "").trim();
+    // One-time migration: arbitrary /ackdrive and ackdrive-legacy → stamped SI controls-command.
+    const isLegacyAckdrive = contractId === "ackdrive-legacy"
+        || name === "/ackdrive"
+        || type === "sensor_fusion_msgs/AckermannDrive"
+        || (source.id === "ackdrive" && !contractId);
+    if (isLegacyAckdrive) {
+        contractId = "controls-command";
+    }
     if (!contractId) {
         const match = CONTRACT_DEFINITIONS.find((entry) => entry.defaultName === name && (entry.schema.type === type || !type));
-        contractId = match?.id || (name === "/ackdrive" ? "ackdrive-legacy" : "");
+        contractId = match?.id || "";
     }
     // Legacy unstamped /perception/lanes → stamped contract when type matches StampedLanes or is absent.
     if (contractId === "perception-lanes" && type === "sensor_fusion_msgs/Lanes") {
@@ -690,25 +683,36 @@ export function migrateLegacyTopic(source = {}, index = 0) {
     const direction = ["input", "output"].includes(source.direction) ? source.direction : (contract?.direction || "output");
     const defaultProducer = direction === "input" ? "candidate" : "simulator";
     const defaultRouteDownstream = contract?.defaultRouteDownstream
-        ?? (direction === "input" && (contract?.stage === "controls" || contractId === "ackdrive-legacy"));
+        ?? (direction === "input" && contract?.stage === "controls");
+    const migratedName = isLegacyAckdrive
+        ? (contract?.defaultName || "/controls/command")
+        : (name || contract?.defaultName || `/topic-${index + 1}`);
+    const migratedId = isLegacyAckdrive && (source.id === "ackdrive" || !source.id)
+        ? "controls-command"
+        : String(source.id || `topic-${index + 1}`).trim();
+    const rosType = isLegacyAckdrive
+        ? (contract?.schema.type || "sensor_fusion_msgs/StampedAckermannDrive")
+        : (type || contract?.schema.type || "std_msgs/String");
     return {
-        id: String(source.id || `topic-${index + 1}`).trim(),
+        id: migratedId,
         contractId: contractId || null,
-        name: name || contract?.defaultName || `/topic-${index + 1}`,
+        name: migratedName,
         direction,
-        type: type || contract?.schema.type || "std_msgs/String",
+        type: rosType,
         schema: {
-            type: type || contract?.schema.type || "std_msgs/String",
+            type: rosType,
             version: Number(source.schema?.version ?? contract?.schema.version ?? 1),
         },
-        required: source.required === true || contract?.required === true,
+        required: source.required == null
+            ? (contract?.required === true)
+            : Boolean(source.required),
         producer: PRODUCER_NAMESPACES.includes(source.producer) ? source.producer : (contract?.defaultProducer || defaultProducer),
         authority: AUTHORITY_MODES.includes(source.authority) ? source.authority : (contract?.defaultAuthority || (direction === "input" ? "candidate" : "reference")),
         routeDownstream: source.routeDownstream === undefined ? Boolean(defaultRouteDownstream) : Boolean(source.routeDownstream),
         timeoutNs: source.timeoutNs ?? contract?.timeoutNs ?? null,
         validityNs: source.validityNs ?? contract?.validityNs ?? null,
-        fallback: source.fallback ?? contract?.fallback ?? null,
-        units: source.units ?? contract?.units ?? null,
+        fallback: isLegacyAckdrive ? null : (source.fallback ?? contract?.fallback ?? null),
+        units: contract?.units ?? source.units ?? null,
         stage: contract?.stage ?? null,
         implementation: contract?.implementation ?? null,
     };
@@ -752,6 +756,50 @@ export function validateTopicAgainstCatalog(topic, index = 0) {
         issues.push({ path: path("fallback.contractId"), message: `Unknown fallback contract "${topic.fallback.contractId}".` });
     }
     return issues;
+}
+
+export function isControlsCommandTopic(topic) {
+    return topic?.contractId === "controls-command"
+        || topic?.name === "/controls/command"
+        || topic?.id === "controls-command";
+}
+
+function isControlsCommandTopicId(topicId) {
+    return topicId === "controls-command"
+        || topicId === "/controls/command"
+        || topicId === "ackdrive"
+        || topicId === "/ackdrive"
+        || topicId === "ackdrive-legacy";
+}
+
+export function scenarioUsesExternalRosForTopic(scenario, topic) {
+    const routes = scenario?.routes || [];
+    return routes.some((route) => {
+        if (route.controller?.kind !== "external-ros") return false;
+        const topicId = route.controller.topicId;
+        if (!topicId || isControlsCommandTopicId(topicId)) return isControlsCommandTopic(topic);
+        return topicId === topic?.id || topicId === topic?.name;
+    });
+}
+
+/**
+ * Whether preflight must see this input advertised on the orchestrator.
+ * Scenario script / route-follower runs close the actuator loop locally, so
+ * `/controls/command` is not required on the wire unless an external-ros
+ * controller consumes it. Fail closed if a scenario is selected but not resolved.
+ */
+export function inputTopicRequiresOrchestrator(topic, {
+    controlsAuthority = "candidate",
+    scenario = null,
+    scenarioSelected = false,
+} = {}) {
+    if (topic?.direction !== "input") return false;
+    if (isControlsCommandTopic(topic)) {
+        if (scenarioUsesExternalRosForTopic(scenario, topic)) return true;
+        if (scenarioSelected && !scenario) return topic.required === true;
+        if (controlsAuthority === "reference") return false;
+    }
+    return topic.required === true;
 }
 
 export function validateManifestTopicAuthority(manifest) {
@@ -818,10 +866,18 @@ export function fixturePayloadForType(typeStr) {
             };
         case "tf2_msgs/TFMessage":
             return { transforms: [] };
-        case "sensor_fusion_msgs/AckermannDrive":
-            return { steering_angle: 0, steering_angle_velocity: 0, speed: 0, acceleration: 0, jerk: 0 };
         case "sensor_fusion_msgs/StampedAckermannDrive":
-            return { header, sequence: 1, mode: "velocity", deadline_ns: 0, steering_angle: 0, steering_angle_velocity: 0, speed: 0, acceleration: 0, jerk: 0 };
+            return {
+                header,
+                sequence: 1,
+                mode: "velocity",
+                deadline_ns: 0,
+                steering_angle: 0,
+                steering_angle_velocity: 0,
+                speed: 0,
+                acceleration: 0,
+                jerk: 0,
+            };
         case "sensor_fusion_msgs/Boxes":
             return { boxes: [] };
         case "sensor_fusion_msgs/Lanes":
@@ -867,7 +923,6 @@ export function msgFilePathsForCatalog() {
         "nav_msgs/Odometry": "/messages/nav_msgs/msg/Odometry.msg",
         "tf2_msgs/TFMessage": "/messages/tf2_msgs/msg/TFMessage.msg",
         "rosgraph_msgs/Clock": "/messages/rosgraph_msgs/msg/Clock.msg",
-        "sensor_fusion_msgs/AckermannDrive": "/messages/sensor_fusion_msgs/msg/AckermannDrive.msg",
         "sensor_fusion_msgs/StampedAckermannDrive": "/messages/sensor_fusion_msgs/msg/StampedAckermannDrive.msg",
         "sensor_fusion_msgs/Box": "/messages/sensor_fusion_msgs/msg/Box.msg",
         "sensor_fusion_msgs/Boxes": "/messages/sensor_fusion_msgs/msg/Boxes.msg",

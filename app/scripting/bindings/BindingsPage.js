@@ -472,7 +472,7 @@ function TriggerEditor({ binding, topics, onPatchTrigger }) {
                             list="bnd-topic-options"
                             value={trigger.topic}
                             onChange={(event) => onPatchTrigger({ topic: event.target.value })}
-                            placeholder="/ackdrive"
+                            placeholder="/controls/command"
                         />
                         <datalist id="bnd-topic-options">
                             {topics.map((topic) => <option key={topic} value={topic} />)}
@@ -689,7 +689,7 @@ function InputMappingRows({ binding, artifact, onPatchInput }) {
                                     <SignalPathInput
                                         value={mapping.path || ""}
                                         onChange={(event) => onPatchInput(port.label, { path: event.target.value })}
-                                        placeholder={SIGNAL_PATHS.ACKDRIVE_TOPIC}
+                                        placeholder={SIGNAL_PATHS.CONTROLS_COMMAND_TOPIC}
                                         aria-label={`Signal path for ${port.label}`}
                                     />
                                 )}
