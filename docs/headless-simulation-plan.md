@@ -7,15 +7,15 @@ language-neutral API authority is
 
 ## Status
 
-- Current completed milestone: **PR 1 — contracts, plan, and characterization**
-- Next milestone: **PR 2 — extract the UI-independent simulation kernel**
+- Current completed milestone: **PR 2 — UI-independent simulation kernel**
+- Next milestone: **PR 3 — deterministic reset, timers, hashing, and teardown**
 - Default implementation/review reasoning level: **Extra High**
 - Last updated: **2026-08-30**
 
 Progress:
 
 - [x] PR 1 — Contracts, plan, and characterization fixtures
-- [ ] PR 2 — UI-independent simulation kernel
+- [x] PR 2 — UI-independent simulation kernel
 - [ ] PR 3 — Deterministic reset, timers, hashing, and teardown
 - [ ] PR 4 — Shared world description and headless vehicle plant
 - [ ] PR 5 — State sensors and episode semantics
@@ -459,3 +459,13 @@ Define Protobuf before transport implementation, separate semantic episode
 identity from operational policy, reserve shared-memory descriptors, and
 characterize the current production `SimulationEngine` without changing its
 runtime behavior.
+
+### 2026-08-30 — PR 2 kernel extraction
+
+Extract authoritative fixed-step state, phase execution, queued input handling,
+telemetry, and lifecycle events into a Node-importable `SimulationKernel`
+behind a narrow runtime-context facade. Keep `SimulationEngine` as the browser
+adapter for RAF pacing, rendering, viewport controls, baking, and overlays.
+The legacy `candidate-viz` phase name remains part of the characterization,
+but graphics updates now run after authoritative transitions. No Protobuf,
+manifest, characterization fixture, or hash contract changed.

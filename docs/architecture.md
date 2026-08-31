@@ -45,7 +45,15 @@ Built-in block classes are registered by `app/scripting/registerBuiltInBlocks.js
 
 `app/3d/Scene.js` creates the Three.js scene, camera, renderer, input managers, and shared `Data` object. `Data` owns registries for vehicles, devices, objects, city data, physics, settings, the orchestrator client, the simulation engine, and (in environment mode) earth tile streaming and import controllers.
 
-`app/simulation/SimulationEngine.js` owns the simulation loop. It supports play, pause, stop, fixed steps, speed changes, real-time vs fixed advancement, and module toggles for vehicles, sensors, controls, rendering, environment, scripting, and physics. In environment mode it also drives `EarthTilesManager.update()` each frame while Google 3D Tiles are loaded.
+`app/simulation/SimulationEngine.js` is the browser adapter for the simulation
+loop. It owns RAF pacing, rendering, overlays, viewport controls, GPU capture
+throttling, and UI subscriptions. Authoritative fixed-step state transitions,
+integer clock advancement, queued inputs, lifecycle telemetry, and pure state
+snapshots live in `app/simulation/kernel/SimulationKernel.js`. A narrow runtime
+context connects the kernel to the current vehicle, device, physics, script,
+scenario, control, telemetry, and topic-routing services without exposing the
+scene, renderer, DOM, or `Data` object. In environment mode the browser adapter
+also drives `EarthTilesManager.update()` while Google 3D Tiles are loaded.
 
 The dependency-ordered extraction of a UI-independent kernel, CLI and worker
 APIs, Python Gymnasium adapter, resource controls, and offscreen sensor

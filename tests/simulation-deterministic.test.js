@@ -95,6 +95,41 @@ test("manifest clock uses exact integer nanoseconds and fixed module order", asy
     assert.deepEqual(calls.slice(-7), ["keys", "script", "vehicle", "physics", "contacts", "sensor", "delivery"]);
 });
 
+test("browser presentation hooks run only after the authoritative kernel phases", async () => {
+    const { engine, data } = harness();
+    const presentationCalls = [];
+    data.baking = () => ({
+        update() {
+            presentationCalls.push(["baking", [...engine.lastStepPhases]]);
+        },
+    });
+    engine.autonomyOverlay.updateFromRuntime = () => {
+        presentationCalls.push(["candidate-overlay", [...engine.lastStepPhases]]);
+    };
+    engine.scenarioDiagnostics.enabled = true;
+    engine.scenarioDiagnostics.update = () => {
+        presentationCalls.push(["scenario-diagnostics", [...engine.lastStepPhases]]);
+    };
+    const manifest = createDefaultRunManifest({
+        clock: { modules: { baking: true } },
+        sensorRig: { sensors: [] },
+        assertions: [],
+    });
+    await engine.applyRunManifest(resolved(manifest));
+
+    engine.step();
+
+    assert.deepEqual(presentationCalls.map(([name]) => name), [
+        "candidate-overlay",
+        "baking",
+        "scenario-diagnostics",
+    ]);
+    for (const [, phases] of presentationCalls) {
+        assert.equal(phases.at(-1), "assertions");
+        assert.equal(phases.includes("candidate-viz"), true);
+    }
+});
+
 test("manifest application consumes frozen environment and vehicle dependencies", async () => {
     const { engine, data, store, vehicleConfigurations } = harness();
     const applyOrder = [];

@@ -1,82 +1,79 @@
 import { clamp } from "three/src/math/MathUtils.js";
-import { AssertionEngine } from "./AssertionEngine.js";
-import { TopicInputQueue } from "./TopicInputQueue.js";
-import { TopicContractRouter } from "./TopicContractRouter.js";
-import { TransformRuntime } from "./TransformRuntime.js";
-import { createLocalizationTruthPublisher } from "./LocalizationTruthPublisher.js";
-import { CandidateOutputRuntime } from "../autonomy/CandidateOutputRuntime.js";
-import { ControlRuntime } from "../autonomy/ControlRuntime.js";
-import { getBuiltInVehicleManifest } from "../vehicles/BuiltInVehicleManifests.js";
-import { ScenarioRuntime } from "../scenarios/ScenarioRuntime.js";
-import { ScenarioDiagnostics } from "../scenarios/ScenarioDiagnostics.js";
 import { AutonomyOverlay } from "../3d/overlay/AutonomyOverlay.js";
+import { ScenarioDiagnostics } from "../scenarios/ScenarioDiagnostics.js";
+import { ScenarioRuntime } from "../scenarios/ScenarioRuntime.js";
+import { SimulationKernel } from "./kernel/SimulationKernel.js";
+import { createSimulationRuntimeContext } from "./kernel/SimulationRuntimeContext.js";
 
+const KERNEL_PROPERTIES = [
+    "stepNs",
+    "fixedDt",
+    "status",
+    "time",
+    "timeNs",
+    "steps",
+    "speed",
+    "maxSteps",
+    "realtime",
+    "deterministic",
+    "modules",
+    "telemetry",
+    "resolvedRun",
+    "inputQueue",
+    "topicRouter",
+    "localizationTruthPublisher",
+    "assertionEngine",
+    "scenarioRuntime",
+    "candidateOutputRuntime",
+    "controlRuntime",
+    "transformRuntime",
+    "lastStepPhases",
+    "resetHandlers",
+];
+
+function exposeKernelProperties(engine) {
+    for (const property of KERNEL_PROPERTIES) {
+        Object.defineProperty(engine, property, {
+            configurable: true,
+            enumerable: true,
+            get: () => engine.kernel[property],
+            set: (value) => { engine.kernel[property] = value; },
+        });
+    }
+}
+
+/**
+ * Browser adapter for the UI-independent SimulationKernel. RAF pacing,
+ * rendering, viewport controls, and visualization overlays stay here.
+ */
 export class SimulationEngine {
     /**
-     * @param {Data} data 
+     * @param {Data} data
      */
-    constructor(data, options={}) {
+    constructor(data, options = {}) {
         this.data = data;
-
-        this.stepNs = Math.max(1, Math.floor(options.stepNs ?? ((options.fixedDt ?? (1 / 60)) * 1e9)));
-        this.fixedDt = this.stepNs / 1e9;
-        this.maxFrameDt = options.maxFrameDt ?? 0.1; // cap delta time to avoid instability
-        this.maxSubSteps = options.maxSubSteps ?? 10; // cap sub-steps to avoid spiral of death
+        this.maxFrameDt = options.maxFrameDt ?? 0.1;
+        this.maxSubSteps = options.maxSubSteps ?? 10;
         this.gpuCaptureEnabled = true;
         this._displayPixelRatio = null;
-
-        this.status = 'stopped'; // ['stopped', 'playing', 'paused']
-        this.time = 0;
-        this.timeNs = 0;
-        this.steps = 0;
-        this.frames = 0;
-        this.speed = 1;
-        this.maxSteps = null;
-        
-        this.realtime = true; // whether to run in real-time (vs. as fast as possible)
-
-        this.deterministic = true; // whether to use fixed time steps (vs. variable time steps)
-
-        this.modules = {
-            inputs: true,
-            physics: false,
-            vehicles: true,
-            sensors: true,
-            controls: true,
-            rendering: true,
-            environment: true,
-            scripting: true,
-            baking: false,
-            assertions: true,
-        }
 
         this.scene = null;
         this.camera = null;
         this.renderer = null;
         this.controls = null;
 
-        this.accumulator = 0; // for fixed time step simulation
+        this.frames = 0;
+        this.accumulator = 0;
         this.accumulatorNs = 0;
-        this.lastFrameMs = 0; // for calculating delta time
-        this.rafId = null; // for canceling the animation frame
-        this.looping = false; // to prevent multiple simultaneous loops
-
+        this.lastFrameMs = 0;
+        this.rafId = null;
+        this.looping = false;
         this.listeners = new Set();
-        this.resetHandlers = new Set();
         this.viewportActive = true;
-        this.telemetry = this.data.bindings?.()?.signalStore ?? null;
-        this.resolvedRun = null;
-        this.inputQueue = new TopicInputQueue();
-        this.topicRouter = null;
-        this.localizationTruthPublisher = null;
-        this.assertionEngine = new AssertionEngine([], this.telemetry);
-        this.scenarioRuntime = new ScenarioRuntime(this.data, { telemetry: this.telemetry });
+        this.environmentRuntime = null;
+
         this.scenarioDiagnostics = new ScenarioDiagnostics();
         this.autonomyOverlay = new AutonomyOverlay();
-        this.candidateOutputRuntime = null;
-        this.controlRuntime = null;
-        this.environmentRuntime = null;
-        this.lastStepPhases = [];
         this._autonomyOverlayEnabled = {
             oracle: true,
             candidate: true,
@@ -85,50 +82,26 @@ export class SimulationEngine {
             controls: true,
         };
 
-        this._defineTelemetrySignals();
+        const telemetry = this.data.bindings?.()?.signalStore ?? null;
+        const scenarioRuntime = new ScenarioRuntime(this.data, { telemetry });
+        this.runtimeContext = createSimulationRuntimeContext({
+            telemetry,
+            inputs: () => this.data.keys?.(),
+            scripts: () => this.data.bindings?.(),
+            vehicles: () => this.data.vehicles?.(),
+            devices: () => this.data.devices?.(),
+            physics: () => this.data.physics?.(),
+            scenarios: scenarioRuntime,
+            vehicleScene: () => this.scene,
+            topicClient: () => this.data.client?.()?.get?.(),
+            applyEnvironment: (environment, resolvedRun) => {
+                this._applyResolvedEnvironment(environment, resolvedRun);
+            },
+        });
+        this.kernel = new SimulationKernel(this.runtimeContext, options);
+        exposeKernelProperties(this);
 
         this._frame = this._frame.bind(this);
-    }
-
-    _defineTelemetrySignals() {
-        const define = (path, options) => this.telemetry?.defineSignal?.({ path, source: "simulation", ...options });
-        define("simulation.status", { type: "string", category: "simulation", replayRole: "input", logClass: "core" });
-        define("simulation.time", { type: "float64", unit: "s", category: "simulation", replayRole: "state", logClass: "core" });
-        define("simulation.step", { type: "uint64", category: "simulation", replayRole: "state", logClass: "core" });
-        define("simulation.speed", { type: "float64", category: "simulation", replayRole: "input", logClass: "core" });
-        define("simulation.fixedDt", { type: "float64", unit: "s", category: "simulation", replayRole: "input", logClass: "core" });
-        define("simulation.timeNs", { type: "uint64", unit: "ns", category: "simulation", replayRole: "state", logClass: "core" });
-        define("simulation.clock", { type: "json", category: "simulation", replayRole: "state", logClass: "core" });
-        define("simulation.assertions", { type: "json", category: "assertions", replayRole: "state", logClass: "core" });
-        define("simulation.modules", { type: "json", category: "simulation", replayRole: "input", logClass: "core" });
-        define("simulation.run", { type: "json", category: "simulation", replayRole: "input", logClass: "core" });
-    }
-
-    _publishRuntimeState() {
-        if (!this.telemetry) return;
-        const timeUs = Math.round(this.timeNs / 1000);
-        const common = { timeUs, cycle: this.steps, source: "simulation" };
-        this.telemetry.publishSignal("simulation.status", this.status, common);
-        this.telemetry.publishSignal("simulation.time", this.time, common);
-        this.telemetry.publishSignal("simulation.timeNs", this.timeNs, { ...common, type: "uint64" });
-        this.telemetry.publishSignal("simulation.step", this.steps, common);
-        this.telemetry.publishSignal("simulation.speed", this.speed, common);
-        this.telemetry.publishSignal("simulation.fixedDt", this.fixedDt, common);
-        this.telemetry.publishSignal("simulation.modules", { ...this.modules }, common);
-        this.telemetry.publishSignal("simulation.run", this.resolvedRun ? {
-            manifestId: this.resolvedRun.manifest.id,
-            resolvedHash: this.resolvedRun.resolvedHash,
-        } : null, common);
-    }
-
-    _emitLifecycle(name, payload = {}) {
-        this.telemetry?.emitTelemetryEvent?.({
-            timeUs: Math.round(this.timeNs / 1000),
-            category: "simulation",
-            name,
-            severity: "info",
-            payload: { time: this.time, step: this.steps, ...payload },
-        });
     }
 
     configure({ scene, camera, renderer, controls = null }) {
@@ -144,7 +117,7 @@ export class SimulationEngine {
         this.environmentRuntime = loader ? { loader, persistence } : null;
     }
 
-    _applyResolvedEnvironment(resolvedEnvironment) {
+    _applyResolvedEnvironment(resolvedEnvironment, resolvedRun = this.resolvedRun) {
         const frozenManifest = resolvedEnvironment?.manifest;
         const loader = this.environmentRuntime?.loader;
         if (!frozenManifest || !loader) return;
@@ -167,9 +140,22 @@ export class SimulationEngine {
             }
             loader.apply(manifest);
             loader.manifest = manifest;
-            const common = { timeUs: 0, cycle: 0, source: "resolved-run", replayRole: "input", logClass: "core" };
-            this.telemetry?.publishSignal?.("environment.id", environment?.environmentId ?? this.resolvedRun?.manifest?.environment?.id, { ...common, type: "string" });
-            this.telemetry?.publishSignal?.("environment.manifest", manifest, { ...common, type: "json" });
+            const common = {
+                timeUs: 0,
+                cycle: 0,
+                source: "resolved-run",
+                replayRole: "input",
+                logClass: "core",
+            };
+            this.telemetry?.publishSignal?.(
+                "environment.id",
+                environment?.environmentId ?? resolvedRun?.manifest?.environment?.id,
+                { ...common, type: "string" },
+            );
+            this.telemetry?.publishSignal?.("environment.manifest", manifest, {
+                ...common,
+                type: "json",
+            });
         } finally {
             persistence?.resumeAutosave?.();
         }
@@ -177,26 +163,11 @@ export class SimulationEngine {
 
     getSnapshot() {
         return {
-            status: this.status,
-            time: this.time,
-            timeNs: this.timeNs,
-            stepNs: this.stepNs,
-            steps: this.steps,
+            ...this.kernel.getSnapshot(),
             frames: this.frames,
-            speed: this.speed,
-            realtime: this.realtime,
-            deterministic: this.deterministic,
-            modules: { ...this.modules },
-            maxSteps: this.maxSteps,
-            activeRun: this.resolvedRun ? {
-                manifestId: this.resolvedRun.manifest.id,
-                resolvedHash: this.resolvedRun.resolvedHash,
-            } : null,
-            assertions: this.assertionEngine.snapshot(),
-            scenario: this.scenarioRuntime.getSnapshot(),
             scenarioDiagnostics: { enabled: this.scenarioDiagnostics.enabled },
             autonomyOverlay: { ...this._autonomyOverlayEnabled },
-        }
+        };
     }
 
     subscribe(listener) {
@@ -206,16 +177,13 @@ export class SimulationEngine {
     }
 
     _emit() {
-        this._publishRuntimeState();
+        this.kernel.publishRuntimeState();
         const snapshot = this.getSnapshot();
-        for (const listener of this.listeners) {
-            listener(snapshot);
-        }
+        for (const listener of this.listeners) listener(snapshot);
     }
 
     onReset(handler) {
-        this.resetHandlers.add(handler);
-        return () => this.resetHandlers.delete(handler);
+        return this.kernel.onReset(handler);
     }
 
     startLoop() {
@@ -236,108 +204,72 @@ export class SimulationEngine {
     dispose() {
         this.stop();
         this.stopLoop();
-
         this.controls?.dispose();
-        this.scenarioRuntime.dispose();
+        this.kernel.dispose();
         this.scenarioDiagnostics.dispose();
         this.autonomyOverlay?.dispose?.();
         this.listeners.clear();
-        this.resetHandlers.clear();
     }
 
     play() {
         this.startLoop();
-        this.status = 'playing';
-        this._emitLifecycle("play");
+        this.kernel.play();
         this._emit();
     }
 
     pause() {
-        this.status = 'paused';
-        this._emitLifecycle("pause");
+        this.kernel.pause();
         this._emit();
     }
 
-    stop({ reset = true} = {}) {
-        this.status = 'stopped';
+    stop({ reset = true } = {}) {
         this.accumulator = 0;
         this.accumulatorNs = 0;
-
-        if (reset) {
-            this.reset();
-        }
-
+        if (reset) this.frames = 0;
+        this.kernel.stop({ reset });
+        if (reset) this.autonomyOverlay?.clear?.();
         this.render();
-        this._emitLifecycle("stop", { reset });
         this._emit();
     }
 
     reset() {
-        this.time = 0;
-        this.timeNs = 0;
-        this.steps = 0;
         this.frames = 0;
         this.accumulator = 0;
         this.accumulatorNs = 0;
-        this.inputQueue.reset();
-        this.assertionEngine.reset();
-        this.scenarioRuntime.reset();
-        this.localizationTruthPublisher?.reset?.();
-        this.candidateOutputRuntime?.reset?.();
-        this.controlRuntime?.reset?.();
+        this.kernel.reset();
         this.autonomyOverlay?.clear?.();
-        
-        for (const handler of this.resetHandlers) {
-            handler();
-        }
-        this._emitLifecycle("reset");
-        if (this.resolvedRun) this._applyInitialState(this.resolvedRun.manifest.initialState);
-        this.transformRuntime?.publishStaticTransforms?.(0);
     }
 
     step(count = 1) {
-        this.status = 'paused';
-
-        for (let i = 0; i < count; i++) {
-            if (this._fixedStep(this.fixedDt) === false) break;
-        }
-
+        this.kernel.step(count, {
+            afterStep: (dt) => this._updatePresentationAfterStep(dt),
+        });
         this.render();
-        this._emitLifecycle("step", { count });
         this._emit();
     }
 
     setSpeed(speed) {
-        this.speed = Math.max(0, Number(speed) || 0);
+        this.kernel.setSpeed(speed);
         this._emit();
     }
 
     setRealtime(realtime) {
-        this.realtime = Boolean(realtime);
+        this.kernel.setRealtime(realtime);
         this._emit();
     }
 
     setDeterministic(deterministic) {
-        this.deterministic = this.resolvedRun ? true : Boolean(deterministic);
+        this.kernel.setDeterministic(deterministic);
         this._emit();
     }
 
     async setPhysicsEnabled(enabled) {
-        this.modules.physics = Boolean(enabled);
-
-        if (enabled) {
-            await this.data.physics()?.start?.();
-        } else {
-            await this.data.physics()?.stop?.();
-        }
-
+        await this.kernel.setPhysicsEnabled(enabled);
         this._emit();
     }
 
     setModule(name, enabled) {
-        if (!(name in this.modules)) return;
-
-        this.modules[name] = Boolean(enabled);
+        this.kernel.setModule(name, enabled);
         this._emit();
     }
 
@@ -389,98 +321,21 @@ export class SimulationEngine {
     async applyRunManifest(resolved) {
         if (!resolved?.manifest) throw new Error("Resolved run manifest is required.");
         this.pause();
-        this.scenarioRuntime.configure(null);
         this.scenarioDiagnostics.configure(null);
-        this.telemetry?.resetRunState?.();
-        this.resolvedRun = structuredClone(resolved);
-        const manifest = this.resolvedRun.manifest;
-        this._applyResolvedEnvironment(this.resolvedRun.environment);
-        this.stepNs = Math.max(1, Math.floor(manifest.clock.stepNs));
-        this.fixedDt = this.stepNs / 1e9;
-        this.realtime = manifest.clock.pacing === "realtime";
-        this.deterministic = true;
-        this.speed = Math.max(0, Number(manifest.clock.speed) || 0);
-        this.maxSteps = manifest.clock.maxSteps;
-        for (const [name, enabled] of Object.entries(manifest.clock.modules || {})) {
-            if (name in this.modules) this.modules[name] = Boolean(enabled);
-        }
-        this.inputQueue = new TopicInputQueue(manifest.topics);
-        this.topicRouter = new TopicContractRouter(manifest, { telemetry: this.telemetry });
-        this.localizationTruthPublisher = createLocalizationTruthPublisher(manifest, this.topicRouter);
-        this.localizationTruthPublisher.stepNs = manifest.clock.stepNs;
-        this.transformRuntime = resolved.calibration
-            ? new TransformRuntime(resolved.calibration, this.topicRouter, {
-                client: this.data.client?.()?.get?.(),
-            })
-            : null;
-        this.candidateOutputRuntime = new CandidateOutputRuntime({
-            telemetry: this.telemetry,
-            transformRuntime: this.transformRuntime,
-            manifest,
-        });
-        this.candidateOutputRuntime.setTransformRuntime(this.transformRuntime);
-        this.controlRuntime = new ControlRuntime({
-            telemetry: this.telemetry,
-            manifest,
-            controls: manifest.controls,
-        });
-        this.assertionEngine = new AssertionEngine(manifest.assertions, this.telemetry);
-        this.data.bindings?.()?.setTopicScheduler?.((info) => this.queueTopicInput(info));
+        this.autonomyOverlay?.clear?.();
+        this.frames = 0;
+        this.accumulator = 0;
+        this.accumulatorNs = 0;
 
-        await this.data.vehicles?.()?.configureFromManifest?.(manifest.initialState.vehicles, this.scene, {
-            resolvedVehicles: this.resolvedRun.vehicles || [],
-        });
-        this._configureControlRuntimeLimits(manifest);
-
-        const selectedBindings = resolved.bindings?.entries || [];
-        await this.data.bindings?.()?.setManifest?.({
-            kind: "cev-sim.script-bindings",
-            version: 2,
-            enabled: manifest.scripts.enabled,
-            folders: [],
-            bindings: selectedBindings,
-        }, { persist: false });
-        await this.data.bindings?.()?.prepareResolvedScripts?.(resolved.scripts || [], {
-            seed: manifest.seed,
-            parameterBindings: [
-                ...(resolved.parameters?.manifest?.bindings || []),
-                ...(resolved.parameters?.scenario?.bindings || []),
-            ],
-        });
-        this.data.bindings?.()?.setTopicScheduler?.((info) => this.queueTopicInput(info));
-        this.data.bindings?.()?.setTopicRouter?.(this.topicRouter, manifest.topics);
-        this.data.devices?.()?.configureFromManifest?.(manifest.sensorRig, {
-            seed: manifest.seed,
-            topics: manifest.topics,
-            topicRouter: this.topicRouter,
-            transformRuntime: this.transformRuntime,
-            calibrationHash: resolved.calibration?.hash ?? null,
-            stepNs: manifest.clock.stepNs,
-        });
-        await this.data.physics?.()?.configureRun?.(manifest, resolved.environment?.manifest);
-        this.reset();
-        this.transformRuntime?.publishStaticTransforms?.(0);
-        for (const [path, value] of Object.entries(manifest.initialState.signals || {})) {
-            this.telemetry?.publishSignal?.(path, value, { timeUs: 0, cycle: 0, source: "manifest", replayRole: "input", logClass: "core" });
-        }
-        this.scenarioRuntime.configure(this.resolvedRun);
-        this.scenarioRuntime.setControlRuntime?.(this.controlRuntime);
+        await this.kernel.configureRun(resolved);
         this.scenarioDiagnostics.configure(this.resolvedRun?.scenario?.scenario ?? null);
-        this.status = "paused";
-        this._publishClock();
-        this._emitLifecycle("manifest-applied", { manifestId: manifest.id, resolvedHash: resolved.resolvedHash });
         this._emit();
         this.render();
         return this.getSnapshot();
     }
 
     queueTopicInput(info) {
-        if (!this.resolvedRun) {
-            this.data.bindings?.()?.applyTopicUpdate?.(info);
-            return null;
-        }
-        const arrivalTimeNs = this.timeNs;
-        return this.inputQueue.enqueue(info, this.steps + 1, { arrivalTimeNs });
+        return this.kernel.queueTopicInput(info);
     }
 
     _frame(nowMs) {
@@ -488,33 +343,25 @@ export class SimulationEngine {
 
         const rawFrameDt = (nowMs - this.lastFrameMs) / 1000;
         this.lastFrameMs = nowMs;
-
         const frameDt = clamp(rawFrameDt, 0, this.maxFrameDt);
 
         if (this.controls) {
-            const cameraControlsEnabled = this.modules.controls && this.data.settings()?.cameraControlsEnabled !== false;
+            const cameraControlsEnabled = this.modules.controls
+                && this.data.settings()?.cameraControlsEnabled !== false;
             this.controls.enabled = this.viewportActive && cameraControlsEnabled;
-
-            if (this.viewportActive && cameraControlsEnabled) {
-                this.controls.update();
-            }
+            if (this.viewportActive && cameraControlsEnabled) this.controls.update();
         }
 
-        if (this.status === 'playing') {
+        if (this.status === "playing") {
             this._advanceSimulation(frameDt);
             this._emit();
         }
-
-        if (this.viewportActive && this.modules.rendering) {
-            this.render();
-        }
-
+        if (this.viewportActive && this.modules.rendering) this.render();
         if (this.looping) this.rafId = requestAnimationFrame(this._frame);
     }
 
     _advanceSimulation(frameDt) {
         const scaledDt = frameDt * this.speed;
-
         this.gpuCaptureEnabled = true;
         if (!this.deterministic) {
             this._fixedStep(scaledDt);
@@ -527,346 +374,92 @@ export class SimulationEngine {
         this.accumulator = this.accumulatorNs / 1e9;
 
         let subSteps = 0;
-
         while (this.accumulatorNs >= this.stepNs && subSteps < this.maxSubSteps) {
             const previousStep = this.steps;
             const shouldContinue = this._fixedStep(this.fixedDt);
             if (this.steps > previousStep) this.accumulatorNs -= this.stepNs;
             this.accumulator = this.accumulatorNs / 1e9;
-            subSteps++;
+            subSteps += 1;
             this.gpuCaptureEnabled = false;
             if (shouldContinue === false) break;
         }
-
-        // Remaining accumulated simulation time is intentionally retained.
-        // Rendering may lag or skip, but deterministic simulation steps are never dropped.
     }
 
     _fixedStep(dt) {
-        if (this.maxSteps !== null && this.steps >= this.maxSteps) {
-            this.status = "paused";
-            this._emitLifecycle("max-steps-reached", { maxSteps: this.maxSteps });
-            return false;
-        }
-
-        const nextStep = this.steps + 1;
-        const nextTimeNs = nextStep * this.stepNs;
-        this.lastStepPhases = [];
-        let shouldContinue = true;
-        const phase = (name, operation) => {
-            this.lastStepPhases.push(name);
-            return operation?.();
-        };
-
-        phase("inputs", () => {
-            this.data.keys()?.update?.(dt);
-            this._applyQueuedInputs(nextStep);
-        });
-
-        phase("scripts", () => {
-            if (this.modules.scripting) {
-                this.data.bindings?.()?.update?.(dt, { step: nextStep, timeNs: nextTimeNs });
-            }
-        });
-
-        let scenarioPreTerminal = false;
-        if (this.scenarioRuntime.active) {
-            phase("scenario-before-motion", () => {
-                const snapshot = this.scenarioRuntime.preMotion({ step: nextStep, timeNs: nextTimeNs, dt });
-                scenarioPreTerminal = Boolean(snapshot.terminal);
-            });
-        }
-
-        phase("controls", () => {
-            if (!this.controlRuntime || this.modules.controls === false) return;
-            const applied = this.controlRuntime.step({ step: nextStep, timeNs: nextTimeNs, dt });
-            this._applyControlSetpoints(applied);
-        });
-
-        this.data.physics?.()?.beginStep?.();
-        phase("vehicles", () => {
-            if (!scenarioPreTerminal && this.modules.vehicles) this.data.vehicles()?.update?.(dt);
-        });
-
-        phase("physics", () => {
-            if (!scenarioPreTerminal && this.modules.physics) this.data.physics()?.step?.(dt);
-        });
-
-        if (this.controlRuntime) {
-            phase("controls-achieved", () => {
-                this._sampleControlAchieved();
-            });
-        }
-
-        let contacts = null;
-        phase("contacts", () => {
-            contacts = this.data.physics?.()?.syncAndPublishContacts?.({ step: nextStep, timeNs: nextTimeNs }) ?? null;
-            return contacts;
-        });
-
-        this.steps = nextStep;
-        this.timeNs = nextTimeNs;
-        this.time = this.timeNs / 1e9;
-        phase("clock", () => this._publishClock());
-
-        phase("transforms", () => {
-            if (this.transformRuntime) {
-                const vehicles = this.data.vehicles?.()?.vehicles || [];
-                this.transformRuntime.publishDynamicTransforms(this.timeNs, this.steps, vehicles);
-                this.localizationTruthPublisher?.publish(this.timeNs, this.steps, vehicles);
-            }
-        });
-
-        phase("sensors", () => {
-            if (this.modules.sensors) this.data.devices()?.update?.(dt, { step: this.steps, timeNs: this.timeNs });
-        });
-
-        phase("delivery", () => this.data.devices?.()?.deliver?.({ step: this.steps, timeNs: this.timeNs }));
-
-        phase("candidate-viz", () => {
-            this.candidateOutputRuntime?.refreshOracle?.({ applyStep: this.steps, applyTimeNs: this.timeNs });
-            const targetId = this.resolvedRun?.manifest?.controls?.targetVehicleId || "ego";
-            const vehicle = (this.data.vehicles?.()?.vehicles || [])
-                .find((candidate) => candidate.telemetryId === targetId)
-                ?? this.data.vehicles?.()?.vehicles?.[0];
-            const vehiclePose = vehicle ? {
-                position: {
-                    x: Number(vehicle.position?.x) || 0,
-                    y: Number(vehicle.position?.y) || 0,
-                    z: Number(vehicle.position?.z) || 0,
-                },
-                yaw: Number(vehicle.rotation?.y) || 0,
-            } : null;
-            this.autonomyOverlay?.updateFromRuntime?.(this.candidateOutputRuntime, this._autonomyOverlayEnabled, {
-                controlRuntime: this.controlRuntime,
-                vehiclePose,
-            });
-        });
-
-        if (this.modules.baking) this.data.baking()?.update?.(dt);
-
-        this._publishSimulationEntities();
-        this._publishRuntimeState();
-        if (this.scenarioRuntime.active || this.scenarioDiagnostics.enabled) {
-            phase("scenario-after-telemetry", () => {
-                const snapshot = this.scenarioRuntime.active
-                    ? this.scenarioRuntime.postTelemetry({
-                        step: this.steps,
-                        timeNs: this.timeNs,
-                        dt,
-                        contacts,
-                    })
-                    : {};
-                if (snapshot.terminal) {
-                    this.status = "paused";
-                    shouldContinue = false;
-                }
-                this.scenarioDiagnostics.update({
-                    ...snapshot,
-                    actorPoses: this._actorPoses(),
-                });
-            });
-        }
-        phase("assertions", () => {
-            if (!this.resolvedRun || this.modules.assertions === false) return;
-            const evaluated = this.assertionEngine.evaluate(this.steps);
-            this.telemetry?.publishSignal?.("simulation.assertions", evaluated.results, {
-                timeUs: Math.round(this.timeNs / 1000), cycle: this.steps, source: "assertions", type: "json",
-            });
-            if (evaluated.shouldStop) {
-                this.status = "paused";
-                shouldContinue = false;
-                this._emitLifecycle("assertion-stop", { results: evaluated.results });
-            }
-            const scenario = this.scenarioRuntime.observeAssertions(evaluated.results);
-            if (scenario.terminal) {
-                this.status = "paused";
-                shouldContinue = false;
-            }
-        });
+        const previousStep = this.steps;
+        const shouldContinue = this.kernel.advanceStep(dt);
+        if (this.steps > previousStep) this._updatePresentationAfterStep(dt);
         return shouldContinue;
     }
 
-    _applyQueuedInputs(step) {
-        const applyTimeNs = step * this.stepNs;
-        for (const entry of this.inputQueue.drain(step, applyTimeNs)) {
-            const routed = this.topicRouter?.routeInbound(entry.info, {
-                applyStep: step,
-                applyTimeNs,
-                arrivalTimeNs: entry.arrivalTimeNs,
-            });
-            this.candidateOutputRuntime?.ingestRouted?.(routed, { applyStep: step, applyTimeNs });
-            if (routed && routed.ok === false && routed.code !== "stale" && routed.code !== "invalid") {
-                continue;
-            }
-            if (routed && routed.ok === false) {
-                continue;
-            }
-            this.data.bindings?.()?.applyTopicUpdate?.(entry.info);
-            const handledByScenario = this.scenarioRuntime.applyExternalTopic(entry.info);
-            const controlTopic = this.resolvedRun?.manifest?.topics?.find((topic) =>
-                topic.direction === "input"
-                && (topic.contractId === "controls-command" || topic.name === entry.info.name || topic.id === entry.info.name)
-            );
-            const isControlsCommand = controlTopic?.contractId === "controls-command"
-                || entry.info.name === "/controls/command";
-            if (!handledByScenario && isControlsCommand && this.controlRuntime) {
-                this.controlRuntime.ingestStampedCommand(entry.info, {
-                    vehicleId: this.resolvedRun?.manifest?.controls?.targetVehicleId || "ego",
-                    producer: controlTopic?.producer || "candidate",
-                    applyTimeNs,
-                });
-            }
-            this.telemetry?.emitTelemetryEvent?.({
-                timeUs: Math.round(applyTimeNs / 1000),
-                category: "topics",
-                name: "input-applied",
-                payload: { topic: entry.info.name, step, sequence: entry.sequence, routed: routed?.ok ?? null },
+    _updatePresentationAfterStep(dt) {
+        this.autonomyOverlay?.updateFromRuntime?.(
+            this.candidateOutputRuntime,
+            this._autonomyOverlayEnabled,
+            {
+                controlRuntime: this.controlRuntime,
+                vehiclePose: this.kernel.targetVehiclePose(),
+            },
+        );
+        if (this.modules.baking) this.data.baking()?.update?.(dt);
+        if (this.scenarioRuntime?.active || this.scenarioDiagnostics.enabled) {
+            this.scenarioDiagnostics.update({
+                ...(this.scenarioRuntime?.active ? this.scenarioRuntime.getSnapshot() : {}),
+                actorPoses: this.kernel.actorPoses(),
             });
         }
+    }
+
+    // Compatibility delegates for existing tests and integrations that use
+    // the former SimulationEngine implementation helpers.
+    _defineTelemetrySignals() {
+        return this.kernel._defineTelemetrySignals();
+    }
+
+    _publishRuntimeState() {
+        return this.kernel.publishRuntimeState();
+    }
+
+    _emitLifecycle(name, payload = {}) {
+        return this.kernel.emitLifecycle(name, payload);
+    }
+
+    _applyQueuedInputs(step) {
+        return this.kernel._applyQueuedInputs(step);
     }
 
     _configureControlRuntimeLimits(manifest) {
-        if (!this.controlRuntime) return;
-        const vehicleLimits = {};
-        const resolvedByActor = new Map((this.resolvedRun?.vehicles || []).map((entry) => [entry.actorId, entry]));
-        for (const entry of manifest.initialState?.vehicles || []) {
-            const resolved = resolvedByActor.get(entry.id);
-            const kinematics = resolved?.manifest?.kinematics
-                || getBuiltInVehicleManifest(entry.type)?.kinematics
-                || {};
-            vehicleLimits[entry.id] = { ...kinematics };
-        }
-        this.controlRuntime.configure({
-            manifest,
-            controls: manifest.controls,
-            vehicleLimits,
-        });
+        return this.kernel._configureControlRuntimeLimits(manifest);
     }
 
     _applyControlSetpoints(appliedMap) {
-        if (!appliedMap) return;
-        const vehicles = this.data.vehicles?.()?.vehicles || [];
-        for (const [vehicleId, setpoint] of appliedMap) {
-            if (!setpoint || setpoint.passthrough) continue;
-            const vehicle = vehicles.find((candidate) => candidate.telemetryId === vehicleId)
-                ?? (vehicleId === "ego" ? vehicles[0] : null);
-            if (!vehicle) continue;
-            if (vehicle.velocity) vehicle.velocity.x = setpoint.speedMps;
-            vehicle.steeringAngle = setpoint.steeringRadThree;
-        }
+        return this.runtimeContext.controls.applySetpoints(appliedMap);
     }
 
     _sampleControlAchieved() {
-        if (!this.controlRuntime) return;
-        const target = this.resolvedRun?.manifest?.controls?.targetVehicleId || "ego";
-        const vehicles = this.data.vehicles?.()?.vehicles || [];
-        const vehicle = vehicles.find((candidate) => candidate.telemetryId === target) ?? vehicles[0];
-        if (!vehicle) return;
-        this.controlRuntime.sampleAchieved(target, {
-            speedMps: Number(vehicle.velocity?.x) || 0,
-            steeringRadThree: Number(vehicle.steeringAngle) || 0,
-            accelerationMps2: Number(vehicle.acceleration?.x) || 0,
+        return this.runtimeContext.controls.sampleAchieved(this.controlRuntime, {
+            targetVehicleId: this.resolvedRun?.manifest?.controls?.targetVehicleId || "ego",
+            step: this.steps,
+            timeNs: this.timeNs,
         });
-        // Refresh snapshot after achieved sampling.
-        this.controlRuntime._publishSnapshot(
-            this.controlRuntime.getSnapshot(target, { applyTimeNs: this.timeNs }),
-            this.steps,
-            this.timeNs,
-        );
     }
 
     _applyInitialState(initialState = {}) {
-        const byId = new Map((initialState.vehicles || []).map((vehicle) => [vehicle.id, vehicle]));
-        for (const [index, vehicle] of (this.data.vehicles?.()?.vehicles || []).entries()) {
-            const configured = byId.get(vehicle.telemetryId) || initialState.vehicles?.[index];
-            if (!configured) continue;
-            vehicle.position?.set?.(configured.pose.position.x, configured.pose.position.y, configured.pose.position.z);
-            vehicle.rotation?.set?.(configured.pose.rotation.x, configured.pose.rotation.y, configured.pose.rotation.z, configured.pose.rotation.order || "XYZ");
-            vehicle.velocity?.set?.(configured.linearVelocity.x, configured.linearVelocity.y, configured.linearVelocity.z);
-            if (Number.isFinite(configured.steeringAngle)) vehicle.steeringAngle = configured.steeringAngle;
-            vehicle.updatePosition?.(vehicle.position);
-            vehicle.updateRotation?.(vehicle.rotation);
-        }
-        this.data.physics?.()?.resetRun?.();
-        this.data.devices?.()?.resetSchedule?.();
+        this.runtimeContext.vehicles.applyInitialState(initialState);
+        this.runtimeContext.physics.resetRun();
+        this.runtimeContext.devices.resetSchedule();
     }
 
     _publishClock() {
-        if (!this.telemetry) return;
-        const stamp = {
-            sec: Math.floor(this.timeNs / 1e9),
-            nanosec: this.timeNs % 1e9,
-        };
-        this.telemetry.publishSignal("simulation.clock", stamp, {
-            timeUs: Math.round(this.timeNs / 1000), cycle: this.steps, source: "simulation", type: "json",
-        });
-        if (this.resolvedRun?.manifest.clock.publishClock) {
-            const topic = this.resolvedRun.manifest.topics.find((candidate) => candidate.id === "clock");
-            if (topic) {
-                this.topicRouter?.routeOutbound?.("clock", {
-                    value: { clock: stamp },
-                    typeStr: topic.schema?.type || topic.type,
-                }, {
-                    producer: "simulator",
-                    captureTimeNs: this.timeNs,
-                    deliveryTimeNs: this.timeNs,
-                    cycle: this.steps,
-                });
-            }
-        }
+        return this.kernel.publishClock();
     }
 
     _actorPoses() {
-        const poses = {};
-        const vehicles = this.data.vehicles?.()?.vehicles || [];
-        vehicles.forEach((vehicle, index) => {
-            const id = vehicle.telemetryId || `vehicle-${index + 1}`;
-            poses[id] = {
-                x: Number(vehicle.position?.x || 0),
-                y: Number(vehicle.position?.y || 0),
-                z: Number(vehicle.position?.z || 0),
-            };
-        });
-        return poses;
+        return this.kernel.actorPoses();
     }
 
     _publishSimulationEntities() {
-        if (!this.telemetry) return;
-        const timeUs = Math.round(this.timeNs / 1000);
-        const vehicles = this.data.vehicles?.()?.vehicles || [];
-        vehicles.forEach((vehicle, index) => {
-            const id = vehicle.telemetryId || `vehicle-${index + 1}`;
-            const prefix = `vehicles.${id}`;
-            const pose = {
-                position: {
-                    x: Number(vehicle.position?.x || 0),
-                    y: Number(vehicle.position?.y || 0),
-                    z: Number(vehicle.position?.z || 0),
-                },
-                rotation: {
-                    x: Number(vehicle.rotation?.x || 0),
-                    y: Number(vehicle.rotation?.y || 0),
-                    z: Number(vehicle.rotation?.z || 0),
-                    order: vehicle.rotation?.order || "XYZ",
-                },
-            };
-            const options = { timeUs, cycle: this.steps, source: "simulation", category: "vehicles", replayRole: "state", logClass: "core" };
-            this.telemetry.publishSignal(`${prefix}.pose`, pose, { ...options, type: "pose3" });
-            this.telemetry.publishSignal(`${prefix}.velocity`, {
-                x: Number(vehicle.velocity?.x || 0),
-                y: Number(vehicle.velocity?.y || 0),
-                z: Number(vehicle.velocity?.z || 0),
-            }, { ...options, type: "vec3", unit: "m/s" });
-            if (Number.isFinite(vehicle.steeringAngle)) {
-                this.telemetry.publishSignal(`${prefix}.steeringAngle`, vehicle.steeringAngle, {
-                    ...options,
-                    type: "float64",
-                    unit: "rad",
-                    replayRole: "input",
-                });
-            }
-        });
+        return this.kernel.publishSimulationEntities();
     }
 
     _applyDisplayPerformance() {
@@ -888,15 +481,12 @@ export class SimulationEngine {
 
     render() {
         if (!this.scene || !this.camera || !this.renderer) return;
-
         this._applyDisplayPerformance();
         this.data.earthTilesManager?.()?.update?.();
-
         if (this.data.skyManager?.()?.render?.()) {
             this.frames += 1;
             return;
         }
-
         this.renderer.render(this.scene, this.camera);
         this.frames += 1;
     }
