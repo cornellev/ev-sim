@@ -7,6 +7,8 @@ import { HeadlessRunner } from "./HeadlessRunner.js";
 import { HeadlessRunnerError } from "./HeadlessRunnerErrors.js";
 import { inspectTarget } from "./Inspection.js";
 import { stringifyJsonProtocol } from "./JsonProtocol.js";
+import { readSupervisorConfig } from "./SupervisorConfig.js";
+import { startHeadlessSupervisor } from "./SupervisorServer.js";
 
 export const CLI_EXIT = Object.freeze({
     OK: 0,
@@ -20,8 +22,9 @@ export const CLI_EXIT = Object.freeze({
 
 const VALUE_OPTIONS = new Set([
     "bundle", "episode", "output", "actions", "tape", "artifact-profile", "sflog-sample-rate",
+    "socket", "tcp", "preset", "config",
 ]);
-const FLAG_OPTIONS = new Set(["sflog-on-failure", "no-sflog-on-failure"]);
+const FLAG_OPTIONS = new Set(["sflog-on-failure", "no-sflog-on-failure", "allow-remote-tcp"]);
 
 function usage() {
     return [
@@ -29,6 +32,7 @@ function usage() {
         "cev-sim inspect <bundle|output-directory|sflog>",
         "cev-sim run --bundle <file> --output <directory> [--episode <file>] [--actions <jsonl-file>]",
         "cev-sim replay --bundle <file> --tape <file> --output <directory>",
+        "cev-sim supervisor (--socket <path> | --tcp <host:port>) [--preset safety|permissive] [--config <json>] [--allow-remote-tcp]",
     ].join("\n");
 }
 
@@ -66,8 +70,11 @@ async function readJson(filePath, label) {
     }
 }
 
-async function* jsonlActions(stream, label) {
+async function* jsonlActions(stream, label, signal = null) {
     const lines = readline.createInterface({ input: stream, crlfDelay: Infinity });
+    const onAbort = () => lines.close();
+    if (signal?.aborted) lines.close();
+    else signal?.addEventListener("abort", onAbort, { once: true });
     let lineNumber = 0;
     try {
         for await (const line of lines) {
@@ -82,6 +89,9 @@ async function* jsonlActions(stream, label) {
     } catch (error) {
         if (error instanceof HeadlessRunnerError) throw error;
         throw new HeadlessRunnerError("INVALID_REQUEST", `Could not read actions from ${label}: ${error.message}`, null, { cause: error });
+    } finally {
+        signal?.removeEventListener("abort", onAbort);
+        lines.close();
     }
 }
 
@@ -122,6 +132,34 @@ export async function main(argv = process.argv.slice(2), io = {}) {
             return CLI_EXIT.OK;
         }
         const { command, options, positional } = parsed;
+        if (command === "supervisor") {
+            if (positional.length > 0) throw new HeadlessRunnerError("USAGE", "supervisor does not accept positional arguments.");
+            const allowed = new Set(["socket", "tcp", "preset", "config", "allow-remote-tcp"]);
+            const unsupported = Object.keys(options).find((key) => !allowed.has(key));
+            if (unsupported) throw new HeadlessRunnerError("USAGE", `supervisor does not accept --${unsupported}.`);
+            const config = options.config ? await readSupervisorConfig(options.config) : null;
+            const running = await startHeadlessSupervisor({
+                ...(config ? { config } : {}),
+                ...(options.socket ? { socket: options.socket } : {}),
+                ...(options.tcp ? { tcp: options.tcp } : {}),
+                ...(options.preset ? { preset: options.preset } : {}),
+                ...(options["allow-remote-tcp"] ? { allowRemoteTcp: true } : {}),
+            });
+            writeJson(stdout, {
+                kind: "cev-sim.headless.supervisor-listening",
+                version: 1,
+                protocol: { major: 1, minor: 1 },
+                address: running.address,
+                transport: running.config.listener.kind,
+            });
+            await new Promise((resolve) => {
+                const stop = () => resolve();
+                process.once("SIGINT", stop);
+                process.once("SIGTERM", stop);
+            });
+            await running.close();
+            return CLI_EXIT.OK;
+        }
         const runner = io.runner ?? new HeadlessRunner();
         if (command === "inspect") {
             if (positional.length !== 1 || Object.keys(options).length > 0) {
@@ -144,6 +182,7 @@ export async function main(argv = process.argv.slice(2), io = {}) {
         if (!["run", "replay"].includes(command)) throw new HeadlessRunnerError("USAGE", `Unknown command ${command}.`);
         if (!options.output) throw new HeadlessRunnerError("USAGE", `--output is required for ${command}.`);
         const abortController = new AbortController();
+        let actionStream = null;
         const onSigint = () => abortController.abort();
         process.once("SIGINT", onSigint);
         try {
@@ -164,10 +203,10 @@ export async function main(argv = process.argv.slice(2), io = {}) {
                     throw new HeadlessRunnerError("USAGE", "run requires --actions or JSONL actions on stdin.");
                 }
                 const episodeSpec = options.episode ? await readJson(options.episode, "episode specification") : {};
-                const actionStream = options.actions ? createReadStream(options.actions) : stdin;
+                actionStream = options.actions ? createReadStream(options.actions) : stdin;
                 final = await runner.run(bundle, {
                     episodeSpec,
-                    actions: jsonlActions(actionStream, options.actions || "stdin"),
+                    actions: jsonlActions(actionStream, options.actions || "stdin", abortController.signal),
                     artifactPolicy: artifactPolicy(options),
                     outputUri: options.output,
                     signal: abortController.signal,

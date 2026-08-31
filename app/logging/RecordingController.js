@@ -11,7 +11,7 @@ import { SAFE_LOG_BATCH_BYTES, TARGET_LOG_BATCH_BYTES } from "./LogLimits.js";
 import { isHeavyValue } from "../scripting/runtime/SignalStore.js";
 
 const FLUSH_INTERVAL_MS = 250;
-const MAX_QUEUE_BYTES = 16 * 1024 * 1024;
+const DEFAULT_MAX_QUEUE_BYTES = 16 * 1024 * 1024;
 const CHECKPOINT_INTERVAL_US = 5e6;
 const RETRY_DELAYS_MS = [250, 750, 2000];
 
@@ -78,7 +78,10 @@ function lightSnapshot(store) {
 }
 
 export class RecordingController {
-    constructor(store = getTelemetryStore(), { transport = HTTP_LOG_TRANSPORT } = {}) {
+    constructor(store = getTelemetryStore(), {
+        transport = HTTP_LOG_TRANSPORT,
+        maxQueueBytes = DEFAULT_MAX_QUEUE_BYTES,
+    } = {}) {
         this.store = store;
         this.transport = transport;
         this.listeners = new Set();
@@ -102,6 +105,7 @@ export class RecordingController {
         this._lastSamples = new Map();
         this._simulation = null;
         this.haltSimulationOnError = true;
+        this.maxQueueBytes = Math.max(1, Number(maxQueueBytes) || DEFAULT_MAX_QUEUE_BYTES);
     }
 
     attachSimulation(simulation) {
@@ -119,6 +123,7 @@ export class RecordingController {
             bytesWritten: this.bytesWritten,
             queuedBytes: this.queuedBytes,
             droppedSamples: this.droppedSamples,
+            maxQueueBytes: this.maxQueueBytes,
         };
     }
 
@@ -298,7 +303,7 @@ export class RecordingController {
     }
 
     _enqueueBatch(batch) {
-        if (this.queuedBytes + batch.bytes.byteLength > MAX_QUEUE_BYTES) {
+        if (this.queuedBytes + batch.bytes.byteLength > this.maxQueueBytes) {
             if (this.haltSimulationOnError) {
                 this._simulation?.pause?.();
                 this.error = "Recording paused the simulation because the backend queue is full.";

@@ -153,6 +153,24 @@ atomically, with evaluation/training/disabled policies controlling SFLog
 retention. Caller artifact policy and output location remain operational and
 do not change episode or trajectory identity.
 
+## Headless batch execution
+
+PR 7 exposes the same session through the
+[`headless batch supervisor`](headless-supervisor.md). `CreateBatch` accepts
+canonical `cev-sim.run-bundle` v1 bytes plus episode specifications; it does
+not accept or resolve an authoring manifest. Every environment keeps its own
+verified bundle snapshot and OS process. Compatible action and observation
+spaces are pooled, while incompatible batches fail atomically before they
+become visible.
+
+Each successful reset publishes beneath
+`<output_uri>/<batch-id>/env-<index>/episode-<sequence>-<hash-prefix>/`.
+Resource limits, restart counts, wall watchdogs, queue policy, transport, and
+output paths are operational. They remain outside `simulationSemanticHash`,
+`episodeHash`, and `trajectoryHash`. An infrastructure failure returns no RL
+transition, never replays the uncertain action, and requires a reset in a
+fresh worker before that environment can continue.
+
 ## Scenario episode metrics
 
 When a run selects a scenario, `ScenarioRuntime` collects ego-only episode metrics each fixed step and merges them into `finalize().metrics` (and `run-results.json`). Built-ins:

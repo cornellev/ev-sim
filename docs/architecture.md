@@ -111,8 +111,19 @@ exposes validate, inspect, run, and policy-tape replay without Express, Next,
 DOM, or WebGL. It publishes core JSON and native SFLog through an injected
 artifact sink and sibling-directory atomic rename. `RecordingController`
 retains HTTP as its browser transport and accepts a direct `LogService`
-transport for headless execution. Process isolation, batching, gRPC, limits,
-and watchdogs remain PR 7 scope.
+transport for headless execution.
+
+PR 7 extracts that lifecycle into `HeadlessSession`, shared by the direct
+runner and one non-detached Node child process per environment. The
+[`headless batch supervisor`](headless-supervisor.md) dynamically loads the
+authoritative proto, serves unary gRPC over a Unix socket or explicitly
+selected insecure TCP, validates and prepares batches atomically, and fans out
+reset/step/finalize commands concurrently while retaining stable index order.
+Worker IPC uses request IDs and advanced serialization with one command in
+flight. Operational RSS/heap, actor/sensor, observation, queue, artifact,
+watchdog, and restart limits cannot alter simulation hashes. Crashes and
+uncertain dispatches replace the process and require a reset; they are never
+fabricated as RL transitions.
 
 Physics pins Rapier `0.19.3` under capability
 `rapier3d-swept-prism-v1`. Rapier owns fixed and kinematic bodies, while

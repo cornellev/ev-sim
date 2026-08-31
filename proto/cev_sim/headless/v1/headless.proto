@@ -435,6 +435,9 @@ message EnvironmentHealth {
   uint64 heap_bytes = 4;
   uint64 last_completed_step = 5;
   string detail = 6;
+  string batch_id = 7;
+  uint32 restart_count = 8;
+  bool requires_reset = 9;
 }
 
 message HealthResponse {

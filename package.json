@@ -12,6 +12,7 @@
     "lint": "eslint",
     "test": "node --experimental-default-type=module --test tests/*.test.js",
     "test:headless": "node --experimental-default-type=module --test tests/headless-*.test.js",
+    "test:supervisor": "node --experimental-default-type=module --test tests/headless-supervisor.test.js",
     "test:cli": "node --experimental-default-type=module --test tests/headless-runner.test.js tests/headless-cli.test.js",
     "fixtures:headless": "node --experimental-default-type=module scripts/generate-headless-fixtures.mjs",
     "test:ui": "playwright test --grep-invert @a11y",
@@ -20,6 +21,8 @@
   "dependencies": {
     "@dimforge/rapier3d": "0.19.3",
     "@dimforge/rapier3d-compat": "0.19.3",
+    "@grpc/grpc-js": "1.14.4",
+    "@grpc/proto-loader": "0.8.1",
     "@jax-js/jax": "^0.1.9",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@noble/hashes": "^2.4.0",

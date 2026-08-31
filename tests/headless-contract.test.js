@@ -74,6 +74,10 @@ test("episode semantics stay separate from operational and artifact policy", asy
     assert.match(errors, /ERROR_CODE_WORKER_CRASHED/);
     assert.match(proto, /message SharedMemoryRef/);
     assert.match(proto, /oneof storage/);
+    const health = declarationBody(proto, "message", "EnvironmentHealth");
+    assert.match(health, /string batch_id = 7;/);
+    assert.match(health, /uint32 restart_count = 8;/);
+    assert.match(health, /bool requires_reset = 9;/);
 });
 
 test("headless characterization fixture regenerates from the current runtime", async () => {

@@ -15,6 +15,16 @@ function artifactFailure(message, cause) {
     return new HeadlessRunnerError("ARTIFACT_FAILURE", message, null, cause ? { cause } : {});
 }
 
+async function directoryBytes(directory) {
+    let total = 0;
+    for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
+        const target = path.join(directory, entry.name);
+        if (entry.isDirectory()) total += await directoryBytes(target);
+        else if (entry.isFile()) total += (await fs.stat(target)).size;
+    }
+    return total;
+}
+
 function normalizeProfile(value) {
     if (typeof value === "number") return PROFILE_BY_NUMBER[value] ?? null;
     const normalized = String(value || "").trim().toLowerCase();
@@ -100,7 +110,7 @@ async function exists(filePath) {
 
 /** Filesystem-backed artifact sink with whole-directory atomic publication. */
 export class HeadlessArtifactSink {
-    constructor({ bundle, episode, policy, provenance }) {
+    constructor({ bundle, episode, policy, provenance, limits = null }) {
         this.bundle = bundle;
         this.episode = episode;
         this.policy = policy;
@@ -109,6 +119,8 @@ export class HeadlessArtifactSink {
         this.stagingDirectory = null;
         this.recording = null;
         this.started = false;
+        this.maxArtifactBytes = Math.max(0, Number(limits?.maxArtifactBytes) || 0);
+        this.maxQueueBytes = Math.max(0, Number(limits?.maxQueueBytes) || 0);
     }
 
     async start() {
@@ -133,6 +145,7 @@ export class HeadlessArtifactSink {
                 const service = new LogService(this.stagingDirectory);
                 this.recording = new RecordingController(this.episode.runtime.signalStore, {
                     transport: directLogTransport(service),
+                    ...(this.maxQueueBytes > 0 ? { maxQueueBytes: this.maxQueueBytes } : {}),
                 });
                 this.recording.attachSimulation(this.episode.kernel);
                 const attachments = [
@@ -211,6 +224,14 @@ export class HeadlessArtifactSink {
                 .filter((name) => !name.endsWith(".partial"))
                 .sort((left, right) => Buffer.from(left).compare(Buffer.from(right)));
             const artifacts = await Promise.all(names.map((name) => fileRef(this.stagingDirectory, name)));
+            const artifactBytes = await directoryBytes(this.stagingDirectory);
+            if (this.maxArtifactBytes > 0 && artifactBytes > this.maxArtifactBytes) {
+                throw new HeadlessRunnerError(
+                    "RESOURCE_LIMIT",
+                    `Artifact staging used ${artifactBytes} bytes, exceeding the ${this.maxArtifactBytes}-byte limit.`,
+                    { artifactBytes, maxArtifactBytes: this.maxArtifactBytes },
+                );
+            }
             await fs.rename(this.stagingDirectory, this.outputDirectory);
             this.stagingDirectory = null;
             return { runResult: result, artifacts, outputDirectory: this.outputDirectory };

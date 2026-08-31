@@ -123,5 +123,6 @@ SFLog. Artifact policy and paths never enter episode or trajectory identity.
 | `5` | Unexpected runtime failure |
 | `130` | SIGINT after result finalization and teardown |
 
-PR 7 adds process isolation, batching, gRPC, limits, and watchdogs. They are
-not implicit in this direct runner.
+Process isolation, batching, gRPC, limits, and watchdogs are available through
+the separate [headless batch supervisor](headless-supervisor.md). They are not
+implicit in this direct runner.

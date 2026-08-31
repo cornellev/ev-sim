@@ -7,8 +7,8 @@ language-neutral API authority is
 
 ## Status
 
-- Current milestone: **PR 6 — implementation complete; Ubuntu CI gate pending**
-- Next planned milestone: **PR 7 — process-isolated batch supervisor and gRPC**
+- Current milestone: **PR 7 — implementation complete; Ubuntu CI gate pending**
+- Next planned milestone: **PR 8 — Python Gymnasium and Stable-Baselines3 package**
 - Default implementation/review reasoning level: **Extra High**
 - Last updated: **2026-08-31**
 
@@ -19,8 +19,8 @@ Progress:
 - [x] PR 3 — Deterministic reset, timers, hashing, and teardown
 - [x] PR 4 — Shared world description and headless vehicle plant
 - [x] PR 5 — State sensors and episode semantics
-- [ ] PR 6 — Single-process runner, CLI, and artifacts (Ubuntu CI pending)
-- [ ] PR 7 — Process-isolated batch supervisor and gRPC
+- [x] PR 6 — Single-process runner, CLI, and artifacts
+- [ ] PR 7 — Process-isolated batch supervisor and gRPC (Ubuntu CI pending)
 - [ ] PR 8 — Python Gymnasium and Stable-Baselines3 package
 - [ ] PR 9 — MCP, experiment, result, and logging integration
 - [ ] PR 10 — Deterministic CPU/BVH LiDAR
@@ -286,11 +286,11 @@ Gate:
 
 ### PR 6 — Single-process runner, CLI, and artifacts
 
-Status: **Implementation complete; Ubuntu CI gate pending (2026-08-31).** The direct `HeadlessRunner` accepts only
+Status: **Complete (2026-08-31).** The direct `HeadlessRunner` accepts only
 verified portable bundles, the `cev-sim` CLI exposes validate/inspect/run/replay,
 and atomic core artifacts plus policy-controlled native SFLog require no web
-server or browser. The focused, fixture, macOS CLI/SFLog, full-suite, and lint
-gates pass locally; the milestone remains open until Ubuntu CI passes.
+server or browser. The focused, fixture, macOS CLI/SFLog, full-suite, lint, and
+Ubuntu CI gates pass.
 
 Deliver:
 
@@ -310,6 +310,13 @@ Gate:
 - Existing replay inspection reads emitted SFLogs.
 
 ### PR 7 — Process-isolated supervisor, gRPC, and limits
+
+Status: **Implementation complete; Ubuntu CI gate pending (2026-08-31).** The
+Node 22 supervisor owns one non-detached child per environment, dynamically
+serves protocol 1.1 over Unix sockets or explicit insecure TCP, enforces
+resource/watchdog/restart policy, and preserves direct-runner hashes and
+packed observations. The focused 1/8/16/32-process, parity, failure, limit,
+cancellation, shutdown, backpressure, and orphan tests pass locally.
 
 Deliver:
 
@@ -591,3 +598,24 @@ failure-promotes it, and disabled omits it. A transport-injected
 v1 and existing Replay/Analysis readers. Protobuf v1, run-manifest v9,
 run-bundle v1, simulator ordering, profile identities, the characterization
 fixture, and episode/trajectory hash algorithms are unchanged.
+
+### 2026-08-31 — PR 7 process-isolated supervisor and gRPC
+
+Advertise protocol 1.1 and add only `EnvironmentHealth.batch_id`,
+`restart_count`, and `requires_reset` to Protobuf v1. Load that schema at
+runtime with pinned grpc-js/proto-loader versions and keep JavaScript bindings
+ungenerated. Unix sockets are the local default; insecure TCP is explicit and
+non-loopback binding requires a second opt-in.
+
+Share bundle verification, episode lifecycle, artifacts, results, and teardown
+through `HeadlessSession`. The supervisor owns one advanced-serialization IPC
+child per environment, one request in flight per child, stable concurrent
+batch aggregation, and an all-or-nothing create boundary. A crash, timeout,
+uncertain backpressure dispatch, memory breach, or operational resource breach
+kills that process, consumes a restart, and requires reset without replaying
+the action or manufacturing a transition. Safety and permissive presets bound
+workers, RPC payloads, memory, actors, sensors, observations, aggregate queues,
+artifacts, wall time, and restarts. These policies and artifact paths remain
+outside all simulation-semantic hashes. Initial observations remain inline
+packed Protobuf bytes; shared memory, Python, MCP, rendered sensors, and
+distributed scheduling remain deferred.
