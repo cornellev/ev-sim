@@ -300,6 +300,10 @@ test("stored baselines snapshot every case dependency in provenance", async () =
                 metrics: { passed: 1 },
                 dependencyHashes,
                 resolvedHash: "resolved-v1",
+                runId: "run-v1",
+                simulationSemanticHash: "semantic-v1",
+                episodeHash: "episode-v1",
+                trajectoryHash: "trajectory-v1",
                 startedAt: "2026-07-30T12:00:00.000Z",
                 finishedAt: "2026-07-30T12:00:01.000Z",
             }],
@@ -320,6 +324,10 @@ test("stored baselines snapshot every case dependency in provenance", async () =
         assert.deepEqual(baseline.provenance.dependencies.runtime, { three: "0.182.0" });
         assert.deepEqual(baseline.provenance.dependencies.cases[caseKey], {
             resolvedHash: "resolved-v1",
+            runId: "run-v1",
+            simulationSemanticHash: "semantic-v1",
+            episodeHash: "episode-v1",
+            trajectoryHash: "trajectory-v1",
             dependencyHashes,
         });
 

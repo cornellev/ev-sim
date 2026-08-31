@@ -1,6 +1,7 @@
 import process from "node:process";
 
 import { HeadlessSession } from "./HeadlessSession.js";
+import { ManagedHeadlessSession } from "./ManagedHeadlessSession.js";
 
 let session = null;
 let initialized = null;
@@ -32,8 +33,14 @@ async function command(name, payload = {}) {
     switch (name) {
         case "initialize": {
             await session?.close();
-            session = new HeadlessSession({ limits: payload.limits });
-            const descriptor = await session.prepare(payload.bundle, payload.episodeSpec);
+            const managed = payload.mode === "managed-experiment";
+            session = managed
+                ? new ManagedHeadlessSession({ limits: payload.limits })
+                : new HeadlessSession({ limits: payload.limits });
+            const descriptor = await session.prepare(
+                payload.bundle,
+                managed ? { metricDefinitions: payload.metricDefinitions } : payload.episodeSpec,
+            );
             initialized = {
                 bundle: payload.bundle,
                 episodeSpec: payload.episodeSpec,
@@ -41,6 +48,9 @@ async function command(name, payload = {}) {
             };
             return { descriptor };
         }
+        case "run-managed":
+            if (!(session instanceof ManagedHeadlessSession)) throw Object.assign(new Error("Worker is not initialized for a managed experiment."), { code: "ENVIRONMENT_NOT_FOUND" });
+            return { finalized: await session.run(payload) };
         case "reset": {
             if (!session || !initialized) throw Object.assign(new Error("Worker is not initialized."), { code: "ENVIRONMENT_NOT_FOUND" });
             const reset = await session.reset(payload.episodeSpec, {

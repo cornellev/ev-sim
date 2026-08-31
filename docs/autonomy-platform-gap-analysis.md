@@ -107,7 +107,7 @@ This architecture is directionally correct, but a professional system also needs
 | Dynamic world and traffic | Prototype | Road authoring, route graph, CommonRoad parser/keyframes, traffic-control metadata, visual atmosphere/clouds | No integrated responsive traffic, pedestrians/cyclists, physical weather, wet friction, or behavior diversity |
 | Scenario V&V and metrics | Good authoring, weak validation authority | Triggers, disturbances, assertions, sweeps, baselines, route/collision/kinematic metrics | No ODD/requirement coverage, critical-scenario search, autonomy metrics, or safety-case evidence graph |
 | Logging, replay, and diagnosis | Partial | SFLog with hashes/attachments, analysis series, autonomy snapshots, replay controls | No complete sensor replay-as-fixture, end-to-end trace graph, remote evidence lifecycle, or audit governance |
-| Automation and scale | Weak | MCP/HTTP lifecycle APIs and a sequential browser experiment queue | No authoritative headless runner, parallel workers, scheduler, quotas, cloud/on-prem execution fabric, or CI closed loop |
+| Automation and scale | Partial | MCP/HTTP lifecycle APIs, a sequential browser queue, and one server-owned process-isolated headless experiment queue | No parallel experiment scheduling, quotas, cloud/on-prem execution fabric, or CI closed loop |
 | Standards and X-in-the-loop | Early | ROS-style contracts, CommonRoad import, external orchestrator boundary | No OpenX/FMI adapters, real-time scheduler, CAN/Ethernet rest bus, SIL/HIL/VIL topology, or ECU synchronization |
 
 ### What tests establish
@@ -433,7 +433,7 @@ Deliver:
 | Kinematic bicycle limitation | `app/3d/vehicles/BigCar.js`, `app/3d/vehicles/ManifestVehicle.js` |
 | Swept-AABB collision limitation | `app/physics/PhysicsEngine.js` |
 | Scenario runtime and ego-centric metrics | `app/scenarios/ScenarioRuntime.js`, `app/scenarios/ScenarioMetrics.js` |
-| Sequential authoritative browser experiment queue | `app/experiments/ExperimentRunController.js` |
+| Sequential browser and server-owned headless experiment queues | `app/experiments/ExperimentRunController.js`, `server/headless/HeadlessExperimentService.js` |
 | Baseline comparison | `app/experiments/BaselineComparison.js` |
 | SFLog provenance and partial replay | `app/logging/`, `app/replay/ReplayScene.js`, `app/logging/LogDataset.js` |
 | CI currently runs lint and Node tests | `.github/workflows/ci.yml` |

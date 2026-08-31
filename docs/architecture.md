@@ -136,6 +136,18 @@ creates a private Unix socket and owns batch, channel, supervisor process
 group, descendant cleanup, and startup diagnostics. Generated Python bindings
 come from the authoritative v1 proto and are checked for drift in CI.
 
+PR 9 adds one `HeadlessExperimentService` to the Express process. Stateless
+MCP server instances share that owner, which admits one sequential headless
+queue, atomically resolves all suite cases, and dispatches each case to the
+existing process-isolated worker layer. The internal managed command is not a
+gRPC/Protobuf surface: it drives `SimulationKernel` with resolved reference
+controllers and no candidate actions. A Node-safe experiment metric collector
+is shared with the browser controller. Final result revisions link immutable
+run/semantic/episode/trajectory hashes and retained artifacts; SFLogs are
+identity-checked and imported into the shared `LogService`. Browser experiment
+execution and `run_manifest_launch` remain the defaults, while persisted
+execution ownership routes headless status and cancellation.
+
 Physics pins Rapier `0.19.3` under capability
 `rapier3d-swept-prism-v1`. Rapier owns fixed and kinematic bodies, while
 authoritative first impact/contact transitions use shared continuous XZ SAT

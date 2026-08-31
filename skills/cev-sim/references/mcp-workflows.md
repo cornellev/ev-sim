@@ -70,7 +70,7 @@ Use `docs/mcp.md` tables for one-line purposes; use live schemas for args.
 | Headless | Requires initialized Simulation tab |
 |----------|-------------------------------------|
 | Environment / script / binding CRUD + validate | `run_manifest_launch` |
-| Scenario / suite / result / baseline CRUD + validate / resolve / compare | `experiment_run_start/pause/resume/cancel` |
+| Scenario / suite / result / baseline CRUD + validate / resolve / compare; `experiment_run_start` with `execution: "headless"`; headless status/cancel | Browser-default experiment start; browser pause/resume/cancel |
 | `log_*`, `replay_inspect`, `replay_series` | `recording_start/stop`, `replay_open/control` |
 | `run_manifest_validate/resolve/export/import` | (launch only) |
 
@@ -87,7 +87,8 @@ script_* → script_lint
 binding_suggest → binding_create
 scenario_* → scenario_verify_route → scenario_validate
 run_manifest_* → validate → resolve → launch [browser]
-experiment_suite_* → validate → experiment_run_* [browser]
+experiment_suite_* → validate → experiment_run_start [browser default or headless]
+  → status → result/log resources → baseline / compare
   → baseline / experiment_compare
 recording_* [browser] → replay_inspect / replay_series [headless]
 ```

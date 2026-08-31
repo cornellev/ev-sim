@@ -77,8 +77,9 @@ Detail: [references/project-operations.md](references/project-operations.md).
 4. Scenario: create/update → `scenario_verify_route` → `scenario_validate`.
 5. Run: create/update → `run_manifest_validate` → `run_manifest_resolve` →
    `run_manifest_launch` (**needs Simulation tab**).
-6. Experiments: suite validate → `experiment_run_start` (**browser**) →
-   status → baseline / `experiment_compare`.
+6. Experiments: suite validate → `experiment_run_start` (browser default, or
+   `execution: "headless"` for a bounded reference-controlled suite) → status
+   → result/log inspection → baseline / `experiment_compare`.
 7. Logging: `recording_start` → sim → `recording_stop` → `replay_inspect` /
    `replay_series` (headless) or `replay_open` (browser).
 
@@ -88,10 +89,11 @@ Full sequencing, resources, failure modes:
 ## Non-negotiable constraints
 
 - **Headless vs browser:** CRUD, validate, resolve, `replay_inspect` /
-  `replay_series` are headless. `run_manifest_launch`, `recording_*`,
-  `replay_open` / `replay_control`, `experiment_run_*` require **one**
-  initialized Simulation tab; MCP may return `accepted` while UI does nothing
-  if no tab is open.
+  `replay_series` are headless. `run_manifest_launch`, `recording_*`, and
+  `replay_open` / `replay_control` require an initialized Simulation tab.
+  Experiment start defaults to browser; `execution: "headless"` supports one
+  server-owned bounded reference/script queue. Headless pause/resume are not
+  supported; status/cancel route by persisted result ownership.
 - **Revisions:** Always `*_get` then pass current `expectedRevision` on updates.
 - **Scripting:** Compile via `script_lint` before bindings or runs that need
   the artifact. Graph head uuid is `head-uuid`.

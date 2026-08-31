@@ -44,6 +44,10 @@ function normalizeBaselineCase(value = {}, index = 0) {
         metrics: normalizeMetricValues(source.metrics),
         dependencyHashes: isPlainObject(source.dependencyHashes) ? cloneValue(source.dependencyHashes) : {},
         resolvedHash: optionalText(source.resolvedHash),
+        runId: optionalText(source.runId),
+        simulationSemanticHash: optionalText(source.simulationSemanticHash),
+        episodeHash: optionalText(source.episodeHash),
+        trajectoryHash: optionalText(source.trajectoryHash),
         logId: optionalText(source.logId),
     };
 }

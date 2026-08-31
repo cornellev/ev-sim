@@ -329,6 +329,7 @@ test("experiment result documents normalize terminal records and interrupt only 
     });
     assert.equal(created.kind, "cev-sim.experiment-result");
     assert.equal(created.version, 1);
+    assert.equal(created.execution, null);
     assert.equal(created.metricDefinitions[0].id, "passed");
     const interrupted = interruptActiveExperimentCases(created, "2026-07-30T10:02:00.000Z");
     assert.equal(interrupted.status, "interrupted");

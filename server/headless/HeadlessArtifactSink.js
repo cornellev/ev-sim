@@ -39,9 +39,12 @@ export function resolveArtifactPolicy(policy, manifest = {}, outputUri = null) {
     const logging = manifest.logging || {};
     let profile;
     let logRequired;
-    if (suppliedProfile) {
+    if (logging.policy === "required") {
+        profile = "evaluation";
+        logRequired = true;
+    } else if (suppliedProfile) {
         profile = suppliedProfile;
-        logRequired = profile === "evaluation";
+        logRequired = false;
     } else {
         profile = logging.policy === "disabled" ? "disabled" : "evaluation";
         logRequired = logging.policy === "required";

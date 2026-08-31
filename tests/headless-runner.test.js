@@ -29,7 +29,8 @@ test("artifact policy translation and training sampling are deterministic", () =
     assert.equal(resolveArtifactPolicy(null, { logging: { policy: "optional" } }, "out").logRequired, false);
     assert.equal(resolveArtifactPolicy(null, { logging: { policy: "disabled" } }, "out").profile, "disabled");
     const explicit = resolveArtifactPolicy({ profile: "training", fullSflogSampleRate: 0.5 }, manifest, "out");
-    assert.equal(explicit.logRequired, false);
+    assert.equal(explicit.logRequired, true);
+    assert.equal(explicit.profile, "evaluation");
     assert.equal(explicit.signalProfileId, "simulation-run-full-sensors");
     const episodeHash = "a".repeat(64);
     assert.equal(isTrainingLogSampled(episodeHash, 0.5), isTrainingLogSampled(episodeHash, 0.5));

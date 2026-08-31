@@ -470,6 +470,66 @@ export class HeadlessSupervisor {
         };
     }
 
+    /**
+     * Internal one-shot reference-controlled execution. This intentionally is
+     * not part of the public gRPC protocol and shares worker isolation and
+     * resource enforcement with policy batches.
+     */
+    async runManagedExperiment(request = {}, { signal = null, onStarted = null } = {}) {
+        if (this.shuttingDown) throw supervisorError("INTERNAL", "Supervisor is shutting down.");
+        if (this.activeEnvironmentCount + this.reservedWorkers + 1 > this.config.maxWorkers) {
+            throw supervisorError("RESOURCE_LIMIT", `Creating a managed environment exceeds supervisor capacity ${this.config.maxWorkers}.`);
+        }
+        const verified = verifyRunBundle(request.bundle);
+        const limits = resolveBatchResourceLimits(request.resourceLimits, this.config);
+        validateStaticLimits(verified.resolved, limits, 0);
+        this.reservedWorkers += 1;
+        let worker = null;
+        let resourceFailure = null;
+        try {
+            worker = this.workerFactory({
+                limits,
+                memoryPollIntervalMs: this.config.memoryPollIntervalMs,
+                shutdownGraceMs: this.config.shutdownGraceMs,
+                killGraceMs: this.config.killGraceMs,
+                onHealth: (health, handle) => {
+                    if (Number(health.rssBytes) > limits.maxRssBytesPerEnvironment) {
+                        resourceFailure = supervisorError("RESOURCE_LIMIT", "Managed environment exceeded its RSS limit.", { rssBytes: health.rssBytes, limit: limits.maxRssBytesPerEnvironment });
+                    } else if (Number(health.heapBytes) > limits.maxHeapBytesPerEnvironment) {
+                        resourceFailure = supervisorError("RESOURCE_LIMIT", "Managed environment exceeded its heap limit.", { heapBytes: health.heapBytes, limit: limits.maxHeapBytesPerEnvironment });
+                    } else if (Number(health.queueBytes || 0) + Number(handle.pendingBytes || 0) > limits.maxQueueBytes) {
+                        resourceFailure = supervisorError("RESOURCE_LIMIT", "Managed environment exceeded its aggregate queue limit.", { queueBytes: health.queueBytes, pendingIpcBytes: handle.pendingBytes || 0, limit: limits.maxQueueBytes });
+                    }
+                    if (resourceFailure) handle.terminate();
+                },
+                onExit: (_event, handle) => this.workers.delete(handle),
+            });
+            this.workers.add(worker);
+            onStarted?.({ pid: worker.pid });
+            await worker.dispatch("initialize", {
+                mode: "managed-experiment",
+                bundle: request.bundle,
+                metricDefinitions: request.metricDefinitions || [],
+                limits,
+            }, { signal });
+            if (resourceFailure) throw resourceFailure;
+            const response = await worker.dispatch("run-managed", {
+                artifactPolicy: request.artifactPolicy,
+                outputUri: request.outputUri,
+                yieldEverySteps: request.yieldEverySteps,
+            }, { timeoutMs: limits.episodeWallTimeoutMs, signal });
+            if (resourceFailure) throw resourceFailure;
+            return response.finalized;
+        } catch (error) {
+            throw resourceFailure || error;
+        } finally {
+            this.reservedWorkers -= 1;
+            await worker?.close().catch(() => {});
+            if (worker) this.workers.delete(worker);
+            if (request.outputUri) await cleanupPartialDirectories(path.dirname(path.resolve(request.outputUri)));
+        }
+    }
+
     async close() {
         if (this.closed) return;
         this.closed = true;

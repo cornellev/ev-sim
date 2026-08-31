@@ -15,8 +15,11 @@ app.prepare().then(async () => {
     const { createMcpRouter } = await import('./mcp/createMcpRouter.js');
     const { LogService } = await import('./logging/LogService.js');
     const { createLogRouter } = await import('./routes/logRouter.js');
+    const { HeadlessExperimentService } = await import('./headless/HeadlessExperimentService.js');
     const storageService = new StorageService(process.env.CEV_SIM_DATA_DIR);
     const logService = new LogService(process.env.CEV_SIM_LOGS_DIR);
+    const headlessExperimentService = new HeadlessExperimentService(storageService, logService);
+    await headlessExperimentService.initialize();
 
     // Parse JSON only for Express-owned routes. A global body parser locks the
     // request stream and breaks Next.js App Router handlers (e.g. POST
@@ -24,16 +27,26 @@ app.prepare().then(async () => {
     const jsonParser = express.json({ limit: '20mb' });
     server.use('/api/logs', createLogRouter(logService));
     server.use('/api/storage', jsonParser, createStorageRouter(storageService));
-    server.use('/mcp', jsonParser, createMcpRouter(storageService, logService));
+    server.use('/mcp', jsonParser, createMcpRouter(storageService, logService, headlessExperimentService));
 
     server.all(/(.*)/, (req, res) => {
         return handle(req, res);
     });
 
     const PORT = process.env.PORT || 3000;
-    server.listen(PORT, (err) => {
+    const httpServer = server.listen(PORT, (err) => {
         if (err) throw err;
         console.log(`> Ready on http://localhost:${PORT}`);
         console.log(`> MCP endpoint: http://localhost:${PORT}/mcp`);
     });
+
+    let shuttingDown = false;
+    const shutdown = async () => {
+        if (shuttingDown) return;
+        shuttingDown = true;
+        httpServer.close();
+        await headlessExperimentService.close();
+    };
+    process.once('SIGTERM', shutdown);
+    process.once('SIGINT', shutdown);
 })

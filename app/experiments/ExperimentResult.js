@@ -46,6 +46,18 @@ function structuredOrText(value) {
     return isPlainObject(value) || Array.isArray(value) ? cloneValue(value) : optionalText(value);
 }
 
+function normalizeExecution(value) {
+    if (!isPlainObject(value)) return null;
+    const backend = ["browser", "headless"].includes(trimmedText(value.backend))
+        ? trimmedText(value.backend)
+        : null;
+    if (!backend) return null;
+    return {
+        backend,
+        jobId: optionalText(value.jobId),
+    };
+}
+
 function normalizeOutcome(value = {}, index = 0) {
     const source = asObject(value);
     const passed = typeof source.passed === "boolean" ? source.passed : null;
@@ -101,6 +113,14 @@ export function normalizeExperimentCaseResult(value = {}, index = 0) {
         metrics: normalizeMetricValues(source.metrics),
         dependencyHashes: isPlainObject(source.dependencyHashes) ? cloneValue(source.dependencyHashes) : {},
         resolvedHash: optionalText(source.resolvedHash),
+        runId: optionalText(source.runId),
+        simulationSemanticHash: optionalText(source.simulationSemanticHash),
+        episodeHash: optionalText(source.episodeHash),
+        trajectoryHash: optionalText(source.trajectoryHash),
+        artifacts: Array.isArray(source.artifacts) ? cloneValue(source.artifacts) : [],
+        artifactWarnings: Array.isArray(source.artifactWarnings)
+            ? source.artifactWarnings.map(optionalText).filter(Boolean)
+            : [],
         logId: optionalText(source.logId),
         startedAt: optionalText(source.startedAt),
         finishedAt: optionalText(source.finishedAt),
@@ -150,6 +170,7 @@ export function normalizeExperimentResult(value = {}, { allowMissingKind = false
             ? null
             : nonNegativeInteger(source.suiteRevision),
         suiteHash: optionalText(source.suiteHash),
+        execution: normalizeExecution(source.execution),
         status: EXPERIMENT_RESULT_STATUSES.includes(requestedStatus) ? requestedStatus : "pending",
         createdAt: optionalText(source.createdAt),
         startedAt: optionalText(source.startedAt),

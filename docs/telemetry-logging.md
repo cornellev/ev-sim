@@ -56,6 +56,11 @@ Recordings persist as native SFLog v1 files (`SFLG`) under `server/data/logs/`. 
 
 The binary layout, record tags, value codecs, recording pipeline, run-manifest policies, HTTP API, Replay/Analysis consumers, and MCP tools are specified in [SFLog](sflog.md).
 
+Managed headless experiment workers use the same `RecordingController` and
+SFLog v1 writer, then import retained logs into this shared catalog after
+checking run and resolved identities. Their experiment metrics are reduced
+from the live `SignalStore`, independently of log retention.
+
 ## Workspaces
 
 The live Three.js scene remains mounted after first load. Leaving Simulation hides its canvas and disables rendering and controls. It does not change play state. Replay owns a different read-only Three.js scene.

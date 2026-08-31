@@ -354,6 +354,7 @@ test("ExperimentRunController executes sequentially, streams metrics, persists e
     await controller.start({ suite, cases });
     const finalSnapshot = await controller.waitForCompletion();
     assert.equal(finalSnapshot.status, "completed");
+    assert.deepEqual(finalSnapshot.result.execution, { backend: "browser", jobId: null });
     assert.deepEqual(finalSnapshot.result.cases.map((entry) => entry.status), ["completed", "failed", "cancelled"]);
     assert.deepEqual(runSession.prepared, ["hash-1", "hash-2"]);
     assert.equal(runSession.maximumActive, 1);

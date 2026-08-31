@@ -171,6 +171,25 @@ output paths are operational. They remain outside `simulationSemanticHash`,
 transition, never replays the uncertain action, and requires a reset in a
 fresh worker before that environment can continue.
 
+## Managed headless experiment execution
+
+`experiment_run_start` with `execution: "headless"` resolves suite cases to
+portable run bundles before creating evidence. Managed cases require
+`controls.authority: "reference"` and route-follower, script, or
+script-with-route controllers. Candidate authority, external ROS controllers,
+camera, LiDAR, unknown sensor backends, and suites without a provable semantic
+bound are rejected atomically. Supported cases may use no sensors or the
+deterministic IMU, GNSS, and wheel-odometry backend.
+
+The worker uses the default episode identity with the authored reset seed,
+action repeat one, manifest bound, and sorted backend selections. It runs the
+reference/script controller directly and never inserts a policy action.
+Required manifest logging always selects a required evaluation SFLog. Optional
+logging defaults to evaluation and may be overridden to evaluation, training,
+or disabled; disabled logging stays disabled unless explicitly upgraded.
+These operational choices do not enter simulation, episode, or trajectory
+identity. `run_manifest_launch` remains browser-backed.
+
 ## Scenario episode metrics
 
 When a run selects a scenario, `ScenarioRuntime` collects ego-only episode metrics each fixed step and merges them into `finalize().metrics` (and `run-results.json`). Built-ins:

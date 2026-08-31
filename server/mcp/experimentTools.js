@@ -22,6 +22,7 @@ function resultSummary(result) {
         id: result?.id ?? null,
         suiteId: result?.suiteId ?? null,
         status: result?.status ?? "unknown",
+        execution: result?.execution ?? null,
         revision: result?.revision ?? null,
         progress: {
             completed: cases.filter((entry) => ["completed", "failed", "error", "cancelled", "interrupted"].includes(entry.status)).length,
@@ -40,7 +41,7 @@ function resultSummary(result) {
  * @param {import("@modelcontextprotocol/sdk/server/mcp.js").McpServer} server
  * @param {import("../storage/StorageService.js").StorageService} storage
  */
-export function registerExperimentTools(server, storage) {
+export function registerExperimentTools(server, storage, headlessExperimentService = null) {
     server.registerTool("experiment_suite_list", {
         title: "List experiment suites",
         description: "List deterministic experiment suites with selected scenarios, manifests, revisions, and hashes.",
@@ -177,7 +178,18 @@ export function registerExperimentTools(server, storage) {
         try {
             const result = await storage.getExperimentResult(resultId);
             if (!result) return fail(`Experiment result "${resultId}" does not exist.`);
-            return ok({ ok: true, result });
+            const logUris = [...new Set((result.cases || [])
+                .map((entry) => entry.logId)
+                .filter(Boolean))]
+                .map((logId) => `fusion://logs/${encodeURIComponent(logId)}`);
+            return ok({
+                ok: true,
+                result,
+                resources: {
+                    result: `fusion://experiment-results/${encodeURIComponent(result.id)}`,
+                    logs: logUris,
+                },
+            });
         } catch (error) { return fail(error); }
     });
 
@@ -345,7 +357,15 @@ export function registerExperimentTools(server, storage) {
             if (resultId) {
                 const result = await storage.getExperimentResult(resultId);
                 if (!result) return fail(`Experiment result "${resultId}" does not exist.`);
-                return ok({ ok: true, result: resultSummary(result), browserRequiredForControl: true });
+                const headless = result.execution?.backend === "headless";
+                return ok({
+                    ok: true,
+                    result: resultSummary(result),
+                    headlessJob: headless && headlessExperimentService?.active?.resultId === result.id
+                        ? headlessExperimentService.active
+                        : null,
+                    browserRequiredForControl: !headless,
+                });
             }
             const active = [];
             for (const entry of await storage.listExperimentResults()) {
@@ -353,22 +373,45 @@ export function registerExperimentTools(server, storage) {
                 const result = await storage.getExperimentResult(entry.id);
                 if (result) active.push(resultSummary(result));
             }
-            return ok({ ok: true, active, browserRequiredForControl: true });
+            return ok({
+                ok: true,
+                active,
+                headlessJob: headlessExperimentService?.active ?? null,
+                browserRequiredForControl: active.some((entry) => entry.execution?.backend !== "headless"),
+            });
         } catch (error) { return fail(error); }
     });
 
     server.registerTool("experiment_run_start", {
         title: "Start experiment suite",
-        description: "Validate a saved suite, expand its deterministic matrix, and ask one authoritative open simulator tab to run the cases sequentially.",
+        description: "Validate and run a deterministic suite in the browser (default), or in the server-owned sequential headless executor.",
         inputSchema: {
             suiteId: z.string().min(1),
+            execution: z.enum(["browser", "headless"]).optional(),
             expectedRevision: z.number().int().nonnegative().optional(),
             resultId: z.string().min(1).optional(),
             failFast: z.boolean().optional(),
+            artifactProfile: z.enum(["evaluation", "training", "disabled"]).optional(),
             openWorkspace: z.boolean().optional(),
         },
-    }, async ({ suiteId, expectedRevision, resultId, failFast, openWorkspace = true }) => {
+    }, async ({ suiteId, execution = "browser", expectedRevision, resultId, failFast, artifactProfile, openWorkspace = true }) => {
         try {
+            if (execution === "headless") {
+                if (!headlessExperimentService) return fail("The server-owned headless experiment executor is unavailable.");
+                const started = await headlessExperimentService.start({
+                    suiteId,
+                    expectedRevision,
+                    resultId,
+                    failFast,
+                    artifactProfile,
+                });
+                return ok({
+                    ok: true,
+                    execution: "headless",
+                    browserRequiredForControl: false,
+                    ...started,
+                });
+            }
             const suite = await storage.getExperimentSuite(suiteId);
             if (!suite) return fail(`Experiment suite "${suiteId}" does not exist.`);
             if (expectedRevision !== undefined && Number(suite.revision) !== expectedRevision) {
@@ -388,6 +431,7 @@ export function registerExperimentTools(server, storage) {
                 resultId: queuedResultId,
                 revision: suite.revision,
                 caseCount: cases.length,
+                execution: "browser",
                 ...browserCommand("start", suiteId, { suiteId, resultId: queuedResultId, failFast, openWorkspace }),
             });
         } catch (error) { return fail(error); }
@@ -403,8 +447,23 @@ export function registerExperimentTools(server, storage) {
             },
         }, async ({ resultId, openWorkspace = true }) => {
             try {
-                if (resultId && !await storage.getExperimentResult(resultId)) {
+                const result = resultId ? await storage.getExperimentResult(resultId) : null;
+                if (resultId && !result) {
                     return fail(`Experiment result "${resultId}" does not exist.`);
+                }
+                const headless = result?.execution?.backend === "headless"
+                    || (!resultId && headlessExperimentService?.active);
+                if (headless) {
+                    if (action !== "cancel") return fail(`Headless experiment queues do not support ${action}; only browser queues can pause or resume.`);
+                    if (!headlessExperimentService) return fail("The server-owned headless experiment executor is unavailable.");
+                    const cancelled = await headlessExperimentService.cancel(resultId ?? headlessExperimentService.active?.resultId);
+                    return ok({
+                        ok: true,
+                        resultId: resultId ?? cancelled?.id ?? null,
+                        result: cancelled ? resultSummary(cancelled) : null,
+                        execution: "headless",
+                        browserRequiredForControl: false,
+                    });
                 }
                 return ok({
                     ok: true,

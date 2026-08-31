@@ -11,7 +11,7 @@ import {
     interruptActiveExperimentCases,
     normalizeExperimentResult,
 } from "./ExperimentResult.js";
-import { MetricAccumulator } from "./MetricReducers.js";
+import { ExperimentMetricCollector } from "./ExperimentMetricCollector.js";
 
 const TERMINAL_CASE_STATUSES = new Set(["completed", "failed", "error", "cancelled", "interrupted"]);
 const TERMINAL_RUN_STATUSES = new Set([
@@ -121,8 +121,7 @@ export class ExperimentRunController {
         this._pauseWaiters = new Set();
         this._terminalWaiter = null;
         this._executionPromise = null;
-        this._metricSubscription = null;
-        this._metricAccumulator = null;
+        this._metricCollector = null;
         this._runSpeed = 1;
         this._disableLogging = false;
         this._runSnapshot = this.runSession.getSnapshot?.() ?? { status: "idle" };
@@ -179,6 +178,7 @@ export class ExperimentRunController {
                     id: input.resultId ?? options.resultId,
                     createdAt: nowIso(this.now),
                     status: "pending",
+                    execution: { backend: "browser", jobId: null },
                 });
                 const stored = documentFrom(await this.createResult(pending), "result");
                 this.revision = stored?.revision ?? null;
@@ -186,6 +186,12 @@ export class ExperimentRunController {
             }
             if (this.result.suiteId !== suite.id) {
                 throw new Error(`Result "${this.result.id}" belongs to suite "${this.result.suiteId}", not "${suite.id}".`);
+            }
+            if (!this.result.execution) {
+                this.result = normalizeExperimentResult({
+                    ...this.result,
+                    execution: { backend: "browser", jobId: null },
+                }, { allowMissingKind: true });
             }
         } catch (error) {
             this.runSession.setLoggingPolicyOverride?.(null);
@@ -378,7 +384,7 @@ export class ExperimentRunController {
         let resolution = null;
         let runResult = null;
         this._stopMetricCollection();
-        this._metricAccumulator = new MetricAccumulator(this.result.metricDefinitions);
+        this._metricCollector = new ExperimentMetricCollector(this.result.metricDefinitions, this.telemetry);
         try {
             resolution = await this.resolveCase(this.result.suiteId, { case: activeCase });
             const resolvedRun = resolution?.resolvedRun ?? resolution?.resolved ?? resolution;
@@ -435,7 +441,7 @@ export class ExperimentRunController {
                     : passed
                         ? "completed"
                         : "failed";
-        const metrics = this._metricAccumulator?.finalize({
+        const metrics = this._metricCollector?.finalize({
             ...runResult,
             status,
             completed,
@@ -465,36 +471,11 @@ export class ExperimentRunController {
 
     _startMetricCollection(definitions) {
         this._stopMetricCollection();
-        this._metricAccumulator = new MetricAccumulator(definitions);
-        const paths = this._metricAccumulator.definitions
-            .filter((metric) => metric.source.kind === "signal")
-            .map((metric) => metric.source.path);
-        this._metricSubscription = this.telemetry?.subscribeSignals?.(
-            { paths, includeEvents: true, includeCatalog: false },
-            (message) => {
-                if (message.kind === "update") {
-                    this._metricAccumulator?.pushSignal(message.path, message.entry?.value);
-                } else if (message.kind === "event") {
-                    this._metricAccumulator?.pushEvent(message.event);
-                }
-            },
-        ) ?? null;
-        // Manifest application publishes deterministic t=0 inputs before the
-        // reducer subscription is installed. Seed reducers from the reset
-        // store so `first`, `last`, min/max, and event counts include that
-        // initial case state without observing the previous case.
-        for (const path of paths) {
-            const entry = this.telemetry?.read?.(path);
-            if (entry && entry.value !== undefined) this._metricAccumulator.pushSignal(path, entry.value);
-        }
-        for (const event of this.telemetry?.events?.() ?? []) {
-            this._metricAccumulator.pushEvent(event);
-        }
+        this._metricCollector = new ExperimentMetricCollector(definitions, this.telemetry).start();
     }
 
     _stopMetricCollection() {
-        this._metricSubscription?.();
-        this._metricSubscription = null;
+        this._metricCollector?.stop();
     }
 
     _waitForTerminalRun(resolvedHash) {

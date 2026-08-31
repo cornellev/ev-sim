@@ -100,16 +100,19 @@ user-path, and credential data.
 
 Profiles:
 
-- `evaluation` always retains a full SFLog and treats log failure as fatal.
+- `evaluation` always retains a full SFLog. Log failure is fatal when the
+  manifest policy is `required` and degradable otherwise.
 - `training` keeps core JSON and retains a full SFLog when deterministically
   sampled or failure-promoted. Defaults are sample rate `0` and promotion on.
 - `disabled` keeps core JSON and omits SFLog.
 
 Use `--artifact-profile`, `--sflog-sample-rate`,
-`--sflog-on-failure`, or `--no-sflog-on-failure`. An explicit caller policy
-supersedes `manifest.logging`. Without one, required/optional logging produces
-an evaluation log (fatal/degradable respectively) and disabled logging omits
-SFLog. Artifact policy and paths never enter episode or trajectory identity.
+`--sflog-on-failure`, or `--no-sflog-on-failure`. Required manifest logging
+cannot be downgraded and always produces a required evaluation log. Otherwise,
+an explicit caller profile selects evaluation, training, or disabled; without
+one, optional logging produces a degradable evaluation log and disabled
+logging omits SFLog. Artifact policy and paths never enter episode or
+trajectory identity.
 
 ## Exit codes
 

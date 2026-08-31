@@ -43,7 +43,7 @@ name and docs use **`cev-sim`**.
 
 Start the app with `npm run dev` (or `npm start` after a build). The server logs the MCP URL on boot.
 
-Live sessions stay in sync: MCP writes and workspace commands publish Server-Sent Events on `GET /api/storage/events`. The open browser re-hydrates environments, scripts, bindings, and log catalogs; it also executes Replay, recording, run-manifest, and experiment commands in the authoritative simulation tab.
+Live sessions stay in sync: MCP writes and workspace commands publish Server-Sent Events on `GET /api/storage/events`. The open browser re-hydrates environments, scripts, bindings, and log catalogs; it also executes Replay, recording, browser run-manifest, and browser experiment commands in the authoritative simulation tab. Headless experiment queues are owned by the Express process.
 
 ## Tool categories
 
@@ -124,9 +124,22 @@ Resources expose the catalogs and complete documents at `fusion://scenarios`, `f
 | `experiment_baseline_list` / `experiment_baseline_get` / `experiment_baseline_create` / `experiment_baseline_validate` / `experiment_baseline_delete` | Manage immutable named baselines |
 | `experiment_compare` | Classify metric deltas, gated regressions, improvements, dependency changes, and unmatched cases |
 | `experiment_run_status` | Inspect persisted queue progress |
-| `experiment_run_start` / `experiment_run_pause` / `experiment_run_resume` / `experiment_run_cancel` | Control sequential execution in one authoritative browser tab |
+| `experiment_run_start` | Start sequential browser execution by default, or server-owned execution with `execution: "headless"` |
+| `experiment_run_pause` / `experiment_run_resume` | Control browser-owned queues only |
+| `experiment_run_cancel` | Route cancellation to the persisted browser or headless owner |
 
-Resources expose suites, results, and baselines through `fusion://experiment-suites`, `fusion://experiment-results`, and `fusion://experiment-baselines`, plus the corresponding `/{id}` document URIs. Suite planning, validation, case resolution, result inspection, baseline creation, and comparison work headlessly. Run control requires one initialized browser tab because the browser owns the authoritative simulation runtime; same-origin tabs elect exactly one command executor.
+Resources expose suites, results, and baselines through `fusion://experiment-suites`, `fusion://experiment-results`, and `fusion://experiment-baselines`, plus the corresponding `/{id}` document URIs. `experiment_result_get` also returns its result URI and the `fusion://logs/{logId}` links retained by its cases.
+
+Browser execution remains the default and uses same-origin executor election.
+Headless start first validates the suite revision and complete deterministic
+expansion, resolves every case, and rejects the request without creating a
+result if any case uses candidate control, external ROS, camera/LiDAR/unknown
+sensors, or lacks a finite semantic bound. The Express process admits one
+headless queue globally and runs cases sequentially in isolated workers.
+Status and cancellation use the result's persisted `execution.backend`;
+headless queues cannot pause or resume. Headless results retain run,
+simulation-semantic, episode, and trajectory hashes plus artifacts and import
+warnings. Baselines preserve the hashes but do not depend on retained files.
 
 ### Logging and replay
 
@@ -150,7 +163,7 @@ The resources `fusion://logs` and `fusion://logs/{logId}` expose the catalog and
 3. `binding_suggest` → `binding_create` with the compiled `scriptId`.
 4. `scenario_create` / `scenario_update` → `scenario_verify_route` → `scenario_validate` for reusable scenario behavior.
 5. `run_manifest_create` or `run_manifest_update` → `run_manifest_validate` → `run_manifest_launch` to start one exact deterministic configuration.
-6. `experiment_suite_create` → `experiment_suite_validate` → `experiment_run_start` → `experiment_run_status` → `experiment_baseline_create` / `experiment_compare` for regression evidence.
+6. `experiment_suite_create` → `experiment_suite_validate` → `experiment_run_start` (omit `execution` for browser, or select `headless`) → `experiment_run_status` → `experiment_result_get` → `experiment_baseline_create` / `experiment_compare` for regression evidence.
 7. `recording_start` → run the simulation → `recording_stop`, then use `replay_inspect`, `replay_series`, or `replay_open`.
 
 ## Implementation map

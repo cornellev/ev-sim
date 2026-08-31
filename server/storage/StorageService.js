@@ -866,6 +866,10 @@ export class StorageService {
             entry.key ?? experimentCaseKey(entry),
             {
                 resolvedHash: entry.resolvedHash ?? null,
+                runId: entry.runId ?? null,
+                simulationSemanticHash: entry.simulationSemanticHash ?? null,
+                episodeHash: entry.episodeHash ?? null,
+                trajectoryHash: entry.trajectoryHash ?? null,
                 dependencyHashes: structuredClone(entry.dependencyHashes ?? {}),
             },
         ]));
@@ -1878,6 +1882,7 @@ function experimentResultSummary(result) {
         id: result.id,
         suiteId: result.suiteId,
         status: result.status,
+        execution: result.execution ?? null,
         revision: result.revision,
         definitionHash: result.definitionHash,
         summary: result.summary,

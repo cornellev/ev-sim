@@ -18,11 +18,11 @@ import { registerExperimentTools } from "./experimentTools.js";
  * @param {import("../storage/StorageService.js").StorageService} storage
  * @param {import("../logging/LogService.js").LogService} logService
  */
-export function createMcpRouter(storage, logService) {
+export function createMcpRouter(storage, logService, headlessExperimentService = null) {
     const router = express.Router();
 
     router.all("/", async (req, res) => {
-        const server = createSensorFusionMcpServer(storage, logService);
+        const server = createSensorFusionMcpServer(storage, logService, headlessExperimentService);
         const transport = new StreamableHTTPServerTransport({
             sessionIdGenerator: undefined,
         });
@@ -54,7 +54,7 @@ export function createMcpRouter(storage, logService) {
  * @param {import("../storage/StorageService.js").StorageService} storage
  * @param {import("../logging/LogService.js").LogService} logService
  */
-export function createSensorFusionMcpServer(storage, logService) {
+export function createSensorFusionMcpServer(storage, logService, headlessExperimentService = null) {
     const server = new McpServer({
         name: "cev-sim",
         version: "0.1.0",
@@ -65,7 +65,7 @@ export function createSensorFusionMcpServer(storage, logService) {
     registerBindingTools(server, storage);
     registerRunManifestTools(server, storage);
     registerScenarioTools(server, storage);
-    registerExperimentTools(server, storage);
+    registerExperimentTools(server, storage, headlessExperimentService);
     registerLoggingTools(server, logService);
 
     return server;

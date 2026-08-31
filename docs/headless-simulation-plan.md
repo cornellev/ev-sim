@@ -7,8 +7,8 @@ language-neutral API authority is
 
 ## Status
 
-- Current milestone: **PR 8 — complete**
-- Next planned milestone: **PR 9 — MCP, experiment, result, and logging integration**
+- Current milestone: **PR 9 — complete**
+- Next planned milestone: **PR 10 — Deterministic CPU/BVH LiDAR**
 - Default implementation/review reasoning level: **Extra High**
 - Last updated: **2026-08-31**
 
@@ -22,7 +22,7 @@ Progress:
 - [x] PR 6 — Single-process runner, CLI, and artifacts
 - [x] PR 7 — Process-isolated batch supervisor and gRPC
 - [x] PR 8 — Python Gymnasium and Stable-Baselines3 package
-- [ ] PR 9 — MCP, experiment, result, and logging integration
+- [x] PR 9 — MCP, experiment, result, and logging integration
 - [ ] PR 10 — Deterministic CPU/BVH LiDAR
 - [ ] PR 11 — Pooled offscreen GPU sensors and large-payload transport
 - [ ] PR 12 — CI, parity, performance, distribution, and release gates
@@ -641,3 +641,35 @@ parity, partial/RPC failure cleanup, and an eight-environment PPO smoke test
 pass. Protocol 1.1, Protobuf fields, run-manifest and run-bundle versions,
 profile/backend hashes, episode/trajectory hash algorithms, and the committed
 characterization fixture are unchanged.
+
+### 2026-08-31 — PR 9 MCP, experiment, result, and logging integration
+
+Add one Express-owned `HeadlessExperimentService` and inject it into every
+stateless MCP server instance. `experiment_run_start` now accepts `execution`;
+browser remains the default, while headless execution atomically resolves and
+validates the complete deterministic case expansion before it creates a
+result. One global queue runs cases sequentially in isolated worker processes.
+Pause/resume stay browser-only, and status/cancel route by persisted result
+ownership.
+
+Managed workers run `SimulationKernel` directly under reference authority with
+route-follower, script, or script-with-route controllers. They accept only no
+sensors or deterministic state sensors and require a positive manifest bound,
+max-duration, or finite time/step finish trigger. Candidate control, external
+ROS, camera, LiDAR, and unknown backends fail preflight. Managed episode
+identity uses reset seed, action repeat one, sorted backend selections, and the
+authored bound; no policy action is injected or recorded. Protobuf v1,
+run-manifest v9, run-bundle v1, `HeadlessEpisode`, and Gym/SB3 semantics are
+unchanged.
+
+Extract browser metric streaming and reset seeding into a Node-safe shared
+collector. Experiment-result v1 gains additive execution ownership and case
+run/hash/artifact fields; immutable baselines copy the run and hash identities
+without depending on artifact retention. Worker SFLogs publish atomically
+under the storage data root, then import through the shared `LogService` after
+run/resolved identity verification. Required import failure is an error;
+optional failure retains the artifact reference and warning. Cancellation
+aborts uncertain dispatch, waits for worker exit, removes staging directories,
+and cancels remaining cases. Startup reconciliation interrupts only stale
+headless-owned results. Existing result, baseline, log, replay-inspect, and
+replay-series surfaces consume the outputs.

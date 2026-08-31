@@ -423,6 +423,18 @@ The default profile id is `simulation-run-full-sensors`. Run sessions use `timeB
 
 Reset finalizes the active result and SFLog, then prepares a replacement run paused at step zero.
 
+### Managed experiment import
+
+Server-owned experiment cases first write artifacts atomically beneath
+`<data-dir>/headless-runs/<job-id>/<case-id>/`. Any retained `run.sflog` is then
+stream-imported through the shared `LogService`. Import must preserve and match
+the worker's `runId` and `resolvedHash` before the catalog `logId` is attached
+to the experiment case and published at `fusion://logs/{logId}`. Required-log
+import failure makes the case an infrastructure error. Optional import failure
+leaves the original artifact URI in the result and adds an artifact warning.
+Metric reduction occurs live in the worker, so disabled or sampled logging
+does not change built-in, signal, or event metric semantics.
+
 ## Recovery and import
 
 `listLogs()` always calls `recoverPartialLogs()` first. For each `.partial` that is not an in-memory active session:
@@ -517,6 +529,7 @@ Resources: `fusion://logs` and `fusion://logs/{logId}`.
 | `server/mcp/loggingTools.js` | MCP tools and `fusion://logs` resources |
 | `app/simulation/RunSessionController.js` | Policy-aware run recording and `run-results.json` |
 | `server/headless/HeadlessArtifactSink.js` | Direct LogService transport, profile retention, and atomic CLI artifacts |
+| `server/headless/HeadlessExperimentService.js` | Managed case queue, shared-log import, cancellation, and stale-result reconciliation |
 | `app/replay/ReplayPage.js`, `ReplayScene.js` | Catalog, seek, interpolated poses |
 | `app/analysis/AnalysisPage.js` | Lazy log series and snapshots |
 | `tests/telemetry-logging.test.js` | Codec round-trips, profiles, backpressure, recovery, import |

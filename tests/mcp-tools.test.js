@@ -549,6 +549,87 @@ test("experiment MCP tools preserve revisions, compare evidence, and publish bro
     });
 });
 
+test("experiment MCP defaults to browser execution and routes persisted headless ownership", async () => {
+    const tools = new Map();
+    const server = {
+        registerTool(name, _definition, handler) { tools.set(name, handler); },
+        registerResource() {},
+    };
+    const suite = {
+        id: "routing-suite",
+        revision: 3,
+        definitionHash: "suite-hash",
+    };
+    const headlessResult = {
+        id: "headless-result",
+        suiteId: suite.id,
+        status: "running",
+        revision: 2,
+        execution: { backend: "headless", jobId: "job-1" },
+        cases: [],
+    };
+    const storage = {
+        getExperimentSuite: async () => suite,
+        validateExperimentSuite: async () => ({ ok: true, matrix: { cases: [{ id: "case-1" }] } }),
+        getExperimentResult: async (id) => id === headlessResult.id ? headlessResult : null,
+        listExperimentResults: async () => [headlessResult],
+    };
+    const calls = [];
+    const headless = {
+        active: { resultId: headlessResult.id, jobId: "job-1" },
+        start: async (input) => {
+            calls.push(["start", input]);
+            return { resultId: "new-headless", jobId: "job-2", suiteId: suite.id, revision: 3, caseCount: 1 };
+        },
+        cancel: async (resultId) => {
+            calls.push(["cancel", resultId]);
+            return { ...headlessResult, status: "cancelled" };
+        },
+    };
+    registerExperimentTools(server, storage, headless);
+
+    const browserEvents = [];
+    const onChange = (event) => {
+        if (event.domain === "experiment-run") browserEvents.push(event);
+    };
+    storageEvents.on("change", onChange);
+    try {
+        const browserResponse = JSON.parse((await tools.get("experiment_run_start")({
+            suiteId: suite.id,
+            resultId: "browser-result",
+        })).content[0].text);
+        assert.equal(browserResponse.execution, "browser");
+        assert.equal(browserResponse.browserRequiredForControl, true);
+        assert.equal(browserEvents[0].action, "start");
+
+        const headlessResponse = JSON.parse((await tools.get("experiment_run_start")({
+            suiteId: suite.id,
+            resultId: "new-headless",
+            execution: "headless",
+            artifactProfile: "training",
+        })).content[0].text);
+        assert.equal(headlessResponse.execution, "headless");
+        assert.equal(headlessResponse.browserRequiredForControl, false);
+        assert.equal(calls[0][1].artifactProfile, "training");
+
+        const status = JSON.parse((await tools.get("experiment_run_status")({ resultId: headlessResult.id })).content[0].text);
+        assert.equal(status.browserRequiredForControl, false);
+        assert.equal(status.result.execution.backend, "headless");
+
+        const pause = await tools.get("experiment_run_pause")({ resultId: headlessResult.id });
+        assert.equal(pause.isError, true);
+        const cancel = JSON.parse((await tools.get("experiment_run_cancel")({ resultId: headlessResult.id })).content[0].text);
+        assert.equal(cancel.execution, "headless");
+        assert.deepEqual(calls.at(-1), ["cancel", headlessResult.id]);
+
+        const evidence = JSON.parse((await tools.get("experiment_result_get")({ resultId: headlessResult.id })).content[0].text);
+        assert.equal(evidence.resources.result, `fusion://experiment-results/${headlessResult.id}`);
+        assert.deepEqual(evidence.resources.logs, []);
+    } finally {
+        storageEvents.off("change", onChange);
+    }
+});
+
 test("EnvironmentDocument round-trip after MCP-style save", async () => {
     await withTempStorage(async (storage) => {
         await storage.createEnvironment({ id: "blank-a", name: "Blank", templateId: "blank" });
