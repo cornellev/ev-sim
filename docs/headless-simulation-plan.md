@@ -7,7 +7,7 @@ language-neutral API authority is
 
 ## Status
 
-- Current milestone: **PR 7 — implementation complete; Ubuntu CI gate pending**
+- Current milestone: **PR 7 — complete**
 - Next planned milestone: **PR 8 — Python Gymnasium and Stable-Baselines3 package**
 - Default implementation/review reasoning level: **Extra High**
 - Last updated: **2026-08-31**
@@ -20,7 +20,7 @@ Progress:
 - [x] PR 4 — Shared world description and headless vehicle plant
 - [x] PR 5 — State sensors and episode semantics
 - [x] PR 6 — Single-process runner, CLI, and artifacts
-- [ ] PR 7 — Process-isolated batch supervisor and gRPC (Ubuntu CI pending)
+- [x] PR 7 — Process-isolated batch supervisor and gRPC
 - [ ] PR 8 — Python Gymnasium and Stable-Baselines3 package
 - [ ] PR 9 — MCP, experiment, result, and logging integration
 - [ ] PR 10 — Deterministic CPU/BVH LiDAR
@@ -311,12 +311,13 @@ Gate:
 
 ### PR 7 — Process-isolated supervisor, gRPC, and limits
 
-Status: **Implementation complete; Ubuntu CI gate pending (2026-08-31).** The
+Status: **Complete (2026-08-31).** The
 Node 22 supervisor owns one non-detached child per environment, dynamically
 serves protocol 1.1 over Unix sockets or explicit insecure TCP, enforces
 resource/watchdog/restart policy, and preserves direct-runner hashes and
 packed observations. The focused 1/8/16/32-process, parity, failure, limit,
-cancellation, shutdown, backpressure, and orphan tests pass locally.
+cancellation, shutdown, backpressure, orphan, full-suite, and Ubuntu CI gates
+pass.
 
 Deliver:
 
