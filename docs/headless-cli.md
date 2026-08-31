@@ -14,6 +14,7 @@ cev-sim inspect output-directory
 cev-sim inspect output-directory/run.sflog
 cev-sim run --bundle bundle.json --output result-dir [--episode episode.json] [--actions actions.jsonl]
 cev-sim replay --bundle bundle.json --tape tape.json --output result-dir
+cev-sim gpu-preflight --config supervisor.json
 ```
 
 `validate` checks bundle integrity, semantic identity, episode profiles,
@@ -21,6 +22,13 @@ backend capabilities, world/vehicle/sensor prerequisites, and spaces without
 stepping or writing artifacts. `inspect` reads a bundle, atomic result
 directory, or native SFLog. `run` reads actions from `--actions` or stdin.
 `replay` reads the versioned policy tape described below.
+`gpu-preflight` launches the configured Chromium stack, validates production
+WebGL2/ANGLE identity and required formats, performs minimal camera/LiDAR
+render-readback, and verifies shared-memory round-trip, stale-generation
+rejection, and cleanup. Its single JSON result includes launch/sandbox and
+renderer provenance. It requires a supervisor config containing
+`renderer.chromiumExecutable`; software renderers cannot satisfy production
+availability.
 
 The local repository executable is `./bin/cev-sim.js`. Installed packages
 expose the `cev-sim` bin. JSON and JSONL are written to stdout; diagnostics are

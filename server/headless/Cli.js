@@ -9,6 +9,7 @@ import { inspectTarget } from "./Inspection.js";
 import { stringifyJsonProtocol } from "./JsonProtocol.js";
 import { readSupervisorConfig } from "./SupervisorConfig.js";
 import { startHeadlessSupervisor } from "./SupervisorServer.js";
+import { runGpuPreflight } from "./GpuPreflight.js";
 
 export const CLI_EXIT = Object.freeze({
     OK: 0,
@@ -33,6 +34,7 @@ function usage() {
         "cev-sim run --bundle <file> --output <directory> [--episode <file>] [--actions <jsonl-file>]",
         "cev-sim replay --bundle <file> --tape <file> --output <directory>",
         "cev-sim supervisor (--socket <path> | --tcp <host:port>) [--preset safety|permissive] [--config <json>] [--allow-remote-tcp]",
+        "cev-sim gpu-preflight --config <json>",
     ].join("\n");
 }
 
@@ -132,6 +134,14 @@ export async function main(argv = process.argv.slice(2), io = {}) {
             return CLI_EXIT.OK;
         }
         const { command, options, positional } = parsed;
+        if (command === "gpu-preflight") {
+            if (positional.length > 0 || !options.config || Object.keys(options).length !== 1) {
+                throw new HeadlessRunnerError("USAGE", "gpu-preflight requires exactly --config <json>.");
+            }
+            const config = await readSupervisorConfig(options.config);
+            writeJson(stdout, await runGpuPreflight(config.renderer || {}));
+            return CLI_EXIT.OK;
+        }
         if (command === "supervisor") {
             if (positional.length > 0) throw new HeadlessRunnerError("USAGE", "supervisor does not accept positional arguments.");
             const allowed = new Set(["socket", "tcp", "preset", "config", "allow-remote-tcp"]);
@@ -148,7 +158,7 @@ export async function main(argv = process.argv.slice(2), io = {}) {
             writeJson(stdout, {
                 kind: "cev-sim.headless.supervisor-listening",
                 version: 1,
-                protocol: { major: 1, minor: 1 },
+                protocol: { major: 1, minor: 2 },
                 address: running.address,
                 transport: running.config.listener.kind,
             });

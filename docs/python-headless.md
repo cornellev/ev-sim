@@ -1,6 +1,6 @@
 # Python Gymnasium and Stable-Baselines3 adapter
 
-The `python/` package is a synchronous client for the cev-sim protocol 1.1
+The `python/` package is a synchronous client for the cev-sim protocol 1.2
 headless supervisor. JavaScript remains the authoritative simulator; Python
 owns Gymnasium/SB3 integration and NumPy tensors only.
 
@@ -58,8 +58,31 @@ default route-safety profiles, bundle-selected physics, and deterministic
 state sensors. If the bundle manifest enables `lidar3d`, the client also adds
 the locked `DEFAULT_CPU_LIDAR_BACKEND` selection and verifies that the
 supervisor advertises `deterministic-cpu-bvh-lidar` version `1`. CPU point
-clouds are published to topics and SFLog; the Python observation remains the
-same flat measured-state dictionary.
+clouds are published to topics and SFLog; the default Python observation
+remains the same flat measured-state dictionary.
+
+Select `measured-perception` explicitly for policy-visible measured RGB and
+LiDAR range/incidence tensors:
+
+```python
+from cev_sim import CevSimEnv, EpisodeConfig, MEASURED_PERCEPTION_OBSERVATION_PROFILE
+
+env = CevSimEnv(
+    "camera-run-bundle.json",
+    output_dir="runs/perception",
+    target="unix:/tmp/cev-sim.sock",
+    episode=EpisodeConfig(
+        observation_profile=MEASURED_PERCEPTION_OBSERVATION_PROFILE,
+    ),
+)
+```
+
+Cameras select `DEFAULT_GPU_SENSOR_BACKEND`; LiDAR may use that backend or
+`DEFAULT_CPU_LIDAR_BACKEND`. The profile preserves every measured-state/task
+entry and adds `uint8[height,width,4]` camera values and
+`float32[elevation,azimuth,2]` LiDAR range/incidence values. Depth,
+semantic/instance IDs, detections, and other oracle products are never exposed
+to the policy.
 
 To connect without owning the supervisor:
 
@@ -110,13 +133,22 @@ is retained in `info["cev_sim.final_result"]`.
 
 ## Compatibility and failures
 
-The client validates protocol 1.1, runtime name, profile schemas, backend
+The client validates protocol 1.2, runtime name, profile schemas, backend
 versions, space layouts, tensor names, dtype, shape, endianness, packed length,
-boolean representation, and bounds. The CPU LiDAR kind, capability, version,
-config hash, and `DEFAULT_CPU_LIDAR_BACKEND` are public package exports. Inline
-observations remain state-only Box tensors in flat Dict observations. Shared
-memory, camera products, and wire layouts for discrete or nested spaces fail
-explicitly.
+boolean representation, and bounds. CPU/GPU LiDAR identities,
+`DEFAULT_CPU_LIDAR_BACKEND`, `DEFAULT_GPU_SENSOR_BACKEND`, and
+`MEASURED_PERCEPTION_OBSERVATION_PROFILE` are public package exports.
+
+On a protocol 1.2 Unix socket, tensors of at least 64 KiB use
+`grpc+unix+shared-memory-v1`; smaller tensors stay inline. Python opens the
+randomized region read-only without following symlinks where supported,
+requires a private regular file owned by the current user, maps the whole
+arena, validates the header before and after copying, and closes the mapping.
+Copying is the default so observations and SB3 terminal observations survive
+the next response generation. TCP and protocol 1.1 remain inline. Shared
+references on another transport, invalid/stale generations, token/sequence or
+tensor-spec mismatches, torn headers, truncated regions, and unsupported
+discrete/nested layouts fail explicitly.
 
 Malformed requests and infrastructure failures raise typed `CevSimError`
 subclasses: `CevSimConfigurationError`, `CevSimLaunchError`,

@@ -9,6 +9,12 @@ import {
     resolveEgoRoute,
 } from "./MeasuredStateObservation.js";
 import {
+    createMeasuredPerceptionObservationSpace,
+    MeasuredPerceptionObservationBuilder,
+    perceptionSensorDescriptor,
+} from "./MeasuredPerceptionObservation.js";
+import {
+    MEASURED_PERCEPTION_PROFILE_ID,
     measuredStateProfileRef,
     resolveObservationProfile,
     resolveRewardProfile,
@@ -25,6 +31,11 @@ import {
     CPU_LIDAR_BACKEND_KIND,
     createCpuLidarBackendSelection,
 } from "../sensors/CpuLidarBackend.js";
+import {
+    assertGpuSensorBackendSelection,
+    createGpuSensorBackendSelection,
+    GPU_SENSOR_BACKEND_KIND,
+} from "../sensors/GpuSensorBackend.js";
 import {
     ACTION_SPACE,
     compareUtf8,
@@ -75,11 +86,15 @@ function normalizeEpisodeSpec(resolvedRun, spec = {}) {
     const requestsLidar = resolvedRun.manifest.sensorRig?.sensors?.some(
         (sensor) => sensor.enabled !== false && sensor.type === "lidar3d",
     );
+    const requestsCamera = resolvedRun.manifest.sensorRig?.sensors?.some(
+        (sensor) => sensor.enabled !== false && sensor.type === "camera",
+    );
     const requestedBackends = spec.backendSelections ?? spec.backend_selections;
     const backends = ((Array.isArray(requestedBackends) && requestedBackends.length > 0) ? requestedBackends : [
         ...(resolvedRun.backendSelections || []),
         createStateSensorBackendSelection(),
         ...(requestsLidar ? [createCpuLidarBackendSelection()] : []),
+        ...(requestsCamera ? [createGpuSensorBackendSelection()] : []),
     ]).map(normalizedBackend);
     return {
         protocolMajor: 1,
@@ -171,6 +186,7 @@ export class HeadlessEpisode {
         this.spaces = null;
         this.previousProgress = 0;
         this.lastResult = null;
+        this.rendererClient = options.rendererClient ?? null;
     }
 
     _preflight(resolvedRun, inputSpec) {
@@ -194,7 +210,8 @@ export class HeadlessEpisode {
         if (!/^\d+$/.test(spec.resetSeed) || BigInt(spec.resetSeed) > 0xffff_ffff_ffff_ffffn) {
             throw new HeadlessEpisodeError("INVALID_REQUEST", "reset_seed must be a uint64 value.");
         }
-        resolveObservationProfile(spec.observationProfile);
+        const observationConfig = resolveObservationProfile(spec.observationProfile);
+        const measuredPerception = spec.observationProfile.id === MEASURED_PERCEPTION_PROFILE_ID;
         const rewardConfig = resolveRewardProfile(spec.rewardProfile);
         const normalized = spec.backendSelections.map(normalizedBackend);
         const sorted = [...normalized].sort(compareBackends);
@@ -210,23 +227,48 @@ export class HeadlessEpisode {
         const physics = normalized.find((entry) => entry.kind === 1);
         const stateSensors = normalized.find((entry) => entry.kind === 2);
         const cpuLidar = normalized.find((entry) => entry.kind === CPU_LIDAR_BACKEND_KIND);
+        const gpuSensors = normalized.find((entry) => entry.kind === GPU_SENSOR_BACKEND_KIND);
         const enabledSensors = (resolvedRun.manifest.sensorRig?.sensors || []).filter((sensor) => sensor.enabled !== false);
         const lidarSensors = enabledSensors.filter((sensor) => sensor.type === "lidar3d");
+        const cameraSensors = enabledSensors.filter((sensor) => sensor.type === "camera");
         const stateSensorConfigs = enabledSensors.filter((sensor) => getStateSensorModel(sensor.type));
         try {
             assertPhysicsBackendSelection(physics);
             assertStateSensorBackendSelection(stateSensors);
-            if (lidarSensors.length > 0) assertCpuLidarBackendSelection(cpuLidar);
+            if (cpuLidar) assertCpuLidarBackendSelection(cpuLidar);
+            if (gpuSensors) assertGpuSensorBackendSelection(gpuSensors);
         } catch (error) {
             throw new HeadlessEpisodeError("UNSUPPORTED_CAPABILITY", error.message);
         }
+        const cpuLidarCount = normalized.filter((entry) => entry.kind === CPU_LIDAR_BACKEND_KIND).length;
+        const gpuSensorCount = normalized.filter((entry) => entry.kind === GPU_SENSOR_BACKEND_KIND).length;
+        const lidarProviderValid = lidarSensors.length > 0
+            ? cpuLidarCount + gpuSensorCount >= 1
+            : cpuLidarCount === 0;
+        const gpuUseValid = cameraSensors.length > 0
+            ? gpuSensorCount === 1
+            : gpuSensorCount === (lidarSensors.length > 0 && cpuLidarCount === 0 ? 1 : 0);
+        if (lidarSensors.length > 0 && cpuLidarCount === 0 && gpuSensorCount === 0) {
+            throw new HeadlessEpisodeError(
+                "UNSUPPORTED_CAPABILITY",
+                "A CPU LiDAR backend selection is required unless the GPU sensor backend is selected.",
+            );
+        }
         if (normalized.filter((entry) => entry.kind === 1).length !== 1
             || normalized.filter((entry) => entry.kind === 2).length !== 1
-            || normalized.filter((entry) => entry.kind === CPU_LIDAR_BACKEND_KIND).length !== (lidarSensors.length > 0 ? 1 : 0)
-            || normalized.some((entry) => ![1, 2, CPU_LIDAR_BACKEND_KIND].includes(entry.kind))) {
-            throw new HeadlessEpisodeError("UNSUPPORTED_CAPABILITY", "Headless execution requires exactly one physics and state backend, plus one CPU LiDAR backend iff lidar3d is enabled.");
+            || cpuLidarCount > 1
+            || gpuSensorCount > 1
+            || !lidarProviderValid
+            || !gpuUseValid
+            || normalized.some((entry) => ![1, 2, CPU_LIDAR_BACKEND_KIND, GPU_SENSOR_BACKEND_KIND].includes(entry.kind))) {
+            throw new HeadlessEpisodeError("UNSUPPORTED_CAPABILITY", "Headless execution requires exactly one physics and state backend, a GPU backend for cameras, and exactly one selected LiDAR provider.");
         }
-        const unsupported = enabledSensors.filter((sensor) => !getStateSensorModel(sensor.type) && sensor.type !== "lidar3d");
+        if (gpuSensors && !this.rendererClient) {
+            throw new HeadlessEpisodeError("UNSUPPORTED_CAPABILITY", "GPU sensors require a supervisor-owned renderer sidecar.");
+        }
+        const unsupported = enabledSensors.filter((sensor) => (
+            !getStateSensorModel(sensor.type) && !["lidar3d", "camera"].includes(sensor.type)
+        ));
         if (unsupported.length) {
             throw new HeadlessEpisodeError("UNSUPPORTED_CAPABILITY", `Unsupported headless sensor(s): ${unsupported.map((sensor) => `${sensor.id}:${sensor.type}`).sort().join(", ")}.`);
         }
@@ -235,6 +277,9 @@ export class HeadlessEpisode {
         }
         if (lidarSensors.length > 0 && !resolvedRun.lidarGeometry) {
             throw new HeadlessEpisodeError("BUNDLE_INVALID", "LiDAR geometry twins are missing; re-resolve and export the run manifest.");
+        }
+        if (cameraSensors.length > 0 && !resolvedRun.renderScene) {
+            throw new HeadlessEpisodeError("BUNDLE_INVALID", "Camera render-scene data is missing; re-resolve and export the run manifest.");
         }
         const sensorIds = new Set();
         const vehicleIds = new Set((resolvedRun.manifest.initialState?.vehicles || []).map((vehicle) => vehicle.id));
@@ -267,22 +312,39 @@ export class HeadlessEpisode {
             throw new HeadlessEpisodeError("BUNDLE_INVALID", "The ego vehicle requires resolved footprint and kinematics data.");
         }
         const descriptors = stateSensorConfigs.map((sensor) => ({ id: sensor.id, type: sensor.type }));
+        const perceptionDescriptors = enabledSensors
+            .map(perceptionSensorDescriptor)
+            .filter(Boolean);
+        if (measuredPerception && perceptionDescriptors.length === 0) {
+            throw new HeadlessEpisodeError(
+                "BUNDLE_INVALID",
+                "measured-perception requires at least one measured RGB camera or measured LiDAR point-cloud product.",
+            );
+        }
         const spaces = {
             actionSpace: ACTION_SPACE,
-            observationSpace: createMeasuredStateObservationSpace(descriptors),
+            observationSpace: measuredPerception
+                ? createMeasuredPerceptionObservationSpace(descriptors, perceptionDescriptors)
+                : createMeasuredStateObservationSpace(descriptors),
         };
-        return { spec, rewardConfig, route, spaces };
+        return { spec, rewardConfig, route, spaces, observationConfig, measuredPerception };
     }
 
     async prepare(resolvedRun, episodeSpec = {}) {
         const prepared = this._preflight(resolvedRun, episodeSpec);
-        await this.kernel.prepare(resolvedRun, { episode: prepared.spec, requireStateSensors: true });
+        await this.kernel.prepare(resolvedRun, {
+            episode: prepared.spec,
+            requireStateSensors: true,
+            perceptionObservations: prepared.measuredPerception,
+        });
         this.resolvedRun = this.kernel.resolvedRun;
         this.episodeSpec = prepared.spec;
         this.rewardConfig = prepared.rewardConfig;
         this.route = prepared.route;
         this.spaces = prepared.spaces;
-        this.observationBuilder = new MeasuredStateObservationBuilder(this.runtime.devices, this.route, () => this.runtime.vehicles);
+        this.observationBuilder = prepared.measuredPerception
+            ? new MeasuredPerceptionObservationBuilder(this.runtime.devices, this.route, () => this.runtime.vehicles)
+            : new MeasuredStateObservationBuilder(this.runtime.devices, this.route, () => this.runtime.vehicles);
         this.lifecycleState = "prepared";
         return {
             episodeHash: this.kernel.episodeHash,
@@ -332,7 +394,7 @@ export class HeadlessEpisode {
         return 0;
     }
 
-    step(action) {
+    *_stepSequence(action) {
         if (this.lifecycleState !== "ready") {
             throw new HeadlessEpisodeError(this.terminal ? "EPISODE_TERMINAL" : "ENVIRONMENT_NOT_FOUND", this.terminal ? "Reset the terminal episode before stepping." : "Prepare and reset the episode before stepping.");
         }
@@ -363,7 +425,7 @@ export class HeadlessEpisode {
                 });
             }
             const previousStep = this.kernel.steps;
-            const continued = this.kernel.advanceStep();
+            const continued = yield;
             if (this.kernel.steps === previousStep) {
                 transition.simulationTime = true;
                 break;
@@ -434,6 +496,20 @@ export class HeadlessEpisode {
         };
         this.lastResult = result;
         return result;
+    }
+
+    step(action) {
+        const sequence = this._stepSequence(action);
+        let state = sequence.next();
+        while (!state.done) state = sequence.next(this.kernel.advanceStep());
+        return state.value;
+    }
+
+    async stepAsync(action) {
+        const sequence = this._stepSequence(action);
+        let state = sequence.next();
+        while (!state.done) state = sequence.next(await this.kernel.advanceStepAsync());
+        return state.value;
     }
 
     finalize(options = {}) {

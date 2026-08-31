@@ -12,7 +12,12 @@ from .bundle import BundleInput, LoadedBundle, load_bundle
 from .config import (
     CPU_LIDAR_KIND,
     DEFAULT_CPU_LIDAR_BACKEND,
+    DEFAULT_GPU_SENSOR_BACKEND,
     DEFAULT_STATE_SENSOR_BACKEND,
+    GPU_SENSOR_KIND,
+    MEASURED_PERCEPTION_PROFILE,
+    MEASURED_PERCEPTION_PROFILE_VERSION,
+    MEASURED_PERCEPTION_SCHEMA_HASH,
     MEASURED_STATE_PROFILE,
     MEASURED_STATE_PROFILE_VERSION,
     MEASURED_STATE_SCHEMA_HASH,
@@ -153,12 +158,18 @@ def _resolved_backends(bundle: LoadedBundle, configuration: EpisodeConfig) -> tu
         )
         if requests_lidar and not any(entry.kind == CPU_LIDAR_KIND for entry in backends):
             backends.append(DEFAULT_CPU_LIDAR_BACKEND)
+        requests_camera = isinstance(sensors, list) and any(
+            isinstance(sensor, Mapping) and sensor.get("enabled", True) is not False and sensor.get("type") == "camera"
+            for sensor in sensors
+        )
+        if requests_camera and not any(entry.kind == GPU_SENSOR_KIND for entry in backends):
+            backends.append(DEFAULT_GPU_SENSOR_BACKEND)
     backends.sort(key=lambda entry: (entry.kind, entry.capability_id.encode("utf-8")))
     return tuple(backends)
 
 
 class SupervisorClient:
-    """Synchronous protocol 1.1 connection with optional process ownership."""
+    """Synchronous protocol 1.2 connection with optional process ownership."""
 
     def __init__(
         self,
@@ -186,6 +197,7 @@ class SupervisorClient:
         self.stub: pb_grpc.HeadlessSimulationServiceStub | None = None
         self.capabilities: pb.GetCapabilitiesResponse | None = None
         self.closed = False
+        self.shared_memory_transport = False
         try:
             self.target = self._owned.start() if self._owned is not None else self._validate_target(target)
             self.channel = grpc.insecure_channel(
@@ -210,6 +222,9 @@ class SupervisorClient:
             )
             _raise_status(self.capabilities.error)
             self._validate_capabilities(self.capabilities)
+            self.shared_memory_transport = self.target.startswith("unix:") and (
+                "grpc+unix+shared-memory-v1" in self.capabilities.transports
+            )
         except Exception:
             self.close()
             raise
@@ -314,6 +329,12 @@ class SupervisorClient:
                 capabilities.observation_profiles,
             ),
             (
+                MEASURED_PERCEPTION_PROFILE,
+                MEASURED_PERCEPTION_PROFILE_VERSION,
+                MEASURED_PERCEPTION_SCHEMA_HASH,
+                capabilities.observation_profiles,
+            ),
+            (
                 ROUTE_SAFETY_PROFILE,
                 ROUTE_SAFETY_PROFILE_VERSION,
                 ROUTE_SAFETY_SCHEMA_HASH,
@@ -356,6 +377,8 @@ class SupervisorClient:
                 raise CevSimCompatibilityError("The locked deterministic state-sensor backend identity is required")
             if requested.kind == CPU_LIDAR_KIND and requested != DEFAULT_CPU_LIDAR_BACKEND:
                 raise CevSimCompatibilityError("The locked deterministic CPU LiDAR backend identity is required")
+            if requested.kind == GPU_SENSOR_KIND and requested != DEFAULT_GPU_SENSOR_BACKEND:
+                raise CevSimCompatibilityError("The locked Chromium WebGL2 sensor backend identity is required")
             capability = next(
                 (
                     entry
@@ -437,10 +460,20 @@ class CevSimBatch:
             raise CevSimCompatibilityError(
                 "PR 8 requires the normalized-speed-steering v1 little-endian float32[2] action space"
             )
-        if descriptor.observation_space.id != MEASURED_STATE_PROFILE or descriptor.observation_space.version != 1:
-            raise CevSimCompatibilityError("PR 8 requires the measured-state v1 observation space")
+        expected_observation = configuration.observation_profile
+        if (
+            descriptor.observation_space.id != expected_observation.id
+            or descriptor.observation_space.version != expected_observation.version
+        ):
+            raise CevSimCompatibilityError(
+                f"Supervisor returned {descriptor.observation_space.id}@{descriptor.observation_space.version}, "
+                f"expected {expected_observation.id}@{expected_observation.version}"
+            )
         self.action_codec = TensorMapCodec(descriptor.action_space, root_name="action")
-        self.observation_codec = TensorMapCodec(descriptor.observation_space)
+        self.observation_codec = TensorMapCodec(
+            descriptor.observation_space,
+            allow_shared_memory=client.shared_memory_transport,
+        )
         self.action_space = self.action_codec.space
         self.observation_space = self.observation_codec.space
         self.states = ["prepared"] * self.count
@@ -617,6 +650,7 @@ class CevSimBatch:
             for result in response.finalized:
                 _raise_status(result.error, environment_index=result.environment_index)
         finally:
+            self.observation_codec.close()
             self.states = ["closed"] * self.count
 
     def _validate_result_indexes(

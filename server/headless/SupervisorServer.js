@@ -64,7 +64,12 @@ export async function startHeadlessSupervisor(options = {}) {
     const config = options.config?.listener
         ? options.config
         : resolveSupervisorConfig(options);
-    const supervisor = options.supervisor ?? new HeadlessSupervisor({ ...config, workerFactory: options.workerFactory });
+    const supervisor = options.supervisor ?? new HeadlessSupervisor({
+        ...config,
+        workerFactory: options.workerFactory,
+        rendererPool: options.rendererPool,
+        rendererAdapterFactory: options.rendererAdapterFactory,
+    });
     const { grpc, service } = loadHeadlessGrpcSchema();
     const server = new grpc.Server({
         "grpc.max_receive_message_length": config.maxRpcMessageBytes,

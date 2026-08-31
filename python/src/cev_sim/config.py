@@ -9,12 +9,17 @@ from typing import Literal
 from .errors import CevSimConfigurationError
 
 PROTOCOL_MAJOR = 1
-PROTOCOL_MINOR = 1
+PROTOCOL_MINOR = 2
 
 MEASURED_STATE_PROFILE = "measured-state"
 MEASURED_STATE_PROFILE_VERSION = 1
 MEASURED_STATE_CONFIG_HASH = "5c81866540bbdf0031f6c700554d65c7becc6fe76b5abaa5e81a20f14aa99e6d"
 MEASURED_STATE_SCHEMA_HASH = "f1e342c273110d10b905550cc2f0f42cd5a0a7fc46d9e468edf9602fafd3e128"
+
+MEASURED_PERCEPTION_PROFILE = "measured-perception"
+MEASURED_PERCEPTION_PROFILE_VERSION = 1
+MEASURED_PERCEPTION_CONFIG_HASH = "e9f6ed5a2eb045c655b3955dec34e20e416e2439077e0c9497c30bcaf5c3ba12"
+MEASURED_PERCEPTION_SCHEMA_HASH = "303ad1c62c107a5e306e28d0a2f58e00efc7fda49a82838b720682ea77f71af1"
 
 ROUTE_SAFETY_PROFILE = "route-safety"
 ROUTE_SAFETY_PROFILE_VERSION = 1
@@ -30,6 +35,11 @@ CPU_LIDAR_KIND = 3
 CPU_LIDAR_CAPABILITY = "deterministic-cpu-bvh-lidar"
 CPU_LIDAR_VERSION = "1"
 CPU_LIDAR_CONFIG_HASH = "488de17bbf8ecf635c18841cd64a9638e011a94a8d9fbb93e4a53943f38bd96d"
+
+GPU_SENSOR_KIND = 4
+GPU_SENSOR_CAPABILITY = "chromium-webgl2-rendered-sensors"
+GPU_SENSOR_VERSION = "1"
+GPU_SENSOR_CONFIG_HASH = "cdbfea7d5698356687ca5820a6d54c932a815f199eb8a2b405b94fbe8183a5c1"
 
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 
@@ -81,6 +91,11 @@ DEFAULT_REWARD_PROFILE = ProfileRef(
     ROUTE_SAFETY_PROFILE_VERSION,
     ROUTE_SAFETY_CONFIG_HASH,
 )
+MEASURED_PERCEPTION_OBSERVATION_PROFILE = ProfileRef(
+    MEASURED_PERCEPTION_PROFILE,
+    MEASURED_PERCEPTION_PROFILE_VERSION,
+    MEASURED_PERCEPTION_CONFIG_HASH,
+)
 DEFAULT_STATE_SENSOR_BACKEND = BackendSelection(
     STATE_SENSOR_KIND,
     STATE_SENSOR_CAPABILITY,
@@ -92,6 +107,12 @@ DEFAULT_CPU_LIDAR_BACKEND = BackendSelection(
     CPU_LIDAR_CAPABILITY,
     CPU_LIDAR_VERSION,
     CPU_LIDAR_CONFIG_HASH,
+)
+DEFAULT_GPU_SENSOR_BACKEND = BackendSelection(
+    GPU_SENSOR_KIND,
+    GPU_SENSOR_CAPABILITY,
+    GPU_SENSOR_VERSION,
+    GPU_SENSOR_CONFIG_HASH,
 )
 
 
@@ -150,6 +171,8 @@ class ResourceLimits:
     step_wall_timeout_ms: int = 0
     episode_wall_timeout_ms: int = 0
     restart_budget: int = 0
+    max_shared_memory_bytes_per_environment: int = 0
+    max_gpu_bytes_per_environment: int = 0
 
     def __post_init__(self) -> None:
         uint32 = {"max_actors_per_environment", "max_sensors_per_environment", "restart_budget"}

@@ -12,7 +12,7 @@ Reset finalizes the active result and SFLog, resolves the newest saved revision,
 
 ## Portable bundles
 
-`cev-sim.run-bundle` version 1 includes the authoring manifest and its resolved environment, normalized `world: { description, hash }`, sorted backend selections, exact compiled script artifacts and bindings, ROS schemas, autonomy catalog metadata, contract endpoints, dependency hashes, full `resolvedHash`, and `simulationSemanticHash`. `dependencyHashes.world` repeats the canonical world SHA-256. Runs with enabled `lidar3d` additionally contain `lidarGeometry: { description, hash }` and `dependencyHashes.lidarGeometry`; non-LiDAR runs omit both. Import verifies old and new bundles in the exact form received; a pre-PR10 LiDAR bundle must be re-resolved because its portable geometry is unavailable. The additive fields do not change the v1 bundle or v9 manifest schemas. `resolvedHash` protects the entire portable bundle. `simulationSemanticHash` uses the world hash—not the authored environment hash—as environment identity, and projects out logging, artifact/resource policy, wall pacing, and presentation-only settings before feeding `episodeHash`. Existing dependencies are reused only when hashes match; conflicting resources receive an eight-character hash suffix and all references are remapped.
+`cev-sim.run-bundle` version 1 includes the authoring manifest and its resolved environment, normalized `world: { description, hash }`, sorted backend selections, exact compiled script artifacts and bindings, ROS schemas, autonomy catalog metadata, contract endpoints, dependency hashes, full `resolvedHash`, and `simulationSemanticHash`. `dependencyHashes.world` repeats the canonical world SHA-256. Runs with enabled `lidar3d` additionally contain `lidarGeometry: { description, hash }` and `dependencyHashes.lidarGeometry`; runs with enabled cameras additionally contain `renderScene: { description, hash }` and `dependencyHashes.renderScene`. The initial scene provider is `canonical-analytic@1`, with stable material, semantic, instance, and dynamic-node IDs. Bundles without those sensors omit the corresponding conditional resources. Import verifies old and new bundles in the exact form received; old LiDAR/camera bundles must be re-resolved when their portable resources are unavailable. The additive fields do not change the v1 bundle or v9 manifest schemas. `resolvedHash` protects the entire portable bundle. `simulationSemanticHash` uses the world hash—not the authored environment hash—as environment identity, and projects out logging, artifact/resource policy, wall pacing, and presentation-only settings before feeding `episodeHash`. Existing dependencies are reused only when hashes match; conflicting resources receive an eight-character hash suffix and all references are remapped.
 
 ## HTTP API
 
@@ -64,7 +64,7 @@ Camera `calibration.products` and LiDAR `calibration.products` gate expensive or
 
 GNSS treats map/odom position as ENU offset from the manifest datum. Wheel odometry integrates an independent measured `odom → base_link` estimate; oracle truth on `/oracle/vehicle/odometry` remains isolated for scoring.
 
-## Headless PR 5 profiles and spaces
+## Headless profiles, spaces, and sensor backends
 
 PR 5 leaves `cev-sim.run-manifest` version 9, `cev-sim.run-bundle` version 1,
 and Protobuf v1 unchanged. Episode-local profile presets are selected only by
@@ -82,10 +82,24 @@ forbidden when it is unused. Point clouds retain the existing metric-v2
 Float32 and PointCloud2 schemas; they route through telemetry/topics/SFLog and
 are not added to the measured-state policy observation.
 
+The GPU sensor backend is kind `GPU_SENSOR`, capability
+`chromium-webgl2-rendered-sensors`, version `1`, with config hash
+`cdbfea7d5698356687ca5820a6d54c932a815f199eb8a2b405b94fbe8183a5c1`.
+It is available only after the supervisor probes a hardware-backed WebGL2
+context with the required float target and asynchronous readback support.
+Cameras require it; LiDAR may use either the CPU or GPU backend for the same
+logical measured tensor. Chromium, ANGLE, GPU, and driver identity are runtime
+provenance and define replay scope, but are not episode semantics.
+
 - Observation `measured-state` v1 has one preset. Its config hash is
   `5c81866540bbdf0031f6c700554d65c7becc6fe76b5abaa5e81a20f14aa99e6d`
   and schema hash is
   `f1e342c273110d10b905550cc2f0f42cd5a0a7fc46d9e468edf9602fafd3e128`.
+- Observation `measured-perception` v1 contains every `measured-state` and task
+  tensor plus measured camera RGBA and LiDAR range/incidence. Its config hash
+  is `e9f6ed5a2eb045c655b3955dec34e20e416e2439077e0c9497c30bcaf5c3ba12`
+  and schema hash is
+  `303ad1c62c107a5e306e28d0a2f58e00efc7fda49a82838b720682ea77f71af1`.
 - Reward `route-safety` v1 has the 16 canonical combinations of collision,
   off-road, and wrong-way termination plus optional smoothness. The default
   terminates on collision and off-road, penalizes but does not terminate on
@@ -116,6 +130,8 @@ Every enabled state sensor is keyed by its stable ID:
 | `task/value` | `float32[7]`: progress ratio, remaining ratio, signed cross-track error, heading error, route distance remaining, off-road, wrong-way |
 | `task/validity` | `bool[7]` |
 | `task/{sequence,is_new,age_steps}` | `uint64[1]`, `bool[1]`, `uint64[1]` |
+| `sensors/<camera-id>/value` (`measured-perception`) | `uint8[height,width,4]`: measured RGBA after distortion/noise/dropout |
+| `sensors/<lidar-id>/value` (`measured-perception`) | `float32[elevation,azimuth,2]`: measured range/incidence; zero range is no hit |
 
 Before a sensor's first delivered sample its value is zero, validity and
 `is_new` are false, and sequence/age are zero. GNSS outage delivers a new

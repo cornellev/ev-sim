@@ -194,7 +194,7 @@ class BackendCapability(_message.Message):
     def __init__(self, id: _Optional[str] = ..., version: _Optional[str] = ..., kind: _Optional[_Union[BackendKind, str]] = ..., description: _Optional[str] = ..., sensor_types: _Optional[_Iterable[str]] = ..., features: _Optional[_Iterable[str]] = ..., available: _Optional[bool] = ..., unavailable_reason: _Optional[str] = ..., determinism_scope: _Optional[str] = ...) -> None: ...
 
 class GetCapabilitiesResponse(_message.Message):
-    __slots__ = ("protocol", "runtime_name", "runtime_version", "platform", "architecture", "backends", "observation_profiles", "reward_profiles", "transports", "error")
+    __slots__ = ("protocol", "runtime_name", "runtime_version", "platform", "architecture", "backends", "observation_profiles", "reward_profiles", "transports", "error", "diagnostic_json")
     PROTOCOL_FIELD_NUMBER: _ClassVar[int]
     RUNTIME_NAME_FIELD_NUMBER: _ClassVar[int]
     RUNTIME_VERSION_FIELD_NUMBER: _ClassVar[int]
@@ -205,6 +205,7 @@ class GetCapabilitiesResponse(_message.Message):
     REWARD_PROFILES_FIELD_NUMBER: _ClassVar[int]
     TRANSPORTS_FIELD_NUMBER: _ClassVar[int]
     ERROR_FIELD_NUMBER: _ClassVar[int]
+    DIAGNOSTIC_JSON_FIELD_NUMBER: _ClassVar[int]
     protocol: ProtocolVersion
     runtime_name: str
     runtime_version: str
@@ -215,7 +216,8 @@ class GetCapabilitiesResponse(_message.Message):
     reward_profiles: _containers.RepeatedCompositeFieldContainer[ProfileCapability]
     transports: _containers.RepeatedScalarFieldContainer[str]
     error: ErrorStatus
-    def __init__(self, protocol: _Optional[_Union[ProtocolVersion, _Mapping]] = ..., runtime_name: _Optional[str] = ..., runtime_version: _Optional[str] = ..., platform: _Optional[str] = ..., architecture: _Optional[str] = ..., backends: _Optional[_Iterable[_Union[BackendCapability, _Mapping]]] = ..., observation_profiles: _Optional[_Iterable[_Union[ProfileCapability, _Mapping]]] = ..., reward_profiles: _Optional[_Iterable[_Union[ProfileCapability, _Mapping]]] = ..., transports: _Optional[_Iterable[str]] = ..., error: _Optional[_Union[ErrorStatus, _Mapping]] = ...) -> None: ...
+    diagnostic_json: bytes
+    def __init__(self, protocol: _Optional[_Union[ProtocolVersion, _Mapping]] = ..., runtime_name: _Optional[str] = ..., runtime_version: _Optional[str] = ..., platform: _Optional[str] = ..., architecture: _Optional[str] = ..., backends: _Optional[_Iterable[_Union[BackendCapability, _Mapping]]] = ..., observation_profiles: _Optional[_Iterable[_Union[ProfileCapability, _Mapping]]] = ..., reward_profiles: _Optional[_Iterable[_Union[ProfileCapability, _Mapping]]] = ..., transports: _Optional[_Iterable[str]] = ..., error: _Optional[_Union[ErrorStatus, _Mapping]] = ..., diagnostic_json: _Optional[bytes] = ...) -> None: ...
 
 class RunBundle(_message.Message):
     __slots__ = ("bundle_id", "resolved_hash", "canonical_json", "simulation_semantic_hash")
@@ -274,7 +276,7 @@ class EpisodeSpec(_message.Message):
     def __init__(self, environment_index: _Optional[int] = ..., environment_id: _Optional[str] = ..., run_bundle_id: _Optional[str] = ..., reset_seed: _Optional[int] = ..., action_repeat: _Optional[int] = ..., max_episode_steps: _Optional[int] = ..., observation_profile: _Optional[_Union[ProfileRef, _Mapping]] = ..., reward_profile: _Optional[_Union[ProfileRef, _Mapping]] = ..., backend_selections: _Optional[_Iterable[_Union[BackendSelection, _Mapping]]] = ...) -> None: ...
 
 class ResourceLimits(_message.Message):
-    __slots__ = ("max_rss_bytes_per_environment", "max_heap_bytes_per_environment", "max_actors_per_environment", "max_sensors_per_environment", "max_observation_bytes", "max_queue_bytes", "max_artifact_bytes", "step_wall_timeout_ms", "episode_wall_timeout_ms", "restart_budget")
+    __slots__ = ("max_rss_bytes_per_environment", "max_heap_bytes_per_environment", "max_actors_per_environment", "max_sensors_per_environment", "max_observation_bytes", "max_queue_bytes", "max_artifact_bytes", "step_wall_timeout_ms", "episode_wall_timeout_ms", "restart_budget", "max_shared_memory_bytes_per_environment", "max_gpu_bytes_per_environment")
     MAX_RSS_BYTES_PER_ENVIRONMENT_FIELD_NUMBER: _ClassVar[int]
     MAX_HEAP_BYTES_PER_ENVIRONMENT_FIELD_NUMBER: _ClassVar[int]
     MAX_ACTORS_PER_ENVIRONMENT_FIELD_NUMBER: _ClassVar[int]
@@ -285,6 +287,8 @@ class ResourceLimits(_message.Message):
     STEP_WALL_TIMEOUT_MS_FIELD_NUMBER: _ClassVar[int]
     EPISODE_WALL_TIMEOUT_MS_FIELD_NUMBER: _ClassVar[int]
     RESTART_BUDGET_FIELD_NUMBER: _ClassVar[int]
+    MAX_SHARED_MEMORY_BYTES_PER_ENVIRONMENT_FIELD_NUMBER: _ClassVar[int]
+    MAX_GPU_BYTES_PER_ENVIRONMENT_FIELD_NUMBER: _ClassVar[int]
     max_rss_bytes_per_environment: int
     max_heap_bytes_per_environment: int
     max_actors_per_environment: int
@@ -295,7 +299,9 @@ class ResourceLimits(_message.Message):
     step_wall_timeout_ms: int
     episode_wall_timeout_ms: int
     restart_budget: int
-    def __init__(self, max_rss_bytes_per_environment: _Optional[int] = ..., max_heap_bytes_per_environment: _Optional[int] = ..., max_actors_per_environment: _Optional[int] = ..., max_sensors_per_environment: _Optional[int] = ..., max_observation_bytes: _Optional[int] = ..., max_queue_bytes: _Optional[int] = ..., max_artifact_bytes: _Optional[int] = ..., step_wall_timeout_ms: _Optional[int] = ..., episode_wall_timeout_ms: _Optional[int] = ..., restart_budget: _Optional[int] = ...) -> None: ...
+    max_shared_memory_bytes_per_environment: int
+    max_gpu_bytes_per_environment: int
+    def __init__(self, max_rss_bytes_per_environment: _Optional[int] = ..., max_heap_bytes_per_environment: _Optional[int] = ..., max_actors_per_environment: _Optional[int] = ..., max_sensors_per_environment: _Optional[int] = ..., max_observation_bytes: _Optional[int] = ..., max_queue_bytes: _Optional[int] = ..., max_artifact_bytes: _Optional[int] = ..., step_wall_timeout_ms: _Optional[int] = ..., episode_wall_timeout_ms: _Optional[int] = ..., restart_budget: _Optional[int] = ..., max_shared_memory_bytes_per_environment: _Optional[int] = ..., max_gpu_bytes_per_environment: _Optional[int] = ...) -> None: ...
 
 class ArtifactPolicy(_message.Message):
     __slots__ = ("profile", "output_uri", "full_sflog_sample_rate", "full_sflog_on_failure")

@@ -152,7 +152,7 @@ async function waitFor(predicate, timeoutMs = 10_000) {
     throw new Error(`Condition was not met within ${timeoutMs} ms.`);
 }
 
-test("protocol 1.1, dynamic schema, presets, config precedence, and TCP protection", async () => {
+test("protocol 1.2, dynamic schema, presets, config precedence, and TCP protection", async () => {
     const { service } = loadHeadlessGrpcSchema();
     assert.ok(service.service.CreateBatch);
     assert.equal(SUPERVISOR_PRESETS.safety.maxRpcMessageBytes, 64 * 1024 * 1024);
@@ -277,7 +277,10 @@ test("insecure TCP requires opt-in for remote hosts and works on loopback", asyn
     });
     const response = await clientCall(client, "getCapabilities", { clientProtocol: { major: 1, minor: 0 } });
     assert.equal(response.error.code, 0);
-    assert.deepEqual(response.protocol, { major: 1, minor: 1 });
+    assert.deepEqual(response.protocol, { major: 1, minor: 2 });
+    const diagnostics = JSON.parse(Buffer.from(response.diagnosticJson).toString("utf8"));
+    assert.equal(diagnostics.gpuProbe.available, false);
+    assert.equal(diagnostics.gpuRenderer.browserLaunches, 0);
     const lidar = response.backends.find((backend) => backend.kind === 3);
     assert.equal(lidar.id, "deterministic-cpu-bvh-lidar");
     assert.equal(lidar.version, "1");
@@ -303,7 +306,7 @@ test("multiple batches coexist and malformed requests fail in response envelopes
     assert.deepEqual(health.environments.map((entry) => `${entry.batchId}:${entry.environmentIndex}`), [...health.environments]
         .sort((left, right) => Buffer.from(left.batchId).compare(Buffer.from(right.batchId)) || left.environmentIndex - right.environmentIndex)
         .map((entry) => `${entry.batchId}:${entry.environmentIndex}`));
-    const protocol = await call("getCapabilities", { clientProtocol: { major: 1, minor: 2 } });
+    const protocol = await call("getCapabilities", { clientProtocol: { major: 1, minor: 3 } });
     assert.equal(protocol.error.code, 2);
     const malformed = await call("createBatch", {
         clientProtocol: { major: 1, minor: 1 },
@@ -692,7 +695,7 @@ test("the supervisor CLI shuts down cleanly and removes its Unix socket", { time
     child.stderr.on("data", (chunk) => { stderr += chunk; });
     t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL"); });
     const listening = JSON.parse(await firstLine(child.stdout));
-    assert.equal(listening.protocol.minor, 1);
+    assert.equal(listening.protocol.minor, 2);
     assert.equal(listening.transport, "socket");
     await fs.access(socket);
     child.kill("SIGTERM");

@@ -24,12 +24,14 @@ export class WorkerHandle {
         killGraceMs = 5_000,
         onHealth = null,
         onExit = null,
+        rendererHandler = null,
     } = {}) {
         this.limits = limits;
         this.shutdownGraceMs = shutdownGraceMs;
         this.killGraceMs = killGraceMs;
         this.onHealth = onHealth;
         this.onExit = onExit;
+        this.rendererHandler = rendererHandler;
         this.nextRequestId = 1;
         this.pending = null;
         this.pendingBytes = 0;
@@ -61,6 +63,10 @@ export class WorkerHandle {
             this.health = message.health;
             this.onHealth?.(message.health, this);
         }
+        if (message?.kind === "cev-sim.renderer-request") {
+            this._rendererRequest(message);
+            return;
+        }
         if (message?.kind !== "cev-sim.worker-response") return;
         if (!this.pending || message.requestId !== this.pending.requestId) return;
         const pending = this.pending;
@@ -70,6 +76,31 @@ export class WorkerHandle {
         pending.removeAbort?.();
         if (message.error) pending.reject(workerError(message.error));
         else pending.resolve(message.result);
+    }
+
+    async _rendererRequest(message) {
+        let result;
+        let error = null;
+        try {
+            if (!this.rendererHandler) throw supervisorError("UNSUPPORTED_CAPABILITY", "GPU renderer service is unavailable.");
+            result = await this.rendererHandler(message.operation, message.payload);
+        } catch (caught) {
+            error = {
+                name: caught?.name || "Error",
+                code: caught?.code || "WORKER_CRASHED",
+                message: caught?.message || "Renderer request failed.",
+                details: caught?.details ?? null,
+                infrastructureFailure: caught?.infrastructureFailure === true,
+            };
+        }
+        if (!this.exited && this.child.connected) {
+            this.child.send({
+                kind: "cev-sim.renderer-response",
+                requestId: message.requestId,
+                result,
+                error,
+            });
+        }
     }
 
     _failPending(error) {

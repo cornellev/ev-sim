@@ -20,6 +20,8 @@ export const RESOURCE_FIELD_NAMES = Object.freeze([
     "stepWallTimeoutMs",
     "episodeWallTimeoutMs",
     "restartBudget",
+    "maxSharedMemoryBytesPerEnvironment",
+    "maxGpuBytesPerEnvironment",
 ]);
 
 const SAFETY_LIMITS = Object.freeze({
@@ -33,6 +35,8 @@ const SAFETY_LIMITS = Object.freeze({
     stepWallTimeoutMs: 30_000,
     episodeWallTimeoutMs: 6 * 60 * 60 * 1000,
     restartBudget: 1,
+    maxSharedMemoryBytesPerEnvironment: 128 * MiB,
+    maxGpuBytesPerEnvironment: 256 * MiB,
 });
 
 const PERMISSIVE_LIMITS = Object.freeze({
@@ -46,6 +50,8 @@ const PERMISSIVE_LIMITS = Object.freeze({
     stepWallTimeoutMs: 120_000,
     episodeWallTimeoutMs: 24 * 60 * 60 * 1000,
     restartBudget: 3,
+    maxSharedMemoryBytesPerEnvironment: 512 * MiB,
+    maxGpuBytesPerEnvironment: 1 * GiB,
 });
 
 export const SUPERVISOR_PRESETS = Object.freeze({
@@ -75,6 +81,24 @@ function normalizeLimits(value, fallback, label) {
             : finiteInteger(source[field], `${label}.${field}`, { minimum: field === "restartBudget" ? 0 : 1 });
     }
     return Object.freeze(result);
+}
+
+function normalizeRenderer(value = {}) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw invalid("renderer must be an object.");
+    const launchArgs = value.launchArgs ?? [];
+    if (!Array.isArray(launchArgs) || launchArgs.some((entry) => typeof entry !== "string" || !entry)) {
+        throw invalid("renderer.launchArgs must contain non-empty strings.");
+    }
+    return Object.freeze({
+        chromiumExecutable: value.chromiumExecutable ? String(value.chromiumExecutable) : "",
+        contextPoolSize: finiteInteger(value.contextPoolSize ?? 1, "renderer.contextPoolSize", { maximum: 64 }),
+        sceneCacheBytes: finiteInteger(value.sceneCacheBytes ?? 512 * MiB, "renderer.sceneCacheBytes"),
+        globalGpuBytes: finiteInteger(value.globalGpuBytes ?? 2 * GiB, "renderer.globalGpuBytes"),
+        angle: value.angle ? String(value.angle) : "",
+        disableSandbox: Boolean(value.disableSandbox),
+        allowSoftwareRenderer: Boolean(value.allowSoftwareRenderer),
+        launchArgs: Object.freeze([...launchArgs]),
+    });
 }
 
 export async function readSupervisorConfig(filePath) {
@@ -141,6 +165,7 @@ export function resolveSupervisorConfig(options = {}) {
         killGraceMs: finiteInteger(supplied.killGraceMs ?? 5_000, "killGraceMs"),
         listener: socket ? { kind: "socket", path: String(socket) } : { kind: "tcp", ...tcp },
         allowRemoteTcp,
+        renderer: normalizeRenderer(supplied.renderer),
     });
 }
 

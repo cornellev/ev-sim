@@ -68,6 +68,11 @@ test("episode semantics stay separate from operational and artifact policy", asy
     const create = declarationBody(proto, "message", "CreateBatchRequest");
     assert.match(create, /\bResourceLimits resource_limits\b/);
     assert.match(create, /\bArtifactPolicy artifact_policy\b/);
+    const limits = declarationBody(proto, "message", "ResourceLimits");
+    assert.match(limits, /uint64 max_shared_memory_bytes_per_environment = 11;/);
+    assert.match(limits, /uint64 max_gpu_bytes_per_environment = 12;/);
+    const capabilities = declarationBody(proto, "message", "GetCapabilitiesResponse");
+    assert.match(capabilities, /bytes diagnostic_json = 11;/);
 
     const errors = declarationBody(proto, "enum", "ErrorCode");
     assert.match(errors, /ERROR_CODE_OK = 0;/);

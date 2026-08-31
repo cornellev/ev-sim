@@ -215,6 +215,7 @@ export function packPointCloud2DataJs({
     sampleRange = (range) => range,
     shouldDrop = () => false,
     onPointDrop = () => {},
+    onMeasured = () => {},
     bufferEncoding = "legacy-normalized",
 }) {
     // Single pass: shouldDrop / sampleRange may consume RNG and must not run twice.
@@ -225,12 +226,14 @@ export function packPointCloud2DataJs({
     forEachLidarHit(buffer, calibration, bufferEncoding, ({ offset, index, theta, phi, rangeLimit, legacy }) => {
         if (shouldDrop(index)) {
             onPointDrop(index);
+            onMeasured(index, 0, 0, false);
             return;
         }
         const rawDistance = legacy ? (1 - Number(buffer[offset])) * rangeLimit : Number(buffer[offset]);
         const measured = Math.max(0, Math.min(rangeLimit, sampleRange(rawDistance, index)));
         const direction = lidarDirectionRep103(theta, phi);
         const intensity = Math.max(0, Math.min(1, Number(legacy ? buffer[offset] : buffer[offset + 1]) || 0));
+        onMeasured(index, measured, intensity, true);
         const byteOffset = width * 16;
         view.setFloat32(byteOffset, measured * direction.x, true);
         view.setFloat32(byteOffset + 4, measured * direction.y, true);
@@ -295,6 +298,7 @@ export function buildPointCloud2(options = {}) {
         sampleRange = (range) => range,
         shouldDrop = () => false,
         onPointDrop = () => {},
+        onMeasured = () => {},
         bufferEncoding = "legacy-normalized",
     } = options;
     const packed = packPointCloud2DataJs({
@@ -303,6 +307,7 @@ export function buildPointCloud2(options = {}) {
         sampleRange,
         shouldDrop,
         onPointDrop,
+        onMeasured,
         bufferEncoding,
     });
     return {

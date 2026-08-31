@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+import os
+import struct
 from collections import OrderedDict
 
 import gymnasium as gym
@@ -9,6 +12,18 @@ import pytest
 from cev_sim.errors import CevSimCompatibilityError, CevSimConfigurationError
 from cev_sim.headless.v1 import headless_pb2 as pb
 from cev_sim.tensors import TensorMapCodec, pack_named_tensor, space_from_proto
+
+
+def _shared_header(region: str, spec: pb.TensorSpec, payload: bytes, generation: int, sequence: int) -> bytes:
+    header = bytearray(192)
+    header[:8] = b"CEVSHM1\x00"
+    struct.pack_into("<II", header, 8, 1, 192)
+    header[16:48] = hashlib.sha256(os.path.basename(region).encode()).digest()
+    struct.pack_into("<QQQ", header, 48, generation, sequence, len(payload))
+    identity = f"{int(spec.dtype)}:{','.join(str(int(value)) for value in spec.shape)}:{int(spec.byte_order)}"
+    header[72:104] = hashlib.sha256(identity.encode()).digest()
+    header[104:136] = hashlib.sha256(payload).digest()
+    return bytes(header)
 
 
 def box_spec(name: str, scalar_type: int, shape: tuple[int, ...], low: float = -100, high: float = 100) -> pb.SpaceSpec:
@@ -195,3 +210,48 @@ def test_action_encoding_validates_shape_finiteness_and_bounds() -> None:
 def test_non_box_wire_spaces_fail_explicitly() -> None:
     with pytest.raises(CevSimCompatibilityError, match="does not define"):
         space_from_proto(pb.SpaceSpec(id="discrete", version=1, discrete=pb.DiscreteSpace(count=2)))
+
+
+def test_shared_tensor_codec_maps_whole_region_copies_and_rejects_stale_refs(tmp_path: object) -> None:
+    root = os.fspath(tmp_path)
+    region = os.path.join(root, "environment-token.arena")
+    specification = box_spec("value", pb.SCALAR_TYPE_FLOAT32, (2,))
+    spec = specification.box.tensor
+    first_payload = np.asarray([1.25, -2.5], dtype="<f4").tobytes()
+    second_payload = np.asarray([3.5, 4.5], dtype="<f4").tobytes()
+    first_offset = 192
+    second_header_offset = 512
+    second_offset = second_header_offset + 192
+    arena = bytearray(1024)
+    arena[:192] = _shared_header(region, spec, first_payload, 1, 1)
+    arena[first_offset : first_offset + len(first_payload)] = first_payload
+    arena[second_header_offset:second_offset] = _shared_header(region, spec, second_payload, 2, 2)
+    arena[second_offset : second_offset + len(second_payload)] = second_payload
+    with open(region, "wb") as file:
+        file.write(arena)
+    os.chmod(region, 0o600)
+
+    def mapped(offset: int, generation: int, sequence: int) -> pb.TensorMap:
+        tensor = pb.PackedTensor(spec=spec)
+        tensor.payload.shared_memory.CopyFrom(
+            pb.SharedMemoryRef(
+                region_name=region,
+                generation=generation,
+                offset_bytes=offset,
+                length_bytes=len(first_payload),
+                sequence=sequence,
+            )
+        )
+        return pb.TensorMap(entries=[pb.NamedTensor(name="value", tensor=tensor)])
+
+    codec = TensorMapCodec(specification, root_name="value", allow_shared_memory=True)
+    first = codec.decode(mapped(first_offset, 1, 1))
+    np.testing.assert_allclose(first, [1.25, -2.5])
+    second = codec.decode(mapped(second_offset, 2, 2))
+    np.testing.assert_allclose(second, [3.5, 4.5])
+    with pytest.raises(CevSimCompatibilityError, match="stale"):
+        codec.decode(mapped(first_offset, 1, 1))
+    with open(region, "r+b") as file:
+        file.seek(first_offset)
+        file.write(b"\x00" * len(first_payload))
+    np.testing.assert_allclose(first, [1.25, -2.5], err_msg="decoded observations must own their memory")

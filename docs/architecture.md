@@ -127,10 +127,10 @@ uncertain dispatches replace the process and require a reset; they are never
 fabricated as RL transitions.
 
 PR 8 adds the [`cev-sim` Python package](python-headless.md) as a synchronous
-protocol 1.1 client; it does not contain simulator logic. `CevSimEnv` maps a
+client (extended to protocol 1.2 by PR 11); it does not contain simulator logic. `CevSimEnv` maps a
 single supervisor environment to Gymnasium, while `CevSimVecEnv` maps one
 process-isolated batch to the Stable-Baselines3 `VecEnv` contract. Both use
-strict inline NumPy/Protobuf codecs for the measured-state space, preserve
+strict NumPy/Protobuf codecs for measured spaces, preserve
 terminal observations, and share deterministic reset-seed rules. A supplied
 Unix or insecure TCP endpoint remains externally owned. Explicit local launch
 creates a private Unix socket and owns batch, channel, supervisor process
@@ -162,8 +162,27 @@ The `deterministic-cpu-bvh-lidar` v1 backend lazily imports Three.js and
 indexes, and performs instantaneous fixed-step scans from capture-time poses.
 LiDAR products use the existing metric-v2 and PointCloud2 paths and flow to
 scripts, telemetry, topics, and SFLog. `MeasuredStateObservationBuilder`
-continues to consume only IMU, GNSS, wheel odometry, and task signals. Camera,
-shared-memory transport, and GPU pooling remain PR 11 scope.
+continues to consume only IMU, GNSS, wheel odometry, and task signals.
+
+PR 11 adds one supervisor-owned `PooledGpuRenderer`. It dynamically imports
+`playwright-core` only when an operator configures Chromium, probes a
+hardware-backed WebGL2/ANGLE stack, owns one browser page and a fixed context
+pool, and caches canonical analytic render scenes by resource hash. Workers
+remain authoritative for fixed-step capture time, ordering, transforms, RNG,
+latency, queues, and sync groups; immutable capture groups cross the renderer
+bridge and are published atomically. The async kernel entry point awaits this
+sensor phase at the same ordering point while synchronous browser, state-only,
+and CPU-LiDAR paths remain intact.
+
+Protocol 1.2 adds the opt-in `measured-perception` profile and local
+`grpc+unix+shared-memory-v1` transport. Per-environment private file-backed
+arenas carry tensors of at least 64 KiB through validated, three-generation
+references; smaller tensors and all protocol 1.1/TCP responses stay inline.
+Python maps each arena read-only and copies before returning NumPy arrays.
+Camera RGBA and LiDAR range/incidence are measured policy inputs, while depth,
+semantic/instance IDs, detections, and other oracle products remain excluded.
+GPU crashes, timeouts, context loss, and invalid arena state use the existing
+infrastructure-failure and reset-required boundary.
 
 Physics pins Rapier `0.19.3` under capability
 `rapier3d-swept-prism-v1`. Rapier owns fixed and kinematic bodies, while

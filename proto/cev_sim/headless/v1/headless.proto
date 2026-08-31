@@ -137,6 +137,9 @@ message GetCapabilitiesResponse {
   repeated ProfileCapability reward_profiles = 8;
   repeated string transports = 9;
   ErrorStatus error = 10;
+  // Canonical UTF-8 JSON with operational backend probe diagnostics. This is
+  // provenance only and never contributes to an episode-semantic hash.
+  bytes diagnostic_json = 11;
 }
 
 // Canonical UTF-8 JSON for an immutable cev-sim.run-bundle.
@@ -193,6 +196,8 @@ message ResourceLimits {
   uint64 step_wall_timeout_ms = 8;
   uint64 episode_wall_timeout_ms = 9;
   uint32 restart_budget = 10;
+  uint64 max_shared_memory_bytes_per_environment = 11;
+  uint64 max_gpu_bytes_per_environment = 12;
 }
 
 // Logging does not alter simulation semantics. Evaluation records full SFLog;

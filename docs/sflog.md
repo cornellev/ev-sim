@@ -419,7 +419,7 @@ A prepared run calls `_ensureRecording` before the first step. Manifest `logging
 | `optional` | Logging starts automatically; storage or finalize failure degrades the run and emits `optional-recording-unavailable` / `optional-recording-finalization-failed` |
 | `disabled` | No SFLog session |
 
-The default profile id is `simulation-run-full-sensors`. Run sessions use `timeBase: "simulation"` and stamp metadata with run id, manifest identity, definition/resolved hashes, and browser/WebGL provenance. Headless LiDAR provenance includes the locked CPU/BVH backend selection, and measured and semantic PointCloud2 records use their capture simulation timestamps. Encoded ROS sensor bytes are the same bytes published on the wire; replay reads those samples instead of recapturing on the replay GPU.
+The default profile id is `simulation-run-full-sensors`. Run sessions use `timeBase: "simulation"` and stamp metadata with run id, manifest identity, definition/resolved hashes, and browser/WebGL provenance. Headless LiDAR provenance includes the locked CPU/BVH backend selection. GPU runs additionally retain the pooled-renderer diagnostic snapshot, Chromium and sidecar versions, launch arguments and sandbox state, ANGLE/WebGL renderer, GPU/driver identity, required format support, and fixed context count. Final result diagnostics retain the same determinism-scope evidence. Measured and semantic PointCloud2 records use their capture simulation timestamps. Encoded ROS sensor bytes are the same bytes published on the wire; replay reads those samples instead of recapturing on the replay GPU.
 
 Reset finalizes the active result and SFLog, then prepares a replacement run paused at step zero.
 

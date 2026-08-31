@@ -33,7 +33,7 @@ def _finalize_resources(batch: CevSimBatch | None, client: SupervisorClient | No
 
 
 class CevSimEnv(gym.Env[dict[str, np.ndarray[Any, Any]], np.ndarray[Any, Any]]):
-    """One Gymnasium environment backed by a protocol 1.1 supervisor batch."""
+    """One Gymnasium environment backed by a protocol 1.2 supervisor batch."""
 
     metadata = {"render_modes": []}
     render_mode = None

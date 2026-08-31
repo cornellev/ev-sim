@@ -23,6 +23,7 @@ import { buildCalibrationBundle } from "../../app/autonomy/CalibrationBundle.js"
 import { computeSimulationSemanticHash } from "../../app/simulation/kernel/SimulationHashes.js";
 import { createWorldResource } from "../../app/simulation/world/WorldDescription.js";
 import { createLidarGeometryResource } from "../../app/simulation/lidar/LidarGeometry.js";
+import { createRenderSceneResource } from "../../app/simulation/render/RenderScene.js";
 import {
     createPhysicsBackendSelection,
     sortBackendSelections,
@@ -1125,6 +1126,9 @@ export class StorageService {
         const lidarGeometry = manifest.sensorRig.sensors.some(
             (sensor) => sensor.enabled !== false && sensor.type === "lidar3d",
         ) ? createLidarGeometryResource(world, resolvedVehicles) : null;
+        const renderScene = manifest.sensorRig.sensors.some(
+            (sensor) => sensor.enabled !== false && sensor.type === "camera",
+        ) ? createRenderSceneResource(world, resolvedVehicles) : null;
         if (manifest.environment.expectedHash && manifest.environment.expectedHash !== environmentHash) {
             throw new Error(`Environment "${manifest.environment.id}" changed: expected ${manifest.environment.expectedHash}, received ${environmentHash}.`);
         }
@@ -1201,6 +1205,7 @@ export class StorageService {
             environment: { hash: environmentHash, manifest: environment },
             world,
             ...(lidarGeometry ? { lidarGeometry } : {}),
+            ...(renderScene ? { renderScene } : {}),
             backendSelections: sortBackendSelections([createPhysicsBackendSelection()]),
             scripts,
             bindings: { hash: bindingsHash, entries: selectedBindings },
@@ -1225,6 +1230,7 @@ export class StorageService {
                 environment: environmentHash,
                 world: world.hash,
                 ...(lidarGeometry ? { lidarGeometry: lidarGeometry.hash } : {}),
+                ...(renderScene ? { renderScene: renderScene.hash } : {}),
                 calibration: calibration.hash,
                 scripts: Object.fromEntries(scripts.map((entry) => [entry.scriptId, entry.hash])),
                 bindings: bindingsHash,

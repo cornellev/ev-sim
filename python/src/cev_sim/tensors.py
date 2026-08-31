@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import hashlib
 import math
+import mmap
+import os
+import stat
+import struct
 import sys
 from collections import OrderedDict
 from collections.abc import Mapping, Sequence
@@ -26,6 +31,10 @@ _WIRE_DTYPES: dict[int, np.dtype[Any]] = {
     pb.SCALAR_TYPE_UINT64: np.dtype("<u8"),
     pb.SCALAR_TYPE_BOOL: np.dtype("u1"),
 }
+
+_SHARED_MAGIC = b"CEVSHM1\x00"
+_SHARED_HEADER_VERSION = 1
+_SHARED_HEADER_BYTES = 192
 
 
 def _native_dtype(scalar_type: int) -> np.dtype[Any]:
@@ -121,9 +130,15 @@ class _TensorExpectation:
 
 
 class TensorMapCodec:
-    """Strict codec for the inline Box tensor layouts advertised in protocol 1.1."""
+    """Strict codec for inline and local protocol-1.2 shared tensor layouts."""
 
-    def __init__(self, specification: pb.SpaceSpec, *, root_name: str | None = None) -> None:
+    def __init__(
+        self,
+        specification: pb.SpaceSpec,
+        *,
+        root_name: str | None = None,
+        allow_shared_memory: bool = False,
+    ) -> None:
         self.specification = specification
         self.space = space_from_proto(specification)
         kind = specification.WhichOneof("kind")
@@ -141,6 +156,11 @@ class TensorMapCodec:
         else:  # space_from_proto already rejects this branch.
             raise CevSimCompatibilityError(f"Unsupported TensorMap space {kind}")
         self._by_name = {entry.name: entry for entry in self.expectations}
+        self._shared_sequences: dict[str, int] = {}
+        self.allow_shared_memory = allow_shared_memory
+
+    def close(self) -> None:
+        self._shared_sequences.clear()
 
     def decode(self, tensor_map: pb.TensorMap) -> Any:
         names = [entry.name for entry in tensor_map.entries]
@@ -166,14 +186,20 @@ class TensorMapCodec:
             or expected.spec.byte_order != pb.BYTE_ORDER_LITTLE_ENDIAN
         ):
             raise CevSimCompatibilityError(f"Tensor {expected.name!r} does not match its advertised specification")
-        if tensor.payload.WhichOneof("storage") != "packed_data":
-            raise CevSimCompatibilityError("PR 8 supports only inline packed_data tensor payloads")
         wire_dtype = _WIRE_DTYPES.get(spec.dtype)
         if wire_dtype is None:
             raise CevSimCompatibilityError(f"Unsupported tensor scalar type {spec.dtype}")
-        payload = tensor.payload.packed_data
         count = _element_count(expected_shape)
         expected_bytes = count * wire_dtype.itemsize
+        storage = tensor.payload.WhichOneof("storage")
+        if storage == "packed_data":
+            payload = tensor.payload.packed_data
+        elif storage == "shared_memory":
+            if not self.allow_shared_memory:
+                raise CevSimCompatibilityError("This transport supports only inline packed_data tensor payloads")
+            payload = self._read_shared_tensor(tensor.payload.shared_memory, spec, expected_bytes)
+        else:
+            raise CevSimCompatibilityError("Tensor payload storage is missing or unsupported")
         if len(payload) != expected_bytes:
             raise CevSimCompatibilityError(
                 f"Tensor {expected.name!r} requires {expected_bytes} bytes, received {len(payload)}"
@@ -189,6 +215,83 @@ class TensorMapCodec:
         if not expected.space.contains(value):
             raise CevSimCompatibilityError(f"Tensor {expected.name!r} lies outside its advertised Box")
         return value
+
+    def _read_shared_tensor(
+        self,
+        reference: pb.SharedMemoryRef,
+        spec: pb.TensorSpec,
+        expected_bytes: int,
+    ) -> bytes:
+        region = reference.region_name
+        offset = int(reference.offset_bytes)
+        length = int(reference.length_bytes)
+        generation = int(reference.generation)
+        sequence = int(reference.sequence)
+        if not region or offset < _SHARED_HEADER_BYTES or length != expected_bytes or generation <= 0 or sequence <= 0:
+            raise CevSimCompatibilityError("Shared tensor reference fields are invalid")
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            descriptor = os.open(region, flags)
+        except OSError as error:
+            raise CevSimCompatibilityError(f"Could not open shared tensor region: {error}") from error
+        try:
+            metadata = os.fstat(descriptor)
+            if not stat.S_ISREG(metadata.st_mode):
+                raise CevSimCompatibilityError("Shared tensor region is not a regular file")
+            if hasattr(os, "getuid") and metadata.st_uid != os.getuid():
+                raise CevSimCompatibilityError("Shared tensor region is not owned by the current user")
+            if stat.S_IMODE(metadata.st_mode) & 0o077:
+                raise CevSimCompatibilityError("Shared tensor region permissions are not private")
+            if offset + length > metadata.st_size:
+                raise CevSimCompatibilityError("Shared tensor reference lies outside its region")
+            try:
+                mapping = mmap.mmap(descriptor, 0, access=mmap.ACCESS_READ)
+            except (OSError, ValueError) as error:
+                raise CevSimCompatibilityError(f"Could not map shared tensor region: {error}") from error
+            try:
+                header_offset = offset - _SHARED_HEADER_BYTES
+                before = bytes(mapping[header_offset:offset])
+                self._validate_shared_header(before, region, spec, generation, sequence, length)
+                payload = bytes(mapping[offset : offset + length])
+                after = bytes(mapping[header_offset:offset])
+                if before != after:
+                    raise CevSimCompatibilityError("Shared tensor header changed while copying")
+                digest = before[104:136]
+                if hashlib.sha256(payload).digest() != digest:
+                    raise CevSimCompatibilityError("Shared tensor content digest is invalid")
+            finally:
+                mapping.close()
+        finally:
+            os.close(descriptor)
+        latest = self._shared_sequences.get(region, 0)
+        if sequence < latest:
+            raise CevSimCompatibilityError("Shared tensor reference is stale")
+        self._shared_sequences[region] = sequence
+        return payload
+
+    @staticmethod
+    def _validate_shared_header(
+        header: bytes,
+        region: str,
+        spec: pb.TensorSpec,
+        generation: int,
+        sequence: int,
+        length: int,
+    ) -> None:
+        if len(header) != _SHARED_HEADER_BYTES or header[:8] != _SHARED_MAGIC:
+            raise CevSimCompatibilityError("Shared tensor header magic or length is invalid")
+        version, header_bytes = struct.unpack_from("<II", header, 8)
+        stored_generation, stored_sequence, stored_length = struct.unpack_from("<QQQ", header, 48)
+        if version != _SHARED_HEADER_VERSION or header_bytes != _SHARED_HEADER_BYTES:
+            raise CevSimCompatibilityError("Shared tensor header version is unsupported")
+        environment_hash = hashlib.sha256(os.path.basename(region).encode("utf-8")).digest()
+        if header[16:48] != environment_hash:
+            raise CevSimCompatibilityError("Shared tensor environment token is invalid")
+        if (stored_generation, stored_sequence, stored_length) != (generation, sequence, length):
+            raise CevSimCompatibilityError("Shared tensor generation, sequence, or length is invalid")
+        identity = f"{int(spec.dtype)}:{','.join(str(int(value)) for value in spec.shape)}:{int(spec.byte_order)}"
+        if header[72:104] != hashlib.sha256(identity.encode("utf-8")).digest():
+            raise CevSimCompatibilityError("Shared tensor specification hash is invalid")
 
     def encode(self, value: Any) -> pb.TensorMap:
         if len(self.expectations) != 1:

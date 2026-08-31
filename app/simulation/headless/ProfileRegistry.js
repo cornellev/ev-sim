@@ -3,6 +3,8 @@ import { HeadlessEpisodeError } from "./HeadlessErrors.js";
 
 export const MEASURED_STATE_PROFILE_ID = "measured-state";
 export const MEASURED_STATE_PROFILE_VERSION = 1;
+export const MEASURED_PERCEPTION_PROFILE_ID = "measured-perception";
+export const MEASURED_PERCEPTION_PROFILE_VERSION = 1;
 export const ROUTE_SAFETY_PROFILE_ID = "route-safety";
 export const ROUTE_SAFETY_PROFILE_VERSION = 1;
 
@@ -17,6 +19,27 @@ export const MEASURED_STATE_SCHEMA_HASH = simulationSha256({
     id: MEASURED_STATE_PROFILE_ID,
     version: MEASURED_STATE_PROFILE_VERSION,
     fields: ["sensors/*/{value,validity,sequence,is_new,age_steps}", "task/{value,validity,sequence,is_new,age_steps}"],
+});
+
+export const MEASURED_PERCEPTION_CONFIG = Object.freeze({
+    kind: "cev-sim.observation-profile-config",
+    version: 1,
+    state: "measured-state@1",
+    camera: "enabled-measured-rgb-rgba8-by-stable-id",
+    lidar: "enabled-measured-range-incidence-float32-by-stable-id",
+    metadata: "validity-sequence-is-new-age-steps-v1",
+    oracleProducts: "excluded",
+});
+export const MEASURED_PERCEPTION_CONFIG_HASH = simulationSha256(MEASURED_PERCEPTION_CONFIG);
+export const MEASURED_PERCEPTION_SCHEMA_HASH = simulationSha256({
+    id: MEASURED_PERCEPTION_PROFILE_ID,
+    version: MEASURED_PERCEPTION_PROFILE_VERSION,
+    fields: [
+        "sensors/state/*/{value,validity,sequence,is_new,age_steps}",
+        "sensors/camera/*/rgba8",
+        "sensors/lidar3d/*/range-incidence-float32",
+        "task/{value,validity,sequence,is_new,age_steps}",
+    ],
 });
 
 function routeSafetyConfig(flags) {
@@ -59,6 +82,10 @@ export function measuredStateProfileRef() {
     return { id: MEASURED_STATE_PROFILE_ID, version: 1, configHash: MEASURED_STATE_CONFIG_HASH };
 }
 
+export function measuredPerceptionProfileRef() {
+    return { id: MEASURED_PERCEPTION_PROFILE_ID, version: 1, configHash: MEASURED_PERCEPTION_CONFIG_HASH };
+}
+
 export function routeSafetyProfileRef(config = DEFAULT_ROUTE_SAFETY_CONFIG) {
     const preset = ROUTE_SAFETY_PRESETS.find((entry) => (
         entry.config.terminateOnCollision === Boolean(config.terminateOnCollision)
@@ -75,12 +102,13 @@ function normalizedRef(ref = {}) {
 
 export function resolveObservationProfile(ref) {
     const actual = normalizedRef(ref);
-    if (actual.id !== MEASURED_STATE_PROFILE_ID
-        || actual.version !== MEASURED_STATE_PROFILE_VERSION
-        || actual.configHash !== MEASURED_STATE_CONFIG_HASH) {
-        throw new HeadlessEpisodeError("UNSUPPORTED_CAPABILITY", `Unsupported observation profile ${actual.id}@${actual.version} (${actual.configHash}).`);
-    }
-    return MEASURED_STATE_CONFIG;
+    if (actual.id === MEASURED_STATE_PROFILE_ID
+        && actual.version === MEASURED_STATE_PROFILE_VERSION
+        && actual.configHash === MEASURED_STATE_CONFIG_HASH) return MEASURED_STATE_CONFIG;
+    if (actual.id === MEASURED_PERCEPTION_PROFILE_ID
+        && actual.version === MEASURED_PERCEPTION_PROFILE_VERSION
+        && actual.configHash === MEASURED_PERCEPTION_CONFIG_HASH) return MEASURED_PERCEPTION_CONFIG;
+    throw new HeadlessEpisodeError("UNSUPPORTED_CAPABILITY", `Unsupported observation profile ${actual.id}@${actual.version} (${actual.configHash}).`);
 }
 
 export function resolveRewardProfile(ref) {
@@ -95,7 +123,10 @@ export function resolveRewardProfile(ref) {
 
 export function getHeadlessProfileCapabilities() {
     return {
-        observationProfiles: [{ id: MEASURED_STATE_PROFILE_ID, version: 1, description: "Measured state sensors and route task signals.", configSchemaHash: MEASURED_STATE_SCHEMA_HASH }],
+        observationProfiles: [
+            { id: MEASURED_STATE_PROFILE_ID, version: 1, description: "Measured state sensors and route task signals.", configSchemaHash: MEASURED_STATE_SCHEMA_HASH },
+            { id: MEASURED_PERCEPTION_PROFILE_ID, version: 1, description: "Measured state, RGB camera, and range/incidence LiDAR tensors.", configSchemaHash: MEASURED_PERCEPTION_SCHEMA_HASH },
+        ],
         rewardProfiles: [{ id: ROUTE_SAFETY_PROFILE_ID, version: 1, description: "Route progress, completion, safety, and optional smoothness.", configSchemaHash: ROUTE_SAFETY_SCHEMA_HASH }],
     };
 }

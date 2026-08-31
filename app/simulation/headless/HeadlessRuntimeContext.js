@@ -32,7 +32,10 @@ export function createHeadlessRuntimeContext(options = {}) {
     const world = options.world ?? new HeadlessWorldRuntime();
     const vehicles = options.vehicles ?? new HeadlessVehicleManager();
     const inputs = options.inputs ?? nullLifecycleService();
-    const devices = options.devices ?? new HeadlessSensorManager(() => vehicles, { telemetry: signalStore });
+    const devices = options.devices ?? new HeadlessSensorManager(() => vehicles, {
+        telemetry: signalStore,
+        rendererClient: options.rendererClient,
+    });
     const data = {
         bindings: () => bindings,
         environment: () => world,

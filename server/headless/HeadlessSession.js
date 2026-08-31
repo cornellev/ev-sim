@@ -9,7 +9,9 @@ import { verifyRunBundle } from "./RunBundle.js";
 
 const PACKAGE_VERSION = createRequire(import.meta.url)("../../package.json").version;
 
-export function defaultHeadlessProvenance(resolved, { episodeSpec = null } = {}) {
+export async function defaultHeadlessProvenance(resolved, { episodeSpec = null, episode = null } = {}) {
+    const usesGpu = (episodeSpec?.backendSelections || []).some((entry) => Number(entry.kind) === 4);
+    const gpuRenderer = usesGpu ? await episode?.rendererClient?.provenance?.() : null;
     return {
         kind: "cev-sim.headless.provenance",
         version: 1,
@@ -21,6 +23,7 @@ export function defaultHeadlessProvenance(resolved, { episodeSpec = null } = {})
         architecture: process.arch,
         backendSelections: structuredClone(episodeSpec?.backendSelections || resolved.backendSelections || []),
         createdAt: new Date().toISOString(),
+        ...(gpuRenderer ? { gpuRenderer } : {}),
     };
 }
 
@@ -53,7 +56,12 @@ function expectationMismatches(expect, result) {
 export function packedTensorMapBytes(map) {
     return (map?.entries || []).reduce((total, entry) => {
         const bytes = entry?.tensor?.payload?.packedData;
-        return total + (ArrayBuffer.isView(bytes) ? bytes.byteLength : Buffer.isBuffer(bytes) ? bytes.length : 0);
+        const sharedLength = Number(entry?.tensor?.payload?.sharedMemory?.lengthBytes || 0);
+        return total + (ArrayBuffer.isView(bytes)
+            ? bytes.byteLength
+            : Buffer.isBuffer(bytes)
+                ? bytes.length
+                : sharedLength);
     }, 0);
 }
 
@@ -113,6 +121,7 @@ export class HeadlessSession {
             bundle: this.bundle,
             descriptor: this.descriptor,
             episodeSpec: this.episode.episodeSpec,
+            episode: this.episode,
         });
         this.artifactSink = await this.artifactSinkFactory({
             bundle: this.bundle,
@@ -131,6 +140,18 @@ export class HeadlessSession {
             throw new HeadlessRunnerError("ENVIRONMENT_NOT_FOUND", "Reset the environment before stepping it.");
         }
         const transition = this.episode.step(action);
+        this._enforceObservation(transition.observation);
+        this.policyStep += 1;
+        this.lastTransition = transition;
+        if (transition.terminated || transition.truncated) this.state = "terminal";
+        return transition;
+    }
+
+    async stepAsync(action) {
+        if (this.state !== "ready") {
+            throw new HeadlessRunnerError("ENVIRONMENT_NOT_FOUND", "Reset the environment before stepping it.");
+        }
+        const transition = await this.episode.stepAsync(action);
         this._enforceObservation(transition.observation);
         this.policyStep += 1;
         this.lastTransition = transition;
@@ -186,6 +207,11 @@ export class HeadlessSession {
             failureReason: semanticPassed ? null : failureReason({ finalization, lastTransition: this.lastTransition, interrupted }),
             degraded: false,
             artifactWarnings: [],
+            ...(this.artifactSink?.provenance?.gpuRenderer ? {
+                diagnostics: {
+                    gpuRenderer: structuredClone(this.artifactSink.provenance.gpuRenderer),
+                },
+            } : {}),
             completedAt: new Date().toISOString(),
         };
         const mismatches = expectationMismatches(expect, runResult);

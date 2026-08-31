@@ -8,6 +8,10 @@ import { createPhysicsBackendSelection } from "../../app/physics/PhysicsBackend.
 import { getHeadlessProfileCapabilities } from "../../app/simulation/headless/ProfileRegistry.js";
 import { createStateSensorBackendSelection, STATE_SENSOR_TYPES } from "../../app/simulation/sensors/StateSensorBackend.js";
 import { createCpuLidarBackendSelection } from "../../app/simulation/sensors/CpuLidarBackend.js";
+import {
+    createGpuSensorBackendSelection,
+    gpuSensorBackendCapability,
+} from "../../app/simulation/sensors/GpuSensorBackend.js";
 import { computeEpisodeHash } from "../../app/simulation/kernel/SimulationHashes.js";
 import { canonicalStringify } from "../../app/simulation/RunManifest.js";
 import { verifyRunBundle } from "./RunBundle.js";
@@ -21,6 +25,15 @@ import {
 } from "./HeadlessProtocol.js";
 import { resolveBatchResourceLimits, resolveSupervisorConfig } from "./SupervisorConfig.js";
 import { WorkerHandle } from "./WorkerHandle.js";
+import { PooledGpuRenderer } from "./PooledGpuRenderer.js";
+import { postProcessGpuObservation } from "./GpuObservationPostProcessing.js";
+import { SharedTensorArena } from "./SharedTensorArena.js";
+import {
+    calculatePerceptionObservationBytes,
+    calculateSharedTensorArenaBytes,
+    externalizeTensorMap,
+    materializeTensorMap,
+} from "./SharedTensorTransport.js";
 
 const HEALTH = Object.freeze({ SERVING: 1, DEGRADED: 2, NOT_SERVING: 3 });
 const INFRASTRUCTURE_CODES = new Set(["RESOURCE_LIMIT", "STEP_TIMEOUT", "WORKER_CRASHED"]);
@@ -190,6 +203,9 @@ export class HeadlessSupervisor {
             ? options
             : resolveSupervisorConfig(options);
         this.workerFactory = options.workerFactory ?? ((workerOptions) => new WorkerHandle(workerOptions));
+        this.rendererPool = options.rendererPool ?? new PooledGpuRenderer(this.config.renderer, {
+            adapterFactory: options.rendererAdapterFactory,
+        });
         this.batches = new Map();
         this.workers = new Set();
         this.reservedWorkers = 0;
@@ -209,6 +225,8 @@ export class HeadlessSupervisor {
         const physics = createPhysicsBackendSelection();
         const sensors = createStateSensorBackendSelection();
         const lidar = createCpuLidarBackendSelection();
+        const gpu = createGpuSensorBackendSelection();
+        const gpuProbe = await this.rendererPool.probe();
         return {
             protocol: HEADLESS_PROTOCOL,
             runtimeName: "cev-sim",
@@ -219,10 +237,15 @@ export class HeadlessSupervisor {
                 { id: physics.capabilityId, version: physics.version, kind: physics.kind, description: "Deterministic swept-prism Rapier backend.", sensorTypes: [], features: ["fixed-step", "continuous-collision"], available: true, unavailableReason: "", determinismScope: "same-runtime-version" },
                 { id: sensors.capabilityId, version: sensors.version, kind: sensors.kind, description: "Deterministic measured state sensors.", sensorTypes: [...STATE_SENSOR_TYPES], features: ["packed-protobuf"], available: true, unavailableReason: "", determinismScope: "same-runtime-version" },
                 { id: lidar.capabilityId, version: lidar.version, kind: lidar.kind, description: "Deterministic CPU/BVH 3D LiDAR.", sensorTypes: ["lidar3d"], features: ["pointcloud2", "semantic-pointcloud2", "fixed-step"], available: true, unavailableReason: "", determinismScope: "same-build-platform-seed-action-tape" },
+                gpuSensorBackendCapability({ available: gpuProbe.available, unavailableReason: gpuProbe.reason, selection: gpu }),
             ],
             observationProfiles: profiles.observationProfiles,
             rewardProfiles: profiles.rewardProfiles,
-            transports: ["unix", "tcp-insecure"],
+            transports: ["unix", "tcp-insecure", "grpc+unix+shared-memory-v1"],
+            diagnosticJson: Buffer.from(canonicalStringify({
+                gpuRenderer: this.rendererPool.diagnostics(),
+                gpuProbe,
+            })),
             error: okStatus(),
         };
     }
@@ -252,11 +275,50 @@ export class HeadlessSupervisor {
                 limits,
                 artifactPolicy,
                 outputRoot: path.resolve(artifactPolicy.outputUri),
+                protocolMinor: Number(request.clientProtocol?.minor || 0),
+                sharedMemory: this.config.listener.kind === "socket"
+                    && Number(request.clientProtocol?.minor || 0) >= 2,
             };
             for (const episodeSpec of episodes) {
                 const bundle = bundles.get(String(episodeSpec.runBundleId || ""));
                 if (!bundle) throw supervisorError("INVALID_REQUEST", `Episode ${episodeSpec.environmentIndex} references unknown run_bundle_id ${episodeSpec.runBundleId}.`);
                 validateStaticLimits(bundle.verified.resolved, limits, episodeSpec.environmentIndex);
+                const perceptionProfile = String(episodeSpec.observationProfile?.id || "") === "measured-perception";
+                if (perceptionProfile && batch.protocolMinor < 2) {
+                    throw supervisorError("PROTOCOL_MISMATCH", "measured-perception requires headless protocol 1.2.");
+                }
+                const arenaBytes = calculateSharedTensorArenaBytes(bundle.verified.resolved, episodeSpec);
+                const requestsCamera = bundle.verified.resolved.manifest.sensorRig?.sensors?.some(
+                    (sensor) => sensor.enabled !== false && sensor.type === "camera",
+                );
+                const requestsGpu = requestsCamera
+                    || (episodeSpec.backendSelections || []).some((entry) => Number(entry.kind) === 4);
+                if (requestsGpu) {
+                    const probe = await this.rendererPool.probe();
+                    if (!probe.available) throw supervisorError("UNSUPPORTED_CAPABILITY", `GPU backend unavailable: ${probe.reason}`);
+                }
+                if (arenaBytes > limits.maxSharedMemoryBytesPerEnvironment) {
+                    throw supervisorError(
+                        "RESOURCE_LIMIT",
+                        `Environment ${episodeSpec.environmentIndex} requires ${arenaBytes} shared-memory bytes; limit is ${limits.maxSharedMemoryBytesPerEnvironment}.`,
+                        { arenaBytes, limit: limits.maxSharedMemoryBytesPerEnvironment },
+                    );
+                }
+                if (perceptionProfile && !batch.sharedMemory
+                    && calculatePerceptionObservationBytes(bundle.verified.resolved, episodeSpec)
+                        > Math.min(limits.maxObservationBytes, this.config.maxRpcMessageBytes)) {
+                    throw supervisorError(
+                        "RESOURCE_LIMIT",
+                        `Environment ${episodeSpec.environmentIndex} can exceed the configured inline gRPC response limit.`,
+                        {
+                            maximumEncodedObservationBytes: calculatePerceptionObservationBytes(
+                                bundle.verified.resolved,
+                                episodeSpec,
+                            ),
+                            maxRpcMessageBytes: this.config.maxRpcMessageBytes,
+                        },
+                    );
+                }
                 const environment = {
                     batch,
                     index: Number(episodeSpec.environmentIndex),
@@ -275,7 +337,15 @@ export class HeadlessSupervisor {
                     episodeTimer: null,
                     lastFinalizeResult: null,
                     recoveryPromise: null,
+                    sharedArena: null,
+                    transportSequence: 0n,
                 };
+                if ((batch.sharedMemory || requestsGpu) && arenaBytes > 0) {
+                    environment.sharedArena = await SharedTensorArena.create({
+                        environmentToken: `${batch.id}:${environment.index}:${randomUUID()}`,
+                        sizeBytes: Math.max(arenaBytes, 3 * 1024),
+                    });
+                }
                 environment.worker = this._newWorker(environment);
                 batch.environments.push(environment);
                 created.push(environment);
@@ -316,6 +386,7 @@ export class HeadlessSupervisor {
             };
         } catch (error) {
             await Promise.allSettled(created.flatMap((environment) => [...environment.workers]).map((worker) => worker.close()));
+            await Promise.allSettled(created.map((environment) => environment.sharedArena?.close()));
             return { error: errorStatus(error) };
         } finally {
             this.reservedWorkers -= reservation;
@@ -355,6 +426,7 @@ export class HeadlessSupervisor {
                     environment.detail = "";
                     environment.lastFinalizeResult = null;
                     this._startEpisodeWatchdog(environment);
+                    await this._externalizeObservation(environment, response.reset.observation);
                     return resetResult(environment.index, response.reset);
                 } catch (error) {
                     await this._recoverIfInfrastructure(environment, error);
@@ -391,6 +463,7 @@ export class HeadlessSupervisor {
                         environment.state = "terminal";
                         this._clearEpisodeWatchdog(environment);
                     }
+                    await this._externalizeObservation(environment, response.transition.observation);
                     return stepResult(environment.index, response.transition);
                 } catch (error) {
                     await this._recoverIfInfrastructure(environment, error);
@@ -440,6 +513,8 @@ export class HeadlessSupervisor {
             await Promise.allSettled(batch.environments.map(async (environment) => {
                 await environment.recoveryPromise?.catch(() => {});
                 await Promise.allSettled([...environment.workers].map((worker) => worker.close()));
+                await environment.sharedArena?.close();
+                this.rendererPool.releaseEnvironment(`${batch.id}:${environment.index}`);
             }));
             await cleanupPartialDirectories(path.join(batch.outputRoot, batch.id));
         }
@@ -540,6 +615,7 @@ export class HeadlessSupervisor {
         const ids = [...this.batches.keys()];
         await Promise.all(ids.map((batchId) => this.closeBatch({ batchId, finalizeActiveEpisodes: false })));
         await Promise.allSettled([...this.workers].map((worker) => worker.close()));
+        await this.rendererPool.close();
     }
 
     _newWorker(environment) {
@@ -556,6 +632,7 @@ export class HeadlessSupervisor {
                 this.workers.delete(exitedWorker);
                 this._observeExit(environment, error);
             },
+            rendererHandler: (operation, payload) => this._rendererRequest(environment, operation, payload),
         });
         environment.workers.add(worker);
         this.workers.add(worker);
@@ -612,6 +689,8 @@ export class HeadlessSupervisor {
         if (environment.recoveryPromise) return environment.recoveryPromise;
         environment.recoveryPromise = (async () => {
             this._clearEpisodeWatchdog(environment);
+            await environment.sharedArena?.invalidate();
+            this.rendererPool.releaseEnvironment(`${environment.batch.id}:${environment.index}`);
             environment.requiresReset = true;
             environment.detail = error.message;
             environment.state = "restarting";
@@ -686,5 +765,72 @@ export class HeadlessSupervisor {
             await this._recoverIfInfrastructure(environment, error);
             return infrastructureResult(environment.index, error);
         }
+    }
+
+    async _externalizeObservation(environment, observation) {
+        if (!environment.sharedArena) return observation;
+        if (!environment.batch.sharedMemory) {
+            return materializeTensorMap(observation, environment.sharedArena);
+        }
+        const sequence = environment.transportSequence + 1n;
+        await externalizeTensorMap(observation, environment.sharedArena, {
+            generation: sequence,
+            sequence,
+        });
+        environment.transportSequence = sequence;
+        return observation;
+    }
+
+    async _rendererRequest(environment, operation, payload) {
+        if (operation === "provenance") return this.rendererPool.diagnostics();
+        if (operation === "release-shared") {
+            return { released: await environment.sharedArena?.release(payload.reference) === true };
+        }
+        if (operation !== "capture-group") throw supervisorError("INVALID_REQUEST", `Unknown renderer operation ${operation}.`);
+        const captured = await this.rendererPool.captureGroup({
+            ...payload,
+            environmentKey: `${environment.batch.id}:${environment.index}`,
+            maxGpuBytes: environment.batch.limits.maxGpuBytesPerEnvironment,
+            timeoutMs: environment.batch.limits.stepWallTimeoutMs,
+        });
+        if (!environment.sharedArena) return captured;
+        const sequence = environment.transportSequence + 1n;
+        const requests = new Map(payload.requests.map((entry) => [entry.id, entry]));
+        return Promise.all(captured.map(async (entry) => {
+            const request = requests.get(entry.id);
+            const rawSpec = {
+                dtype: entry.type === "camera" ? 4 : 1,
+                shape: [request.height, request.width, 4],
+                byteOrder: 1,
+            };
+            const rawBytes = new Uint8Array(entry.data.buffer, entry.data.byteOffset, entry.data.byteLength);
+            const rawSharedMemory = await environment.sharedArena.publishTensor(rawBytes, rawSpec, {
+                generation: sequence,
+                sequence,
+            });
+            const observation = request.includeObservation
+                ? postProcessGpuObservation(entry.data, request)
+                : null;
+            const sharedMemory = observation ? await environment.sharedArena.publishTensor(new Uint8Array(
+                observation.values.buffer,
+                observation.values.byteOffset,
+                observation.values.byteLength,
+            ), {
+                dtype: observation.scalarType,
+                shape: observation.shape,
+                byteOrder: 1,
+            }, { generation: sequence, sequence, retained: true }) : null;
+            return {
+                id: entry.id,
+                type: entry.type,
+                rawSharedMemory,
+                ...(observation ? { observation: {
+                    dtype: observation.dtype,
+                    shape: observation.shape,
+                    sharedMemory,
+                    digest: observation.digest,
+                } } : {}),
+            };
+        }));
     }
 }

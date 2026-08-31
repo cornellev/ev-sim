@@ -10,6 +10,7 @@ import { computeSimulationSemanticHash } from "../../app/simulation/kernel/Simul
 import { HeadlessEpisodeError } from "../../app/simulation/headless/HeadlessErrors.js";
 import { assertWorldResource } from "../../app/simulation/world/WorldDescription.js";
 import { assertLidarGeometryResource } from "../../app/simulation/lidar/LidarGeometry.js";
+import { assertRenderSceneResource } from "../../app/simulation/render/RenderScene.js";
 
 function invalid(code, message, details = null) {
     throw new HeadlessEpisodeError(code, message, details);
@@ -67,6 +68,28 @@ export function verifyRunBundle(bundle) {
         }
     } else if (resolved.dependencyHashes?.lidarGeometry) {
         invalid("BUNDLE_INVALID", "A non-LiDAR bundle must not declare a LiDAR geometry dependency hash.");
+    }
+    const requestsCamera = resolved.manifest.sensorRig?.sensors?.some(
+        (sensor) => sensor.enabled !== false && sensor.type === "camera",
+    );
+    if (requestsCamera && !resolved.renderScene) {
+        invalid(
+            "BUNDLE_INVALID",
+            "This camera run bundle predates persisted render scenes; re-resolve and export the run manifest.",
+        );
+    }
+    if (resolved.renderScene) {
+        if (!requestsCamera) invalid("BUNDLE_INVALID", "A non-camera bundle must not persist a render scene.");
+        try {
+            assertRenderSceneResource(resolved.renderScene);
+        } catch (error) {
+            invalid("BUNDLE_HASH_MISMATCH", error.message);
+        }
+        if (resolved.dependencyHashes?.renderScene !== resolved.renderScene.hash) {
+            invalid("BUNDLE_HASH_MISMATCH", "The resolved render-scene dependency hash does not match the resource.");
+        }
+    } else if (resolved.dependencyHashes?.renderScene) {
+        invalid("BUNDLE_INVALID", "A non-camera bundle must not declare a render-scene dependency hash.");
     }
     if (!Array.isArray(resolved.backendSelections) || resolved.backendSelections.length === 0) {
         invalid("BUNDLE_INVALID", "The resolved run is missing backend selections.");

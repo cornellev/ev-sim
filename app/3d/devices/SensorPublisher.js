@@ -13,6 +13,7 @@ import {
     estimateEncodeBytes,
     isHeavySensorValue,
 } from "./SensorEncodePool.js";
+import { simulationSha256 } from "../../simulation/kernel/SimulationHashes.js";
 
 const DEFAULT_MAX_QUEUE_BYTES = 64 * 1024 * 1024;
 
@@ -29,6 +30,7 @@ export function normalizeCaptureResult(captured, captureTimeNs, sampleIndex) {
         captureTimeNs: Number.isFinite(captured.captureTimeNs) ? captured.captureTimeNs : captureTimeNs,
         sampleIndex: Number.isFinite(captured.sampleIndex) ? captured.sampleIndex : sampleIndex,
         rng: captured.rng,
+        observation: captured.observation ?? null,
     };
 }
 
@@ -38,6 +40,13 @@ function estimateFrameBytes(messages = []) {
         total += estimateEncodeBytes(message?.value) || 256;
     }
     return total;
+}
+
+function estimateObservationBytes(observation) {
+    const value = observation?.value;
+    return ArrayBuffer.isView(value)
+        ? value.byteLength
+        : Number(observation?.sharedMemory?.lengthBytes || 0);
 }
 
 export class SensorPublisher {
@@ -82,6 +91,7 @@ export class SensorPublisher {
         if (nextSeed !== null && nextSeed !== undefined) this.seed = String(nextSeed);
         cancelEncodeOwner(this.encodeOwnerId);
         this.encodeGeneration = bumpEncodeOwnerGeneration(this.encodeOwnerId);
+        for (const frame of this.queue) this.device.releaseObservation?.(frame.observation);
         this.queue = [];
         this.queuedBytes = 0;
         this.sampleIndex = 0;
@@ -137,6 +147,14 @@ export class SensorPublisher {
                     frameId: message.frameId,
                     value: message.value,
                 })),
+                ...(frame.observation ? {
+                    observation: {
+                        dtype: frame.observation.dtype,
+                        shape: frame.observation.shape,
+                        digest: frame.observation.digest
+                            || simulationSha256(frame.observation.value),
+                    },
+                } : {}),
             })),
             health: {
                 captureAttempts: this.health.captureAttempts,
@@ -154,48 +172,98 @@ export class SensorPublisher {
     dispose() {
         cancelEncodeOwner(this.encodeOwnerId);
         this.encodeGeneration = bumpEncodeOwnerGeneration(this.encodeOwnerId);
+        for (const frame of this.queue) this.device.releaseObservation?.(frame.observation);
         this.queue = [];
         this.queuedBytes = 0;
     }
 
-    update(clock) {
+    _initializeSchedule(clock) {
         if (!this.stepNs) {
             const schedule = resolveFixedStepSensorSchedule(this.config, clock, this.manifestStepNs);
             this.stepNs = schedule.stepNs;
             this.periodSteps = schedule.periodSteps;
             this.nextCaptureStep = schedule.nextCaptureStep;
         }
+    }
+
+    _captureContext(clock) {
+        const captureTimeNs = this.nextCaptureStep * this.stepNs;
+        const sampleIndex = this.sampleIndex++;
+        const skip = this.device.gpuCapture
+            && this.device.getParent?.()?.getParent?.()?.simulation?.()?.gpuCaptureEnabled === false;
+        return {
+            captureTimeNs,
+            sampleIndex,
+            skip,
+            rng: new SeededRNG(`${this.seed}:sensor:${this.config.id}:sample:${sampleIndex}`),
+            clock,
+        };
+    }
+
+    _acceptCapture(captured, context, captureStartNs) {
+        const result = normalizeCaptureResult(captured, context.captureTimeNs, context.sampleIndex);
+        const captureDurationNs = Math.max(0, this._time() - captureStartNs);
+        this.health.captureTimeNs = captureDurationNs;
+        this.health.captureTimeTotalNs += captureDurationNs;
+        if (result.messages.length > 0 || result.observation) {
+            this.health.capturedFrames += 1;
+            this.enqueue(
+                result.messages,
+                result.captureTimeNs,
+                result.sampleIndex,
+                result.rng || context.rng,
+                result.observation,
+            );
+        }
+    }
+
+    update(clock) {
+        this._initializeSchedule(clock);
         while (clock.step >= this.nextCaptureStep) {
-            const captureTimeNs = this.nextCaptureStep * this.stepNs;
-            const index = this.sampleIndex++;
-            const skipGpu = this.device.gpuCapture
-                && this.device.getParent?.()?.getParent?.()?.simulation?.()?.gpuCaptureEnabled === false;
-            if (skipGpu) {
+            const context = this._captureContext(clock);
+            if (context.skip) {
                 this.nextCaptureStep += this.periodSteps;
                 continue;
             }
-            const rng = new SeededRNG(`${this.seed}:sensor:${this.config.id}:sample:${index}`);
             try {
                 this.health.captureAttempts += 1;
                 const captureStartNs = this._time();
-                const captured = this.device.captureAt?.({ captureTimeNs, sampleIndex: index, rng });
-                const result = normalizeCaptureResult(captured, captureTimeNs, index);
-                const captureDurationNs = Math.max(0, this._time() - captureStartNs);
-                this.health.captureTimeNs = captureDurationNs;
-                this.health.captureTimeTotalNs += captureDurationNs;
-                if (result.messages.length > 0) {
-                    this.health.capturedFrames += 1;
-                    this.enqueue(result.messages, result.captureTimeNs, result.sampleIndex, result.rng || rng);
-                }
+                const captured = this.device.captureAt?.(context);
+                if (captured?.then) throw new Error(`Sensor ${this.config.id} requires updateAsync().`);
+                this._acceptCapture(captured, context, captureStartNs);
             } catch (error) {
-                this._event("capture-failed", "error", { sampleIndex: index, reason: error.message });
+                if (error?.infrastructureFailure) throw error;
+                this._event("capture-failed", "error", { sampleIndex: context.sampleIndex, reason: error.message });
             }
             this.nextCaptureStep += this.periodSteps;
         }
         this._publishHealth(clock);
     }
 
-    enqueue(messages, captureTimeNs, sampleIndex, rng) {
+    async updateAsync(clock) {
+        this._initializeSchedule(clock);
+        while (clock.step >= this.nextCaptureStep) {
+            const context = this._captureContext(clock);
+            if (!context.skip) {
+                try {
+                    this.health.captureAttempts += 1;
+                    const captureStartNs = this._time();
+                    const captured = await this.device.captureAt?.(context);
+                    this._acceptCapture(captured, context, captureStartNs);
+                } catch (error) {
+                    if (error?.infrastructureFailure) throw error;
+                    this._event("capture-failed", "error", {
+                        sampleIndex: context.sampleIndex,
+                        reason: error.message,
+                    });
+                }
+            }
+            this.nextCaptureStep += this.periodSteps;
+        }
+        this._publishHealth(clock);
+    }
+
+    enqueue(messages, captureTimeNs, sampleIndex, rng, observation = null) {
         const stepNs = this.stepNs || this.manifestStepNs || 16_666_667;
         const delivery = resolveSensorDelivery(this.config, captureTimeNs, rng, stepNs);
         const {
@@ -222,8 +290,9 @@ export class SensorPublisher {
                 }),
             });
         }
-        const frameBytes = estimateFrameBytes(frameMessages);
+        const frameBytes = estimateFrameBytes(frameMessages) + estimateObservationBytes(observation);
         if (this.queue.length >= this.maxQueueFrames || this.queuedBytes + frameBytes > this.maxQueueBytes) {
+            this.device.releaseObservation?.(observation);
             this._incrementFrameDrop();
             this._event("frame-dropped", "warning", {
                 sampleIndex,
@@ -243,6 +312,7 @@ export class SensorPublisher {
             sequence: sampleIndex,
             syncGroupKey: this.config.syncGroupId ? `${this.config.syncGroupId}:${captureStep}` : null,
             messages: frameMessages,
+            observation,
             encodedByTopic: new Map(),
             encodeReady: false,
             encodeFailed: false,
@@ -315,7 +385,9 @@ export class SensorPublisher {
         this.health.queueBytes = this.queuedBytes;
         for (const frame of ready) {
             if (frame.encodeFailed) {
+                this.device.releaseObservation?.(frame.observation);
                 frame.messages = null;
+                frame.observation = null;
                 frame.encodedByTopic = null;
                 continue;
             }
@@ -335,8 +407,18 @@ export class SensorPublisher {
             this.health.transportTimeNs = transportDurationNs;
             this.health.transportTimeTotalNs += transportDurationNs;
             this.health.deliveredFrames += 1;
+            if (frame.observation) {
+                this.device.onDeliveredObservation?.(frame.observation, {
+                    captureTimeNs: frame.captureTimeNs,
+                    captureStep: frame.captureStep,
+                    deliveryTimeNs: frame.deliveryTimeNs,
+                    deliveryStep: clock.step,
+                    sequence: frame.sequence,
+                });
+            }
             // Drop frame references immediately after delivery so Image/PointCloud buffers can GC.
             frame.messages = null;
+            frame.observation = null;
             frame.encodedByTopic?.clear?.();
             frame.encodedByTopic = null;
         }

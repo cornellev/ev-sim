@@ -1,16 +1,19 @@
 # Headless batch supervisor
 
-PR 7 adds a Node 22 process supervisor around the authoritative JavaScript
-headless session. Each environment runs in one non-detached child process.
-Clients use unary gRPC calls; Unix-domain sockets are the normal local
-transport and insecure TCP must be selected explicitly.
+The Node 22 process supervisor wraps the authoritative JavaScript headless
+session. Each environment runs in one non-detached child process. Clients use
+unary gRPC calls; Unix-domain sockets are the normal local transport and
+insecure TCP must be selected explicitly. PR 11 adds an optional, shared
+headless-Chromium renderer pool and local large-tensor transport without
+changing the one-process-per-environment simulation boundary.
 
 The supervisor does not resolve authoring manifests. `CreateBatch` accepts
 canonical immutable `cev-sim.run-bundle` version 1 bytes and `EpisodeSpec`
 records from the authoritative
 [`headless.proto`](../proto/cev_sim/headless/v1/headless.proto). Python and MCP
-clients are supported. Camera/GPU sensors, shared memory, and distributed
-scheduling remain later milestones.
+clients are supported. Camera/GPU sensors require configured Chromium and a
+successful production hardware probe. Distributed scheduling remains a later
+milestone.
 
 ## Starting and stopping
 
@@ -47,10 +50,12 @@ and tests.
 
 ## Protocol and loading
 
-The server advertises protocol `1.1`. It accepts clients with major `1` and a
-minor version no greater than `1`. Schema changes remain additive within v1;
-`EnvironmentHealth` now reports `batch_id`, `restart_count`, and
-`requires_reset` in fields 7, 8, and 9.
+The server advertises protocol `1.2`. It accepts clients with major `1` and a
+minor version no greater than `2`. Protocol 1.1 state-only and CPU-LiDAR
+clients remain compatible and receive inline tensors. Schema changes remain
+additive within v1; `ResourceLimits` fields 11 and 12 are
+`max_shared_memory_bytes_per_environment` and
+`max_gpu_bytes_per_environment`.
 
 JavaScript loads the checked-in proto dynamically with
 `@grpc/grpc-js` 1.14.4 and `@grpc/proto-loader` 0.8.1. Loader values use camel
@@ -58,12 +63,17 @@ case, numeric enums, decimal-string uint64 values, `Buffer` bytes, defaults,
 and oneof markers. There are no generated JavaScript bindings.
 
 `GetCapabilities.backends` advertises physics, deterministic state sensors,
-and backend kind 3 `deterministic-cpu-bvh-lidar` version `1`. Its locked local
+backend kind 3 `deterministic-cpu-bvh-lidar` version `1`, and backend kind 4
+`chromium-webgl2-rendered-sensors` version `1`. The CPU backend's locked local
 configuration hash is
 `488de17bbf8ecf635c18841cd64a9638e011a94a8d9fbb93e4a53943f38bd96d`.
-LiDAR episodes require exactly one matching selection and a verified persisted
-geometry resource; missing, duplicate, mismatched, and unused CPU LiDAR
-selections fail batch preparation. Protocol 1.1 and Protobuf v1 are unchanged.
+The GPU backend's hash is
+`cdbfea7d5698356687ca5820a6d54c932a815f199eb8a2b405b94fbe8183a5c1`;
+it is marked available only after a hardware-backed WebGL2 probe succeeds.
+LiDAR episodes require exactly one matching CPU or GPU selection and a verified
+geometry resource. Cameras require the GPU backend and a verified render-scene
+resource. Missing, duplicate, mismatched, unused, and unavailable selections
+fail batch preparation.
 
 ## Configuration
 
@@ -82,10 +92,21 @@ the selected preset, whose fallback is `safety`.
   "shutdownGraceMs": 5000,
   "killGraceMs": 5000,
   "defaultLimits": {
-    "maxSensorsPerEnvironment": 32
+    "maxSensorsPerEnvironment": 32,
+    "maxSharedMemoryBytesPerEnvironment": 134217728,
+    "maxGpuBytesPerEnvironment": 268435456
   },
   "hardCeilings": {
     "maxSensorsPerEnvironment": 64
+  },
+  "renderer": {
+    "chromiumExecutable": "/path/to/chromium",
+    "contextPoolSize": 1,
+    "sceneCacheBytes": 536870912,
+    "globalGpuBytes": 2147483648,
+    "angle": "",
+    "disableSandbox": false,
+    "launchArgs": []
   }
 }
 ```
@@ -109,12 +130,26 @@ value must not exceed the configured ceiling.
 | Step timeout | 30 s | 120 s |
 | Episode timeout | 6 h | 24 h |
 | Restarts | 1 | 3 |
+| Shared memory/environment | 128 MiB | 512 MiB |
+| GPU allocation/environment | 256 MiB | 1 GiB |
 
 The configurable resource keys are
 `maxRssBytesPerEnvironment`, `maxHeapBytesPerEnvironment`,
 `maxActorsPerEnvironment`, `maxSensorsPerEnvironment`,
 `maxObservationBytes`, `maxQueueBytes`, `maxArtifactBytes`,
-`stepWallTimeoutMs`, `episodeWallTimeoutMs`, and `restartBudget`.
+`stepWallTimeoutMs`, `episodeWallTimeoutMs`, `restartBudget`,
+`maxSharedMemoryBytesPerEnvironment`, and `maxGpuBytesPerEnvironment`. The GPU
+and shared-memory limits are operational and never contribute to
+`episodeHash`.
+
+The renderer uses one managed browser and page, a fixed WebGL2 context pool,
+and a bounded LRU scene cache. `angle` selects a platform-specific ANGLE
+backend. Chromium's sandbox remains enabled unless `disableSandbox` is
+explicitly set; that override and all launch arguments appear in provenance.
+SwiftShader, llvmpipe, and other software renderers never satisfy production
+capability. `playwright-core` is optional and dynamically imported only after
+GPU selection, so state-only and CPU-LiDAR operation do not import or require
+it.
 
 ## Transport security
 
@@ -123,6 +158,16 @@ or authentication. Loopback hosts are allowed with `--tcp`; binding any other
 host requires `--allow-remote-tcp`. That flag is an explicit acceptance of
 cleartext, unauthenticated access and should normally be combined with a
 container network, firewall, VPN, or local proxy.
+
+Protocol 1.2 Unix-socket batches advertise
+`grpc+unix+shared-memory-v1`. Tensors at least 64 KiB use a private
+per-environment file-backed arena; smaller tensors remain inline. Each arena
+has a `0700` directory, a randomized `0600` regular file, aligned slots, and a
+versioned header containing environment token, generation, response sequence,
+payload length, tensor-spec hash, and content digest. A reference expires at
+the next successful reset/step response for that environment. Protocol 1.1
+and TCP stay inline, and batch creation fails early if a maximum encoded
+perception observation exceeds the configured RPC/observation ceiling.
 
 ## Batch lifecycle
 
@@ -159,8 +204,9 @@ server.
 
 The server centrally maps existing simulator errors to the proto `ErrorCode`
 enum. Infrastructure failures never include an observation, reward,
-termination, or truncation transition. A crash, step timeout, uncertain IPC
-backpressure result, memory breach, or resource breach terminates that worker,
+termination, or truncation transition. A crash, step timeout, renderer or GPU
+process crash, context loss, invalid shared memory, missing slot generation,
+uncertain IPC backpressure result, memory breach, or resource breach terminates that worker,
 consumes one restart, prepares a replacement, and reports `requires_reset`.
 The failed action is never replayed and the failed episode never continues.
 An exhausted budget permanently faults only that environment. `Health`
@@ -174,6 +220,12 @@ bytes are checked before a response. The queue limit aggregates pending IPC,
 kernel input, delayed sensor delivery, and recording queues. Recording retains
 its historical 16 MiB default when no headless limit is supplied. Artifact
 staging and log bytes are checked before atomic publication.
+
+Perception batches preallocate three response generations plus configured
+sensor-queue capacity and reject arenas above the per-environment limit.
+Renderer allocations account for scenes, textures, buffers, and targets
+against both per-environment and global limits. GPU capture responses crossing
+worker IPC contain only bounded handles, digests, and metadata.
 
 Workers report `heapUsed`, RSS, queue use, and their last completed step after
 commands and on the configured polling interval (250 ms by default). V8 old
@@ -194,3 +246,18 @@ supervisor and runtime overhead. A cgroup OOM kill is observed as a worker
 crash and follows the same no-replay recovery policy. macOS has no equivalent
 per-child cgroup boundary here; RSS polling, V8 heap bounds, watchdogs, and
 signal escalation are best-effort enforcement.
+
+## GPU preflight
+
+Run preflight on each deployment host before admitting GPU batches:
+
+```bash
+cev-sim gpu-preflight --config supervisor.json
+```
+
+The JSON report covers Chromium/sidecar versions, launch arguments and sandbox
+state, ANGLE/WebGL and driver identity, required formats/extensions and maximum
+dimensions, asynchronous camera/LiDAR readback, and shared-memory mapping,
+stale-generation rejection, and cleanup. The same renderer diagnostics are
+available through capabilities and are persisted in run provenance, SFLog
+metadata, and final diagnostics.

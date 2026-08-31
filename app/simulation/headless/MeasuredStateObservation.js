@@ -17,7 +17,7 @@ const SENSOR_SHAPES = Object.freeze({
 const FLOAT_BOUND = Number.MAX_VALUE;
 const UINT64_BOUND = Number.MAX_SAFE_INTEGER;
 
-function metadataSpaces(prefix, validityShape = [1]) {
+export function metadataSpaces(prefix, validityShape = [1]) {
     return [
         { key: `${prefix}/validity`, space: boxSpace(`${prefix}/validity`, 1, "bool", validityShape, [0], [1]) },
         { key: `${prefix}/sequence`, space: boxSpace(`${prefix}/sequence`, 1, "uint64", [1], [0], [UINT64_BOUND]) },

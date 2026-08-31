@@ -270,7 +270,11 @@ export class SimulationKernel {
         this.modules[name] = Boolean(enabled);
     }
 
-    async prepare(resolved, { episode = null, requireStateSensors = false } = {}) {
+    async prepare(resolved, {
+        episode = null,
+        requireStateSensors = false,
+        perceptionObservations = false,
+    } = {}) {
         if (!resolved?.manifest) throw new Error("Resolved run manifest is required.");
 
         if (this.resolvedRun || this.lifecycleState === "finalized") this.clearRun();
@@ -357,6 +361,8 @@ export class SimulationKernel {
                 ?? this.resolvedRun.backendSelections
                 ?? [],
             lidarGeometry: this.resolvedRun.lidarGeometry ?? null,
+            renderScene: this.resolvedRun.renderScene ?? null,
+            perceptionObservations,
         });
         await this.context.physics.configureRun({
             manifest,
@@ -397,7 +403,7 @@ export class SimulationKernel {
         this.pendingAcceptedActions.push(cloneSnapshot(action));
     }
 
-    advanceStep(dt = this.fixedDt) {
+    advanceStep(dt = this.fixedDt, { asyncSensors = false } = {}) {
         if (this.lifecycleState === "disposed") {
             throw new Error("Cannot step a disposed simulation kernel.");
         }
@@ -488,74 +494,84 @@ export class SimulationKernel {
             this.localizationTruthPublisher?.publish(this.timeNs, this.steps, vehicles);
         });
 
-        phase("sensors", () => {
+        const sensorUpdate = phase("sensors", () => {
             if (this.modules.sensors) {
-                this.context.devices.update(dt, { step: this.steps, timeNs: this.timeNs });
+                return asyncSensors && this.context.devices.updateAsync
+                    ? this.context.devices.updateAsync(dt, { step: this.steps, timeNs: this.timeNs })
+                    : this.context.devices.update(dt, { step: this.steps, timeNs: this.timeNs });
             }
+            return null;
         });
 
-        phase("delivery", () => this.context.devices.deliver({
-            step: this.steps,
-            timeNs: this.timeNs,
-        }));
+        const finishStep = () => {
+            phase("delivery", () => this.context.devices.deliver({
+                step: this.steps,
+                timeNs: this.timeNs,
+            }));
 
-        // This legacy phase name is part of the PR 1 characterization. Only
-        // derived state/telemetry remains here; graphics are updated by the
-        // browser adapter after the authoritative transition completes.
-        phase("candidate-viz", () => {
-            this.candidateOutputRuntime?.refreshOracle?.({
-                applyStep: this.steps,
-                applyTimeNs: this.timeNs,
-            });
-        });
-
-        this.publishSimulationEntities();
-        this.publishRuntimeState();
-        if (this.scenarioRuntime?.active) {
-            phase("scenario-after-telemetry", () => {
-                const snapshot = this.scenarioRuntime.postTelemetry({
-                    step: this.steps,
-                    timeNs: this.timeNs,
-                    dt,
-                    contacts,
+            // This legacy phase name is part of the PR 1 characterization. Only
+            // derived state/telemetry remains here; graphics are updated by the
+            // browser adapter after the authoritative transition completes.
+            phase("candidate-viz", () => {
+                this.candidateOutputRuntime?.refreshOracle?.({
+                    applyStep: this.steps,
+                    applyTimeNs: this.timeNs,
                 });
-                if (snapshot.terminal) {
+            });
+
+            this.publishSimulationEntities();
+            this.publishRuntimeState();
+            if (this.scenarioRuntime?.active) {
+                phase("scenario-after-telemetry", () => {
+                    const snapshot = this.scenarioRuntime.postTelemetry({
+                        step: this.steps,
+                        timeNs: this.timeNs,
+                        dt,
+                        contacts,
+                    });
+                    if (snapshot.terminal) {
+                        this.status = "paused";
+                        shouldContinue = false;
+                    }
+                });
+            }
+
+            phase("assertions", () => {
+                if (!this.resolvedRun || this.modules.assertions === false) return;
+                const evaluated = this.assertionEngine.evaluate(this.steps);
+                this.telemetry?.publishSignal?.("simulation.assertions", evaluated.results, {
+                    timeUs: Math.round(this.timeNs / 1000),
+                    cycle: this.steps,
+                    source: "assertions",
+                    type: "json",
+                });
+                if (evaluated.shouldStop) {
+                    this.status = "paused";
+                    shouldContinue = false;
+                    this.emitLifecycle("assertion-stop", { results: evaluated.results });
+                }
+                const scenario = this.scenarioRuntime?.observeAssertions?.(evaluated.results);
+                if (scenario?.terminal) {
                     this.status = "paused";
                     shouldContinue = false;
                 }
             });
-        }
+            if (this.trajectoryHasher) {
+                this.trajectoryHash = this.trajectoryHasher.update({
+                    step: this.steps,
+                    timeNs: this.timeNs,
+                    actions: this.lastAcceptedActions,
+                    state: this.getCanonicalState(),
+                });
+            }
+            if (this.resolvedRun) this.lifecycleState = "stepping";
+            return shouldContinue;
+        };
+        return sensorUpdate?.then ? sensorUpdate.then(finishStep) : finishStep();
+    }
 
-        phase("assertions", () => {
-            if (!this.resolvedRun || this.modules.assertions === false) return;
-            const evaluated = this.assertionEngine.evaluate(this.steps);
-            this.telemetry?.publishSignal?.("simulation.assertions", evaluated.results, {
-                timeUs: Math.round(this.timeNs / 1000),
-                cycle: this.steps,
-                source: "assertions",
-                type: "json",
-            });
-            if (evaluated.shouldStop) {
-                this.status = "paused";
-                shouldContinue = false;
-                this.emitLifecycle("assertion-stop", { results: evaluated.results });
-            }
-            const scenario = this.scenarioRuntime?.observeAssertions?.(evaluated.results);
-            if (scenario?.terminal) {
-                this.status = "paused";
-                shouldContinue = false;
-            }
-        });
-        if (this.trajectoryHasher) {
-            this.trajectoryHash = this.trajectoryHasher.update({
-                step: this.steps,
-                timeNs: this.timeNs,
-                actions: this.lastAcceptedActions,
-                state: this.getCanonicalState(),
-            });
-        }
-        if (this.resolvedRun) this.lifecycleState = "stepping";
-        return shouldContinue;
+    async advanceStepAsync(dt = this.fixedDt) {
+        return this.advanceStep(dt, { asyncSensors: true });
     }
 
     _applyQueuedInputs(step) {

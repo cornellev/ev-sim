@@ -106,6 +106,19 @@ export function namedTensor(name, dtype, shape, values) {
     return { name, tensor: packTensor(dtype, shape, values) };
 }
 
+export function namedSharedTensor(name, dtype, shape, sharedMemory) {
+    if (!sharedMemory?.regionName || !Number.isSafeInteger(Number(sharedMemory.offsetBytes))) {
+        throw new TypeError(`Tensor ${name} requires a valid shared-memory reference.`);
+    }
+    return {
+        name,
+        tensor: {
+            spec: tensorSpec(dtype, shape),
+            payload: { sharedMemory: { ...sharedMemory } },
+        },
+    };
+}
+
 export function boxSpace(id, version, dtype, shape, low, high) {
     return { id, version, box: { tensor: tensorSpec(dtype, shape), low: [...low], high: [...high] } };
 }

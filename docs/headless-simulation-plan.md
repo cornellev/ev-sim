@@ -7,8 +7,8 @@ language-neutral API authority is
 
 ## Status
 
-- Current milestone: **PR 10 — complete**
-- Next planned milestone: **PR 11 — Pooled offscreen GPU sensors and large-payload transport**
+- Current milestone: **PR 11 — complete**
+- Next planned milestone: **PR 12 — CI, parity, performance, distribution, and release gates**
 - Default implementation/review reasoning level: **Extra High**
 - Last updated: **2026-08-31**
 
@@ -24,7 +24,7 @@ Progress:
 - [x] PR 8 — Python Gymnasium and Stable-Baselines3 package
 - [x] PR 9 — MCP, experiment, result, and logging integration
 - [x] PR 10 — Deterministic CPU/BVH LiDAR
-- [ ] PR 11 — Pooled offscreen GPU sensors and large-payload transport
+- [x] PR 11 — Pooled offscreen GPU sensors and large-payload transport
 - [ ] PR 12 — CI, parity, performance, distribution, and release gates
 
 ## Locked decisions
@@ -395,6 +395,11 @@ measured-state observation contract remain unchanged.
 
 ### PR 11 — Pooled offscreen GPU sensors and large payloads
 
+Status: **Complete (2026-08-31).** Protocol 1.2 adds measured-perception,
+hardware-probed pooled Chromium/WebGL2 sensors, conditional canonical analytic
+render scenes, local shared-memory tensor references, and GPU/shared-memory
+resource limits while retaining inline protocol 1.1 compatibility.
+
 Deliver:
 
 - Add a pooled renderer sidecar rather than one browser per environment.
@@ -410,6 +415,18 @@ Gate:
 - Multi-environment camera/LiDAR runs retain bounded GPU memory.
 - Stale shared-memory frames are rejected.
 - State-only workers do not depend on Chromium/GPU packages.
+
+Completed gate evidence: the 1/8/16-environment fake-pool soak retains one
+browser launch, one configured context, a plateaued scene cache, bounded
+tracked allocation, and zero environment allocation after close. Hardware
+Chrome 152 on ANGLE Metal/Apple M1 Max passes camera/LiDAR readback, CPU/GPU
+LiDAR comparison, and real process-isolated UDS shared-memory integration.
+Malformed/stale shared references and torn/truncated regions are rejected;
+the unconfigured dependency-isolation path does not load the renderer adapter.
+The complete Node suite reports 588 passes and two expected hardware skips,
+the hardware-enabled GPU suite passes all seven tests, the Python suite passes
+all 42 tests, generated bindings are current, lint has no errors, and the
+characterization fixture has no delta.
 
 ### PR 12 — CI, parity, performance, distribution, and release
 
@@ -711,3 +728,57 @@ unsupported until PR 11. Newly resolved LiDAR runs intentionally receive new
 resolved, simulation-semantic, episode, and trajectory hashes; world hashes,
 physics, non-LiDAR compatibility, manifest v9, run-bundle v1, protocol 1.1,
 reward and observation profiles, and PointCloud2 schemas do not change.
+
+### 2026-08-31 — PR 11 pooled GPU sensors and shared-memory transport
+
+Advance the service contract additively to protocol 1.2. `ResourceLimits`
+fields 11 and 12 bound per-environment shared-memory and renderer-accounted GPU
+allocation; capability-response field 11 carries canonical operational probe
+diagnostics. None of these operational fields enters `episodeHash`.
+Protocol 1.1 and TCP responses remain inline. Protocol 1.2 local Unix sockets
+advertise `grpc+unix+shared-memory-v1` and externalize tensors at least 64 KiB.
+
+Register backend kind 4 as `chromium-webgl2-rendered-sensors` version `1`,
+configuration hash
+`cdbfea7d5698356687ca5820a6d54c932a815f199eb8a2b405b94fbe8183a5c1`.
+It requires a successful hardware WebGL2 probe and rejects software renderers
+for production. One supervisor-owned browser/page and fixed context pool serve
+process-isolated workers; workers retain authoritative fixed-step capture
+ordering, integer-nanosecond stamps, transforms, RNG, latency, queues, and sync
+groups. Same-stack replay scope includes the cev-sim/Chromium/ANGLE/GPU/driver
+stack and the scene resource. Cross-environment renderer scheduling is
+operational.
+
+Add `measured-perception` version 1 with configuration hash
+`e9f6ed5a2eb045c655b3955dec34e20e416e2439077e0c9497c30bcaf5c3ba12`
+and schema hash
+`303ad1c62c107a5e306e28d0a2f58e00efc7fda49a82838b720682ea77f71af1`.
+It preserves measured-state/task tensors and adds measured RGBA plus LiDAR
+range/incidence with existing delivery metadata. Depth, semantic/instance IDs,
+detections, and other oracle products remain excluded. CPU and GPU LiDAR share
+the logical tensor; cameras require GPU.
+
+Resolve `cev-sim.render-scene` version 1 only for camera bundles through the
+provider-neutral `RenderSceneProvider`; `canonical-analytic@1` supplies the
+initial stable materials, geometry, semantic/instance IDs, and dynamic-node
+bindings. Only bundles receiving the new resource change resolved and semantic
+hashes. Existing state-only and CPU-LiDAR bundles, the action-tape
+characterization, manifest v9, and run-bundle v1 remain unchanged.
+
+Use private `0700` directories and randomized `0600` regular files for
+three-generation arenas. Headers authenticate the environment token,
+generation, response sequence, payload length, tensor-spec hash, and content
+digest. Python opens regions read-only, maps the whole arena, validates before
+and after copying, returns owning NumPy arrays, and rejects stale or malformed
+references. Renderer failure, context loss, or invalid shared memory is an
+infrastructure failure requiring reset, never an RL transition.
+
+Final gate evidence: `npm run test:gpu-sensors` passes all seven cases against
+Chrome 152.0.7977.65 / ANGLE Metal / Apple M1 Max; preflight reports production
+hardware WebGL2, sandbox enabled, 16384 maximum dimensions, float targets,
+asynchronous readback, stale-generation rejection, and cleanup. `npm test`
+reports 588 passed and two hardware-gated skips; `python/.venv/bin/pytest
+python/tests` reports 42 passed. Focused shared-memory, LiDAR, CLI, supervisor,
+protocol-generation, and Python lint checks pass. `npm run lint` has no errors
+(two pre-existing warnings), and `npm run fixtures:headless` produces no
+characterization delta.

@@ -3,7 +3,7 @@ import { registerMsgDefinition } from "../../client/Client.js";
 import { compareUtf8 } from "../world/WorldDescription.js";
 import { assertLidarGeometryResource } from "../lidar/LidarGeometry.js";
 import { assertCpuLidarBackendSelection } from "./CpuLidarBackend.js";
-import { buildLidarMessages } from "./LidarProducts.js";
+import { buildLidarCapture } from "./LidarProducts.js";
 
 function clone(value) {
     return typeof structuredClone === "function" ? structuredClone(value) : JSON.parse(JSON.stringify(value));
@@ -18,6 +18,9 @@ class HeadlessCpuLidarDevice {
         this.manager = manager;
         this.enabled = config.enabled !== false;
         this.gpuCapture = false;
+        this.perceptionObservations = publisherOptions.perceptionObservations === true;
+        this.latestObservation = null;
+        this.deliveryGeneration = 0;
         this.contractPublisher = new SensorPublisher(this, this.config, publisherOptions);
     }
 
@@ -38,13 +41,51 @@ class HeadlessCpuLidarDevice {
             return [];
         }
         const buffer = this.manager.scene.capture(this.config, vehicles);
-        return buildLidarMessages({
+        return buildLidarCapture({
             buffer,
             config: this.config,
             captureTimeNs: context.captureTimeNs,
             rng: context.rng,
             publisher: this.contractPublisher,
+            includeObservation: this.perceptionObservations,
         });
+    }
+
+    onDeliveredObservation(observation, metadata) {
+        this.deliveryGeneration += 1;
+        this.latestObservation = {
+            ...observation,
+            ...metadata,
+            generation: this.deliveryGeneration,
+            validity: true,
+        };
+    }
+
+    getObservationRecord(step) {
+        const azimuth = this.config.calibration.azimuth;
+        const elevation = this.config.calibration.elevation;
+        const shape = [
+            Math.ceil((elevation.endDeg - elevation.startDeg) / elevation.stepDeg),
+            Math.ceil((azimuth.endDeg - azimuth.startDeg) / azimuth.stepDeg),
+            2,
+        ];
+        if (!this.latestObservation) {
+            return {
+                id: this.id,
+                dtype: "float32",
+                shape,
+                value: new Float32Array(shape.reduce((total, size) => total * size, 1)),
+                validity: false,
+                sequence: 0,
+                generation: 0,
+                ageSteps: Number.MAX_SAFE_INTEGER,
+            };
+        }
+        return {
+            id: this.id,
+            ...this.latestObservation,
+            ageSteps: Math.max(0, Number(step) - this.latestObservation.deliveryStep),
+        };
     }
 
     setEnabled(enabled) {
@@ -108,6 +149,7 @@ export class HeadlessCpuLidarSensorManager {
                 calibrationHash: options.calibrationHash,
                 stepNs: options.stepNs,
                 runtimeData: this.runtimeData,
+                perceptionObservations: options.perceptionObservations,
                 // Capture timing is diagnostic only and must not perturb deterministic state.
                 nowNs: () => 0,
             });
@@ -130,7 +172,11 @@ export class HeadlessCpuLidarSensorManager {
     resetRun({ resetSeed = this.seed } = {}) {
         this.seed = String(resetSeed);
         this.clock = { step: 0, timeNs: 0 };
-        for (const device of this.devices) device.contractPublisher.reset({ resetSeed: this.seed });
+        for (const device of this.devices) {
+            device.latestObservation = null;
+            device.deliveryGeneration = 0;
+            device.contractPublisher.reset({ resetSeed: this.seed });
+        }
         return this.getDeterministicState();
     }
 
@@ -157,5 +203,12 @@ export class HeadlessCpuLidarSensorManager {
             enabled: device.enabled,
             publisher: device.contractPublisher.getDeterministicState(),
         }));
+    }
+
+
+    getPerceptionObservationRecords(step) {
+        return this.devices
+            .filter((device) => device.perceptionObservations)
+            .map((device) => device.getObservationRecord(step));
     }
 }

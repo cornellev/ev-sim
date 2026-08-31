@@ -1,7 +1,7 @@
 # cev-sim Python adapter
 
 This package provides the Gymnasium and Stable-Baselines3 clients for the
-protocol 1.1 cev-sim headless supervisor. See
+protocol 1.2 cev-sim headless supervisor. See
 [`docs/python-headless.md`](../docs/python-headless.md) for installation and
 usage.
 

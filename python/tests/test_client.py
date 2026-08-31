@@ -11,6 +11,9 @@ from cev_sim.config import (
     CPU_LIDAR_KIND,
     CPU_LIDAR_VERSION,
     DEFAULT_CPU_LIDAR_BACKEND,
+    MEASURED_PERCEPTION_PROFILE,
+    MEASURED_PERCEPTION_PROFILE_VERSION,
+    MEASURED_PERCEPTION_SCHEMA_HASH,
     MEASURED_STATE_PROFILE,
     MEASURED_STATE_PROFILE_VERSION,
     MEASURED_STATE_SCHEMA_HASH,
@@ -34,13 +37,18 @@ def capabilities() -> pb.GetCapabilitiesResponse:
         protocol=pb.ProtocolVersion(major=PROTOCOL_MAJOR, minor=PROTOCOL_MINOR),
         runtime_name="cev-sim",
         runtime_version="0.1.0",
-        transports=["unix", "tcp-insecure"],
+        transports=["unix", "tcp-insecure", "grpc+unix+shared-memory-v1"],
         observation_profiles=[
             pb.ProfileCapability(
                 id=MEASURED_STATE_PROFILE,
                 version=MEASURED_STATE_PROFILE_VERSION,
                 config_schema_hash=MEASURED_STATE_SCHEMA_HASH,
-            )
+            ),
+            pb.ProfileCapability(
+                id=MEASURED_PERCEPTION_PROFILE,
+                version=MEASURED_PERCEPTION_PROFILE_VERSION,
+                config_schema_hash=MEASURED_PERCEPTION_SCHEMA_HASH,
+            ),
         ],
         reward_profiles=[
             pb.ProfileCapability(
