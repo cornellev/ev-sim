@@ -183,7 +183,13 @@ test("transform runtime publishes live TF fixtures through the contract router",
     runtime.publishDynamicTransforms(16_666_667, 1, [{ telemetryId: "ego", position: { x: 1, y: 0, z: 2 }, rotation: { x: 0, y: 0, z: 0, order: "XYZ" } }]);
     const tf = store.read("topics./tf")?.value;
     const tfStatic = store.read("topics./tf_static")?.value;
+    const tfEntry = store.read("topics./tf");
+    const tfStaticEntry = store.read("topics./tf_static");
     assert.ok(Array.isArray(tf?.transforms) && tf.transforms.length >= 2);
     assert.ok(Array.isArray(tfStatic?.transforms) && tfStatic.transforms.length >= 0);
     assert.equal(tf.transforms[1].child_frame_id, "base_link");
+    assert.equal(tfEntry.timeUs, 16_667);
+    assert.equal(tfEntry.cycle, 1);
+    assert.equal(tfStaticEntry.timeUs, 0);
+    assert.equal(tfStaticEntry.cycle, 0);
 });

@@ -226,11 +226,15 @@ export class TopicContractRouter {
         const logClass = resolvePayloadLogClass(info.value, metadata.logClass);
         const observationalOracle = producer === "oracle" && metadata.observationalOracle === true;
         const routeActive = !observationalOracle && shouldRouteDownstream(topic);
+        const publishTimeNs = metadata.deliveryTimeNs ?? metadata.captureTimeNs ?? 0;
+        const publishCycle = metadata.actualDeliveryStep ?? metadata.cycle ?? metadata.captureStep ?? 0;
         // Publish producer once. When intentionally routing active, `_writeActive`
         // owns the producer write so the same payload is not stored twice.
         if (!routeActive) {
             this._publish(producerPath, info.value, {
                 ...metadata,
+                timeUs: Math.round(publishTimeNs / 1000),
+                cycle: publishCycle,
                 type: "json",
                 source: producer,
                 category: "topics",
@@ -271,7 +275,7 @@ export class TopicContractRouter {
                 captureTimeNs: metadata.captureTimeNs ?? null,
                 arrivalTimeNs: metadata.deliveryTimeNs ?? metadata.captureTimeNs ?? 0,
                 applyTimeNs: metadata.deliveryTimeNs ?? metadata.captureTimeNs ?? 0,
-                applyStep: metadata.cycle ?? 0,
+                applyStep: publishCycle,
                 sequence: metadata.sequenceId ?? null,
                 usedFallback: false,
                 routeDownstream: false,
