@@ -357,6 +357,10 @@ Add conformance-tested import/export or adapters for:
 
 ## Dependency-ordered roadmap
 
+The implementation-level contract, PR sequence, acceptance gates, and
+Codex/Cursor handoff for authoritative headless execution live in the
+[Headless Simulation Implementation Plan](headless-simulation-plan.md).
+
 ### Gate A — Reproducible verification spine
 
 **Objective:** Turn the existing integration harness into an unattended, diagnosable test authority before broadening the autonomy stack.

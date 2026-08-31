@@ -47,6 +47,11 @@ Built-in block classes are registered by `app/scripting/registerBuiltInBlocks.js
 
 `app/simulation/SimulationEngine.js` owns the simulation loop. It supports play, pause, stop, fixed steps, speed changes, real-time vs fixed advancement, and module toggles for vehicles, sensors, controls, rendering, environment, scripting, and physics. In environment mode it also drives `EarthTilesManager.update()` each frame while Google 3D Tiles are loaded.
 
+The dependency-ordered extraction of a UI-independent kernel, CLI and worker
+APIs, Python Gymnasium adapter, resource controls, and offscreen sensor
+backends is specified in the
+[Headless Simulation Implementation Plan](headless-simulation-plan.md).
+
 ## Environment Editor
 
 The environment editor authors static world content through an `EnvironmentDocument` (roads, buildings, features, earth metadata). `EditorState` tracks three sub-modes within the editor: scene editing, 2D map authoring, and earth import.

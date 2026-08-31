@@ -1,0 +1,452 @@
+syntax = "proto3";
+
+package cev_sim.headless.v1;
+
+// Language-neutral control contract for deterministic headless simulation.
+// The schema is transport-independent even though the first implementation
+// will expose it through gRPC over Unix-domain sockets or TCP.
+service HeadlessSimulationService {
+  rpc GetCapabilities(GetCapabilitiesRequest) returns (GetCapabilitiesResponse);
+  rpc CreateBatch(CreateBatchRequest) returns (CreateBatchResponse);
+  rpc ResetBatch(ResetBatchRequest) returns (ResetBatchResponse);
+  rpc StepBatch(StepBatchRequest) returns (StepBatchResponse);
+  rpc FinalizeBatch(FinalizeBatchRequest) returns (FinalizeBatchResponse);
+  rpc CloseBatch(CloseBatchRequest) returns (CloseBatchResponse);
+  rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+enum ScalarType {
+  SCALAR_TYPE_UNSPECIFIED = 0;
+  SCALAR_TYPE_FLOAT32 = 1;
+  SCALAR_TYPE_FLOAT64 = 2;
+  SCALAR_TYPE_INT8 = 3;
+  SCALAR_TYPE_UINT8 = 4;
+  SCALAR_TYPE_INT16 = 5;
+  SCALAR_TYPE_UINT16 = 6;
+  SCALAR_TYPE_INT32 = 7;
+  SCALAR_TYPE_UINT32 = 8;
+  SCALAR_TYPE_INT64 = 9;
+  SCALAR_TYPE_UINT64 = 10;
+  SCALAR_TYPE_BOOL = 11;
+}
+
+enum ByteOrder {
+  BYTE_ORDER_UNSPECIFIED = 0;
+  BYTE_ORDER_LITTLE_ENDIAN = 1;
+  BYTE_ORDER_BIG_ENDIAN = 2;
+}
+
+enum BackendKind {
+  BACKEND_KIND_UNSPECIFIED = 0;
+  BACKEND_KIND_PHYSICS = 1;
+  BACKEND_KIND_STATE_SENSOR = 2;
+  BACKEND_KIND_CPU_LIDAR = 3;
+  BACKEND_KIND_GPU_SENSOR = 4;
+  BACKEND_KIND_ARTIFACT = 5;
+}
+
+enum ArtifactProfile {
+  ARTIFACT_PROFILE_UNSPECIFIED = 0;
+  ARTIFACT_PROFILE_EVALUATION = 1;
+  ARTIFACT_PROFILE_TRAINING = 2;
+  ARTIFACT_PROFILE_DISABLED = 3;
+}
+
+enum ErrorCode {
+  // Zero is success so an omitted ErrorStatus has conventional proto3
+  // success semantics.
+  ERROR_CODE_OK = 0;
+  ERROR_CODE_INVALID_REQUEST = 1;
+  ERROR_CODE_PROTOCOL_MISMATCH = 2;
+  ERROR_CODE_BUNDLE_INVALID = 3;
+  ERROR_CODE_BUNDLE_HASH_MISMATCH = 4;
+  ERROR_CODE_INCOMPATIBLE_SPACE = 5;
+  ERROR_CODE_UNSUPPORTED_CAPABILITY = 6;
+  ERROR_CODE_BATCH_NOT_FOUND = 7;
+  ERROR_CODE_ENVIRONMENT_NOT_FOUND = 8;
+  ERROR_CODE_EPISODE_TERMINAL = 9;
+  ERROR_CODE_RESOURCE_LIMIT = 10;
+  ERROR_CODE_STEP_TIMEOUT = 11;
+  ERROR_CODE_WORKER_CRASHED = 12;
+  ERROR_CODE_ARTIFACT_FAILURE = 13;
+  ERROR_CODE_INTERNAL = 14;
+}
+
+enum TerminationReason {
+  TERMINATION_REASON_UNSPECIFIED = 0;
+  TERMINATION_REASON_NONE = 1;
+  TERMINATION_REASON_SUCCESS = 2;
+  TERMINATION_REASON_COLLISION = 3;
+  TERMINATION_REASON_OFF_ROAD = 4;
+  TERMINATION_REASON_WRONG_WAY = 5;
+  TERMINATION_REASON_SCENARIO_FAILURE = 6;
+  TERMINATION_REASON_ASSERTION_FAILURE = 7;
+}
+
+enum TruncationReason {
+  TRUNCATION_REASON_UNSPECIFIED = 0;
+  TRUNCATION_REASON_NONE = 1;
+  TRUNCATION_REASON_MAX_EPISODE_STEPS = 2;
+  TRUNCATION_REASON_MAX_SIMULATION_TIME = 3;
+  TRUNCATION_REASON_CANCELLED = 4;
+}
+
+enum HealthState {
+  HEALTH_STATE_UNSPECIFIED = 0;
+  HEALTH_STATE_SERVING = 1;
+  HEALTH_STATE_DEGRADED = 2;
+  HEALTH_STATE_NOT_SERVING = 3;
+}
+
+message ProtocolVersion {
+  uint32 major = 1;
+  uint32 minor = 2;
+}
+
+message GetCapabilitiesRequest {
+  ProtocolVersion client_protocol = 1;
+}
+
+message ProfileCapability {
+  string id = 1;
+  uint32 version = 2;
+  string description = 3;
+  string config_schema_hash = 4;
+}
+
+message BackendCapability {
+  string id = 1;
+  string version = 2;
+  BackendKind kind = 3;
+  string description = 4;
+  repeated string sensor_types = 5;
+  repeated string features = 6;
+  bool available = 7;
+  string unavailable_reason = 8;
+  string determinism_scope = 9;
+}
+
+message GetCapabilitiesResponse {
+  ProtocolVersion protocol = 1;
+  string runtime_name = 2;
+  string runtime_version = 3;
+  string platform = 4;
+  string architecture = 5;
+  repeated BackendCapability backends = 6;
+  repeated ProfileCapability observation_profiles = 7;
+  repeated ProfileCapability reward_profiles = 8;
+  repeated string transports = 9;
+  ErrorStatus error = 10;
+}
+
+// Canonical UTF-8 JSON for an immutable cev-sim.run-bundle.
+message RunBundle {
+  string bundle_id = 1;
+  string resolved_hash = 2;
+  bytes canonical_json = 3;
+}
+
+message ProfileRef {
+  string id = 1;
+  uint32 version = 2;
+  string config_hash = 3;
+}
+
+message BackendSelection {
+  BackendKind kind = 1;
+  string capability_id = 2;
+  string version = 3;
+  string config_hash = 4;
+}
+
+// Immutable simulation-semantic input for one episode. A new reset seed
+// requires a new EpisodeSpec. Operational limits and artifact policy are
+// deliberately not part of this message and therefore not part of episodeHash.
+//
+// backend_selections must be sorted by (kind, capability_id). environment_index
+// values in a batch must be unique, zero-based, and contiguous.
+message EpisodeSpec {
+  uint32 environment_index = 1;
+  string environment_id = 2;
+  string run_bundle_id = 3;
+  uint64 reset_seed = 4;
+  uint32 action_repeat = 5;
+  uint64 max_episode_steps = 6;
+  ProfileRef observation_profile = 7;
+  ProfileRef reward_profile = 8;
+  repeated BackendSelection backend_selections = 9;
+}
+
+// Operational safeguards. Triggering one is an infrastructure error, not an
+// RL truncation transition. Zero means "use the supervisor default".
+message ResourceLimits {
+  uint64 max_rss_bytes_per_environment = 1;
+  uint64 max_heap_bytes_per_environment = 2;
+  uint32 max_actors_per_environment = 3;
+  uint32 max_sensors_per_environment = 4;
+  uint64 max_observation_bytes = 5;
+  uint64 max_queue_bytes = 6;
+  uint64 max_artifact_bytes = 7;
+  uint64 step_wall_timeout_ms = 8;
+  uint64 episode_wall_timeout_ms = 9;
+  uint32 restart_budget = 10;
+}
+
+// Logging does not alter simulation semantics. Evaluation records full SFLog;
+// training records summaries and may sample/failure-promote full SFLogs.
+message ArtifactPolicy {
+  ArtifactProfile profile = 1;
+  string output_uri = 2;
+  double full_sflog_sample_rate = 3;
+  bool full_sflog_on_failure = 4;
+}
+
+message TensorSpec {
+  ScalarType dtype = 1;
+  repeated uint64 shape = 2;
+  ByteOrder byte_order = 3;
+}
+
+message BoxSpace {
+  TensorSpec tensor = 1;
+  // Bounds contain either one broadcast value or one value per tensor element.
+  repeated double low = 2;
+  repeated double high = 3;
+}
+
+message DiscreteSpace {
+  uint64 count = 1;
+  int64 start = 2;
+}
+
+message MultiDiscreteSpace {
+  repeated uint64 counts = 1;
+  repeated int64 starts = 2;
+}
+
+message DictSpaceEntry {
+  string key = 1;
+  SpaceSpec space = 2;
+}
+
+message DictSpace {
+  // Entries are sorted by UTF-8 key bytes for canonical hashing.
+  repeated DictSpaceEntry entries = 1;
+}
+
+message TupleSpace {
+  repeated SpaceSpec entries = 1;
+}
+
+message SpaceSpec {
+  string id = 1;
+  uint32 version = 2;
+  oneof kind {
+    BoxSpace box = 10;
+    DiscreteSpace discrete = 11;
+    MultiDiscreteSpace multi_discrete = 12;
+    DictSpace dictionary = 13;
+    TupleSpace tuple = 14;
+  }
+}
+
+message SharedMemoryRef {
+  string region_name = 1;
+  uint64 generation = 2;
+  uint64 offset_bytes = 3;
+  uint64 length_bytes = 4;
+  uint64 sequence = 5;
+}
+
+message TensorPayload {
+  oneof storage {
+    bytes packed_data = 1;
+    SharedMemoryRef shared_memory = 2;
+  }
+}
+
+message PackedTensor {
+  TensorSpec spec = 1;
+  TensorPayload payload = 2;
+}
+
+message NamedTensor {
+  string name = 1;
+  PackedTensor tensor = 2;
+}
+
+message TensorMap {
+  // Entries are sorted by UTF-8 name bytes. Packed values must exactly match
+  // their declared dtype, shape, byte order, and byte length.
+  repeated NamedTensor entries = 1;
+}
+
+message EnvironmentDescriptor {
+  uint32 environment_index = 1;
+  string environment_id = 2;
+  string episode_hash = 3;
+}
+
+message BatchDescriptor {
+  string batch_id = 1;
+  repeated EnvironmentDescriptor environments = 2;
+  SpaceSpec action_space = 3;
+  SpaceSpec observation_space = 4;
+}
+
+message CreateBatchRequest {
+  ProtocolVersion client_protocol = 1;
+  repeated RunBundle run_bundles = 2;
+  repeated EpisodeSpec episodes = 3;
+  ResourceLimits resource_limits = 4;
+  ArtifactPolicy artifact_policy = 5;
+}
+
+message CreateBatchResponse {
+  BatchDescriptor batch = 1;
+  ErrorStatus error = 2;
+}
+
+message ResetBatchRequest {
+  string batch_id = 1;
+  // Exactly one immutable EpisodeSpec for each environment being reset.
+  // Entries must be sorted by environment_index.
+  repeated EpisodeSpec episodes = 2;
+}
+
+message EpisodeResetInfo {
+  string episode_hash = 1;
+  string resolved_hash = 2;
+  uint64 step = 3;
+  uint64 simulation_time_ns = 4;
+}
+
+message ResetResult {
+  uint32 environment_index = 1;
+  TensorMap observation = 2;
+  EpisodeResetInfo info = 3;
+  ErrorStatus error = 4;
+}
+
+message ResetBatchResponse {
+  string batch_id = 1;
+  repeated ResetResult results = 2;
+  ErrorStatus error = 3;
+}
+
+message EnvironmentAction {
+  uint32 environment_index = 1;
+  TensorMap action = 2;
+}
+
+message StepBatchRequest {
+  string batch_id = 1;
+  // Exactly one action per active environment, sorted by environment_index.
+  repeated EnvironmentAction actions = 2;
+}
+
+message RewardTerm {
+  string id = 1;
+  double value = 2;
+  double weight = 3;
+  double weighted_value = 4;
+}
+
+message EpisodeTransitionInfo {
+  string episode_hash = 1;
+  string trajectory_hash = 2;
+  uint64 step = 3;
+  uint64 simulation_time_ns = 4;
+  repeated RewardTerm reward_terms = 5;
+  TerminationReason termination_reason = 6;
+  TruncationReason truncation_reason = 7;
+  // Forward-compatible canonical JSON for non-space diagnostic metadata only.
+  bytes diagnostic_json = 8;
+}
+
+message StepResult {
+  uint32 environment_index = 1;
+  TensorMap observation = 2;
+  double reward = 3;
+  bool terminated = 4;
+  bool truncated = 5;
+  EpisodeTransitionInfo info = 6;
+  ErrorStatus error = 7;
+}
+
+message StepBatchResponse {
+  string batch_id = 1;
+  repeated StepResult results = 2;
+  ErrorStatus error = 3;
+}
+
+message FinalizeBatchRequest {
+  string batch_id = 1;
+  // Empty means all environments; otherwise sorted and unique.
+  repeated uint32 environment_indices = 2;
+}
+
+message ArtifactRef {
+  string name = 1;
+  string uri = 2;
+  string mime_type = 3;
+  uint64 size_bytes = 4;
+  string sha256 = 5;
+}
+
+message FinalizeResult {
+  uint32 environment_index = 1;
+  string episode_hash = 2;
+  string trajectory_hash = 3;
+  bool passed = 4;
+  bytes canonical_result_json = 5;
+  repeated ArtifactRef artifacts = 6;
+  ErrorStatus error = 7;
+}
+
+message FinalizeBatchResponse {
+  string batch_id = 1;
+  repeated FinalizeResult results = 2;
+  ErrorStatus error = 3;
+}
+
+message CloseBatchRequest {
+  string batch_id = 1;
+  bool finalize_active_episodes = 2;
+}
+
+message CloseBatchResponse {
+  string batch_id = 1;
+  repeated FinalizeResult finalized = 2;
+  ErrorStatus error = 3;
+}
+
+message HealthRequest {
+  bool include_environments = 1;
+}
+
+message EnvironmentHealth {
+  uint32 environment_index = 1;
+  HealthState state = 2;
+  uint64 rss_bytes = 3;
+  uint64 heap_bytes = 4;
+  uint64 last_completed_step = 5;
+  string detail = 6;
+}
+
+message HealthResponse {
+  HealthState state = 1;
+  string runtime_version = 2;
+  uint64 uptime_ms = 3;
+  uint32 active_batches = 4;
+  uint32 active_environments = 5;
+  repeated EnvironmentHealth environments = 6;
+  ErrorStatus error = 7;
+}
+
+message ErrorStatus {
+  ErrorCode code = 1;
+  string message = 2;
+  bool retryable = 3;
+  bytes canonical_detail_json = 4;
+}

@@ -1,0 +1,503 @@
+{
+  "kind": "cev-sim.headless.characterization",
+  "version": 1,
+  "id": "fixed-step-controls-v1",
+  "sourceRuntime": "app/simulation/SimulationEngine.js",
+  "run": {
+    "manifestId": "headless-characterization-v1",
+    "definitionHash": "39c19ab6c9f786f870001a4153b141cf7dce6017dd460f0aee492ec2717024be",
+    "resolvedHash": "1bc531d3996922239130344ea7f86ee41e5b5ffebfee53065022445d95687d37",
+    "stepNs": 20000000,
+    "maxSteps": 6
+  },
+  "phaseOrder": [
+    "inputs",
+    "scripts",
+    "controls",
+    "vehicles",
+    "physics",
+    "controls-achieved",
+    "contacts",
+    "clock",
+    "transforms",
+    "sensors",
+    "delivery",
+    "candidate-viz",
+    "assertions"
+  ],
+  "snapshots": [
+    {
+      "step": 1,
+      "timeNs": 20000000,
+      "timeSeconds": 0.02,
+      "phases": [
+        "inputs",
+        "scripts",
+        "controls",
+        "vehicles",
+        "physics",
+        "controls-achieved",
+        "contacts",
+        "clock",
+        "transforms",
+        "sensors",
+        "delivery",
+        "candidate-viz",
+        "assertions"
+      ],
+      "runtimeCalls": [
+        "keys",
+        "input:/controls/command",
+        "script",
+        "vehicle",
+        "physics",
+        "contacts",
+        "sensor",
+        "delivery"
+      ],
+      "appliedInputs": [
+        {
+          "sequence": 1,
+          "topic": "/controls/command"
+        }
+      ],
+      "vehicle": {
+        "position": {
+          "x": 0.04,
+          "y": 0,
+          "z": 0
+        },
+        "velocity": {
+          "x": 2,
+          "y": 0,
+          "z": 0
+        },
+        "steeringAngle": -0.05
+      },
+      "control": {
+        "status": "ok",
+        "statusCode": null,
+        "sequence": 1,
+        "mode": "velocity",
+        "applied": {
+          "speedMps": 2,
+          "steeringRad": 0.05,
+          "accelerationMps2": 100
+        },
+        "achieved": {
+          "speedMps": 2,
+          "steeringRad": 0.05,
+          "accelerationMps2": 0
+        }
+      },
+      "assertions": [
+        {
+          "id": "time-reaches-100ms",
+          "name": "Simulation reaches 100 ms",
+          "severity": "error",
+          "onFailure": "stop",
+          "status": "pending",
+          "evaluations": 1,
+          "firstFailureStep": null,
+          "message": null
+        }
+      ]
+    },
+    {
+      "step": 2,
+      "timeNs": 40000000,
+      "timeSeconds": 0.04,
+      "phases": [
+        "inputs",
+        "scripts",
+        "controls",
+        "vehicles",
+        "physics",
+        "controls-achieved",
+        "contacts",
+        "clock",
+        "transforms",
+        "sensors",
+        "delivery",
+        "candidate-viz",
+        "assertions"
+      ],
+      "runtimeCalls": [
+        "keys",
+        "script",
+        "vehicle",
+        "physics",
+        "contacts",
+        "sensor",
+        "delivery"
+      ],
+      "appliedInputs": [],
+      "vehicle": {
+        "position": {
+          "x": 0.08,
+          "y": 0,
+          "z": 0
+        },
+        "velocity": {
+          "x": 2,
+          "y": 0,
+          "z": 0
+        },
+        "steeringAngle": -0.05
+      },
+      "control": {
+        "status": "ok",
+        "statusCode": null,
+        "sequence": 1,
+        "mode": "velocity",
+        "applied": {
+          "speedMps": 2,
+          "steeringRad": 0.05,
+          "accelerationMps2": 0
+        },
+        "achieved": {
+          "speedMps": 2,
+          "steeringRad": 0.05,
+          "accelerationMps2": 0
+        }
+      },
+      "assertions": [
+        {
+          "id": "time-reaches-100ms",
+          "name": "Simulation reaches 100 ms",
+          "severity": "error",
+          "onFailure": "stop",
+          "status": "pending",
+          "evaluations": 2,
+          "firstFailureStep": null,
+          "message": null
+        }
+      ]
+    },
+    {
+      "step": 3,
+      "timeNs": 60000000,
+      "timeSeconds": 0.06,
+      "phases": [
+        "inputs",
+        "scripts",
+        "controls",
+        "vehicles",
+        "physics",
+        "controls-achieved",
+        "contacts",
+        "clock",
+        "transforms",
+        "sensors",
+        "delivery",
+        "candidate-viz",
+        "assertions"
+      ],
+      "runtimeCalls": [
+        "keys",
+        "input:/controls/command",
+        "script",
+        "vehicle",
+        "physics",
+        "contacts",
+        "sensor",
+        "delivery"
+      ],
+      "appliedInputs": [
+        {
+          "sequence": 2,
+          "topic": "/controls/command"
+        }
+      ],
+      "vehicle": {
+        "position": {
+          "x": 0.16,
+          "y": 0,
+          "z": 0
+        },
+        "velocity": {
+          "x": 4,
+          "y": 0,
+          "z": 0
+        },
+        "steeringAngle": 0.1
+      },
+      "control": {
+        "status": "ok",
+        "statusCode": null,
+        "sequence": 2,
+        "mode": "velocity",
+        "applied": {
+          "speedMps": 4,
+          "steeringRad": -0.1,
+          "accelerationMps2": 100
+        },
+        "achieved": {
+          "speedMps": 4,
+          "steeringRad": -0.1,
+          "accelerationMps2": 0
+        }
+      },
+      "assertions": [
+        {
+          "id": "time-reaches-100ms",
+          "name": "Simulation reaches 100 ms",
+          "severity": "error",
+          "onFailure": "stop",
+          "status": "pending",
+          "evaluations": 3,
+          "firstFailureStep": null,
+          "message": null
+        }
+      ]
+    },
+    {
+      "step": 4,
+      "timeNs": 80000000,
+      "timeSeconds": 0.08,
+      "phases": [
+        "inputs",
+        "scripts",
+        "controls",
+        "vehicles",
+        "physics",
+        "controls-achieved",
+        "contacts",
+        "clock",
+        "transforms",
+        "sensors",
+        "delivery",
+        "candidate-viz",
+        "assertions"
+      ],
+      "runtimeCalls": [
+        "keys",
+        "script",
+        "vehicle",
+        "physics",
+        "contacts",
+        "sensor",
+        "delivery"
+      ],
+      "appliedInputs": [],
+      "vehicle": {
+        "position": {
+          "x": 0.24,
+          "y": 0,
+          "z": 0
+        },
+        "velocity": {
+          "x": 4,
+          "y": 0,
+          "z": 0
+        },
+        "steeringAngle": 0.1
+      },
+      "control": {
+        "status": "ok",
+        "statusCode": null,
+        "sequence": 2,
+        "mode": "velocity",
+        "applied": {
+          "speedMps": 4,
+          "steeringRad": -0.1,
+          "accelerationMps2": 0
+        },
+        "achieved": {
+          "speedMps": 4,
+          "steeringRad": -0.1,
+          "accelerationMps2": 0
+        }
+      },
+      "assertions": [
+        {
+          "id": "time-reaches-100ms",
+          "name": "Simulation reaches 100 ms",
+          "severity": "error",
+          "onFailure": "stop",
+          "status": "pending",
+          "evaluations": 4,
+          "firstFailureStep": null,
+          "message": null
+        }
+      ]
+    },
+    {
+      "step": 5,
+      "timeNs": 100000000,
+      "timeSeconds": 0.1,
+      "phases": [
+        "inputs",
+        "scripts",
+        "controls",
+        "vehicles",
+        "physics",
+        "controls-achieved",
+        "contacts",
+        "clock",
+        "transforms",
+        "sensors",
+        "delivery",
+        "candidate-viz",
+        "assertions"
+      ],
+      "runtimeCalls": [
+        "keys",
+        "input:/controls/command",
+        "script",
+        "vehicle",
+        "physics",
+        "contacts",
+        "sensor",
+        "delivery"
+      ],
+      "appliedInputs": [
+        {
+          "sequence": 3,
+          "topic": "/controls/command"
+        }
+      ],
+      "vehicle": {
+        "position": {
+          "x": 0.26,
+          "y": 0,
+          "z": 0
+        },
+        "velocity": {
+          "x": 1,
+          "y": 0,
+          "z": 0
+        },
+        "steeringAngle": 0
+      },
+      "control": {
+        "status": "ok",
+        "statusCode": null,
+        "sequence": 3,
+        "mode": "velocity",
+        "applied": {
+          "speedMps": 1,
+          "steeringRad": 0,
+          "accelerationMps2": -150
+        },
+        "achieved": {
+          "speedMps": 1,
+          "steeringRad": 0,
+          "accelerationMps2": 0
+        }
+      },
+      "assertions": [
+        {
+          "id": "time-reaches-100ms",
+          "name": "Simulation reaches 100 ms",
+          "severity": "error",
+          "onFailure": "stop",
+          "status": "passed",
+          "evaluations": 5,
+          "firstFailureStep": null,
+          "message": null
+        }
+      ]
+    },
+    {
+      "step": 6,
+      "timeNs": 120000000,
+      "timeSeconds": 0.12,
+      "phases": [
+        "inputs",
+        "scripts",
+        "controls",
+        "vehicles",
+        "physics",
+        "controls-achieved",
+        "contacts",
+        "clock",
+        "transforms",
+        "sensors",
+        "delivery",
+        "candidate-viz",
+        "assertions"
+      ],
+      "runtimeCalls": [
+        "keys",
+        "script",
+        "vehicle",
+        "physics",
+        "contacts",
+        "sensor",
+        "delivery"
+      ],
+      "appliedInputs": [],
+      "vehicle": {
+        "position": {
+          "x": 0.28,
+          "y": 0,
+          "z": 0
+        },
+        "velocity": {
+          "x": 1,
+          "y": 0,
+          "z": 0
+        },
+        "steeringAngle": 0
+      },
+      "control": {
+        "status": "ok",
+        "statusCode": null,
+        "sequence": 3,
+        "mode": "velocity",
+        "applied": {
+          "speedMps": 1,
+          "steeringRad": 0,
+          "accelerationMps2": 0
+        },
+        "achieved": {
+          "speedMps": 1,
+          "steeringRad": 0,
+          "accelerationMps2": 0
+        }
+      },
+      "assertions": [
+        {
+          "id": "time-reaches-100ms",
+          "name": "Simulation reaches 100 ms",
+          "severity": "error",
+          "onFailure": "stop",
+          "status": "passed",
+          "evaluations": 5,
+          "firstFailureStep": null,
+          "message": null
+        }
+      ]
+    }
+  ],
+  "assertions": [
+    {
+      "id": "time-reaches-100ms",
+      "name": "Simulation reaches 100 ms",
+      "severity": "error",
+      "onFailure": "stop",
+      "status": "passed",
+      "evaluations": 5,
+      "firstFailureStep": null,
+      "message": null
+    }
+  ],
+  "metrics": {
+    "commandsApplied": 3,
+    "distanceTravelledM": 0.28,
+    "finalLongitudinalPositionM": 0.28,
+    "simulatedTimeNs": 120000000,
+    "totalSteps": 6
+  },
+  "verification": {
+    "resetReplayMatches": true,
+    "freshRuntimeMatches": true
+  },
+  "hashes": {
+    "actionTapeSha256": "8517a1389476cd63af52907acb995496eae7fbf5b8ca4d9ffc64701751355ac0",
+    "trajectorySha256": "b32c30fde91910fc3d95205ba25ab7a1ab8ef3261fe89d9cfe4972b016135891",
+    "resetTrajectorySha256": "b32c30fde91910fc3d95205ba25ab7a1ab8ef3261fe89d9cfe4972b016135891",
+    "freshTrajectorySha256": "b32c30fde91910fc3d95205ba25ab7a1ab8ef3261fe89d9cfe4972b016135891"
+  }
+}

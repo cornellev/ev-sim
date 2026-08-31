@@ -8,6 +8,7 @@
     "start": "node server/App.js",
     "lint": "eslint",
     "test": "node --experimental-default-type=module --test tests/*.test.js",
+    "fixtures:headless": "node --experimental-default-type=module scripts/generate-headless-fixtures.mjs",
     "test:ui": "playwright test --grep-invert @a11y",
     "test:a11y": "playwright test --grep @a11y"
   },

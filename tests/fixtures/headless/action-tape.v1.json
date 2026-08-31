@@ -1,0 +1,172 @@
+{
+  "kind": "cev-sim.headless.action-tape",
+  "version": 1,
+  "id": "fixed-step-controls-v1",
+  "description": "Characterizes deterministic topic ordering, control application, fixed-step motion, assertions, and reset replay in the current SimulationEngine runtime.",
+  "manifestOverrides": {
+    "id": "headless-characterization-v1",
+    "name": "Headless Characterization V1",
+    "seed": "headless-characterization-seed",
+    "clock": {
+      "stepNs": 20000000,
+      "pacing": "unbounded",
+      "speed": 1,
+      "maxSteps": 6,
+      "publishClock": true,
+      "modules": {
+        "inputs": true,
+        "scripting": true,
+        "vehicles": true,
+        "physics": true,
+        "sensors": true,
+        "assertions": true
+      }
+    },
+    "initialState": {
+      "vehicles": [
+        {
+          "id": "ego",
+          "type": "big-car",
+          "pose": {
+            "position": {
+              "x": 0,
+              "y": 0,
+              "z": 0
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "order": "XYZ"
+            }
+          },
+          "linearVelocity": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "steeringAngle": 0
+        }
+      ],
+      "signals": {}
+    },
+    "sensorRig": {
+      "mapFrameId": "map",
+      "odomFrameId": "odom",
+      "rootFrameId": "base_link",
+      "vehicleId": "ego",
+      "syncGroups": [],
+      "sensors": []
+    },
+    "controls": {
+      "targetVehicleId": "ego",
+      "authority": "candidate",
+      "referenceShadow": true,
+      "watchdogNs": 200000000,
+      "stalePolicy": "hold",
+      "referenceSource": "scenario-route-follower",
+      "actuatorOverrides": {
+        "maxSpeed": 40,
+        "maxAcceleration": 1000000,
+        "maxDeceleration": 1000000,
+        "maxJerk": 1000000,
+        "maxSteeringAngle": 3.141592653589793,
+        "maxSteeringRate": 1000000,
+        "responseDelayNs": 0
+      }
+    },
+    "assertions": [
+      {
+        "id": "time-reaches-100ms",
+        "name": "Simulation reaches 100 ms",
+        "source": "signal",
+        "path": "simulation.time",
+        "operator": "gte",
+        "expected": 0.1,
+        "tolerance": 0,
+        "mode": "eventually",
+        "window": {
+          "startStep": 1,
+          "endStep": 6
+        },
+        "severity": "error",
+        "onFailure": "stop"
+      }
+    ],
+    "logging": {
+      "policy": "disabled",
+      "profileId": "simulation-run-full-sensors"
+    }
+  },
+  "actions": [
+    {
+      "step": 1,
+      "topic": "/controls/command",
+      "type": "sensor_fusion_msgs/StampedAckermannDrive",
+      "producer": "candidate",
+      "value": {
+        "header": {
+          "stamp": {
+            "sec": 0,
+            "nanosec": 20000000
+          },
+          "frame_id": "base_link"
+        },
+        "sequence": 1,
+        "mode": "velocity",
+        "deadline_ns": 0,
+        "steering_angle": 0.05,
+        "steering_angle_velocity": 0,
+        "speed": 2,
+        "acceleration": 0,
+        "jerk": 0
+      }
+    },
+    {
+      "step": 3,
+      "topic": "/controls/command",
+      "type": "sensor_fusion_msgs/StampedAckermannDrive",
+      "producer": "candidate",
+      "value": {
+        "header": {
+          "stamp": {
+            "sec": 0,
+            "nanosec": 60000000
+          },
+          "frame_id": "base_link"
+        },
+        "sequence": 2,
+        "mode": "velocity",
+        "deadline_ns": 0,
+        "steering_angle": -0.1,
+        "steering_angle_velocity": 0,
+        "speed": 4,
+        "acceleration": 0,
+        "jerk": 0
+      }
+    },
+    {
+      "step": 5,
+      "topic": "/controls/command",
+      "type": "sensor_fusion_msgs/StampedAckermannDrive",
+      "producer": "candidate",
+      "value": {
+        "header": {
+          "stamp": {
+            "sec": 0,
+            "nanosec": 100000000
+          },
+          "frame_id": "base_link"
+        },
+        "sequence": 3,
+        "mode": "velocity",
+        "deadline_ns": 0,
+        "steering_angle": 0,
+        "steering_angle_velocity": 0,
+        "speed": 1,
+        "acceleration": 0,
+        "jerk": 0
+      }
+    }
+  ]
+}
