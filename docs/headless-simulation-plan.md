@@ -7,8 +7,8 @@ language-neutral API authority is
 
 ## Status
 
-- Current completed milestone: **PR 4 — shared world description and headless vehicle plant**
-- Next milestone: **PR 5 — state sensors and episode semantics**
+- Current completed milestone: **PR 5 — state sensors and episode semantics**
+- Next milestone: **PR 6 — single-process runner, CLI, and artifacts**
 - Default implementation/review reasoning level: **Extra High**
 - Last updated: **2026-08-30**
 
@@ -18,7 +18,7 @@ Progress:
 - [x] PR 2 — UI-independent simulation kernel
 - [x] PR 3 — Deterministic reset, timers, hashing, and teardown
 - [x] PR 4 — Shared world description and headless vehicle plant
-- [ ] PR 5 — State sensors and episode semantics
+- [x] PR 5 — State sensors and episode semantics
 - [ ] PR 6 — Single-process runner, CLI, and artifacts
 - [ ] PR 7 — Process-isolated batch supervisor and gRPC
 - [ ] PR 8 — Python Gymnasium and Stable-Baselines3 package
@@ -261,6 +261,12 @@ Gate:
   tolerances.
 
 ### PR 5 — State sensors and episode semantics
+
+Status: **Complete (2026-08-30).** The Node-safe backend capability is
+`deterministic-state-sensors` version `1`; `HeadlessEpisode` owns the
+`measured-state` v1 and `route-safety` v1 contracts without changing
+Protobuf v1 or run-manifest v9. `npm run test:headless` is the focused PR 5
+gate.
 
 Deliver:
 
@@ -523,3 +529,35 @@ ScenarioCar retains keyframe/static semantics and unmanaged PhysicalVehicle
 retains linear motion. The headless context composes isolated bindings,
 signals, scenarios, vehicles, world, and injected physics without GLTF, DOM,
 WebGL, or asset decoding. Enabled sensor requests fail explicitly until PR 5.
+
+### 2026-08-30 — PR 5 measured-state and episode contracts
+
+Add backend kind `STATE_SENSOR` capability `deterministic-state-sensors`
+version `1`, with config hash
+`dc27525458e0f720321213cd0a1abac8842266ae86f3d82172d8cda518924cf5`.
+Browser and headless runtimes share pure WGS84 geodesy, fixed-step scheduling
+and delivery, seeded streams, and IMU/GNSS/wheel-odometry measurement models.
+GNSS dropout retains the last delivery; outage delivers a new invalid zero
+fix. Custom manifest kinematics now feed both measurements and route metrics.
+
+Select local immutable presets through existing `ProfileRef` fields. The
+single `measured-state` v1 config hash is
+`5c81866540bbdf0031f6c700554d65c7becc6fe76b5abaa5e81a20f14aa99e6d`.
+`route-safety` v1 registers all 16 termination/smoothness combinations; its
+default config hash is
+`29dd55136f4207d78b8c3e9d4202f33849f12d9b415c7ed17fff641ee876b1f4`.
+The `normalized-speed-steering` v1 action-space hash is
+`283885ba2896078f0272a8d50c65bf01ee7ccf3787ec3bb4e1f10e42efa7a652`.
+Observation-space hashes are dynamic over the complete sorted sensor ID/type
+layout, deliberately excluding declaration order and calibration.
+
+`max_episode_steps` counts accepted external actions; `action_repeat` counts
+fixed kernel substeps. The action is recorded once in the transition hash and
+resubmitted through candidate `ControlRuntime` authority every substep. Safety
+is observed on every substep and charged once per policy transition. Stable
+reward ordering, configurable safety stops, explicit scenario/assertion
+behavior, failure precedence, success mapping, and policy/simulation bound
+truncations are implemented in `HeadlessEpisode`. Camera/LiDAR/unknown enabled
+requests fail before preparation; sensor-disabled direct kernel use remains
+compatible. Protobuf field numbers, manifest version, resolved hashes, and the
+PR 1 characterization fixture are unchanged.

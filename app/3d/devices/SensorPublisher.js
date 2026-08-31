@@ -1,5 +1,9 @@
 import { encodeTopicValue } from "../../client/Client.js";
 import { SeededRNG } from "../../util/SeededRNG.js";
+import {
+    resolveFixedStepSensorSchedule,
+    resolveSensorDelivery,
+} from "../../simulation/sensors/FixedStepSensorSchedule.js";
 import { buildDiagnosticArray } from "./SensorMessages.js";
 import {
     bumpEncodeOwnerGeneration,
@@ -154,10 +158,10 @@ export class SensorPublisher {
 
     update(clock) {
         if (!this.stepNs) {
-            this.stepNs = Math.max(1, Math.round(clock.timeNs / Math.max(1, clock.step)));
-            this.periodSteps = Math.max(1, Math.round(this.periodNs / this.stepNs));
-            const phaseSteps = Math.max(0, Math.round(Number(this.config.phaseNs || 0) / this.stepNs));
-            this.nextCaptureStep = phaseSteps > 0 ? phaseSteps : this.periodSteps;
+            const schedule = resolveFixedStepSensorSchedule(this.config, clock, this.manifestStepNs);
+            this.stepNs = schedule.stepNs;
+            this.periodSteps = schedule.periodSteps;
+            this.nextCaptureStep = schedule.nextCaptureStep;
         }
         while (clock.step >= this.nextCaptureStep) {
             const captureTimeNs = this.nextCaptureStep * this.stepNs;
@@ -190,14 +194,14 @@ export class SensorPublisher {
     }
 
     enqueue(messages, captureTimeNs, sampleIndex, rng) {
-        const jitter = Number(this.config.latency?.jitterNs || 0);
-        const signedJitter = jitter > 0 ? Math.round((rng.next() * 2 - 1) * jitter) : 0;
-        const fixedLatency = Number(this.config.latency?.fixedNs || 0);
-        const scheduledDeliveryTimeNs = captureTimeNs + fixedLatency;
-        const deliveryTimeNs = Math.max(captureTimeNs, scheduledDeliveryTimeNs + signedJitter);
         const stepNs = this.stepNs || this.manifestStepNs || 16_666_667;
-        const captureStep = Math.round(captureTimeNs / stepNs);
-        const scheduledDeliveryStep = Math.round(scheduledDeliveryTimeNs / stepNs);
+        const delivery = resolveSensorDelivery(this.config, captureTimeNs, rng, stepNs);
+        const {
+            scheduledDeliveryTimeNs,
+            deliveryTimeNs,
+            captureStep,
+            scheduledDeliveryStep,
+        } = delivery;
         const frameMessages = [...messages];
         const diagnosticsTopicId = this.config.outputs?.diagnosticsTopicId;
         const diagnosticsEnabled = this.config.calibration?.products?.diagnostics === true;
@@ -242,7 +246,7 @@ export class SensorPublisher {
             encodeFailed: false,
             encodeCancelled: false,
             bytes: frameBytes,
-            zeroLatency: fixedLatency <= 0 && jitter <= 0,
+            zeroLatency: delivery.fixedLatencyNs <= 0 && delivery.jitterNs <= 0,
         });
         const frame = this.queue[this.queue.length - 1];
         this.queuedBytes += frameBytes;

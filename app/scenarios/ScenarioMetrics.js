@@ -85,6 +85,7 @@ export function resolveVehicleFootprint(vehicle = null, options = {}) {
         finiteNumber(
             options.wheelbase
             ?? vehicle?.manifest?.kinematics?.wheelbase
+            ?? vehicle?.kinematics?.wheelbase
             ?? vehicle?.wheelbase
             ?? builtIn?.kinematics?.wheelbase,
             DEFAULT_WHEELBASE_M,

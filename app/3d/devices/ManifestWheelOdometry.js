@@ -7,6 +7,7 @@ import {
     buildWheelOdometryMeasurement,
     captureVehicleSnapshot,
     createMeasurementSeedState,
+    stateSensorSampleDropped,
 } from "../../autonomy/LocalizationMeasurements.js";
 import { rep103PoseToThree } from "../../autonomy/CoordinateFrames.js";
 
@@ -56,6 +57,11 @@ export class ManifestWheelOdometry extends Device {
 
         const { measurement, nextState } = buildWheelOdometryMeasurement(snapshot, this.config, rng, this.measurementState);
         this.measurementState = { ...this.measurementState, ...nextState };
+
+        if (stateSensorSampleDropped(this.config, rng)) {
+            this.contractPublisher?._event?.("sample-dropped", "warning", { sampleIndex, reason: "wheel-odometry-dropout" });
+            return [];
+        }
 
         const frameId = this.config.calibration.odomFrameId || "odom";
         return [{

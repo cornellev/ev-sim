@@ -1,5 +1,9 @@
 import * as THREE from "three";
 import { convertFromLatLng } from "../../util/Location.js";
+import {
+    ecefToWgs84,
+    enuOffsetToWgs84 as enuOffsetToWgs84Pure,
+} from "../../autonomy/Geodesy.js";
 
 const WGS84_A = 6378137;
 const WGS84_E2 = 0.00669437999014;
@@ -130,35 +134,14 @@ export function simplifyLatLngPolyline(points, anchor, toleranceMeters) {
  * @param {{ lat: number, lng: number, altitude?: number }} datum
  */
 export function enuOffsetToWgs84(east, north, up, datum) {
-    const matrix = makeLocalToECEFMatrix(datum.lat, datum.lng);
-    const local = new THREE.Vector3(Number(east) || 0, Number(up) || 0, Number(north) || 0);
-    const ecef = local.applyMatrix4(matrix);
-    return ecefToLatLngHeight(ecef);
+    return enuOffsetToWgs84Pure(east, north, up, datum);
 }
 
 /**
  * @param {THREE.Vector3} ecef
  */
 export function ecefToLatLngHeight(ecef) {
-    const x = ecef.x;
-    const y = ecef.y;
-    const z = ecef.z;
-    const b = WGS84_A * Math.sqrt(1 - WGS84_E2);
-    const ep = Math.sqrt((WGS84_A * WGS84_A - b * b) / (b * b));
-    const p = Math.hypot(x, y);
-    const th = Math.atan2(WGS84_A * z, b * p);
-    const sinTh = Math.sin(th);
-    const cosTh = Math.cos(th);
-    const lat = Math.atan2(z + ep * ep * b * sinTh * sinTh * sinTh, p - WGS84_E2 * WGS84_A * cosTh * cosTh * cosTh);
-    const lng = Math.atan2(y, x);
-    const sinLat = Math.sin(lat);
-    const n = WGS84_A / Math.sqrt(1 - WGS84_E2 * sinLat * sinLat);
-    const alt = p / Math.cos(lat) - n;
-    return {
-        lat: THREE.MathUtils.radToDeg(lat),
-        lng: THREE.MathUtils.radToDeg(lng),
-        alt,
-    };
+    return ecefToWgs84(ecef);
 }
 
 function perpendicularDistance(point, lineStart, lineEnd) {

@@ -64,6 +64,73 @@ Camera `calibration.products` and LiDAR `calibration.products` gate expensive or
 
 GNSS treats map/odom position as ENU offset from the manifest datum. Wheel odometry integrates an independent measured `odom → base_link` estimate; oracle truth on `/oracle/vehicle/odometry` remains isolated for scoring.
 
+## Headless PR 5 profiles and spaces
+
+PR 5 leaves `cev-sim.run-manifest` version 9, `cev-sim.run-bundle` version 1,
+and Protobuf v1 unchanged. Episode-local profile presets are selected only by
+`ProfileRef { id, version, config_hash }`:
+
+The state-sensor backend is kind `STATE_SENSOR`, capability
+`deterministic-state-sensors`, version `1`, with config hash
+`dc27525458e0f720321213cd0a1abac8842266ae86f3d82172d8cda518924cf5`.
+
+- Observation `measured-state` v1 has one preset. Its config hash is
+  `5c81866540bbdf0031f6c700554d65c7becc6fe76b5abaa5e81a20f14aa99e6d`
+  and schema hash is
+  `f1e342c273110d10b905550cc2f0f42cd5a0a7fc46d9e468edf9602fafd3e128`.
+- Reward `route-safety` v1 has the 16 canonical combinations of collision,
+  off-road, and wrong-way termination plus optional smoothness. The default
+  terminates on collision and off-road, penalizes but does not terminate on
+  wrong-way, and disables smoothness. Its config hash is
+  `29dd55136f4207d78b8c3e9d4202f33849f12d9b415c7ed17fff641ee876b1f4`;
+  the profile schema hash is
+  `214ad749f21030998ca0da8b02a123f8e70893c4602929be3f2448e4c7fce9b7`.
+
+The action space is `normalized-speed-steering` v1, little-endian
+`float32[2]`, ordered `[speed, steering]`, with both elements in `[-1,1]`.
+Its canonical space hash is
+`283885ba2896078f0272a8d50c65bf01ee7ccf3787ec3bb4e1f10e42efa7a652`.
+Speed maps symmetrically to `[-maxSpeed,+maxSpeed]`; steering maps to the
+REP-103 steering limit. Actions are rejected if their dtype, shape, packed
+length, finiteness, or bounds are invalid.
+
+Measured observations are UTF-8-sorted little-endian `TensorMap` entries.
+Every enabled state sensor is keyed by its stable ID:
+
+| Entry | Layout |
+| --- | --- |
+| `sensors/<id>/value` (IMU) | `float32[6]`: angular velocity XYZ, linear acceleration XYZ |
+| `sensors/<id>/value` (GNSS) | `float64[3]`: latitude, longitude, altitude |
+| `sensors/<id>/value` (wheel odometry) | `float32[13]`: position XYZ, quaternion XYZW, linear velocity XYZ, angular velocity XYZ |
+| `sensors/<id>/validity` | `bool[1]` |
+| `sensors/<id>/{sequence,age_steps}` | `uint64[1]` |
+| `sensors/<id>/is_new` | `bool[1]` |
+| `task/value` | `float32[7]`: progress ratio, remaining ratio, signed cross-track error, heading error, route distance remaining, off-road, wrong-way |
+| `task/validity` | `bool[7]` |
+| `task/{sequence,is_new,age_steps}` | `uint64[1]`, `bool[1]`, `uint64[1]` |
+
+Before a sensor's first delivered sample its value is zero, validity and
+`is_new` are false, and sequence/age are zero. GNSS outage delivers a new
+invalid zero sample; dropout retains the previous delivery and increases its
+age. Observation-space hashes include the complete sorted layout, so sensor
+calibration and declaration order do not affect pooling but stable IDs, types,
+and counts do.
+
+`max_episode_steps` counts accepted policy actions, not fixed substeps; zero
+is unbounded. One action is resubmitted for up to `action_repeat` substeps so
+the normal watchdog, response delay, acceleration/jerk, and steering-rate
+limits remain active. A terminal substep or simulation-time bound stops the
+repeat immediately and records the actual count in diagnostic JSON.
+
+The stable reward-term order is route-progress-ratio delta (`+1`), completion
+(`+1`), collision (`-1`), off-road (`-1`), wrong-way (`-0.25`), normalized
+acceleration (`-0.05` when enabled), and normalized jerk (`-0.01` when
+enabled). Disabled smoothness terms remain present with zero weight. Failure
+precedence is collision, off-road, wrong-way, assertion failure, scenario
+failure, then success; termination on the same transition as a semantic bound
+wins over truncation. Policy limits map to `MAX_EPISODE_STEPS`, while scenario
+duration and manifest simulation bounds map to `MAX_SIMULATION_TIME`.
+
 Topic contracts are edited in the Config **Topics** tab (catalog picker, producer, authority, route-downstream, timeout, fallback) or normalized from legacy JSON. Perception and localization candidate returns default to observational (`routeDownstream: false`). Controls default to `/controls/command` with `routeDownstream: true`. See [Autonomy interface contracts](./autonomy-interface-contracts.md) for namespace and preflight rules. Preparation fails before the run reaches `ready` when preflight detects schema mismatches or missing orchestrator returns that the run actually consumes. Local reference controllers (scenario route follower or script) do not need `/controls/command` advertised.
 
 Logging writes a native SFLog (see [SFLog](sflog.md)). Policies are:

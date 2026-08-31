@@ -7,6 +7,7 @@ import {
     buildImuMeasurement,
     captureVehicleSnapshot,
     createMeasurementSeedState,
+    stateSensorSampleDropped,
 } from "../../autonomy/LocalizationMeasurements.js";
 import { rep103PoseToThree } from "../../autonomy/CoordinateFrames.js";
 
@@ -56,6 +57,11 @@ export class ManifestImu extends Device {
 
         const { measurement, nextState } = buildImuMeasurement(snapshot, this.config, rng, this.measurementState);
         this.measurementState = { ...this.measurementState, ...nextState };
+
+        if (stateSensorSampleDropped(this.config, rng)) {
+            this.contractPublisher?._event?.("sample-dropped", "warning", { sampleIndex, reason: "imu-dropout" });
+            return [];
+        }
 
         if (nextState.saturated) {
             this.contractPublisher?._event?.("measurement-saturated", "warning", { sampleIndex });

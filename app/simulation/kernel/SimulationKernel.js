@@ -71,6 +71,7 @@ export class SimulationKernel {
         this.trajectoryHash = null;
         this.trajectoryHasher = null;
         this.lastAcceptedActions = [];
+        this.pendingAcceptedActions = [];
         this.lastContacts = { started: [], active: [], ended: [] };
         this.finalizedResult = null;
 
@@ -183,6 +184,7 @@ export class SimulationKernel {
         this.steps = 0;
         this.lastStepPhases = [];
         this.lastAcceptedActions = [];
+        this.pendingAcceptedActions = [];
         this.lastContacts = { started: [], active: [], ended: [] };
         this.finalizedResult = null;
         this.telemetry?.resetRunState?.();
@@ -268,7 +270,7 @@ export class SimulationKernel {
         this.modules[name] = Boolean(enabled);
     }
 
-    async prepare(resolved, { episode = null } = {}) {
+    async prepare(resolved, { episode = null, requireStateSensors = false } = {}) {
         if (!resolved?.manifest) throw new Error("Resolved run manifest is required.");
 
         if (this.resolvedRun || this.lifecycleState === "finalized") this.clearRun();
@@ -347,6 +349,10 @@ export class SimulationKernel {
             transformRuntime: this.transformRuntime,
             calibrationHash: this.resolvedRun.calibration?.hash ?? null,
             stepNs: manifest.clock.stepNs,
+            enabled: this.modules.sensors,
+            requireStateSensors,
+            backendSelection: (episode?.backendSelections ?? episode?.backend_selections ?? this.resolvedRun.backendSelections ?? [])
+                .find((entry) => Number(entry.kind) === 2) ?? null,
         });
         await this.context.physics.configureRun({
             manifest,
@@ -382,6 +388,11 @@ export class SimulationKernel {
         return this.inputQueue.enqueue(info, this.steps + 1, { arrivalTimeNs });
     }
 
+    recordAcceptedPolicyAction(action) {
+        if (!action || typeof action !== "object") throw new TypeError("Accepted policy actions must be objects.");
+        this.pendingAcceptedActions.push(cloneSnapshot(action));
+    }
+
     advanceStep(dt = this.fixedDt) {
         if (this.lifecycleState === "disposed") {
             throw new Error("Cannot step a disposed simulation kernel.");
@@ -406,7 +417,10 @@ export class SimulationKernel {
 
         phase("inputs", () => {
             this.context.inputs.update(dt);
-            this.lastAcceptedActions = this._applyQueuedInputs(nextStep);
+            this.lastAcceptedActions = [
+                ...this.pendingAcceptedActions.splice(0),
+                ...this._applyQueuedInputs(nextStep),
+            ];
         });
 
         phase("scripts", () => {
@@ -822,6 +836,7 @@ export class SimulationKernel {
         this.trajectoryHasher = null;
         this.trajectoryHash = null;
         this.lastAcceptedActions = [];
+        this.pendingAcceptedActions = [];
         this.finalizedResult = null;
         this.lifecycleState = "idle";
         this.status = "stopped";

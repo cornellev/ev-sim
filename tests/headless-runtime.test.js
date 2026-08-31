@@ -47,11 +47,11 @@ test("resolved sensor-disabled bundle completes the Node lifecycle without brows
     }
 });
 
-test("headless runtime explicitly rejects enabled sensor requests", async () => {
+test("headless runtime rejects unsupported enabled sensor requests", async () => {
     const resolved = await new StorageService().resolveRunManifest("igvc-default");
     const runtime = createHeadlessRuntimeContext();
     const kernel = new SimulationKernel(runtime.context);
-    await assert.rejects(() => kernel.prepare(resolved), /unavailable until PR 5/);
+    await assert.rejects(() => kernel.prepare(resolved), /Unsupported headless sensor request/);
     kernel.clearRun();
 });
 

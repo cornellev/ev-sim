@@ -80,8 +80,29 @@ presentation adapters over the same numeric state used by
 `HeadlessVehicleManager`; GLTF models, wheels, paths, cameras, lane visuals,
 and devices remain browser services. `createHeadlessRuntimeContext` composes a
 non-global binding runtime, signal store, scenario runtime, world, vehicle
-manager, injected physics, and null browser services. Sensors are an explicit
-unsupported capability until PR 5.
+manager, injected physics, state-sensor manager, and null browser services.
+The direct sensor-disabled PR 4 kernel path remains supported.
+
+PR 5 adds a Three.js-independent state-sensor seam. Browser devices and
+`HeadlessStateSensorManager` share pure geodesy, fixed-step scheduling and
+delivery calculations, and the deterministic IMU, GNSS, and wheel-odometry
+measurement models. The headless backend capability is
+`deterministic-state-sensors` version `1`, backend kind `STATE_SENSOR`; its
+configuration hash is
+`dc27525458e0f720321213cd0a1abac8842266ae86f3d82172d8cda518924cf5`.
+Camera, LiDAR, and unknown enabled sensor types remain explicit unsupported
+capabilities, while the sensor-disabled PR 4 kernel path remains valid.
+
+`HeadlessEpisode` is the policy-facing facade over `SimulationKernel`. It
+validates immutable episode prerequisites before kernel preparation, owns the
+`measured-state` observation and `route-safety` reward profiles, maps the
+`normalized-speed-steering` action through `ControlRuntime`, and implements
+policy-step limits, action repeat, rewards, and Gym termination/truncation
+semantics. Every repeated substep still passes through the authoritative
+kernel phase graph, actuator delay/rate limits, state hashing, scenario
+metrics, and sensor capture/delivery. This facade is reusable by the later
+runner and supervisor milestones; it does not add a CLI, transport, Python
+client, or process manager.
 
 Physics pins Rapier `0.19.3` under capability
 `rapier3d-swept-prism-v1`. Rapier owns fixed and kinematic bodies, while

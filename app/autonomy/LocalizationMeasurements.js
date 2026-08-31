@@ -7,7 +7,7 @@ import {
     threePoseToRep103,
     threeToRep103Vector,
 } from "./CoordinateFrames.js";
-import { enuOffsetToWgs84 } from "../3d/earth/GeospatialTransform.js";
+import { enuOffsetToWgs84 } from "./Geodesy.js";
 
 const GRAVITY = 9.80665;
 const UNAVAILABLE_COVARIANCE = -1;
@@ -115,7 +115,12 @@ export function captureVehicleSnapshot(vehicle, captureTimeNs, previous = null, 
     const pose = rep103PoseFromVehicle(vehicle);
     const orientation = eulerToQuaternion(pose.rotation);
     const bodyVelocity = rep103BodyVelocity(vehicle);
-    const wheelbase = Number(vehicle?.manifest?.kinematics?.wheelbase || vehicle?.wheelbase || 2.5);
+    const wheelbase = Number(
+        vehicle?.manifest?.kinematics?.wheelbase
+        || vehicle?.kinematics?.wheelbase
+        || vehicle?.wheelbase
+        || 2.5,
+    );
     const steeringAngle = Number(vehicle?.steeringAngle || 0);
     const speed = bodyVelocity.x;
     const yawRate = wheelbase > 0 ? (speed / wheelbase) * Math.tan(steeringAngle) : 0;
@@ -269,7 +274,10 @@ export function buildGnssMeasurement(snapshot, sensorConfig, rng, state = {}) {
         rng,
     );
 
-    const dropoutProbability = Number(faults.dropoutProbability ?? sensorConfig.noise?.dropoutProbability ?? 0);
+    const dropoutProbability = Math.max(
+        Number(faults.dropoutProbability || 0),
+        Number(sensorConfig.noise?.dropoutProbability || 0),
+    );
     if (dropoutProbability > 0 && rng.next() < dropoutProbability) {
         return { measurement: null, nextState: { ...state, multipath: nextMultipath, lastCaptureTimeNs: snapshot.captureTimeNs, dropped: true } };
     }
@@ -319,6 +327,11 @@ export function buildGnssMeasurement(snapshot, sensorConfig, rng, state = {}) {
         },
         nextState: { ...state, multipath: nextMultipath, inOutage: false, lastCaptureTimeNs: snapshot.captureTimeNs, dropped: false },
     };
+}
+
+export function stateSensorSampleDropped(sensorConfig, rng) {
+    const probability = Math.max(0, Math.min(1, Number(sensorConfig?.noise?.dropoutProbability || 0)));
+    return probability > 0 && rng.next() < probability;
 }
 
 export function quantizeTravel(distanceMeters, wheelRadius, ticksPerRevolution) {
