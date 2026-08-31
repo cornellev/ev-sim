@@ -12,6 +12,12 @@ This page is the format and pipeline spec. [Telemetry, Logging, Replay, and Anal
 - **Typed and compact.** A schema record binds a numeric ID to a path and type. Later cycle and checkpoint values carry no type tag.
 - **Idempotent upload.** The browser streams uncompressed record batches over HTTP. Sequence numbers make retries safe; the server concatenates, gzip-compresses, and indexes.
 
+The PR 6 headless runner injects a direct `LogService` transport into the same
+`RecordingController`. This bypasses HTTP but preserves identical profile
+filtering, record encoding, batching, gzip/CRC chunks, checkpoints, index, and
+attachments. Atomic runner outputs use `run.sflog` and `run.json`; existing
+Replay, Analysis, and MCP readers require no alternate format path.
+
 ```mermaid
 flowchart LR
   signalStore[SignalStore] --> recordingController[RecordingController]
@@ -500,7 +506,7 @@ Resources: `fusion://logs` and `fusion://logs/{logId}`.
 | `app/logging/LogLimits.js` | 8 MiB / 256 KiB / safe-batch constants shared by client and server |
 | `app/logging/LogProfiles.js` | Built-in profiles, glob matching, replay-safe locks |
 | `app/logging/RecordingOptions.js` | Shared attachment + metadata builder for UI, MCP, and runs |
-| `app/logging/RecordingController.js` | Session lifecycle, sampling, flush, retry, backpressure |
+| `app/logging/RecordingController.js` | Transport-injected session lifecycle, sampling, flush, retry, backpressure |
 | `app/logging/RecordingPanel.js` | Simulation overlay UI, profile editor, import |
 | `app/logging/LogClient.js` | Browser `/api/logs` fetch wrapper |
 | `app/logging/LogDataset.js` | Decoded log for Replay/Analysis |
@@ -510,6 +516,7 @@ Resources: `fusion://logs` and `fusion://logs/{logId}`.
 | `server/routes/logRouter.js` | HTTP routes |
 | `server/mcp/loggingTools.js` | MCP tools and `fusion://logs` resources |
 | `app/simulation/RunSessionController.js` | Policy-aware run recording and `run-results.json` |
+| `server/headless/HeadlessArtifactSink.js` | Direct LogService transport, profile retention, and atomic CLI artifacts |
 | `app/replay/ReplayPage.js`, `ReplayScene.js` | Catalog, seek, interpolated poses |
 | `app/analysis/AnalysisPage.js` | Lazy log series and snapshots |
 | `tests/telemetry-logging.test.js` | Codec round-trips, profiles, backpressure, recovery, import |

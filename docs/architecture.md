@@ -104,6 +104,16 @@ metrics, and sensor capture/delivery. This facade is reusable by the later
 runner and supervisor milestones; it does not add a CLI, transport, Python
 client, or process manager.
 
+PR 6 adds `server/headless/HeadlessRunner.js` as the single-process owner of
+portable-bundle verification, episode lifecycle, normalized action streams,
+machine results, and guaranteed teardown. The [`cev-sim` CLI](headless-cli.md)
+exposes validate, inspect, run, and policy-tape replay without Express, Next,
+DOM, or WebGL. It publishes core JSON and native SFLog through an injected
+artifact sink and sibling-directory atomic rename. `RecordingController`
+retains HTTP as its browser transport and accepts a direct `LogService`
+transport for headless execution. Process isolation, batching, gRPC, limits,
+and watchdogs remain PR 7 scope.
+
 Physics pins Rapier `0.19.3` under capability
 `rapier3d-swept-prism-v1`. Rapier owns fixed and kinematic bodies, while
 authoritative first impact/contact transitions use shared continuous XZ SAT

@@ -10,9 +10,9 @@ import {
     RUN_MANIFEST_KIND,
     RUN_MANIFEST_VERSION,
     canonicalStringify,
+    computeResolvedRunHash,
     createDefaultRunManifest,
     normalizeRunManifest,
-    stripRunMetadata,
     validateRunManifest,
 } from "../../app/simulation/RunManifest.js";
 import {
@@ -1775,7 +1775,7 @@ export class StorageService {
 }
 
 function semanticHash(value) {
-    return createHash("sha256").update(canonicalStringify(stripRunMetadata(value))).digest("hex");
+    return computeResolvedRunHash(value);
 }
 
 function validationError(issues) {

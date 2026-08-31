@@ -2,6 +2,9 @@
   "name": "cev-sim",
   "version": "0.1.0",
   "private": true,
+  "bin": {
+    "cev-sim": "bin/cev-sim.js"
+  },
   "scripts": {
     "dev": "node server/App.js",
     "build": "next build",
@@ -9,6 +12,7 @@
     "lint": "eslint",
     "test": "node --experimental-default-type=module --test tests/*.test.js",
     "test:headless": "node --experimental-default-type=module --test tests/headless-*.test.js",
+    "test:cli": "node --experimental-default-type=module --test tests/headless-runner.test.js tests/headless-cli.test.js",
     "fixtures:headless": "node --experimental-default-type=module scripts/generate-headless-fixtures.mjs",
     "test:ui": "playwright test --grep-invert @a11y",
     "test:a11y": "playwright test --grep @a11y"

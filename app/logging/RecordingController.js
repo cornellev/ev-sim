@@ -15,11 +15,17 @@ const MAX_QUEUE_BYTES = 16 * 1024 * 1024;
 const CHECKPOINT_INTERVAL_US = 5e6;
 const RETRY_DELAYS_MS = [250, 750, 2000];
 
-async function uploadWithRetry(id, sequence, batch) {
+const HTTP_LOG_TRANSPORT = Object.freeze({
+    createSession: createLogSession,
+    appendBatch: uploadLogBatch,
+    finalize: finalizeLogSession,
+});
+
+async function uploadWithRetry(transport, id, sequence, batch) {
     let lastError;
     for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt += 1) {
         try {
-            return await uploadLogBatch(id, sequence, batch);
+            return await transport.appendBatch(id, sequence, batch);
         } catch (error) {
             lastError = error;
             if (attempt === RETRY_DELAYS_MS.length) break;
@@ -72,8 +78,9 @@ function lightSnapshot(store) {
 }
 
 export class RecordingController {
-    constructor(store = getTelemetryStore()) {
+    constructor(store = getTelemetryStore(), { transport = HTTP_LOG_TRANSPORT } = {}) {
         this.store = store;
+        this.transport = transport;
         this.listeners = new Set();
         this.encoder = null;
         this.session = null;
@@ -140,7 +147,7 @@ export class RecordingController {
             ?? (this.profile.mode === "replay-safe");
         this._emit();
         try {
-            const created = await createLogSession({
+            const created = await this.transport.createSession({
                 name: options.name,
                 environmentId: options.environmentId,
                 simulator: options.simulator,
@@ -309,7 +316,7 @@ export class RecordingController {
         this._emit();
         this._uploadChain = this._uploadChain
             .then(async () => {
-                const result = await uploadWithRetry(this.session.id, sequence, batch);
+                const result = await uploadWithRetry(this.transport, this.session.id, sequence, batch);
                 this.bytesWritten = result.bytesWritten;
                 this.queuedBytes = Math.max(0, this.queuedBytes - batch.bytes.byteLength);
                 this._emit();
@@ -377,7 +384,7 @@ export class RecordingController {
             } catch (error) {
                 uploadError = error;
             }
-            const metadata = await finalizeLogSession(this.session.id, {
+            const metadata = await this.transport.finalize(this.session.id, {
                 ...finalizePatch,
                 incomplete: Boolean(finalizePatch.incomplete || this.error || this.droppedSamples || uploadError),
                 loggingError: uploadError?.message || finalizePatch.loggingError || null,

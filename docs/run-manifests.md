@@ -141,6 +141,18 @@ Logging writes a native SFLog (see [SFLog](sflog.md)). Policies are:
 
 Run logs contain `run-manifest.json` at start and `run-results.json` at finalization, plus manifest identity, hashes, run ID, and browser/WebGL/runtime provenance in metadata. Results include `simulationSemanticHash`, `episodeHash`, and the final bounded `trajectoryHash`; operational logging policy and output paths do not affect them. Replay reads recorded state and sensor bytes instead of rerunning sensors on the replay GPU. Capture-aligned `visualization.controls.snapshot` scrubs requested/applied/achieved with arcs in Analysis and Replay.
 
+## Headless CLI execution
+
+PR 6 consumes exported `cev-sim.run-bundle` v1 envelopes directly through the
+[`cev-sim` CLI](headless-cli.md). The runner verifies the full resolved hash,
+simulation-semantic hash, embedded manifest, world, and backend selections; it
+does not accept an authoring manifest or call the storage resolver. Streaming
+and tape actions both enter the existing normalized policy/action-repeat
+contract. Core results, the verified bundle, and runtime provenance publish
+atomically, with evaluation/training/disabled policies controlling SFLog
+retention. Caller artifact policy and output location remain operational and
+do not change episode or trajectory identity.
+
 ## Scenario episode metrics
 
 When a run selects a scenario, `ScenarioRuntime` collects ego-only episode metrics each fixed step and merges them into `finalize().metrics` (and `run-results.json`). Built-ins:

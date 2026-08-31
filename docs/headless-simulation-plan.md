@@ -7,10 +7,10 @@ language-neutral API authority is
 
 ## Status
 
-- Current completed milestone: **PR 5 — state sensors and episode semantics**
-- Next milestone: **PR 6 — single-process runner, CLI, and artifacts**
+- Current milestone: **PR 6 — implementation complete; Ubuntu CI gate pending**
+- Next planned milestone: **PR 7 — process-isolated batch supervisor and gRPC**
 - Default implementation/review reasoning level: **Extra High**
-- Last updated: **2026-08-30**
+- Last updated: **2026-08-31**
 
 Progress:
 
@@ -19,7 +19,7 @@ Progress:
 - [x] PR 3 — Deterministic reset, timers, hashing, and teardown
 - [x] PR 4 — Shared world description and headless vehicle plant
 - [x] PR 5 — State sensors and episode semantics
-- [ ] PR 6 — Single-process runner, CLI, and artifacts
+- [ ] PR 6 — Single-process runner, CLI, and artifacts (Ubuntu CI pending)
 - [ ] PR 7 — Process-isolated batch supervisor and gRPC
 - [ ] PR 8 — Python Gymnasium and Stable-Baselines3 package
 - [ ] PR 9 — MCP, experiment, result, and logging integration
@@ -285,6 +285,12 @@ Gate:
 - Camera/LiDAR requests fail at capability validation until supported.
 
 ### PR 6 — Single-process runner, CLI, and artifacts
+
+Status: **Implementation complete; Ubuntu CI gate pending (2026-08-31).** The direct `HeadlessRunner` accepts only
+verified portable bundles, the `cev-sim` CLI exposes validate/inspect/run/replay,
+and atomic core artifacts plus policy-controlled native SFLog require no web
+server or browser. The focused, fixture, macOS CLI/SFLog, full-suite, and lint
+gates pass locally; the milestone remains open until Ubuntu CI passes.
 
 Deliver:
 
@@ -561,3 +567,27 @@ truncations are implemented in `HeadlessEpisode`. Camera/LiDAR/unknown enabled
 requests fail before preparation; sensor-disabled direct kernel use remains
 compatible. Protobuf field numbers, manifest version, resolved hashes, and the
 PR 1 characterization fixture are unchanged.
+
+### 2026-08-30 — PR 6 direct runner, CLI, and artifacts
+
+Wrap `HeadlessEpisode` in a single-environment, same-process `HeadlessRunner`
+with guaranteed teardown. Accept only verified `cev-sim.run-bundle` v1
+envelopes; validation never resolves or imports authoring data. Extract the
+existing full resolved-run hash implementation for shared storage/runner use
+without changing its canonicalization or any committed hash contract.
+
+The `cev-sim` CLI defines validate, inspect, streaming run, and policy-tape
+replay commands. Machine records use stdout, diagnostics use stderr, and exit
+codes distinguish semantic, usage, input/capability, artifact, runtime, and
+interrupt outcomes. Policy tapes use the new
+`cev-sim.headless.policy-action-tape` v1 kind; the PR 1 topic tape is
+unchanged. The runner establishes simulation-time telemetry at reset so first
+step trajectory hashing and SFLog checkpoints are independent of wall time.
+
+Core JSON artifacts publish through a sibling staging directory and atomic
+rename. Evaluation retains full SFLog, training deterministically samples or
+failure-promotes it, and disabled omits it. A transport-injected
+`RecordingController` writes directly through `LogService`, preserving SFLog
+v1 and existing Replay/Analysis readers. Protobuf v1, run-manifest v9,
+run-bundle v1, simulator ordering, profile identities, the characterization
+fixture, and episode/trajectory hash algorithms are unchanged.

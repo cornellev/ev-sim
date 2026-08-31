@@ -19,6 +19,8 @@ import {
 import { threePoseToRep103 } from "../autonomy/CoordinateFrames.js";
 import { validateSensorRigFrames, validateSyncGroups } from "../simulation/TransformRuntime.js";
 import { validateScalarParameterTarget } from "../scenarios/ScenarioDocument.js";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex } from "@noble/hashes/utils.js";
 
 export const RUN_MANIFEST_KIND = "cev-sim.run-manifest";
 export const RUN_MANIFEST_VERSION = 9;
@@ -828,4 +830,9 @@ export function stripRunMetadata(value) {
         );
     };
     return visit(value);
+}
+
+/** Full portable resolved-run integrity hash. Keep this distinct from simulationSemanticHash. */
+export function computeResolvedRunHash(value) {
+    return bytesToHex(sha256(new TextEncoder().encode(canonicalStringify(stripRunMetadata(value)))));
 }
