@@ -2,6 +2,8 @@ import * as THREE from "three";
 import { PhysicalVehicle } from "./Vehicle";
 import { LiDAR3d } from "../devices/LiDAR3d";
 import Unit from "@/app/util/Unit";
+import { getBuiltInVehicleManifest } from "../../vehicles/BuiltInVehicleManifests.js";
+import { attachVehiclePlant, resetVehiclePlant, stepVehiclePlant } from "./VehiclePlantAdapter.js";
 
 export class IGVCCar extends PhysicalVehicle {
     constructor(db, position=new THREE.Vector3(), rotation=new THREE.Euler()) {
@@ -12,6 +14,12 @@ export class IGVCCar extends PhysicalVehicle {
             new Unit(18, Unit.Type.INCH).getValue(Unit.Type.METER), // height
             new Unit(26.94, Unit.Type.INCH).getValue(Unit.Type.METER), // width
         );
+        this.steeringAngle = 0;
+        attachVehiclePlant(this, {
+            id: this.telemetryId || "igvc-car",
+            type: "igvc-car",
+            pose: { position: this.position, rotation: this.rotation },
+        }, { manifest: getBuiltInVehicleManifest("igvc-car") });
     }
 
     setupDevices() {
@@ -30,7 +38,12 @@ export class IGVCCar extends PhysicalVehicle {
 
 
     update(dt) {
+        stepVehiclePlant(this, dt);
+    }
 
+    resetRunState(entry = {}) {
+        super.resetRunState(entry);
+        resetVehiclePlant(this, entry);
     }
 
     async addToScene(scene) {

@@ -1,3 +1,6 @@
+import { assertPhysicsBackendSelection, PHYSICS_BACKEND_CONFIG } from "./PhysicsBackend.js";
+import { compareUtf8 } from "../simulation/world/WorldDescription.js";
+
 function vector(value = {}) {
     return { x: Number(value.x || 0), y: Number(value.y || 0), z: Number(value.z || 0) };
 }
@@ -36,6 +39,83 @@ export function sweepAabb(start, end, half, target) {
     return Math.max(0, entry);
 }
 
+function projectionInterval(points, axis) {
+    const values = points.map((point) => point.x * axis.x + point.z * axis.z);
+    return { min: Math.min(...values), max: Math.max(...values) };
+}
+
+function movingInterval(start, end, half, axis, target, current) {
+    const startCenter = start.x * axis.x + start.z * axis.z;
+    const endCenter = end.x * axis.x + end.z * axis.z;
+    const delta = endCenter - startCenter;
+    const radius = Math.abs(axis.x) * half.x + Math.abs(axis.z) * half.z;
+    if (Math.abs(delta) <= 1e-15) {
+        if (startCenter + radius < target.min || startCenter - radius > target.max) return null;
+        return current;
+    }
+    const first = (target.min - (startCenter + radius)) / delta;
+    const second = (target.max - (startCenter - radius)) / delta;
+    return {
+        entry: Math.max(current.entry, Math.min(first, second)),
+        exit: Math.min(current.exit, Math.max(first, second)),
+    };
+}
+
+function movingYInterval(start, end, half, minY, maxY, current) {
+    const delta = end.y - start.y;
+    if (Math.abs(delta) <= 1e-15) {
+        if (start.y + half.y < minY || start.y - half.y > maxY) return null;
+        return current;
+    }
+    const first = (minY - (start.y + half.y)) / delta;
+    const second = (maxY - (start.y - half.y)) / delta;
+    return {
+        entry: Math.max(current.entry, Math.min(first, second)),
+        exit: Math.min(current.exit, Math.max(first, second)),
+    };
+}
+
+/** Continuous XZ SAT plus a continuous Y-slab test for an AABB and triangle prism. */
+export function sweepAabbTrianglePrism(start, end, half, points, minY, maxY) {
+    const axes = [{ x: 1, z: 0 }, { x: 0, z: 1 }];
+    for (let index = 0; index < points.length; index += 1) {
+        const point = points[index];
+        const next = points[(index + 1) % points.length];
+        const edge = { x: next.x - point.x, z: next.z - point.z };
+        if (Math.abs(edge.x) + Math.abs(edge.z) <= 1e-15) continue;
+        axes.push({ x: -edge.z, z: edge.x });
+    }
+    let interval = { entry: -Infinity, exit: Infinity };
+    for (const axis of axes) {
+        interval = movingInterval(start, end, half, axis, projectionInterval(points, axis), interval);
+        if (!interval || interval.entry > interval.exit) return null;
+    }
+    interval = movingYInterval(start, end, half, minY, maxY, interval);
+    if (!interval || interval.entry > interval.exit || interval.exit < 0 || interval.entry > 1) return null;
+    return Math.max(0, interval.entry);
+}
+
+function axisAlignedRectangle(obstacle) {
+    const points = obstacle.footprint;
+    if (!Array.isArray(points) || points.length !== 4) return false;
+    return points.every((point, index) => {
+        const next = points[(index + 1) % points.length];
+        return Math.abs(point.x - next.x) <= 1e-12 || Math.abs(point.z - next.z) <= 1e-12;
+    });
+}
+
+function sweepWorldObstacle(start, end, half, obstacle) {
+    if (axisAlignedRectangle(obstacle)) return sweepAabb(start, end, half, obstacle.bounds);
+    let firstImpact = null;
+    for (const triangle of obstacle.triangles ?? []) {
+        const points = triangle.map((index) => obstacle.footprint[index]);
+        if (points.some((point) => !point)) continue;
+        const impact = sweepAabbTrianglePrism(start, end, half, points, obstacle.minY, obstacle.maxY);
+        if (impact !== null && (firstImpact === null || impact < firstImpact)) firstImpact = impact;
+    }
+    return firstImpact;
+}
+
 function vehicleHalfExtents(vehicle) {
     const dimensions = vehicle.collisionDimensions || vehicle.dimensions || { x: 1, y: 1, z: 1 };
     return {
@@ -50,7 +130,7 @@ function stableVehicleId(vehicle, index) {
 }
 
 export class PhysicsEngine {
-    constructor(data, { loadPhysics = () => import("@dimforge/rapier3d") } = {}) {
+    constructor(data, { loadPhysics = () => import("@dimforge/rapier3d-compat") } = {}) {
         this.data = data;
         this.RAPIER = null;
         this.world = null;
@@ -59,8 +139,9 @@ export class PhysicsEngine {
         this.vehicleStates = [];
         this.activeContacts = new Set();
         this.pendingContacts = new Set();
-        this._initialization = loadPhysics().then((module) => {
+        this._initialization = loadPhysics().then(async (module) => {
             this.RAPIER = module.default || module;
+            await (module.init ?? this.RAPIER.init)?.({});
             this._createWorld();
             return this.world;
         });
@@ -68,37 +149,78 @@ export class PhysicsEngine {
 
     _createWorld() {
         this.world?.free?.();
-        this.world = new this.RAPIER.World({ x: 0, y: -9.81, z: 0 });
+        this.world = new this.RAPIER.World(PHYSICS_BACKEND_CONFIG.gravity);
         this.rigidbodies = [];
+        this.staticColliders = [];
+        this.vehicleStates = [];
     }
 
     async start() {
         await this._initialization;
     }
 
-    async configureRun() {
+    async configureRun(configuration = null, legacyEnvironmentManifest = null) {
         await this._initialization;
+        const legacy = configuration && !Object.hasOwn(configuration, "manifest");
+        const manifest = legacy ? configuration : configuration?.manifest ?? null;
+        const worldDescription = legacy ? null : configuration?.worldDescription ?? null;
+        const backendSelection = legacy ? null : configuration?.backendSelection ?? null;
+        if (worldDescription) assertPhysicsBackendSelection(backendSelection);
+        this.preparedManifest = manifest;
+        this.preparedEnvironmentManifest = legacyEnvironmentManifest;
+        this.preparedWorldDescription = worldDescription;
+        this.preparedBackendSelection = backendSelection;
+        this.resetRun();
+    }
+
+    _buildStaticColliders() {
         this._createWorld();
-        const boxes = [...(this.data.objects?.()?.boxes?.() || [])]
-            .map((box) => ({ box, key: [box.position.x, box.position.y, box.position.z, box.scale.x, box.scale.y, box.scale.z].join(":" ) }))
-            .sort((left, right) => left.key.localeCompare(right.key));
-        this.staticColliders = boxes.map(({ box }, index) => {
-            const center = vector(box.position);
-            const half = { x: box.scale.x / 2, y: box.scale.y / 2, z: box.scale.z / 2 };
-            const id = `environment-${String(index + 1).padStart(5, "0")}`;
+        const worldObstacles = this.preparedWorldDescription?.obstacles;
+        const entries = Array.isArray(worldObstacles)
+            ? worldObstacles.map((obstacle) => ({
+                id: String(obstacle.id),
+                bounds: obstacle.bounds,
+                footprint: obstacle.footprint,
+                triangles: obstacle.triangles,
+                minY: obstacle.minY,
+                maxY: obstacle.maxY,
+                obstacle,
+            }))
+            : [...(this.data.objects?.()?.boxes?.() || [])]
+                .map((box, index) => {
+                    const center = vector(box.position);
+                    const half = { x: box.scale.x / 2, y: box.scale.y / 2, z: box.scale.z / 2 };
+                    return {
+                        id: `environment-${String(index + 1).padStart(5, "0")}`,
+                        bounds: bounds(center, half),
+                        box,
+                    };
+                })
+                .sort((left, right) => JSON.stringify(left.bounds).localeCompare(JSON.stringify(right.bounds)));
+        this.staticColliders = entries
+            .sort((left, right) => compareUtf8(left.id, right.id))
+            .map((entry) => {
+            const center = {
+                x: (entry.bounds.min.x + entry.bounds.max.x) / 2,
+                y: (entry.bounds.min.y + entry.bounds.max.y) / 2,
+                z: (entry.bounds.min.z + entry.bounds.max.z) / 2,
+            };
+            const half = {
+                x: Math.max(0.001, (entry.bounds.max.x - entry.bounds.min.x) / 2),
+                y: Math.max(0.001, (entry.bounds.max.y - entry.bounds.min.y) / 2),
+                z: Math.max(0.001, (entry.bounds.max.z - entry.bounds.min.z) / 2),
+            };
             const body = this.world.createRigidBody(this.RAPIER.RigidBodyDesc.fixed().setTranslation(center.x, center.y, center.z));
             this.world.createCollider(this.RAPIER.ColliderDesc.cuboid(half.x, half.y, half.z), body);
             this.rigidbodies.push(body);
-            return { id, center, half, bounds: bounds(center, half), body };
+            return { ...entry, center, half, body };
         });
-        this._buildVehicleStates();
-        this.resetRun();
     }
 
     _buildVehicleStates() {
         const vehicles = [...(this.data.vehicles?.()?.vehicles || [])]
             .map((vehicle, index) => ({ vehicle, id: stableVehicleId(vehicle, index) }))
-            .sort((left, right) => left.id.localeCompare(right.id));
+            .sort((left, right) => compareUtf8(left.id, right.id));
         this.vehicleStates = vehicles.map(({ vehicle, id }) => {
             const half = vehicleHalfExtents(vehicle);
             const position = vector(vehicle.position);
@@ -119,12 +241,17 @@ export class PhysicsEngine {
         this.pendingContacts = new Set();
         for (const state of this.vehicleStates) {
             const candidate = vector(state.vehicle.position);
-            let impact = 1;
+            const hits = [];
             for (const obstacle of this.staticColliders) {
-                const time = sweepAabb(state.previous, candidate, state.half, obstacle.bounds);
+                const time = obstacle.obstacle
+                    ? sweepWorldObstacle(state.previous, candidate, state.half, obstacle)
+                    : sweepAabb(state.previous, candidate, state.half, obstacle.bounds);
                 if (time === null) continue;
-                impact = Math.min(impact, time);
-                this.pendingContacts.add(`${state.id}|${obstacle.id}`);
+                hits.push({ id: obstacle.id, time });
+            }
+            const impact = hits.reduce((minimum, hit) => Math.min(minimum, hit.time), 1);
+            for (const hit of hits.filter((entry) => entry.time <= impact + 1e-12)) {
+                this.pendingContacts.add(`${state.id}|${hit.id}`);
             }
             if (impact < 1) {
                 const safeImpact = Math.max(0, impact - 1e-9);
@@ -180,8 +307,8 @@ export class PhysicsEngine {
     }
 
     syncAndPublishContacts({ step = 0, timeNs = 0 } = {}) {
-        const started = [...this.pendingContacts].filter((key) => !this.activeContacts.has(key)).sort();
-        const ended = [...this.activeContacts].filter((key) => !this.pendingContacts.has(key)).sort();
+        const started = [...this.pendingContacts].filter((key) => !this.activeContacts.has(key)).sort(compareUtf8);
+        const ended = [...this.activeContacts].filter((key) => !this.pendingContacts.has(key)).sort(compareUtf8);
         const store = this.data.bindings?.()?.signalStore;
         const emit = (name, key) => {
             const [firstId, secondId] = key.split("|");
@@ -196,16 +323,49 @@ export class PhysicsEngine {
         for (const key of started) emit("contact-start", key);
         for (const key of ended) emit("contact-end", key);
         this.activeContacts = new Set(this.pendingContacts);
-        return { started, ended, active: [...this.activeContacts].sort() };
+        return { started, ended, active: [...this.activeContacts].sort(compareUtf8) };
     }
 
     resetRun() {
+        if (this.RAPIER) {
+            this._buildStaticColliders();
+            this._buildVehicleStates();
+        }
         this.activeContacts.clear();
         this.pendingContacts.clear();
         for (const state of this.vehicleStates) {
             state.previous = vector(state.vehicle.position);
             state.body?.setNextKinematicTranslation?.(state.previous);
         }
+    }
+
+    getDeterministicState() {
+        return {
+            activeContacts: [...this.activeContacts].sort(compareUtf8),
+            pendingContacts: [...this.pendingContacts].sort(compareUtf8),
+            vehicles: this.vehicleStates.map((state) => ({
+                id: state.id,
+                previous: vector(state.previous),
+            })),
+        };
+    }
+
+    finalizeRun() {
+        return this.getDeterministicState();
+    }
+
+    disposeRun() {
+        this.world?.free?.();
+        this.world = null;
+        this.rigidbodies = [];
+        this.staticColliders = [];
+        this.vehicleStates = [];
+        this.activeContacts.clear();
+        this.pendingContacts.clear();
+        this.preparedManifest = null;
+        this.preparedEnvironmentManifest = null;
+        this.preparedWorldDescription = null;
+        this.preparedBackendSelection = null;
     }
 
     async stop() {}

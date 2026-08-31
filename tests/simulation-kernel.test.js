@@ -246,3 +246,147 @@ test("kernel snapshots are defensive, structured-cloneable state values", async 
     assert.notEqual(snapshot.modules.physics, kernel.modules.physics);
     assert.equal(kernel.assertionEngine.snapshot().length, 0);
 });
+
+test("managed kernel lifecycle finalizes idempotently and requires reset before more steps", async () => {
+    const { SimulationKernel } = await import("../app/simulation/kernel/SimulationKernel.js");
+    const target = createHarness();
+    const manifest = createDefaultRunManifest({
+        seed: "lifecycle-seed",
+        clock: { stepNs: 10_000_000, maxSteps: 3 },
+        sensorRig: { sensors: [] },
+        assertions: [],
+    });
+    const kernel = new SimulationKernel(target.context);
+    await kernel.prepare(resolvedRun(manifest));
+    assert.equal(kernel.lifecycleState, "prepared");
+    const initialEpisodeHash = kernel.episodeHash;
+    const initialTrajectoryHash = kernel.trajectoryHash;
+
+    kernel.step();
+    assert.equal(kernel.lifecycleState, "stepping");
+    assert.notEqual(kernel.trajectoryHash, initialTrajectoryHash);
+
+    const first = kernel.finalize({ status: "completed" });
+    const second = kernel.finalize({ status: "ignored" });
+    assert.deepEqual(second, first);
+    assert.equal(kernel.lifecycleState, "finalized");
+    assert.throws(() => kernel.step(), /finalized episode/);
+    assert.throws(() => kernel.play(), /finalized episode/);
+
+    kernel.reset({ resetSeed: "next-seed" });
+    assert.equal(kernel.lifecycleState, "prepared");
+    assert.equal(kernel.steps, 0);
+    assert.notEqual(kernel.episodeHash, initialEpisodeHash);
+    kernel.step();
+
+    kernel.dispose();
+    kernel.dispose();
+    assert.equal(kernel.lifecycleState, "disposed");
+    assert.throws(() => kernel.step(), /disposed simulation kernel/);
+});
+
+test("same episode reset reconstructs production trajectory hash", async () => {
+    const { SimulationKernel } = await import("../app/simulation/kernel/SimulationKernel.js");
+    const target = createHarness();
+    const manifest = createDefaultRunManifest({
+        seed: "repeat-seed",
+        clock: { stepNs: 10_000_000, maxSteps: 2 },
+        initialState: {
+            vehicles: [{
+                id: "ego",
+                type: "big-car",
+                pose: { position: {}, rotation: {} },
+                linearVelocity: { x: 2, y: 0, z: 0 },
+                steeringAngle: 0,
+            }],
+            signals: {},
+        },
+        sensorRig: { sensors: [] },
+        assertions: [],
+    });
+    const kernel = new SimulationKernel(target.context);
+    await kernel.prepare(resolvedRun(manifest));
+    kernel.step(2);
+    const first = kernel.trajectoryHash;
+
+    kernel.reset();
+    kernel.step(2);
+    assert.equal(kernel.trajectoryHash, first);
+});
+
+test("runtime facade disposes prepared components in reverse dependency order", async () => {
+    const [{ SimulationKernel }, { createSimulationRuntimeContext }, { SignalStore }] = await Promise.all([
+        import("../app/simulation/kernel/SimulationKernel.js"),
+        import("../app/simulation/kernel/SimulationRuntimeContext.js"),
+        import("../app/scripting/runtime/SignalStore.js"),
+    ]);
+    const calls = [];
+    const scripts = {
+        signalStore: new SignalStore({}, { sourceId: "lifecycle-order" }),
+        setTopicScheduler() {},
+        setTopicRouter() {},
+        async setManifest() {},
+        async prepareResolvedScripts() {},
+        resetRun() { calls.push("scripts-reset"); },
+        finalizeRun() { calls.push("scripts-finalize"); },
+        disposeRun() { calls.push("scripts-dispose"); },
+        update() {},
+    };
+    const manager = (name) => ({
+        vehicles: [],
+        devices: [],
+        async configureFromManifest() { calls.push(`${name}-prepare`); },
+        async configureRun() { calls.push(`${name}-prepare`); },
+        resetRun() { calls.push(`${name}-reset`); },
+        finalizeRun() { calls.push(`${name}-finalize`); },
+        disposeRun() { calls.push(`${name}-dispose`); },
+        update() {},
+        deliver() {},
+        beginStep() {},
+        step() {},
+        syncAndPublishContacts() { return { started: [], active: [], ended: [] }; },
+    });
+    const scenarioRuntime = {
+        active: false,
+        configure() {},
+        reset() { calls.push("scenario-reset"); },
+        finalize() { calls.push("scenario-finalize"); return null; },
+        dispose() { calls.push("scenario-dispose"); },
+        getSnapshot() { return null; },
+    };
+    const context = createSimulationRuntimeContext({
+        telemetry: scripts.signalStore,
+        scripts,
+        scenarios: scenarioRuntime,
+        vehicles: manager("vehicles"),
+        devices: manager("devices"),
+        physics: manager("physics"),
+        inputs: {
+            update() {},
+            resetRun() { calls.push("inputs-reset"); },
+            finalizeRun() { calls.push("inputs-finalize"); },
+            disposeRun() { calls.push("inputs-dispose"); },
+        },
+        applyEnvironment() { calls.push("environment-prepare"); },
+        resetEnvironment() { calls.push("environment-reset"); },
+        finalizeEnvironment() { calls.push("environment-finalize"); },
+        disposeEnvironment() { calls.push("environment-dispose"); },
+    });
+    const kernel = new SimulationKernel(context);
+    await kernel.prepare(resolvedRun(createDefaultRunManifest({
+        sensorRig: { sensors: [] },
+        assertions: [],
+    })));
+    kernel.finalize();
+    kernel.dispose();
+
+    assert.deepEqual(calls.slice(-7), [
+        "scenario-dispose",
+        "physics-dispose",
+        "devices-dispose",
+        "vehicles-dispose",
+        "scripts-dispose",
+        "inputs-dispose",
+        "environment-dispose",
+    ]);
+});

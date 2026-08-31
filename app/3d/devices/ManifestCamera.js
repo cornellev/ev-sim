@@ -353,6 +353,11 @@ export class ManifestCamera extends Device {
         return this._buildMessages({ captureTimeNs, sampleIndex, rng, truth }, captured);
     }
 
+    resetRunState() {
+        this._issuedCapture = null;
+        this.renderProducts?.reset?.();
+    }
+
     dispose() {
         this._issuedCapture = null;
         this.contractPublisher?.dispose?.();

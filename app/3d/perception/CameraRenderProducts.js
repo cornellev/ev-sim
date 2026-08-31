@@ -493,6 +493,12 @@ export class CameraRenderProducts {
         return result;
     }
 
+    reset() {
+        for (const slot of Object.values(this._slots)) slot.pack?.reset?.();
+        this._inflight = null;
+        this._asyncDisabled = false;
+    }
+
     dispose() {
         this.target?.dispose?.();
         this.depthMaterial?.dispose?.();

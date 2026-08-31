@@ -103,6 +103,54 @@ export class Vehicle {
         }
     }
 
+    resetRunState(entry = {}) {
+        const pose = entry.pose || {};
+        const position = pose.position || { x: 0, y: 0, z: 0 };
+        const rotation = pose.rotation || { x: 0, y: 0, z: 0, order: "XYZ" };
+        this.position?.set?.(
+            Number(position.x) || 0,
+            Number(position.y) || 0,
+            Number(position.z) || 0,
+        );
+        this.rotation?.set?.(
+            Number(rotation.x) || 0,
+            Number(rotation.y) || 0,
+            Number(rotation.z) || 0,
+            rotation.order || "XYZ",
+        );
+        this.velocity?.set?.(
+            Number(entry.linearVelocity?.x) || 0,
+            Number(entry.linearVelocity?.y) || 0,
+            Number(entry.linearVelocity?.z) || 0,
+        );
+        this.acceleration?.set?.(
+            Number(entry.linearAcceleration?.x) || 0,
+            Number(entry.linearAcceleration?.y) || 0,
+            Number(entry.linearAcceleration?.z) || 0,
+        );
+        if ("steeringAngle" in this || Number.isFinite(Number(entry.steeringAngle))) {
+            this.steeringAngle = Number(entry.steeringAngle) || 0;
+        }
+        this.updatePosition?.(this.position);
+        this.updateRotation?.(this.rotation);
+    }
+
+    getDeterministicState() {
+        const vector = (value = {}) => ({
+            x: Number(value.x) || 0,
+            y: Number(value.y) || 0,
+            z: Number(value.z) || 0,
+        });
+        return {
+            id: String(this.telemetryId || this.id || ""),
+            position: vector(this.position),
+            rotation: { ...vector(this.rotation), order: this.rotation?.order || "XYZ" },
+            velocity: vector(this.velocity),
+            acceleration: vector(this.acceleration),
+            steeringAngle: Number(this.steeringAngle) || 0,
+        };
+    }
+
     dispose() {
         const deviceDatabase = this.db?.getParent?.()?.devices?.();
         for (const device of [...this.devices]) {

@@ -1,16 +1,17 @@
-import { setupIGVC } from "../igvc/IGVCScene.js";
 import { syncBuildingsFromDocument, syncRoadsFromDocument } from "../editor/document/DocumentSync.js";
 import { removeBuildingMeshesFromScene, removeFeatureFromRuntime } from "../editor/map/mapRuntimeSync.js";
 import { placeFusionObjectInScene } from "../editor/placement/placeFusionObject.js";
 import { getEnvironmentManifest } from "./EnvironmentCatalogClient.js";
-import { getEnvironmentApplyPolicy } from "./EnvironmentManifestPolicy.js";
+import {
+    assertWorldResource,
+    createWorldResource,
+} from "../../simulation/world/WorldDescription.js";
 
 /**
  * The single environment load/apply path used by both Simulation and Editor.
  *
- * Templates create their native runtime first (IGVC keeps its exact roads and
- * intersections). Persisted author edits are then overlaid by document domain:
- * only explicitly-authored roads replace template roads.
+ * The browser is a materializer for the same normalized world document used
+ * by Node. No template geometry is bootstrapped outside that shared contract.
  */
 export class EnvironmentLoader {
     constructor({ data, scene }) {
@@ -30,57 +31,65 @@ export class EnvironmentLoader {
         environment.roadStylePreset = definition.roadStylePreset;
         environment.getDocument().environmentId = definition.environmentId;
 
-        await this._bootstrap(definition.templateId);
-        // Template bootstraps add native props to ObjectDatabase. Materialize
-        // them before registry hydration so editor-first and simulation-first
-        // loads see the exact same objects.
         this.data.objects().scene(this.scene);
         environment.setup(this.scene);
-
-        if (this.manifest) {
-            this.apply(this.manifest);
-        }
+        this.apply(this.manifest ?? {
+            environmentId: definition.environmentId,
+            templateId: definition.templateId,
+        });
 
         return definition;
     }
 
-    async _bootstrap(templateId) {
-        if (templateId === "igvc") {
-            await setupIGVC(this.scene, this.data);
-        }
-        // "blank" intentionally has no runtime content.
-    }
-
-    apply(manifest) {
+    apply(manifest, resolvedWorld = null) {
         const environment = this.data.environment();
         const document = environment.getDocument();
-        const current = document.snapshot();
-        const saved = manifest.document ?? {};
-        const policy = getEnvironmentApplyPolicy(manifest, environment.templateId);
+        const worldResource = resolvedWorld ?? createWorldResource(manifest);
+        const description = assertWorldResource(worldResource);
+        const roadsAuthored = description.domainSources.roads === "authored";
+        const buildingsAuthored = description.domainSources.buildings === "authored";
+        const featuresAuthored = description.domainSources.features === "authored";
 
         document.restoreSnapshot({
-            ...current,
-            ...saved,
-            environmentId: environment.environmentId,
-            roads: policy.roadsAuthored ? saved.roads : current.roads,
-            buildings: policy.buildingsAuthored ? saved.buildings : current.buildings,
-            features: policy.featuresAuthored ? saved.features : current.features,
-            roadsAuthored: policy.roadsAuthored,
-            buildingsAuthored: policy.buildingsAuthored,
-            featuresAuthored: policy.featuresAuthored,
+            environmentId: description.environmentId,
+            chunkSize: manifest.chunkSize ?? 20,
+            roads: structuredClone(description.roads),
+            buildings: description.buildings.map((building) => ({
+                buildingId: building.id,
+                footprint: structuredClone(building.footprint),
+                height: building.height,
+                textureId: building.textureId,
+                tags: [...building.tags],
+                meshName: building.meshName,
+            })),
+            features: description.features.map((feature) => ({
+                id: feature.id,
+                type: feature.type,
+                x: feature.transform.position.x,
+                z: feature.transform.position.z,
+                dir: feature.dir,
+                rotationY: feature.rotationY,
+                tags: [...feature.tags],
+            })),
+            earth: manifest.document?.earth ?? null,
+            roadsAuthored,
+            buildingsAuthored,
+            featuresAuthored,
         });
 
-        // Native IGVC roads are canonical until a user actually edits roads.
-        if (policy.rebuildRoads) {
-            syncRoadsFromDocument(this.data, this.scene, document);
-        }
-        if (policy.rebuildBuildings) this._rebuildBuildings();
-        if (policy.rebuildFeatures) this._rebuildFeatures();
+        syncRoadsFromDocument(this.data, this.scene, document);
+        this._rebuildBuildings();
+        this._rebuildFeatures();
+        document.roadsAuthored = roadsAuthored;
+        document.buildingsAuthored = buildingsAuthored;
+        document.featuresAuthored = featuresAuthored;
+        environment.setWorldDescription?.(description, worldResource.hash);
 
         environment.objects().registerExistingContent(this.scene, this.data);
         this._restoreSky(manifest.sky);
         this._restoreEditorState(manifest.editor);
         this.data.simulation()?.render?.();
+        return worldResource;
     }
 
     _rebuildBuildings() {
@@ -185,4 +194,3 @@ function normalizeDefinition(environmentId, manifest) {
         roadStylePreset: manifest?.roadStylePreset ?? (templateId === "igvc" ? "igvc" : "default"),
     };
 }
-

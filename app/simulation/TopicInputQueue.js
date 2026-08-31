@@ -70,6 +70,20 @@ export class TopicInputQueue {
         };
     }
 
+    getDeterministicState() {
+        return {
+            sequence: this.sequence,
+            queue: this.queue.map((entry) => ({
+                info: cloneInfo(entry.info),
+                applyStep: entry.applyStep,
+                arrivalTimeNs: entry.arrivalTimeNs,
+                sequence: entry.sequence,
+                bytes: entry.bytes,
+            })),
+            stats: this.getStats(),
+        };
+    }
+
     enqueue(info, applyStep, { arrivalTimeNs = null } = {}) {
         if (!info?.name) return null;
         if (this.declaredInputs.size > 0 && !this.declaredInputs.has(info.name)) {

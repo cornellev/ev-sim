@@ -108,6 +108,7 @@ export class ScenarioRuntime {
         this.scenario = null;
         this.active = false;
         this.controlRuntime = options.controlRuntime ?? null;
+        this.resetSeed = "0";
         this._scriptEntries = [];
         this._defineSignals();
         this._clearState();
@@ -172,12 +173,14 @@ export class ScenarioRuntime {
         this.scenario = this.resolvedRun?.scenario?.scenario
             ?? (this.resolvedRun?.scenario?.kind === "cev-sim.scenario" ? this.resolvedRun.scenario : null);
         this.active = Boolean(this.scenario);
+        this.resetSeed = String(this.resolvedRun?.manifest?.seed ?? "0");
         this._scriptEntries = this.resolvedRun?.scripts ?? this.resolvedRun?.scenario?.scripts ?? [];
         this.reset({ clearSignals: false });
         return this.getSnapshot();
     }
 
-    reset({ clearSignals = true } = {}) {
+    reset({ clearSignals = true, resetSeed = this.resetSeed } = {}) {
+        this.resetSeed = String(resetSeed);
         this._restoreSensorBaselines();
         if (clearSignals) this._resetScenarioSignals(this.scenario);
         this._clearState();
@@ -244,6 +247,7 @@ export class ScenarioRuntime {
         return {
             active: this.active,
             scenarioId: this.scenario?.id ?? null,
+            resetSeed: this.resetSeed,
             step: this.step,
             timeNs: this.timeNs,
             status: !this.active ? "inactive" : this.terminal ? this.terminal.status : "running",
@@ -316,7 +320,7 @@ export class ScenarioRuntime {
             try {
                 const runner = entry.runtime ?? entry.script ?? this.scriptFactory(entry.artifact, {
                     signalStore: this.telemetry,
-                    runtimeContext: scriptRuntimeContext(this.resolvedRun?.manifest?.seed, `scenario:${scriptId}`),
+                    runtimeContext: scriptRuntimeContext(this.resetSeed, `scenario:${scriptId}`),
                 });
                 this.runners.set(scriptId, runner);
             } catch (error) {

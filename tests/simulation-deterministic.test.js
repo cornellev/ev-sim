@@ -413,3 +413,42 @@ test("reset and replaying the same steps reconstructs the same vehicle state", a
     target.engine.step(12);
     assert.deepEqual({ x: target.vehicle.position.x, step: target.engine.steps, timeNs: target.engine.timeNs }, first);
 });
+
+test("browser adapter disposal is idempotent and does not trigger reset work", async () => {
+    const { engine } = harness();
+    const manifest = createDefaultRunManifest({
+        sensorRig: { sensors: [] },
+        assertions: [],
+    });
+    await engine.applyRunManifest(resolved(manifest));
+    let resets = 0;
+    engine.onReset(() => { resets += 1; });
+    engine.dispose();
+    engine.dispose();
+    assert.equal(resets, 0);
+    assert.equal(engine.lifecycleState, "disposed");
+    assert.equal(engine.listeners.size, 0);
+});
+
+test("browser adapter can clear and prepare the same run repeatedly", async () => {
+    const { engine } = harness();
+    const run = resolved(createDefaultRunManifest({
+        clock: { maxSteps: 2 },
+        sensorRig: { sensors: [] },
+        assertions: [],
+    }));
+    let resets = 0;
+    engine.onReset(() => { resets += 1; });
+
+    await engine.prepare(run);
+    engine.step(2);
+    const first = engine.trajectoryHash;
+    engine.clearRun();
+    assert.equal(engine.lifecycleState, "idle");
+    assert.equal(engine.resolvedRun, null);
+
+    await engine.prepare(run);
+    engine.step(2);
+    assert.equal(engine.trajectoryHash, first);
+    assert.equal(resets, 2);
+});

@@ -55,6 +55,41 @@ scenario, control, telemetry, and topic-routing services without exposing the
 scene, renderer, DOM, or `Data` object. In environment mode the browser adapter
 also drives `EarthTilesManager.update()` while Google 3D Tiles are loaded.
 
+The kernel owns the run-scoped `prepare/reset/step/finalize/dispose`
+lifecycle. Resets reconstruct component state and seeded streams, while
+finalization returns pure assertion/scenario results and reverse-order
+disposal releases run resources without destroying app-lifetime libraries.
+Canonical state feeds a bounded SHA-256 trajectory chain. Full
+`resolvedHash` identifies portable bundle bytes; the separate
+`simulationSemanticHash` excludes logging, resource/artifact policy, wall
+pacing, and presentation settings before episode identity is computed.
+
+`app/simulation/world/WorldDescription.js` is the UI-independent world seam.
+It normalizes schema-v2 environment documents into canonical
+`cev-sim.world-description` v1 JSON with stable road/building/feature IDs,
+drivable surfaces, exact obstacle prisms, aggregate bounds, route-network
+identity, and a world SHA-256. The browser `EnvironmentLoader` materializes
+that description into Three.js; `HeadlessWorldRuntime` retains only the pure
+description and deterministic `{ worldHash }` state. Resolved bundles retain
+the authored environment resource for integrity but use the world hash for
+simulation semantics.
+
+Vehicle motion is owned by the Three.js-free `KinematicVehiclePlant`.
+BigCar, IGVCCar, ScenarioCar, and manifest-backed browser vehicles are
+presentation adapters over the same numeric state used by
+`HeadlessVehicleManager`; GLTF models, wheels, paths, cameras, lane visuals,
+and devices remain browser services. `createHeadlessRuntimeContext` composes a
+non-global binding runtime, signal store, scenario runtime, world, vehicle
+manager, injected physics, and null browser services. Sensors are an explicit
+unsupported capability until PR 5.
+
+Physics pins Rapier `0.19.3` under capability
+`rapier3d-swept-prism-v1`. Rapier owns fixed and kinematic bodies, while
+authoritative first impact/contact transitions use shared continuous XZ SAT
+with a Y-slab test. Feature boxes are oriented prisms, building footprints are
+deterministically triangulated extrusions, and roads are drivable surfaces
+rather than obstacle colliders.
+
 The dependency-ordered extraction of a UI-independent kernel, CLI and worker
 APIs, Python Gymnasium adapter, resource controls, and offscreen sensor
 backends is specified in the
@@ -62,7 +97,7 @@ backends is specified in the
 
 ## Environment Editor
 
-The environment editor authors static world content through an `EnvironmentDocument` (roads, buildings, features, earth metadata). `EditorState` tracks three sub-modes within the editor: scene editing, 2D map authoring, and earth import.
+The environment editor authors static world content through an `EnvironmentDocument` (roads, buildings, features, earth metadata). Runtime road/intersection entities retain UI compatibility aliases while their `sourceId` and canonical entity identity derive from document road/node IDs rather than array position. `EditorState` tracks three sub-modes within the editor: scene editing, 2D map authoring, and earth import.
 
 - [Environment Editor](environment-editor.md) — document model, editor modes, baking, and chrome UI.
 - [Earth Import](earth-import.md) — Google 3D Tiles preview, OSM road import, and geospatial configuration.

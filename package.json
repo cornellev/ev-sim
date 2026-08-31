@@ -2,20 +2,23 @@
   "name": "cev-sim",
   "version": "0.1.0",
   "private": true,
-    "scripts": {
+  "scripts": {
     "dev": "node server/App.js",
     "build": "next build",
     "start": "node server/App.js",
     "lint": "eslint",
     "test": "node --experimental-default-type=module --test tests/*.test.js",
+    "test:headless": "node --experimental-default-type=module --test tests/headless-*.test.js",
     "fixtures:headless": "node --experimental-default-type=module scripts/generate-headless-fixtures.mjs",
     "test:ui": "playwright test --grep-invert @a11y",
     "test:a11y": "playwright test --grep @a11y"
   },
   "dependencies": {
-    "@dimforge/rapier3d": "^0.19.3",
+    "@dimforge/rapier3d": "0.19.3",
+    "@dimforge/rapier3d-compat": "0.19.3",
     "@jax-js/jax": "^0.1.9",
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "@noble/hashes": "^2.4.0",
     "@sparkjsdev/spark": "^0.1.10",
     "@tabler/icons-react": "^3.45.0",
     "@takram/three-atmosphere": "^0.19.1",

@@ -29,6 +29,13 @@ const KERNEL_PROPERTIES = [
     "transformRuntime",
     "lastStepPhases",
     "resetHandlers",
+    "lifecycleState",
+    "simulationSemanticHash",
+    "episodeIdentity",
+    "episodeHash",
+    "trajectoryHash",
+    "lastAcceptedActions",
+    "finalizedResult",
 ];
 
 function exposeKernelProperties(engine) {
@@ -94,9 +101,10 @@ export class SimulationEngine {
             scenarios: scenarioRuntime,
             vehicleScene: () => this.scene,
             topicClient: () => this.data.client?.()?.get?.(),
-            applyEnvironment: (environment, resolvedRun) => {
-                this._applyResolvedEnvironment(environment, resolvedRun);
+            applyEnvironment: (environment, resolvedRun, worldResource) => {
+                this._applyResolvedEnvironment(environment, resolvedRun, worldResource);
             },
+            environmentState: () => this.data.environment?.()?.getDeterministicState?.() ?? null,
         });
         this.kernel = new SimulationKernel(this.runtimeContext, options);
         exposeKernelProperties(this);
@@ -117,7 +125,7 @@ export class SimulationEngine {
         this.environmentRuntime = loader ? { loader, persistence } : null;
     }
 
-    _applyResolvedEnvironment(resolvedEnvironment, resolvedRun = this.resolvedRun) {
+    _applyResolvedEnvironment(resolvedEnvironment, resolvedRun = this.resolvedRun, worldResource = resolvedRun?.world) {
         const frozenManifest = resolvedEnvironment?.manifest;
         const loader = this.environmentRuntime?.loader;
         if (!frozenManifest || !loader) return;
@@ -138,7 +146,7 @@ export class SimulationEngine {
                 environment.templateId = frozenTemplate ?? environment.templateId;
                 environment.roadStylePreset = manifest.roadStylePreset ?? environment.roadStylePreset;
             }
-            loader.apply(manifest);
+            loader.apply(manifest, worldResource);
             loader.manifest = manifest;
             const common = {
                 timeUs: 0,
@@ -202,13 +210,18 @@ export class SimulationEngine {
     }
 
     dispose() {
-        this.stop();
+        if (this.kernel.lifecycleState === "disposed") return;
         this.stopLoop();
         this.controls?.dispose();
         this.kernel.dispose();
         this.scenarioDiagnostics.dispose();
         this.autonomyOverlay?.dispose?.();
         this.listeners.clear();
+        this.scene = null;
+        this.camera = null;
+        this.renderer = null;
+        this.controls = null;
+        this.environmentRuntime = null;
     }
 
     play() {
@@ -232,12 +245,14 @@ export class SimulationEngine {
         this._emit();
     }
 
-    reset() {
+    reset(episodeSpec = null) {
         this.frames = 0;
         this.accumulator = 0;
         this.accumulatorNs = 0;
-        this.kernel.reset();
+        this.kernel.reset(episodeSpec);
         this.autonomyOverlay?.clear?.();
+        this._emit();
+        return this.getSnapshot();
     }
 
     step(count = 1) {
@@ -318,7 +333,7 @@ export class SimulationEngine {
         this.setWorkspaceActive(active);
     }
 
-    async applyRunManifest(resolved) {
+    async applyRunManifest(resolved, options = {}) {
         if (!resolved?.manifest) throw new Error("Resolved run manifest is required.");
         this.pause();
         this.scenarioDiagnostics.configure(null);
@@ -327,11 +342,28 @@ export class SimulationEngine {
         this.accumulator = 0;
         this.accumulatorNs = 0;
 
-        await this.kernel.configureRun(resolved);
+        await this.kernel.prepare(resolved, options);
         this.scenarioDiagnostics.configure(this.resolvedRun?.scenario?.scenario ?? null);
         this._emit();
         this.render();
         return this.getSnapshot();
+    }
+
+    async prepare(resolved, options = {}) {
+        return this.applyRunManifest(resolved, options);
+    }
+
+    finalize(options = {}) {
+        const result = this.kernel.finalize(options);
+        this._emit();
+        return result;
+    }
+
+    clearRun() {
+        this.stopLoop();
+        this.kernel.clearRun();
+        this.autonomyOverlay?.clear?.();
+        this._emit();
     }
 
     queueTopicInput(info) {

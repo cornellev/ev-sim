@@ -7,8 +7,8 @@ language-neutral API authority is
 
 ## Status
 
-- Current completed milestone: **PR 2 — UI-independent simulation kernel**
-- Next milestone: **PR 3 — deterministic reset, timers, hashing, and teardown**
+- Current completed milestone: **PR 4 — shared world description and headless vehicle plant**
+- Next milestone: **PR 5 — state sensors and episode semantics**
 - Default implementation/review reasoning level: **Extra High**
 - Last updated: **2026-08-30**
 
@@ -16,8 +16,8 @@ Progress:
 
 - [x] PR 1 — Contracts, plan, and characterization fixtures
 - [x] PR 2 — UI-independent simulation kernel
-- [ ] PR 3 — Deterministic reset, timers, hashing, and teardown
-- [ ] PR 4 — Shared world description and headless vehicle plant
+- [x] PR 3 — Deterministic reset, timers, hashing, and teardown
+- [x] PR 4 — Shared world description and headless vehicle plant
 - [ ] PR 5 — State sensors and episode semantics
 - [ ] PR 6 — Single-process runner, CLI, and artifacts
 - [ ] PR 7 — Process-isolated batch supervisor and gRPC
@@ -100,7 +100,7 @@ version-tagged simulation-semantic data:
 
 ```text
 protocol major
-resolved bundle hash
+simulation-semantic bundle hash
 reset seed
 action repeat
 maximum episode steps
@@ -234,6 +234,11 @@ Gate:
 - Seed/action changes alter trajectory hash; logging policy does not.
 
 ### PR 4 — Shared world description and headless vehicle plant
+
+Status: **Complete (2026-08-30).** `cev-sim.world-description` v1 is the
+browser/Node world contract. Resolved runs embed its SHA-256 identity and the
+sorted `rapier3d-swept-prism-v1` physics selection. `npm run test:headless`
+is the focused PR 4 gate.
 
 Deliver:
 
@@ -469,3 +474,52 @@ adapter for RAF pacing, rendering, viewport controls, baking, and overlays.
 The legacy `candidate-viz` phase name remains part of the characterization,
 but graphics updates now run after authoritative transitions. No Protobuf,
 manifest, characterization fixture, or hash contract changed.
+
+### 2026-08-30 — PR 3 deterministic lifecycle and episode identity
+
+Keep `resolvedHash` as the full portable-bundle integrity hash and add
+`simulationSemanticHash` for authoritative simulation content. Logging,
+artifact/resource policy, wall pacing, and presentation-only settings do not
+change `episodeHash`; seed, episode bounds, profile refs, and sorted backend
+selections do. The shared kernel now owns explicit
+`prepare/reset/step/finalize/dispose` orchestration, a bounded per-step
+trajectory hash chain, simulation-clock managed timers, complete run-state
+reset, and reverse-order teardown. Fresh-process and 500-cycle in-place reset
+soaks produce the same trajectory hash with bounded heap and component counts.
+
+### 2026-08-30 — PR 4 world, plant, and collision identity
+
+Normalize environment schema-v2 documents into a versioned, canonical
+`cev-sim.world-description` v1 before either browser or Node materializes
+them. Explicitly authored domains, including empty arrays, override persisted
+hydrated template data; persisted data overrides deterministic template
+defaults. The pure IGVC default now owns roads, signs, barrels, and seeded
+buildings, so browser-only IGVC bootstrap geometry is no longer authoritative.
+Existing road IDs and `hashEnvironmentRoadNetwork` values remain unchanged.
+
+Resolved runs retain their original environment manifest/hash for portable
+bundle integrity and add `world`, `dependencyHashes.world`, and sorted backend
+selections. Simulation-semantic environment identity is the world hash, so PR
+4 intentionally changes resolved, simulation-semantic, episode, and trajectory
+hashes without changing Protobuf or manifest schema versions. Old v1 bundles
+are verified in their original form and acquire the new derived fields when
+re-resolved.
+
+Pin Dimforge Rapier at `0.19.3`; Node loads the matching
+`@dimforge/rapier3d-compat` distribution because the non-compat package's
+entry is bundler-only. The physics selection capability is
+`rapier3d-swept-prism-v1`; its config hash covers gravity, vehicle AABB
+semantics, continuous XZ SAT plus Y-slab contact version, impact backoff, and
+ordered transitions. Rapier owns fixed/kinematic bodies, while the shared
+swept-prism solver is authoritative for first impact. Buildings are exact
+deterministically triangulated extrusions, features are oriented box prisms,
+and roads are non-colliding drivable surfaces. Vehicle/browser numeric parity
+tolerance is `1e-9`; IDs, road/world hashes, and contact arrays are exact.
+
+`KinematicVehiclePlant` defines local-`+X` bicycle integration with world
+heading `(cos(yaw), 0, -sin(yaw))`, explicit Euler ordering, and manifest
+wheelbase/steering limits. BigCar, IGVCCar, and manifest vehicles use it;
+ScenarioCar retains keyframe/static semantics and unmanaged PhysicalVehicle
+retains linear motion. The headless context composes isolated bindings,
+signals, scenarios, vehicles, world, and injected physics without GLTF, DOM,
+WebGL, or asset decoding. Enabled sensor requests fail explicitly until PR 5.

@@ -20,6 +20,12 @@ import {
     schemaClosureForManifest,
 } from "../../app/autonomy/AutonomyContractCatalog.js";
 import { buildCalibrationBundle } from "../../app/autonomy/CalibrationBundle.js";
+import { computeSimulationSemanticHash } from "../../app/simulation/kernel/SimulationHashes.js";
+import { createWorldResource } from "../../app/simulation/world/WorldDescription.js";
+import {
+    createPhysicsBackendSelection,
+    sortBackendSelections,
+} from "../../app/physics/PhysicsBackend.js";
 import {
     VEHICLE_BUNDLE_KIND,
     VEHICLE_BUNDLE_VERSION,
@@ -561,12 +567,13 @@ export class StorageService {
         scenario = parameterizedValidation.scenario;
         const environment = await this._resolveEnvironment(scenario.environment.id);
         const environmentHash = semanticHash(environment);
-        const roadNetworkHash = hashEnvironmentRoadNetwork(environment);
+        const world = createWorldResource(environment);
+        const roadNetworkHash = hashEnvironmentRoadNetwork(world.description);
         if (scenario.environment.expectedHash && scenario.environment.expectedHash !== environmentHash) {
             throw new Error(`Environment "${scenario.environment.id}" changed: expected ${scenario.environment.expectedHash}, received ${environmentHash}.`);
         }
         for (const route of scenario.routes) {
-            const routeValidation = validateRouteVerification(route, environment);
+            const routeValidation = validateRouteVerification(route, world.description);
             if (!routeValidation.ok) {
                 throw new Error(`Route "${route.id}" must be re-verified: ${routeValidation.issues.map((issue) => issue.message).join(" ")}`);
             }
@@ -638,18 +645,22 @@ export class StorageService {
             scenario,
             definitionHash,
             environment: { hash: environmentHash, manifest: environment },
+            world,
+            backendSelections: sortBackendSelections([createPhysicsBackendSelection()]),
             scripts,
             vehicles,
             parameters: parameterResolution,
             dependencyHashes: {
                 scenario: definitionHash,
                 environment: environmentHash,
+                world: world.hash,
                 roadNetwork: roadNetworkHash,
                 scripts: Object.fromEntries(scripts.map((entry) => [entry.scriptId, entry.hash])),
                 vehicles: Object.fromEntries(vehicles.map((entry) => [entry.vehicleId, entry.hash])),
                 vehicleAssets: Object.fromEntries(vehicles.map((entry) => [entry.vehicleId, entry.assetHashes])),
             },
         };
+        resolved.simulationSemanticHash = computeSimulationSemanticHash(resolved);
         resolved.resolvedHash = semanticHash(resolved);
         return resolved;
     }
@@ -1105,6 +1116,7 @@ export class StorageService {
         const environment = resolvedScenario?.environment.manifest
             ?? await this._resolveEnvironment(manifest.environment.id);
         const environmentHash = semanticHash(environment);
+        const world = createWorldResource(environment);
         if (manifest.environment.expectedHash && manifest.environment.expectedHash !== environmentHash) {
             throw new Error(`Environment "${manifest.environment.id}" changed: expected ${manifest.environment.expectedHash}, received ${environmentHash}.`);
         }
@@ -1179,6 +1191,8 @@ export class StorageService {
             definitionHash,
             calibration,
             environment: { hash: environmentHash, manifest: environment },
+            world,
+            backendSelections: sortBackendSelections([createPhysicsBackendSelection()]),
             scripts,
             bindings: { hash: bindingsHash, entries: selectedBindings },
             scenario: resolvedScenario,
@@ -1200,6 +1214,7 @@ export class StorageService {
             })),
             dependencyHashes: {
                 environment: environmentHash,
+                world: world.hash,
                 calibration: calibration.hash,
                 scripts: Object.fromEntries(scripts.map((entry) => [entry.scriptId, entry.hash])),
                 bindings: bindingsHash,
@@ -1208,6 +1223,7 @@ export class StorageService {
                 vehicleAssets: Object.fromEntries(resolvedVehicles.map((entry) => [entry.vehicleId, entry.assetHashes])),
             },
         };
+        resolved.simulationSemanticHash = computeSimulationSemanticHash(resolved);
         resolved.resolvedHash = semanticHash(resolved);
         return resolved;
     }
@@ -1221,6 +1237,7 @@ export class StorageService {
             manifest: resolved.manifest,
             resolved,
             resolvedHash: resolved.resolvedHash,
+            simulationSemanticHash: resolved.simulationSemanticHash,
         };
     }
 
@@ -1230,6 +1247,10 @@ export class StorageService {
         }
         if (!bundle.resolved || semanticHash(bundle.resolved) !== bundle.resolvedHash) {
             throw new Error("Run bundle resolved hash is invalid.");
+        }
+        const simulationSemanticHash = computeSimulationSemanticHash(bundle.resolved);
+        if (bundle.simulationSemanticHash && bundle.simulationSemanticHash !== simulationSemanticHash) {
+            throw new Error("Run bundle simulation semantic hash is invalid.");
         }
         const incoming = normalizeRunManifest(bundle.manifest);
         const importedEnvironment = bundle.resolved.environment?.manifest;

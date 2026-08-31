@@ -201,6 +201,7 @@ function createRoadFromEdge(edge, trimmedEndpoints, networkOptions) {
     road.oneWay = !edge.bidirectional;
     road.direction = edge.bidirectional ? 0 : 1;
     road.network = {
+        edgeId: edge.id ?? null,
         startName: edge.startName,
         endName: edge.endName,
         bidirectional: edge.bidirectional,
@@ -249,6 +250,7 @@ export function buildRoadNetwork(scene, vectorMap, connections, options = {}) {
             : endNodeVec.clone();
 
         edges.push({
+            id: metadata.id ?? null,
             startName,
             endName,
             startVec,
@@ -317,6 +319,7 @@ export function buildRoadNetwork(scene, vectorMap, connections, options = {}) {
         if (intersectionRoads.length < 2) continue;
 
         const intersection = new Intersection(intersectionRoads, networkOptions.intersectionOptions);
+        intersection.networkNodeId = nodeName;
         intersections.push(intersection);
 
         if (scene) {

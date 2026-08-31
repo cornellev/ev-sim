@@ -494,22 +494,34 @@ test("run finalization records scenario semantics and finalized log id", async (
         addAttachment() {},
         async stop() { return { id: "log-final" }; },
     };
+    let finalizedStatus = null;
+    const scenarioFinalization = {
+        completed: true,
+        passed: true,
+        status: "completed",
+        terminationReason: "trigger",
+        latestTrigger: { id: "finish" },
+        outcomes: [{ id: "safe", status: "passed" }],
+        metrics: { duration: 2 },
+        terminalEvent: { reason: "trigger" },
+    };
     const simulation = {
         steps: 4,
         timeNs: 2_000_000_000,
+        finalize({ status }) {
+            finalizedStatus = status;
+            return {
+                assertions: [],
+                scenario: scenarioFinalization,
+                simulationSemanticHash: "semantic-hash",
+                episodeHash: "episode-hash",
+                trajectoryHash: "trajectory-hash",
+            };
+        },
         assertionEngine: { finalize: () => ({ results: [] }) },
         scenarioRuntime: {
             observeAssertions() {},
-            finalize: () => ({
-                completed: true,
-                passed: true,
-                status: "completed",
-                terminationReason: "trigger",
-                latestTrigger: { id: "finish" },
-                outcomes: [{ id: "safe", status: "passed" }],
-                metrics: { duration: 2 },
-                terminalEvent: { reason: "trigger" },
-            }),
+            finalize: () => scenarioFinalization,
         },
         stop() {},
     };
@@ -520,6 +532,10 @@ test("run finalization records scenario semantics and finalized log id", async (
     assert.equal(result.passed, true);
     assert.equal(result.terminationReason, "trigger");
     assert.equal(result.logId, "log-final");
+    assert.equal(result.simulationSemanticHash, "semantic-hash");
+    assert.equal(result.episodeHash, "episode-hash");
+    assert.equal(result.trajectoryHash, "trajectory-hash");
+    assert.equal(finalizedStatus, "completed");
 });
 
 test("scenario metrics publish deterministically, finalize idempotently, and resolve ego collisions by actor id", () => {

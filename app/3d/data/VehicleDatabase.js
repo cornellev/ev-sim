@@ -202,6 +202,11 @@ export class VehicleDatabase extends Database {
                 );
             }
             vehicle.telemetryId = entry.id;
+            if (vehicle.plant) {
+                vehicle.plant.id = entry.id;
+                vehicle.plant.telemetryId = entry.id;
+                vehicle.plant.definition.id = entry.id;
+            }
             vehicle.manifestManaged = true;
             vehicle.resolvedVehicleHash = dependency?.hash || null;
             if (scene) await vehicle.addToScene?.(scene);
@@ -245,5 +250,33 @@ export class VehicleDatabase extends Database {
                 throw new Error(`Vehicle "${vehicle.telemetryId || vehicle.constructor?.name}" returned asynchronous work from a deterministic update.`);
             }
         }
+    }
+
+    resetRun(initialState = {}) {
+        const entries = initialState.vehicles || [];
+        const byId = new Map(entries.map((entry) => [entry.id, entry]));
+        for (const [index, vehicle] of this.vehicles.entries()) {
+            const entry = byId.get(vehicle.telemetryId) || entries[index];
+            if (!entry) continue;
+            if (typeof vehicle.resetRunState === "function") {
+                vehicle.resetRunState(entry);
+            }
+        }
+    }
+
+    getDeterministicState() {
+        return this.vehicles
+            .map((vehicle, index) => vehicle.getDeterministicState?.() ?? {
+                id: String(vehicle.telemetryId || `vehicle-${index + 1}`),
+            })
+            .sort((left, right) => String(left.id).localeCompare(String(right.id)));
+    }
+
+    finalizeRun() {
+        return this.getDeterministicState();
+    }
+
+    disposeRun() {
+        for (const vehicle of [...this.vehicles]) this.removeVehicle(vehicle);
     }
 }

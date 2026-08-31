@@ -91,6 +91,7 @@ export class EnvironmentRegistry {
         this.subscribers = new Set();
         this.batchDepth = 0;
         this.pendingNotify = false;
+        this.aliases = new Map();
     }
 
     subscribe(callback) {
@@ -169,6 +170,11 @@ export class EnvironmentRegistry {
         }
 
         this.entities.set(next.id, next);
+        for (const alias of entity.legacyIds ?? []) {
+            if (!alias || alias === next.id) continue;
+            this.aliases.set(alias, next.id);
+            this.chunkManager?.aliasEntity?.(alias, next.id);
+        }
         this.notify();
         return next;
     }
@@ -185,9 +191,12 @@ export class EnvironmentRegistry {
         data?.city?.()?.getRoads?.()?.forEach((road, index) => {
             if (!road?.root) return;
             roadRoots.add(road.root);
+            const sourceId = String(road.network?.edgeId ?? `road:${index}`);
+            const id = sourceId.startsWith("road:") ? sourceId : `road:${sourceId}`;
             candidates.push({
-                id: `road:${index}`,
-                sourceId: `road:${index}`,
+                id,
+                sourceId,
+                legacyIds: [`road:${index}`],
                 kind: "road",
                 label: `Road ${index + 1}`,
                 layer: EDITOR_LAYERS.ROADS,
@@ -199,9 +208,12 @@ export class EnvironmentRegistry {
         data?.city?.()?.getIntersections?.()?.forEach((intersection, index) => {
             if (!intersection?.root) return;
             roadRoots.add(intersection.root);
+            const sourceId = String(intersection.networkNodeId ?? `intersection:${index}`);
+            const id = sourceId.startsWith("intersection:") ? sourceId : `intersection:${sourceId}`;
             candidates.push({
-                id: `intersection:${index}`,
-                sourceId: `intersection:${index}`,
+                id,
+                sourceId,
+                legacyIds: [`intersection:${index}`],
                 kind: "intersection",
                 label: `Intersection ${index + 1}`,
                 layer: EDITOR_LAYERS.ROADS,
@@ -262,7 +274,7 @@ export class EnvironmentRegistry {
     }
 
     getEntity(entityId) {
-        return this.entities.get(entityId) ?? null;
+        return this.entities.get(this.aliases.get(entityId) ?? entityId) ?? null;
     }
 
     listEntities() {
@@ -315,7 +327,8 @@ export class EnvironmentRegistry {
     }
 
     setEntityVisible(entityId, visible) {
-        const entity = this.entities.get(entityId);
+        const canonicalId = this.aliases.get(entityId) ?? entityId;
+        const entity = this.entities.get(canonicalId);
         if (!entity) return;
 
         entity.visible = Boolean(visible);
@@ -323,14 +336,18 @@ export class EnvironmentRegistry {
         if (entity.object3D) {
             entity.object3D.visible = Boolean(visible);
         }
-        this.chunkManager?.markEntityDirty?.(entityId);
+        this.chunkManager?.markEntityDirty?.(canonicalId);
         this.notify();
     }
 
     unregisterEntity(entityId) {
-        if (!this.entities.has(entityId)) return false;
-        this.entities.delete(entityId);
-        this.chunkManager?.removeEntity?.(entityId);
+        const canonicalId = this.aliases.get(entityId) ?? entityId;
+        if (!this.entities.has(canonicalId)) return false;
+        this.entities.delete(canonicalId);
+        for (const [alias, target] of this.aliases) {
+            if (alias === entityId || target === canonicalId) this.aliases.delete(alias);
+        }
+        this.chunkManager?.removeEntity?.(canonicalId);
         this.notify();
         return true;
     }
@@ -345,7 +362,7 @@ export class EnvironmentRegistry {
     }
 
     updateEntityTransform(entityId, object3D = null) {
-        const entity = this.entities.get(entityId);
+        const entity = this.entities.get(this.aliases.get(entityId) ?? entityId);
         if (!entity) return null;
 
         const target = object3D ?? entity.object3D;

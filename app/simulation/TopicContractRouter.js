@@ -48,6 +48,24 @@ export class TopicContractRouter {
         return this.byName.get(nameOrId) || this.byId.get(nameOrId) || this.byContractId.get(nameOrId) || null;
     }
 
+    reset() {
+        this.sequence = 0;
+        this.lastActive.clear();
+        this.lastProducer.clear();
+        this.lastStatus.clear();
+    }
+
+    getDeterministicState() {
+        return {
+            sequence: this.sequence,
+            statuses: Object.fromEntries(
+                [...this.lastStatus.entries()]
+                    .sort(([left], [right]) => left.localeCompare(right))
+                    .map(([id, status]) => [id, structuredClone(status)]),
+            ),
+        };
+    }
+
     validateInbound(info) {
         const topic = this.getTopic(info?.name);
         if (!topic) {

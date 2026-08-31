@@ -8,6 +8,7 @@ export class ChunkManager {
         this.scene = scene;
         this.index = new ChunkIndex({ chunkSize });
         this.groups = new Map();
+        this.entityAliases = new Map();
     }
 
     setScene(scene) {
@@ -68,11 +69,19 @@ export class ChunkManager {
     }
 
     removeEntity(entityId) {
-        this.index.removeObject(entityId);
+        const canonicalId = this.entityAliases.get(entityId) ?? entityId;
+        this.index.removeObject(canonicalId);
+        for (const [alias, target] of this.entityAliases) {
+            if (alias === entityId || target === canonicalId) this.entityAliases.delete(alias);
+        }
+    }
+
+    aliasEntity(alias, entityId) {
+        if (alias && entityId && alias !== entityId) this.entityAliases.set(alias, entityId);
     }
 
     markEntityDirty(entityId) {
-        const membership = this.index.getObjectMembership(entityId);
+        const membership = this.index.getObjectMembership(this.entityAliases.get(entityId) ?? entityId);
         membership?.coveredChunks.forEach((key) => this.index.markDirty(key));
     }
 
@@ -83,7 +92,7 @@ export class ChunkManager {
     }
 
     getMembership(entityId) {
-        return this.index.getObjectMembership(entityId);
+        return this.index.getObjectMembership(this.entityAliases.get(entityId) ?? entityId);
     }
 
     listChunks() {

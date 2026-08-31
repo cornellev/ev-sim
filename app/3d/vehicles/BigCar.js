@@ -11,6 +11,8 @@ import { wait, waitFor } from "@/app/util/Wait";
 import { StopSign } from "../city/objects/StopSign";
 import { Barrel } from "../city/objects/Barrel";
 import { applyModelPlacement } from "./ModelPlacement.js";
+import { getBuiltInVehicleManifest } from "../../vehicles/BuiltInVehicleManifests.js";
+import { attachVehiclePlant, resetVehiclePlant, stepVehiclePlant } from "./VehiclePlantAdapter.js";
 
 // ---------- constants ----------
 const WHEELBASE = new Unit(49, Unit.Type.INCH).getValue(Unit.Type.METER);          // meters (set to your car)
@@ -257,6 +259,11 @@ export class BigCar extends PhysicalVehicle {
         this.follower.cameraOffset.set(-5, 4, 0); // default offset behind and above the car
 
         this.controlsEnabled = true; // whether user can control the car
+        attachVehiclePlant(this, {
+            id: this.telemetryId || "big-car",
+            type: "big-car",
+            pose: { position: this.position, rotation: this.rotation },
+        }, { manifest: getBuiltInVehicleManifest("big-car") });
     }
 
     resetPose() {
@@ -302,40 +309,7 @@ export class BigCar extends PhysicalVehicle {
     }
 
     update(deltaTime) {
-        // Planar bicycle / Ackermann kinematics.
-        // State: (x,z,yaw). Control: forward speed v and steering angle delta.
-        // yawRate = v/L * tan(delta)
-        // posDot  = v * heading
-
-        // IMPORTANT: `this.velocity` and `this.acceleration` are treated as
-        // *vehicle-local* vectors (relative to the car frame), not world-space.
-        // Convention: vehicle forward is -Z in local space (three.js default).
-
-        // Integrate local velocity from local acceleration (does NOT depend on heading).
-        this.velocity.addScaledVector(this.acceleration, deltaTime);
-
-        // Forward speed (meters/sec). Forward is -Z.
-        const v = this.velocity.x;
-
-        // Clamp steering away from +/- 90deg to avoid tan() blow-ups.
-        const maxSteer = Math.PI * 0.49;
-        const delta = THREE.MathUtils.clamp(this.steeringAngle, -maxSteer, +maxSteer);
-
-        const yawRate = (v / WHEELBASE) * Math.tan(delta);
-
-        // Vehicle forward in world space (heading) from yaw.
-        const heading = new THREE.Vector3(1, 0, 0).applyEuler(this.rotation);
-        heading.y = 0;
-        const headingLen = heading.length();
-        if (headingLen > 0) heading.multiplyScalar(1 / headingLen);
-
-        // Integrate pose (explicit Euler)
-        this.position.addScaledVector(heading, v * deltaTime);
-        this.rotation.y += yawRate * deltaTime;
-
-        // Push pose to scene and notify devices.
-        this.updatePosition(this.position);
-        this.updateRotation(this.rotation);
+        stepVehiclePlant(this, deltaTime);
 
         this.renderPath();
 
@@ -344,6 +318,13 @@ export class BigCar extends PhysicalVehicle {
         this.follower.updateCamera(this.sceneObject, deltaTime);
 
         // closest road update
+    }
+
+    resetRunState(entry = {}) {
+        super.resetRunState(entry);
+        resetVehiclePlant(this, entry);
+        this.displaySteeringAngle = Number(entry.steeringAngle) || 0;
+        if (this.path) this.renderPath();
     }
 
     renderPath() {

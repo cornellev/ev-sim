@@ -19,9 +19,12 @@ function registerRoadEntities(registry, result) {
 
     result.roads.forEach((road, index) => {
         if (!road?.root) return;
+        const sourceId = String(road.network?.edgeId ?? `road:${index}`);
+        const id = sourceId.startsWith("road:") ? sourceId : `road:${sourceId}`;
         registry.registerEntity({
-            id: `road:${index}`,
-            sourceId: `road:${index}`,
+            id,
+            sourceId,
+            legacyIds: [`road:${index}`],
             kind: "road",
             label: `Road ${index + 1}`,
             layer: EDITOR_LAYERS.ROADS,
@@ -32,9 +35,12 @@ function registerRoadEntities(registry, result) {
 
     result.intersections.forEach((intersection, index) => {
         if (!intersection?.root) return;
+        const sourceId = String(intersection.networkNodeId ?? `intersection:${index}`);
+        const id = sourceId.startsWith("intersection:") ? sourceId : `intersection:${sourceId}`;
         registry.registerEntity({
-            id: `intersection:${index}`,
-            sourceId: `intersection:${index}`,
+            id,
+            sourceId,
+            legacyIds: [`intersection:${index}`],
             kind: "intersection",
             label: `Intersection ${index + 1}`,
             layer: EDITOR_LAYERS.ROADS,
@@ -89,6 +95,10 @@ export function syncRoadsFromDocument(data, scene, document) {
             roadOptions: {
                 ...(preset.roadOptions ?? {}),
             },
+        });
+        result.roads.forEach((road, index) => {
+            if (!road.network) road.network = {};
+            road.network.edgeId = document.roads.edges[index]?.id ?? null;
         });
         city.addRoads(result.roads);
         for (const intersection of result.intersections) {

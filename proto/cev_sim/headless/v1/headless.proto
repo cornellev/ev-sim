@@ -144,6 +144,9 @@ message RunBundle {
   string bundle_id = 1;
   string resolved_hash = 2;
   bytes canonical_json = 3;
+  // Hash of simulation-semantic content only. Logging, artifact, resource,
+  // wall-pacing, and presentation policy are excluded.
+  string simulation_semantic_hash = 4;
 }
 
 message ProfileRef {

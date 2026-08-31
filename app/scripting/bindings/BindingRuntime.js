@@ -69,6 +69,7 @@ export class BindingRuntime {
         this.manifest = createBindingManifest();
         this._activeSource = "library";
         this.loadScriptImpl = options.loadScript || loadScript;
+        this.allowWallTimers = options.allowWallTimers !== false;
 
         this.listeners = new Set();
         this.telemetry = new Map();
@@ -88,6 +89,10 @@ export class BindingRuntime {
         this._lastEmit = 0;
         this._emitTimeout = null;
         this._ready = false;
+        this._resolvedScripts = [];
+        this._resolvedSeed = "42";
+        this._resolvedParameterBindings = [];
+        this._manifestGeneration = 0;
 
         this._readyPromise = this._hydrate(options.autoLoad !== false);
     }
@@ -171,12 +176,14 @@ export class BindingRuntime {
     }
 
     _activateManifest(manifest, source) {
+        const generation = ++this._manifestGeneration;
         this.manifest = normalizeBindingManifest(manifest);
         this._activeSource = source;
         this._tickCounters.clear();
         this._signalWatch.clear();
+        this._scriptLoads.clear();
         this._syncTimers();
-        this._preloadScripts();
+        this._preloadScripts(generation);
         this._emit();
         return this.manifest;
     }
@@ -221,15 +228,18 @@ export class BindingRuntime {
 
     // --------------------------------------------------------------- scripts
 
-    _preloadScripts() {
+    _preloadScripts(generation = this._manifestGeneration) {
         this._orderedBindings()
             .filter((binding) => binding.enabled && binding.scriptId)
             .forEach((binding) => {
-                this._ensureScript(binding.scriptId).catch(() => {});
+                this._ensureScript(binding.scriptId, generation).catch(() => {});
             });
     }
 
     async prepareResolvedScripts(entries = [], { seed = "42", parameterBindings = [] } = {}) {
+        this._resolvedScripts = structuredClone(entries);
+        this._resolvedSeed = String(seed);
+        this._resolvedParameterBindings = structuredClone(parameterBindings);
         this._scriptParameterInputs.clear();
         const resolvedIds = new Set(entries.map((entry) => entry.scriptId));
         for (const scriptId of this._scripts.keys()) {
@@ -239,6 +249,11 @@ export class BindingRuntime {
         const { registerBuiltInBlocks } = await import("../registerBuiltInBlocks.js");
         registerBuiltInBlocks();
         await Promise.all(entries.map((entry) => this._ensureScript(entry.scriptId).catch(() => null)));
+        this._instantiateResolvedScripts(entries, seed, parameterBindings);
+    }
+
+    _instantiateResolvedScripts(entries, seed, parameterBindings) {
+        this._scriptParameterInputs.clear();
         for (const binding of parameterBindings) {
             if (binding?.target?.kind !== "script-input") continue;
             const inputs = this._scriptParameterInputs.get(binding.target.scriptId) ?? {};
@@ -259,11 +274,96 @@ export class BindingRuntime {
         }
     }
 
+    resetRun({ resetSeed = this._resolvedSeed } = {}) {
+        this._tickCounters.clear();
+        this._signalWatch.clear();
+        this._topicsSeen.clear();
+        this.telemetry.clear();
+        this._resolvedSeed = String(resetSeed);
+        if (this._emitTimeout) {
+            clearTimeout(this._emitTimeout);
+            this._emitTimeout = null;
+        }
+        if (this._resolvedScripts.length > 0) {
+            this._instantiateResolvedScripts(
+                this._resolvedScripts,
+                this._resolvedSeed,
+                this._resolvedParameterBindings,
+            );
+        }
+        this._syncTimers();
+        this._emit();
+    }
+
+    finalizeRun() {
+        return this.getDeterministicState();
+    }
+
+    disposeRun() {
+        for (const timer of this._timers.values()) clearInterval(timer);
+        this._timers.clear();
+        this._tickCounters.clear();
+        this._signalWatch.clear();
+        this._topicsSeen.clear();
+        this.telemetry.clear();
+        this._topicScheduler = null;
+        this._topicRouter = null;
+        this._runTopics.clear();
+        this._resolvedScripts = [];
+        this._resolvedParameterBindings = [];
+        this._scriptParameterInputs.clear();
+        this._scripts.clear();
+        this._scriptLoads.clear();
+        this.activateLibraryBindings();
+    }
+
+    getDeterministicState() {
+        const signals = this.signalStore.snapshot({ includeHeavy: false });
+        const signalValues = {};
+        for (const path of Object.keys(signals).sort()) {
+            if (/^bindings\.[^.]+\.(?:outputs|status)$/.test(path)) continue;
+            if (/^simulation\.(?:lifecycle|pacing|run|runtime|speed|status)$/.test(path)) continue;
+            const descriptor = this.signalStore.descriptor(path);
+            if (descriptor?.logClass === "diagnostics" || descriptor?.logClass === "heavy") continue;
+            const entry = signals[path];
+            signalValues[path] = {
+                value: entry.value,
+                type: entry.type,
+                timeUs: entry.timeUs,
+                cycle: entry.cycle,
+                source: entry.source,
+            };
+        }
+        return {
+            source: this._activeSource,
+            counters: Object.fromEntries(
+                [...this._tickCounters.entries()].sort(([left], [right]) => String(left).localeCompare(String(right))),
+            ),
+            signalWatch: Object.fromEntries(
+                [...this._signalWatch.entries()]
+                    .sort(([left], [right]) => String(left).localeCompare(String(right)))
+                    .map(([id, entry]) => [id, {
+                        revision: entry.revision ?? 0,
+                        valueKey: entry.valueKey,
+                    }]),
+            ),
+            scripts: Object.fromEntries(
+                [...this._scripts.entries()]
+                    .sort(([left], [right]) => left.localeCompare(right))
+                    .map(([id, script]) => [
+                        id,
+                        script?.runner?.serializeRuntimeState?.() ?? {},
+                    ]),
+            ),
+            signals: signalValues,
+        };
+    }
+
     _orderedBindings() {
         return [...this.manifest.bindings].sort((left, right) => String(left.id).localeCompare(String(right.id)));
     }
 
-    _ensureScript(scriptId) {
+    _ensureScript(scriptId, generation = this._manifestGeneration) {
         if (this._scripts.has(scriptId)) {
             return Promise.resolve(this._scripts.get(scriptId));
         }
@@ -274,8 +374,9 @@ export class BindingRuntime {
 
         const load = this.loadScriptImpl(scriptId, { signalStore: this.signalStore })
             .then((script) => {
+                if (generation !== this._manifestGeneration) return script;
                 this._scripts.set(scriptId, script);
-                this._scriptLoads.delete(scriptId);
+                if (this._scriptLoads.get(scriptId) === load) this._scriptLoads.delete(scriptId);
                 this.signalStore.publishSignal(`scripts.${scriptId}.versionHash`, stableArtifactHash(script.artifact), {
                     source: "scripting",
                     type: "string",
@@ -288,7 +389,7 @@ export class BindingRuntime {
                 return script;
             })
             .catch((error) => {
-                this._scriptLoads.delete(scriptId);
+                if (this._scriptLoads.get(scriptId) === load) this._scriptLoads.delete(scriptId);
                 throw error;
             });
 
@@ -405,9 +506,14 @@ export class BindingRuntime {
 
         const timeNs = Number(clock.timeNs ?? Math.round(time * 1e9));
         this._orderedBindings()
-            .filter((binding) => binding.enabled && binding.trigger.kind === "simulation-timer")
+            .filter((binding) => binding.enabled && (
+                binding.trigger.kind === TRIGGER_KINDS.SIMULATION_TIMER
+                || (this._activeSource === "resolved" && binding.trigger.kind === TRIGGER_KINDS.TIMER)
+            ))
             .forEach((binding) => {
-                const intervalNs = Math.max(1, Number(binding.trigger.intervalNs || 100_000_000));
+                const intervalNs = binding.trigger.kind === TRIGGER_KINDS.TIMER
+                    ? Math.max(1, Math.round(Number(binding.trigger.intervalMs || 100) * 1e6))
+                    : Math.max(1, Number(binding.trigger.intervalNs || 100_000_000));
                 const nextKey = `sim-timer:${binding.id}`;
                 let nextNs = this._tickCounters.get(nextKey) ?? intervalNs;
                 while (timeNs >= nextNs) {
@@ -445,11 +551,11 @@ export class BindingRuntime {
                 }
 
                 const previous = this._signalWatch.get(binding.id);
-                this._signalWatch.set(binding.id, { updatedAt: entry.updatedAt, valueKey });
+                this._signalWatch.set(binding.id, { revision, valueKey });
 
                 // First observation records the baseline without firing.
                 if (previous === undefined) return;
-                if (previous.updatedAt === entry.updatedAt && previous.valueKey === valueKey) return;
+                if (previous.revision === revision && previous.valueKey === valueKey) return;
 
                 this._dispatch(binding, { ...context, message: entry.value });
             });
@@ -463,7 +569,10 @@ export class BindingRuntime {
         }
         this._timers.clear();
 
-        if (typeof window === "undefined" || !this.manifest.enabled) return;
+        if (!this.allowWallTimers
+            || typeof window === "undefined"
+            || !this.manifest.enabled
+            || this._activeSource === "resolved") return;
 
         this._orderedBindings()
             .filter((binding) => binding.enabled && binding.trigger.kind === TRIGGER_KINDS.TIMER)
@@ -483,7 +592,19 @@ export class BindingRuntime {
             clearInterval(timer);
         }
         this._timers.clear();
+        this._manifestGeneration += 1;
         this._topicScheduler = null;
+        this._topicRouter = null;
+        this._runTopics.clear();
+        this._scripts.clear();
+        this._scriptLoads.clear();
+        this._scriptParameterInputs.clear();
+        this._resolvedScripts = [];
+        this._resolvedParameterBindings = [];
+        this._tickCounters.clear();
+        this._signalWatch.clear();
+        this._topicsSeen.clear();
+        this.telemetry.clear();
         if (this._emitTimeout) {
             clearTimeout(this._emitTimeout);
             this._emitTimeout = null;

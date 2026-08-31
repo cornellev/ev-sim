@@ -6,6 +6,12 @@ import { createLocalizationTruthPublisher } from "../LocalizationTruthPublisher.
 import { TopicContractRouter } from "../TopicContractRouter.js";
 import { TopicInputQueue } from "../TopicInputQueue.js";
 import { TransformRuntime } from "../TransformRuntime.js";
+import {
+    computeEpisodeHash,
+    computeSimulationSemanticHash,
+    defaultEpisodeIdentity,
+    TrajectoryHasher,
+} from "./SimulationHashes.js";
 
 const DEFAULT_MODULES = Object.freeze({
     inputs: true,
@@ -58,6 +64,15 @@ export class SimulationKernel {
         this.transformRuntime = null;
         this.lastStepPhases = [];
         this.resetHandlers = new Set();
+        this.lifecycleState = "idle";
+        this.simulationSemanticHash = null;
+        this.episodeIdentity = null;
+        this.episodeHash = null;
+        this.trajectoryHash = null;
+        this.trajectoryHasher = null;
+        this.lastAcceptedActions = [];
+        this.lastContacts = { started: [], active: [], ended: [] };
+        this.finalizedResult = null;
 
         this._defineTelemetrySignals();
     }
@@ -122,7 +137,11 @@ export class SimulationKernel {
             activeRun: this.resolvedRun ? {
                 manifestId: this.resolvedRun.manifest.id,
                 resolvedHash: this.resolvedRun.resolvedHash,
+                simulationSemanticHash: this.simulationSemanticHash,
             } : null,
+            lifecycleState: this.lifecycleState,
+            episodeHash: this.episodeHash,
+            trajectoryHash: this.trajectoryHash,
             assertions: this.assertionEngine.snapshot(),
             scenario: this.scenarioRuntime?.getSnapshot?.() ?? null,
         });
@@ -134,6 +153,12 @@ export class SimulationKernel {
     }
 
     play() {
+        if (this.lifecycleState === "disposed") {
+            throw new Error("Cannot play a disposed simulation kernel.");
+        }
+        if (this.resolvedRun && this.lifecycleState === "finalized") {
+            throw new Error("Cannot play a finalized episode; reset it first.");
+        }
         this.status = "playing";
         this.emitLifecycle("play");
     }
@@ -144,30 +169,67 @@ export class SimulationKernel {
     }
 
     stop({ reset = true } = {}) {
-        this.status = "stopped";
         if (reset) this.reset();
+        this.status = "stopped";
         this.emitLifecycle("stop", { reset });
     }
 
-    reset() {
+    reset(episodeSpec = null) {
+        if (this.lifecycleState === "disposed") {
+            throw new Error("Cannot reset a disposed simulation kernel before preparing a run.");
+        }
         this.time = 0;
         this.timeNs = 0;
         this.steps = 0;
+        this.lastStepPhases = [];
+        this.lastAcceptedActions = [];
+        this.lastContacts = { started: [], active: [], ended: [] };
+        this.finalizedResult = null;
+        this.telemetry?.resetRunState?.();
         this.inputQueue.reset();
         this.assertionEngine.reset();
-        this.scenarioRuntime?.reset?.();
+        this.topicRouter?.reset?.();
+        this.transformRuntime?.reset?.();
         this.localizationTruthPublisher?.reset?.();
         this.candidateOutputRuntime?.reset?.();
         this.controlRuntime?.reset?.();
 
-        for (const handler of this.resetHandlers) handler();
-        this.emitLifecycle("reset");
+        const resetSeed = episodeSpec?.resetSeed
+            ?? episodeSpec?.reset_seed
+            ?? this.episodeIdentity?.resetSeed
+            ?? this.resolvedRun?.manifest?.seed
+            ?? "0";
+        this.context.environment.reset?.({ resetSeed });
+        this.context.inputs.reset?.({ resetSeed });
+        this.context.scripts.reset?.({ resetSeed });
         if (this.resolvedRun) {
-            this.context.vehicles.applyInitialState(this.resolvedRun.manifest.initialState);
-            this.context.physics.resetRun();
-            this.context.devices.resetSchedule();
+            this.context.vehicles.reset(this.resolvedRun.manifest.initialState, { resetSeed });
+            this.context.physics.resetRun({ resetSeed });
+            this.context.devices.reset({ resetSeed });
+        }
+        this.scenarioRuntime?.reset?.({ resetSeed });
+
+        for (const handler of this.resetHandlers) handler();
+        if (this.resolvedRun) {
+            this.episodeIdentity = defaultEpisodeIdentity(this.resolvedRun, {
+                ...this.episodeIdentity,
+                ...(episodeSpec || {}),
+                simulationSemanticHash: this.simulationSemanticHash,
+                resetSeed,
+            });
+            this.episodeHash = computeEpisodeHash(this.episodeIdentity);
+            this.trajectoryHasher = new TrajectoryHasher(this.episodeHash);
+            this.trajectoryHash = this.trajectoryHasher.digest;
+            this._publishInitialSignals();
+            this.lifecycleState = "prepared";
         }
         this.transformRuntime?.publishStaticTransforms?.(0);
+        this.emitLifecycle("reset", {
+            resetSeed: String(resetSeed),
+            episodeHash: this.episodeHash,
+        });
+        this.publishClock();
+        return this.getSnapshot();
     }
 
     step(count = 1, { afterStep = null } = {}) {
@@ -206,14 +268,22 @@ export class SimulationKernel {
         this.modules[name] = Boolean(enabled);
     }
 
-    async configureRun(resolved) {
+    async prepare(resolved, { episode = null } = {}) {
         if (!resolved?.manifest) throw new Error("Resolved run manifest is required.");
 
+        if (this.resolvedRun || this.lifecycleState === "finalized") this.clearRun();
+        this.lifecycleState = "preparing";
         this.scenarioRuntime?.configure?.(null);
-        this.telemetry?.resetRunState?.();
         this.resolvedRun = structuredClone(resolved);
+        this.simulationSemanticHash = resolved.simulationSemanticHash
+            || computeSimulationSemanticHash(this.resolvedRun);
+        this.resolvedRun.simulationSemanticHash = this.simulationSemanticHash;
         const manifest = this.resolvedRun.manifest;
-        await this.context.environment.applyResolved(this.resolvedRun.environment, this.resolvedRun);
+        await this.context.environment.prepare(
+            this.resolvedRun.environment,
+            this.resolvedRun,
+            this.resolvedRun.world,
+        );
 
         this.stepNs = Math.max(1, Math.floor(manifest.clock.stepNs));
         this.fixedDt = this.stepNs / 1e9;
@@ -278,28 +348,29 @@ export class SimulationKernel {
             calibrationHash: this.resolvedRun.calibration?.hash ?? null,
             stepNs: manifest.clock.stepNs,
         });
-        await this.context.physics.configureRun(manifest, this.resolvedRun.environment?.manifest);
+        await this.context.physics.configureRun({
+            manifest,
+            worldDescription: this.resolvedRun.world?.description ?? null,
+            backendSelection: (this.resolvedRun.backendSelections ?? [])
+                .find((entry) => Number(entry.kind) === 1) ?? null,
+        });
 
-        this.reset();
-        this.transformRuntime?.publishStaticTransforms?.(0);
-        for (const [path, value] of Object.entries(manifest.initialState.signals || {})) {
-            this.telemetry?.publishSignal?.(path, value, {
-                timeUs: 0,
-                cycle: 0,
-                source: "manifest",
-                replayRole: "input",
-                logClass: "core",
-            });
-        }
         this.scenarioRuntime?.configure?.(this.resolvedRun);
         this.scenarioRuntime?.setControlRuntime?.(this.controlRuntime);
+        this.reset(episode);
         this.status = "paused";
-        this.publishClock();
+        this.lifecycleState = "prepared";
         this.emitLifecycle("manifest-applied", {
             manifestId: manifest.id,
             resolvedHash: resolved.resolvedHash,
+            simulationSemanticHash: this.simulationSemanticHash,
+            episodeHash: this.episodeHash,
         });
         return this.getSnapshot();
+    }
+
+    async configureRun(resolved, options = {}) {
+        return this.prepare(resolved, options);
     }
 
     queueTopicInput(info) {
@@ -312,6 +383,12 @@ export class SimulationKernel {
     }
 
     advanceStep(dt = this.fixedDt) {
+        if (this.lifecycleState === "disposed") {
+            throw new Error("Cannot step a disposed simulation kernel.");
+        }
+        if (this.resolvedRun && this.lifecycleState === "finalized") {
+            throw new Error("Cannot step a finalized episode; reset it first.");
+        }
         if (this.maxSteps !== null && this.steps >= this.maxSteps) {
             this.status = "paused";
             this.emitLifecycle("max-steps-reached", { maxSteps: this.maxSteps });
@@ -329,7 +406,7 @@ export class SimulationKernel {
 
         phase("inputs", () => {
             this.context.inputs.update(dt);
-            this._applyQueuedInputs(nextStep);
+            this.lastAcceptedActions = this._applyQueuedInputs(nextStep);
         });
 
         phase("scripts", () => {
@@ -377,6 +454,7 @@ export class SimulationKernel {
                 step: nextStep,
                 timeNs: nextTimeNs,
             });
+            this.lastContacts = contacts ?? { started: [], active: [], ended: [] };
             return contacts;
         });
 
@@ -450,11 +528,21 @@ export class SimulationKernel {
                 shouldContinue = false;
             }
         });
+        if (this.trajectoryHasher) {
+            this.trajectoryHash = this.trajectoryHasher.update({
+                step: this.steps,
+                timeNs: this.timeNs,
+                actions: this.lastAcceptedActions,
+                state: this.getCanonicalState(),
+            });
+        }
+        if (this.resolvedRun) this.lifecycleState = "stepping";
         return shouldContinue;
     }
 
     _applyQueuedInputs(step) {
         const applyTimeNs = step * this.stepNs;
+        const accepted = [];
         for (const entry of this.inputQueue.drain(step, applyTimeNs)) {
             const routed = this.topicRouter?.routeInbound(entry.info, {
                 applyStep: step,
@@ -477,12 +565,19 @@ export class SimulationKernel {
             const isControlsCommand = controlTopic?.contractId === "controls-command"
                 || entry.info.name === "/controls/command";
             if (!handledByScenario && isControlsCommand && this.controlRuntime) {
-                this.controlRuntime.ingestStampedCommand(entry.info, {
+                const controlResult = this.controlRuntime.ingestStampedCommand(entry.info, {
                     vehicleId: this.resolvedRun?.manifest?.controls?.targetVehicleId || "ego",
                     producer: controlTopic?.producer || "candidate",
                     applyTimeNs,
                 });
+                if (controlResult?.ok === false) continue;
             }
+            accepted.push({
+                topic: entry.info.name,
+                type: entry.info.typeStr ?? null,
+                producer: entry.info.producer ?? controlTopic?.producer ?? null,
+                value: entry.info.value,
+            });
             this.telemetry?.emitTelemetryEvent?.({
                 timeUs: Math.round(applyTimeNs / 1000),
                 category: "topics",
@@ -495,6 +590,7 @@ export class SimulationKernel {
                 },
             });
         }
+        return accepted;
     }
 
     _configureControlRuntimeLimits(manifest) {
@@ -513,6 +609,49 @@ export class SimulationKernel {
             controls: manifest.controls,
             vehicleLimits,
         });
+    }
+
+    getCanonicalState() {
+        const targetVehicleId = this.resolvedRun?.manifest?.controls?.targetVehicleId || "ego";
+        return cloneSnapshot({
+            kind: "cev-sim.canonical-state",
+            version: 1,
+            clock: {
+                step: this.steps,
+                timeNs: String(this.timeNs),
+                stepNs: String(this.stepNs),
+            },
+            modules: { ...this.modules },
+            inputs: this.inputQueue.getDeterministicState?.() ?? this.inputQueue.getStats?.() ?? null,
+            topicRouter: this.topicRouter?.getDeterministicState?.() ?? null,
+            scripts: this.context.scripts.getDeterministicState?.() ?? null,
+            environment: this.context.environment.getDeterministicState?.() ?? null,
+            vehicles: this.context.vehicles.getDeterministicState?.() ?? [],
+            physics: this.context.physics.getDeterministicState?.() ?? {
+                contacts: this.lastContacts,
+            },
+            devices: this.context.devices.getDeterministicState?.() ?? [],
+            controls: this.controlRuntime?.getSnapshot?.(targetVehicleId, {
+                applyTimeNs: this.timeNs,
+            }) ?? null,
+            transforms: this.transformRuntime?.getDeterministicState?.() ?? null,
+            localizationTruth: this.localizationTruthPublisher?.getDeterministicState?.() ?? null,
+            scenario: this.scenarioRuntime?.getSnapshot?.() ?? null,
+            assertions: this.assertionEngine.snapshot(),
+        });
+    }
+
+    _publishInitialSignals() {
+        const signals = this.resolvedRun?.manifest?.initialState?.signals || {};
+        for (const [path, value] of Object.entries(signals)) {
+            this.telemetry?.publishSignal?.(path, value, {
+                timeUs: 0,
+                cycle: 0,
+                source: "manifest",
+                replayRole: "input",
+                logClass: "core",
+            });
+        }
     }
 
     publishClock() {
@@ -614,8 +753,85 @@ export class SimulationKernel {
         });
     }
 
-    dispose() {
+    finalize(options = {}) {
+        if (this.finalizedResult) return cloneSnapshot(this.finalizedResult);
+        if (this.lifecycleState === "disposed") {
+            throw new Error("Cannot finalize a disposed simulation kernel.");
+        }
+        if (!this.resolvedRun) {
+            throw new Error("Cannot finalize before preparing a managed run.");
+        }
+        const assertions = this.assertionEngine.finalize(this.steps);
+        this.scenarioRuntime?.observeAssertions?.(assertions.results);
+        const scenario = this.scenarioRuntime?.finalize?.({
+            step: this.steps,
+            timeNs: this.timeNs,
+            assertions: assertions.results,
+        }) ?? null;
+        const componentResults = {
+            inputs: this.context.inputs.finalize?.({ step: this.steps, timeNs: this.timeNs }),
+            scripts: this.context.scripts.finalize?.({ step: this.steps, timeNs: this.timeNs }),
+            vehicles: this.context.vehicles.finalize?.({ step: this.steps, timeNs: this.timeNs }),
+            devices: this.context.devices.finalize?.({ step: this.steps, timeNs: this.timeNs }),
+            physics: this.context.physics.finalize?.({ step: this.steps, timeNs: this.timeNs }),
+            environment: this.context.environment.finalize?.({ step: this.steps, timeNs: this.timeNs }),
+        };
+        this.status = "paused";
+        this.lifecycleState = "finalized";
+        this.finalizedResult = {
+            kind: "cev-sim.episode-finalization",
+            version: 1,
+            step: this.steps,
+            timeNs: this.timeNs,
+            simulationSemanticHash: this.simulationSemanticHash,
+            episodeHash: this.episodeHash,
+            trajectoryHash: this.trajectoryHash,
+            assertions: assertions.results,
+            assertionShouldStop: assertions.shouldStop,
+            scenario,
+            components: componentResults,
+            status: options.status ?? null,
+        };
+        this.emitLifecycle("finalize", {
+            episodeHash: this.episodeHash,
+            trajectoryHash: this.trajectoryHash,
+        });
+        return cloneSnapshot(this.finalizedResult);
+    }
+
+    clearRun() {
+        if (this.lifecycleState === "disposed") return;
         this.scenarioRuntime?.dispose?.();
+        this.context.physics.dispose?.();
+        this.context.devices.dispose?.();
+        this.context.vehicles.dispose?.();
+        this.context.scripts.dispose?.();
+        this.context.inputs.dispose?.();
+        this.context.environment.dispose?.();
+        this.inputQueue.reset();
+        this.telemetry?.resetRunState?.({ preservePaths: [] });
+        this.topicRouter = null;
+        this.localizationTruthPublisher = null;
+        this.candidateOutputRuntime = null;
+        this.controlRuntime = null;
+        this.transformRuntime = null;
+        this.resolvedRun = null;
+        this.simulationSemanticHash = null;
+        this.episodeIdentity = null;
+        this.episodeHash = null;
+        this.trajectoryHasher = null;
+        this.trajectoryHash = null;
+        this.lastAcceptedActions = [];
+        this.finalizedResult = null;
+        this.lifecycleState = "idle";
+        this.status = "stopped";
+    }
+
+    dispose() {
+        if (this.lifecycleState === "disposed") return;
+        this.clearRun();
         this.resetHandlers.clear();
+        this.lifecycleState = "disposed";
+        this.status = "stopped";
     }
 }

@@ -6,6 +6,7 @@ import { createVehicleSensorDevice } from "../devices/SensorRuntimeRegistry.js";
 import { Triangle } from "../data/objects/Triangle";
 import { normalizeVehicleManifest, resolveVehicleModelUrl } from "../../vehicles/VehicleManifest.js";
 import { applyModelPlacement } from "./ModelPlacement.js";
+import { attachVehiclePlant, resetVehiclePlant, stepVehiclePlant } from "./VehiclePlantAdapter.js";
 
 export { applyModelPlacement } from "./ModelPlacement.js";
 
@@ -34,6 +35,11 @@ export class ManifestVehicle extends PhysicalVehicle {
 
         // Physics reads collisionDimensions for the swept AABB half extents.
         this.collisionDimensions = { ...this.manifest.boundingBox.size };
+        attachVehiclePlant(this, {
+            id: this.telemetryId || this.manifest.id,
+            type: this.manifest.id,
+            pose: { position: this.position, rotation: this.rotation },
+        }, { manifest: this.manifest });
 
         this.cameraFocusOffset = new THREE.Vector3(
             this.manifest.egoCenter.x,
@@ -190,25 +196,9 @@ export class ManifestVehicle extends PhysicalVehicle {
     }
 
     update(deltaTime) {
-        // Planar bicycle kinematics, matching BigCar: velocity.x is the
-        // vehicle-local forward speed and heading is local +X in world space.
-        this.velocity.addScaledVector(this.acceleration, deltaTime);
-        const speed = this.velocity.x;
-
         const maxSteer = Math.min(this.manifest.kinematics.maxSteeringAngle, Math.PI * 0.49);
         const steering = THREE.MathUtils.clamp(this.steeringAngle, -maxSteer, +maxSteer);
-        const yawRate = (speed / this.manifest.kinematics.wheelbase) * Math.tan(steering);
-
-        const heading = new THREE.Vector3(1, 0, 0).applyEuler(this.rotation);
-        heading.y = 0;
-        const headingLength = heading.length();
-        if (headingLength > 0) heading.multiplyScalar(1 / headingLength);
-
-        this.position.addScaledVector(heading, speed * deltaTime);
-        this.rotation.y += yawRate * deltaTime;
-
-        this.updatePosition(this.position);
-        this.updateRotation(this.rotation);
+        stepVehiclePlant(this, deltaTime);
 
         this.displaySteeringAngle += (steering - this.displaySteeringAngle) * 0.25;
         for (const wheel of this._wheels) {
@@ -226,6 +216,21 @@ export class ManifestVehicle extends PhysicalVehicle {
     updateRotation(newRotation) {
         super.updateRotation(newRotation);
         this._updateLidarZoneTransform();
+    }
+
+    resetRunState(entry = {}) {
+        this._zoneLastPose = null;
+        super.resetRunState(entry);
+        resetVehiclePlant(this, entry);
+        this.displaySteeringAngle = Number(entry.steeringAngle) || 0;
+        for (const wheel of this._wheels) {
+            if (wheel.steerable) wheel.pivot.rotation.y = this.displaySteeringAngle;
+        }
+        this._updateLidarZoneTransform();
+    }
+
+    getDeterministicState() {
+        return super.getDeterministicState();
     }
 
     dispose() {

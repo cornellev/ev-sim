@@ -41,6 +41,18 @@ export class TransformRuntime {
         this._historyLimit = Math.max(8, Number(options.historyLimit) || 240);
     }
 
+    reset() {
+        this.staticPublished = false;
+        this._history = [];
+    }
+
+    getDeterministicState() {
+        return {
+            staticPublished: this.staticPublished,
+            history: structuredClone(this._history),
+        };
+    }
+
     publishStaticTransforms(timeNs = 0) {
         const transforms = staticTransformMessages(this.bundle, timeNs);
         const payload = buildTFMessage(transforms);

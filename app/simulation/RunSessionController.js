@@ -101,6 +101,8 @@ export class RunSessionController {
         if (this.snapshot.pendingResolved) this._applyPending().catch(() => {});
         return () => {
             if (this.data === data) {
+                this._launchSequence += 1;
+                this._rejectPendingPrepare(new Error("Run preparation was detached from the simulation."));
                 this._unsubscribeSimulation?.();
                 this._unsubscribeSimulation = null;
                 this.data = null;
@@ -270,13 +272,23 @@ export class RunSessionController {
 
     async stop({ status = "stopped" } = {}) {
         const simulation = this.data?.simulation?.();
-        const finalized = simulation?.assertionEngine?.finalize?.(simulation.steps || 0) || { results: [] };
-        simulation?.scenarioRuntime?.observeAssertions?.(finalized.results);
-        const scenarioResult = simulation?.scenarioRuntime?.finalize?.({
-            step: simulation?.steps || 0,
-            timeNs: simulation?.timeNs || 0,
-            assertions: finalized.results,
-        }) ?? null;
+        const kernelFinalization = simulation?.finalize?.({ status }) ?? null;
+        const finalized = kernelFinalization
+            ? {
+                results: kernelFinalization.assertions || [],
+                shouldStop: kernelFinalization.assertionShouldStop,
+            }
+            : simulation?.assertionEngine?.finalize?.(simulation.steps || 0) || { results: [] };
+        if (!kernelFinalization) {
+            simulation?.scenarioRuntime?.observeAssertions?.(finalized.results);
+        }
+        const scenarioResult = kernelFinalization?.scenario
+            ?? simulation?.scenarioRuntime?.finalize?.({
+                step: simulation?.steps || 0,
+                timeNs: simulation?.timeNs || 0,
+                assertions: finalized.results,
+            })
+            ?? null;
         const errorAssertionFailures = finalized.results.filter((result) => result.status === "failed" && result.severity === "error");
         let finalStatus = status === "assertion-failed"
             ? "failed"
@@ -306,6 +318,12 @@ export class RunSessionController {
             runId: this.snapshot.activeRunId,
             manifestId: this.snapshot.activeResolved?.manifest?.id || null,
             resolvedHash: this.snapshot.activeResolved?.resolvedHash || null,
+            simulationSemanticHash: kernelFinalization?.simulationSemanticHash
+                ?? simulation?.simulationSemanticHash
+                ?? this.snapshot.activeResolved?.simulationSemanticHash
+                ?? null,
+            episodeHash: kernelFinalization?.episodeHash ?? simulation?.episodeHash ?? null,
+            trajectoryHash: kernelFinalization?.trajectoryHash ?? simulation?.trajectoryHash ?? null,
             scenarioId: this.snapshot.activeResolved?.scenario?.scenario?.id || null,
             status: finalStatus,
             completed,
@@ -419,6 +437,7 @@ export class RunSessionController {
     clear() {
         this._launchSequence += 1;
         this._rejectPendingPrepare(new Error("Run preparation was cleared."));
+        this.data?.simulation?.()?.clearRun?.();
         this._loggingPolicyOverride = null;
         this._speedOverride = null;
         this._set({

@@ -184,6 +184,13 @@ export class ManifestLidar3d extends LiDAR3d {
         }
     }
 
+    resetRunState() {
+        this._issuedCapture = null;
+        this.captureContext = null;
+        this.captureMessages = [];
+        this.shader?.reset?.();
+    }
+
     dispose() {
         this._issuedCapture = null;
         this.captureContext = null;

@@ -21,6 +21,20 @@ const INTERSECTION_ROADS = Object.freeze([
     [10, 11],
 ]);
 
+const STOP_SIGNS = Object.freeze([
+    [`42°40'05.85"N`, `83°13'03.77"W`, 1],
+    [`42°40'04.75"N`, `83°13'03.30"W`, 3],
+    [`42°40'05.86"N`, `83°13'04.17"W`, 0],
+]);
+
+const BARRELS = Object.freeze([
+    [`42°40'05.62"N`, `83°13'03.20"W`],
+    [`42°40'05.19"N`, `83°13'03.06"W`],
+    [`42°40'05.25"N`, `83°13'04.70"W`],
+    [`42°40'05.66"N`, `83°13'04.85"W`],
+    [`42°40'04.71"N`, `83°13'03.77"W`],
+]);
+
 function parseCoordinate(value) {
     const [latitude, longitude] = value.split(" ");
     const parse = (part, negative) => {
@@ -59,6 +73,61 @@ function chooseIntersectionEndpoints(roads, roadIndexes) {
     return best;
 }
 
+function deterministicHeight(id) {
+    let state = 2166136261;
+    for (const character of id) {
+        state ^= character.charCodeAt(0);
+        state = Math.imul(state, 16777619);
+    }
+    return 6 + ((state >>> 0) % 8000) / 1000;
+}
+
+function createSeededBuildings(nodes, edges) {
+    const byId = new Map(nodes.map((node) => [node.id, node]));
+    const buildings = [];
+    for (const edge of edges) {
+        const start = byId.get(edge.startNodeId);
+        const end = byId.get(edge.endNodeId);
+        if (!start || !end) continue;
+        const dx = end.x - start.x;
+        const dz = end.z - start.z;
+        const length = Math.hypot(dx, dz);
+        if (length < 12) continue;
+        const ux = dx / length;
+        const uz = dz / length;
+        const nx = -uz;
+        const nz = ux;
+        const buildingLength = Math.min(10, length * 0.35);
+        const depth = 5;
+        const alongX = ux * buildingLength * 0.5;
+        const alongZ = uz * buildingLength * 0.5;
+        const centerX = (start.x + end.x) * 0.5;
+        const centerZ = (start.z + end.z) * 0.5;
+        for (const side of [-1, 1]) {
+            const id = `igvc:building:${edge.id}:${side < 0 ? "right" : "left"}`;
+            const offset = (edge.width * 0.5 + edge.shoulderWidth + 2 + depth * 0.5) * side;
+            const x = centerX + nx * offset;
+            const z = centerZ + nz * offset;
+            const acrossX = nx * depth * 0.5;
+            const acrossZ = nz * depth * 0.5;
+            buildings.push({
+                buildingId: id,
+                footprint: [
+                    { x: x - alongX - acrossX, z: z - alongZ - acrossZ },
+                    { x: x + alongX - acrossX, z: z + alongZ - acrossZ },
+                    { x: x + alongX + acrossX, z: z + alongZ + acrossZ },
+                    { x: x - alongX + acrossX, z: z - alongZ + acrossZ },
+                ],
+                height: deterministicHeight(id),
+                textureId: 0,
+                tags: ["building"],
+                meshName: id,
+            });
+        }
+    }
+    return buildings;
+}
+
 /**
  * Pure server/browser projection of the native IGVC template road topology.
  * The runtime scene remains the visual source; this document gives authoring,
@@ -69,6 +138,10 @@ export function createBuiltInIGVCEnvironmentDocument() {
         line.split(" -> ").map((coordinate) => toMercator(parseCoordinate(coordinate)))
     ));
     const origin = geographicRoads[0][0];
+    const localCoordinate = (latitude, longitude) => {
+        const projected = toMercator(parseCoordinate(`${latitude} ${longitude}`));
+        return { x: projected.x - origin.x, z: -(projected.z - origin.z) };
+    };
     const roads = geographicRoads.map((road) => road.map((point) => ({
         x: point.x - origin.x,
         z: -(point.z - origin.z),
@@ -112,6 +185,25 @@ export function createBuiltInIGVCEnvironmentDocument() {
         };
     });
 
+    const features = [
+        ...STOP_SIGNS.map(([latitude, longitude, dir], index) => ({
+            id: `igvc:stop-sign:${index}`,
+            type: "stop-sign",
+            ...localCoordinate(latitude, longitude),
+            dir,
+            rotationY: 0,
+            tags: ["sign"],
+        })),
+        ...BARRELS.map(([latitude, longitude], index) => ({
+            id: `igvc:barrel:${index}`,
+            type: "barrel",
+            ...localCoordinate(latitude, longitude),
+            dir: 0,
+            rotationY: 0,
+            tags: ["barrel"],
+        })),
+    ];
+
     return {
         environmentId: "igvc",
         chunkSize: 20,
@@ -119,8 +211,8 @@ export function createBuiltInIGVCEnvironmentDocument() {
         buildingsAuthored: false,
         featuresAuthored: false,
         roads: { nodes, edges },
-        buildings: [],
-        features: [],
+        buildings: createSeededBuildings(nodes, edges),
+        features,
         earth: null,
     };
 }

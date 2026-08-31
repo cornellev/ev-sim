@@ -229,6 +229,12 @@ export class Shader {
         return mesh;
     }
 
+    reset() {
+        this._pack?.reset?.();
+        this._asyncDisabled = false;
+        this._inPass = false;
+    }
+
     dispose() {
         this._renderTarget?.dispose?.();
         this._quad?.geometry?.dispose?.();

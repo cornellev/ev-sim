@@ -71,7 +71,9 @@ export class SensorPublisher {
         this.reset();
     }
 
-    reset() {
+    reset({ resetSeed = null, seed = null } = {}) {
+        const nextSeed = resetSeed ?? seed;
+        if (nextSeed !== null && nextSeed !== undefined) this.seed = String(nextSeed);
         cancelEncodeOwner(this.encodeOwnerId);
         this.encodeGeneration = bumpEncodeOwnerGeneration(this.encodeOwnerId);
         this.queue = [];
@@ -102,6 +104,45 @@ export class SensorPublisher {
         this.stepNs = null;
         this.periodSteps = null;
         this.nextCaptureStep = null;
+    }
+
+    getDeterministicState() {
+        return {
+            seed: String(this.seed),
+            sampleIndex: this.sampleIndex,
+            stepNs: this.stepNs,
+            periodSteps: this.periodSteps,
+            nextCaptureStep: this.nextCaptureStep,
+            droppedFrames: this.droppedFrames,
+            errors: this.errors,
+            queuedBytes: this.queuedBytes,
+            queue: this.queue.map((frame) => ({
+                captureTimeNs: frame.captureTimeNs,
+                scheduledDeliveryTimeNs: frame.scheduledDeliveryTimeNs,
+                deliveryTimeNs: frame.deliveryTimeNs,
+                captureStep: frame.captureStep,
+                scheduledDeliveryStep: frame.scheduledDeliveryStep,
+                sampleIndex: frame.sampleIndex,
+                sequence: frame.sequence,
+                syncGroupKey: frame.syncGroupKey,
+                messages: (frame.messages || []).map((message) => ({
+                    topicId: message.topicId,
+                    signal: message.signal,
+                    frameId: message.frameId,
+                    value: message.value,
+                })),
+            })),
+            health: {
+                captureAttempts: this.health.captureAttempts,
+                capturedFrames: this.health.capturedFrames,
+                deliveredFrames: this.health.deliveredFrames,
+                droppedFrames: this.health.droppedFrames,
+                pointDrops: this.health.pointDrops,
+                missedDeadlines: this.health.missedDeadlines,
+                shaderBusyDrops: this.health.shaderBusyDrops,
+                encodeRejected: this.health.encodeRejected,
+            },
+        };
     }
 
     dispose() {

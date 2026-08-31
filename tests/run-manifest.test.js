@@ -111,6 +111,7 @@ test("run manifests resolve dependencies and portable bundles round-trip", async
         await left.service.listRunManifests();
         const resolved = await left.service.resolveRunManifest("igvc-default");
         assert.equal(resolved.resolvedHash.length, 64);
+        assert.equal(resolved.simulationSemanticHash.length, 64);
         assert.equal(resolved.environment.manifest.environmentId, "igvc");
         assert.ok(resolved.schemas["sensor_msgs/Image"].includes("uint8[] data"));
         assert.ok(resolved.schemas["sensor_fusion_msgs/StampedAckermannDrive"]);
@@ -119,6 +120,7 @@ test("run manifests resolve dependencies and portable bundles round-trip", async
         const bundle = await left.service.exportRunManifest("igvc-default");
         assert.equal(bundle.kind, RUN_BUNDLE_KIND);
         assert.equal(bundle.resolvedHash, resolved.resolvedHash);
+        assert.equal(bundle.simulationSemanticHash, resolved.simulationSemanticHash);
 
         const imported = await right.service.importRunBundle(bundle);
         const importedResolved = await right.service.resolveRunManifest(imported.id);
@@ -127,6 +129,30 @@ test("run manifests resolve dependencies and portable bundles round-trip", async
     } finally {
         await fs.rm(left.dir, { recursive: true, force: true });
         await fs.rm(right.dir, { recursive: true, force: true });
+    }
+});
+
+test("logging changes preserve simulation semantic identity", async () => {
+    const { dir, service } = await temporaryService();
+    try {
+        await service.listRunManifests();
+        const before = await service.resolveRunManifest("igvc-default");
+        const stored = await service.getRunManifest("igvc-default");
+        await service.putRunManifest("igvc-default", {
+            manifest: {
+                ...stored,
+                logging: {
+                    ...stored.logging,
+                    policy: stored.logging.policy === "disabled" ? "required" : "disabled",
+                },
+            },
+            expectedRevision: stored.revision,
+        });
+        const after = await service.resolveRunManifest("igvc-default");
+        assert.notEqual(after.resolvedHash, before.resolvedHash);
+        assert.equal(after.simulationSemanticHash, before.simulationSemanticHash);
+    } finally {
+        await fs.rm(dir, { recursive: true, force: true });
     }
 });
 

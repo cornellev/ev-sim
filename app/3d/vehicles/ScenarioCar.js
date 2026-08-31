@@ -1,11 +1,7 @@
 import * as THREE from "three";
-import { PhysicalVehicle, Vehicle } from "./Vehicle";
-
-function lerpAngle(a, b, t) {
-    const tau = Math.PI * 2;
-    const delta = THREE.MathUtils.euclideanModulo(b - a + Math.PI, tau) - Math.PI;
-    return a + delta * t;
-}
+import { PhysicalVehicle } from "./Vehicle";
+import { getBuiltInVehicleManifest } from "../../vehicles/BuiltInVehicleManifests.js";
+import { attachVehiclePlant, resetVehiclePlant, syncVehicleFromPlant } from "./VehiclePlantAdapter.js";
 
 function normalizeKeyframes(keyframes) {
     return (keyframes || [])
@@ -59,7 +55,21 @@ export class ScenarioCar extends PhysicalVehicle {
         this.started = false;
         this.completed = false;
         this.currentSpeed = first.velocity || 0;
-        this.isPlaying = autoplay === true;
+        this.autoplay = autoplay === true;
+        this.isPlaying = this.autoplay;
+
+        attachVehiclePlant(this, {
+            id: this.id,
+            type: "scenario-car",
+            pose: { position: this.position, rotation: this.rotation },
+            keyframes: this.keyframes,
+        }, { manifest: getBuiltInVehicleManifest("scenario-car") }, {
+            lift: this.lift,
+            freezeAtEnd: this.freezeAtEnd,
+            playbackRate: this.playbackRate,
+            autoplay: this.autoplay,
+        });
+        this.plant.started = false;
 
 
         this.sceneObject = this.createSceneObject();
@@ -145,10 +155,13 @@ export class ScenarioCar extends PhysicalVehicle {
         }
     }
 
-    start() {
+    start(_scene = null, { resetPlant = true } = {}) {
         this.started = true;
         this.elapsedTime = 0;
         this.completed = false;
+        if (resetPlant) this.plant.resetRunState();
+        this.plant.started = true;
+        this.plant.isPlaying = this.isPlaying;
 
         if (!this.keyframes.length) {
             this.sceneObject.visible = false;
@@ -165,15 +178,18 @@ export class ScenarioCar extends PhysicalVehicle {
         }
 
         this.isPlaying = true;
+        this.plant.play({ restart: false });
     }
 
     pause() {
         this.isPlaying = false;
+        this.plant.pause();
     }
 
     restart() {
         this.elapsedTime = 0;
         this.completed = false;
+        this.plant.restart();
 
         if (!this.keyframes.length) {
             this.sceneObject.visible = false;
@@ -182,6 +198,17 @@ export class ScenarioCar extends PhysicalVehicle {
 
         this.sceneObject.visible = this.keyframes[0].t <= 0;
         this.applyState(this.keyframes[0]);
+    }
+
+    resetRunState(entry = {}) {
+        super.resetRunState(entry);
+        resetVehiclePlant(this, entry);
+        this.isPlaying = this.autoplay;
+        this.start(null, { resetPlant: false });
+    }
+
+    getDeterministicState() {
+        return super.getDeterministicState();
     }
 
     togglePlayback() {
@@ -195,33 +222,7 @@ export class ScenarioCar extends PhysicalVehicle {
     }
 
     sampleState(timeSeconds) {
-        if (!this.keyframes.length) return null;
-        if (this.keyframes.length === 1) return this.keyframes[0];
-
-        const first = this.keyframes[0];
-        const last = this.keyframes[this.keyframes.length - 1];
-
-        if (timeSeconds <= first.t) return first;
-        if (timeSeconds >= last.t) return last;
-
-        for (let i = 1; i < this.keyframes.length; i++) {
-            const prev = this.keyframes[i - 1];
-            const next = this.keyframes[i];
-            if (timeSeconds > next.t) continue;
-
-            const span = Math.max(next.t - prev.t, Number.EPSILON);
-            const alpha = (timeSeconds - prev.t) / span;
-
-            return {
-                t: timeSeconds,
-                x: THREE.MathUtils.lerp(prev.x, next.x, alpha),
-                y: THREE.MathUtils.lerp(prev.y, next.y, alpha),
-                yaw: lerpAngle(prev.yaw, next.yaw, alpha),
-                velocity: THREE.MathUtils.lerp(prev.velocity, next.velocity, alpha),
-            };
-        }
-
-        return last;
+        return this.plant.sampleScenarioState(timeSeconds);
     }
 
     applyState(state) {
@@ -239,27 +240,20 @@ export class ScenarioCar extends PhysicalVehicle {
             return;
         }
 
-        this.elapsedTime += deltaTime * this.playbackRate;
-
         const first = this.keyframes[0];
-        const last = this.keyframes[this.keyframes.length - 1];
-
-        if (this.elapsedTime < first.t) {
+        this.plant.started = this.started;
+        this.plant.isPlaying = this.isPlaying;
+        this.plant.update(deltaTime);
+        this.elapsedTime = this.plant.elapsedTime;
+        if (this.plant.elapsedTime < first.t) {
             this.sceneObject.visible = false;
             return;
         }
 
         this.sceneObject.visible = true;
-
-        const clampedTime = this.freezeAtEnd
-            ? Math.min(this.elapsedTime, last.t)
-            : this.elapsedTime;
-        const state = this.sampleState(clampedTime);
-        this.applyState(state);
-
-        if (this.freezeAtEnd && this.elapsedTime >= last.t) {
-            this.elapsedTime = last.t;
-            this.completed = true;
-        }
+        syncVehicleFromPlant(this);
+        this.currentSpeed = this.plant.currentSpeed;
+        this.completed = this.plant.completed;
+        if (this.completed) this.elapsedTime = this.keyframes.at(-1).t;
     }
 }

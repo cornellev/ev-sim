@@ -313,6 +313,42 @@ test("sensor publisher health tracks queue depth and injected clock timings", ()
     assert.equal(publisher.health.shaderBusyDrops, 1);
 });
 
+test("sensor publisher reset clears queues and reconstructs sample-zero RNG", () => {
+    const device = {
+        telemetryId: "imu",
+        captureAt: ({ sampleIndex, rng }) => [{
+            topicId: "imu-data",
+            signal: "imu",
+            value: { sampleIndex, noise: rng.next() },
+        }],
+        getParent: () => null,
+    };
+    const publisher = new SensorPublisher(device, {
+        id: "imu",
+        rateHz: 100,
+        phaseNs: 0,
+        maxQueueFrames: 8,
+        noise: {},
+        latency: { fixedNs: 20_000_000, jitterNs: 5_000_000 },
+        outputs: {},
+        calibration: { products: { diagnostics: false } },
+        health: { deadlineNs: 0 },
+    }, { seed: "episode-a", topics: [] });
+
+    publisher.update({ step: 1, timeNs: 10_000_000 });
+    const first = publisher.getDeterministicState();
+    assert.equal(first.queue.length, 1);
+
+    publisher.reset({ resetSeed: "episode-a" });
+    assert.equal(publisher.getDeterministicState().queue.length, 0);
+    publisher.update({ step: 1, timeNs: 10_000_000 });
+    assert.deepEqual(publisher.getDeterministicState(), first);
+
+    publisher.reset({ resetSeed: "episode-b" });
+    publisher.update({ step: 1, timeNs: 10_000_000 });
+    assert.notDeepEqual(publisher.getDeterministicState(), first);
+});
+
 test("GPU sensor captures are skipped when the display frame has no remaining budget", () => {
     let captures = 0;
     const simulation = { gpuCaptureEnabled: false };

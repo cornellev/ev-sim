@@ -371,6 +371,73 @@ test("simulation-time bindings fire deterministically from integer nanoseconds",
     assert.deepEqual(runs.map((entry) => entry.time), [0.1, 0.2, 0.3]);
 });
 
+test("managed legacy timers use simulation time, catch up, and reset their deadline", async () => {
+    const runs = [];
+    const runtime = createRuntime({
+        scripts: { "script-1": createScriptStub((inputs) => { runs.push(inputs.time); return {}; }) },
+    });
+    await runtime.ready();
+    await runtime.setManifest({
+        bindings: [{
+            id: "legacy-timer",
+            scriptId: "script-1",
+            trigger: { kind: "timer", intervalMs: 100 },
+            inputs: [{ input: "time", source: "sim", key: "time" }],
+        }],
+    }, { persist: false, source: "resolved" });
+    await flush();
+
+    runtime.update(0.3, { timeNs: 300_000_000, step: 1 });
+    assert.deepEqual(runs, [0.1, 0.2, 0.3]);
+
+    runtime.resetRun({ resetSeed: "42" });
+    runtime.update(0.05, { timeNs: 50_000_000, step: 1 });
+    assert.equal(runs.length, 3);
+    runtime.update(0.05, { timeNs: 100_000_000, step: 2 });
+    assert.deepEqual(runs, [0.1, 0.2, 0.3, 0.1]);
+});
+
+test("managed signal triggers observe revisions instead of wall timestamps", async () => {
+    const runs = [];
+    const runtime = createRuntime({
+        scripts: { "script-1": createScriptStub((inputs) => { runs.push(inputs.value); return {}; }) },
+    });
+    await runtime.ready();
+    await runtime.setManifest({
+        bindings: [{
+            id: "signal",
+            scriptId: "script-1",
+            trigger: { kind: "signal-update", path: "test.value" },
+            inputs: [{ input: "value", source: "signal", path: "test.value" }],
+        }],
+    }, { persist: false, source: "resolved" });
+    const originalNow = Date.now;
+    Date.now = () => 1234;
+    try {
+        runtime.signalStore.set("test.value", 1);
+        runtime.update(0.01, { timeNs: 10_000_000, step: 1 });
+        runtime.signalStore.set("test.value", 1);
+        runtime.update(0.01, { timeNs: 20_000_000, step: 2 });
+    } finally {
+        Date.now = originalNow;
+    }
+    assert.deepEqual(runs, [1]);
+});
+
+test("deterministic binding state excludes operational run identity and pacing", async () => {
+    const runtime = createRuntime();
+    await runtime.ready();
+    runtime.signalStore.publishSignal("simulation.run", { resolvedHash: "logging-a" });
+    runtime.signalStore.publishSignal("simulation.speed", 1);
+    runtime.signalStore.publishSignal("simulation.timeNs", 100, { timeUs: 0, cycle: 1 });
+    const first = runtime.getDeterministicState();
+
+    runtime.signalStore.publishSignal("simulation.run", { resolvedHash: "logging-b" });
+    runtime.signalStore.publishSignal("simulation.speed", 20);
+    const second = runtime.getDeterministicState();
+    assert.deepEqual(second, first);
+});
+
 test("library activation runs only global bindings while manual execution can run selected bindings", async () => {
     const runs = [];
     const runtime = createRuntime({

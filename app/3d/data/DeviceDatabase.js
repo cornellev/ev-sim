@@ -147,11 +147,16 @@ export class DeviceDatabase extends Database {
         this.loopDisabled = false;
     }
 
-    resetSchedule() {
+    resetSchedule(runtimeOptions = {}) {
         for (const device of this.devices) {
-            device.contractPublisher?.reset?.();
-            device.resetMeasurementState?.();
+            device.resetRunState?.(runtimeOptions);
+            if ("measurementState" in device) device.measurementState = null;
+            device.contractPublisher?.reset?.(runtimeOptions);
         }
+    }
+
+    resetRun(runtimeOptions = {}) {
+        this.resetSchedule(runtimeOptions);
     }
 
     update(dt, clock = null) {
@@ -185,6 +190,42 @@ export class DeviceDatabase extends Database {
             }
             this._publishDevice(device);
         }
+    }
+
+    getDeterministicState() {
+        return [...this.devices]
+            .sort((left, right) => String(left.telemetryId || "").localeCompare(String(right.telemetryId || "")))
+            .map((device) => ({
+                id: String(device.telemetryId || ""),
+                enabled: Boolean(device.enabled),
+                publisher: device.contractPublisher?.getDeterministicState?.() ?? null,
+                measurementState: device.measurementState
+                    ? structuredClone(device.measurementState)
+                    : null,
+            }));
+    }
+
+    finalizeRun() {
+        return this.getDeterministicState();
+    }
+
+    disposeRun() {
+        const runVehicles = new Set(this.parent?.vehicles?.()?.vehicles || []);
+        for (const device of [...this.devices]) {
+            if (device.manifestManaged || runVehicles.has(device.getParent?.())) {
+                this.removeDevice(device);
+            }
+        }
+        for (const device of this.devices) {
+            if (device._legacyEnabledBeforeRun === undefined) continue;
+            if (typeof device.setEnabled === "function") {
+                device.setEnabled(device._legacyEnabledBeforeRun);
+            } else {
+                device.enabled = device._legacyEnabledBeforeRun;
+            }
+            delete device._legacyEnabledBeforeRun;
+        }
+        this.loopDisabled = false;
     }
 
     _publishDevice(device, clock = null) {

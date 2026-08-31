@@ -10,6 +10,32 @@ function vehicleList(source) {
     return manager(source)?.vehicles ?? [];
 }
 
+function vector(value = {}) {
+    return {
+        x: Number(value?.x) || 0,
+        y: Number(value?.y) || 0,
+        z: Number(value?.z) || 0,
+    };
+}
+
+function rotation(value = {}) {
+    return {
+        ...vector(value),
+        order: value?.order || "XYZ",
+    };
+}
+
+function defaultVehicleState(vehicle, index) {
+    return {
+        id: String(vehicle?.telemetryId || vehicle?.id || `vehicle-${index + 1}`),
+        position: vector(vehicle?.position),
+        rotation: rotation(vehicle?.rotation),
+        velocity: vector(vehicle?.velocity),
+        acceleration: vector(vehicle?.acceleration),
+        steeringAngle: Number(vehicle?.steeringAngle) || 0,
+    };
+}
+
 /**
  * Creates the narrow service facade consumed by SimulationKernel. Sources may
  * be concrete managers or accessors so browser managers that are installed
@@ -23,13 +49,42 @@ export function createSimulationRuntimeContext(options = {}) {
     const context = {
         telemetry,
         environment: {
-            applyResolved(environment, resolvedRun) {
-                return options.applyEnvironment?.(environment, resolvedRun);
+            prepare(environment, resolvedRun, worldResource) {
+                return options.applyEnvironment?.(environment, resolvedRun, worldResource);
+            },
+            applyResolved(environment, resolvedRun, worldResource) {
+                return this.prepare(environment, resolvedRun, worldResource);
+            },
+            reset(runtimeOptions) {
+                return options.resetEnvironment?.(runtimeOptions);
+            },
+            finalize(runtimeOptions) {
+                return options.finalizeEnvironment?.(runtimeOptions) ?? null;
+            },
+            dispose() {
+                return options.disposeEnvironment?.();
+            },
+            getDeterministicState() {
+                return options.environmentState?.() ?? null;
             },
         },
         inputs: {
             update(dt) {
                 return manager(options.inputs)?.update?.(dt);
+            },
+            reset(runtimeOptions) {
+                const target = manager(options.inputs);
+                if (typeof target?.resetRun === "function") return target.resetRun(runtimeOptions);
+                return target?.reset?.(runtimeOptions);
+            },
+            finalize(runtimeOptions) {
+                return manager(options.inputs)?.finalizeRun?.(runtimeOptions) ?? null;
+            },
+            dispose() {
+                return manager(options.inputs)?.disposeRun?.();
+            },
+            getDeterministicState() {
+                return manager(options.inputs)?.getDeterministicState?.() ?? null;
             },
         },
         scripts: {
@@ -51,6 +106,18 @@ export function createSimulationRuntimeContext(options = {}) {
             update(dt, clock) {
                 return manager(options.scripts)?.update?.(dt, clock);
             },
+            reset(runtimeOptions) {
+                return manager(options.scripts)?.resetRun?.(runtimeOptions);
+            },
+            finalize(runtimeOptions) {
+                return manager(options.scripts)?.finalizeRun?.(runtimeOptions) ?? null;
+            },
+            dispose() {
+                return manager(options.scripts)?.disposeRun?.();
+            },
+            getDeterministicState() {
+                return manager(options.scripts)?.getDeterministicState?.() ?? null;
+            },
         },
         vehicles: {
             list() {
@@ -66,11 +133,33 @@ export function createSimulationRuntimeContext(options = {}) {
             update(dt) {
                 return manager(options.vehicles)?.update?.(dt);
             },
+            reset(initialState = {}, runtimeOptions = {}) {
+                const target = manager(options.vehicles);
+                if (target?.resetRun) return target.resetRun(initialState, runtimeOptions);
+                return this.applyInitialState(initialState);
+            },
+            finalize(runtimeOptions) {
+                return manager(options.vehicles)?.finalizeRun?.(runtimeOptions) ?? null;
+            },
+            dispose() {
+                return manager(options.vehicles)?.disposeRun?.();
+            },
+            getDeterministicState() {
+                const target = manager(options.vehicles);
+                if (target?.getDeterministicState) return target.getDeterministicState();
+                return vehicleList(options.vehicles)
+                    .map(defaultVehicleState)
+                    .sort((left, right) => left.id.localeCompare(right.id));
+            },
             applyInitialState(initialState = {}) {
                 const byId = new Map((initialState.vehicles || []).map((vehicle) => [vehicle.id, vehicle]));
                 for (const [index, vehicle] of vehicleList(options.vehicles).entries()) {
                     const configured = byId.get(vehicle.telemetryId) || initialState.vehicles?.[index];
                     if (!configured) continue;
+                    if (typeof vehicle.resetRunState === "function") {
+                        vehicle.resetRunState(configured);
+                        continue;
+                    }
                     vehicle.position?.set?.(
                         configured.pose.position.x,
                         configured.pose.position.y,
@@ -86,6 +175,11 @@ export function createSimulationRuntimeContext(options = {}) {
                         configured.linearVelocity.x,
                         configured.linearVelocity.y,
                         configured.linearVelocity.z,
+                    );
+                    vehicle.acceleration?.set?.(
+                        Number(configured.linearAcceleration?.x) || 0,
+                        Number(configured.linearAcceleration?.y) || 0,
+                        Number(configured.linearAcceleration?.z) || 0,
                     );
                     if (Number.isFinite(configured.steeringAngle)) {
                         vehicle.steeringAngle = configured.steeringAngle;
@@ -111,6 +205,20 @@ export function createSimulationRuntimeContext(options = {}) {
             deliver(clock) {
                 return manager(options.devices)?.deliver?.(clock);
             },
+            reset(runtimeOptions) {
+                const target = manager(options.devices);
+                if (typeof target?.resetRun === "function") return target.resetRun(runtimeOptions);
+                return target?.resetSchedule?.(runtimeOptions);
+            },
+            finalize(runtimeOptions) {
+                return manager(options.devices)?.finalizeRun?.(runtimeOptions) ?? null;
+            },
+            dispose() {
+                return manager(options.devices)?.disposeRun?.();
+            },
+            getDeterministicState() {
+                return manager(options.devices)?.getDeterministicState?.() ?? [];
+            },
         },
         physics: {
             start() {
@@ -119,8 +227,8 @@ export function createSimulationRuntimeContext(options = {}) {
             stop() {
                 return manager(options.physics)?.stop?.();
             },
-            configureRun(manifest, environmentManifest) {
-                return manager(options.physics)?.configureRun?.(manifest, environmentManifest);
+            configureRun(configuration) {
+                return manager(options.physics)?.configureRun?.(configuration);
             },
             resetRun() {
                 return manager(options.physics)?.resetRun?.();
@@ -133,6 +241,17 @@ export function createSimulationRuntimeContext(options = {}) {
             },
             syncAndPublishContacts(clock) {
                 return manager(options.physics)?.syncAndPublishContacts?.(clock) ?? null;
+            },
+            finalize(runtimeOptions) {
+                return manager(options.physics)?.finalizeRun?.(runtimeOptions) ?? null;
+            },
+            dispose() {
+                const target = manager(options.physics);
+                if (typeof target?.disposeRun === "function") return target.disposeRun();
+                return target?.dispose?.();
+            },
+            getDeterministicState() {
+                return manager(options.physics)?.getDeterministicState?.() ?? null;
             },
         },
         scenarios: options.scenarios ?? null,

@@ -62,6 +62,8 @@ export class Environment {
 
         this.scene = null;
         this.toolController = null;
+        this.worldDescription = null;
+        this.worldHash = null;
     }
 
     setup(scene) {
@@ -89,6 +91,19 @@ export class Environment {
 
     chunks() {
         return this.chunkManager;
+    }
+
+    setWorldDescription(description, hash) {
+        this.worldDescription = description ? structuredClone(description) : null;
+        this.worldHash = hash ?? null;
+    }
+
+    getWorldDescription() {
+        return this.worldDescription ? structuredClone(this.worldDescription) : null;
+    }
+
+    getDeterministicState() {
+        return this.worldHash ? { worldHash: this.worldHash } : null;
     }
 
     setToolController(controller) {

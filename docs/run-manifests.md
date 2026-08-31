@@ -1,6 +1,6 @@
 # Deterministic simulation runs
 
-Every professional simulation launch is defined by a saved `cev-sim.run-manifest` version 9 document. The server normalizes and validates the authoring document, resolves its environment, scripts, bindings, autonomy catalog metadata, deterministic calibration bundle, ROS schema closure, and contract endpoints, then computes SHA-256 definition and resolved hashes. A running session holds that resolved snapshot and never applies Config edits in place.
+Every professional simulation launch is defined by a saved `cev-sim.run-manifest` version 9 document. The server normalizes and validates the authoring document, resolves its environment, canonical world description, physics backend identity, scripts, bindings, autonomy catalog metadata, deterministic calibration bundle, ROS schema closure, and contract endpoints, then computes SHA-256 definition, full resolved, and simulation-semantic hashes. A running session holds that resolved snapshot and never applies Config edits in place.
 
 Binding resolution includes every global library binding plus the ids listed in `scripts.bindingIds`. The Bindings workspace manages those ids through manifest checkboxes. Scripts referenced by effective bindings are resolved automatically; entries in `scripts.artifacts` remain optional hash locks. Portable manifests with `embeddedBindings` use only their frozen embedded set.
 
@@ -12,7 +12,7 @@ Reset finalizes the active result and SFLog, resolves the newest saved revision,
 
 ## Portable bundles
 
-`cev-sim.run-bundle` version 1 includes the authoring manifest and its resolved environment, exact compiled script artifacts and bindings, ROS schemas, autonomy catalog metadata, contract endpoints, dependency hashes, and resolved hash. Import verifies the bundle hash. Existing dependencies are reused only when hashes match; conflicting resources receive an eight-character hash suffix and all references are remapped.
+`cev-sim.run-bundle` version 1 includes the authoring manifest and its resolved environment, normalized `world: { description, hash }`, sorted backend selections, exact compiled script artifacts and bindings, ROS schemas, autonomy catalog metadata, contract endpoints, dependency hashes, full `resolvedHash`, and `simulationSemanticHash`. `dependencyHashes.world` repeats the canonical world SHA-256. Import verifies old and new bundles in the exact form received; re-resolution of an old bundle derives world/backend fields without changing the v1 bundle or v9 manifest schemas. `resolvedHash` protects the entire portable bundle. `simulationSemanticHash` uses the world hash—not the authored environment hash—as environment identity, and projects out logging, artifact/resource policy, wall pacing, and presentation-only settings before feeding `episodeHash`. Existing dependencies are reused only when hashes match; conflicting resources receive an eight-character hash suffix and all references are remapped.
 
 ## HTTP API
 
@@ -30,7 +30,17 @@ The storage service exposes these endpoints under `/api/storage`:
 
 ## Runtime guarantees
 
-Simulation time is `stepIndex * stepNs`, using integer nanoseconds. Realtime speed changes pacing only. Each fixed step applies inputs, scripts, scenario pre-motion, **controls** (actuator selection/delay/limits), vehicle motion, physics, contacts, clock, transforms (`/tf`, `/tf_static`, and oracle odometry), sensor capture, delayed delivery, assertions, and telemetry in that order. Stable IDs order topics, bindings, vehicles, sensors, colliders, and contact events. Managed runs never write `vehicle.velocity` / `steeringAngle` from raw topic handlers; only `ControlRuntime` applied setpoints reach the plant.
+Environment domain precedence is explicit authored data (including empty
+arrays), then persisted hydrated template data, then deterministic template
+defaults. `cev-sim.world-description` v1 sorts IDs by UTF-8 bytes, validates
+all references and finite geometry, preserves the route-network hash, and
+contains roads/drivable surfaces, buildings, features, obstacle prisms, and
+aggregate bounds. The physics backend selection is pinned to
+`rapier3d-swept-prism-v1` / `0.19.3` with a config hash covering gravity,
+vehicle AABB semantics, and contact-model version. Preparation rejects a
+mismatched selection.
+
+Simulation time is `stepIndex * stepNs`, using integer nanoseconds. Realtime speed changes pacing only. Managed `timer` and `simulation-timer` bindings both advance from this integer clock; wall timers remain available only to library/editor execution. Each fixed step applies inputs, scripts, scenario pre-motion, **controls** (actuator selection/delay/limits), vehicle motion, physics, contacts, clock, transforms (`/tf`, `/tf_static`, and oracle odometry), sensor capture, delayed delivery, assertions, and telemetry in that order. Stable IDs order topics, bindings, vehicles, sensors, colliders, and contact events. Managed runs never write `vehicle.velocity` / `steeringAngle` from raw topic handlers; only `ControlRuntime` applied setpoints reach the plant.
 
 ## Frames, calibration, and synchronization
 
@@ -62,7 +72,7 @@ Logging writes a native SFLog (see [SFLog](sflog.md)). Policies are:
 - `optional`: logging starts automatically; the run continues with degraded status if storage is unavailable.
 - `disabled`: no SFLog session is created.
 
-Run logs contain `run-manifest.json` at start and `run-results.json` at finalization, plus manifest identity, hashes, run ID, and browser/WebGL/runtime provenance in metadata. Replay reads recorded state and sensor bytes instead of rerunning sensors on the replay GPU. Capture-aligned `visualization.controls.snapshot` scrubs requested/applied/achieved with arcs in Analysis and Replay.
+Run logs contain `run-manifest.json` at start and `run-results.json` at finalization, plus manifest identity, hashes, run ID, and browser/WebGL/runtime provenance in metadata. Results include `simulationSemanticHash`, `episodeHash`, and the final bounded `trajectoryHash`; operational logging policy and output paths do not affect them. Replay reads recorded state and sensor bytes instead of rerunning sensors on the replay GPU. Capture-aligned `visualization.controls.snapshot` scrubs requested/applied/achieved with arcs in Analysis and Replay.
 
 ## Scenario episode metrics
 

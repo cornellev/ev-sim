@@ -55,6 +55,10 @@ export class LocalizationTruthPublisher {
     reset() {
         this.lastSnapshot = null;
     }
+
+    getDeterministicState() {
+        return this.lastSnapshot ? structuredClone(this.lastSnapshot) : null;
+    }
 }
 
 function optionsStepNs(publisher) {
