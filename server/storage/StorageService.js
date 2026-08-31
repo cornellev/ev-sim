@@ -962,14 +962,14 @@ export class StorageService {
         const ids = await this._listJsonIds(this.runManifestsDir);
         const stored = (await Promise.all(ids.map((id) => this.getRunManifest(id)))).filter(Boolean);
         if (stored.length === 0) {
-            const created = await this.createRunManifest(createDefaultRunManifest());
-            return [runManifestSummary(created)];
+            return [runManifestSummary(builtInDefaultRunManifest())];
         }
         return stored.map(runManifestSummary).sort((a, b) => a.name.localeCompare(b.name));
     }
 
     getRunManifest(manifestId) {
-        return this._fileStore(this._runManifestPath(manifestId), null).read();
+        return this._fileStore(this._runManifestPath(manifestId), null).read()
+            .then((stored) => stored ?? (manifestId === "igvc-default" ? builtInDefaultRunManifest() : null));
     }
 
     async createRunManifest(input = {}) {
@@ -1298,6 +1298,9 @@ export class StorageService {
             }
         }
         const existingManifest = await this.getRunManifest(incoming.id);
+        if (existingManifest && semanticHash(existingManifest) === semanticHash(incoming)) {
+            return existingManifest;
+        }
         if (existingManifest) incoming.id = `${incoming.id}-${bundle.resolvedHash.slice(0, 8)}`;
         return this.createRunManifest(incoming);
     }
@@ -1776,6 +1779,17 @@ export class StorageService {
 
 function semanticHash(value) {
     return computeResolvedRunHash(value);
+}
+
+function builtInDefaultRunManifest() {
+    const manifest = createDefaultRunManifest();
+    return {
+        ...manifest,
+        revision: 1,
+        definitionHash: semanticHash(manifest),
+        createdAt: null,
+        updatedAt: null,
+    };
 }
 
 function validationError(issues) {
