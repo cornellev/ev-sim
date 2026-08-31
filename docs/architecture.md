@@ -125,6 +125,17 @@ watchdog, and restart limits cannot alter simulation hashes. Crashes and
 uncertain dispatches replace the process and require a reset; they are never
 fabricated as RL transitions.
 
+PR 8 adds the [`cev-sim` Python package](python-headless.md) as a synchronous
+protocol 1.1 client; it does not contain simulator logic. `CevSimEnv` maps a
+single supervisor environment to Gymnasium, while `CevSimVecEnv` maps one
+process-isolated batch to the Stable-Baselines3 `VecEnv` contract. Both use
+strict inline NumPy/Protobuf codecs for the measured-state space, preserve
+terminal observations, and share deterministic reset-seed rules. A supplied
+Unix or insecure TCP endpoint remains externally owned. Explicit local launch
+creates a private Unix socket and owns batch, channel, supervisor process
+group, descendant cleanup, and startup diagnostics. Generated Python bindings
+come from the authoritative v1 proto and are checked for drift in CI.
+
 Physics pins Rapier `0.19.3` under capability
 `rapier3d-swept-prism-v1`. Rapier owns fixed and kinematic bodies, while
 authoritative first impact/contact transitions use shared continuous XZ SAT

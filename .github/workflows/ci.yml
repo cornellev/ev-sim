@@ -25,11 +25,28 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
       - name: Install dependencies
         run: npm ci
+
+      - name: Install Python dependencies
+        run: python -m pip install -e './python[sb3,test]'
 
       - name: Lint
         run: npm run lint
 
       - name: Test
         run: npm run test
+
+      - name: Check Python generated bindings and lint
+        run: |
+          npm run proto:python
+          npm run lint:python
+
+      - name: Test Python Gymnasium and SB3 adapters
+        run: npm run test:python

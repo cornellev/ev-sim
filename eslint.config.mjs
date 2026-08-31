@@ -13,6 +13,12 @@ const eslintConfig = defineConfig([
     "playwright-report/**",
     "test-results/**",
     ".playwright-data/**",
+    "python/.venv/**",
+    "python/.pytest_cache/**",
+    "python/.ruff_cache/**",
+    "python/build/**",
+    "python/dist/**",
+    "python/src/*.egg-info/**",
     "next-env.d.ts",
   ]),
 ]);

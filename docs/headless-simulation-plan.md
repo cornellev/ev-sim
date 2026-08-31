@@ -7,8 +7,8 @@ language-neutral API authority is
 
 ## Status
 
-- Current milestone: **PR 7 — complete**
-- Next planned milestone: **PR 8 — Python Gymnasium and Stable-Baselines3 package**
+- Current milestone: **PR 8 — complete**
+- Next planned milestone: **PR 9 — MCP, experiment, result, and logging integration**
 - Default implementation/review reasoning level: **Extra High**
 - Last updated: **2026-08-31**
 
@@ -21,7 +21,7 @@ Progress:
 - [x] PR 5 — State sensors and episode semantics
 - [x] PR 6 — Single-process runner, CLI, and artifacts
 - [x] PR 7 — Process-isolated batch supervisor and gRPC
-- [ ] PR 8 — Python Gymnasium and Stable-Baselines3 package
+- [x] PR 8 — Python Gymnasium and Stable-Baselines3 package
 - [ ] PR 9 — MCP, experiment, result, and logging integration
 - [ ] PR 10 — Deterministic CPU/BVH LiDAR
 - [ ] PR 11 — Pooled offscreen GPU sensors and large-payload transport
@@ -620,3 +620,24 @@ artifacts, wall time, and restarts. These policies and artifact paths remain
 outside all simulation-semantic hashes. Initial observations remain inline
 packed Protobuf bytes; shared memory, Python, MCP, rendered sensors, and
 distributed scheduling remain deferred.
+
+### 2026-08-31 — PR 8 Python Gymnasium and Stable-Baselines3 package
+
+Add the Python 3.10–3.13 `cev-sim` package as a synchronous protocol 1.1
+client. `CevSimEnv` owns a one-environment batch and follows Gymnasium reset,
+step, seed, terminal-observation, and close semantics. The optional
+`CevSimVecEnv` owns one process-isolated batch, follows the SB3 `VecEnv`
+autoreset contract, retains terminal observations and finalization JSON, and
+fails closed if a vector step is only partially successful.
+
+Use RFC 8785 canonical JSON and generated Protobuf 7/gRPC stubs to preserve
+JavaScript bundle bytes. Limit PR 8 to inline, little-endian measured-state
+tensor dictionaries and the normalized float32 action box; shared memory,
+rendered sensors, TLS, heterogeneous bundles, and Gymnasium `VectorEnv` remain
+deferred. Explicit local launch owns a private Unix socket and the complete
+supervisor process group; external endpoints are never terminated. Capability
+negotiation, Gymnasium/SB3 checkers, Python/CLI/direct-worker byte and hash
+parity, partial/RPC failure cleanup, and an eight-environment PPO smoke test
+pass. Protocol 1.1, Protobuf fields, run-manifest and run-bundle versions,
+profile/backend hashes, episode/trajectory hash algorithms, and the committed
+characterization fixture are unchanged.

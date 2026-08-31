@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cev-sim"
+version = "0.1.0"
+description = "Gymnasium and Stable-Baselines3 adapters for the cev-sim headless supervisor"
+readme = "README.md"
+requires-python = ">=3.10,<3.14"
+dependencies = [
+    "gymnasium>=1.3,<2",
+    "grpcio>=1.83,<2",
+    "numpy>=1.26,<3",
+    "protobuf>=7.36,<8",
+    "rfc8785>=0.1.4,<0.2",
+]
+
+[project.optional-dependencies]
+sb3 = ["stable-baselines3>=2.9,<3"]
+test = [
+    "grpcio-tools==1.83.1",
+    "psutil>=6,<8",
+    "pytest>=8,<9",
+    "pytest-timeout>=2.3,<3",
+    "ruff>=0.12,<1",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+cev_sim = ["py.typed"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+timeout = 120
+markers = ["integration: exercises the real Node supervisor and worker processes"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+extend-exclude = [
+    "**/headless/v1/headless_pb2.py",
+    "**/headless/v1/headless_pb2.pyi",
+    "**/headless/v1/headless_pb2_grpc.py",
+]
+
+[tool.ruff.lint]
+select = ["B", "E", "F", "I", "UP"]

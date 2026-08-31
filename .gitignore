@@ -60,6 +60,15 @@ baking/baked
 
 tests/__pycache__
 
+# Python headless adapter
+/python/.venv
+/python/.pytest_cache
+/python/.ruff_cache
+/python/build
+/python/dist
+/python/src/*.egg-info
+/python/**/__pycache__
+
 .cursor
 
 graphify-out
