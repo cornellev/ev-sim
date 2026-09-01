@@ -1391,6 +1391,7 @@ button,
   left: 50%;
   z-index: calc(var(--layer-modal) + 1);
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   width: min(560px, calc(100vw - 32px));
   max-height: calc(100dvh - 32px);
   overflow: hidden;

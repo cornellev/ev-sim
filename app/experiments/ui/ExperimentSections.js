@@ -15,10 +15,11 @@ import {
     IconRefresh,
     IconRoute,
     IconSquare,
+    IconTerminal2,
     IconTrash,
 } from "@tabler/icons-react";
 
-import { AdvancedFields, Button, DialogSurface, Field, NativeSelect, Switch, Textarea, TextInput } from "../../ui";
+import { AdvancedFields, Button, DialogSurface, Field, NativeSelect, StatusMessage, Switch, Textarea, TextInput } from "../../ui";
 import { BUILT_IN_METRIC_IDS, METRIC_DIRECTIONS, METRIC_REDUCER_KINDS, builtInMetricDefaults } from "../MetricReducers.js";
 import styles from "./ExperimentWorkspace.module.css";
 
@@ -374,12 +375,15 @@ export function RunSection({
     onPause,
     onResume,
     onCancel,
+    onQueueHeadless,
     onReplay,
     onAnalysis,
 }) {
     const diagnosticsViewportRef = useRef(null);
     const [inspectIndex, setInspectIndex] = useState(null);
-    const controllerOwnsResult = Boolean(snapshot?.result?.id && snapshot.result.id === result?.id);
+    const controllerOwnsResult = Boolean(snapshot?.result?.id && snapshot.result.id === result?.id)
+        && result?.execution?.backend !== "headless";
+    const headlessResult = result?.execution?.backend === "headless";
     const liveResult = controllerOwnsResult ? snapshot.result : result;
     const status = controllerOwnsResult ? snapshot.status : liveResult?.status || "idle";
     const cases = liveResult?.cases || plan.cases || [];
@@ -444,7 +448,8 @@ export function RunSection({
 
     return (
         <div className={styles.sectionStack}>
-            {heading("", "Run & monitor", "", <div className={styles.runActions}><Button aria-pressed={diagnosticsEnabled} variant={diagnosticsEnabled ? "primary" : "default"} onClick={() => onDiagnosticsEnabledChange?.(!diagnosticsEnabled)}><IconRoute size={14} /> 3D diagnostics</Button>{status === "running" ? <Button onClick={onPause}><IconPlayerPause size={14} /> Pause</Button> : canResume || status === "paused" ? <Button variant="primary" onClick={onResume}><IconPlayerPlay size={14} /> Resume</Button> : <Button variant="primary" disabled={!plan.ok || plan.cases.length === 0 || Boolean(runNicknameError)} onClick={onStart}><IconPlayerPlay size={14} /> Run suite</Button>}<Button disabled={!['running', 'paused'].includes(status)} onClick={onCancel}><IconSquare size={13} /> Cancel</Button></div>)}
+            {heading("", "Run & monitor", "", <div className={styles.runActions}><Button aria-pressed={diagnosticsEnabled} variant={diagnosticsEnabled ? "primary" : "default"} onClick={() => onDiagnosticsEnabledChange?.(!diagnosticsEnabled)} disabled={headlessResult}><IconRoute size={14} /> 3D diagnostics</Button><Button onClick={() => onQueueHeadless?.()}><IconTerminal2 size={14} /> Queue headless</Button>{status === "running" && !headlessResult ? <Button onClick={onPause}><IconPlayerPause size={14} /> Pause</Button> : canResume && !headlessResult ? <Button variant="primary" onClick={onResume}><IconPlayerPlay size={14} /> Resume</Button> : <Button variant="primary" disabled={headlessResult || !plan.ok || plan.cases.length === 0 || Boolean(runNicknameError)} onClick={onStart}><IconPlayerPlay size={14} /> Run suite</Button>}<Button disabled={headlessResult || !['running', 'paused'].includes(status)} onClick={onCancel}><IconSquare size={13} /> Cancel</Button></div>)}
+            {headlessResult && <StatusMessage tone="neutral" title="Headless-owned result">This result is owned by the server headless queue. Open Headless Runs to monitor or cancel it.</StatusMessage>}
             <section className={styles.runOptions} aria-label="Run options">
                 <Field
                     label="Run nickname"

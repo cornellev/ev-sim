@@ -698,3 +698,77 @@ test("SFLogCodec does not expand typed arrays into JSON number lists", () => {
     const batch = encoder.flush();
     assert.ok(batch.bytes.byteLength < huge.byteLength);
 });
+
+test("LogService reads attachments, pose series, and autonomy snapshots from indexed logs", async (context) => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "fusion-sflog-spatial-"));
+    context.after(() => rm(directory, { recursive: true, force: true }));
+    const service = new LogService(directory);
+    const session = await service.createSession({ id: "spatial-queries" });
+    const encoder = new SFLogBatchEncoder();
+    encoder.addAttachment({
+        name: "environment.json",
+        mime: "application/json",
+        bytes: JSON.stringify({ roads: { nodes: [{ id: "n1", x: 0, z: 0 }, { id: "n2", x: 20, z: 0 }], edges: [] }, buildings: [], features: [] }),
+    });
+    encoder.addAttachment({
+        name: "run-manifest.json",
+        mime: "application/json",
+        bytes: JSON.stringify({ resolvedHash: "abc123", manifest: { id: "run-a" } }),
+    });
+    for (let index = 0; index < 120; index += 1) {
+        encoder.addUpdate({
+            path: "vehicles.ego.pose",
+            timeUs: index * 100_000,
+            cycle: index,
+            entry: {
+                type: "pose3",
+                value: {
+                    position: { x: index, y: 0, z: Math.sin(index / 8) },
+                    rotation: { x: 0, y: index / 40, z: 0, order: "XYZ" },
+                },
+            },
+            descriptor: { path: "vehicles.ego.pose", type: "pose3", replayRole: "state", logClass: "core" },
+        });
+        encoder.addUpdate({
+            path: "visualization.perception.candidate",
+            timeUs: index * 100_000,
+            cycle: index,
+            entry: {
+                type: "json",
+                value: {
+                    captureTimeNs: index * 100_000_000,
+                    detections3d: [{ center: { x: index, y: 0, z: 0 }, size: { x: 1, y: 1, z: 1 }, yaw: 0 }],
+                    lanes: [],
+                },
+            },
+            descriptor: { path: "visualization.perception.candidate", type: "json", replayRole: "sample", logClass: "core" },
+        });
+    }
+    const batch = encoder.flush();
+    await service.appendBatch(session.id, { sequence: 0, startUs: 0, endUs: 11_900_000, bytes: batch.bytes });
+    await service.finalize(session.id);
+
+    const attachments = await service.readAttachments(session.id, { names: ["environment.json", "run-manifest.json"] });
+    assert.equal(attachments.attachments.length, 2);
+    const environmentAttachment = attachments.attachments.find((entry) => entry.name === "environment.json");
+    assert.ok(environmentAttachment);
+    assert.equal(JSON.parse(Buffer.from(environmentAttachment.bytes, "base64").toString()).roads.nodes.length, 2);
+
+    const poseSeries = await service.readPoseSeries(session.id, { path: "vehicles.ego.pose", maxPoints: 30 });
+    assert.equal(poseSeries.path, "vehicles.ego.pose");
+    assert.ok(poseSeries.samples.length <= 30);
+    assert.equal(poseSeries.samples[0].timeUs, 0);
+    assert.equal(poseSeries.samples.at(-1).timeUs, 11_900_000);
+
+    const autonomy = await service.readAutonomySnapshot(session.id, 5_000_000);
+    assert.equal(autonomy.timeUs, 5_000_000);
+    assert.equal(autonomy.snapshot.perception.detections3d.length, 1);
+
+    const missingPose = await service.readPoseSeries(session.id, { path: "vehicles.missing.pose", maxPoints: 10 });
+    assert.equal(missingPose.path, "vehicles.missing.pose");
+    assert.deepEqual(missingPose.samples, []);
+
+    const missingSeries = await service.readSeries(session.id, { path: "vehicles.missing.pose", maxPoints: 10 });
+    assert.equal(missingSeries.path, "vehicles.missing.pose");
+    assert.deepEqual(missingSeries.samples, []);
+});

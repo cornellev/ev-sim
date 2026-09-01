@@ -156,7 +156,7 @@ function summaryFromResult(value) {
     };
 }
 
-export default function ExperimentWorkspace({ onOpenWorkspace, onOpenReplay, onOpenAnalysis, onDiagnosticsViewportChange }) {
+export default function ExperimentWorkspace({ onOpenWorkspace, onOpenReplay, onOpenAnalysis, onOpenHeadlessRuns, onDiagnosticsViewportChange }) {
     const runController = useMemo(() => getExperimentRunController(), []);
     const runSession = useMemo(() => getRunSessionController(), []);
     const [suites, setSuites] = useState([]);
@@ -533,7 +533,7 @@ export default function ExperimentWorkspace({ onOpenWorkspace, onOpenReplay, onO
                             <TabsContent value="setup"><SetupSection suite={draft} scenarios={scenarios} manifests={manifests} parameters={parameters} onUpdate={update} /></TabsContent>
                             <TabsContent value="matrix"><MatrixSection suite={draft} plan={plan} scenarios={scenarios} manifests={manifests} onToggleExclusion={toggleExclusion} /></TabsContent>
                             <TabsContent value="metrics"><MetricsSection suite={draft} onUpdate={update} /></TabsContent>
-                            <TabsContent value="run"><RunSection plan={plan} result={selectedResult} snapshot={snapshot} results={suiteResults} diagnosticsEnabled={diagnosticsEnabled} onDiagnosticsEnabledChange={changeDiagnostics} onDiagnosticsViewportChange={onDiagnosticsViewportChange} onSelectResult={chooseResult} runNickname={runNickname} runNicknameError={runNicknameError} onRunNicknameChange={setRunNickname} runSpeed={runSpeed} disableLogging={disableLogging} onRunSpeedChange={changeRunSpeed} onDisableLoggingChange={setDisableLogging} onStart={startRun} onPause={pauseRun} onResume={resumeRun} onCancel={cancelRun} onReplay={onOpenReplay} onAnalysis={onOpenAnalysis} /></TabsContent>
+                            <TabsContent value="run"><RunSection plan={plan} result={selectedResult} snapshot={snapshot} results={suiteResults} diagnosticsEnabled={diagnosticsEnabled} onDiagnosticsEnabledChange={changeDiagnostics} onDiagnosticsViewportChange={onDiagnosticsViewportChange} onSelectResult={chooseResult} runNickname={runNickname} runNicknameError={runNicknameError} onRunNicknameChange={setRunNickname} runSpeed={runSpeed} disableLogging={disableLogging} onRunSpeedChange={changeRunSpeed} onDisableLoggingChange={setDisableLogging} onStart={startRun} onPause={pauseRun} onResume={resumeRun} onCancel={cancelRun} onQueueHeadless={() => onOpenHeadlessRuns?.(selectedId)} onReplay={onOpenReplay} onAnalysis={onOpenAnalysis} /></TabsContent>
                             <TabsContent value="compare"><CompareSection results={suiteResults} baselines={baselines.filter((entry) => entry.suiteId === selectedId)} result={selectedResult} baseline={selectedBaseline} comparison={comparison} onResult={chooseResult} onBaseline={chooseBaseline} onSaveBaseline={saveBaseline} /></TabsContent>
                             <TabsContent value="review"><ReviewSection result={selectedResult} results={suiteResults} onResult={chooseResult} onReplay={onOpenReplay} onAnalysis={onOpenAnalysis} /></TabsContent>
                         </div>

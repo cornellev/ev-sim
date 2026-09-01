@@ -6,6 +6,7 @@ import { gzipSync, gunzipSync } from "node:zlib";
 import { ByteReader, ByteWriter, SFLOG_VERSION, decodeRecordStream } from "../../app/logging/SFLogCodec.js";
 import { downsampleMinMax } from "../../app/analysis/downsample.js";
 import { MAX_LOG_BATCH_BYTES } from "../../app/logging/LogLimits.js";
+import { collectAttachments, readAutonomySnapshot, readPoseSeries } from "./spatialLogQueries.js";
 
 const DEFAULT_LOGS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "data", "logs");
 const textEncoder = new TextEncoder();
@@ -367,7 +368,18 @@ export class LogService {
         if (!signalPath) throw new Error("A signal path is required.");
         const index = await this.getIndex(idValue);
         const descriptor = index.schemas.find((schema) => schema.path === signalPath);
-        if (!descriptor) throw new Error(`Signal "${signalPath}" does not exist in log "${idValue}".`);
+        const boundedToUs = Number.isFinite(toUs) ? toUs : index.durationUs;
+        if (!descriptor) {
+            return {
+                path: signalPath,
+                field: field || "",
+                fromUs,
+                toUs: boundedToUs,
+                totalSamples: 0,
+                samples: [],
+                downsampled: false,
+            };
+        }
         const schemas = new Map(index.schemas.map((schema) => [schema.id, schema]));
         const samples = [];
         for await (const chunk of this.iterateChunks(idValue, { fromUs, toUs })) {
@@ -433,6 +445,25 @@ export class LogService {
         }
         const boundedLimit = Math.min(10000, Math.max(1, Math.floor(Number(limit) || 5000)));
         return { events: events.sort((a, b) => a.timeUs - b.timeUs).slice(-boundedLimit), truncated: events.length > boundedLimit };
+    }
+
+    async readAttachments(idValue, { names = null } = {}) {
+        const attachments = await collectAttachments(this, idValue, { names });
+        return {
+            attachments: attachments.map((attachment) => ({
+                name: attachment.name,
+                mime: attachment.mime,
+                bytes: Buffer.from(attachment.bytes).toString("base64"),
+            })),
+        };
+    }
+
+    async readPoseSeries(idValue, options = {}) {
+        return readPoseSeries(this, idValue, options);
+    }
+
+    async readAutonomySnapshot(idValue, timeUs = 0, options = {}) {
+        return readAutonomySnapshot(this, idValue, timeUs, options);
     }
 
     async _readIndexedChunk(filePath, chunk) {

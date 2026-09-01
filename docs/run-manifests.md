@@ -198,7 +198,16 @@ fresh worker before that environment can continue.
 ## Managed headless experiment execution
 
 `experiment_run_start` with `execution: "headless"` resolves suite cases to
-portable run bundles before creating evidence. Managed cases require
+portable run bundles before creating evidence. The server persists an atomic
+FIFO queue index plus write-once bundle sidecars under
+`headless-run-bundles/<resultId>/`; sidecars are verified with
+`verifyRunBundle()` on read and never re-resolved after admission. Exactly one
+isolated case worker runs at a time; overlapping submissions enqueue rather than
+reject. The browser **Headless Runs** workspace and `/api/headless` surface
+control the same queue without changing MCP semantics or browser-owned suite
+execution.
+
+Managed cases require
 `controls.authority: "reference"` and route-follower, script, or
 script-with-route controllers. Candidate authority, external ROS controllers,
 camera and unknown sensor backends, unavailable LiDAR geometry, and suites

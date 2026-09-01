@@ -139,7 +139,10 @@ LiDAR cases use the locked deterministic CPU/BVH backend and include it in
 episode identity and provenance. The Express process admits one
 headless queue globally and runs cases sequentially in isolated workers.
 Status and cancellation use the result's persisted `execution.backend`;
-headless queues cannot pause or resume. Headless results retain run,
+headless queues cannot pause or resume. Multiple headless suite submissions are
+accepted into a durable FIFO queue with queue position returned from
+`experiment_run_start`; the browser Headless Runs workspace exposes the same
+queue through `/api/headless`. Headless results retain run,
 simulation-semantic, episode, and trajectory hashes plus artifacts and import
 warnings. Baselines preserve the hashes but do not depend on retained files.
 

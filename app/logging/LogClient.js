@@ -88,6 +88,51 @@ export async function getLogEvents(id, { fromUs = 0, toUs, limit = 5000 } = {}) 
     return (await assertOk(await fetch(`${BASE_URL}/${encodeURIComponent(id)}/events?${params}`), "Log event load")).json();
 }
 
+function decodeBase64Bytes(value) {
+    if (typeof Buffer !== "undefined") return new Uint8Array(Buffer.from(value, "base64"));
+    const binary = atob(value);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+    return bytes;
+}
+
+export async function getLogAttachments(id, { names = null } = {}) {
+    const params = new URLSearchParams();
+    if (names?.length) params.set("names", names.join(","));
+    const payload = await (await assertOk(
+        await fetch(`${BASE_URL}/${encodeURIComponent(id)}/attachments?${params}`),
+        "Log attachment load",
+    )).json();
+    return {
+        attachments: (payload.attachments || []).map((attachment) => ({
+            name: attachment.name,
+            mime: attachment.mime,
+            bytes: decodeBase64Bytes(attachment.bytes),
+        })),
+    };
+}
+
+export async function getLogPoseSeries(id, { path, fromUs = 0, toUs, maxPoints = 2000 } = {}) {
+    const params = new URLSearchParams({
+        path,
+        fromUs: String(Math.max(0, fromUs)),
+        maxPoints: String(Math.min(2000, Math.max(2, maxPoints))),
+    });
+    if (toUs !== undefined && Number.isFinite(toUs)) params.set("toUs", String(toUs));
+    return (await assertOk(await fetch(`${BASE_URL}/${encodeURIComponent(id)}/pose-series?${params}`), "Log pose series load")).json();
+}
+
+export async function getLogAutonomySnapshot(id, timeUs, { exactSync = false, captureTimeNs = null } = {}) {
+    const params = new URLSearchParams({
+        timeUs: String(Math.max(0, Number(timeUs) || 0)),
+        exactSync: String(Boolean(exactSync)),
+    });
+    if (captureTimeNs !== null && Number.isFinite(captureTimeNs)) {
+        params.set("captureTimeNs", String(captureTimeNs));
+    }
+    return (await assertOk(await fetch(`${BASE_URL}/${encodeURIComponent(id)}/autonomy-snapshot?${params}`), "Log autonomy snapshot load")).json();
+}
+
 export async function importLog(file) {
     const response = await fetch(`${BASE_URL}/import`, {
         method: "POST",

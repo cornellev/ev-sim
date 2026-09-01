@@ -16,6 +16,7 @@ app.prepare().then(async () => {
     const { LogService } = await import('./logging/LogService.js');
     const { createLogRouter } = await import('./routes/logRouter.js');
     const { HeadlessExperimentService } = await import('./headless/HeadlessExperimentService.js');
+    const { createHeadlessRouter } = await import('./routes/headlessRouter.js');
     const storageService = new StorageService(process.env.CEV_SIM_DATA_DIR);
     const logService = new LogService(process.env.CEV_SIM_LOGS_DIR);
     const headlessExperimentService = new HeadlessExperimentService(storageService, logService);
@@ -27,6 +28,7 @@ app.prepare().then(async () => {
     const jsonParser = express.json({ limit: '20mb' });
     server.use('/api/logs', createLogRouter(logService));
     server.use('/api/storage', jsonParser, createStorageRouter(storageService));
+    server.use('/api/headless', jsonParser, createHeadlessRouter(headlessExperimentService));
     server.use('/mcp', jsonParser, createMcpRouter(storageService, logService, headlessExperimentService));
 
     server.all(/(.*)/, (req, res) => {

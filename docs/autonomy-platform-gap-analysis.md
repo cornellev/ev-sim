@@ -198,7 +198,7 @@ before candidate acceptance. Distributed scheduling remains Gate C scope.
 
 #### 2. Complete replay and cross-stage tracing
 
-**Current:** SFLog captures rich data, but spatial replay is primarily poses and selected autonomy overlays.
+**Current:** SFLog captures rich data. Native spatial replay now includes a shared 2D route/trajectory map in Replay and Analysis (environment geometry, planned route, vehicle trails, timeline seek, capture-aligned autonomy overlays). Heavy sensor decode, multi-log comparison beyond basic trail overlay, and full cross-stage correlation tracing remain open.
 
 **Add:**
 

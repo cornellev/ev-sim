@@ -62,6 +62,23 @@ export function createLogRouter(service) {
         toUs: req.query.toUs === undefined ? Number.POSITIVE_INFINITY : Number(req.query.toUs),
         limit: Number(req.query.limit || 5000),
     })));
+    router.get("/:id/attachments", handle(async (req) => service.readAttachments(req.params.id, {
+        names: req.query.names ? String(req.query.names).split(",").map((name) => name.trim()).filter(Boolean) : null,
+    })));
+    router.get("/:id/pose-series", handle(async (req) => service.readPoseSeries(req.params.id, {
+        path: req.query.path,
+        fromUs: Number(req.query.fromUs || 0),
+        toUs: req.query.toUs === undefined ? Number.POSITIVE_INFINITY : Number(req.query.toUs),
+        maxPoints: Number(req.query.maxPoints || 2000),
+    })));
+    router.get("/:id/autonomy-snapshot", handle(async (req) => service.readAutonomySnapshot(
+        req.params.id,
+        Number(req.query.timeUs || 0),
+        {
+            exactSync: req.query.exactSync === "true",
+            captureTimeNs: req.query.captureTimeNs === undefined ? null : Number(req.query.captureTimeNs),
+        },
+    )));
     router.get("/:id/file", async (req, res) => {
         try {
             const filePath = service.getFilePath(req.params.id);

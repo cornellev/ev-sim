@@ -465,6 +465,9 @@ Mounted at `/api/logs` from `server/App.js`, in front of JSON storage middleware
 | `GET /:id/chunks?fromUs=&toUs=` | Concatenated uncompressed records; seek uses the latest checkpoint at or before `fromUs` |
 | `GET /:id/chunks/:chunkIndex` | One uncompressed chunk, `application/x-sflog-records` |
 | `GET /:id/series?path=&field=&fromUs=&toUs=&maxPoints=` | Numeric series, min/max downsampled to at most 2000 points |
+| `GET /:id/pose-series?path=&fromUs=&toUs=&maxPoints=` | `pose3` trajectories with geometry-preserving simplification (not scalar min/max) |
+| `GET /:id/attachments?names=` | Named attachment payloads (base64 in JSON) |
+| `GET /:id/autonomy-snapshot?timeUs=&exactSync=&captureTimeNs=` | Capture-aligned autonomy overlay snapshot for spatial replay |
 | `GET /:id/snapshot?timeUs=&includeHeavy=` | Checkpoint + later updates; `includeHeavy=false` omits `bytes` and `logClass: heavy` |
 | `GET /:id/events?fromUs=&toUs=&limit=` | Events, newest `limit` (max 10000, default 5000) |
 | `GET /:id/file` | Raw `.sflog` with HTTP Range |
@@ -486,7 +489,7 @@ Errors return `400` with `{ "error": "<message>" }`.
 
 ### Replay
 
-Replay owns a **read-only** Three.js scene, distinct from the live simulation scene. Inspectors use `snapshotAt` (exact recorded values). Vehicle meshes call `valueAt(..., { interpolate: true })` so poses move smoothly between samples. Timeline state lives in the shared `TimelineStore` (cursor, duration, play, speed `0.25–4`, loop, selection). Keyboard: Space play/pause, arrows ±1/60 s.
+Replay owns a **read-only** Three.js scene, distinct from the live simulation scene. Inspectors use `snapshotAt` (exact recorded values). Vehicle meshes call `valueAt(..., { interpolate: true })` so poses move smoothly between samples. A **Map** view (`SpatialLogViewer`) shares the scenario 2D map viewport for environment geometry, planned route, vehicle trails, timeline seek-on-click, and capture-aligned autonomy overlays. Timeline state lives in the shared `TimelineStore` (cursor, duration, play, speed `0.25–4`, loop, selection). Keyboard: Space play/pause, arrows ±1/60 s.
 
 ### Analysis
 

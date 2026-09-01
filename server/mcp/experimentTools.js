@@ -358,11 +358,18 @@ export function registerExperimentTools(server, storage, headlessExperimentServi
                 const result = await storage.getExperimentResult(resultId);
                 if (!result) return fail(`Experiment result "${resultId}" does not exist.`);
                 const headless = result.execution?.backend === "headless";
+                const queue = headless ? await headlessExperimentService?.getQueue?.() : null;
                 return ok({
                     ok: true,
                     result: resultSummary(result),
                     headlessJob: headless && headlessExperimentService?.active?.resultId === result.id
                         ? headlessExperimentService.active
+                        : null,
+                    queuePosition: headless && queue
+                        ? queue.entries.find((entry) => entry.resultId === result.id)?.queuePosition ?? null
+                        : null,
+                    liveHealth: headless && headlessExperimentService?.active?.resultId === result.id
+                        ? headlessExperimentService.getLiveHealth()
                         : null,
                     browserRequiredForControl: !headless,
                 });
@@ -377,6 +384,7 @@ export function registerExperimentTools(server, storage, headlessExperimentServi
                 ok: true,
                 active,
                 headlessJob: headlessExperimentService?.active ?? null,
+                headlessQueue: headlessExperimentService ? await headlessExperimentService.getQueue() : null,
                 browserRequiredForControl: active.some((entry) => entry.execution?.backend !== "headless"),
             });
         } catch (error) { return fail(error); }
@@ -409,6 +417,8 @@ export function registerExperimentTools(server, storage, headlessExperimentServi
                     ok: true,
                     execution: "headless",
                     browserRequiredForControl: false,
+                    queuePosition: started.queuePosition ?? null,
+                    liveHealth: headlessExperimentService.getLiveHealth(),
                     ...started,
                 });
             }

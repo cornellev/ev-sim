@@ -6,7 +6,7 @@ import test from "node:test";
 
 import { compareExperimentResultToBaseline } from "../app/experiments/BaselineComparison.js";
 import { createDefaultExperimentSuite } from "../app/experiments/ExperimentSuite.js";
-import { createExperimentResult } from "../app/experiments/ExperimentResult.js";
+import { createExperimentResult, interruptActiveExperimentCases } from "../app/experiments/ExperimentResult.js";
 import { createDefaultScenario } from "../app/scenarios/ScenarioDocument.js";
 import { verifyRoute } from "../app/scenarios/route/index.js";
 import { createDefaultRunManifest } from "../app/simulation/RunManifest.js";
@@ -152,10 +152,8 @@ test("managed experiments complete without a browser, repeat hashes, and import 
     });
     try {
         const firstStart = await service.start({ suiteId: suite.id, resultId: "managed-first" });
-        await assert.rejects(
-            service.start({ suiteId: suite.id, resultId: "overlapping" }),
-            /already active/,
-        );
+        const secondStart = await service.start({ suiteId: suite.id, resultId: "overlapping" });
+        assert.ok(secondStart.queuePosition >= 2);
         const first = await service.waitForCompletion(firstStart.resultId);
         assert.equal(first.execution.backend, "headless");
         assert.equal(first.status, "completed");
@@ -178,7 +176,6 @@ test("managed experiments complete without a browser, repeat hashes, and import 
         });
         assert.ok(series.samples.length > 0);
 
-        const secondStart = await service.start({ suiteId: suite.id, resultId: "managed-second" });
         const second = await service.waitForCompletion(secondStart.resultId);
         assert.equal(second.cases[0].episodeHash, first.cases[0].episodeHash);
         assert.equal(second.cases[0].trajectoryHash, first.cases[0].trajectoryHash);
@@ -333,12 +330,14 @@ test("managed queues stop on optimistic result revision conflicts without overwr
         resultId: "revision-conflict",
         artifactProfile: "disabled",
     });
-    const completion = service.activeJob.promise;
+    const completion = service.waitForCompletion(started.resultId);
     await entered;
     const externallyRead = await current.storage.getExperimentResult(started.resultId);
+    const paused = interruptActiveExperimentCases(externallyRead, new Date().toISOString());
+    paused.status = "paused";
     await current.storage.putExperimentResult(started.resultId, {
         expectedRevision: externallyRead.revision,
-        result: { ...externallyRead, status: "paused" },
+        result: paused,
     });
     release();
     await completion;

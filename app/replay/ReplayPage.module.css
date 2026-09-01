@@ -53,6 +53,10 @@
     background: var(--slate-bg);
 }
 
+.spatialViewer {
+    height: 100%;
+}
+
 .stateOverlay {
     position: absolute;
     inset: 0;

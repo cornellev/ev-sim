@@ -11,6 +11,7 @@ import ConfigPage from './config/ConfigPage';
 import VehicleEditorPage from './vehicles/editor/VehicleEditorPage';
 import ScenarioPage from './scenarios/ScenarioPage';
 import ExperimentPage from './experiments/ExperimentPage';
+import HeadlessPage from './headless/HeadlessPage';
 import McpExperimentBridge from './experiments/McpExperimentBridge';
 import { getExperimentRunController } from './experiments/ExperimentRunController';
 import Menu from './3d/overlay/menu/Menu';
@@ -58,6 +59,7 @@ function HomeContent() {
     const [desktopRequired, setDesktopRequired] = useState(false);
     const [experimentDiagnosticsViewport, setExperimentDiagnosticsViewport] = useState(null);
     const [experimentExecutionActive, setExperimentExecutionActive] = useState(false);
+    const [headlessPreselectedSuiteId, setHeadlessPreselectedSuiteId] = useState(null);
 
     useEffect(() => {
         const query = window.matchMedia("(max-width: 767px)");
@@ -169,6 +171,15 @@ function HomeContent() {
     const goToExperiments = useCallback(() => {
         requestWorkspace(() => {
             setView(APP_VIEWS.EXPERIMENTS);
+            setThreeDMode(THREE_D_MODES.SIMULATION);
+            setMenuVisible(false);
+        });
+    }, [requestWorkspace]);
+
+    const goToHeadlessRuns = useCallback((suiteId = null) => {
+        requestWorkspace(() => {
+            setHeadlessPreselectedSuiteId(typeof suiteId === "string" ? suiteId : null);
+            setView(APP_VIEWS.HEADLESS_RUNS);
             setThreeDMode(THREE_D_MODES.SIMULATION);
             setMenuVisible(false);
         });
@@ -289,6 +300,7 @@ function HomeContent() {
                     onVehicleEditor={goToVehicleEditor}
                     onScenarios={goToScenarios}
                     onExperiments={goToExperiments}
+                    onHeadlessRuns={goToHeadlessRuns}
                     onReplay={goToReplay}
                     onAnalysis={goToAnalysis}
                     instant={menuSource === "keyboard"}
@@ -332,7 +344,10 @@ function HomeContent() {
             view === APP_VIEWS.SCENARIOS && <ScenarioPage onOpenWorkspace={() => openWorkspaceSwitcher("pointer")} />
         }
         {
-            view === APP_VIEWS.EXPERIMENTS && <ExperimentPage onOpenWorkspace={() => openWorkspaceSwitcher("pointer")} onOpenReplay={goToReplay} onOpenAnalysis={goToAnalysis} onDiagnosticsViewportChange={updateExperimentDiagnosticsViewport} />
+            view === APP_VIEWS.EXPERIMENTS && <ExperimentPage onOpenWorkspace={() => openWorkspaceSwitcher("pointer")} onOpenReplay={goToReplay} onOpenAnalysis={goToAnalysis} onOpenHeadlessRuns={goToHeadlessRuns} onDiagnosticsViewportChange={updateExperimentDiagnosticsViewport} />
+        }
+        {
+            view === APP_VIEWS.HEADLESS_RUNS && <HeadlessPage onOpenWorkspace={() => openWorkspaceSwitcher("pointer")} onOpenReplay={goToReplay} onOpenAnalysis={goToAnalysis} preselectedSuiteId={headlessPreselectedSuiteId} />
         }
         {
             activeEnvironmentId && (

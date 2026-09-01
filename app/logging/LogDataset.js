@@ -1,5 +1,8 @@
 import { decodeRecordStream } from "./SFLogCodec.js";
-import { getLogChunk, getLogEvents, getLogIndex, getLogSeries, getLogSnapshot } from "./LogClient.js";
+import { getLogAttachments, getLogAutonomySnapshot, getLogChunk, getLogEvents, getLogIndex, getLogPoseSeries, getLogSeries, getLogSnapshot } from "./LogClient.js";
+import { simplifyTrajectory, poseSampleFromValue } from "../spatial/trajectorySimplify.js";
+
+const datasetCache = new Map();
 
 function clone(value) {
     if (typeof structuredClone === "function") return structuredClone(value);
@@ -53,6 +56,24 @@ export class LogDataset {
         return dataset;
     }
 
+    static async openCached(id, options = {}) {
+        const key = `${id}:${options.eager === false ? "lazy" : "eager"}`;
+        if (datasetCache.has(key)) return datasetCache.get(key);
+        const opened = await LogDataset.open(id, options);
+        datasetCache.set(key, opened);
+        return opened;
+    }
+
+    static clearCache(id = null) {
+        if (!id) {
+            datasetCache.clear();
+            return;
+        }
+        for (const key of [...datasetCache.keys()]) {
+            if (key.startsWith(`${id}:`)) datasetCache.delete(key);
+        }
+    }
+
     async loadSeries(path, field = "", options = {}) {
         return (await getLogSeries(this.id, { path, field, ...options })).samples;
     }
@@ -65,6 +86,49 @@ export class LogDataset {
         const result = await getLogEvents(this.id, options);
         this.events = result.events;
         return result;
+    }
+
+    async loadAttachment(name) {
+        const existing = this.attachment(name);
+        if (existing) return existing;
+        const result = await getLogAttachments(this.id, { names: [name] });
+        for (const attachment of result.attachments) {
+            if (!this.attachment(attachment.name)) this.attachments.push(attachment);
+        }
+        return this.attachment(name);
+    }
+
+    async loadPoseSeries(path, options = {}) {
+        this._poseSeriesCache ||= new Map();
+        const cacheKey = `${path}:${options.fromUs || 0}:${options.toUs || this.durationUs}:${options.maxPoints || 2000}`;
+        if (this._poseSeriesCache.has(cacheKey)) return this._poseSeriesCache.get(cacheKey);
+
+        const eagerSamples = this.series.get(path) || [];
+        let samples = [];
+        if (!this.lazy && eagerSamples.length) {
+            samples = simplifyTrajectory(
+                eagerSamples.map((sample) => poseSampleFromValue(sample.timeUs, sample.cycle, sample.value)),
+                options.maxPoints || 2000,
+            );
+        } else {
+            const result = await getLogPoseSeries(this.id, {
+                path,
+                fromUs: options.fromUs ?? 0,
+                toUs: options.toUs ?? this.durationUs,
+                maxPoints: options.maxPoints ?? 2000,
+            });
+            samples = result.samples || [];
+        }
+        this._poseSeriesCache.set(cacheKey, samples);
+        return samples;
+    }
+
+    async loadAutonomySnapshot(timeUs, options = {}) {
+        if (!this.lazy && this.series.size) {
+            return this.autonomySnapshotAt(timeUs, options);
+        }
+        const result = await getLogAutonomySnapshot(this.id, timeUs, options);
+        return result.snapshot;
     }
 
     getSeries(path, field = "") {

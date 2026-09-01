@@ -33,6 +33,8 @@ import { downsampleMinMax } from "./downsample.js";
 import { eventTypeKey, eventTypeLabel, eventTypeLabelFromKey, filterEvents } from "./eventFilters.js";
 import { simulationTimeUsFromSnapshot } from "../telemetry/SimulationClock.js";
 import { Button, IconButton, NativeSelect, StatusMessage, TabsContent, TabsList, TabsRoot, TabsTrigger, TextInput, WorkspaceFrame } from "../ui";
+import SpatialLogViewer from "../spatial/SpatialLogViewer.js";
+import { loadAutonomySnapshotForDataset, loadVehicleTrails } from "../spatial/spatialLogQueries.js";
 import styles from "./AnalysisPage.module.css";
 
 const LAYOUT_KEY = "analysis:layout:v1";
@@ -218,11 +220,18 @@ export default function AnalysisPage({ initialLogId, onOpenReplay, onOpenWorkspa
         if (!dataset || !sourceKey.startsWith("log:")) return undefined;
         let cancelled = false;
         const maxPoints = Math.min(2000, Math.max(2, Math.floor(graphPixelWidth * 2)));
-        Promise.all(selected.map(async (item) => [selectionKey(item), await dataset.loadSeries(item.path, item.field, {
-            fromUs: 0,
-            toUs: dataset.durationUs,
-            maxPoints,
-        })])).then((entries) => {
+        Promise.all(selected.map(async (item) => {
+            if (!dataset.paths().includes(item.path)) return [selectionKey(item), []];
+            try {
+                return [selectionKey(item), await dataset.loadSeries(item.path, item.field, {
+                    fromUs: 0,
+                    toUs: dataset.durationUs,
+                    maxPoints,
+                })];
+            } catch {
+                return [selectionKey(item), []];
+            }
+        })).then((entries) => {
             if (!cancelled) setLogSeries(new Map(entries));
         }).catch((caught) => { if (!cancelled) setError(caught.message); });
         return () => { cancelled = true; };
@@ -442,6 +451,8 @@ export default function AnalysisPage({ initialLogId, onOpenReplay, onOpenWorkspa
                                     exactSync={exactSync}
                                     onExactSyncChange={setExactSync}
                                     store={store}
+                                    timeline={timeline}
+                                    logs={logs}
                                 />
                             )}
                         </div>
@@ -469,10 +480,49 @@ export default function AnalysisPage({ initialLogId, onOpenReplay, onOpenWorkspa
     );
 }
 
-function AutonomySpatialView({ source, dataset, sourceKey, timeUs, exactSync, onExactSyncChange, store }) {
+function AutonomySpatialView({ source, dataset, sourceKey, timeUs, exactSync, onExactSyncChange, store, timeline, logs = [] }) {
+    const [autonomy, setAutonomy] = useState(null);
+    const [compareLogId, setCompareLogId] = useState("");
+    const [compareTrail, setCompareTrail] = useState(null);
+    const [compareWarning, setCompareWarning] = useState(null);
+
+    useEffect(() => {
+        if (!dataset || !sourceKey.startsWith("log:")) return undefined;
+        let cancelled = false;
+        loadAutonomySnapshotForDataset(dataset, timeUs, { exactSync })
+            .then((snapshot) => { if (!cancelled) setAutonomy(snapshot); })
+            .catch(() => { if (!cancelled) setAutonomy(null); });
+        return () => { cancelled = true; };
+    }, [dataset, exactSync, sourceKey, timeUs]);
+
+    useEffect(() => {
+        if (!compareLogId || !sourceKey.startsWith("log:")) return undefined;
+        let cancelled = false;
+        LogDataset.open(compareLogId, { eager: false })
+            .then(async (compareDataset) => {
+                if (cancelled) return;
+                const primaryHash = dataset?.metadata?.resolvedHash || dataset?.resolvedRun?.resolvedHash;
+                const compareHash = compareDataset.metadata?.resolvedHash || compareDataset.resolvedRun?.resolvedHash;
+                if (primaryHash && compareHash && primaryHash !== compareHash) {
+                    setCompareWarning("Compare log uses a different resolved run; overlay may not align.");
+                } else {
+                    setCompareWarning(null);
+                }
+                const trails = await loadVehicleTrails(compareDataset);
+                setCompareTrail(trails[0] ? { ...trails[0], color: "#f59e0b", entityId: compareLogId } : null);
+            })
+            .catch(() => {
+                if (!cancelled) {
+                    setCompareTrail(null);
+                    setCompareWarning("Could not load compare log.");
+                }
+            });
+        return () => { cancelled = true; };
+    }, [compareLogId, dataset?.metadata?.resolvedHash, dataset?.resolvedRun?.resolvedHash, sourceKey]);
+
     const snap = useMemo(() => {
         if (dataset && sourceKey.startsWith("log:")) {
-            return dataset.autonomySnapshotAt(timeUs, { exactSync });
+            return autonomy || dataset.autonomySnapshotAt?.(timeUs, { exactSync }) || {};
         }
         const candidate = store.read("visualization.perception.candidate")?.value;
         const oracle = store.read("visualization.perception.oracle")?.value;
@@ -498,7 +548,47 @@ function AutonomySpatialView({ source, dataset, sourceKey, timeUs, exactSync, on
                 controlsNs: controls?.ageNs ?? controls?.heartbeatAgeNs ?? null,
             },
         };
-    }, [dataset, exactSync, sourceKey, store, timeUs, source]);
+    }, [autonomy, dataset, exactSync, sourceKey, store, timeUs]);
+
+    if (sourceKey.startsWith("log:") && dataset) {
+        return (
+            <div className={styles.spatialLayout}>
+                <SpatialLogViewer
+                    dataset={dataset}
+                    timeUs={timeUs}
+                    timeline={timeline}
+                    exactSync={exactSync}
+                    compact
+                    className={styles.spatialMap}
+                    compareTrails={compareLogId && compareTrail ? [compareTrail] : []}
+                />
+                <aside className={styles.spatialDiagnostics} aria-label="Autonomy diagnostics">
+                    <div className={styles.eventFilter}>
+                        <div className={styles.eventFilterControls}>
+                            <Button size="compact" aria-pressed={exactSync} onClick={() => onExactSyncChange(!exactSync)}>
+                                {exactSync ? "Exact sync on" : "Lookback"}
+                            </Button>
+                            <NativeSelect
+                                aria-label="Compare log overlay"
+                                value={compareLogId}
+                                onChange={(event) => setCompareLogId(event.target.value)}
+                            >
+                                <option value="">No compare log</option>
+                                {logs.filter((log) => `log:${log.id}` !== sourceKey).map((log) => (
+                                    <option key={log.id} value={log.id}>{log.name}</option>
+                                ))}
+                            </NativeSelect>
+                            <span className={styles.eventCount}>
+                                capture-aligned · age {Number.isFinite(snap?.ages?.perceptionNs) ? `${(snap.ages.perceptionNs / 1e6).toFixed(0)} ms` : "—"}
+                            </span>
+                        </div>
+                        {compareWarning && <p className={styles.spatialLiveHint}>{compareWarning}</p>}
+                    </div>
+                    <AutonomyDiagnosticsList snap={snap} />
+                </aside>
+            </div>
+        );
+    }
 
     return (
         <div className={styles.eventView}>
@@ -512,50 +602,59 @@ function AutonomySpatialView({ source, dataset, sourceKey, timeUs, exactSync, on
                     </span>
                 </div>
             </div>
-            <div className={styles.eventList}>
-                <div className={styles.eventRow}>
-                    <div className={styles.eventJump}>
-                        <span>Candidate 3D boxes</span>
-                        <code>{snap?.perception?.detections3d?.length || 0}</code>
-                        <span>2D</span>
-                        <code>{snap?.perception?.detections2d?.length || 0}</code>
-                    </div>
+            <AutonomyDiagnosticsList snap={snap} />
+            {!sourceKey.startsWith("log:") && (
+                <p className={styles.spatialLiveHint}>Spatial map is available for recorded SFLog sources. Switch to a log to inspect route and trajectory.</p>
+            )}
+        </div>
+    );
+}
+
+function AutonomyDiagnosticsList({ snap }) {
+    return (
+        <div className={styles.eventList}>
+            <div className={styles.eventRow}>
+                <div className={styles.eventJump}>
+                    <span>Candidate 3D boxes</span>
+                    <code>{snap?.perception?.detections3d?.length || 0}</code>
+                    <span>2D</span>
+                    <code>{snap?.perception?.detections2d?.length || 0}</code>
                 </div>
-                <div className={styles.eventRow}>
-                    <div className={styles.eventJump}>
-                        <span>Oracle 3D boxes</span>
-                        <code>{snap?.perception?.oracle?.detections3d?.length || 0}</code>
-                        <span>lanes</span>
-                        <code>{(snap?.perception?.lanes?.length || 0) + (snap?.perception?.oracle?.lanes?.length || 0)}</code>
-                    </div>
+            </div>
+            <div className={styles.eventRow}>
+                <div className={styles.eventJump}>
+                    <span>Oracle 3D boxes</span>
+                    <code>{snap?.perception?.oracle?.detections3d?.length || 0}</code>
+                    <span>lanes</span>
+                    <code>{(snap?.perception?.lanes?.length || 0) + (snap?.perception?.oracle?.lanes?.length || 0)}</code>
                 </div>
-                <div className={styles.eventRow}>
-                    <div className={styles.eventJump}>
-                        <span>EKF estimate</span>
-                        <code>{snap?.localization?.estimate ? "present" : "missing"}</code>
-                        <span>|err|</span>
-                        <code>{snap?.localization?.error ? `${Number(snap.localization.error.positionM || 0).toFixed(3)} m` : "—"}</code>
-                    </div>
+            </div>
+            <div className={styles.eventRow}>
+                <div className={styles.eventJump}>
+                    <span>EKF estimate</span>
+                    <code>{snap?.localization?.estimate ? "present" : "missing"}</code>
+                    <span>|err|</span>
+                    <code>{snap?.localization?.error ? `${Number(snap.localization.error.positionM || 0).toFixed(3)} m` : "—"}</code>
                 </div>
-                <div className={styles.eventRow} data-testid="controls-analysis-summary">
-                    <div className={styles.eventJump}>
-                        <span>Controls</span>
-                        <code>{snap?.controls?.mode || "—"}</code>
-                        <span>req/app/ach v</span>
-                        <code>
-                            {Number(snap?.controls?.requested?.speedMps ?? NaN).toFixed?.(2) || "—"}/
-                            {Number(snap?.controls?.applied?.speedMps ?? NaN).toFixed?.(2) || "—"}/
-                            {Number(snap?.controls?.achieved?.speedMps ?? NaN).toFixed?.(2) || "—"}
-                        </code>
-                        <span>{snap?.controls?.flags?.timedOut ? "timeout" : snap?.controls?.flags?.saturated ? "sat" : ""}</span>
-                    </div>
+            </div>
+            <div className={styles.eventRow} data-testid="controls-analysis-summary">
+                <div className={styles.eventJump}>
+                    <span>Controls</span>
+                    <code>{snap?.controls?.mode || "—"}</code>
+                    <span>req/app/ach v</span>
+                    <code>
+                        {Number(snap?.controls?.requested?.speedMps ?? NaN).toFixed?.(2) || "—"}/
+                        {Number(snap?.controls?.applied?.speedMps ?? NaN).toFixed?.(2) || "—"}/
+                        {Number(snap?.controls?.achieved?.speedMps ?? NaN).toFixed?.(2) || "—"}
+                    </code>
+                    <span>{snap?.controls?.flags?.timedOut ? "timeout" : snap?.controls?.flags?.saturated ? "sat" : ""}</span>
                 </div>
-                <div className={styles.eventRow}>
-                    <div className={styles.eventJump}>
-                        <span>Status</span>
-                        <code>{snap?.perception?.status || "ok"}</code>
-                        <span>{snap?.perception?.statusCode || ""}</span>
-                    </div>
+            </div>
+            <div className={styles.eventRow}>
+                <div className={styles.eventJump}>
+                    <span>Status</span>
+                    <code>{snap?.perception?.status || "ok"}</code>
+                    <span>{snap?.perception?.statusCode || ""}</span>
                 </div>
             </div>
         </div>

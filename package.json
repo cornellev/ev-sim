@@ -43,6 +43,7 @@
     "@jax-js/jax": "^0.1.9",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@noble/hashes": "^2.4.0",
+    "@phosphor-icons/react": "^2.1.10",
     "@sparkjsdev/spark": "^0.1.10",
     "@tabler/icons-react": "^3.45.0",
     "@takram/three-atmosphere": "^0.19.1",

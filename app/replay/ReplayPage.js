@@ -11,13 +11,16 @@ import {
     IconDots,
     IconFileImport,
     IconFolderOpen,
+    IconMap2,
     IconPlayerPause,
     IconPlayerPlay,
     IconRepeat,
     IconTrash,
+    IconView360,
     IconX,
 } from "@tabler/icons-react";
 import ReplayScene from "./ReplayScene";
+import SpatialLogViewer from "../spatial/SpatialLogViewer.js";
 import { deleteLog, getLogDownloadUrl, importLog, listLogs, updateLog } from "../logging/LogClient.js";
 import { LogDataset } from "../logging/LogDataset.js";
 import { getTimelineStore } from "../logging/TimelineStore.js";
@@ -54,6 +57,7 @@ export default function ReplayPage({ initialLogId, mcpCommand, onOpenAnalysis, o
     const [deleteArmed, setDeleteArmed] = useState(false);
     const [inspectorOpen, setInspectorOpen] = useState(false);
     const [exactSync, setExactSync] = useState(false);
+    const [viewMode, setViewMode] = useState("3d");
     const fileRef = useRef(null);
     const playRef = useRef({ timeUs: 0, stamp: 0 });
     const appliedMcpCommandRef = useRef(null);
@@ -252,7 +256,17 @@ export default function ReplayPage({ initialLogId, mcpCommand, onOpenAnalysis, o
         >
             <div className={styles.replayShell}>
                 <section className={styles.sceneRegion}>
-                    {dataset && <ReplayScene dataset={dataset} timeUs={timelineState.timeUs} selectedEntity={selectedEntity} onSelectEntity={setSelectedEntity} exactSync={exactSync} />}
+                    {dataset && viewMode === "3d" && <ReplayScene dataset={dataset} timeUs={timelineState.timeUs} selectedEntity={selectedEntity} onSelectEntity={setSelectedEntity} exactSync={exactSync} />}
+                    {dataset && viewMode === "map" && (
+                        <SpatialLogViewer
+                            dataset={dataset}
+                            timeUs={timelineState.timeUs}
+                            timeline={timeline}
+                            exactSync={exactSync}
+                            primaryEntityId={selectedEntity}
+                            className={styles.spatialViewer}
+                        />
+                    )}
                     {status === "loading" && <div className={styles.stateOverlay}><AsyncState status="loading" title="Indexing log" detail="Preparing checkpoints and event data." /></div>}
                     {!dataset && status !== "loading" && <div className={styles.stateOverlay}><AsyncState status="empty" title="Select or import an SFLog" detail="Replay seeks from indexed checkpoints, so moving backward does not rescan the session." /></div>}
                     {error && <StatusMessage className={styles.errorMessage} tone="danger" title="Could not open this log">{error}</StatusMessage>}
@@ -301,6 +315,10 @@ export default function ReplayPage({ initialLogId, mcpCommand, onOpenAnalysis, o
                         <Button size="compact" disabled={!dataset} onClick={() => timeline.set({ selection: { ...(timelineState.selection || {}), startUs: timelineState.timeUs } })}>Mark in</Button>
                         <Button size="compact" disabled={!dataset} onClick={() => timeline.set({ selection: { ...(timelineState.selection || {}), endUs: timelineState.timeUs } })}>Mark out</Button>
                         <Button size="compact" aria-pressed={exactSync} className={exactSync ? styles.activeControl : undefined} onClick={() => setExactSync((value) => !value)}>Exact sync</Button>
+                        <Button size="compact" aria-pressed={viewMode === "map"} className={viewMode === "map" ? styles.activeControl : undefined} disabled={!dataset} onClick={() => setViewMode((mode) => (mode === "3d" ? "map" : "3d"))}>
+                            {viewMode === "map" ? <IconMap2 size={15} stroke={1.75} /> : <IconView360 size={15} stroke={1.75} />}
+                            {viewMode === "map" ? "Map" : "3D"}
+                        </Button>
                         <Button size="compact" className={styles.compactInspectorButton} disabled={!dataset} onClick={() => setInspectorOpen(true)}><IconAdjustmentsHorizontal size={15} stroke={1.75} /> Inspector</Button>
                         <span className={styles.clock}>{formatTime(timelineState.timeUs)} <span>/ {formatTime(timelineState.durationUs)}</span></span>
                     </div>

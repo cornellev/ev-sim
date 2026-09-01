@@ -500,6 +500,16 @@ compared with the committed characterization.
 
 ## Decision log
 
+### 2026-09-01 — Headless Runs workspace (operational follow-on)
+
+Add a browser Headless Runs workspace backed by a durable FIFO queue for saved
+experiment suites only. This is not PR 13: it does not change run-bundle,
+episode-hash, or trajectory-hash contracts. Queue admission freezes immutable
+bundle sidecars, executes exactly one isolated case at a time, and exposes
+same-origin `/api/headless` plus throttled `headless-runtime` events. Remote
+visual streaming, parallel scheduling, distributed queues, and pause/resume
+remain deferred.
+
 ### 2026-08-30 — Runtime and language boundary
 
 Use the existing JavaScript runtime as the reference kernel and expose a

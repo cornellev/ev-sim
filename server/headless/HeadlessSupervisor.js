@@ -553,7 +553,7 @@ export class HeadlessSupervisor {
      * not part of the public gRPC protocol and shares worker isolation and
      * resource enforcement with policy batches.
      */
-    async runManagedExperiment(request = {}, { signal = null, onStarted = null } = {}) {
+    async runManagedExperiment(request = {}, { signal = null, onStarted = null, onHealth = null } = {}) {
         if (this.shuttingDown) throw supervisorError("INTERNAL", "Supervisor is shutting down.");
         if (this.activeEnvironmentCount + this.reservedWorkers + 1 > this.config.maxWorkers) {
             throw supervisorError("RESOURCE_LIMIT", `Creating a managed environment exceeds supervisor capacity ${this.config.maxWorkers}.`);
@@ -571,6 +571,7 @@ export class HeadlessSupervisor {
                 shutdownGraceMs: this.config.shutdownGraceMs,
                 killGraceMs: this.config.killGraceMs,
                 onHealth: (health, handle) => {
+                    onHealth?.(health);
                     if (Number(health.rssBytes) > limits.maxRssBytesPerEnvironment) {
                         resourceFailure = supervisorError("RESOURCE_LIMIT", "Managed environment exceeded its RSS limit.", { rssBytes: health.rssBytes, limit: limits.maxRssBytesPerEnvironment });
                     } else if (Number(health.heapBytes) > limits.maxHeapBytesPerEnvironment) {

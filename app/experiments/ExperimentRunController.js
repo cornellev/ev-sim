@@ -82,6 +82,7 @@ export async function interruptStaleExperimentResults(entries = [], options = {}
         const raw = documentFrom(await loadResult(candidate.id), "result");
         if (!raw) continue;
         const result = normalizeExperimentResult(raw, { allowMissingKind: true });
+        if (result.execution?.backend === "headless") continue;
         const stale = ["running", "paused"].includes(result.status)
             || result.cases.some((entry) => entry.status === "running");
         if (!stale) continue;

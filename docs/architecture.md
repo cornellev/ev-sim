@@ -138,9 +138,11 @@ group, descendant cleanup, and startup diagnostics. Generated Python bindings
 come from the authoritative v1 proto and are checked for drift in CI.
 
 PR 9 adds one `HeadlessExperimentService` to the Express process. Stateless
-MCP server instances share that owner, which admits one sequential headless
-queue, atomically resolves all suite cases, and dispatches each case to the
-existing process-isolated worker layer. The internal managed command is not a
+MCP server instances share that owner, which runs a durable FIFO queue with
+one sequential headless worker at a time. Admission writes immutable
+`headless-run-bundles/<resultId>/` sidecars plus a small
+`headless-experiment-queue.v1.json` index; the browser Headless Runs workspace
+controls the queue through `/api/headless`. The internal managed command is not a
 gRPC/Protobuf surface: it drives `SimulationKernel` with resolved reference
 controllers and no candidate actions. A Node-safe experiment metric collector
 is shared with the browser controller. Final result revisions link immutable

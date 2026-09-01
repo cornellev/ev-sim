@@ -585,6 +585,20 @@ test("experiment MCP defaults to browser execution and routes persisted headless
             calls.push(["cancel", resultId]);
             return { ...headlessResult, status: "cancelled" };
         },
+        getQueue: async () => ({
+            revision: 1,
+            entries: [{ resultId: headlessResult.id, jobId: "job-1", queuePosition: 1 }],
+            pumpRunning: true,
+            active: { resultId: headlessResult.id, jobId: "job-1" },
+        }),
+        getLiveHealth: () => ({
+            pumpState: "running",
+            activeResultId: headlessResult.id,
+            activeCaseIndex: null,
+            workerPid: null,
+            cancelRequested: false,
+            supervisor: null,
+        }),
     };
     registerExperimentTools(server, storage, headless);
 

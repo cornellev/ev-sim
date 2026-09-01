@@ -12,6 +12,7 @@ import {
     IconPlayerPlay,
     IconRoute,
     IconFlask2,
+    IconTerminal2,
     IconWorld,
     IconX,
 } from "@tabler/icons-react";
@@ -31,6 +32,7 @@ export default function Menu({
     onVehicleEditor,
     onScenarios,
     onExperiments,
+    onHeadlessRuns,
     onScripting,
     onBindings,
     onReplay,
@@ -49,6 +51,7 @@ export default function Menu({
                 { key: "config", label: "Run Configuration", hint: "Edit simulation manifests", icon: IconAdjustments, active: activeView === APP_VIEWS.CONFIG, onSelect: onConfig },
                 { key: "scenarios", label: "Scenarios", hint: "Create test scenarios", icon: IconRoute, active: activeView === APP_VIEWS.SCENARIOS, onSelect: onScenarios },
                 { key: "experiments", label: "Experiment Suite", hint: "Experiment with scenarios", icon: IconFlask2, active: activeView === APP_VIEWS.EXPERIMENTS, onSelect: onExperiments },
+                { key: "headless-runs", label: "Headless Runs", hint: "Queue and monitor server runs", icon: IconTerminal2, active: activeView === APP_VIEWS.HEADLESS_RUNS, onSelect: onHeadlessRuns },
             ],
         },
         {
@@ -72,6 +75,7 @@ export default function Menu({
         onBindings,
         onConfig,
         onExperiments,
+        onHeadlessRuns,
         onEnvironmentEditor,
         onReplay,
         onScripting,

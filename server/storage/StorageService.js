@@ -68,6 +68,12 @@ import {
     validateExperimentBaseline,
 } from "../../app/experiments/BaselineComparison.js";
 import {
+    createHeadlessExperimentQueue,
+    normalizeHeadlessExperimentQueue,
+    normalizeHeadlessRunBundleManifest,
+    validateHeadlessExperimentQueue,
+} from "../headless/HeadlessExperimentQueue.js";
+import {
     hashEnvironmentRoadNetwork,
     validateRouteVerification,
 } from "../../app/scenarios/route/index.js";
@@ -160,6 +166,8 @@ async function hashPublicVehicleAssets(manifest) {
  *   vehicle-assets/<vehicleId>/<file>  binary model assets (glb/gltf)
  *   bindings.json                      the binding manifest
  *   settings.json                      flat key/value settings map
+ *   headless-experiment-queue.v1.json  durable FIFO index for headless suites
+ *   headless-run-bundles/<resultId>/   write-once immutable run-bundle sidecars
  *
  * Every collection is backed by JsonFileStore instances, so reads come from
  * memory and writes are atomic.
@@ -190,6 +198,10 @@ export class StorageService {
         this._experimentResultWriteChains = new Map();
         this._experimentBaselineWriteChains = new Map();
         this._vehicleWriteChains = new Map();
+        this.headlessQueuePath = path.join(dataDir, "headless-experiment-queue.v1.json");
+        this.headlessRunBundlesDir = path.join(dataDir, "headless-run-bundles");
+        this._headlessQueueWriteChain = Promise.resolve();
+        this._headlessAdmissionChain = Promise.resolve();
     }
 
     // --- Environments -------------------------------------------------------
@@ -1699,6 +1711,96 @@ export class StorageService {
         throw new Error(`Environment "${environmentId}" does not exist.`);
     }
 
+    // --- Headless experiment queue and bundle sidecars ----------------------
+
+    async getHeadlessExperimentQueue() {
+        const stored = await this._headlessQueueStore().read();
+        return normalizeHeadlessExperimentQueue(stored ?? createHeadlessExperimentQueue());
+    }
+
+    putHeadlessExperimentQueue({ queue, expectedRevision } = {}) {
+        const operation = this._headlessQueueWriteChain
+            .catch(() => {})
+            .then(async () => {
+                const current = await this.getHeadlessExperimentQueue();
+                const next = normalizeHeadlessExperimentQueue(queue);
+                if (expectedRevision !== undefined && Number(current.revision) !== Number(expectedRevision)) {
+                    throw new Error(`Headless queue revision conflict: expected ${expectedRevision}, current revision is ${current.revision}.`);
+                }
+                const validated = validateHeadlessExperimentQueue(next);
+                if (!validated.ok) throw headlessQueueValidationError(validated.issues);
+                await this._headlessQueueStore().write(validated.queue);
+                return validated.queue;
+            });
+        this._headlessQueueWriteChain = operation;
+        return operation;
+    }
+
+    withHeadlessAdmission(operation) {
+        const current = this._headlessAdmissionChain.catch(() => {}).then(operation);
+        this._headlessAdmissionChain = current;
+        return current;
+    }
+
+    async writeHeadlessRunBundles(resultId, { manifest, bundles }) {
+        safeSegment(resultId);
+        const bundleDir = this._headlessRunBundleDir(resultId);
+        const stagingDir = `${bundleDir}.tmp-${process.pid}-${Date.now()}`;
+        await fs.mkdir(stagingDir, { recursive: true });
+        try {
+            const normalizedManifest = normalizeHeadlessRunBundleManifest({
+                ...manifest,
+                resultId,
+                caseCount: bundles.length,
+            });
+            await fs.writeFile(
+                path.join(stagingDir, "manifest.json"),
+                `${JSON.stringify(normalizedManifest, null, 2)}\n`,
+                "utf8",
+            );
+            for (let index = 0; index < bundles.length; index += 1) {
+                const fileName = `case-${String(index).padStart(4, "0")}.bundle.json`;
+                await fs.writeFile(
+                    path.join(stagingDir, fileName),
+                    `${JSON.stringify(bundles[index], null, 2)}\n`,
+                    "utf8",
+                );
+            }
+            await fs.rm(bundleDir, { recursive: true, force: true });
+            await fs.rename(stagingDir, bundleDir);
+            return normalizedManifest;
+        } catch (error) {
+            await fs.rm(stagingDir, { recursive: true, force: true }).catch(() => {});
+            throw error;
+        }
+    }
+
+    async readHeadlessRunBundles(resultId) {
+        safeSegment(resultId);
+        const bundleDir = this._headlessRunBundleDir(resultId);
+        const manifestPath = path.join(bundleDir, "manifest.json");
+        let manifestText;
+        try {
+            manifestText = await fs.readFile(manifestPath, "utf8");
+        } catch (error) {
+            if (error.code === "ENOENT") return null;
+            throw error;
+        }
+        const manifest = normalizeHeadlessRunBundleManifest(JSON.parse(manifestText));
+        const bundles = [];
+        for (let index = 0; index < manifest.caseCount; index += 1) {
+            const fileName = `case-${String(index).padStart(4, "0")}.bundle.json`;
+            const bundleText = await fs.readFile(path.join(bundleDir, fileName), "utf8");
+            bundles.push(JSON.parse(bundleText));
+        }
+        return { manifest, bundles };
+    }
+
+    async deleteHeadlessRunBundles(resultId) {
+        safeSegment(resultId);
+        await fs.rm(this._headlessRunBundleDir(resultId), { recursive: true, force: true });
+    }
+
     // --- Settings (flat key/value map) --------------------------------------
 
     /** @returns {Promise<unknown|null>} the value for `key`, or null. */
@@ -1726,6 +1828,14 @@ export class StorageService {
 
     _settingsStore() {
         return this._fileStore(path.join(this.dataDir, "settings.json"), {});
+    }
+
+    _headlessQueueStore() {
+        return this._fileStore(this.headlessQueuePath, createHeadlessExperimentQueue());
+    }
+
+    _headlessRunBundleDir(resultId) {
+        return path.join(this.headlessRunBundlesDir, safeSegment(resultId));
     }
 
     _withEnvironmentWrite(environmentId, operation) {
@@ -1831,6 +1941,11 @@ function experimentResultValidationError(issues) {
 function experimentBaselineValidationError(issues) {
     const detail = issues.map((issue) => `${issue.path || "baseline"}: ${issue.message}`).join("; ");
     return new Error(`Experiment baseline validation failed: ${detail}`);
+}
+
+function headlessQueueValidationError(issues) {
+    const detail = issues.map((issue) => `${issue.path || "queue"}: ${issue.message}`).join("; ");
+    return new Error(`Headless experiment queue validation failed: ${detail}`);
 }
 
 function vehicleValidationError(issues) {

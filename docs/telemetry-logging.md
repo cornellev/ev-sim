@@ -65,7 +65,7 @@ from the live `SignalStore`, independently of log retention.
 
 The live Three.js scene remains mounted after first load. Leaving Simulation hides its canvas and disables rendering and controls. It does not change play state. Replay owns a different read-only Three.js scene.
 
-Replay loads the binary index and schemas, seeks from checkpoint state, applies exact updates to inspectors, and interpolates visual poses between samples. Analysis shares the timeline cursor and supports local live data, another browser tab, or a backend log. Its layout JSON is stored under `analysis:layout:v1` and can be exported and edited.
+Replay loads the binary index and schemas, seeks from checkpoint state, applies exact updates to inspectors, and interpolates visual poses between samples. Replay also exposes a **Map** view for 2D route and trajectory inspection over recorded environment attachments. Analysis shares the timeline cursor and supports local live data, another browser tab, or a backend log. Its **Autonomy** tab renders the same spatial map for `log:*` sources with capture-aligned diagnostics beside the map. Layout JSON is stored under `analysis:layout:v1` and can be exported and edited.
 
 ## Extension checklist
 
@@ -78,4 +78,4 @@ When adding a producer:
 5. Add lifecycle failures or discontinuities as telemetry events.
 6. Add round-trip tests when introducing a binary type.
 
-The primary implementation files are `SignalStore.js`, `TelemetryRuntime.js`, `SFLogCodec.js`, `RecordingController.js`, `LogService.js`, `ReplayPage.js`, and `AnalysisPage.js`.
+The primary implementation files are `SignalStore.js`, `TelemetryRuntime.js`, `SFLogCodec.js`, `RecordingController.js`, `LogService.js`, `ReplayPage.js`, `AnalysisPage.js`, and `app/spatial/SpatialLogViewer.js`.
