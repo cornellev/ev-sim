@@ -4,6 +4,33 @@ import { validateDeviceTelemetryId } from "./DeviceTelemetryId";
 import { createRunSensorDevice } from "../devices/SensorRuntimeRegistry.js";
 import { getDeviceTelemetrySignals } from "./DeviceTelemetrySignals.js";
 
+function summarizeMeasurementState(state) {
+    if (state == null) return null;
+    if (typeof state !== "object") return state;
+    if (ArrayBuffer.isView(state) || state instanceof ArrayBuffer) {
+        return { byteLength: state.byteLength };
+    }
+    const out = {};
+    for (const [key, value] of Object.entries(state)) {
+        if (ArrayBuffer.isView(value) || value instanceof ArrayBuffer) {
+            out[key] = { byteLength: value.byteLength };
+            continue;
+        }
+        if (value && typeof value === "object" && ArrayBuffer.isView(value.data)) {
+            out[key] = {
+                encoding: value.encoding ?? null,
+                width: value.width ?? null,
+                height: value.height ?? null,
+                point_step: value.point_step ?? null,
+                byteLength: value.data.byteLength,
+            };
+            continue;
+        }
+        out[key] = value && typeof value === "object" ? structuredClone(value) : value;
+    }
+    return out;
+}
+
 export class DeviceDatabase extends Database {
     constructor(parent) {
         super(parent);
@@ -199,9 +226,7 @@ export class DeviceDatabase extends Database {
                 id: String(device.telemetryId || ""),
                 enabled: Boolean(device.enabled),
                 publisher: device.contractPublisher?.getDeterministicState?.() ?? null,
-                measurementState: device.measurementState
-                    ? structuredClone(device.measurementState)
-                    : null,
+                measurementState: summarizeMeasurementState(device.measurementState),
             }));
     }
 

@@ -47,9 +47,16 @@ export class TransformRuntime {
     }
 
     getDeterministicState() {
+        const latest = this._history.length > 0 ? this._history[this._history.length - 1] : null;
         return {
             staticPublished: this.staticPublished,
-            history: structuredClone(this._history),
+            historyLength: this._history.length,
+            latest: latest ? {
+                timeNs: latest.timeNs,
+                step: latest.step,
+                mapToOdom: latest.mapToOdom,
+                odomToBase: latest.odomToBase,
+            } : null,
         };
     }
 

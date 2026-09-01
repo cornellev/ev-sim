@@ -129,6 +129,28 @@ function stableVehicleId(vehicle, index) {
     return String(vehicle.telemetryId || vehicle.manifestId || `vehicle-${String(index + 1).padStart(4, "0")}`);
 }
 
+const rapierInitByModule = new WeakMap();
+
+function rapierFromModule(module) {
+    return module?.default || module;
+}
+
+function initializeRapier(module) {
+    const rapier = rapierFromModule(module);
+    const init = module?.init ?? rapier?.init;
+    if (typeof init !== "function") return Promise.resolve(rapier);
+    const key = typeof rapier === "object" && rapier ? rapier : module;
+    let pending = rapierInitByModule.get(key);
+    if (!pending) {
+        pending = Promise.resolve(init.call(rapier ?? module)).then(() => rapier, (error) => {
+            rapierInitByModule.delete(key);
+            throw error;
+        });
+        rapierInitByModule.set(key, pending);
+    }
+    return pending;
+}
+
 export class PhysicsEngine {
     constructor(data, { loadPhysics = () => import("@dimforge/rapier3d-compat") } = {}) {
         this.data = data;
@@ -140,15 +162,40 @@ export class PhysicsEngine {
         this.activeContacts = new Set();
         this.pendingContacts = new Set();
         this._initialization = loadPhysics().then(async (module) => {
-            this.RAPIER = module.default || module;
-            await (module.init ?? this.RAPIER.init)?.({});
-            this._createWorld();
-            return this.world;
+            this.RAPIER = await initializeRapier(module);
+            return this.RAPIER;
         });
     }
 
+    _releaseWorld() {
+        const world = this.world;
+        const bodies = this.rigidbodies;
+        this.world = null;
+        this.rigidbodies = [];
+        this.staticColliders = [];
+        this.vehicleStates = [];
+        if (!world) return;
+        if (typeof world.removeRigidBody === "function") {
+            for (const body of bodies) {
+                try {
+                    if (body && body.isValid?.() !== false) world.removeRigidBody(body);
+                } catch {
+                    // A stale wrapper must not block the rest of teardown.
+                }
+            }
+        }
+        try {
+            world.free?.();
+        } catch {
+            // Rapier's wasm-bindgen .free() takes ownership. If a body, collider,
+            // or in-flight step still borrows the world, that throw must not
+            // prevent environment switches from finishing.
+        }
+    }
+
     _createWorld() {
-        this.world?.free?.();
+        if (!this.RAPIER) return;
+        this._releaseWorld();
         this.world = new this.RAPIER.World(PHYSICS_BACKEND_CONFIG.gravity);
         this.rigidbodies = [];
         this.staticColliders = [];
@@ -157,6 +204,7 @@ export class PhysicsEngine {
 
     async start() {
         await this._initialization;
+        if (!this.world) this._createWorld();
     }
 
     async configureRun(configuration = null, legacyEnvironmentManifest = null) {
@@ -355,11 +403,7 @@ export class PhysicsEngine {
     }
 
     disposeRun() {
-        this.world?.free?.();
-        this.world = null;
-        this.rigidbodies = [];
-        this.staticColliders = [];
-        this.vehicleStates = [];
+        this._releaseWorld();
         this.activeContacts.clear();
         this.pendingContacts.clear();
         this.preparedManifest = null;

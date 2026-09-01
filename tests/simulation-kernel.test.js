@@ -314,6 +314,62 @@ test("same episode reset reconstructs production trajectory hash", async () => {
     assert.equal(kernel.trajectoryHash, first);
 });
 
+test("canonical state v2 excludes sensor payloads and signal catalogs", async () => {
+    const { SimulationKernel } = await import("../app/simulation/kernel/SimulationKernel.js");
+    const { isHeavyValue } = await import("../app/scripting/runtime/SignalStore.js");
+    const target = createHarness();
+    target.scripts.getDeterministicState = () => ({
+        source: "library",
+        counters: {},
+        signalWatch: {},
+        scripts: {},
+    });
+    target.telemetry.publishSignal("vehicles.ego.pose", {
+        position: { x: 1, y: 0, z: 0 },
+        rotation: { x: 0, y: 0, z: 0, order: "XYZ" },
+    }, { type: "pose3", timeUs: 0, cycle: 0 });
+    target.telemetry.publishSignal("devices.front-camera.image", {
+        width: 2,
+        height: 1,
+        encoding: "rgba8",
+        data: new Uint8Array(8),
+    }, { type: "json", logClass: "heavy", timeUs: 0, cycle: 0 });
+
+    const manifest = createDefaultRunManifest({
+        seed: "canonical-v2",
+        clock: { stepNs: 10_000_000, maxSteps: 1 },
+        sensorRig: { sensors: [] },
+        assertions: [],
+    });
+    const kernel = new SimulationKernel(target.context);
+    await kernel.prepare(resolvedRun(manifest));
+    kernel.step();
+    const state = kernel.getCanonicalState();
+    assert.equal(state.kind, "cev-sim.canonical-state");
+    assert.equal(state.version, 2);
+    assert.equal(state.scripts?.signals, undefined);
+
+    const visit = (value, path = "root") => {
+        if (value == null) return;
+        if (ArrayBuffer.isView(value) || value instanceof ArrayBuffer) {
+            assert.fail(`canonical state retains binary payload at ${path}`);
+        }
+        if (isHeavyValue(value)) {
+            assert.fail(`canonical state retains heavy payload at ${path}`);
+        }
+        if (Array.isArray(value)) {
+            value.forEach((entry, index) => visit(entry, `${path}[${index}]`));
+            return;
+        }
+        if (typeof value === "object") {
+            assert.equal(Object.hasOwn(value, "data") && ArrayBuffer.isView(value.data), false,
+                `canonical state retains .data buffer at ${path}`);
+            for (const [key, child] of Object.entries(value)) visit(child, `${path}.${key}`);
+        }
+    };
+    visit(state);
+});
+
 test("runtime facade disposes prepared components in reverse dependency order", async () => {
     const [{ SimulationKernel }, { createSimulationRuntimeContext }, { SignalStore }] = await Promise.all([
         import("../app/simulation/kernel/SimulationKernel.js"),

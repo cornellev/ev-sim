@@ -10,7 +10,7 @@ language-neutral API authority is
 - Current milestone: **PR 12 — implementation complete; external hardware acceptance pending**
 - Next planned milestone: **None — the numbered headless implementation roadmap is complete**
 - Default implementation/review reasoning level: **Extra High**
-- Last updated: **2026-08-31**
+- Last updated: **2026-08-31** (browser play-loop canonical-state v2)
 
 Progress:
 
@@ -820,3 +820,16 @@ and dedicated `cev-sim-gpu-x64` / `cev-sim-jetson-arm64` reports are not
 claimed by this local run; they remain mandatory candidate evidence from the
 new workflows. No simulator contract, characterization byte, or semantic hash
 changed.
+
+### 2026-08-31 — Browser play-loop canonical-state v2
+
+`trajectoryHash` still updates every authoritative kernel step, but
+`cev-sim.canonical-state` advances to **version 2** so the hash input is a
+compact plant digest instead of sensor message bytes and the full non-heavy
+signal catalog. `SensorPublisher.getDeterministicState()` retains queue
+metadata and per-message digests only; `BindingRuntime.getDeterministicState()`
+drops the telemetry `signals` dump; transform history is summarized to length
+plus latest sample. Episode/semantic hash algorithms, proto field numbers, and
+per-step hashing cadence are unchanged. Browser RAF notifications use a shallow
+HUD snapshot and no longer `structuredClone` the resolved run bundle every
+frame.

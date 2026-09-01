@@ -486,8 +486,10 @@ export class ExperimentRunController {
     }
 
     _onRunSnapshot(value) {
-        this._runSnapshot = clone(value);
+        this._runSnapshot = value;
         this._maybeResolveTerminal(value);
+        // Idle controllers only need terminal detection; avoid cloning the run bundle every sim frame.
+        if (!this._executionPromise) return;
         this._set({ run: value });
     }
 

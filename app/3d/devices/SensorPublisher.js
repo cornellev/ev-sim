@@ -145,14 +145,17 @@ export class SensorPublisher {
                     topicId: message.topicId,
                     signal: message.signal,
                     frameId: message.frameId,
-                    value: message.value,
+                    digest: message.digest
+                        ?? (message.value == null ? null : simulationSha256(message.value)),
                 })),
                 ...(frame.observation ? {
                     observation: {
                         dtype: frame.observation.dtype,
                         shape: frame.observation.shape,
                         digest: frame.observation.digest
-                            || simulationSha256(frame.observation.value),
+                            || (frame.observation.value == null
+                                ? null
+                                : simulationSha256(frame.observation.value)),
                     },
                 } : {}),
             })),

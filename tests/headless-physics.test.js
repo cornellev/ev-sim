@@ -5,19 +5,38 @@ import { createPhysicsBackendSelection } from "../app/physics/PhysicsBackend.js"
 import { PhysicsEngine, sweepAabbTrianglePrism } from "../app/physics/PhysicsEngine.js";
 import { createWorldDescription } from "../app/simulation/world/WorldDescription.js";
 
-function fakeRapier() {
+function fakeRapier({ throwOnBorrowedFree = true } = {}) {
     class BodyDescriptor {
         setTranslation(x, y, z) { this.translation = { x, y, z }; return this; }
     }
     class Body {
+        constructor(world) { this.world = world; }
+        isValid() { return Boolean(this.world); }
         setNextKinematicTranslation(position) { this.next = { ...position }; }
     }
     class World {
-        constructor(gravity) { this.gravity = gravity; this.freed = false; }
-        createRigidBody() { return new Body(); }
+        constructor(gravity) {
+            this.gravity = gravity;
+            this.freed = false;
+            this.bodies = [];
+        }
+        createRigidBody() {
+            const body = new Body(this);
+            this.bodies.push(body);
+            return body;
+        }
         createCollider() { return {}; }
+        removeRigidBody(body) {
+            this.bodies = this.bodies.filter((entry) => entry !== body);
+            if (body) body.world = null;
+        }
         step() {}
-        free() { this.freed = true; }
+        free() {
+            if (throwOnBorrowedFree && this.bodies.length) {
+                throw new Error("attempted to take ownership of Rust value while it was borrowed");
+            }
+            this.freed = true;
+        }
     }
     return {
         init: async () => {},
@@ -92,5 +111,57 @@ test("physics prevents tunneling, collapses triangle hits to stable source conta
     assert.equal(physics.world, null);
     assert.deepEqual(physics.staticColliders, []);
     assert.deepEqual(physics.vehicleStates, []);
+});
+
+test("Rapier load does not create a world until physics starts", async () => {
+    const physics = new PhysicsEngine({}, { loadPhysics: async () => fakeRapier() });
+    await physics._initialization;
+    assert.equal(physics.world, null);
+    await physics.start();
+    assert.ok(physics.world);
+    physics.disposeRun();
+    assert.equal(physics.world, null);
+});
+
+test("dispose during Rapier load does not create a late world", async () => {
+    let resolvePhysics;
+    const physics = new PhysicsEngine({}, {
+        loadPhysics: () => new Promise((resolve) => { resolvePhysics = resolve; }),
+    });
+    physics.disposeRun();
+    resolvePhysics(fakeRapier());
+    await physics._initialization;
+    assert.equal(physics.world, null);
+});
+
+test("disposeRun drops rigid-body wrappers before freeing Rapier", async () => {
+    const physics = new PhysicsEngine({
+        vehicles: () => ({ vehicles: [] }),
+        objects: () => ({ boxes: () => [{ position: { x: 0, y: 0, z: 0 }, scale: { x: 1, y: 1, z: 1 } }] }),
+        bindings: () => ({ signalStore: null }),
+    }, { loadPhysics: async () => fakeRapier() });
+    await physics.configureRun();
+    const world = physics.world;
+    assert.ok(world);
+    assert.ok(physics.rigidbodies.length > 0);
+    physics.disposeRun();
+    assert.equal(physics.world, null);
+    assert.deepEqual(physics.rigidbodies, []);
+    assert.equal(world.freed, true);
+    assert.equal(world.bodies.length, 0);
+});
+
+test("disposeRun finishes even if Rapier still reports a borrow", async () => {
+    const physics = new PhysicsEngine({
+        vehicles: () => ({ vehicles: [] }),
+        objects: () => ({ boxes: () => [] }),
+        bindings: () => ({ signalStore: null }),
+    }, { loadPhysics: async () => fakeRapier({ throwOnBorrowedFree: false }) });
+    await physics.start();
+    physics.world.free = () => {
+        throw new Error("attempted to take ownership of Rust value while it was borrowed");
+    };
+    physics.disposeRun();
+    assert.equal(physics.world, null);
 });
 

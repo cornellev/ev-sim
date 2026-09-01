@@ -647,9 +647,10 @@ export class SimulationKernel {
 
     getCanonicalState() {
         const targetVehicleId = this.resolvedRun?.manifest?.controls?.targetVehicleId || "ego";
-        return cloneSnapshot({
+        const scenario = this.scenarioRuntime?.getSnapshot?.() ?? null;
+        return {
             kind: "cev-sim.canonical-state",
-            version: 1,
+            version: 2,
             clock: {
                 step: this.steps,
                 timeNs: String(this.timeNs),
@@ -670,9 +671,32 @@ export class SimulationKernel {
             }) ?? null,
             transforms: this.transformRuntime?.getDeterministicState?.() ?? null,
             localizationTruth: this.localizationTruthPublisher?.getDeterministicState?.() ?? null,
-            scenario: this.scenarioRuntime?.getSnapshot?.() ?? null,
-            assertions: this.assertionEngine.snapshot(),
-        });
+            scenario: scenario ? {
+                active: scenario.active,
+                scenarioId: scenario.scenarioId,
+                resetSeed: scenario.resetSeed,
+                step: scenario.step,
+                timeNs: scenario.timeNs,
+                status: scenario.status,
+                terminal: scenario.terminal,
+                flags: scenario.flags,
+                outcomes: scenario.outcomes,
+                collisionCount: scenario.collisionCount,
+                egoCollisionCount: scenario.egoCollisionCount,
+                metrics: scenario.metrics,
+                metricEpisode: scenario.metricEpisode,
+                activeEffects: scenario.activeEffects,
+                scriptErrors: scenario.scriptErrors,
+            } : null,
+            assertions: this.assertionEngine.snapshot().map((result) => ({
+                id: result.id,
+                status: result.status,
+                evaluations: result.evaluations,
+                firstFailureStep: result.firstFailureStep,
+                onFailure: result.onFailure,
+                severity: result.severity,
+            })),
+        };
     }
 
     _publishInitialSignals() {

@@ -338,6 +338,8 @@ test("sensor publisher reset clears queues and reconstructs sample-zero RNG", ()
     publisher.update({ step: 1, timeNs: 10_000_000 });
     const first = publisher.getDeterministicState();
     assert.equal(first.queue.length, 1);
+    assert.equal(Object.hasOwn(first.queue[0].messages[0], "value"), false);
+    assert.match(first.queue[0].messages[0].digest, /^[0-9a-f]{64}$/);
 
     publisher.reset({ resetSeed: "episode-a" });
     assert.equal(publisher.getDeterministicState().queue.length, 0);

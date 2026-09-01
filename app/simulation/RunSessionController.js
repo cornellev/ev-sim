@@ -8,6 +8,11 @@ function clone(value) {
     return value === undefined ? undefined : structuredClone(value);
 }
 
+function assertionSignature(results = []) {
+    if (!Array.isArray(results) || results.length === 0) return "";
+    return results.map((result) => `${result.id}:${result.status}:${result.evaluations ?? 0}`).join("|");
+}
+
 function formatDetail(value) {
     if (typeof value === "string") return value;
     if (value === null || value === undefined) return null;
@@ -48,7 +53,8 @@ export class RunSessionController {
     }
 
     getSnapshot() {
-        return clone(this.snapshot);
+        // Shallow copy: activeResolved / pendingResolved stay by reference (immutable after prepare).
+        return { ...this.snapshot };
     }
 
     subscribe(listener) {
@@ -96,7 +102,21 @@ export class RunSessionController {
                 return;
             }
             const status = simulationState.status === "playing" ? "running" : simulationState.status;
-            this._set({ status, assertionResults, simulation: simulationState });
+            const previous = this.snapshot.simulation;
+            const assertionsChanged = assertionSignature(assertionResults) !== assertionSignature(this.snapshot.assertionResults);
+            const statusChanged = status !== this.snapshot.status;
+            if (statusChanged || assertionsChanged || scenarioTerminal) {
+                this._set({ status, assertionResults, simulation: simulationState });
+                return;
+            }
+            // Time/step HUD updates come from SimulationEngine.subscribe; keep a live pointer
+            // without cloning activeResolved or notifying run-session listeners every frame.
+            if (!previous
+                || previous.steps !== simulationState.steps
+                || previous.time !== simulationState.time
+                || previous.timeNs !== simulationState.timeNs) {
+                this.snapshot.simulation = simulationState;
+            }
         }) || null;
         if (this.snapshot.pendingResolved) this._applyPending().catch(() => {});
         return () => {

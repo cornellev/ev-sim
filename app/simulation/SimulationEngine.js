@@ -178,6 +178,56 @@ export class SimulationEngine {
         };
     }
 
+    /** Shallow HUD snapshot for the RAF play path — no structuredClone of assertions/scenario. */
+    _getFrameSnapshot() {
+        const assertions = this.assertionEngine
+            ? [...this.assertionEngine.results.values()].map((result) => ({
+                id: result.id,
+                name: result.name,
+                status: result.status,
+                severity: result.severity,
+                onFailure: result.onFailure,
+                evaluations: result.evaluations,
+                firstFailureStep: result.firstFailureStep,
+            }))
+            : [];
+        const scenarioRuntime = this.scenarioRuntime;
+        return {
+            status: this.status,
+            time: this.time,
+            timeNs: this.timeNs,
+            stepNs: this.stepNs,
+            steps: this.steps,
+            speed: this.speed,
+            realtime: this.realtime,
+            deterministic: this.deterministic,
+            modules: { ...this.modules },
+            maxSteps: this.maxSteps,
+            activeRun: this.resolvedRun ? {
+                manifestId: this.resolvedRun.manifest.id,
+                resolvedHash: this.resolvedRun.resolvedHash,
+                simulationSemanticHash: this.simulationSemanticHash,
+            } : null,
+            lifecycleState: this.lifecycleState,
+            episodeHash: this.episodeHash,
+            trajectoryHash: this.trajectoryHash,
+            assertions,
+            scenario: scenarioRuntime ? {
+                active: scenarioRuntime.active,
+                scenarioId: scenarioRuntime.scenario?.id ?? null,
+                status: !scenarioRuntime.active
+                    ? "inactive"
+                    : scenarioRuntime.terminal
+                        ? scenarioRuntime.terminal.status
+                        : "running",
+                terminal: scenarioRuntime.terminal,
+            } : null,
+            frames: this.frames,
+            scenarioDiagnostics: { enabled: this.scenarioDiagnostics.enabled },
+            autonomyOverlay: { ...this._autonomyOverlayEnabled },
+        };
+    }
+
     subscribe(listener) {
         this.listeners.add(listener);
         listener(this.getSnapshot());
@@ -187,6 +237,12 @@ export class SimulationEngine {
     _emit() {
         this.kernel.publishRuntimeState();
         const snapshot = this.getSnapshot();
+        for (const listener of this.listeners) listener(snapshot);
+    }
+
+    /** Notify UI after a play-frame step without republishing telemetry or deep-cloning. */
+    _emitFrame() {
+        const snapshot = this._getFrameSnapshot();
         for (const listener of this.listeners) listener(snapshot);
     }
 
@@ -386,7 +442,7 @@ export class SimulationEngine {
 
         if (this.status === "playing") {
             this._advanceSimulation(frameDt);
-            this._emit();
+            this._emitFrame();
         }
         if (this.viewportActive && this.modules.rendering) this.render();
         if (this.looping) this.rafId = requestAnimationFrame(this._frame);

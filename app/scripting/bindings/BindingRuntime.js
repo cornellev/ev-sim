@@ -318,22 +318,6 @@ export class BindingRuntime {
     }
 
     getDeterministicState() {
-        const signals = this.signalStore.snapshot({ includeHeavy: false });
-        const signalValues = {};
-        for (const path of Object.keys(signals).sort()) {
-            if (/^bindings\.[^.]+\.(?:outputs|status)$/.test(path)) continue;
-            if (/^simulation\.(?:lifecycle|pacing|run|runtime|speed|status)$/.test(path)) continue;
-            const descriptor = this.signalStore.descriptor(path);
-            if (descriptor?.logClass === "diagnostics" || descriptor?.logClass === "heavy") continue;
-            const entry = signals[path];
-            signalValues[path] = {
-                value: entry.value,
-                type: entry.type,
-                timeUs: entry.timeUs,
-                cycle: entry.cycle,
-                source: entry.source,
-            };
-        }
         return {
             source: this._activeSource,
             counters: Object.fromEntries(
@@ -355,7 +339,6 @@ export class BindingRuntime {
                         script?.runner?.serializeRuntimeState?.() ?? {},
                     ]),
             ),
-            signals: signalValues,
         };
     }
 
