@@ -66,6 +66,17 @@ Keep the definition registry platform-neutral because run and vehicle manifests 
 
 Managed-run control input uses `/controls/command` (`sensor_fusion_msgs/StampedAckermannDrive`) through `ControlRuntime` at fixed-step boundaries. Unmanaged scene integrations use the same SI stamped endpoint in `app/3d/Scene.js`. There is no live `/ackdrive` handler. Scenario route-follower and script baselines with `controls.authority: reference` close that loop locally; they do not need the topic advertised on the orchestrator.
 
+### Built-in route follower
+
+The scenario `route-follower` controller closes the loop with bicycle Pure Pursuit on a **runtime-only follow polyline**:
+
+- Directed A\* `verification.polyline` remains the hashed topological proof used by metrics, scripts, and spatial planned-route overlays.
+- At configure/reset, the follower fillets sharp vertices with circular arcs sized from vehicle wheelbase and a **road-scale** steer budget (plant emergency max-steer near π/2 is not used for fillet radius), then tracks that curve.
+- Lookahead scales with speed (minimum ~4 m); commanded speed is limited by previewed path curvature so corners are entered slower than cruise.
+- Projection is **forward-only**: overlapping later visits of the same centerline (out-and-back city routes) cannot snap progress back to the first pass.
+- Authoring map and scenario diagnostics draw both the A\* proof (muted) and the filleted follow path (brighter). Follow geometry is never persisted on the scenario document.
+- The plant only applies these commands when `controls.authority` is `reference`. With `candidate` + `referenceShadow`, the follower still runs for comparison but the vehicle keeps its initial cruise unless an external candidate command arrives — set **Config → Controls → Authority** to **reference** for built-in following.
+
 ## Scenario Assets
 
 CommonRoad scenarios should be placed under `public/scenarios/` locally. They are loaded through `TrafficScenario.load(...)` with browser paths such as `/scenarios/recorded/NGSIM/Peachtree/USA_Peach-1_1_T-1.xml`.

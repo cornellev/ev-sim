@@ -918,3 +918,48 @@ test("AssertionEngine collects telemetry events via eventsFromIndex cursor", () 
     const result = engine.evaluate(1);
     assert.equal(result.results[0].status, "passed");
 });
+
+test("recording snapshot reports pending bytes and stopping flush progress", () => {
+    const controller = new RecordingController({});
+    controller.session = { id: "queue-progress" };
+    controller.status = "recording";
+    controller.queuedBytes = 1000;
+    controller.encoder = { byteEstimate: 500 };
+    assert.equal(controller.getSnapshot().pendingBytes, 1500);
+    assert.equal(controller.getSnapshot().flushProgress, null);
+
+    controller._flushTotalBytes = 2000;
+    assert.equal(controller.getSnapshot().flushProgress, 0.25);
+
+    controller.status = "stopping";
+    assert.equal(controller.getSnapshot().flushTotalBytes, 2000);
+    assert.equal(controller.getSnapshot().flushProgress, 0.25);
+
+    controller.queuedBytes = 0;
+    controller.encoder.byteEstimate = 0;
+    assert.equal(controller.getSnapshot().flushProgress, 1);
+});
+
+test("recording flushes leftover encoder bytes when the simulation clock stops", () => {
+    let listener = null;
+    const simulation = {
+        subscribe(fn) {
+            listener = fn;
+            fn({ status: "playing", lifecycleState: "stepping" });
+            return () => {};
+        },
+    };
+    const controller = new RecordingController({});
+    controller.session = { id: "flush-on-stop" };
+    controller.status = "recording";
+    let flushed = 0;
+    controller._flush = () => { flushed += 1; };
+    controller.attachSimulation(simulation);
+    assert.equal(flushed, 0);
+    listener({ status: "paused" });
+    assert.equal(flushed, 0);
+    listener({ status: "paused", lifecycleState: "finalized" });
+    assert.equal(flushed, 1);
+    listener({ status: "stopped", lifecycleState: "finalized" });
+    assert.equal(flushed, 1);
+});

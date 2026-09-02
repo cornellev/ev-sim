@@ -12,7 +12,7 @@ import {
 } from "@tabler/icons-react";
 
 import { Button, Field, NativeSelect } from "../../ui";
-import { environmentDocumentFrom, projectPointToRoadNetwork } from "../route/index.js";
+import { environmentDocumentFrom, filletPolyline, followRadiusM, FOLLOW_PATH_DEFAULT_KINEMATICS, projectPointToRoadNetwork } from "../route/index.js";
 import ScenarioMapViewport from "./ScenarioMapViewport.js";
 import { orderedWaypoints, renumberWaypoints } from "./scenarioUiModel.js";
 import styles from "./ScenarioWorkspace.module.css";
@@ -111,6 +111,9 @@ export default function RouteMapEditor({
     const pathPoints = route?.verification?.polyline
         || route?.verification?.sections?.flatMap((section, index) => index ? section.polyline?.slice(1) || [] : section.polyline || [])
         || [];
+    const followPoints = pathPoints.length > 2
+        ? filletPolyline(pathPoints, followRadiusM(FOLLOW_PATH_DEFAULT_KINEMATICS))
+        : pathPoints;
 
     return (
         <section className={styles.routeEditor} aria-label={`${route?.name || "Actor"} route editor`}>
@@ -151,6 +154,15 @@ export default function RouteMapEditor({
                                 <polyline
                                     className={styles.verifiedPath}
                                     points={pathPoints.map((point) => {
+                                        const screen = toScreen(point);
+                                        return `${screen.x},${screen.y}`;
+                                    }).join(" ")}
+                                />
+                            )}
+                            {followPoints.length > 1 && (
+                                <polyline
+                                    className={styles.followPath}
+                                    points={followPoints.map((point) => {
                                         const screen = toScreen(point);
                                         return `${screen.x},${screen.y}`;
                                     }).join(" ")}

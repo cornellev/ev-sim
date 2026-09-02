@@ -1,10 +1,15 @@
 import * as THREE from "three";
-import { getRoutePolyline } from "./route/index.js";
+import {
+    FOLLOW_PATH_DEFAULT_KINEMATICS,
+    followPolylineFromRoute,
+    getRoutePolyline,
+} from "./route/index.js";
 
 const COLORS = Object.freeze({
     zone: 0x50a7ff,
     zoneActive: 0xffb454,
     route: 0x63d7a4,
+    follow: 0x3ecf8e,
     ego: 0xffffff,
     actor: 0xaab4c3,
 });
@@ -124,11 +129,24 @@ export class ScenarioDiagnostics {
         ));
         if (points.length < 2) return;
         const geometry = new THREE.BufferGeometry().setFromPoints(points);
-        const material = new THREE.LineBasicMaterial({ color: COLORS.route, transparent: true, opacity: 0.9, depthTest: false });
+        const material = new THREE.LineBasicMaterial({ color: COLORS.route, transparent: true, opacity: 0.45, depthTest: false });
         const line = disableRaycast(new THREE.Line(geometry, material));
         line.name = `scenario-route:${route.id}`;
         line.renderOrder = 1000;
         this.group.add(line);
+
+        const follow = followPolylineFromRoute(route, FOLLOW_PATH_DEFAULT_KINEMATICS).map((entry) => new THREE.Vector3(
+            Number(entry.x || 0),
+            Number(entry.y || 0) + 0.1,
+            Number(entry.z || 0),
+        ));
+        if (follow.length < 2) return;
+        const followGeometry = new THREE.BufferGeometry().setFromPoints(follow);
+        const followMaterial = new THREE.LineBasicMaterial({ color: COLORS.follow, transparent: true, opacity: 0.95, depthTest: false });
+        const followLine = disableRaycast(new THREE.Line(followGeometry, followMaterial));
+        followLine.name = `scenario-follow:${route.id}`;
+        followLine.renderOrder = 1001;
+        this.group.add(followLine);
     }
 
     _addRole(actor) {

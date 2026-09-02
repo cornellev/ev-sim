@@ -6,8 +6,12 @@ import {
 } from "./ScenarioMetrics.js";
 import {
     distanceToRouteEnd,
+    followPolylineFromRoute,
+    followRadiusM,
+    FOLLOW_PATH_DEFAULT_KINEMATICS,
     projectPoseToRoute,
-    sampleRoute,
+    resolveFollowerKinematics,
+    routeFollowerCommand,
 } from "./route/index.js";
 import {
     SCENARIO_SCRIPT_CONTRACTS,
@@ -73,13 +77,6 @@ function flagPath(flag) {
     const name = String(flag || "").trim();
     if (!name) return "";
     return name.startsWith("scenario.") ? name : `scenario.flags.${name}`;
-}
-
-function normalizeAngle(value) {
-    let result = finite(value);
-    while (result > Math.PI) result -= Math.PI * 2;
-    while (result < -Math.PI) result += Math.PI * 2;
-    return result;
 }
 
 function outputLabel(mapping = {}) {
@@ -153,6 +150,8 @@ export class ScenarioRuntime {
         this.effects = [];
         this.effectSequence = 0;
         this.controllerCommands = new Map();
+        this.followPathCache = new Map();
+        this.followProgress = new Map();
         this.sensorBaselines = new Map();
         this.runners = new Map();
         this.scriptParameterInputs = new Map();
@@ -577,23 +576,46 @@ export class ScenarioRuntime {
         }
     }
 
+    _followerKinematics(actorId, vehicle) {
+        const limits = this.controlRuntime?.getLimits?.(actorId);
+        return resolveFollowerKinematics([
+            limits,
+            vehicle?.kinematics,
+            vehicle?.manifest?.kinematics,
+            FOLLOW_PATH_DEFAULT_KINEMATICS,
+        ]);
+    }
+
+    _followPolyline(route, kinematics) {
+        const radius = followRadiusM(kinematics);
+        const cacheKey = `${route.id || "route"}:${radius.toFixed(6)}`;
+        const cached = this.followPathCache.get(cacheKey);
+        if (cached) return cached;
+        const polyline = followPolylineFromRoute(route, kinematics);
+        this.followPathCache.set(cacheKey, polyline);
+        return polyline;
+    }
+
     _followRoute(route) {
         const vehicle = this._vehicle(route.actorId);
         if (!vehicle) return;
-        const projection = projectPoseToRoute(route, vehicle.position);
-        const totalLength = finite(route.totalLength ?? route.verification?.totalLength, 0);
-        const lookaheadMeters = Math.max(1.5, Math.abs(finite(route.initialSpeedMps)) * 0.6);
-        const progress = Math.min(1, finite(projection?.progress) + (totalLength > EPSILON ? lookaheadMeters / totalLength : 1));
-        const target = sampleRoute(route, progress) ?? route.waypoints?.at(-1)?.position;
-        if (!target) return;
-        const dx = finite(target.x) - finite(vehicle.position?.x);
-        const dz = finite(target.z) - finite(vehicle.position?.z);
-        const desiredYaw = -Math.atan2(dz, dx);
-        const yaw = finite(vehicle.rotation?.y);
-        const steering = Math.max(-0.65, Math.min(0.65, normalizeAngle(desiredYaw - yaw) * 0.9));
-        const remaining = distanceToRouteEnd(route, vehicle.position);
-        const speed = remaining <= 0.15 ? 0 : finite(route.initialSpeedMps);
-        this._setControllerCommand(route.actorId, speed, steering);
+        const kinematics = this._followerKinematics(route.actorId, vehicle);
+        const followPolyline = this._followPolyline(route, kinematics);
+        const achieved = this.controlRuntime?.getSnapshot?.(route.actorId)?.achieved?.speedMps;
+        const lastAlong = this.followProgress.get(route.actorId) ?? 0;
+        const command = routeFollowerCommand({
+            position: vehicle.position,
+            yaw: finite(vehicle.rotation?.y),
+            cruiseSpeedMps: finite(route.initialSpeedMps),
+            achievedSpeedMps: Number.isFinite(achieved) ? achieved : finite(vehicle.velocity?.x),
+            followPolyline,
+            kinematics,
+            minDistanceAlong: lastAlong,
+        });
+        if (Number.isFinite(command.distanceAlong)) {
+            this.followProgress.set(route.actorId, Math.max(lastAlong, command.distanceAlong));
+        }
+        this._setControllerCommand(route.actorId, command.speedMps, command.steeringRad);
     }
 
     _runControllerScript(route, dt) {

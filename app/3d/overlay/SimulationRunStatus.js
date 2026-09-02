@@ -50,15 +50,17 @@ export function SimulationRunStatus({ simState, runState, recordingState, sensor
     const loggingPolicy = manifest?.logging?.policy;
     const recordingLabel = recordingState?.status === "error"
         ? "Log error"
-        : recordingState?.active
-            ? "Recording"
-            : recordingState?.status === "starting"
-                ? "Opening log"
-                : loggingPolicy === "disabled"
-                    ? "Disabled"
-                    : loggingPolicy
-                        ? `Ready (${loggingPolicy})`
-                        : "Off";
+        : recordingState?.status === "stopping"
+            ? "Cleaning up"
+            : recordingState?.active
+                ? "Recording"
+                : recordingState?.status === "starting"
+                    ? "Opening log"
+                    : loggingPolicy === "disabled"
+                        ? "Disabled"
+                        : loggingPolicy
+                            ? `Ready (${loggingPolicy})`
+                            : "Off";
     const recordingTone = recordingState?.status === "error"
         ? "text-rose-300"
         : recordingState?.active

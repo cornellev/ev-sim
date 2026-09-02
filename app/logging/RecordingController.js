@@ -111,15 +111,51 @@ export class RecordingController {
         this._lastSamples = new Map();
         this._ruleCache = new Map();
         this._simulation = null;
+        this._unsubscribeSim = null;
+        this._simClockStopped = false;
+        this._flushTotalBytes = 0;
         this.haltSimulationOnError = true;
         this.maxQueueBytes = Math.max(1, Number(maxQueueBytes) || DEFAULT_MAX_QUEUE_BYTES);
     }
 
     attachSimulation(simulation) {
+        if (this._simulation === simulation) return;
+        this._unsubscribeSim?.();
+        this._unsubscribeSim = null;
         this._simulation = simulation;
+        this._simClockStopped = false;
+        this._unsubscribeSim = simulation?.subscribe?.((state) => this._handleSimulationSnapshot(state)) || null;
+    }
+
+    _pendingBytes() {
+        return this.queuedBytes + Math.max(0, Number(this.encoder?.byteEstimate) || 0);
+    }
+
+    _flushProgress(pendingBytes = this._pendingBytes()) {
+        const total = Math.max(this._flushTotalBytes || 0, pendingBytes);
+        if (this.status !== "stopping" && this._flushTotalBytes <= 0) return null;
+        if (total <= 0) return this.status === "stopping" ? 1 : 0;
+        return Math.max(0, Math.min(1, 1 - pendingBytes / total));
+    }
+
+    _markFlushBaseline() {
+        this._flushTotalBytes = Math.max(this._flushTotalBytes || 0, this._pendingBytes());
+    }
+
+    _handleSimulationSnapshot(state) {
+        const stoppedNow = state?.status === "stopped" || state?.lifecycleState === "finalized";
+        const wasStopped = this._simClockStopped;
+        this._simClockStopped = Boolean(stoppedNow);
+        if (stoppedNow && !wasStopped && this.status === "recording") {
+            this._markFlushBaseline();
+            this._flush();
+            this._markFlushBaseline();
+            this._emit();
+        }
     }
 
     getSnapshot() {
+        const pendingBytes = this._pendingBytes();
         return {
             status: this.status,
             active: Boolean(this.session) && ["recording", "stopping", "error"].includes(this.status),
@@ -129,6 +165,10 @@ export class RecordingController {
             startedAt: this.startedAt,
             bytesWritten: this.bytesWritten,
             queuedBytes: this.queuedBytes,
+            pendingBytes,
+            encoderBytes: Math.max(0, Number(this.encoder?.byteEstimate) || 0),
+            flushTotalBytes: Math.max(this._flushTotalBytes || 0, this.status === "stopping" ? pendingBytes : 0),
+            flushProgress: this._flushProgress(pendingBytes),
             droppedSamples: this.droppedSamples,
             maxQueueBytes: this.maxQueueBytes,
         };
@@ -180,6 +220,7 @@ export class RecordingController {
             this.startedAt = Date.now();
             this.bytesWritten = 0;
             this.queuedBytes = 0;
+            this._flushTotalBytes = 0;
             this.droppedSamples = 0;
             this.sequence = 0;
             this._uploadChain = Promise.resolve();
@@ -308,6 +349,7 @@ export class RecordingController {
         this._lastValues.clear();
         this._lastSamples.clear();
         this.queuedBytes = 0;
+        this._flushTotalBytes = 0;
         if (this.encoder) {
             this.encoder.records = [];
             this.encoder._byteEstimate = 0;
@@ -336,6 +378,7 @@ export class RecordingController {
                 const result = await uploadWithRetry(this.transport, this.session.id, sequence, batch);
                 this.bytesWritten = result.bytesWritten;
                 this.queuedBytes = Math.max(0, this.queuedBytes - batch.bytes.byteLength);
+                if (this.status === "recording" && this._pendingBytes() === 0) this._flushTotalBytes = 0;
                 this._emit();
             })
             .catch((error) => {
@@ -379,6 +422,8 @@ export class RecordingController {
     async stop(finalizePatch = {}) {
         if (!this.session || !["recording", "error"].includes(this.status)) return null;
         this.status = "stopping";
+        this._flushTotalBytes = this._pendingBytes();
+        this._emit();
         clearInterval(this._flushTimer);
         this._flushTimer = null;
         this._unsubscribe?.();
@@ -392,7 +437,9 @@ export class RecordingController {
             this.store.descriptors(),
             finalTimeUs,
         );
+        this._flushTotalBytes = this._pendingBytes();
         this._flush();
+        this._flushTotalBytes = Math.max(this._flushTotalBytes, this._pendingBytes());
         this._emit();
         try {
             let uploadError = null;

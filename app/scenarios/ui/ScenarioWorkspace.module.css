@@ -1306,6 +1306,15 @@
     stroke: #b9c7b6;
     stroke-linejoin: round;
     stroke-width: 5;
+    opacity: 0.55;
+}
+
+.followPath {
+    fill: none;
+    stroke: #63d7a4;
+    stroke-linejoin: round;
+    stroke-linecap: round;
+    stroke-width: 3.5;
 }
 
 .mapWaypoint {

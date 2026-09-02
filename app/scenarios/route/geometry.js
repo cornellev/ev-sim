@@ -1,8 +1,11 @@
+import { canonicalFiniteNumber } from "../../simulation/kernel/SimulationHashes.js";
+
 const EPSILON = 1e-9;
 
 export function finiteNumber(value, fallback = 0) {
     const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : fallback;
+    if (!Number.isFinite(parsed)) return fallback;
+    return canonicalFiniteNumber(parsed);
 }
 
 export function pointFrom(value, fallback = null) {
@@ -14,9 +17,9 @@ export function pointFrom(value, fallback = null) {
     const z = Number(source.z ?? source.latitude ?? source.lat);
     if (!Number.isFinite(x) || !Number.isFinite(z)) return fallback;
     return {
-        x,
+        x: canonicalFiniteNumber(x),
         y: finiteNumber(source.y ?? source.altitude, 0),
-        z,
+        z: canonicalFiniteNumber(z),
     };
 }
 
@@ -122,7 +125,7 @@ export function sampleArcLengthPolyline(points, percent) {
     };
 }
 
-export function projectPointToPolyline(value, points) {
+export function projectPointToPolyline(value, points, options = {}) {
     const point = pointFrom(value);
     const arc = buildArcLengthPolyline(points);
     if (!point || arc.polyline.length === 0) return null;
@@ -139,11 +142,16 @@ export function projectPointToPolyline(value, points) {
         };
     }
 
+    const minDistanceAlong = Number.isFinite(options.minDistanceAlong)
+        ? options.minDistanceAlong
+        : Number.NEGATIVE_INFINITY;
+
     let best = null;
     for (let index = 0; index < arc.polyline.length - 1; index += 1) {
         const projection = projectPointToSegment(point, arc.polyline[index], arc.polyline[index + 1]);
         const segmentLength = arc.cumulativeDistances[index + 1] - arc.cumulativeDistances[index];
         const distanceAlong = arc.cumulativeDistances[index] + projection.t * segmentLength;
+        if (distanceAlong + EPSILON < minDistanceAlong) continue;
         const start = arc.polyline[index];
         const end = arc.polyline[index + 1];
         const dx = end.x - start.x;
@@ -166,7 +174,44 @@ export function projectPointToPolyline(value, points) {
             best = candidate;
         }
     }
-    return best;
+    if (best) return best;
+
+    // Forward search found nothing (min is past the path or skipped every segment).
+    // Stay on the remaining path instead of snapping backward to an overlapping visit.
+    if (Number.isFinite(options.minDistanceAlong) && arc.totalLength > EPSILON) {
+        const target = Math.max(0, Math.min(arc.totalLength, minDistanceAlong));
+        let segment = arc.polyline.length - 2;
+        for (let index = 0; index < arc.cumulativeDistances.length - 1; index += 1) {
+            if (target <= arc.cumulativeDistances[index + 1] + EPSILON) {
+                segment = index;
+                break;
+            }
+        }
+        const start = arc.polyline[segment];
+        const end = arc.polyline[segment + 1];
+        const startDistance = arc.cumulativeDistances[segment];
+        const segmentLength = arc.cumulativeDistances[segment + 1] - startDistance;
+        const t = segmentLength <= EPSILON ? 0 : (target - startDistance) / segmentLength;
+        const clamped = {
+            x: start.x + (end.x - start.x) * t,
+            y: start.y + (end.y - start.y) * t,
+            z: start.z + (end.z - start.z) * t,
+        };
+        const dx = end.x - start.x;
+        const dz = end.z - start.z;
+        const length = Math.hypot(dx, dz);
+        return {
+            point: clamped,
+            t,
+            distance: distanceXZ(point, clamped),
+            distanceAlong: target,
+            progress: target / arc.totalLength,
+            segment,
+            heading: Math.atan2(dx, dz),
+            tangent: length <= EPSILON ? { x: 1, z: 0 } : { x: dx / length, z: dz / length },
+        };
+    }
+    return null;
 }
 
 /** Normalize an angle into (-π, π]. */
