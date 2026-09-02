@@ -12,6 +12,8 @@ from cev_sim.errors import CevSimConfigurationError
 
 
 def test_rfc8785_bytes_match_javascript_canonical_stringify(repository_root: Path) -> None:
+    if not (repository_root / "node_modules").is_dir():
+        pytest.skip("JavaScript workspace dependencies are not installed")
     value = {
         "z": -0.0,
         "unicode": {"😀": "astral", "é": "accent", "a": "ascii"},

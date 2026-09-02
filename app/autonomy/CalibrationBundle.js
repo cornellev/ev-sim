@@ -8,6 +8,7 @@ import {
     eulerToQuaternion,
     rep103PoseToThree,
 } from "./CoordinateFrames.js";
+import { canonicalNumericTree } from "../simulation/kernel/SimulationHashes.js";
 
 function text(value, fallback = "") {
     const normalized = String(value ?? "").trim();
@@ -140,7 +141,7 @@ export function buildCalibrationBundle(manifest, options = {}) {
         frameIds.add(sensor.measurementFrameId);
     }
 
-    const bundle = {
+    const bundle = canonicalNumericTree({
         kind: "cev-sim.calibration-bundle",
         version: 2,
         manifestId: manifest.id,
@@ -158,7 +159,7 @@ export function buildCalibrationBundle(manifest, options = {}) {
         sensors,
         staticTransforms,
         frameIds: [...frameIds].sort(),
-    };
+    });
     bundle.hash = calibrationBundleHash(bundle);
     return bundle;
 }

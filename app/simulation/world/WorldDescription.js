@@ -1,6 +1,6 @@
 import { createBuiltInIGVCEnvironmentDocument } from "../../3d/igvc/IGVCEnvironmentDocument.js";
 import { hashEnvironmentRoadNetwork } from "../../scenarios/route/roadGraph.js";
-import { canonicalizeSimulationValue, simulationSha256 } from "../kernel/SimulationHashes.js";
+import { canonicalFiniteNumber, canonicalizeSimulationValue, simulationSha256 } from "../kernel/SimulationHashes.js";
 
 export const WORLD_DESCRIPTION_KIND = "cev-sim.world-description";
 export const WORLD_DESCRIPTION_VERSION = 1;
@@ -28,7 +28,7 @@ export function compareUtf8(left, right) {
 function finite(value, label) {
     const result = Number(value);
     if (!Number.isFinite(result)) throw new TypeError(`${label} must be finite.`);
-    return Object.is(result, -0) ? 0 : result;
+    return canonicalFiniteNumber(result);
 }
 
 function positive(value, label, fallback = null) {

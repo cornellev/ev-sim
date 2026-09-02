@@ -10,7 +10,7 @@ language-neutral API authority is
 - Current milestone: **PR 12 — implementation complete; external hardware acceptance pending**
 - Next planned milestone: **None — the numbered headless implementation roadmap is complete**
 - Default implementation/review reasoning level: **Extra High**
-- Last updated: **2026-08-31** (browser play-loop canonical-state v2)
+- Last updated: **2026-09-02** (portable hashed-number canonicalization)
 
 Progress:
 
@@ -843,3 +843,27 @@ plus latest sample. Episode/semantic hash algorithms, proto field numbers, and
 per-step hashing cadence are unchanged. Browser RAF notifications use a shallow
 HUD snapshot and no longer `structuredClone` the resolved run bundle every
 frame.
+
+### 2026-09-02 — Portable hashed-number canonicalization
+
+Hosted macOS/Linux semantic parity was comparing independently resolved
+bundle hashes. IGVC Mercator projection, road hypotenuses, and other derived
+geometry differ by 1 ULP across CPU libm implementations, so `resolvedHash`,
+`simulationSemanticHash`, and `episodeHash` diverged even when discrete
+tensors matched and numeric observations stayed well inside the declared
+Float64/Float32 tolerances.
+
+v1 hash algorithms, field sets, and `SIMULATION_HASH_VERSION` are unchanged.
+RFC 8785 `canonicalStringify` stays byte-identical with Python `rfc8785`.
+Finite numbers that enter hashed world, route, calibration, lidar, and
+simulation-identity documents round to 6 decimal places first so the same
+authored environment resolves to the same identity hashes on linux-x64 and
+darwin-arm64. Twelve decimal places left Mercator local-frame cancellation
+(~1e-9 m) in the hash; six places absorb that noise at micrometer scale.
+
+Python unit CI installs `./python[test]` without Stable-Baselines3. Collection
+of `test_integration.py` is skipped unless that extra is present; VecEnv seed
+coverage remains an optional unit test behind `importorskip`. JS-backed unit
+tests skip unless `node_modules` is installed; the Python version matrix runs
+`npm ci` so those checks still execute.
+

@@ -21,6 +21,7 @@ import { validateSensorRigFrames, validateSyncGroups } from "../simulation/Trans
 import { validateScalarParameterTarget } from "../scenarios/ScenarioDocument.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
+import { canonicalNumericTree } from "./kernel/SimulationHashes.js";
 
 export const RUN_MANIFEST_KIND = "cev-sim.run-manifest";
 export const RUN_MANIFEST_VERSION = 9;
@@ -834,5 +835,7 @@ export function stripRunMetadata(value) {
 
 /** Full portable resolved-run integrity hash. Keep this distinct from simulationSemanticHash. */
 export function computeResolvedRunHash(value) {
-    return bytesToHex(sha256(new TextEncoder().encode(canonicalStringify(stripRunMetadata(value)))));
+    return bytesToHex(sha256(new TextEncoder().encode(
+        canonicalStringify(canonicalNumericTree(stripRunMetadata(value))),
+    )));
 }

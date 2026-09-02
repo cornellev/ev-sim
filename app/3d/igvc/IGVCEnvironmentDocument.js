@@ -1,3 +1,5 @@
+import { canonicalFiniteNumber } from "../../simulation/kernel/SimulationHashes.js";
+
 const ROAD_COORDINATES = `42°40'05.93"N 83°13'03.15"W -> 42°40'04.71"N 83°13'03.11"W
 42°40'04.59"N 83°13'02.44"W -> 42°40'04.59"N 83°13'02.95"W
 42°40'04.58"N 83°13'03.24"W -> 42°40'04.57"N 83°13'03.78"W
@@ -48,8 +50,8 @@ function parseCoordinate(value) {
 function toMercator({ latitude, longitude }) {
     const radius = 6_378_137;
     return {
-        x: radius * longitude * Math.PI / 180,
-        z: radius * Math.log(Math.tan(latitude * Math.PI / 360 + Math.PI / 4)),
+        x: canonicalFiniteNumber(radius * longitude * Math.PI / 180),
+        z: canonicalFiniteNumber(radius * Math.log(Math.tan(latitude * Math.PI / 360 + Math.PI / 4))),
     };
 }
 
@@ -140,11 +142,14 @@ export function createBuiltInIGVCEnvironmentDocument() {
     const origin = geographicRoads[0][0];
     const localCoordinate = (latitude, longitude) => {
         const projected = toMercator(parseCoordinate(`${latitude} ${longitude}`));
-        return { x: projected.x - origin.x, z: -(projected.z - origin.z) };
+        return {
+            x: canonicalFiniteNumber(projected.x - origin.x),
+            z: canonicalFiniteNumber(-(projected.z - origin.z)),
+        };
     };
     const roads = geographicRoads.map((road) => road.map((point) => ({
-        x: point.x - origin.x,
-        z: -(point.z - origin.z),
+        x: canonicalFiniteNumber(point.x - origin.x),
+        z: canonicalFiniteNumber(-(point.z - origin.z)),
     })));
     const nodes = [];
     const links = new Map();
@@ -156,7 +161,12 @@ export function createBuiltInIGVCEnvironmentDocument() {
             z: sum.z + point.z / selected.points.length,
         }), { x: 0, z: 0 });
         const id = `intersection:${intersectionIndex}`;
-        nodes.push({ id, x: center.x, z: center.z, kind: "intersection" });
+        nodes.push({
+            id,
+            x: canonicalFiniteNumber(center.x),
+            z: canonicalFiniteNumber(center.z),
+            kind: "intersection",
+        });
         roadIndexes.forEach((roadIndex, offset) => {
             const entries = links.get(roadIndex) ?? [];
             entries.push({ id, endpoint: (selected.mask >> offset) & 1 });

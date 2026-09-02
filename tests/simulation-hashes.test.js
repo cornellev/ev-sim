@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
     canonicalEpisodeIdentity,
+    canonicalFiniteNumber,
     canonicalSimulationStringify,
     computeEpisodeHash,
     computeSimulationSemanticHash,
@@ -11,7 +12,7 @@ import {
     simulationSha256,
     TrajectoryHasher,
 } from "../app/simulation/kernel/SimulationHashes.js";
-import { createDefaultRunManifest } from "../app/simulation/RunManifest.js";
+import { computeResolvedRunHash, createDefaultRunManifest } from "../app/simulation/RunManifest.js";
 
 function resolved(overrides = {}) {
     return {
@@ -123,4 +124,14 @@ test("canonicalSimulationStringify golden string stays stable for mixed keys", (
     const canonical = canonicalSimulationStringify(value);
     assert.equal(canonical, '{"a":{"m":1,"😀":2},"nested":[{"a":2,"b":1}],"z":2}');
     assert.equal(simulationSha256(value), "85f52aca8ef9bdeb38e685ace34fc7a3955d8cd3b0afd0e542a7a330b01d3172");
+});
+
+test("canonical numbers absorb sub-micrometer float noise across hashers", () => {
+    const value = 42.123456789012;
+    const perturbed = value + 4e-9;
+    assert.notEqual(value, perturbed);
+    assert.equal(canonicalFiniteNumber(value), canonicalFiniteNumber(perturbed));
+    assert.equal(simulationSha256({ x: value }), simulationSha256({ x: perturbed }));
+    assert.equal(computeResolvedRunHash({ x: value }), computeResolvedRunHash({ x: perturbed }));
+    assert.equal(canonicalSimulationStringify({ x: Math.PI }), '{"x":3.141593}');
 });

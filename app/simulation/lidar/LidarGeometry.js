@@ -1,6 +1,6 @@
 import { perceptionClassId } from "../../autonomy/PerceptionLabelCatalog.js";
 import { compareUtf8 } from "../world/WorldDescription.js";
-import { canonicalizeSimulationValue, simulationSha256 } from "../kernel/SimulationHashes.js";
+import { canonicalFiniteNumber, canonicalizeSimulationValue, simulationSha256 } from "../kernel/SimulationHashes.js";
 import { allocateLidarInstanceIds, stableInstanceIdFromSource } from "./LidarInstanceIds.js";
 
 export const LIDAR_GEOMETRY_KIND = "cev-sim.lidar-geometry";
@@ -10,7 +10,7 @@ export const INTERSECTION_SEGMENTS = 64;
 function finite(value, label) {
     const result = Number(value);
     if (!Number.isFinite(result)) throw new TypeError(`${label} must be finite.`);
-    return Object.is(result, -0) ? 0 : result;
+    return canonicalFiniteNumber(result);
 }
 
 function vec3(value, label) {
