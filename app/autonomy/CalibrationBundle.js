@@ -8,6 +8,7 @@ import {
     eulerToQuaternion,
     rep103PoseToThree,
 } from "./CoordinateFrames.js";
+import { canonicalFiniteNumber } from "../simulation/kernel/SimulationHashes.js";
 
 function text(value, fallback = "") {
     const normalized = String(value ?? "").trim();
@@ -16,6 +17,7 @@ function text(value, fallback = "") {
 
 function canonicalStringify(value) {
     const normalize = (entry) => {
+        if (typeof entry === "number" && Number.isFinite(entry)) return canonicalFiniteNumber(entry);
         if (Array.isArray(entry)) return entry.map(normalize);
         if (!entry || typeof entry !== "object") return entry;
         return Object.fromEntries(

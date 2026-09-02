@@ -1,3 +1,5 @@
+import { canonicalFiniteNumber } from "../../simulation/kernel/SimulationHashes.js";
+
 /**
  * JSON-compatible stable serialization used by scenario route hashes.
  * Object keys and Map entries are sorted; array order remains significant.
@@ -13,6 +15,7 @@ export function stableStringify(value) {
     const normalize = (item) => {
         if (item === null || typeof item !== "object") {
             if (typeof item === "number" && !Number.isFinite(item)) return null;
+            if (typeof item === "number") return canonicalFiniteNumber(item);
             return item;
         }
 

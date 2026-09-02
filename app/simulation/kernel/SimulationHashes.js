@@ -3,6 +3,17 @@ import { bytesToHex } from "@noble/hashes/utils.js";
 
 export const SIMULATION_HASH_VERSION = 1;
 
+/** Decimal places used so hashed floats are stable across CPU libm implementations. */
+export const CANONICAL_NUMBER_DECIMALS = 12;
+
+export function canonicalFiniteNumber(value) {
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+        throw new TypeError("Simulation hashes require finite numbers.");
+    }
+    const rounded = Number(value.toFixed(CANONICAL_NUMBER_DECIMALS));
+    return Object.is(rounded, -0) ? 0 : rounded;
+}
+
 const textEncoder = new TextEncoder();
 const utf8KeyCache = new Map();
 const VOLATILE_KEYS = new Set([
@@ -55,10 +66,7 @@ export function canonicalizeSimulationValue(value, seen = new WeakSet()) {
         return { $bigint: value.toString(10) };
     }
     if (typeof value === "number") {
-        if (!Number.isFinite(value)) {
-            throw new TypeError("Simulation hashes require finite numbers.");
-        }
-        return Object.is(value, -0) ? 0 : value;
+        return canonicalFiniteNumber(value);
     }
     if (typeof value !== "object") return value;
 

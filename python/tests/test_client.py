@@ -29,7 +29,6 @@ from cev_sim.config import (
 )
 from cev_sim.env import CevSimEnv
 from cev_sim.headless.v1 import headless_pb2 as pb
-from cev_sim.sb3 import CevSimVecEnv
 
 
 def capabilities() -> pb.GetCapabilitiesResponse:
@@ -156,6 +155,11 @@ def test_unseeded_seed_streams_are_reproducible() -> None:
     env._np_random = np.random.default_rng(91)
     assert [env._reset_seed(None) for _ in range(3)] == first
     assert env._reset_seed(2**64 - 1) == 2**64 - 1
+
+
+def test_unseeded_vecenv_seed_streams_are_reproducible() -> None:
+    pytest.importorskip("stable_baselines3")
+    from cev_sim.sb3 import CevSimVecEnv
 
     vector = object.__new__(CevSimVecEnv)
     vector._rngs = [np.random.default_rng(7), np.random.default_rng(8)]

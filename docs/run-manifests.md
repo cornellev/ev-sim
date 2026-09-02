@@ -234,7 +234,9 @@ artifact paths, runner labels, and baseline comparisons never enter
 
 Cross-platform parity reports record the already-resolved bundle hashes and
 backend/profile identities, then compare a semantic projection under the
-declared Float64/Float32/CPU-LiDAR tolerances. They do not re-resolve or mutate
+declared Float64/Float32/CPU-LiDAR tolerances. Finite numbers that enter those
+identity hashes round to 12 decimal places so independently resolved worlds stay
+portable across CPU libm implementations. They do not re-resolve or mutate
 the bundle. Same-platform paths still require exact episode/trajectory hashes
 and tensor bytes. See [Headless release and CI gates](headless-release.md).
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import subprocess
 from pathlib import Path
@@ -9,6 +10,13 @@ import pytest
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 CLI_PATH = REPOSITORY_ROOT / "bin" / "cev-sim.js"
+
+
+def pytest_ignore_collect(collection_path: Path, config: pytest.Config) -> bool:
+    del config
+    if collection_path.name != "test_integration.py":
+        return False
+    return importlib.util.find_spec("stable_baselines3") is None
 
 
 @pytest.fixture(scope="session")

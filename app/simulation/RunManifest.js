@@ -22,6 +22,8 @@ import { validateScalarParameterTarget } from "../scenarios/ScenarioDocument.js"
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 
+import { canonicalFiniteNumber } from "./kernel/SimulationHashes.js";
+
 export const RUN_MANIFEST_KIND = "cev-sim.run-manifest";
 export const RUN_MANIFEST_VERSION = 9;
 export const LEGACY_RUN_MANIFEST_VERSION = 1;
@@ -809,6 +811,7 @@ export function validateRunManifest(value) {
 
 export function canonicalStringify(value) {
     const normalize = (entry) => {
+        if (typeof entry === "number" && Number.isFinite(entry)) return canonicalFiniteNumber(entry);
         if (Array.isArray(entry)) return entry.map(normalize);
         if (!entry || typeof entry !== "object") return entry;
         return Object.fromEntries(
