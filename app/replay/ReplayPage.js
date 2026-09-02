@@ -28,9 +28,10 @@ import { subscribeStorageEvents } from "../client/storageEvents.js";
 import { AsyncState, Button, IconButton, NativeSelect, PopoverSurface, StatusMessage, TextInput, WorkspaceFrame, useShortcut } from "../ui";
 import styles from "./ReplayPage.module.css";
 
-function useTimeline(store) {
+function useTimeline(store, options = null) {
     const [state, setState] = useState(() => store.getSnapshot());
-    useEffect(() => store.subscribe(setState), [store]);
+    const uiIntervalMs = options?.uiIntervalMs ?? 0;
+    useEffect(() => store.subscribe(setState, { uiIntervalMs }), [store, uiIntervalMs]);
     return state;
 }
 
@@ -44,7 +45,7 @@ function formatTime(timeUs) {
 
 export default function ReplayPage({ initialLogId, mcpCommand, onOpenAnalysis, onOpenWorkspace }) {
     const timeline = useMemo(() => getTimelineStore(), []);
-    const timelineState = useTimeline(timeline);
+    const timelineState = useTimeline(timeline, { uiIntervalMs: 66 });
     const [logs, setLogs] = useState([]);
     const [selectedId, setSelectedId] = useState(initialLogId || "");
     const [dataset, setDataset] = useState(null);
@@ -193,15 +194,46 @@ export default function ReplayPage({ initialLogId, mcpCommand, onOpenAnalysis, o
         }
     };
 
-    const exactSnapshot = dataset?.snapshotAt(timelineState.timeUs) || {};
+    const simulationStep = dataset?.valueAt("simulation.step", timelineState.timeUs, { clone: false });
+    const simulationStatus = dataset?.valueAt("simulation.status", timelineState.timeUs, { clone: false });
     const selectedLog = logs.find((log) => log.id === selectedId) || null;
     const entityPrefix = selectedEntity ? `vehicles.${selectedEntity}.` : null;
-    const entityRows = entityPrefix ? Object.entries(exactSnapshot).filter(([path]) => path.startsWith(entityPrefix)).slice(0, 7) : [];
-    const nearbyEvents = dataset?.events
-        .map((event, index) => ({ event, index }))
-        .filter(({ event }) => Math.abs(event.timeUs - timelineState.timeUs) <= 750000)
-        .slice(-5) || [];
-    const autonomySnap = dataset?.autonomySnapshotAt?.(timelineState.timeUs, { exactSync }) || null;
+    const entityDescriptorPaths = useMemo(() => {
+        if (!dataset || !entityPrefix) return [];
+        return dataset.descriptors
+            .filter((descriptor) => descriptor.path.startsWith(entityPrefix))
+            .slice(0, 7)
+            .map((descriptor) => descriptor.path);
+    }, [dataset, entityPrefix]);
+    const entityRows = useMemo(() => {
+        if (!dataset || !entityDescriptorPaths.length) return [];
+        return entityDescriptorPaths.map((path) => ({
+            path,
+            value: dataset.valueAt(path, timelineState.timeUs, { clone: false }),
+        }));
+    }, [dataset, entityDescriptorPaths, timelineState.timeUs]);
+    const nearbyEvents = useMemo(() => {
+        if (!dataset) return [];
+        return dataset.eventsNear(timelineState.timeUs, 750000).slice(-5);
+    }, [dataset, timelineState.timeUs]);
+    const autonomySnap = useMemo(() => {
+        if (!dataset || !inspectorOpen) return null;
+        return dataset.autonomySnapshotAt(timelineState.timeUs, { exactSync, clone: false });
+    }, [dataset, exactSync, inspectorOpen, timelineState.timeUs]);
+    const eventMarkers = useMemo(() => {
+        if (!dataset?.events?.length) return null;
+        const durationUs = dataset.durationUs;
+        return dataset.events.map((event, index) => (
+            <button
+                key={`${event.timeUs}-${index}`}
+                type="button"
+                aria-label={`${event.category}: ${event.name}`}
+                onClick={() => timeline.seek(event.timeUs)}
+                className={styles.eventMarker}
+                style={{ left: `${durationUs ? (event.timeUs / durationUs) * 100 : 0}%` }}
+            />
+        ));
+    }, [dataset, timeline]);
 
     const manageTrigger = (
         <IconButton
@@ -256,7 +288,15 @@ export default function ReplayPage({ initialLogId, mcpCommand, onOpenAnalysis, o
         >
             <div className={styles.replayShell}>
                 <section className={styles.sceneRegion}>
-                    {dataset && viewMode === "3d" && <ReplayScene dataset={dataset} timeUs={timelineState.timeUs} selectedEntity={selectedEntity} onSelectEntity={setSelectedEntity} exactSync={exactSync} />}
+                    {dataset && viewMode === "3d" && (
+                        <ReplayScene
+                            dataset={dataset}
+                            timeline={timeline}
+                            selectedEntity={selectedEntity}
+                            onSelectEntity={setSelectedEntity}
+                            exactSync={exactSync}
+                        />
+                    )}
                     {dataset && viewMode === "map" && (
                         <SpatialLogViewer
                             dataset={dataset}
@@ -274,12 +314,12 @@ export default function ReplayPage({ initialLogId, mcpCommand, onOpenAnalysis, o
                     {dataset && (
                         <aside className={styles.inspector} data-open={inspectorOpen || undefined}>
                             <div className={styles.inspectorHeader}><div><p>At cursor</p><strong>{formatTime(timelineState.timeUs)}</strong></div><IconButton className={styles.compactClose} label="Close inspector" onClick={() => setInspectorOpen(false)}><IconX size={16} stroke={1.75} /></IconButton></div>
-                            <div className={styles.metricGrid}><InspectorMetric label="Step" value={exactSnapshot["simulation.step"] ?? "N/A"} /><InspectorMetric label="Status" value={exactSnapshot["simulation.status"] ?? "N/A"} /></div>
+                            <div className={styles.metricGrid}><InspectorMetric label="Step" value={simulationStep ?? "N/A"} /><InspectorMetric label="Status" value={simulationStatus ?? "N/A"} /></div>
                             {dataset.runManifest && <div className={styles.inspectorSection}><p className={styles.sectionLabel}>Recorded run</p><p className={styles.emphasis}>{dataset.runManifest.name}</p><p className={styles.hash}>{dataset.metadata.resolvedHash || dataset.resolvedRun?.resolvedHash}</p>{dataset.runResults && <p className={dataset.runResults.passed ? styles.resultPassed : styles.resultFailed}>{dataset.runResults.passed ? "Assertions passed" : "Assertions failed"} · {dataset.runResults.assertions?.length || 0} checked</p>}</div>}
                             <div className={styles.inspectorSection}>
                                 <p className={styles.sectionLabel}>Selected entity</p>
                                 <p className={styles.emphasis}>{selectedEntity || "No vehicle state"}</p>
-                                {entityRows.map(([path, value]) => <div key={path} className={styles.dataRow}><span>{path.slice(entityPrefix.length)}</span><code>{typeof value === "object" ? JSON.stringify(value) : String(value)}</code></div>)}
+                                {entityRows.map(({ path, value }) => <div key={path} className={styles.dataRow}><span>{path.slice(entityPrefix.length)}</span><code>{typeof value === "object" ? JSON.stringify(value) : String(value)}</code></div>)}
                             </div>
                             <div className={styles.inspectorSection}>
                                 <p className={styles.sectionLabel}>Autonomy at cursor</p>
@@ -300,7 +340,7 @@ export default function ReplayPage({ initialLogId, mcpCommand, onOpenAnalysis, o
                                     </p>
                                 )}
                             </div>
-                            <div className={styles.inspectorSection}><p className={styles.sectionLabel}>Nearby events</p>{nearbyEvents.length === 0 ? <p className={styles.muted}>No events within ±0.75 s</p> : nearbyEvents.map(({ event, index }) => <button key={`${event.id || "event"}-${index}`} onClick={() => timeline.seek(event.timeUs)} className={styles.eventRow}><code>{formatTime(event.timeUs)}</code><span>{event.category} / {event.name}</span></button>)}</div>
+                            <div className={styles.inspectorSection}><p className={styles.sectionLabel}>Nearby events</p>{nearbyEvents.length === 0 ? <p className={styles.muted}>No events within ±0.75 s</p> : nearbyEvents.map((event, index) => <button key={`${event.id || "event"}-${event.timeUs}-${index}`} onClick={() => timeline.seek(event.timeUs)} className={styles.eventRow}><code>{formatTime(event.timeUs)}</code><span>{event.category} / {event.name}</span></button>)}</div>
                         </aside>
                     )}
                 </section>
@@ -324,7 +364,7 @@ export default function ReplayPage({ initialLogId, mcpCommand, onOpenAnalysis, o
                     </div>
                     <div className={styles.timeline}>
                         <input aria-label="Replay timeline" type="range" min="0" max={Math.max(1, timelineState.durationUs)} step="1000" value={Math.min(timelineState.timeUs, Math.max(1, timelineState.durationUs))} disabled={!dataset} onChange={(event) => timeline.seek(Number(event.target.value))} className="timeline-range" />
-                        {dataset?.events.map((event, index) => <button key={`${event.timeUs}-${index}`} type="button" aria-label={`${event.category}: ${event.name}`} onClick={() => timeline.seek(event.timeUs)} className={styles.eventMarker} style={{ left: `${dataset.durationUs ? (event.timeUs / dataset.durationUs) * 100 : 0}%` }} />)}
+                        {eventMarkers}
                     </div>
                 </footer>
             </div>

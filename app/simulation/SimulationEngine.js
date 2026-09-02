@@ -61,6 +61,8 @@ export class SimulationEngine {
         this.data = data;
         this.maxFrameDt = options.maxFrameDt ?? 0.1;
         this.maxSubSteps = options.maxSubSteps ?? 10;
+        this.realtimeStepBudgetMs = options.realtimeStepBudgetMs ?? 12;
+        this._nowMs = typeof options.nowMs === "function" ? options.nowMs : () => performance.now();
         this.gpuCaptureEnabled = true;
         this._displayPixelRatio = null;
 
@@ -450,6 +452,7 @@ export class SimulationEngine {
 
     _advanceSimulation(frameDt) {
         const scaledDt = frameDt * this.speed;
+        const frameStartMs = this.realtime ? this._nowMs() : 0;
         this.gpuCaptureEnabled = true;
         if (!this.deterministic) {
             this._fixedStep(scaledDt);
@@ -470,6 +473,9 @@ export class SimulationEngine {
             subSteps += 1;
             this.gpuCaptureEnabled = false;
             if (shouldContinue === false) break;
+            if (this.realtime && subSteps > 0 && this._nowMs() - frameStartMs > this.realtimeStepBudgetMs) {
+                break;
+            }
         }
     }
 

@@ -32,7 +32,7 @@ The same-origin tab bridge uses `BroadcastChannel("cev-sim-telemetry-v1")`. The 
 
 ## Recording profiles
 
-Profiles are versioned, human-readable JSON persisted under the `logging-profiles-v1` setting. Glob rules run in order and the last matching rule wins.
+Profiles are versioned, human-readable JSON persisted under the `logging-profiles-v1` setting. Glob rules run in order and the last matching rule wins. `LogProfiles` compiles glob patterns to cached `RegExp` instances when a profile is normalized or recording starts; rule resolution is unchanged.
 
 ```json
 {

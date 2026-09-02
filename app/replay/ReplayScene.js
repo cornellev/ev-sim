@@ -29,7 +29,7 @@ function labelSprite(text) {
 
 export default function ReplayScene({
     dataset,
-    timeUs,
+    timeline,
     selectedEntity,
     onSelectEntity,
     exactSync = false,
@@ -37,6 +37,11 @@ export default function ReplayScene({
 }) {
     const mountRef = useRef(null);
     const runtimeRef = useRef(null);
+    const propsRef = useRef({ dataset, timeline, selectedEntity, exactSync, autonomyLayers });
+
+    useEffect(() => {
+        propsRef.current = { dataset, timeline, selectedEntity, exactSync, autonomyLayers };
+    }, [autonomyLayers, dataset, exactSync, selectedEntity, timeline]);
 
     useEffect(() => {
         const mount = mountRef.current;
@@ -74,6 +79,69 @@ export default function ReplayScene({
         const raycaster = new THREE.Raycaster();
         const pointer = new THREE.Vector2();
         const meshes = new Map();
+        let cachedPosePathsFor = null;
+        let posePaths = [];
+
+        const syncScene = () => {
+            const { dataset: activeDataset, timeline: activeTimeline, selectedEntity: activeEntity, exactSync: activeExactSync, autonomyLayers: activeLayers } = propsRef.current;
+            if (!activeDataset || !activeTimeline) return;
+            const timeUs = activeTimeline.getSnapshot().timeUs;
+            if (cachedPosePathsFor !== activeDataset.id) {
+                cachedPosePathsFor = activeDataset.id;
+                posePaths = activeDataset.descriptors
+                    .filter((item) => item.type === "pose3" && item.path.startsWith("vehicles."))
+                    .map((item) => item.path);
+            }
+            const active = new Set();
+            for (const path of posePaths) {
+                const entityId = path.split(".")[1] || path;
+                active.add(entityId);
+                let mesh = meshes.get(entityId);
+                if (!mesh) {
+                    mesh = new THREE.Mesh(
+                        createReplayVehicleGeometry(),
+                        new THREE.MeshStandardMaterial({ color: 0x38bdf8, roughness: 0.58, metalness: 0.18 }),
+                    );
+                    mesh.position.y = 0.45;
+                    mesh.userData.entityId = entityId;
+                    mesh.add(labelSprite(entityId));
+                    scene.add(mesh);
+                    meshes.set(entityId, mesh);
+                }
+                const pose = activeDataset.valueAt(path, timeUs, { interpolate: true, clone: false });
+                if (pose?.position) mesh.position.set(pose.position.x || 0, (pose.position.y || 0) + 0.45, pose.position.z || 0);
+                if (pose?.rotation) mesh.rotation.set(pose.rotation.x || 0, pose.rotation.y || 0, pose.rotation.z || 0, pose.rotation.order || "XYZ");
+                const selected = activeEntity === entityId;
+                mesh.material.color.setHex(selected ? 0xfbbf24 : 0x38bdf8);
+                mesh.material.emissive.setHex(selected ? 0x332100 : 0x00131d);
+            }
+            for (const [entityId, mesh] of meshes) {
+                if (active.has(entityId)) continue;
+                scene.remove(mesh);
+                meshes.delete(entityId);
+                mesh.geometry.dispose();
+                mesh.material.dispose();
+            }
+
+            const autonomy = activeDataset.autonomySnapshotAt?.(timeUs, { exactSync: activeExactSync, clone: false }) || {
+                perception: {},
+                localization: {},
+                controls: null,
+            };
+            let vehiclePose = null;
+            const egoPath = posePaths.find((path) => path === "vehicles.ego.pose") || posePaths[0] || null;
+            if (egoPath) {
+                const pose = activeDataset.valueAt(egoPath, timeUs, { interpolate: true, clone: false });
+                if (pose?.position) {
+                    vehiclePose = {
+                        position: pose.position,
+                        yaw: Number(pose.rotation?.y) || 0,
+                    };
+                }
+            }
+            autonomyOverlay.updateFromSnapshot({ ...autonomy, vehiclePose }, activeLayers);
+        };
+
         const resize = () => {
             const { width, height } = mount.getBoundingClientRect();
             const nextWidth = Math.max(1, Math.round(width));
@@ -87,6 +155,7 @@ export default function ReplayScene({
         resize();
         let frame;
         const render = () => {
+            syncScene();
             controls.update();
             renderer.render(scene, camera);
             frame = requestAnimationFrame(render);
@@ -118,62 +187,6 @@ export default function ReplayScene({
             runtimeRef.current = null;
         };
     }, [onSelectEntity]);
-
-    useEffect(() => {
-        const runtime = runtimeRef.current;
-        if (!runtime || !dataset) return;
-        const posePaths = dataset.descriptors
-            .filter((item) => item.type === "pose3" && item.path.startsWith("vehicles."))
-            .map((item) => item.path);
-        const active = new Set();
-        for (const path of posePaths) {
-            const entityId = path.split(".")[1] || path;
-            active.add(entityId);
-            let mesh = runtime.meshes.get(entityId);
-            if (!mesh) {
-                mesh = new THREE.Mesh(
-                    createReplayVehicleGeometry(),
-                    new THREE.MeshStandardMaterial({ color: 0x38bdf8, roughness: 0.58, metalness: 0.18 }),
-                );
-                mesh.position.y = 0.45;
-                mesh.userData.entityId = entityId;
-                mesh.add(labelSprite(entityId));
-                runtime.scene.add(mesh);
-                runtime.meshes.set(entityId, mesh);
-            }
-            const pose = dataset.valueAt(path, timeUs, { interpolate: true });
-            if (pose?.position) mesh.position.set(pose.position.x || 0, (pose.position.y || 0) + 0.45, pose.position.z || 0);
-            if (pose?.rotation) mesh.rotation.set(pose.rotation.x || 0, pose.rotation.y || 0, pose.rotation.z || 0, pose.rotation.order || "XYZ");
-            const selected = selectedEntity === entityId;
-            mesh.material.color.setHex(selected ? 0xfbbf24 : 0x38bdf8);
-            mesh.material.emissive.setHex(selected ? 0x332100 : 0x00131d);
-        }
-        for (const [entityId, mesh] of runtime.meshes) {
-            if (active.has(entityId)) continue;
-            runtime.scene.remove(mesh);
-            runtime.meshes.delete(entityId);
-            mesh.geometry.dispose();
-            mesh.material.dispose();
-        }
-
-        const autonomy = dataset.autonomySnapshotAt?.(timeUs, { exactSync }) || {
-            perception: {},
-            localization: {},
-            controls: null,
-        };
-        let vehiclePose = null;
-        const egoPath = posePaths.find((path) => path === "vehicles.ego.pose") || posePaths[0] || null;
-        if (egoPath) {
-            const pose = dataset.valueAt(egoPath, timeUs, { interpolate: true });
-            if (pose?.position) {
-                vehiclePose = {
-                    position: pose.position,
-                    yaw: Number(pose.rotation?.y) || 0,
-                };
-            }
-        }
-        runtime.autonomyOverlay.updateFromSnapshot({ ...autonomy, vehiclePose }, autonomyLayers);
-    }, [autonomyLayers, dataset, exactSync, selectedEntity, timeUs]);
 
     return <div ref={mountRef} className="absolute inset-0" aria-label="Read-only replay scene" />;
 }

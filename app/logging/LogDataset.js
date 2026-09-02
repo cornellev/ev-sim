@@ -9,6 +9,19 @@ function clone(value) {
     return JSON.parse(JSON.stringify(value));
 }
 
+function maybeClone(value, shouldClone) {
+    return shouldClone ? clone(value) : value;
+}
+
+function captureStamp(sample) {
+    return Number(
+        sample.value?.captureTimeNs
+        ?? sample.value?.estimate?.captureTimeNs
+        ?? sample.value?.applyTimeNs
+        ?? (sample.timeUs * 1000),
+    );
+}
+
 function getNested(value, path) {
     if (!path) return value;
     return path.split(".").reduce((current, key) => current?.[key], value);
@@ -153,7 +166,7 @@ export class LogDataset {
         }
     }
 
-    valueAt(path, timeUs, { interpolate = false } = {}) {
+    valueAt(path, timeUs, { interpolate = false, clone: shouldClone = true } = {}) {
         const samples = this.series.get(path) || [];
         if (samples.length === 0) return undefined;
         let low = 0;
@@ -165,7 +178,9 @@ export class LogDataset {
         }
         const before = samples[Math.max(0, high)];
         const after = samples[Math.min(samples.length - 1, high + 1)];
-        if (!interpolate || before === after || after.timeUs === before.timeUs) return clone(before.value);
+        if (!interpolate || before === after || after.timeUs === before.timeUs) {
+            return maybeClone(before.value, shouldClone);
+        }
         const amount = Math.min(1, Math.max(0, (timeUs - before.timeUs) / (after.timeUs - before.timeUs)));
         if (typeof before.value === "number" && typeof after.value === "number") {
             return before.value + (after.value - before.value) * amount;
@@ -186,46 +201,80 @@ export class LogDataset {
                 },
             };
         }
-        return clone(before.value);
+        return maybeClone(before.value, shouldClone);
     }
 
     /**
      * Look up by captureTimeNs embedded in visualization/status envelopes.
      * Default mode is latest-at-or-before; exactSync requires equal capture stamps.
      */
-    valueAtCaptureTime(path, captureTimeNs, { exactSync = false } = {}) {
+    _findCaptureLookback(samples, target, { startIndex = 0 } = {}) {
+        let best = null;
+        let bestIndex = -1;
+        for (let index = Math.max(0, startIndex); index < samples.length; index += 1) {
+            const stamp = captureStamp(samples[index]);
+            if (!Number.isFinite(stamp)) continue;
+            if (stamp <= target) {
+                best = { sample: samples[index], stamp };
+                bestIndex = index;
+                continue;
+            }
+            break;
+        }
+        if (best) return { best, bestIndex };
+        let low = 0;
+        let high = samples.length - 1;
+        while (low <= high) {
+            const middle = (low + high) >> 1;
+            const stamp = captureStamp(samples[middle]);
+            if (!Number.isFinite(stamp)) {
+                low = middle + 1;
+                continue;
+            }
+            if (stamp <= target) {
+                best = { sample: samples[middle], stamp };
+                bestIndex = middle;
+                low = middle + 1;
+            } else {
+                high = middle - 1;
+            }
+        }
+        return { best, bestIndex };
+    }
+
+    valueAtCaptureTime(path, captureTimeNs, { exactSync = false, clone: shouldClone = true } = {}) {
         const samples = this.series.get(path) || [];
         if (samples.length === 0) return { value: undefined, ageNs: null, matched: false };
         const target = Number(captureTimeNs);
-        let best = null;
-        for (const sample of samples) {
-            const stamp = Number(
-                sample.value?.captureTimeNs
-                ?? sample.value?.estimate?.captureTimeNs
-                ?? sample.value?.applyTimeNs
-                ?? (sample.timeUs * 1000),
-            );
-            if (!Number.isFinite(stamp)) continue;
-            if (exactSync) {
+        if (exactSync) {
+            for (const sample of samples) {
+                const stamp = captureStamp(sample);
+                if (!Number.isFinite(stamp)) continue;
                 if (stamp === target) {
                     return {
-                        value: clone(sample.value),
+                        value: maybeClone(sample.value, shouldClone),
                         ageNs: 0,
                         matched: true,
                         sampleTimeUs: sample.timeUs,
                         captureTimeNs: stamp,
                     };
                 }
-                continue;
             }
-            if (stamp <= target) best = { sample, stamp };
-            else break;
-        }
-        if (exactSync || !best) {
             return { value: undefined, ageNs: null, matched: false };
         }
+
+        this._captureLookbackCache ||= new Map();
+        const cached = this._captureLookbackCache.get(path);
+        const startIndex = cached && target >= cached.targetNs ? cached.index : 0;
+        const { best, bestIndex } = this._findCaptureLookback(samples, target, { startIndex });
+        if (!best) {
+            return { value: undefined, ageNs: null, matched: false };
+        }
+        if (bestIndex >= 0) {
+            this._captureLookbackCache.set(path, { targetNs: target, index: bestIndex });
+        }
         return {
-            value: clone(best.sample.value),
+            value: maybeClone(best.sample.value, shouldClone),
             ageNs: Math.max(0, target - best.stamp),
             matched: true,
             sampleTimeUs: best.sample.timeUs,
@@ -233,14 +282,15 @@ export class LogDataset {
         };
     }
 
-    autonomySnapshotAt(timeUs, { exactSync = false, captureTimeNs = null } = {}) {
+    autonomySnapshotAt(timeUs, { exactSync = false, captureTimeNs = null, clone: shouldClone = true } = {}) {
         const cursorNs = Number.isFinite(captureTimeNs) ? captureTimeNs : Math.round(Number(timeUs) * 1000);
-        const perception = this.valueAtCaptureTime("visualization.perception.candidate", cursorNs, { exactSync });
-        const oracle = this.valueAtCaptureTime("visualization.perception.oracle", cursorNs, { exactSync });
-        const localization = this.valueAtCaptureTime("visualization.localization.candidate", cursorNs, { exactSync });
-        const localizationError = this.valueAtCaptureTime("visualization.localization.error", cursorNs, { exactSync });
-        const status = this.valueAtCaptureTime("visualization.perception.status", cursorNs, { exactSync });
-        const controls = this.valueAtCaptureTime("visualization.controls.snapshot", cursorNs, { exactSync });
+        const captureOptions = { exactSync, clone: shouldClone };
+        const perception = this.valueAtCaptureTime("visualization.perception.candidate", cursorNs, captureOptions);
+        const oracle = this.valueAtCaptureTime("visualization.perception.oracle", cursorNs, captureOptions);
+        const localization = this.valueAtCaptureTime("visualization.localization.candidate", cursorNs, captureOptions);
+        const localizationError = this.valueAtCaptureTime("visualization.localization.error", cursorNs, captureOptions);
+        const status = this.valueAtCaptureTime("visualization.perception.status", cursorNs, captureOptions);
+        const controls = this.valueAtCaptureTime("visualization.controls.snapshot", cursorNs, captureOptions);
         return {
             captureTimeNs: cursorNs,
             exactSync,
@@ -300,13 +350,28 @@ export class LogDataset {
     }
 }
 
-export function flattenNumericFields(value, prefix = "") {
+const FLATTEN_NUMERIC_FIELD_CAP = 48;
+
+export function flattenNumericFields(value, prefix = "", { maxFields = FLATTEN_NUMERIC_FIELD_CAP } = {}) {
     if (typeof value === "number") return [{ field: prefix, value }];
     if (!value || typeof value !== "object" || ArrayBuffer.isView(value)) return [];
+    if (Array.isArray(value)) {
+        if (value.length === 0 || typeof value[0] !== "object" || value[0] === null) return [];
+        return [];
+    }
     const result = [];
     for (const [key, child] of Object.entries(value)) {
+        if (result.length >= maxFields) break;
         const path = prefix ? `${prefix}.${key}` : key;
-        result.push(...flattenNumericFields(child, path));
+        if (typeof child === "number") {
+            result.push({ field: path, value: child });
+            continue;
+        }
+        if (Array.isArray(child)) {
+            if (child.length === 0 || typeof child[0] !== "object" || child[0] === null) continue;
+            continue;
+        }
+        result.push(...flattenNumericFields(child, path, { maxFields: maxFields - result.length }));
     }
     return result;
 }

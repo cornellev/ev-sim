@@ -34,6 +34,7 @@ export default function SpatialLogViewer({
     compact = false,
     className = "",
     emptyDetail = "Record a run with environment.json and vehicle pose channels to populate the map.",
+    onAutonomyChange = null,
 }) {
     const reactId = useId();
     const [layers, setLayers] = useState(initialLayers);
@@ -48,6 +49,7 @@ export default function SpatialLogViewer({
         primaryEntityId,
         exactSync,
         compareTrails,
+        onAutonomyChange,
     });
 
     const environment = useMemo(() => normalizeEnvironment(model.environment), [model.environment]);

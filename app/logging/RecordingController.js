@@ -37,6 +37,9 @@ async function uploadWithRetry(transport, id, sequence, batch) {
 
 function valuesEqual(a, b) {
     if (Object.is(a, b)) return true;
+    if (a === null || b === null || typeof a !== "object" || typeof b !== "object") {
+        return false;
+    }
     if (ArrayBuffer.isView(a) || ArrayBuffer.isView(b)) {
         if (!(ArrayBuffer.isView(a) && ArrayBuffer.isView(b))) return false;
         if (a.byteLength !== b.byteLength) return false;
@@ -57,10 +60,13 @@ function valuesEqual(a, b) {
 function copyCaptureEntry(entry) {
     if (!entry) return entry;
     const value = entry.value;
+    if (value === null || value === undefined || typeof value !== "object") {
+        return { ...entry, value };
+    }
     if (ArrayBuffer.isView(value)) {
         return { ...entry, value: value.slice() };
     }
-    if (value && typeof value === "object" && ArrayBuffer.isView(value.data)) {
+    if (ArrayBuffer.isView(value.data)) {
         return { ...entry, value: { ...value, data: value.data.slice() } };
     }
     if (typeof structuredClone === "function") {
@@ -70,7 +76,7 @@ function copyCaptureEntry(entry) {
             // Fall through.
         }
     }
-    return { ...entry };
+    return { ...entry, value: JSON.parse(JSON.stringify(value)) };
 }
 
 function lightSnapshot(store) {
@@ -103,6 +109,7 @@ export class RecordingController {
         this._uploadChain = Promise.resolve();
         this._lastValues = new Map();
         this._lastSamples = new Map();
+        this._ruleCache = new Map();
         this._simulation = null;
         this.haltSimulationOnError = true;
         this.maxQueueBytes = Math.max(1, Number(maxQueueBytes) || DEFAULT_MAX_QUEUE_BYTES);
@@ -181,6 +188,7 @@ export class RecordingController {
             this.timeBase = options.timeBase === "simulation" ? "simulation" : "wall";
             this._lastValues.clear();
             this._lastSamples.clear();
+            this._ruleCache.clear();
             for (const attachment of options.attachments || []) this.encoder.addAttachment(attachment);
             const initialTimeUs = 0;
             const initialSnapshot = lightSnapshot(this.store);
@@ -253,7 +261,11 @@ export class RecordingController {
         const descriptor = message.descriptor || { path: message.path, type: message.entry?.type || "json" };
         const heavy = descriptor.logClass === "heavy" || descriptor.type === "bytes" || isHeavyValue(message.entry?.value);
         if (shouldSkipHeavyAlias(this.profile, descriptor, { isHeavy: heavy })) return;
-        const rule = resolveProfileRule(this.profile, descriptor);
+        let rule = this._ruleCache.get(message.path);
+        if (!rule) {
+            rule = resolveProfileRule(this.profile, descriptor);
+            this._ruleCache.set(message.path, rule);
+        }
         if (!rule.enabled) return;
         const previous = this._lastValues.get(message.path);
         if (rule.sampling === "on-change") {

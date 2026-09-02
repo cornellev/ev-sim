@@ -488,7 +488,7 @@ function ScenarioCreateForm({ environments, folders, onCreate, busy }) {
         <div className={styles.createStage}>
             <form className={styles.createForm} onSubmit={(event) => { event.preventDefault(); if (name.trim()) onCreate({ name, description, environmentId, folderId }); }}>
                 <div className={styles.createIcon}><IconRoute size={22} stroke={1.45} aria-hidden="true" /></div>
-                <h1>New Reusable Scenario</h1>
+                <h1>New Scenario</h1>
                 <div className={styles.formStack}>
                     <Field label="Scenario name" required><TextInput autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="Downtown protected left" /></Field>
                     <Field label="Description"><Textarea value={description} onChange={(event) => setDescription(event.target.value)} placeholder="What behavior and failure mode does this scenario exercise?" /></Field>
@@ -500,7 +500,6 @@ function ScenarioCreateForm({ environments, folders, onCreate, busy }) {
                 <Button className={styles.createButton} variant="primary" type="submit" disabled={!name.trim()} loading={busy}><IconPlus size={15} stroke={1.75} /> Create scenario</Button>
             </form>
             <aside className={styles.createGuide}>
-                <span>Authoring sequence</span>
                 <ol><li><strong>Route</strong><p>Define a path and/or behavior for the scenario.</p></li><li><strong>Orchestrate</strong><p>Add events to the scenario.</p></li><li><strong>Define</strong><p>Create conditions for the scenario to pass.</p></li></ol>
                 <p className="pt-[30px]">
                     See documentation for more on scenario authoring.

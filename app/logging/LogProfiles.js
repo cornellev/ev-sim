@@ -113,13 +113,24 @@ function escapeRegExp(value) {
     return value.replace(/[|\\{}()[\]^$+?.]/g, "\\$&");
 }
 
-export function globMatches(pattern, path) {
+const globRegexCache = new Map();
+
+function compileGlobPattern(pattern) {
+    const key = String(pattern || "**");
+    const cached = globRegexCache.get(key);
+    if (cached) return cached;
     const marker = "__DOUBLE_STAR__";
-    const regex = escapeRegExp(String(pattern || "**"))
+    const source = escapeRegExp(key)
         .replace(/\*\*/g, marker)
         .replace(/\*/g, "[^.]*")
         .replaceAll(marker, ".*");
-    return new RegExp(`^${regex}$`).test(String(path || ""));
+    const regex = new RegExp(`^${source}$`);
+    globRegexCache.set(key, regex);
+    return regex;
+}
+
+export function globMatches(pattern, path) {
+    return compileGlobPattern(pattern).test(String(path || ""));
 }
 
 export function normalizeProfile(profile = DEFAULT_REPLAY_PROFILE) {
@@ -136,6 +147,7 @@ export function normalizeProfile(profile = DEFAULT_REPLAY_PROFILE) {
                 ? rule.sampling
                 : "on-change",
             rateHz: Number.isFinite(Number(rule.rateHz)) && Number(rule.rateHz) > 0 ? Number(rule.rateHz) : null,
+            _regex: compileGlobPattern(rule.pattern || "**"),
         })),
     };
 }
@@ -144,7 +156,7 @@ export function resolveProfileRule(profileValue, descriptor) {
     const profile = normalizeProfile(profileValue);
     let resolved = { enabled: false, sampling: "disabled", rateHz: null, locked: false };
     for (const rule of profile.rules) {
-        if (!globMatches(rule.pattern, descriptor.path)) continue;
+        if (!rule._regex.test(descriptor.path)) continue;
         resolved = { ...rule, locked: false };
     }
     const replayRequired = profile.mode === "replay-safe"

@@ -452,3 +452,27 @@ test("browser adapter can clear and prepare the same run repeatedly", async () =
     assert.equal(engine.trajectoryHash, first);
     assert.equal(resets, 2);
 });
+
+test("realtime advanceSimulation respects step budget and leaves accumulator debt", async () => {
+    const { engine } = harness();
+    const manifest = createDefaultRunManifest({
+        clock: { stepNs: 20_000_000, pacing: "realtime", speed: 1, maxSteps: 20 },
+        sensorRig: { sensors: [] },
+        assertions: [],
+    });
+    await engine.applyRunManifest(resolved(manifest));
+
+    let now = 0;
+    engine.realtimeStepBudgetMs = 1;
+    engine._nowMs = () => now;
+    const originalAdvance = engine.kernel.advanceStep.bind(engine.kernel);
+    engine.kernel.advanceStep = (...args) => {
+        now += 5;
+        return originalAdvance(...args);
+    };
+
+    engine.accumulatorNs = 0;
+    engine._advanceSimulation(0.2);
+    assert.equal(engine.steps, 1);
+    assert.ok(engine.accumulatorNs >= engine.stepNs * 8);
+});

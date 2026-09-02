@@ -351,6 +351,42 @@ test("sensor publisher reset clears queues and reconstructs sample-zero RNG", ()
     assert.notDeepEqual(publisher.getDeterministicState(), first);
 });
 
+test("sensor publisher publishes health on deliver only and skips unchanged counters", () => {
+    const signals = [];
+    const store = { publishSignal: (path, value) => signals.push({ path, value }) };
+    const runtimeData = { bindings: () => ({ signalStore: store }), simulation: () => ({ timeNs: 100_000_000, steps: 1 }) };
+    const device = {
+        telemetryId: "front-lidar",
+        captureAt: () => [],
+        getParent: () => null,
+    };
+    const publisher = new SensorPublisher(device, {
+        id: "front-lidar",
+        rateHz: 10,
+        phaseNs: 0,
+        maxQueueFrames: 2,
+        latency: { fixedNs: 0, jitterNs: 0 },
+        outputs: {},
+        calibration: { products: { diagnostics: false } },
+        health: { deadlineNs: 0 },
+    }, { seed: "health-once", topics: [], runtimeData });
+
+    publisher.update({ step: 1, timeNs: 100_000_000 });
+    assert.equal(signals.length, 0);
+
+    publisher.deliver({ step: 1, timeNs: 100_000_000 });
+    const afterDeliver = signals.length;
+    assert.ok(afterDeliver > 0);
+    assert.ok(signals.some((entry) => entry.path.endsWith(".captureAttempts")));
+
+    publisher.deliver({ step: 1, timeNs: 100_000_000 });
+    assert.equal(signals.length, afterDeliver);
+
+    publisher.health.captureAttempts += 1;
+    publisher.deliver({ step: 2, timeNs: 116_666_667 });
+    assert.ok(signals.length > afterDeliver);
+});
+
 test("GPU sensor captures are skipped when the display frame has no remaining budget", () => {
     let captures = 0;
     const simulation = { gpuCaptureEnabled: false };

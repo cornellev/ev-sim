@@ -17,6 +17,7 @@ function isPlainObject(value) {
 
 function cloneValue(value) {
     if (value === undefined) return undefined;
+    if (value === null || typeof value !== "object") return value;
     if (typeof structuredClone === "function") {
         try {
             return structuredClone(value);
@@ -253,6 +254,7 @@ export class SignalStore {
         this._listeners = new Set();
         this._events = [];
         this._eventLimit = Math.max(1, Number(options.eventLimit ?? 5000));
+        this._eventIndexOffset = 0;
         this._sequence = 0;
         this.hydrate(initialValues);
     }
@@ -375,6 +377,7 @@ export class SignalStore {
         };
         const path = envelope.path ? normalizeSignalPath(envelope.path) : null;
         const heavyUpdate = envelope.kind === "update" && path && isHeavyPath(this, path);
+        let sharedEnvelope = null;
         // Snapshot so a listener that setStates/resubscribes cannot extend this pass.
         for (const subscription of [...this._listeners]) {
             if (envelope.kind === "event" && !subscription.includeEvents) continue;
@@ -387,7 +390,8 @@ export class SignalStore {
                 subscription.listener(envelope);
                 continue;
             }
-            subscription.listener(cloneValue(envelope));
+            if (!sharedEnvelope) sharedEnvelope = cloneValue(envelope);
+            subscription.listener(sharedEnvelope);
         }
     }
 
@@ -401,9 +405,26 @@ export class SignalStore {
             payload: cloneValue(event.payload ?? null),
         };
         this._events.push(normalized);
-        this._events = this._events.slice(-this._eventLimit);
-        this._notify({ kind: "event", event: cloneValue(normalized) });
+        if (this._events.length > this._eventLimit) {
+            const dropCount = this._events.length - this._eventLimit;
+            this._events = this._events.slice(dropCount);
+            this._eventIndexOffset += dropCount;
+        }
+        this._notify({ kind: "event", event: normalized });
         return cloneValue(normalized);
+    }
+
+    /**
+     * Zero-copy cursor over the live event ring for hot-path consumers.
+     * Returned events are read-only; mutating them corrupts store state.
+     */
+    eventsFromIndex(startIndex = 0) {
+        const logicalStart = Math.max(0, Math.floor(Number(startIndex) || 0));
+        const physicalStart = Math.max(0, logicalStart - this._eventIndexOffset);
+        return {
+            events: this._events.slice(physicalStart),
+            nextIndex: this._eventIndexOffset + this._events.length,
+        };
     }
 
     events({ fromUs = 0, toUs = Number.POSITIVE_INFINITY } = {}) {
@@ -441,6 +462,7 @@ export class SignalStore {
         this._history.clear();
         this._revisions.clear();
         this._events = [];
+        this._eventIndexOffset = 0;
         this._sequence = 0;
         this.sessionStartedAtMs = monotonicNowMs();
         for (const [path, entry] of preserved) this._committed.set(path, entry);
@@ -587,7 +609,8 @@ export class SignalStore {
                 now: options.now || this.now,
             });
         const previous = this._committed.get(normalizedPath);
-        if (previous && !heavy) {
+        const trackPrevious = retention !== "none" && options.history !== false;
+        if (previous && !heavy && trackPrevious) {
             this._previous.set(normalizedPath, cloneValue(previous));
         } else if (heavy) {
             this._previous.delete(normalizedPath);
@@ -600,7 +623,7 @@ export class SignalStore {
             retention,
         });
         this._publishUpdate(normalizedPath, entry, heavy ? null : previous);
-        return heavy ? cloneEntryShallowHeavy(entry) : cloneValue(entry);
+        return null;
     }
 
     publishSignal(path, value, options = {}) {
@@ -615,7 +638,7 @@ export class SignalStore {
             timeUs: entry.timeUs ?? this.getTimeUs(),
             cycle: entry.cycle ?? null,
             entry: heavy ? entry : cloneValue(entry),
-            previous: heavy || !previous ? null : cloneValue(previous),
+            previous: heavy || !previous ? null : previous,
             descriptor: this.descriptor(path),
         });
     }

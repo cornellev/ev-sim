@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
     buildSpatialLogModel,
@@ -12,6 +12,8 @@ import {
     loadVehicleTrails,
 } from "./spatialLogQueries.js";
 
+const AUTONOMY_DEBOUNCE_MS = 66;
+
 export function useSpatialLogData(dataset, {
     enabled = true,
     timeUs = 0,
@@ -20,6 +22,7 @@ export function useSpatialLogData(dataset, {
     primaryEntityId = null,
     exactSync = false,
     compareTrails = [],
+    onAutonomyChange = null,
 } = {}) {
     const [status, setStatus] = useState("idle");
     const [error, setError] = useState(null);
@@ -27,6 +30,18 @@ export function useSpatialLogData(dataset, {
     const [trails, setTrails] = useState([]);
     const [events, setEvents] = useState([]);
     const [autonomy, setAutonomy] = useState(null);
+    const [debouncedTimeUs, setDebouncedTimeUs] = useState(timeUs);
+    const onAutonomyChangeRef = useRef(onAutonomyChange);
+
+    useEffect(() => {
+        onAutonomyChangeRef.current = onAutonomyChange;
+    }, [onAutonomyChange]);
+
+    useEffect(() => {
+        if (!enabled || !dataset) return undefined;
+        const timer = setTimeout(() => setDebouncedTimeUs(timeUs), AUTONOMY_DEBOUNCE_MS);
+        return () => clearTimeout(timer);
+    }, [dataset, enabled, timeUs]);
 
     useEffect(() => {
         if (!enabled || !dataset) return undefined;
@@ -73,11 +88,19 @@ export function useSpatialLogData(dataset, {
     useEffect(() => {
         if (!enabled || !dataset || status !== "ready") return undefined;
         let cancelled = false;
-        loadAutonomySnapshotForDataset(dataset, timeUs, { exactSync })
-            .then((snapshot) => { if (!cancelled) setAutonomy(snapshot); })
-            .catch(() => { if (!cancelled) setAutonomy(null); });
+        loadAutonomySnapshotForDataset(dataset, debouncedTimeUs, { exactSync })
+            .then((snapshot) => {
+                if (cancelled) return;
+                setAutonomy(snapshot);
+                onAutonomyChangeRef.current?.(snapshot);
+            })
+            .catch(() => {
+                if (cancelled) return;
+                setAutonomy(null);
+                onAutonomyChangeRef.current?.(null);
+            });
         return () => { cancelled = true; };
-    }, [dataset, enabled, exactSync, status, timeUs]);
+    }, [dataset, debouncedTimeUs, enabled, exactSync, status]);
 
     const mergedTrails = useMemo(
         () => [...(trails || []), ...(compareTrails || [])],

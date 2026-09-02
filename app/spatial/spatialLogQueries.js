@@ -3,6 +3,13 @@ import { simplifyTrajectory, poseSampleFromValue } from "./trajectorySimplify.js
 import { discoverVehiclePosePaths } from "./spatialLogModel.js";
 import { environmentDocumentFrom } from "../scenarios/route/index.js";
 
+const autonomySnapshotInflight = new Map();
+let fetchAutonomySnapshot = getLogAutonomySnapshot;
+
+export function __testOnly_setAutonomySnapshotFetcher(fetcher) {
+    fetchAutonomySnapshot = fetcher || getLogAutonomySnapshot;
+}
+
 export function parseEnvironmentAttachment(dataset) {
     const raw = dataset?.jsonAttachment?.("environment.json");
     if (!raw) return null;
@@ -88,6 +95,16 @@ export async function loadAutonomySnapshotForDataset(dataset, timeUs, options = 
     if (!dataset.lazy && dataset.series?.size) {
         return dataset.autonomySnapshotAt(timeUs, options);
     }
-    const result = await getLogAutonomySnapshot(dataset.id, timeUs, options);
-    return result.snapshot;
+    const exactSync = Boolean(options.exactSync);
+    const cacheKey = `${dataset.id}:${Math.round(Number(timeUs) || 0)}:${exactSync}`;
+    if (autonomySnapshotInflight.has(cacheKey)) {
+        return autonomySnapshotInflight.get(cacheKey);
+    }
+    const promise = fetchAutonomySnapshot(dataset.id, timeUs, options)
+        .then((result) => result.snapshot)
+        .finally(() => {
+            autonomySnapshotInflight.delete(cacheKey);
+        });
+    autonomySnapshotInflight.set(cacheKey, promise);
+    return promise;
 }

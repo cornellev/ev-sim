@@ -24,6 +24,7 @@ import {
 import { RecordingController } from "../app/logging/RecordingController.js";
 import { LogDataset, flattenNumericFields } from "../app/logging/LogDataset.js";
 import { SignalStore, summarizeBindingValue } from "../app/scripting/runtime/SignalStore.js";
+import { AssertionEngine } from "../app/simulation/AssertionEngine.js";
 import { TimelineStore } from "../app/logging/TimelineStore.js";
 import { TelemetryTabBridge } from "../app/telemetry/TelemetryRuntime.js";
 import { LogService } from "../server/logging/LogService.js";
@@ -335,6 +336,22 @@ test("nested numeric extraction and dataset interpolation do not duplicate paren
         { field: "accel.x", value: 1 },
         { field: "accel.y", value: 2 },
     ]);
+    assert.deepEqual(flattenNumericFields({
+        detections3d: [{
+            box3d: { center: { x: 1, y: 2, z: 3 }, size: { x: 4, y: 5, z: 6 } },
+            status: "ok",
+        }],
+        lanes: [{ points: [{ x: 0, y: 0, z: 0 }] }],
+    }), []);
+    assert.deepEqual(flattenNumericFields({
+        estimate: { position: { x: 1, y: 2, z: 3 }, covarianceEllipse: { sigmaX: 0.5, sigmaY: 0.6 } },
+    }), [
+        { field: "estimate.position.x", value: 1 },
+        { field: "estimate.position.y", value: 2 },
+        { field: "estimate.position.z", value: 3 },
+        { field: "estimate.covarianceEllipse.sigmaX", value: 0.5 },
+        { field: "estimate.covarianceEllipse.sigmaY", value: 0.6 },
+    ]);
     const schemas = new Map([[1, { id: 1, path: "vehicles.ego.pose", type: "pose3" }]]);
     const dataset = new LogDataset("log", { metadata: {}, durationUs: 1000 }, {
         schemas,
@@ -386,6 +403,62 @@ test("TimelineStore clamps seeks and preserves shared playback state", () => {
     assert.equal(timeline.getSnapshot().liveLocked, false);
     timeline.set({ speed: 4, playing: true, selection: { startUs: 100, endUs: 900 } });
     assert.deepEqual(timeline.getSnapshot().selection, { startUs: 100, endUs: 900 });
+});
+
+test("TimelineStore throttles ui subscribers during playback but keeps seek urgent", () => {
+    const timeline = new TimelineStore();
+    timeline.setDuration(10_000_000);
+    timeline.set({ playing: true, timeUs: 0 });
+    let uiUpdates = 0;
+    const unsubscribe = timeline.subscribe(() => { uiUpdates += 1; }, { uiIntervalMs: 1000 });
+    assert.equal(uiUpdates, 1);
+    timeline.set({ timeUs: 1000 });
+    timeline.set({ timeUs: 2000 });
+    timeline.set({ timeUs: 3000 });
+    assert.equal(uiUpdates, 1);
+    timeline.seek(4_000_000);
+    assert.equal(uiUpdates, 2);
+    unsubscribe();
+});
+
+test("LogDataset valueAt clone false returns stored samples without copying", () => {
+    const pose = { position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0 } };
+    const dataset = new LogDataset("log", { metadata: {}, durationUs: 1000 }, {
+        schemas: new Map([[1, { id: 1, path: "vehicles.ego.pose", type: "pose3" }]]),
+        updates: [{ path: "vehicles.ego.pose", timeUs: 0, cycle: 0, value: pose }],
+        events: [],
+        checkpoints: [],
+        attachments: [],
+    });
+    const direct = dataset.valueAt("vehicles.ego.pose", 0, { clone: false });
+    assert.equal(direct, pose);
+    direct.position.x = 99;
+    assert.equal(dataset.series.get("vehicles.ego.pose")[0].value.position.x, 99);
+});
+
+test("LogDataset capture-time lookback uses binary search after backward seeks", () => {
+    const dataset = new LogDataset("test", { metadata: {}, durationUs: 4_000_000 }, {
+        schemas: new Map([
+            [1, { id: 1, path: "visualization.perception.candidate", type: "json" }],
+        ]),
+        updates: [
+            { path: "visualization.perception.candidate", timeUs: 1_000_000, cycle: 1, value: { captureTimeNs: 1_000_000_000, detections3d: [{ id: "a" }], detections2d: [], lanes: [] } },
+            { path: "visualization.perception.candidate", timeUs: 2_000_000, cycle: 2, value: { captureTimeNs: 2_000_000_000, detections3d: [{ id: "b" }], detections2d: [], lanes: [] } },
+            { path: "visualization.perception.candidate", timeUs: 3_000_000, cycle: 3, value: { captureTimeNs: 3_000_000_000, detections3d: [{ id: "c" }], detections2d: [], lanes: [] } },
+        ],
+        events: [],
+        checkpoints: [],
+        attachments: [],
+    });
+    const forward = dataset.valueAtCaptureTime("visualization.perception.candidate", 2_500_000_000);
+    assert.equal(forward.matched, true);
+    assert.equal(forward.value.detections3d[0].id, "b");
+    const backward = dataset.valueAtCaptureTime("visualization.perception.candidate", 1_500_000_000);
+    assert.equal(backward.matched, true);
+    assert.equal(backward.value.detections3d[0].id, "a");
+    const noClone = dataset.valueAtCaptureTime("visualization.perception.candidate", 2_500_000_000, { clone: false });
+    assert.equal(noClone.value.detections3d[0].id, "b");
+    assert.equal(noClone.value, dataset.series.get("visualization.perception.candidate")[1].value);
 });
 
 test("TelemetryTabBridge discovers sources, filters full-rate subscriptions, mirrors previews, and expires stale tabs", () => {
@@ -771,4 +844,77 @@ test("LogService reads attachments, pose series, and autonomy snapshots from ind
     const missingSeries = await service.readSeries(session.id, { path: "vehicles.missing.pose", maxPoints: 10 });
     assert.equal(missingSeries.path, "vehicles.missing.pose");
     assert.deepEqual(missingSeries.samples, []);
+});
+
+test("SignalStore events() returns defensive copies", () => {
+    const store = new SignalStore({}, { sourceId: "events-clone" });
+    store.emitTelemetryEvent({ name: "evt", category: "test", payload: { x: 1 } });
+    const events = store.events();
+    events[0].payload.x = 99;
+    assert.equal(store.events()[0].payload.x, 1);
+});
+
+test("SignalStore eventsFromIndex cursor survives ring trim", () => {
+    const store = new SignalStore({}, { eventLimit: 3, sourceId: "events-ring" });
+    store.emitTelemetryEvent({ name: "e0", category: "c", payload: {} });
+    store.emitTelemetryEvent({ name: "e1", category: "c", payload: {} });
+    store.emitTelemetryEvent({ name: "e2", category: "c", payload: {} });
+    const baseline = store.eventsFromIndex(0);
+    assert.equal(baseline.events.length, 3);
+    assert.equal(baseline.nextIndex, 3);
+
+    store.emitTelemetryEvent({ name: "e3", category: "c", payload: {} });
+    const tail = store.eventsFromIndex(3);
+    assert.equal(tail.events.length, 1);
+    assert.equal(tail.events[0].name, "e3");
+
+    const resumed = store.eventsFromIndex(2);
+    assert.deepEqual(resumed.events.map((event) => event.name), ["e2", "e3"]);
+    assert.equal(resumed.nextIndex, 4);
+});
+
+test("SignalStore publishSignal skips cloning primitive return values", () => {
+    const store = new SignalStore({}, { sourceId: "primitive-return" });
+    const returned = store.publishSignal("simulation.step", 7, {
+        type: "int32",
+        history: false,
+        retention: "none",
+    });
+    assert.equal(returned, null);
+    assert.equal(store.read("simulation.step").value, 7);
+});
+
+test("SignalStore notify clones object updates once for all subscribers", () => {
+    const store = new SignalStore({}, { sourceId: "notify-once" });
+    const seen = [];
+    store.subscribeSignals({ includeEvents: false, includeCatalog: false }, (message) => {
+        seen.push(message);
+    });
+    store.subscribeSignals({ includeEvents: false, includeCatalog: false }, (message) => {
+        seen.push(message);
+    });
+    store.publishSignal("vehicles.ego.speed", { x: 1 }, { type: "json", history: false, retention: "none" });
+    assert.equal(seen.length, 2);
+    assert.equal(seen[0].entry, seen[1].entry);
+    seen[0].entry.value.x = 99;
+    assert.equal(store.read("vehicles.ego.speed").value.x, 1);
+});
+
+test("AssertionEngine collects telemetry events via eventsFromIndex cursor", () => {
+    const store = new SignalStore({}, { eventLimit: 100, sourceId: "assert-events" });
+    store.emitTelemetryEvent({ category: "controls", name: "input-applied", payload: { step: 1 } });
+    const engine = new AssertionEngine([{
+        id: "evt-count",
+        name: "input",
+        source: "event",
+        category: "controls",
+        event: "input-applied",
+        mode: "eventually",
+        window: { startStep: 0, endStep: null },
+        expected: { min: 1, max: 1 },
+        severity: "error",
+        onFailure: "stop",
+    }], store);
+    const result = engine.evaluate(1);
+    assert.equal(result.results[0].status, "passed");
 });

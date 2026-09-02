@@ -83,7 +83,15 @@
 .signalRow:focus-within { background: var(--slate-surface-2); }
 .signalMain { display: flex; min-width: 0; flex: 1; align-items: center; gap: 7px; border: 0; background: transparent; padding: 0; text-align: left; cursor: grab; }
 .signalMain:disabled { cursor: default; }
-.grip { flex: none; color: var(--slate-muted); opacity: .55; }
+.grip {
+    width: 6px;
+    height: 14px;
+    flex: none;
+    border-radius: 1px;
+    background:
+        radial-gradient(circle, var(--slate-muted) 1px, transparent 1.5px) 0 0 / 6px 4px repeat-y;
+    opacity: .55;
+}
 .numericMark,
 .valueMark { width: 6px; height: 6px; flex: none; border-radius: 999px; background: #38bdf8; }
 .valueMark { background: var(--slate-muted); opacity: .45; }

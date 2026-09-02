@@ -263,10 +263,19 @@ export class DeviceDatabase extends Database {
             source: "devices", category: "devices", replayRole: "state", logClass: "standard",
             ...(clock ? { timeUs: Math.round(clock.timeNs / 1000), cycle: clock.step } : {}),
         };
-        telemetry.publishSignal(`${prefix}.enabled`, Boolean(device.enabled), { ...options, type: "boolean" });
-        telemetry.publishSignal(`${prefix}.pose`, {
+        const enabled = Boolean(device.enabled);
+        if (!device._lastPublishedEnabled || device._lastPublishedEnabled !== enabled) {
+            telemetry.publishSignal(`${prefix}.enabled`, enabled, { ...options, type: "boolean" });
+            device._lastPublishedEnabled = enabled;
+        }
+        const pose = {
             position: { x: Number(position?.x || 0), y: Number(position?.y || 0), z: Number(position?.z || 0) },
             rotation: { x: Number(rotation?.x || 0), y: Number(rotation?.y || 0), z: Number(rotation?.z || 0), order: rotation?.order || "XYZ" },
-        }, { ...options, type: "pose3" });
+        };
+        const poseKey = JSON.stringify(pose);
+        if (device._lastPublishedPoseKey !== poseKey) {
+            telemetry.publishSignal(`${prefix}.pose`, pose, { ...options, type: "pose3" });
+            device._lastPublishedPoseKey = poseKey;
+        }
     }
 }

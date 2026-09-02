@@ -113,3 +113,14 @@ test("trajectory hash is bounded, deterministic, and action-sensitive", () => {
         hasher.update({ step: 1 });
     }, /increase monotonically/);
 });
+
+test("canonicalSimulationStringify golden string stays stable for mixed keys", () => {
+    const value = {
+        z: 2,
+        a: { m: 1, "\u{1f600}": 2 },
+        nested: [{ b: 1, a: 2 }],
+    };
+    const canonical = canonicalSimulationStringify(value);
+    assert.equal(canonical, '{"a":{"m":1,"😀":2},"nested":[{"a":2,"b":1}],"z":2}');
+    assert.equal(simulationSha256(value), "85f52aca8ef9bdeb38e685ace34fc7a3955d8cd3b0afd0e542a7a330b01d3172");
+});

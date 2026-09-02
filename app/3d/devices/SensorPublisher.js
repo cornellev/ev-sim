@@ -83,6 +83,7 @@ export class SensorPublisher {
         this.errors = 0;
         this._lastTransportNoticeNs = 0;
         this._lastTransportNoticeName = null;
+        this._lastPublishedHealth = null;
         this.reset();
     }
 
@@ -97,6 +98,7 @@ export class SensorPublisher {
         this.sampleIndex = 0;
         this.droppedFrames = 0;
         this.errors = 0;
+        this._lastPublishedHealth = null;
         this.health = {
             captureAttempts: 0,
             capturedFrames: 0,
@@ -240,7 +242,6 @@ export class SensorPublisher {
             }
             this.nextCaptureStep += this.periodSteps;
         }
-        this._publishHealth(clock);
     }
 
     async updateAsync(clock) {
@@ -263,7 +264,6 @@ export class SensorPublisher {
             }
             this.nextCaptureStep += this.periodSteps;
         }
-        this._publishHealth(clock);
     }
 
     enqueue(messages, captureTimeNs, sampleIndex, rng, observation = null) {
@@ -611,13 +611,17 @@ export class SensorPublisher {
             history: false,
             retention: "none",
         };
-        for (const [suffix, value] of Object.entries(this.getHealthSnapshot())) {
+        const snapshot = this.getHealthSnapshot();
+        const last = this._lastPublishedHealth;
+        for (const [suffix, value] of Object.entries(snapshot)) {
+            if (last && Object.is(last[suffix], value)) continue;
             telemetry.publishSignal?.(
                 `devices.${this.device.telemetryId}.${suffix}`,
                 value,
                 { ...options, type: "uint64" },
             );
         }
+        this._lastPublishedHealth = { ...snapshot };
     }
 
     _event(name, severity, payload) {

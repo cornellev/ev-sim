@@ -4,6 +4,7 @@ import { bytesToHex } from "@noble/hashes/utils.js";
 export const SIMULATION_HASH_VERSION = 1;
 
 const textEncoder = new TextEncoder();
+const utf8KeyCache = new Map();
 const VOLATILE_KEYS = new Set([
     "clientRevision",
     "createdAt",
@@ -16,8 +17,16 @@ const VOLATILE_KEYS = new Set([
 ]);
 
 function compareUtf8(left, right) {
-    const a = textEncoder.encode(String(left));
-    const b = textEncoder.encode(String(right));
+    let a = utf8KeyCache.get(left);
+    if (!a) {
+        a = textEncoder.encode(String(left));
+        utf8KeyCache.set(left, a);
+    }
+    let b = utf8KeyCache.get(right);
+    if (!b) {
+        b = textEncoder.encode(String(right));
+        utf8KeyCache.set(right, b);
+    }
     const length = Math.min(a.length, b.length);
     for (let index = 0; index < length; index += 1) {
         if (a[index] !== b[index]) return a[index] - b[index];

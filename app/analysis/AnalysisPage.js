@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Dialog } from "radix-ui";
 import {
     IconAdjustmentsHorizontal,
@@ -12,7 +12,6 @@ import {
     IconDownload,
     IconEyeOff,
     IconFileImport,
-    IconGripVertical,
     IconList,
     IconLock,
     IconLockOpen,
@@ -24,7 +23,8 @@ import {
 } from "@tabler/icons-react";
 import UPlotGraph from "./UPlotGraph";
 import { getTelemetryStore, getTelemetryTabBridge } from "../telemetry/TelemetryRuntime.js";
-import { flattenNumericFields, LogDataset } from "../logging/LogDataset.js";
+import { LogDataset } from "../logging/LogDataset.js";
+import { buildAnalysisFieldRows, formatAnalysisValue, groupAnalysisFieldRows } from "./analysisFieldRows.js";
 import { getTimelineStore } from "../logging/TimelineStore.js";
 import { importLog, listLogs } from "../logging/LogClient.js";
 import { storageGet, storagePut } from "../client/storageClient.js";
@@ -34,7 +34,7 @@ import { eventTypeKey, eventTypeLabel, eventTypeLabelFromKey, filterEvents } fro
 import { simulationTimeUsFromSnapshot } from "../telemetry/SimulationClock.js";
 import { Button, IconButton, NativeSelect, StatusMessage, TabsContent, TabsList, TabsRoot, TabsTrigger, TextInput, WorkspaceFrame } from "../ui";
 import SpatialLogViewer from "../spatial/SpatialLogViewer.js";
-import { loadAutonomySnapshotForDataset, loadVehicleTrails } from "../spatial/spatialLogQueries.js";
+import { loadVehicleTrails } from "../spatial/spatialLogQueries.js";
 import styles from "./AnalysisPage.module.css";
 
 const LAYOUT_KEY = "analysis:layout:v1";
@@ -76,10 +76,7 @@ function valueAtSamples(samples, timeUs) {
 }
 
 function formatValue(value) {
-    if (value === undefined) return "—";
-    if (typeof value === "number") return Number.isInteger(value) ? String(value) : value.toPrecision(7).replace(/0+$/, "").replace(/\.$/, "");
-    if (typeof value === "string") return value;
-    try { return JSON.stringify(value); } catch { return String(value); }
+    return formatAnalysisValue(value);
 }
 
 function formatCursor(timeUs) {
@@ -129,10 +126,6 @@ export default function AnalysisPage({ initialLogId, onOpenReplay, onOpenWorkspa
         "simulation",
         "topics",
         "vehicles",
-        "candidate",
-        "oracle",
-        "visualization",
-        "diagnostics",
     ]));
     const [exactSync, setExactSync] = useState(false);
 
@@ -260,51 +253,51 @@ export default function AnalysisPage({ initialLogId, onOpenReplay, onOpenWorkspa
     }, [activeView, excludedEventTypes, leftWidth, liveWindow, rightWidth, selected]);
 
     const source = useMemo(() => {
-        if (sourceKey === "live") return { descriptors: store.descriptors(), snapshot: store.snapshot({ includeHeavy: false }), events: store.events(), timeUs: localSimulationTimeUs(store), revision };
+        if (sourceKey === "live") {
+            return {
+                descriptors: store.descriptors(),
+                snapshot: store.snapshot({ includeHeavy: false }),
+                events: store.events(),
+                revision,
+            };
+        }
         if (sourceKey.startsWith("remote:")) {
             const remote = remoteSources.find((item) => item.sourceId === sourceKey.slice(7));
-            return remote ? { ...remote, timeUs: remoteSimulationTimeUs(remote) } : { descriptors: [], snapshot: {}, events: [], timeUs: 0 };
+            return remote
+                ? { descriptors: remote.descriptors || [], snapshot: remote.snapshot || {}, events: remote.events || [] }
+                : { descriptors: [], snapshot: {}, events: [] };
         }
-        if (dataset) return { descriptors: dataset.descriptors, snapshot: datasetSnapshot, events: dataset.events, timeUs: timelineState.timeUs };
-        return { descriptors: [], snapshot: {}, events: [], timeUs: 0 };
-    }, [dataset, datasetSnapshot, remoteSources, revision, sourceKey, store, timelineState.timeUs]);
-
-    const fieldRows = useMemo(() => {
-        const rows = [];
-        for (const descriptor of source.descriptors || []) {
-            const raw = source.snapshot?.[descriptor.path];
-            const latest = raw?.value !== undefined && raw?.type ? raw.value : raw;
-            if (descriptor.type === "bytes" || descriptor.logClass === "heavy") {
-                rows.push({ descriptor, path: descriptor.path, field: "", value: undefined, numeric: false });
-                continue;
-            }
-            const numeric = flattenNumericFields(latest);
-            if (typeof latest === "number" || numeric.length === 0) rows.push({ descriptor, path: descriptor.path, field: "", value: latest, numeric: typeof latest === "number" });
-            for (const child of numeric) {
-                if (!child.field && typeof latest === "number") continue;
-                rows.push({ descriptor, path: descriptor.path, field: child.field, value: child.value, numeric: true });
-            }
+        if (dataset) {
+            return { descriptors: dataset.descriptors, snapshot: datasetSnapshot, events: dataset.events };
         }
-        const lower = query.toLowerCase();
-        return rows.filter((row) => `${row.path}.${row.field} ${row.descriptor.type} ${row.descriptor.unit || ""}`.toLowerCase().includes(lower));
-    }, [query, source]);
+        return { descriptors: [], snapshot: {}, events: [] };
+    }, [dataset, datasetSnapshot, remoteSources, revision, sourceKey, store]);
 
-    const groupedFields = useMemo(() => {
-        const groups = new Map();
-        for (const row of fieldRows) {
-            const group = row.path.split(".")[0] || "signals";
-            if (!groups.has(group)) groups.set(group, []);
-            groups.get(group).push(row);
+    const liveSourceTimeUs = useMemo(() => {
+        if (sourceKey === "live") {
+            void revision;
+            return localSimulationTimeUs(store);
         }
-        return [...groups.entries()].sort(([a], [b]) => a.localeCompare(b));
-    }, [fieldRows]);
+        if (sourceKey.startsWith("remote:")) {
+            const remote = remoteSources.find((item) => item.sourceId === sourceKey.slice(7));
+            return remoteSimulationTimeUs(remote);
+        }
+        return 0;
+    }, [remoteSources, revision, sourceKey, store]);
 
-    const toggleGroup = (group) => setExpandedGroups((current) => {
+    const fieldRows = useMemo(
+        () => buildAnalysisFieldRows(source.descriptors, source.snapshot, query),
+        [query, source.descriptors, source.snapshot],
+    );
+
+    const groupedFields = useMemo(() => groupAnalysisFieldRows(fieldRows), [fieldRows]);
+
+    const toggleGroup = useCallback((group) => setExpandedGroups((current) => {
         const next = new Set(current);
         if (next.has(group)) next.delete(group);
         else next.add(group);
         return next;
-    });
+    }), []);
 
     const addSignal = useCallback((row) => {
         if (!row?.numeric) return;
@@ -314,7 +307,12 @@ export default function AnalysisPage({ initialLogId, onOpenReplay, onOpenWorkspa
 
     const samplesFor = useCallback((item) => {
         if (dataset && sourceKey.startsWith("log:")) return logSeries.get(selectionKey(item)) || [];
-        if (sourceKey === "live") return store.series(item.path).map((sample) => ({ ...sample, value: item.field ? item.field.split(".").reduce((value, key) => value?.[key], sample.value) : sample.value }));
+        if (sourceKey === "live") {
+            return store.series(item.path).map((sample) => ({
+                ...sample,
+                value: item.field ? item.field.split(".").reduce((value, key) => value?.[key], sample.value) : sample.value,
+            }));
+        }
         if (sourceKey.startsWith("remote:")) {
             return bridge.getSeries(sourceKey.slice(7), item.path).map((sample) => ({
                 ...sample,
@@ -323,10 +321,14 @@ export default function AnalysisPage({ initialLogId, onOpenReplay, onOpenWorkspa
         }
         const raw = source.snapshot?.[item.path];
         const value = raw?.value !== undefined ? raw.value : raw;
-        return [{ timeUs: source.timeUs || 0, value: item.field ? item.field.split(".").reduce((current, key) => current?.[key], value) : value }];
-    }, [bridge, dataset, logSeries, source, sourceKey, store]);
+        return [{
+            timeUs: liveSourceTimeUs || 0,
+            value: item.field ? item.field.split(".").reduce((current, key) => current?.[key], value) : value,
+        }];
+    }, [bridge, dataset, liveSourceTimeUs, logSeries, source.snapshot, sourceKey, store]);
 
     const graphData = useMemo(() => {
+        if (activeView !== "graph") return [[], ...selected.map(() => [])];
         const rawSeries = selected.map(samplesFor);
         const newestTime = rawSeries.reduce((latest, samples) => Math.max(latest, samples.at(-1)?.timeUs || 0), 0);
         const windowStart = !sourceKey.startsWith("log:") && timelineState.liveLocked ? Math.max(0, newestTime - liveWindow * 1e6) : 0;
@@ -338,7 +340,7 @@ export default function AnalysisPage({ initialLogId, onOpenReplay, onOpenWorkspa
             const values = new Map(samples.map((sample) => [sample.timeUs || 0, typeof sample.value === "number" ? sample.value : null]));
             return visibleTimes.map((time) => values.get(time) ?? null);
         })];
-    }, [graphPixelWidth, liveWindow, samplesFor, selected, sourceKey, timelineState.liveLocked]);
+    }, [activeView, graphPixelWidth, liveWindow, samplesFor, selected, sourceKey, timelineState.liveLocked]);
 
     const removeSignal = (index) => setSelected((current) => current.filter((_item, itemIndex) => itemIndex !== index));
     const updateSignal = (index, patch) => setSelected((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item));
@@ -417,7 +419,7 @@ export default function AnalysisPage({ initialLogId, onOpenReplay, onOpenWorkspa
                     <aside className={styles.leftRail} style={{ width: leftWidth }}>
                         <div className={styles.railSearch}>{signalSearch}</div>
                         <div className={styles.railHeading}><span>Signal tree</span><span>{fieldRows.length}</span></div>
-                        <SignalTree groups={groupedFields} query={query} expanded={expandedGroups} onToggle={toggleGroup} onAdd={addSignal} />
+                        <MemoSignalTree groups={groupedFields} query={query} expanded={expandedGroups} onToggle={toggleGroup} onAdd={addSignal} />
                         <ResizeHandle side="right" onDelta={(delta) => setLeftWidth((width) => Math.min(440, Math.max(210, width + delta)))} />
                     </aside>
 
@@ -444,7 +446,7 @@ export default function AnalysisPage({ initialLogId, onOpenReplay, onOpenWorkspa
                             {activeView === "events" && <EventView events={source.events || []} timeline={timeline} excludedTypes={excludedEventTypes} onExcludedTypesChange={setExcludedEventTypes} />}
                             {activeView === "spatial" && (
                                 <AutonomySpatialView
-                                    source={source}
+                                    key={`${sourceKey}:${dataset?.id || "none"}:${exactSync}`}
                                     dataset={dataset}
                                     sourceKey={sourceKey}
                                     timeUs={timelineState.timeUs}
@@ -458,7 +460,7 @@ export default function AnalysisPage({ initialLogId, onOpenReplay, onOpenWorkspa
                         </div>
                         <div className={styles.timelinePanel}>
                             <div className={styles.timelineToolbar}>
-                                <Button size="compact" aria-pressed={timelineState.liveLocked && isLiveSource} className={timelineState.liveLocked && isLiveSource ? styles.activeControl : undefined} onClick={() => { const timeUs = sourceKey === "live" ? localSimulationTimeUs(store) : isLiveSource ? source.timeUs : timelineState.durationUs; timeline.set({ timeUs, liveLocked: isLiveSource }); }}>{timelineState.liveLocked && isLiveSource ? <IconLock size={15} stroke={1.75} /> : <IconLockOpen size={15} stroke={1.75} />}{isLiveSource ? "Live" : "Cursor"}</Button>
+                                <Button size="compact" aria-pressed={timelineState.liveLocked && isLiveSource} className={timelineState.liveLocked && isLiveSource ? styles.activeControl : undefined} onClick={() => { const timeUs = sourceKey === "live" ? localSimulationTimeUs(store) : isLiveSource ? liveSourceTimeUs : timelineState.durationUs; timeline.set({ timeUs, liveLocked: isLiveSource }); }}>{timelineState.liveLocked && isLiveSource ? <IconLock size={15} stroke={1.75} /> : <IconLockOpen size={15} stroke={1.75} />}{isLiveSource ? "Live" : "Cursor"}</Button>
                                 {!sourceKey.startsWith("log:") && <NativeSelect value={liveWindow} onChange={(event) => setLiveWindow(Number(event.target.value))} aria-label="Live data window" className={styles.windowSelect}>{[10, 30, 60, 120].map((seconds) => <option key={seconds} value={seconds}>{seconds}s window</option>)}</NativeSelect>}
                                 <span>{formatCursor(timelineState.timeUs)} / {formatCursor(timelineState.durationUs)}</span>
                             </div>
@@ -472,7 +474,7 @@ export default function AnalysisPage({ initialLogId, onOpenReplay, onOpenWorkspa
                     </aside>
                 </div>
 
-                {leftDrawerOpen && <Drawer side="left" title="Signals" onClose={() => setLeftDrawerOpen(false)} restoreFocusRef={leftDrawerTriggerRef}><div className={styles.railSearch}>{signalSearch}</div><SignalTree groups={groupedFields} query={query} expanded={expandedGroups} onToggle={toggleGroup} onAdd={(row) => { addSignal(row); setLeftDrawerOpen(false); }} /></Drawer>}
+                {leftDrawerOpen && <Drawer side="left" title="Signals" onClose={() => setLeftDrawerOpen(false)} restoreFocusRef={leftDrawerTriggerRef}><div className={styles.railSearch}>{signalSearch}</div><MemoSignalTree groups={groupedFields} query={query} expanded={expandedGroups} onToggle={toggleGroup} onAdd={(row) => { addSignal(row); setLeftDrawerOpen(false); }} /></Drawer>}
                 {rightDrawerOpen && <Drawer side="right" title="View configuration" onClose={() => setRightDrawerOpen(false)} restoreFocusRef={rightDrawerTriggerRef}><SignalConfiguration selected={selected} onRemove={removeSignal} onUpdate={updateSignal} onExport={exportLayout} onImport={() => layoutFileRef.current?.click()} /></Drawer>}
                 <input ref={layoutFileRef} hidden type="file" accept="application/json,.json" onChange={importLayout} />
             </div>
@@ -480,20 +482,15 @@ export default function AnalysisPage({ initialLogId, onOpenReplay, onOpenWorkspa
     );
 }
 
-function AutonomySpatialView({ source, dataset, sourceKey, timeUs, exactSync, onExactSyncChange, store, timeline, logs = [] }) {
-    const [autonomy, setAutonomy] = useState(null);
+function AutonomySpatialView({ sourceKey, dataset, timeUs, exactSync, onExactSyncChange, store, timeline, logs = [] }) {
+    const [autonomySnap, setAutonomySnap] = useState(null);
     const [compareLogId, setCompareLogId] = useState("");
     const [compareTrail, setCompareTrail] = useState(null);
     const [compareWarning, setCompareWarning] = useState(null);
 
-    useEffect(() => {
-        if (!dataset || !sourceKey.startsWith("log:")) return undefined;
-        let cancelled = false;
-        loadAutonomySnapshotForDataset(dataset, timeUs, { exactSync })
-            .then((snapshot) => { if (!cancelled) setAutonomy(snapshot); })
-            .catch(() => { if (!cancelled) setAutonomy(null); });
-        return () => { cancelled = true; };
-    }, [dataset, exactSync, sourceKey, timeUs]);
+    const handleAutonomyChange = useCallback((snapshot) => {
+        setAutonomySnap(snapshot);
+    }, []);
 
     useEffect(() => {
         if (!compareLogId || !sourceKey.startsWith("log:")) return undefined;
@@ -522,7 +519,7 @@ function AutonomySpatialView({ source, dataset, sourceKey, timeUs, exactSync, on
 
     const snap = useMemo(() => {
         if (dataset && sourceKey.startsWith("log:")) {
-            return autonomy || dataset.autonomySnapshotAt?.(timeUs, { exactSync }) || {};
+            return autonomySnap || {};
         }
         const candidate = store.read("visualization.perception.candidate")?.value;
         const oracle = store.read("visualization.perception.oracle")?.value;
@@ -548,7 +545,7 @@ function AutonomySpatialView({ source, dataset, sourceKey, timeUs, exactSync, on
                 controlsNs: controls?.ageNs ?? controls?.heartbeatAgeNs ?? null,
             },
         };
-    }, [autonomy, dataset, exactSync, sourceKey, store, timeUs]);
+    }, [autonomySnap, dataset, sourceKey, store]);
 
     if (sourceKey.startsWith("log:") && dataset) {
         return (
@@ -561,6 +558,7 @@ function AutonomySpatialView({ source, dataset, sourceKey, timeUs, exactSync, on
                     compact
                     className={styles.spatialMap}
                     compareTrails={compareLogId && compareTrail ? [compareTrail] : []}
+                    onAutonomyChange={handleAutonomyChange}
                 />
                 <aside className={styles.spatialDiagnostics} aria-label="Autonomy diagnostics">
                     <div className={styles.eventFilter}>
@@ -687,7 +685,7 @@ function SignalTree({ groups, query, expanded, onToggle, onAdd }) {
                                         onKeyDown={(event) => { if (event.key === "Enter") onAdd(row); }}
                                         className={styles.signalMain}
                                     >
-                                        <IconGripVertical size={13} stroke={1.5} className={styles.grip} />
+                                        <span className={styles.grip} aria-hidden="true" />
                                         <span className={row.numeric ? styles.numericMark : styles.valueMark} />
                                         <span className={styles.signalCopy}>
                                             <span className={styles.signalName}>{row.field ? <><span>{row.path}.</span>{row.field}</> : row.path}</span>
@@ -695,7 +693,7 @@ function SignalTree({ groups, query, expanded, onToggle, onAdd }) {
                                         </span>
                                     </button>
                                     {row.numeric && (
-                                        <IconButton type="button" onClick={() => onAdd(row)} label={`Add ${label} to graph`}><IconPlus size={14} stroke={1.75} /></IconButton>
+                                        <IconButton type="button" tooltip={null} onClick={() => onAdd(row)} label={`Add ${label} to graph`}><IconPlus size={14} stroke={1.75} /></IconButton>
                                     )}
                                 </div>
                             );
@@ -706,6 +704,8 @@ function SignalTree({ groups, query, expanded, onToggle, onAdd }) {
         </div>
     );
 }
+
+const MemoSignalTree = memo(SignalTree);
 
 function SignalConfiguration({ selected, onRemove, onUpdate, onExport, onImport }) {
     return <div className={styles.configuration}><div className={styles.configurationHeader}><p>View configuration</p><span>{selected.length} plotted series</span></div><div className={styles.configurationList}>{selected.map((item, index) => <div key={selectionKey(item)} className={styles.seriesCard}><div className={styles.seriesHeader}><input aria-label={`${item.label} color`} type="color" value={item.color} onChange={(event) => onUpdate(index, { color: event.target.value })} /><code>{item.label}</code><button type="button" onClick={() => onRemove(index)}>Remove</button></div><div className={styles.axisControl}><button type="button" aria-pressed={item.axis !== "right"} onClick={() => onUpdate(index, { axis: "left" })}>Left axis</button><button type="button" aria-pressed={item.axis === "right"} onClick={() => onUpdate(index, { axis: "right" })}>Right axis</button></div></div>)}{selected.length === 0 && <p className={styles.emptyCopy}>Add a numeric field to configure its axis and color.</p>}</div><div className={styles.configurationActions}><Button size="compact" onClick={onExport}><IconDownload size={15} stroke={1.75} /> Export</Button><Button size="compact" onClick={onImport}><IconFileImport size={15} stroke={1.75} /> Layout</Button></div></div>;

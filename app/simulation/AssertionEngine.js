@@ -125,15 +125,16 @@ export class AssertionEngine {
     }
 
     _collectEvents(step) {
-        const events = this.store?.events?.() || [];
-        for (const event of events.slice(this.eventCursor)) {
+        if (!this.store?.eventsFromIndex) return;
+        const { events, nextIndex } = this.store.eventsFromIndex(this.eventCursor);
+        for (const event of events) {
             const key = `${event.category}:${event.name}`;
             const occurredAtStep = Number.isInteger(event.payload?.step) ? event.payload.step : step;
             const steps = this.eventSteps.get(key) || [];
             steps.push(occurredAtStep);
             this.eventSteps.set(key, steps);
         }
-        this.eventCursor = events.length;
+        this.eventCursor = nextIndex;
     }
 
     _fail(assertion, result, step, message) {
