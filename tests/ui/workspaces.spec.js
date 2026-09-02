@@ -22,7 +22,7 @@ test("workspace switcher reaches every workspace at laptop height", async ({ pag
     await page.keyboard.press("Escape");
     const dialog = page.getByRole("dialog", { name: "Workspaces" });
     await expect(dialog).toBeVisible();
-    await expect(dialog.getByRole("button")).toHaveCount(12);
+    await expect(dialog.getByRole("button")).toHaveCount(13);
     await expect(dialog.getByRole("button", { name: /^Run configuration/i })).toBeVisible();
 
     const activeWorkspace = dialog.getByRole("button", { name: /^Simulation/ });
@@ -32,7 +32,7 @@ test("workspace switcher reaches every workspace at laptop height", async ({ pag
     await expect(activeWorkspace).toHaveAttribute("data-active", "true");
     await expect(activeWorkspace).toHaveCSS("background-color", "rgb(33, 35, 37)");
 
-    for (const label of ["Environment editor", "Run configuration", "Scenarios", "Experiment suite", "Headless runs", "Vehicle editor", "Scripting canvas", "Bindings", "Replay", "Analysis"]) {
+    for (const label of ["Environment editor", "Run configuration", "Scenarios", "Experiment suite", "Headless runs", "Vehicle editor", "Scripting canvas", "Bindings", "Replay", "Logs", "Analysis"]) {
         if (!(await dialog.isVisible())) await page.keyboard.press("Escape");
         await dialog.getByRole("button", { name: new RegExp(`^${label}`, "i") }).click();
         const discard = page.getByRole("button", { name: "Discard and switch" });
@@ -216,6 +216,7 @@ test("@a11y every workspace has no serious violations", async ({ page }) => {
         { name: "Scripting canvas", open: "Scripting canvas" },
         { name: "Bindings", open: "Bindings" },
         { name: "Replay", open: "Replay" },
+        { name: "Logs", open: "Logs" },
         { name: "Analysis", open: "Analysis" },
     ];
 

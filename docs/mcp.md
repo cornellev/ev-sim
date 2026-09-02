@@ -158,14 +158,15 @@ storage tools. See [Headless release and CI gates](headless-release.md).
 | Tool | Purpose |
 |------|---------|
 | `log_list` / `log_get` | Discover logs, metadata, checkpoints, and typed signal schemas |
-| `log_update` / `log_delete` | Edit catalog names/tags or delete a log |
+| `log_update` / `log_delete` | Edit catalog names/tags/folder, or delete a log |
+| `log_catalog_get` / `log_catalog_update` | Read or replace the ordered log folder catalog |
 | `recording_status` | Inspect active backend recording sessions |
 | `recording_start` / `recording_stop` | Control the authoritative open simulator tab |
 | `replay_open` / `replay_control` | Open, seek, play, pause, loop, and set Replay speed |
 | `replay_inspect` | Read exact state and nearby events at a timestamp, with optional path globs |
 | `replay_series` | Read a bounded, downsampled signal or nested-field series |
 
-The resources `fusion://logs` and `fusion://logs/{logId}` expose the catalog and per-log metadata/signal catalog. Headless inspection tools read directly from the backend and do not require a browser. Recording and visual Replay controls require one initialized simulator browser tab; same-origin tabs elect exactly one command executor. See [SFLog](sflog.md) for the file format and recording pipeline.
+The resources `fusion://logs`, `fusion://logs/{logId}`, and `fusion://log-folders` expose the catalog, per-log metadata/signal catalog, and ordered folder list. Headless inspection tools read directly from the backend and do not require a browser. Recording and visual Replay controls require one initialized simulator browser tab; same-origin tabs elect exactly one command executor. See [SFLog](sflog.md) for the file format and recording pipeline.
 
 ## Typical agent workflow
 

@@ -219,15 +219,16 @@ export function registerLoggingTools(server, logService) {
 
     server.registerTool("log_update", {
         title: "Update simulation log",
-        description: "Rename a persisted log or replace its human-editable tags.",
+        description: "Rename a persisted log, replace its human-editable tags, or move it between catalog folders.",
         inputSchema: {
             logId: z.string().min(1),
             name: z.string().min(1).optional(),
             tags: z.array(z.string()).max(100).optional(),
+            folderId: z.string().nullable().optional(),
         },
-    }, async ({ logId, name, tags }) => {
+    }, async ({ logId, name, tags, folderId }) => {
         try {
-            const log = await logService.updateMetadata(logId, { name, tags });
+            const log = await logService.updateMetadata(logId, { name, tags, folderId });
             storageEvents.publish({ domain: "logging", id: logId, action: "updated", data: { log } });
             return ok({ ok: true, log });
         } catch (error) { return fail(error); }
@@ -243,6 +244,30 @@ export function registerLoggingTools(server, logService) {
             await logService.deleteLog(logId);
             storageEvents.publish({ domain: "logging", id: logId, action: "deleted" });
             return ok({ ok: true, deleted: logId });
+        } catch (error) { return fail(error); }
+    });
+
+    server.registerTool("log_catalog_get", {
+        title: "Get log folder catalog",
+        description: "Get the ordered single-level log folder catalog and its optimistic revision.",
+        inputSchema: {},
+    }, async () => {
+        try { return ok({ ok: true, catalog: await logService.getCatalog() }); }
+        catch (error) { return fail(error); }
+    });
+
+    server.registerTool("log_catalog_update", {
+        title: "Update log folder catalog",
+        description: "Replace the ordered log folder catalog using its expected optimistic revision. Removed folders unfile their logs.",
+        inputSchema: {
+            expectedRevision: z.number().int().nonnegative(),
+            catalog: z.record(z.string(), z.any()),
+        },
+    }, async ({ expectedRevision, catalog }) => {
+        try {
+            const updated = await logService.putCatalog({ catalog, expectedRevision });
+            storageEvents.publish({ domain: "logging", action: "catalog-updated", data: { revision: updated.revision } });
+            return ok({ ok: true, catalog: updated });
         } catch (error) { return fail(error); }
     });
 
@@ -361,6 +386,18 @@ export function registerLoggingTools(server, logService) {
         description: "Current catalog of backend-persisted SFLog recordings.",
         mimeType: "application/json",
     }, async (uri) => ({ contents: [{ uri: uri.href, mimeType: "application/json", text: JSON.stringify(await logService.listLogs(), null, 2) }] }));
+
+    server.registerResource("log-folder-catalog", "fusion://log-folders", {
+        title: "Log Folder Catalog",
+        description: "Ordered single-level folder catalog for the Logs workspace.",
+        mimeType: "application/json",
+    }, async (uri) => ({
+        contents: [{
+            uri: uri.href,
+            mimeType: "application/json",
+            text: JSON.stringify(await logService.getCatalog(), null, 2),
+        }],
+    }));
 
     server.registerResource("simulation-log", new ResourceTemplate("fusion://logs/{logId}", {
         list: async () => ({

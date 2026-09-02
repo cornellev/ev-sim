@@ -2,6 +2,7 @@ import express from "express";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { MAX_LOG_BATCH_BYTES } from "../../app/logging/LogLimits.js";
+import { storageEvents } from "../mcp/events.js";
 
 export function createLogRouter(service) {
     const router = express.Router();
@@ -9,6 +10,20 @@ export function createLogRouter(service) {
     const batch = express.raw({ type: "application/octet-stream", limit: MAX_LOG_BATCH_BYTES });
 
     router.get("/", handle(async () => service.listLogs()));
+    router.get("/catalog", handle(async () => service.getCatalog()));
+    router.put("/catalog", json, handle(async (req) => {
+        const catalog = await service.putCatalog(req.body || {});
+        storageEvents.publish({ domain: "logging", action: "catalog-updated", data: { revision: catalog.revision } });
+        return catalog;
+    }));
+    router.post("/delete-batch", json, handle(async (req) => {
+        const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(String) : [];
+        const result = await service.deleteLogs(ids);
+        for (const entry of result.results) {
+            if (entry.deleted) storageEvents.publish({ domain: "logging", id: entry.id, action: "deleted" });
+        }
+        return result;
+    }));
     router.post("/sessions", json, handle(async (req) => service.createSession(req.body || {})));
     router.post("/sessions/:id/batches", batch, handle(async (req) => service.appendBatch(req.params.id, {
         sequence: req.get("x-sflog-sequence"),
@@ -111,8 +126,16 @@ export function createLogRouter(service) {
             respondError(req, res, error);
         }
     });
-    router.patch("/:id", json, handle(async (req) => service.updateMetadata(req.params.id, req.body || {})));
-    router.delete("/:id", handle(async (req) => service.deleteLog(req.params.id)));
+    router.patch("/:id", json, handle(async (req) => {
+        const log = await service.updateMetadata(req.params.id, req.body || {});
+        storageEvents.publish({ domain: "logging", id: log.id, action: "updated", data: { log } });
+        return log;
+    }));
+    router.delete("/:id", handle(async (req) => {
+        await service.deleteLog(req.params.id);
+        storageEvents.publish({ domain: "logging", id: req.params.id, action: "deleted" });
+        return { ok: true, deleted: req.params.id };
+    }));
     return router;
 }
 

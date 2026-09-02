@@ -159,6 +159,28 @@ export async function deleteLog(id) {
     return (await assertOk(response, "Log deletion")).json();
 }
 
+export async function getLogCatalog() {
+    return (await assertOk(await fetch(`${BASE_URL}/catalog`), "Log folder catalog load")).json();
+}
+
+export async function saveLogCatalog(catalog) {
+    const response = await fetch(`${BASE_URL}/catalog`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(catalog),
+    });
+    return (await assertOk(response, "Log folder catalog save")).json();
+}
+
+export async function deleteLogs(ids) {
+    const response = await fetch(`${BASE_URL}/delete-batch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids }),
+    });
+    return (await assertOk(response, "Log batch deletion")).json();
+}
+
 export function getLogDownloadUrl(id) {
     return `${BASE_URL}/${encodeURIComponent(id)}/file`;
 }

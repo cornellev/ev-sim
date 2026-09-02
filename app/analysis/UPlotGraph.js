@@ -3,7 +3,7 @@
 import { useEffect, useRef } from "react";
 import styles from "./AnalysisPage.module.css";
 
-export default function UPlotGraph({ data, series, onCursor, onUnlockLive, onWidth }) {
+export default function UPlotGraph({ data, series, loading = false, onCursor, onUnlockLive, onWidth }) {
     const mountRef = useRef(null);
     const plotRef = useRef(null);
     const dataRef = useRef(data);
@@ -81,5 +81,5 @@ export default function UPlotGraph({ data, series, onCursor, onUnlockLive, onWid
         }
     };
 
-    return <div className={styles.graph} onPointerUp={finishPointerGesture}><div ref={mountRef} className={styles.graphMount} />{!data?.[0]?.length && <div className={styles.graphEmpty}><div><p>Add a signal with data to graph to visualize it.</p><span>Use the add button, double-click, press Enter, or drag a signal here.</span></div></div>}</div>;
+    return <div className={styles.graph} onPointerUp={finishPointerGesture}><div ref={mountRef} className={styles.graphMount} />{loading && <div className={styles.graphEmpty}><div><p>Loading series</p><span>Reading recorded samples for the selected signals.</span></div></div>}{!loading && !data?.[0]?.length && <div className={styles.graphEmpty}><div><p>Add a signal with data to graph to visualize it.</p><span>Use the add button, double-click, press Enter, or drag a signal here.</span></div></div>}</div>;
 }

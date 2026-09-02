@@ -38,8 +38,9 @@ Files live under `server/data/logs/` unless `CEV_SIM_LOGS_DIR` overrides the dir
 
 ```text
 <id>.sflog     finalized binary (header + gzip chunks + index + SEND locator)
-<id>.json      catalog sidecar: metadata, editable name and tags, byte/duration summaries
+<id>.json      catalog sidecar: metadata, editable name, tags, folderId, byte/duration summaries
 <id>.partial   active or crash-interrupted recording (header + complete chunks only)
+catalog.json   reserved ordered single-level folder catalog (`cev-sim.log-catalog`)
 ```
 
 IDs are `log-{UTC stamp without colons or hyphens}-{6 random chars}`, for example `log-20260828T191012Z-a1b2c3`. Path segments are URL-encoded and rejected if they contain `/` or `\`, or if the whole id is `.` or `..`.
@@ -50,7 +51,7 @@ Sidecar JSON is written atomically (temp file + rename). It is **not** the sourc
 
 Both copies start from the same session object. After finalize, import, or recovery the sidecar also stores catalog fields that change after the header is written: `status`, `incomplete`, `completedAt`, `durationUs`, `bytes`, `importedAt`, `recoveredAt`, `recoveryError`, `loggingError`, `runResult`.
 
-Editable catalog fields (`name`, `tags`) exist only in the sidecar. Patching them does not rewrite the binary header.
+Editable catalog fields (`name`, `tags`, `folderId`) exist only in the sidecar. Patching them does not rewrite the binary header. `folderId` points at an entry in `catalog.json`; missing or unknown folder ids appear as Unfiled. The Logs workspace organizes recordings with this catalog. Removing a folder unfiles its logs and does not delete `.sflog` files.
 
 Status values:
 
@@ -455,7 +456,10 @@ Mounted at `/api/logs` from `server/App.js`, in front of JSON storage middleware
 
 | Method | Path | Notes |
 | --- | --- | --- |
-| `GET /` | Catalog from sidecars (after recovery) |
+| `GET /` | Catalog from sidecars (after recovery); includes `folderId` and `bytes` |
+| `GET /catalog` | Ordered folder catalog (`cev-sim.log-catalog`) |
+| `PUT /catalog` | Replace folders; `expectedRevision` required for optimistic concurrency; removed folders unfile logs |
+| `POST /delete-batch` | Delete many ids; active recordings are skipped and reported |
 | `POST /sessions` | Create `.partial` + sidecar |
 | `POST /sessions/:id/batches` | Uncompressed records; sequence in `X-SFLog-Sequence` |
 | `POST /sessions/:id/finalize` | Index, rename, patch metadata |
@@ -471,8 +475,8 @@ Mounted at `/api/logs` from `server/App.js`, in front of JSON storage middleware
 | `GET /:id/snapshot?timeUs=&includeHeavy=` | Checkpoint + later updates; `includeHeavy=false` omits `bytes` and `logClass: heavy` |
 | `GET /:id/events?fromUs=&toUs=&limit=` | Events, newest `limit` (max 10000, default 5000) |
 | `GET /:id/file` | Raw `.sflog` with HTTP Range |
-| `PATCH /:id` | Name and tags only |
-| `DELETE /:id` | Binary + partial + sidecar; refused while recording |
+| `PATCH /:id` | Sidecar `name`, `tags`, and `folderId` only |
+| `DELETE /:id` | Binary + partial + sidecar; refused while recording; `{ ok, deleted }` |
 
 Errors return `400` with `{ "error": "<message>" }`.
 
@@ -493,7 +497,7 @@ Replay owns a **read-only** Three.js scene, distinct from the live simulation sc
 
 ### Analysis
 
-Analysis can bind to live local telemetry, a remote simulator tab, or `log:<id>`. Log sources open the dataset with `eager: false` and fetch snapshots/series over HTTP (`includeHeavy: false` on snapshots). Series are min/max downsampled to roughly two points per graph pixel, capped at 2000.
+Analysis can bind to live local telemetry, a remote simulator tab, or `log:<id>`. Log sources open the dataset with `eager: false` and fetch snapshots/series over HTTP (`includeHeavy: false` on snapshots). Series scans skip unused records (heavy bytes, JSON, checkpoints, attachments) and reuse inflated chunks from the index scan. The graph fetches each selected series once (capped at 2000 points) and min/max downsamples locally to roughly two points per pixel.
 
 Remote tabs never record. The simulator tab is authoritative; the `BroadcastChannel("cev-sim-telemetry-v1")` bridge only mirrors catalogs, previews, and requested full-rate paths. Heavy signals are excluded from previews.
 
@@ -504,14 +508,15 @@ Headless tools read the backend files directly. Recording start/stop and visual 
 | Tool | Reads / writes |
 | --- | --- |
 | `log_list`, `log_get` | Sidecar + index/schemas |
-| `log_update`, `log_delete` | Sidecar name/tags; delete files |
+| `log_update`, `log_delete` | Sidecar name/tags/folderId; delete files |
+| `log_catalog_get`, `log_catalog_update` | Ordered folder catalog; removing a folder unfiles logs |
 | `recording_status` | Sidecars with `status: recording` |
 | `recording_start` / `recording_stop` | Browser command; optional custom rules |
 | `replay_open` / `replay_control` | Browser Replay workspace |
 | `replay_inspect` | Exact snapshot + nearby events, path globs |
 | `replay_series` | Downsampled series, max 2000 samples |
 
-Resources: `fusion://logs` and `fusion://logs/{logId}`.
+Resources: `fusion://logs`, `fusion://logs/{logId}`, and `fusion://log-folders`.
 
 ## Release soak and throughput evidence
 
@@ -534,6 +539,8 @@ not affect episode or trajectory identity. See [Headless release and CI gates](h
 | `app/logging/RecordingController.js` | Transport-injected session lifecycle, sampling, flush, retry, backpressure |
 | `app/logging/RecordingPanel.js` | Simulation overlay UI, profile editor, import |
 | `app/logging/LogClient.js` | Browser `/api/logs` fetch wrapper |
+| `app/logging/LogCatalogDocument.js` | Folder catalog kind, normalize, size/duration formatting |
+| `app/logging/LogsPage.js` | Logs workspace library |
 | `app/logging/LogDataset.js` | Decoded log for Replay/Analysis |
 | `app/logging/TimelineStore.js` | Shared Replay/Analysis cursor |
 | `app/logging/McpLoggingBridge.js` | Exactly-once MCP start/stop in the simulator tab |

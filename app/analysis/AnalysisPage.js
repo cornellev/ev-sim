@@ -108,6 +108,9 @@ export default function AnalysisPage({ initialLogId, onOpenReplay, onOpenWorkspa
     const [dataset, setDataset] = useState(null);
     const [datasetSnapshot, setDatasetSnapshot] = useState({});
     const [logSeries, setLogSeries] = useState(new Map());
+    const [seriesLoading, setSeriesLoading] = useState(false);
+    const logSeriesRef = useRef(logSeries);
+    logSeriesRef.current = logSeries;
     const [query, setQuery] = useState("");
     const [activeView, setActiveView] = useState("graph");
     const [selected, setSelected] = useState([]);
@@ -210,11 +213,25 @@ export default function AnalysisPage({ initialLogId, onOpenReplay, onOpenWorkspa
         };
     }, [dataset, sourceKey, timelineState.timeUs]);
     useEffect(() => {
-        if (!dataset || !sourceKey.startsWith("log:")) return undefined;
+        if (!dataset || !sourceKey.startsWith("log:")) {
+            setSeriesLoading(false);
+            return undefined;
+        }
         let cancelled = false;
-        const maxPoints = Math.min(2000, Math.max(2, Math.floor(graphPixelWidth * 2)));
-        Promise.all(selected.map(async (item) => {
-            if (!dataset.paths().includes(item.path)) return [selectionKey(item), []];
+        const maxPoints = 2000;
+        const loaded = logSeriesRef.current;
+        const pending = selected.filter((item) => dataset.paths().includes(item.path) && !loaded.has(selectionKey(item)));
+        if (pending.length === 0) {
+            setLogSeries((current) => {
+                const keys = new Set(selected.map(selectionKey));
+                const next = new Map([...current].filter(([key]) => keys.has(key)));
+                return next.size === current.size ? current : next;
+            });
+            setSeriesLoading(false);
+            return undefined;
+        }
+        setSeriesLoading(true);
+        Promise.all(pending.map(async (item) => {
             try {
                 return [selectionKey(item), await dataset.loadSeries(item.path, item.field, {
                     fromUs: 0,
@@ -225,10 +242,23 @@ export default function AnalysisPage({ initialLogId, onOpenReplay, onOpenWorkspa
                 return [selectionKey(item), []];
             }
         })).then((entries) => {
-            if (!cancelled) setLogSeries(new Map(entries));
-        }).catch((caught) => { if (!cancelled) setError(caught.message); });
-        return () => { cancelled = true; };
-    }, [dataset, graphPixelWidth, selected, sourceKey]);
+            if (cancelled) return;
+            setLogSeries((current) => {
+                const keys = new Set(selected.map(selectionKey));
+                const next = new Map([...current, ...entries].filter(([key]) => keys.has(key)));
+                return next;
+            });
+            setSeriesLoading(false);
+        }).catch((caught) => {
+            if (!cancelled) {
+                setSeriesLoading(false);
+                setError(caught.message);
+            }
+        });
+        return () => {
+            cancelled = true;
+        };
+    }, [dataset, selected, sourceKey]);
     useEffect(() => {
         let cancelled = false;
         storageGet(`settings/${encodeURIComponent(LAYOUT_KEY)}`)
@@ -441,7 +471,7 @@ export default function AnalysisPage({ initialLogId, onOpenReplay, onOpenWorkspa
                             </div>
                         </div>
                         <div className={styles.visualization} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); try { addSignal(JSON.parse(event.dataTransfer.getData("application/x-fusion-signal"))); } catch {} }}>
-                            {activeView === "graph" && <UPlotGraph data={graphData} series={selected} onWidth={setGraphPixelWidth} onCursor={(timeUs) => timeline.seek(timeUs)} onUnlockLive={() => { if (isLiveSource && timeline.getSnapshot().liveLocked) timeline.set({ liveLocked: false }); }} />}
+                            {activeView === "graph" && <UPlotGraph data={graphData} series={selected} loading={seriesLoading} onWidth={setGraphPixelWidth} onCursor={(timeUs) => timeline.seek(timeUs)} onUnlockLive={() => { if (isLiveSource && timeline.getSnapshot().liveLocked) timeline.set({ liveLocked: false }); }} />}
                             {activeView === "table" && <SignalTable selected={selected} samplesFor={samplesFor} timeUs={timelineState.timeUs} />}
                             {activeView === "events" && <EventView events={source.events || []} timeline={timeline} excludedTypes={excludedEventTypes} onExcludedTypesChange={setExcludedEventTypes} />}
                             {activeView === "spatial" && (

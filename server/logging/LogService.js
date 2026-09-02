@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -5,6 +6,13 @@ import { gzipSync, gunzipSync } from "node:zlib";
 
 import { ByteReader, ByteWriter, SFLOG_VERSION, decodeRecordStream } from "../../app/logging/SFLogCodec.js";
 import { downsampleMinMax } from "../../app/analysis/downsample.js";
+import {
+    LOG_CATALOG_FILENAME,
+    createLogCatalog,
+    logCatalogDefinition,
+    normalizeLogCatalog,
+    normalizeLogFolderId,
+} from "../../app/logging/LogCatalogDocument.js";
 import { MAX_LOG_BATCH_BYTES } from "../../app/logging/LogLimits.js";
 import { collectAttachments, readAutonomySnapshot, readPoseSeries } from "./spatialLogQueries.js";
 
@@ -18,6 +26,23 @@ const END_MAGIC = Buffer.from("SEND");
 const CHUNK_HEADER_BYTES = 36;
 const MAX_CHUNK_BYTES = 64 * 1024 * 1024;
 const MAX_IMPORT_BYTES = 2 * 1024 * 1024 * 1024;
+const INFLATED_CHUNK_CACHE_BYTES = 256 * 1024 * 1024;
+
+const INDEX_DECODE_OPTIONS = Object.freeze({
+    includeUpdates: false,
+    includeCheckpointValues: false,
+    includeEvents: false,
+    includeAttachments: false,
+});
+
+function pathDecodeOptions(signalPath) {
+    return {
+        includeUpdates: (schema) => schema.path === signalPath,
+        includeCheckpointValues: false,
+        includeEvents: false,
+        includeAttachments: false,
+    };
+}
 
 async function readAt(handle, length, position) {
     const buffer = Buffer.allocUnsafe(length);
@@ -131,19 +156,106 @@ async function readSidecar(filePath) {
     }
 }
 
+function catalogHash(definition) {
+    const normalize = (entry) => {
+        if (Array.isArray(entry)) return entry.map(normalize);
+        if (!entry || typeof entry !== "object") return entry;
+        return Object.fromEntries(Object.keys(entry).sort().map((key) => [key, normalize(entry[key])]));
+    };
+    return createHash("sha256").update(JSON.stringify(normalize(definition))).digest("hex");
+}
+
+function emptyCatalogDocument() {
+    const catalog = createLogCatalog();
+    return {
+        ...catalog,
+        revision: 0,
+        definitionHash: catalogHash(logCatalogDefinition(catalog)),
+        createdAt: null,
+        updatedAt: null,
+    };
+}
+
+function isLogSidecarName(name, files) {
+    if (!name.endsWith(".json") || name === LOG_CATALOG_FILENAME) return false;
+    const id = name.slice(0, -".json".length);
+    return files.has(`${id}.sflog`) || files.has(`${id}.partial`);
+}
+
+async function withFileBytes(logsDir, metadata, files) {
+    const folderId = normalizeLogFolderId(metadata?.folderId);
+    let bytes = Number(metadata?.bytes);
+    if (!Number.isFinite(bytes)) {
+        const fileName = files.has(`${metadata.id}.sflog`) ? `${metadata.id}.sflog` : `${metadata.id}.partial`;
+        try {
+            bytes = (await fs.stat(path.join(logsDir, fileName))).size;
+        } catch {
+            bytes = 0;
+        }
+    }
+    return { ...metadata, folderId, bytes };
+}
+
 export class LogService {
     constructor(logsDir = DEFAULT_LOGS_DIR) {
         this.logsDir = logsDir;
+        this.catalogPath = path.join(logsDir, LOG_CATALOG_FILENAME);
         this.active = new Map();
         this.indexCache = new Map();
+        this._inflatedChunks = new Map();
+        this._inflatedChunkBytes = 0;
+        this._logOps = new Map();
+        this._pathSampleCache = new Map();
+        this._catalogWriteChain = Promise.resolve();
+    }
+
+    _queueLogOp(id, fn) {
+        const previous = this._logOps.get(id) || Promise.resolve();
+        const run = previous.catch(() => {}).then(fn);
+        this._logOps.set(id, run);
+        return run;
+    }
+
+    _cachedInflatedChunk(id, chunkIndex) {
+        return this._inflatedChunks.get(id)?.get(chunkIndex) || null;
+    }
+
+    _forgetInflatedLog(id) {
+        const chunks = this._inflatedChunks.get(id);
+        if (!chunks) return;
+        this._inflatedChunks.delete(id);
+        for (const bytes of chunks.values()) this._inflatedChunkBytes -= bytes.byteLength || bytes.length || 0;
+        if (this._inflatedChunkBytes < 0) this._inflatedChunkBytes = 0;
+    }
+
+    _rememberInflatedChunk(id, chunkIndex, raw) {
+        let chunks = this._inflatedChunks.get(id);
+        if (chunks?.has(chunkIndex)) return;
+        const size = raw.byteLength || raw.length || 0;
+        if (size > INFLATED_CHUNK_CACHE_BYTES) return;
+        while (this._inflatedChunkBytes + size > INFLATED_CHUNK_CACHE_BYTES) {
+            const oldestOther = [...this._inflatedChunks.keys()].find((key) => key !== id);
+            if (oldestOther == null) return;
+            this._forgetInflatedLog(oldestOther);
+        }
+        if (!chunks) {
+            chunks = new Map();
+            this._inflatedChunks.set(id, chunks);
+        }
+        chunks.set(chunkIndex, raw);
+        this._inflatedChunkBytes += size;
     }
 
     async listLogs() {
         await fs.mkdir(this.logsDir, { recursive: true });
         await this.recoverPartialLogs();
         const entries = await fs.readdir(this.logsDir);
-        const sidecars = entries.filter((name) => name.endsWith(".json"));
-        const logs = await Promise.all(sidecars.map((name) => readSidecar(path.join(this.logsDir, name))));
+        const files = new Set(entries);
+        const sidecars = entries.filter((name) => isLogSidecarName(name, files));
+        const logs = await Promise.all(sidecars.map(async (name) => {
+            const metadata = await readSidecar(path.join(this.logsDir, name));
+            return metadata ? withFileBytes(this.logsDir, metadata, files) : null;
+        }));
         return logs.filter(Boolean).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
     }
 
@@ -178,6 +290,7 @@ export class LogService {
             resolvedHash: input.resolvedHash || null,
             provenance: input.provenance || null,
             tags: Array.isArray(input.tags) ? input.tags : [],
+            folderId: normalizeLogFolderId(input.folderId),
             incomplete: false,
         };
         const header = buildFileHeader(metadata);
@@ -307,7 +420,7 @@ export class LogService {
         const id = safeSegment(idValue);
         const metadata = await readSidecar(this._sidecarPath(id));
         if (!metadata) throw new Error(`Log "${id}" was not found.`);
-        return metadata;
+        return { ...metadata, folderId: normalizeLogFolderId(metadata.folderId) };
     }
 
     async updateMetadata(idValue, patch = {}) {
@@ -316,19 +429,81 @@ export class LogService {
             ...metadata,
             name: patch.name === undefined ? metadata.name : String(patch.name).trim() || metadata.name,
             tags: patch.tags === undefined ? metadata.tags : (Array.isArray(patch.tags) ? patch.tags.map(String) : metadata.tags),
+            folderId: patch.folderId === undefined ? normalizeLogFolderId(metadata.folderId) : normalizeLogFolderId(patch.folderId),
         };
         await this._writeSidecar(metadata.id, updated);
         return updated;
     }
 
+    async getCatalog() {
+        await fs.mkdir(this.logsDir, { recursive: true });
+        const stored = await readSidecar(this.catalogPath);
+        if (!stored) return emptyCatalogDocument();
+        try {
+            return normalizeLogCatalog(stored);
+        } catch {
+            return emptyCatalogDocument();
+        }
+    }
+
+    putCatalog(value = {}) {
+        const requested = value.catalog ?? value;
+        const expectedRevision = value.expectedRevision ?? requested.revision;
+        const operation = this._catalogWriteChain.catch(() => {}).then(async () => {
+            const current = await this.getCatalog();
+            const currentRevision = Number(current.revision || 0);
+            if (expectedRevision !== undefined && Number(expectedRevision) !== currentRevision) {
+                throw new Error(`Log catalog revision conflict: expected ${expectedRevision}, current revision is ${currentRevision}.`);
+            }
+            const now = new Date().toISOString();
+            const normalized = normalizeLogCatalog(requested);
+            const definition = logCatalogDefinition(normalized);
+            const catalog = {
+                ...definition,
+                revision: currentRevision + 1,
+                definitionHash: catalogHash(definition),
+                createdAt: current.createdAt ?? now,
+                updatedAt: now,
+            };
+            await this._writeJsonFile(this.catalogPath, catalog);
+            await this._unfileMissingFolders(catalog.folders);
+            return catalog;
+        });
+        this._catalogWriteChain = operation;
+        return operation;
+    }
+
+    async deleteLogs(ids = []) {
+        const results = [];
+        for (const id of ids) {
+            try {
+                await this.deleteLog(id);
+                results.push({ id, deleted: true });
+            } catch (error) {
+                results.push({ id, deleted: false, error: error.message });
+            }
+        }
+        return { results };
+    }
+
     async getIndex(idValue) {
         const id = safeSegment(idValue);
         if (this.indexCache.has(id)) return this.indexCache.get(id);
-        const scanned = await this._scanFile(this._finalPath(id));
+        const scanned = await this._scanFile(this._finalPath(id), { cacheId: id });
         const result = {
             metadata: scanned.header.metadata,
             durationUs: scanned.chunks.at(-1)?.endUs || 0,
-            chunks: scanned.chunks.map(({ startUs, endUs, offset, compressedLength, uncompressedLength, crc, hasCheckpoint }, index) => ({ index, startUs, endUs, offset, compressedLength, uncompressedLength, crc, hasCheckpoint })),
+            chunks: scanned.chunks.map(({ startUs, endUs, offset, compressedLength, uncompressedLength, crc, hasCheckpoint, schemaIds }, index) => ({
+                index,
+                startUs,
+                endUs,
+                offset,
+                compressedLength,
+                uncompressedLength,
+                crc,
+                hasCheckpoint,
+                schemaIds: schemaIds || [],
+            })),
             checkpoints: scanned.checkpoints,
             schemas: [...scanned.schemas.values()],
         };
@@ -350,7 +525,7 @@ export class LogService {
         return this._readIndexedChunk(this._finalPath(id), chunk);
     }
 
-    async *iterateChunks(idValue, { fromUs = 0, toUs = Number.POSITIVE_INFINITY } = {}) {
+    async *iterateChunks(idValue, { fromUs = 0, toUs = Number.POSITIVE_INFINITY, verifyCrc = true } = {}) {
         const id = safeSegment(idValue);
         const index = await this.getIndex(id);
         let startIndex = 0;
@@ -358,14 +533,31 @@ export class LogService {
             if (checkpoint.timeUs > fromUs) break;
             startIndex = checkpoint.chunkIndex;
         }
-        for (const chunk of index.chunks.slice(startIndex)) {
-            if (chunk.startUs > toUs) break;
-            yield { ...chunk, raw: await this._readIndexedChunk(this._finalPath(id), chunk) };
+        const needed = index.chunks.slice(startIndex).filter((chunk) => chunk.startUs <= toUs);
+        const missing = needed.filter((chunk) => !this._cachedInflatedChunk(id, chunk.index));
+        let handle = null;
+        try {
+            if (missing.length) handle = await fs.open(this._finalPath(id), "r");
+            for (const chunk of needed) {
+                let raw = this._cachedInflatedChunk(id, chunk.index);
+                if (!raw) {
+                    raw = await this._readChunkFromHandle(handle, chunk, { verifyCrc });
+                    this._rememberInflatedChunk(id, chunk.index, raw);
+                }
+                yield { ...chunk, raw };
+            }
+        } finally {
+            await handle?.close();
         }
     }
 
     async readSeries(idValue, { path: signalPath, field = "", fromUs = 0, toUs = Number.POSITIVE_INFINITY, maxPoints = 2000 } = {}) {
         if (!signalPath) throw new Error("A signal path is required.");
+        const id = safeSegment(idValue);
+        return this._queueLogOp(id, () => this._readSeries(id, { path: signalPath, field, fromUs, toUs, maxPoints }));
+    }
+
+    async _readSeries(idValue, { path: signalPath, field = "", fromUs = 0, toUs = Number.POSITIVE_INFINITY, maxPoints = 2000 } = {}) {
         const index = await this.getIndex(idValue);
         const descriptor = index.schemas.find((schema) => schema.path === signalPath);
         const boundedToUs = Number.isFinite(toUs) ? toUs : index.durationUs;
@@ -380,14 +572,12 @@ export class LogService {
                 downsampled: false,
             };
         }
-        const schemas = new Map(index.schemas.map((schema) => [schema.id, schema]));
+        const rawSamples = await this._loadPathSamples(idValue, descriptor, { fromUs, toUs: boundedToUs });
         const samples = [];
-        for await (const chunk of this.iterateChunks(idValue, { fromUs, toUs })) {
-            const decoded = decodeRecordStream(chunk.raw, schemas);
-            for (const update of decoded.updates) {
-                if (update.path !== signalPath || update.timeUs < fromUs || update.timeUs > toUs) continue;
-                const value = getNested(update.value, field);
-                if (typeof value === "number" && Number.isFinite(value)) samples.push({ timeUs: update.timeUs, cycle: update.cycle, value });
+        for (const sample of rawSamples) {
+            const value = getNested(sample.value, field);
+            if (typeof value === "number" && Number.isFinite(value)) {
+                samples.push({ timeUs: sample.timeUs, cycle: sample.cycle, value });
             }
         }
         const limit = Math.min(2000, Math.max(2, Math.floor(Number(maxPoints) || 2000)));
@@ -396,11 +586,33 @@ export class LogService {
             path: signalPath,
             field: field || "",
             fromUs,
-            toUs: Number.isFinite(toUs) ? toUs : index.durationUs,
+            toUs: boundedToUs,
             totalSamples: samples.length,
             samples: downsampled,
             downsampled: downsampled.length < samples.length,
         };
+    }
+
+    async _loadPathSamples(idValue, descriptor, { fromUs = 0, toUs = Number.POSITIVE_INFINITY } = {}) {
+        const cacheKey = `${idValue}\0${descriptor.path}\0${fromUs}\0${toUs}`;
+        if (this._pathSampleCache.has(cacheKey)) return this._pathSampleCache.get(cacheKey);
+        const schemas = new Map((await this.getIndex(idValue)).schemas.map((schema) => [schema.id, schema]));
+        const decodeOptions = pathDecodeOptions(descriptor.path);
+        const samples = [];
+        for await (const chunk of this.iterateChunks(idValue, { fromUs, toUs, verifyCrc: false })) {
+            if (Array.isArray(chunk.schemaIds) && chunk.schemaIds.length && !chunk.schemaIds.includes(descriptor.id)) continue;
+            const decoded = decodeRecordStream(chunk.raw, schemas, decodeOptions);
+            for (const update of decoded.updates) {
+                if (update.path !== descriptor.path || update.timeUs < fromUs || update.timeUs > toUs) continue;
+                samples.push({ timeUs: update.timeUs, cycle: update.cycle, value: update.value });
+            }
+        }
+        if (this._pathSampleCache.size >= 24) {
+            const oldest = this._pathSampleCache.keys().next().value;
+            this._pathSampleCache.delete(oldest);
+        }
+        this._pathSampleCache.set(cacheKey, samples);
+        return samples;
     }
 
     async readSnapshot(idValue, timeUs = 0, { includeHeavy = true } = {}) {
@@ -436,15 +648,22 @@ export class LogService {
     }
 
     async readEvents(idValue, { fromUs = 0, toUs = Number.POSITIVE_INFINITY, limit = 5000 } = {}) {
-        const index = await this.getIndex(idValue);
-        const schemas = new Map(index.schemas.map((schema) => [schema.id, schema]));
-        const events = [];
-        for await (const chunk of this.iterateChunks(idValue, { fromUs, toUs })) {
-            const decoded = decodeRecordStream(chunk.raw, schemas);
-            events.push(...decoded.events.filter((event) => event.timeUs >= fromUs && event.timeUs <= toUs));
-        }
-        const boundedLimit = Math.min(10000, Math.max(1, Math.floor(Number(limit) || 5000)));
-        return { events: events.sort((a, b) => a.timeUs - b.timeUs).slice(-boundedLimit), truncated: events.length > boundedLimit };
+        const id = safeSegment(idValue);
+        return this._queueLogOp(id, async () => {
+            const index = await this.getIndex(id);
+            const schemas = new Map(index.schemas.map((schema) => [schema.id, schema]));
+            const events = [];
+            for await (const chunk of this.iterateChunks(id, { fromUs, toUs, verifyCrc: false })) {
+                const decoded = decodeRecordStream(chunk.raw, schemas, {
+                    includeUpdates: false,
+                    includeCheckpointValues: false,
+                    includeAttachments: false,
+                });
+                events.push(...decoded.events.filter((event) => event.timeUs >= fromUs && event.timeUs <= toUs));
+            }
+            const boundedLimit = Math.min(10000, Math.max(1, Math.floor(Number(limit) || 5000)));
+            return { events: events.sort((a, b) => a.timeUs - b.timeUs).slice(-boundedLimit), truncated: events.length > boundedLimit };
+        });
     }
 
     async readAttachments(idValue, { names = null } = {}) {
@@ -459,21 +678,26 @@ export class LogService {
     }
 
     async readPoseSeries(idValue, options = {}) {
-        return readPoseSeries(this, idValue, options);
+        const id = safeSegment(idValue);
+        return this._queueLogOp(id, () => readPoseSeries(this, id, options));
     }
 
     async readAutonomySnapshot(idValue, timeUs = 0, options = {}) {
         return readAutonomySnapshot(this, idValue, timeUs, options);
     }
 
-    async _readIndexedChunk(filePath, chunk) {
+    async _readChunkFromHandle(handle, chunk, { verifyCrc = true } = {}) {
+        const compressed = await readAt(handle, chunk.compressedLength, chunk.offset + CHUNK_HEADER_BYTES);
+        const raw = gunzipSync(compressed);
+        if (raw.length !== chunk.uncompressedLength) throw new Error("SFLog chunk length does not match its header.");
+        if (verifyCrc && crc32(raw) !== chunk.crc) throw new Error("SFLog chunk failed CRC validation.");
+        return raw;
+    }
+
+    async _readIndexedChunk(filePath, chunk, options = {}) {
         const handle = await fs.open(filePath, "r");
         try {
-            const compressed = await readAt(handle, chunk.compressedLength, chunk.offset + CHUNK_HEADER_BYTES);
-            const raw = gunzipSync(compressed);
-            if (raw.length !== chunk.uncompressedLength) throw new Error("SFLog chunk length does not match its header.");
-            if (crc32(raw) !== chunk.crc) throw new Error("SFLog chunk failed CRC validation.");
-            return raw;
+            return await this._readChunkFromHandle(handle, chunk, options);
         } finally {
             await handle.close();
         }
@@ -539,6 +763,10 @@ export class LogService {
             fs.rm(this._sidecarPath(id), { force: true }),
         ]);
         this.indexCache.delete(id);
+        this._forgetInflatedLog(id);
+        for (const key of [...this._pathSampleCache.keys()]) {
+            if (key.startsWith(`${id}\0`)) this._pathSampleCache.delete(key);
+        }
         return true;
     }
 
@@ -577,7 +805,7 @@ export class LogService {
         }
     }
 
-    async _scanFile(filePath, { allowPartial = false } = {}) {
+    async _scanFile(filePath, { allowPartial = false, cacheId = null } = {}) {
         const handle = await fs.open(filePath, "r");
         try {
             const stat = await handle.stat();
@@ -635,7 +863,8 @@ export class LogService {
                     const raw = gunzipSync(compressed);
                     if (raw.length !== uncompressedLength) throw new Error("SFLog chunk length does not match its header.");
                     if (crc32(raw) !== expectedCrc) throw new Error("SFLog chunk failed CRC validation.");
-                    decoded = decodeRecordStream(raw, schemas);
+                    decoded = decodeRecordStream(raw, schemas, INDEX_DECODE_OPTIONS);
+                    if (cacheId) this._rememberInflatedChunk(cacheId, chunks.length, raw);
                 } catch (error) {
                     if (allowPartial) break;
                     throw error;
@@ -644,7 +873,16 @@ export class LogService {
                 const hasCheckpoint = decoded.checkpoints.length > 0;
                 const chunkIndex = chunks.length;
                 checkpoints.push(...decoded.checkpoints.map((checkpoint) => ({ timeUs: checkpoint.timeUs, chunkOffset: offset, chunkIndex })));
-                chunks.push({ startUs, endUs, offset, uncompressedLength, compressedLength, crc: expectedCrc, hasCheckpoint });
+                chunks.push({
+                    startUs,
+                    endUs,
+                    offset,
+                    uncompressedLength,
+                    compressedLength,
+                    crc: expectedCrc,
+                    hasCheckpoint,
+                    schemaIds: [...(decoded.observedSchemaIds || [])],
+                });
                 offset = dataEnd;
             }
 
@@ -682,10 +920,21 @@ export class LogService {
     _sidecarPath(id) { return path.join(this.logsDir, `${id}.json`); }
 
     async _writeSidecar(id, value) {
-        await fs.mkdir(this.logsDir, { recursive: true });
-        const filePath = this._sidecarPath(id);
+        await this._writeJsonFile(this._sidecarPath(id), value);
+    }
+
+    async _writeJsonFile(filePath, value) {
+        await fs.mkdir(path.dirname(filePath), { recursive: true });
         const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
         await fs.writeFile(tempPath, JSON.stringify(value, null, 2));
         await fs.rename(tempPath, filePath);
+    }
+
+    async _unfileMissingFolders(folders) {
+        const folderIds = new Set((folders || []).map((folder) => folder.id));
+        const logs = await this.listLogs();
+        await Promise.all(logs
+            .filter((log) => log.folderId && !folderIds.has(log.folderId))
+            .map((log) => this.updateMetadata(log.id, { folderId: null })));
     }
 }

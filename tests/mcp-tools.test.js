@@ -277,6 +277,8 @@ test("logging MCP suite registers catalog, recording, and replay capabilities", 
         "log_get",
         "log_update",
         "log_delete",
+        "log_catalog_get",
+        "log_catalog_update",
         "recording_status",
         "recording_start",
         "recording_stop",
@@ -285,7 +287,7 @@ test("logging MCP suite registers catalog, recording, and replay capabilities", 
         "replay_inspect",
         "replay_series",
     ]);
-    assert.deepEqual(resources, ["simulation-log-catalog", "simulation-log"]);
+    assert.deepEqual(resources, ["simulation-log-catalog", "log-folder-catalog", "simulation-log"]);
 });
 
 test("run manifest MCP suite exposes catalog, lifecycle, portable, and launch capabilities", () => {

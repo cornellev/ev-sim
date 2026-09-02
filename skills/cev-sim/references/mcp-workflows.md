@@ -46,10 +46,11 @@ internally — Express must be listening.
 | `fusion://experiment-results`, `…/{resultId}` | Results |
 | `fusion://experiment-baselines`, `…/{baselineId}` | Baselines |
 | `fusion://logs`, `…/{logId}` | SFLog catalog / metadata |
+| `fusion://log-folders` | Log folder catalog |
 
 No MCP prompts are registered.
 
-## Tool domains (~93 tools)
+## Tool domains (~95 tools)
 
 Modules registered in `createMcpRouter.js`:
 
@@ -96,6 +97,7 @@ recording_* [browser] → replay_inspect / replay_series [headless]
 ### Revision safety
 
 For `run_manifest_update`, `scenario_update`, `scenario_catalog_update`,
+`log_catalog_update`,
 `experiment_suite_update`, `experiment_result_update`, and similar: read current
 document, pass `expectedRevision`. Stale revision → storage error → `fail()`.
 

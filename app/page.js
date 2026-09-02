@@ -6,6 +6,7 @@ import TotalScene from './3d/Scene';
 import Scripting from './scripting/Scripting';
 import BindingsPage from './scripting/bindings/BindingsPage';
 import ReplayPage from './replay/ReplayPage';
+import LogsPage from './logging/LogsPage';
 import AnalysisPage from './analysis/AnalysisPage';
 import ConfigPage from './config/ConfigPage';
 import VehicleEditorPage from './vehicles/editor/VehicleEditorPage';
@@ -135,6 +136,13 @@ function HomeContent() {
         requestWorkspace(() => {
             if (typeof logId === "string") setSelectedLogId(logId);
             setView(APP_VIEWS.REPLAY);
+            setMenuVisible(false);
+        });
+    }, [requestWorkspace]);
+
+    const goToLogs = useCallback(() => {
+        requestWorkspace(() => {
+            setView(APP_VIEWS.LOGS);
             setMenuVisible(false);
         });
     }, [requestWorkspace]);
@@ -302,6 +310,7 @@ function HomeContent() {
                     onExperiments={goToExperiments}
                     onHeadlessRuns={goToHeadlessRuns}
                     onReplay={goToReplay}
+                    onLogs={goToLogs}
                     onAnalysis={goToAnalysis}
                     instant={menuSource === "keyboard"}
                 />
@@ -327,6 +336,11 @@ function HomeContent() {
         {
             view === APP_VIEWS.REPLAY && (
                 <ReplayPage key={selectedLogId || "replay"} initialLogId={selectedLogId} mcpCommand={replayCommand} onOpenAnalysis={goToAnalysis} onOpenWorkspace={() => openWorkspaceSwitcher("pointer")} />
+            )
+        }
+        {
+            view === APP_VIEWS.LOGS && (
+                <LogsPage onOpenWorkspace={() => openWorkspaceSwitcher("pointer")} onOpenReplay={goToReplay} onOpenAnalysis={goToAnalysis} />
             )
         }
         {

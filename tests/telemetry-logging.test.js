@@ -125,6 +125,48 @@ test("SFLog record streams preserve schemas, cycles, events, checkpoints, attach
     assert.equal(new TextDecoder().decode(decoded.attachments[0].bytes), "{}");
 });
 
+test("decodeRecordStream can skip unused payloads while extracting one path", () => {
+    const encoder = new SFLogBatchEncoder();
+    encoder.addUpdate({
+        path: "vehicles.ego.steeringAngle",
+        timeUs: 1_000,
+        cycle: 1,
+        entry: { type: "float64", value: 0.25 },
+        descriptor: { path: "vehicles.ego.steeringAngle", type: "float64", replayRole: "state", logClass: "core" },
+    });
+    encoder.addUpdate({
+        path: "visualization.perception.candidate",
+        timeUs: 1_000,
+        cycle: 1,
+        entry: { type: "json", value: { blob: "x".repeat(8_000) } },
+        descriptor: { path: "visualization.perception.candidate", type: "json", replayRole: "derived", logClass: "standard" },
+    });
+    encoder.addEvent({ timeUs: 1_000, category: "simulation", name: "tick", severity: "info", payload: { n: 1 } });
+    encoder.addAttachment({ name: "notes.txt", mime: "text/plain", bytes: "skip me", timeUs: 0 });
+    encoder.addCheckpoint({
+        "vehicles.ego.steeringAngle": { type: "float64", value: 0.25 },
+        "visualization.perception.candidate": { type: "json", value: { blob: "y" } },
+    }, [
+        { path: "vehicles.ego.steeringAngle", type: "float64", replayRole: "state", logClass: "core" },
+        { path: "visualization.perception.candidate", type: "json", replayRole: "derived", logClass: "standard" },
+    ], 1_000);
+
+    const decoded = decodeRecordStream(encoder.flush().bytes, new Map(), {
+        includeUpdates: (schema) => schema.path === "vehicles.ego.steeringAngle",
+        includeCheckpointValues: false,
+        includeEvents: false,
+        includeAttachments: false,
+    });
+    assert.equal(decoded.updates.length, 1);
+    assert.equal(decoded.updates[0].path, "vehicles.ego.steeringAngle");
+    assert.equal(decoded.updates[0].value, 0.25);
+    assert.equal(decoded.events.length, 0);
+    assert.equal(decoded.attachments.length, 0);
+    assert.equal(decoded.checkpoints.length, 1);
+    assert.deepEqual(decoded.checkpoints[0].values, {});
+    assert.ok([...decoded.schemas.values()].some((schema) => schema.path === "vehicles.ego.steeringAngle"));
+});
+
 test("recording profiles use last-match precedence and lock replay-critical signals", () => {
     assert.equal(globMatches("devices.**", "devices.lidar.points"), true);
     assert.equal(globMatches("vehicles.*.pose", "vehicles.ego.pose"), true);
@@ -571,6 +613,10 @@ test("LogService finalizes indexed chunks, retries batches idempotently, imports
     assert.deepEqual(iterated, [0, 1]);
     const series = await service.readSeries(session.id, { path: "simulation.time", maxPoints: 10 });
     assert.deepEqual(series.samples.map((sample) => sample.value), [2, 3]);
+    const seriesAgain = await service.readSeries(session.id, { path: "simulation.time", maxPoints: 10 });
+    assert.deepEqual(seriesAgain.samples.map((sample) => sample.value), [2, 3]);
+    const timeSchema = index.schemas.find((schema) => schema.path === "simulation.time");
+    assert.ok(index.chunks.some((chunk) => chunk.schemaIds.includes(timeSchema.id)));
     const snapshot = await service.readSnapshot(session.id, 3_000_000);
     assert.equal(snapshot.snapshot["simulation.time"], 3);
     assert.deepEqual(snapshot.snapshot["devices.camera.image"], new Uint8Array([1, 2, 3]));

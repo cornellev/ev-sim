@@ -77,7 +77,11 @@ export async function collectAttachments(service, idValue, { names = null } = {}
     const schemas = new Map(index.schemas.map((schema) => [schema.id, schema]));
 
     for await (const chunk of service.iterateChunks(idValue)) {
-        const decoded = decodeRecordStream(chunk.raw, schemas);
+        const decoded = decodeRecordStream(chunk.raw, schemas, {
+            includeUpdates: false,
+            includeCheckpointValues: false,
+            includeEvents: false,
+        });
         for (const attachment of decoded.attachments) {
             if (wanted && !wanted.has(attachment.name)) continue;
             found.set(attachment.name, attachment);
@@ -113,8 +117,15 @@ export async function readPoseSeries(service, idValue, {
 
     const schemas = new Map(index.schemas.map((schema) => [schema.id, schema]));
     const rawSamples = [];
-    for await (const chunk of service.iterateChunks(idValue, { fromUs, toUs })) {
-        const decoded = decodeRecordStream(chunk.raw, schemas);
+    const decodeOptions = {
+        includeUpdates: (schema) => schema.path === signalPath,
+        includeCheckpointValues: false,
+        includeEvents: false,
+        includeAttachments: false,
+    };
+    for await (const chunk of service.iterateChunks(idValue, { fromUs, toUs, verifyCrc: false })) {
+        if (Array.isArray(chunk.schemaIds) && chunk.schemaIds.length && !chunk.schemaIds.includes(descriptor.id)) continue;
+        const decoded = decodeRecordStream(chunk.raw, schemas, decodeOptions);
         for (const update of decoded.updates) {
             if (update.path !== signalPath || update.timeUs < fromUs || update.timeUs > toUs) continue;
             const sample = poseSampleFromValue(update.timeUs, update.cycle, update.value);
@@ -148,9 +159,16 @@ export async function readAutonomySnapshot(service, idValue, timeUs = 0, { exact
     const schemas = new Map(index.schemas.map((schema) => [schema.id, schema]));
     const seriesMap = new Map(paths.map((path) => [path, []]));
     const pathSet = new Set(paths);
+    const wantedIds = new Set(index.schemas.filter((schema) => pathSet.has(schema.path)).map((schema) => schema.id));
 
-    for await (const chunk of service.iterateChunks(idValue, { fromUs: 0, toUs: cursorUs })) {
-        const decoded = decodeRecordStream(chunk.raw, schemas);
+    for await (const chunk of service.iterateChunks(idValue, { fromUs: 0, toUs: cursorUs, verifyCrc: false })) {
+        if (wantedIds.size && Array.isArray(chunk.schemaIds) && chunk.schemaIds.length && !chunk.schemaIds.some((schemaId) => wantedIds.has(schemaId))) continue;
+        const decoded = decodeRecordStream(chunk.raw, schemas, {
+            includeUpdates: (schema) => pathSet.has(schema.path),
+            includeCheckpointValues: false,
+            includeEvents: false,
+            includeAttachments: false,
+        });
         for (const update of decoded.updates) {
             if (!pathSet.has(update.path) || update.timeUs > cursorUs) continue;
             const samples = seriesMap.get(update.path);

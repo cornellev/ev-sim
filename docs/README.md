@@ -19,7 +19,7 @@ This folder is the contributor guide for cev-sim. Start here when you need to ru
 
 ## Project Map
 
-- `app/page.js` selects Simulation, Environment, Scripting, Bindings, Replay, and Analysis workspaces while preserving the live scene runtime.
+- `app/page.js` selects Simulation, Environment, Scripting, Bindings, Replay, Logs, and Analysis workspaces while preserving the live scene runtime.
 - `app/telemetry/`, `app/logging/`, `app/replay/`, and `app/analysis/` contain the shared signal transport, SFLog client, and inspection workspaces. The on-disk format and `LogService` are documented in [SFLog](sflog.md).
 - `app/scripting/` contains the node editor, block registry, compiler, runner, and built-in units.
 - `app/scripting/bindings/` contains the bindings manifest, runtime dispatcher, and Bindings workspace UI.

@@ -1,6 +1,7 @@
 export const LAST_OPEN_WORKSPACE_KEYS = Object.freeze({
     "run-config": "cev-sim.ui.lastOpen.run-config",
     scenarios: "cev-sim.ui.lastOpen.scenarios",
+    logs: "cev-sim.ui.lastOpen.logs",
     "experiment-suite": "cev-sim.ui.lastOpen.experiment-suite",
     "headless-runs": "cev-sim.ui.lastOpen.headless-runs",
 });

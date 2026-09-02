@@ -247,6 +247,12 @@ export class ByteReader {
         return this.readBytes(this.varuint());
     }
 
+    skipSizedBytes() {
+        const length = this.varuint();
+        this._require(length);
+        this.offset += length;
+    }
+
     string() {
         return textDecoder.decode(this.sizedBytes());
     }
@@ -659,14 +665,25 @@ function encodeRecords(records, schemas) {
     return writer.finish();
 }
 
-export function decodeRecordStream(bytes, initialSchemas = new Map()) {
+function includeDecoded(option, fallback, schema) {
+    if (option === undefined) return fallback;
+    if (typeof option === "function") return Boolean(option(schema));
+    return Boolean(option);
+}
+
+export function decodeRecordStream(bytes, initialSchemas = new Map(), options = {}) {
     const reader = new ByteReader(bytes);
     const schemas = new Map(initialSchemas);
     const updates = [];
     const events = [];
     const checkpoints = [];
     const attachments = [];
+    const observedSchemaIds = new Set();
     let lastCycleTimeUs = 0;
+    const includeUpdates = options.includeUpdates;
+    const includeCheckpointValues = options.includeCheckpointValues !== false;
+    const includeEvents = options.includeEvents !== false;
+    const includeAttachments = options.includeAttachments !== false;
 
     while (reader.remaining > 0) {
         const tag = reader.uint8();
@@ -691,18 +708,38 @@ export function decodeRecordStream(bytes, initialSchemas = new Map()) {
                 const id = reader.varuint();
                 const schema = schemas.get(id);
                 if (!schema) throw new Error(`SFLog update references unknown schema ${id}.`);
-                updates.push({ id, path: schema.path, descriptor: schema, timeUs, cycle, value: decodeSignalValue(schema.type, reader.sizedBytes()) });
+                observedSchemaIds.add(id);
+                if (includeDecoded(includeUpdates, true, schema)) {
+                    updates.push({
+                        id,
+                        path: schema.path,
+                        descriptor: schema,
+                        timeUs,
+                        cycle,
+                        value: decodeSignalValue(schema.type, reader.sizedBytes()),
+                    });
+                } else {
+                    reader.skipSizedBytes();
+                }
             }
             continue;
         }
         if (tag === RECORD_TAGS.EVENT) {
-            events.push({
-                timeUs: reader.varuint(),
-                category: reader.string(),
-                name: reader.string(),
-                severity: reader.string(),
-                payload: jsonParse(reader.string()),
-            });
+            if (includeEvents) {
+                events.push({
+                    timeUs: reader.varuint(),
+                    category: reader.string(),
+                    name: reader.string(),
+                    severity: reader.string(),
+                    payload: jsonParse(reader.string()),
+                });
+            } else {
+                reader.varuint();
+                reader.skipSizedBytes();
+                reader.skipSizedBytes();
+                reader.skipSizedBytes();
+                reader.skipSizedBytes();
+            }
             continue;
         }
         if (tag === RECORD_TAGS.CHECKPOINT) {
@@ -713,16 +750,32 @@ export function decodeRecordStream(bytes, initialSchemas = new Map()) {
                 const id = reader.varuint();
                 const schema = schemas.get(id);
                 if (!schema) throw new Error(`SFLog checkpoint references unknown schema ${id}.`);
-                values[schema.path] = decodeSignalValue(schema.type, reader.sizedBytes());
+                if (includeCheckpointValues) {
+                    values[schema.path] = decodeSignalValue(schema.type, reader.sizedBytes());
+                } else {
+                    reader.skipSizedBytes();
+                }
             }
             checkpoints.push({ timeUs, values });
             continue;
         }
         if (tag === RECORD_TAGS.ATTACHMENT) {
-            attachments.push({ timeUs: reader.varuint(), name: reader.string(), mime: reader.string(), bytes: new Uint8Array(reader.sizedBytes()) });
+            if (includeAttachments) {
+                attachments.push({
+                    timeUs: reader.varuint(),
+                    name: reader.string(),
+                    mime: reader.string(),
+                    bytes: new Uint8Array(reader.sizedBytes()),
+                });
+            } else {
+                reader.varuint();
+                reader.skipSizedBytes();
+                reader.skipSizedBytes();
+                reader.skipSizedBytes();
+            }
             continue;
         }
         throw new Error(`Unknown SFLog record tag 0x${tag.toString(16)}.`);
     }
-    return { schemas, updates, events, checkpoints, attachments };
+    return { schemas, updates, events, checkpoints, attachments, observedSchemaIds };
 }

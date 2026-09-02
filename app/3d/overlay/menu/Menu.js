@@ -8,6 +8,7 @@ import {
     IconCode,
     IconCube,
     IconHistory,
+    IconFiles,
     IconLink,
     IconPlayerPlay,
     IconRoute,
@@ -36,6 +37,7 @@ export default function Menu({
     onScripting,
     onBindings,
     onReplay,
+    onLogs,
     onAnalysis,
     onClose,
     instant = false,
@@ -65,7 +67,8 @@ export default function Menu({
             label: "Inspect",
             items: [
                 { key: "replay", label: "Replay", hint: "Inspect recorded simulations", icon: IconHistory, active: activeView === APP_VIEWS.REPLAY, onSelect: onReplay },
-                { key: "analysis", label: "Analysis", hint: "Graph live data", icon: IconChartHistogram, active: activeView === APP_VIEWS.ANALYSIS, onSelect: onAnalysis },
+                                { key: "analysis", label: "Analysis", hint: "Graph live data", icon: IconChartHistogram, active: activeView === APP_VIEWS.ANALYSIS, onSelect: onAnalysis },
+                { key: "logs", label: "Logs", hint: "Organize recorded simulations", icon: IconFiles, active: activeView === APP_VIEWS.LOGS, onSelect: onLogs },
             ],
         },
     ], [
@@ -77,6 +80,7 @@ export default function Menu({
         onExperiments,
         onHeadlessRuns,
         onEnvironmentEditor,
+        onLogs,
         onReplay,
         onScripting,
         onSimulation,

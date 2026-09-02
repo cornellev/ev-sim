@@ -88,7 +88,12 @@ export class LogDataset {
     }
 
     async loadSeries(path, field = "", options = {}) {
-        return (await getLogSeries(this.id, { path, field, ...options })).samples;
+        this._seriesCache ||= new Map();
+        const cacheKey = `${path}\0${field || ""}\0${options.fromUs ?? 0}\0${options.toUs ?? this.durationUs}\0${options.maxPoints ?? 2000}`;
+        if (this._seriesCache.has(cacheKey)) return this._seriesCache.get(cacheKey);
+        const samples = (await getLogSeries(this.id, { path, field, ...options })).samples;
+        this._seriesCache.set(cacheKey, samples);
+        return samples;
     }
 
     async loadSnapshot(timeUs, options = {}) {

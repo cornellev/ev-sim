@@ -1,10 +1,11 @@
-/** @typedef {"scripting" | "bindings" | "scenarios" | "experiments" | "headless-runs" | "replay" | "analysis" | "config" | "vehicle-editor" | "3d"} AppView */
+/** @typedef {"scripting" | "bindings" | "scenarios" | "experiments" | "headless-runs" | "replay" | "logs" | "analysis" | "config" | "vehicle-editor" | "3d"} AppView */
 /** @typedef {"simulation" | "environment"} ThreeDMode */
 
 export const APP_VIEWS = {
     SCRIPTING: "scripting",
     BINDINGS: "bindings",
     REPLAY: "replay",
+    LOGS: "logs",
     ANALYSIS: "analysis",
     CONFIG: "config",
     SCENARIOS: "scenarios",
@@ -33,6 +34,7 @@ export function getActiveWorkspaceKey(view, threeDMode) {
     if (view === APP_VIEWS.SCRIPTING) return APP_VIEWS.SCRIPTING;
     if (view === APP_VIEWS.BINDINGS) return APP_VIEWS.BINDINGS;
     if (view === APP_VIEWS.REPLAY) return APP_VIEWS.REPLAY;
+    if (view === APP_VIEWS.LOGS) return APP_VIEWS.LOGS;
     if (view === APP_VIEWS.ANALYSIS) return APP_VIEWS.ANALYSIS;
     if (view === APP_VIEWS.CONFIG) return APP_VIEWS.CONFIG;
     if (view === APP_VIEWS.SCENARIOS) return APP_VIEWS.SCENARIOS;
@@ -58,6 +60,7 @@ export function parseWorkspaceKey(workspaceKey) {
 
     if (
         workspaceKey === APP_VIEWS.REPLAY
+        || workspaceKey === APP_VIEWS.LOGS
         || workspaceKey === APP_VIEWS.ANALYSIS
         || workspaceKey === APP_VIEWS.CONFIG
         || workspaceKey === APP_VIEWS.SCENARIOS
