@@ -24,8 +24,9 @@ the browser `SimulationEngine` adapter, direct headless session, CLI, UDS gRPC
 supervisor, and Python client. Each case uses one resolved bundle and policy
 action tape. Same-platform episode/trajectory hashes, tensor bytes, discrete
 state, ordering, and final results must be exact. Finite numbers that enter
-`resolvedHash`, `simulationSemanticHash`, and `episodeHash` round to 12 decimal
-places so independently resolved bundles match across macOS and Linux. The
+hashed world, route, calibration, lidar, and simulation-identity documents
+round to 6 decimal places so independently resolved bundles match across macOS
+and Linux. RFC 8785 `canonicalStringify` is unchanged. The
 generated
 `cev-sim.headless.parity-report` v1 also contains a cross-platform semantic
 projection with these tolerances:

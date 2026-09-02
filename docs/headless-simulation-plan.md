@@ -854,11 +854,16 @@ tensors matched and numeric observations stayed well inside the declared
 Float64/Float32 tolerances.
 
 v1 hash algorithms, field sets, and `SIMULATION_HASH_VERSION` are unchanged.
-Finite numbers that enter those hashes now round to 12 decimal places first,
-matching the existing characterization snapshot helper, so the same authored
-environment resolves to the same identity hashes on linux-x64 and darwin-arm64.
+RFC 8785 `canonicalStringify` stays byte-identical with Python `rfc8785`.
+Finite numbers that enter hashed world, route, calibration, lidar, and
+simulation-identity documents round to 6 decimal places first so the same
+authored environment resolves to the same identity hashes on linux-x64 and
+darwin-arm64. Twelve decimal places left Mercator local-frame cancellation
+(~1e-9 m) in the hash; six places absorb that noise at micrometer scale.
 
 Python unit CI installs `./python[test]` without Stable-Baselines3. Collection
 of `test_integration.py` is skipped unless that extra is present; VecEnv seed
-coverage remains an optional unit test behind `importorskip`.
+coverage remains an optional unit test behind `importorskip`. JS-backed unit
+tests skip unless `node_modules` is installed; the Python version matrix runs
+`npm ci` so those checks still execute.
 

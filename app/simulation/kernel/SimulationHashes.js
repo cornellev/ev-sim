@@ -3,8 +3,13 @@ import { bytesToHex } from "@noble/hashes/utils.js";
 
 export const SIMULATION_HASH_VERSION = 1;
 
-/** Decimal places used so hashed floats are stable across CPU libm implementations. */
-export const CANONICAL_NUMBER_DECIMALS = 12;
+/**
+ * Decimal places used so hashed floats are stable across CPU libm implementations.
+ * Six places is 1e-6 (micrometer-scale for meter quantities). Independently
+ * resolved IGVC local frames retain ~1e-9 m of Mercator cancellation noise,
+ * which 12-decimal rounding does not absorb.
+ */
+export const CANONICAL_NUMBER_DECIMALS = 6;
 
 export function canonicalFiniteNumber(value) {
     if (typeof value !== "number" || !Number.isFinite(value)) {
@@ -12,6 +17,15 @@ export function canonicalFiniteNumber(value) {
     }
     const rounded = Number(value.toFixed(CANONICAL_NUMBER_DECIMALS));
     return Object.is(rounded, -0) ? 0 : rounded;
+}
+
+export function canonicalNumericTree(value) {
+    if (typeof value === "number" && Number.isFinite(value)) return canonicalFiniteNumber(value);
+    if (Array.isArray(value)) return value.map(canonicalNumericTree);
+    if (!value || typeof value !== "object") return value;
+    return Object.fromEntries(
+        Object.entries(value).map(([key, entry]) => [key, canonicalNumericTree(entry)]),
+    );
 }
 
 const textEncoder = new TextEncoder();

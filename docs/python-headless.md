@@ -23,7 +23,9 @@ registry. See [Headless release and CI gates](headless-release.md).
 Python 3.10–3.13 is supported. The base package does not install
 Stable-Baselines3 or PyTorch. Unit tests (`pytest -m 'not integration'`)
 collect without the `sb3` extra; Gymnasium/SB3 integration tests require
-`./python[sb3,test]`. Generated Protobuf bindings are committed and
+`./python[sb3,test]`. JS-backed unit tests (`test_bundle.py` envelope/rfc8785
+checks and the session fixture) skip unless `node_modules` is present.
+Generated Protobuf bindings are committed and
 must be regenerated, never edited, after an additive protocol change:
 
 ```bash

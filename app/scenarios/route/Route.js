@@ -15,6 +15,7 @@ import {
 } from "./roadGraph.js";
 import { hashWaypoints, normalizeWaypoints } from "./waypoints.js";
 import { stableStringify } from "./hash.js";
+import { canonicalNumericTree } from "../../simulation/kernel/SimulationHashes.js";
 
 const EPSILON = 1e-9;
 export const ROUTE_SCHEMA = "cev-sim.route";
@@ -411,7 +412,7 @@ export function verifyRoute(first, second, third) {
     }
 
     const flattened = flattenSections(sections);
-    const verification = {
+    const verification = canonicalNumericTree({
         algorithm: "directed-a-star",
         algorithmVersion: 1,
         environmentId: document.environmentId ?? null,
@@ -422,7 +423,7 @@ export function verifyRoute(first, second, third) {
         polyline: flattened.polyline,
         cumulativeDistances: flattened.cumulativeDistances,
         totalLength: flattened.totalLength,
-    };
+    });
     const verifiedRoute = {
         ...route,
         schema: route.schema ?? ROUTE_SCHEMA,

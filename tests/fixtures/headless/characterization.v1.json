@@ -5,8 +5,8 @@
   "sourceRuntime": "app/simulation/SimulationEngine.js",
   "run": {
     "manifestId": "headless-characterization-v1",
-    "definitionHash": "6eccd8b0fc06b83f0f73f2575d61a2c0d63ffbbc4c4705b78f0c58a47cbc39c5",
-    "resolvedHash": "0237f5818b027a6c4abb08ace200bfc38686731fbcab718e4dd2d88a23b2d601",
+    "definitionHash": "39c19ab6c9f786f870001a4153b141cf7dce6017dd460f0aee492ec2717024be",
+    "resolvedHash": "1bc531d3996922239130344ea7f86ee41e5b5ffebfee53065022445d95687d37",
     "stepNs": 20000000,
     "maxSteps": 6
   },
@@ -495,9 +495,9 @@
     "freshRuntimeMatches": true
   },
   "hashes": {
-    "actionTapeSha256": "12c5f3ccd3f0dcfae4fc7681cd987dc2f2f3fcf4e246e956fed049917e9f41e5",
-    "trajectorySha256": "1c48f8055f0b7f9cb8e6e0dbd2e1ea56b42adc4a724dd9d5f0e6c263abfe53c3",
-    "resetTrajectorySha256": "1c48f8055f0b7f9cb8e6e0dbd2e1ea56b42adc4a724dd9d5f0e6c263abfe53c3",
-    "freshTrajectorySha256": "1c48f8055f0b7f9cb8e6e0dbd2e1ea56b42adc4a724dd9d5f0e6c263abfe53c3"
+    "actionTapeSha256": "8517a1389476cd63af52907acb995496eae7fbf5b8ca4d9ffc64701751355ac0",
+    "trajectorySha256": "b32c30fde91910fc3d95205ba25ab7a1ab8ef3261fe89d9cfe4972b016135891",
+    "resetTrajectorySha256": "b32c30fde91910fc3d95205ba25ab7a1ab8ef3261fe89d9cfe4972b016135891",
+    "freshTrajectorySha256": "b32c30fde91910fc3d95205ba25ab7a1ab8ef3261fe89d9cfe4972b016135891"
   }
 }

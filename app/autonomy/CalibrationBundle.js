@@ -8,7 +8,7 @@ import {
     eulerToQuaternion,
     rep103PoseToThree,
 } from "./CoordinateFrames.js";
-import { canonicalFiniteNumber } from "../simulation/kernel/SimulationHashes.js";
+import { canonicalNumericTree } from "../simulation/kernel/SimulationHashes.js";
 
 function text(value, fallback = "") {
     const normalized = String(value ?? "").trim();
@@ -17,7 +17,6 @@ function text(value, fallback = "") {
 
 function canonicalStringify(value) {
     const normalize = (entry) => {
-        if (typeof entry === "number" && Number.isFinite(entry)) return canonicalFiniteNumber(entry);
         if (Array.isArray(entry)) return entry.map(normalize);
         if (!entry || typeof entry !== "object") return entry;
         return Object.fromEntries(
@@ -142,7 +141,7 @@ export function buildCalibrationBundle(manifest, options = {}) {
         frameIds.add(sensor.measurementFrameId);
     }
 
-    const bundle = {
+    const bundle = canonicalNumericTree({
         kind: "cev-sim.calibration-bundle",
         version: 2,
         manifestId: manifest.id,
@@ -160,7 +159,7 @@ export function buildCalibrationBundle(manifest, options = {}) {
         sensors,
         staticTransforms,
         frameIds: [...frameIds].sort(),
-    };
+    });
     bundle.hash = calibrationBundleHash(bundle);
     return bundle;
 }
