@@ -98,5 +98,8 @@ container does not prove Chromium/ANGLE capability inside it.
 Register the isolated runner with label `cev-sim-jetson-arm64`. The scheduled
 workflow never handles pull requests or release secrets. It always runs
 state-only, CPU-LiDAR, and Python tests. It runs rendered-sensor tests only
-when the host report proves production hardware WebGL2. The x64 NVIDIA runner
-label `cev-sim-gpu-x64` is the mandatory rendered-sensor gate and must pass.
+when the host report proves production hardware WebGL2. Those tests load
+`CEV_SIM_SUPERVISOR_CONFIG` (`/etc/cev-sim/supervisor.json`) so Chromium gets
+the same ANGLE/launch arguments as `gpu-preflight`; the executable path alone
+falls back to software WebGL on Thor. The x64 NVIDIA runner label
+`cev-sim-gpu-x64` is the mandatory rendered-sensor gate and must pass.

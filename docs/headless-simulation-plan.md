@@ -855,6 +855,16 @@ inline observations so stdout never contains shared-memory references that
 expire at teardown. Protobuf v1, protocol 1.2, bundle/profile/backend
 identities, and all simulation hashes remain unchanged.
 
+### 2026-09-05 — Hardware GPU tests use supervisor renderer config
+
+`npm run test:gpu-sensors` hardware cases previously launched
+`CEV_SIM_CHROMIUM_EXECUTABLE` with no ANGLE or launch arguments. Host
+`gpu-preflight` used `/etc/cev-sim/supervisor.json` and could report a
+production NVIDIA renderer while the same CI step fell back to software
+WebGL. Hardware tests now read `CEV_SIM_SUPERVISOR_CONFIG` when set, and the
+rendered-sensor workflow exports `/etc/cev-sim/supervisor.json`. Protobuf v1,
+bundle/profile/backend identities, and hash algorithms remain unchanged.
+
 ### 2026-09-05 — Verified headless smoke-bundle generator
 
 Add `cev-sim create-smoke-bundle --output <bundle.json>` for deployment

@@ -58,6 +58,25 @@ function tensorByName(map, name) {
     return map.entries.find((entry) => entry.name === name)?.tensor;
 }
 
+async function hardwareRendererConfig() {
+    const configPath = process.env.CEV_SIM_SUPERVISOR_CONFIG;
+    const fallback = {
+        chromiumExecutable: process.env.CEV_SIM_CHROMIUM_EXECUTABLE,
+        contextPoolSize: 1,
+    };
+    if (!configPath) return fallback;
+    const config = JSON.parse(await fs.readFile(configPath, "utf8"));
+    const renderer = config.renderer || {};
+    return {
+        chromiumExecutable: renderer.chromiumExecutable || fallback.chromiumExecutable,
+        contextPoolSize: renderer.contextPoolSize ?? 1,
+        angle: renderer.angle || "",
+        disableSandbox: Boolean(renderer.disableSandbox),
+        allowSoftwareRenderer: Boolean(renderer.allowSoftwareRenderer),
+        launchArgs: Array.isArray(renderer.launchArgs) ? renderer.launchArgs : [],
+    };
+}
+
 function grpcCall(client, method, request) {
     return new Promise((resolve, reject) => {
         client[method](request, (error, response) => error ? reject(error) : resolve(response));
@@ -77,6 +96,31 @@ test("unconfigured GPU support stays unavailable without loading a renderer adap
     assert.match(probe.reason, /not configured/);
     assert.equal(adapterLoaded, false);
     await pool.close();
+});
+
+test("hardware renderer config copies ANGLE and launch arguments from the supervisor file", async (t) => {
+    const previous = process.env.CEV_SIM_SUPERVISOR_CONFIG;
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "cev-gpu-renderer-config-"));
+    t.after(async () => {
+        if (previous === undefined) delete process.env.CEV_SIM_SUPERVISOR_CONFIG;
+        else process.env.CEV_SIM_SUPERVISOR_CONFIG = previous;
+        await fs.rm(root, { recursive: true, force: true });
+    });
+    const configPath = path.join(root, "supervisor.json");
+    await fs.writeFile(configPath, JSON.stringify({
+        kind: "cev-sim.headless-supervisor-config",
+        version: 1,
+        renderer: {
+            chromiumExecutable: "/usr/bin/chromium",
+            angle: "gl-egl",
+            launchArgs: ["--enable-gpu", "--use-gl=angle", "--use-angle=gl-egl"],
+        },
+    }));
+    process.env.CEV_SIM_SUPERVISOR_CONFIG = configPath;
+    const renderer = await hardwareRendererConfig();
+    assert.equal(renderer.chromiumExecutable, "/usr/bin/chromium");
+    assert.equal(renderer.angle, "gl-egl");
+    assert.deepEqual(renderer.launchArgs, ["--enable-gpu", "--use-gl=angle", "--use-angle=gl-egl"]);
 });
 
 test("measured-perception adds delivered CPU LiDAR values without changing measured-state", async () => {
@@ -418,10 +462,7 @@ test("hardware WebGL2 LiDAR matches CPU range/incidence on the canonical scene",
         (sensor.calibration.elevation.endDeg - sensor.calibration.elevation.startDeg)
         / sensor.calibration.elevation.stepDeg,
     );
-    const pool = new PooledGpuRenderer({
-        chromiumExecutable: process.env.CEV_SIM_CHROMIUM_EXECUTABLE,
-        contextPoolSize: 1,
-    });
+    const pool = new PooledGpuRenderer(await hardwareRendererConfig());
     try {
         const [captured] = await pool.captureGroup({
             environmentKey: "parity",
@@ -475,10 +516,7 @@ test("protocol 1.2 UDS returns large GPU observations through shared memory", {
         config: {
             kind: "cev-sim.headless-supervisor-config",
             version: 1,
-            renderer: {
-                chromiumExecutable: process.env.CEV_SIM_CHROMIUM_EXECUTABLE,
-                contextPoolSize: 1,
-            },
+            renderer: await hardwareRendererConfig(),
         },
     });
     const { grpc, service } = loadHeadlessGrpcSchema();

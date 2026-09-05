@@ -37,6 +37,7 @@ jobs:
       - name: Production rendered sensors
         env:
           CEV_SIM_CHROMIUM_EXECUTABLE: ${{ steps.chromium.outputs.executable }}
+          CEV_SIM_SUPERVISOR_CONFIG: /etc/cev-sim/supervisor.json
         run: |
           npm run test:gpu-sensors
           npm run test:shared-memory
@@ -79,6 +80,7 @@ jobs:
         if: steps.gpu.outputs.available == 'true'
         env:
           CEV_SIM_CHROMIUM_EXECUTABLE: ${{ steps.gpu.outputs.executable }}
+          CEV_SIM_SUPERVISOR_CONFIG: /etc/cev-sim/supervisor.json
         run: npm run test:gpu-sensors
       - name: Explicit unsupported rendered-sensor path
         if: steps.gpu.outputs.available != 'true'
