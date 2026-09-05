@@ -95,3 +95,80 @@ test("LogService refuses to delete an active recording and reports batch failure
         assert.equal((await service.listLogs()).length, 0);
     });
 });
+
+test("LogService indexes evidence from finalize and backfills legacy sidecars once", async () => {
+    await withLogs(async (service, directory) => {
+        const session = await service.createSession({
+            id: "evidence-log",
+            name: "Evidence",
+            runId: "run-evidence",
+            manifestId: "golden",
+            definitionHash: "d".repeat(64),
+            resolvedHash: "r".repeat(64),
+            gitHash: "g".repeat(40),
+            evidence: {
+                kind: "cev-sim.log-evidence",
+                version: 1,
+                manifestId: "golden",
+                runId: "run-evidence",
+                definitionHash: "d".repeat(64),
+                resolvedHash: "r".repeat(64),
+                gitCommit: "g".repeat(40),
+                candidateModels: [{
+                    role: "planning",
+                    modelId: "planner",
+                    version: "1",
+                    digest: "a".repeat(64),
+                }],
+            },
+        });
+        const finalized = await service.finalize(session.id, {
+            runResult: {
+                simulationSemanticHash: "s".repeat(64),
+                episodeHash: "e".repeat(64),
+                trajectoryHash: "t".repeat(64),
+                worldHash: "w".repeat(64),
+                calibrationHash: "c".repeat(64),
+            },
+        });
+        assert.equal(finalized.evidence.episodeHash, "e".repeat(64));
+        assert.equal(finalized.evidence.candidateModels[0].modelId, "planner");
+        assert.equal(finalized.evidence.source.status, "indexed");
+
+        const linked = await service.linkExperimentEvidence(session.id, {
+            suiteId: "suite-1",
+            resultId: "result-1",
+            caseId: "case-1",
+        });
+        assert.equal(linked.evidence.suiteId, "suite-1");
+        assert.equal(linked.evidence.resultId, "result-1");
+        assert.equal(linked.evidence.caseId, "case-1");
+
+        const legacyId = "legacy-log";
+        const sidecarPath = path.join(directory, `${legacyId}.json`);
+        const sflogPath = path.join(directory, `${legacyId}.sflog`);
+        const legacyMeta = {
+            id: legacyId,
+            name: "Legacy",
+            createdAt: new Date().toISOString(),
+            status: "complete",
+            format: "sflog",
+            version: 1,
+            runId: "legacy-run",
+            manifestId: "legacy-manifest",
+            resolvedHash: "1".repeat(64),
+            definitionHash: "2".repeat(64),
+            gitHash: "3".repeat(40),
+            bytes: 0,
+            durationUs: 0,
+        };
+        await writeFile(sidecarPath, `${JSON.stringify(legacyMeta, null, 2)}\n`);
+        await writeFile(sflogPath, Buffer.from("SFLG"));
+        const listed = await service.listLogs();
+        const legacy = listed.find((entry) => entry.id === legacyId);
+        assert.ok(legacy?.evidence);
+        assert.equal(legacy.evidence.runId, "legacy-run");
+        assert.equal(legacy.evidence.manifestId, "legacy-manifest");
+        assert.equal(legacy.evidence.source.backfilled, true);
+    });
+});

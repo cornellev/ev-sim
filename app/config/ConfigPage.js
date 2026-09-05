@@ -80,7 +80,15 @@ import {
     writeLastOpenWorkspaceId,
 } from "../ui";
 
-const TABS = ["Overview", "Scenario", "Initial State", "Clock", "Controls", "Sensors", "Scripts", "Topics", "Assertions", "Logging", "JSON"];
+const TABS = ["Overview", "Scenario", "Initial State", "Clock", "Controls", "Sensors", "Scripts", "Topics", "Assertions", "Logging", "Provenance", "JSON"];
+const CANDIDATE_MODEL_ROLE_OPTIONS = [
+    "perception",
+    "localization",
+    "planning",
+    "control",
+    "full-stack",
+    "other",
+];
 const SENSOR_TYPE_DEFINITIONS = listSensorTypes();
 const FaPlus = (props) => <IconPlus size={14} stroke={1.75} {...props} />;
 
@@ -133,6 +141,7 @@ function validationIssueLocation(path = "") {
     if (path.startsWith("scripts")) return "Scripts";
     if (path.startsWith("assertions")) return "Assertions";
     if (path.startsWith("logging")) return "Logging";
+    if (path.startsWith("provenance")) return "Provenance";
     if (path.startsWith("parameters") || path.startsWith("environment")) return "Overview";
     if (path === "dependencies") return "Overview";
     return null;
@@ -200,7 +209,7 @@ function buildConfigurationAttention({ error, environmentError, rawError, valida
     return { title, sections };
 }
 
-export default function ConfigPage({ onLaunch, onOpenWorkspace }) {
+export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestId = null }) {
     const controller = useMemo(() => getRunSessionController(), []);
     const importRef = useRef(null);
     const manifestLoadRequest = useRef(0);
@@ -352,7 +361,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace }) {
     };
 
     useEffect(() => {
-        loadManifestCatalog();
+        loadManifestCatalog(initialManifestId);
         loadEnvironmentCatalog();
         loadVehicleCatalog();
         loadScenarioCatalog();
@@ -681,6 +690,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace }) {
                                         {item === "Topics" && <Topics draft={draft} update={update} />}
                                         {item === "Assertions" && <Assertions draft={draft} update={update} />}
                                         {item === "Logging" && <Logging draft={draft} update={update} />}
+                                        {item === "Provenance" && <Provenance draft={draft} update={update} />}
                                         {item === "JSON" && (
                                             <div className="space-y-3">
                                                 <textarea aria-label="Raw run manifest JSON" spellCheck={false} value={raw} onChange={(event) => applyRaw(event.target.value)} className="sf-input min-h-[520px] resize-y p-4 font-mono text-[12px] leading-relaxed" />
@@ -1591,6 +1601,86 @@ function Assertions({ draft, update }) {
 
 function Logging({ draft, update }) {
     return <div className="grid gap-4 md:grid-cols-2"><Field label="Run logging policy"><select value={draft.logging.policy} onChange={(event) => update(["logging", "policy"], event.target.value)}><option value="required">Required: reject run if unavailable</option><option value="optional">Optional: continue degraded</option><option value="disabled">Disabled</option></select></Field><Field label="Recording profile"><input value={draft.logging.profileId} onChange={(event) => update(["logging", "profileId"], event.target.value)} /></Field></div>;
+}
+
+function emptyCandidateModel() {
+    return { role: "other", modelId: "", version: null, digest: "" };
+}
+
+function Provenance({ draft, update }) {
+    const models = Array.isArray(draft.provenance?.candidateModels) ? draft.provenance.candidateModels : [];
+    const setModels = (next) => update(["provenance", "candidateModels"], next);
+    return (
+        <div className="space-y-4">
+            <p className="text-[12px] text-[var(--slate-muted)]">
+                Declare hash-locked candidate models that produced this run. These references change
+                definition and resolved hashes for evidence lineage, but do not change simulation,
+                episode, or trajectory identity.
+            </p>
+            {models.length === 0 ? (
+                <p className="text-[12px] text-[var(--slate-muted)]">No candidate models declared.</p>
+            ) : models.map((model, index) => (
+                <div key={`candidate-model-${index}`} className="rounded-[var(--radius)] border border-[var(--slate-border)] bg-[var(--slate-surface-1)] p-4">
+                    <div className="grid gap-4 md:grid-cols-2">
+                        <Field label="Role">
+                            <select
+                                value={model.role || "other"}
+                                onChange={(event) => setModels(models.map((entry, candidate) => (
+                                    candidate === index ? { ...entry, role: event.target.value } : entry
+                                )))}
+                            >
+                                {CANDIDATE_MODEL_ROLE_OPTIONS.map((role) => (
+                                    <option key={role} value={role}>{role}</option>
+                                ))}
+                            </select>
+                        </Field>
+                        <Field label="Model ID">
+                            <input
+                                value={model.modelId || ""}
+                                onChange={(event) => setModels(models.map((entry, candidate) => (
+                                    candidate === index ? { ...entry, modelId: event.target.value } : entry
+                                )))}
+                                placeholder="planner-v3"
+                            />
+                        </Field>
+                        <Field label="Version (optional)">
+                            <input
+                                value={model.version || ""}
+                                onChange={(event) => setModels(models.map((entry, candidate) => (
+                                    candidate === index ? { ...entry, version: event.target.value || null } : entry
+                                )))}
+                                placeholder="1.2.0"
+                            />
+                        </Field>
+                        <Field label="SHA-256 digest" wide>
+                            <input
+                                value={model.digest || ""}
+                                onChange={(event) => setModels(models.map((entry, candidate) => (
+                                    candidate === index ? { ...entry, digest: event.target.value } : entry
+                                )))}
+                                placeholder="64-character hex digest"
+                                className="font-mono"
+                            />
+                        </Field>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={() => setModels(models.filter((_, candidate) => candidate !== index))}
+                        className="mt-4 text-left text-[11px] text-[var(--slate-danger)]"
+                    >
+                        Remove model
+                    </button>
+                </div>
+            ))}
+            <button
+                type="button"
+                onClick={() => setModels([...models, emptyCandidateModel()])}
+                className="text-left text-[12px] font-medium text-[var(--slate-accent)]"
+            >
+                Add candidate model
+            </button>
+        </div>
+    );
 }
 
 function VectorFields({ label, value, onChange }) {

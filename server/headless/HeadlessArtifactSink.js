@@ -4,6 +4,7 @@ import path from "node:path";
 
 import { RecordingController } from "../../app/logging/RecordingController.js";
 import { builtInProfile } from "../../app/logging/LogProfiles.js";
+import { projectEvidenceFromResolvedRun } from "../../app/logging/LogEvidenceDocument.js";
 import { LogService } from "../logging/LogService.js";
 import { stringifyJsonProtocol } from "./JsonProtocol.js";
 import { HeadlessRunnerError } from "./HeadlessRunnerErrors.js";
@@ -172,6 +173,15 @@ export class HeadlessArtifactSink {
                     definitionHash: this.bundle.resolved.definitionHash ?? null,
                     resolvedHash: this.bundle.resolvedHash,
                     provenance: this.provenance,
+                    evidence: projectEvidenceFromResolvedRun(this.bundle.resolved, {
+                        runId: `run-${this.episode.kernel.episodeHash.slice(0, 16)}`,
+                        gitCommit: this.provenance.gitHash,
+                        resolvedHash: this.bundle.resolvedHash,
+                        simulationSemanticHash: this.bundle.resolved.simulationSemanticHash
+                            ?? this.bundle.simulationSemanticHash
+                            ?? null,
+                        episodeHash: this.episode.kernel.episodeHash,
+                    }),
                     haltSimulationOnError: this.policy.logRequired,
                     timeBase: "simulation",
                     attachments,

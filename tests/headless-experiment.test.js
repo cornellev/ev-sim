@@ -312,40 +312,69 @@ test("fail-fast cancels pending cases while continue executes the full sequentia
 
 test("managed queues stop on optimistic result revision conflicts without overwriting external changes", async (t) => {
     const current = await fixture(t, { loggingPolicy: "disabled" });
-    let release;
-    let announce;
-    const entered = new Promise((resolve) => { announce = resolve; });
-    const blocked = new Promise((resolve) => { release = resolve; });
+    let releaseWorker = () => {};
+    let announceWorker = () => {};
+    const workerEntered = new Promise((resolve) => { announceWorker = resolve; });
+    const workerReleased = new Promise((resolve) => { releaseWorker = resolve; });
+    const events = [];
     const supervisor = new FakeSupervisor(async (request) => {
-        announce();
-        await blocked;
+        announceWorker();
+        await workerReleased;
         return fakeFinalized(request);
     });
     const service = new HeadlessExperimentService(current.storage, current.logs, {
         supervisor,
         artifactRoot: path.join(current.root, "artifacts"),
+        publish: (event) => events.push(event),
     });
-    const started = await service.start({
-        suiteId: current.suite.id,
-        resultId: "revision-conflict",
-        artifactProfile: "disabled",
-    });
-    const completion = service.waitForCompletion(started.resultId);
-    await entered;
-    const externallyRead = await current.storage.getExperimentResult(started.resultId);
-    const paused = interruptActiveExperimentCases(externallyRead, new Date().toISOString());
-    paused.status = "paused";
-    await current.storage.putExperimentResult(started.resultId, {
-        expectedRevision: externallyRead.revision,
-        result: paused,
-    });
-    release();
-    await completion;
-    const preserved = await current.storage.getExperimentResult(started.resultId);
-    assert.equal(preserved.status, "paused");
-    assert.equal(service.active, null);
-    assert.equal(supervisor.calls, 1);
-    await service.close();
+    try {
+        const started = await service.start({
+            suiteId: current.suite.id,
+            resultId: "revision-conflict",
+            artifactProfile: "disabled",
+        });
+        await workerEntered;
+        assert.equal(supervisor.calls, 1);
+        assert.ok(service.active);
+
+        const externallyRead = await current.storage.getExperimentResult(started.resultId);
+        const paused = interruptActiveExperimentCases(externallyRead, new Date().toISOString());
+        paused.status = "paused";
+        const externalWrite = await current.storage.putExperimentResult(started.resultId, {
+            expectedRevision: externallyRead.revision,
+            result: paused,
+        });
+        assert.ok(Number(externalWrite.revision) > Number(externallyRead.revision));
+
+        releaseWorker();
+        // Observe the externally paused document, then wait for the no-arg pump
+        // quiescence path so activeJob/queue cleanup is deterministic.
+        const observed = await service.waitForCompletion(started.resultId);
+        assert.equal(observed.status, "paused");
+        assert.equal(observed.revision, externalWrite.revision);
+        await service.waitForCompletion();
+
+        const preserved = await current.storage.getExperimentResult(started.resultId);
+        assert.equal(preserved.status, "paused");
+        assert.equal(preserved.revision, externalWrite.revision);
+        assert.deepEqual(preserved.cases, externalWrite.cases);
+        assert.equal(service.active, null);
+        assert.equal(supervisor.calls, 1);
+
+        const queue = await current.storage.getHeadlessExperimentQueue();
+        assert.equal(queue.entries.some((entry) => entry.resultId === started.resultId), false);
+        assert.equal(await current.storage.readHeadlessRunBundles(started.resultId), null);
+
+        const conflicts = events.filter((event) => (
+            event.domain === "experiment-run"
+            && event.id === started.resultId
+            && event.action === "revision-conflict"
+        ));
+        assert.equal(conflicts.length, 1);
+    } finally {
+        releaseWorker();
+        await service.close();
+    }
 });
 
 test("cancellation exits workers and startup reconciliation touches only headless-owned results", async (t) => {

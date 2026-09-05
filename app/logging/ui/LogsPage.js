@@ -14,6 +14,7 @@ import {
     resolveLogFolderId,
     slugifyLogFolder,
 } from "../LogCatalogDocument.js";
+import { evidenceSearchHaystack } from "../LogEvidenceDocument.js";
 import {
     deleteLogs,
     getLogCatalog,
@@ -22,6 +23,11 @@ import {
     saveLogCatalog,
     updateLog,
 } from "../LogClient.js";
+import {
+    getExperimentResult,
+    listExperimentBaselines,
+    listExperimentResults,
+} from "../../experiments/ExperimentClient.js";
 import { subscribeStorageEvents } from "../../client/storageEvents.js";
 import {
     AsyncState,
@@ -55,7 +61,13 @@ function compareLogs(a, b, sort) {
     return String(left || "").localeCompare(String(right || "")) * direction;
 }
 
-export default function LogsPage({ onOpenWorkspace, onOpenReplay, onOpenAnalysis }) {
+export default function LogsPage({
+    onOpenWorkspace,
+    onOpenReplay,
+    onOpenAnalysis,
+    onOpenManifest,
+    onOpenExperiment,
+}) {
     const fileRef = useRef(null);
     const [logs, setLogs] = useState([]);
     const [catalog, setCatalog] = useState(() => createLogCatalog());
@@ -68,16 +80,23 @@ export default function LogsPage({ onOpenWorkspace, onOpenReplay, onOpenAnalysis
     const [error, setError] = useState(null);
     const [busy, setBusy] = useState(false);
     const [pendingDelete, setPendingDelete] = useState(null);
+    const [resultSummaries, setResultSummaries] = useState([]);
+    const [baselines, setBaselines] = useState([]);
+    const [linkedResult, setLinkedResult] = useState(null);
 
     const folders = useMemo(() => catalog.folders || [], [catalog.folders]);
 
     const refresh = useCallback(async () => {
-        const [nextLogs, nextCatalog] = await Promise.all([
+        const [nextLogs, nextCatalog, nextResults, nextBaselines] = await Promise.all([
             listLogs(),
             getLogCatalog().catch(() => createLogCatalog()),
+            listExperimentResults().catch(() => ({ results: [] })),
+            listExperimentBaselines().catch(() => ({ baselines: [] })),
         ]);
         setLogs(nextLogs);
         setCatalog(normalizeLogCatalog(nextCatalog || {}));
+        setResultSummaries(Array.isArray(nextResults?.results) ? nextResults.results : (Array.isArray(nextResults) ? nextResults : []));
+        setBaselines(Array.isArray(nextBaselines?.baselines) ? nextBaselines.baselines : (Array.isArray(nextBaselines) ? nextBaselines : []));
         return nextLogs;
     }, []);
 
@@ -132,13 +151,38 @@ export default function LogsPage({ onOpenWorkspace, onOpenReplay, onOpenAnalysis
                 if (selectedFolderId === UNFILED_FOLDER_ID && folderId) return false;
                 if (selectedFolderId !== ALL_FOLDER_ID && selectedFolderId !== UNFILED_FOLDER_ID && folderId !== selectedFolderId) return false;
                 if (!needle) return true;
-                return `${log.name || ""} ${log.id || ""} ${(log.tags || []).join(" ")} ${log.status || ""}`.toLowerCase().includes(needle);
+                return evidenceSearchHaystack(log.evidence, log).includes(needle);
             })
             .slice()
             .sort((a, b) => compareLogs(a, b, sort));
     }, [folders, logs, query, selectedFolderId, sort]);
 
     const selectedLog = logs.find((log) => log.id === selectedId) || null;
+    const selectedResultId = selectedLog?.evidence?.resultId || null;
+
+    useEffect(() => {
+        let cancelled = false;
+        if (!selectedResultId) {
+            setLinkedResult(null);
+            return undefined;
+        }
+        const summary = resultSummaries.find((entry) => entry.id === selectedResultId) || null;
+        getExperimentResult(selectedResultId)
+            .then((value) => {
+                if (cancelled) return;
+                setLinkedResult(value?.result || value || summary);
+            })
+            .catch(() => {
+                if (!cancelled) setLinkedResult(null);
+            });
+        return () => { cancelled = true; };
+    }, [resultSummaries, selectedResultId]);
+
+    const linkedBaseline = useMemo(() => {
+        if (!selectedResultId) return null;
+        return baselines.find((entry) => entry.sourceResultId === selectedResultId) || null;
+    }, [baselines, selectedResultId]);
+
     const totalBytes = logs.reduce((sum, log) => sum + (Number(log.bytes) || 0), 0);
 
     const persistCatalog = async (nextFolders) => {
@@ -278,11 +322,31 @@ export default function LogsPage({ onOpenWorkspace, onOpenReplay, onOpenAnalysis
                         log={selectedLog}
                         folders={folders}
                         busy={busy}
+                        linkedResult={linkedResult}
+                        linkedBaseline={linkedBaseline}
                         onRename={(name) => selectedLog && patchLog(selectedLog.id, { name })}
                         onTags={(tags) => selectedLog && patchLog(selectedLog.id, { tags })}
                         onMove={(folderId) => selectedLog && patchLog(selectedLog.id, { folderId })}
                         onOpenReplay={onOpenReplay}
                         onOpenAnalysis={onOpenAnalysis}
+                        onOpenManifest={(manifestId) => onOpenManifest?.(manifestId)}
+                        onOpenExperimentResult={(target) => onOpenExperiment?.({
+                            suiteId: target.suiteId,
+                            resultId: target.resultId,
+                            tab: "review",
+                        })}
+                        onOpenExperimentCase={(target) => onOpenExperiment?.({
+                            suiteId: target.suiteId,
+                            resultId: target.resultId,
+                            caseId: target.caseId,
+                            tab: "review",
+                        })}
+                        onOpenBaselineCompare={(target) => onOpenExperiment?.({
+                            suiteId: target.suiteId,
+                            resultId: target.resultId,
+                            baselineId: target.baselineId,
+                            tab: "compare",
+                        })}
                         onDelete={() => selectedLog && setPendingDelete({ ids: [selectedLog.id] })}
                     />
                 )}

@@ -44,6 +44,7 @@ export class RunSessionController {
         this._environmentHandler = null;
         this.recording = getRecordingController();
         this._recordingRunId = null;
+        this._recordingEvidenceContext = null;
         this._unsubscribeSimulation = null;
         this._autoFinalizing = false;
         this._pendingPrepare = null;
@@ -438,6 +439,7 @@ export class RunSessionController {
                 runId,
                 resolvedRun: resolved,
                 provenance,
+                evidenceContext: this._recordingEvidenceContext,
                 haltSimulationOnError: policy === "required",
             }));
             this._recordingRunId = runId;
@@ -454,9 +456,20 @@ export class RunSessionController {
         }
     }
 
+    setRecordingEvidenceContext(context = null) {
+        this._recordingEvidenceContext = context && typeof context === "object"
+            ? {
+                suiteId: context.suiteId ?? null,
+                resultId: context.resultId ?? null,
+                caseId: context.caseId ?? null,
+            }
+            : null;
+    }
+
     clear() {
         this._launchSequence += 1;
         this._rejectPendingPrepare(new Error("Run preparation was cleared."));
+        this._recordingEvidenceContext = null;
         this.data?.simulation?.()?.clearRun?.();
         this._loggingPolicyOverride = null;
         this._speedOverride = null;

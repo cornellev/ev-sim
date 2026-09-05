@@ -49,9 +49,21 @@ Sidecar JSON is written atomically (temp file + rename). It is **not** the sourc
 
 ### Sidecar vs header metadata
 
-Both copies start from the same session object. After finalize, import, or recovery the sidecar also stores catalog fields that change after the header is written: `status`, `incomplete`, `completedAt`, `durationUs`, `bytes`, `importedAt`, `recoveredAt`, `recoveryError`, `loggingError`, `runResult`.
+Both copies start from the same session object. After finalize, import, or recovery the sidecar also stores catalog fields that change after the header is written: `status`, `incomplete`, `completedAt`, `durationUs`, `bytes`, `importedAt`, `recoveredAt`, `recoveryError`, `loggingError`, and the versioned `evidence` index. Finalize may merge final hashes from `runResult` into that evidence block without rewriting `.sflog` bytes.
 
 Editable catalog fields (`name`, `tags`, `folderId`) exist only in the sidecar. Patching them does not rewrite the binary header. `folderId` points at an entry in `catalog.json`; missing or unknown folder ids appear as Unfiled. The Logs workspace organizes recordings with this catalog. Removing a folder unfiles its logs and does not delete `.sflog` files.
+
+### Evidence index
+
+Sidecar-only `cev-sim.log-evidence` version 1 stores searchable lineage without changing SFLog v1:
+
+- Manifest/run IDs and definition/resolved/simulation/episode/trajectory hashes
+- World and calibration hashes
+- Suite/result/case IDs when the recording came from an experiment
+- Git commit and declared candidate-model references
+- Source status (`indexed` / `partial` / `unknown`), backfill flag, and attachment warnings
+
+Legacy sidecars without `evidence` are backfilled once from header fields plus `run-manifest.json`, `run-results.json`, `calibration.json`, and `provenance.json` attachments when available. Malformed or missing attachments leave explicit unknown/partial fields rather than fabricating lineage. Managed-headless import links suite/result/case context through `LogService.linkExperimentEvidence`.
 
 Status values:
 

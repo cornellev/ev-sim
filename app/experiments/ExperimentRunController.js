@@ -394,6 +394,11 @@ export class ExperimentRunController {
             // Manifest application resets every run-scoped telemetry source.
             // Subscribe after that reset so reducers observe the case itself,
             // rather than setup events or the tail of the previous case.
+            this.runSession.setRecordingEvidenceContext?.({
+                suiteId: this.result.suiteId,
+                resultId: this.result.id,
+                caseId: activeCase.id,
+            });
             await this.runSession.prepare(resolvedRun, { autoplay: false });
             this.runSession.applyRuntimeOverrides?.(resolvedRun);
             this._startMetricCollection(this.result.metricDefinitions);
@@ -408,6 +413,8 @@ export class ExperimentRunController {
                 passed: false,
                 failureReason: error?.message || String(error),
             };
+        } finally {
+            this.runSession.setRecordingEvidenceContext?.(null);
         }
 
         const finishedAt = nowIso(this.now);

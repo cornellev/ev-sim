@@ -173,6 +173,13 @@ export function simulationSemanticProjection(resolved = {}) {
     projectWorldEnvironmentIdentity(projection);
     if (projection.manifest) {
         delete projection.manifest.logging;
+        // Candidate-model declarations are evidence provenance only. Project v10
+        // back to the prior semantic shape so otherwise-identical runs keep the
+        // same simulationSemanticHash / episodeHash / trajectoryHash.
+        delete projection.manifest.provenance;
+        if (Number(projection.manifest.version) === 10) {
+            projection.manifest.version = 9;
+        }
         if (projection.manifest.clock) {
             delete projection.manifest.clock.pacing;
             delete projection.manifest.clock.speed;
@@ -181,6 +188,11 @@ export function simulationSemanticProjection(resolved = {}) {
                 delete projection.manifest.clock.modules.baking;
             }
         }
+    }
+    // Resolved documents also carry the authored manifest version; keep the
+    // portable envelope aligned with the projected semantic shape.
+    if (Number(projection.version) === 10) {
+        projection.version = 9;
     }
     delete projection.artifactPolicy;
     delete projection.resourceLimits;

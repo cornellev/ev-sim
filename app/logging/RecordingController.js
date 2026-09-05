@@ -212,6 +212,7 @@ export class RecordingController {
                 definitionHash: options.definitionHash || null,
                 resolvedHash: options.resolvedHash || null,
                 provenance: options.provenance || null,
+                evidence: options.evidence || null,
             });
             this.session = created.metadata;
             this.session.id = created.id;

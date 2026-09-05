@@ -147,9 +147,12 @@ gRPC/Protobuf surface: it drives `SimulationKernel` with resolved reference
 controllers and no candidate actions. A Node-safe experiment metric collector
 is shared with the browser controller. Final result revisions link immutable
 run/semantic/episode/trajectory hashes and retained artifacts; SFLogs are
-identity-checked and imported into the shared `LogService`. Browser experiment
+identity-checked and imported into the shared `LogService`, then linked into the
+sidecar-only evidence index (suite/result/case plus final hashes). Browser experiment
 execution and `run_manifest_launch` remain the defaults, while persisted
-execution ownership routes headless status and cancellation.
+execution ownership routes headless status and cancellation. Manifest v10
+candidate-model provenance changes definition/resolved hashes for lineage but is
+projected out of simulation-semantic / episode / trajectory identity.
 
 PR 10 adds a portable `cev-sim.lidar-geometry` v1 resource to resolved runs
 only when an enabled `lidar3d` sensor exists. Canonical box and triangle twins

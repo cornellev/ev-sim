@@ -1,8 +1,16 @@
 import { test, expect } from "@playwright/test";
 
+async function openRunConfiguration(page) {
+    await page.goto("/");
+    await page.keyboard.press("Escape");
+    const dialog = page.getByRole("dialog", { name: "Workspaces" });
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole("button", { name: /^Run configuration/i }).click();
+}
+
 test.describe("control commands", () => {
     test("config exposes controls tab with canonical endpoint", async ({ page }) => {
-        await page.goto("/config");
+        await openRunConfiguration(page);
         await expect(page.getByRole("tab", { name: "Controls" })).toBeVisible({ timeout: 30_000 });
         await page.getByRole("tab", { name: "Controls" }).click();
         await expect(page.getByTestId("controls-config")).toBeVisible();
@@ -13,9 +21,8 @@ test.describe("control commands", () => {
     });
 
     test("topics catalog adds controls-command not ackdrive", async ({ page }) => {
-        await page.goto("/config");
+        await openRunConfiguration(page);
         await page.getByRole("tab", { name: "Topics" }).click();
-        const add = page.locator("select").filter({ hasText: "Add from catalog" }).or(page.getByRole("combobox").first());
         // Ensure the live page text does not advertise /ackdrive as an option.
         await expect(page.locator("body")).not.toContainText("/ackdrive");
     });

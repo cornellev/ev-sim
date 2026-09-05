@@ -61,6 +61,8 @@ function HomeContent() {
     const [experimentDiagnosticsViewport, setExperimentDiagnosticsViewport] = useState(null);
     const [experimentExecutionActive, setExperimentExecutionActive] = useState(false);
     const [headlessPreselectedSuiteId, setHeadlessPreselectedSuiteId] = useState(null);
+    const [configInitialManifestId, setConfigInitialManifestId] = useState(null);
+    const [experimentNavigation, setExperimentNavigation] = useState(null);
 
     useEffect(() => {
         const query = window.matchMedia("(max-width: 767px)");
@@ -155,8 +157,9 @@ function HomeContent() {
         });
     }, [requestWorkspace]);
 
-    const goToConfig = useCallback(() => {
+    const goToConfig = useCallback((manifestId = null) => {
         requestWorkspace(() => {
+            setConfigInitialManifestId(typeof manifestId === "string" ? manifestId : null);
             setView(APP_VIEWS.CONFIG);
             setMenuVisible(false);
         });
@@ -176,8 +179,9 @@ function HomeContent() {
         });
     }, [requestWorkspace]);
 
-    const goToExperiments = useCallback(() => {
+    const goToExperiments = useCallback((target = null) => {
         requestWorkspace(() => {
+            setExperimentNavigation(target && typeof target === "object" ? target : null);
             setView(APP_VIEWS.EXPERIMENTS);
             setThreeDMode(THREE_D_MODES.SIMULATION);
             setMenuVisible(false);
@@ -340,7 +344,13 @@ function HomeContent() {
         }
         {
             view === APP_VIEWS.LOGS && (
-                <LogsPage onOpenWorkspace={() => openWorkspaceSwitcher("pointer")} onOpenReplay={goToReplay} onOpenAnalysis={goToAnalysis} />
+                <LogsPage
+                    onOpenWorkspace={() => openWorkspaceSwitcher("pointer")}
+                    onOpenReplay={goToReplay}
+                    onOpenAnalysis={goToAnalysis}
+                    onOpenManifest={goToConfig}
+                    onOpenExperiment={goToExperiments}
+                />
             )
         }
         {
@@ -349,7 +359,14 @@ function HomeContent() {
             )
         }
         {
-            view === APP_VIEWS.CONFIG && <ConfigPage onLaunch={launchResolvedRun} onOpenWorkspace={() => openWorkspaceSwitcher("pointer")} />
+            view === APP_VIEWS.CONFIG && (
+                <ConfigPage
+                    key={configInitialManifestId || "config"}
+                    initialManifestId={configInitialManifestId}
+                    onLaunch={launchResolvedRun}
+                    onOpenWorkspace={() => openWorkspaceSwitcher("pointer")}
+                />
+            )
         }
         {
             view === APP_VIEWS.VEHICLE_EDITOR && <VehicleEditorPage onOpenWorkspace={() => openWorkspaceSwitcher("pointer")} />
@@ -358,7 +375,23 @@ function HomeContent() {
             view === APP_VIEWS.SCENARIOS && <ScenarioPage onOpenWorkspace={() => openWorkspaceSwitcher("pointer")} />
         }
         {
-            view === APP_VIEWS.EXPERIMENTS && <ExperimentPage onOpenWorkspace={() => openWorkspaceSwitcher("pointer")} onOpenReplay={goToReplay} onOpenAnalysis={goToAnalysis} onOpenHeadlessRuns={goToHeadlessRuns} onDiagnosticsViewportChange={updateExperimentDiagnosticsViewport} />
+            view === APP_VIEWS.EXPERIMENTS && (
+                <ExperimentPage
+                    key={[
+                        experimentNavigation?.suiteId || "",
+                        experimentNavigation?.resultId || "",
+                        experimentNavigation?.caseId || "",
+                        experimentNavigation?.baselineId || "",
+                        experimentNavigation?.tab || "",
+                    ].join(":") || "experiments"}
+                    initialNavigation={experimentNavigation}
+                    onOpenWorkspace={() => openWorkspaceSwitcher("pointer")}
+                    onOpenReplay={goToReplay}
+                    onOpenAnalysis={goToAnalysis}
+                    onOpenHeadlessRuns={goToHeadlessRuns}
+                    onDiagnosticsViewportChange={updateExperimentDiagnosticsViewport}
+                />
+            )
         }
         {
             view === APP_VIEWS.HEADLESS_RUNS && <HeadlessPage onOpenWorkspace={() => openWorkspaceSwitcher("pointer")} onOpenReplay={goToReplay} onOpenAnalysis={goToAnalysis} preselectedSuiteId={headlessPreselectedSuiteId} />

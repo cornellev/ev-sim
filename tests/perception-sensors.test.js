@@ -499,7 +499,7 @@ test("oracle topics stay under oracle.* and do not populate active.*", () => {
 
 test("default v6 manifests declare perception sync group; v5 migration keeps oracle products off", () => {
     const defaults = createDefaultRunManifest();
-    assert.equal(defaults.version, 9);
+    assert.equal(defaults.version, 10);
     const camera = defaults.sensorRig.sensors.find((sensor) => sensor.id === "front-camera");
     assert.equal(camera.calibration.products.depth, true);
     assert.equal(camera.outputs.depthTopicId, "front-camera-depth");

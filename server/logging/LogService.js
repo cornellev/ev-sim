@@ -13,6 +13,14 @@ import {
     normalizeLogCatalog,
     normalizeLogFolderId,
 } from "../../app/logging/LogCatalogDocument.js";
+import {
+    backfillEvidenceFromAttachments,
+    createEmptyLogEvidence,
+    hasCompleteEvidenceIndex,
+    mergeLogEvidence,
+    normalizeLogEvidence,
+    projectEvidenceFromRunResult,
+} from "../../app/logging/LogEvidenceDocument.js";
 import { MAX_LOG_BATCH_BYTES } from "../../app/logging/LogLimits.js";
 import { collectAttachments, readAutonomySnapshot, readPoseSeries } from "./spatialLogQueries.js";
 
@@ -254,7 +262,9 @@ export class LogService {
         const sidecars = entries.filter((name) => isLogSidecarName(name, files));
         const logs = await Promise.all(sidecars.map(async (name) => {
             const metadata = await readSidecar(path.join(this.logsDir, name));
-            return metadata ? withFileBytes(this.logsDir, metadata, files) : null;
+            if (!metadata) return null;
+            const ensured = await this._ensureEvidenceIndex(metadata);
+            return withFileBytes(this.logsDir, ensured, files);
         }));
         return logs.filter(Boolean).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
     }
@@ -271,6 +281,15 @@ export class LogService {
             if (error.code !== "ENOENT") throw error;
         }
 
+        const evidence = input.evidence
+            ? normalizeLogEvidence(input.evidence)
+            : createEmptyLogEvidence({
+                manifestId: input.manifestId || null,
+                runId: input.runId || null,
+                definitionHash: input.definitionHash || null,
+                resolvedHash: input.resolvedHash || null,
+                gitCommit: input.gitHash || null,
+            });
         const metadata = {
             id,
             name: String(input.name || `Recording ${new Date().toLocaleString()}`),
@@ -289,6 +308,7 @@ export class LogService {
             definitionHash: input.definitionHash || null,
             resolvedHash: input.resolvedHash || null,
             provenance: input.provenance || null,
+            evidence,
             tags: Array.isArray(input.tags) ? input.tags : [],
             folderId: normalizeLogFolderId(input.folderId),
             incomplete: false,
@@ -358,11 +378,28 @@ export class LogService {
         const finalPath = this._finalPath(id);
         await fs.rename(session.partialPath, finalPath);
         const durationUs = session.index.at(-1)?.endUs || 0;
+        const { runResult, evidence: evidencePatch, ...restPatch } = patch || {};
+        let evidence = session.metadata.evidence
+            ? normalizeLogEvidence(session.metadata.evidence)
+            : createEmptyLogEvidence({
+                manifestId: session.metadata.manifestId,
+                runId: session.metadata.runId,
+                definitionHash: session.metadata.definitionHash,
+                resolvedHash: session.metadata.resolvedHash,
+                gitCommit: session.metadata.gitHash,
+            });
+        if (runResult) {
+            evidence = mergeLogEvidence(evidence, projectEvidenceFromRunResult(runResult));
+        }
+        if (evidencePatch) {
+            evidence = mergeLogEvidence(evidence, evidencePatch);
+        }
         const metadata = {
             ...session.metadata,
-            ...patch,
-            status: patch.incomplete ? "incomplete" : "complete",
-            incomplete: Boolean(patch.incomplete),
+            ...restPatch,
+            evidence,
+            status: restPatch.incomplete ? "incomplete" : "complete",
+            incomplete: Boolean(restPatch.incomplete),
             completedAt: new Date().toISOString(),
             durationUs,
             bytes: session.bytesWritten,
@@ -420,7 +457,8 @@ export class LogService {
         const id = safeSegment(idValue);
         const metadata = await readSidecar(this._sidecarPath(id));
         if (!metadata) throw new Error(`Log "${id}" was not found.`);
-        return { ...metadata, folderId: normalizeLogFolderId(metadata.folderId) };
+        const ensured = await this._ensureEvidenceIndex(metadata);
+        return { ...ensured, folderId: normalizeLogFolderId(ensured.folderId) };
     }
 
     async updateMetadata(idValue, patch = {}) {
@@ -430,7 +468,90 @@ export class LogService {
             name: patch.name === undefined ? metadata.name : String(patch.name).trim() || metadata.name,
             tags: patch.tags === undefined ? metadata.tags : (Array.isArray(patch.tags) ? patch.tags.map(String) : metadata.tags),
             folderId: patch.folderId === undefined ? normalizeLogFolderId(metadata.folderId) : normalizeLogFolderId(patch.folderId),
+            evidence: patch.evidence === undefined
+                ? metadata.evidence
+                : mergeLogEvidence(metadata.evidence, patch.evidence),
         };
+        await this._writeSidecar(metadata.id, updated);
+        return updated;
+    }
+
+    /**
+     * Strict internal linker for managed/browser experiment lineage. Never rewrites .sflog bytes.
+     */
+    async linkExperimentEvidence(idValue, input = {}) {
+        const metadata = await this.getMetadata(idValue);
+        const patch = projectEvidenceFromRunResult({
+            suiteId: input.suiteId ?? null,
+            resultId: input.resultId ?? null,
+            caseId: input.caseId ?? null,
+            runId: input.runId ?? null,
+            manifestId: input.manifestId ?? null,
+            definitionHash: input.definitionHash ?? null,
+            resolvedHash: input.resolvedHash ?? null,
+            simulationSemanticHash: input.simulationSemanticHash ?? null,
+            episodeHash: input.episodeHash ?? null,
+            trajectoryHash: input.trajectoryHash ?? null,
+            worldHash: input.worldHash ?? input.dependencyHashes?.world ?? null,
+            calibrationHash: input.calibrationHash ?? input.dependencyHashes?.calibration ?? null,
+            candidateModels: input.candidateModels ?? [],
+            gitCommit: input.gitCommit ?? input.gitHash ?? null,
+        });
+        const evidence = mergeLogEvidence(metadata.evidence, patch);
+        const updated = { ...metadata, evidence };
+        await this._writeSidecar(metadata.id, updated);
+        return updated;
+    }
+
+    async _ensureEvidenceIndex(metadata) {
+        if (!metadata?.id) return metadata;
+        if (hasCompleteEvidenceIndex(metadata.evidence) && metadata.evidence?.kind === "cev-sim.log-evidence") {
+            try {
+                return { ...metadata, evidence: normalizeLogEvidence(metadata.evidence) };
+            } catch {
+                // Fall through and rebuild from attachments/header fields.
+            }
+        }
+        if (metadata.status === "recording" || this.active.has(metadata.id)) {
+            return {
+                ...metadata,
+                evidence: metadata.evidence
+                    ? normalizeLogEvidence(metadata.evidence)
+                    : createEmptyLogEvidence({
+                        manifestId: metadata.manifestId,
+                        runId: metadata.runId,
+                        definitionHash: metadata.definitionHash,
+                        resolvedHash: metadata.resolvedHash,
+                        gitCommit: metadata.gitHash,
+                    }),
+            };
+        }
+        let attachments = [];
+        try {
+            attachments = await collectAttachments(this, metadata.id, {
+                names: ["run-manifest.json", "run-results.json", "calibration.json", "provenance.json"],
+            });
+        } catch (error) {
+            const evidence = mergeLogEvidence(
+                metadata.evidence,
+                createEmptyLogEvidence({
+                    manifestId: metadata.manifestId,
+                    runId: metadata.runId,
+                    definitionHash: metadata.definitionHash,
+                    resolvedHash: metadata.resolvedHash,
+                    gitCommit: metadata.gitHash,
+                    source: {
+                        backfilled: true,
+                        warnings: [`Attachment backfill failed: ${error.message}`],
+                    },
+                }),
+            );
+            const updated = { ...metadata, evidence };
+            await this._writeSidecar(metadata.id, updated);
+            return updated;
+        }
+        const evidence = backfillEvidenceFromAttachments(metadata, attachments);
+        const updated = { ...metadata, evidence };
         await this._writeSidecar(metadata.id, updated);
         return updated;
     }

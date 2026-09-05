@@ -170,6 +170,7 @@ test("scenario, experiment, and run configuration restore the last open document
         await openWorkspace(page, "Run configuration");
         const manifestButton = page.getByRole("button", { name: new RegExp(`${manifestName}[\\s\\S]*${manifestId}`) });
         await expect(manifestButton).toBeVisible({ timeout: 30_000 });
+        page.once("dialog", (dialog) => dialog.accept());
         await manifestButton.click();
         await expect(manifestButton).toHaveAttribute("aria-current", "page");
         await expect.poll(() => page.evaluate((key) => localStorage.getItem(key), "cev-sim.ui.lastOpen.run-config")).toBe(manifestId);

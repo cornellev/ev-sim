@@ -20,11 +20,12 @@ async function temporaryService() {
 test("run manifest normalization supplies deterministic professional defaults", () => {
     const manifest = createDefaultRunManifest();
     assert.equal(manifest.kind, "cev-sim.run-manifest");
-    assert.equal(manifest.version, 9);
+    assert.equal(manifest.version, 10);
     assert.equal(manifest.scenario, null);
     assert.equal(manifest.clock.stepNs, 16_666_667);
     assert.equal(manifest.clock.pacing, "realtime");
     assert.equal(manifest.seed, "42");
+    assert.deepEqual(manifest.provenance.candidateModels, []);
     assert.deepEqual(manifest.sensorRig.sensors.map((sensor) => sensor.id), [
         "front-camera",
         "front-lidar",
@@ -40,12 +41,13 @@ test("run manifest v4 migrates v1-v3 and rejects future versions and duplicate s
         ...createDefaultRunManifest(),
         version: 1,
     });
-    assert.equal(migrated.version, 9);
+    assert.equal(migrated.version, 10);
     assert.ok(migrated.autonomyCatalog?.hash);
     assert.equal(migrated.scenario, null);
     assert.ok(migrated.controls);
     assert.equal(migrated.controls.stalePolicy, "stop");
-    assert.throws(() => normalizeRunManifest({ kind: "cev-sim.run-manifest", version: 10 }), /version 10/);
+    assert.deepEqual(migrated.provenance.candidateModels, []);
+    assert.throws(() => normalizeRunManifest({ kind: "cev-sim.run-manifest", version: 11 }), /version 11/);
     const manifest = createDefaultRunManifest();
     manifest.topics.push({ ...manifest.topics[0] });
     const validation = validateRunManifest(manifest);
@@ -68,7 +70,7 @@ test("run manifest migrates /ackdrive to /controls/command and validates control
         }],
         initialState: { vehicles: [{ id: "ego", type: "big-car" }] },
     });
-    assert.equal(migrated.version, 9);
+    assert.equal(migrated.version, 10);
     assert.equal(migrated.topics[0].name, "/controls/command");
     assert.equal(migrated.topics[0].contractId, "controls-command");
     assert.equal(migrated.controls.targetVehicleId, "ego");
@@ -78,6 +80,54 @@ test("run manifest migrates /ackdrive to /controls/command and validates control
     bad.controls.stalePolicy = "fallback";
     bad.controls.fallbackCommand = null;
     assert.equal(validateRunManifest(bad).ok, false);
+});
+
+test("run manifest v9 migrates to v10 provenance and candidate models change full hashes only", async () => {
+    const digest = "a".repeat(64);
+    const migrated = normalizeRunManifest({
+        ...createDefaultRunManifest(),
+        version: 9,
+    });
+    assert.equal(migrated.version, 10);
+    assert.deepEqual(migrated.provenance.candidateModels, []);
+
+    const invalid = createDefaultRunManifest({
+        provenance: {
+            candidateModels: [{ role: "planning", modelId: "planner", digest: "short" }],
+        },
+    });
+    assert.equal(validateRunManifest(invalid).ok, false);
+
+    const { dir, service } = await temporaryService();
+    try {
+        await service.listRunManifests();
+        const before = await service.resolveRunManifest("igvc-default");
+        const stored = await service.getRunManifest("igvc-default");
+        await service.putRunManifest("igvc-default", {
+            manifest: {
+                ...stored,
+                provenance: {
+                    candidateModels: [{
+                        role: "planning",
+                        modelId: "planner-v3",
+                        version: "1.0.0",
+                        digest,
+                    }],
+                },
+            },
+            expectedRevision: stored.revision,
+        });
+        const after = await service.resolveRunManifest("igvc-default");
+        assert.equal(after.manifest.provenance.candidateModels[0].digest, digest);
+        assert.notEqual(after.definitionHash, before.definitionHash);
+        assert.notEqual(after.resolvedHash, before.resolvedHash);
+        assert.equal(after.simulationSemanticHash, before.simulationSemanticHash);
+
+        const bundle = await service.exportRunManifest("igvc-default");
+        assert.equal(bundle.resolved.manifest.provenance.candidateModels[0].modelId, "planner-v3");
+    } finally {
+        await fs.rm(dir, { recursive: true, force: true });
+    }
 });
 
 test("run manifest storage creates a default catalog and enforces optimistic revisions", async () => {

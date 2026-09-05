@@ -483,6 +483,20 @@
     padding: 16px;
 }
 
+.inspectorSection {
+    display: grid;
+    gap: 8px;
+}
+
+.inspectorSectionTitle {
+    margin: 0;
+    color: #8b908e;
+    font-size: 10px;
+    font-weight: 650;
+    letter-spacing: 0.085em;
+    text-transform: uppercase;
+}
+
 .inspectorField {
     display: grid;
     gap: 6px;
@@ -498,7 +512,7 @@
 
 .metaGrid {
     display: grid;
-    gap: 12px;
+    gap: 10px;
 }
 
 .metaRow {
@@ -513,6 +527,10 @@
     font-family: var(--font-geist-mono), monospace;
     font-size: 11px;
     line-height: 1.45;
+}
+
+.monoValue {
+    font-family: var(--font-geist-mono), monospace;
 }
 
 .tagList {

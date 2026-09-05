@@ -831,6 +831,32 @@ claimed by this local run; they remain mandatory candidate evidence from the
 new workflows. No simulator contract, characterization byte, or semantic hash
 changed.
 
+### 2026-09-05 — Logs evidence library and manifest v10 provenance
+
+Post–PR 12 maintenance (not a numbered headless PR). Advance run-manifest to
+**v10** with authored `provenance.candidateModels[]` (role, model id, optional
+version, required SHA-256 digest). Candidate models change `definitionHash` and
+full `resolvedHash` but are projected out of `simulationSemanticHash` (v10
+semantic shape maps back to v9) so `episodeHash` / `trajectoryHash` stay equal
+for otherwise identical runs. Protobuf v1, run-bundle v1, and SFLog v1 are
+unchanged.
+
+Sidecar-only `cev-sim.log-evidence` v1 indexes manifest/run IDs, hashes,
+suite/result/case IDs, git commit, calibration, and candidate models. Legacy
+sidecars backfill once from header fields and attachments without rewriting
+`.sflog` bytes. Logs search and inspector deep-link to Config, Experiments
+(result/case/baseline), Replay, and Analysis.
+
+Managed-queue optimistic revision conflicts now propagate from `_drain` so
+`_drainQueue` can dequeue and delete immutable run-bundle sidecars without
+overwriting an externally paused result.
+
+`npm run fixtures:headless` updates characterization `definitionHash` /
+`resolvedHash` (and the characterization meta-hashes that include
+`resolvedHash`). Phase order, step snapshots, assertions, and metrics remain
+byte-identical; kernel `simulationSemanticHash` / `episodeHash` /
+`trajectoryHash` stay equal for otherwise identical runs.
+
 ### 2026-08-31 — Browser play-loop canonical-state v2
 
 `trajectoryHash` still updates every authoritative kernel step, but

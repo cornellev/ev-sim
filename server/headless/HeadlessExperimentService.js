@@ -738,8 +738,8 @@ export class HeadlessExperimentService {
             } else {
                 const current = await this.storage.getExperimentResult(job.result.id).catch(() => null);
                 if (current && Number(current.revision) !== Number(job.revision)) {
-                    this.publish({ domain: "experiment-run", id: job.result.id, action: "revision-conflict", data: { error: error.message } });
-                    return job.result;
+                    // Propagate so _drainQueue can dequeue and delete immutable sidecars.
+                    throw error;
                 } else {
                     const finishedAt = nowIso(this.now);
                     const cases = job.result.cases.map((entry) => entry.status === "running"
@@ -829,6 +829,13 @@ export class HeadlessExperimentService {
                     }
                     logId = imported.id;
                     logArtifact.catalogUri = `fusion://logs/${encodeURIComponent(logId)}`;
+                    await this._linkImportedLogEvidence(imported.id, {
+                        suiteId: job.suite.id,
+                        resultId: job.result.id,
+                        caseId: activeCase.id,
+                        runResult,
+                        dependencyHashes: planned.resolution.dependencyHashes ?? {},
+                    });
                     this.publish({ domain: "logging", id: logId, action: "imported", data: { resultId: job.result.id, caseId: activeCase.id } });
                 } catch (error) {
                     if (planned.policy.logRequired) throw error;
@@ -896,6 +903,33 @@ export class HeadlessExperimentService {
             finishedAt: nowIso(this.now),
             failureReason: "Cancelled by request.",
         };
+    }
+
+    async _linkImportedLogEvidence(logId, {
+        suiteId,
+        resultId,
+        caseId,
+        runResult = {},
+        dependencyHashes = {},
+    } = {}) {
+        if (!logId || typeof this.logService.linkExperimentEvidence !== "function") return null;
+        return this.logService.linkExperimentEvidence(logId, {
+            suiteId,
+            resultId,
+            caseId,
+            runId: runResult.runId ?? null,
+            manifestId: runResult.manifestId ?? null,
+            definitionHash: runResult.definitionHash ?? null,
+            resolvedHash: runResult.resolvedHash ?? null,
+            simulationSemanticHash: runResult.simulationSemanticHash ?? null,
+            episodeHash: runResult.episodeHash ?? null,
+            trajectoryHash: runResult.trajectoryHash ?? null,
+            dependencyHashes,
+            candidateModels: runResult.candidateModels
+                ?? runResult.provenance?.candidateModels
+                ?? [],
+            gitCommit: runResult.gitCommit ?? runResult.gitHash ?? null,
+        });
     }
 
     async _finalizeCancellation(job) {

@@ -594,8 +594,17 @@ test("LogService finalizes indexed chunks, retries batches idempotently, imports
     );
     const secondBatch = encoder.flush();
     await service.appendBatch(session.id, { sequence: 1, startUs: 0, endUs: 3_000_000, bytes: secondBatch.bytes });
-    const metadata = await service.finalize(session.id);
+    const metadata = await service.finalize(session.id, {
+        runResult: {
+            simulationSemanticHash: "sem",
+            episodeHash: "ep",
+            trajectoryHash: "tr",
+        },
+    });
     assert.equal(metadata.status, "complete");
+    assert.equal(metadata.evidence.runId, "run-1");
+    assert.equal(metadata.evidence.episodeHash, "ep");
+    assert.equal(metadata.evidence.trajectoryHash, "tr");
     const index = await service.getIndex(session.id);
     assert.equal(index.chunks.length, 2);
     assert.equal(index.checkpoints[0].timeUs, 2_000_000);

@@ -24,7 +24,7 @@ import { bytesToHex } from "@noble/hashes/utils.js";
 import { canonicalNumericTree } from "./kernel/SimulationHashes.js";
 
 export const RUN_MANIFEST_KIND = "cev-sim.run-manifest";
-export const RUN_MANIFEST_VERSION = 9;
+export const RUN_MANIFEST_VERSION = 10;
 export const LEGACY_RUN_MANIFEST_VERSION = 1;
 export const RUN_MANIFEST_V2 = 2;
 export const RUN_MANIFEST_V3 = 3;
@@ -33,8 +33,19 @@ export const RUN_MANIFEST_V5 = 5;
 export const RUN_MANIFEST_V6 = 6;
 export const RUN_MANIFEST_V7 = 7;
 export const RUN_MANIFEST_V8 = 8;
+export const RUN_MANIFEST_V9 = 9;
 export const RUN_BUNDLE_KIND = "cev-sim.run-bundle";
 export const RUN_BUNDLE_VERSION = 1;
+
+export const CANDIDATE_MODEL_ROLES = Object.freeze([
+    "perception",
+    "localization",
+    "planning",
+    "control",
+    "full-stack",
+    "other",
+]);
+export const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/i;
 
 export const RUN_LOGGING_POLICIES = Object.freeze(["required", "optional", "disabled"]);
 export const RUN_PACING_MODES = Object.freeze(["realtime", "unbounded"]);
@@ -162,6 +173,30 @@ export function normalizeControlsConfig(value = {}, { targetVehicleId = "ego" } 
         referenceSource: text(source.referenceSource, DEFAULT_CONTROLS.referenceSource) || null,
         actuatorOverrides: normalizeActuatorOverrides(source.actuatorOverrides),
     };
+}
+
+export function normalizeCandidateModel(value = {}, index = 0) {
+    const source = object(value);
+    const role = CANDIDATE_MODEL_ROLES.includes(source.role) ? source.role : "other";
+    const modelId = text(source.modelId || source.id || source.name);
+    return {
+        role,
+        modelId,
+        version: text(source.version) || null,
+        digest: text(source.digest || source.hash || source.sha256).toLowerCase() || null,
+    };
+}
+
+export function normalizeManifestProvenance(value = {}) {
+    const source = object(value);
+    const models = Array.isArray(source.candidateModels) ? source.candidateModels : [];
+    return {
+        candidateModels: models.map(normalizeCandidateModel).filter((entry) => entry.modelId || entry.digest),
+    };
+}
+
+export function createDefaultManifestProvenance() {
+    return normalizeManifestProvenance({ candidateModels: [] });
 }
 
 function assertion(value = {}, index = 0) {
@@ -601,6 +636,7 @@ export function createDefaultRunManifest(overrides = {}) {
         assertions: [],
         parameters: [],
         logging: { policy: "optional", profileId: "simulation-run-full-sensors" },
+        provenance: createDefaultManifestProvenance(),
     };
     return normalizeRunManifest({ ...base, ...overrides }, { allowMissingKind: true });
 }
@@ -620,6 +656,7 @@ export function normalizeRunManifest(value, { allowMissingKind = false } = {}) {
         RUN_MANIFEST_V6,
         RUN_MANIFEST_V7,
         RUN_MANIFEST_V8,
+        RUN_MANIFEST_V9,
         RUN_MANIFEST_VERSION,
     ];
     if (!supported.includes(sourceVersion)) {
@@ -692,6 +729,7 @@ export function normalizeRunManifest(value, { allowMissingKind = false } = {}) {
             policy: RUN_LOGGING_POLICIES.includes(source.logging?.policy) ? source.logging.policy : "optional",
             profileId: text(source.logging?.profileId, "simulation-run-full-sensors"),
         },
+        provenance: normalizeManifestProvenance(source.provenance),
         autonomyCatalog: source.autonomyCatalog?.version
             ? { ...catalogMetadata(), ...object(source.autonomyCatalog) }
             : catalogMetadata(),
@@ -804,6 +842,23 @@ export function validateRunManifest(value) {
         } else if (entry.target.kind === "script-input" && (!entry.target.scriptId || !entry.target.input)) {
             issues.push({ path: `parameters.${index}.target`, message: "Script-input target requires a script and input port." });
         }
+    }
+    const modelKeys = new Set();
+    for (const [index, model] of (manifest.provenance?.candidateModels || []).entries()) {
+        if (!model.modelId) {
+            issues.push({ path: `provenance.candidateModels.${index}.modelId`, message: "A candidate model id is required." });
+        }
+        if (!model.digest || !SHA256_HEX_PATTERN.test(model.digest)) {
+            issues.push({ path: `provenance.candidateModels.${index}.digest`, message: "Candidate model digest must be a 64-character SHA-256 hex string." });
+        }
+        if (!CANDIDATE_MODEL_ROLES.includes(model.role)) {
+            issues.push({ path: `provenance.candidateModels.${index}.role`, message: "Candidate model role is unsupported." });
+        }
+        const key = `${model.role}\0${model.modelId}\0${model.version || ""}`;
+        if (model.modelId && modelKeys.has(key)) {
+            issues.push({ path: `provenance.candidateModels.${index}`, message: `Duplicate candidate model identity "${model.role}/${model.modelId}".` });
+        }
+        modelKeys.add(key);
     }
     return { ok: issues.length === 0, manifest, issues };
 }

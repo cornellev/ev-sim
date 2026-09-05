@@ -542,8 +542,19 @@ export function CompareSection({ results, baselines, result, baseline, compariso
     );
 }
 
-export function ReviewSection({ result, results, onResult, onReplay, onAnalysis }) {
+export function ReviewSection({ result, results, onResult, onReplay, onAnalysis, initialCaseId = null, onInitialCaseConsumed }) {
     const [inspectIndex, setInspectIndex] = useState(null);
+    const consumedInitialCase = useRef(false);
+    useEffect(() => {
+        if (consumedInitialCase.current || !initialCaseId || !result?.cases?.length) return;
+        const index = result.cases.findIndex((entry) => entry.id === initialCaseId);
+        if (index < 0) return;
+        consumedInitialCase.current = true;
+        queueMicrotask(() => {
+            setInspectIndex(index);
+            onInitialCaseConsumed?.();
+        });
+    }, [initialCaseId, onInitialCaseConsumed, result]);
     const inspectEntry = inspectIndex == null ? null : inspectableCase(result?.cases?.[inspectIndex]);
     return (
         <div className={styles.sectionStack}>

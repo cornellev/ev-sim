@@ -156,7 +156,14 @@ function summaryFromResult(value) {
     };
 }
 
-export default function ExperimentWorkspace({ onOpenWorkspace, onOpenReplay, onOpenAnalysis, onOpenHeadlessRuns, onDiagnosticsViewportChange }) {
+export default function ExperimentWorkspace({
+    onOpenWorkspace,
+    onOpenReplay,
+    onOpenAnalysis,
+    onOpenHeadlessRuns,
+    onDiagnosticsViewportChange,
+    initialNavigation = null,
+}) {
     const runController = useMemo(() => getExperimentRunController(), []);
     const runSession = useMemo(() => getRunSessionController(), []);
     const [suites, setSuites] = useState([]);
@@ -175,7 +182,8 @@ export default function ExperimentWorkspace({ onOpenWorkspace, onOpenReplay, onO
     const [runSpeed, setRunSpeed] = useState(1);
     const [disableLogging, setDisableLogging] = useState(false);
     const [runNickname, setRunNickname] = useState("");
-    const [tab, setTab] = useState("setup");
+    const [tab, setTab] = useState(initialNavigation?.tab || "setup");
+    const [initialCaseId, setInitialCaseId] = useState(initialNavigation?.caseId || null);
     const [creating, setCreating] = useState(false);
     const [loading, setLoading] = useState(true);
     const [busy, setBusy] = useState(false);
@@ -260,10 +268,49 @@ export default function ExperimentWorkspace({ onOpenWorkspace, onOpenReplay, onO
 
     useEffect(() => {
         let cancelled = false;
-        loadAll().catch((loadError) => !cancelled && setError(loadError?.message || "Could not load experiment suites."))
-            .finally(() => !cancelled && setLoading(false));
+        (async () => {
+            try {
+                let preferredSuiteId = initialNavigation?.suiteId || null;
+                if (!preferredSuiteId && initialNavigation?.resultId) {
+                    try {
+                        const result = normalizeExperimentResult(resultDocument(await getExperimentResult(initialNavigation.resultId)));
+                        preferredSuiteId = result.suiteId;
+                    } catch {
+                        preferredSuiteId = null;
+                    }
+                }
+                await loadAll(preferredSuiteId);
+                if (cancelled) return;
+                if (initialNavigation?.tab) setTab(initialNavigation.tab);
+                if (initialNavigation?.caseId) setInitialCaseId(initialNavigation.caseId);
+                if (initialNavigation?.resultId) {
+                    const result = normalizeExperimentResult(resultDocument(await getExperimentResult(initialNavigation.resultId)));
+                    if (cancelled) return;
+                    if (result.suiteId && result.suiteId !== preferredSuiteId) {
+                        const storedSuite = suiteDocument(await getExperimentSuite(result.suiteId));
+                        if (!cancelled) applySuite(storedSuite);
+                    }
+                    if (!cancelled) setSelectedResult(result);
+                }
+                if (initialNavigation?.baselineId) {
+                    const baseline = normalizeExperimentBaseline(baselineDocument(await getExperimentBaseline(initialNavigation.baselineId)));
+                    if (!cancelled) setSelectedBaseline(baseline);
+                } else if (initialNavigation?.resultId && initialNavigation?.tab === "compare") {
+                    const baselineList = await listExperimentBaselines();
+                    const entries = listFrom(baselineList, "baselines");
+                    const match = entries.find((entry) => entry.sourceResultId === initialNavigation.resultId);
+                    if (match && !cancelled) {
+                        setSelectedBaseline(normalizeExperimentBaseline(baselineDocument(await getExperimentBaseline(match.id))));
+                    }
+                }
+            } catch (loadError) {
+                if (!cancelled) setError(loadError?.message || "Could not load experiment suites.");
+            } finally {
+                if (!cancelled) setLoading(false);
+            }
+        })();
         return () => { cancelled = true; };
-    }, [loadAll]);
+    }, [applySuite, initialNavigation, loadAll, runController]);
 
     useEffect(() => runController.subscribe((nextSnapshot) => {
         setSnapshot(nextSnapshot);
@@ -535,7 +582,7 @@ export default function ExperimentWorkspace({ onOpenWorkspace, onOpenReplay, onO
                             <TabsContent value="metrics"><MetricsSection suite={draft} onUpdate={update} /></TabsContent>
                             <TabsContent value="run"><RunSection plan={plan} result={selectedResult} snapshot={snapshot} results={suiteResults} diagnosticsEnabled={diagnosticsEnabled} onDiagnosticsEnabledChange={changeDiagnostics} onDiagnosticsViewportChange={onDiagnosticsViewportChange} onSelectResult={chooseResult} runNickname={runNickname} runNicknameError={runNicknameError} onRunNicknameChange={setRunNickname} runSpeed={runSpeed} disableLogging={disableLogging} onRunSpeedChange={changeRunSpeed} onDisableLoggingChange={setDisableLogging} onStart={startRun} onPause={pauseRun} onResume={resumeRun} onCancel={cancelRun} onQueueHeadless={() => onOpenHeadlessRuns?.(selectedId)} onReplay={onOpenReplay} onAnalysis={onOpenAnalysis} /></TabsContent>
                             <TabsContent value="compare"><CompareSection results={suiteResults} baselines={baselines.filter((entry) => entry.suiteId === selectedId)} result={selectedResult} baseline={selectedBaseline} comparison={comparison} onResult={chooseResult} onBaseline={chooseBaseline} onSaveBaseline={saveBaseline} /></TabsContent>
-                            <TabsContent value="review"><ReviewSection result={selectedResult} results={suiteResults} onResult={chooseResult} onReplay={onOpenReplay} onAnalysis={onOpenAnalysis} /></TabsContent>
+                            <TabsContent value="review"><ReviewSection result={selectedResult} results={suiteResults} initialCaseId={initialCaseId} onInitialCaseConsumed={() => setInitialCaseId(null)} onResult={chooseResult} onReplay={onOpenReplay} onAnalysis={onOpenAnalysis} /></TabsContent>
                         </div>
                     </TabsRoot>
                 </div>
