@@ -7,7 +7,7 @@ import { createDefaultRunManifest } from "../app/simulation/RunManifest.js";
 import { TopicInputQueue } from "../app/simulation/TopicInputQueue.js";
 import { PhysicsEngine, sweepAabb } from "../app/physics/PhysicsEngine.js";
 
-function harness() {
+function harness(options = {}) {
     const calls = [];
     const vehicleConfigurations = [];
     const store = new SignalStore({}, { sourceId: "deterministic-test" });
@@ -54,7 +54,7 @@ function harness() {
         earthTilesManager: () => null,
         skyManager: () => null,
     };
-    return { engine: new SimulationEngine(data), data, store, runtime, vehicle, calls, vehicleConfigurations };
+    return { engine: new SimulationEngine(data, options), data, store, runtime, vehicle, calls, vehicleConfigurations };
 }
 
 function resolved(manifest) {
@@ -361,7 +361,7 @@ test("manual, realtime, and unbounded pacing produce the same fixed-step state",
     await manual.engine.applyRunManifest(resolved(manifest));
     manual.engine.step(5);
 
-    const realtime = harness();
+    const realtime = harness({ nowMs: () => 0 });
     await realtime.engine.applyRunManifest(resolved(manifest));
     realtime.engine._advanceSimulation(0.1);
 
