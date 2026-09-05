@@ -20,7 +20,9 @@ import {
 import { CpuLidarScene } from "../app/simulation/sensors/CpuLidarScene.js";
 import { StorageService } from "../server/storage/StorageService.js";
 import { loadHeadlessGrpcSchema } from "../server/headless/GrpcSchema.js";
+import { HeadlessSupervisor } from "../server/headless/HeadlessSupervisor.js";
 import { startHeadlessSupervisor } from "../server/headless/SupervisorServer.js";
+import { validateBundleWithSupervisor } from "../server/headless/SupervisorValidation.js";
 import { canonicalStringify } from "../app/simulation/RunManifest.js";
 import { routeSafetyProfileRef } from "../app/simulation/headless/ProfileRegistry.js";
 import {
@@ -144,6 +146,51 @@ test("GPU manager submits same-time sync groups in stable sensor order and expos
     assert.equal(unpackTensor(tensorByName(transition.observation, "sensors/camera-a/validity"))[0], true);
     assert.deepEqual(tensorByName(transition.observation, "sensors/camera-a/value").spec.shape, [2, 4, 4]);
     episode.dispose();
+});
+
+test("supervisor-backed validation prepares GPU bundles with the configured renderer", async () => {
+    const camera = await sensorFromDefault("camera");
+    camera.rateHz = 60;
+    camera.phaseNs = 0;
+    camera.calibration.width = 4;
+    camera.calibration.height = 2;
+    camera.calibration.distortion = [];
+    camera.calibration.products = {
+        ...Object.fromEntries(Object.keys(camera.calibration.products).map((key) => [key, false])),
+        rgb: true,
+    };
+    const bundle = await createPortableHeadlessBundle({
+        sensors: [createHeadlessImu(), camera],
+    });
+    const result = await validateBundleWithSupervisor(bundle, {
+        config: {
+            kind: "cev-sim.headless-supervisor-config",
+            version: 1,
+            renderer: { chromiumExecutable: "/fake/chromium" },
+        },
+        episodeSpec: { observationProfile: measuredPerceptionProfileRef() },
+        supervisorFactory: (options) => new HeadlessSupervisor({
+            ...options,
+            rendererAdapterFactory: () => ({
+                provenance: null,
+                async start() {
+                    this.provenance = {
+                        renderer: "hardware-test-gpu",
+                        floatColorBuffer: true,
+                        floatFramebufferComplete: true,
+                        readbackCheck: true,
+                    };
+                },
+                isRunning() { return true; },
+                async close() {},
+            }),
+        }),
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.validationMode, "supervisor");
+    assert.ok(result.observationSpace.dictionary.entries.some(
+        (entry) => entry.key === `sensors/${camera.id}/value`,
+    ));
 });
 
 test("pooled renderer launches once, fixes context count, and enforces per-environment budgets", async () => {

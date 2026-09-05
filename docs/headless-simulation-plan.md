@@ -831,6 +831,17 @@ claimed by this local run; they remain mandatory candidate evidence from the
 new workflows. No simulator contract, characterization byte, or semantic hash
 changed.
 
+### 2026-09-05 — Supervisor-backed CLI bundle validation
+
+Allow `cev-sim validate --config <supervisor.json>` to prepare one temporary,
+process-isolated supervisor environment. This gives camera and GPU-LiDAR
+bundles a CLI validation path through the configured Chromium pool while
+retaining the existing direct, renderer-free validation default. Validation
+does not reset or step the episode, publishes no run artifacts, and closes the
+worker, renderer pool, and temporary files before returning. Protobuf v1,
+protocol 1.2, run-bundle v1, backend/profile identities, and all simulation
+hashes remain unchanged.
+
 ### 2026-09-05 — Logs evidence library and manifest v10 provenance
 
 Post–PR 12 maintenance (not a numbered headless PR). Advance run-manifest to

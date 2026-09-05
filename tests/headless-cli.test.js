@@ -43,13 +43,26 @@ async function writeJson(filePath, value) {
 test("CLI validate, stdin run, action-file run, and inspect emit machine-readable output", async (t) => {
     const root = await temporaryRoot(t);
     const bundlePath = path.join(root, "bundle.json");
+    const configPath = path.join(root, "supervisor.json");
     const actionsPath = path.join(root, "actions.jsonl");
     await writeJson(bundlePath, await createPortableHeadlessBundle());
+    await writeJson(configPath, {
+        kind: "cev-sim.headless-supervisor-config",
+        version: 1,
+        preset: "safety",
+        renderer: {},
+    });
     await fs.writeFile(actionsPath, `${JSON.stringify({ policyStep: 1, action: [0, 0] })}\n`);
 
     const validation = await runCli(["validate", "--bundle", bundlePath]);
     assert.equal(validation.code, 0, validation.stderr);
     assert.equal(jsonLines(validation.stdout)[0].kind, "cev-sim.headless.validation");
+
+    const supervisorValidation = await runCli([
+        "validate", "--bundle", bundlePath, "--config", configPath,
+    ]);
+    assert.equal(supervisorValidation.code, 0, supervisorValidation.stderr);
+    assert.equal(jsonLines(supervisorValidation.stdout)[0].validationMode, "supervisor");
 
     const stdinOutput = path.join(root, "stdin-run");
     const stdinRun = await runCli([

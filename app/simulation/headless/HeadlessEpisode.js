@@ -82,7 +82,7 @@ function compareBackends(left, right) {
     return left.kind - right.kind || compareUtf8(left.capabilityId, right.capabilityId);
 }
 
-function normalizeEpisodeSpec(resolvedRun, spec = {}) {
+export function normalizeEpisodeSpec(resolvedRun, spec = {}) {
     const requestsLidar = resolvedRun.manifest.sensorRig?.sensors?.some(
         (sensor) => sensor.enabled !== false && sensor.type === "lidar3d",
     );

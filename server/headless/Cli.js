@@ -9,6 +9,7 @@ import { inspectTarget } from "./Inspection.js";
 import { stringifyJsonProtocol } from "./JsonProtocol.js";
 import { readSupervisorConfig } from "./SupervisorConfig.js";
 import { startHeadlessSupervisor } from "./SupervisorServer.js";
+import { validateBundleWithSupervisor } from "./SupervisorValidation.js";
 import { runGpuPreflight } from "./GpuPreflight.js";
 
 export const CLI_EXIT = Object.freeze({
@@ -29,7 +30,7 @@ const FLAG_OPTIONS = new Set(["sflog-on-failure", "no-sflog-on-failure", "allow-
 
 function usage() {
     return [
-        "cev-sim validate --bundle <file> [--episode <file>]",
+        "cev-sim validate --bundle <file> [--episode <file>] [--config <supervisor.json>]",
         "cev-sim inspect <bundle|output-directory|sflog>",
         "cev-sim run --bundle <file> --output <directory> [--episode <file>] [--actions <jsonl-file>]",
         "cev-sim replay --bundle <file> --tape <file> --output <directory>",
@@ -182,11 +183,17 @@ export async function main(argv = process.argv.slice(2), io = {}) {
         if (positional.length > 0) throw new HeadlessRunnerError("USAGE", `Unexpected positional argument: ${positional[0]}`);
         const bundle = await readJson(options.bundle, "run bundle");
         if (command === "validate") {
-            const allowed = new Set(["bundle", "episode"]);
+            const allowed = new Set(["bundle", "episode", "config"]);
             const unsupported = Object.keys(options).find((key) => !allowed.has(key));
             if (unsupported) throw new HeadlessRunnerError("USAGE", `validate does not accept --${unsupported}.`);
             const episodeSpec = options.episode ? await readJson(options.episode, "episode specification") : {};
-            writeJson(stdout, await runner.validate(bundle, { episodeSpec }));
+            if (options.config) {
+                const config = await readSupervisorConfig(options.config);
+                const supervisorValidator = io.supervisorValidator ?? validateBundleWithSupervisor;
+                writeJson(stdout, await supervisorValidator(bundle, { config, episodeSpec }));
+            } else {
+                writeJson(stdout, await runner.validate(bundle, { episodeSpec }));
+            }
             return CLI_EXIT.OK;
         }
         if (!["run", "replay"].includes(command)) throw new HeadlessRunnerError("USAGE", `Unknown command ${command}.`);

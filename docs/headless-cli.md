@@ -8,7 +8,7 @@ manifests or starts the web server.
 ## Commands
 
 ```bash
-cev-sim validate --bundle bundle.json [--episode episode.json]
+cev-sim validate --bundle bundle.json [--episode episode.json] [--config supervisor.json]
 cev-sim inspect bundle.json
 cev-sim inspect output-directory
 cev-sim inspect output-directory/run.sflog
@@ -19,7 +19,13 @@ cev-sim gpu-preflight --config supervisor.json
 
 `validate` checks bundle integrity, semantic identity, episode profiles,
 backend capabilities, world/vehicle/sensor prerequisites, and spaces without
-stepping or writing artifacts. `inspect` reads a bundle, atomic result
+stepping or writing artifacts. Without `--config`, it uses the direct
+single-process runner and rejects GPU sensors because that runner does not own
+a renderer. With `--config`, it creates a temporary process-isolated
+supervisor, prepares one environment through the configured Chromium renderer
+pool, and tears the worker, pool, and temporary files down immediately.
+Configured validation is the supported CLI preflight for camera and GPU-LiDAR
+bundles. `inspect` reads a bundle, atomic result
 directory, or native SFLog. `run` reads actions from `--actions` or stdin.
 `replay` reads the versioned policy tape described below.
 `gpu-preflight` launches the configured Chromium stack, validates production

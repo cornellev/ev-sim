@@ -175,7 +175,10 @@ and tape actions both enter the existing normalized policy/action-repeat
 contract. Core results, the verified bundle, and runtime provenance publish
 atomically, with evaluation/training/disabled policies controlling SFLog
 retention. Caller artifact policy and output location remain operational and
-do not change episode or trajectory identity.
+do not change episode or trajectory identity. Direct validation remains
+renderer-free; `validate --config` transiently uses the process-isolated
+supervisor and its configured Chromium pool when the bundle requires GPU
+sensors.
 
 ## Headless batch execution
 
