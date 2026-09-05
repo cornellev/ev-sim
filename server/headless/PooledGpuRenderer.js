@@ -263,19 +263,17 @@ export class ChromiumWebGlRendererAdapter {
                         void main(){gl_Position=vec4(p[gl_VertexID],0.,1.);}`);
                     const fragment = compile(gl.FRAGMENT_SHADER, `#version 300 es
                         precision highp float; precision highp int;
-                        uniform sampler2D uTriangles; uniform int uCount;
+                        // NVIDIA ANGLE otherwise permits half-float texture sampling here.
+                        uniform highp sampler2D uTriangles; uniform int uCount;
                         uniform vec3 uOrigin; uniform vec4 uQuaternion;
                         uniform vec3 uScan; uniform vec2 uElevation; uniform float uRange;
                         out vec4 color;
                         vec3 rotateQ(vec3 v, vec4 q){return v+2.*cross(q.xyz,cross(q.xyz,v)+q.w*v);}
-                        float hit(vec3 ro,vec3 rd,vec3 a,vec3 b,vec3 c,vec3 n){
+                        float hit(vec3 ro,vec3 rd,vec3 a,vec3 b,vec3 c){
                             vec3 e1=b-a,e2=c-a,p=cross(rd,e2); float d=dot(e1,p);
                             if(abs(d)<1e-7)return -1.; float inv=1./d; vec3 t=ro-a;
                             float u=dot(t,p)*inv; if(u<0.||u>1.)return -1.; vec3 q=cross(t,e1);
-                            float v=dot(rd,q)*inv; if(v<0.||u+v>1.)return -1.;
-                            float planeDenominator=dot(n,rd);
-                            if(abs(planeDenominator)<1e-7)return -1.;
-                            return dot(n,a-ro)/planeDenominator;
+                            float v=dot(rd,q)*inv; if(v<0.||u+v>1.)return -1.; return dot(e2,q)*inv;
                         }
                         void main(){
                             float theta=radians(uScan.x+floor(gl_FragCoord.x)*uScan.z);
@@ -285,7 +283,7 @@ export class ChromiumWebGlRendererAdapter {
                             for(int i=0;i<${triangles.length};i++){
                                 vec4 av=texelFetch(uTriangles,ivec2(0,i),0); vec4 bv=texelFetch(uTriangles,ivec2(1,i),0);
                                 vec3 cv=texelFetch(uTriangles,ivec2(2,i),0).xyz; vec3 n=texelFetch(uTriangles,ivec2(3,i),0).xyz;
-                                float distance=hit(uOrigin,rd,av.xyz,bv.xyz,cv,n);
+                                float distance=hit(uOrigin,rd,av.xyz,bv.xyz,cv);
                                 if(distance>=0.0001&&distance<=uRange&&distance<best){best=distance;incidence=abs(dot(n,rd));semantic=av.w;instance=bv.w;}
                             }
                             color=best<=uRange?vec4(best,incidence,semantic,instance):vec4(0.);
