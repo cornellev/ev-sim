@@ -476,7 +476,7 @@ export class HeadlessSupervisor {
         }
     }
 
-    async finalizeBatch(request = {}, { signal = null } = {}) {
+    async finalizeBatch(request = {}, { signal = null, finalizeOptions = null } = {}) {
         const batch = this.batches.get(String(request.batchId || ""));
         if (!batch) return { batchId: String(request.batchId || ""), error: errorStatus(supervisorError("BATCH_NOT_FOUND", "Batch was not found.")) };
         try {
@@ -488,7 +488,9 @@ export class HeadlessSupervisor {
             if (supplied.length > 0 && selected.some((entry, index) => !entry || entry.index !== Number(supplied[index]))) {
                 throw supervisorError("INVALID_REQUEST", "FinalizeBatch references an unknown environment index.");
             }
-            const results = await Promise.all(selected.map((environment) => this._finalizeEnvironment(environment, { signal })));
+            const results = await Promise.all(selected.map(
+                (environment) => this._finalizeEnvironment(environment, { signal, finalizeOptions }),
+            ));
             return { batchId: batch.id, results, error: okStatus() };
         } catch (error) {
             return { batchId: batch.id, error: errorStatus(error) };
@@ -747,7 +749,7 @@ export class HeadlessSupervisor {
         environment.episodeDeadline = null;
     }
 
-    async _finalizeEnvironment(environment, { signal = null } = {}) {
+    async _finalizeEnvironment(environment, { signal = null, finalizeOptions = null } = {}) {
         if (environment.lastFinalizeResult) return environment.lastFinalizeResult;
         if (!["ready", "terminal"].includes(environment.state)) {
             return infrastructureResult(environment.index, supervisorError("ENVIRONMENT_NOT_FOUND", "Environment has no active episode to finalize."));
@@ -755,7 +757,10 @@ export class HeadlessSupervisor {
         this._clearEpisodeWatchdog(environment);
         try {
             const response = await this._dispatch(environment, "finalize", {
-                options: { status: environment.state === "terminal" ? "completed" : "interrupted" },
+                options: {
+                    ...(finalizeOptions || {}),
+                    status: environment.state === "terminal" ? "completed" : "interrupted",
+                },
             }, { signal });
             const result = finalizedResult(environment.index, response.finalized);
             environment.lastFinalizeResult = result;

@@ -12,7 +12,7 @@ cev-sim validate --bundle bundle.json [--episode episode.json] [--config supervi
 cev-sim inspect bundle.json
 cev-sim inspect output-directory
 cev-sim inspect output-directory/run.sflog
-cev-sim run --bundle bundle.json --output result-dir [--episode episode.json] [--actions actions.jsonl]
+cev-sim run --bundle bundle.json --output result-root [--episode episode.json] [--actions actions.jsonl] [--config supervisor.json]
 cev-sim replay --bundle bundle.json --tape tape.json --output result-dir
 cev-sim gpu-preflight --config supervisor.json
 ```
@@ -27,6 +27,12 @@ pool, and tears the worker, pool, and temporary files down immediately.
 Configured validation is the supported CLI preflight for camera and GPU-LiDAR
 bundles. `inspect` reads a bundle, atomic result
 directory, or native SFLog. `run` reads actions from `--actions` or stdin.
+Without `--config`, it uses the direct in-process runner. With `--config`, it
+creates one process-isolated supervisor environment and executes camera or
+GPU-LiDAR captures through that config's Chromium pool. The transient
+supervisor, worker, and renderer are closed after finalization; a separately
+started supervisor is not required for this form. `replay` remains a direct
+runner command and does not accept `--config`.
 `replay` reads the versioned policy tape described below.
 `gpu-preflight` launches the configured Chromium stack, validates production
 WebGL2/ANGLE identity and required formats, performs minimal camera/LiDAR
@@ -63,6 +69,7 @@ interrupted, non-passing result. An interactive terminal requires
 `cev-sim.headless.transition`, and one `cev-sim.headless.result` version 1
 record. Packed tensor bytes use `{ "encoding": "base64", "type": "...",
 "data": "..." }`; uint64 result fields are decimal strings.
+Configured run records also contain `executionMode: "supervisor"`.
 
 - Reset records contain `environmentIndex`, the episode/space `descriptor`,
   initial `observation`, and reset `info`.
@@ -99,10 +106,14 @@ and is not accepted by this command.
 
 ## Atomic artifacts
 
-The runner stages beside the requested output path and publishes the complete
-directory with one rename. Existing destinations are refused. Semantic
+The direct runner stages beside the requested output path and publishes the
+complete directory with one rename. Existing destinations are refused.
+Configured runs interpret `--output` as a supervisor output root and publish
+beneath
+`<output>/<batch-id>/env-0/episode-1-<episode-hash-prefix>/`; use the final
+record's `outputDirectory` as the authoritative episode directory. Semantic
 failures still publish evidence; invalid input, runtime failure, and required
-artifact failure leave no final directory.
+artifact failure leave no final episode directory.
 
 Every artifact profile writes:
 
@@ -146,6 +157,7 @@ trajectory identity.
 | `5` | Unexpected runtime failure |
 | `130` | SIGINT after result finalization and teardown |
 
-Process isolation, batching, gRPC, limits, and watchdogs are available through
-the separate [headless batch supervisor](headless-supervisor.md). They are not
-implicit in this direct runner.
+Process isolation, batching, limits, watchdogs, and the configured Chromium
+pool are used by `run --config`. Long-lived multi-environment and Python
+clients use the separate [headless batch supervisor](headless-supervisor.md)
+over gRPC.

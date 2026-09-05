@@ -48,6 +48,23 @@ try {
 `address`, the resolved `config`, and the in-process `supervisor` for embedding
 and tests.
 
+For a single CLI-driven GPU episode, the CLI can own this lifecycle
+transiently:
+
+```bash
+cev-sim run \
+  --bundle bundle.json \
+  --episode episode.json \
+  --actions actions.jsonl \
+  --output runs/gpu-smoke \
+  --config supervisor.json
+```
+
+This starts no external gRPC listener. It creates one worker, uses the
+configured Chromium pool, emits observations inline in the machine JSONL,
+publishes under the normal batch artifact layout, and tears everything down.
+Use the long-lived listener form for Python, batching, or repeated episodes.
+
 ## Protocol and loading
 
 The server advertises protocol `1.2`. It accepts clients with major `1` and a

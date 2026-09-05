@@ -14,7 +14,7 @@ const ERROR_NAMES = Object.freeze(Object.fromEntries(
     Object.entries(ERROR_CODE).map(([name, value]) => [value, name]),
 ));
 
-function errorFromStatus(status = {}) {
+export function errorFromStatus(status = {}) {
     const code = ERROR_NAMES[Number(status.code)] || "INTERNAL";
     let details = null;
     const encoded = status.canonicalDetailJson;

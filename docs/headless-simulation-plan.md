@@ -842,6 +842,19 @@ worker, renderer pool, and temporary files before returning. Protobuf v1,
 protocol 1.2, run-bundle v1, backend/profile identities, and all simulation
 hashes remain unchanged.
 
+### 2026-09-05 — Supervisor-backed CLI GPU execution
+
+Allow `cev-sim run --config <supervisor.json>` to reset, step, and finalize
+one process-isolated environment through a transient supervisor. This is the
+CLI execution path for camera and GPU-LiDAR bundles because the direct runner
+does not own a Chromium renderer sidecar. Action input and machine JSONL remain
+the existing CLI contract; configured records identify
+`executionMode: "supervisor"` and artifacts use the supervisor
+batch/environment/episode layout. The transient listener metadata selects
+inline observations so stdout never contains shared-memory references that
+expire at teardown. Protobuf v1, protocol 1.2, bundle/profile/backend
+identities, and all simulation hashes remain unchanged.
+
 ### 2026-09-05 — Logs evidence library and manifest v10 provenance
 
 Post–PR 12 maintenance (not a numbered headless PR). Advance run-manifest to

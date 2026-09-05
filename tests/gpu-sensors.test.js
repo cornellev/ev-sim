@@ -22,6 +22,7 @@ import { StorageService } from "../server/storage/StorageService.js";
 import { loadHeadlessGrpcSchema } from "../server/headless/GrpcSchema.js";
 import { HeadlessSupervisor } from "../server/headless/HeadlessSupervisor.js";
 import { startHeadlessSupervisor } from "../server/headless/SupervisorServer.js";
+import { SupervisorRunner } from "../server/headless/SupervisorRunner.js";
 import { validateBundleWithSupervisor } from "../server/headless/SupervisorValidation.js";
 import { canonicalStringify } from "../app/simulation/RunManifest.js";
 import { routeSafetyProfileRef } from "../app/simulation/headless/ProfileRegistry.js";
@@ -191,6 +192,73 @@ test("supervisor-backed validation prepares GPU bundles with the configured rend
     assert.ok(result.observationSpace.dictionary.entries.some(
         (entry) => entry.key === `sensors/${camera.id}/value`,
     ));
+});
+
+test("supervisor-backed runner executes GPU bundles through the configured renderer", async (t) => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "cev-gpu-runner-"));
+    t.after(() => fs.rm(root, { recursive: true, force: true }));
+    const camera = await sensorFromDefault("camera");
+    camera.rateHz = 60;
+    camera.phaseNs = 0;
+    camera.calibration.width = 4;
+    camera.calibration.height = 2;
+    camera.calibration.distortion = [];
+    camera.calibration.products = {
+        ...Object.fromEntries(Object.keys(camera.calibration.products).map((key) => [key, false])),
+        rgb: true,
+    };
+    const bundle = await createPortableHeadlessBundle({
+        sensors: [createHeadlessImu(), camera],
+    });
+    const events = [];
+    const runner = new SupervisorRunner({
+        supervisorFactory: (options) => new HeadlessSupervisor({
+            ...options,
+            rendererAdapterFactory: () => ({
+                provenance: null,
+                async start() {
+                    this.provenance = {
+                        renderer: "hardware-test-gpu",
+                        floatColorBuffer: true,
+                        floatFramebufferComplete: true,
+                        readbackCheck: true,
+                    };
+                },
+                isRunning() { return true; },
+                async captureGroup(_scene, requests) {
+                    return requests.map((request) => ({
+                        id: request.id,
+                        type: request.type,
+                        data: new Uint8Array(request.width * request.height * 4).fill(64),
+                    }));
+                },
+                async close() {},
+            }),
+        }),
+    });
+    const result = await runner.run(bundle, {
+        config: {
+            kind: "cev-sim.headless-supervisor-config",
+            version: 1,
+            renderer: { chromiumExecutable: "/fake/chromium" },
+        },
+        episodeSpec: {
+            actionRepeat: 5,
+            observationProfile: measuredPerceptionProfileRef(),
+        },
+        actions: [{ policyStep: 1, action: [0, 0] }],
+        artifactPolicy: { profile: "disabled" },
+        outputUri: path.join(root, "output"),
+        onEvent: (event) => events.push(event),
+    });
+    assert.equal(result.result.passed, true);
+    assert.deepEqual(events.map((event) => event.kind), [
+        "cev-sim.headless.reset",
+        "cev-sim.headless.transition",
+        "cev-sim.headless.result",
+    ]);
+    assert.ok(events.every((event) => event.executionMode === "supervisor"));
+    await fs.access(path.join(result.outputDirectory, "run-results.json"));
 });
 
 test("pooled renderer launches once, fixes context count, and enforces per-environment budgets", async () => {

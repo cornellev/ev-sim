@@ -180,6 +180,13 @@ renderer-free; `validate --config` transiently uses the process-isolated
 supervisor and its configured Chromium pool when the bundle requires GPU
 sensors.
 
+`run --config <supervisor.json>` similarly executes one CLI action stream
+through a transient process-isolated supervisor and its configured Chromium
+pool. This is the supported CLI run path for camera and GPU-LiDAR bundles.
+Its `--output` value is a supervisor root, with the final episode published
+under the batch/environment/episode layout documented below; the final JSON
+record reports the exact `outputDirectory`.
+
 ## Headless batch execution
 
 PR 7 exposes the same session through the

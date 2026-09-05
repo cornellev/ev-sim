@@ -64,6 +64,20 @@ test("CLI validate, stdin run, action-file run, and inspect emit machine-readabl
     assert.equal(supervisorValidation.code, 0, supervisorValidation.stderr);
     assert.equal(jsonLines(supervisorValidation.stdout)[0].validationMode, "supervisor");
 
+    const supervisorOutput = path.join(root, "supervisor-run");
+    const supervisorRun = await runCli([
+        "run", "--bundle", bundlePath, "--output", supervisorOutput,
+        "--actions", actionsPath, "--episode", await episodeFile(root),
+        "--artifact-profile", "disabled", "--config", configPath,
+    ]);
+    assert.equal(supervisorRun.code, 0, supervisorRun.stderr);
+    const supervisorEvents = jsonLines(supervisorRun.stdout);
+    assert.deepEqual(supervisorEvents.map((entry) => entry.kind), [
+        "cev-sim.headless.reset", "cev-sim.headless.transition", "cev-sim.headless.result",
+    ]);
+    assert.ok(supervisorEvents.every((entry) => entry.executionMode === "supervisor"));
+    await fs.access(path.join(supervisorEvents.at(-1).outputDirectory, "run-results.json"));
+
     const stdinOutput = path.join(root, "stdin-run");
     const stdinRun = await runCli([
         "run", "--bundle", bundlePath, "--output", stdinOutput, "--artifact-profile", "disabled", "--episode", await episodeFile(root),

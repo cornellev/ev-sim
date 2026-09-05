@@ -120,9 +120,11 @@ runner and one non-detached Node child process per environment. The
 authoritative proto, serves unary gRPC over a Unix socket or explicitly
 selected insecure TCP, validates and prepares batches atomically, and fans out
 reset/step/finalize commands concurrently while retaining stable index order.
-The CLI can also use this process-isolated preparation path transiently through
-`validate --config`, allowing GPU bundles to be validated against a configured
-supervisor-owned Chromium pool without starting an episode.
+The CLI can also use this process-isolated path transiently through
+`validate --config` or `run --config`. Validation prepares a GPU bundle without
+starting an episode; configured run streams one episode through the
+supervisor-owned Chromium pool and publishes artifacts under the supervisor
+batch layout.
 Worker IPC uses request IDs and advanced serialization with one command in
 flight. Operational RSS/heap, actor/sensor, observation, queue, artifact,
 watchdog, and restart limits cannot alter simulation hashes. Crashes and

@@ -7,7 +7,7 @@ import { defaultHeadlessProvenance, HeadlessSession } from "./HeadlessSession.js
 export const POLICY_ACTION_TAPE_KIND = "cev-sim.headless.policy-action-tape";
 export const POLICY_ACTION_TAPE_VERSION = 1;
 
-function actionIterator(actions) {
+export function actionIterator(actions) {
     if (actions?.[Symbol.asyncIterator]) return actions[Symbol.asyncIterator]();
     if (actions?.[Symbol.iterator]) {
         const iterator = actions[Symbol.iterator]();
@@ -16,7 +16,7 @@ function actionIterator(actions) {
     throw new HeadlessRunnerError("INVALID_REQUEST", "Actions must be an iterable or async iterable.");
 }
 
-async function nextAction(iterator, signal) {
+export async function nextAction(iterator, signal) {
     if (!signal) return iterator.next();
     if (signal.aborted) return { done: true, aborted: true };
     let abortHandler;
@@ -31,7 +31,7 @@ async function nextAction(iterator, signal) {
     }
 }
 
-function normalizeActionRecord(value, expectedPolicyStep) {
+export function normalizeActionRecord(value, expectedPolicyStep) {
     if (!value || typeof value !== "object" || Array.isArray(value)) {
         throw new HeadlessRunnerError("INVALID_REQUEST", `Policy action ${expectedPolicyStep} must be an object.`);
     }

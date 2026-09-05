@@ -8,6 +8,7 @@ import { HeadlessRunnerError } from "./HeadlessRunnerErrors.js";
 import { inspectTarget } from "./Inspection.js";
 import { stringifyJsonProtocol } from "./JsonProtocol.js";
 import { readSupervisorConfig } from "./SupervisorConfig.js";
+import { SupervisorRunner } from "./SupervisorRunner.js";
 import { startHeadlessSupervisor } from "./SupervisorServer.js";
 import { validateBundleWithSupervisor } from "./SupervisorValidation.js";
 import { runGpuPreflight } from "./GpuPreflight.js";
@@ -32,7 +33,7 @@ function usage() {
     return [
         "cev-sim validate --bundle <file> [--episode <file>] [--config <supervisor.json>]",
         "cev-sim inspect <bundle|output-directory|sflog>",
-        "cev-sim run --bundle <file> --output <directory> [--episode <file>] [--actions <jsonl-file>]",
+        "cev-sim run --bundle <file> --output <directory> [--episode <file>] [--actions <jsonl-file>] [--config <supervisor.json>]",
         "cev-sim replay --bundle <file> --tape <file> --output <directory>",
         "cev-sim supervisor (--socket <path> | --tcp <host:port>) [--preset safety|permissive] [--config <json>] [--allow-remote-tcp]",
         "cev-sim gpu-preflight --config <json>",
@@ -206,7 +207,9 @@ export async function main(argv = process.argv.slice(2), io = {}) {
             let final;
             if (command === "replay") {
                 if (!options.tape) throw new HeadlessRunnerError("USAGE", "--tape is required for replay.");
-                if (options.actions || options.episode) throw new HeadlessRunnerError("USAGE", "replay takes actions and episode settings from its tape.");
+                if (options.actions || options.episode || options.config) {
+                    throw new HeadlessRunnerError("USAGE", "replay takes actions and episode settings from its tape and does not accept --config.");
+                }
                 const tape = await readJson(options.tape, "policy action tape");
                 final = await runner.replay(bundle, tape, {
                     artifactPolicy: artifactPolicy(options),
@@ -221,7 +224,12 @@ export async function main(argv = process.argv.slice(2), io = {}) {
                 }
                 const episodeSpec = options.episode ? await readJson(options.episode, "episode specification") : {};
                 actionStream = options.actions ? createReadStream(options.actions) : stdin;
-                final = await runner.run(bundle, {
+                const configured = options.config ? await readSupervisorConfig(options.config) : null;
+                const executionRunner = configured
+                    ? (io.supervisorRunner ?? new SupervisorRunner())
+                    : runner;
+                final = await executionRunner.run(bundle, {
+                    ...(configured ? { config: configured } : {}),
                     episodeSpec,
                     actions: jsonlActions(actionStream, options.actions || "stdin", abortController.signal),
                     artifactPolicy: artifactPolicy(options),
