@@ -22,6 +22,7 @@ import { StorageService } from "../server/storage/StorageService.js";
 import { loadHeadlessGrpcSchema } from "../server/headless/GrpcSchema.js";
 import { HeadlessSupervisor } from "../server/headless/HeadlessSupervisor.js";
 import { startHeadlessSupervisor } from "../server/headless/SupervisorServer.js";
+import { createHeadlessSmokeBundle } from "../server/headless/SmokeBundle.js";
 import { SupervisorRunner } from "../server/headless/SupervisorRunner.js";
 import { validateBundleWithSupervisor } from "../server/headless/SupervisorValidation.js";
 import { canonicalStringify } from "../app/simulation/RunManifest.js";
@@ -149,20 +150,11 @@ test("GPU manager submits same-time sync groups in stable sensor order and expos
     episode.dispose();
 });
 
-test("supervisor-backed validation prepares GPU bundles with the configured renderer", async () => {
-    const camera = await sensorFromDefault("camera");
-    camera.rateHz = 60;
-    camera.phaseNs = 0;
-    camera.calibration.width = 4;
-    camera.calibration.height = 2;
-    camera.calibration.distortion = [];
-    camera.calibration.products = {
-        ...Object.fromEntries(Object.keys(camera.calibration.products).map((key) => [key, false])),
-        rgb: true,
-    };
-    const bundle = await createPortableHeadlessBundle({
-        sensors: [createHeadlessImu(), camera],
-    });
+test("generated GPU smoke bundles contain a verified route and pass supervisor preparation", async () => {
+    const bundle = await createHeadlessSmokeBundle();
+    const route = bundle.resolved.scenario.scenario.routes[0];
+    const camera = bundle.resolved.manifest.sensorRig.sensors.find((sensor) => sensor.type === "camera");
+    assert.ok(route.verification.polyline.length >= 2);
     const result = await validateBundleWithSupervisor(bundle, {
         config: {
             kind: "cev-sim.headless-supervisor-config",

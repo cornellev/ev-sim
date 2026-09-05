@@ -180,6 +180,13 @@ renderer-free; `validate --config` transiently uses the process-isolated
 supervisor and its configured Chromium pool when the bundle requires GPU
 sensors.
 
+The built-in `igvc-default` authoring manifest has no selected scenario and
+therefore is not itself a valid headless `route-safety` input. For deployment
+smoke tests, `cev-sim create-smoke-bundle --output run-bundle.json` uses an
+ephemeral authoring store to create and verify an IGVC Ego route before
+exporting a self-contained GPU-enabled bundle. Real evaluation bundles must
+instead select and verify their intended authored scenario before export.
+
 `run --config <supervisor.json>` similarly executes one CLI action stream
 through a transient process-isolated supervisor and its configured Chromium
 pool. This is the supported CLI run path for camera and GPU-LiDAR bundles.

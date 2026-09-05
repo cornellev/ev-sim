@@ -42,6 +42,15 @@ async function writeJson(filePath, value) {
 
 test("CLI validate, stdin run, action-file run, and inspect emit machine-readable output", async (t) => {
     const root = await temporaryRoot(t);
+    const smokeBundlePath = path.join(root, "smoke-bundle.json");
+    const smokeBundleResult = await runCli([
+        "create-smoke-bundle", "--output", smokeBundlePath,
+    ]);
+    assert.equal(smokeBundleResult.code, 0, smokeBundleResult.stderr);
+    const smokeBundle = JSON.parse(await fs.readFile(smokeBundlePath, "utf8"));
+    assert.equal(smokeBundle.resolved.manifest.scenario.id, "igvc-headless-smoke");
+    assert.ok(smokeBundle.resolved.scenario.scenario.routes[0].verification.polyline.length >= 2);
+
     const bundlePath = path.join(root, "bundle.json");
     const configPath = path.join(root, "supervisor.json");
     const actionsPath = path.join(root, "actions.jsonl");

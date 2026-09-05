@@ -9,6 +9,7 @@ manifests or starts the web server.
 
 ```bash
 cev-sim validate --bundle bundle.json [--episode episode.json] [--config supervisor.json]
+cev-sim create-smoke-bundle --output bundle.json
 cev-sim inspect bundle.json
 cev-sim inspect output-directory
 cev-sim inspect output-directory/run.sflog
@@ -41,6 +42,15 @@ rejection, and cleanup. Its single JSON result includes launch/sandbox and
 renderer provenance. It requires a supervisor config containing
 `renderer.chromiumExecutable`; software renderers cannot satisfy production
 availability.
+
+`create-smoke-bundle` builds a portable GPU-enabled IGVC bundle through the
+normal authoring resolver. It creates an ephemeral scenario, verifies a route
+from the Ego vehicle's nearest directed road endpoint, selects that scenario
+in a dedicated manifest, exports the resolved bundle, and removes the
+temporary authoring data. Use this command for host smoke tests; exporting the
+built-in `igvc-default` directly is not sufficient because that browser
+default intentionally has `scenario: null`, while every current headless
+observation/reward profile requires a verified Ego route.
 
 The local repository executable is `./bin/cev-sim.js`. Installed packages
 expose the `cev-sim` bin. JSON and JSONL are written to stdout; diagnostics are

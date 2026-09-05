@@ -290,7 +290,14 @@ export class HeadlessEpisode {
         }
         const route = resolveEgoRoute(resolvedRun);
         if (!route?.verification || !Array.isArray(route.polyline) || route.polyline.length < 2 || !(Number(route.totalLength) > 0)) {
-            throw new HeadlessEpisodeError("BUNDLE_INVALID", "A verified, non-empty ego route is required.");
+            throw new HeadlessEpisodeError(
+                "BUNDLE_INVALID",
+                "A verified, non-empty ego route is required; select and verify a scenario before export, or generate a deployment bundle with `cev-sim create-smoke-bundle`.",
+                {
+                    manifestScenarioId: resolvedRun.manifest.scenario?.id ?? null,
+                    resolvedScenarioId: resolvedRun.scenario?.scenario?.id ?? null,
+                },
+            );
         }
         const routeValidation = validateRouteVerification(route, resolvedRun.environment?.manifest);
         if (!routeValidation.ok) {

@@ -855,6 +855,18 @@ inline observations so stdout never contains shared-memory references that
 expire at teardown. Protobuf v1, protocol 1.2, bundle/profile/backend
 identities, and all simulation hashes remain unchanged.
 
+### 2026-09-05 — Verified headless smoke-bundle generator
+
+Add `cev-sim create-smoke-bundle --output <bundle.json>` for deployment
+checks. The built-in `igvc-default` browser manifest intentionally has no
+scenario, but current headless observation and reward profiles require a
+verified Ego route. The generator uses an ephemeral authoring store, selects a
+deterministic nearby IGVC road edge, verifies the route through the production
+directed-A* path, resolves a dedicated GPU-enabled manifest, exports its
+portable bundle, and deletes the authoring store. It does not repair or mutate
+arbitrary bundles and does not weaken route validation. Protobuf v1, bundle
+v1, profile/backend identities, and hash algorithms remain unchanged.
+
 ### 2026-09-05 — Logs evidence library and manifest v10 provenance
 
 Post–PR 12 maintenance (not a numbered headless PR). Advance run-manifest to

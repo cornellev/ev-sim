@@ -3,10 +3,12 @@ import process from "node:process";
 import readline from "node:readline";
 
 import { HeadlessEpisodeError } from "../../app/simulation/headless/HeadlessErrors.js";
+import { canonicalStringify } from "../../app/simulation/RunManifest.js";
 import { HeadlessRunner } from "./HeadlessRunner.js";
 import { HeadlessRunnerError } from "./HeadlessRunnerErrors.js";
 import { inspectTarget } from "./Inspection.js";
 import { stringifyJsonProtocol } from "./JsonProtocol.js";
+import { createHeadlessSmokeBundle } from "./SmokeBundle.js";
 import { readSupervisorConfig } from "./SupervisorConfig.js";
 import { SupervisorRunner } from "./SupervisorRunner.js";
 import { startHeadlessSupervisor } from "./SupervisorServer.js";
@@ -32,6 +34,7 @@ const FLAG_OPTIONS = new Set(["sflog-on-failure", "no-sflog-on-failure", "allow-
 function usage() {
     return [
         "cev-sim validate --bundle <file> [--episode <file>] [--config <supervisor.json>]",
+        "cev-sim create-smoke-bundle --output <bundle.json>",
         "cev-sim inspect <bundle|output-directory|sflog>",
         "cev-sim run --bundle <file> --output <directory> [--episode <file>] [--actions <jsonl-file>] [--config <supervisor.json>]",
         "cev-sim replay --bundle <file> --tape <file> --output <directory>",
@@ -170,6 +173,33 @@ export async function main(argv = process.argv.slice(2), io = {}) {
                 process.once("SIGTERM", stop);
             });
             await running.close();
+            return CLI_EXIT.OK;
+        }
+        if (command === "create-smoke-bundle") {
+            if (positional.length > 0 || !options.output || Object.keys(options).length !== 1) {
+                throw new HeadlessRunnerError("USAGE", "create-smoke-bundle requires exactly --output <bundle.json>.");
+            }
+            const createBundle = io.smokeBundleFactory ?? createHeadlessSmokeBundle;
+            const bundle = await createBundle();
+            try {
+                await fs.writeFile(options.output, canonicalStringify(bundle));
+            } catch (error) {
+                throw new HeadlessRunnerError(
+                    "ARTIFACT_FAILURE",
+                    `Could not write smoke bundle ${options.output}: ${error.message}`,
+                    null,
+                    { cause: error },
+                );
+            }
+            writeJson(stdout, {
+                kind: "cev-sim.headless.smoke-bundle",
+                version: 1,
+                output: options.output,
+                manifestId: bundle.resolved.manifest.id,
+                scenarioId: bundle.resolved.scenario.scenario.id,
+                resolvedHash: bundle.resolvedHash,
+                simulationSemanticHash: bundle.simulationSemanticHash,
+            });
             return CLI_EXIT.OK;
         }
         const runner = io.runner ?? new HeadlessRunner();
