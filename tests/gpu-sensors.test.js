@@ -323,8 +323,20 @@ test("hardware WebGL2 LiDAR matches CPU range/incidence on the canonical scene",
             maxGpuBytes: 64 * 1024 * 1024,
         });
         for (let offset = 0; offset < cpu.length; offset += 4) {
-            assert.ok(Math.abs(captured.data[offset] - cpu[offset]) <= 1e-4);
-            assert.ok(Math.abs(captured.data[offset + 1] - cpu[offset + 1]) <= 1e-4);
+            const ray = offset / 4;
+            const distanceDelta = Math.abs(captured.data[offset] - cpu[offset]);
+            const incidenceDelta = Math.abs(captured.data[offset + 1] - cpu[offset + 1]);
+            assert.ok(distanceDelta <= 1e-4, JSON.stringify({
+                ray,
+                gpuRange: captured.data[offset],
+                cpuRange: cpu[offset],
+                distanceDelta,
+                gpuIncidence: captured.data[offset + 1],
+                cpuIncidence: cpu[offset + 1],
+                semantic: captured.data[offset + 2],
+                instance: captured.data[offset + 3],
+            }));
+            assert.ok(incidenceDelta <= 1e-4, `ray ${ray}: incidence delta ${incidenceDelta}`);
             assert.equal(captured.data[offset + 2], cpu[offset + 2]);
             assert.equal(captured.data[offset + 3], cpu[offset + 3]);
         }
