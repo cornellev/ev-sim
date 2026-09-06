@@ -18,7 +18,7 @@ import {
 } from "../../app/simulation/sensors/CpuLidarBackend.js";
 import { createHeadlessArtifactSink, resolveArtifactPolicy } from "./HeadlessArtifactSink.js";
 import { HeadlessRunnerError } from "./HeadlessRunnerErrors.js";
-import { verifyRunBundle } from "./RunBundle.js";
+import { cloneRunBundle, verifyRunBundle } from "./RunBundle.js";
 
 const PACKAGE_VERSION = createRequire(import.meta.url)("../../package.json").version;
 const MANAGED_CONTROLLERS = new Set(["route-follower", "script", "script-with-route"]);
@@ -166,7 +166,7 @@ export class ManagedHeadlessSession {
     async prepare(bundle, { metricDefinitions = [] } = {}) {
         this.verified = verifyRunBundle(bundle);
         validateManagedRun(this.verified.resolved);
-        this.bundle = structuredClone(bundle);
+        this.bundle = cloneRunBundle(bundle);
         this.metricDefinitions = structuredClone(metricDefinitions);
         this.episodeIdentity = managedEpisodeIdentity(this.verified.resolved);
         this.runtime = createHeadlessRuntimeContext();

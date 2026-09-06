@@ -316,3 +316,21 @@ def test_owned_supervisor_cleanup_is_idempotent(repository_root: Path) -> None:
     owner.close()
     wait_for_exit(processes)
     time.sleep(0.01)
+
+
+@pytest.mark.parametrize("version", [10, 11])
+def test_bundle_episode_hash_matches_frozen_javascript_vector(
+    repository_root: Path, tmp_path: Path, version: int,
+) -> None:
+    import json
+
+    root = repository_root / "tests/fixtures/visual-layer"
+    vector = (json.loads((root / "legacy-bundles.v1.json").read_text())["state"] if version == 10
+              else json.loads((root / "world-bound-state.v2.json").read_text()))
+    filename = "legacy-state.v10.json" if version == 10 else "world-bound-state.v11.json"
+    with CevSimEnv(root / filename, output_dir=tmp_path / "legacy",
+                   launch=launch(repository_root), artifact_policy=ArtifactPolicy(profile="disabled")) as env:
+        _, info = env.reset(seed=42)
+        assert info["episode_hash"] == vector["headlessEpisodeHash"]
+        _, repeated = env.reset(seed=42)
+        assert repeated["episode_hash"] == info["episode_hash"]

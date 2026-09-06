@@ -14,7 +14,8 @@ import {
 } from "../../app/simulation/sensors/GpuSensorBackend.js";
 import { computeEpisodeHash } from "../../app/simulation/kernel/SimulationHashes.js";
 import { canonicalStringify } from "../../app/simulation/RunManifest.js";
-import { verifyRunBundle } from "./RunBundle.js";
+import { canonicalRunBundleStringify, verifyRunBundle, verifyRunBundleBytes } from "./RunBundle.js";
+import { WORLD_BOUND_IDENTITY_CAPABILITY } from "../../app/simulation/kernel/RunIdentity.js";
 import {
     errorStatus,
     HEADLESS_PROTOCOL,
@@ -76,16 +77,11 @@ function decodeBundles(entries) {
         const bundleId = String(envelope.bundleId || "");
         if (!bundleId || bundles.has(bundleId)) throw supervisorError("INVALID_REQUEST", "run_bundles require unique non-empty bundle_id values.");
         const bytes = Buffer.from(envelope.canonicalJson || []);
-        let bundle;
-        try {
-            bundle = JSON.parse(bytes.toString("utf8"));
-        } catch (error) {
-            throw supervisorError("BUNDLE_INVALID", `Run bundle ${bundleId} is not valid UTF-8 JSON: ${error.message}`);
-        }
-        if (!bytes.equals(Buffer.from(canonicalStringify(bundle)))) {
+        const verified = verifyRunBundleBytes(bytes);
+        const { bundle } = verified;
+        if (!bytes.equals(Buffer.from(canonicalRunBundleStringify(bundle)))) {
             throw supervisorError("BUNDLE_INVALID", `Run bundle ${bundleId} bytes are not canonical JSON.`);
         }
-        const verified = verifyRunBundle(bundle);
         if (String(envelope.resolvedHash || "") !== verified.resolvedHash
             || String(envelope.simulationSemanticHash || "") !== verified.simulationSemanticHash) {
             throw supervisorError("BUNDLE_HASH_MISMATCH", `Run bundle ${bundleId} envelope hashes do not match its canonical bytes.`);
@@ -113,6 +109,7 @@ function episodeArtifactPath(batch, environment, episodeSpec, sequence) {
     const hash = computeEpisodeHash({
         ...episodeSpec,
         protocolMajor: HEADLESS_PROTOCOL.major,
+        identityVersion: environment.bundle.verified.identityVersion,
         simulationSemanticHash: environment.bundle.verified.simulationSemanticHash,
     });
     return {
@@ -229,6 +226,8 @@ export class HeadlessSupervisor {
         const gpuProbe = await this.rendererPool.probe();
         return {
             protocol: HEADLESS_PROTOCOL,
+            identityProfiles: [WORLD_BOUND_IDENTITY_CAPABILITY],
+            assetAdmissionProfiles: [],
             runtimeName: "cev-sim",
             runtimeVersion: PACKAGE_VERSION,
             platform: process.platform,
@@ -258,6 +257,11 @@ export class HeadlessSupervisor {
             if (mismatch) throw mismatch;
             if (this.shuttingDown) throw supervisorError("INTERNAL", "Supervisor is shutting down.");
             const bundles = decodeBundles(request.runBundles);
+            for (const { verified } of bundles.values()) {
+                if (Number(request.clientProtocol?.minor || 0) < verified.requiredProtocolMinor) {
+                    throw supervisorError("UNSUPPORTED_CAPABILITY", "world-bound@2 requires headless protocol 1.3.");
+                }
+            }
             const episodes = request.episodes || [];
             if (episodes.length === 0) throw supervisorError("INVALID_REQUEST", "CreateBatch requires at least one episode.");
             ensureSortedUnique(episodes.map((entry) => entry.environmentIndex), "episodes.environment_index", { contiguous: true });

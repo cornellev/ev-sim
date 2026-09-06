@@ -11,6 +11,7 @@ import {
     createReport,
     percentile,
 } from "../server/headless/ReleaseReports.js";
+import { HEADLESS_PROTOCOL } from "../server/headless/HeadlessProtocol.js";
 import { startHeadlessSupervisor } from "../server/headless/SupervisorServer.js";
 import {
     actionMessage,
@@ -68,7 +69,7 @@ async function benchmarkCount(environmentCount, configuration, running, client, 
         episodeSpec(index, bundleId, bundle, { resetSeed: index, actionRepeat: 1 })
     ));
     const created = await clientCall(client, "createBatch", {
-        clientProtocol: { major: 1, minor: 2 },
+        clientProtocol: HEADLESS_PROTOCOL,
         runBundles: [bundleEnvelope(bundleId, bundle)],
         episodes,
         artifactPolicy: { profile: 1, outputUri: artifactRoot },
@@ -221,7 +222,7 @@ async function main() {
         }
         let report = createReport(BENCHMARK_REPORT_KIND, {
             provenance: processProvenance(),
-            protocol: { major: 1, minor: 2 },
+            protocol: HEADLESS_PROTOCOL,
             configuration,
             runs,
             passed: runs.every((entry) => entry.cleanup.workersExited && entry.cleanup.queueBytes === 0),

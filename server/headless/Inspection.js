@@ -4,8 +4,9 @@ import path from "node:path";
 import { decodeRecordStream } from "../../app/logging/SFLogCodec.js";
 import { LogDataset } from "../../app/logging/LogDataset.js";
 import { LogService } from "../logging/LogService.js";
+import { sha256ExactBytes } from "../../app/simulation/visual/VisualLayer.js";
 import { HeadlessRunnerError } from "./HeadlessRunnerErrors.js";
-import { verifyRunBundle } from "./RunBundle.js";
+import { verifyRunBundle, verifyRunBundleBytes, runBundleBytes } from "./RunBundle.js";
 
 async function readJson(filePath) {
     try {
@@ -24,6 +25,9 @@ export function inspectRunBundle(bundle) {
         manifestName: verified.resolved.manifest.name,
         environmentId: verified.resolved.manifest.environment?.id ?? null,
         scenarioId: verified.resolved.scenario?.scenario?.id ?? null,
+        bundleBytesHash: sha256ExactBytes(runBundleBytes(bundle)),
+        identityVersion: verified.identityVersion,
+        requiredProtocolMinor: verified.requiredProtocolMinor,
         resolvedHash: verified.resolvedHash,
         simulationSemanticHash: verified.simulationSemanticHash,
         worldHash: verified.resolved.world.hash,
@@ -82,7 +86,7 @@ export async function inspectTarget(target) {
     if (stat.isDirectory()) {
         const [runResult, bundle, provenance] = await Promise.all([
             readJson(path.join(absolute, "run-results.json")),
-            readJson(path.join(absolute, "run-bundle.json")),
+            fs.readFile(path.join(absolute, "run-bundle.json")).then((bytes) => verifyRunBundleBytes(bytes).bundle),
             readJson(path.join(absolute, "provenance.json")),
         ]);
         const sflogPath = path.join(absolute, "run.sflog");
@@ -103,5 +107,5 @@ export async function inspectTarget(target) {
         };
     }
     if (absolute.endsWith(".sflog")) return inspectSflog(absolute);
-    return inspectRunBundle(await readJson(absolute));
+    return inspectRunBundle(verifyRunBundleBytes(await fs.readFile(absolute)).bundle);
 }

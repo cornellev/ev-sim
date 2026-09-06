@@ -1,0 +1,18 @@
+{
+  "analytic": {
+    "bundleBytesHash": "856ec4964b6e664f4230852ee8d0ad7310d6a7af0c052c7d05dadb54df78946d",
+    "byteLength": 622242,
+    "resolvedHash": "c8274011f030b3e32f27b88f54bbe057483ae9980366e159cd887de4487bd1a2",
+    "simulationSemanticHash": "3e9a1c96b31dd8f3f69da239e151560b7dbd055962c6c09b250305b0a4b620dc",
+    "browserEpisodeHash": "27666a493d7e541a640fc3331e494710465f5d5991458c9490fc8bd67935adf2",
+    "headlessEpisodeHash": "34b10e509a0a50a2b98d1a0584d2c1cc001ab4cc4ad37a9eab1b8d6c4d83d174"
+  },
+  "state": {
+    "bundleBytesHash": "892145e47d2c00eddec24eda57a19d560e90ea59dd3ee8f45ef3e73169cfa194",
+    "byteLength": 96418,
+    "resolvedHash": "bc19cf561d27488a0f5e5b104796a7d9dd312e77db5223b1dff0e45c25e2dad3",
+    "simulationSemanticHash": "4ae6c8375c22954ba3b73d4c6aead6fbe39a31541f506fef4c180aab3ee38dd6",
+    "browserEpisodeHash": "1f7c1b5e946e205862a39ebf0250b3b17b944587c797b4037e7cd987366b433a",
+    "headlessEpisodeHash": "117093a8545e0e5093b90d94f38d04c071e2da70bbe088eaf689b8e75be6a69e"
+  }
+}

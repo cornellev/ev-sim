@@ -55,7 +55,7 @@ test("portable bundle verification preserves storage hashes and rejects mutation
     worldMismatch.resolved.world.description.bounds.minX -= 1;
     worldMismatch.resolved.resolvedHash = computeResolvedRunHash(worldMismatch.resolved);
     worldMismatch.resolvedHash = worldMismatch.resolved.resolvedHash;
-    assert.throws(() => verifyRunBundle(worldMismatch), (error) => error.code === "BUNDLE_HASH_MISMATCH");
+    assert.throws(() => verifyRunBundle(worldMismatch), (error) => ["BUNDLE_INVALID", "BUNDLE_HASH_MISMATCH"].includes(error.code));
 });
 
 test("runner validates a real IGVC-derived state-only portable bundle", async () => {

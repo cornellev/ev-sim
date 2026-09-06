@@ -243,6 +243,8 @@ export async function generateHeadlessCharacterization(tape) {
     }
 
     const manifest = createDefaultRunManifest(tape.manifestOverrides);
+    // PR 1 characterizes the frozen v10 input contract independently of new authoring defaults.
+    manifest.version = 10;
     const resolved = resolvedRun(manifest);
     const context = createHarness();
     await context.engine.applyRunManifest(resolved);

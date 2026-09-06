@@ -158,7 +158,7 @@ test("v7 manifests without candidate returns gain them on normalize", () => {
     source.version = 7;
     source.topics = source.topics.filter((entry) => !DEFAULT_CANDIDATE_RETURN_CONTRACT_IDS.includes(entry.contractId));
     const migrated = normalizeRunManifest(source);
-    assert.equal(migrated.version, 10);
+    assert.equal(migrated.version, 11);
     for (const id of DEFAULT_CANDIDATE_RETURN_CONTRACT_IDS) {
         const topic = migrated.topics.find((entry) => entry.contractId === id);
         assert.ok(topic, id);
@@ -173,7 +173,7 @@ test("v8+ manifests can omit candidate return topics", () => {
     for (const id of DEFAULT_CANDIDATE_RETURN_CONTRACT_IDS) {
         assert.ok(!kept.topics.some((entry) => entry.contractId === id), id);
     }
-    assert.equal(kept.version, 10);
+    assert.equal(kept.version, 11);
     assert.ok(kept.controls);
     assert.equal(kept.controls.stalePolicy, "stop");
 });
@@ -205,7 +205,7 @@ test("v2 manifests normalize to v9 with controls-command migration", () => {
             required: true,
         }],
     });
-    assert.equal(legacy.version, 10);
+    assert.equal(legacy.version, 11);
     assert.equal(legacy.topics[0].contractId, "controls-command");
     assert.equal(legacy.topics[0].name, "/controls/command");
     assert.equal(validateRunManifest(legacy).ok, true);

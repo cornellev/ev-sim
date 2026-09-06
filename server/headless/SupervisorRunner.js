@@ -2,7 +2,6 @@ import path from "node:path";
 
 import { normalizeEpisodeSpec } from "../../app/simulation/headless/HeadlessEpisode.js";
 import { hashSpace, namedTensor, tensorMap } from "../../app/simulation/headless/TensorProtocol.js";
-import { canonicalStringify } from "../../app/simulation/RunManifest.js";
 import { ERROR_CODE, HEADLESS_PROTOCOL } from "./HeadlessProtocol.js";
 import {
     actionIterator,
@@ -12,7 +11,7 @@ import {
 import { HeadlessRunnerError } from "./HeadlessRunnerErrors.js";
 import { HeadlessSupervisor } from "./HeadlessSupervisor.js";
 import { errorFromStatus } from "./SupervisorValidation.js";
-import { verifyRunBundle } from "./RunBundle.js";
+import { canonicalRunBundleStringify, verifyRunBundle } from "./RunBundle.js";
 
 const ARTIFACT_PROFILES = Object.freeze({
     evaluation: 1,
@@ -91,7 +90,7 @@ export class SupervisorRunner {
                     bundleId: episode.runBundleId,
                     resolvedHash: verified.resolvedHash,
                     simulationSemanticHash: verified.simulationSemanticHash,
-                    canonicalJson: Buffer.from(canonicalStringify(bundle)),
+                    canonicalJson: Buffer.from(canonicalRunBundleStringify(bundle)),
                 }],
                 episodes: [episode],
                 artifactPolicy: artifactPolicyForSupervisor(artifactPolicy, outputUri),

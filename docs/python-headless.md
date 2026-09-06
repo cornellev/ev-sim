@@ -1,6 +1,6 @@
 # Python Gymnasium and Stable-Baselines3 adapter
 
-The `python/` package is a synchronous client for the cev-sim protocol 1.2
+The `python/` package is a synchronous client for the cev-sim protocols 1.2 and 1.3
 headless supervisor. JavaScript remains the authoritative simulator; Python
 owns Gymnasium/SB3 integration and NumPy tensors only.
 
@@ -144,8 +144,9 @@ is retained in `info["cev_sim.final_result"]`.
 
 ## Compatibility and failures
 
-The client validates protocol 1.2, runtime name, profile schemas, backend
-versions, space layouts, tensor names, dtype, shape, endianness, packed length,
+The client discovers capabilities using protocol 1.2 and negotiates up to 1.3.
+It validates runtime name, profile schemas, backend versions, space layouts,
+tensor names, dtype, shape, endianness, packed length,
 boolean representation, and bounds. CPU/GPU LiDAR identities,
 `DEFAULT_CPU_LIDAR_BACKEND`, `DEFAULT_GPU_SENSOR_BACKEND`, and
 `MEASURED_PERCEPTION_OBSERVATION_PROFILE` are public package exports.
@@ -173,3 +174,18 @@ Owned launch uses the configured executable directly, without a shell or
 implicit `npx`. `close()` first closes the batch, then the gRPC channel, asks
 the supervisor process group to stop, escalates after bounded grace periods,
 and removes its private Unix socket directory.
+
+### VIS-12a bundle identity
+
+`load_bundle` retains `received_bytes` and their `bundle_bytes_hash` alongside
+`canonical_json` and `canonical_json_hash`. An optional
+`expected_bundle_bytes_hash` validates an externally supplied exact digest.
+It rejects duplicate JSON keys and malformed UTF-8; v11 uses JCS, while v10
+keeps its legacy serialization. These digests do not replace authoritative
+JavaScript semantic verification.
+
+Loaded v11 bundles declare `identity_profile = "world-bound@2"` and
+`required_protocol_minor = 3`. The client checks both the protocol and the
+advertised identity profile before creating a batch. Legacy v10 bundles remain
+usable with protocol 1.2 supervisors, including explicitly launched local
+supervisors. No local Python simulator or semantic hash implementation is added.

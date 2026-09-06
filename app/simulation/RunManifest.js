@@ -21,10 +21,12 @@ import { validateSensorRigFrames, validateSyncGroups } from "../simulation/Trans
 import { validateScalarParameterTarget } from "../scenarios/ScenarioDocument.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
+import { assertRunIdentityCounters } from "./kernel/RunIdentity.js";
 import { canonicalNumericTree } from "./kernel/SimulationHashes.js";
 
 export const RUN_MANIFEST_KIND = "cev-sim.run-manifest";
-export const RUN_MANIFEST_VERSION = 10;
+export const RUN_MANIFEST_VERSION = 11;
+export const RUN_MANIFEST_V10 = 10;
 export const LEGACY_RUN_MANIFEST_VERSION = 1;
 export const RUN_MANIFEST_V2 = 2;
 export const RUN_MANIFEST_V3 = 3;
@@ -657,10 +659,14 @@ export function normalizeRunManifest(value, { allowMissingKind = false } = {}) {
         RUN_MANIFEST_V7,
         RUN_MANIFEST_V8,
         RUN_MANIFEST_V9,
+        RUN_MANIFEST_V10,
         RUN_MANIFEST_VERSION,
     ];
     if (!supported.includes(sourceVersion)) {
         throw new Error(`Unsupported run manifest version ${source.version}; expected version 1–${RUN_MANIFEST_VERSION}.`);
+    }
+    if ((source.sensorRig?.sensors ?? []).some((sensor) => sensor.render !== undefined)) {
+        throw new Error("Explicit camera render selections are unsupported until VIS-02 provider dispatch.");
     }
     const initial = object(source.initialState);
     const clock = object(source.clock);
@@ -744,6 +750,11 @@ export function validateRunManifest(value) {
         return { ok: false, manifest: null, issues: [{ path: "", message: error.message }] };
     }
     const issues = [];
+    try {
+        assertRunIdentityCounters(manifest);
+    } catch (error) {
+        issues.push({ path: "", message: error.message });
+    }
     const duplicateIssues = (entries, path) => {
         const seen = new Set();
         for (const [index, entry] of entries.entries()) {

@@ -1,3 +1,4 @@
+import { canonicalRunBundleStringify } from "../../server/headless/RunBundle.js";
 import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
 import os from "node:os";
@@ -100,7 +101,7 @@ export function bundleEnvelope(bundleId, bundle) {
         bundleId,
         resolvedHash: bundle.resolvedHash,
         simulationSemanticHash: bundle.simulationSemanticHash,
-        canonicalJson: Buffer.from(canonicalStringify(bundle)),
+        canonicalJson: Buffer.from(canonicalRunBundleStringify(bundle)),
     };
 }
 

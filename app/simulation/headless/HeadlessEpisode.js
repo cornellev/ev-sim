@@ -1,3 +1,4 @@
+import { simulationIdentityVersion } from "../kernel/RunIdentity.js";
 import { assertPhysicsBackendSelection } from "../../physics/PhysicsBackend.js";
 import { validateRouteVerification } from "../../scenarios/route/Route.js";
 import { SimulationKernel } from "../kernel/SimulationKernel.js";
@@ -97,6 +98,7 @@ export function normalizeEpisodeSpec(resolvedRun, spec = {}) {
         ...(requestsCamera ? [createGpuSensorBackendSelection()] : []),
     ]).map(normalizedBackend);
     return {
+        identityVersion: simulationIdentityVersion(resolvedRun),
         protocolMajor: 1,
         environmentIndex: Number(spec.environmentIndex ?? spec.environment_index ?? 0),
         environmentId: String(spec.environmentId || spec.environment_id || resolvedRun.manifest.id || "environment-0"),

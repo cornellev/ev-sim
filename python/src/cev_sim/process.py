@@ -13,7 +13,7 @@ from collections import deque
 from pathlib import Path
 from typing import TextIO
 
-from .config import PROTOCOL_MAJOR, PROTOCOL_MINOR, SupervisorLaunch
+from .config import MIN_PROTOCOL_MINOR, PROTOCOL_MAJOR, SupervisorLaunch
 from .errors import CevSimLaunchError
 
 
@@ -158,12 +158,14 @@ class OwnedSupervisor:
         if not isinstance(record, dict):
             raise CevSimLaunchError("Supervisor listener record is not a JSON object")
         protocol = record.get("protocol")
-        expected = {"major": PROTOCOL_MAJOR, "minor": PROTOCOL_MINOR}
         if (
             record.get("kind") != "cev-sim.headless.supervisor-listening"
             or record.get("version") != 1
             or record.get("transport") != "socket"
-            or protocol != expected
+            or not isinstance(protocol, dict)
+            or protocol.get("major") != PROTOCOL_MAJOR
+            or type(protocol.get("minor")) is not int
+            or protocol["minor"] < MIN_PROTOCOL_MINOR
             or record.get("address") != str(self.socket_path)
         ):
             raise CevSimLaunchError(f"Incompatible supervisor listener record: {record!r}")

@@ -950,3 +950,22 @@ the future surface. The current runtime stays at protocol 1.2, does not
 advertise either profile, and does not implement the new RPCs. Existing bundle
 v1 bytes, field numbers, hash algorithms, backends, and execution behavior are
 unchanged.
+
+### 2026-09-06 — VIS-12a identity negotiation and immutable compatibility
+
+The separate visual program activates protocol 1.3 and `world-bound@2` for
+newly resolved manifest v11 bundles. Existing executable v10 bundles retain
+their legacy semantic/episode hashes, bytes, backend identities, and supported
+execution paths; new v11 semantic/episode identities use version 2. The
+trajectory algorithm and `SIMULATION_HASH_VERSION = 1` remain unchanged.
+Python discovers capabilities using 1.2 and negotiates up to 1.3. The existing
+protobuf identity field is active, with no field-number or `EpisodeSpec`
+changes; package-admission profiles/RPCs remain inactive until VIS-13b.
+
+See the [visual acceptance ledger](visual-layer-plan.md#progress-and-acceptance-ledger)
+for frozen legacy/v11 JS/Python vectors, protocol/reset/CLI/managed coverage,
+parity, and quick-soak evidence. Regenerating the canonical action tape has
+no delta; its helper explicitly retains the original v10 input contract.
+Headless PRs 1–12 remain implemented. Their hosted, release-soak, x64 NVIDIA,
+and Jetson ARM64 candidate acceptance obligations remain open as recorded;
+VIS-12a is not another numbered headless PR or visual hardware acceptance.

@@ -67,8 +67,9 @@ Use the long-lived listener form for Python, batching, or repeated episodes.
 
 ## Protocol and loading
 
-The server advertises protocol `1.2`. It accepts clients with major `1` and a
-minor version no greater than `2`. Protocol 1.1 state-only and CPU-LiDAR
+The server advertises protocol `1.3` and identity profile `world-bound@2`.
+It accepts clients with major `1` and a minor version no greater than `3`.
+Protocol 1.1 state-only and CPU-LiDAR
 clients remain compatible and receive inline tensors. Schema changes remain
 additive within v1; `ResourceLimits` fields 11 and 12 are
 `max_shared_memory_bytes_per_environment` and
@@ -287,3 +288,13 @@ dimensions, asynchronous camera/LiDAR readback, and shared-memory mapping,
 stale-generation rejection, and cleanup. The same renderer diagnostics are
 available through capabilities and are persisted in run provenance, SFLog
 metadata, and final diagnostics.
+
+### VIS-12a identity compatibility
+
+New v11 bundles require a client using protocol 1.3; admission rejects older
+clients before spawning workers. v10 bundles keep their legacy episode hashes
+on existing client protocol paths. Reset and artifact paths derive identity
+version from the verified bundle, never from client overrides. The protobuf
+EpisodeSpec shape is unchanged. Exact canonical JSON is checked with the
+version-appropriate serializer and duplicate-key/UTF-8 validation. Asset
+admission profiles remain empty and the protocol 1.4 RPCs remain unavailable.

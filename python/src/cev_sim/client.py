@@ -21,6 +21,7 @@ from .config import (
     MEASURED_STATE_PROFILE,
     MEASURED_STATE_PROFILE_VERSION,
     MEASURED_STATE_SCHEMA_HASH,
+    MIN_PROTOCOL_MINOR,
     PROTOCOL_MAJOR,
     PROTOCOL_MINOR,
     ROUTE_SAFETY_PROFILE,
@@ -169,7 +170,7 @@ def _resolved_backends(bundle: LoadedBundle, configuration: EpisodeConfig) -> tu
 
 
 class SupervisorClient:
-    """Synchronous protocol 1.2 connection with optional process ownership."""
+    """Synchronous protocol 1.2/1.3 connection with optional process ownership."""
 
     def __init__(
         self,
@@ -217,11 +218,12 @@ class SupervisorClient:
             self.capabilities = self.call(
                 self.stub.GetCapabilities,
                 pb.GetCapabilitiesRequest(
-                    client_protocol=pb.ProtocolVersion(major=PROTOCOL_MAJOR, minor=PROTOCOL_MINOR)
+                    client_protocol=pb.ProtocolVersion(major=PROTOCOL_MAJOR, minor=MIN_PROTOCOL_MINOR)
                 ),
             )
             _raise_status(self.capabilities.error)
             self._validate_capabilities(self.capabilities)
+            self.protocol_minor = min(PROTOCOL_MINOR, self.capabilities.protocol.minor)
             self.shared_memory_transport = self.target.startswith("unix:") and (
                 "grpc+unix+shared-memory-v1" in self.capabilities.transports
             )
@@ -253,6 +255,9 @@ class SupervisorClient:
         artifact_policy: ArtifactPolicy,
     ) -> CevSimBatch:
         bundle = load_bundle(bundle_input)
+        if bundle.identity_profile and (self.protocol_minor < bundle.required_protocol_minor
+                                       or bundle.identity_profile not in self.capabilities.identity_profiles):
+            raise CevSimCompatibilityError("world-bound@2 requires supervisor protocol 1.3 and identity capability")
         if type(count) is not int or not 1 <= count <= 0xFFFF_FFFF:
             raise CevSimConfigurationError("Environment count must be a positive uint32")
         try:
@@ -266,7 +271,7 @@ class SupervisorClient:
         response = self.call(
             self.stub.CreateBatch,
             pb.CreateBatchRequest(
-                client_protocol=pb.ProtocolVersion(major=PROTOCOL_MAJOR, minor=PROTOCOL_MINOR),
+                client_protocol=pb.ProtocolVersion(major=PROTOCOL_MAJOR, minor=self.protocol_minor),
                 run_bundles=[
                     pb.RunBundle(
                         bundle_id=bundle.bundle_id,
@@ -309,10 +314,10 @@ class SupervisorClient:
 
     def _validate_capabilities(self, capabilities: pb.GetCapabilitiesResponse) -> None:
         protocol = capabilities.protocol
-        if protocol.major != PROTOCOL_MAJOR or protocol.minor < PROTOCOL_MINOR:
+        if protocol.major != PROTOCOL_MAJOR or protocol.minor < MIN_PROTOCOL_MINOR:
             raise CevSimCompatibilityError(
                 f"Supervisor protocol {protocol.major}.{protocol.minor} does not satisfy "
-                f"{PROTOCOL_MAJOR}.{PROTOCOL_MINOR}"
+                f"{PROTOCOL_MAJOR}.{MIN_PROTOCOL_MINOR}"
             )
         if capabilities.runtime_name != "cev-sim":
             raise CevSimCompatibilityError(f"Unexpected supervisor runtime {capabilities.runtime_name!r}")

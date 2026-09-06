@@ -95,7 +95,7 @@ test("v3 manifests migrate sensor poses to REP-103 without changing physical pla
             }],
         },
     });
-    assert.equal(migrated.version, 10);
+    assert.equal(migrated.version, 11);
     assert.deepEqual(migrated.sensorRig.sensors[0].pose.position, { x: 1.5, y: 0, z: 0.5 });
     assert.equal(migrated.sensorRig.sensors[0].mountFrameId, "front_camera_link");
 });

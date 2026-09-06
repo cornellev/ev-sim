@@ -166,3 +166,19 @@ def test_unseeded_vecenv_seed_streams_are_reproducible() -> None:
     sequence = [vector._next_seed(0), vector._next_seed(1)]
     vector._rngs = [np.random.default_rng(7), np.random.default_rng(8)]
     assert [vector._next_seed(0), vector._next_seed(1)] == sequence
+
+
+def test_v11_requires_explicit_identity_capability_before_batch_creation(headless_fixture, tmp_path) -> None:
+    from cev_sim.config import ArtifactPolicy, ResourceLimits
+
+    client = object.__new__(SupervisorClient)
+    client.target = "unix:/tmp/cev-sim.sock"
+    client.capabilities = capabilities()
+    client.capabilities.protocol.minor = 2
+    client._validate_capabilities(client.capabilities)
+    for minor in (2, 3):
+        client.protocol_minor = minor
+        with pytest.raises(CevSimCompatibilityError, match="world-bound@2"):
+            client.create_batch(headless_fixture["bundlePath"], count=1, output_directory=tmp_path,
+                                episode=EpisodeConfig(), resource_limits=ResourceLimits(),
+                                artifact_policy=ArtifactPolicy(profile="disabled"))

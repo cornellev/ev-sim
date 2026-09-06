@@ -176,11 +176,11 @@ test("localization estimate loopback routes through candidate namespace", () => 
 
 test("default manifest v6 includes localization sensors without migrating v4 runs", () => {
     const defaults = createDefaultRunManifest();
-    assert.equal(defaults.version, 10);
+    assert.equal(defaults.version, 11);
     assert.ok(defaults.sensorRig.sensors.some((sensor) => sensor.type === "imu"));
     assert.ok(defaults.topics.some((topic) => topic.contractId === "truth-odometry"));
     const migrated = normalizeRunManifest({ ...createDefaultRunManifest({ sensorRig: { sensors: [] } }), version: 4 });
-    assert.equal(migrated.version, 10);
+    assert.equal(migrated.version, 11);
     assert.equal(migrated.sensorRig.sensors.length, 0);
 });
 

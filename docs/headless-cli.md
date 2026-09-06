@@ -171,3 +171,14 @@ Process isolation, batching, limits, watchdogs, and the configured Chromium
 pool are used by `run --config`. Long-lived multi-environment and Python
 clients use the separate [headless batch supervisor](headless-supervisor.md)
 over gRPC.
+
+### VIS-12a integrity and compatibility
+
+Bundle inspection reports the exact `bundleBytesHash`, identity version, and
+required protocol minor. File ingestion preserves the original bytes and
+rejects invalid UTF-8, duplicate keys, and malformed exact JSON. v10 bundles
+remain executable with unchanged hashes; v11 uses `world-bound@2` and the
+local protocol 1.3 runtime. `run-bundle.json` artifacts preserve received bytes
+for direct file execution; canonical supervisor wire serialization is a
+separate representation. Historical unsupported bundle versions require
+verified authoring import and re-resolution. Package flags remain unavailable.

@@ -11,7 +11,7 @@ const bundle = await createPortableHeadlessBundle();
 const bundleId = "parent-death";
 const supervisor = new HeadlessSupervisor({ socket: path.join(root, "unused.sock") });
 const created = await supervisor.createBatch({
-    clientProtocol: { major: 1, minor: 1 },
+    clientProtocol: { major: 1, minor: 3 },
     runBundles: [{
         bundleId,
         resolvedHash: bundle.resolvedHash,

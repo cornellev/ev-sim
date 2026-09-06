@@ -6,6 +6,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { main } from "../server/headless/Cli.js";
+import { sha256ExactBytes } from "../app/simulation/visual/VisualLayer.js";
 import { createPortableHeadlessBundle, successfulTape } from "./helpers/headlessRunnerBundle.js";
 
 const cliPath = path.resolve("bin/cev-sim.js");
@@ -39,6 +40,35 @@ function jsonLines(text) {
 async function writeJson(filePath, value) {
     await fs.writeFile(filePath, `${JSON.stringify(value)}\n`);
 }
+
+test("CLI preserves received v10/v11 bundle bytes and frozen episode identity", async (t) => {
+    const root = await temporaryRoot(t);
+    const fixtureRoot = new URL("./fixtures/visual-layer/", import.meta.url);
+    for (const [version, name, vectorFile] of [
+        [10, "legacy-state.v10.json", "legacy-bundles.v1.json"],
+        [11, "world-bound-state.v11.json", "world-bound-state.v2.json"],
+    ]) {
+        const vectors = JSON.parse(await fs.readFile(new URL(vectorFile, fixtureRoot), "utf8"));
+        const expected = version === 10 ? vectors.state : vectors;
+        const original = await fs.readFile(new URL(name, fixtureRoot));
+        const received = Buffer.concat([Buffer.from("\n"), original, Buffer.from("\n")]);
+        const bundlePath = path.join(root, name);
+        await fs.writeFile(bundlePath, received);
+        const inspection = await runCli(["inspect", bundlePath]);
+        assert.equal(inspection.code, 0, inspection.stderr);
+        const inspected = jsonLines(inspection.stdout)[0];
+        assert.equal(inspected.bundleBytesHash, sha256ExactBytes(received));
+        assert.equal(inspected.identityVersion, version === 10 ? 1 : 2);
+        const output = path.join(root, `output-${version}`);
+        const run = await runCli(["run", "--bundle", bundlePath, "--output", output,
+            "--artifact-profile", "disabled"], { input: [1, 2].map((policyStep) => (
+            JSON.stringify({ policyStep, action: [0, 0] })
+        )).join("\n") + "\n" });
+        assert.equal(run.code, 0, run.stderr);
+        assert.equal(jsonLines(run.stdout).at(-1).result.episodeHash, expected.headlessEpisodeHash);
+        assert.deepEqual(await fs.readFile(path.join(output, "run-bundle.json")), received);
+    }
+});
 
 test("CLI validate, stdin run, action-file run, and inspect emit machine-readable output", async (t) => {
     const root = await temporaryRoot(t);

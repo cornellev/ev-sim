@@ -3,7 +3,8 @@ import process from "node:process";
 import readline from "node:readline";
 
 import { HeadlessEpisodeError } from "../../app/simulation/headless/HeadlessErrors.js";
-import { canonicalStringify } from "../../app/simulation/RunManifest.js";
+import { canonicalRunBundleStringify, verifyRunBundleBytes } from "./RunBundle.js";
+import { HEADLESS_PROTOCOL } from "./HeadlessProtocol.js";
 import { HeadlessRunner } from "./HeadlessRunner.js";
 import { HeadlessRunnerError } from "./HeadlessRunnerErrors.js";
 import { inspectTarget } from "./Inspection.js";
@@ -163,7 +164,7 @@ export async function main(argv = process.argv.slice(2), io = {}) {
             writeJson(stdout, {
                 kind: "cev-sim.headless.supervisor-listening",
                 version: 1,
-                protocol: { major: 1, minor: 2 },
+                protocol: HEADLESS_PROTOCOL,
                 address: running.address,
                 transport: running.config.listener.kind,
             });
@@ -182,7 +183,7 @@ export async function main(argv = process.argv.slice(2), io = {}) {
             const createBundle = io.smokeBundleFactory ?? createHeadlessSmokeBundle;
             const bundle = await createBundle();
             try {
-                await fs.writeFile(options.output, canonicalStringify(bundle));
+                await fs.writeFile(options.output, canonicalRunBundleStringify(bundle));
             } catch (error) {
                 throw new HeadlessRunnerError(
                     "ARTIFACT_FAILURE",
@@ -212,7 +213,7 @@ export async function main(argv = process.argv.slice(2), io = {}) {
         }
         if (!options.bundle) throw new HeadlessRunnerError("USAGE", `--bundle is required for ${command}.`);
         if (positional.length > 0) throw new HeadlessRunnerError("USAGE", `Unexpected positional argument: ${positional[0]}`);
-        const bundle = await readJson(options.bundle, "run bundle");
+        const { bundle } = verifyRunBundleBytes(await fs.readFile(options.bundle));
         if (command === "validate") {
             const allowed = new Set(["bundle", "episode", "config"]);
             const unsupported = Object.keys(options).find((key) => !allowed.has(key));

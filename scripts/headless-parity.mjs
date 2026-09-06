@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { canonicalRunBundleStringify } from "../server/headless/RunBundle.js";
 
 import { promises as fs } from "node:fs";
 import path from "node:path";
@@ -17,6 +18,7 @@ import {
     createReport,
     reportSha256,
 } from "../server/headless/ReleaseReports.js";
+import { HEADLESS_PROTOCOL } from "../server/headless/HeadlessProtocol.js";
 import { startHeadlessSupervisor } from "../server/headless/SupervisorServer.js";
 import {
     REPOSITORY_ROOT,
@@ -327,7 +329,7 @@ async function runDirect(bundle, spec, root) {
 async function runCli(bundle, spec, root) {
     const bundlePath = path.join(root, "bundle.json");
     const specPath = path.join(root, "episode.json");
-    await fs.writeFile(bundlePath, canonicalStringify(bundle));
+    await fs.writeFile(bundlePath, canonicalRunBundleStringify(bundle));
     await fs.writeFile(specPath, JSON.stringify(spec));
     const input = ACTIONS.map((action, index) => JSON.stringify({ policyStep: index + 1, action })).join("\n") + "\n";
     const result = await run(path.join(REPOSITORY_ROOT, "bin/cev-sim.js"), [
@@ -350,7 +352,7 @@ async function runCli(bundle, spec, root) {
 async function runGrpc(bundle, spec, client, root) {
     const bundleId = spec.runBundleId;
     const created = await clientCall(client, "createBatch", {
-        clientProtocol: { major: 1, minor: 2 },
+        clientProtocol: HEADLESS_PROTOCOL,
         runBundles: [bundleEnvelope(bundleId, bundle)],
         episodes: [spec],
         artifactPolicy: { profile: 3, outputUri: path.join(root, "grpc") },
@@ -384,7 +386,7 @@ async function runGrpc(bundle, spec, client, root) {
 async function runPython(bundle, root, socket, perception) {
     const bundlePath = path.join(root, "python-bundle.json");
     const actionsPath = path.join(root, "actions.json");
-    await fs.writeFile(bundlePath, canonicalStringify(bundle));
+    await fs.writeFile(bundlePath, canonicalRunBundleStringify(bundle));
     await fs.writeFile(actionsPath, JSON.stringify(ACTIONS));
     const virtualPython = path.join(REPOSITORY_ROOT, "python/.venv/bin/python");
     let python = process.env.PYTHON || "python3";
@@ -463,7 +465,7 @@ async function main() {
         ];
         const report = createReport(PARITY_REPORT_KIND, {
             provenance: processProvenance(),
-            protocol: { major: 1, minor: 2 },
+            protocol: HEADLESS_PROTOCOL,
             tolerances: PARITY_TOLERANCES,
             cases,
             passed: cases.every((entry) => entry.passed),

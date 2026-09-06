@@ -4,11 +4,10 @@ import path from "node:path";
 
 import { normalizeEpisodeSpec } from "../../app/simulation/headless/HeadlessEpisode.js";
 import { hashSpace } from "../../app/simulation/headless/TensorProtocol.js";
-import { canonicalStringify } from "../../app/simulation/RunManifest.js";
 import { ERROR_CODE, HEADLESS_PROTOCOL } from "./HeadlessProtocol.js";
 import { HeadlessRunnerError } from "./HeadlessRunnerErrors.js";
 import { HeadlessSupervisor } from "./HeadlessSupervisor.js";
-import { verifyRunBundle } from "./RunBundle.js";
+import { canonicalRunBundleStringify, verifyRunBundle } from "./RunBundle.js";
 
 const ERROR_NAMES = Object.freeze(Object.fromEntries(
     Object.entries(ERROR_CODE).map(([name, value]) => [value, name]),
@@ -50,7 +49,7 @@ export async function validateBundleWithSupervisor(bundle, {
                 bundleId: normalizedEpisode.runBundleId,
                 resolvedHash: verified.resolvedHash,
                 simulationSemanticHash: verified.simulationSemanticHash,
-                canonicalJson: Buffer.from(canonicalStringify(bundle)),
+                canonicalJson: Buffer.from(canonicalRunBundleStringify(bundle)),
             }],
             episodes: [normalizedEpisode],
             artifactPolicy: {

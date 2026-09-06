@@ -186,7 +186,7 @@ test("real Unix-socket gRPC batches preserve stable ordering at 1, 8, 16, and 32
     for (const count of [1, 8, 16, 32]) {
         const episodes = Array.from({ length: count }, (_, index) => episode(index, bundleId, bundle));
         const created = await call("createBatch", {
-            clientProtocol: { major: 1, minor: 1 },
+            clientProtocol: { major: 1, minor: 3 },
             runBundles: [bundleEnvelope(bundleId, bundle)],
             episodes,
             artifactPolicy: { profile: 3, outputUri: path.join(root, `artifacts-${count}`) },
@@ -242,7 +242,7 @@ test("gRPC, direct runner, and CLI preserve episode hashes, trajectory hashes, a
     assert.equal(cli.code, 0, cli.stderr);
     const cliEvents = jsonLines(cli.stdout);
     const created = await call("createBatch", {
-        clientProtocol: { major: 1, minor: 1 },
+        clientProtocol: { major: 1, minor: 3 },
         runBundles: [bundleEnvelope(bundleId, bundle)],
         episodes: [spec],
         artifactPolicy: { profile: 3, outputUri: path.join(root, "grpc") },
@@ -277,7 +277,7 @@ test("insecure TCP requires opt-in for remote hosts and works on loopback", asyn
     });
     const response = await clientCall(client, "getCapabilities", { clientProtocol: { major: 1, minor: 0 } });
     assert.equal(response.error.code, 0);
-    assert.deepEqual(response.protocol, { major: 1, minor: 2 });
+    assert.deepEqual(response.protocol, { major: 1, minor: 3 });
     const diagnostics = JSON.parse(Buffer.from(response.diagnosticJson).toString("utf8"));
     assert.equal(diagnostics.gpuProbe.available, false);
     assert.equal(diagnostics.gpuRenderer.browserLaunches, 0);
@@ -292,7 +292,7 @@ test("multiple batches coexist and malformed requests fail in response envelopes
     const { root, call } = await fixture(t);
     const bundle = await createPortableHeadlessBundle();
     const make = (name, offset = 0) => call("createBatch", {
-        clientProtocol: { major: 1, minor: 1 },
+        clientProtocol: { major: 1, minor: 3 },
         runBundles: [bundleEnvelope(name, bundle)],
         episodes: [0, 1].map((index) => ({ ...episode(index, name, bundle), resetSeed: String(index + offset) })),
         artifactPolicy: { profile: 3, outputUri: path.join(root, name) },
@@ -306,10 +306,10 @@ test("multiple batches coexist and malformed requests fail in response envelopes
     assert.deepEqual(health.environments.map((entry) => `${entry.batchId}:${entry.environmentIndex}`), [...health.environments]
         .sort((left, right) => Buffer.from(left.batchId).compare(Buffer.from(right.batchId)) || left.environmentIndex - right.environmentIndex)
         .map((entry) => `${entry.batchId}:${entry.environmentIndex}`));
-    const protocol = await call("getCapabilities", { clientProtocol: { major: 1, minor: 3 } });
+    const protocol = await call("getCapabilities", { clientProtocol: { major: 1, minor: 4 } });
     assert.equal(protocol.error.code, 2);
     const malformed = await call("createBatch", {
-        clientProtocol: { major: 1, minor: 1 },
+        clientProtocol: { major: 1, minor: 3 },
         runBundles: [bundleEnvelope("bad", bundle)],
         episodes: [episode(1, "bad", bundle)],
         artifactPolicy: { profile: 3, outputUri: path.join(root, "bad") },
@@ -318,7 +318,7 @@ test("multiple batches coexist and malformed requests fail in response envelopes
     const noncanonicalEnvelope = bundleEnvelope("noncanonical", bundle);
     noncanonicalEnvelope.canonicalJson = Buffer.from(JSON.stringify(bundle, null, 2));
     const noncanonical = await call("createBatch", {
-        clientProtocol: { major: 1, minor: 1 },
+        clientProtocol: { major: 1, minor: 3 },
         runBundles: [noncanonicalEnvelope],
         episodes: [episode(0, "noncanonical", bundle)],
         artifactPolicy: { profile: 3, outputUri: path.join(root, "noncanonical") },
@@ -331,7 +331,7 @@ test("concurrent batch creation reserves capacity atomically", { timeout: 30_000
     const { root, call } = await fixture(t, { config: testConfig({ maxWorkers: 1 }) });
     const bundle = await createPortableHeadlessBundle();
     const create = (name) => call("createBatch", {
-        clientProtocol: { major: 1, minor: 1 },
+        clientProtocol: { major: 1, minor: 3 },
         runBundles: [bundleEnvelope(name, bundle)],
         episodes: [episode(0, name, bundle)],
         artifactPolicy: { profile: 3, outputUri: path.join(root, name) },
@@ -348,7 +348,7 @@ test("worker crashes restart without replay and exhausted budgets fault only tha
     const bundleId = "recovery";
     const episodes = [0, 1].map((index) => episode(index, bundleId, bundle));
     const created = await call("createBatch", {
-        clientProtocol: { major: 1, minor: 1 },
+        clientProtocol: { major: 1, minor: 3 },
         runBundles: [bundleEnvelope(bundleId, bundle)],
         episodes,
         resourceLimits: { restartBudget: 1 },
@@ -387,7 +387,7 @@ test("observation and queue breaches are infrastructure errors without RL transi
     const bundleId = "limits";
     const spec = episode(0, bundleId, bundle);
     const created = await call("createBatch", {
-        clientProtocol: { major: 1, minor: 1 },
+        clientProtocol: { major: 1, minor: 3 },
         runBundles: [bundleEnvelope(bundleId, bundle)],
         episodes: [spec],
         resourceLimits: { maxObservationBytes: 1, restartBudget: 1 },
@@ -402,7 +402,7 @@ test("observation and queue breaches are infrastructure errors without RL transi
     await call("closeBatch", { batchId: created.batch.batchId });
 
     const queue = await call("createBatch", {
-        clientProtocol: { major: 1, minor: 1 },
+        clientProtocol: { major: 1, minor: 3 },
         runBundles: [bundleEnvelope("queue", bundle)],
         episodes: [episode(0, "queue", bundle)],
         resourceLimits: { maxQueueBytes: 1 },
@@ -416,7 +416,7 @@ test("RSS and reported heap breaches reject or restart only the affected environ
     const { root, running, call } = await fixture(t, { config: testConfig({ shutdownGraceMs: 50, killGraceMs: 50 }) });
     const bundle = await createPortableHeadlessBundle();
     const rss = await call("createBatch", {
-        clientProtocol: { major: 1, minor: 1 },
+        clientProtocol: { major: 1, minor: 3 },
         runBundles: [bundleEnvelope("rss", bundle)],
         episodes: [episode(0, "rss", bundle)],
         resourceLimits: { maxRssBytesPerEnvironment: 1 },
@@ -426,7 +426,7 @@ test("RSS and reported heap breaches reject or restart only the affected environ
     assert.equal(rss.batch, null);
 
     const created = await call("createBatch", {
-        clientProtocol: { major: 1, minor: 1 },
+        clientProtocol: { major: 1, minor: 3 },
         runBundles: [bundleEnvelope("heap", bundle)],
         episodes: [episode(0, "heap", bundle)],
         resourceLimits: { restartBudget: 1 },
@@ -451,7 +451,7 @@ test("uncertain IPC backpressure restarts one worker while its peer completes", 
     const bundleId = "backpressure";
     const episodes = [0, 1].map((index) => episode(index, bundleId, bundle));
     const created = await call("createBatch", {
-        clientProtocol: { major: 1, minor: 1 },
+        clientProtocol: { major: 1, minor: 3 },
         runBundles: [bundleEnvelope(bundleId, bundle)],
         episodes,
         resourceLimits: { restartBudget: 1 },
@@ -481,7 +481,7 @@ test("client cancellation is a transport error and an uncertain worker is reset"
     const bundle = await createPortableHeadlessBundle();
     const spec = episode(0, "cancel", bundle);
     const created = await call("createBatch", {
-        clientProtocol: { major: 1, minor: 1 },
+        clientProtocol: { major: 1, minor: 3 },
         runBundles: [bundleEnvelope("cancel", bundle)],
         episodes: [spec],
         resourceLimits: { restartBudget: 1 },
@@ -510,7 +510,7 @@ test("partial action failures let healthy peers finish and never fabricate trans
     const bundleId = "partial";
     const episodes = [0, 1].map((index) => episode(index, bundleId, bundle));
     const created = await call("createBatch", {
-        clientProtocol: { major: 1, minor: 1 },
+        clientProtocol: { major: 1, minor: 3 },
         runBundles: [bundleEnvelope(bundleId, bundle)],
         episodes,
         artifactPolicy: { profile: 3, outputUri: path.join(root, "partial") },
@@ -542,7 +542,7 @@ test("static sensor/actor limits, incompatible spaces, artifact limits, and epis
         sensors: [createHeadlessImu({ id: "imu-a" }), createHeadlessImu({ id: "imu-b" })],
     });
     const sensorLimited = await call("createBatch", {
-        clientProtocol: { major: 1, minor: 1 },
+        clientProtocol: { major: 1, minor: 3 },
         runBundles: [bundleEnvelope("sensor-limit", twoSensors)],
         episodes: [episode(0, "sensor-limit", twoSensors)],
         resourceLimits: { maxSensorsPerEnvironment: 1 },
@@ -554,7 +554,7 @@ test("static sensor/actor limits, incompatible spaces, artifact limits, and epis
     actors.resolved.scenario.scenario.actors.push({ id: "npc", role: "npc", name: "NPC" });
     const actorBundle = rehashRunBundle(actors);
     const actorLimited = await call("createBatch", {
-        clientProtocol: { major: 1, minor: 1 },
+        clientProtocol: { major: 1, minor: 3 },
         runBundles: [bundleEnvelope("actor-limit", actorBundle)],
         episodes: [episode(0, "actor-limit", actorBundle)],
         resourceLimits: { maxActorsPerEnvironment: 1 },
@@ -564,7 +564,7 @@ test("static sensor/actor limits, incompatible spaces, artifact limits, and epis
 
     const oneSensor = await createPortableHeadlessBundle();
     const incompatible = await call("createBatch", {
-        clientProtocol: { major: 1, minor: 1 },
+        clientProtocol: { major: 1, minor: 3 },
         runBundles: [bundleEnvelope("one", oneSensor), bundleEnvelope("two", twoSensors)],
         episodes: [episode(0, "one", oneSensor), episode(1, "two", twoSensors)],
         artifactPolicy: { profile: 3, outputUri: path.join(root, "incompatible") },
@@ -573,7 +573,7 @@ test("static sensor/actor limits, incompatible spaces, artifact limits, and epis
 
     const artifactSpec = episode(0, "artifact", oneSensor);
     const artifact = await call("createBatch", {
-        clientProtocol: { major: 1, minor: 1 },
+        clientProtocol: { major: 1, minor: 3 },
         runBundles: [bundleEnvelope("artifact", oneSensor)],
         episodes: [artifactSpec],
         resourceLimits: { maxArtifactBytes: 1, restartBudget: 1 },
@@ -588,7 +588,7 @@ test("static sensor/actor limits, incompatible spaces, artifact limits, and epis
 
     const timeoutSpec = episode(0, "timeout", oneSensor);
     const timeout = await call("createBatch", {
-        clientProtocol: { major: 1, minor: 1 },
+        clientProtocol: { major: 1, minor: 3 },
         runBundles: [bundleEnvelope("timeout", oneSensor)],
         episodes: [timeoutSpec],
         resourceLimits: { episodeWallTimeoutMs: 20, restartBudget: 1 },
@@ -609,7 +609,7 @@ test("step watchdog kills an uncertain worker while a peer completes", { timeout
     const bundleId = "step-timeout";
     const episodes = [0, 1].map((index) => episode(index, bundleId, bundle));
     const created = await call("createBatch", {
-        clientProtocol: { major: 1, minor: 1 },
+        clientProtocol: { major: 1, minor: 3 },
         runBundles: [bundleEnvelope(bundleId, bundle)],
         episodes,
         resourceLimits: { restartBudget: 1 },
@@ -664,7 +664,7 @@ test("forced shutdown kills stopped workers and removes sockets and known stagin
     const spec = episode(0, "forced", bundle);
     const outputUri = path.join(root, "forced-artifacts");
     const created = await running.supervisor.createBatch({
-        clientProtocol: { major: 1, minor: 1 },
+        clientProtocol: { major: 1, minor: 3 },
         runBundles: [bundleEnvelope("forced", bundle)],
         episodes: [spec],
         artifactPolicy: { profile: 3, outputUri },
@@ -695,7 +695,7 @@ test("the supervisor CLI shuts down cleanly and removes its Unix socket", { time
     child.stderr.on("data", (chunk) => { stderr += chunk; });
     t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL"); });
     const listening = JSON.parse(await firstLine(child.stdout));
-    assert.equal(listening.protocol.minor, 2);
+    assert.equal(listening.protocol.minor, 3);
     assert.equal(listening.transport, "socket");
     await fs.access(socket);
     child.kill("SIGTERM");

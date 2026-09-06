@@ -1,8 +1,8 @@
 # Visual layer contracts
 
 This document freezes the VIS-01 contracts. It describes interfaces that
-later VIS milestones implement; it does not advertise a photoreal runtime,
-asset store, package importer, or new headless capability.
+later VIS milestones implement. VIS-12a activates the identity contracts below;
+photoreal rendering, the asset store, and package admission remain unavailable.
 
 The implementation authority and acceptance gates remain in
 [the visual-layer roadmap](visual-layer-plan.md). JavaScript remains the only
@@ -25,9 +25,9 @@ become collision, route, LiDAR, registry, or oracle truth.
 | Identity negotiation | Protocol 1.3 | VIS-12a |
 | Package admission | Protocol 1.4 | VIS-13b |
 
-The current runtime continues to advertise protocol 1.2. The protobuf v1
-schema declares future additive fields and RPCs, but the runtime does not
-populate or implement them in VIS-01. Unknown required versions, profiles,
+The current runtime advertises protocol 1.3 and `identity_profiles: ["world-bound@2"]`.
+Package admission remains inactive: `asset_admission_profiles` is empty and
+the protocol 1.4 RPCs remain unimplemented. Unknown required versions, profiles,
 providers, products, or extensions fail explicitly.
 
 ## Visual layer descriptor
@@ -165,8 +165,9 @@ scene ownership; imported `extras` or `userData` never register truth.
 
 ## Identity projection and compatibility
 
-VIS-12a will activate `resolved.identityProfile = { id: "world-bound",
-version: 2 }`. Its resolver must:
+VIS-12a activates `resolved.identityProfile = { id: "world-bound",
+version: 2 }`. Its resolver validates locks before producing a JSON snapshot,
+then projects a clone. The implemented identity rules are:
 
 1. Validate all top-level and nested environment, scenario, script, and
    embedded dependency locks against the full authoring snapshot.
@@ -177,8 +178,10 @@ version: 2 }`. Its resolver must:
    inputs.
 4. Apply the same projection to browser observation and reward profile config
    hashes.
-5. Resolve visual resources only for enabled cameras that select them. All
-   enabled cameras must select one provider; mixed-provider rigs fail.
+5. Preserve conditional analytic-camera and LiDAR resources. Explicit new
+   camera selections remain unsupported until VIS-02; selected visual
+   resource resolution belongs to VIS-12b. Prospective projection tests do
+   not advertise those capabilities.
 6. Include selected render resources, calibration, product policy, and
    semantic backend configuration. Exclude evidence, logging, artifact and
    resource policy, wall pacing, host paths, admissions, and replay evidence.
@@ -189,11 +192,45 @@ Compatibility is evaluated separately at each boundary:
 | --- | --- | --- | --- |
 | Bundle v1 / resolved v10 | Preserve received bytes and existing algorithms | Supported | Existing analytic path remains supported |
 | Older authored manifests | N/A unless a historical bundle verifier exists | Normalize and re-resolve | Only through a newly resolved supported bundle |
-| Manifest v11 / `world-bound@2` | New version-dispatched algorithms | Supported after VIS-12a | Only after negotiated runtime support |
-| Unknown identity/provider/backend | Fail explicitly | Import only if a defined migration exists | Unsupported capability |
+| Bundle v1 / manifest v11 / `world-bound@2` | New version-dispatched algorithms | Supported | Protocol 1.3 and advertised identity profile required |
+| Earlier immutable bundles | Retain legacy import verification where its algorithm applies | Verify before normalizing | Explicit re-resolution required |
+| Unknown versions or identities | Explicit compatibility error | Rejected | Rejected |
 
 Verification never normalizes or rewrites received immutable bundle bytes.
 Authoring import is not proof of executable compatibility.
+
+`verifyRunBundleIntegrity` checks received envelope hashes before authoring
+import; `verifyRunBundle` additionally requires executable resolved v10 or
+v11 and the existing resource/backend contracts. Historical resolved v1–v9
+can use the existing legacy import verifier only where their hashes match its
+algorithm; otherwise they fail explicitly. No historical verifier is inferred.
+
+New resolutions always produce v11, including resolutions of imported older
+authoring documents. v10 bundles without an identity selector keep semantic
+and episode v1 algorithms. Missing/unknown v11 selectors and selectors on
+legacy bundles fail. `SIMULATION_HASH_VERSION`, metric-world, legacy analytic
+provider, backend/profile presets, and trajectory algorithms remain unchanged.
+The normalized resolved hash keeps its historical metadata and six-decimal
+rules; the v11 envelope and semantic/episode v2 domains intentionally change
+new run identities. Evidence exclusions apply at named envelope/dependency
+locations, not inside arbitrary script inputs.
+
+`verifyRunBundleBytes(bytes, { expectedBundleBytesHash, execution })` preserves
+received bytes and optionally verifies an external exact digest before parsing.
+It rejects invalid UTF-8, BOMs, duplicate keys, non-finite values, and invalid
+Unicode. v11 counters use safe numeric integers; large headless uint64 values
+continue to use their existing string representation. `runBundleBytes` returns
+retained received bytes, or an explicit serialization for an object input.
+`canonicalRunBundleStringify` preserves the historical serializer for v10 and
+uses exact JCS for v11. Canonical wire bytes and original pretty-printed file
+bytes can have different digests without changing normalized run identity.
+Neither byte digest is inserted into its own bundle.
+
+Python discovers capabilities with protocol 1.2, then negotiates up to 1.3.
+Legacy bundles still work with 1.2 supervisors. A v11 request requires both
+protocol 1.3 and `world-bound@2` before batch creation; the JavaScript
+supervisor remains the authoritative semantic verifier. No protobuf field
+numbers or EpisodeSpec fields changed in VIS-12a.
 
 For environment v3, a display-only rename retains a visual binding only if the
 recomputed world hash is equal. Duplication, environment-ID changes, and

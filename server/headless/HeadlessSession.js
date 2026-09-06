@@ -5,7 +5,7 @@ import { serialize } from "node:v8";
 import { HeadlessEpisode, TERMINATION_REASON } from "../../app/simulation/headless/HeadlessEpisode.js";
 import { createHeadlessArtifactSink, resolveArtifactPolicy } from "./HeadlessArtifactSink.js";
 import { HeadlessRunnerError } from "./HeadlessRunnerErrors.js";
-import { verifyRunBundle } from "./RunBundle.js";
+import { cloneRunBundle, verifyRunBundle } from "./RunBundle.js";
 
 const PACKAGE_VERSION = createRequire(import.meta.url)("../../package.json").version;
 
@@ -94,7 +94,7 @@ export class HeadlessSession {
             throw new HeadlessRunnerError("INVALID_REQUEST", "The session is already prepared.");
         }
         this.verified = verifyRunBundle(bundle);
-        this.bundle = structuredClone(bundle);
+        this.bundle = cloneRunBundle(bundle);
         this.episode = this.episodeFactory();
         this.descriptor = await this.episode.prepare(this.verified.resolved, episodeSpec);
         this.state = "prepared";

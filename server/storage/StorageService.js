@@ -20,6 +20,9 @@ import {
     schemaClosureForManifest,
 } from "../../app/autonomy/AutonomyContractCatalog.js";
 import { buildCalibrationBundle } from "../../app/autonomy/CalibrationBundle.js";
+import { WORLD_BOUND_IDENTITY } from "../../app/simulation/kernel/RunIdentity.js";
+import { canonicalExactStringify } from "../../app/simulation/visual/VisualLayer.js";
+import { runBundleBytes, verifyRunBundleBytes, verifyRunBundleIntegrity } from "../headless/RunBundle.js";
 import { computeSimulationSemanticHash } from "../../app/simulation/kernel/SimulationHashes.js";
 import { createWorldResource } from "../../app/simulation/world/WorldDescription.js";
 import { createLidarGeometryResource } from "../../app/simulation/lidar/LidarGeometry.js";
@@ -579,7 +582,9 @@ export class StorageService {
             "scenario",
         );
         scenario = parameterizedValidation.scenario;
-        const environment = await this._resolveEnvironment(scenario.environment.id);
+        const environment = options.environmentSnapshot?.id === scenario.environment.id
+            ? options.environmentSnapshot.manifest
+            : await this._resolveEnvironment(scenario.environment.id);
         const environmentHash = semanticHash(environment);
         const world = createWorldResource(environment);
         const roadNetworkHash = hashEnvironmentRoadNetwork(world.description);
@@ -1063,6 +1068,14 @@ export class StorageService {
         manifest = parameterizedValidation.manifest;
         if (resolutionOptions.seed !== undefined) manifest.seed = resolutionOptions.seed;
 
+        // Check the original lock before scenario selection replaces the effective environment.
+        // Use this same snapshot below for direct runs, avoiding a check/use re-read.
+        const authoredEnvironment = manifest.environment.expectedHash
+            ? await this._resolveEnvironment(manifest.environment.id) : null;
+        if (authoredEnvironment && semanticHash(authoredEnvironment) !== manifest.environment.expectedHash) {
+            throw new Error(`Environment "${manifest.environment.id}" changed: expected ${manifest.environment.expectedHash}, received ${semanticHash(authoredEnvironment)}.`);
+        }
+
         const transientScenarioId = String(resolutionOptions.scenarioId ?? "").trim() || null;
         const selectedScenario = transientScenarioId
             ? {
@@ -1087,6 +1100,8 @@ export class StorageService {
             resolvedScenario = await this.resolveScenario(selectedScenario.id, null, {
                 expectedHash: selectedScenario.expectedHash,
                 parameterValues: scenarioParameterValues,
+                environmentSnapshot: authoredEnvironment
+                    ? { id: manifest.environment.id, manifest: authoredEnvironment } : null,
             });
             manifest = normalizeRunManifest({
                 ...manifest,
@@ -1132,6 +1147,7 @@ export class StorageService {
         }
 
         const environment = resolvedScenario?.environment.manifest
+            ?? authoredEnvironment
             ?? await this._resolveEnvironment(manifest.environment.id);
         const environmentHash = semanticHash(environment);
         const world = createWorldResource(environment);
@@ -1208,9 +1224,10 @@ export class StorageService {
 
         const definitionHash = semanticHash(manifest);
         const calibration = buildCalibrationBundle(manifest);
-        const resolved = {
+        const resolved = resolvedRunJsonSnapshot({
             kind: RUN_MANIFEST_KIND,
             version: RUN_MANIFEST_VERSION,
+            identityProfile: { ...WORLD_BOUND_IDENTITY },
             manifest,
             definitionHash,
             calibration,
@@ -1250,7 +1267,7 @@ export class StorageService {
                 vehicles: Object.fromEntries(resolvedVehicles.map((entry) => [entry.vehicleId, entry.hash])),
                 vehicleAssets: Object.fromEntries(resolvedVehicles.map((entry) => [entry.vehicleId, entry.assetHashes])),
             },
-        };
+        });
         resolved.simulationSemanticHash = computeSimulationSemanticHash(resolved);
         resolved.resolvedHash = semanticHash(resolved);
         return resolved;
@@ -1270,16 +1287,7 @@ export class StorageService {
     }
 
     async importRunBundle(bundle = {}) {
-        if (bundle.kind !== RUN_BUNDLE_KIND || Number(bundle.version) !== RUN_BUNDLE_VERSION) {
-            throw new Error(`Unsupported run bundle; expected ${RUN_BUNDLE_KIND} version ${RUN_BUNDLE_VERSION}.`);
-        }
-        if (!bundle.resolved || semanticHash(bundle.resolved) !== bundle.resolvedHash) {
-            throw new Error("Run bundle resolved hash is invalid.");
-        }
-        const simulationSemanticHash = computeSimulationSemanticHash(bundle.resolved);
-        if (bundle.simulationSemanticHash && bundle.simulationSemanticHash !== simulationSemanticHash) {
-            throw new Error("Run bundle simulation semantic hash is invalid.");
-        }
+        verifyRunBundleIntegrity(bundle);
         const incoming = normalizeRunManifest(bundle.manifest);
         const importedEnvironment = bundle.resolved.environment?.manifest;
         if (importedEnvironment) {
@@ -1762,8 +1770,7 @@ export class StorageService {
                 const fileName = `case-${String(index).padStart(4, "0")}.bundle.json`;
                 await fs.writeFile(
                     path.join(stagingDir, fileName),
-                    `${JSON.stringify(bundles[index], null, 2)}\n`,
-                    "utf8",
+                    runBundleBytes(bundles[index]),
                 );
             }
             await fs.rm(bundleDir, { recursive: true, force: true });
@@ -1790,8 +1797,8 @@ export class StorageService {
         const bundles = [];
         for (let index = 0; index < manifest.caseCount; index += 1) {
             const fileName = `case-${String(index).padStart(4, "0")}.bundle.json`;
-            const bundleText = await fs.readFile(path.join(bundleDir, fileName), "utf8");
-            bundles.push(JSON.parse(bundleText));
+            const bundleBytes = await fs.readFile(path.join(bundleDir, fileName));
+            bundles.push(verifyRunBundleBytes(bundleBytes).bundle);
         }
         return { manifest, bundles };
     }
@@ -2259,4 +2266,17 @@ function safeSegment(value) {
         throw new Error(`Invalid storage id: ${JSON.stringify(value)}`);
     }
     return encodeURIComponent(text);
+}
+
+// Authoring normalization produces optional undefined properties. Elide those
+// once when publishing a JSON snapshot, never when verifying received bundles.
+function resolvedRunJsonSnapshot(value) {
+    const snapshot = JSON.parse(JSON.stringify(value, (_key, entry) => {
+        if (typeof entry === "number" && !Number.isFinite(entry)) {
+            throw new Error("Resolved run JSON requires finite numbers.");
+        }
+        return entry;
+    }));
+    canonicalExactStringify(snapshot);
+    return snapshot;
 }

@@ -6,6 +6,7 @@ import path from "node:path";
 import process from "node:process";
 
 import { SOAK_REPORT_KIND, createReport, percentile } from "../server/headless/ReleaseReports.js";
+import { HEADLESS_PROTOCOL } from "../server/headless/HeadlessProtocol.js";
 import { startHeadlessSupervisor } from "../server/headless/SupervisorServer.js";
 import {
     actionMessage,
@@ -122,7 +123,7 @@ async function runArtifactProfileChecks(running, client, bundle, failureBundle, 
         const caseBundle = entry.failure ? failureBundle : bundle;
         const spec = episodeSpec(0, caseBundle.resolvedHash, caseBundle);
         const created = await clientCall(client, "createBatch", {
-            clientProtocol: { major: 1, minor: 2 },
+            clientProtocol: HEADLESS_PROTOCOL,
             runBundles: [bundleEnvelope(caseBundle.resolvedHash, caseBundle)],
             episodes: [spec],
             artifactPolicy: { ...entry.artifactPolicy, outputUri },
@@ -174,7 +175,7 @@ async function runArtifactProfileChecks(running, client, bundle, failureBundle, 
 async function runSharedMemoryCleanupCheck(running, client, bundle, artifactRoot) {
     const spec = episodeSpec(0, bundle.resolvedHash, bundle, { perception: true });
     const created = await clientCall(client, "createBatch", {
-        clientProtocol: { major: 1, minor: 2 },
+        clientProtocol: HEADLESS_PROTOCOL,
         runBundles: [bundleEnvelope(bundle.resolvedHash, bundle)],
         episodes: [spec],
         artifactPolicy: { profile: 3, outputUri: path.join(artifactRoot, "shared-memory") },
@@ -241,7 +242,7 @@ async function runCount(count, configuration, running, client, bundle, artifactR
     const bundleId = bundle.resolvedHash;
     const episodes = Array.from({ length: count }, (_, index) => episodeSpec(index, bundleId, bundle));
     const created = await clientCall(client, "createBatch", {
-        clientProtocol: { major: 1, minor: 2 },
+        clientProtocol: HEADLESS_PROTOCOL,
         runBundles: [bundleEnvelope(bundleId, bundle)],
         episodes,
         artifactPolicy: { profile: 3, outputUri: artifactRoot },
@@ -390,7 +391,7 @@ async function main() {
         );
         const report = createReport(SOAK_REPORT_KIND, {
             provenance: processProvenance(),
-            protocol: { major: 1, minor: 2 },
+            protocol: HEADLESS_PROTOCOL,
             configuration,
             runs,
             artifactProfiles,

@@ -1,3 +1,4 @@
+import { runBundleBytes } from "./RunBundle.js";
 import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
@@ -143,7 +144,7 @@ export class HeadlessArtifactSink {
             }
             this.stagingDirectory = await fs.mkdtemp(path.join(parent, `.${base}.tmp-`));
             this.outputDirectory = outputDirectory;
-            await writeJson(path.join(this.stagingDirectory, "run-bundle.json"), this.bundle);
+            await fs.writeFile(path.join(this.stagingDirectory, "run-bundle.json"), runBundleBytes(this.bundle));
             await writeJson(path.join(this.stagingDirectory, "provenance.json"), this.provenance);
             if (this.policy.profile !== "disabled") {
                 const service = new LogService(this.stagingDirectory);
@@ -154,7 +155,7 @@ export class HeadlessArtifactSink {
                 this.recording.attachSimulation(this.episode.kernel);
                 const attachments = [
                     { name: "run-manifest.json", mime: "application/json", bytes: stringifyJsonProtocol(this.bundle.resolved) },
-                    { name: "run-bundle.json", mime: "application/json", bytes: stringifyJsonProtocol(this.bundle) },
+                    { name: "run-bundle.json", mime: "application/json", bytes: runBundleBytes(this.bundle) },
                     { name: "provenance.json", mime: "application/json", bytes: stringifyJsonProtocol(this.provenance) },
                 ];
                 if (this.bundle.resolved.calibration) {

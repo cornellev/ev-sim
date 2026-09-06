@@ -1,3 +1,5 @@
+import { computeResolvedRunHash } from "../app/simulation/RunManifest.js";
+import { computeSimulationSemanticHash } from "../app/simulation/kernel/SimulationHashes.js";
 import assert from "node:assert/strict";
 import { promises as fs } from "node:fs";
 import os from "node:os";
@@ -94,10 +96,18 @@ test("portable LiDAR bundles require intact persisted twins and explain legacy r
     const legacy = structuredClone(bundle);
     delete legacy.resolved.lidarGeometry;
     delete legacy.resolved.dependencyHashes.lidarGeometry;
+    const seal = (value) => {
+        value.resolved.simulationSemanticHash = computeSimulationSemanticHash(value.resolved);
+        value.simulationSemanticHash = value.resolved.simulationSemanticHash;
+        value.resolved.resolvedHash = computeResolvedRunHash(value.resolved);
+        value.resolvedHash = value.resolved.resolvedHash;
+    };
+    seal(legacy);
     assert.throws(() => verifyRunBundle(legacy), /predates persisted geometry twins; re-resolve/i);
 
     const tampered = structuredClone(bundle);
     tampered.resolved.lidarGeometry.description.staticPrimitives[0].vertices[0].x += 1;
+    seal(tampered);
     assert.throws(() => verifyRunBundle(tampered), /LiDAR geometry hash mismatch/i);
 });
 

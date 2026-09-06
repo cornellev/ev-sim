@@ -7,7 +7,7 @@ package cev_sim.headless.v1;
 // will expose it through gRPC over Unix-domain sockets or TCP.
 service HeadlessSimulationService {
   rpc GetCapabilities(GetCapabilitiesRequest) returns (GetCapabilitiesResponse);
-  // Declared for protocol 1.4. Protocol 1.2 runtimes do not advertise or
+  // Declared for protocol 1.4. Runtimes through 1.3 do not advertise or
   // implement package admission and therefore return UNIMPLEMENTED.
   rpc AdmitRunPackage(AdmitRunPackageRequest) returns (AdmitRunPackageResponse);
   rpc ReleaseAssetAdmission(ReleaseAssetAdmissionRequest) returns (ReleaseAssetAdmissionResponse);
@@ -144,8 +144,8 @@ message GetCapabilitiesResponse {
   // Canonical UTF-8 JSON with operational backend probe diagnostics. This is
   // provenance only and never contributes to an episode-semantic hash.
   bytes diagnostic_json = 11;
-  // Reserved contract declarations. Identity profiles activate with protocol
-  // 1.3 and asset admission profiles with protocol 1.4.
+  // Identity profiles are advertised starting with protocol 1.3. Asset
+  // admission profiles remain reserved for protocol 1.4.
   repeated string identity_profiles = 12;
   repeated string asset_admission_profiles = 13;
 }

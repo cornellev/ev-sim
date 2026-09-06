@@ -1,11 +1,11 @@
 #!/usr/bin/env node
+import { canonicalRunBundleStringify } from "../server/headless/RunBundle.js";
 
 import { promises as fs } from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import process from "node:process";
 
-import { canonicalStringify } from "../app/simulation/RunManifest.js";
 import { RELEASE_MANIFEST_KIND, assertReport } from "../server/headless/ReleaseReports.js";
 import {
     createStateBundle,
@@ -73,7 +73,7 @@ async function verifyNpm(root, tarball) {
     });
     const bundleFile = path.join(project, "bundle.json");
     const episodeFile = path.join(project, "episode.json");
-    await fs.writeFile(bundleFile, canonicalStringify(bundle));
+    await fs.writeFile(bundleFile, canonicalRunBundleStringify(bundle));
     await fs.writeFile(episodeFile, JSON.stringify(episodeSpec(0, bundle.resolvedHash, bundle)));
     const smoke = await checked(executable, [
         "run", "--bundle", bundleFile, "--episode", episodeFile,

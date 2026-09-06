@@ -9,7 +9,8 @@ from typing import Literal
 from .errors import CevSimConfigurationError
 
 PROTOCOL_MAJOR = 1
-PROTOCOL_MINOR = 2
+PROTOCOL_MINOR = 3
+MIN_PROTOCOL_MINOR = 2
 
 MEASURED_STATE_PROFILE = "measured-state"
 MEASURED_STATE_PROFILE_VERSION = 1

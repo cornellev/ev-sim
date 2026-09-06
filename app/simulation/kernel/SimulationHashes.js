@@ -1,5 +1,6 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
+import { simulationIdentityVersion } from "./RunIdentity.js";
 
 export const SIMULATION_HASH_VERSION = 1;
 
@@ -166,7 +167,7 @@ function projectWorldEnvironmentIdentity(value) {
  * Project an immutable resolved run onto fields that can affect authoritative
  * simulation transitions. Full resolvedHash remains the bundle-integrity hash.
  */
-export function simulationSemanticProjection(resolved = {}) {
+function legacySimulationSemanticProjection(resolved = {}) {
     const projection = stripVolatile(structuredClone(resolved));
     // Preserve the authored environment manifest/hash for bundle integrity,
     // while simulation identity follows only the normalized world semantics.
@@ -203,6 +204,85 @@ export function simulationSemanticProjection(resolved = {}) {
     };
 }
 
+// These are document-envelope fields, not a recursive blacklist: script inputs
+// and behavioral objects may legitimately use any of these names.
+function omitIdentityMetadata(document) {
+    if (!document || typeof document !== "object") return;
+    for (const key of VOLATILE_KEYS) delete document[key];
+}
+
+function projectSensorRig(rig) {
+    const projected = structuredClone(rig ?? null);
+    for (const sensor of projected?.sensors ?? []) {
+        if (sensor.enabled === false) delete sensor.render;
+    }
+    return projected;
+}
+
+function projectScenarioDefinition(scenario, worldHash) {
+    const projected = structuredClone(scenario ?? null);
+    if (!projected) return projected;
+    omitIdentityMetadata(projected);
+    if (projected.environment) projected.environment = { worldHash };
+    return projected;
+}
+
+function projectEvidence(envelope) {
+    for (const key of ["evidence", "provenance", "correspondence", "sourcePolicyEvidence", "replayEvidence"]) {
+        delete envelope[key];
+        if (envelope.dependencyHashes) delete envelope.dependencyHashes[key];
+    }
+}
+
+function projectResolvedEnvironment(envelope, worldHash) {
+    if (envelope.environment) envelope.environment = { worldHash };
+    if (envelope.dependencyHashes) delete envelope.dependencyHashes.environment;
+}
+
+export function simulationSemanticProjection(resolved = {}) {
+    const version = simulationIdentityVersion(resolved);
+    if (version === 1) return legacySimulationSemanticProjection(resolved);
+    const projection = structuredClone(resolved);
+    const worldHash = resolved.world?.hash;
+    if (!worldHash) throw new Error("world-bound@2 requires a resolved world hash.");
+    omitIdentityMetadata(projection);
+    projectResolvedEnvironment(projection, worldHash);
+    projectEvidence(projection);
+    const manifest = projection.manifest;
+    omitIdentityMetadata(manifest);
+    if (manifest) {
+        manifest.environment = { worldHash };
+        manifest.sensorRig = projectSensorRig(manifest.sensorRig);
+        delete manifest.logging;
+        delete manifest.provenance;
+        if (manifest.clock) {
+            delete manifest.clock.pacing;
+            delete manifest.clock.speed;
+            if (manifest.clock.modules) {
+                delete manifest.clock.modules.rendering;
+                delete manifest.clock.modules.baking;
+            }
+        }
+    }
+    if (projection.scenario) {
+        const scenario = projection.scenario;
+        const scenarioWorldHash = scenario.world?.hash ?? worldHash;
+        omitIdentityMetadata(scenario);
+        projectEvidence(scenario);
+        projectResolvedEnvironment(scenario, scenarioWorldHash);
+        scenario.scenario = projectScenarioDefinition(scenario.scenario, scenarioWorldHash);
+        const scenarioHash = simulationSha256({
+            kind: "cev-sim.scenario-semantics", version: 2, scenario: scenario.scenario,
+        });
+        if (manifest?.scenario) manifest.scenario.expectedHash = scenarioHash;
+        if (scenario.dependencyHashes) scenario.dependencyHashes.scenario = scenarioHash;
+        if (projection.dependencyHashes) projection.dependencyHashes.scenario = scenarioHash;
+    }
+    delete projection.artifactPolicy;
+    delete projection.resourceLimits;
+    return { kind: "cev-sim.simulation-semantics", version, resolved: projection };
+}
+
 export function computeSimulationSemanticHash(resolved) {
     return simulationSha256(simulationSemanticProjection(resolved));
 }
@@ -225,6 +305,9 @@ function normalizeBackend(entry = {}) {
 }
 
 export function canonicalEpisodeIdentity(input = {}) {
+    const version = input.identityVersion
+        ?? (input.kind === "cev-sim.episode-identity" ? input.version : 1);
+    if (![1, 2].includes(version)) throw new Error(`Unsupported episode identity version ${version}.`);
     const backends = (input.backendSelections || input.backend_selections || [])
         .map(normalizeBackend)
         .sort((left, right) => left.kind - right.kind
@@ -233,7 +316,7 @@ export function canonicalEpisodeIdentity(input = {}) {
             || compareUtf8(left.configHash, right.configHash));
     return {
         kind: "cev-sim.episode-identity",
-        version: SIMULATION_HASH_VERSION,
+        version,
         protocolMajor: Math.max(0, Math.floor(Number(input.protocolMajor ?? input.protocol_major) || 0)),
         simulationSemanticHash: String(
             input.simulationSemanticHash
@@ -254,6 +337,7 @@ export function computeEpisodeHash(input) {
 }
 
 export function defaultEpisodeIdentity(resolved, overrides = {}) {
+    const identityVersion = simulationIdentityVersion(resolved);
     const simulationSemanticHash = overrides.simulationSemanticHash
         || resolved?.simulationSemanticHash
         || computeSimulationSemanticHash(resolved);
@@ -266,15 +350,20 @@ export function defaultEpisodeIdentity(resolved, overrides = {}) {
         observationProfile: {
             id: "browser-runtime-state",
             version: 1,
-            configHash: simulationSha256(resolved?.manifest?.sensorRig ?? null),
+            configHash: simulationSha256(identityVersion === 2
+                ? projectSensorRig(resolved?.manifest?.sensorRig)
+                : resolved?.manifest?.sensorRig ?? null),
         },
         rewardProfile: {
             id: "browser-scenario-outcomes",
             version: 1,
-            configHash: simulationSha256(resolved?.scenario?.scenario ?? null),
+            configHash: simulationSha256(identityVersion === 2
+                ? projectScenarioDefinition(resolved?.scenario?.scenario, resolved?.scenario?.world?.hash ?? resolved?.world?.hash)
+                : resolved?.scenario?.scenario ?? null),
         },
         backendSelections: resolved?.backendSelections ?? [],
         ...overrides,
+        identityVersion,
     });
 }
 

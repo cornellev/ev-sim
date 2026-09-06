@@ -1,6 +1,6 @@
 # Deterministic simulation runs
 
-Every professional simulation launch is defined by a saved `cev-sim.run-manifest` version 10 document. The server normalizes and validates the authoring document, resolves its environment, canonical world description, physics backend identity, scripts, bindings, autonomy catalog metadata, deterministic calibration bundle, ROS schema closure, and contract endpoints, then computes SHA-256 definition, full resolved, and simulation-semantic hashes. A running session holds that resolved snapshot and never applies Config edits in place.
+Every professional simulation launch is defined by a saved `cev-sim.run-manifest` version 11 document. The server normalizes and validates the authoring document, resolves its environment, canonical world description, physics backend identity, scripts, bindings, autonomy catalog metadata, deterministic calibration bundle, ROS schema closure, and contract endpoints, then computes SHA-256 definition, full resolved, and simulation-semantic hashes. A running session holds that resolved snapshot and never applies Config edits in place.
 
 Binding resolution includes every global library binding plus the ids listed in `scripts.bindingIds`. The Bindings workspace manages those ids through manifest checkboxes. Scripts referenced by effective bindings are resolved automatically; entries in `scripts.artifacts` remain optional hash locks. Portable manifests with `embeddedBindings` use only their frozen embedded set.
 
@@ -12,23 +12,31 @@ Reset finalizes the active result and SFLog, resolves the newest saved revision,
 
 ## Portable bundles
 
-`cev-sim.run-bundle` version 1 includes the authoring manifest and its resolved environment, normalized `world: { description, hash }`, sorted backend selections, exact compiled script artifacts and bindings, ROS schemas, autonomy catalog metadata, contract endpoints, dependency hashes, full `resolvedHash`, and `simulationSemanticHash`. `dependencyHashes.world` repeats the canonical world SHA-256. Runs with enabled `lidar3d` additionally contain `lidarGeometry: { description, hash }` and `dependencyHashes.lidarGeometry`; runs with enabled cameras additionally contain `renderScene: { description, hash }` and `dependencyHashes.renderScene`. The initial scene provider is `canonical-analytic@1`, with stable material, semantic, instance, and dynamic-node IDs. Bundles without those sensors omit the corresponding conditional resources. Import verifies old and new bundles in the exact form received; old LiDAR/camera bundles must be re-resolved when their portable resources are unavailable. The additive fields do not change the v1 bundle schema. Manifest v10 adds sidecar-facing candidate-model provenance only. `resolvedHash` protects the entire portable bundle including provenance. `simulationSemanticHash` uses the world hash—not the authored environment hash—as environment identity, and projects out logging, `manifest.provenance`, artifact/resource policy, wall pacing, presentation-only settings, and the v10→v9 semantic shape before feeding `episodeHash`. Existing dependencies are reused only when hashes match; conflicting resources receive an eight-character hash suffix and all references are remapped.
+`cev-sim.run-bundle` version 1 includes the authoring manifest and its resolved environment, normalized `world: { description, hash }`, sorted backend selections, exact compiled script artifacts and bindings, ROS schemas, autonomy catalog metadata, contract endpoints, dependency hashes, full `resolvedHash`, and `simulationSemanticHash`. `dependencyHashes.world` repeats the canonical world SHA-256. Runs with enabled `lidar3d` additionally contain `lidarGeometry: { description, hash }` and `dependencyHashes.lidarGeometry`; runs with enabled cameras additionally contain `renderScene: { description, hash }` and `dependencyHashes.renderScene`. The initial scene provider is `canonical-analytic@1`, with stable material, semantic, instance, and dynamic-node IDs. Bundles without those sensors omit the corresponding conditional resources. Import verifies old and new bundles in the exact form received; old LiDAR/camera bundles must be re-resolved when their portable resources are unavailable. The additive fields do not change the v1 bundle schema. Manifest v10 adds sidecar-facing candidate-model provenance only. `resolvedHash` identifies normalized resolved content including provenance; exact byte integrity uses `bundleBytesHash`. `simulationSemanticHash` uses the world hash—not the authored environment hash—as environment identity, and projects out logging, `manifest.provenance`, artifact/resource policy, wall pacing, presentation-only settings, and the v10→v9 semantic shape before feeding `episodeHash`. Existing dependencies are reused only when hashes match; conflicting resources receive an eight-character hash suffix and all references are remapped.
 
-VIS-01 freezes future visual contracts without activating them. VIS-12a will
-introduce manifest v11 and `resolved.identityProfile = { id: "world-bound",
-version: 2 }` under protocol 1.3. VIS-13b will activate same-host package
-admission under protocol 1.4. The current runtime continues to advertise
-protocol 1.2 and accepts the existing JSON-only bundle path.
+VIS-12a activates manifest v11 and
+`resolved.identityProfile = { id: "world-bound", version: 2 }`, semantic and
+episode identity v2, and protocol 1.3 identity negotiation. Existing v10
+bundles retain their bytes, legacy algorithms, analytic resources and backend
+identities. Authoring import verifies before normalization; a newly resolved
+import uses v11. Missing or unknown identity selectors fail explicitly.
 
-The future version-dispatched resolver validates full top-level and nested
-authoring locks before projecting environment references to metric-world
-identity. Only enabled cameras explicitly selecting a visual provider acquire
-its render resources, and all enabled cameras must select the same provider.
-Selected render resources, calibration, product policy, and semantic backend
-configuration affect semantic and episode identity; provenance, evidence,
-admission handles, storage paths, and operational policies do not. See
-[Visual Layer Contracts](visual-layer.md) for the complete compatibility and
-exact-byte integrity rules.
+Resolution validates the original manifest environment lock before scenario
+selection replaces its effective environment, plus scenario, script, binding,
+and nested environment locks. The semantic projection replaces authoring-only
+environment references with metric-world identity and recomputes scenario
+semantic dependencies and default browser profile hashes. Refreshed visual
+locks and evidence do not alter episode identity; stale locks still fail.
+
+Exact received bytes are preserved at CLI, Python, supervisor, and persisted
+queue ingestion boundaries. A byte-oriented verifier can check an external
+`bundleBytesHash`; canonical wire serialization is separate. Legacy v10
+serialization remains unchanged, while v11 uses JCS. See
+[Visual Layer Contracts](visual-layer.md) for the support table and byte rules.
+
+New visual provider selection/resolution remains gated by VIS-02/VIS-12b.
+The current renderer is `canonical-analytic@1`. Package admission remains
+inactive until VIS-13b/protocol 1.4.
 
 ## HTTP API
 
@@ -60,7 +68,7 @@ Simulation time is `stepIndex * stepNs`, using integer nanoseconds. Realtime spe
 
 ## Frames, calibration, and synchronization
 
-Manifest version 10 stores sensor extrinsics in REP-103 (`+X` forward, `+Y` left, `+Z` up) relative to `base_link`. v1–v9 documents normalize to v10 with an empty `provenance.candidateModels` list; saved `/ackdrive` topics rewrite to `/controls/command`. Cameras declare a mount frame (`*_link`) and an optical measurement frame (`*_optical_frame`, `+Z` forward, `+X` right, `+Y` down). LiDAR mount and measurement frames are identical. Localization sensors use mount/measurement frames (`imu_link`, `gnss_link`, `wheel_odom_link`). Scene/vehicle coordinates remain internal Three.js coordinates; conversion happens only at the ROS/TF boundary.
+Manifest version 11 stores sensor extrinsics in REP-103 (`+X` forward, `+Y` left, `+Z` up) relative to `base_link`. v1–v10 authoring documents normalize to v11, retaining v10 provenance and supplying an empty `provenance.candidateModels` list for older inputs; saved `/ackdrive` topics rewrite to `/controls/command`. Cameras declare a mount frame (`*_link`) and an optical measurement frame (`*_optical_frame`, `+Z` forward, `+X` right, `+Y` down). LiDAR mount and measurement frames are identical. Localization sensors use mount/measurement frames (`imu_link`, `gnss_link`, `wheel_odom_link`). Scene/vehicle coordinates remain internal Three.js coordinates; conversion happens only at the ROS/TF boundary.
 
 `sensorRig` also declares canonical `map`, `odom`, and `base_link` frame ids, the owning vehicle id, and optional synchronization groups keyed by declared topic ids. Default manifests include `perception-primary` (camera + LiDAR measured and optional oracle products) and `localization-primary` (IMU, GNSS, wheel odometry). Sensors in the same group captured on the same simulation step share a synchronization key in telemetry metadata.
 

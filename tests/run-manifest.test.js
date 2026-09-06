@@ -20,7 +20,7 @@ async function temporaryService() {
 test("run manifest normalization supplies deterministic professional defaults", () => {
     const manifest = createDefaultRunManifest();
     assert.equal(manifest.kind, "cev-sim.run-manifest");
-    assert.equal(manifest.version, 10);
+    assert.equal(manifest.version, 11);
     assert.equal(manifest.scenario, null);
     assert.equal(manifest.clock.stepNs, 16_666_667);
     assert.equal(manifest.clock.pacing, "realtime");
@@ -41,13 +41,13 @@ test("run manifest v4 migrates v1-v3 and rejects future versions and duplicate s
         ...createDefaultRunManifest(),
         version: 1,
     });
-    assert.equal(migrated.version, 10);
+    assert.equal(migrated.version, 11);
     assert.ok(migrated.autonomyCatalog?.hash);
     assert.equal(migrated.scenario, null);
     assert.ok(migrated.controls);
     assert.equal(migrated.controls.stalePolicy, "stop");
     assert.deepEqual(migrated.provenance.candidateModels, []);
-    assert.throws(() => normalizeRunManifest({ kind: "cev-sim.run-manifest", version: 11 }), /version 11/);
+    assert.throws(() => normalizeRunManifest({ kind: "cev-sim.run-manifest", version: 12 }), /version 12/);
     const manifest = createDefaultRunManifest();
     manifest.topics.push({ ...manifest.topics[0] });
     const validation = validateRunManifest(manifest);
@@ -70,7 +70,7 @@ test("run manifest migrates /ackdrive to /controls/command and validates control
         }],
         initialState: { vehicles: [{ id: "ego", type: "big-car" }] },
     });
-    assert.equal(migrated.version, 10);
+    assert.equal(migrated.version, 11);
     assert.equal(migrated.topics[0].name, "/controls/command");
     assert.equal(migrated.topics[0].contractId, "controls-command");
     assert.equal(migrated.controls.targetVehicleId, "ego");
@@ -82,13 +82,13 @@ test("run manifest migrates /ackdrive to /controls/command and validates control
     assert.equal(validateRunManifest(bad).ok, false);
 });
 
-test("run manifest v9 migrates to v10 provenance and candidate models change full hashes only", async () => {
+test("run manifest v9 migrates to v11 with provenance and candidate models change full hashes only", async () => {
     const digest = "a".repeat(64);
     const migrated = normalizeRunManifest({
         ...createDefaultRunManifest(),
         version: 9,
     });
-    assert.equal(migrated.version, 10);
+    assert.equal(migrated.version, 11);
     assert.deepEqual(migrated.provenance.candidateModels, []);
 
     const invalid = createDefaultRunManifest({

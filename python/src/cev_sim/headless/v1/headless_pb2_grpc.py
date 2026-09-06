@@ -97,7 +97,7 @@ class HeadlessSimulationServiceServicer:
         raise NotImplementedError('Method not implemented!')
 
     def AdmitRunPackage(self, request, context):
-        """Declared for protocol 1.4. Protocol 1.2 runtimes do not advertise or
+        """Declared for protocol 1.4. Runtimes through 1.3 do not advertise or
         implement package admission and therefore return UNIMPLEMENTED.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)

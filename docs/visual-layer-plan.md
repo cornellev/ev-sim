@@ -25,7 +25,7 @@ a VIS, GOOG, or GS PR changes a contract, hash, gate, or milestone status.
 
 ## Status and release verdict
 
-- Current milestone: **VIS-12a — not started**. VIS-01 is implemented.
+- Next milestone: **VIS-02 — not started**. VIS-01 and VIS-12a are implemented.
 - Review verdict: **NO-GO for the original ordering and for claiming visual
   runtime support.** The five Blocker findings below require implementation
   and evidence. This revision supplies the corrected handoff; editing the
@@ -33,9 +33,10 @@ a VIS, GOOG, or GS PR changes a contract, hash, gate, or milestone status.
 - Core assumption: **Google approval, Google-derived assets, Gaussian
   splatting, and a model service are unavailable.**
 - Default implementation/review reasoning level: **Extra High**.
-- Last updated: **2026-09-06 — VIS-01 contracts and baseline implemented**.
-- VIS-01 acceptance evidence is recorded in the progress ledger and decision
-  log. No visual runtime capability is advertised.
+- Last updated: **2026-09-06 — VIS-12a identity and compatibility implemented**.
+- VIS-01 and VIS-12a acceptance evidence is recorded in the progress ledger
+  and decision log. Protocol 1.3 advertises `world-bound@2`; no visual renderer
+  or package-admission capability is advertised.
 
 The owned/synthetic-asset core must independently deliver author/import →
 preview → no-model bake → atomic promotion → reload → portable package →
@@ -46,7 +47,7 @@ may improve appearance, but cannot be prerequisites for this path.
 
 Original VIS numbers remain workstream identifiers. Suffixes below identify
 actual PRs; completing one suffix does not complete its entire workstream.
-All entries after VIS-01 remain unstarted.
+All required entries except VIS-01 and VIS-12a remain unstarted.
 
 | Workstream | Required core PRs | Optional enrichment |
 | --- | --- | --- |
@@ -77,7 +78,11 @@ the core release gate.
 These findings describe the repository inspected on 2026-09-06. Each row
 names the current seam, concrete failure, required correction, and proving
 gate. Gate definitions later in this document are normative test
-requirements, not completed test results.
+requirements; completed portions are recorded in the acceptance ledger.
+VIS-12a supplies F01's implemented identity/compatibility evidence and F06's
+version-dispatch evidence. Neither finding is fully closed: selected visual
+resources still require VIS-12b, and environment rebind/transaction cases
+still require VIS-03. The other runtime findings retain their owning gates.
 
 | ID / severity | Current behavior and failure mode | Required PR correction and proof |
 | --- | --- | --- |
@@ -1392,8 +1397,10 @@ claim and no dependency from this gate into VIS-17c.
 
 ## Acceptance gates and omitted tests now required
 
-All gates below are **pending**. The original plan's high-level gates did
-not prove these failure cases. Every implementation PR must link its
+The VIS-01 contract portions and VIS-12a identity/compatibility portions of
+G-HASH and G-MIGRATION have passed with the evidence below. Remaining gate
+portions are **pending**. The original plan's high-level gates did not prove
+these failure cases. Every implementation PR must link its
 executed evidence; a document change, a mock, an unsupported-path success
 or a skipped test does not close a runtime gate.
 
@@ -1497,7 +1504,7 @@ person and commit their decision/evidence before the specified gate.
 
 | ID | Accountable role | Decision required | Due before |
 | --- | --- | --- | --- |
-| **D01** | Repository owner (interim); simulation + Python/protocol implementers | **Resolved for VIS-01:** manifest v11, `world-bound@2`, semantic/episode v2, protocol 1.3; preserve bundle v1 and current analytic execution. Nested lock/profile vectors are frozen. | Contract recorded; VIS-12a implements and proves real paths |
+| **D01** | Repository owner (interim); simulation + Python/protocol implementers | **Implemented in VIS-12a:** manifest v11, `world-bound@2`, semantic/episode v2, protocol 1.3; preserve bundle v1 and current analytic execution. Nested lock/profile and JS/Python byte/episode vectors pass. | Scoped G-HASH/G-MIGRATION evidence recorded below; VIS-12b retains selected-visual cases |
 | **D02** | Repository owner (interim); rendering + perception implementers | **Resolved for VIS-01:** static GLB/glTF, PNG/JPEG/KTX2, opaque/cutout metallic-roughness or unlit with the listed surface extensions; calibrated RGBA/CameraInfo and optional analytic depth/semantic/instance products. | Contract recorded; VIS-02 and VIS-06a implement it |
 | **D03** | Repository owner (interim); storage + protocol implementers | **Resolved for VIS-01:** deterministic uncompressed USTAR and fixed limits; separate exact byte digests; same-host opaque admission handles; additive protocol 1.4 fields/RPCs; durable acquire-before-release roots and pins. | Contract recorded; VIS-04/VIS-13 implement it |
 | **D04** | Runtime packaging/release owner | Delivery of renderer/decoder runtime assets, dependency/license closure, package size ceiling or separately verified runtime artifact choice, and offline installation expectations. No scene/model data in the runtime tarball. | VIS-15c; constraints recorded in VIS-01 |
@@ -1514,18 +1521,58 @@ requirements with silent fallback or unsupported claims.
 
 ## Progress and acceptance ledger
 
-VIS-01 is complete; all later required core PRs remain **not started**:
+VIS-01 and VIS-12a are complete in the working tree; all other required core
+PRs remain **not started**. No commit or PR has been created for VIS-12a.
+Its accountable owner remains the repository owner under D01; implementation
+and local verification were performed by Codex.
 
 - [x] VIS-01 — contract helpers, docs, additive protocol declarations, owned
   fixtures, identity expectations, and legacy compatibility vectors. Runtime
-  remains protocol 1.2 with no visual provider activation.
+  remained protocol 1.2 at that milestone, with no visual provider activation.
   Local acceptance evidence: 32/32 focused contract and characterization
   tests passed; `npm run lint` completed with zero errors and two pre-existing
   warnings; `npm test` passed 654/656 with two declared hardware GPU skips;
   Python lint passed and Python tests passed 45/45; generated protobuf
   bindings passed the drift check. The committed action-tape characterization
   had no delta.
-- [ ] VIS-12a
+- [x] VIS-12a — manifest v11 / `world-bound@2`, semantic/episode v2,
+  protocol 1.3 negotiation, full lock validation before projection, shared
+  integrity/import and executable admission, and strict exact-byte ingestion.
+  The [support table](visual-layer.md#identity-projection-and-compatibility)
+  distinguishes legacy v10 execution from older authored/immutable imports.
+  New v11 identity changes are intentional; analytic scene/backend identities
+  and frozen v10 bytes/hashes remain unchanged.
+  Local acceptance evidence:
+  - [Identity tests](../tests/visual-identity.test.js) and
+    [CLI tests](../tests/headless-cli.test.js): 16/16 passed, without skips.
+    Covers real direct/scenario resolution, distinct top-level/nested
+    environment locks, refreshed visual/evidence edits, script/binding locks,
+    browser default profiles, direct/supervisor reset and managed execution,
+    strict JSON and byte authentication, and verification before import.
+  - [Legacy fixtures](../tests/fixtures/visual-layer/legacy-bundles.v1.json)
+    were captured before changing defaults. The analytic bundle's byte digest
+    matches the committed VIS-01 baseline. Separate
+    [v11 vectors](../tests/fixtures/visual-layer/world-bound-state.v2.json)
+    record the intentional new semantic/episode hashes. Python tests compare
+    received/canonical bytes and supervisor episode hashes against both sets.
+  - `npm run lint`: zero errors, two pre-existing warnings. `npm test`:
+    666/668 passed, with only two declared hardware GPU skips.
+    `npm run test:python`: 56/56 passed; `npm run lint:python` and
+    `npm run proto:python` passed. The generated binding change is a docstring;
+    protobuf field numbers and `EpisodeSpec` are unchanged.
+  - `npm run test:parity`: state-only and CPU-LiDAR browser/direct/CLI/UDS/
+    Python comparisons passed. `npm run test:shared-memory`: 3/3 passed.
+    `npm run test:soak:quick` and `npm run benchmark:headless:quick` passed
+    using protocol 1.3. These local quick runs do not replace release soak or
+    hardware acceptance.
+  - `npm run fixtures:headless`: no characterization delta. Its helper now
+    explicitly selects the frozen v10 manifest version so the original tape
+    remains an independent legacy simulator-contract baseline. Kernel-safe
+    import checks pass in the full suite.
+  Selected PBR and disabled visual-selection relationships have contract-only
+  coverage; provider activation and real selected-asset G-HASH evidence belong
+  to VIS-02/VIS-12b. Environment v3 rebind/transaction G-MIGRATION cases remain
+  with VIS-03. Full F01/F06 closure and later visual/hardware gates remain open.
 - [ ] VIS-02
 - [ ] VIS-03
 - [ ] VIS-04
@@ -1645,3 +1692,44 @@ interimly by the repository owner. D04 records offline closure constraints;
 VIS-15c still owns its final packaging choice. VIS-12a is the next milestone;
 F01/F15 and all runtime findings remain open until their implementation gates
 pass.
+
+### 2026-09-06 — Implement VIS-12a versioned identity and compatibility
+
+Activate new resolutions as manifest v11 with the exact selector
+`{ id: "world-bound", version: 2 }`; dispatch semantic and episode hashes to
+v2 while retaining `SIMULATION_HASH_VERSION = 1` and trajectory hashing.
+The new episode domain intentionally starts new trajectory chains. Frozen
+v10 documents retain their legacy hashes, original bytes, analytic resources,
+backend identities, and supported execution paths. Older immutable documents
+use only the existing applicable import algorithm and require re-resolution
+for execution. Verification never performs authoring migration.
+
+Validate the original manifest environment lock before scenario selection,
+then validate nested environment, scenario definition, script, and binding
+locks against their full authoring snapshots. Reuse a checked environment
+snapshot when the scenario references the same resource. Publish a validated
+JSON snapshot before projecting a clone: normalized authoring-only undefined
+properties are elided at publication, while received immutable documents are
+never repaired. Project only known environment/evidence locations, recompute
+scenario semantic dependencies, and share those rules with browser default
+observation/reward profiles. Standalone scenario hashing remains legacy.
+
+Keep the existing six-decimal metric/normalized-hash contracts. Add strict
+UTF-8, duplicate-key, finite-number, Unicode, and safe-counter validation at
+byte-ingestion boundaries. Retain exact received bytes and their optional
+externally authenticated digest separately from the hashed document. v10
+wire serialization remains legacy; v11 uses JCS. Python preserves source and
+canonical wire bytes/digests and delegates semantic verification to JavaScript.
+
+Advertise protocol 1.3 and `world-bound@2`, require identity support before
+spawning v11 workers, and carry the selected identity through preparation,
+reset, managed execution, and artifact-directory hashing. Python discovers
+with its existing 1.2 minimum and negotiates the supported protocol; v10 stays
+usable with 1.2 supervisors. Local CLI, parity, soak, and benchmark callers
+use the shared protocol constant. Asset-admission profiles remain empty.
+
+The scoped G-HASH/G-MIGRATION evidence above passes. No existing golden or
+action-tape characterization value changed. This independently mergeable
+working-tree change enables identity compatibility only; VIS-02 is next.
+VIS-03, VIS-12b, VIS-13, VIS-15, and VIS-17 retain their unimplemented
+environment, selected-visual, packaging, rendering, and hardware obligations.

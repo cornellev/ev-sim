@@ -23,7 +23,6 @@ import {
     sha256ExactUtf8,
 } from "../app/simulation/visual/VisualLayer.js";
 import { HEADLESS_PROTOCOL } from "../server/headless/HeadlessProtocol.js";
-import { StorageService } from "../server/storage/StorageService.js";
 
 const root = new URL("../", import.meta.url);
 const ownedFixtureUrl = new URL("tests/fixtures/visual-layer/owned-layer.v1.json", root);
@@ -219,11 +218,11 @@ test("source policy fails closed for unknown, forged, expired, revoked and restr
     assert.throws(() => evaluateVisualSourcePolicy({ registry }), /required for deterministic policy evaluation/);
 });
 
-test("VIS-01 package and additive protocol declarations remain inactive", async () => {
+test("VIS-12a activates identity negotiation while package declarations remain inactive", async () => {
     assert.equal(RUN_PACKAGE_PROFILE.container, "ustar");
     assert.equal(RUN_PACKAGE_PROFILE.compression, "none");
     assert.equal(RUN_PACKAGE_PROFILE.limits.archiveBytes, 8 * 1024 ** 3);
-    assert.deepEqual(HEADLESS_PROTOCOL, { major: 1, minor: 2 });
+    assert.deepEqual(HEADLESS_PROTOCOL, { major: 1, minor: 3 });
 
     const proto = await readFile(protoUrl, "utf8");
     assert.match(proto, /repeated string identity_profiles = 12;/);
@@ -237,7 +236,7 @@ test("VIS-01 package and additive protocol declarations remain inactive", async 
 
 test("legacy compatibility vectors and prospective identity cases stay frozen", async () => {
     const expected = await json(baselineUrl);
-    const resolved = await new StorageService().resolveRunManifest("igvc-default");
+    const { resolved } = await json(new URL("tests/fixtures/visual-layer/legacy-analytic.v10.json", root));
     const bundle = {
         kind: "cev-sim.run-bundle",
         version: 1,
@@ -258,7 +257,7 @@ test("legacy compatibility vectors and prospective identity cases stay frozen", 
         headlessDefaultEpisodeHash: computeEpisodeHash(normalizeEpisodeSpec(resolved)),
         canonicalBundleBytesHash: sha256ExactUtf8(bytes),
         canonicalBundleByteLength: new TextEncoder().encode(bytes).length,
-        protocol: HEADLESS_PROTOCOL,
+        protocol: expected.protocol,
     }, {
         worldHash: expected.worldHash,
         analyticRenderSceneHash: expected.analyticRenderSceneHash,

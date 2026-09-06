@@ -59,8 +59,9 @@ The kernel owns the run-scoped `prepare/reset/step/finalize/dispose`
 lifecycle. Resets reconstruct component state and seeded streams, while
 finalization returns pure assertion/scenario results and reverse-order
 disposal releases run resources without destroying app-lifetime libraries.
-Canonical state feeds a bounded SHA-256 trajectory chain. Full
-`resolvedHash` identifies portable bundle bytes; the separate
+Canonical state feeds a bounded SHA-256 trajectory chain. Normalized
+`resolvedHash` identifies resolved content; exact `bundleBytesHash` identifies
+received serialized bytes; the separate
 `simulationSemanticHash` excludes logging, resource/artifact policy, wall
 pacing, and presentation settings before episode identity is computed.
 
@@ -225,10 +226,14 @@ The environment editor authors static world content through an `EnvironmentDocum
 - [Visual Layer Contracts](visual-layer.md) — frozen visual descriptors, exact-byte integrity, source policy, camera products, and future package admission.
 - [Visual Layer Implementation Plan](visual-layer-plan.md) — `VIS-*` photoreal fidelity layer, hashed assets, and optional Google/3DGS tracks.
 
-VIS-01 adds only kernel-safe contract code and future additive protobuf
-declarations. The current browser and headless runtime remain on
-`canonical-analytic@1`, run-manifest v10, and protocol 1.2. Visual descriptors
-are appearance resources bound to `worldHash`; their meshes never enter metric
+VIS-01 froze kernel-safe contracts and additive protobuf declarations.
+VIS-12a activates run-manifest v11, `world-bound@2` semantic/episode identity
+and protocol 1.3 while retaining immutable v10 execution. Full authoring locks
+are validated before schema-aware world/scenario projection, including the
+default browser profiles. Byte verification is separate from authoring import
+and executable capability validation. The current renderer remains
+`canonical-analytic@1`; package admission and new providers stay unavailable.
+Visual descriptors are appearance resources bound to `worldHash`; their meshes never enter metric
 world, collision, LiDAR, object-registry, or oracle truth.
 
 ## External Integration
