@@ -9,6 +9,7 @@ This folder is the contributor guide for cev-sim. Start here when you need to ru
 - Headless operation: [Headless CLI](headless-cli.md), [Headless supervisor](headless-supervisor.md), [Python adapter](python-headless.md), [Release and CI gates](headless-release.md), and [Jetson deployment](jetson-headless.md).
 - Telemetry work: [Telemetry, Logging, Replay, and Analysis](telemetry-logging.md), then [SFLog](sflog.md) for the binary format, recording pipeline, recovery, and HTTP API.
 - Environment authoring: [Environment Editor](environment-editor.md), then [Earth Import](earth-import.md) for geographic imports.
+- Photoreal visual layer: [Visual Layer Contracts](visual-layer.md), then the agent-facing [Visual Layer Implementation Plan](visual-layer-plan.md) — truth-first mesh/PBR baking, hashed assets, optional Google and 3DGS tracks.
 - Visual scripting work: [Scripting Overview](scripting/README.md), then [Scripting Architecture](scripting/architecture.md) and [Extension Guide](scripting/extension-guide.md).
 - Running scripts on live data: [Script Bindings](script-bindings.md) (topics, fixed updates, signals, timers).
 - Agent tooling: [MCP Server](mcp.md) — environment, scripting, binding, logging, and replay tools for AI agents. Portable skill + MCP config: root `plugin.json` / `mcp.json` and [`skills/cev-sim/`](../skills/cev-sim/).

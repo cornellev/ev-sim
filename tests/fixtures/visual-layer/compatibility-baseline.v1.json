@@ -1,0 +1,22 @@
+{
+  "kind": "cev-sim.visual-compatibility-baseline",
+  "version": 1,
+  "fixture": "igvc-default",
+  "worldHash": "d358aef1dc46de1f1d2f15e679a93fc0d9812e92d419f407d4fe30d399fcfa5f",
+  "analyticRenderSceneHash": "3373dad79b60cd85812dad31cf42c7c2361b2ef658ee79b12c1c9227ce2d60a6",
+  "resolvedHash": "c8274011f030b3e32f27b88f54bbe057483ae9980366e159cd887de4487bd1a2",
+  "simulationSemanticHash": "3e9a1c96b31dd8f3f69da239e151560b7dbd055962c6c09b250305b0a4b620dc",
+  "legacyBackendSelections": [
+    {
+      "kind": 1,
+      "capabilityId": "rapier3d-swept-prism-v1",
+      "version": "0.19.3",
+      "configHash": "a14b17de63682cb6b6c2a57f6832c1f8580319acc08b597132bcbf03a3ff429c"
+    }
+  ],
+  "browserDefaultEpisodeHash": "27666a493d7e541a640fc3331e494710465f5d5991458c9490fc8bd67935adf2",
+  "headlessDefaultEpisodeHash": "af9a5b9f7491fb17e133130a185111ce1a493a0e7fea8186218c0427c7fb436f",
+  "canonicalBundleBytesHash": "856ec4964b6e664f4230852ee8d0ad7310d6a7af0c052c7d05dadb54df78946d",
+  "canonicalBundleByteLength": 622242,
+  "protocol": { "major": 1, "minor": 2 }
+}

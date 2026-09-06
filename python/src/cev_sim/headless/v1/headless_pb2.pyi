@@ -194,7 +194,7 @@ class BackendCapability(_message.Message):
     def __init__(self, id: _Optional[str] = ..., version: _Optional[str] = ..., kind: _Optional[_Union[BackendKind, str]] = ..., description: _Optional[str] = ..., sensor_types: _Optional[_Iterable[str]] = ..., features: _Optional[_Iterable[str]] = ..., available: _Optional[bool] = ..., unavailable_reason: _Optional[str] = ..., determinism_scope: _Optional[str] = ...) -> None: ...
 
 class GetCapabilitiesResponse(_message.Message):
-    __slots__ = ("protocol", "runtime_name", "runtime_version", "platform", "architecture", "backends", "observation_profiles", "reward_profiles", "transports", "error", "diagnostic_json")
+    __slots__ = ("protocol", "runtime_name", "runtime_version", "platform", "architecture", "backends", "observation_profiles", "reward_profiles", "transports", "error", "diagnostic_json", "identity_profiles", "asset_admission_profiles")
     PROTOCOL_FIELD_NUMBER: _ClassVar[int]
     RUNTIME_NAME_FIELD_NUMBER: _ClassVar[int]
     RUNTIME_VERSION_FIELD_NUMBER: _ClassVar[int]
@@ -206,6 +206,8 @@ class GetCapabilitiesResponse(_message.Message):
     TRANSPORTS_FIELD_NUMBER: _ClassVar[int]
     ERROR_FIELD_NUMBER: _ClassVar[int]
     DIAGNOSTIC_JSON_FIELD_NUMBER: _ClassVar[int]
+    IDENTITY_PROFILES_FIELD_NUMBER: _ClassVar[int]
+    ASSET_ADMISSION_PROFILES_FIELD_NUMBER: _ClassVar[int]
     protocol: ProtocolVersion
     runtime_name: str
     runtime_version: str
@@ -217,19 +219,61 @@ class GetCapabilitiesResponse(_message.Message):
     transports: _containers.RepeatedScalarFieldContainer[str]
     error: ErrorStatus
     diagnostic_json: bytes
-    def __init__(self, protocol: _Optional[_Union[ProtocolVersion, _Mapping]] = ..., runtime_name: _Optional[str] = ..., runtime_version: _Optional[str] = ..., platform: _Optional[str] = ..., architecture: _Optional[str] = ..., backends: _Optional[_Iterable[_Union[BackendCapability, _Mapping]]] = ..., observation_profiles: _Optional[_Iterable[_Union[ProfileCapability, _Mapping]]] = ..., reward_profiles: _Optional[_Iterable[_Union[ProfileCapability, _Mapping]]] = ..., transports: _Optional[_Iterable[str]] = ..., error: _Optional[_Union[ErrorStatus, _Mapping]] = ..., diagnostic_json: _Optional[bytes] = ...) -> None: ...
+    identity_profiles: _containers.RepeatedScalarFieldContainer[str]
+    asset_admission_profiles: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, protocol: _Optional[_Union[ProtocolVersion, _Mapping]] = ..., runtime_name: _Optional[str] = ..., runtime_version: _Optional[str] = ..., platform: _Optional[str] = ..., architecture: _Optional[str] = ..., backends: _Optional[_Iterable[_Union[BackendCapability, _Mapping]]] = ..., observation_profiles: _Optional[_Iterable[_Union[ProfileCapability, _Mapping]]] = ..., reward_profiles: _Optional[_Iterable[_Union[ProfileCapability, _Mapping]]] = ..., transports: _Optional[_Iterable[str]] = ..., error: _Optional[_Union[ErrorStatus, _Mapping]] = ..., diagnostic_json: _Optional[bytes] = ..., identity_profiles: _Optional[_Iterable[str]] = ..., asset_admission_profiles: _Optional[_Iterable[str]] = ...) -> None: ...
+
+class AssetAdmissionRef(_message.Message):
+    __slots__ = ("handle", "bundle_bytes_hash")
+    HANDLE_FIELD_NUMBER: _ClassVar[int]
+    BUNDLE_BYTES_HASH_FIELD_NUMBER: _ClassVar[int]
+    handle: str
+    bundle_bytes_hash: str
+    def __init__(self, handle: _Optional[str] = ..., bundle_bytes_hash: _Optional[str] = ...) -> None: ...
 
 class RunBundle(_message.Message):
-    __slots__ = ("bundle_id", "resolved_hash", "canonical_json", "simulation_semantic_hash")
+    __slots__ = ("bundle_id", "resolved_hash", "canonical_json", "simulation_semantic_hash", "asset_admission")
     BUNDLE_ID_FIELD_NUMBER: _ClassVar[int]
     RESOLVED_HASH_FIELD_NUMBER: _ClassVar[int]
     CANONICAL_JSON_FIELD_NUMBER: _ClassVar[int]
     SIMULATION_SEMANTIC_HASH_FIELD_NUMBER: _ClassVar[int]
+    ASSET_ADMISSION_FIELD_NUMBER: _ClassVar[int]
     bundle_id: str
     resolved_hash: str
     canonical_json: bytes
     simulation_semantic_hash: str
-    def __init__(self, bundle_id: _Optional[str] = ..., resolved_hash: _Optional[str] = ..., canonical_json: _Optional[bytes] = ..., simulation_semantic_hash: _Optional[str] = ...) -> None: ...
+    asset_admission: AssetAdmissionRef
+    def __init__(self, bundle_id: _Optional[str] = ..., resolved_hash: _Optional[str] = ..., canonical_json: _Optional[bytes] = ..., simulation_semantic_hash: _Optional[str] = ..., asset_admission: _Optional[_Union[AssetAdmissionRef, _Mapping]] = ...) -> None: ...
+
+class AdmitRunPackageRequest(_message.Message):
+    __slots__ = ("client_protocol", "staging_id", "archive_hash")
+    CLIENT_PROTOCOL_FIELD_NUMBER: _ClassVar[int]
+    STAGING_ID_FIELD_NUMBER: _ClassVar[int]
+    ARCHIVE_HASH_FIELD_NUMBER: _ClassVar[int]
+    client_protocol: ProtocolVersion
+    staging_id: str
+    archive_hash: str
+    def __init__(self, client_protocol: _Optional[_Union[ProtocolVersion, _Mapping]] = ..., staging_id: _Optional[str] = ..., archive_hash: _Optional[str] = ...) -> None: ...
+
+class AdmitRunPackageResponse(_message.Message):
+    __slots__ = ("admission", "error")
+    ADMISSION_FIELD_NUMBER: _ClassVar[int]
+    ERROR_FIELD_NUMBER: _ClassVar[int]
+    admission: AssetAdmissionRef
+    error: ErrorStatus
+    def __init__(self, admission: _Optional[_Union[AssetAdmissionRef, _Mapping]] = ..., error: _Optional[_Union[ErrorStatus, _Mapping]] = ...) -> None: ...
+
+class ReleaseAssetAdmissionRequest(_message.Message):
+    __slots__ = ("handle",)
+    HANDLE_FIELD_NUMBER: _ClassVar[int]
+    handle: str
+    def __init__(self, handle: _Optional[str] = ...) -> None: ...
+
+class ReleaseAssetAdmissionResponse(_message.Message):
+    __slots__ = ("error",)
+    ERROR_FIELD_NUMBER: _ClassVar[int]
+    error: ErrorStatus
+    def __init__(self, error: _Optional[_Union[ErrorStatus, _Mapping]] = ...) -> None: ...
 
 class ProfileRef(_message.Message):
     __slots__ = ("id", "version", "config_hash")

@@ -106,6 +106,7 @@ Run everything with `npm test`.
 
 ## Related docs
 
+- [Visual Layer Implementation Plan](visual-layer-plan.md) — truth-first photoreal baking, hashed visual assets, and optional Google/3DGS tracks.
 - [Earth Import](earth-import.md) — geographic preview, road import, API keys, and troubleshooting.
 - [Simulation](simulation.md) — how the simulation workspace differs from environment authoring.
 - [Assets](assets.md) — external data policy (scenarios, models, API keys).

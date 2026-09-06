@@ -939,3 +939,14 @@ coverage remains an optional unit test behind `importorskip`. JS-backed unit
 tests skip unless `node_modules` is installed; the Python version matrix runs
 `npm ci` so those checks still execute.
 
+### 2026-09-06 — VIS-01 future package admission declarations
+
+The separate visual-layer program reserves additive protobuf v1 declarations
+for `world-bound@2` identity negotiation at protocol 1.3 and same-host package
+admission at protocol 1.4. `GetCapabilitiesResponse` gains fields 12 and 13,
+`RunBundle` gains field 5, and `AdmitRunPackage` / `ReleaseAssetAdmission` plus
+their request/response messages are declared. Generated Python bindings record
+the future surface. The current runtime stays at protocol 1.2, does not
+advertise either profile, and does not implement the new RPCs. Existing bundle
+v1 bytes, field numbers, hash algorithms, backends, and execution behavior are
+unchanged.

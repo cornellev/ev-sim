@@ -92,6 +92,7 @@ node skills/cev-sim/scripts/validate.mjs
 - [Jetson headless deployment](docs/jetson-headless.md)
 - [Environment editor](docs/environment-editor.md)
 - [Earth import](docs/earth-import.md)
+- [Visual layer implementation plan](docs/visual-layer-plan.md)
 - [Development workflow](docs/development.md)
 - [Visual scripting](docs/scripting/README.md)
 - [Simulation](docs/simulation.md)

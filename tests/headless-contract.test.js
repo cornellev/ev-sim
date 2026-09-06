@@ -37,6 +37,8 @@ test("headless protobuf v1 declares the complete lifecycle service", async () =>
     const service = declarationBody(proto, "service", "HeadlessSimulationService");
     for (const operation of [
         "GetCapabilities",
+        "AdmitRunPackage",
+        "ReleaseAssetAdmission",
         "CreateBatch",
         "ResetBatch",
         "StepBatch",
@@ -73,6 +75,10 @@ test("episode semantics stay separate from operational and artifact policy", asy
     assert.match(limits, /uint64 max_gpu_bytes_per_environment = 12;/);
     const capabilities = declarationBody(proto, "message", "GetCapabilitiesResponse");
     assert.match(capabilities, /bytes diagnostic_json = 11;/);
+    assert.match(capabilities, /repeated string identity_profiles = 12;/);
+    assert.match(capabilities, /repeated string asset_admission_profiles = 13;/);
+    const runBundle = declarationBody(proto, "message", "RunBundle");
+    assert.match(runBundle, /AssetAdmissionRef asset_admission = 5;/);
 
     const errors = declarationBody(proto, "enum", "ErrorCode");
     assert.match(errors, /ERROR_CODE_OK = 0;/);

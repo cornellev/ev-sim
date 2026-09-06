@@ -3,6 +3,8 @@
 Earth Import pulls real-world geography into an environment: Google Photorealistic 3D Tiles for visual preview, and OpenStreetMap roads (via Overpass) as editable road graph data in `EnvironmentDocument`.
 
 Tiles are temporary. Roads and earth metadata persist after you Apply.
+Persistent photoreal ingestion, if ever licensed, is specified in the
+[Visual Layer Implementation Plan](visual-layer-plan.md) Google track.
 
 ## Before you start
 

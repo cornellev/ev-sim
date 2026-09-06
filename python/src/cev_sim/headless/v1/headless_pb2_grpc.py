@@ -42,6 +42,16 @@ class HeadlessSimulationServiceStub:
                 request_serializer=cev__sim_dot_headless_dot_v1_dot_headless__pb2.GetCapabilitiesRequest.SerializeToString,
                 response_deserializer=cev__sim_dot_headless_dot_v1_dot_headless__pb2.GetCapabilitiesResponse.FromString,
                 _registered_method=True)
+        self.AdmitRunPackage = channel.unary_unary(
+                '/cev_sim.headless.v1.HeadlessSimulationService/AdmitRunPackage',
+                request_serializer=cev__sim_dot_headless_dot_v1_dot_headless__pb2.AdmitRunPackageRequest.SerializeToString,
+                response_deserializer=cev__sim_dot_headless_dot_v1_dot_headless__pb2.AdmitRunPackageResponse.FromString,
+                _registered_method=True)
+        self.ReleaseAssetAdmission = channel.unary_unary(
+                '/cev_sim.headless.v1.HeadlessSimulationService/ReleaseAssetAdmission',
+                request_serializer=cev__sim_dot_headless_dot_v1_dot_headless__pb2.ReleaseAssetAdmissionRequest.SerializeToString,
+                response_deserializer=cev__sim_dot_headless_dot_v1_dot_headless__pb2.ReleaseAssetAdmissionResponse.FromString,
+                _registered_method=True)
         self.CreateBatch = channel.unary_unary(
                 '/cev_sim.headless.v1.HeadlessSimulationService/CreateBatch',
                 request_serializer=cev__sim_dot_headless_dot_v1_dot_headless__pb2.CreateBatchRequest.SerializeToString,
@@ -81,6 +91,20 @@ class HeadlessSimulationServiceServicer:
     """
 
     def GetCapabilities(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def AdmitRunPackage(self, request, context):
+        """Declared for protocol 1.4. Protocol 1.2 runtimes do not advertise or
+        implement package admission and therefore return UNIMPLEMENTED.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ReleaseAssetAdmission(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -129,6 +153,16 @@ def add_HeadlessSimulationServiceServicer_to_server(servicer, server):
                     servicer.GetCapabilities,
                     request_deserializer=cev__sim_dot_headless_dot_v1_dot_headless__pb2.GetCapabilitiesRequest.FromString,
                     response_serializer=cev__sim_dot_headless_dot_v1_dot_headless__pb2.GetCapabilitiesResponse.SerializeToString,
+            ),
+            'AdmitRunPackage': grpc.unary_unary_rpc_method_handler(
+                    servicer.AdmitRunPackage,
+                    request_deserializer=cev__sim_dot_headless_dot_v1_dot_headless__pb2.AdmitRunPackageRequest.FromString,
+                    response_serializer=cev__sim_dot_headless_dot_v1_dot_headless__pb2.AdmitRunPackageResponse.SerializeToString,
+            ),
+            'ReleaseAssetAdmission': grpc.unary_unary_rpc_method_handler(
+                    servicer.ReleaseAssetAdmission,
+                    request_deserializer=cev__sim_dot_headless_dot_v1_dot_headless__pb2.ReleaseAssetAdmissionRequest.FromString,
+                    response_serializer=cev__sim_dot_headless_dot_v1_dot_headless__pb2.ReleaseAssetAdmissionResponse.SerializeToString,
             ),
             'CreateBatch': grpc.unary_unary_rpc_method_handler(
                     servicer.CreateBatch,
@@ -191,6 +225,60 @@ class HeadlessSimulationService:
             '/cev_sim.headless.v1.HeadlessSimulationService/GetCapabilities',
             cev__sim_dot_headless_dot_v1_dot_headless__pb2.GetCapabilitiesRequest.SerializeToString,
             cev__sim_dot_headless_dot_v1_dot_headless__pb2.GetCapabilitiesResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def AdmitRunPackage(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/cev_sim.headless.v1.HeadlessSimulationService/AdmitRunPackage',
+            cev__sim_dot_headless_dot_v1_dot_headless__pb2.AdmitRunPackageRequest.SerializeToString,
+            cev__sim_dot_headless_dot_v1_dot_headless__pb2.AdmitRunPackageResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ReleaseAssetAdmission(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/cev_sim.headless.v1.HeadlessSimulationService/ReleaseAssetAdmission',
+            cev__sim_dot_headless_dot_v1_dot_headless__pb2.ReleaseAssetAdmissionRequest.SerializeToString,
+            cev__sim_dot_headless_dot_v1_dot_headless__pb2.ReleaseAssetAdmissionResponse.FromString,
             options,
             channel_credentials,
             insecure,

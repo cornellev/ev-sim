@@ -59,8 +59,9 @@ Default load: Simulation with environment **`igvc`**.
 2. Edits persist via `EnvironmentPersistence` (debounced PUT) under
    `server/data/environments/<id>.json`.
 3. Optional bake: key `b` when harness is configured; Python backend typically
-   `cd baking && python baking.py` (HTTP `http://localhost:8000`). Docs are
-   thin — see `app/3d/environment/visualization/` and `baking/`.
+   `cd baking && python baking.py` (HTTP `http://localhost:8000`). Persistent
+   photoreal baking is specified in
+   [docs/visual-layer-plan.md](../../../docs/visual-layer-plan.md).
 
 ### Vehicles
 

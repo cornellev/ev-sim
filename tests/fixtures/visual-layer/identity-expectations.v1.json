@@ -1,0 +1,19 @@
+{
+  "kind": "cev-sim.visual-identity-expectations",
+  "version": 1,
+  "identityProfile": { "id": "world-bound", "version": 2 },
+  "cases": [
+    { "id": "preview-only-state-run", "resolution": "success", "world": "same", "renderScene": "absent", "resolved": "may-change", "semantic": "same", "episode": "same" },
+    { "id": "preview-only-analytic-camera", "resolution": "success", "world": "same", "renderScene": "same", "resolved": "may-change", "semantic": "same", "episode": "same" },
+    { "id": "selected-pbr-asset", "resolution": "success", "world": "same", "renderScene": "changes", "resolved": "changes", "semantic": "changes", "episode": "changes" },
+    { "id": "disabled-camera-selection", "resolution": "success", "world": "same", "renderScene": "same-or-absent", "resolved": "may-change", "semantic": "same", "episode": "same" },
+    { "id": "evidence-only", "resolution": "success", "world": "same", "renderScene": "same", "resolved": "changes", "semantic": "same", "episode": "same" },
+    { "id": "resource-logging-wall-policy", "resolution": "success", "world": "same", "renderScene": "same", "resolved": "changes", "semantic": "same", "episode": "same" },
+    { "id": "camera-calibration-product-backend", "resolution": "success", "world": "same", "renderScene": "provider-dependent", "resolved": "changes", "semantic": "changes", "episode": "changes" },
+    { "id": "scenario-behavior-profile-config", "resolution": "success", "world": "same", "renderScene": "same", "resolved": "changes", "semantic": "changes", "episode": "changes" },
+    { "id": "nested-scenario-visual-lock-refreshed", "resolution": "success", "world": "same", "renderScene": "selection-dependent", "resolved": "changes", "semantic": "selection-dependent", "episode": "selection-dependent" },
+    { "id": "stale-top-level-or-nested-lock", "resolution": "failure", "world": "unresolved", "renderScene": "unresolved", "resolved": "absent", "semantic": "absent", "episode": "absent" },
+    { "id": "metric-world-or-environment-id", "resolution": "success", "world": "changes", "renderScene": "rebound", "resolved": "changes", "semantic": "changes", "episode": "changes" },
+    { "id": "host-gpu-evidence-only", "resolution": "success", "world": "same", "renderScene": "same", "resolved": "may-change", "semantic": "same", "episode": "same" }
+  ]
+}

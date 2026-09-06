@@ -14,6 +14,22 @@ Reset finalizes the active result and SFLog, resolves the newest saved revision,
 
 `cev-sim.run-bundle` version 1 includes the authoring manifest and its resolved environment, normalized `world: { description, hash }`, sorted backend selections, exact compiled script artifacts and bindings, ROS schemas, autonomy catalog metadata, contract endpoints, dependency hashes, full `resolvedHash`, and `simulationSemanticHash`. `dependencyHashes.world` repeats the canonical world SHA-256. Runs with enabled `lidar3d` additionally contain `lidarGeometry: { description, hash }` and `dependencyHashes.lidarGeometry`; runs with enabled cameras additionally contain `renderScene: { description, hash }` and `dependencyHashes.renderScene`. The initial scene provider is `canonical-analytic@1`, with stable material, semantic, instance, and dynamic-node IDs. Bundles without those sensors omit the corresponding conditional resources. Import verifies old and new bundles in the exact form received; old LiDAR/camera bundles must be re-resolved when their portable resources are unavailable. The additive fields do not change the v1 bundle schema. Manifest v10 adds sidecar-facing candidate-model provenance only. `resolvedHash` protects the entire portable bundle including provenance. `simulationSemanticHash` uses the world hash—not the authored environment hash—as environment identity, and projects out logging, `manifest.provenance`, artifact/resource policy, wall pacing, presentation-only settings, and the v10→v9 semantic shape before feeding `episodeHash`. Existing dependencies are reused only when hashes match; conflicting resources receive an eight-character hash suffix and all references are remapped.
 
+VIS-01 freezes future visual contracts without activating them. VIS-12a will
+introduce manifest v11 and `resolved.identityProfile = { id: "world-bound",
+version: 2 }` under protocol 1.3. VIS-13b will activate same-host package
+admission under protocol 1.4. The current runtime continues to advertise
+protocol 1.2 and accepts the existing JSON-only bundle path.
+
+The future version-dispatched resolver validates full top-level and nested
+authoring locks before projecting environment references to metric-world
+identity. Only enabled cameras explicitly selecting a visual provider acquire
+its render resources, and all enabled cameras must select the same provider.
+Selected render resources, calibration, product policy, and semantic backend
+configuration affect semantic and episode identity; provenance, evidence,
+admission handles, storage paths, and operational policies do not. See
+[Visual Layer Contracts](visual-layer.md) for the complete compatibility and
+exact-byte integrity rules.
+
 ## HTTP API
 
 The storage service exposes these endpoints under `/api/storage`:

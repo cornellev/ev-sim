@@ -222,6 +222,14 @@ The environment editor authors static world content through an `EnvironmentDocum
 
 - [Environment Editor](environment-editor.md) — document model, editor modes, baking, and chrome UI.
 - [Earth Import](earth-import.md) — Google 3D Tiles preview, OSM road import, and geospatial configuration.
+- [Visual Layer Contracts](visual-layer.md) — frozen visual descriptors, exact-byte integrity, source policy, camera products, and future package admission.
+- [Visual Layer Implementation Plan](visual-layer-plan.md) — `VIS-*` photoreal fidelity layer, hashed assets, and optional Google/3DGS tracks.
+
+VIS-01 adds only kernel-safe contract code and future additive protobuf
+declarations. The current browser and headless runtime remain on
+`canonical-analytic@1`, run-manifest v10, and protocol 1.2. Visual descriptors
+are appearance resources bound to `worldHash`; their meshes never enter metric
+world, collision, LiDAR, object-registry, or oracle truth.
 
 ## External Integration
 

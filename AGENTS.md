@@ -23,6 +23,24 @@ Update the progress and decision log in
 `docs/headless-simulation-plan.md` whenever a roadmap PR changes a contract,
 hash, acceptance criterion, or milestone status.
 
+## Visual-layer roadmap
+
+Before changing visual-layer, bake, render-scene provider, photoreal camera,
+or visual-asset packaging code, read:
+
+1. [`docs/visual-layer-plan.md`](docs/visual-layer-plan.md)
+2. [`docs/environment-editor.md`](docs/environment-editor.md)
+3. [`docs/run-manifests.md`](docs/run-manifests.md)
+4. [`docs/architecture.md`](docs/architecture.md)
+
+This is a separate `VIS-*` program. Do not treat it as a headless PR 13.
+Google Tiles and Gaussian splatting are optional tracks behind the gates in
+that plan.
+
+Update the progress and decision log in
+`docs/visual-layer-plan.md` whenever a VIS, GOOG, or GS PR changes a
+contract, hash, acceptance criterion, or milestone status.
+
 ## Architectural invariants
 
 - JavaScript remains the single authoritative simulator implementation.

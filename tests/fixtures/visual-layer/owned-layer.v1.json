@@ -1,0 +1,90 @@
+{
+  "document": {
+    "kind": "cev-sim.visual-layer",
+    "version": 1,
+    "sourceWorldHash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "assetProfile": { "id": "static-gltf-surface", "version": 1 },
+    "assets": [
+      {
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "mediaType": "model/gltf-binary",
+        "sizeBytes": 256,
+        "role": "mesh"
+      },
+      {
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "mediaType": "image/ktx2",
+        "sizeBytes": 128,
+        "role": "texture"
+      },
+      {
+        "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "mediaType": "model/gltf-binary",
+        "sizeBytes": 192,
+        "role": "mesh"
+      }
+    ],
+    "materials": [
+      {
+        "id": "brick",
+        "mode": "metallic-roughness",
+        "alphaMode": "OPAQUE",
+        "alphaCutoff": 0.5,
+        "doubleSided": false,
+        "parameters": {
+          "baseColorFactor": [1, 1, 1, 1],
+          "metallicFactor": 1,
+          "roughnessFactor": 1,
+          "emissiveFactor": [0, 0, 0],
+          "emissiveStrength": 1,
+          "normalScale": 1,
+          "occlusionStrength": 1,
+          "clearcoatFactor": 0.25,
+          "clearcoatRoughnessFactor": 0,
+          "sheenColorFactor": [0, 0, 0],
+          "sheenRoughnessFactor": 0,
+          "specularFactor": 1,
+          "specularColorFactor": [1, 1, 1]
+        },
+        "textures": [
+          {
+            "slot": "baseColor",
+            "assetUri": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "texCoord": 0,
+            "transform": { "offset": [0.125, 0], "rotation": 0, "scale": [2, 2] }
+          }
+        ],
+        "extensions": ["KHR_materials_clearcoat", "KHR_texture_basisu", "KHR_texture_transform"]
+      }
+    ],
+    "chunks": [
+      {
+        "id": "chunk-0",
+        "instanceIds": ["building-0"],
+        "dependencyUris": [
+          "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        ]
+      }
+    ],
+    "instances": [
+      {
+        "id": "building-0",
+        "assetUri": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "lodLevels": [
+          "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        ],
+        "matrix": [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 10.123456789, 0, -2.5, 1],
+        "chunkIds": ["chunk-0"],
+        "materialIds": ["brick"]
+      }
+    ],
+    "bindings": [{ "id": "binding-0", "instanceId": "building-0", "truthEntityId": "building-0" }],
+    "appearanceDependencies": [
+      "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    ]
+  },
+  "visualLayerHash": "6873beb44f5eaa652200e990bac881537b796e97b0d4a2952692071d92606088"
+}
