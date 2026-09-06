@@ -117,6 +117,7 @@ export function buildCalibrationBundle(manifest, options = {}) {
                 schema: structuredClone(sensor.schema || {}),
                 health: structuredClone(sensor.health || {}),
                 noise: structuredClone(sensor.noise || {}),
+                ...(sensor.render ? { render: structuredClone(sensor.render) } : {}),
                 schedule,
             };
         });

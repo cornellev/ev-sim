@@ -30,6 +30,7 @@ const baselineUrl = new URL("tests/fixtures/visual-layer/compatibility-baseline.
 const expectationsUrl = new URL("tests/fixtures/visual-layer/identity-expectations.v1.json", root);
 const protoUrl = new URL("proto/cev_sim/headless/v1/headless.proto", root);
 const moduleUrl = new URL("app/simulation/visual/VisualLayer.js", root);
+const registryUrl = new URL("app/simulation/render/RenderSceneProviderRegistry.js", root);
 
 async function json(url) {
     return JSON.parse(await readFile(url, "utf8"));
@@ -279,18 +280,20 @@ test("legacy compatibility vectors and prospective identity cases stay frozen", 
 });
 
 test("visual contract import graph is kernel-safe", async () => {
-    const source = await readFile(moduleUrl, "utf8");
-    assert.doesNotMatch(source, /from ["'](?:three|react|next|node:)/);
-    assert.doesNotMatch(source, /\b(?:window|document|navigator|requestAnimationFrame|WebGL)\b/);
-    const script = `
+    for (const url of [moduleUrl, registryUrl]) {
+        const source = await readFile(url, "utf8");
+        assert.doesNotMatch(source, /from ["'](?:three|react|next|node:)/);
+        assert.doesNotMatch(source, /\b(?:window|document|navigator|requestAnimationFrame|WebGL)\b/);
+        const script = `
 for (const key of ["window", "document", "navigator", "requestAnimationFrame"]) {
   Object.defineProperty(globalThis, key, { configurable: true, get() { throw new Error(key + " accessed"); } });
 }
-await import(${JSON.stringify(moduleUrl.href)});
+await import(${JSON.stringify(url.href)});
 `;
-    const result = spawnSync(process.execPath, ["--experimental-default-type=module", "--input-type=module", "-e", script], {
-        cwd: new URL("../", import.meta.url),
-        encoding: "utf8",
-    });
-    assert.equal(result.status, 0, result.stderr);
+        const result = spawnSync(process.execPath, ["--experimental-default-type=module", "--input-type=module", "-e", script], {
+            cwd: new URL("../", import.meta.url),
+            encoding: "utf8",
+        });
+        assert.equal(result.status, 0, `${url.pathname}: ${result.stderr}`);
+    }
 });

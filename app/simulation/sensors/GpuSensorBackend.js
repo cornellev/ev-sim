@@ -3,6 +3,7 @@ import { simulationSha256 } from "../kernel/SimulationHashes.js";
 export const GPU_SENSOR_BACKEND_KIND = 4;
 export const GPU_SENSOR_CAPABILITY_ID = "chromium-webgl2-rendered-sensors";
 export const GPU_SENSOR_BACKEND_VERSION = "1";
+export const GPU_SENSOR_BACKEND_V2_VERSION = "2";
 
 export const GPU_SENSOR_BACKEND_CONFIG = Object.freeze({
     kind: "cev-sim.gpu-sensor-backend-config",
@@ -19,6 +20,25 @@ export const GPU_SENSOR_BACKEND_CONFIG = Object.freeze({
 
 export const GPU_SENSOR_BACKEND_CONFIG_HASH = simulationSha256(GPU_SENSOR_BACKEND_CONFIG);
 
+export const GPU_SENSOR_BACKEND_V2_CONFIG = Object.freeze({
+    kind: "cev-sim.gpu-sensor-backend-config",
+    version: 2,
+    renderer: "headless-chromium-webgl2-hardware",
+    scene: "cev-sim.render-scene@1/provider-product-routing-v2",
+    camera: "provider-product-routed-rgba8-brown-conrady-measured-v1",
+    lidar: "metric-v2-float32-distance-incidence-semantic-instance-zero-no-hit",
+    scanOrdering: "elevation-major-azimuth-minor-ceil-exclusive-end-v1",
+    readback: "pixel-pack-buffer-fence-event-loop-poll-v1",
+    delivery: "integer-fixed-step-capture-and-queued-delivery-v1",
+    softwareFallback: false,
+    providerRouting: true,
+    productRouting: true,
+});
+
+export const GPU_SENSOR_BACKEND_V2_CONFIG_HASH = simulationSha256(GPU_SENSOR_BACKEND_V2_CONFIG);
+export const GPU_SENSOR_BACKEND_V2_AVAILABLE = false;
+export const GPU_SENSOR_BACKEND_V2_UNAVAILABLE_REASON = "chromium-webgl2-rendered-sensors@2 is known but unavailable until provider/product routed camera capture is implemented";
+
 export function createGpuSensorBackendSelection() {
     return {
         kind: GPU_SENSOR_BACKEND_KIND,
@@ -28,11 +48,30 @@ export function createGpuSensorBackendSelection() {
     };
 }
 
+export function createGpuSensorBackendV2Selection() {
+    return {
+        kind: GPU_SENSOR_BACKEND_KIND,
+        capabilityId: GPU_SENSOR_CAPABILITY_ID,
+        version: GPU_SENSOR_BACKEND_V2_VERSION,
+        configHash: GPU_SENSOR_BACKEND_V2_CONFIG_HASH,
+        available: GPU_SENSOR_BACKEND_V2_AVAILABLE,
+        unavailableReason: GPU_SENSOR_BACKEND_V2_UNAVAILABLE_REASON,
+    };
+}
+
 function selectedField(selection, camel, snake) {
     return selection?.[camel] ?? selection?.[snake];
 }
 
+function isGpuSensorBackendV2(selection) {
+    return selectedField(selection, "capabilityId", "capability_id") === GPU_SENSOR_CAPABILITY_ID
+        && String(selectedField(selection, "version", "version")) === GPU_SENSOR_BACKEND_V2_VERSION;
+}
+
 export function assertGpuSensorBackendSelection(selection) {
+    if (isGpuSensorBackendV2(selection)) {
+        throw new Error(GPU_SENSOR_BACKEND_V2_UNAVAILABLE_REASON);
+    }
     const expected = createGpuSensorBackendSelection();
     if (!selection) throw new Error(`GPU sensor backend ${GPU_SENSOR_CAPABILITY_ID} is required.`);
     for (const [camel, snake] of [["kind", "kind"], ["capabilityId", "capability_id"], ["version", "version"], ["configHash", "config_hash"]]) {

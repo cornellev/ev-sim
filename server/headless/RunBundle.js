@@ -12,6 +12,10 @@ import { HeadlessEpisodeError } from "../../app/simulation/headless/HeadlessErro
 import { assertWorldResource } from "../../app/simulation/world/WorldDescription.js";
 import { assertLidarGeometryResource } from "../../app/simulation/lidar/LidarGeometry.js";
 import { assertRenderSceneResource } from "../../app/simulation/render/RenderScene.js";
+import {
+    RenderSceneProviderError,
+    renderSceneProviderRegistry,
+} from "../../app/simulation/render/RenderSceneProviderRegistry.js";
 
 function invalid(code, message, details = null) {
     throw new HeadlessEpisodeError(code, message, details);
@@ -74,6 +78,18 @@ export function verifyRunBundleIntegrity(bundle) {
     };
 }
 
+function invalidRenderSelection(error) {
+    if (!(error instanceof RenderSceneProviderError)) throw error;
+    const capability = [
+        "UNKNOWN_PROVIDER",
+        "UNKNOWN_PROVIDER_VERSION",
+        "PROVIDER_UNAVAILABLE",
+        "UNKNOWN_PRODUCT_PROFILE",
+        "UNSUPPORTED_RENDERED_PRODUCT",
+    ].includes(error.code);
+    invalid(capability ? "UNSUPPORTED_CAPABILITY" : "BUNDLE_INVALID", error.message, error.details);
+}
+
 /** Execution accepts only implemented immutable versions; no normalization here. */
 export function verifyRunBundle(bundle) {
     const verified = verifyRunBundleIntegrity(bundle);
@@ -83,9 +99,6 @@ export function verifyRunBundle(bundle) {
     }
     if (resolved.manifest?.kind !== RUN_MANIFEST_KIND || resolved.manifest.version !== resolved.version) {
         invalid("BUNDLE_INVALID", "Resolved and authored manifest versions must agree.");
-    }
-    if ((resolved.manifest.sensorRig?.sensors ?? []).some((sensor) => sensor.render !== undefined)) {
-        invalid("UNSUPPORTED_CAPABILITY", "Explicit camera render selections require provider dispatch support.");
     }
     if (!resolved.world?.description || !resolved.world?.hash) {
         invalid("BUNDLE_INVALID", "The resolved run is missing its world description or world hash.");
@@ -133,6 +146,15 @@ export function verifyRunBundle(bundle) {
     }
     if (resolved.renderScene) {
         if (!requestsCamera) invalid("BUNDLE_INVALID", "A non-camera bundle must not persist a render scene.");
+        try {
+            renderSceneProviderRegistry.assertMatchesScene(
+                resolved.manifest.sensorRig?.sensors,
+                resolved.renderScene,
+                { requireAvailable: true },
+            );
+        } catch (error) {
+            invalidRenderSelection(error);
+        }
         try {
             assertRenderSceneResource(resolved.renderScene);
         } catch (error) {

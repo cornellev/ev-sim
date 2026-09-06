@@ -37,6 +37,7 @@ import {
     createGpuSensorBackendSelection,
     GPU_SENSOR_BACKEND_KIND,
 } from "../sensors/GpuSensorBackend.js";
+import { assertEnabledCameraRenderRuntime, RenderSceneProviderError } from "../render/RenderSceneProviderRegistry.js";
 import {
     ACTION_SPACE,
     compareUtf8,
@@ -234,6 +235,30 @@ export class HeadlessEpisode {
         const lidarSensors = enabledSensors.filter((sensor) => sensor.type === "lidar3d");
         const cameraSensors = enabledSensors.filter((sensor) => sensor.type === "camera");
         const stateSensorConfigs = enabledSensors.filter((sensor) => getStateSensorModel(sensor.type));
+        if (cameraSensors.length > 0 && !resolvedRun.renderScene) {
+            throw new HeadlessEpisodeError("BUNDLE_INVALID", "Camera render-scene data is missing; re-resolve and export the run manifest.");
+        }
+        if (cameraSensors.length > 0) {
+            try {
+                assertEnabledCameraRenderRuntime(resolvedRun.manifest.sensorRig?.sensors, resolvedRun.renderScene);
+            } catch (error) {
+                if (error instanceof RenderSceneProviderError) {
+                    const capability = [
+                        "UNKNOWN_PROVIDER",
+                        "UNKNOWN_PROVIDER_VERSION",
+                        "PROVIDER_UNAVAILABLE",
+                        "UNKNOWN_PRODUCT_PROFILE",
+                        "UNSUPPORTED_RENDERED_PRODUCT",
+                    ].includes(error.code);
+                    throw new HeadlessEpisodeError(
+                        capability ? "UNSUPPORTED_CAPABILITY" : "BUNDLE_INVALID",
+                        error.message,
+                        error.details,
+                    );
+                }
+                throw error;
+            }
+        }
         try {
             assertPhysicsBackendSelection(physics);
             assertStateSensorBackendSelection(stateSensors);
@@ -279,9 +304,6 @@ export class HeadlessEpisode {
         }
         if (lidarSensors.length > 0 && !resolvedRun.lidarGeometry) {
             throw new HeadlessEpisodeError("BUNDLE_INVALID", "LiDAR geometry twins are missing; re-resolve and export the run manifest.");
-        }
-        if (cameraSensors.length > 0 && !resolvedRun.renderScene) {
-            throw new HeadlessEpisodeError("BUNDLE_INVALID", "Camera render-scene data is missing; re-resolve and export the run manifest.");
         }
         const sensorIds = new Set();
         const vehicleIds = new Set((resolvedRun.manifest.initialState?.vehicles || []).map((vehicle) => vehicle.id));

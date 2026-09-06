@@ -8,6 +8,7 @@ import {
 import { computeSimulationSemanticHash } from "../../app/simulation/kernel/SimulationHashes.js";
 import { createLidarGeometryResource } from "../../app/simulation/lidar/LidarGeometry.js";
 import { createRenderSceneResource } from "../../app/simulation/render/RenderScene.js";
+import { resolveEnabledCameraRenderSelection } from "../../app/simulation/render/RenderSceneProviderRegistry.js";
 import { StorageService } from "../../server/storage/StorageService.js";
 
 export function createHeadlessImu(overrides = {}) {
@@ -51,7 +52,15 @@ export function rehashRunBundle(bundle) {
         (sensor) => sensor.enabled !== false && sensor.type === "camera",
     );
     if (requestsCamera) {
-        next.resolved.renderScene = createRenderSceneResource(next.resolved.world, next.resolved.vehicles);
+        const selection = resolveEnabledCameraRenderSelection(
+            next.resolved.manifest.sensorRig.sensors,
+            { requireAvailable: true },
+        );
+        next.resolved.renderScene = createRenderSceneResource(
+            next.resolved.world,
+            next.resolved.vehicles,
+            selection,
+        );
         next.resolved.dependencyHashes.renderScene = next.resolved.renderScene.hash;
     } else {
         delete next.resolved.renderScene;

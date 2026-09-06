@@ -4,6 +4,7 @@ import test from "node:test";
 import {
     SensorTypeRegistry,
     changeRunSensorType,
+    createRunSensor,
     getSensorType,
     listSensorTypes,
     normalizeRunSensor,
@@ -21,6 +22,12 @@ test("built-in sensor definitions own defaults, fields, outputs, and determinism
 
     const camera = normalizeRunSensor({ type: "camera" });
     assert.equal(camera.rateHz, 30);
+    assert.equal("render" in camera, false);
+    const created = createRunSensor("camera");
+    assert.deepEqual(created.render, {
+        provider: { id: "canonical-analytic", version: 1 },
+        productProfile: { id: "measured-rgba-analytic-oracle", version: 1 },
+    });
     assert.equal(camera.calibration.encoding, "rgba8");
     assert.equal(camera.schema.imageTopicId, "sensor_msgs/Image");
     assert.equal(camera.schema.cameraInfoTopicId, "sensor_msgs/CameraInfo");
@@ -35,6 +42,10 @@ test("built-in sensor definitions own defaults, fields, outputs, and determinism
         ["image", "cameraInfo", "depth", "semantic", "instance", "detections2d", "detections3d", "lanes", "trafficControls", "diagnostics"],
     );
     assert.ok(getSensorType("camera").run.fields.some((field) => field.path.join(".") === "calibration.width"));
+    assert.ok(getSensorType("camera").run.fields.some((field) => field.path.join(".") === "render.provider.id" && field.advanced));
+    assert.ok(getSensorType("camera").run.fields.some((field) => field.path.join(".") === "render.provider.version" && field.advanced));
+    assert.ok(getSensorType("camera").run.fields.some((field) => field.path.join(".") === "render.productProfile.id" && field.advanced));
+    assert.ok(getSensorType("camera").run.fields.some((field) => field.path.join(".") === "render.productProfile.version" && field.advanced));
 
     const cameraFields = getSensorType("camera").run.fields;
     const lidarFields = getSensorType("lidar3d").run.fields;

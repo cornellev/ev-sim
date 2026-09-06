@@ -231,8 +231,12 @@ VIS-12a activates run-manifest v11, `world-bound@2` semantic/episode identity
 and protocol 1.3 while retaining immutable v10 execution. Full authoring locks
 are validated before schema-aware world/scenario projection, including the
 default browser profiles. Byte verification is separate from authoring import
-and executable capability validation. The current renderer remains
-`canonical-analytic@1`; package admission and new providers stay unavailable.
+and executable capability validation. VIS-02 dispatches exact camera render
+provider ID/version. Newly created cameras author `canonical-analytic@1`;
+absent `render` blocks remain the legacy analytic alias during resolution.
+`canonical-analytic@2` and `pbr-mesh@1` are known but unavailable. GPU sensor
+backend v1 identity is unchanged; backend v2 is declared but rejected.
+Package admission stays inactive.
 Visual descriptors are appearance resources bound to `worldHash`; their meshes never enter metric
 world, collision, LiDAR, object-registry, or oracle truth.
 

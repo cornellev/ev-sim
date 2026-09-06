@@ -1,3 +1,10 @@
+import {
+    defaultCameraRenderSelection,
+    normalizeCameraRenderSelection,
+    renderSceneProviderRegistry,
+    validateCameraRenderDeclaration,
+} from "../../simulation/render/RenderSceneProviderRegistry.js";
+
 const DEFAULT_SENSOR_TYPE = "lidar3d";
 
 function object(value) {
@@ -176,6 +183,10 @@ const cameraRunFields = [
     { label: "Lanes topic ID", path: ["outputs", "lanesTopicId"], control: "text", advanced: true },
     { label: "Traffic controls topic ID", path: ["outputs", "trafficControlsTopicId"], control: "text", advanced: true },
     { label: "Diagnostics topic ID", path: ["outputs", "diagnosticsTopicId"], control: "text", advanced: true },
+    { label: "Render provider ID", path: ["render", "provider", "id"], control: "text", advanced: true },
+    { label: "Render provider version", path: ["render", "provider", "version"], control: "number", min: 1, step: 1, advanced: true },
+    { label: "Product profile ID", path: ["render", "productProfile", "id"], control: "text", advanced: true },
+    { label: "Product profile version", path: ["render", "productProfile", "version"], control: "number", min: 1, step: 1, advanced: true },
     { label: "Encoding", path: ["calibration", "encoding"], control: "text", readOnly: true, advanced: true },
     { label: "Frame dropout probability", path: ["noise", "dropoutProbability"], control: "number", min: 0, max: 1, step: 0.001, advanced: true },
     { label: "Deadline (ns)", path: ["health", "deadlineNs"], control: "number", min: 0, advanced: true },
@@ -335,6 +346,9 @@ registerSensorType({
             const height = Math.max(1, Math.floor(positive(calibrationSource.height, 180)));
             const verticalFovDeg = Math.min(179, positive(calibrationSource.verticalFovDeg, 75));
             const products = object(calibrationSource.products);
+            if (Object.keys(products).length > 0) {
+                renderSceneProviderRegistry.assertCameraProductFlags(products);
+            }
             return {
                 calibration: {
                     width,
@@ -625,6 +639,10 @@ export function normalizeRunSensor(value = {}, index = 0, registry = sensorTypeR
         determinism: cloneObject(source.determinism),
     };
     const isCamera = type === "camera";
+    if (!isCamera && source.render !== undefined) {
+        throw new Error("Render selection is only valid on camera sensors.");
+    }
+    const render = isCamera ? normalizeCameraRenderSelection(source.render) : undefined;
     const defaultMount = isCamera
         ? `${id.replace(/-camera$/, "")}_camera_link`.replace(/^([^-]+)$/, "$1_camera_link")
         : text(source.frameId, `${id}_frame`);
@@ -664,11 +682,16 @@ export function normalizeRunSensor(value = {}, index = 0, registry = sensorTypeR
         determinism: specific.determinism,
         maxQueueFrames: positiveInteger(source.maxQueueFrames, 8),
         maxQueueBytes: positiveInteger(source.maxQueueBytes, 64 * 1024 * 1024),
+        ...(render ? { render } : {}),
     };
 }
 
 export function createRunSensor(type = DEFAULT_SENSOR_TYPE, overrides = {}, index = 0, registry = sensorTypeRegistry) {
-    return normalizeRunSensor({ ...overrides, type }, index, registry);
+    const source = { ...overrides, type };
+    if (type === "camera" && source.render === undefined) {
+        source.render = defaultCameraRenderSelection();
+    }
+    return normalizeRunSensor(source, index, registry);
 }
 
 export function changeRunSensorType(sensor, type, registry = sensorTypeRegistry) {
@@ -715,7 +738,11 @@ export function getSensorFieldValue(sensor, path) {
 export function validateRunSensorDefinition(sensor, registry = sensorTypeRegistry) {
     const definition = registry.get(sensor?.type);
     if (!definition) return [{ path: "type", message: `Unsupported sensor type "${sensor?.type}".` }];
-    return definition.run.validate?.(sensor) || [];
+    const issues = definition.run.validate?.(sensor) || [];
+    if (sensor?.type === "camera" || sensor?.render !== undefined) {
+        issues.push(...validateCameraRenderDeclaration(sensor));
+    }
+    return issues;
 }
 
 export function validateVehicleSensorDefinition(sensor, registry = sensorTypeRegistry) {

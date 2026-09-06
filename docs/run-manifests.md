@@ -34,9 +34,10 @@ queue ingestion boundaries. A byte-oriented verifier can check an external
 serialization remains unchanged, while v11 uses JCS. See
 [Visual Layer Contracts](visual-layer.md) for the support table and byte rules.
 
-New visual provider selection/resolution remains gated by VIS-02/VIS-12b.
-The current renderer is `canonical-analytic@1`. Package admission remains
-inactive until VIS-13b/protocol 1.4.
+VIS-02 dispatches exact camera render provider ID/version. Omitted selections
+alias only to `canonical-analytic@1` during resolution. `canonical-analytic@2`
+and `pbr-mesh@1` are known but unavailable and never fall back. Package
+admission remains inactive until VIS-13b/protocol 1.4.
 
 ## HTTP API
 

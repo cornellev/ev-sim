@@ -1,0 +1,10 @@
+{
+  "kind": "cev-sim.visual-explicit-camera-vectors",
+  "version": 1,
+  "fixture": "igvc-default",
+  "renderSceneHash": "6e828677f59fdae0d5f9b29c6de049486df54b2e8177b1ee0b3cbe9dff17a311",
+  "resolvedHash": "81d55d940ca8b58d7183e22980cd704853e07898d7bac0d8448ad83f73206128",
+  "simulationSemanticHash": "a36789c0bb5e3896e82f18b45f1ef7e6b3161bad4491e7a04723e35ce618ad78",
+  "browserEpisodeHash": "c9314189c80e5cba3168b5a87c9c14ceb49afde0c933c944623105ed54ee88a2",
+  "headlessEpisodeHash": "a81f1a6d131a8b6b4b62505ae049d48f76d25fb97649d00783109de31ce9d60d"
+}

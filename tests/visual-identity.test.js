@@ -183,18 +183,23 @@ test("VIS-12a projection exclusions are explicit and selected semantic inputs re
 
 test("VIS-12a prospective camera selections are projected without activating provider support", async () => {
     const { resolved } = await createPortableHeadlessBundle();
-    resolved.manifest.sensorRig.sensors.push({ id: "future-camera", type: "camera", enabled: false,
-        render: { provider: { id: "pbr-mesh", version: 1 } } });
+    resolved.manifest.sensorRig.sensors.push({
+        id: "future-camera",
+        type: "camera",
+        enabled: false,
+        render: {
+            provider: { id: "pbr-mesh", version: 1 },
+            productProfile: { id: "measured-rgba-analytic-oracle", version: 1 },
+        },
+    });
     const before = identities(resolved);
     resolved.manifest.sensorRig.sensors.at(-1).render.provider.version = 2;
     assert.deepEqual(identities(resolved), before);
-    // Contract-only selected resources; admission remains unavailable until VIS-12b.
     resolved.manifest.sensorRig.sensors.at(-1).enabled = true;
     resolved.renderScene = { hash: "a".repeat(64), description: { provider: { id: "pbr-mesh", version: 1 } } };
     const selected = computeSimulationSemanticHash(resolved);
     resolved.renderScene.hash = "b".repeat(64);
     assert.notEqual(computeSimulationSemanticHash(resolved), selected);
-    assert.throws(() => createDefaultRunManifest({ sensorRig: resolved.manifest.sensorRig }), /unsupported/);
 });
 
 test("VIS-12a exact byte integrity is independent of normalized hashes and never normalizes verification", async (t) => {

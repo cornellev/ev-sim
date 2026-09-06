@@ -27,6 +27,7 @@ import { computeSimulationSemanticHash } from "../../app/simulation/kernel/Simul
 import { createWorldResource } from "../../app/simulation/world/WorldDescription.js";
 import { createLidarGeometryResource } from "../../app/simulation/lidar/LidarGeometry.js";
 import { createRenderSceneResource } from "../../app/simulation/render/RenderScene.js";
+import { resolveEnabledCameraRenderSelection } from "../../app/simulation/render/RenderSceneProviderRegistry.js";
 import {
     createPhysicsBackendSelection,
     sortBackendSelections,
@@ -1154,9 +1155,15 @@ export class StorageService {
         const lidarGeometry = manifest.sensorRig.sensors.some(
             (sensor) => sensor.enabled !== false && sensor.type === "lidar3d",
         ) ? createLidarGeometryResource(world, resolvedVehicles) : null;
-        const renderScene = manifest.sensorRig.sensors.some(
+        const cameraSensors = manifest.sensorRig.sensors.filter(
             (sensor) => sensor.enabled !== false && sensor.type === "camera",
-        ) ? createRenderSceneResource(world, resolvedVehicles) : null;
+        );
+        const renderSelection = cameraSensors.length > 0
+            ? resolveEnabledCameraRenderSelection(manifest.sensorRig.sensors, { requireAvailable: true })
+            : null;
+        const renderScene = renderSelection
+            ? createRenderSceneResource(world, resolvedVehicles, renderSelection)
+            : null;
         if (manifest.environment.expectedHash && manifest.environment.expectedHash !== environmentHash) {
             throw new Error(`Environment "${manifest.environment.id}" changed: expected ${manifest.environment.expectedHash}, received ${environmentHash}.`);
         }

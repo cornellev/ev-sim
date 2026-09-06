@@ -23,6 +23,7 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import { assertRunIdentityCounters } from "./kernel/RunIdentity.js";
 import { canonicalNumericTree } from "./kernel/SimulationHashes.js";
+import { renderSceneProviderRegistry } from "./render/RenderSceneProviderRegistry.js";
 
 export const RUN_MANIFEST_KIND = "cev-sim.run-manifest";
 export const RUN_MANIFEST_VERSION = 11;
@@ -665,9 +666,6 @@ export function normalizeRunManifest(value, { allowMissingKind = false } = {}) {
     if (!supported.includes(sourceVersion)) {
         throw new Error(`Unsupported run manifest version ${source.version}; expected version 1–${RUN_MANIFEST_VERSION}.`);
     }
-    if ((source.sensorRig?.sensors ?? []).some((sensor) => sensor.render !== undefined)) {
-        throw new Error("Explicit camera render selections are unsupported until VIS-02 provider dispatch.");
-    }
     const initial = object(source.initialState);
     const clock = object(source.clock);
     const scripts = object(source.scripts);
@@ -782,6 +780,15 @@ export function validateRunManifest(value) {
             if (topicId && linked && sensorEntry.schema[key] !== linkedType) {
                 issues.push({ path: `sensorRig.sensors.${index}.schema.${key}`, message: `Schema must match topic type "${linkedType}".` });
             }
+        }
+    }
+    try {
+        renderSceneProviderRegistry.resolveEnabledCameraSelection(manifest.sensorRig.sensors, { requireAvailable: false });
+    } catch (error) {
+        if (error?.code === "MIXED_RENDER_SELECTION") {
+            issues.push({ path: "sensorRig.sensors", message: error.message });
+        } else if (error?.name !== "RenderSceneProviderError") {
+            throw error;
         }
     }
     issues.push(...validateSensorRigFrames(manifest));

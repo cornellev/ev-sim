@@ -2,7 +2,8 @@
 
 This document freezes the VIS-01 contracts. It describes interfaces that
 later VIS milestones implement. VIS-12a activates the identity contracts below;
-photoreal rendering, the asset store, and package admission remain unavailable.
+VIS-02 dispatches exact camera render provider ID/version. Photoreal rendering,
+the asset store, and package admission remain unavailable.
 
 The implementation authority and acceptance gates remain in
 [the visual-layer roadmap](visual-layer-plan.md). JavaScript remains the only
@@ -19,8 +20,8 @@ become collision, route, LiDAR, registry, or oracle truth.
 | Simulation-semantic and episode identity | 2 | VIS-12a |
 | `cev-sim.world-description` | 1, unchanged | Existing runtime |
 | Legacy analytic scene | `canonical-analytic@1`, unchanged | Existing runtime |
-| Corrected analytic scene | `canonical-analytic@2` | VIS-02/VIS-06/VIS-14/VIS-15 |
-| PBR scene | `pbr-mesh@1` | VIS-02/VIS-05/VIS-14/VIS-15 |
+| Corrected analytic scene | `canonical-analytic@2` | VIS-02 known/unavailable; runtime VIS-06/VIS-14/VIS-15 |
+| PBR scene | `pbr-mesh@1` | VIS-02 known/unavailable; runtime VIS-05/VIS-14/VIS-15 |
 | Corrected GPU sensor backend | `chromium-webgl2-rendered-sensors@2` | VIS-14/VIS-15 |
 | Identity negotiation | Protocol 1.3 | VIS-12a |
 | Package admission | Protocol 1.4 | VIS-13b |
@@ -122,11 +123,16 @@ New camera authoring uses:
 ```json
 {
   "render": {
-    "provider": { "id": "pbr-mesh", "version": 1 },
+    "provider": { "id": "canonical-analytic", "version": 1 },
     "productProfile": { "id": "measured-rgba-analytic-oracle", "version": 1 }
   }
 }
 ```
+
+Existing pre-VIS-02 cameras may omit `render`; absence aliases to
+`canonical-analytic@1` only during resolution. `canonical-analytic@2` and
+`pbr-mesh@1` may be authored when structurally valid, but they remain
+unavailable and never fall back to analytic.
 
 Existing product flags select products within that profile. Measured RGBA and
 matching CameraInfo are required for PBR camera support. Analytic depth,
@@ -178,10 +184,10 @@ then projects a clone. The implemented identity rules are:
    inputs.
 4. Apply the same projection to browser observation and reward profile config
    hashes.
-5. Preserve conditional analytic-camera and LiDAR resources. Explicit new
-   camera selections remain unsupported until VIS-02; selected visual
-   resource resolution belongs to VIS-12b. Prospective projection tests do
-   not advertise those capabilities.
+5. Preserve conditional analytic-camera and LiDAR resources. Explicit camera
+   render selections are dispatched by VIS-02; omitted selections alias only
+   to `canonical-analytic@1`. Selected visual resource resolution belongs to
+   VIS-12b. Unavailable providers may be stored but cannot resolve or execute.
 6. Include selected render resources, calibration, product policy, and
    semantic backend configuration. Exclude evidence, logging, artifact and
    resource policy, wall pacing, host paths, admissions, and replay evidence.

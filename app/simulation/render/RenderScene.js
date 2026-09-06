@@ -6,6 +6,10 @@ import {
 } from "../lidar/LidarGeometry.js";
 import { canonicalizeSimulationValue, simulationSha256 } from "../kernel/SimulationHashes.js";
 import { compareUtf8 } from "../world/WorldDescription.js";
+import {
+    bindCanonicalAnalyticRenderScene,
+    renderSceneProviderRegistry,
+} from "./RenderSceneProviderRegistry.js";
 
 export const RENDER_SCENE_KIND = "cev-sim.render-scene";
 export const RENDER_SCENE_VERSION = 1;
@@ -58,7 +62,7 @@ export function createRenderScene(worldResource, vehicleDependencies = []) {
     });
 }
 
-export function assertRenderSceneDescription(description) {
+export function assertCanonicalAnalyticRenderSceneDescription(description) {
     if (description?.kind !== RENDER_SCENE_KIND || Number(description.version) !== RENDER_SCENE_VERSION) {
         throw new TypeError(`Expected ${RENDER_SCENE_KIND} v${RENDER_SCENE_VERSION}.`);
     }
@@ -94,14 +98,32 @@ export function assertRenderSceneDescription(description) {
     return description;
 }
 
+export function hashCanonicalAnalyticRenderScene(description) {
+    assertCanonicalAnalyticRenderSceneDescription(description);
+    return simulationSha256(description);
+}
+
+function createCanonicalAnalyticRenderSceneResource(worldResource, vehicleDependencies = []) {
+    const description = createRenderScene(worldResource, vehicleDependencies);
+    return { description, hash: hashCanonicalAnalyticRenderScene(description) };
+}
+
+bindCanonicalAnalyticRenderScene({
+    createResource: createCanonicalAnalyticRenderSceneResource,
+    assertDescription: assertCanonicalAnalyticRenderSceneDescription,
+});
+
+export function assertRenderSceneDescription(description) {
+    return renderSceneProviderRegistry.assertDescription(description);
+}
+
 export function hashRenderScene(description) {
     assertRenderSceneDescription(description);
     return simulationSha256(description);
 }
 
-export function createRenderSceneResource(worldResource, vehicleDependencies = []) {
-    const description = createRenderScene(worldResource, vehicleDependencies);
-    return { description, hash: hashRenderScene(description) };
+export function createRenderSceneResource(worldResource, vehicleDependencies = [], selection) {
+    return renderSceneProviderRegistry.resolveResource(worldResource, vehicleDependencies, selection);
 }
 
 export class CanonicalAnalyticRenderSceneProvider extends RenderSceneProvider {

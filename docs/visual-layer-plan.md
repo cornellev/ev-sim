@@ -25,7 +25,7 @@ a VIS, GOOG, or GS PR changes a contract, hash, gate, or milestone status.
 
 ## Status and release verdict
 
-- Next milestone: **VIS-02 — not started**. VIS-01 and VIS-12a are implemented.
+- Next milestone: **VIS-03 — not started**. VIS-01, VIS-12a, and VIS-02 are implemented.
 - Review verdict: **NO-GO for the original ordering and for claiming visual
   runtime support.** The five Blocker findings below require implementation
   and evidence. This revision supplies the corrected handoff; editing the
@@ -33,10 +33,11 @@ a VIS, GOOG, or GS PR changes a contract, hash, gate, or milestone status.
 - Core assumption: **Google approval, Google-derived assets, Gaussian
   splatting, and a model service are unavailable.**
 - Default implementation/review reasoning level: **Extra High**.
-- Last updated: **2026-09-06 — VIS-12a identity and compatibility implemented**.
-- VIS-01 and VIS-12a acceptance evidence is recorded in the progress ledger
-  and decision log. Protocol 1.3 advertises `world-bound@2`; no visual renderer
-  or package-admission capability is advertised.
+- Last updated: **2026-09-06 — VIS-02 provider dispatch and capability validation implemented**.
+- VIS-01, VIS-12a, and VIS-02 acceptance evidence is recorded in the progress
+  ledger and decision log. Protocol 1.3 advertises `world-bound@2`. Only
+  `canonical-analytic@1` and GPU sensor backend v1 remain runtime-capable;
+  no visual renderer or package-admission capability is advertised.
 
 The owned/synthetic-asset core must independently deliver author/import →
 preview → no-model bake → atomic promotion → reload → portable package →
@@ -47,7 +48,7 @@ may improve appearance, but cannot be prerequisites for this path.
 
 Original VIS numbers remain workstream identifiers. Suffixes below identify
 actual PRs; completing one suffix does not complete its entire workstream.
-All required entries except VIS-01 and VIS-12a remain unstarted.
+All required entries except VIS-01, VIS-12a, and VIS-02 remain unstarted.
 
 | Workstream | Required core PRs | Optional enrichment |
 | --- | --- | --- |
@@ -80,9 +81,11 @@ names the current seam, concrete failure, required correction, and proving
 gate. Gate definitions later in this document are normative test
 requirements; completed portions are recorded in the acceptance ledger.
 VIS-12a supplies F01's implemented identity/compatibility evidence and F06's
-version-dispatch evidence. Neither finding is fully closed: selected visual
-resources still require VIS-12b, and environment rebind/transaction cases
-still require VIS-03. The other runtime findings retain their owning gates.
+version-dispatch evidence. VIS-02 supplies F09's registry/schema portion of
+G-CAPABILITY. Neither F01 nor F06 is fully closed: selected visual resources
+still require VIS-12b, and environment rebind/transaction cases still require
+VIS-03. F09 product completeness remains later VIS work. The other runtime
+findings retain their owning gates.
 
 | ID / severity | Current behavior and failure mode | Required PR correction and proof |
 | --- | --- | --- |
@@ -94,7 +97,7 @@ still require VIS-03. The other runtime findings retain their owning gates.
 | F06 **High** | [WorldDescription.js](../app/simulation/world/WorldDescription.js) hashes `environmentId`; [StorageService.js](../server/storage/StorageService.js) duplication, ID changes, and conflicting imports change IDs. Retaining a visual descriptor unchanged makes `sourceWorldHash` stale. [RunBundle.js](../server/headless/RunBundle.js) accepts the current resolved manifest version, not every historical authored version. A global GPU identity bump can invalidate old analytic selections. | Correct VIS-03 rebind behavior and VIS-12a migration/version dispatch; preserve old provider identities. G-MIGRATION distinguishes rename, duplicate, import, integrity verification, and executable support. |
 | F07 **High** | [SensorTypeRegistry.js](../app/3d/devices/SensorTypeRegistry.js) accepts unequal/off-center intrinsics; [ManifestCamera.js](../app/3d/devices/ManifestCamera.js) and [PooledGpuRenderer.js](../server/headless/PooledGpuRenderer.js) construct FOV/aspect projections. [BakeView.js](../app/3d/environment/visualization/BakeView.js) uses a different pixel-center convention. Published calibration can disagree with pixels even when both renderers agree. | Put shared versioned K-to-projection math in VIS-06a. G-CALIBRATION uses independently calculated points, unequal focal lengths, off-center principal points, and rotated mounts. |
 | F08 **High** | [BakeView.js](../app/3d/environment/visualization/BakeView.js) hides non-target mask geometry, forces depth visibility, and boosts beauty road materials; these are not aligned samples. [CameraRenderProducts.js](../app/3d/perception/CameraRenderProducts.js) changes materials on scene meshes rather than selecting independent truth twins. Fusion or correspondence can accept occluded/misregistered samples. | Split VIS-06b from legacy calibration/isolation; define separate visual G-buffer and analytic oracle pass families. G-GBUFFER proves occlusion, validity, alpha policy, encoding, and exception-safe restoration. |
-| F09 **High** | [HeadlessGpuSensorManager.js](../app/simulation/sensors/HeadlessGpuSensorManager.js) shares `renderScene || lidarGeometry`; its camera implementation produces RGB/CameraInfo rather than every authored oracle product. [SensorTypeRegistry.js](../app/3d/devices/SensorTypeRegistry.js), `normalizeRunSensor`, has a fixed authored field set. [PerceptionTruthIndex.js](../app/autonomy/PerceptionTruthIndex.js) and [EnvironmentRegistry.js](../app/3d/editor/EnvironmentRegistry.js) discover truth from scene metadata. PBR geometry or imported GLTF extras can cross the truth boundary, while unsupported products can disappear. | Add selection/product schemas and explicit validation in VIS-02/VIS-12b; separate truth resources and sanitize imported metadata in VIS-05a/VIS-14/VIS-15a. G-CAPABILITY and G-ORACLE prove product completeness and observation isolation. |
+| F09 **High** | [HeadlessGpuSensorManager.js](../app/simulation/sensors/HeadlessGpuSensorManager.js) shares `renderScene || lidarGeometry`; its camera implementation produces RGB/CameraInfo rather than every authored oracle product. [SensorTypeRegistry.js](../app/3d/devices/SensorTypeRegistry.js), `normalizeRunSensor`, has a fixed authored field set. [PerceptionTruthIndex.js](../app/autonomy/PerceptionTruthIndex.js) and [EnvironmentRegistry.js](../app/3d/editor/EnvironmentRegistry.js) discover truth from scene metadata. PBR geometry or imported GLTF extras can cross the truth boundary, while unsupported products can disappear. | VIS-02 added provider/profile schemas and explicit validation; remaining product-completeness and selected-visual resolution belong to later VIS/VIS-12b. Separate truth resources and sanitize imported metadata in VIS-05a/VIS-14/VIS-15a. G-CAPABILITY and G-ORACLE prove product completeness and observation isolation. |
 | F10 **High** | [BakeRunConfig.js](../app/3d/environment/visualization/BakeRunConfig.js) does not serialize all view planning inputs; [BuildingRegionPlanner.js](../app/3d/environment/visualization/BuildingRegionPlanner.js) depends on traversal order. [bakeUpload.js](../app/3d/environment/visualization/bakeUpload.js) uses browser image encoding. [process.py](../baking/process.py) loads an unpinned model and runtime options. [ProjectedBuildingTextureManager.js](../app/3d/environment/visualization/ProjectedBuildingTextureManager.js) stores unlit captured radiance, not intrinsic PBR base color. Repeated jobs can diverge or double-light captured appearance. | Combine the provider job contract with VIS-07; split deterministic atlas construction (VIS-10a) from optional material estimation (VIS-10b/VIS-11). G-PROVENANCE and G-ATLAS separate fixed-input determinism from GPU/model nondeterminism and test material semantics. |
 | F11 **High** | The installed `three/examples/jsm/loaders/GLTFLoader.js` resolves buffer/image URIs, copies extras into `userData`, and can warn rather than reject an unknown required extension; `three/examples/jsm/loaders/KTX2Loader.js` loads transcoder resources and allocates decoded textures. Three is declared in [package.json](../package.json). Existing [StorageService.js](../server/storage/StorageService.js) has no visual graph/archive validator. The proposed VIS-05 loader path therefore needs more than digest/MIME checks to prevent network/file access, expansion bombs, unsupported content, or metadata injection. | Require a restricted asset profile, bounded parser/decoder, closed digest graph, and hostile archive validation in VIS-04/VIS-13a before loaders become usable. G-SECURITY proves rejection before external access or unbounded allocation. |
 | F12 **High** | [StorageService.js](../server/storage/StorageService.js) persists queued experiment bundle sidecars under `headless-run-bundles`; environment/package references are not the whole live set. Worker resets, queued jobs, replay, bake staging, and validation reports also need blobs. Environment-only reference checks allow deletion of required assets or indefinite growth. | Put pins, durable roots, quotas, staging recovery, and a no-unsafe-delete policy in VIS-04; wire execution roots in VIS-13b/VIS-15b. G-LIFECYCLE races deletion against queueing, promotion, restart, reset, and cancellation. |
@@ -1397,9 +1400,9 @@ claim and no dependency from this gate into VIS-17c.
 
 ## Acceptance gates and omitted tests now required
 
-The VIS-01 contract portions and VIS-12a identity/compatibility portions of
-G-HASH and G-MIGRATION have passed with the evidence below. Remaining gate
-portions are **pending**. The original plan's high-level gates did not prove
+The VIS-01 contract portions, VIS-12a identity/compatibility portions of
+G-HASH and G-MIGRATION, and the VIS-02 registry/schema portion of G-CAPABILITY
+have passed with the evidence below. Remaining gate portions are **pending**. The original plan's high-level gates did not prove
 these failure cases. Every implementation PR must link its
 executed evidence; a document change, a mock, an unsupported-path success
 or a skipped test does not close a runtime gate.
@@ -1505,7 +1508,7 @@ person and commit their decision/evidence before the specified gate.
 | ID | Accountable role | Decision required | Due before |
 | --- | --- | --- | --- |
 | **D01** | Repository owner (interim); simulation + Python/protocol implementers | **Implemented in VIS-12a:** manifest v11, `world-bound@2`, semantic/episode v2, protocol 1.3; preserve bundle v1 and current analytic execution. Nested lock/profile and JS/Python byte/episode vectors pass. | Scoped G-HASH/G-MIGRATION evidence recorded below; VIS-12b retains selected-visual cases |
-| **D02** | Repository owner (interim); rendering + perception implementers | **Resolved for VIS-01:** static GLB/glTF, PNG/JPEG/KTX2, opaque/cutout metallic-roughness or unlit with the listed surface extensions; calibrated RGBA/CameraInfo and optional analytic depth/semantic/instance products. | Contract recorded; VIS-02 and VIS-06a implement it |
+| **D02** | Repository owner (interim); rendering + perception implementers | **Implemented in VIS-02:** provider ID/version registry, `measured-rgba-analytic-oracle@1` product profile, new-camera `canonical-analytic@1` defaults, and strict camera product/profile validation. `canonical-analytic@2` and `pbr-mesh@1` stay known but unavailable. | Contract recorded in VIS-01; VIS-06a still owns calibrated capture math |
 | **D03** | Repository owner (interim); storage + protocol implementers | **Resolved for VIS-01:** deterministic uncompressed USTAR and fixed limits; separate exact byte digests; same-host opaque admission handles; additive protocol 1.4 fields/RPCs; durable acquire-before-release roots and pins. | Contract recorded; VIS-04/VIS-13 implement it |
 | **D04** | Runtime packaging/release owner | Delivery of renderer/decoder runtime assets, dependency/license closure, package size ceiling or separately verified runtime artifact choice, and offline installation expectations. No scene/model data in the runtime tarball. | VIS-15c; constraints recorded in VIS-01 |
 | **D05** | Repository owner (interim baseline); applicable legal/source owner for grants | **Resolved baseline:** only the configured local operator registry is trusted; permissions intersect through ancestry; unknown/revoked/expired sources and ungranted Google-derived operations fail closed. | Baseline recorded; VIS-04 enforces it and every GOOG activation needs its source owner |
@@ -1521,10 +1524,9 @@ requirements with silent fallback or unsupported claims.
 
 ## Progress and acceptance ledger
 
-VIS-01 and VIS-12a are complete in the working tree; all other required core
-PRs remain **not started**. No commit or PR has been created for VIS-12a.
-Its accountable owner remains the repository owner under D01; implementation
-and local verification were performed by Codex.
+VIS-01, VIS-12a, and VIS-02 are complete in the working tree; all other
+required core PRs remain **not started**. VIS-12a landed at commit `e4f756a`.
+Its accountable owner remains the repository owner under D01.
 
 - [x] VIS-01 — contract helpers, docs, additive protocol declarations, owned
   fixtures, identity expectations, and legacy compatibility vectors. Runtime
@@ -1570,10 +1572,49 @@ and local verification were performed by Codex.
     remains an independent legacy simulator-contract baseline. Kernel-safe
     import checks pass in the full suite.
   Selected PBR and disabled visual-selection relationships have contract-only
-  coverage; provider activation and real selected-asset G-HASH evidence belong
-  to VIS-02/VIS-12b. Environment v3 rebind/transaction G-MIGRATION cases remain
-  with VIS-03. Full F01/F06 closure and later visual/hardware gates remain open.
-- [ ] VIS-02
+  coverage; provider dispatch is implemented in VIS-02, while real selected-asset
+  G-HASH evidence belongs to VIS-12b. Environment v3 rebind/transaction
+  G-MIGRATION cases remain with VIS-03. Full F01/F06 closure and later
+  visual/hardware gates remain open.
+- [x] VIS-02 — kernel-safe `RenderSceneProviderRegistry` keyed by exact provider
+  ID and positive integer version. `canonical-analytic@1` is runtime-available;
+  `canonical-analytic@2` and `pbr-mesh@1` are known but unavailable, with no
+  analytic fallback. New cameras author
+  `canonical-analytic@1` / `measured-rgba-analytic-oracle@1`; absent `render`
+  blocks remain valid as the legacy analytic alias during resolution only.
+  Explicit selections must match the persisted render-scene provider.
+  GPU backend v1 identity, capability advertisement, selection, and config hash
+  are unchanged; GPU backend v2 is exported as an unavailable semantic
+  declaration and rejected at runtime. Manifest v11, protocol 1.3, generated
+  bindings, and VIS-12a identity projection are unchanged.
+  Local acceptance evidence:
+  - [Provider dispatch tests](../tests/render-scene-provider.test.js),
+    [identity tests](../tests/visual-identity.test.js),
+    [sensor registry](../tests/sensor-type-registry.test.js),
+    [run manifests](../tests/run-manifest.test.js), and
+    [visual-layer contracts](../tests/visual-layer.test.js) cover malformed and
+    duplicate declarations, unknown IDs/versions, unavailable providers, mixed
+    enabled cameras, disabled-camera exclusion, legacy absence preservation,
+    explicit round-trip, strict product booleans, unknown products, bundle
+    match/mismatch, byte-first integrity, calibration/import/export, and
+    disabled-versus-enabled identity.
+  - Explicit-camera v11 vectors are recorded in
+    [explicit-camera.v2.json](../tests/fixtures/visual-layer/explicit-camera.v2.json)
+    without replacing legacy v10 or VIS-12a
+    [world-bound-state.v2.json](../tests/fixtures/visual-layer/world-bound-state.v2.json)
+    vectors. Built-in default cameras keep the existing analytic scene provider
+    identity while changing resolved/semantic/episode hashes because enabled
+    render selections are already semantic.
+  - Only `canonical-analytic@1` and GPU backend v1
+    (`cdbfea7d5698356687ca5820a6d54c932a815f199eb8a2b405b94fbe8183a5c1`) remain
+    runtime-capable.
+  - Focused provider, identity, sensor-registry, run-manifest, and visual-layer
+    suites passed 46/46 with no skips. `npm run lint` completed with zero errors
+    and two pre-existing warnings. `npm test` passed 679/681 with two declared
+    hardware GPU skips. `npm run test:headless` passed 87/87.
+    `npm run test:gpu-sensors` passed 8/10 with the same two hardware skips.
+    `npm run test:python` passed 56/56. `npm run fixtures:headless` produced no
+    characterization delta.
 - [ ] VIS-03
 - [ ] VIS-04
 - [ ] VIS-06a
@@ -1730,6 +1771,51 @@ use the shared protocol constant. Asset-admission profiles remain empty.
 
 The scoped G-HASH/G-MIGRATION evidence above passes. No existing golden or
 action-tape characterization value changed. This independently mergeable
-working-tree change enables identity compatibility only; VIS-02 is next.
-VIS-03, VIS-12b, VIS-13, VIS-15, and VIS-17 retain their unimplemented
-environment, selected-visual, packaging, rendering, and hardware obligations.
+working-tree change enables identity compatibility only. VIS-03, VIS-12b,
+VIS-13, VIS-15, and VIS-17 retain their unimplemented environment,
+selected-visual, packaging, rendering, and hardware obligations.
+
+### 2026-09-06 — Implement VIS-02 provider dispatch and capability validation
+
+Replace VIS-12a's temporary explicit-render guards with a kernel-safe registry
+keyed by exact provider ID and positive integer version. Register
+`canonical-analytic@1` as available and `canonical-analytic@2` / `pbr-mesh@1`
+as known but unavailable. Unknown ID, unknown version, and known-but-unavailable
+errors are distinct; explicit selections never fall back to analytic.
+
+New cameras author `canonical-analytic@1` with
+`measured-rgba-analytic-oracle@1`. Absent `render` blocks on pre-VIS-02
+manifests, including v11 inputs, remain valid and alias to the legacy analytic
+provider only during resolution. Render selection survives normalization,
+duplication, raw JSON, calibration bundles, import, and export. Provider-profile
+rules apply to `rgb`, `cameraInfo`, `depth`, `semantic`, and `instance`;
+detection, lane, traffic-control, and diagnostic products stay separately
+routed. Malformed profiles, non-boolean flags, unknown products, unsupported
+rendered products, and mixed enabled-camera providers are rejected. Disabled
+cameras are ignored for compatibility aggregation.
+
+Structurally valid unavailable selections may be stored. Resolution, render-scene
+creation, bundle execution verification, and headless preparation reject them.
+Enabled-camera selection is passed into render-scene creation and compared with
+`renderScene.description.provider` during bundle verification. Byte-first
+integrity and exact received v10/v11 documents are unchanged.
+
+GPU backend v1 constants, capability advertisement, selection, and configuration
+hash stay locked. GPU backend v2 is a separate unavailable semantic declaration
+for later provider/product routing and is rejected by runtime capability
+validation. Manifest version, protocol schema, generated bindings, and identity
+projection are unchanged.
+
+Add explicit-camera v11 vectors in
+[explicit-camera.v2.json](../tests/fixtures/visual-layer/explicit-camera.v2.json)
+without replacing legacy v10 or VIS-12a goldens:
+
+- `renderSceneHash` `6e828677f59fdae0d5f9b29c6de049486df54b2e8177b1ee0b3cbe9dff17a311`
+- `resolvedHash` `81d55d940ca8b58d7183e22980cd704853e07898d7bac0d8448ad83f73206128`
+- `simulationSemanticHash` `a36789c0bb5e3896e82f18b45f1ef7e6b3161bad4491e7a04723e35ce618ad78`
+- `browserEpisodeHash` `c9314189c80e5cba3168b5a87c9c14ceb49afde0c933c944623105ed54ee88a2`
+- `headlessEpisodeHash` `a81f1a6d131a8b6b4b62505ae049d48f76d25fb97649d00783109de31ce9d60d`
+
+Only `canonical-analytic@1` and GPU backend v1 remain runtime-capable. PBR
+materialization, corrected analytic rendering, visual-asset packaging, and GPU
+backend v2 activation remain later VIS work. VIS-03 is next.
