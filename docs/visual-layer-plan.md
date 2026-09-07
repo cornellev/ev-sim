@@ -25,7 +25,7 @@ a VIS, GOOG, or GS PR changes a contract, hash, gate, or milestone status.
 
 ## Status and release verdict
 
-- Next milestone: **VIS-06a — not started**. VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, VIS-05a, and VIS-05b are implemented.
+- Next milestone: **VIS-07 — bake catalog and provider job contract**. VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, VIS-05a, VIS-05b, VIS-06a, and VIS-06b are implemented.
 - Review verdict: **NO-GO for the original ordering and for claiming visual
   runtime support.** The five Blocker findings below require implementation
   and evidence. This revision supplies the corrected handoff; editing the
@@ -33,15 +33,16 @@ a VIS, GOOG, or GS PR changes a contract, hash, gate, or milestone status.
 - Core assumption: **Google approval, Google-derived assets, Gaussian
   splatting, and a model service are unavailable.**
 - Default implementation/review reasoning level: **Extra High**.
-- Last updated: **2026-09-06 — VIS-05b bounded residency and NVIDIA scale prototype implemented**.
-- VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, VIS-05a, and VIS-05b acceptance evidence is recorded in
+- Last updated: **2026-09-07 — VIS-06b aligned capture products implemented**.
+- VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, VIS-05a, VIS-05b, VIS-06a, and VIS-06b acceptance evidence is recorded in
   the progress ledger and decision log. Protocol 1.3 advertises `world-bound@2`.
   Only `canonical-analytic@1` and GPU sensor backend v1 remain runtime-capable;
   no visual renderer or package-admission capability is advertised. Environment
   v3 references may include `accessHash`. Preview materialization is display-only
   and does not enable `pbr-mesh@1`. Admission profiles stay empty. Advertised
   D06 hardware reports remain required from protected x64/Orin/Thor runners
-  before G-SCALE is closed on those stacks.
+  before G-SCALE is closed on those stacks. VIS-06b closes F08 and
+  G-GBUFFER; later non-capture G-RIGHTS boundaries remain open.
 
 The owned/synthetic-asset core must independently deliver author/import →
 preview → no-model bake → atomic promotion → reload → portable package →
@@ -53,7 +54,7 @@ may improve appearance, but cannot be prerequisites for this path.
 Original VIS numbers remain workstream identifiers. Suffixes below identify
 actual PRs; completing one suffix does not complete its entire workstream.
 All required entries except VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, VIS-05a,
-and VIS-05b remain unstarted.
+VIS-05b, VIS-06a, and VIS-06b remain unstarted.
 
 | Workstream | Required core PRs | Optional enrichment |
 | --- | --- | --- |
@@ -919,7 +920,7 @@ validation through an alternative URL/path. No automatic GC is required.
 
 ### VIS-06a — Measured-scene isolation and calibrated projection
 
-**Depends on:** VIS-01, VIS-02, VIS-12a.
+**Depends on:** VIS-01, VIS-02, VIS-12a. **Status:** implemented.
 
 Establish scene ownership and a planned shared
 `app/3d/environment/visual/VisualCapturePipeline.js` calibration core.
@@ -929,7 +930,11 @@ Characterize [BakeView.js](../app/3d/environment/visualization/BakeView.js),
 [PooledGpuRenderer.js](../server/headless/PooledGpuRenderer.js).
 Add versioned K-to-projection/frame math and immutable capture inputs;
 preserve legacy paths and explicitly prevent new preview objects from
-entering them.
+entering them. Implemented as strict
+`cev-sim.visual-camera-calibration@1`, immutable
+`cev-sim.visual-capture-input@1`, and owned generation-stamped capture scene
+roles. Corrected browser, bake, and headless adapters are explicit opt-ins;
+provider/backend activation remains later work.
 
 **Merge gate:** G-ISOLATION and G-CALIBRATION independent geometric vectors.
 Shared math imports headlessly; no Google/model/splat dependency. This PR
@@ -1520,7 +1525,7 @@ person and commit their decision/evidence before the specified gate.
 | ID | Accountable role | Decision required | Due before |
 | --- | --- | --- | --- |
 | **D01** | Repository owner (interim); simulation + Python/protocol implementers | **Implemented in VIS-12a:** manifest v11, `world-bound@2`, semantic/episode v2, protocol 1.3; preserve bundle v1 and current analytic execution. Nested lock/profile and JS/Python byte/episode vectors pass. | Scoped G-HASH/G-MIGRATION evidence recorded below; VIS-12b retains selected-visual cases |
-| **D02** | Repository owner (interim); rendering + perception implementers | **Implemented in VIS-02:** provider ID/version registry, `measured-rgba-analytic-oracle@1` product profile, new-camera `canonical-analytic@1` defaults, and strict camera product/profile validation. `canonical-analytic@2` and `pbr-mesh@1` stay known but unavailable. | Contract recorded in VIS-01; VIS-06a still owns calibrated capture math |
+| **D02** | Repository owner (interim); rendering + perception implementers | **Implemented in VIS-02 and VIS-06a:** provider ID/version registry, `measured-rgba-analytic-oracle@1` product profile, new-camera `canonical-analytic@1` defaults, strict camera product/profile validation, and the versioned calibrated-capture core. `canonical-analytic@2` and `pbr-mesh@1` stay known but unavailable. | Contract and calibration evidence recorded; VIS-14/VIS-15 retain provider/backend activation |
 | **D03** | Repository owner (interim); storage + protocol implementers | **Resolved for VIS-01; storage implemented in VIS-04:** deterministic uncompressed USTAR and fixed limits; separate exact byte digests; same-host opaque admission handles; additive protocol 1.4 fields/RPCs; durable acquire-before-release roots and pins. VIS-04 stores immutable bytes, source-bound uses, quotas, staging recovery, and internal roots/pins. Protocol 1.4 and package admission remain VIS-13. | VIS-04 storage evidence recorded; VIS-13 retains package/admission |
 | **D04** | Runtime packaging/release owner | Delivery of renderer/decoder runtime assets, dependency/license closure, package size ceiling or separately verified runtime artifact choice, and offline installation expectations. No scene/model data in the runtime tarball. | VIS-15c; constraints recorded in VIS-01 |
 | **D05** | Repository owner (interim baseline); applicable legal/source owner for grants | **Resolved baseline; ingestion enforced in VIS-04:** only the configured local operator registry is trusted; permissions intersect through ancestry; unknown/revoked/expired sources and ungranted Google-derived operations fail closed. VIS-04 loads the operator file with no mutation API and re-evaluates grants at upload, content access, and root/pin acquisition. | VIS-04 ingestion evidence recorded; every GOOG activation still needs its source owner |
@@ -1536,8 +1541,9 @@ requirements with silent fallback or unsupported claims.
 
 ## Progress and acceptance ledger
 
-VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, and VIS-05a are complete in the working tree;
-all other required core PRs remain **not started**. VIS-12a landed at commit
+VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, VIS-05a, VIS-05b, and VIS-06a are
+complete in the working tree; all other required core PRs remain **not
+started**. VIS-12a landed at commit
 `e4f756a`. Its accountable owner remains the repository owner under D01.
 
 - [x] VIS-01 — contract helpers, docs, additive protocol declarations, owned
@@ -1791,7 +1797,19 @@ all other required core PRs remain **not started**. VIS-12a landed at commit
     hardware GPU skips. `npm run test:headless` passed 87/87.
     `npm run build` succeeded. `npm run fixtures:headless` produced no
     characterization delta.
-- [ ] VIS-06a
+- [x] VIS-06a — Measured-scene isolation and calibrated projection
+  (2026-09-07). Added the headless-safe calibration/capture core, exact
+  asymmetric K projection, REP-103/intrinsic-XYZ pose snapshots, top-left row
+  normalization, strict five/eight-coefficient Brown-Conrady mapping with
+  validity, zero-plus-validity axial depth, and owned
+  `measured-appearance`/`analytic-truth`/`bake-snapshot` scene handles.
+  `BakeView`, `ManifestCamera`/`CameraRenderProducts`, bake projection
+  consumers, and `PooledGpuRenderer` have an explicit
+  `calibrated-projection@1` path. `legacy-fov@1`, manifests, hashes,
+  `canonical-analytic@1`, GPU backend v1, and capability advertisement are
+  unchanged; corrected providers/backends stay unavailable. Independent
+  vectors and the real browser isolation gate pass. See the VIS-06a decision
+  log for exact evidence. VIS-06b is next.
 - [x] VIS-05b — Bounded residency and NVIDIA scale prototype (2026-09-06).
   Hashed `cev-sim.visual-lod-policy@1` freezes `[0, 80, 200]` m bands for every
   D06 profile; memory pressure cannot coarsen LOD. Identity hashes are
@@ -1802,7 +1820,13 @@ all other required core PRs remain **not started**. VIS-12a landed at commit
   hardware reports remain required from protected runners before G-SCALE is
   closed on those stacks; F14 stays open. `pbr-mesh@1` stays disabled.
   See the VIS-05b decision-log entry for local counts.
-- [ ] VIS-06b
+- [x] VIS-06b — Aligned capture products (2026-09-07). Added the internal
+  `cev-sim.visual-capture-pass-set@1`, canonical descriptor catalogs and
+  bindings, source-use rights preflight, aligned visual G-buffer proxies, and
+  distinct analytic-truth products. The corrected BakeView and camera entry
+  points are opt-in and atomic; legacy capture remains unchanged. Real WebGL2
+  G-GBUFFER coverage and fault/rights contract tests pass. See the VIS-06b
+  decision-log entry for exact evidence. VIS-07 is next.
 - [ ] VIS-07
 - [ ] VIS-08
 - [ ] VIS-09
@@ -2142,5 +2166,97 @@ succeeded. `npm run fixtures:headless` produced no characterization delta.
 This workstation is not an x64 NVIDIA, AGX Orin, or AGX Thor runner, so those
 hardware reports are not recorded here.
 
+### 2026-09-07 — Implement VIS-06a measured-scene isolation and calibrated projection
 
+Add Three/DOM-free `VisualCapturePipeline.js` with strict
+`cev-sim.visual-camera-calibration@1` and immutable
+`cev-sim.visual-capture-input@1`. Freeze top-left integer pixel centers,
+authored unequal/off-center K, exact asymmetric frustum equations,
+column-major OpenGL/Three matrices, REP-103 camera-link/optical conversion,
+intrinsic XYZ rotations, and non-negative integer-nanosecond capture poses.
+Capture inputs freeze calibration, projection, view/world pose, scene role,
+scene generation, optional description hash, and timestamp before submission.
 
+Accept only `none`, five-coefficient Brown-Conrady, and eight-coefficient
+rational Brown-Conrady in the corrected contract. Reject non-finite values,
+wrong lengths/models, singular rational denominators, and non-convergent
+inverse mapping. Corrected inverse warps return zero outside the source plus a
+shared Uint8 validity mask; RGB is bilinear while depth/labels are nearest.
+Axial optical depth is zero-plus-validity and remains distinct from off-axis
+ray range. Move legacy distortion implementations into the shared module and
+re-export their historical names from `CameraRenderProducts.js`.
+
+Introduce owned capture handles with `measured-appearance`, `analytic-truth`,
+and `bake-snapshot` roles. Corrected display/preview capture is rejected and
+deliberate recreation increments generation. Add explicit corrected adapters
+to `BakeView`, `ManifestCamera`/`CameraRenderProducts`, bake
+projection/unprojection consumers, and `PooledGpuRenderer`. Corrected Three
+cameras receive the shared matrix; Chromium receives the immutable
+view-projection input and returns top-left rows. Default legacy FOV,
+framebuffer orientation, request shapes, bake/vector behavior, provider
+selection, manifests, calibration bundles, hashes, protocol, and capability
+advertisements are unchanged.
+
+Independent committed geometric vectors cover unequal focal lengths,
+off-center principal points, odd/even dimensions, clipping, translated/rotated
+poses, and readback orientation. The focused calibration/isolation/bake/
+perception/GPU run passed 79/81 with only the two declared hardware GPU skips;
+the calibration suite passed 11/11. A real Chromium WebGL2 isolation case
+passed 1/1 while preview assets, sky/exposure, materials, visibility, active
+environment, and bake overlays changed around an in-flight owned capture.
+`npm run lint` completed with zero errors and two pre-existing warnings.
+`npm test` passed 759/761 with the two declared hardware skips.
+`npm run test:headless` passed 87/87. `npm run build` succeeded.
+`npm run fixtures:headless` produced no characterization delta.
+
+No G-buffer, resolved-provider materialization, PBR execution, package
+admission, VIS-14/VIS-15 routing, Google, model-service, splat, protobuf, or
+Python change is included. `canonical-analytic@2`, `pbr-mesh@1`, and GPU
+backend v2 remain unavailable. VIS-06b is next.
+
+### 2026-09-07 — Implement VIS-06b aligned capture products
+
+Extend the Three/DOM-free capture core with strict
+`cev-sim.visual-capture-pass-set@1` visual-appearance and analytic-oracle
+families. Each family carries its own VIS-06a input; calibration, pose,
+timestamp, distortion, and top-left orientation must agree while scene roles
+remain distinct. Visual bindings name verified descriptor renderables and
+material slots. UTF-8-sorted object/material catalogs reserve zero for
+unknown/unbound surfaces and assign `1..N`; truth bindings explicitly carry
+semantic and instance IDs. Numeric serialization is little-endian. Invalid and
+no-hit samples are zero with validity zero.
+
+Add `AlignedCaptureProducts.js` beside the shared contract. It builds
+exception-safe proxy scenes that share read-only geometry and approved alpha
+textures, renders every visible surface for depth testing, and never derives
+identity from names, `extras`, or `userData`. Primitive geometric normals are
+reported in simulator world coordinates without normal maps or view-facing
+flips. OPAQUE/MASK alpha inputs are shared exactly with beauty; unsupported
+blend/transmission/volume/line/point/sprite/skin/morph/custom content fails
+before rendering. Frontmost object IDs drive target masks. Analytic products
+come only from a distinct `analytic-truth` handle.
+
+Corrected measured capture revalidates `display` and
+`machine-interpretation`; corrected bake capture also requests `derivatives`.
+Rights denial, allocation/render/readback failure, cancellation, and context
+loss return no partial result, restore renderer/camera/scene/material state,
+and dispose temporary targets and proxy materials. `BakeView` and
+`CameraRenderProducts` expose new asynchronous `captureAlignedProducts()`
+entry points. Existing `capturePasses()`, `captureFrame()`, and legacy camera
+RGB/depth/semantic/instance paths are unchanged until their owning milestones.
+
+F08 and G-GBUFFER are closed. This closes only the capture-boundary portion of
+G-RIGHTS. Persistent bake-job adoption belongs to VIS-07, and browser/headless
+provider routing belongs to VIS-14/VIS-15. Manifests, protobuf, hashes,
+provider identities, advertised capabilities, Python, Google, model-service,
+and splat behavior are unchanged. `canonical-analytic@1` and GPU backend v1
+remain the only runtime path; `canonical-analytic@2`, `pbr-mesh@1`, and GPU
+backend v2 remain unavailable. VIS-07 is next.
+
+Local acceptance: focused capture/calibration/bake/perception/visual-layer
+suites passed 59/59 with no skips. The raw-product and actual Three-adapter
+Chromium WebGL2 G-GBUFFER gates passed 2/2. `npm run lint` completed with zero
+errors and two pre-existing warnings. `npm test` passed 767/769 with the two
+declared hardware GPU skips.
+`npm run test:headless` passed 87/87. `npm run build` succeeded.
+`npm run fixtures:headless` produced no characterization delta.

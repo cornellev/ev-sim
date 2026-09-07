@@ -7,6 +7,18 @@ import { passFileRole } from "./BakePass";
 import { buildSensorRotationMatrix } from "./LidarSplatProjector";
 import { withPixelPackBufferUnbound } from "../../util/glReadback.js";
 import { rgbaBufferLength } from "./BakeCaptureMemory.js";
+import {
+    applyProjectionToThreeCamera,
+    assertOwnedCaptureScene,
+    CORRECTED_VISUAL_CAPTURE_MODE,
+    createVisualCameraCalibration,
+    createVisualCaptureInput,
+    createVisualCapturePassSet,
+    LEGACY_VISUAL_CAPTURE_MODE,
+    normalizeImageRows,
+    VISUAL_CAPTURE_PASS_FAMILIES,
+} from "../visual/VisualCapturePipeline.js";
+import { AlignedCaptureProducts } from "../visual/AlignedCaptureProducts.js";
 
 /**
  * @param {THREE.Object3D} threeObject
@@ -104,6 +116,9 @@ export class BakeView {
             maxFramesPerChannel = 0,
             includeTags = [],
             excludeTags = [],
+            captureMode = LEGACY_VISUAL_CAPTURE_MODE,
+            captureSceneHandle = null,
+            authorizeSourceUse = null,
         } = settings;
 
         const cameraWidth = camera.width ?? 1920;
@@ -135,6 +150,31 @@ export class BakeView {
             near: camera.near ?? 0.1,
             far: camera.far ?? Math.max(this.range, 500),
         };
+        this.captureMode = captureMode;
+        this.captureSceneHandle = captureSceneHandle;
+        this.authorizeSourceUse = authorizeSourceUse;
+        this.visualCalibration = null;
+        this.lastCaptureInput = null;
+        if (captureMode === CORRECTED_VISUAL_CAPTURE_MODE) {
+            const fovRad = THREE.MathUtils.degToRad(cameraVerticalFov);
+            const defaultFocal = (cameraHeight / 2) / Math.tan(fovRad / 2);
+            this.visualCalibration = createVisualCameraCalibration({
+                width: cameraWidth,
+                height: cameraHeight,
+                intrinsics: {
+                    fx: camera.intrinsics?.fx ?? defaultFocal,
+                    fy: camera.intrinsics?.fy ?? defaultFocal,
+                    cx: camera.intrinsics?.cx ?? (cameraWidth - 1) / 2,
+                    cy: camera.intrinsics?.cy ?? (cameraHeight - 1) / 2,
+                },
+                near: this.cameraSettings.near,
+                far: this.cameraSettings.far,
+                distortionModel: camera.distortionModel ?? "none",
+                distortion: camera.distortion ?? [],
+            });
+        } else if (captureMode !== LEGACY_VISUAL_CAPTURE_MODE) {
+            throw new Error(`Unsupported bake capture mode "${captureMode}".`);
+        }
         this._cameraBufferLength = rgbaBufferLength(cameraWidth, cameraHeight);
 
         this.channels = {
@@ -219,7 +259,14 @@ export class BakeView {
      * @param {{ scene: THREE.Scene, renderer: THREE.WebGLRenderer, data: import("../data/Data").Data }} context
      */
     setup({ scene, renderer, data }) {
-        this.scene = scene;
+        if (this.captureMode === CORRECTED_VISUAL_CAPTURE_MODE) {
+            this.captureSceneHandle = assertOwnedCaptureScene(this.captureSceneHandle, {
+                role: "bake-snapshot",
+            });
+            this.scene = this.captureSceneHandle.scene;
+        } else {
+            this.scene = scene;
+        }
         this.renderer = renderer;
         this.data = data;
 
@@ -233,7 +280,11 @@ export class BakeView {
         this.sensorCamera.position.copy(this.getPosition());
         this.sensorCamera.rotation.copy(this.getRotation());
         this.sensorCamera.updateMatrixWorld(true);
-        scene.add(this.sensorCamera);
+        if (this.captureMode === CORRECTED_VISUAL_CAPTURE_MODE) {
+            applyProjectionToThreeCamera(this.sensorCamera, this.visualCalibration);
+        } else {
+            scene.add(this.sensorCamera);
+        }
 
         this.cameraRenderTarget = new THREE.WebGLRenderTarget(
             this.cameraSettings.width,
@@ -457,7 +508,17 @@ export class BakeView {
             this.renderer.setRenderTarget(previousRenderTarget);
         }
 
-        return new Uint8Array(this.cameraPixelBuffer);
+        const copy = new Uint8Array(this.cameraPixelBuffer);
+        if (this.captureMode === CORRECTED_VISUAL_CAPTURE_MODE) {
+            return normalizeImageRows(
+                copy,
+                this.cameraSettings.width,
+                this.cameraSettings.height,
+                4,
+                { inputRows: "bottom-left" },
+            );
+        }
+        return copy;
     }
 
     /**
@@ -617,6 +678,23 @@ export class BakeView {
      * @returns {Object}
      */
     getCameraIntrinsics() {
+        if (this.captureMode === CORRECTED_VISUAL_CAPTURE_MODE) {
+            const { width, height } = this.visualCalibration.image;
+            const { fx, fy, cx, cy } = this.visualCalibration.intrinsics;
+            return {
+                width,
+                height,
+                fov: this.cameraSettings.fov,
+                near: this.visualCalibration.clipping.near,
+                far: this.visualCalibration.clipping.far,
+                aspect: width / height,
+                fx,
+                fy,
+                cx,
+                cy,
+                visualCalibration: this.visualCalibration,
+            };
+        }
         const aspect = this.cameraSettings.width / Math.max(1, this.cameraSettings.height);
         const fovRad = THREE.MathUtils.degToRad(this.cameraSettings.fov);
         const fy = (this.cameraSettings.height / 2) / Math.tan(fovRad / 2);
@@ -679,6 +757,21 @@ export class BakeView {
         this._captureInFlight = true;
         this.updateCameraPose();
 
+        if (this.captureMode === CORRECTED_VISUAL_CAPTURE_MODE) {
+            const captureTimeNs = Number.isSafeInteger(metadata.captureTimeNs)
+                ? metadata.captureTimeNs
+                : 0;
+            this.lastCaptureInput = createVisualCaptureInput({
+                calibration: this.visualCalibration,
+                pose: {
+                    matrixWorld: this.sensorCamera.matrixWorld.elements,
+                    quaternion: this.sensorCamera.quaternion,
+                },
+                sceneHandle: this.captureSceneHandle,
+                captureTimeNs,
+            });
+        }
+
         const position = this.getPosition();
         const rotation = this.getRotation();
         const frameMetadata = {
@@ -689,6 +782,7 @@ export class BakeView {
             rotation: { x: rotation.x, y: rotation.y, z: rotation.z },
             cameraIntrinsics: this.getCameraIntrinsics(),
             cameraExtrinsics: this.getCameraExtrinsics(),
+            ...(this.lastCaptureInput ? { visualCaptureInput: this.lastCaptureInput } : {}),
         };
 
         const lidarFrame = this._captureLidar();
@@ -812,6 +906,93 @@ export class BakeView {
         };
     }
 
+    /**
+     * VIS-06b opt-in aligned capture. The legacy capturePasses/captureFrame
+     * contract above remains the default until VIS-07 adopts the pass-set
+     * schema for persistent bake jobs.
+     */
+    async captureAlignedProducts({
+        captureTimeNs = 0,
+        products,
+        bindings,
+        sourceUseHashes,
+        renderables = new Map(),
+        analytic = null,
+        signal,
+    } = {}) {
+        if (this.captureMode !== CORRECTED_VISUAL_CAPTURE_MODE) {
+            throw new Error("Aligned products require calibrated-projection@1.");
+        }
+        if (!signal || typeof signal.aborted !== "boolean") {
+            throw new Error("Aligned bake capture requires an AbortSignal.");
+        }
+        if (!Array.isArray(bindings) || !Array.isArray(sourceUseHashes)) {
+            throw new Error("Aligned bake capture requires explicit bindings and sourceUseHashes arrays.");
+        }
+        if (this._captureInFlight) return null;
+        if (!this.sensorCamera || !this.renderer || !this.captureSceneHandle) return null;
+
+        this._captureInFlight = true;
+        let aligned = null;
+        try {
+            this.updateCameraPose();
+            const pose = {
+                matrixWorld: this.sensorCamera.matrixWorld.elements,
+                quaternion: this.sensorCamera.quaternion,
+            };
+            const visualInput = createVisualCaptureInput({
+                calibration: this.visualCalibration,
+                pose,
+                sceneHandle: this.captureSceneHandle,
+                captureTimeNs,
+            });
+            this.lastCaptureInput = visualInput;
+            const visualPassSet = createVisualCapturePassSet({
+                family: VISUAL_CAPTURE_PASS_FAMILIES.visual,
+                captureInput: visualInput,
+                products,
+                bindings,
+                sourceUseHashes,
+            });
+            let analyticPassSet = null;
+            if (analytic) {
+                const analyticHandle = assertOwnedCaptureScene(analytic.sceneHandle, { role: "analytic-truth" });
+                if (!Array.isArray(analytic.bindings)) {
+                    throw new Error("Analytic capture requires explicit truth bindings.");
+                }
+                analyticPassSet = createVisualCapturePassSet({
+                    family: VISUAL_CAPTURE_PASS_FAMILIES.analytic,
+                    captureInput: createVisualCaptureInput({
+                        calibration: this.visualCalibration,
+                        pose,
+                        sceneHandle: analyticHandle,
+                        captureTimeNs,
+                    }),
+                    products: analytic.products,
+                    bindings: analytic.bindings,
+                    sourceUseHashes: [],
+                });
+            }
+            aligned = new AlignedCaptureProducts({
+                renderer: this.renderer,
+                camera: this.sensorCamera,
+                visualSceneHandle: this.captureSceneHandle,
+                analyticSceneHandle: analytic?.sceneHandle ?? null,
+                authorizeSourceUse: this.authorizeSourceUse,
+            });
+            return await aligned.capture({
+                visualPassSet,
+                visualRenderables: renderables,
+                analyticPassSet,
+                analyticRenderables: analytic?.renderables ?? new Map(),
+                signal,
+            });
+        } finally {
+            aligned?.dispose();
+            this._captureInFlight = false;
+        }
+    }
+
     _recordFrame(channelName, frame) {
         const bucket = this.recording[channelName];
         if (!bucket) return;
@@ -862,6 +1043,7 @@ export class BakeView {
         this._depthMaterial?.dispose?.();
 
         this.sensorCamera = null;
+        this.lastCaptureInput = null;
         this.cameraRenderTarget = null;
         this.cameraPixelBuffer = null;
         this.buff = null;
@@ -870,6 +1052,7 @@ export class BakeView {
         this.scene = null;
         this.renderer = null;
         this.data = null;
+        this.authorizeSourceUse = null;
         this._captureInFlight = false;
 
         for (const channelName of Object.keys(this.recording)) {

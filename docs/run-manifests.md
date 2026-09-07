@@ -104,6 +104,16 @@ Manifest sensors schedule captures on integer steps. Message headers contain cap
 
 Camera `calibration.products` and LiDAR `calibration.products` gate expensive oracle render products. Frame dropout drops the entire capture bundle coherently; LiDAR point dropout applies only to the measured cloud.
 
+VIS-06a introduces an internal, headless-safe
+`cev-sim.visual-camera-calibration@1` projection contract and immutable
+`cev-sim.visual-capture-input@1`. Corrected opt-in capture uses authored K,
+REP-103 camera-link/optical conversion, intrinsic XYZ rotation, column-major
+OpenGL matrices, integer-nanosecond pose sampling, and top-left integer pixel
+centers. This does not change run-manifest v11, calibration-bundle v2, any run
+or episode hash, provider selection, protocol, or capability advertisement.
+The existing FOV camera path remains the only active analytic/provider route
+until VIS-14/VIS-15.
+
 ### Localization sensor parameters (defaults)
 
 | Sensor | Rate | Key calibration | Units |

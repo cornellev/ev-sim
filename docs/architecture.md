@@ -252,6 +252,22 @@ identity, or episode identity. Visual descriptors are appearance resources bound
 to `worldHash`; their meshes never enter metric world, collision, LiDAR,
 object-registry, or oracle truth.
 
+VIS-06a adds `VisualCapturePipeline.js`, a Three/DOM-free calibration and
+capture-input seam shared by browser camera, bake, and headless Chromium
+adapters. It owns exact K-to-OpenGL projection, REP-103 optical conversion,
+integer-nanosecond pose snapshots, row normalization, strict Brown-Conrady
+warping, axial-depth decoding, and generation-stamped capture-scene handles.
+Corrected adapters are opt-in as `calibrated-projection@1`; the active
+`canonical-analytic@1`, GPU backend v1, legacy FOV/readback/request behavior,
+manifests, hashes, and capabilities remain unchanged. VIS-06b adds aligned
+`cev-sim.visual-capture-pass-set@1` families and a Three.js proxy-pass adapter.
+Visual beauty/G-buffers use descriptor-backed bindings and source-use rights;
+analytic depth/labels use a distinct truth scene and explicit truth bindings.
+The opt-in corrected path is atomic and exception-safe, while legacy camera
+and bake entry points are unchanged. VIS-07 owns persistent bake-job adoption;
+VIS-14/VIS-15 own runtime provider routing. `pbr-mesh@1`, corrected GPU backend
+v2, manifests, hashes, protobuf, and advertised capabilities remain unchanged.
+
 ## External Integration
 
 cev-sim does not embed ROS. `app/3d/managers/ClientManager.js` creates a browser client from `app/client/Client.js`, syncs message definitions from the external orchestrator Types API, then connects to the orchestrator WebSocket.

@@ -78,6 +78,22 @@ Default chunk size is 20 meters. It is stored on the document and can differ per
 
 The bake harness (`BakeProgressOverlay`, modules under `app/3d/environment/visualization/`) renders environment visuals into textures and related outputs. Baking runs as a simulation module while active.
 
+VIS-06a adds an explicit `calibrated-projection@1` bake adapter. It requires
+an owned `bake-snapshot` scene, snapshots its generation, camera pose,
+calibration, and integer-nanosecond capture time, applies the shared asymmetric
+K projection, and normalizes corrected readbacks to top-left rows. The default
+`legacy-fov@1` bake path and existing vector/buffer conventions remain
+unchanged. VIS-06b adds the opt-in asynchronous `captureAlignedProducts()`
+path. It requires the owned `bake-snapshot`, explicit descriptor bindings,
+source-use hashes, and an abort signal. Beauty and every visual G-buffer see
+the same visible surfaces and OPAQUE/MASK alpha tests; no target visibility
+filter, forced hidden-object visibility, or road-material boost is applied.
+Target/building/tag masks are derived from the frontmost object-ID product so
+other surfaces remain occluders. Oracle products require a separate
+`analytic-truth` handle and explicit truth bindings. VIS-07 owns adoption by
+persistent bake jobs; `capturePasses()` and `captureFrame()` remain legacy
+defaults.
+
 Press `b` in the environment editor to start or stop a bake run when a harness is configured. See the bake tests under `tests/bake-*.test.js` for expected behavior around determinism, splats, and render bundles.
 
 ## How it connects to the rest of the app

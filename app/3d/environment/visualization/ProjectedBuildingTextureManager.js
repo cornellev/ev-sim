@@ -73,9 +73,10 @@ function cameraSampleForPoint(point, intrinsics, cameraMatrix, invCameraMatrix) 
 }
 
 function worldFromPixelDepth(px, py, depth, intrinsics, cameraMatrix, surfaceOffset = 0.02) {
+    const calibrated = Boolean(intrinsics.visualCalibration);
     const cameraPoint = new THREE.Vector3(
         ((px - intrinsics.cx) * depth) / intrinsics.fx,
-        ((py - intrinsics.cy) * depth) / intrinsics.fy,
+        (calibrated ? -1 : 1) * ((py - intrinsics.cy) * depth) / intrinsics.fy,
         -depth,
     );
     const world = cameraPoint.applyMatrix4(cameraMatrix);

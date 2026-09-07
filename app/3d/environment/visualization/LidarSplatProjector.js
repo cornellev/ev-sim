@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { projectWorldPoint } from "../visual/VisualCapturePipeline.js";
 
 const TAG_NAME_BY_ID = {
     0: "unknown",
@@ -280,6 +281,19 @@ export function activeBuildingAllowsPoint(activeBuildingId, attributedBuildingId
  */
 export function worldToPixel(world, intrinsics, matrixWorld) {
     if (!intrinsics || !matrixWorld?.length) return null;
+
+    if (intrinsics.visualCalibration) {
+        const projected = projectWorldPoint(
+            world,
+            intrinsics.visualCalibration,
+            { matrixWorld },
+        );
+        if (!projected.valid) return null;
+        return {
+            px: Math.round(projected.pixel.x),
+            py: Math.round(projected.pixel.y),
+        };
+    }
 
     const worldVec = world instanceof THREE.Vector3
         ? world

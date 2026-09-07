@@ -7,7 +7,11 @@ environment schema v3, server revisions, and an internal descriptor store.
 VIS-04 adds a source-aware immutable visual-asset CAS with validation, quotas,
 staging recovery, and internal root/pin primitives. VIS-05a adds immutable
 `cev-sim.visual-layer-access@1` sidecars and browser preview materialization
-for owned GLB/glTF and PNG/JPEG/KTX2. Photoreal `pbr-mesh@1` rendering,
+for owned GLB/glTF and PNG/JPEG/KTX2. VIS-06a adds the headless-safe
+`cev-sim.visual-camera-calibration@1` and immutable calibrated-capture seam.
+VIS-06b adds the internal `cev-sim.visual-capture-pass-set@1` contract and
+aligned visual/analytic capture adapter without activating a provider.
+Photoreal `pbr-mesh@1` rendering,
 corrected GPU backend v2, measured PBR cameras, and package admission remain
 unavailable.
 
@@ -29,6 +33,9 @@ become collision, route, LiDAR, registry, or oracle truth.
 | Corrected analytic scene | `canonical-analytic@2` | VIS-02 known/unavailable; runtime VIS-06/VIS-14/VIS-15 |
 | PBR scene | `pbr-mesh@1` | VIS-02 known/unavailable; runtime VIS-05/VIS-14/VIS-15 |
 | Corrected GPU sensor backend | `chromium-webgl2-rendered-sensors@2` | VIS-14/VIS-15 |
+| Visual camera calibration | `cev-sim.visual-camera-calibration@1` | VIS-06a internal opt-in; provider activation VIS-14/VIS-15 |
+| Immutable visual capture input | `cev-sim.visual-capture-input@1` | VIS-06a internal opt-in |
+| Aligned capture pass set | `cev-sim.visual-capture-pass-set@1` | VIS-06b internal opt-in; bake-job adoption VIS-07 |
 | Identity negotiation | Protocol 1.3 | VIS-12a |
 | Environment schema | 3 | VIS-03 |
 | Package admission | Protocol 1.4 | VIS-13b |
@@ -237,12 +244,36 @@ lengths and off-center principal points, with explicit near/far clipping. The
 coordinate and optical-frame conventions remain those in
 [run manifests](run-manifests.md).
 
+VIS-06a implements these rules in the Three/DOM-free
+`app/3d/environment/visual/VisualCapturePipeline.js`. For near plane `n`, the
+authored intrinsics produce the exact asymmetric frustum:
+
+```text
+left   = -(cx + 0.5) n / fx
+right  =  (width - cx - 0.5) n / fx
+top    =  (cy + 0.5) n / fy
+bottom = -(height - cy - 0.5) n / fy
+```
+
+Matrices use column-major OpenGL/Three layout. Capture poses use intrinsic XYZ
+rotation, REP-103 camera-link/optical conversion, and non-negative integer
+nanosecond timestamps. A `cev-sim.visual-capture-input@1` freezes calibration,
+projection, camera pose/view matrices, scene role/generation, and capture time
+before asynchronous submission.
+
 Supported distortion is `none`, five-coefficient Brown-Conrady
 `[k1,k2,p1,p2,k3]`, or eight-coefficient rational Brown-Conrady
 `[k1,k2,p1,p2,k3,k4,k5,k6]`. Output generation inverse-maps destination
 pixels with a bounded iteration count. Nonconvergence and samples outside the
-source image are invalid. RGB uses linear interpolation; depth, validity, and
-integer labels use nearest sampling to preserve discontinuities.
+source image are invalid. Beauty uses linear interpolation; all numeric, ID,
+confidence, and validity products use nearest sampling to preserve
+discontinuities.
+
+The strict corrected path rejects unsupported coefficient counts/models,
+non-finite coefficients, singular rational denominators, and non-convergent
+inverse mappings. Outside-image samples are zero with a shared Uint8 validity
+mask. The historical distortion helper names remain re-exported by
+`CameraRenderProducts.js` for legacy callers.
 
 | Product | Representation |
 | --- | --- |
@@ -251,14 +282,57 @@ integer labels use nearest sampling to preserve discontinuities.
 | Geometric normal | little-endian Float32 XYZ in world coordinates |
 | World position | little-endian Float32 XYZ in world meters |
 | Confidence | little-endian Float32 |
-| Semantic/material/instance IDs | little-endian Uint32 |
+| Object/material/semantic/instance IDs | little-endian Uint32 |
 | Invalid/no hit | zero values plus an explicit validity mask |
 
-Geometric G-buffer normals remain separate from shading normals. Beauty and
-visual G-buffers use identical geometry, visibility, alpha cutoff, calibration,
-and sample time. Analytic oracle passes use immutable truth twins. Preview,
-measured appearance, analytic truth, and frozen bake snapshots have separate
-scene ownership; imported `extras` or `userData` never register truth.
+`cev-sim.visual-capture-pass-set@1` has two disjoint families. The
+`visual-appearance` family contains beauty, axial depth, primitive geometric
+normal, object/material IDs, world position, confidence, and validity. The
+`analytic-oracle` family contains axial depth, semantic/instance IDs, and
+validity. Both families carry separate VIS-06a capture inputs with identical
+calibration, optical pose, capture timestamp, distortion, and top-left output
+rows. Their scene roles and handles remain distinct.
+
+Visual bindings name verified descriptor renderables, descriptor object keys,
+and material-slot keys. Truth bindings name verified analytic renderables and
+their semantic/instance IDs. Imported `extras`, object names, and mutable
+`userData` are never consulted. Object and material catalogs assign `1..N` by
+UTF-8-sorted descriptor identifiers; `0` is unknown/unbound. Visible unbound
+surfaces still occlude and have validity `1`, zero IDs, and confidence `0`.
+Exact bindings have confidence `1`. Selection masks are computed from the
+frontmost object-ID product, so non-target surfaces remain occluders.
+
+Geometric normals come from transformed primitive geometry in simulator world
+coordinates, do not sample normal maps, and are not flipped toward the view.
+Beauty and visual proxies share geometry, visibility, sidedness, and the exact
+base-alpha/alpha-map textures, transforms, opacity factor, and cutoff. The
+corrected path accepts only the existing OPAQUE/MASK profile; blend,
+transmission, volume, lines, points, sprites, skinning, morphing, displacement,
+custom shaders/hooks, and other surface-order-changing content fail before
+rendering. Analytic oracle passes use explicit immutable truth twins.
+
+Every visual pass set carries canonical source-use hashes. Measured capture
+requires `display` and `machine-interpretation`; bake capture additionally
+requires `derivatives`. A trusted closure validator rechecks all uses before
+render/readback. Failure, cancellation, or context loss publishes no partial
+family, restores renderer/camera/scene state, and disposes temporary proxy and
+target resources.
+
+Owned capture handles have only `measured-appearance`, `analytic-truth`, or
+`bake-snapshot` roles and a positive generation. Corrected camera capture
+rejects display/preview scenes. `BakeView`, `ManifestCamera` /
+`CameraRenderProducts`, and `PooledGpuRenderer` expose explicit
+`calibrated-projection@1` adapters: Three receives the shared projection
+matrix, headless Chromium receives the frozen view-projection input, corrected
+readbacks use top-left rows, and corrected bake projection/unprojection uses
+the same calibration. Their default path remains `legacy-fov@1`, including
+the old FOV projection, framebuffer orientation, request shapes, and bake
+behavior.
+
+This foundation does not activate a render provider or backend. Only
+`canonical-analytic@1` and GPU backend v1 are available. VIS-07 owns persistent
+bake-job adoption; VIS-14 and VIS-15 own resolved-provider browser/headless
+routing.
 
 VIS-05a materializes owned preview geometry in the display scene only.
 `VisualLayerMaterializer` verifies descriptor/access hashes, world bindings,

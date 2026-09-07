@@ -1,146 +1,32 @@
 import * as THREE from "three";
 
 import { perceptionMetadataFromObject } from "../../autonomy/PerceptionTruthIndex.js";
+import {
+    applyProjectionToThreeCamera,
+    assertOwnedCaptureScene,
+    assertVisualCameraCalibration,
+    CORRECTED_VISUAL_CAPTURE_MODE,
+    decodeAxialDepth,
+    distortNormalizedPoint,
+    distortPixel,
+    flipRows,
+    LEGACY_VISUAL_CAPTURE_MODE,
+    unpackRgbDepth,
+    undistortNormalizedPoint,
+    warpBrownConrady,
+} from "../environment/visual/VisualCapturePipeline.js";
+import { AlignedCaptureProducts } from "../environment/visual/AlignedCaptureProducts.js";
 import { isVisualPreviewObject } from "../environment/visual/VisualPreviewIsolation.js";
 import { getWebGL2Context, PixelPackSlot, withPixelPackBufferUnbound } from "../util/glReadback.js";
 
-function finite(value, fallback = 0) {
-    const number = Number(value);
-    return Number.isFinite(number) ? number : fallback;
-}
-
-export function distortNormalizedPoint(point, distortion = []) {
-    const x = finite(point?.x);
-    const y = finite(point?.y);
-    const [k1 = 0, k2 = 0, p1 = 0, p2 = 0, k3 = 0, k4 = 0, k5 = 0, k6 = 0] = distortion;
-    const r2 = x * x + y * y;
-    const r4 = r2 * r2;
-    const r6 = r4 * r2;
-    const radialNumerator = 1 + k1 * r2 + k2 * r4 + k3 * r6;
-    const radialDenominator = 1 + k4 * r2 + k5 * r4 + k6 * r6;
-    const radial = Math.abs(radialDenominator) > Number.EPSILON
-        ? radialNumerator / radialDenominator
-        : radialNumerator;
-    return {
-        x: x * radial + 2 * p1 * x * y + p2 * (r2 + 2 * x * x),
-        y: y * radial + p1 * (r2 + 2 * y * y) + 2 * p2 * x * y,
-    };
-}
-
-export function undistortNormalizedPoint(point, distortion = [], iterations = 8) {
-    const target = { x: finite(point?.x), y: finite(point?.y) };
-    let estimate = { ...target };
-    for (let index = 0; index < iterations; index += 1) {
-        const projected = distortNormalizedPoint(estimate, distortion);
-        estimate.x += target.x - projected.x;
-        estimate.y += target.y - projected.y;
-    }
-    return estimate;
-}
-
-export function distortPixel(point, intrinsics, distortion = []) {
-    const fx = finite(intrinsics?.fx, 1);
-    const fy = finite(intrinsics?.fy, 1);
-    const cx = finite(intrinsics?.cx);
-    const cy = finite(intrinsics?.cy);
-    const normalized = distortNormalizedPoint({
-        x: (finite(point?.x) - cx) / fx,
-        y: (finite(point?.y) - cy) / fy,
-    }, distortion);
-    return { x: normalized.x * fx + cx, y: normalized.y * fy + cy };
-}
-
-function sampleNearest(data, width, height, channels, x, y, channel) {
-    const sx = Math.max(0, Math.min(width - 1, Math.round(x)));
-    const sy = Math.max(0, Math.min(height - 1, Math.round(y)));
-    return data[(sy * width + sx) * channels + channel];
-}
-
-function sampleLinear(data, width, height, channels, x, y, channel) {
-    const x0 = Math.max(0, Math.min(width - 1, Math.floor(x)));
-    const y0 = Math.max(0, Math.min(height - 1, Math.floor(y)));
-    const x1 = Math.min(width - 1, x0 + 1);
-    const y1 = Math.min(height - 1, y0 + 1);
-    const tx = x - Math.floor(x);
-    const ty = y - Math.floor(y);
-    const a = data[(y0 * width + x0) * channels + channel];
-    const b = data[(y0 * width + x1) * channels + channel];
-    const c = data[(y1 * width + x0) * channels + channel];
-    const d = data[(y1 * width + x1) * channels + channel];
-    return (a * (1 - tx) + b * tx) * (1 - ty) + (c * (1 - tx) + d * tx) * ty;
-}
-
-/**
- * Applies a Brown-Conrady warp. Destination pixels are inverse-mapped so RGB
- * can interpolate while depth and integer labels remain discontinuity-safe.
- */
-export function warpBrownConrady({
-    data,
-    width,
-    height,
-    intrinsics,
-    distortion = [],
-    channels = 1,
-    interpolation = "nearest",
-    output = null,
-}) {
-    if (!data || distortion.every((value) => Number(value) === 0)) return data;
-    const dest = output && output.length >= data.length
-        ? output
-        : new data.constructor(data.length);
-    if (dest === data) {
-        throw new Error("warpBrownConrady requires a separate output buffer.");
-    }
-    dest.fill?.(0);
-    if (!dest.fill) {
-        for (let index = 0; index < dest.length; index += 1) dest[index] = 0;
-    }
-    const fx = finite(intrinsics?.fx, 1);
-    const fy = finite(intrinsics?.fy, 1);
-    const cx = finite(intrinsics?.cx);
-    const cy = finite(intrinsics?.cy);
-    const sampler = interpolation === "linear" ? sampleLinear : sampleNearest;
-    for (let y = 0; y < height; y += 1) {
-        for (let x = 0; x < width; x += 1) {
-            const sourceNormalized = undistortNormalizedPoint({
-                x: (x - cx) / fx,
-                y: (y - cy) / fy,
-            }, distortion);
-            const sourceX = sourceNormalized.x * fx + cx;
-            const sourceY = sourceNormalized.y * fy + cy;
-            if (sourceX < 0 || sourceX > width - 1 || sourceY < 0 || sourceY > height - 1) continue;
-            for (let channel = 0; channel < channels; channel += 1) {
-                const value = sampler(data, width, height, channels, sourceX, sourceY, channel);
-                dest[(y * width + x) * channels + channel] = interpolation === "linear"
-                    ? Math.round(value)
-                    : value;
-            }
-        }
-    }
-    return dest;
-}
-
-export function flipRows(data, width, height, channels = 1, output = new data.constructor(data.length)) {
-    const rowLength = width * channels;
-    if (output === data) {
-        throw new Error("flipRows requires a separate output buffer.");
-    }
-    for (let row = 0; row < height; row += 1) {
-        output.set(
-            data.subarray((height - row - 1) * rowLength, (height - row) * rowLength),
-            row * rowLength,
-        );
-    }
-    return output;
-}
-
-export function unpackRgbDepth(r, g, b, a) {
-    const downscale = 255 / 256;
-    return r * downscale / (256 ** 3)
-        + g * downscale / (256 ** 2)
-        + b * downscale / 256
-        + a * downscale;
-}
+export {
+    distortNormalizedPoint,
+    distortPixel,
+    flipRows,
+    unpackRgbDepth,
+    undistortNormalizedPoint,
+    warpBrownConrady,
+};
 
 export function rgbaDepthToMetric(rgba, width, height, near, far, {
     flipScratch = null,
@@ -231,23 +117,54 @@ function shouldExcludeFromSensorView(object, mode) {
 }
 
 export class CameraRenderProducts {
-    constructor({ renderer, scene, camera, width, height, near = 0.1, far = 200 } = {}) {
+    constructor({
+        renderer,
+        scene,
+        camera,
+        width,
+        height,
+        near = 0.1,
+        far = 200,
+        captureMode = LEGACY_VISUAL_CAPTURE_MODE,
+        calibration = null,
+        sceneHandle = null,
+        analyticSceneHandle = null,
+        authorizeSourceUse = null,
+    } = {}) {
         this.renderer = renderer;
-        this.scene = scene;
         this.camera = camera;
-        this.width = width;
-        this.height = height;
-        this.near = near;
-        this.far = far;
-        this.target = new THREE.WebGLRenderTarget(width, height, {
+        this.captureMode = captureMode;
+        this.calibration = null;
+        this.sceneHandle = null;
+        this.analyticSceneHandle = analyticSceneHandle;
+        this.authorizeSourceUse = authorizeSourceUse;
+        if (captureMode === CORRECTED_VISUAL_CAPTURE_MODE) {
+            this.calibration = assertVisualCameraCalibration(calibration);
+            this.sceneHandle = assertOwnedCaptureScene(sceneHandle, { role: "measured-appearance" });
+            this.scene = this.sceneHandle.scene;
+            this.width = this.calibration.image.width;
+            this.height = this.calibration.image.height;
+            this.near = this.calibration.clipping.near;
+            this.far = this.calibration.clipping.far;
+            applyProjectionToThreeCamera(this.camera, this.calibration);
+        } else if (captureMode === LEGACY_VISUAL_CAPTURE_MODE) {
+            this.scene = scene;
+            this.width = width;
+            this.height = height;
+            this.near = near;
+            this.far = far;
+        } else {
+            throw new Error(`Unsupported camera capture mode "${captureMode}".`);
+        }
+        this.target = new THREE.WebGLRenderTarget(this.width, this.height, {
             format: THREE.RGBAFormat,
             type: THREE.UnsignedByteType,
             depthBuffer: true,
             stencilBuffer: false,
         });
         this.target.texture.colorSpace = THREE.SRGBColorSpace;
-        this.pixelBuffer = new Uint8Array(width * height * 4);
-        this.flipBuffer = new Uint8Array(width * height * 4);
+        this.pixelBuffer = new Uint8Array(this.width * this.height * 4);
+        this.flipBuffer = new Uint8Array(this.width * this.height * 4);
         this.depthMaterial = new THREE.MeshDepthMaterial({
             depthPacking: THREE.RGBADepthPacking,
             side: THREE.DoubleSide,
@@ -256,10 +173,11 @@ export class CameraRenderProducts {
         this._slots = Object.create(null);
         this._inflight = null;
         this._asyncDisabled = false;
-        this._depthScratch = new Float32Array(width * height);
-        this._semanticScratch = new Uint16Array(width * height);
-        this._instanceScratch = new Uint32Array(width * height);
-        this._decodeFlipScratch = new Uint8Array(width * height * 4);
+        this._depthScratch = new Float32Array(this.width * this.height);
+        this._depthValidityScratch = new Uint8Array(this.width * this.height);
+        this._semanticScratch = new Uint16Array(this.width * this.height);
+        this._instanceScratch = new Uint32Array(this.width * this.height);
+        this._decodeFlipScratch = new Uint8Array(this.width * this.height * 4);
     }
 
     _ensureSlot(key) {
@@ -293,6 +211,9 @@ export class CameraRenderProducts {
     }
 
     _render({ mode = "rgb", pack = null } = {}) {
+        if (this.captureMode === CORRECTED_VISUAL_CAPTURE_MODE) {
+            assertOwnedCaptureScene(this.sceneHandle);
+        }
         const previousTarget = this.renderer.getRenderTarget();
         const previousBackground = this.scene.background;
         const previousColorSpace = this.target.texture.colorSpace;
@@ -315,7 +236,13 @@ export class CameraRenderProducts {
             } else {
                 this.target.texture.colorSpace = THREE.NoColorSpace;
                 this.scene.background = null;
-                this.renderer.setClearColor(0x000000, 0);
+                if (mode === "depth" && this.captureMode === CORRECTED_VISUAL_CAPTURE_MODE) {
+                    // RGBADepthPacking encodes the far plane as white. This
+                    // makes corrected no-hit pixels decode to zero + invalid.
+                    this.renderer.setClearColor(0xffffff, 1);
+                } else {
+                    this.renderer.setClearColor(0x000000, 0);
+                }
                 const usedMaterials = new Set();
                 this.scene.traverse((object) => {
                     if (shouldExcludeFromSensorView(object, mode) && object.visible) {
@@ -391,6 +318,15 @@ export class CameraRenderProducts {
     _decodeProduct(key, rgba) {
         if (key === "rgb") return flipRows(rgba, this.width, this.height, 4, this.flipBuffer);
         if (key === "depth") {
+            if (this.captureMode === CORRECTED_VISUAL_CAPTURE_MODE) {
+                return decodeAxialDepth({
+                    rgba,
+                    calibration: this.calibration,
+                    inputRows: "bottom-left",
+                    output: this._depthScratch,
+                    validity: this._depthValidityScratch,
+                }).data;
+            }
             return rgbaDepthToMetric(rgba, this.width, this.height, this.near, this.far, {
                 flipScratch: this._decodeFlipScratch,
                 output: this._depthScratch,
@@ -426,12 +362,18 @@ export class CameraRenderProducts {
         const result = {};
         for (const key of this._inflight) {
             result[key] = this._decodeProduct(key, this._slots[key].cpu);
+            if (key === "depth" && this.captureMode === CORRECTED_VISUAL_CAPTURE_MODE) {
+                result.depthValidity = this._depthValidityScratch;
+            }
         }
         this._inflight = null;
         return result;
     }
 
     submit(products = {}) {
+        if (this.captureMode === CORRECTED_VISUAL_CAPTURE_MODE) {
+            throw new Error("Corrected capture requires captureAlignedProducts() and explicit pass-family inputs.");
+        }
         if (this._inflight) return false;
         const keys = ["rgb", "depth", "semantic", "instance"].filter((key) => products[key]);
         if (keys.length === 0) return true;
@@ -466,15 +408,31 @@ export class CameraRenderProducts {
     }
 
     _captureSync(products = {}) {
+        if (this.captureMode === CORRECTED_VISUAL_CAPTURE_MODE) {
+            throw new Error("Corrected capture requires captureAlignedProducts() and explicit pass-family inputs.");
+        }
         const result = {};
         if (products.rgb) result.rgb = flipRows(this._render({ mode: "rgb" }), this.width, this.height, 4, this.flipBuffer);
         if (products.depth) {
-            result.depth = rgbaDepthToMetric(
-                this._render({ mode: "depth" }), this.width, this.height, this.near, this.far, {
-                    flipScratch: this._decodeFlipScratch,
+            const rgba = this._render({ mode: "depth" });
+            if (this.captureMode === CORRECTED_VISUAL_CAPTURE_MODE) {
+                const decoded = decodeAxialDepth({
+                    rgba,
+                    calibration: this.calibration,
+                    inputRows: "bottom-left",
                     output: this._depthScratch,
-                },
-            );
+                    validity: this._depthValidityScratch,
+                });
+                result.depth = decoded.data;
+                result.depthValidity = decoded.validity;
+            } else {
+                result.depth = rgbaDepthToMetric(
+                    rgba, this.width, this.height, this.near, this.far, {
+                        flipScratch: this._decodeFlipScratch,
+                        output: this._depthScratch,
+                    },
+                );
+            }
         }
         if (products.semantic) {
             result.semantic = decodePackedIds(
@@ -495,6 +453,42 @@ export class CameraRenderProducts {
         return result;
     }
 
+    async captureAlignedProducts({
+        visualPassSet,
+        visualRenderables = new Map(),
+        analyticPassSet = null,
+        analyticRenderables = new Map(),
+        signal,
+    } = {}) {
+        if (this.captureMode !== CORRECTED_VISUAL_CAPTURE_MODE) {
+            throw new Error("Aligned products require calibrated-projection@1.");
+        }
+        if (!signal || typeof signal.aborted !== "boolean") {
+            throw new Error("Aligned camera capture requires an AbortSignal.");
+        }
+        if (analyticPassSet && !this.analyticSceneHandle) {
+            throw new Error("Analytic oracle products require a separate analytic-truth scene handle.");
+        }
+        const aligned = new AlignedCaptureProducts({
+            renderer: this.renderer,
+            camera: this.camera,
+            visualSceneHandle: this.sceneHandle,
+            analyticSceneHandle: this.analyticSceneHandle,
+            authorizeSourceUse: this.authorizeSourceUse,
+        });
+        try {
+            return await aligned.capture({
+                visualPassSet,
+                visualRenderables,
+                analyticPassSet,
+                analyticRenderables,
+                signal,
+            });
+        } finally {
+            aligned.dispose();
+        }
+    }
+
     reset() {
         for (const slot of Object.values(this._slots)) slot.pack?.reset?.();
         this._inflight = null;
@@ -512,10 +506,13 @@ export class CameraRenderProducts {
         this.pixelBuffer = null;
         this.flipBuffer = null;
         this._depthScratch = null;
+        this._depthValidityScratch = null;
         this._semanticScratch = null;
         this._instanceScratch = null;
         this._decodeFlipScratch = null;
         this._asyncDisabled = false;
+        this.analyticSceneHandle = null;
+        this.authorizeSourceUse = null;
     }
 }
 

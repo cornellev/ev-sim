@@ -16,6 +16,14 @@ import {
     projectTruthBoundsToImage,
     warpBrownConrady,
 } from "../perception/CameraRenderProducts.js";
+import {
+    assertOwnedCaptureScene,
+    CORRECTED_VISUAL_CAPTURE_MODE,
+    createVisualCameraCalibration,
+    createVisualCaptureInput,
+    LEGACY_VISUAL_CAPTURE_MODE,
+    warpCalibratedImage,
+} from "../environment/visual/VisualCapturePipeline.js";
 import { getSharedPerceptionTruthIndex } from "../../autonomy/PerceptionTruthIndex.js";
 
 function gaussian(rng) {
@@ -39,6 +47,14 @@ export class ManifestCamera extends Device {
         this.sensorCamera = null;
         this.renderProducts = null;
         this.truthIndex = options.perceptionTruthIndex ?? null;
+        this.captureMode = options.captureMode ?? LEGACY_VISUAL_CAPTURE_MODE;
+        this.captureSceneHandle = this.captureMode === CORRECTED_VISUAL_CAPTURE_MODE
+            ? assertOwnedCaptureScene(options.captureSceneHandle, { role: "measured-appearance" })
+            : options.captureSceneHandle ?? null;
+        this.visualCalibration = this.captureMode === CORRECTED_VISUAL_CAPTURE_MODE
+            ? createVisualCameraCalibration(config.calibration)
+            : null;
+        this.lastCaptureInput = null;
         const look = threeCameraLookAlongMountForwardEuler();
         this.opticalQuaternion = new THREE.Quaternion().setFromEuler(
             new THREE.Euler(look.x, look.y, look.z, look.order),
@@ -56,7 +72,7 @@ export class ManifestCamera extends Device {
             calibration.near,
             calibration.far,
         );
-        scene.add(this.sensorCamera);
+        if (this.captureMode === LEGACY_VISUAL_CAPTURE_MODE) scene.add(this.sensorCamera);
         const data = this.getParent()?.getParent?.();
         this.renderProducts = new CameraRenderProducts({
             renderer: data?.renderer,
@@ -66,6 +82,9 @@ export class ManifestCamera extends Device {
             height: calibration.height,
             near: calibration.near,
             far: calibration.far,
+            captureMode: this.captureMode,
+            calibration: this.visualCalibration,
+            sceneHandle: this.captureSceneHandle,
         });
     }
 
@@ -109,15 +128,22 @@ export class ManifestCamera extends Device {
         const calibration = this.config.calibration;
         const products = calibration.products || {};
         const outputs = this.config.outputs || {};
-        const warp = (pixels, channels, interpolation) => warpBrownConrady({
-            data: pixels,
-            width: calibration.width,
-            height: calibration.height,
-            intrinsics: calibration.intrinsics,
-            distortion: calibration.distortion,
-            channels,
-            interpolation,
-        });
+        const warp = this.captureMode === CORRECTED_VISUAL_CAPTURE_MODE
+            ? (pixels, channels, interpolation) => warpCalibratedImage({
+                data: pixels,
+                calibration: this.visualCalibration,
+                channels,
+                interpolation,
+            }).data
+            : (pixels, channels, interpolation) => warpBrownConrady({
+                data: pixels,
+                width: calibration.width,
+                height: calibration.height,
+                intrinsics: calibration.intrinsics,
+                distortion: calibration.distortion,
+                channels,
+                interpolation,
+            });
         const pixels = captured.rgb ? warp(captured.rgb, 4, "linear") : null;
         if (pixels && (noise.model === "gaussian" || noise.bias !== 0)) {
             for (let offset = 0; offset < pixels.length; offset += 4) {
@@ -311,6 +337,17 @@ export class ManifestCamera extends Device {
                 };
             }
             this._applyPose();
+            if (this.captureMode === CORRECTED_VISUAL_CAPTURE_MODE) {
+                this.lastCaptureInput = createVisualCaptureInput({
+                    calibration: this.visualCalibration,
+                    pose: {
+                        matrixWorld: this.sensorCamera.matrixWorld.elements,
+                        quaternion: this.sensorCamera.quaternion,
+                    },
+                    sceneHandle: this.captureSceneHandle,
+                    captureTimeNs,
+                });
+            }
             const truth = this._refreshTruth(data, scene, vehicles);
             const calibration = this.config.calibration;
             const imageDetections = projectTruthBoundsToImage(
@@ -329,6 +366,7 @@ export class ManifestCamera extends Device {
                     rng,
                     truth,
                     imageDetections,
+                    captureInput: this.lastCaptureInput,
                 };
             }
             return {
@@ -348,6 +386,17 @@ export class ManifestCamera extends Device {
             return [];
         }
         this._applyPose();
+        if (this.captureMode === CORRECTED_VISUAL_CAPTURE_MODE) {
+            this.lastCaptureInput = createVisualCaptureInput({
+                calibration: this.visualCalibration,
+                pose: {
+                    matrixWorld: this.sensorCamera.matrixWorld.elements,
+                    quaternion: this.sensorCamera.quaternion,
+                },
+                sceneHandle: this.captureSceneHandle,
+                captureTimeNs,
+            });
+        }
         const truth = this._refreshTruth(data, scene, vehicles);
         const captured = this.renderProducts.capture(enabled);
         return this._buildMessages({ captureTimeNs, sampleIndex, rng, truth }, captured);
@@ -355,11 +404,13 @@ export class ManifestCamera extends Device {
 
     resetRunState() {
         this._issuedCapture = null;
+        this.lastCaptureInput = null;
         this.renderProducts?.reset?.();
     }
 
     dispose() {
         this._issuedCapture = null;
+        this.lastCaptureInput = null;
         this.contractPublisher?.dispose?.();
         this.sensorCamera?.removeFromParent?.();
         this.renderProducts?.dispose?.();

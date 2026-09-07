@@ -1,6 +1,10 @@
 import { createRequire } from "node:module";
 
 import { supervisorError } from "./HeadlessProtocol.js";
+import {
+    assertVisualCaptureInput,
+    CORRECTED_VISUAL_CAPTURE_MODE,
+} from "../../app/3d/environment/visual/VisualCapturePipeline.js";
 
 const PACKAGE_VERSION = createRequire(import.meta.url)("../../package.json").version;
 const SOFTWARE_RENDERERS = /swiftshader|llvmpipe|software rasterizer/i;
@@ -18,6 +22,23 @@ function infrastructureError(message, details = null) {
     const error = supervisorError("WORKER_CRASHED", message, details);
     error.infrastructureFailure = true;
     return error;
+}
+
+export function createCalibratedHeadlessCameraRequest({ id, captureInput, clearColor = [0, 0, 0, 0], ...rest } = {}) {
+    const checked = assertVisualCaptureInput(captureInput);
+    if (checked.scene.role === "bake-snapshot") {
+        throw new Error("Headless camera requests cannot use a bake-snapshot scene.");
+    }
+    return Object.freeze({
+        ...rest,
+        id: String(id || ""),
+        type: "camera",
+        width: checked.calibration.image.width,
+        height: checked.calibration.image.height,
+        clearColor: Object.freeze([...clearColor]),
+        captureMode: CORRECTED_VISUAL_CAPTURE_MODE,
+        captureInput: checked,
+    });
 }
 
 export class ChromiumWebGlRendererAdapter {
@@ -348,13 +369,18 @@ export class ChromiumWebGlRendererAdapter {
                         precision highp float;
                         layout(location=0) in vec3 position; layout(location=1) in vec4 inputColor;
                         uniform vec3 uOrigin; uniform vec4 uInverseQuaternion;
-                        uniform vec4 uProjection; out vec4 vertexColor;
+                        uniform vec4 uProjection; uniform mat4 uViewProjection;
+                        uniform bool uCalibrated; out vec4 vertexColor;
                         vec3 rotateQ(vec3 v, vec4 q){return v+2.*cross(q.xyz,cross(q.xyz,v)+q.w*v);}
                         void main(){
-                            vec3 p=rotateQ(position-uOrigin,uInverseQuaternion);
-                            float f=uProjection.x; float aspect=uProjection.y;
-                            float near=uProjection.z; float far=uProjection.w;
-                            gl_Position=vec4(p.x*f/aspect,p.y*f,((far+near)/(near-far))*p.z+(2.*far*near)/(near-far),-p.z);
+                            if(uCalibrated){
+                                gl_Position=uViewProjection*vec4(position,1.);
+                            }else{
+                                vec3 p=rotateQ(position-uOrigin,uInverseQuaternion);
+                                float f=uProjection.x; float aspect=uProjection.y;
+                                float near=uProjection.z; float far=uProjection.w;
+                                gl_Position=vec4(p.x*f/aspect,p.y*f,((far+near)/(near-far))*p.z+(2.*far*near)/(near-far),-p.z);
+                            }
                             vertexColor=inputColor;
                         }`);
                     const fragment = compile(gl.FRAGMENT_SHADER, `#version 300 es
@@ -367,21 +393,6 @@ export class ChromiumWebGlRendererAdapter {
                     if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
                         throw new Error(gl.getProgramInfoLog(program) || "GPU camera shader linking failed.");
                     }
-                    const parent = (job.vehicles || []).find((vehicle) => vehicle.id === job.sensor.parentId);
-                    if (!parent) throw new Error(`GPU sensor parent ${job.sensor.parentId} is missing.`);
-                    const vehicleQ = quaternion(parent.rotation);
-                    const pose = job.sensor.pose || {};
-                    const localPosition = [pose.position?.x || 0, pose.position?.z || 0, pose.position?.y || 0];
-                    const rotatedPosition = rotate(localPosition, vehicleQ);
-                    const origin = rotatedPosition.map((value, index) => value
-                        + [parent.position.x, parent.position.y, parent.position.z][index]);
-                    const mountQ = multiplyQuaternion(vehicleQ, quaternion({
-                        x: pose.rotation?.x || 0,
-                        y: pose.rotation?.z || 0,
-                        z: pose.rotation?.y || 0,
-                    }));
-                    const cameraQ = multiplyQuaternion(mountQ, quaternion({ y: -Math.PI / 2 }));
-                    const inverseQ = [-cameraQ[0], -cameraQ[1], -cameraQ[2], cameraQ[3]];
                     const buffer = gl.createBuffer();
                     const vao = gl.createVertexArray();
                     gl.bindVertexArray(vao);
@@ -394,16 +405,41 @@ export class ChromiumWebGlRendererAdapter {
                     gl.enable(gl.DEPTH_TEST);
                     gl.depthFunc(gl.LEQUAL);
                     gl.useProgram(program);
-                    gl.uniform3fv(gl.getUniformLocation(program, "uOrigin"), origin);
-                    gl.uniform4fv(gl.getUniformLocation(program, "uInverseQuaternion"), inverseQ);
-                    const calibration = job.sensor.calibration;
-                    gl.uniform4f(
-                        gl.getUniformLocation(program, "uProjection"),
-                        1 / Math.tan(calibration.verticalFovDeg * Math.PI / 360),
-                        job.width / job.height,
-                        calibration.near,
-                        calibration.far,
-                    );
+                    const calibrated = job.captureMode === "calibrated-projection@1";
+                    gl.uniform1i(gl.getUniformLocation(program, "uCalibrated"), calibrated ? 1 : 0);
+                    if (calibrated) {
+                        gl.uniformMatrix4fv(
+                            gl.getUniformLocation(program, "uViewProjection"),
+                            false,
+                            new Float32Array(job.captureInput.viewProjectionMatrix),
+                        );
+                    } else {
+                        const parent = (job.vehicles || []).find((vehicle) => vehicle.id === job.sensor.parentId);
+                        if (!parent) throw new Error(`GPU sensor parent ${job.sensor.parentId} is missing.`);
+                        const vehicleQ = quaternion(parent.rotation);
+                        const pose = job.sensor.pose || {};
+                        const localPosition = [pose.position?.x || 0, pose.position?.z || 0, pose.position?.y || 0];
+                        const rotatedPosition = rotate(localPosition, vehicleQ);
+                        const origin = rotatedPosition.map((value, index) => value
+                            + [parent.position.x, parent.position.y, parent.position.z][index]);
+                        const mountQ = multiplyQuaternion(vehicleQ, quaternion({
+                            x: pose.rotation?.x || 0,
+                            y: pose.rotation?.z || 0,
+                            z: pose.rotation?.y || 0,
+                        }));
+                        const cameraQ = multiplyQuaternion(mountQ, quaternion({ y: -Math.PI / 2 }));
+                        const inverseQ = [-cameraQ[0], -cameraQ[1], -cameraQ[2], cameraQ[3]];
+                        gl.uniform3fv(gl.getUniformLocation(program, "uOrigin"), origin);
+                        gl.uniform4fv(gl.getUniformLocation(program, "uInverseQuaternion"), inverseQ);
+                        const calibration = job.sensor.calibration;
+                        gl.uniform4f(
+                            gl.getUniformLocation(program, "uProjection"),
+                            1 / Math.tan(calibration.verticalFovDeg * Math.PI / 360),
+                            job.width / job.height,
+                            calibration.near,
+                            calibration.far,
+                        );
+                    }
                     gl.drawArrays(gl.TRIANGLES, 0, triangles.length * 3);
                     gl.disable(gl.DEPTH_TEST);
                     gl.bindVertexArray(null);
@@ -457,6 +493,17 @@ export class ChromiumWebGlRendererAdapter {
                     gl.deleteFramebuffer(framebuffer);
                     gl.deleteTexture(texture);
                     for (const resource of renderResources) gl.deleteTexture(resource);
+                    if (job.type === "camera" && job.captureMode === "calibrated-projection@1") {
+                        const topLeft = new output.constructor(output.length);
+                        const rowLength = width * 4;
+                        for (let row = 0; row < height; row += 1) {
+                            topLeft.set(
+                                output.subarray((height - row - 1) * rowLength, (height - row) * rowLength),
+                                row * rowLength,
+                            );
+                        }
+                        return Array.from(topLeft);
+                    }
                     return Array.from(output);
                 };
                 const output = [];
@@ -598,6 +645,17 @@ export class PooledGpuRenderer {
                 infrastructureError("Chromium renderer disconnected."),
             );
             await this.resetPromise;
+        }
+        for (const request of requests) {
+            if (request.captureMode !== CORRECTED_VISUAL_CAPTURE_MODE) continue;
+            const captureInput = assertVisualCaptureInput(request.captureInput);
+            if (request.width !== captureInput.calibration.image.width
+                || request.height !== captureInput.calibration.image.height) {
+                throw new Error("Corrected camera request dimensions must match its calibration.");
+            }
+            if (captureInput.scene.descriptionHash && captureInput.scene.descriptionHash !== scene?.hash) {
+                throw new Error("Corrected camera request scene hash does not match the resolved scene.");
+            }
         }
         const probe = await this.probe();
         if (!probe.available) throw infrastructureError(`GPU backend unavailable: ${probe.reason}`);
