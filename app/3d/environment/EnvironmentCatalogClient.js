@@ -16,8 +16,8 @@ export function getEnvironmentManifest(environmentId) {
     return storageGet(`environments/${encodeURIComponent(environmentId)}`);
 }
 
-export function saveEnvironmentManifest(environmentId, manifest) {
-    return storagePut(`environments/${encodeURIComponent(environmentId)}`, manifest);
+export function saveEnvironmentManifest(environmentId, manifest, expectedRevision) {
+    return storagePut(`environments/${encodeURIComponent(environmentId)}`, { manifest, expectedRevision });
 }
 
 export function createEnvironment(input) {
@@ -28,18 +28,20 @@ export function duplicateEnvironment(sourceId, input) {
     return storagePost(`environments/${encodeURIComponent(sourceId)}/duplicate`, input);
 }
 
-export function renameEnvironment(environmentId, name) {
-    return storagePatch(`environments/${encodeURIComponent(environmentId)}`, { name });
+export function renameEnvironment(environmentId, name, expectedRevision) {
+    return storagePatch(`environments/${encodeURIComponent(environmentId)}`, { name, expectedRevision });
 }
 
-export function changeEnvironmentId(environmentId, nextEnvironmentId) {
+export function changeEnvironmentId(environmentId, nextEnvironmentId, expectedRevision) {
     return storagePatch(`environments/${encodeURIComponent(environmentId)}/id`, {
         id: nextEnvironmentId,
+        expectedRevision,
     });
 }
 
-export function deleteEnvironment(environmentId) {
-    return storageDelete(`environments/${encodeURIComponent(environmentId)}`);
+export function deleteEnvironment(environmentId, expectedRevision) {
+    const revision = expectedRevision === undefined ? "" : `?expectedRevision=${encodeURIComponent(expectedRevision)}`;
+    return storageDelete(`environments/${encodeURIComponent(environmentId)}${revision}`);
 }
 
 export async function getActiveEnvironmentId() {

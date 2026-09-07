@@ -17,32 +17,39 @@ const MAX_WAIT_MS = 8000;
  *
  * Saving serializes `environment.toManifest()`. EnvironmentLoader exclusively
  * owns loading and runtime application so there cannot be two competing paths.
+ * Revision numbers advance only from a successful server response.
  */
 export class EnvironmentPersistence {
     /**
      * @param {object} params
      * @param {import("../data/Data").Data} params.data
      * @param {THREE.Scene} params.scene
+     * @param {number} [params.revision]
+     * @param {typeof storagePut} [params.put]
      */
-    constructor({ data, scene, clientRevision = 0 }) {
+    constructor({ data, scene, revision = 0, put = storagePut }) {
         this.data = data;
         this.scene = scene;
         this.environmentId = data.environment().environmentId;
         this.resourcePath = `environments/${encodeURIComponent(this.environmentId)}`;
+        this._put = put;
         data.environment().persistence = this;
 
         this._attached = false;
         this._unsubscribers = [];
         this._saveTimer = null;
         this._firstPendingAt = 0;
-        this._saving = false;
-        this._saveQueued = false;
+        this._inFlight = null;
+        this._queued = false;
+        this._queuedKeepalive = false;
         this._discarded = false;
-        this._currentSave = null;
-        this._writeChain = Promise.resolve();
-        this._clientRevision = Math.max(Date.now(), Number(clientRevision) || 0);
+        this._generation = 0;
+        this._acknowledgedRevision = Math.max(0, Number(revision) || 0);
+        this._dirty = false;
+        this._conflict = null;
+        this._sending = false;
+        this._chain = Promise.resolve();
 
-        // Bound so we can add/remove them as event listeners.
         this._flushForUnload = () => this.flush({ keepalive: true });
         this._flushOnHide = () => {
             if (typeof document !== "undefined" && document.visibilityState === "hidden") {
@@ -51,11 +58,18 @@ export class EnvironmentPersistence {
         };
     }
 
-    /**
-     * Start watching for edits. The subscribe() calls below fire once
-     * immediately with the current state; those initial callbacks are ignored
-     * because `_attached` is still false until this method finishes.
-     */
+    get acknowledgedRevision() {
+        return this._acknowledgedRevision;
+    }
+
+    get conflict() {
+        return this._conflict;
+    }
+
+    get isDirty() {
+        return this._dirty;
+    }
+
     attach() {
         this._discarded = false;
         const environment = this.data.environment();
@@ -76,8 +90,7 @@ export class EnvironmentPersistence {
         this._attached = true;
     }
 
-    /** Cancel pending work, optionally save one last time, and detach listeners. */
-    dispose({ flush = true } = {}) {
+    async dispose({ flush = true } = {}) {
         this._attached = false;
         this._clearTimer();
 
@@ -92,16 +105,16 @@ export class EnvironmentPersistence {
         if (this.data.environment().persistence === this) {
             this.data.environment().persistence = null;
         }
-        if (flush && !this._discarded) this.flush();
+        if (flush && !this._discarded) await this.flush();
     }
 
-    /** Detach without recreating a manifest that was intentionally deleted. */
     async discard() {
         this._discarded = true;
-        this._saveQueued = false;
-        this.dispose({ flush: false });
+        this._queued = false;
+        this._generation += 1;
+        await this.dispose({ flush: false });
         try {
-            await this._writeChain;
+            await this._chain;
         } catch {
             // The normal save path already reports the error.
         }
@@ -111,11 +124,17 @@ export class EnvironmentPersistence {
      * Temporarily stop autosaving so an external (MCP) apply does not get
      * overwritten by a stale local debounce. Pair with resumeAutosave().
      */
-    suspendAutosave() {
+    async suspendAutosave() {
         this._attached = false;
         this._clearTimer();
         this._firstPendingAt = 0;
-        this._saveQueued = false;
+        this._queued = false;
+        this._generation += 1;
+        try {
+            await this._chain;
+        } catch {
+            // Settled; conflict state is recorded by the save path.
+        }
     }
 
     /** Resume watching for local edits after an external apply. */
@@ -125,27 +144,50 @@ export class EnvironmentPersistence {
     }
 
     /**
-     * Adopt the server's clientRevision after an MCP write so the next local
-     * save is ordered after the agent's revision.
-     * @param {number} revision
+     * Adopt a server revision after a successful response or a clean remote apply.
+     * Never advances over a dirty/in-flight local draft.
      */
-    adoptClientRevision(revision) {
-        const next = Number(revision) || 0;
-        this._clientRevision = Math.max(this._clientRevision, next);
+    adoptRevision(revision, { force = false } = {}) {
+        const next = Number(revision);
+        if (!Number.isInteger(next) || next < 0) return;
+        if (!force && (this._dirty || this._sending || this._conflict)) return;
+        this._acknowledgedRevision = next;
+        const environment = this.data.environment();
+        if (environment) environment.revision = next;
+        if (force) {
+            this._dirty = false;
+            this._conflict = null;
+        }
+    }
+
+    /**
+     * Decide whether an external document can replace the local draft.
+     * Dirty or in-flight work is retained and exposed as a conflict.
+     */
+    async prepareExternalApply(remoteManifest) {
+        await this.suspendAutosave();
+        if (this._dirty || this._conflict) {
+            this._conflict = {
+                code: "ENVIRONMENT_REVISION_CONFLICT",
+                currentRevision: this._acknowledgedRevision,
+                remoteRevision: remoteManifest?.revision ?? null,
+            };
+            return { apply: false, conflict: this._conflict };
+        }
+        return { apply: true };
     }
 
     // --- Saving -------------------------------------------------------------
 
     _handleChange() {
-        if (!this._attached) return; // Ignore the immediate subscribe() callbacks.
+        if (!this._attached) return;
 
+        this._dirty = true;
         const now = Date.now();
         if (!this._firstPendingAt) this._firstPendingAt = now;
 
         this._clearTimer();
 
-        // If edits have been streaming in past the cap, save now; otherwise wait
-        // for the edits to settle.
         if (now - this._firstPendingAt >= MAX_WAIT_MS) {
             this._saveNow();
         } else if (typeof window !== "undefined") {
@@ -159,73 +201,85 @@ export class EnvironmentPersistence {
         this._save();
     }
 
-    /** Serialize the current manifest and PUT it. Never overlaps two requests. */
-    async _save() {
-        if (this._saving) {
-            this._saveQueued = true; // A change arrived mid-save; save again after.
-            return;
+    async _save({ keepalive = false, throwOnError = false } = {}) {
+        if (this._discarded) return null;
+        if (keepalive) this._queuedKeepalive = true;
+        if (this._sending) {
+            this._queued = true;
+            return this._chain;
         }
 
-        this._saving = true;
-        let request = null;
-        try {
-            request = this._queueWrite();
-            this._currentSave = request;
-            await request;
-        } catch (error) {
-            console.warn("[environment] autosave failed:", error);
-        } finally {
-            this._saving = false;
-            if (this._currentSave === request) this._currentSave = null;
-            if (this._saveQueued && !this._discarded) {
-                this._saveQueued = false;
-                this._save();
+        const generation = this._generation;
+        this._sending = true;
+        this._chain = (async () => {
+            let last = null;
+            try {
+                do {
+                    this._queued = false;
+                    const useKeepalive = this._queuedKeepalive;
+                    this._queuedKeepalive = false;
+                    last = await this._sendLatest({ keepalive: useKeepalive, generation });
+                } while (this._queued && !this._discarded && !this._conflict && generation === this._generation);
+                return last;
+            } catch (error) {
+                if (!throwOnError) console.warn("[environment] autosave failed:", error);
+                if (throwOnError) throw error;
+                return null;
+            } finally {
+                this._sending = false;
             }
+        })();
+        return this._chain;
+    }
+
+    async _sendLatest({ keepalive = false, generation }) {
+        const expectedRevision = this._acknowledgedRevision;
+        const manifest = this.data.environment().toManifest();
+        try {
+            const stored = await this._put(
+                this.resourcePath,
+                { manifest, expectedRevision },
+                { keepalive },
+            );
+            if (this._discarded) return stored;
+            this._acknowledgedRevision = Number(stored?.revision) || expectedRevision + 1;
+            const environment = this.data.environment();
+            if (environment) {
+                environment.revision = this._acknowledgedRevision;
+                environment.visualLayer = stored?.visualLayer ?? environment.visualLayer ?? null;
+                environment.evidence = stored?.evidence ?? environment.evidence ?? null;
+            }
+            if (generation !== this._generation) {
+                this._dirty = true;
+                return stored;
+            }
+            this._dirty = this._queued;
+            this._conflict = null;
+            return stored;
+        } catch (error) {
+            if (isRevisionConflict(error)) {
+                this._conflict = {
+                    code: error.code || "ENVIRONMENT_REVISION_CONFLICT",
+                    currentRevision: error.currentRevision ?? this._acknowledgedRevision,
+                };
+            }
+            throw error;
         }
     }
 
     /**
      * Fire a save immediately (used on page unload). `keepalive` lets the
-     * request outlive the page.
+     * request outlive the page. Hide/unload traffic joins the same queue.
      */
     flush({ keepalive = false, throwOnError = false } = {}) {
         if (this._discarded) return Promise.resolve();
+        if (!this._dirty && !this._sending && !this._queued) return Promise.resolve();
         this._clearTimer();
         this._firstPendingAt = 0;
-        this._saveQueued = false;
-        if (keepalive) {
-            // Start unload traffic immediately; server-side clientRevision
-            // ordering prevents an older in-flight save from overwriting it.
-            return storagePut(this.resourcePath, this._buildManifest(), { keepalive })
-                .catch((error) => {
-                    console.warn("[environment] flush failed:", error);
-                    if (throwOnError) throw error;
-                });
-        }
-        return this._queueWrite({ keepalive }).catch((error) => {
+        return this._save({ keepalive, throwOnError }).catch((error) => {
             console.warn("[environment] flush failed:", error);
             if (throwOnError) throw error;
         });
-    }
-
-    _queueWrite({ keepalive = false } = {}) {
-        const manifest = this._buildManifest();
-        const request = this._writeChain
-            .catch(() => {})
-            .then(() => {
-                if (this._discarded) return null;
-                return storagePut(this.resourcePath, manifest, { keepalive });
-            });
-        this._writeChain = request;
-        return request;
-    }
-
-    _buildManifest() {
-        this._clientRevision = Math.max(Date.now(), this._clientRevision + 1);
-        return {
-            ...this.data.environment().toManifest(),
-            clientRevision: this._clientRevision,
-        };
     }
 
     _clearTimer() {
@@ -234,4 +288,10 @@ export class EnvironmentPersistence {
         }
         this._saveTimer = null;
     }
+}
+
+function isRevisionConflict(error) {
+    return error?.status === 409
+        || error?.statusCode === 409
+        || error?.code === "ENVIRONMENT_REVISION_CONFLICT";
 }

@@ -2,8 +2,10 @@
 
 This document freezes the VIS-01 contracts. It describes interfaces that
 later VIS milestones implement. VIS-12a activates the identity contracts below;
-VIS-02 dispatches exact camera render provider ID/version. Photoreal rendering,
-the asset store, and package admission remain unavailable.
+VIS-02 dispatches exact camera render provider ID/version. VIS-03 adds
+environment schema v3, server revisions, and an internal descriptor store.
+Photoreal rendering, validated binary CAS, and package admission remain
+unavailable.
 
 The implementation authority and acceptance gates remain in
 [the visual-layer roadmap](visual-layer-plan.md). JavaScript remains the only
@@ -24,6 +26,7 @@ become collision, route, LiDAR, registry, or oracle truth.
 | PBR scene | `pbr-mesh@1` | VIS-02 known/unavailable; runtime VIS-05/VIS-14/VIS-15 |
 | Corrected GPU sensor backend | `chromium-webgl2-rendered-sensors@2` | VIS-14/VIS-15 |
 | Identity negotiation | Protocol 1.3 | VIS-12a |
+| Environment schema | 3 | VIS-03 |
 | Package admission | Protocol 1.4 | VIS-13b |
 
 The current runtime advertises protocol 1.3 and `identity_profiles: ["world-bound@2"]`.
@@ -73,6 +76,15 @@ shape: missing defaults, reordered sets, unknown fields, invalid references,
 and unsupported versions are errors. `hashVisualLayer` hashes RFC 8785/JCS
 UTF-8 bytes without applying the simulator's historical six-decimal numeric
 projection.
+
+VIS-03 persists canonical descriptor JSON at
+`server/data/visual-layer-descriptors/sha256/<hash>.json`. Writes verify with
+`assertVisualLayer` and `hashVisualLayer`, store exact JCS bytes, and never
+overwrite an existing digest. Binary assets, public CAS APIs, quotas, pins,
+and garbage collection remain VIS-04. Environment documents reference a
+descriptor by `visualLayer.descriptorHash` only; loaders copy that hash into
+environment state and do not instantiate meshes, materials, LiDAR geometry, or
+measured-camera resources.
 
 New exact contracts normalize negative zero to zero and reject non-finite
 numbers, unsafe integer counters, duplicate JSON keys, lone surrogates, and
@@ -242,8 +254,12 @@ For environment v3, a display-only rename retains a visual binding only if the
 recomputed world hash is equal. Duplication, environment-ID changes, and
 conflict-renamed imports create a new descriptor bound to the new world;
 compatible bytes may be shared, but correspondence evidence is invalidated.
-Every v3 full write and visual promotion requires an expected server revision.
-An older client cannot erase visual fields by omitting them.
+Conflicting imports rebind only when the referenced descriptor is already in
+the local descriptor store; otherwise import fails explicitly. Every v3 full
+write requires `{ manifest, expectedRevision }`. Missing or stale revisions
+return HTTP 409 with `ENVIRONMENT_REVISION_CONFLICT` and `currentRevision`.
+An older client cannot erase visual fields by omitting them, and cannot use
+`clientRevision` as a concurrency token.
 
 ## Source policy
 

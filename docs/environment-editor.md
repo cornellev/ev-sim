@@ -44,13 +44,17 @@ Runtime meshes are rebuilt from the document through adapters such as `RoadRunti
 
 Environment edits are saved to the backend, not the browser. Loading and saving are deliberately separate:
 
-- **`EnvironmentLoader`** fetches the selected manifest and applies it to the one runtime shared by Simulation and Environment Editor. IGVC starts from its native template meshes; legacy hydrated road data does not replace those roads. Roads are rebuilt only after a map/Earth Import edit marks them as authored.
-- **`EnvironmentPersistence`** watches the document, registry, editor, and sky. Changes trigger a debounced `PUT /api/storage/environments/<id>` (about 1.5s after the last edit, with an 8s cap so long drag sessions still save).
-- **On page unload / tab hide** it flushes a final save with a `keepalive` request.
+- **`EnvironmentLoader`** fetches the selected manifest and applies it to the one runtime shared by Simulation and Environment Editor. IGVC starts from its native template meshes; legacy hydrated road data does not replace those roads. Roads are rebuilt only after a map/Earth Import edit marks them as authored. Schema v3 `revision`, `visualLayer`, and `evidence` fields are copied onto environment state and are not materialized into meshes, materials, object-registry membership, collision geometry, LiDAR truth, or measured cameras.
+- **`EnvironmentPersistence`** watches the document, registry, editor, and sky. It tracks only the last acknowledged server revision, allows one `PUT` in flight, and builds queued saves from the latest `Environment.toManifest()` at send time. Revision advances only from a successful response. External MCP updates over a dirty or in-flight draft expose a conflict and keep the local edits; they never report success or adopt an unacknowledged revision.
+- **On page unload / tab hide** it flushes through the same queue with `keepalive`. It never issues a parallel speculative write. Autosave suspension is an asynchronous barrier: it cancels timers, invalidates queued generations, waits for the in-flight request to settle, and then lets the caller apply a clean remote document or keep a conflicted draft.
+
+The storage contract is environment schema v3. v2 files load as revision `0` with implied null visual/evidence references; the first guarded save writes v3 revision `1`. Full replacement is `PUT /api/storage/environments/<id>` with `{ manifest, expectedRevision }`. Rename, duplicate, ID change, and delete require the same revision. Missing or stale revisions return HTTP `409` with `ENVIRONMENT_REVISION_CONFLICT` and `currentRevision`. Unguarded legacy bodies are rejected with `ENVIRONMENT_UNGUARDED_WRITE`. Catalog entries include `revision`. `clientRevision` is not a concurrency authority and is not written into v3 documents.
+
+Display-name rename keeps visual and evidence references when `worldHash` is unchanged. Duplicating an environment, changing its ID, or importing onto a conflicting ID rebinds the descriptor to the destination world, reuses compatible asset digests, and clears correspondence evidence. Missing or incompatible descriptors fail before the environment mutation.
+
+The environment switcher in both 3D workspaces selects, creates, duplicates, renames, and deletes environments using the acknowledged revision. Selection is shared between Simulation and Editor and stored in server settings. The saved payload is `Environment.toManifest()` at `server/data/environments/<id>.json`. See [development.md](development.md) for the storage backend.
 
 Building transforms update their authoritative footprint/height records as the gizmo moves; prop transforms update position and heading. Reload therefore reconstructs the edited location rather than the original runtime mesh.
-
-The environment switcher in both 3D workspaces selects, creates, duplicates, renames, and deletes environments. Selection is shared between Simulation and Editor and stored in server settings. The saved payload is `Environment.toManifest()` at `server/data/environments/<id>.json`. See [development.md](development.md) for the storage backend.
 
 ## UI chrome
 

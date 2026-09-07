@@ -74,17 +74,35 @@ function url(path) {
     return `${BASE_URL}/${path}`;
 }
 
+export class StorageRequestError extends Error {
+    constructor(message, { status, code = null, currentRevision = undefined, payload = null } = {}) {
+        super(message);
+        this.name = "StorageRequestError";
+        this.status = status;
+        this.code = code;
+        this.currentRevision = currentRevision;
+        this.payload = payload;
+    }
+}
+
 /** Throw a readable error when the server responds with a non-2xx status. */
 async function assertOk(response, action) {
     if (response.ok) return;
 
-    let detail = "";
+    let payload = null;
     try {
-        const payload = await response.json();
-        detail = payload?.error ? `: ${payload.error}` : "";
+        payload = await response.json();
     } catch {
-        // Response had no JSON body; the status text is enough.
+        payload = null;
     }
-
-    throw new Error(`Storage ${action} failed (${response.status} ${response.statusText})${detail}`);
+    const detail = payload?.error ? `: ${payload.error}` : "";
+    throw new StorageRequestError(
+        `Storage ${action} failed (${response.status} ${response.statusText})${detail}`,
+        {
+            status: response.status,
+            code: payload?.code ?? null,
+            currentRevision: payload?.currentRevision,
+            payload,
+        },
+    );
 }

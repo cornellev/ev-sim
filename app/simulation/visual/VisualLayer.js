@@ -697,6 +697,48 @@ export function hashVisualLayer(value) {
     return sha256ExactUtf8(canonicalExactStringify(value));
 }
 
+/** @param {unknown} value @param {string} [path] @returns {string} */
+export function assertSha256Digest(value, path = "digest") {
+    return digest(value, path);
+}
+
+export function visualTruthEntityIds(worldDescription) {
+    const ids = new Set();
+    for (const building of worldDescription?.buildings ?? []) ids.add(building.id);
+    for (const feature of worldDescription?.features ?? []) ids.add(feature.id);
+    for (const node of worldDescription?.roads?.nodes ?? []) ids.add(node.id);
+    for (const edge of worldDescription?.roads?.edges ?? []) ids.add(edge.id);
+    return ids;
+}
+
+export function assertVisualLayerTruthBindings(layer, worldDescription) {
+    assertVisualLayer(layer);
+    const ids = visualTruthEntityIds(worldDescription);
+    for (const [index, binding] of layer.bindings.entries()) {
+        if (!ids.has(binding.truthEntityId)) {
+            fail(
+                `visualLayer.bindings.${index}.truthEntityId`,
+                `references missing truth entity ${binding.truthEntityId}`,
+            );
+        }
+    }
+    return layer;
+}
+
+/**
+ * Clone an immutable descriptor onto a destination world. Asset digests are
+ * reused unchanged; callers clear correspondence evidence separately.
+ */
+export function rebindVisualLayer(descriptor, destinationWorldHash, worldDescription = null) {
+    assertVisualLayer(descriptor);
+    const rebound = normalizeVisualLayer({
+        ...descriptor,
+        sourceWorldHash: destinationWorldHash,
+    });
+    if (worldDescription) assertVisualLayerTruthBindings(rebound, worldDescription);
+    return rebound;
+}
+
 function registryEntry(registry, id) {
     if (registry instanceof Map) return registry.get(id);
     if (typeof registry?.getSource === "function") return registry.getSource(id);

@@ -5,6 +5,7 @@ import { hydrateDocumentFromRuntime } from "../editor/document/documentRuntimeHy
 import { EditorState } from "../editor/EditorState.js";
 import { EnvironmentRegistry } from "../editor/EnvironmentRegistry.js";
 import { EnvironmentSkyState } from "../skybox/EnvironmentSkyState.js";
+import { ENVIRONMENT_SCHEMA_VERSION } from "./EnvironmentManifestPolicy.js";
 
 /**
  * What is an environment?
@@ -64,6 +65,9 @@ export class Environment {
         this.toolController = null;
         this.worldDescription = null;
         this.worldHash = null;
+        this.revision = Math.max(0, Number(options.revision) || 0);
+        this.visualLayer = options.visualLayer ?? null;
+        this.evidence = options.evidence ?? null;
     }
 
     setup(scene) {
@@ -121,13 +125,16 @@ export class Environment {
         return {
             environmentId: this.environmentId,
             name: this.name,
-            schemaVersion: 2,
+            schemaVersion: ENVIRONMENT_SCHEMA_VERSION,
+            revision: this.revision,
             templateId: this.templateId,
             roadStylePreset: this.roadStylePreset,
             roadsAuthored: this.document.roadsAuthored,
             buildingsAuthored: this.document.buildingsAuthored,
             featuresAuthored: this.document.featuresAuthored,
             chunkSize: this.chunkSize,
+            visualLayer: this.visualLayer ?? null,
+            evidence: this.evidence ?? null,
             document: this.document.toManifest(),
             ...this.chunkManager.toManifest(),
             ...this.registry.toManifest(),

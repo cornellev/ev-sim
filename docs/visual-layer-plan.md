@@ -25,7 +25,7 @@ a VIS, GOOG, or GS PR changes a contract, hash, gate, or milestone status.
 
 ## Status and release verdict
 
-- Next milestone: **VIS-03 — not started**. VIS-01, VIS-12a, and VIS-02 are implemented.
+- Next milestone: **VIS-04 — not started**. VIS-01, VIS-12a, VIS-02, and VIS-03 are implemented.
 - Review verdict: **NO-GO for the original ordering and for claiming visual
   runtime support.** The five Blocker findings below require implementation
   and evidence. This revision supplies the corrected handoff; editing the
@@ -33,11 +33,12 @@ a VIS, GOOG, or GS PR changes a contract, hash, gate, or milestone status.
 - Core assumption: **Google approval, Google-derived assets, Gaussian
   splatting, and a model service are unavailable.**
 - Default implementation/review reasoning level: **Extra High**.
-- Last updated: **2026-09-06 — VIS-02 provider dispatch and capability validation implemented**.
-- VIS-01, VIS-12a, and VIS-02 acceptance evidence is recorded in the progress
-  ledger and decision log. Protocol 1.3 advertises `world-bound@2`. Only
-  `canonical-analytic@1` and GPU sensor backend v1 remain runtime-capable;
-  no visual renderer or package-admission capability is advertised.
+- Last updated: **2026-09-06 — VIS-03 environment v3 and server revisions implemented**.
+- VIS-01, VIS-12a, VIS-02, and VIS-03 acceptance evidence is recorded in the
+  progress ledger and decision log. Protocol 1.3 advertises `world-bound@2`.
+  Only `canonical-analytic@1` and GPU sensor backend v1 remain runtime-capable;
+  no visual renderer or package-admission capability is advertised. Environment
+  v3 references remain storage-only.
 
 The owned/synthetic-asset core must independently deliver author/import →
 preview → no-model bake → atomic promotion → reload → portable package →
@@ -48,7 +49,7 @@ may improve appearance, but cannot be prerequisites for this path.
 
 Original VIS numbers remain workstream identifiers. Suffixes below identify
 actual PRs; completing one suffix does not complete its entire workstream.
-All required entries except VIS-01, VIS-12a, and VIS-02 remain unstarted.
+All required entries except VIS-01, VIS-12a, VIS-02, and VIS-03 remain unstarted.
 
 | Workstream | Required core PRs | Optional enrichment |
 | --- | --- | --- |
@@ -82,10 +83,11 @@ gate. Gate definitions later in this document are normative test
 requirements; completed portions are recorded in the acceptance ledger.
 VIS-12a supplies F01's implemented identity/compatibility evidence and F06's
 version-dispatch evidence. VIS-02 supplies F09's registry/schema portion of
-G-CAPABILITY. Neither F01 nor F06 is fully closed: selected visual resources
-still require VIS-12b, and environment rebind/transaction cases still require
-VIS-03. F09 product completeness remains later VIS work. The other runtime
-findings retain their owning gates.
+G-CAPABILITY. VIS-03 supplies F05's environment revision CAS and F06's
+environment rebind/transaction cases. Neither F01 nor F06 is fully closed:
+selected visual resources still require VIS-12b, and bake-promotion races
+remain VIS-08. F09 product completeness remains later VIS work. The other
+runtime findings retain their owning gates.
 
 | ID / severity | Current behavior and failure mode | Required PR correction and proof |
 | --- | --- | --- |
@@ -1574,7 +1576,7 @@ Its accountable owner remains the repository owner under D01.
   Selected PBR and disabled visual-selection relationships have contract-only
   coverage; provider dispatch is implemented in VIS-02, while real selected-asset
   G-HASH evidence belongs to VIS-12b. Environment v3 rebind/transaction
-  G-MIGRATION cases remain with VIS-03. Full F01/F06 closure and later
+  G-MIGRATION cases are implemented in VIS-03. Full F01/F06 closure and later
   visual/hardware gates remain open.
 - [x] VIS-02 — kernel-safe `RenderSceneProviderRegistry` keyed by exact provider
   ID and positive integer version. `canonical-analytic@1` is runtime-available;
@@ -1615,7 +1617,54 @@ Its accountable owner remains the repository owner under D01.
     `npm run test:gpu-sensors` passed 8/10 with the same two hardware skips.
     `npm run test:python` passed 56/56. `npm run fixtures:headless` produced no
     characterization delta.
-- [ ] VIS-03
+- [x] VIS-03 — environment schema v3 with server-owned `revision`,
+  `visualLayer: null | { descriptorHash }`, and
+  `evidence: null | { reportHash }`. v2 files load as revision 0 without
+  injecting those keys; the first guarded save writes v3 revision 1 and omits
+  `clientRevision`. `PUT /environments/:id` requires
+  `{ manifest, expectedRevision }`. Rename, duplicate, ID change, and delete
+  require the same revision token. Missing or stale revisions return HTTP 409
+  with `ENVIRONMENT_REVISION_CONFLICT` and `currentRevision`. Unguarded full
+  writes return 400 `ENVIRONMENT_UNGUARDED_WRITE`. Catalog entries and MCP
+  summaries include `revision`.
+  Visual references stay storage-only: `EnvironmentLoader` copies them onto
+  environment state and does not create meshes, materials, registry entries,
+  LiDAR geometry, or measured-camera resources. `worldHash` is unchanged.
+  An internal immutable descriptor store at
+  `server/data/visual-layer-descriptors/sha256/<hash>.json` accepts canonical
+  `cev-sim.visual-layer@1` JSON, verifies with `assertVisualLayer` /
+  `hashVisualLayer`, writes JCS bytes once, and never overwrites a digest.
+  Duplicate, environment-ID change, and conflicting import rebind the
+  descriptor to the destination `sourceWorldHash`, reuse asset digests, and
+  clear evidence; display-name rename retains both references when the world
+  hash is unchanged. Missing, corrupt, or incompatible descriptors fail before
+  any environment mutation. Conflicting imports rebind only when the
+  referenced descriptor is already in the local store. Per-ID write locks
+  serialize mutations; ID changes journal destination publish then source
+  removal. `JsonFileStore` publishes its cache only after the atomic rename.
+  `EnvironmentPersistence` tracks the last acknowledged server revision, keeps
+  one request in flight, queues the latest draft, advances revision only from
+  a successful response, joins hide/unload flushes onto that queue, and
+  exposes a conflict instead of applying a remote document over a dirty draft.
+  Local acceptance evidence:
+  - [Environment v3](../tests/environment-v3.test.js),
+    [persistence](../tests/environment-persistence.test.js),
+    [storage](../tests/storage-service.test.js),
+    [MCP](../tests/mcp-tools.test.js),
+    [identity](../tests/visual-identity.test.js), and
+    [visual-layer](../tests/visual-layer.test.js) cover v2→v3 migration,
+    reference isolation from `worldHash`, malformed versions/hashes, CAS 409,
+    stale rename/delete/ID-change, unguarded writes, disk-failure cache
+    isolation, queued/hide/unload/suspend persistence, display rename retain,
+    duplicate/ID/import rebind, missing-descriptor failure, and journal
+    recovery.
+  - Focused environment, storage, MCP, loader, and visual-identity suites
+    passed 69/69 with no skips. `npm run lint` completed with zero errors
+    and two pre-existing warnings. `npm test` passed 698/700 with two
+    declared hardware GPU skips. `npm run test:headless` passed 87/87.
+    `npm run fixtures:headless` produced no characterization delta.
+  - PBR rendering, selected-visual run resolution, bake promotion, public CAS
+    routes, quotas, and package admission remain inactive.
 - [ ] VIS-04
 - [ ] VIS-06a
 - [ ] VIS-05a
@@ -1818,4 +1867,37 @@ without replacing legacy v10 or VIS-12a goldens:
 
 Only `canonical-analytic@1` and GPU backend v1 remain runtime-capable. PBR
 materialization, corrected analytic rendering, visual-asset packaging, and GPU
-backend v2 activation remain later VIS work. VIS-03 is next.
+backend v2 activation remain later VIS work. VIS-04 is next.
+
+### 2026-09-06 — Implement VIS-03 environment v3 and server revisions
+
+Add environment schema v3 with server-owned `revision` and optional
+`visualLayer` / `evidence` hash references. v2 documents present as revision 0
+without injecting those keys; the first guarded save writes v3 revision 1 and
+drops `clientRevision` as a concurrency authority. `worldHash` continues to
+hash only the metric world description.
+
+Replace unguarded environment PUT with `{ manifest, expectedRevision }`.
+Rename, duplicate, ID change, and delete require the same token. Stale or
+missing revisions return HTTP 409 `ENVIRONMENT_REVISION_CONFLICT` with
+`currentRevision`; unguarded bodies return 400 `ENVIRONMENT_UNGUARDED_WRITE`.
+Catalog and MCP summaries publish `revision`.
+
+Store canonical `cev-sim.visual-layer@1` descriptors under
+`server/data/visual-layer-descriptors/sha256/<hash>.json` as an internal
+immutable JSON CAS. Binary assets, public routes, quotas, pins, and GC remain
+VIS-04. Duplicate, ID change, and conflicting import rebind the descriptor to
+the destination world, reuse asset digests, and clear evidence. Display-name
+rename retains references when the world hash is unchanged. Missing or
+incompatible descriptors fail before mutation. Environment writes use per-ID
+locks and a recoverable ID-change journal. `JsonFileStore` publishes cache
+only after the atomic rename.
+
+Rework `EnvironmentPersistence` to one in-flight guarded save, a latest-draft
+queue, hide/unload keepalive on that queue, an asynchronous suspend barrier,
+and an explicit conflict when a remote update arrives over a dirty draft.
+Loader copies references into environment state without materializing measured
+resources. `JsonFileStore` publishes cache only after rename; headless queue
+removals mutate inside the same write chain so cancel/drain cannot observe a
+stale revision. PBR rendering, selected-visual resolution, bake promotion, and
+package admission stay inactive.

@@ -53,6 +53,18 @@ The storage service exposes these endpoints under `/api/storage`:
 
 `PUT` accepts `{ manifest, expectedRevision }`. A stale expected revision returns a conflict error rather than overwriting newer content.
 
+Environment documents use the same revision token. `PUT /environments/:id`
+accepts `{ manifest, expectedRevision }` and returns the stored v3 manifest
+with the incremented revision. Rename, duplicate, ID change, and delete also
+require `expectedRevision`. Missing or stale environment revisions return HTTP
+`409` with `code: "ENVIRONMENT_REVISION_CONFLICT"` and `currentRevision`.
+Unguarded environment bodies return `400` `ENVIRONMENT_UNGUARDED_WRITE`.
+Import treats two environments as the same resource when their authoring
+content matches after ignoring schema version, visual/evidence references, and
+revision timestamps; a conflicting ID rebinds a local visual descriptor onto
+the new world and clears evidence. A missing descriptor fails the import
+before any environment write.
+
 ## Runtime guarantees
 
 Environment domain precedence is explicit authored data (including empty

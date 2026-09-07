@@ -83,7 +83,11 @@ export function EnvironmentSwitcher({ data, activeEnvironmentId, onEnvironmentCh
         const id = uniqueId(displayName);
         run(async () => {
             await data?.environment?.()?.persistence?.flush?.({ throwOnError: true });
-            await duplicateEnvironment(active.id, { id, name: displayName });
+            await duplicateEnvironment(active.id, {
+                id,
+                name: displayName,
+                expectedRevision: data?.environment?.()?.persistence?.acknowledgedRevision ?? active.revision ?? 0,
+            });
             onEnvironmentChange?.(id);
             setOpen(false);
         });
@@ -93,7 +97,11 @@ export function EnvironmentSwitcher({ data, activeEnvironmentId, onEnvironmentCh
         if (!active || !name.trim()) return;
         run(async () => {
             await data?.environment?.()?.persistence?.flush?.({ throwOnError: true });
-            const renamed = await renameEnvironment(active.id, name.trim());
+            const renamed = await renameEnvironment(
+                active.id,
+                name.trim(),
+                data?.environment?.()?.persistence?.acknowledgedRevision ?? active.revision ?? 0,
+            );
             if (data?.environment?.() && renamed?.name) {
                 data.environment().name = renamed.name;
             }
@@ -108,7 +116,11 @@ export function EnvironmentSwitcher({ data, activeEnvironmentId, onEnvironmentCh
             await persistence?.flush?.({ throwOnError: true });
             await persistence?.discard?.();
             try {
-                const moved = await changeEnvironmentId(active.id, nextId);
+                const moved = await changeEnvironmentId(
+                    active.id,
+                    nextId,
+                    persistence?.acknowledgedRevision ?? active.revision ?? 0,
+                );
                 onEnvironmentChange?.(moved?.environmentId ?? nextId);
                 setOpen(false);
             } catch (changeError) {
@@ -129,7 +141,10 @@ export function EnvironmentSwitcher({ data, activeEnvironmentId, onEnvironmentCh
             await persistence?.flush?.({ throwOnError: true });
             await persistence?.discard?.();
             try {
-                await deleteEnvironment(active.id);
+                await deleteEnvironment(
+                    active.id,
+                    persistence?.acknowledgedRevision ?? active.revision ?? 0,
+                );
             } catch (deleteError) {
                 persistence?.attach?.();
                 throw deleteError;

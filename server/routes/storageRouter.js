@@ -20,14 +20,16 @@ export function createStorageRouter(service) {
         service.duplicateEnvironment(req.params.id, req.body ?? {})
     )));
     router.patch("/environments/:id/id", handle(async (req) => (
-        service.changeEnvironmentId(req.params.id, req.body?.id)
+        service.changeEnvironmentId(req.params.id, req.body ?? {})
     )));
     router.patch("/environments/:id", handle(async (req) => (
-        service.renameEnvironment(req.params.id, req.body?.name)
+        service.renameEnvironment(req.params.id, req.body ?? {})
     )));
-    router.delete("/environments/:id", handle(async (req) => service.deleteEnvironment(req.params.id)));
+    router.delete("/environments/:id", handle(async (req) => (
+        service.deleteEnvironment(req.params.id, parseExpectedRevision(req.query?.expectedRevision))
+    )));
     router.get("/environments/:id", handle(async (req) => service.getEnvironment(req.params.id)));
-    router.put("/environments/:id", handle(async (req) => service.putEnvironment(req.params.id, req.body)));
+    router.put("/environments/:id", handle(async (req) => service.putEnvironment(req.params.id, req.body ?? {})));
 
     // --- Scripts ---
     router.get("/scripts", handle(async () => service.listScripts()));
@@ -236,8 +238,15 @@ function handle(fn) {
             const result = await fn(req);
             res.json(result ?? null);
         } catch (error) {
+            const status = Number(error.statusCode) || 400;
             console.error(`[storage] ${req.method} ${req.originalUrl} failed:`, error);
-            res.status(400).json({ error: error.message });
+            res.status(status).json(error.toJSON?.() ?? { error: error.message, code: error.code, currentRevision: error.currentRevision });
         }
     };
+}
+
+function parseExpectedRevision(value) {
+    if (value === undefined || value === null || value === "") return undefined;
+    const parsed = Number(value);
+    return Number.isInteger(parsed) ? parsed : value;
 }

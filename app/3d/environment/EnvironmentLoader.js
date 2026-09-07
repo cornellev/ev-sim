@@ -2,6 +2,7 @@ import { syncBuildingsFromDocument, syncRoadsFromDocument } from "../editor/docu
 import { removeBuildingMeshesFromScene, removeFeatureFromRuntime } from "../editor/map/mapRuntimeSync.js";
 import { placeFusionObjectInScene } from "../editor/placement/placeFusionObject.js";
 import { getEnvironmentManifest } from "./EnvironmentCatalogClient.js";
+import { applyEnvironmentVisualReferences } from "./EnvironmentManifestPolicy.js";
 import {
     assertWorldResource,
     createWorldResource,
@@ -88,8 +89,13 @@ export class EnvironmentLoader {
         environment.objects().registerExistingContent(this.scene, this.data);
         this._restoreSky(manifest.sky);
         this._restoreEditorState(manifest.editor);
+        this._restoreVisualReferences(manifest);
         this.data.simulation()?.render?.();
         return worldResource;
+    }
+
+    _restoreVisualReferences(manifest) {
+        applyEnvironmentVisualReferences(this.data.environment(), manifest);
     }
 
     _rebuildBuildings() {

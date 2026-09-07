@@ -7,9 +7,9 @@ import path from "node:path";
  * Design goals (kept deliberately simple - no database, no dependencies):
  *   - Reads are served from an in-memory cache after the first load, so the
  *     hot path never touches the disk.
- *   - Writes update the cache immediately and then flush to disk atomically
- *     (write to a temp file, then rename) so a crash mid-write can never leave
- *     a half-written / corrupt JSON file behind.
+ *   - Writes flush to disk atomically (write to a temp file, then rename) and
+ *     publish the in-memory cache only after that rename succeeds, so a failed
+ *     write cannot leave a phantom revision in cache.
  *   - Writes are serialized through a promise chain so two concurrent writes
  *     can't race on the same temp file or rename.
  *
@@ -46,7 +46,7 @@ export class JsonFileStore {
                         const text = await fs.readFile(this.filePath, "utf8");
                         loaded = JSON.parse(text);
                     } catch (error) {
-                        if (error.code === "ENOENT") {
+                        if (error.code === "ENOENT" || error.code === "ENOTDIR" || error.code === "EISDIR") {
                             loaded = clone(this.fallback);
                         } else {
                             throw error;
@@ -68,18 +68,19 @@ export class JsonFileStore {
     }
 
     /**
-     * Stores `value`: updates the in-memory cache right away and flushes it to
-     * disk atomically. Returns a copy of what was stored.
+     * Stores `value` by flushing to disk atomically, then publishing the cache.
+     * Failed writes leave the previous cache (and callers) unchanged.
      */
     async write(value) {
         const snapshot = clone(value);
-        this._cache = snapshot;
-        // Recover the queue after a prior filesystem error. The failed caller
-        // still receives its rejection, while later writes get a fresh attempt.
-        this._writeChain = this._writeChain
+        const request = this._writeChain
             .catch(() => {})
-            .then(() => flushToDisk(this.filePath, snapshot));
-        await this._writeChain;
+            .then(async () => {
+                await flushToDisk(this.filePath, snapshot);
+                this._cache = snapshot;
+            });
+        this._writeChain = request;
+        await request;
         return clone(snapshot);
     }
 

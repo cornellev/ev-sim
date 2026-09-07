@@ -75,10 +75,14 @@ test("VIS-12a freezes v10 bytes, hashes and canonical episode identities", async
 test("VIS-12a real direct resolution ignores refreshed visual locks for state, LiDAR and analytic cameras", async (t) => {
     const { service } = await temporaryService(t);
     const original = await service.getEnvironment("igvc");
+    let current = original;
     for (const type of ["imu", "lidar3d", "camera"]) {
-        await service.putEnvironment("igvc", original);
+        current = await service.putEnvironment("igvc", {
+            manifest: { ...original, visualLayer: null, evidence: null },
+            expectedRevision: current.revision ?? 0,
+        });
         const manifest = createDefaultRunManifest({ id: `identity-${type}`, environment: {
-            id: "igvc", expectedHash: computeResolvedRunHash(original),
+            id: "igvc", expectedHash: computeResolvedRunHash(current),
         } });
         manifest.sensorRig.sensors.forEach((sensor) => { sensor.enabled = sensor.type === type; });
         const before = await service.resolveRunManifest(manifest.id, manifest);
@@ -86,10 +90,10 @@ test("VIS-12a real direct resolution ignores refreshed visual locks for state, L
         assert.equal(before.version, 11);
         assert.equal(defaultEpisodeIdentity(before).version, 2);
         verifyRunBundle(bundleFor(before));
-        const changed = { ...original, visualLayer: { descriptorHash: "a".repeat(64) }, evidence: { reportHash: "b".repeat(64) } };
-        await service.putEnvironment("igvc", changed);
+        const changed = { ...current, visualLayer: { descriptorHash: "a".repeat(64) }, evidence: { reportHash: "b".repeat(64) } };
+        current = await service.putEnvironment("igvc", { manifest: changed, expectedRevision: current.revision });
         await assert.rejects(service.resolveRunManifest(manifest.id, manifest), /Environment .* changed/);
-        manifest.environment.expectedHash = computeResolvedRunHash(changed);
+        manifest.environment.expectedHash = computeResolvedRunHash(current);
         const after = await service.resolveRunManifest(manifest.id, manifest);
         assert.equal(before.world.hash, after.world.hash);
         assert.equal(before.renderScene?.hash, after.renderScene?.hash);
@@ -109,18 +113,26 @@ test("VIS-12a checks original and nested scenario locks before projection and pr
     }, scenario: { id: scenario.id, expectedHash: scenario.definitionHash, egoVehicleId: "big-car" } });
     manifest.sensorRig.sensors = [];
     const before = await service.resolveRunManifest(manifest.id, manifest);
-    await service.putEnvironment("authoring-environment", { ...environment, id: "authoring-environment" });
+    await service.putEnvironment("authoring-environment", {
+        ...environment,
+        environmentId: "authoring-environment",
+    }, { create: true });
     const authoredEnvironment = await service.getEnvironment("authoring-environment");
     const alternate = structuredClone(manifest);
     alternate.environment = { id: "authoring-environment", expectedHash: computeResolvedRunHash(authoredEnvironment) };
     assert.deepEqual(identities(await service.resolveRunManifest(alternate.id, alternate)), identities(before));
-    const changedAuthoring = { ...authoredEnvironment, visualLayer: { descriptorHash: "d".repeat(64) } };
-    await service.putEnvironment("authoring-environment", changedAuthoring);
+    const changedAuthoring = await service.putEnvironment("authoring-environment", {
+        manifest: { ...authoredEnvironment, visualLayer: { descriptorHash: "d".repeat(64) } },
+        expectedRevision: authoredEnvironment.revision,
+    });
     await assert.rejects(service.resolveRunManifest(alternate.id, alternate), /Environment "authoring-environment" changed/);
     alternate.environment.expectedHash = computeResolvedRunHash(changedAuthoring);
     assert.deepEqual(identities(await service.resolveRunManifest(alternate.id, alternate)), identities(before));
-    const changed = { ...environment, visualLayer: { descriptorHash: "c".repeat(64) } };
-    await service.putEnvironment("igvc", changed);
+    const igvc = await service.getEnvironment("igvc");
+    const changed = await service.putEnvironment("igvc", {
+        manifest: { ...igvc, visualLayer: { descriptorHash: "c".repeat(64) } },
+        expectedRevision: igvc.revision ?? 0,
+    });
     await assert.rejects(service.resolveRunManifest(manifest.id, manifest), /Environment .* changed/);
     manifest.environment.expectedHash = computeResolvedRunHash(changed);
     await assert.rejects(service.resolveRunManifest(manifest.id, manifest), /Environment .* changed/);
@@ -328,7 +340,12 @@ test("VIS-12a legacy authoring import re-resolves as v11 without changing source
     const bytes = await fs.readFile(new URL("legacy-analytic.v10.json", fixtureRoot));
     const { bundle } = verifyRunBundleBytes(bytes);
     // Re-resolution of an unchanged ID/world; conflicting IDs are a separate import case.
-    await service.putEnvironment(bundle.manifest.environment.id, bundle.resolved.environment.manifest);
+    const environmentId = bundle.manifest.environment.id;
+    const existing = await service.getEnvironment(environmentId);
+    await service.putEnvironment(environmentId, {
+        manifest: bundle.resolved.environment.manifest,
+        expectedRevision: existing?.revision ?? 0,
+    });
     const imported = await service.importRunBundle(bundle);
     assert.equal(imported.version, 11);
     const resolved = await service.resolveRunManifest(imported.id);

@@ -104,7 +104,7 @@ export class SimulationEngine {
             vehicleScene: () => this.scene,
             topicClient: () => this.data.client?.()?.get?.(),
             applyEnvironment: (environment, resolvedRun, worldResource) => {
-                this._applyResolvedEnvironment(environment, resolvedRun, worldResource);
+                return this._applyResolvedEnvironment(environment, resolvedRun, worldResource);
             },
             environmentState: () => this.data.environment?.()?.getDeterministicState?.() ?? null,
         });
@@ -127,7 +127,7 @@ export class SimulationEngine {
         this.environmentRuntime = loader ? { loader, persistence } : null;
     }
 
-    _applyResolvedEnvironment(resolvedEnvironment, resolvedRun = this.resolvedRun, worldResource = resolvedRun?.world) {
+    async _applyResolvedEnvironment(resolvedEnvironment, resolvedRun = this.resolvedRun, worldResource = resolvedRun?.world) {
         const frozenManifest = resolvedEnvironment?.manifest;
         const loader = this.environmentRuntime?.loader;
         if (!frozenManifest || !loader) return;
@@ -139,7 +139,7 @@ export class SimulationEngine {
         }
 
         const persistence = this.environmentRuntime?.persistence;
-        persistence?.suspendAutosave?.();
+        await persistence?.suspendAutosave?.();
         try {
             const manifest = structuredClone(frozenManifest);
             const environment = this.data.environment?.();
@@ -150,6 +150,7 @@ export class SimulationEngine {
             }
             loader.apply(manifest, worldResource);
             loader.manifest = manifest;
+            persistence?.adoptRevision?.(manifest.revision, { force: true });
             const common = {
                 timeUs: 0,
                 cycle: 0,
@@ -163,6 +164,10 @@ export class SimulationEngine {
                 { ...common, type: "string" },
             );
             this.telemetry?.publishSignal?.("environment.manifest", manifest, {
+                ...common,
+                type: "json",
+            });
+            this.telemetry?.publishSignal?.("environment.revision", manifest.revision ?? null, {
                 ...common,
                 type: "json",
             });

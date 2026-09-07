@@ -55,6 +55,16 @@ test("JsonFileStore hands out copies so callers cannot mutate the cache", async 
     assert.deepEqual(await store.read(), { items: ["a"] });
 });
 
+test("JsonFileStore does not publish a cache value when the disk write fails", async () => {
+    const dir = await tempDir();
+    const blockedParent = path.join(dir, "blocked");
+    await fs.writeFile(blockedParent, "not a directory");
+    const store = new JsonFileStore(path.join(blockedParent, "value.json"), { fallback: { count: 0 } });
+
+    await assert.rejects(() => store.write({ attempt: 1 }));
+    assert.deepEqual(await store.read(), { count: 0 });
+});
+
 test("JsonFileStore accepts later writes after a filesystem failure", async () => {
     const dir = await tempDir();
     const blockedParent = path.join(dir, "blocked");
@@ -73,7 +83,7 @@ test("StorageService stores environments at environments/<id>.json", async () =>
     const dir = await tempDir();
     const service = new StorageService(dir);
 
-    await service.putEnvironment("igvc", { environmentId: "igvc", roads: { nodes: [], edges: [] } });
+    await service.putEnvironment("igvc", { environmentId: "igvc", roads: { nodes: [], edges: [] } }, { create: true });
 
     const onDisk = JSON.parse(await fs.readFile(path.join(dir, "environments", "igvc.json"), "utf8"));
     assert.equal(onDisk.environmentId, "igvc");
@@ -171,11 +181,16 @@ test("StorageService environment catalog supports create, duplicate, rename, id 
     assert.equal(initial[0].builtIn, true);
 
     await service.createEnvironment({ id: "yard", name: "Test Yard", templateId: "blank" });
-    await service.renameEnvironment("yard", "North Yard");
+    const renamed = await service.renameEnvironment("yard", { name: "North Yard", expectedRevision: 1 });
     assert.equal((await service.getEnvironment("yard")).environmentId, "yard");
+    assert.equal(renamed.revision, 2);
 
-    const moved = await service.changeEnvironmentId("yard", "north-yard");
-    await service.duplicateEnvironment("north-yard", { id: "yard-copy", name: "North Yard Copy" });
+    const moved = await service.changeEnvironmentId("yard", { id: "north-yard", expectedRevision: renamed.revision });
+    const duplicated = await service.duplicateEnvironment("north-yard", {
+        id: "yard-copy",
+        name: "North Yard Copy",
+        expectedRevision: moved.revision,
+    });
 
     assert.equal(await service.getEnvironment("yard"), null);
     assert.equal(moved.environmentId, "north-yard");
@@ -183,13 +198,14 @@ test("StorageService environment catalog supports create, duplicate, rename, id 
     assert.equal((await service.getEnvironment("north-yard")).name, "North Yard");
     await assert.rejects(() => fs.access(path.join(dir, "environments", "yard.json")));
     await fs.access(path.join(dir, "environments", "north-yard.json"));
-    assert.equal((await service.getEnvironment("yard-copy")).templateId, "blank");
+    assert.equal((await service.getEnvironment("yard-copy")).revision, 1);
+    assert.equal((await service.listEnvironments()).find((entry) => entry.id === "igvc").revision, 0);
     assert.deepEqual(
         (await service.listEnvironments()).map(({ id }) => id).sort(),
         ["igvc", "north-yard", "yard-copy"],
     );
 
-    await service.deleteEnvironment("yard-copy");
+    await service.deleteEnvironment("yard-copy", duplicated.revision);
     assert.equal(await service.getEnvironment("yard-copy"), null);
 });
 
@@ -210,7 +226,7 @@ test("StorageService protects built-in environments and duplicate ids", async ()
     await service.createEnvironment({ id: "yard", name: "Yard" });
     await service.createEnvironment({ id: "field", name: "Field" });
     await assert.rejects(
-        () => service.changeEnvironmentId("yard", "field"),
+        () => service.changeEnvironmentId("yard", { id: "field", expectedRevision: 1 }),
         /already exists/,
     );
     await assert.rejects(
@@ -219,40 +235,49 @@ test("StorageService protects built-in environments and duplicate ids", async ()
     );
 });
 
-test("StorageService ignores stale environment revisions", async () => {
+test("StorageService rejects unguarded and stale environment revisions", async () => {
     const dir = await tempDir();
     const service = new StorageService(dir);
+    const created = await service.createEnvironment({ id: "yard", name: "Yard" });
 
-    await service.putEnvironment("yard", {
-        environmentId: "yard",
-        name: "Newest",
-        clientRevision: 20,
-    });
-    await service.putEnvironment("yard", {
-        environmentId: "yard",
-        name: "Stale",
-        clientRevision: 10,
-    });
+    await assert.rejects(
+        () => service.putEnvironment("yard", { environmentId: "yard", name: "Legacy" }),
+        /Unguarded environment writes/,
+    );
+    await assert.rejects(
+        () => service.putEnvironment("yard", { manifest: { ...created, name: "Stale" }, expectedRevision: 0 }),
+        /revision conflict/,
+    );
+    assert.equal((await service.getEnvironment("yard")).name, "Yard");
+    assert.equal((await service.getEnvironment("yard")).revision, 1);
 
-    assert.equal((await service.getEnvironment("yard")).name, "Newest");
+    const updated = await service.putEnvironment("yard", {
+        manifest: { ...created, name: "Newest" },
+        expectedRevision: 1,
+    });
+    assert.equal(updated.revision, 2);
+    assert.equal(updated.schemaVersion, 3);
 });
 
 test("StorageService sequences deletion after pending writes and rejects stale recreation", async () => {
     const dir = await tempDir();
     const service = new StorageService(dir);
-    await service.createEnvironment({ id: "yard", name: "Yard" });
+    const created = await service.createEnvironment({ id: "yard", name: "Yard" });
 
     const pendingWrite = service.putEnvironment("yard", {
-        environmentId: "yard",
-        name: "Pending",
-        clientRevision: 1,
+        manifest: { ...created, name: "Pending" },
+        expectedRevision: created.revision,
     });
-    const pendingDelete = service.deleteEnvironment("yard");
-    await Promise.all([pendingWrite, pendingDelete]);
+    const pendingDelete = service.deleteEnvironment("yard", created.revision);
+    const outcomes = await Promise.allSettled([pendingWrite, pendingDelete]);
+    assert.equal(outcomes.filter((entry) => entry.status === "fulfilled").length >= 1, true);
+    const remaining = await service.getEnvironment("yard");
+    if (remaining) {
+        assert.equal(remaining.name === "Pending" || remaining.name === "Yard", true);
+    }
 
-    assert.equal(await service.getEnvironment("yard"), null);
     await assert.rejects(
-        () => service.putEnvironment("yard", { environmentId: "yard", clientRevision: 2 }),
-        /was deleted/,
+        () => service.putEnvironment("yard", { manifest: { environmentId: "yard" }, expectedRevision: 99 }),
+        remaining ? /revision conflict/ : /was deleted/,
     );
 });

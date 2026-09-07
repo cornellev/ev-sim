@@ -4,6 +4,23 @@ import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 
 import { JsonFileStore } from "./JsonFileStore.js";
+import { VisualLayerDescriptorStore } from "./VisualLayerDescriptorStore.js";
+import {
+    environmentRevisionConflict,
+    unguardedEnvironmentWriteError,
+} from "./StorageErrors.js";
+import {
+    ENVIRONMENT_SCHEMA_VERSION,
+    ENVIRONMENT_UNGUARDED_WRITE,
+    environmentSummaryFields,
+    parseEnvironmentWriteEnvelope,
+    presentStoredEnvironment,
+    serializeEnvironmentManifestV3,
+} from "../../app/3d/environment/EnvironmentManifestPolicy.js";
+import {
+    assertVisualLayer,
+    rebindVisualLayer,
+} from "../../app/simulation/visual/VisualLayer.js";
 import {
     RUN_BUNDLE_KIND,
     RUN_BUNDLE_VERSION,
@@ -158,7 +175,9 @@ async function hashPublicVehicleAssets(manifest) {
  * callers talk to this domain API and never touch file paths directly.
  *
  * Layout under the data directory (default: `server/data/`):
- *   environments/<environmentId>.json  full Environment.toManifest() output
+ *   environments/<environmentId>.json  schema v3 environment manifests
+ *   environment-transactions/          recoverable environment ID-change journals
+ *   visual-layer-descriptors/sha256/   immutable visual-layer descriptor JSON
  *   scripts/<scriptId>.json            one human-editable file per script
  *   run-manifests/<manifestId>.json    authored simulation run manifests
  *   scenarios/<scenarioId>.json        authored reusable scenarios
@@ -195,6 +214,9 @@ export class StorageService {
         this._settingsWriteChain = Promise.resolve();
         this._environmentWriteChains = new Map();
         this._deletedEnvironmentIds = new Set();
+        this._visualLayerDescriptors = new VisualLayerDescriptorStore(dataDir);
+        this.environmentTransactionsDir = path.join(dataDir, "environment-transactions");
+        this._environmentRecovery = null;
         this._runManifestWriteChains = new Map();
         this._scenarioWriteChains = new Map();
         this._scenarioCatalogWriteChain = Promise.resolve();
@@ -212,15 +234,20 @@ export class StorageService {
 
     /** Return lightweight catalog entries for all saved and built-in worlds. */
     async listEnvironments() {
+        await this._recoverEnvironmentTransactions();
         const ids = await this._listJsonIds(this.environmentsDir);
         const saved = await Promise.all(ids.map((id) => this.getEnvironment(id)));
-        const catalog = new Map(BUILT_IN_ENVIRONMENTS.map((entry) => [entry.id, entry]));
+        const catalog = new Map(BUILT_IN_ENVIRONMENTS.map((entry) => [entry.id, {
+            ...entry,
+            revision: 0,
+            updatedAt: null,
+        }]));
 
         saved.filter(Boolean).forEach((manifest) => {
             const id = manifest.environmentId;
             if (!id) return;
             const builtInEntry = BUILT_IN_ENVIRONMENTS.find((entry) => entry.id === id);
-            catalog.set(id, environmentSummary(manifest, {
+            catalog.set(id, environmentSummaryFields(manifest, {
                 builtIn: Boolean(builtInEntry),
                 fallbackName: builtInEntry?.name,
             }));
@@ -231,33 +258,36 @@ export class StorageService {
 
     /** @returns {Promise<object|null>} the saved manifest, or null if none. */
     async getEnvironment(environmentId) {
-        const stored = await this._fileStore(this._environmentPath(environmentId), null).read();
-        if (stored) return stored;
-        return environmentId === "igvc" ? createBuiltInIGVCEnvironmentManifest() : null;
+        await this._recoverEnvironmentTransactions();
+        return this._readEnvironment(environmentId);
     }
 
-    /** Persist the full environment manifest for `environmentId`. */
-    putEnvironment(environmentId, manifest) {
+    /**
+     * Persist a full environment replacement.
+     * Public writes are `{ manifest, expectedRevision }`. Internal callers may
+     * pass `{ create: true }` to publish revision 1 without a prior document.
+     */
+    putEnvironment(environmentId, input = {}, options = {}) {
         return this._withEnvironmentWrite(environmentId, async () => {
+            await this._recoverEnvironmentTransactions();
             if (this._deletedEnvironmentIds.has(environmentId)) {
                 throw new Error(`Environment "${environmentId}" was deleted.`);
             }
-            const current = await this.getEnvironment(environmentId);
-            if (
-                Number.isFinite(current?.clientRevision)
-                && Number.isFinite(manifest?.clientRevision)
-                && current.clientRevision > manifest.clientRevision
-            ) {
-                return current;
-            }
-            const normalized = normalizeEnvironmentManifest(environmentId, manifest, current);
-            return this._fileStore(this._environmentPath(environmentId), null).write(normalized);
+            const create = options.create === true;
+            const { manifest, expectedRevision } = create
+                ? { manifest: input, expectedRevision: undefined }
+                : parseEnvironmentWriteInput(input);
+            return this._commitEnvironment(environmentId, manifest, {
+                expectedRevision,
+                create,
+            });
         });
     }
 
     /** Create a blank or template-backed environment. */
     async createEnvironment({ id, name, templateId = "blank" }) {
         safeSegment(id);
+        await this._recoverEnvironmentTransactions();
         if (BUILT_IN_ENVIRONMENTS.some((entry) => entry.id === id) || await this.getEnvironment(id)) {
             throw new Error(`Environment "${id}" already exists.`);
         }
@@ -266,120 +296,147 @@ export class StorageService {
         return this.putEnvironment(id, {
             environmentId: id,
             name: cleanName(name, id),
-            schemaVersion: 2,
+            schemaVersion: ENVIRONMENT_SCHEMA_VERSION,
             templateId: templateId === "igvc" ? "igvc" : "blank",
             roadStylePreset: templateId === "igvc" ? "igvc" : "default",
             roadsAuthored: false,
+            visualLayer: null,
+            evidence: null,
             document: emptyEnvironmentDocument(id),
-        });
+        }, { create: true });
     }
 
     /** Duplicate a saved environment or a built-in template descriptor. */
-    async duplicateEnvironment(sourceId, { id, name }) {
-        if (BUILT_IN_ENVIRONMENTS.some((entry) => entry.id === id) || await this.getEnvironment(id)) {
-            throw new Error(`Environment "${id}" already exists.`);
-        }
+    async duplicateEnvironment(sourceId, { id, name, expectedRevision } = {}) {
+        const ids = [sourceId, id].sort();
+        return this._withEnvironmentWrite(ids[0], () => (
+            this._withEnvironmentWrite(ids[1], async () => {
+                await this._recoverEnvironmentTransactions();
+                if (BUILT_IN_ENVIRONMENTS.some((entry) => entry.id === id) || await this.getEnvironment(id)) {
+                    throw new Error(`Environment "${id}" already exists.`);
+                }
 
-        const source = await this.getEnvironment(sourceId);
-        const builtIn = BUILT_IN_ENVIRONMENTS.find((entry) => entry.id === sourceId);
-        if (!source && !builtIn) throw new Error(`Environment "${sourceId}" does not exist.`);
+                const source = await this.getEnvironment(sourceId);
+                const builtIn = BUILT_IN_ENVIRONMENTS.find((entry) => entry.id === sourceId);
+                if (!source && !builtIn) throw new Error(`Environment "${sourceId}" does not exist.`);
+                requireEnvironmentRevision(expectedRevision, source?.revision ?? 0);
 
-        const duplicate = source
-            ? structuredClone(source)
-            : {
-                schemaVersion: 2,
-                templateId: builtIn.templateId,
-                roadStylePreset: builtIn.templateId === "igvc" ? "igvc" : "default",
-                roadsAuthored: false,
-                document: emptyEnvironmentDocument(id),
-            };
-        duplicate.environmentId = id;
-        duplicate.name = cleanName(name, `${source?.name ?? builtIn.name} Copy`);
-        duplicate.createdAt = new Date().toISOString();
-        duplicate.updatedAt = duplicate.createdAt;
-        if (duplicate.document) duplicate.document.environmentId = id;
-        this._deletedEnvironmentIds.delete(id);
-        return this.putEnvironment(id, duplicate);
+                const duplicate = source
+                    ? structuredClone(source)
+                    : {
+                        templateId: builtIn.templateId,
+                        roadStylePreset: builtIn.templateId === "igvc" ? "igvc" : "default",
+                        roadsAuthored: false,
+                        visualLayer: null,
+                        evidence: null,
+                        document: emptyEnvironmentDocument(id),
+                    };
+                duplicate.environmentId = id;
+                duplicate.name = cleanName(name, `${source?.name ?? builtIn.name} Copy`);
+                duplicate.createdAt = new Date().toISOString();
+                duplicate.updatedAt = duplicate.createdAt;
+                if (duplicate.document) duplicate.document.environmentId = id;
+                const rebound = await this._rebindEnvironmentVisuals(source, duplicate, {
+                    requireDescriptor: Boolean(source?.visualLayer?.descriptorHash),
+                });
+                this._deletedEnvironmentIds.delete(id);
+                return this._commitEnvironment(id, rebound, { create: true });
+            })
+        ));
     }
 
     /** Rename an environment without changing its stable id / filename. */
-    async renameEnvironment(environmentId, name) {
-        const current = await this.getEnvironment(environmentId);
-        const builtIn = BUILT_IN_ENVIRONMENTS.find((entry) => entry.id === environmentId);
-        if (!current && !builtIn) throw new Error(`Environment "${environmentId}" does not exist.`);
+    async renameEnvironment(environmentId, input = {}) {
+        const { name, expectedRevision } = typeof input === "string"
+            ? { name: input, expectedRevision: undefined }
+            : input;
+        return this._withEnvironmentWrite(environmentId, async () => {
+            await this._recoverEnvironmentTransactions();
+            const current = await this.getEnvironment(environmentId);
+            const builtIn = BUILT_IN_ENVIRONMENTS.find((entry) => entry.id === environmentId);
+            if (!current && !builtIn) throw new Error(`Environment "${environmentId}" does not exist.`);
+            requireEnvironmentRevision(expectedRevision, current?.revision ?? 0);
 
-        return this.putEnvironment(environmentId, {
-            ...(current ?? {
-                templateId: builtIn.templateId,
-                roadStylePreset: "igvc",
-                roadsAuthored: false,
-                document: emptyEnvironmentDocument(environmentId),
-            }),
-            name: cleanName(name, current?.name ?? builtIn.name),
+            const next = {
+                ...(current ?? {
+                    templateId: builtIn.templateId,
+                    roadStylePreset: "igvc",
+                    roadsAuthored: false,
+                    visualLayer: null,
+                    evidence: null,
+                    document: emptyEnvironmentDocument(environmentId),
+                }),
+                name: cleanName(name, current?.name ?? builtIn.name),
+            };
+            return this._commitEnvironment(environmentId, next, {
+                expectedRevision: current?.revision ?? 0,
+            });
         });
     }
 
     /** Move a user environment to a new stable id / filename. */
-    async changeEnvironmentId(environmentId, nextEnvironmentId) {
+    async changeEnvironmentId(environmentId, input = {}) {
         const currentId = String(environmentId ?? "").trim();
-        const nextId = validateEnvironmentId(nextEnvironmentId);
+        const request = typeof input === "string" ? { id: input } : input;
+        const nextId = validateEnvironmentId(request.id);
         safeSegment(currentId);
-        if (currentId === nextId) {
-            const current = await this.getEnvironment(currentId);
-            if (!current) throw new Error(`Environment "${currentId}" does not exist.`);
-            return current;
-        }
-        if (BUILT_IN_ENVIRONMENTS.some((entry) => entry.id === currentId)) {
-            throw new Error(`Built-in environment "${currentId}" cannot change its id.`);
-        }
-        if (BUILT_IN_ENVIRONMENTS.some((entry) => entry.id === nextId)) {
-            throw new Error(`Environment "${nextId}" already exists.`);
-        }
-
         const ids = [currentId, nextId].sort();
         return this._withEnvironmentWrite(ids[0], () => (
             this._withEnvironmentWrite(ids[1], async () => {
+                await this._recoverEnvironmentTransactions();
                 const current = await this.getEnvironment(currentId);
                 if (!current) throw new Error(`Environment "${currentId}" does not exist.`);
+                if (BUILT_IN_ENVIRONMENTS.some((entry) => entry.id === currentId)) {
+                    throw new Error(`Built-in environment "${currentId}" cannot change its id.`);
+                }
+                requireEnvironmentRevision(request.expectedRevision, current.revision ?? 0);
+                if (currentId === nextId) return current;
+                if (BUILT_IN_ENVIRONMENTS.some((entry) => entry.id === nextId)) {
+                    throw new Error(`Environment "${nextId}" already exists.`);
+                }
                 if (await this.getEnvironment(nextId)) {
                     throw new Error(`Environment "${nextId}" already exists.`);
                 }
 
-                const moved = normalizeEnvironmentManifest(nextId, {
+                const moved = {
                     ...current,
+                    environmentId: nextId,
                     document: current.document
                         ? { ...current.document, environmentId: nextId }
                         : current.document,
-                }, current);
-                const currentPath = this._environmentPath(currentId);
-                const nextPath = this._environmentPath(nextId);
-                const nextStore = this._fileStore(nextPath, null);
-
-                this._deletedEnvironmentIds.delete(nextId);
-                await nextStore.write(moved);
-                try {
-                    await fs.rm(currentPath);
-                } catch (error) {
-                    await fs.rm(nextPath, { force: true });
-                    nextStore.invalidate();
-                    this._stores.delete(nextPath);
-                    throw error;
-                }
-
-                this._stores.get(currentPath)?.invalidate();
-                this._stores.delete(currentPath);
-                this._deletedEnvironmentIds.add(currentId);
-                return moved;
+                };
+                const rebound = await this._rebindEnvironmentVisuals(current, moved, {
+                    requireDescriptor: Boolean(current.visualLayer?.descriptorHash),
+                });
+                const committed = serializeEnvironmentManifestV3(rebound, {
+                    environmentId: nextId,
+                    revision: 1,
+                    current,
+                });
+                await this._publishEnvironmentIdChange({
+                    sourceId: currentId,
+                    destinationId: nextId,
+                    destinationManifest: committed,
+                    descriptorHash: committed.visualLayer?.descriptorHash ?? null,
+                });
+                return committed;
             })
         ));
     }
 
     /** Delete a user environment. Built-in templates remain available. */
-    async deleteEnvironment(environmentId) {
+    async deleteEnvironment(environmentId, expectedRevision) {
         if (BUILT_IN_ENVIRONMENTS.some((entry) => entry.id === environmentId)) {
             throw new Error(`Built-in environment "${environmentId}" cannot be deleted.`);
         }
         return this._withEnvironmentWrite(environmentId, async () => {
+            await this._recoverEnvironmentTransactions();
+            const current = await this.getEnvironment(environmentId);
+            if (!current) {
+                requireEnvironmentRevision(expectedRevision, 0);
+                return true;
+            }
+            requireEnvironmentRevision(expectedRevision, current.revision ?? 0);
             this._deletedEnvironmentIds.add(environmentId);
             const filePath = this._environmentPath(environmentId);
             this._stores.get(filePath)?.invalidate();
@@ -1301,11 +1358,22 @@ export class StorageService {
             const requestedId = incoming.environment.id;
             const existing = await this.getEnvironment(requestedId);
             if (!existing && requestedId !== "igvc") {
-                await this.putEnvironment(requestedId, importedEnvironment);
-            } else if (semanticHash(existing ?? await this._resolveEnvironment(requestedId)) !== semanticHash(importedEnvironment)) {
+                await this.putEnvironment(requestedId, importedEnvironment, { create: true });
+            } else if (environmentImportHash(existing ?? await this._resolveEnvironment(requestedId)) !== environmentImportHash(importedEnvironment)) {
                 const importedId = `${requestedId}-${semanticHash(importedEnvironment).slice(0, 8)}`;
                 if (!await this.getEnvironment(importedId)) {
-                    await this.putEnvironment(importedId, { ...importedEnvironment, environmentId: importedId, name: `${importedEnvironment.name || requestedId} (Imported)` });
+                    const conflicted = {
+                        ...importedEnvironment,
+                        environmentId: importedId,
+                        name: `${importedEnvironment.name || requestedId} (Imported)`,
+                        document: importedEnvironment.document
+                            ? { ...importedEnvironment.document, environmentId: importedId }
+                            : importedEnvironment.document,
+                    };
+                    const rebound = await this._rebindEnvironmentVisuals(importedEnvironment, conflicted, {
+                        requireDescriptor: Boolean(importedEnvironment.visualLayer?.descriptorHash),
+                    });
+                    await this.putEnvironment(importedId, rebound, { create: true });
                 }
                 incoming.environment.id = importedId;
             }
@@ -1751,6 +1819,27 @@ export class StorageService {
         return operation;
     }
 
+    /**
+     * Apply a queue mutation inside the serialized write chain so concurrent
+     * dequeue/cancel cannot observe a stale revision between get and put.
+     */
+    mutateHeadlessExperimentQueue(mutator) {
+        const operation = this._headlessQueueWriteChain
+            .catch(() => {})
+            .then(async () => {
+                const current = await this.getHeadlessExperimentQueue();
+                const mutated = mutator(current);
+                if (mutated == null || mutated === current) return current;
+                const next = normalizeHeadlessExperimentQueue(mutated);
+                const validated = validateHeadlessExperimentQueue(next);
+                if (!validated.ok) throw headlessQueueValidationError(validated.issues);
+                await this._headlessQueueStore().write(validated.queue);
+                return validated.queue;
+            });
+        this._headlessQueueWriteChain = operation;
+        return operation;
+    }
+
     withHeadlessAdmission(operation) {
         const current = this._headlessAdmissionChain.catch(() => {}).then(operation);
         this._headlessAdmissionChain = current;
@@ -1852,6 +1941,200 @@ export class StorageService {
         return path.join(this.headlessRunBundlesDir, safeSegment(resultId));
     }
 
+    async _readEnvironment(environmentId) {
+        const stored = await this._fileStore(this._environmentPath(environmentId), null).read();
+        if (stored) return presentStoredEnvironment(stored, environmentId);
+        if (environmentId === "igvc") {
+            return presentStoredEnvironment(createBuiltInIGVCEnvironmentManifest(), environmentId);
+        }
+        return null;
+    }
+
+    async _commitEnvironment(environmentId, manifest, { expectedRevision, create = false } = {}) {
+        const current = await this._readEnvironment(environmentId);
+        const stored = await this._fileStore(this._environmentPath(environmentId), null).read();
+        if (create && stored) {
+            throw new Error(`Environment "${environmentId}" already exists.`);
+        }
+        if (!create) {
+            requireEnvironmentRevision(expectedRevision, current?.revision ?? 0);
+        }
+        const revision = create ? 1 : (current?.revision ?? 0) + 1;
+        const prepared = serializeEnvironmentManifestV3(manifest, {
+            environmentId,
+            revision,
+            current,
+        });
+        await this._assertVisualReference(prepared);
+        return this._fileStore(this._environmentPath(environmentId), null).write(prepared);
+    }
+
+    async _assertVisualReference(manifest) {
+        const digest = manifest?.visualLayer?.descriptorHash;
+        if (!digest) return;
+        const descriptor = await this._visualLayerDescriptors.get(digest);
+        if (!descriptor) return;
+        const world = createWorldResource(manifest);
+        if (descriptor.sourceWorldHash !== world.hash) {
+            throw new Error(
+                `Visual layer descriptor ${digest} is bound to world ${descriptor.sourceWorldHash}, not ${world.hash}.`,
+            );
+        }
+    }
+
+    async _rebindEnvironmentVisuals(source, destination, { requireDescriptor = false } = {}) {
+        const dest = structuredClone(destination);
+        const sourceHash = source?.visualLayer?.descriptorHash ?? null;
+        if (!sourceHash) {
+            dest.visualLayer = null;
+            dest.evidence = null;
+            return dest;
+        }
+        const sourceWorld = createWorldResource(source);
+        const destWorld = createWorldResource(dest);
+        if (sourceWorld.hash === destWorld.hash) {
+            dest.visualLayer = source.visualLayer ?? null;
+            dest.evidence = source.evidence ?? null;
+            return dest;
+        }
+        const descriptor = await this._visualLayerDescriptors.get(sourceHash);
+        if (!descriptor) {
+            if (requireDescriptor) {
+                throw new Error(`Visual layer descriptor ${sourceHash} is missing.`);
+            }
+            dest.visualLayer = null;
+            dest.evidence = null;
+            return dest;
+        }
+        if (descriptor.sourceWorldHash !== sourceWorld.hash) {
+            throw new Error(
+                `Visual layer descriptor ${sourceHash} is bound to world ${descriptor.sourceWorldHash}, not ${sourceWorld.hash}.`,
+            );
+        }
+        assertVisualLayer(descriptor);
+        const rebound = rebindVisualLayer(descriptor, destWorld.hash, destWorld.description);
+        const digest = await this._visualLayerDescriptors.put(rebound);
+        dest.visualLayer = { descriptorHash: digest };
+        dest.evidence = null;
+        return dest;
+    }
+
+    async _publishEnvironmentIdChange({ sourceId, destinationId, destinationManifest, descriptorHash }) {
+        const journalPath = this._environmentTransactionPath(sourceId, destinationId);
+        const journal = {
+            kind: "cev-sim.environment-id-change",
+            version: 1,
+            sourceId,
+            destinationId,
+            descriptorHash,
+            destinationManifest,
+            phase: "prepared",
+        };
+        await this._writeJsonFile(journalPath, journal);
+        try {
+            await this._applyDestinationFromJournal(journal);
+            journal.phase = "destination-published";
+            await this._writeJsonFile(journalPath, journal);
+            await this._removeSourceFromJournal(journal);
+        } catch (error) {
+            if (journal.phase === "prepared") {
+                await this._rollbackPreparedDestination(journal);
+            }
+            throw error;
+        }
+        await fs.rm(journalPath, { force: true });
+        this._deletedEnvironmentIds.delete(destinationId);
+        this._deletedEnvironmentIds.add(sourceId);
+        return destinationManifest;
+    }
+
+    async _applyDestinationFromJournal(journal) {
+        const nextPath = this._environmentPath(journal.destinationId);
+        this._deletedEnvironmentIds.delete(journal.destinationId);
+        await this._fileStore(nextPath, null).write(journal.destinationManifest);
+    }
+
+    async _removeSourceFromJournal(journal) {
+        const currentPath = this._environmentPath(journal.sourceId);
+        await fs.rm(currentPath, { force: true });
+        this._stores.get(currentPath)?.invalidate();
+        this._stores.delete(currentPath);
+    }
+
+    async _rollbackPreparedDestination(journal) {
+        const nextPath = this._environmentPath(journal.destinationId);
+        await fs.rm(nextPath, { force: true });
+        this._stores.get(nextPath)?.invalidate();
+        this._stores.delete(nextPath);
+    }
+
+    async _recoverEnvironmentTransactions() {
+        if (this._environmentRecovery) return this._environmentRecovery;
+        const run = this._runEnvironmentRecovery();
+        this._environmentRecovery = run;
+        try {
+            await run;
+        } finally {
+            if (this._environmentRecovery === run) this._environmentRecovery = null;
+        }
+    }
+
+    async _runEnvironmentRecovery() {
+        let names;
+        try {
+            names = await fs.readdir(this.environmentTransactionsDir);
+        } catch (error) {
+            if (error.code === "ENOENT") return;
+            throw error;
+        }
+        for (const name of names) {
+            if (!name.endsWith(".json")) continue;
+            const journalPath = path.join(this.environmentTransactionsDir, name);
+            let journal;
+            try {
+                journal = JSON.parse(await fs.readFile(journalPath, "utf8"));
+            } catch {
+                continue;
+            }
+            if (journal?.kind !== "cev-sim.environment-id-change") continue;
+            if (journal.phase === "destination-published") {
+                await this._removeSourceFromJournal(journal);
+                await fs.rm(journalPath, { force: true });
+                this._deletedEnvironmentIds.add(journal.sourceId);
+                continue;
+            }
+            const destPath = this._environmentPath(journal.destinationId);
+            let destExists = false;
+            try {
+                await fs.access(destPath);
+                destExists = true;
+            } catch {
+                destExists = false;
+            }
+            if (destExists) {
+                await this._removeSourceFromJournal(journal);
+                await fs.rm(journalPath, { force: true });
+                this._deletedEnvironmentIds.add(journal.sourceId);
+            } else {
+                await fs.rm(journalPath, { force: true });
+            }
+        }
+    }
+
+    async _writeJsonFile(filePath, value) {
+        await fs.mkdir(path.dirname(filePath), { recursive: true });
+        const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+        await fs.writeFile(tempPath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+        await fs.rename(tempPath, filePath);
+    }
+
+    _environmentTransactionPath(sourceId, destinationId) {
+        return path.join(
+            this.environmentTransactionsDir,
+            `${safeSegment(sourceId)}--${safeSegment(destinationId)}.json`,
+        );
+    }
+
     _withEnvironmentWrite(environmentId, operation) {
         safeSegment(environmentId);
         const previous = this._environmentWriteChains.get(environmentId) ?? Promise.resolve();
@@ -1919,6 +2202,14 @@ export class StorageService {
 
 function semanticHash(value) {
     return computeResolvedRunHash(value);
+}
+
+function environmentImportHash(manifest) {
+    const clone = structuredClone(manifest ?? {});
+    delete clone.schemaVersion;
+    delete clone.visualLayer;
+    delete clone.evidence;
+    return semanticHash(clone);
 }
 
 function builtInDefaultRunManifest() {
@@ -2207,33 +2498,21 @@ function standardRunSchemas() {
     return schemaClosureForManifest(createDefaultRunManifest());
 }
 
-function environmentSummary(manifest, { builtIn = false, fallbackName = null } = {}) {
-    return {
-        id: manifest.environmentId,
-        name: cleanName(manifest.name, fallbackName ?? manifest.environmentId),
-        templateId: manifest.templateId ?? (manifest.environmentId === "igvc" ? "igvc" : "blank"),
-        builtIn,
-        updatedAt: manifest.updatedAt ?? null,
-    };
+function parseEnvironmentWriteInput(input) {
+    try {
+        return parseEnvironmentWriteEnvelope(input);
+    } catch (error) {
+        if (error.code === ENVIRONMENT_UNGUARDED_WRITE) throw unguardedEnvironmentWriteError();
+        throw error;
+    }
 }
 
-function normalizeEnvironmentManifest(environmentId, manifest = {}, current = null) {
-    const now = new Date().toISOString();
-    return {
-        ...manifest,
-        environmentId,
-        name: cleanName(manifest.name, current?.name ?? environmentId),
-        schemaVersion: Math.max(2, Number(manifest.schemaVersion) || 0),
-        templateId: manifest.templateId
-            ?? current?.templateId
-            ?? (environmentId === "igvc" ? "igvc" : "blank"),
-        roadStylePreset: manifest.roadStylePreset
-            ?? current?.roadStylePreset
-            ?? (environmentId === "igvc" ? "igvc" : "default"),
-        roadsAuthored: manifest.roadsAuthored ?? current?.roadsAuthored ?? false,
-        createdAt: current?.createdAt ?? manifest.createdAt ?? now,
-        updatedAt: now,
-    };
+function requireEnvironmentRevision(expectedRevision, currentRevision) {
+    const current = Number.isInteger(currentRevision) && currentRevision >= 0 ? currentRevision : 0;
+    if (!Number.isInteger(expectedRevision) || expectedRevision < 0 || expectedRevision !== current) {
+        throw environmentRevisionConflict(expectedRevision, current);
+    }
+    return current;
 }
 
 function emptyEnvironmentDocument(environmentId) {

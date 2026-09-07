@@ -66,14 +66,16 @@ received serialized bytes; the separate
 pacing, and presentation settings before episode identity is computed.
 
 `app/simulation/world/WorldDescription.js` is the UI-independent world seam.
-It normalizes schema-v2 environment documents into canonical
+It normalizes schema-v2 and schema-v3 environment documents into canonical
 `cev-sim.world-description` v1 JSON with stable road/building/feature IDs,
 drivable surfaces, exact obstacle prisms, aggregate bounds, route-network
-identity, and a world SHA-256. The browser `EnvironmentLoader` materializes
-that description into Three.js; `HeadlessWorldRuntime` retains only the pure
-description and deterministic `{ worldHash }` state. Resolved bundles retain
-the authored environment resource for integrity but use the world hash for
-simulation semantics.
+identity, and a world SHA-256. Schema v3 adds a server-owned `revision` and
+optional `visualLayer` / `evidence` hash references; those fields are excluded
+from `worldHash` and are not loaded into measured scenes. The browser
+`EnvironmentLoader` materializes the metric description into Three.js;
+`HeadlessWorldRuntime` retains only the pure description and deterministic
+`{ worldHash }` state. Resolved bundles retain the authored environment
+resource for integrity but use the world hash for simulation semantics.
 
 Vehicle motion is owned by the Three.js-free `KinematicVehiclePlant`.
 BigCar, IGVCCar, ScenarioCar, and manifest-backed browser vehicles are
@@ -236,7 +238,9 @@ provider ID/version. Newly created cameras author `canonical-analytic@1`;
 absent `render` blocks remain the legacy analytic alias during resolution.
 `canonical-analytic@2` and `pbr-mesh@1` are known but unavailable. GPU sensor
 backend v1 identity is unchanged; backend v2 is declared but rejected.
-Package admission stays inactive.
+VIS-03 stores environment schema v3 with a server revision and optional visual
+descriptor/evidence hashes. Those references stay out of `worldHash` and out of
+measured scenes. Package admission stays inactive.
 Visual descriptors are appearance resources bound to `worldHash`; their meshes never enter metric
 world, collision, LiDAR, object-registry, or oracle truth.
 

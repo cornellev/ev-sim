@@ -989,9 +989,9 @@ export class HeadlessExperimentService {
     }
 
     async _removeFromQueue(resultId) {
-        const queue = await this.storage.getHeadlessExperimentQueue();
-        if (!queue.entries.some((entry) => entry.resultId === resultId)) return queue;
-        const next = removeQueueEntry(queue, resultId);
-        return this.storage.putHeadlessExperimentQueue({ queue: next, expectedRevision: queue.revision });
+        return this.storage.mutateHeadlessExperimentQueue((queue) => {
+            if (!queue.entries.some((entry) => entry.resultId === resultId)) return queue;
+            return removeQueueEntry(queue, resultId);
+        });
     }
 }

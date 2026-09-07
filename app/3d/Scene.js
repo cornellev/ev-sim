@@ -77,7 +77,7 @@ function publishEnvironmentTelemetry(data, environmentId, manifest, initialScene
     if (!telemetry) return;
     const common = { source: "environment", category: "environment", replayRole: "input", logClass: "core" };
     telemetry.publishSignal("environment.id", environmentId, { ...common, type: "string" });
-    telemetry.publishSignal("environment.revision", manifest?.clientRevision ?? null, { ...common, type: "json" });
+    telemetry.publishSignal("environment.revision", manifest?.revision ?? null, { ...common, type: "json" });
     telemetry.publishSignal("environment.seed", data.bakeRunConfig?.()?.seed ?? 42, { ...common, type: "int32" });
     telemetry.publishSignal("environment.manifest", manifest || { environmentId }, { ...common, type: "json" });
     telemetry.publishSignal("environment.initialSceneState", initialSceneState, { ...common, type: "json" });
@@ -770,7 +770,7 @@ export default function TotalScene({
             const environmentPersistence = new EnvironmentPersistence({
                 data,
                 scene,
-                clientRevision: environmentLoader.manifest?.clientRevision,
+                revision: environmentLoader.manifest?.revision ?? 0,
             });
             environmentPersistence.attach();
             data.simulation().setEnvironmentRuntime({
@@ -897,13 +897,16 @@ export default function TotalScene({
 
             (async () => {
                 try {
-                    persistence?.suspendAutosave();
                     const manifest = await getEnvironmentManifest(environmentId);
                     if (!manifest || runtime.disposed) return;
+                    const decision = persistence
+                        ? await persistence.prepareExternalApply(manifest)
+                        : { apply: true };
+                    if (!decision.apply) return;
                     loader.apply(manifest);
                     loader.manifest = manifest;
                     publishEnvironmentTelemetry(runtime.data, environmentId, manifest, runtime.startingState);
-                    persistence?.adoptClientRevision(manifest.clientRevision);
+                    persistence?.adoptRevision(manifest.revision);
                 } catch (error) {
                     console.warn("[environment] MCP live-sync apply failed:", error);
                 } finally {

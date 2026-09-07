@@ -67,7 +67,7 @@ export function registerEnvironmentTools(server, storage) {
                     name: name ?? id,
                     templateId: templateId ?? "blank",
                 });
-                storageEvents.publish({ domain: "environment", id, action: "created" });
+                storageEvents.publish({ domain: "environment", id, action: "created", revision: manifest.revision });
                 return ok({ ok: true, environment: summarizeManifest(manifest) });
             } catch (error) {
                 return fail(error);
@@ -83,12 +83,18 @@ export function registerEnvironmentTools(server, storage) {
             inputSchema: {
                 environmentId: z.string().min(1),
                 name: z.string().min(1),
+                expectedRevision: z.number().int().nonnegative(),
             },
         },
-        async ({ environmentId, name }) => {
+        async ({ environmentId, name, expectedRevision }) => {
             try {
-                const manifest = await storage.renameEnvironment(environmentId, name);
-                storageEvents.publish({ domain: "environment", id: environmentId, action: "renamed" });
+                const manifest = await storage.renameEnvironment(environmentId, { name, expectedRevision });
+                storageEvents.publish({
+                    domain: "environment",
+                    id: environmentId,
+                    action: "renamed",
+                    revision: manifest.revision,
+                });
                 return ok({ ok: true, environment: summarizeManifest(manifest) });
             } catch (error) {
                 return fail(error);
@@ -103,11 +109,12 @@ export function registerEnvironmentTools(server, storage) {
             description: "Delete a saved environment (built-in IGVC cannot be deleted).",
             inputSchema: {
                 environmentId: z.string().min(1),
+                expectedRevision: z.number().int().nonnegative(),
             },
         },
-        async ({ environmentId }) => {
+        async ({ environmentId, expectedRevision }) => {
             try {
-                await storage.deleteEnvironment(environmentId);
+                await storage.deleteEnvironment(environmentId, expectedRevision);
                 storageEvents.publish({ domain: "environment", id: environmentId, action: "deleted" });
                 return ok({ ok: true, deleted: environmentId });
             } catch (error) {
@@ -243,7 +250,6 @@ export function registerEnvironmentTools(server, storage) {
                 }
 
                 await saveDocument(storage, environmentId, manifest, document);
-                storageEvents.publish({ domain: "environment", id: environmentId, action: "updated" });
                 return ok({
                     ok: true,
                     createdNodes,
@@ -273,7 +279,6 @@ export function registerEnvironmentTools(server, storage) {
                 const result = removeRoadEdge(document, edgeId);
                 if (!result.ok) return fail(result.error);
                 await saveDocument(storage, environmentId, manifest, document);
-                storageEvents.publish({ domain: "environment", id: environmentId, action: "updated" });
                 return ok({ ok: true, removed: edgeId });
             } catch (error) {
                 return fail(error);
@@ -306,7 +311,6 @@ export function registerEnvironmentTools(server, storage) {
                     return fail("Rejected due to geometric conflicts (strict=true).", { conflicts });
                 }
                 await saveDocument(storage, environmentId, manifest, document);
-                storageEvents.publish({ domain: "environment", id: environmentId, action: "updated" });
                 return ok({ ok: true, nodeId, point, conflicts });
             } catch (error) {
                 return fail(error);
@@ -339,7 +343,6 @@ export function registerEnvironmentTools(server, storage) {
                 const response = maybeFailStrict(strict, conflicts, { building: result.record });
                 if (response.isError) return response;
                 await saveDocument(storage, environmentId, manifest, document);
-                storageEvents.publish({ domain: "environment", id: environmentId, action: "updated" });
                 return response;
             } catch (error) {
                 return fail(error);
@@ -363,7 +366,6 @@ export function registerEnvironmentTools(server, storage) {
                 const result = removeBuilding(document, buildingId);
                 if (!result.ok) return fail(result.error);
                 await saveDocument(storage, environmentId, manifest, document);
-                storageEvents.publish({ domain: "environment", id: environmentId, action: "updated" });
                 return ok({ ok: true, removed: buildingId });
             } catch (error) {
                 return fail(error);
@@ -410,7 +412,6 @@ export function registerEnvironmentTools(server, storage) {
                 const response = maybeFailStrict(strict, conflicts, { feature: result.record });
                 if (response.isError) return response;
                 await saveDocument(storage, environmentId, manifest, document);
-                storageEvents.publish({ domain: "environment", id: environmentId, action: "updated" });
                 return response;
             } catch (error) {
                 return fail(error);
@@ -440,7 +441,6 @@ export function registerEnvironmentTools(server, storage) {
                 const response = maybeFailStrict(strict, conflicts, { feature: result.feature });
                 if (response.isError) return response;
                 await saveDocument(storage, environmentId, manifest, document);
-                storageEvents.publish({ domain: "environment", id: environmentId, action: "updated" });
                 return response;
             } catch (error) {
                 return fail(error);
@@ -464,7 +464,6 @@ export function registerEnvironmentTools(server, storage) {
                 const result = removeFeature(document, featureId);
                 if (!result.ok) return fail(result.error);
                 await saveDocument(storage, environmentId, manifest, document);
-                storageEvents.publish({ domain: "environment", id: environmentId, action: "updated" });
                 return ok({ ok: true, removed: featureId });
             } catch (error) {
                 return fail(error);
@@ -498,35 +497,9 @@ export function registerEnvironmentTools(server, storage) {
 }
 
 async function loadDocument(storage, environmentId) {
-    let manifest = await storage.getEnvironment(environmentId);
+    const manifest = await storage.getEnvironment(environmentId);
     if (!manifest) {
-        const catalog = await storage.listEnvironments();
-        const entry = catalog.find((item) => item.id === environmentId);
-        if (!entry) {
-            throw new Error(`Environment "${environmentId}" not found.`);
-        }
-        // Built-in with no saved file yet — create a persisted blank shell so edits stick.
-        manifest = await storage.putEnvironment(environmentId, {
-            environmentId,
-            name: entry.name,
-            schemaVersion: 2,
-            templateId: entry.templateId ?? "blank",
-            roadStylePreset: entry.templateId === "igvc" ? "igvc" : "default",
-            roadsAuthored: false,
-            buildingsAuthored: false,
-            featuresAuthored: false,
-            document: {
-                environmentId,
-                chunkSize: 20,
-                roads: { nodes: [], edges: [] },
-                buildings: [],
-                features: [],
-                earth: null,
-                roadsAuthored: false,
-                buildingsAuthored: false,
-                featuresAuthored: false,
-            },
-        });
+        throw new Error(`Environment "${environmentId}" not found.`);
     }
     const document = EnvironmentDocument.fromManifest(manifest.document ?? {
         environmentId,
@@ -539,17 +512,25 @@ async function loadDocument(storage, environmentId) {
 
 async function saveDocument(storage, environmentId, manifest, document) {
     const snapshot = document.toManifest();
-    const nextRevision = Math.max(Date.now(), Number(manifest.clientRevision || 0) + 1);
-    return storage.putEnvironment(environmentId, {
-        ...manifest,
-        environmentId,
-        document: snapshot,
-        roadsAuthored: document.roadsAuthored,
-        buildingsAuthored: document.buildingsAuthored,
-        featuresAuthored: document.featuresAuthored,
-        clientRevision: nextRevision,
-        updatedAt: new Date().toISOString(),
+    const saved = await storage.putEnvironment(environmentId, {
+        manifest: {
+            ...manifest,
+            environmentId,
+            document: snapshot,
+            roadsAuthored: document.roadsAuthored,
+            buildingsAuthored: document.buildingsAuthored,
+            featuresAuthored: document.featuresAuthored,
+            updatedAt: new Date().toISOString(),
+        },
+        expectedRevision: Number.isInteger(manifest.revision) ? manifest.revision : 0,
     });
+    storageEvents.publish({
+        domain: "environment",
+        id: environmentId,
+        action: "updated",
+        revision: saved.revision,
+    });
+    return saved;
 }
 
 function summarizeManifest(manifest) {
@@ -559,10 +540,12 @@ function summarizeManifest(manifest) {
         name: manifest.name,
         templateId: manifest.templateId,
         schemaVersion: manifest.schemaVersion,
+        revision: manifest.revision ?? 0,
         roadsAuthored: manifest.roadsAuthored === true,
         buildingsAuthored: manifest.buildingsAuthored === true,
         featuresAuthored: manifest.featuresAuthored === true,
-        clientRevision: manifest.clientRevision ?? null,
+        visualLayer: manifest.visualLayer ?? null,
+        evidence: manifest.evidence ?? null,
     };
 }
 

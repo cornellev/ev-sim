@@ -10,8 +10,11 @@ export function ok(data) {
 
 export function fail(error, extras = {}) {
     const message = error instanceof Error ? error.message : String(error);
+    const payload = { ok: false, error: message, ...extras };
+    if (error?.code) payload.code = error.code;
+    if (error?.currentRevision !== undefined) payload.currentRevision = error.currentRevision;
     return {
-        content: [{ type: "text", text: JSON.stringify({ ok: false, error: message, ...extras }, null, 2) }],
+        content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
         isError: true,
     };
 }
