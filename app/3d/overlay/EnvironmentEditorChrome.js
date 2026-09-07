@@ -12,6 +12,7 @@ import { SelectionVisualizer } from "./SelectionVisualizer";
 import { EDITOR_MODES } from "../editor/EditorState";
 import { useEffect, useState } from "react";
 import { EnvironmentSwitcher } from "./EnvironmentSwitcher";
+import { VisualPreviewDiagnostic } from "./VisualPreviewDiagnostic";
 import { useShortcut } from "../../ui";
 
 export function EnvironmentEditorChrome({ data, activeEnvironmentId, onEnvironmentChange }) {
@@ -51,6 +52,7 @@ export function EnvironmentEditorChrome({ data, activeEnvironmentId, onEnvironme
             {!inOverlayMode && <SceneHierarchy data={data} compactOpen={hierarchyOpen} />}
             {!inOverlayMode && <ObjectInspector data={data} compactOpen={inspectorOpen} />}
             <BakeProgressOverlay data={data} />
+            <VisualPreviewDiagnostic data={data} />
             {!inOverlayMode && (
                 <EnvironmentEditorMenu
                     data={data}

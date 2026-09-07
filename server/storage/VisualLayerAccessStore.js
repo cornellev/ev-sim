@@ -2,26 +2,26 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 
 import {
-    assertVisualLayer,
+    assertVisualLayerAccess,
     canonicalExactStringify,
-    hashVisualLayer,
+    hashVisualLayerAccess,
     parseExactJson,
 } from "../../app/simulation/visual/VisualLayer.js";
 
 const DIGEST_PATTERN = /^[a-f0-9]{64}$/;
 
 /**
- * Internal content-addressed store for immutable visual-layer descriptors.
- * Binary assets, public CAS routes, quotas, and GC are owned by VisualAssetStore.
+ * Internal content-addressed store for immutable visual-layer access sidecars.
+ * Access hashes stay outside visualLayerHash, worldHash, and episode identity.
  */
-export class VisualLayerDescriptorStore {
+export class VisualLayerAccessStore {
     constructor(dataDir) {
-        this.rootDir = path.join(dataDir, "visual-layer-descriptors", "sha256");
+        this.rootDir = path.join(dataDir, "visual-layer-access", "sha256");
     }
 
     pathFor(digest) {
         if (!DIGEST_PATTERN.test(digest)) {
-            throw new Error("Visual layer descriptor digest must be a lowercase SHA-256 hash.");
+            throw new Error("Visual layer access digest must be a lowercase SHA-256 hash.");
         }
         return path.join(this.rootDir, `${digest}.json`);
     }
@@ -35,18 +35,18 @@ export class VisualLayerDescriptorStore {
             throw error;
         }
         const parsed = parseExactJson(text);
-        assertVisualLayer(parsed);
-        const hash = hashVisualLayer(parsed);
+        assertVisualLayerAccess(parsed);
+        const hash = hashVisualLayerAccess(parsed);
         if (hash !== digest) {
-            throw new Error(`Visual layer descriptor ${digest} does not match its canonical digest ${hash}.`);
+            throw new Error(`Visual layer access ${digest} does not match its canonical digest ${hash}.`);
         }
         return parsed;
     }
 
-    async put(descriptor) {
-        assertVisualLayer(descriptor);
-        const digest = hashVisualLayer(descriptor);
-        const bytes = canonicalExactStringify(descriptor);
+    async put(access) {
+        assertVisualLayerAccess(access);
+        const digest = hashVisualLayerAccess(access);
+        const bytes = canonicalExactStringify(access);
         await writeExclusiveUtf8(this.pathFor(digest), bytes);
         return digest;
     }
@@ -62,7 +62,7 @@ async function writeExclusiveUtf8(filePath, bytes) {
         if (error.code !== "EEXIST") throw error;
         const existing = await fs.readFile(filePath, "utf8");
         if (existing !== bytes) {
-            throw new Error(`Visual layer digest collision at ${path.basename(filePath)}.`);
+            throw new Error(`Visual layer access digest collision at ${path.basename(filePath)}.`);
         }
     } finally {
         await fs.rm(tempPath, { force: true });

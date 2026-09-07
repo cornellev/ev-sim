@@ -2,9 +2,10 @@
  * Environment document schema and apply policy.
  *
  * Schema v2 is the legacy authoring shape. Schema v3 adds a server-owned
- * revision and optional content-addressed visual/evidence references. Those
- * reference fields are storage-only: loaders must not materialize them into
- * measured scenes, and they must not enter `worldHash`.
+ * revision and optional content-addressed visual/evidence references.
+ * `accessHash` is provenance for preview materialization and stays out of
+ * `worldHash`. Preview meshes are isolated from measured cameras, registries,
+ * and oracle scans.
  */
 
 export const ENVIRONMENT_SCHEMA_VERSION = 3;
@@ -60,12 +61,12 @@ export function presentStoredEnvironment(manifest, environmentId) {
     };
     if (schemaVersion >= ENVIRONMENT_SCHEMA_VERSION) {
         presented.revision = environmentRevisionOf(manifest);
-        presented.visualLayer = normalizeHashReference(manifest.visualLayer, "visualLayer", "descriptorHash");
+        presented.visualLayer = normalizeVisualLayerReference(manifest.visualLayer);
         presented.evidence = normalizeHashReference(manifest.evidence, "evidence", "reportHash");
     } else {
         if (hasOwn(manifest, "revision")) presented.revision = environmentRevisionOf(manifest);
         if (hasOwn(manifest, "visualLayer")) {
-            presented.visualLayer = normalizeHashReference(manifest.visualLayer, "visualLayer", "descriptorHash");
+            presented.visualLayer = normalizeVisualLayerReference(manifest.visualLayer);
         }
         if (hasOwn(manifest, "evidence")) {
             presented.evidence = normalizeHashReference(manifest.evidence, "evidence", "reportHash");
@@ -113,12 +114,7 @@ export function serializeEnvironmentManifestV3(manifest, {
         }
     }
     const now = new Date().toISOString();
-    const visualLayer = resolveReferenceField(
-        manifest,
-        current,
-        "visualLayer",
-        "descriptorHash",
-    );
+    const visualLayer = resolveVisualLayerField(manifest, current);
     const evidence = visualLayer == null && !hasOwn(manifest, "evidence")
         ? null
         : resolveReferenceField(manifest, current, "evidence", "reportHash");
@@ -209,6 +205,58 @@ function readSchemaVersion(manifest) {
         return version;
     }
     throw new Error(`Unsupported environment schema version ${manifest.schemaVersion}.`);
+}
+
+export function isVisualLayerMaterializable(value) {
+    return Boolean(value?.descriptorHash && value?.accessHash);
+}
+
+export function normalizeVisualLayerReference(value, field = "visualLayer") {
+    if (value === undefined || value === null) return null;
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+        throw new Error(`Environment ${field} must be null or { descriptorHash } or { descriptorHash, accessHash }.`);
+    }
+    const keys = Object.keys(value);
+    const allowed = keys.every((key) => key === "descriptorHash" || key === "accessHash");
+    if (!allowed || !keys.includes("descriptorHash") || keys.length > 2) {
+        throw new Error(`Environment ${field} must be null or { descriptorHash } or { descriptorHash, accessHash }.`);
+    }
+    const descriptorHash = value.descriptorHash;
+    if (!isSha256Digest(descriptorHash)) {
+        throw new Error(`Environment ${field}.descriptorHash must be a lowercase SHA-256 digest.`);
+    }
+    if (!keys.includes("accessHash")) {
+        return { descriptorHash };
+    }
+    if (!isSha256Digest(value.accessHash)) {
+        throw new Error(`Environment ${field}.accessHash must be a lowercase SHA-256 digest.`);
+    }
+    return { descriptorHash, accessHash: value.accessHash };
+}
+
+function resolveVisualLayerField(manifest, current) {
+    if (hasOwn(manifest, "visualLayer")) {
+        const incoming = normalizeVisualLayerReference(manifest.visualLayer);
+        const existing = current && hasOwn(current, "visualLayer")
+            ? normalizeVisualLayerReference(current.visualLayer)
+            : null;
+        if (incoming && !incoming.accessHash && existing?.accessHash) {
+            if (existing.descriptorHash === incoming.descriptorHash) {
+                return { descriptorHash: existing.descriptorHash, accessHash: existing.accessHash };
+            }
+            const error = new Error(
+                "Environment visualLayer descriptor replacement requires a matching accessHash.",
+            );
+            error.code = "VISUAL_LAYER_ACCESS_REQUIRED";
+            error.statusCode = 409;
+            throw error;
+        }
+        return incoming;
+    }
+    if (current && hasOwn(current, "visualLayer")) {
+        return normalizeVisualLayerReference(current.visualLayer);
+    }
+    return null;
 }
 
 function normalizeHashReference(value, field, hashKey) {

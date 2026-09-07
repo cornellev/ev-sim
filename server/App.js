@@ -11,13 +11,17 @@ app.prepare().then(async () => {
     // Storage API: persists environment edits, scripts, and bindings to disk.
     // The storage modules are ESM, so load them dynamically from this CommonJS file.
     const { StorageService } = await import('./storage/StorageService.js');
-    const { createStorageRouter } = await import('./routes/storageRouter.js');
+    const { mountStorageApi } = await import('./routes/storageApi.js');
     const { createMcpRouter } = await import('./mcp/createMcpRouter.js');
     const { LogService } = await import('./logging/LogService.js');
     const { createLogRouter } = await import('./routes/logRouter.js');
     const { HeadlessExperimentService } = await import('./headless/HeadlessExperimentService.js');
     const { createHeadlessRouter } = await import('./routes/headlessRouter.js');
-    const storageService = new StorageService(process.env.CEV_SIM_DATA_DIR);
+    const storageService = new StorageService(process.env.CEV_SIM_DATA_DIR, {
+        visualAssets: {
+            registryPath: process.env.CEV_SIM_VISUAL_SOURCE_REGISTRY || undefined,
+        },
+    });
     const logService = new LogService(process.env.CEV_SIM_LOGS_DIR);
     const headlessExperimentService = new HeadlessExperimentService(storageService, logService);
     await headlessExperimentService.initialize();
@@ -27,8 +31,19 @@ app.prepare().then(async () => {
     // /api/scripting/compile) that need to read the body themselves.
     const jsonParser = express.json({ limit: '20mb' });
     server.use('/api/logs', createLogRouter(logService));
-    server.use('/api/storage', jsonParser, createStorageRouter(storageService));
+    mountStorageApi(server, storageService, { jsonParser });
     server.use('/api/headless', jsonParser, createHeadlessRouter(headlessExperimentService));
+    const path = require("node:path");
+    const THREE_BASIS_DIR = path.join(
+        path.dirname(require.resolve("three/package.json")),
+        "examples/jsm/libs/basis",
+    );
+    server.use("/vendor/basis", express.static(THREE_BASIS_DIR, {
+        fallthrough: false,
+        index: false,
+        maxAge: "1y",
+        immutable: true,
+    }));
     server.use('/mcp', jsonParser, createMcpRouter(storageService, logService, headlessExperimentService));
 
     server.all(/(.*)/, (req, res) => {

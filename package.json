@@ -52,6 +52,7 @@
     "@takram/three-geospatial-effects": "^0.6.4",
     "3d-tiles-renderer": "^0.4.28",
     "express": "^5.2.1",
+    "gltf-validator": "2.0.0-dev.3.10",
     "leaflet": "^1.9.4",
     "next": "^16.1.6",
     "noisejs": "^2.1.0",

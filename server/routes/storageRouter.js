@@ -166,6 +166,12 @@ export function createStorageRouter(service) {
     router.put("/vehicles/:id", handle(async (req) => service.putVehicleManifest(req.params.id, req.body ?? {})));
     router.delete("/vehicles/:id", handle(async (req) => service.deleteVehicleManifest(req.params.id)));
 
+    // --- Visual layer descriptors and access sidecars ---
+    router.post("/visual-layers", handle(async (req) => service.publishVisualLayer(req.body ?? {})));
+    router.get("/visual-layers/:descriptorHash/access/:accessHash", handle(async (req) => (
+        service.getVisualLayerAccess(req.params.descriptorHash, req.params.accessHash)
+    )));
+
     // --- Vehicle model assets (raw binary uploads, not JSON) ---
     const rawBody = express.raw({ limit: "100mb", type: () => true });
     router.put("/vehicle-assets/:id/:file", rawBody, handle(async (req) => {

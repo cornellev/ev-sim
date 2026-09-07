@@ -37,7 +37,12 @@ serialization remains unchanged, while v11 uses JCS. See
 VIS-02 dispatches exact camera render provider ID/version. Omitted selections
 alias only to `canonical-analytic@1` during resolution. `canonical-analytic@2`
 and `pbr-mesh@1` are known but unavailable and never fall back. Package
-admission remains inactive until VIS-13b/protocol 1.4.
+admission remains inactive until VIS-13b/protocol 1.4. VIS-04 stores
+validated visual-asset bytes and source-bound use records; those hashes stay
+out of `visualLayerHash`, simulation-semantic, and episode identity. VIS-05a
+access hashes are likewise excluded from those identities. Attaching or
+changing `accessHash` may change normalized authoring/resolved environment
+identity as provenance changes.
 
 ## HTTP API
 
@@ -61,9 +66,17 @@ require `expectedRevision`. Missing or stale environment revisions return HTTP
 Unguarded environment bodies return `400` `ENVIRONMENT_UNGUARDED_WRITE`.
 Import treats two environments as the same resource when their authoring
 content matches after ignoring schema version, visual/evidence references, and
-revision timestamps; a conflicting ID rebinds a local visual descriptor onto
-the new world and clears evidence. A missing descriptor fails the import
-before any environment write.
+revision timestamps; a conflicting ID rebinds a local visual descriptor and
+its access sidecar onto the new world and clears evidence. A missing
+descriptor or access sidecar fails the import before any environment write.
+
+Visual-layer publish/read:
+
+- `POST /api/storage/visual-layers` accepts `{ descriptor, assetUses }` and
+  returns `{ descriptorHash, accessHash }`.
+- `GET /api/storage/visual-layers/:descriptorHash/access/:accessHash` returns
+  the verified descriptor and access sidecar after re-evaluating `display`
+  rights.
 
 ## Runtime guarantees
 

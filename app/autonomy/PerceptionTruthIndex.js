@@ -1,5 +1,6 @@
 import * as THREE from "three";
 
+import { isVisualPreviewObject } from "../3d/environment/visual/VisualPreviewIsolation.js";
 import {
     normalizePerceptionClassName,
     perceptionClassId,
@@ -177,6 +178,7 @@ export class PerceptionTruthIndex {
             });
         }
         scene?.traverse?.((object) => {
+            if (isVisualPreviewObject(object)) return;
             const sourceId = object.userData?.perceptionSourceId;
             if (!sourceId || entities.some((entity) => sourceIdForEntity(entity, "") === sourceId)) return;
             entities.push({

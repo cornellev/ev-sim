@@ -12,15 +12,25 @@ import { canonicalStringify } from "../app/simulation/RunManifest.js";
 import {
     RUN_PACKAGE_PROFILE,
     VISUAL_ALPHA_MODES,
+    VISUAL_ASSET_MEDIA_TYPES,
+    VISUAL_ASSET_ROLES,
+    VISUAL_ASSET_USE_KIND,
     VISUAL_MATERIAL_EXTENSIONS,
+    assertVisualAssetReference,
     assertVisualLayer,
     canonicalExactStringify,
     evaluateVisualSourcePolicy,
+    hashVisualAssetUse,
     hashVisualLayer,
+    hashVisualLayerAccess,
+    normalizeVisualAssetUse,
     normalizeVisualLayer,
+    normalizeVisualLayerAccess,
     parseExactJson,
     parseVisualLayerJson,
     sha256ExactUtf8,
+    assertVisualLayerAccess,
+    assertVisualLayerAccessMatches,
 } from "../app/simulation/visual/VisualLayer.js";
 import { HEADLESS_PROTOCOL } from "../server/headless/HeadlessProtocol.js";
 
@@ -297,3 +307,180 @@ await import(${JSON.stringify(url.href)});
         assert.equal(result.status, 0, `${url.pathname}: ${result.stderr}`);
     }
 });
+
+test("visual asset use records hash provenance separately from bytes", () => {
+    assert.deepEqual(VISUAL_ASSET_MEDIA_TYPES[0], "application/octet-stream");
+    assert.ok(VISUAL_ASSET_ROLES.includes("buffer"));
+    const asset = {
+        sha256: "a".repeat(64),
+        mediaType: "application/octet-stream",
+        role: "buffer",
+        sizeBytes: 4,
+    };
+    assertVisualAssetReference(asset);
+    const first = normalizeVisualAssetUse({
+        kind: VISUAL_ASSET_USE_KIND,
+        version: 1,
+        asset,
+        sourceIds: ["owned-lab"],
+        dependencies: {},
+    });
+    const second = normalizeVisualAssetUse({
+        ...first,
+        sourceIds: ["owned-other"],
+    });
+    assert.notEqual(hashVisualAssetUse(first), hashVisualAssetUse(second));
+    assert.throws(() => normalizeVisualAssetUse({ ...first, sourceIds: [] }), /at least one trusted source/);
+    assert.throws(() => normalizeVisualAssetUse({ ...first, extra: true }), /unknown field/);
+});
+
+test("visual-layer-access hashes canonical UTF-8 digest order and rejects coverage errors", async () => {
+    const { document } = await json(ownedFixtureUrl);
+    const uses = new Map();
+    const digestToUse = new Map();
+    for (const asset of document.assets) {
+        const use = normalizeVisualAssetUse({
+            kind: VISUAL_ASSET_USE_KIND,
+            version: 1,
+            asset,
+            sourceIds: ["owned-lab"],
+            dependencies: {},
+        });
+        const useHash = hashVisualAssetUse(use);
+        uses.set(useHash, use);
+        digestToUse.set(asset.sha256, useHash);
+    }
+    const mesh = document.assets.find((entry) => entry.mediaType === "model/gltf-binary");
+    const otherMesh = document.assets.find((entry) => (
+        entry.mediaType === "model/gltf-binary" && entry.sha256 !== mesh.sha256
+    ));
+    const meshUseHash = digestToUse.get(mesh.sha256);
+    const meshUse = normalizeVisualAssetUse({
+        ...uses.get(meshUseHash),
+        dependencies: { [`sha256:${otherMesh.sha256}`]: digestToUse.get(otherMesh.sha256) },
+    });
+    uses.delete(meshUseHash);
+    uses.set(hashVisualAssetUse(meshUse), meshUse);
+    digestToUse.set(mesh.sha256, hashVisualAssetUse(meshUse));
+
+    const access = normalizeVisualLayerAccess({
+        kind: "cev-sim.visual-layer-access",
+        version: 1,
+        descriptorHash: hashVisualLayer(document),
+        assets: document.assets.map((asset) => ({
+            sha256: asset.sha256,
+            useHash: digestToUse.get(asset.sha256),
+        })),
+    });
+    assert.deepEqual(access.assets.map((entry) => entry.sha256), document.assets.map((entry) => entry.sha256));
+    assert.equal(assertVisualLayerAccess(access), access);
+    const firstHash = hashVisualLayerAccess(access);
+    assert.throws(
+        () => assertVisualLayerAccess({ ...access, assets: [...access.assets].reverse() }),
+        /not in canonical normalized form/,
+    );
+    assertVisualLayerAccessMatches(access, document, uses);
+    assert.equal(hashVisualLayerAccess(access), firstHash);
+
+    assert.throws(
+        () => assertVisualLayerAccessMatches(
+            normalizeVisualLayerAccess({ ...access, assets: access.assets.slice(1) }),
+            document,
+            uses,
+        ),
+        /exactly once/,
+    );
+
+    const extraAsset = {
+        sha256: "e".repeat(64),
+        mediaType: "image/png",
+        sizeBytes: 8,
+        role: "texture",
+    };
+    const extraUse = normalizeVisualAssetUse({
+        kind: VISUAL_ASSET_USE_KIND,
+        version: 1,
+        asset: extraAsset,
+        sourceIds: ["owned-lab"],
+        dependencies: {},
+    });
+    uses.set(hashVisualAssetUse(extraUse), extraUse);
+    assert.throws(
+        () => assertVisualLayerAccessMatches(normalizeVisualLayerAccess({
+            ...access,
+            assets: [...access.assets, { sha256: extraAsset.sha256, useHash: hashVisualAssetUse(extraUse) }],
+        }), document, uses),
+        /exactly once/,
+    );
+
+    const duplicate = structuredClone(access);
+    duplicate.assets.push({ ...duplicate.assets[0] });
+    assert.throws(() => normalizeVisualLayerAccess(duplicate), /duplicate/);
+
+    const texture = document.assets.find((entry) => entry.role === "texture");
+    const inconsistent = normalizeVisualAssetUse({
+        ...meshUse,
+        dependencies: { [`sha256:${otherMesh.sha256}`]: digestToUse.get(texture.sha256) },
+    });
+    const inconsistentHash = hashVisualAssetUse(inconsistent);
+    uses.set(inconsistentHash, inconsistent);
+    assert.throws(
+        () => assertVisualLayerAccessMatches(normalizeVisualLayerAccess({
+            ...access,
+            assets: access.assets.map((entry) => (
+                entry.sha256 === mesh.sha256
+                    ? { sha256: mesh.sha256, useHash: inconsistentHash }
+                    : entry
+            )),
+        }), document, uses),
+        /does not match the sidecar use selection/,
+    );
+
+    const extraDigest = "e".repeat(64);
+    const extraClosureUse = normalizeVisualAssetUse({
+        kind: VISUAL_ASSET_USE_KIND,
+        version: 1,
+        asset: { sha256: extraDigest, mediaType: "image/png", sizeBytes: 8, role: "texture" },
+        sourceIds: ["owned-lab"],
+        dependencies: {},
+    });
+    const extraClosureHash = hashVisualAssetUse(extraClosureUse);
+    uses.set(extraClosureHash, extraClosureUse);
+    const leakyMesh = normalizeVisualAssetUse({
+        ...meshUse,
+        dependencies: {
+            ...meshUse.dependencies,
+            [`sha256:${extraDigest}`]: extraClosureHash,
+        },
+    });
+    uses.set(hashVisualAssetUse(leakyMesh), leakyMesh);
+    assert.throws(
+        () => assertVisualLayerAccessMatches(normalizeVisualLayerAccess({
+            ...access,
+            assets: access.assets.map((entry) => (
+                entry.sha256 === mesh.sha256
+                    ? { sha256: mesh.sha256, useHash: hashVisualAssetUse(leakyMesh) }
+                    : entry
+            )),
+        }), document, uses),
+        /extra closure member/,
+    );
+
+    const mismatched = normalizeVisualAssetUse({
+        ...uses.get(digestToUse.get(texture.sha256)),
+        asset: { ...texture, mediaType: "image/png" },
+    });
+    uses.set(hashVisualAssetUse(mismatched), mismatched);
+    assert.throws(
+        () => assertVisualLayerAccessMatches(normalizeVisualLayerAccess({
+            ...access,
+            assets: access.assets.map((entry) => (
+                entry.sha256 === texture.sha256
+                    ? { sha256: texture.sha256, useHash: hashVisualAssetUse(mismatched) }
+                    : entry
+            )),
+        }), document, uses),
+        /does not match the descriptor asset/,
+    );
+});
+

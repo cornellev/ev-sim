@@ -25,7 +25,7 @@ a VIS, GOOG, or GS PR changes a contract, hash, gate, or milestone status.
 
 ## Status and release verdict
 
-- Next milestone: **VIS-04 — not started**. VIS-01, VIS-12a, VIS-02, and VIS-03 are implemented.
+- Next milestone: **VIS-06a — not started**. VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, and VIS-05a are implemented.
 - Review verdict: **NO-GO for the original ordering and for claiming visual
   runtime support.** The five Blocker findings below require implementation
   and evidence. This revision supplies the corrected handoff; editing the
@@ -33,12 +33,13 @@ a VIS, GOOG, or GS PR changes a contract, hash, gate, or milestone status.
 - Core assumption: **Google approval, Google-derived assets, Gaussian
   splatting, and a model service are unavailable.**
 - Default implementation/review reasoning level: **Extra High**.
-- Last updated: **2026-09-06 — VIS-03 environment v3 and server revisions implemented**.
-- VIS-01, VIS-12a, VIS-02, and VIS-03 acceptance evidence is recorded in the
-  progress ledger and decision log. Protocol 1.3 advertises `world-bound@2`.
+- Last updated: **2026-09-06 — VIS-05a validated browser preview materialization implemented**.
+- VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, and VIS-05a acceptance evidence is recorded in
+  the progress ledger and decision log. Protocol 1.3 advertises `world-bound@2`.
   Only `canonical-analytic@1` and GPU sensor backend v1 remain runtime-capable;
   no visual renderer or package-admission capability is advertised. Environment
-  v3 references remain storage-only.
+  v3 references may include `accessHash`. Preview materialization is display-only
+  and does not enable `pbr-mesh@1`. Admission profiles stay empty.
 
 The owned/synthetic-asset core must independently deliver author/import →
 preview → no-model bake → atomic promotion → reload → portable package →
@@ -49,7 +50,7 @@ may improve appearance, but cannot be prerequisites for this path.
 
 Original VIS numbers remain workstream identifiers. Suffixes below identify
 actual PRs; completing one suffix does not complete its entire workstream.
-All required entries except VIS-01, VIS-12a, VIS-02, and VIS-03 remain unstarted.
+All required entries except VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, and VIS-05a remain unstarted.
 
 | Workstream | Required core PRs | Optional enrichment |
 | --- | --- | --- |
@@ -84,10 +85,14 @@ requirements; completed portions are recorded in the acceptance ledger.
 VIS-12a supplies F01's implemented identity/compatibility evidence and F06's
 version-dispatch evidence. VIS-02 supplies F09's registry/schema portion of
 G-CAPABILITY. VIS-03 supplies F05's environment revision CAS and F06's
-environment rebind/transaction cases. Neither F01 nor F06 is fully closed:
-selected visual resources still require VIS-12b, and bake-promotion races
-remain VIS-08. F09 product completeness remains later VIS work. The other
-runtime findings retain their owning gates.
+environment rebind/transaction cases. VIS-04 supplies F11's bounded CAS
+validator, F12's storage roots/pins/quotas/no-delete policy, and F15's
+ingestion/content/root-pin rights enforcement. Neither F01 nor F06 is fully
+closed: selected visual resources still require VIS-12b, and bake-promotion
+races remain VIS-08. F09 product completeness remains later VIS work. F11
+loader cases remain VIS-05a/VIS-13a. F12 execution-root wiring remains
+VIS-13b/VIS-15b. F15 import/bake/package/worker denial remains later VIS/GOOG
+work. The other runtime findings retain their owning gates.
 
 | ID / severity | Current behavior and failure mode | Required PR correction and proof |
 | --- | --- | --- |
@@ -895,7 +900,7 @@ scenes. No new metric fields or world-hash change.
 
 ### VIS-04 — Validated CAS, quotas, and lifecycle
 
-**Depends on:** VIS-01.
+**Depends on:** VIS-01. **Status:** implemented.
 
 Implement digest storage/service routes and planned
 `app/3d/environment/visual/VisualAssetClient.js`. Validate the bounded
@@ -933,8 +938,10 @@ must land before any new scene materialization is enabled.
 
 Add planned
 `app/3d/environment/visual/VisualLayerMaterializer.js` with restricted
-GLB/KTX2 loading and digest-only dependency resolution. Integrate preview
-loading after metric rebuilding in
+GLB/KTX2 loading and digest-only dependency resolution. Freeze
+`cev-sim.visual-layer-access@1` so preview fetches are source-bound and cannot
+be laundered through digest-only URLs. Integrate preview loading after metric
+rebuilding in
 [EnvironmentLoader.js](../app/3d/environment/EnvironmentLoader.js).
 Sanitize metadata, validate truth bindings, and dispose partial/superseded
 loads in [Scene.js](../app/3d/Scene.js). Make Spark/splat setup lazy and
@@ -1511,9 +1518,9 @@ person and commit their decision/evidence before the specified gate.
 | --- | --- | --- | --- |
 | **D01** | Repository owner (interim); simulation + Python/protocol implementers | **Implemented in VIS-12a:** manifest v11, `world-bound@2`, semantic/episode v2, protocol 1.3; preserve bundle v1 and current analytic execution. Nested lock/profile and JS/Python byte/episode vectors pass. | Scoped G-HASH/G-MIGRATION evidence recorded below; VIS-12b retains selected-visual cases |
 | **D02** | Repository owner (interim); rendering + perception implementers | **Implemented in VIS-02:** provider ID/version registry, `measured-rgba-analytic-oracle@1` product profile, new-camera `canonical-analytic@1` defaults, and strict camera product/profile validation. `canonical-analytic@2` and `pbr-mesh@1` stay known but unavailable. | Contract recorded in VIS-01; VIS-06a still owns calibrated capture math |
-| **D03** | Repository owner (interim); storage + protocol implementers | **Resolved for VIS-01:** deterministic uncompressed USTAR and fixed limits; separate exact byte digests; same-host opaque admission handles; additive protocol 1.4 fields/RPCs; durable acquire-before-release roots and pins. | Contract recorded; VIS-04/VIS-13 implement it |
+| **D03** | Repository owner (interim); storage + protocol implementers | **Resolved for VIS-01; storage implemented in VIS-04:** deterministic uncompressed USTAR and fixed limits; separate exact byte digests; same-host opaque admission handles; additive protocol 1.4 fields/RPCs; durable acquire-before-release roots and pins. VIS-04 stores immutable bytes, source-bound uses, quotas, staging recovery, and internal roots/pins. Protocol 1.4 and package admission remain VIS-13. | VIS-04 storage evidence recorded; VIS-13 retains package/admission |
 | **D04** | Runtime packaging/release owner | Delivery of renderer/decoder runtime assets, dependency/license closure, package size ceiling or separately verified runtime artifact choice, and offline installation expectations. No scene/model data in the runtime tarball. | VIS-15c; constraints recorded in VIS-01 |
-| **D05** | Repository owner (interim baseline); applicable legal/source owner for grants | **Resolved baseline:** only the configured local operator registry is trusted; permissions intersect through ancestry; unknown/revoked/expired sources and ungranted Google-derived operations fail closed. | Baseline recorded; VIS-04 enforces it and every GOOG activation needs its source owner |
+| **D05** | Repository owner (interim baseline); applicable legal/source owner for grants | **Resolved baseline; ingestion enforced in VIS-04:** only the configured local operator registry is trusted; permissions intersect through ancestry; unknown/revoked/expired sources and ungranted Google-derived operations fail closed. VIS-04 loads the operator file with no mutation API and re-evaluates grants at upload, content access, and root/pin acquisition. | VIS-04 ingestion evidence recorded; every GOOG activation still needs its source owner |
 | **D06** | Performance + deployment owners | Numeric city workload and CPU/GPU/storage/decode budgets, camera rate/latency, concurrency, bake duration and recovery thresholds per supported hardware stack. Decide the advertised capacity from measurements. | VIS-05b; rerun for VIS-15a and VIS-17c |
 | **D07** | Perception validation + experiment owners | Geometric/photometric thresholds, coverage minimums, near/far bands, worst-region limits, confidence/no-hit denominators and matched-fidelity experiment policy. | VIS-16a schema; fixed before VIS-16b evaluates acceptance |
 | **D08** | Validation + runtime owners | Accepted validator/tool provenance, locally recomputed versus trusted imported reports, stale-evidence handling and admission/recovery authority. Define who can approve a threshold/report profile. | VIS-16a; enforced by VIS-16b |
@@ -1526,9 +1533,9 @@ requirements with silent fallback or unsupported claims.
 
 ## Progress and acceptance ledger
 
-VIS-01, VIS-12a, and VIS-02 are complete in the working tree; all other
-required core PRs remain **not started**. VIS-12a landed at commit `e4f756a`.
-Its accountable owner remains the repository owner under D01.
+VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, and VIS-05a are complete in the working tree;
+all other required core PRs remain **not started**. VIS-12a landed at commit
+`e4f756a`. Its accountable owner remains the repository owner under D01.
 
 - [x] VIS-01 — contract helpers, docs, additive protocol declarations, owned
   fixtures, identity expectations, and legacy compatibility vectors. Runtime
@@ -1665,9 +1672,123 @@ Its accountable owner remains the repository owner under D01.
     `npm run fixtures:headless` produced no characterization delta.
   - PBR rendering, selected-visual run resolution, bake promotion, public CAS
     routes, quotas, and package admission remain inactive.
-- [ ] VIS-04
+- [x] VIS-04 — source-aware immutable visual-asset CAS at
+  `server/data/visual-assets/sha256/<digest>` with source-bound
+  `cev-sim.visual-asset-use@1` records, validation evidence, durable staging,
+  quota reservations, roots, pins, and recovery journals. Publication order is
+  bounded stream → exact size/hash → validation → file/directory fsync →
+  exclusive publish → metadata/use publish → staging cleanup. Regular files
+  only; verified handles for range reads; explicit corruption, disk-full, and
+  short-write errors. Published deletion is disabled.
+  The contract adds reusable asset-reference validators,
+  `application/octet-stream` / `buffer` for digest-addressed glTF buffers, and
+  JCS-hashed use records. Identical bytes under different provenance produce
+  distinct use hashes. Source-use and validation evidence stay outside
+  `visualLayerHash`, semantic hashes, and episode hashes.
+  Preflight rejects HTTP/file/blob/relative/absolute URIs, animation, skins,
+  morph targets, alpha blending, unknown required extensions, and all glTF
+  `extras`. External resources resolve only through supplied dependency-use
+  `sha256:<digest>` mappings. The pinned Khronos `gltf-validator@2.0.0-dev.3.10`
+  runs in a time/memory-bounded worker whose resource callback sees only the
+  verified dependency table. In-repo PNG/JPEG/KTX2 inspectors enforce the
+  reviewed Basis/UASTC profile and expansion budgets.
+  Trusted grants load from operator-controlled
+  `cev-sim.visual-source-registry@1` JSON with no mutation API. Missing,
+  unknown, expired, revoked, or incomplete grants fail closed. Upload creation
+  and finalization require `persistent-cache`, `machine-interpretation`, and
+  `retention`; content access re-evaluates `display`; root/pin acquisition
+  re-evaluates requested operations over dependency-use ancestry. Asset
+  metadata cannot self-attest ownership; evaluation uses the server clock.
+  Internal `acquire/replace/releaseRoot` uses generation compare-and-swap and
+  acquire-new-before-release-old journaling. Internal `acquire/renew/releasePin`
+  uses opaque handles, leases, idempotent release, and startup reconciliation.
+  Tests use synthetic owners; environment promotion, bake, package, queue,
+  worker, replay, and report owners remain later milestones.
+  Browser API is `VisualAssetClient` at `/api/storage/visual-assets`. Streaming
+  content routes mount before the shared JSON parser, require exact
+  `Content-Length`, and support validated single ranges, digest ETags, and
+  `416`. Digest-only content URLs, filesystem paths, root/pin mutation, and
+  published deletion are not exposed. Constructor/environment configuration may
+  lower limits but cannot exceed the frozen ceilings.
+  Local acceptance evidence:
+  - [security](../tests/visual-asset-security.test.js),
+    [lifecycle](../tests/visual-asset-lifecycle.test.js),
+    [rights](../tests/visual-asset-rights.test.js),
+    [API](../tests/visual-asset-api.test.js),
+    [visual-layer](../tests/visual-layer.test.js),
+    [identity](../tests/visual-identity.test.js),
+    [environment v3](../tests/environment-v3.test.js),
+    [persistence](../tests/environment-persistence.test.js), and
+    [storage](../tests/storage-service.test.js) cover G-SECURITY URI/media/graph
+    attacks, G-LIFECYCLE quota/dedup/cancel/recovery/root/pin races, G-RIGHTS
+    owned/unknown/Google-derived/expired/revoked/ancestral/deduplicated/forged
+    records, parser ordering, and unchanged visual/semantic/episode hashes.
+  - Focused visual-asset, visual-layer, environment, and storage suites passed
+    69/69 with no skips. `npm run lint` completed with zero errors and two
+    pre-existing warnings. `npm test` passed 713/715 with two declared
+    hardware GPU skips. `npm run test:headless` passed 87/87.
+    `npm run fixtures:headless` produced no characterization delta.
+  - Protocol remains 1.3. Admission profiles stay empty. PBR providers stay
+    unavailable. Automatic GC and later owner wiring stay inactive. VIS-06a is
+    next.
+- [x] VIS-05a — validated browser preview materialization for owned GLB/glTF
+  and PNG/JPEG/KTX2, plus immutable `cev-sim.visual-layer-access@1` sidecars.
+  Access documents are JCS-hashed, stored at
+  `visual-layer-access/sha256/<accessHash>.json`, and must cover every
+  descriptor asset exactly once with matching use digest/media/size/role and
+  closed glTF dependency mappings. Environment v3 references are
+  `{ descriptorHash, accessHash }`. Legacy descriptor-only references remain
+  readable and non-materializable. Older clients preserve an existing
+  `accessHash` when rewriting the same descriptor; descriptor replacement
+  without a matching access hash is rejected. Rename retains both hashes;
+  duplicate, ID change, and conflicting import rebind the descriptor and
+  create a corresponding sidecar with unchanged use selections.
+  `accessHash` stays outside `visualLayerHash`, `worldHash`, simulation-semantic
+  identity, and episode identity; it may change normalized authoring/resolved
+  identity. `POST /api/storage/visual-layers` and
+  `GET /api/storage/visual-layers/:descriptorHash/access/:accessHash` re-evaluate
+  `display` rights and never expose digest-only asset URLs or filesystem paths.
+  `VisualLayerMaterializer` fetches assets only through selected use hashes,
+  rejects non-digest glTF URIs before a request, uses the pinned `/vendor/basis/`
+  transcoder, materializes only each instance's primary `assetUri`, requires a
+  unique NFC material-name bijection, replaces embedded materials with
+  descriptor-driven `MeshPhysicalMaterial` or unlit `MeshBasicMaterial`, applies
+  matrices without extra rounding, and commits a detached group only after
+  every instance succeeds. Preview objects overwrite imported `userData`, are
+  non-selectable, and are excluded from registry, perception, collision, LiDAR,
+  and measured camera scans. `truthEntityId` remains in the materializer binding
+  table. Generation tokens and `AbortController` cancel stale work; failed or
+  superseded loads dispose staged resources once and leave an empty preview.
+  `EnvironmentLoader.apply()` is async: metric rebuild/register first, then
+  preview. Visual failures preserve the metric scene and expose
+  `idle/loading/ready/error` with retry. Spark/`SplatAccumulator` initialize
+  only when an explicitly started bake selects the splat path.
+  `pbr-mesh@1`, corrected GPU backend v2, measured PBR cameras, package
+  admission, and VIS-05b residency/LOD/caches remain unavailable. Full VIS-06a
+  calibration math remains next; this PR used a preview/measured-scene
+  ownership boundary rather than claiming that calibration milestone.
+  Local acceptance evidence:
+  - [visual-layer](../tests/visual-layer.test.js),
+    [access](../tests/visual-layer-access.test.js),
+    [materializer](../tests/visual-layer-materializer.test.js),
+    [isolation](../tests/visual-preview-isolation.test.js),
+    [independence](../tests/visual-preview-independence.test.js),
+    [environment v3](../tests/environment-v3.test.js),
+    [identity](../tests/visual-identity.test.js), and
+    [asset API/rights](../tests/visual-asset-api.test.js) cover canonical access
+    hashes, coverage/mismatch/dependency/corruption cases, old-client
+    preservation, rename/rebind/import, source-policy dedup, synthetic
+    GLB/buffer/PNG/JPEG/KTX2 preview, URI/material/decoder/rights failures,
+    supersession/teardown/retry, G-ORACLE/G-ISOLATION preview markers, and
+    G-INDEPENDENCE Spark-lazy startup.
+  - Focused visual-layer/access/materializer/isolation/independence suites
+    passed 28/28 with no skips. Related environment, identity, and asset suites
+    passed 35/35. `npm run lint` completed with zero errors and two
+    pre-existing warnings. `npm test` passed 732/734 with two declared
+    hardware GPU skips. `npm run test:headless` passed 87/87.
+    `npm run build` succeeded. `npm run fixtures:headless` produced no
+    characterization delta.
 - [ ] VIS-06a
-- [ ] VIS-05a
 - [ ] VIS-05b
 - [ ] VIS-06b
 - [ ] VIS-07
@@ -1867,7 +1988,8 @@ without replacing legacy v10 or VIS-12a goldens:
 
 Only `canonical-analytic@1` and GPU backend v1 remain runtime-capable. PBR
 materialization, corrected analytic rendering, visual-asset packaging, and GPU
-backend v2 activation remain later VIS work. VIS-04 is next.
+backend v2 activation remain later VIS work. VIS-04 was next after this
+milestone.
 
 ### 2026-09-06 — Implement VIS-03 environment v3 and server revisions
 
@@ -1885,8 +2007,8 @@ Catalog and MCP summaries publish `revision`.
 
 Store canonical `cev-sim.visual-layer@1` descriptors under
 `server/data/visual-layer-descriptors/sha256/<hash>.json` as an internal
-immutable JSON CAS. Binary assets, public routes, quotas, pins, and GC remain
-VIS-04. Duplicate, ID change, and conflicting import rebind the descriptor to
+immutable JSON CAS. Binary assets, public routes, quotas, pins, and GC remained
+VIS-04 at this milestone. Duplicate, ID change, and conflicting import rebind the descriptor to
 the destination world, reuse asset digests, and clear evidence. Display-name
 rename retains references when the world hash is unchanged. Missing or
 incompatible descriptors fail before mutation. Environment writes use per-ID
@@ -1901,3 +2023,76 @@ resources. `JsonFileStore` publishes cache only after rename; headless queue
 removals mutate inside the same write chain so cancel/drain cannot observe a
 stale revision. PBR rendering, selected-visual resolution, bake promotion, and
 package admission stay inactive.
+
+### 2026-09-06 — Implement VIS-04 validated CAS, quotas, and lifecycle
+
+Add a source-aware immutable visual-asset store with digest bytes, JCS-hashed
+`cev-sim.visual-asset-use@1` records, validation evidence, durable staging,
+quota reservations, roots, pins, and recovery journals. Publication is bounded
+stream → exact size/hash → validation → fsync → exclusive publish → metadata →
+staging cleanup. Regular-file and symlink checks, verified range handles, and
+explicit corruption/disk-full/short-write errors apply. Published deletion stays
+disabled.
+
+Extend the visual contract with reusable asset-reference validators,
+`application/octet-stream` / `buffer`, and source-bound use hashing so identical
+bytes under different provenance remain distinct. Keep source-use and validation
+evidence outside visual, semantic, and episode hashes.
+
+Validate GLB/glTF/PNG/JPEG/KTX2 before publication with URI policy, graph
+limits, material restrictions, and the pinned Khronos validator in a bounded
+worker. Permit external resources only as supplied `sha256:<digest>`
+dependency-use mappings. Load `cev-sim.visual-source-registry@1` from an
+operator file with no mutation API and fail closed. Re-evaluate upload, display,
+and root/pin operations over dependency-use ancestry.
+
+Expose `VisualAssetClient` and streaming `/api/storage/visual-assets` routes
+mounted before the JSON parser. Do not expose digest-only content URLs,
+filesystem paths, root/pin mutation, or published deletion. Internal root/pin
+APIs are tested with synthetic owners; later milestones wire real owners.
+Protocol remains 1.3. Admission profiles stay empty. PBR providers stay
+unavailable. Automatic GC is out of scope. VIS-06a is next.
+
+Local acceptance: focused visual-asset/environment/storage suites 69/69;
+`npm run lint` 0 errors / 2 pre-existing warnings; `npm test` 713/715 with two
+hardware GPU skips; `npm run test:headless` 87/87; `npm run fixtures:headless`
+produced no characterization delta.
+
+### 2026-09-06 — Implement VIS-05a validated browser materialization
+
+Add immutable `cev-sim.visual-layer-access@1` as a source-bound sidecar of
+selected use hashes. Canonicalize assets by UTF-8 digest order, hash exact JCS
+bytes, and store under `visual-layer-access/sha256/<accessHash>.json`. The
+sidecar must cover every descriptor asset exactly once with matching
+digest/media/size/role and closed glTF dependency-use mappings. Environment v3
+references become `{ descriptorHash, accessHash }`. Legacy descriptor-only
+references remain readable and non-materializable. Older clients preserve an
+existing access hash when rewriting the same descriptor; descriptor replacement
+without a matching access hash is rejected. Rename retains both hashes;
+duplicate, ID change, and conflicting import rebind the descriptor and create a
+corresponding sidecar with unchanged use selections. `accessHash` stays outside
+`visualLayerHash`, `worldHash`, simulation-semantic identity, and episode
+identity.
+
+`VisualLayerMaterializer` verifies hashes, truth bindings, closure, and
+`display` rights, fetches only selected uses, rejects non-digest glTF URIs
+before a request, uses the pinned `/vendor/basis/` transcoder, materializes
+only primary `assetUri` values, requires unique NFC material-name bijection,
+replaces embedded materials with descriptor-driven physical or unlit materials,
+applies matrices without extra rounding, and commits a detached group only
+after every instance succeeds. Preview objects overwrite imported `userData`
+and are excluded from registry, perception, collision, LiDAR, and measured
+cameras. Failed or superseded loads dispose staged resources once and leave an
+empty preview. `EnvironmentLoader.apply()` is async: metric first, then
+preview. Spark/splat construction is lazy. `pbr-mesh@1` stays unavailable.
+VIS-06a calibration remains next; this PR used a preview/measured-scene
+ownership boundary rather than that calibration milestone. VIS-05b retains
+residency, caches, LOD, and scale budgets.
+
+Local acceptance: focused visual-layer/access/materializer/isolation/
+independence suites 28/28; related environment/identity/asset suites 35/35;
+`npm run lint` 0 errors / 2 pre-existing warnings; `npm test` 732/734 with two
+hardware GPU skips; `npm run test:headless` 87/87; `npm run build` succeeded;
+`npm run fixtures:headless` produced no characterization delta.
+
+

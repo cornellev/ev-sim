@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { SimulationMenu } from "./SimulationMenu";
 import { SimulationCleanupOverlay } from "./SimulationCleanupOverlay";
+import { VisualPreviewDiagnostic } from "./VisualPreviewDiagnostic";
 import { VehicleOverlay } from "./VehicleOverlay";
 import { SensorProductPanel } from "./SensorProductPanel";
 import { ControlsHud } from "./ControlsHud";
@@ -50,6 +51,7 @@ export function SimulationChrome({ data, onOpenReplay }) {
                 </div>
             )}
             <ControlsHud data={data} />
+            <VisualPreviewDiagnostic data={data} />
             <SimulationCleanupOverlay data={data} />
             <SimulationMenu
                 data={data}

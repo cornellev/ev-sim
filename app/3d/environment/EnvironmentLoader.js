@@ -3,6 +3,11 @@ import { removeBuildingMeshesFromScene, removeFeatureFromRuntime } from "../edit
 import { placeFusionObjectInScene } from "../editor/placement/placeFusionObject.js";
 import { getEnvironmentManifest } from "./EnvironmentCatalogClient.js";
 import { applyEnvironmentVisualReferences } from "./EnvironmentManifestPolicy.js";
+import { VisualPreviewHost } from "./visual/VisualPreviewHost.js";
+import { VisualLayerMaterializer } from "./visual/VisualLayerMaterializer.js";
+import {
+    VISUAL_PREVIEW_STATUS,
+} from "../../simulation/visual/VisualLayer.js";
 import {
     assertWorldResource,
     createWorldResource,
@@ -15,10 +20,23 @@ import {
  * by Node. No template geometry is bootstrapped outside that shared contract.
  */
 export class EnvironmentLoader {
-    constructor({ data, scene }) {
+    constructor({ data, scene, materializer = undefined, previewHost = undefined }) {
         this.data = data;
         this.scene = scene;
         this.manifest = null;
+        this.previewHost = previewHost === undefined && scene
+            ? new VisualPreviewHost(scene)
+            : previewHost ?? null;
+        this.materializer = materializer === undefined && this.previewHost
+            ? new VisualLayerMaterializer({
+                previewRoot: this.previewHost.root,
+                renderer: data?.renderer ?? data?.three?.()?.renderer ?? null,
+            })
+            : materializer ?? null;
+        this._disposed = false;
+        if (this.materializer && this.data?.setVisualPreviewStatus) {
+            this.materializer.subscribe((status) => this.data.setVisualPreviewStatus(status));
+        }
     }
 
     async load(environmentId) {
@@ -34,7 +52,7 @@ export class EnvironmentLoader {
 
         this.data.objects().scene(this.scene);
         environment.setup(this.scene);
-        this.apply(this.manifest ?? {
+        await this.apply(this.manifest ?? {
             environmentId: definition.environmentId,
             templateId: definition.templateId,
         });
@@ -42,7 +60,7 @@ export class EnvironmentLoader {
         return definition;
     }
 
-    apply(manifest, resolvedWorld = null) {
+    async apply(manifest, resolvedWorld = null) {
         const environment = this.data.environment();
         const document = environment.getDocument();
         const worldResource = resolvedWorld ?? createWorldResource(manifest);
@@ -90,8 +108,31 @@ export class EnvironmentLoader {
         this._restoreSky(manifest.sky);
         this._restoreEditorState(manifest.editor);
         this._restoreVisualReferences(manifest);
+        await this._materializePreview(worldResource);
         this.data.simulation()?.render?.();
         return worldResource;
+    }
+
+    async retryPreview() {
+        if (!this.materializer) return idlePreview();
+        const status = await this.materializer.retry();
+        this.data.simulation()?.render?.();
+        return status;
+    }
+
+    dispose() {
+        if (this._disposed) return;
+        this._disposed = true;
+        this.materializer?.dispose?.();
+        this.materializer = null;
+        this.previewHost?.dispose?.();
+        this.previewHost = null;
+    }
+
+    async _materializePreview(worldResource) {
+        if (!this.materializer) return idlePreview();
+        const reference = this.data.environment()?.visualLayer ?? null;
+        return this.materializer.replace(reference, worldResource);
     }
 
     _restoreVisualReferences(manifest) {
@@ -199,4 +240,8 @@ function normalizeDefinition(environmentId, manifest) {
         templateId,
         roadStylePreset: manifest?.roadStylePreset ?? (templateId === "igvc" ? "igvc" : "default"),
     };
+}
+
+function idlePreview() {
+    return { status: VISUAL_PREVIEW_STATUS.idle, error: null };
 }

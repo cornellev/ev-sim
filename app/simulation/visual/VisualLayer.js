@@ -46,6 +46,31 @@ import { bytesToHex } from "@noble/hashes/utils.js";
 
 export const VISUAL_LAYER_KIND = "cev-sim.visual-layer";
 export const VISUAL_LAYER_VERSION = 1;
+export const VISUAL_LAYER_ACCESS_KIND = "cev-sim.visual-layer-access";
+export const VISUAL_LAYER_ACCESS_VERSION = 1;
+export const VISUAL_KTX2_TRANSCODER_PATH = "/vendor/basis/";
+export const VISUAL_PREVIEW_STATUS = Object.freeze({
+    idle: "idle",
+    loading: "loading",
+    ready: "ready",
+    error: "error",
+});
+export const VISUAL_PREVIEW_ERROR_CODES = Object.freeze({
+    ACCESS_MISSING: "VISUAL_PREVIEW_ACCESS_MISSING",
+    DESCRIPTOR_MISSING: "VISUAL_PREVIEW_DESCRIPTOR_MISSING",
+    ASSET_MISSING: "VISUAL_PREVIEW_ASSET_MISSING",
+    RIGHTS_DENIED: "VISUAL_PREVIEW_RIGHTS_DENIED",
+    MATERIAL_MISMATCH: "VISUAL_PREVIEW_MATERIAL_MISMATCH",
+    DECODER_FAILED: "VISUAL_PREVIEW_DECODER_FAILED",
+    HASH_MISMATCH: "VISUAL_PREVIEW_HASH_MISMATCH",
+    URI_REJECTED: "VISUAL_PREVIEW_URI_REJECTED",
+    BINDING_INVALID: "VISUAL_PREVIEW_BINDING_INVALID",
+    WORLD_MISMATCH: "VISUAL_PREVIEW_WORLD_MISMATCH",
+    UNSUPPORTED_RENDERER: "VISUAL_PREVIEW_UNSUPPORTED_RENDERER",
+    SUPERSEDED: "VISUAL_PREVIEW_SUPERSEDED",
+    MEDIA_MISMATCH: "VISUAL_PREVIEW_MEDIA_MISMATCH",
+    SIZE_MISMATCH: "VISUAL_PREVIEW_SIZE_MISMATCH",
+});
 export const VISUAL_ASSET_PROFILE = Object.freeze({ id: "static-gltf-surface", version: 1 });
 export const VISUAL_CONTRACT_VERSIONS = Object.freeze({
     runBundle: 1,
@@ -82,6 +107,7 @@ export const VISUAL_CAMERA_BUFFER_CONTRACT = Object.freeze({
 });
 
 export const VISUAL_ASSET_MEDIA_TYPES = Object.freeze([
+    "application/octet-stream",
     "image/jpeg",
     "image/ktx2",
     "image/png",
@@ -90,10 +116,21 @@ export const VISUAL_ASSET_MEDIA_TYPES = Object.freeze([
 ]);
 export const VISUAL_ASSET_ROLES = Object.freeze([
     "actor",
+    "buffer",
     "environment-map",
     "mesh",
     "texture",
 ]);
+export const VISUAL_ASSET_USE_KIND = "cev-sim.visual-asset-use";
+export const VISUAL_ASSET_USE_VERSION = 1;
+export const VISUAL_SOURCE_REGISTRY_KIND = "cev-sim.visual-source-registry";
+export const VISUAL_SOURCE_REGISTRY_VERSION = 1;
+export const VISUAL_ASSET_UPLOAD_OPERATIONS = Object.freeze([
+    "persistent-cache",
+    "machine-interpretation",
+    "retention",
+]);
+export const VISUAL_ASSET_ACCESS_OPERATIONS = Object.freeze(["display"]);
 export const VISUAL_MATERIAL_MODES = Object.freeze([
     "metallic-roughness",
     "unlit-captured-radiance",
@@ -467,15 +504,45 @@ function matrix(value, path) {
     return result;
 }
 
-function normalizeAsset(value, path) {
+/**
+ * Normalize a closed visual-asset reference `{ sha256, mediaType, sizeBytes, role }`.
+ * Digest-addressed external glTF buffers use `application/octet-stream` / `buffer`.
+ * @param {unknown} value
+ * @param {string} [path]
+ * @returns {VisualAssetReference}
+ */
+export function normalizeVisualAssetReference(value, path = "asset") {
     const source = plainObject(value, path);
     assertKeys(source, ["sha256", "mediaType", "sizeBytes", "role"], path);
+    const mediaType = enumValue(source.mediaType, VISUAL_ASSET_MEDIA_TYPES, `${path}.mediaType`);
+    const role = enumValue(source.role, VISUAL_ASSET_ROLES, `${path}.role`);
+    if (role === "buffer" && mediaType !== "application/octet-stream") {
+        fail(`${path}.mediaType`, "buffer assets must use application/octet-stream");
+    }
+    if (mediaType === "application/octet-stream" && role !== "buffer") {
+        fail(`${path}.role`, "application/octet-stream is only valid for buffer assets");
+    }
+    if ((role === "mesh" || role === "actor") && mediaType !== "model/gltf-binary" && mediaType !== "model/gltf+json") {
+        fail(`${path}.mediaType`, "mesh and actor assets must be glTF");
+    }
+    if (role === "texture" && mediaType !== "image/png" && mediaType !== "image/jpeg" && mediaType !== "image/ktx2") {
+        fail(`${path}.mediaType`, "texture assets must be PNG, JPEG, or KTX2");
+    }
     return {
         sha256: digest(source.sha256, `${path}.sha256`),
-        mediaType: enumValue(source.mediaType, VISUAL_ASSET_MEDIA_TYPES, `${path}.mediaType`),
+        mediaType,
         sizeBytes: integer(source.sizeBytes, `${path}.sizeBytes`),
-        role: enumValue(source.role, VISUAL_ASSET_ROLES, `${path}.role`),
+        role,
     };
+}
+
+/** @param {unknown} value @param {string} [path] @returns {VisualAssetReference} */
+export function assertVisualAssetReference(value, path = "asset") {
+    const normalized = normalizeVisualAssetReference(value, path);
+    if (canonicalExactStringify(normalized) !== canonicalExactStringify(value)) {
+        fail(path, "immutable asset reference is not in canonical normalized form");
+    }
+    return value;
 }
 
 const PARAMETER_DEFAULTS = Object.freeze({
@@ -611,7 +678,7 @@ export function normalizeVisualLayer(value) {
     if (normalizedProfile.id !== VISUAL_ASSET_PROFILE.id || normalizedProfile.version !== VISUAL_ASSET_PROFILE.version) {
         fail("visualLayer.assetProfile", "unsupported asset profile");
     }
-    const assets = uniqueSorted(source.assets ?? [], "visualLayer.assets", normalizeAsset)
+    const assets = uniqueSorted(source.assets ?? [], "visualLayer.assets", normalizeVisualAssetReference)
         .sort((left, right) => compareUtf8(left.sha256, right.sha256));
     if (new Set(assets.map((entry) => entry.sha256)).size !== assets.length) fail("visualLayer.assets", "contains duplicate digests");
     const result = {
@@ -843,4 +910,308 @@ export function evaluateVisualSourcePolicy({ sourceIds = [], operations = [], re
             retentionUntil: retentionUntil?.toISOString() ?? null,
         },
     };
+}
+
+function normalizeDependencyUses(value, path) {
+    const source = value === undefined ? {} : plainObject(value, path);
+    const result = {};
+    for (const key of Object.keys(source).sort()) {
+        const uri = digestUri(key, `${path} key`);
+        result[uri] = digest(source[key], `${path}.${key}`);
+    }
+    return result;
+}
+
+/**
+ * Normalize a source-bound visual-asset use record.
+ * Identical bytes with different provenance produce distinct use hashes.
+ * @param {unknown} value
+ * @returns {object}
+ */
+export function normalizeVisualAssetUse(value) {
+    const source = plainObject(value, "visualAssetUse");
+    assertKeys(source, ["kind", "version", "asset", "sourceIds", "dependencies"], "visualAssetUse");
+    const sourceIds = uniqueSorted(source.sourceIds ?? [], "visualAssetUse.sourceIds");
+    if (sourceIds.length === 0) fail("visualAssetUse.sourceIds", "expected at least one trusted source id");
+    const result = {
+        kind: source.kind ?? VISUAL_ASSET_USE_KIND,
+        version: source.version ?? VISUAL_ASSET_USE_VERSION,
+        asset: normalizeVisualAssetReference(source.asset, "visualAssetUse.asset"),
+        sourceIds,
+        dependencies: normalizeDependencyUses(source.dependencies, "visualAssetUse.dependencies"),
+    };
+    if (result.kind !== VISUAL_ASSET_USE_KIND || result.version !== VISUAL_ASSET_USE_VERSION) {
+        fail("visualAssetUse", `expected ${VISUAL_ASSET_USE_KIND} version ${VISUAL_ASSET_USE_VERSION}`);
+    }
+    return result;
+}
+
+/** @param {unknown} value @returns {object} */
+export function assertVisualAssetUse(value) {
+    const normalized = normalizeVisualAssetUse(value);
+    if (canonicalExactStringify(normalized) !== canonicalExactStringify(value)) {
+        fail("visualAssetUse", "immutable use record is not in canonical normalized form");
+    }
+    return value;
+}
+
+/** @param {string} value @returns {object} */
+export function parseVisualAssetUseJson(value) {
+    const parsed = parseExactJson(value);
+    assertVisualAssetUse(parsed);
+    return parsed;
+}
+
+/** @param {unknown} value @returns {string} */
+export function hashVisualAssetUse(value) {
+    assertVisualAssetUse(value);
+    return sha256ExactUtf8(canonicalExactStringify(value));
+}
+
+function normalizeSourcePermissions(value, path) {
+    const source = value === undefined ? {} : plainObject(value, path);
+    const result = {};
+    for (const key of Object.keys(source).sort()) {
+        enumValue(key, VISUAL_SOURCE_OPERATIONS, `${path} key`);
+        result[key] = boolean(source[key], `${path}.${key}`);
+    }
+    return result;
+}
+
+function normalizeSourceRecord(value, path) {
+    const source = plainObject(value, path);
+    assertKeys(source, [
+        "id", "kind", "status", "ancestorIds", "permissions", "notBefore", "expiresAt", "obligations",
+    ], path);
+    const obligations = source.obligations === undefined
+        ? undefined
+        : plainObject(source.obligations, `${path}.obligations`);
+    if (obligations) {
+        assertKeys(obligations, ["attribution", "requirements", "retentionUntil"], `${path}.obligations`);
+    }
+    return {
+        id: string(source.id, `${path}.id`, { identifier: true }),
+        kind: string(source.kind, `${path}.kind`, { identifier: true }),
+        status: string(source.status, `${path}.status`, { identifier: true }),
+        ancestorIds: uniqueSorted(source.ancestorIds ?? [], `${path}.ancestorIds`),
+        permissions: normalizeSourcePermissions(source.permissions, `${path}.permissions`),
+        ...(source.notBefore === undefined ? {} : { notBefore: string(source.notBefore, `${path}.notBefore`) }),
+        ...(source.expiresAt === undefined ? {} : { expiresAt: string(source.expiresAt, `${path}.expiresAt`) }),
+        ...(obligations ? {
+            obligations: {
+                attribution: uniqueSorted(
+                    obligations.attribution ?? [],
+                    `${path}.obligations.attribution`,
+                    (entry, itemPath) => string(entry, itemPath),
+                ),
+                requirements: uniqueSorted(
+                    obligations.requirements ?? [],
+                    `${path}.obligations.requirements`,
+                    (entry, itemPath) => string(entry, itemPath),
+                ),
+                ...(obligations.retentionUntil === undefined ? {} : {
+                    retentionUntil: string(obligations.retentionUntil, `${path}.obligations.retentionUntil`),
+                }),
+            },
+        } : {}),
+    };
+}
+
+/** @param {unknown} value @returns {object} */
+export function normalizeVisualSourceRegistry(value) {
+    const source = plainObject(value, "visualSourceRegistry");
+    assertKeys(source, ["kind", "version", "sources"], "visualSourceRegistry");
+    const sources = uniqueSorted(source.sources ?? [], "visualSourceRegistry.sources", normalizeSourceRecord);
+    if (new Set(sources.map((entry) => entry.id)).size !== sources.length) {
+        fail("visualSourceRegistry.sources", "contains duplicate ids");
+    }
+    const result = {
+        kind: source.kind ?? VISUAL_SOURCE_REGISTRY_KIND,
+        version: source.version ?? VISUAL_SOURCE_REGISTRY_VERSION,
+        sources,
+    };
+    if (result.kind !== VISUAL_SOURCE_REGISTRY_KIND || result.version !== VISUAL_SOURCE_REGISTRY_VERSION) {
+        fail("visualSourceRegistry", `expected ${VISUAL_SOURCE_REGISTRY_KIND} version ${VISUAL_SOURCE_REGISTRY_VERSION}`);
+    }
+    return result;
+}
+
+/** @param {unknown} value @returns {object} */
+export function assertVisualSourceRegistry(value) {
+    const normalized = normalizeVisualSourceRegistry(value);
+    if (canonicalExactStringify(normalized) !== canonicalExactStringify(value)) {
+        fail("visualSourceRegistry", "immutable registry is not in canonical normalized form");
+    }
+    return value;
+}
+
+/** @param {string} value @returns {string} */
+export function parseSha256Uri(value, path = "uri") {
+    return digestUri(value, path);
+}
+
+/** @param {string} uri @returns {string|null} */
+export function sha256FromUri(uri) {
+    const match = SHA256_URI_PATTERN.exec(uri);
+    return match ? match[1] : null;
+}
+
+export class VisualPreviewError extends Error {
+    constructor(code, message) {
+        super(message);
+        this.name = "VisualPreviewError";
+        this.code = code;
+    }
+}
+
+function lookupUse(uses, useHash) {
+    if (!uses) return undefined;
+    if (typeof uses.get === "function") return uses.get(useHash);
+    return uses[useHash];
+}
+
+function normalizeAccessAsset(value, path) {
+    const source = plainObject(value, path);
+    assertKeys(source, ["sha256", "useHash"], path);
+    return {
+        sha256: digest(source.sha256, `${path}.sha256`),
+        useHash: digest(source.useHash, `${path}.useHash`),
+    };
+}
+
+/**
+ * Normalize an immutable visual-layer access sidecar.
+ * Assets are sorted by UTF-8 digest order; use hashes are source-bound.
+ * @param {unknown} value
+ * @returns {object}
+ */
+export function normalizeVisualLayerAccess(value) {
+    const source = plainObject(value, "visualLayerAccess");
+    assertKeys(source, ["kind", "version", "descriptorHash", "assets"], "visualLayerAccess");
+    const assets = uniqueSorted(source.assets ?? [], "visualLayerAccess.assets", normalizeAccessAsset)
+        .sort((left, right) => compareUtf8(left.sha256, right.sha256));
+    if (new Set(assets.map((entry) => entry.sha256)).size !== assets.length) {
+        fail("visualLayerAccess.assets", "contains duplicate digests");
+    }
+    if (new Set(assets.map((entry) => entry.useHash)).size !== assets.length) {
+        fail("visualLayerAccess.assets", "contains duplicate use hashes");
+    }
+    const result = {
+        kind: source.kind ?? VISUAL_LAYER_ACCESS_KIND,
+        version: source.version ?? VISUAL_LAYER_ACCESS_VERSION,
+        descriptorHash: digest(source.descriptorHash, "visualLayerAccess.descriptorHash"),
+        assets,
+    };
+    if (result.kind !== VISUAL_LAYER_ACCESS_KIND || result.version !== VISUAL_LAYER_ACCESS_VERSION) {
+        fail("visualLayerAccess", `expected ${VISUAL_LAYER_ACCESS_KIND} version ${VISUAL_LAYER_ACCESS_VERSION}`);
+    }
+    return result;
+}
+
+/** @param {unknown} value @returns {object} */
+export function assertVisualLayerAccess(value) {
+    const normalized = normalizeVisualLayerAccess(value);
+    if (canonicalExactStringify(normalized) !== canonicalExactStringify(value)) {
+        fail("visualLayerAccess", "immutable access sidecar is not in canonical normalized form");
+    }
+    return value;
+}
+
+/** @param {string} value @returns {object} */
+export function parseVisualLayerAccessJson(value) {
+    const parsed = parseExactJson(value);
+    assertVisualLayerAccess(parsed);
+    return parsed;
+}
+
+/** @param {unknown} value @returns {string} */
+export function hashVisualLayerAccess(value) {
+    assertVisualLayerAccess(value);
+    return sha256ExactUtf8(canonicalExactStringify(value));
+}
+
+/**
+ * Verify an access sidecar covers the descriptor exactly once, each selected
+ * use matches digest/media/size/role, and glTF dependency-use mappings stay
+ * inside the sidecar without extra closure members.
+ * @param {unknown} access
+ * @param {unknown} descriptor
+ * @param {Map<string, object>|Record<string, object>} usesByHash
+ * @returns {object}
+ */
+export function assertVisualLayerAccessMatches(access, descriptor, usesByHash) {
+    assertVisualLayerAccess(access);
+    assertVisualLayer(descriptor);
+    const descriptorHash = hashVisualLayer(descriptor);
+    if (access.descriptorHash !== descriptorHash) {
+        fail("visualLayerAccess.descriptorHash", `does not match descriptor digest ${descriptorHash}`);
+    }
+    const descriptorDigests = descriptor.assets.map((entry) => entry.sha256);
+    const accessDigests = access.assets.map((entry) => entry.sha256);
+    if (accessDigests.length !== descriptorDigests.length) {
+        fail("visualLayerAccess.assets", "must cover every descriptor asset exactly once");
+    }
+    for (let index = 0; index < descriptorDigests.length; index += 1) {
+        if (accessDigests[index] !== descriptorDigests[index]) {
+            fail("visualLayerAccess.assets", "must cover every descriptor asset exactly once");
+        }
+    }
+    const digestToUse = new Map(access.assets.map((entry) => [entry.sha256, entry.useHash]));
+    const sidecarUses = new Set(access.assets.map((entry) => entry.useHash));
+    const descriptorByDigest = new Map(descriptor.assets.map((entry) => [entry.sha256, entry]));
+    for (const [index, entry] of access.assets.entries()) {
+        const use = lookupUse(usesByHash, entry.useHash);
+        if (!use) fail(`visualLayerAccess.assets.${index}.useHash`, `missing use record ${entry.useHash}`);
+        assertVisualAssetUse(use);
+        if (hashVisualAssetUse(use) !== entry.useHash) {
+            fail(`visualLayerAccess.assets.${index}.useHash`, "use record digest does not match useHash");
+        }
+        const expected = descriptorByDigest.get(entry.sha256);
+        if (use.asset.sha256 !== entry.sha256
+            || use.asset.mediaType !== expected.mediaType
+            || use.asset.sizeBytes !== expected.sizeBytes
+            || use.asset.role !== expected.role) {
+            fail(`visualLayerAccess.assets.${index}`, "use record does not match the descriptor asset");
+        }
+        for (const [uri, dependencyUseHash] of Object.entries(use.dependencies)) {
+            const digest = sha256FromUri(uri);
+            if (!digest) fail(`visualLayerAccess.assets.${index}.dependencies`, `invalid dependency URI ${uri}`);
+            const mapped = digestToUse.get(digest);
+            if (mapped === undefined) {
+                fail(`visualLayerAccess.assets.${index}.dependencies`, `extra closure member ${uri}`);
+            }
+            if (mapped !== dependencyUseHash) {
+                fail(
+                    `visualLayerAccess.assets.${index}.dependencies`,
+                    `dependency ${uri} does not match the sidecar use selection`,
+                );
+            }
+            if (!sidecarUses.has(dependencyUseHash)) {
+                fail(`visualLayerAccess.assets.${index}.dependencies`, `extra closure member ${dependencyUseHash}`);
+            }
+        }
+    }
+    return access;
+}
+
+/** Rebind an access sidecar onto a newly hashed descriptor, keeping use selections. */
+export function rebindVisualLayerAccess(access, destinationDescriptorHash) {
+    assertVisualLayerAccess(access);
+    return normalizeVisualLayerAccess({
+        ...access,
+        descriptorHash: destinationDescriptorHash,
+    });
+}
+
+export function isVisualLayerMaterializableReference(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    return SHA256_PATTERN.test(value.descriptorHash) && SHA256_PATTERN.test(value.accessHash);
+}
+
+export function assertPinnedKtx2TranscoderPath(value, path = "transcoderPath") {
+    const result = string(value, path);
+    if (result !== VISUAL_KTX2_TRANSCODER_PATH) {
+        fail(path, `must be the pinned Basis transcoder path ${VISUAL_KTX2_TRANSCODER_PATH}`);
+    }
+    return result;
 }

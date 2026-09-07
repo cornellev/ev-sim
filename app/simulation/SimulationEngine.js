@@ -148,7 +148,7 @@ export class SimulationEngine {
                 environment.templateId = frozenTemplate ?? environment.templateId;
                 environment.roadStylePreset = manifest.roadStylePreset ?? environment.roadStylePreset;
             }
-            loader.apply(manifest, worldResource);
+            await loader.apply(manifest, worldResource);
             loader.manifest = manifest;
             persistence?.adoptRevision?.(manifest.revision, { force: true });
             const common = {

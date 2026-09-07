@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { EDITOR_LAYERS } from "./EditorState.js";
 import { annotatePerceptionObject } from "../../autonomy/PerceptionTruthIndex.js";
+import { isVisualPreviewObject } from "../environment/visual/VisualPreviewIsolation.js";
 
 function shortId(value) {
     const text = String(value ?? "");
@@ -223,6 +224,7 @@ export class EnvironmentRegistry {
         });
 
         scene?.traverse?.((object) => {
+            if (isVisualPreviewObject(object)) return;
             if (object.userData?.skipEnvironmentSelection || object.userData?.environmentChunkKey) return;
             if (roadRoots.has(object) || hasAncestorInSet(object, roadRoots)) return;
 
@@ -300,6 +302,7 @@ export class EnvironmentRegistry {
         let current = object3D;
 
         while (current) {
+            if (isVisualPreviewObject(current)) return null;
             if (current.userData?.skipEnvironmentSelection) {
                 current = current.parent;
                 continue;

@@ -37,6 +37,8 @@ export class Data {
         this._skyManager = null;
         this._earthTilesManager = null;
         this._earthImportController = null;
+        this._visualPreview = { status: "idle", error: null };
+        this._visualPreviewListeners = new Set();
         
         this.scene = null;
         this.camera = null;
@@ -190,6 +192,21 @@ export class Data {
      */
     splats() {
         return this._splatAccumulator;
+    }
+
+    setVisualPreviewStatus(status) {
+        this._visualPreview = status ?? { status: "idle", error: null };
+        for (const listener of this._visualPreviewListeners) listener(this._visualPreview);
+    }
+
+    visualPreview() {
+        return this._visualPreview;
+    }
+
+    subscribeVisualPreview(listener) {
+        this._visualPreviewListeners.add(listener);
+        listener(this._visualPreview);
+        return () => this._visualPreviewListeners.delete(listener);
     }
 
     /**

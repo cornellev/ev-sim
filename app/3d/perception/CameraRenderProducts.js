@@ -1,6 +1,7 @@
 import * as THREE from "three";
 
 import { perceptionMetadataFromObject } from "../../autonomy/PerceptionTruthIndex.js";
+import { isVisualPreviewObject } from "../environment/visual/VisualPreviewIsolation.js";
 import { getWebGL2Context, PixelPackSlot, withPixelPackBufferUnbound } from "../util/glReadback.js";
 
 function finite(value, fallback = 0) {
@@ -222,6 +223,7 @@ function isRenderable(object) {
 
 function shouldExcludeFromSensorView(object, mode) {
     if (!object) return false;
+    if (isVisualPreviewObject(object)) return true;
     if (object.isSparkRenderer || object.constructor?.name === "SparkRenderer") return true;
     if (object.userData?.autonomyOverlay) return true;
     if (mode === "rgb" && object.isMesh && object.userData?.bakeIgnore) return true;

@@ -4,7 +4,11 @@ This document freezes the VIS-01 contracts. It describes interfaces that
 later VIS milestones implement. VIS-12a activates the identity contracts below;
 VIS-02 dispatches exact camera render provider ID/version. VIS-03 adds
 environment schema v3, server revisions, and an internal descriptor store.
-Photoreal rendering, validated binary CAS, and package admission remain
+VIS-04 adds a source-aware immutable visual-asset CAS with validation, quotas,
+staging recovery, and internal root/pin primitives. VIS-05a adds immutable
+`cev-sim.visual-layer-access@1` sidecars and browser preview materialization
+for owned GLB/glTF and PNG/JPEG/KTX2. Photoreal `pbr-mesh@1` rendering,
+corrected GPU backend v2, measured PBR cameras, and package admission remain
 unavailable.
 
 The implementation authority and acceptance gates remain in
@@ -57,9 +61,11 @@ only inputs that can affect reusable static appearance:
 
 Assets use lowercase `{ sha256, mediaType, sizeBytes, role }` records. All
 descriptor graph edges use `sha256:<digest>` and must resolve inside the
-closed asset set. Dependencies discovered inside GLB/glTF are checked against
-the same set during later bounded asset validation. URLs and filesystem paths
-are not resource identities. Chunks and instances bind each other explicitly. A visual-to-truth
+closed asset set. Digest-addressed external glTF buffers use
+`application/octet-stream` and role `buffer`. Dependencies discovered inside
+GLB/glTF are checked against the same set during bounded asset validation. URLs
+and filesystem paths are not resource identities. Chunks and instances bind each
+other explicitly. A visual-to-truth
 binding names a validated truth entity for evaluation; it does not register
 the visual object as truth.
 
@@ -80,11 +86,81 @@ projection.
 VIS-03 persists canonical descriptor JSON at
 `server/data/visual-layer-descriptors/sha256/<hash>.json`. Writes verify with
 `assertVisualLayer` and `hashVisualLayer`, store exact JCS bytes, and never
-overwrite an existing digest. Binary assets, public CAS APIs, quotas, pins,
-and garbage collection remain VIS-04. Environment documents reference a
-descriptor by `visualLayer.descriptorHash` only; loaders copy that hash into
-environment state and do not instantiate meshes, materials, LiDAR geometry, or
-measured-camera resources.
+overwrite an existing digest. Environment documents reference a descriptor as
+`visualLayer: { descriptorHash }` or
+`{ descriptorHash, accessHash }`. Legacy descriptor-only references remain
+readable but are not materializable until an access hash is attached. Older
+clients that rewrite the same descriptor without `accessHash` preserve the
+existing sidecar; replacing the descriptor without a matching access hash is
+rejected. Rename retains both hashes. Duplicate, ID change, and conflicting
+import rebind the descriptor and create a corresponding access sidecar with
+unchanged use selections.
+
+`accessHash` stays outside `visualLayerHash`, `worldHash`, simulation-semantic
+identity, and episode identity. It may change normalized authoring/resolved
+environment identity as provenance changes.
+
+VIS-05a stores canonical access sidecars at
+`server/data/visual-layer-access/sha256/<accessHash>.json`. The sidecar is:
+
+```json
+{
+  "kind": "cev-sim.visual-layer-access",
+  "version": 1,
+  "descriptorHash": "<sha256>",
+  "assets": [{ "sha256": "<asset digest>", "useHash": "<source-bound use hash>" }]
+}
+```
+
+Assets are canonicalized by UTF-8 digest order and hashed as exact JCS bytes.
+The sidecar must cover every descriptor asset exactly once. Each use record
+must match the descriptor digest/media/size/role, and glTF dependency-use
+mappings must agree with the sidecar without extra closure members. Publish
+and read re-evaluate `display` rights. Digest-only asset URLs and filesystem
+paths are not exposed.
+
+Browser access is `VisualLayerClient` at `/api/storage/visual-layers`:
+
+- `POST /api/storage/visual-layers` with canonical `{ descriptor, assetUses }`
+  returns `{ descriptorHash, accessHash }`.
+- `GET /api/storage/visual-layers/:descriptorHash/access/:accessHash` returns
+  the verified descriptor and access sidecar.
+
+VIS-04 stores binary assets at `server/data/visual-assets/sha256/<digest>` and
+source-bound `cev-sim.visual-asset-use@1` records at
+`uses/sha256/<useHash>.json`. A use record contains the asset reference, sorted
+trusted source IDs, and exact dependency-use mappings. Use hashes are RFC
+8785/JCS SHA-256 values; identical bytes uploaded under different provenance
+produce distinct use hashes. Validation evidence is stored beside the use and
+does not enter `visualLayerHash`, semantic hashes, or episode hashes.
+`normalizeVisualAssetReference` / `assertVisualAssetReference` are the reusable
+asset-reference validators.
+
+Publication streams to staging, hashes while writing, validates, fsyncs
+file and directory, then exclusively publishes bytes and metadata. Published
+objects are immutable regular files; symlink paths are rejected. Range reads
+use verified handles, digest ETags, and `416` for unsatisfiable ranges.
+Published deletion is disabled. Internal `acquire/replace/releaseRoot` and
+`acquire/renew/releasePin` APIs reference use closures, not bare digest paths.
+Environment promotion, bake, package, queue, worker, replay, and report owners
+wire those primitives in later milestones.
+
+Browser access is `VisualAssetClient` at `/api/storage/visual-assets`. Streaming
+content routes are mounted before the shared JSON parser. Digest-only content
+URLs, filesystem paths, root/pin mutation, and published deletion are not
+exposed. Constructor and environment configuration may lower operational limits
+but cannot exceed the frozen ceilings: 32 GiB published, 4 GiB staging, 1 GiB
+per asset, 16,384 assets, depth 64, 100,000 nodes, 4,000,000 triangles, 8192
+pixels, 14 mips, 4 GiB decoded closure, two uploads, one validation, 32 readers,
+60-second validation, and a one-hour abandoned-stage TTL.
+
+The operator-controlled `cev-sim.visual-source-registry@1` file is the only
+trusted grant source. There is no mutation API. Missing registries and unknown,
+expired, revoked, or incomplete grants fail closed. Upload creation and
+finalization require `persistent-cache`, `machine-interpretation`, and
+`retention`. Content access re-evaluates `display`. Root and pin acquisition
+re-evaluate the caller-requested operations over the full dependency-use
+ancestry.
 
 New exact contracts normalize negative zero to zero and reject non-finite
 numbers, unsafe integer counters, duplicate JSON keys, lone surrogates, and
@@ -180,6 +256,25 @@ visual G-buffers use identical geometry, visibility, alpha cutoff, calibration,
 and sample time. Analytic oracle passes use immutable truth twins. Preview,
 measured appearance, analytic truth, and frozen bake snapshots have separate
 scene ownership; imported `extras` or `userData` never register truth.
+
+VIS-05a materializes owned preview geometry in the display scene only.
+`VisualLayerMaterializer` verifies descriptor/access hashes, world bindings,
+asset closure, and current `display` rights before decoding. Assets are fetched
+only through selected use hashes. glTF resource URIs resolve through an exact
+`sha256:<digest>` map; relative, network, file, and unrecognized URIs are
+rejected before a request. KTX2 uses the pinned Basis transcoder path
+`/vendor/basis/`. Each instance uses only its primary `assetUri`; LOD selection
+and residency remain VIS-05b. Primitive material names must be unique NFC
+identifiers that bijection-match the instance `materialIds`. Descriptor-driven
+`MeshPhysicalMaterial` or unlit `MeshBasicMaterial` replaces embedded runtime
+materials. Instance matrices are applied without extra numeric rounding. A
+complete detached group is committed only after every instance succeeds.
+Imported `userData` is overwritten with namespaced preview metadata. Preview
+objects are non-selectable and excluded from environment registry, perception
+truth, collision, LiDAR, and measured camera scans. `truthEntityId` stays in
+the materializer binding table. Failed or superseded loads dispose staged
+resources and leave an empty preview, not another world's visuals.
+`pbr-mesh@1` remains unavailable.
 
 ## Identity projection and compatibility
 
@@ -285,8 +380,10 @@ Unknown, missing, expired, revoked, or insufficient records fail closed.
 Google-derived sources deny sensor use, baking, persistence, machine
 interpretation, ML, worker access, and export unless the trusted registry
 contains a reviewed operation-specific grant. Live human preview remains a
-separate permission. Enforcement at import, bake, promotion, package,
-admission, and worker recovery lands in the owning later milestones.
+separate permission. VIS-04 enforces these rules at visual-asset upload,
+content access, closure validation, and internal root/pin acquisition.
+Enforcement at import, bake, promotion, package, admission, and worker recovery
+lands in the owning later milestones.
 
 ## Deterministic run packages
 

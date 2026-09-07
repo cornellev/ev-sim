@@ -33,11 +33,10 @@ import { FIII1 } from "./igvc/mini/fiii1";
 import { FIII2 } from "./igvc/mini/fiii2";
 import { FIII3 } from "./igvc/mini/fiii3";
 import Unit from "../scripting/units/Unit";
-import { SparkRenderer } from "@sparkjsdev/spark";
 import { BakeHarness } from "./environment/visualization/BakeHarness";
 import { BakePath } from "./environment/visualization/BakePath";
 import { createDefaultBakeRunConfig } from "./environment/visualization/BakeRunConfig";
-import { SplatAccumulator } from "./environment/visualization/SplatAccumulator";
+import { isSplatBakePath } from "./environment/visualization/optionalSplatRuntime";
 import { EnvironmentSkyManager } from "./skybox/EnvironmentSkyManager";
 import { EarthTilesManager } from "./earth/EarthTilesManager";
 import { EarthImportController } from "./earth/EarthImportController";
@@ -634,10 +633,6 @@ function setupBaking(data, scene) {
 
     try {
         harness.setup(scene);
-
-        const splatAccumulator = new SplatAccumulator(scene, bakeConfig.splat);
-        data.setSplatAccumulator(splatAccumulator);
-        //samplePath.display(data);
         data.setBakeHarness(harness);
     } catch (error) {
         harness.dispose();
@@ -661,6 +656,20 @@ function registerBakeKey(data, harness) {
             return;
         }
 
+        if (isSplatBakePath(harness.splatConfig)) {
+            try {
+                const { ensureSplatAccumulator } = await import("./environment/visualization/optionalSplatRuntime.js");
+                await ensureSplatAccumulator({
+                    data,
+                    scene: data.scene,
+                    renderer: data.renderer,
+                    splatConfig: harness.splatConfig,
+                });
+            } catch (error) {
+                console.warn("[bake] splat runtime unavailable:", error);
+                throw error;
+            }
+        }
         await harness.start();
         sim.setModule("baking", true);
         sim.play();
@@ -711,8 +720,6 @@ export default function TotalScene({
         renderer.setSize(initialWidth, initialHeight);
         mountNode.appendChild(renderer.domElement);
 
-        const spark = new SparkRenderer({ renderer });
-
         const data = new Data({ environment: { environmentId } });
 
         data.keyManager = keyManagerRef.current;
@@ -721,8 +728,6 @@ export default function TotalScene({
         data.scene = scene;
         data.camera = camera;
         data.renderer = renderer;
-        data.spark = spark; // this is for guassian splats
-        scene.add(spark);
 
         const initialize = async () => {
             setLoadError(null);
@@ -835,6 +840,7 @@ export default function TotalScene({
             const runtime = runtimeRef.current;
             if (runtime) runtime.disposed = true;
             runtime?.environmentPersistence?.dispose();
+            runtime?.environmentLoader?.dispose();
             runtime?.disposeEditorInfrastructure?.();
             runtime?.disposeSimulationControls?.();
             runtimeRef.current = null;
@@ -853,6 +859,9 @@ export default function TotalScene({
             data.setEarthTilesManager(null);
             data.skyManager()?.dispose?.();
             data.setSkyManager(null);
+
+            data.spark?.dispose?.();
+            data.spark = null;
 
             if (mountNode.contains(renderer.domElement)) {
                 mountNode.removeChild(renderer.domElement);
@@ -903,7 +912,7 @@ export default function TotalScene({
                         ? await persistence.prepareExternalApply(manifest)
                         : { apply: true };
                     if (!decision.apply) return;
-                    loader.apply(manifest);
+                    await loader.apply(manifest);
                     loader.manifest = manifest;
                     publishEnvironmentTelemetry(runtime.data, environmentId, manifest, runtime.startingState);
                     persistence?.adoptRevision(manifest.revision);

@@ -5,9 +5,13 @@ import { createHash } from "node:crypto";
 
 import { JsonFileStore } from "./JsonFileStore.js";
 import { VisualLayerDescriptorStore } from "./VisualLayerDescriptorStore.js";
+import { VisualLayerAccessStore } from "./VisualLayerAccessStore.js";
+import { VisualAssetStore } from "./VisualAssetStore.js";
 import {
     environmentRevisionConflict,
     unguardedEnvironmentWriteError,
+    VISUAL_LAYER_ERROR_CODES,
+    visualAssetError,
 } from "./StorageErrors.js";
 import {
     ENVIRONMENT_SCHEMA_VERSION,
@@ -18,8 +22,15 @@ import {
     serializeEnvironmentManifestV3,
 } from "../../app/3d/environment/EnvironmentManifestPolicy.js";
 import {
+    VISUAL_ASSET_ACCESS_OPERATIONS,
     assertVisualLayer,
+    assertVisualLayerAccess,
+    assertVisualLayerAccessMatches,
+    canonicalExactStringify,
+    hashVisualLayer,
+    normalizeVisualLayerAccess,
     rebindVisualLayer,
+    rebindVisualLayerAccess,
 } from "../../app/simulation/visual/VisualLayer.js";
 import {
     RUN_BUNDLE_KIND,
@@ -38,7 +49,6 @@ import {
 } from "../../app/autonomy/AutonomyContractCatalog.js";
 import { buildCalibrationBundle } from "../../app/autonomy/CalibrationBundle.js";
 import { WORLD_BOUND_IDENTITY } from "../../app/simulation/kernel/RunIdentity.js";
-import { canonicalExactStringify } from "../../app/simulation/visual/VisualLayer.js";
 import { runBundleBytes, verifyRunBundleBytes, verifyRunBundleIntegrity } from "../headless/RunBundle.js";
 import { computeSimulationSemanticHash } from "../../app/simulation/kernel/SimulationHashes.js";
 import { createWorldResource } from "../../app/simulation/world/WorldDescription.js";
@@ -178,6 +188,13 @@ async function hashPublicVehicleAssets(manifest) {
  *   environments/<environmentId>.json  schema v3 environment manifests
  *   environment-transactions/          recoverable environment ID-change journals
  *   visual-layer-descriptors/sha256/   immutable visual-layer descriptor JSON
+ *   visual-assets/sha256/              immutable visual-asset bytes
+ *   visual-assets/uses/sha256/         immutable source-bound use records
+ *   visual-assets/validation/sha256/   immutable validation evidence
+ *   visual-assets/staging/             durable uploads and quota reservations
+ *   visual-assets/roots.json           internal source-bound root records
+ *   visual-assets/pins.json            internal leased pin records
+ *   visual-source-registry.json        operator-controlled trusted source grants
  *   scripts/<scriptId>.json            one human-editable file per script
  *   run-manifests/<manifestId>.json    authored simulation run manifests
  *   scenarios/<scenarioId>.json        authored reusable scenarios
@@ -197,7 +214,7 @@ async function hashPublicVehicleAssets(manifest) {
  */
 export class StorageService {
     /** @param {string} [dataDir] Absolute path to the data directory. */
-    constructor(dataDir = DEFAULT_DATA_DIR) {
+    constructor(dataDir = DEFAULT_DATA_DIR, options = {}) {
         this.dataDir = dataDir;
         this.environmentsDir = path.join(dataDir, "environments");
         this.scriptsDir = path.join(dataDir, "scripts");
@@ -215,6 +232,8 @@ export class StorageService {
         this._environmentWriteChains = new Map();
         this._deletedEnvironmentIds = new Set();
         this._visualLayerDescriptors = new VisualLayerDescriptorStore(dataDir);
+        this._visualLayerAccess = new VisualLayerAccessStore(dataDir);
+        this.visualAssets = new VisualAssetStore(dataDir, options.visualAssets ?? {});
         this.environmentTransactionsDir = path.join(dataDir, "environment-transactions");
         this._environmentRecovery = null;
         this._runManifestWriteChains = new Map();
@@ -260,6 +279,94 @@ export class StorageService {
     async getEnvironment(environmentId) {
         await this._recoverEnvironmentTransactions();
         return this._readEnvironment(environmentId);
+    }
+
+    /**
+     * Publish a canonical visual-layer descriptor plus its source-bound access sidecar.
+     * @param {{ descriptor: object, assetUses: Array<{ sha256: string, useHash: string }> }} body
+     */
+    async publishVisualLayer({ descriptor, assetUses } = {}) {
+        await this.visualAssets.initialize();
+        assertVisualLayer(descriptor);
+        const descriptorHash = hashVisualLayer(descriptor);
+        const access = normalizeVisualLayerAccess({
+            kind: "cev-sim.visual-layer-access",
+            version: 1,
+            descriptorHash,
+            assets: assetUses,
+        });
+        assertVisualLayerAccess(access);
+        const uses = await this._loadAccessUses(access);
+        try {
+            assertVisualLayerAccessMatches(access, descriptor, uses);
+        } catch (error) {
+            throw visualAssetError(VISUAL_LAYER_ERROR_CODES.INVALID_ACCESS, error.message);
+        }
+        const storedDescriptorHash = await this._visualLayerDescriptors.put(descriptor);
+        const accessHash = await this._visualLayerAccess.put(access);
+        return { descriptorHash: storedDescriptorHash, accessHash };
+    }
+
+    /**
+     * Return a verified descriptor and access sidecar after re-evaluating display rights.
+     */
+    async getVisualLayerAccess(descriptorHash, accessHash) {
+        await this.visualAssets.initialize();
+        const descriptor = await this._visualLayerDescriptors.get(descriptorHash);
+        if (!descriptor) {
+            throw visualAssetError(
+                VISUAL_LAYER_ERROR_CODES.DESCRIPTOR_NOT_FOUND,
+                `Visual layer descriptor ${descriptorHash} was not found.`,
+            );
+        }
+        const access = await this._visualLayerAccess.get(accessHash);
+        if (!access) {
+            throw visualAssetError(
+                VISUAL_LAYER_ERROR_CODES.ACCESS_NOT_FOUND,
+                `Visual layer access ${accessHash} was not found.`,
+            );
+        }
+        if (access.descriptorHash !== descriptorHash || hashVisualLayer(descriptor) !== descriptorHash) {
+            throw visualAssetError(
+                VISUAL_LAYER_ERROR_CODES.ACCESS_MISMATCH,
+                "Visual layer access sidecar does not match the requested descriptor.",
+            );
+        }
+        const uses = await this._loadAccessUses(access);
+        try {
+            assertVisualLayerAccessMatches(access, descriptor, uses);
+        } catch (error) {
+            throw visualAssetError(
+                VISUAL_LAYER_ERROR_CODES.INVALID_ACCESS,
+                error.message,
+            );
+        }
+        try {
+            for (const entry of access.assets) {
+                await this.visualAssets.validateClosure({
+                    useHash: entry.useHash,
+                    operations: [...VISUAL_ASSET_ACCESS_OPERATIONS],
+                });
+            }
+        } catch (error) {
+            if (error.code === "VISUAL_ASSET_RIGHTS_DENIED") {
+                throw visualAssetError(
+                    VISUAL_LAYER_ERROR_CODES.RIGHTS_DENIED,
+                    error.message,
+                    { denials: error.denials },
+                );
+            }
+            throw error;
+        }
+        return { descriptor, access };
+    }
+
+    async _loadAccessUses(access) {
+        const uses = new Map();
+        for (const entry of access.assets) {
+            uses.set(entry.useHash, await this.visualAssets.getUse(entry.useHash));
+        }
+        return uses;
     }
 
     /**
@@ -1973,12 +2080,32 @@ export class StorageService {
         const digest = manifest?.visualLayer?.descriptorHash;
         if (!digest) return;
         const descriptor = await this._visualLayerDescriptors.get(digest);
-        if (!descriptor) return;
-        const world = createWorldResource(manifest);
-        if (descriptor.sourceWorldHash !== world.hash) {
-            throw new Error(
-                `Visual layer descriptor ${digest} is bound to world ${descriptor.sourceWorldHash}, not ${world.hash}.`,
+        if (descriptor) {
+            const world = createWorldResource(manifest);
+            if (descriptor.sourceWorldHash !== world.hash) {
+                throw new Error(
+                    `Visual layer descriptor ${digest} is bound to world ${descriptor.sourceWorldHash}, not ${world.hash}.`,
+                );
+            }
+        }
+        const accessHash = manifest?.visualLayer?.accessHash;
+        if (!accessHash) return;
+        const access = await this._visualLayerAccess.get(accessHash);
+        if (!access) {
+            throw visualAssetError(
+                VISUAL_LAYER_ERROR_CODES.ACCESS_NOT_FOUND,
+                `Visual layer access ${accessHash} was not found.`,
             );
+        }
+        if (access.descriptorHash !== digest) {
+            throw visualAssetError(
+                VISUAL_LAYER_ERROR_CODES.ACCESS_MISMATCH,
+                "Environment accessHash does not match the referenced descriptor.",
+            );
+        }
+        if (descriptor) {
+            const uses = await this._loadAccessUses(access);
+            assertVisualLayerAccessMatches(access, descriptor, uses);
         }
     }
 
@@ -2014,7 +2141,28 @@ export class StorageService {
         assertVisualLayer(descriptor);
         const rebound = rebindVisualLayer(descriptor, destWorld.hash, destWorld.description);
         const digest = await this._visualLayerDescriptors.put(rebound);
-        dest.visualLayer = { descriptorHash: digest };
+        const sourceAccessHash = source?.visualLayer?.accessHash ?? null;
+        if (!sourceAccessHash) {
+            dest.visualLayer = { descriptorHash: digest };
+            dest.evidence = null;
+            return dest;
+        }
+        const sourceAccess = await this._visualLayerAccess.get(sourceAccessHash);
+        if (!sourceAccess) {
+            throw visualAssetError(
+                VISUAL_LAYER_ERROR_CODES.ACCESS_NOT_FOUND,
+                `Visual layer access ${sourceAccessHash} was not found.`,
+            );
+        }
+        if (sourceAccess.descriptorHash !== sourceHash) {
+            throw visualAssetError(
+                VISUAL_LAYER_ERROR_CODES.ACCESS_MISMATCH,
+                "Source visual-layer access sidecar does not match its descriptor.",
+            );
+        }
+        const reboundAccess = rebindVisualLayerAccess(sourceAccess, digest);
+        const accessHash = await this._visualLayerAccess.put(reboundAccess);
+        dest.visualLayer = { descriptorHash: digest, accessHash };
         dest.evidence = null;
         return dest;
     }

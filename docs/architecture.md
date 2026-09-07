@@ -71,11 +71,14 @@ It normalizes schema-v2 and schema-v3 environment documents into canonical
 drivable surfaces, exact obstacle prisms, aggregate bounds, route-network
 identity, and a world SHA-256. Schema v3 adds a server-owned `revision` and
 optional `visualLayer` / `evidence` hash references; those fields are excluded
-from `worldHash` and are not loaded into measured scenes. The browser
-`EnvironmentLoader` materializes the metric description into Three.js;
-`HeadlessWorldRuntime` retains only the pure description and deterministic
-`{ worldHash }` state. Resolved bundles retain the authored environment
-resource for integrity but use the world hash for simulation semantics.
+from `worldHash`. `accessHash` is provenance for preview materialization and
+also stays out of `worldHash`, `visualLayerHash`, simulation-semantic identity,
+and episode identity. The browser `EnvironmentLoader` rebuilds metric geometry
+first, then materializes a preview-only visual layer; measured cameras,
+registries, collision, and LiDAR skip preview objects. `HeadlessWorldRuntime`
+retains only the pure description and deterministic `{ worldHash }` state.
+Resolved bundles retain the authored environment resource for integrity but
+use the world hash for simulation semantics.
 
 Vehicle motion is owned by the Three.js-free `KinematicVehiclePlant`.
 BigCar, IGVCCar, ScenarioCar, and manifest-backed browser vehicles are
@@ -239,10 +242,13 @@ absent `render` blocks remain the legacy analytic alias during resolution.
 `canonical-analytic@2` and `pbr-mesh@1` are known but unavailable. GPU sensor
 backend v1 identity is unchanged; backend v2 is declared but rejected.
 VIS-03 stores environment schema v3 with a server revision and optional visual
-descriptor/evidence hashes. Those references stay out of `worldHash` and out of
-measured scenes. Package admission stays inactive.
-Visual descriptors are appearance resources bound to `worldHash`; their meshes never enter metric
-world, collision, LiDAR, object-registry, or oracle truth.
+descriptor/evidence hashes. Those references stay out of `worldHash`. VIS-04
+stores validated visual-asset bytes and source-bound use records. VIS-05a
+stores `cev-sim.visual-layer-access@1` sidecars and materializes owned preview
+geometry in the display scene only; `pbr-mesh@1` and package admission stay
+inactive. Visual descriptors are appearance resources bound to `worldHash`;
+their meshes never enter metric world, collision, LiDAR, object-registry, or
+oracle truth.
 
 ## External Integration
 
@@ -257,3 +263,16 @@ Browser-served assets live under `public/`. Current important asset groups are:
 - `public/messages/` for fallback `.msg` definitions.
 - `public/shell.gltf` for model/optimizer experiments.
 - `public/scenarios/` for local CommonRoad scenarios, which should not be committed.
+
+Validated visual assets are stored under `CEV_SIM_DATA_DIR` (default
+`server/data`) as:
+
+- `visual-layer-descriptors/sha256/<hash>.json` — immutable visual-layer descriptors
+- `visual-layer-access/sha256/<accessHash>.json` — source-bound access sidecars
+- `visual-assets/sha256/<digest>` — immutable published bytes
+- `visual-assets/uses/sha256/<useHash>.json` — source-bound use records
+- `visual-assets/validation/sha256/<useHash>.json` — validation evidence
+- `visual-assets/staging/`, `visual-assets/roots.json`, `visual-assets/pins.json`
+- `visual-source-registry.json` or `CEV_SIM_VISUAL_SOURCE_REGISTRY`
+
+There is no public digest-only content URL and no published-asset deletion API.
