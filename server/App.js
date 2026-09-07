@@ -34,9 +34,10 @@ app.prepare().then(async () => {
     mountStorageApi(server, storageService, { jsonParser });
     server.use('/api/headless', jsonParser, createHeadlessRouter(headlessExperimentService));
     const path = require("node:path");
-    const THREE_BASIS_DIR = path.join(
-        path.dirname(require.resolve("three/package.json")),
-        "examples/jsm/libs/basis",
+    // three does not export `./package.json`; resolve the pinned Basis files via
+    // the exported `examples/jsm` glob instead.
+    const THREE_BASIS_DIR = path.dirname(
+        require.resolve("three/examples/jsm/libs/basis/basis_transcoder.js"),
     );
     server.use("/vendor/basis", express.static(THREE_BASIS_DIR, {
         fallthrough: false,
