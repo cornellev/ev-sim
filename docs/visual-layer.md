@@ -124,7 +124,10 @@ Browser access is `VisualLayerClient` at `/api/storage/visual-layers`:
 - `POST /api/storage/visual-layers` with canonical `{ descriptor, assetUses }`
   returns `{ descriptorHash, accessHash }`.
 - `GET /api/storage/visual-layers/:descriptorHash/access/:accessHash` returns
-  the verified descriptor and access sidecar.
+  the verified descriptor, access sidecar, and additive `verification`
+  metadata (decoded-size estimates, geometry counts, texture dimensions, and
+  permission summary) after re-evaluating `display` rights. `accessHash` is
+  unchanged. Digest-only URLs and filesystem paths are not exposed.
 
 VIS-04 stores binary assets at `server/data/visual-assets/sha256/<digest>` and
 source-bound `cev-sim.visual-asset-use@1` records at
@@ -263,18 +266,23 @@ asset closure, and current `display` rights before decoding. Assets are fetched
 only through selected use hashes. glTF resource URIs resolve through an exact
 `sha256:<digest>` map; relative, network, file, and unrecognized URIs are
 rejected before a request. KTX2 uses the pinned Basis transcoder path
-`/vendor/basis/`. Each instance uses only its primary `assetUri`; LOD selection
-and residency remain VIS-05b. Primitive material names must be unique NFC
+`/vendor/basis/`. VIS-05b selects per-instance LODs from hashed
+`cev-sim.visual-lod-policy@1` distance bands `[0, 80, 200]` meters and streams
+chunks inside a 100 m required / 120 m prefetch radius (128-chunk cap).
+Hardware profiles share that policy and must not coarsen LOD to relieve
+memory pressure. Required chunks load exactly or fail; camera-movement budget
+pressure keeps the last committed AOI and reports
+`VISUAL_PREVIEW_BUDGET_EXCEEDED`. Primitive material names must be unique NFC
 identifiers that bijection-match the instance `materialIds`. Descriptor-driven
 `MeshPhysicalMaterial` or unlit `MeshBasicMaterial` replaces embedded runtime
-materials. Instance matrices are applied without extra numeric rounding. A
-complete detached group is committed only after every instance succeeds.
-Imported `userData` is overwritten with namespaced preview metadata. Preview
-objects are non-selectable and excluded from environment registry, perception
-truth, collision, LiDAR, and measured camera scans. `truthEntityId` stays in
-the materializer binding table. Failed or superseded loads dispose staged
-resources and leave an empty preview, not another world's visuals.
-`pbr-mesh@1` remains unavailable.
+materials. Instance matrices are applied without extra numeric rounding.
+Complete chunk groups are committed only after every instance in the group
+succeeds. Imported `userData` is overwritten with namespaced preview metadata.
+Preview objects are non-selectable and excluded from environment registry,
+perception truth, collision, LiDAR, and measured camera scans. `truthEntityId`
+stays in the materializer binding table. Failed initial or environment-switch
+loads dispose staged resources and leave an empty preview, not another world's
+visuals. `pbr-mesh@1` remains unavailable.
 
 ## Identity projection and compatibility
 

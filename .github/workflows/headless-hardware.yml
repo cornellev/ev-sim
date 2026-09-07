@@ -14,9 +14,9 @@ concurrency:
 
 jobs:
   nvidia-x64:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     runs-on: [self-hosted, cev-sim-gpu-x64]
-    timeout-minutes: 90
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -41,6 +41,15 @@ jobs:
         run: |
           npm run test:gpu-sensors
           npm run test:shared-memory
+      - name: VIS-05b x64 visual-scale
+        env:
+          CEV_SIM_CHROMIUM_EXECUTABLE: ${{ steps.chromium.outputs.executable }}
+          CEV_SIM_SUPERVISOR_CONFIG: /etc/cev-sim/supervisor.json
+        run: >-
+          npm run benchmark:visual-scale --
+          --profile nvidia-x64-consumer-v1
+          --require-gpu
+          --output artifacts/visual-scale-nvidia-x64-consumer-v1.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -49,7 +58,7 @@ jobs:
           retention-days: 30
 
   jetson-arm64:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     runs-on: [self-hosted, cev-sim-jetson-arm64]
     timeout-minutes: 120
     steps:
@@ -89,5 +98,79 @@ jobs:
         if: always()
         with:
           name: hardware-jetson-${{ github.run_id }}
+          path: artifacts/*.json
+          retention-days: 30
+
+  jetson-agx-orin:
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, cev-sim-jetson-orin-arm64]
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.14
+          cache: npm
+      - run: npm ci
+      - name: Validate Jetson AGX Orin host and hardware WebGL2
+        run: >-
+          npm run host:validate --
+          --role jetson-agx-orin
+          --config /etc/cev-sim/supervisor.json
+          --require-gpu
+          --output artifacts/host-jetson-agx-orin.json
+      - name: Resolve configured Chromium
+        id: chromium
+        run: echo "executable=$(jq -r '.renderer.chromiumExecutable' /etc/cev-sim/supervisor.json)" >> "$GITHUB_OUTPUT"
+      - name: VIS-05b Orin visual-scale
+        env:
+          CEV_SIM_CHROMIUM_EXECUTABLE: ${{ steps.chromium.outputs.executable }}
+          CEV_SIM_SUPERVISOR_CONFIG: /etc/cev-sim/supervisor.json
+        run: >-
+          npm run benchmark:visual-scale --
+          --profile jetson-agx-orin-v1
+          --require-gpu
+          --output artifacts/visual-scale-jetson-agx-orin-v1.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hardware-orin-${{ github.run_id }}
+          path: artifacts/*.json
+          retention-days: 30
+
+  jetson-agx-thor:
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, cev-sim-jetson-thor-arm64]
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.14
+          cache: npm
+      - run: npm ci
+      - name: Validate Jetson AGX Thor host and hardware WebGL2
+        run: >-
+          npm run host:validate --
+          --role jetson-agx-thor
+          --config /etc/cev-sim/supervisor.json
+          --require-gpu
+          --output artifacts/host-jetson-agx-thor.json
+      - name: Resolve configured Chromium
+        id: chromium
+        run: echo "executable=$(jq -r '.renderer.chromiumExecutable' /etc/cev-sim/supervisor.json)" >> "$GITHUB_OUTPUT"
+      - name: VIS-05b Thor visual-scale
+        env:
+          CEV_SIM_CHROMIUM_EXECUTABLE: ${{ steps.chromium.outputs.executable }}
+          CEV_SIM_SUPERVISOR_CONFIG: /etc/cev-sim/supervisor.json
+        run: >-
+          npm run benchmark:visual-scale --
+          --profile jetson-agx-thor-v1
+          --require-gpu
+          --output artifacts/visual-scale-jetson-agx-thor-v1.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hardware-thor-${{ github.run_id }}
           path: artifacts/*.json
           retention-days: 30

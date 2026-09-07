@@ -71,11 +71,11 @@ Quick local diagnostics are available as `npm run test:soak:quick` and
 
 | Workflow | Trigger | Evidence |
 | --- | --- | --- |
-| `CI` hosted CPU | Pull requests and main pushes | Lint, complete Node tests, Next build, fixture and generated-Protobuf drift, Python unit matrix |
+| `CI` hosted CPU | Pull requests and main pushes | Lint, complete Node tests, hosted visual-scale quick profile, Next build, fixture and generated-Protobuf drift, Python unit matrix |
 | `CI` cross-platform headless | Pull requests and main pushes | Ubuntu/macOS headless, CLI, CPU LiDAR, all-language parity, distribution build and clean-install smoke |
 | `CI` parity aggregation | Pull requests and main pushes | macOS/Linux semantic projection comparison |
 | `Headless nightly soak` | Tuesday/Friday 04:17 UTC and manual | Full reset/memory/process/log soak and 1/8/16/32 benchmark with runner baseline |
-| `Headless rendered-sensor hardware` | Wednesday 05:43 UTC and manual | Dedicated x64 NVIDIA and Jetson ARM64 reports; rendered tests are capability-gated |
+| `Headless rendered-sensor hardware` | Wednesday 05:43 UTC and manual | Dedicated x64 NVIDIA, generic Jetson ARM64, AGX Orin, and AGX Thor reports; VIS-05b scale jobs require hardware WebGL2 |
 | `Internal headless candidate` | Manual on main | Complete gates plus coordinated npm/Python artifacts and checksums |
 
 The public-repository self-hosted runners accept only default-branch scheduled

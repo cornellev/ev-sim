@@ -23,6 +23,9 @@ import {
     hashVisualAssetUse,
     hashVisualLayer,
     hashVisualLayerAccess,
+    hashVisualLodPolicy,
+    defaultVisualLodPolicy,
+    selectVisualLodIndex,
     normalizeVisualAssetUse,
     normalizeVisualLayer,
     normalizeVisualLayerAccess,
@@ -482,5 +485,21 @@ test("visual-layer-access hashes canonical UTF-8 digest order and rejects covera
         }), document, uses),
         /does not match the descriptor asset/,
     );
+});
+
+test("visual LOD policy is hashed, frozen at [0, 80, 200], and hardware-independent", () => {
+    const policy = defaultVisualLodPolicy();
+    assert.deepEqual(policy.distanceBandsMeters, [0, 80, 200]);
+    const hashed = hashVisualLodPolicy(policy);
+    assert.equal(hashed, hashVisualLodPolicy(defaultVisualLodPolicy()));
+    assert.equal(selectVisualLodIndex(0, policy), 0);
+    assert.equal(selectVisualLodIndex(79.9, policy), 0);
+    assert.equal(selectVisualLodIndex(80, policy), 1);
+    assert.equal(selectVisualLodIndex(199.9, policy), 1);
+    assert.equal(selectVisualLodIndex(200, policy), 2);
+    assert.throws(() => hashVisualLodPolicy({
+        ...policy,
+        distanceBandsMeters: [0, 120, 400],
+    }), /frozen band/);
 });
 

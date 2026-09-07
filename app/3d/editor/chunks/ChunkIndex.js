@@ -169,6 +169,42 @@ export class ChunkIndex {
             : null;
     }
 
+    queryKeysInRadius(point, radius) {
+        const origin = toPoint(point);
+        const safeRadius = Number(radius);
+        if (!Number.isFinite(safeRadius) || safeRadius < 0) return [];
+        return this.listChunks()
+            .filter((chunk) => circleIntersectsBounds(origin, safeRadius, chunk.bounds))
+            .map((chunk) => chunk.key);
+    }
+
+    queryKeysInBounds(bounds) {
+        const box = normalizeBounds(bounds);
+        return this.listChunks()
+            .filter((chunk) => boundsIntersect(box, chunk.bounds))
+            .map((chunk) => chunk.key);
+    }
+
+    queryObjectsInRadius(point, radius) {
+        const keys = this.queryKeysInRadius(point, radius);
+        return this._objectsForKeys(keys);
+    }
+
+    queryObjectsInBounds(bounds) {
+        const keys = this.queryKeysInBounds(bounds);
+        return this._objectsForKeys(keys);
+    }
+
+    _objectsForKeys(keys) {
+        const ids = new Set();
+        for (const key of keys) {
+            const chunk = this.chunks.get(key);
+            if (!chunk) continue;
+            for (const objectId of chunk.objectIds) ids.add(objectId);
+        }
+        return [...ids].sort();
+    }
+
     listChunks() {
         return [...this.chunks.values()].map((chunk) => ({
             key: chunk.key,
@@ -178,4 +214,28 @@ export class ChunkIndex {
             dirty: chunk.dirty,
         }));
     }
+}
+
+function normalizeBounds(bounds = {}) {
+    return {
+        minX: Number(bounds.minX ?? 0),
+        minZ: Number(bounds.minZ ?? 0),
+        maxX: Number(bounds.maxX ?? 0),
+        maxZ: Number(bounds.maxZ ?? 0),
+    };
+}
+
+function boundsIntersect(left, right) {
+    return left.minX <= right.maxX
+        && left.maxX >= right.minX
+        && left.minZ <= right.maxZ
+        && left.maxZ >= right.minZ;
+}
+
+function circleIntersectsBounds(point, radius, bounds) {
+    const nearestX = Math.min(Math.max(point.x, bounds.minX), bounds.maxX);
+    const nearestZ = Math.min(Math.max(point.z, bounds.minZ), bounds.maxZ);
+    const dx = point.x - nearestX;
+    const dz = point.z - nearestZ;
+    return (dx * dx) + (dz * dz) <= radius * radius;
 }

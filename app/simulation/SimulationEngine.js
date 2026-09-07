@@ -588,5 +588,20 @@ export class SimulationEngine {
         }
         this.renderer.render(this.scene, this.camera);
         this.frames += 1;
+        this._reconcileVisualInterest();
+    }
+
+    _reconcileVisualInterest() {
+        const loader = this.environmentRuntime?.loader;
+        if (!loader?.updateVisualInterest || !this.camera) return;
+        const position = this.camera.position;
+        try {
+            loader.updateVisualInterest({
+                position: { x: position.x, y: position.y, z: position.z },
+            });
+        } catch (error) {
+            if (error?.code === "VISUAL_PREVIEW_CONTEXT_LOST") return;
+            throw error;
+        }
     }
 }

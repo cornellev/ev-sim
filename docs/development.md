@@ -18,6 +18,7 @@ npm test
 - `npm run start` runs `server/App.js` on `PORT` or `3000`.
 - `npm run lint` runs ESLint.
 - `npm test` runs `node --experimental-default-type=module --test tests/*.test.js`.
+- `npm run benchmark:visual-scale:quick` writes a hosted `cev-sim.visual-scale-report@1`. Full x64/Orin/Thor reports use `npm run benchmark:visual-scale -- --profile <id> --require-gpu`.
 
 Test files are grouped by area: `visual-script-runtime.test.js`, `editor-core.test.js`, `editor-map-mode.test.js`, `earth-import-mode.test.js`, `bake-*.test.js`, and `storage-service.test.js`.
 
@@ -34,7 +35,9 @@ Environment edits, scripts, and bindings are persisted on the server rather than
 - `app/client/storageClient.js` - the browser's JSON fetch wrapper for that API.
 - `app/3d/environment/visual/VisualAssetClient.js` - browser client for visual-asset upload, use, content, and closure validation.
 - `app/3d/environment/visual/VisualLayerClient.js` - browser client for visual-layer publish/read.
-- `app/3d/environment/visual/VisualLayerMaterializer.js` - validated preview materialization into the display scene.
+- `app/3d/environment/visual/VisualLayerMaterializer.js` - bounded AOI preview materialization, LOD selection, and residency snapshots.
+- `app/3d/environment/visual/VisualResourceCache.js` - renderer-scoped reference-counted encoded/parsed/texture cache.
+- `app/simulation/visual/VisualScaleProfile.js` - D06 hardware and hosted-quick capacity profiles.
 - `app/3d/environment/EnvironmentCatalogClient.js` - list/create/duplicate/rename/delete and active-environment settings.
 - `app/3d/environment/EnvironmentLoader.js` - the sole manifest/template-to-runtime application path; metric rebuild then preview materialization.
 - `app/3d/environment/EnvironmentPersistence.js` - debounced manifest saving only.

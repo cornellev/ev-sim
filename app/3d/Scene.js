@@ -44,6 +44,7 @@ import { SceneLoadingScreen } from "./overlay/SceneLoadingScreen";
 import { EditorToolController } from "./editor/tools/EditorToolController";
 import { EnvironmentPersistence } from "./environment/EnvironmentPersistence";
 import { EnvironmentLoader } from "./environment/EnvironmentLoader";
+import { disposeRendererVisualResourceCache } from "./environment/visual/VisualResourceCache";
 import { getEnvironmentManifest } from "./environment/EnvironmentCatalogClient";
 import { subscribeStorageEvents } from "../client/storageEvents";
 import McpLoggingBridge from "../logging/McpLoggingBridge";
@@ -869,6 +870,7 @@ export default function TotalScene({
 
             window.removeEventListener('resize', handleResize);
             data.simulation()?.controls?.disposeEnvironmentKeys?.();
+            disposeRendererVisualResourceCache(renderer);
             renderer.dispose();
         };
     }, [environmentId, loadAttempt]);

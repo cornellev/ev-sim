@@ -111,6 +111,27 @@ test("objects can be indexed across multiple chunks", () => {
     assert.equal(index.listChunks().length, covered.length);
 });
 
+test("chunk spatial queries are independent of metric loaded and dirty flags", () => {
+    const index = new ChunkIndex({ chunkSize: 20 });
+    index.assignObject("building:near", { minX: 2, minZ: 2, maxX: 4, maxZ: 4 });
+    index.assignObject("building:far", { minX: 80, minZ: 80, maxX: 82, maxZ: 82 });
+    index.setLoaded("0,0", false);
+    index.markDirty("0,0");
+
+    const nearby = index.queryObjectsInRadius({ x: 0, z: 0 }, 10);
+    assert.deepEqual(nearby, ["building:near"]);
+    assert.deepEqual(index.queryKeysInRadius({ x: 0, z: 0 }, 10), ["0,0"]);
+    assert.equal(index.queryObjectsInBounds({ minX: 70, minZ: 70, maxX: 90, maxZ: 90 }).includes("building:far"), true);
+    const chunk = index.listChunks().find((entry) => entry.key === "0,0");
+    assert.equal(chunk.loaded, false);
+    assert.equal(chunk.dirty, true);
+
+    const manager = new ChunkManager({ chunkSize: 20 });
+    manager.index.assignObject("building:near", { minX: 2, minZ: 2, maxX: 4, maxZ: 4 });
+    assert.deepEqual(manager.queryObjectsInRadius({ x: 0, z: 0 }, 10), ["building:near"]);
+    assert.deepEqual(manager.queryKeysInBounds({ minX: 0, minZ: 0, maxX: 10, maxZ: 10 }), ["0,0"]);
+});
+
 test("editor state publishes tool, selection, layers, and hidden objects", () => {
     const editor = new EditorState();
     const snapshots = [];

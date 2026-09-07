@@ -130,6 +130,7 @@ export class SplatAccumulator {
         this.buildingCounts = new Map();
         /** @type {Set<string>} */
         this.hiddenBuildings = new Set();
+        this.spatialIndex = options.spatialIndex ?? null;
 
         this.mesh = null;
         this.ready = Promise.resolve();
@@ -149,12 +150,20 @@ export class SplatAccumulator {
 
     reset() {
         if (this.hiddenBuildings.size > 0) {
-            this.scene.traverse((object) => {
-                const buildingId = effectiveBuildingId(object);
-                if (buildingId && this.hiddenBuildings.has(buildingId)) {
-                    object.visible = true;
+            if (this.spatialIndex) {
+                for (const buildingId of this.hiddenBuildings) {
+                    for (const object of this.spatialIndex.meshesForBuilding(buildingId)) {
+                        object.visible = true;
+                    }
                 }
-            });
+            } else {
+                this.scene.traverse((object) => {
+                    const buildingId = effectiveBuildingId(object);
+                    if (buildingId && this.hiddenBuildings.has(buildingId)) {
+                        object.visible = true;
+                    }
+                });
+            }
         }
 
         if (this.mesh?.parent) {
@@ -181,6 +190,7 @@ export class SplatAccumulator {
      * @returns {string|null}
      */
     _nearestBuildingIdForPoint(world) {
+        if (this.spatialIndex) return this.spatialIndex.nearestBuildingId(world, this.coverageVoxelSize * 2);
         let nearestId = null;
         let nearestDistance = Infinity;
         const box = new THREE.Box3();
@@ -454,25 +464,47 @@ export class SplatAccumulator {
         const hiddenThisCall = [];
         const eligibleThisCall = [];
 
-        scene.traverse((object) => {
-            const buildingId = effectiveBuildingId(object);
-            if (!buildingId || !object.isMesh) return;
+        const spatialIndex = context.spatialIndex ?? this.spatialIndex;
+        if (spatialIndex) this.spatialIndex = spatialIndex;
+        if (spatialIndex) {
+            for (const entry of spatialIndex.buildings()) {
+                const count = this.buildingCounts.get(entry.id) ?? 0;
+                if (count < threshold) continue;
+                for (const object of entry.meshes) {
+                    eligibleThisCall.push({
+                        buildingId: entry.id,
+                        count,
+                        wasVisible: object.visible,
+                    });
+                    object.visible = false;
+                    this.hiddenBuildings.add(entry.id);
+                    hiddenThisCall.push({
+                        buildingId: entry.id,
+                        count,
+                    });
+                }
+            }
+        } else {
+            scene.traverse((object) => {
+                const buildingId = effectiveBuildingId(object);
+                if (!buildingId || !object.isMesh) return;
 
-            const count = this.buildingCounts.get(buildingId) ?? 0;
-            if (count < threshold) return;
-            eligibleThisCall.push({
-                buildingId,
-                count,
-                wasVisible: object.visible,
-            });
+                const count = this.buildingCounts.get(buildingId) ?? 0;
+                if (count < threshold) return;
+                eligibleThisCall.push({
+                    buildingId,
+                    count,
+                    wasVisible: object.visible,
+                });
 
-            object.visible = false;
-            this.hiddenBuildings.add(buildingId);
-            hiddenThisCall.push({
-                buildingId,
-                count,
+                object.visible = false;
+                this.hiddenBuildings.add(buildingId);
+                hiddenThisCall.push({
+                    buildingId,
+                    count,
+                });
             });
-        });
+        }
 
         if (config.debug === true) {
             console.log("SplatAccumulator: hide baked geometry", {

@@ -97,34 +97,40 @@ export class BuildingRegionPlanner {
     }
 
     /**
-     * @param {THREE.Scene} scene
+     * @param {THREE.Scene|import("./BakeSpatialIndex.js").BakeSpatialIndex} sceneOrIndex
      * @param {THREE.PerspectiveCamera} camera
-     * @returns {{ activeBuildingId: string|null, hasVisibleBuilding: boolean, visibleBuildingIds: string[] }}
      */
-    planForView(scene, camera) {
+    planForView(sceneOrIndex, camera) {
         const visibleBuildingIds = [];
-        const frustum = new THREE.Frustum();
-        const matrix = new THREE.Matrix4().multiplyMatrices(
-            camera.projectionMatrix,
-            camera.matrixWorldInverse,
-        );
-        frustum.setFromProjectionMatrix(matrix);
+        const indexHits = sceneOrIndex?.queryFrustum
+            ? sceneOrIndex.queryFrustum(camera)
+            : null;
 
-        scene.traverse((object) => {
-            if (!object.isMesh) return;
-            const buildingId = effectiveBuildingId(object);
-            if (!buildingId) return;
-
-            const box = new THREE.Box3().setFromObject(object);
-            if (!frustum.intersectsBox(box)) return;
-
-            const projected = this._projectedArea(object, camera);
-            if (projected <= 0) return;
-
-            if (!visibleBuildingIds.includes(buildingId)) {
-                visibleBuildingIds.push(buildingId);
+        if (indexHits) {
+            for (const entry of indexHits) {
+                const projected = this._projectedBounds(entry.bounds, camera);
+                if (projected <= 0) continue;
+                if (!visibleBuildingIds.includes(entry.id)) visibleBuildingIds.push(entry.id);
             }
-        });
+        } else {
+            const scene = sceneOrIndex;
+            const frustum = new THREE.Frustum();
+            const matrix = new THREE.Matrix4().multiplyMatrices(
+                camera.projectionMatrix,
+                camera.matrixWorldInverse,
+            );
+            frustum.setFromProjectionMatrix(matrix);
+            scene.traverse((object) => {
+                if (!object.isMesh) return;
+                const buildingId = effectiveBuildingId(object);
+                if (!buildingId) return;
+                const box = new THREE.Box3().setFromObject(object);
+                if (!frustum.intersectsBox(box)) return;
+                const projected = this._projectedArea(object, camera);
+                if (projected <= 0) return;
+                if (!visibleBuildingIds.includes(buildingId)) visibleBuildingIds.push(buildingId);
+            });
+        }
 
         if (!visibleBuildingIds.length) {
             return {
@@ -145,6 +151,20 @@ export class BuildingRegionPlanner {
         };
     }
 
+    _projectedBounds(bounds, camera) {
+        const corners = [
+            new THREE.Vector3(bounds.minX, bounds.minY ?? 0, bounds.minZ),
+            new THREE.Vector3(bounds.maxX, bounds.minY ?? 0, bounds.minZ),
+            new THREE.Vector3(bounds.minX, bounds.maxY ?? 0, bounds.minZ),
+            new THREE.Vector3(bounds.maxX, bounds.maxY ?? 0, bounds.minZ),
+            new THREE.Vector3(bounds.minX, bounds.minY ?? 0, bounds.maxZ),
+            new THREE.Vector3(bounds.maxX, bounds.minY ?? 0, bounds.maxZ),
+            new THREE.Vector3(bounds.minX, bounds.maxY ?? 0, bounds.maxZ),
+            new THREE.Vector3(bounds.maxX, bounds.maxY ?? 0, bounds.maxZ),
+        ];
+        return this._projectedCorners(corners, camera);
+    }
+
     /**
      * @param {THREE.Object3D} object
      * @param {THREE.PerspectiveCamera} camera
@@ -162,7 +182,10 @@ export class BuildingRegionPlanner {
             new THREE.Vector3(box.min.x, box.max.y, box.max.z),
             new THREE.Vector3(box.max.x, box.max.y, box.max.z),
         ];
+        return this._projectedCorners(corners, camera);
+    }
 
+    _projectedCorners(corners, camera) {
         let minX = Infinity;
         let minY = Infinity;
         let maxX = -Infinity;

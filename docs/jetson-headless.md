@@ -35,6 +35,30 @@ UID/GID/groups, Vulkan/EGL/NVIDIA diagnostics, total memory, power mode,
 sandbox configuration, and the production `gpu-preflight` result.
 Use `--require-gpu` only when rendered sensors are mandatory for that host.
 
+VIS-05b advertised capacity uses dedicated roles and runners. Orin NX/Nano
+are not in those profiles:
+
+```bash
+npm run host:validate -- \
+  --role jetson-agx-orin \
+  --config /etc/cev-sim/supervisor.json \
+  --require-gpu \
+  --output jetson-agx-orin-host.json
+
+npm run host:validate -- \
+  --role jetson-agx-thor \
+  --config /etc/cev-sim/supervisor.json \
+  --require-gpu \
+  --output jetson-agx-thor-host.json
+```
+
+Those roles require a matching `/proc/device-tree/model`, at least 32 GiB
+(Orin) or 64 GiB (Thor) unified memory, JetPack/L4T and power-mode reports,
+readable GPU device nodes, configured Chromium, and production hardware
+WebGL2. Software WebGL, missing GPU telemetry, and capability-skipped
+rendering do not satisfy either profile. `jetson-arm64` remains the
+CPU-only/capability-negative evidence lane.
+
 ## Install a candidate
 
 Download the coordinated Actions artifact, then verify SHA-256 records before
@@ -103,3 +127,8 @@ when the host report proves production hardware WebGL2. Those tests load
 the same ANGLE/launch arguments as `gpu-preflight`; the executable path alone
 falls back to software WebGL on Thor. The x64 NVIDIA runner label
 `cev-sim-gpu-x64` is the mandatory rendered-sensor gate and must pass.
+VIS-05b advertised reports use additional labels `cev-sim-jetson-orin-arm64`
+and `cev-sim-jetson-thor-arm64` with `--require-gpu` and
+`npm run benchmark:visual-scale`. Manual `workflow_dispatch` may target a
+reviewed candidate commit; scheduled main runs upload all three hardware
+reports as artifacts and do not commit them.

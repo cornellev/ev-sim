@@ -8,12 +8,15 @@ import {
     assertVisualLayerAccess,
     assertVisualLayerAccessMatches,
     assertVisualLayerTruthBindings,
+    defaultVisualLodPolicy,
     hashVisualLayer,
     hashVisualLayerAccess,
+    hashVisualLodPolicy,
     isVisualLayerMaterializableReference,
     sha256ExactBytes,
     sha256FromUri,
 } from "../../../simulation/visual/VisualLayer.js";
+import { getVisualScaleProfile } from "../../../simulation/visual/VisualScaleProfile.js";
 import { VisualAssetClient } from "./VisualAssetClient.js";
 import { VisualLayerClient } from "./VisualLayerClient.js";
 import { createDigestUrlModifier } from "./VisualGltfUriGuard.js";
@@ -23,6 +26,15 @@ import {
     replaceEmbeddedMaterials,
 } from "./VisualMaterialFactory.js";
 import { sanitizePreviewObject } from "./VisualPreviewIsolation.js";
+import { VisualBudgetError } from "./VisualMemoryLedger.js";
+import {
+    VisualChunkResidencyController,
+    emptyResidencySnapshot,
+} from "./VisualChunkResidencyController.js";
+import {
+    VisualResourceCache,
+    visualResourceCacheForRenderer,
+} from "./VisualResourceCache.js";
 
 const GLTF_MEDIA = new Set(["model/gltf-binary", "model/gltf+json"]);
 
@@ -37,6 +49,9 @@ export class VisualLayerMaterializer {
         KTX2Loader,
         decodeTexture = null,
         parseGltf = null,
+        cache = null,
+        profile = getVisualScaleProfile(),
+        lodPolicy = defaultVisualLodPolicy(),
     } = {}) {
         this.previewRoot = previewRoot;
         this.renderer = renderer;
@@ -47,18 +62,39 @@ export class VisualLayerMaterializer {
         this.KTX2Loader = KTX2Loader;
         this.decodeTexture = decodeTexture;
         this.parseGltf = parseGltf;
+        this.profile = profile;
+        this.lodPolicy = lodPolicy;
+        this.lodPolicyHash = hashVisualLodPolicy(lodPolicy);
+        this._ownsCache = false;
+        this.cache = cache ?? (renderer
+            ? visualResourceCacheForRenderer(renderer, cacheOptions(this))
+            : null);
+        if (!this.cache) {
+            this.cache = new VisualResourceCache(cacheOptions(this));
+            this._ownsCache = true;
+        }
+        this.residency = new VisualChunkResidencyController({
+            policy: lodPolicy,
+            profile,
+        });
         this._generation = 0;
         this._controller = null;
         this._disposed = false;
-        this._objectUrls = new Set();
-        this._stagingUrls = new Set();
         this._ktx2Loader = null;
-        this._committed = null;
         this._committedWorldHash = null;
         this._bindings = new Map();
         this._lastRequest = null;
         this._listeners = new Set();
-        this.status = idleStatus();
+        this._documents = null;
+        this._uses = new Map();
+        this._interest = this.residency.normalizeInterest({ position: { x: 0, y: 0, z: 0 } });
+        this._resident = new Map();
+        this._queued = new Set();
+        this._reconcileActive = null;
+        this._coalescedInterest = null;
+        this._layerSwitch = false;
+        this._detachCache = this.cache.attach(this);
+        this.status = idleStatus(this._residencyMetrics());
     }
 
     subscribe(listener) {
@@ -71,22 +107,34 @@ export class VisualLayerMaterializer {
         return new Map(this._bindings);
     }
 
-    async replace(reference, worldResource) {
+    residencySnapshot() {
+        return this._residencyMetrics();
+    }
+
+    async replace(reference, worldResource, { interest } = {}) {
         this._assertNotDisposed();
+        if (this.cache.dead) this.handleContextLost();
         const generation = ++this._generation;
         this._abortCurrent();
         const controller = new AbortController();
         this._controller = controller;
-        this._lastRequest = { reference: reference ?? null, worldResource: worldResource ?? null };
+        this._lastRequest = {
+            reference: reference ?? null,
+            worldResource: worldResource ?? null,
+            interest: interest ?? this._interest,
+        };
+        if (interest) this._interest = this.residency.normalizeInterest(interest);
         const worldHash = worldResource?.hash ?? null;
+        this._layerSwitch = true;
+        this._coalescedInterest = null;
         if (this._committedWorldHash && worldHash && this._committedWorldHash !== worldHash) {
-            this._disposeCommitted();
+            this._releaseAllResident();
         }
         this._setStatus(VISUAL_PREVIEW_STATUS.loading);
-        let staged = null;
         try {
             if (!reference) {
-                this._disposeCommitted();
+                this._releaseAllResident();
+                this._documents = null;
                 this._committedWorldHash = worldHash;
                 this._setStatus(VISUAL_PREVIEW_STATUS.idle);
                 return this.status;
@@ -104,39 +152,82 @@ export class VisualLayerMaterializer {
             const uses = await this._loadUses(access, controller.signal);
             this._throwIfStale(generation, controller.signal);
             assertVisualLayerAccessMatches(access, descriptor, uses);
-            const resources = await this._fetchNeededAssets(descriptor, access, uses, controller.signal);
-            this._throwIfStale(generation, controller.signal);
-            staged = await this._stageLayer(descriptor, resources, controller.signal);
-            this._throwIfStale(generation, controller.signal);
-            this._disposeCommitted();
-            this._commit(staged, worldHash);
-            staged = null;
-            this._setStatus(VISUAL_PREVIEW_STATUS.ready);
+            await this._revalidateCachedRights(uses, controller.signal);
+            this._documents = { descriptor, access };
+            this._uses = uses;
+            this._committedWorldHash = worldHash;
+            await this._reconcile({
+                generation,
+                signal: controller.signal,
+                retainCommittedAoi: false,
+            });
             return this.status;
         } catch (error) {
-            await this._disposeGroup(staged?.group ?? staged);
-            this._revokeStagingUrls();
             if (generation !== this._generation) return this.status;
-            this._disposeCommitted();
-            if (error?.code === VISUAL_PREVIEW_ERROR_CODES.SUPERSEDED) {
-                return this.status;
-            }
+            this._releaseAllResident();
+            if (error?.code === VISUAL_PREVIEW_ERROR_CODES.SUPERSEDED) return this.status;
             this._setStatus(VISUAL_PREVIEW_STATUS.error, normalizePreviewError(error));
             return this.status;
+        } finally {
+            if (generation === this._generation) this._layerSwitch = false;
         }
     }
 
+    async updateInterest(interest = {}) {
+        this._assertNotDisposed();
+        if (this.cache.dead) {
+            this.handleContextLost();
+            return this.status;
+        }
+        this._interest = this.residency.normalizeInterest({ ...this._interest, ...interest });
+        if (this._lastRequest) this._lastRequest.interest = this._interest;
+        if (!this._documents) {
+            this._setStatus(this.status.status, this.status.error && normalizePreviewError(this.status.error));
+            return this.status;
+        }
+        if (this._reconcileActive) {
+            this._coalescedInterest = this._interest;
+            return this._reconcileActive;
+        }
+        return this._drainReconcile({ retainCommittedAoi: true });
+    }
+
     async retry() {
-        return this.replace(this._lastRequest?.reference, this._lastRequest?.worldResource);
+        if (this.status?.residency?.retainCommittedAoi && this._documents) {
+            return this.updateInterest(this._interest);
+        }
+        return this.replace(
+            this._lastRequest?.reference,
+            this._lastRequest?.worldResource,
+            { interest: this._lastRequest?.interest },
+        );
     }
 
     clear() {
         this._generation += 1;
         this._abortCurrent();
-        this._disposeCommitted();
+        this._releaseAllResident();
+        this._documents = null;
         this._committedWorldHash = null;
         this._lastRequest = null;
         this._setStatus(VISUAL_PREVIEW_STATUS.idle);
+        return this.status;
+    }
+
+    handleContextLost(reason) {
+        this._generation += 1;
+        this._abortCurrent();
+        this._releaseAllResident({ skipCacheRelease: true });
+        this.cache = this.cache.recreate({ reason });
+        this._detachCache = this.cache.attach(this);
+        this._ownsCache = false;
+        this._setStatus(
+            VISUAL_PREVIEW_STATUS.error,
+            new VisualPreviewError(
+                VISUAL_PREVIEW_ERROR_CODES.CONTEXT_LOST,
+                reason || "The visual renderer context was lost.",
+            ),
+        );
         return this.status;
     }
 
@@ -145,12 +236,13 @@ export class VisualLayerMaterializer {
         this._disposed = true;
         this._generation += 1;
         this._abortCurrent();
-        this._disposeCommitted();
+        this._releaseAllResident();
         this._disposeKtx2();
-        this._revokeObjectUrls();
+        this._detachCache?.();
+        if (this._ownsCache) this.cache.dispose();
         this._listeners.clear();
         this.previewRoot = null;
-        this.status = idleStatus();
+        this.status = idleStatus(emptyResidencySnapshot());
     }
 
     _assertNotDisposed() {
@@ -162,11 +254,255 @@ export class VisualLayerMaterializer {
     _abortCurrent() {
         this._controller?.abort();
         this._controller = null;
+        this._coalescedInterest = null;
     }
 
     _throwIfStale(generation, signal) {
         if (this._disposed || generation !== this._generation || signal?.aborted) {
             throw new VisualPreviewError(VISUAL_PREVIEW_ERROR_CODES.SUPERSEDED, "Visual preview load was superseded.");
+        }
+    }
+
+    async _drainReconcile({ retainCommittedAoi }) {
+        const controller = this._controller ?? new AbortController();
+        this._controller = controller;
+        const generation = this._generation;
+        this._reconcileActive = this._reconcile({
+            generation,
+            signal: controller.signal,
+            retainCommittedAoi,
+        }).finally(() => {
+            if (this._reconcileActive) this._reconcileActive = null;
+        });
+        await this._reconcileActive;
+        if (this._coalescedInterest && generation === this._generation) {
+            this._interest = this._coalescedInterest;
+            this._coalescedInterest = null;
+            return this._drainReconcile({ retainCommittedAoi: true });
+        }
+        return this.status;
+    }
+
+    async _reconcile({ generation, signal, retainCommittedAoi }) {
+        const descriptor = this._documents.descriptor;
+        let plan;
+        try {
+            plan = this.residency.plan(descriptor, this._interest);
+        } catch (error) {
+            if (retainCommittedAoi && isBudgetError(error)) {
+                this._setStatus(VISUAL_PREVIEW_STATUS.error, normalizePreviewError(error), {
+                    retainCommittedAoi: true,
+                });
+                return this.status;
+            }
+            throw error;
+        }
+        const desiredIds = new Set([
+            ...plan.required.map((chunk) => chunk.id),
+            ...plan.prefetch.map((chunk) => chunk.id),
+        ]);
+        const missingRequired = plan.required.filter((chunk) => !this._chunkMatches(chunk.id, plan));
+        const missingPrefetch = plan.prefetch.filter((chunk) => !this._chunkMatches(chunk.id, plan));
+        for (const chunk of [...missingRequired, ...missingPrefetch]) this._queued.add(chunk.id);
+        this._setStatus(VISUAL_PREVIEW_STATUS.loading, null, { plan });
+
+        const staged = [];
+        try {
+            for (const chunk of missingRequired) {
+                this._throwIfStale(generation, signal);
+                staged.push(await this._loadChunk(chunk, plan, generation, signal));
+            }
+            for (const chunk of missingPrefetch) {
+                this._throwIfStale(generation, signal);
+                if (this._resident.size + staged.length >= this.residency.maxResidentChunks) {
+                    this.residency.prefetchShed += 1;
+                    break;
+                }
+                try {
+                    staged.push(await this._loadChunk(chunk, plan, generation, signal));
+                } catch (error) {
+                    if (isBudgetError(error)) {
+                        this.residency.prefetchShed += 1;
+                        continue;
+                    }
+                    throw error;
+                }
+            }
+            for (const loaded of staged) {
+                this._commitChunk(loaded);
+            }
+            for (const chunkId of [...this._resident.keys()]) {
+                if (!desiredIds.has(chunkId)) this._evictChunk(chunkId);
+            }
+            this._queued.clear();
+            this._rebuildBindings();
+            this._setStatus(VISUAL_PREVIEW_STATUS.ready, null, { plan });
+            return this.status;
+        } catch (error) {
+            for (const loaded of staged) await this._disposeStagedChunk(loaded);
+            this._queued.clear();
+            if (generation !== this._generation) return this.status;
+            if (retainCommittedAoi && isBudgetError(error) && this._resident.size > 0) {
+                this._setStatus(VISUAL_PREVIEW_STATUS.error, normalizePreviewError(error), {
+                    plan,
+                    retainCommittedAoi: true,
+                });
+                return this.status;
+            }
+            throw error;
+        }
+    }
+
+    _chunkMatches(chunkId, plan) {
+        const resident = this._resident.get(chunkId);
+        if (!resident) return false;
+        return resident.lodSignature === lodSignatureForChunk(chunkId, this._documents.descriptor, plan);
+    }
+
+    async _loadChunk(chunk, plan, generation, signal) {
+        const THREE = await this._three();
+        const descriptor = this._documents.descriptor;
+        const layerHash = hashVisualLayer(descriptor);
+        const group = new THREE.Group();
+        group.name = `cev-sim.visual-chunk:${chunk.id}`;
+        sanitizePreviewObject(group, { layerHash, instanceId: null });
+        const leases = [];
+        const instances = descriptor.instances.filter((instance) => instance.chunkIds.includes(chunk.id));
+        try {
+            for (const instance of instances) {
+                this._throwIfStale(generation, signal);
+                const staged = await this._stageInstance(instance, plan, layerHash, generation, signal);
+                leases.push(...staged.leases);
+                group.add(staged.root);
+            }
+            return {
+                chunkId: chunk.id,
+                group,
+                leases,
+                lodSignature: lodSignatureForChunk(chunk.id, descriptor, plan),
+                bindings: instances.flatMap((instance) => {
+                    const binding = descriptor.bindings.find((entry) => entry.instanceId === instance.id);
+                    return binding ? [[instance.id, { ...binding }]] : [];
+                }),
+            };
+        } catch (error) {
+            for (const lease of leases) lease.release?.();
+            disposeInstanceTree(group);
+            throw error;
+        }
+    }
+
+    async _stageInstance(instance, plan, layerHash, generation, signal) {
+        const THREE = await this._three();
+        const lod = plan.selectedLods[instance.id];
+        const digest = lod.digest;
+        const parsed = await this._acquireParsed(digest, generation, signal);
+        const leases = [parsed];
+        try {
+            assertGltfMaterialBijection(parsed.value.json, instance.materialIds);
+            const textures = await this._texturesForInstance(instance, leases, generation, signal);
+            const instanceMaterials = new Map();
+            const materialsById = new Map(this._documents.descriptor.materials.map((material) => [material.id, material]));
+            for (const materialId of instance.materialIds) {
+                instanceMaterials.set(
+                    materialId,
+                    createDescriptorMaterial(THREE, materialsById.get(materialId), textures),
+                );
+            }
+            const root = parsed.value.scene.clone(true);
+            if (instance.materialIds.length > 0) {
+                replaceEmbeddedMaterials(root, THREE, instanceMaterials);
+            }
+            root.matrix.fromArray(instance.matrix);
+            root.matrixAutoUpdate = false;
+            root.updateMatrixWorld(true);
+            const binding = this._documents.descriptor.bindings.find((entry) => entry.instanceId === instance.id);
+            sanitizePreviewObject(root, {
+                layerHash,
+                instanceId: instance.id,
+                bindingId: binding?.id ?? null,
+            });
+            return { root, leases };
+        } catch (error) {
+            for (const lease of leases) lease.release?.();
+            throw error;
+        }
+    }
+
+    async _acquireParsed(digest, generation, signal) {
+        const encoded = await this._acquireEncoded(digest, generation, signal);
+        const closureLeases = await this._acquireDependencyLeases(encoded.entry?.useHash, generation, signal);
+        try {
+            const parsed = await this.cache.acquireParsed({
+                digest,
+                useHash: encoded.entry?.useHash,
+                bytes: estimateParsedBytes(encoded.value),
+                signal,
+                loader: async () => {
+                    const parsedValue = await this._parsePrimaryAsset(digest, encoded.value, signal);
+                    return {
+                        value: parsedValue,
+                        bytes: estimateParsedBytes(encoded.value),
+                        dispose: (value) => disposeObjectTree(value?.scene),
+                    };
+                },
+            });
+            this._throwIfStale(generation, signal);
+            encoded.release();
+            for (const lease of closureLeases) lease.release();
+            return parsed;
+        } catch (error) {
+            encoded.release();
+            for (const lease of closureLeases) lease.release();
+            throw error;
+        }
+    }
+
+    async _acquireDependencyLeases(useHash, generation, signal) {
+        const leases = [];
+        const use = this._uses.get(useHash);
+        if (!use) return leases;
+        for (const dependencyUseHash of Object.values(use.dependencies ?? {})) {
+            const dependency = this._uses.get(dependencyUseHash);
+            if (!dependency?.asset?.sha256) continue;
+            leases.push(await this._acquireEncoded(dependency.asset.sha256, generation, signal));
+        }
+        return leases;
+    }
+
+    async _acquireEncoded(digest, generation, signal) {
+        const { access } = this._documents;
+        const digestToUse = new Map(access.assets.map((entry) => [entry.sha256, entry.useHash]));
+        const useHash = digestToUse.get(digest);
+        if (!useHash) {
+            throw new VisualPreviewError(
+                VISUAL_PREVIEW_ERROR_CODES.ASSET_MISSING,
+                `Visual asset ${digest} is not present in the access sidecar.`,
+            );
+        }
+        const use = this._uses.get(useHash);
+        this._throwIfStale(generation, signal);
+        return this.cache.acquireEncoded({
+            digest,
+            useHash,
+            mediaType: use.asset.mediaType,
+            sizeBytes: use.asset.sizeBytes,
+            signal,
+            loader: async () => {
+                const resource = await this._fetchAsset(useHash, use.asset, signal);
+                this._collectUseClosure(useHash, this._uses, new Set());
+                return resource.bytes;
+            },
+        });
+    }
+
+    async _revalidateCachedRights(uses, signal) {
+        const useHashes = [...uses.keys()];
+        try {
+            await this.cache.revalidateSourceRights(useHashes);
+        } catch (error) {
+            this._throwIfStale(this._generation, signal);
+            throw mapClientError(error, VISUAL_PREVIEW_ERROR_CODES.RIGHTS_DENIED);
         }
     }
 
@@ -228,38 +564,6 @@ export class VisualLayerMaterializer {
         return uses;
     }
 
-    async _fetchNeededAssets(descriptor, access, uses, signal) {
-        const digestToUse = new Map(access.assets.map((entry) => [entry.sha256, entry.useHash]));
-        const needed = new Set();
-        for (const instance of descriptor.instances) {
-            const digest = sha256FromUri(instance.assetUri);
-            needed.add(digest);
-            this._collectUseClosure(digestToUse.get(digest), uses, needed);
-            const materialIds = new Set(instance.materialIds);
-            for (const material of descriptor.materials) {
-                if (!materialIds.has(material.id)) continue;
-                for (const texture of material.textures) {
-                    const textureDigest = sha256FromUri(texture.assetUri);
-                    needed.add(textureDigest);
-                    this._collectUseClosure(digestToUse.get(textureDigest), uses, needed);
-                }
-            }
-        }
-        const resources = new Map();
-        for (const digest of needed) {
-            const useHash = digestToUse.get(digest);
-            if (!useHash) {
-                throw new VisualPreviewError(
-                    VISUAL_PREVIEW_ERROR_CODES.ASSET_MISSING,
-                    `Visual asset ${digest} is not present in the access sidecar.`,
-                );
-            }
-            const use = uses.get(useHash);
-            resources.set(digest, await this._fetchAsset(useHash, use.asset, signal));
-        }
-        return resources;
-    }
-
     _collectUseClosure(useHash, uses, needed) {
         const use = uses.get(useHash);
         if (!use) return;
@@ -308,80 +612,32 @@ export class VisualLayerMaterializer {
         return { bytes, mediaType: expected.mediaType, useHash, role: expected.role };
     }
 
-    async _stageLayer(descriptor, resources, signal) {
-        const THREE = await this._three();
-        const staged = new THREE.Group();
-        staged.name = "cev-sim.visual-layer-staged";
-        const layerHash = hashVisualLayer(descriptor);
-        sanitizePreviewObject(staged, { layerHash, instanceId: null });
-        const urlMap = this.parseGltf ? new Map() : this._objectUrlMap(resources);
-        const parsed = new Map();
-        const materialsById = new Map(descriptor.materials.map((material) => [material.id, material]));
-        const bindingsByInstance = new Map(descriptor.bindings.map((binding) => [binding.instanceId, binding]));
-        const stagedBindings = new Map();
-        for (const instance of descriptor.instances) {
-            this._throwIfStale(this._generation, signal);
-            const digest = sha256FromUri(instance.assetUri);
-            if (!parsed.has(digest)) {
-                parsed.set(digest, await this._parsePrimaryAsset(digest, resources, urlMap, signal));
-            }
-            const template = parsed.get(digest);
-            assertGltfMaterialBijection(template.json, instance.materialIds);
-            const textures = await this._texturesForInstance(instance, materialsById, resources, signal);
-            const instanceMaterials = new Map();
-            for (const materialId of instance.materialIds) {
-                instanceMaterials.set(
-                    materialId,
-                    createDescriptorMaterial(THREE, materialsById.get(materialId), textures),
-                );
-            }
-            const root = template.scene.clone(true);
-            if (instance.materialIds.length > 0) {
-                replaceEmbeddedMaterials(root, THREE, instanceMaterials);
-            }
-            root.matrix.fromArray(instance.matrix);
-            root.matrixAutoUpdate = false;
-            root.updateMatrixWorld(true);
-            const binding = bindingsByInstance.get(instance.id) ?? null;
-            if (binding) stagedBindings.set(instance.id, { ...binding });
-            sanitizePreviewObject(root, {
-                layerHash,
-                instanceId: instance.id,
-                bindingId: binding?.id ?? null,
-            });
-            staged.add(root);
-        }
-        return { group: staged, bindings: stagedBindings };
-    }
-
-    async _parsePrimaryAsset(digest, resources, urlMap, signal) {
-        const resource = resources.get(digest);
-        if (!resource) {
-            throw new VisualPreviewError(
-                VISUAL_PREVIEW_ERROR_CODES.ASSET_MISSING,
-                `Primary visual asset ${digest} was not fetched.`,
-            );
-        }
-        if (!GLTF_MEDIA.has(resource.mediaType)) {
+    async _parsePrimaryAsset(digest, encodedBytes, signal) {
+        const useHash = this._useHashForDigest(digest);
+        const use = this._uses.get(useHash);
+        const mediaType = use?.asset?.mediaType;
+        if (!GLTF_MEDIA.has(mediaType)) {
             throw new VisualPreviewError(
                 VISUAL_PREVIEW_ERROR_CODES.MEDIA_MISMATCH,
                 `Primary asset ${digest} must be glTF.`,
             );
         }
         if (this.parseGltf) {
-            const parsed = await this.parseGltf(resource.bytes, digest, resources);
+            const parsed = await this.parseGltf(encodedBytes, digest, null);
             this._throwIfStale(this._generation, signal);
             return parsed;
         }
         const THREE = await this._three();
         const { GLTFLoader } = await this._loaders();
+        const resources = await this._dependencyResourceMap(use, signal);
+        const urlMap = this._objectUrlMap(resources);
         const manager = new THREE.LoadingManager();
         manager.setURLModifier(createDigestUrlModifier(urlMap));
         const loader = new GLTFLoader(manager);
         const ktx2 = await this._ensureKtx2(manager, resources);
         if (ktx2) loader.setKTX2Loader(ktx2);
         try {
-            const gltf = await loader.parseAsync(toArrayBuffer(resource.bytes), "");
+            const gltf = await loader.parseAsync(toArrayBuffer(encodedBytes), "");
             this._throwIfStale(this._generation, signal);
             return {
                 scene: gltf.scene,
@@ -393,53 +649,98 @@ export class VisualLayerMaterializer {
                 VISUAL_PREVIEW_ERROR_CODES.DECODER_FAILED,
                 error.message || "glTF decode failed.",
             );
+        } finally {
+            revokeUrlSet(new Set([...urlMap.values()].map((entry) => entry.objectUrl)));
+            for (const resource of resources.values()) resource.lease?.release?.();
         }
     }
 
-    async _texturesForInstance(instance, materialsById, resources, signal) {
+    async _dependencyResourceMap(use, signal) {
+        const resources = new Map();
+        if (!use) return resources;
+        resources.set(use.asset.sha256, {
+            bytes: null,
+            mediaType: use.asset.mediaType,
+            useHash: hashKey(use),
+        });
+        for (const [uri, useHash] of Object.entries(use.dependencies)) {
+            const digest = sha256FromUri(uri);
+            const encoded = await this._acquireEncoded(digest, this._generation, signal);
+            resources.set(digest, {
+                bytes: encoded.value,
+                mediaType: this._uses.get(useHash)?.asset?.mediaType,
+                useHash,
+                lease: encoded,
+            });
+        }
+        return resources;
+    }
+
+    async _texturesForInstance(instance, leases, generation, signal) {
         const textures = new Map();
+        const materialsById = new Map(this._documents.descriptor.materials.map((material) => [material.id, material]));
         for (const materialId of instance.materialIds) {
             const material = materialsById.get(materialId);
             for (const texture of material.textures) {
                 if (textures.has(texture.slot)) continue;
                 const digest = sha256FromUri(texture.assetUri);
-                textures.set(texture.slot, await this._decodeTexture(resources.get(digest), texture.slot, signal));
+                const handle = await this._decodeTexture(digest, texture.slot, generation, signal);
+                leases.push(handle);
+                textures.set(texture.slot, handle.value);
             }
         }
         return textures;
     }
 
-    async _decodeTexture(resource, slot, signal) {
-        if (!resource) {
-            throw new VisualPreviewError(
-                VISUAL_PREVIEW_ERROR_CODES.ASSET_MISSING,
-                `Texture for slot ${slot} was not fetched.`,
-            );
+    async _decodeTexture(digest, slot, generation, signal) {
+        const encoded = await this._acquireEncoded(digest, generation, signal);
+        try {
+            const handle = await this.cache.acquireTexture({
+                digest,
+                useHash: encoded.entry?.useHash,
+                bytes: encoded.value?.byteLength ?? 0,
+                signal,
+                loader: async () => {
+                    const decoded = await this._decodeTextureBytes(encoded.value, this._uses.get(encoded.entry.useHash)?.asset?.mediaType, slot, signal);
+                    return { value: decoded, bytes: estimateTextureBytes(decoded, encoded.value) };
+                },
+            });
+            encoded.release();
+            return handle;
+        } catch (error) {
+            encoded.release();
+            throw error;
         }
+    }
+
+    async _decodeTextureBytes(bytes, mediaType, slot, signal) {
         this._throwIfStale(this._generation, signal);
         try {
-            if (this.decodeTexture) return await this.decodeTexture(resource.bytes, resource.mediaType, slot);
+            if (this.decodeTexture) return await this.decodeTexture(bytes, mediaType, slot);
             const THREE = await this._three();
-            if (resource.mediaType === "image/ktx2") {
-                const ktx2 = await this._ensureKtx2(null, new Map([["ktx2", resource]]));
+            if (mediaType === "image/ktx2") {
+                const ktx2 = await this._ensureKtx2(null, new Map([["ktx2", { bytes, mediaType }]]));
                 if (!ktx2) {
                     throw new VisualPreviewError(
                         VISUAL_PREVIEW_ERROR_CODES.UNSUPPORTED_RENDERER,
                         "KTX2 textures require a supported GPU transcoder.",
                     );
                 }
-                return await ktx2.parse(toArrayBuffer(resource.bytes));
+                return await ktx2.parse(toArrayBuffer(bytes));
             }
-            const blob = new Blob([resource.bytes], { type: resource.mediaType });
+            const blob = new Blob([bytes], { type: mediaType });
             const objectUrl = URL.createObjectURL(blob);
-            this._stagingUrls.add(objectUrl);
-            const loader = new THREE.TextureLoader();
-            return await loader.loadAsync(objectUrl);
+            try {
+                const loader = new THREE.TextureLoader();
+                return await loader.loadAsync(objectUrl);
+            } finally {
+                URL.revokeObjectURL(objectUrl);
+            }
         } catch (error) {
             if (error instanceof VisualPreviewError) throw error;
             throw new VisualPreviewError(
                 VISUAL_PREVIEW_ERROR_CODES.DECODER_FAILED,
-                error.message || `Failed to decode ${resource.mediaType} texture.`,
+                error.message || `Failed to decode ${mediaType} texture.`,
             );
         }
     }
@@ -447,10 +748,9 @@ export class VisualLayerMaterializer {
     _objectUrlMap(resources) {
         const map = new Map();
         for (const [digest, resource] of resources) {
+            if (!resource?.bytes) continue;
             const blob = new Blob([resource.bytes], { type: resource.mediaType });
-            const objectUrl = URL.createObjectURL(blob);
-            this._stagingUrls.add(objectUrl);
-            map.set(digest, { objectUrl, ...resource });
+            map.set(digest, { objectUrl: URL.createObjectURL(blob), ...resource });
         }
         return map;
     }
@@ -510,30 +810,55 @@ export class VisualLayerMaterializer {
         return { GLTFLoader: this.GLTFLoader, KTX2Loader: this.KTX2Loader };
     }
 
-    _commit(staged, worldHash) {
-        const group = staged.group;
-        this.previewRoot.add(group);
-        this._committed = group;
-        this._committedWorldHash = worldHash;
-        this._bindings = staged.bindings ?? new Map();
-        group.name = "cev-sim.visual-layer";
-        for (const url of this._stagingUrls) this._objectUrls.add(url);
-        this._stagingUrls.clear();
+    _commitChunk(loaded) {
+        this.previewRoot.add(loaded.group);
+        loaded.group.name = `cev-sim.visual-layer:${loaded.chunkId}`;
+        this._resident.set(loaded.chunkId, loaded);
+        this._queued.delete(loaded.chunkId);
     }
 
-    _disposeCommitted() {
-        if (this._committed) {
-            this.previewRoot?.remove?.(this._committed);
-            disposeObjectTree(this._committed);
-            this._committed = null;
-            this._revokeObjectUrls();
+    async _disposeStagedChunk(loaded) {
+        this.previewRoot?.remove?.(loaded.group);
+        disposeInstanceTree(loaded.group);
+        for (const lease of loaded.leases ?? []) lease.release?.();
+    }
+
+    _evictChunk(chunkId) {
+        const resident = this._resident.get(chunkId);
+        if (!resident) return;
+        this.previewRoot?.remove?.(resident.group);
+        disposeInstanceTree(resident.group);
+        for (const lease of resident.leases ?? []) lease.release?.();
+        this._resident.delete(chunkId);
+        this.residency.recordEviction(1);
+    }
+
+    _releaseAllResident({ skipCacheRelease = false } = {}) {
+        for (const chunkId of [...this._resident.keys()]) {
+            const resident = this._resident.get(chunkId);
+            this.previewRoot?.remove?.(resident.group);
+            disposeInstanceTree(resident.group);
+            if (!skipCacheRelease) {
+                for (const lease of resident.leases ?? []) lease.release?.();
+            }
+            this._resident.delete(chunkId);
         }
         this._bindings = new Map();
+        this._queued.clear();
     }
 
-    async _disposeGroup(group) {
-        if (!group) return;
-        disposeObjectTree(group);
+    _rebuildBindings() {
+        const bindings = new Map();
+        for (const resident of this._resident.values()) {
+            for (const [instanceId, binding] of resident.bindings ?? []) {
+                bindings.set(instanceId, binding);
+            }
+        }
+        this._bindings = bindings;
+    }
+
+    _useHashForDigest(digest) {
+        return this._documents.access.assets.find((entry) => entry.sha256 === digest)?.useHash;
     }
 
     _disposeKtx2() {
@@ -542,29 +867,75 @@ export class VisualLayerMaterializer {
         this._ktx2Loader = null;
     }
 
-    _revokeStagingUrls() {
-        revokeUrlSet(this._stagingUrls);
+    _residencyMetrics(plan = null, retainCommittedAoi = false) {
+        let computed = plan;
+        if (!computed && this._documents) {
+            try {
+                computed = this.residency.plan(this._documents.descriptor, this._interest);
+            } catch {
+                computed = null;
+            }
+        }
+        return this.residency.snapshot({
+            plan: computed,
+            residentChunkIds: [...this._resident.keys()],
+            queuedChunkIds: [...this._queued],
+            memory: this.cache?.snapshot?.().memory ?? null,
+            retainCommittedAoi,
+        });
     }
 
-    _revokeObjectUrls() {
-        revokeUrlSet(this._objectUrls);
-        this._revokeStagingUrls();
-    }
-
-    _setStatus(status, error = null) {
+    _setStatus(status, error = null, { plan = null, retainCommittedAoi = false } = {}) {
         this.status = {
             status,
             error: error ? {
                 code: error.code ?? VISUAL_PREVIEW_ERROR_CODES.DECODER_FAILED,
                 message: error.message,
             } : null,
+            residency: this._residencyMetrics(plan, retainCommittedAoi),
         };
         for (const listener of this._listeners) listener(this.status);
     }
 }
 
-function idleStatus() {
-    return { status: VISUAL_PREVIEW_STATUS.idle, error: null };
+function cacheOptions(materializer) {
+    return {
+        renderer: materializer.renderer,
+        profile: materializer.profile,
+        rightsChecker: async ({ useHash, operations }) => {
+            if (typeof materializer.assetClient.validateClosure === "function") {
+                await materializer.assetClient.validateClosure({ useHash, operations });
+            }
+        },
+    };
+}
+
+function idleStatus(residency = emptyResidencySnapshot()) {
+    return { status: VISUAL_PREVIEW_STATUS.idle, error: null, residency };
+}
+
+function lodSignatureForChunk(chunkId, descriptor, plan) {
+    const instances = (descriptor.instances ?? [])
+        .filter((instance) => instance.chunkIds.includes(chunkId))
+        .map((instance) => `${instance.id}:${plan.selectedLods[instance.id]?.uri ?? ""}`);
+    instances.sort();
+    return instances.join("|");
+}
+
+function estimateParsedBytes(bytes) {
+    return Math.max(64, (bytes?.byteLength ?? 0) * 4);
+}
+
+function estimateTextureBytes(texture, encoded) {
+    const image = texture?.image;
+    const width = Number(image?.width ?? texture?.source?.data?.width ?? 0);
+    const height = Number(image?.height ?? texture?.source?.data?.height ?? 0);
+    if (width > 0 && height > 0) return width * height * 4;
+    return encoded?.byteLength ?? 0;
+}
+
+function hashKey(use) {
+    return use?.asset?.sha256 ?? null;
 }
 
 function revokeUrlSet(urls) {
@@ -575,7 +946,7 @@ function revokeUrlSet(urls) {
             // already revoked
         }
     }
-    urls.clear();
+    urls.clear?.();
 }
 
 function toArrayBuffer(bytes) {
@@ -593,12 +964,26 @@ function disposeObjectTree(root) {
     });
 }
 
+function disposeInstanceTree(root) {
+    if (!root) return;
+    root.removeFromParent?.();
+    root.traverse?.((object) => {
+        const materials = [].concat(object.material ?? []);
+        for (const material of materials) disposeMaterial(material);
+    });
+}
+
 function disposeMaterial(material) {
     if (!material) return;
     for (const value of Object.values(material)) {
         if (value?.isTexture) value.dispose?.();
     }
     material.dispose?.();
+}
+
+function isBudgetError(error) {
+    return error instanceof VisualBudgetError
+        || error?.code === VISUAL_PREVIEW_ERROR_CODES.BUDGET_EXCEEDED;
 }
 
 function normalizePreviewError(error) {

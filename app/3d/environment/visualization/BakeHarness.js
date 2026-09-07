@@ -36,6 +36,15 @@ import {
     markBakeStopped,
 } from "./BakeTelemetry";
 import { ProjectedBuildingTextureManager } from "./ProjectedBuildingTextureManager";
+import {
+    BakeMemoryLedger,
+    BAKE_MEMORY_KINDS,
+    estimatePassSetBytes,
+} from "./BakeMemoryLedger.js";
+import { BakeSpatialIndex } from "./BakeSpatialIndex.js";
+import { getVisualScaleProfile } from "../../../simulation/visual/VisualScaleProfile.js";
+
+const TELEMETRY_PREVIEW_MAX_EDGE = 256;
 
 function countBy(items, getKey) {
     const counts = {};
@@ -74,10 +83,11 @@ function round(value, digits = 2) {
 
 function summarizeImage(image, extra = {}) {
     if (!image?.data) return null;
+    const preview = downscaleRgba(image, TELEMETRY_PREVIEW_MAX_EDGE);
     return {
-        data: image.data,
-        width: image.width,
-        height: image.height,
+        data: preview.data,
+        width: preview.width,
+        height: preview.height,
         colorSpace: image.colorSpace ?? "linear",
         source: image.source ?? "raw",
         passId: image.passId ?? extra.passId ?? null,
@@ -89,13 +99,14 @@ function summarizeImage(image, extra = {}) {
 
 function summarizeMask(maskImage, extra = {}) {
     if (!maskImage?.data) return null;
+    const preview = downscaleRgba(maskImage, TELEMETRY_PREVIEW_MAX_EDGE);
     const whitePixels = extra.whitePixels ?? countOpaqueWhitePixels(maskImage.data);
     const totalPixels = Math.max(1, (maskImage.width ?? 0) * (maskImage.height ?? 0));
 
     return {
-        data: maskImage.data,
-        width: maskImage.width,
-        height: maskImage.height,
+        data: preview.data,
+        width: preview.width,
+        height: preview.height,
         passId: maskImage.passId ?? null,
         buildingId: maskImage.buildingId ?? null,
         activeBuildingId: extra.activeBuildingId ?? maskImage.buildingId ?? null,
@@ -112,6 +123,34 @@ function summarizeMask(maskImage, extra = {}) {
         sliverBounds: extra.sliverBounds ?? null,
         updatedAt: Date.now(),
     };
+}
+
+function downscaleRgba(image, maxEdge) {
+    const width = image.width ?? 0;
+    const height = image.height ?? 0;
+    const source = image.data;
+    if (!width || !height || !source) return image;
+    const edge = Math.max(width, height);
+    if (edge <= maxEdge) {
+        return { data: source, width, height };
+    }
+    const scale = maxEdge / edge;
+    const nextWidth = Math.max(1, Math.round(width * scale));
+    const nextHeight = Math.max(1, Math.round(height * scale));
+    const data = new Uint8Array(nextWidth * nextHeight * 4);
+    for (let y = 0; y < nextHeight; y += 1) {
+        const srcY = Math.min(height - 1, Math.floor((y + 0.5) * height / nextHeight));
+        for (let x = 0; x < nextWidth; x += 1) {
+            const srcX = Math.min(width - 1, Math.floor((x + 0.5) * width / nextWidth));
+            const dst = (y * nextWidth + x) * 4;
+            const src = (srcY * width + srcX) * 4;
+            data[dst] = source[src];
+            data[dst + 1] = source[src + 1];
+            data[dst + 2] = source[src + 2];
+            data[dst + 3] = source[src + 3];
+        }
+    }
+    return { data, width: nextWidth, height: nextHeight };
 }
 
 function summarizeLidarFrame(lidarFrame, extra = {}) {
@@ -186,7 +225,8 @@ function effectiveBuildingId(object) {
     return null;
 }
 
-function nearestBuildingIdForPoint(scene, world, tolerance = 0.05) {
+function nearestBuildingIdForPoint(scene, world, tolerance = 0.05, spatialIndex = null) {
+    if (spatialIndex) return spatialIndex.nearestBuildingId(world, tolerance);
     let nearestId = null;
     let nearestDistance = Infinity;
     const box = new THREE.Box3();
@@ -333,6 +373,9 @@ export class BakeHarness {
 
         this._setupComplete = false;
         this._manifestUploaded = false;
+        this.profile = options.profile ?? getVisualScaleProfile();
+        this.memoryLedger = options.memoryLedger ?? new BakeMemoryLedger({ profile: this.profile });
+        this.spatialIndex = options.spatialIndex ?? null;
     }
 
     getSnapshot() {
@@ -430,7 +473,15 @@ export class BakeHarness {
     setup(scene) {
         if (this._setupComplete) return;
 
-        this.projectedTextureManager = new ProjectedBuildingTextureManager(scene);
+        this.projectedTextureManager = new ProjectedBuildingTextureManager(scene, {
+            ledger: this.memoryLedger,
+            maxProjections: this.profile.residency.maxProjections,
+        });
+        this.spatialIndex = this.spatialIndex ?? BakeSpatialIndex.fromRegistry(
+            this.data.environment?.()?.objects?.(),
+            this.data.environment?.()?.objects?.()?.chunkManager,
+            { scene },
+        );
 
         for (const viewConfig of this.viewConfigs) {
             const localPosition = viewConfig.position.clone();
@@ -632,6 +683,11 @@ export class BakeHarness {
         this._emitTelemetry();
     }
 
+    _assertRunning(stage) {
+        if (this.running) return;
+        throw new Error(`Bake cancelled during ${stage}.`);
+    }
+
     dispose() {
         this.running = false;
         this.completed = true;
@@ -644,6 +700,8 @@ export class BakeHarness {
 
         this.projectedTextureManager?.dispose?.();
         this.projectedTextureManager = null;
+        this.memoryLedger?.releaseAll?.();
+        this.spatialIndex = null;
         this.telemetryListeners.clear();
 
         // Telemetry previews deliberately contain pixel arrays. Drop them
@@ -849,8 +907,9 @@ export class BakeHarness {
         );
 
         for (const view of this.views) {
+            this._assertRunning("planning");
             const regionPlan = this.regionPlanner.planForView(
-                this.data.scene,
+                this.spatialIndex ?? this.data.scene,
                 view.sensorCamera,
             );
 
@@ -887,11 +946,25 @@ export class BakeHarness {
                 visibleBuildingIds: regionPlan.visibleBuildingIds,
             });
 
-            const capture = view.capturePasses(passes, metadata, {
-                maskMinPixels: this.maskMinPixels,
-                skipEmptyMasks: false,
-                debug: this.debug,
-            });
+            this._assertRunning("capture");
+            const pipelineId = this.memoryLedger.reserve(
+                BAKE_MEMORY_KINDS.passBuffer,
+                estimatePassSetBytes({
+                    width: view.cameraSettings.width,
+                    height: view.cameraSettings.height,
+                    passCount: passes.length,
+                }),
+            );
+            let capture;
+            try {
+                capture = view.capturePasses(passes, metadata, {
+                    maskMinPixels: this.maskMinPixels,
+                    skipEmptyMasks: false,
+                    debug: this.debug,
+                });
+            } finally {
+                this.memoryLedger.release(pipelineId);
+            }
             if (!capture) {
                 this._updateTelemetry(
                     {
@@ -1138,6 +1211,7 @@ export class BakeHarness {
                             this.data.scene,
                             point.world,
                             (this.splatConfig.coverageVoxelSize ?? 0.05) * 2,
+                            this.spatialIndex,
                         ),
                     }))
                     .filter((point) => point.pixel);
@@ -1174,6 +1248,7 @@ export class BakeHarness {
                     continue;
                 }
 
+                this._assertRunning("projection");
                 const projectionResult = this.projectedTextureManager?.applyProjection({
                     image: bakedImage,
                     maskImage: processMaskImage,
@@ -1187,6 +1262,7 @@ export class BakeHarness {
                     maxDepthDelta: this.splatConfig.projectedTexture?.maxDepthDelta ?? 1.5,
                     maxTriangleDepthDelta: this.splatConfig.projectedTexture?.maxTriangleDepthDelta ?? 1,
                     surfaceOffset: this.splatConfig.projectedTexture?.surfaceOffset ?? 0.005,
+                    required: true,
                 }) ?? { updatedMeshes: 0 };
 
                 this._updateTelemetry(
@@ -1376,6 +1452,7 @@ export class BakeHarness {
                 });
 
                 accumulator.hideBakedGeometry(this.data.scene, this.splatConfig, {
+                    spatialIndex: this.spatialIndex,
                     runId: this.runId,
                     sampleId,
                     frameIndex,

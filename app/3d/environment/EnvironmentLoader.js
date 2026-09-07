@@ -132,7 +132,14 @@ export class EnvironmentLoader {
     async _materializePreview(worldResource) {
         if (!this.materializer) return idlePreview();
         const reference = this.data.environment()?.visualLayer ?? null;
-        return this.materializer.replace(reference, worldResource);
+        return this.materializer.replace(reference, worldResource, {
+            interest: visualInterestFromData(this.data),
+        });
+    }
+
+    updateVisualInterest(interest = null) {
+        if (!this.materializer?.updateInterest) return this.materializer?.status ?? idlePreview();
+        return this.materializer.updateInterest(interest ?? visualInterestFromData(this.data));
     }
 
     _restoreVisualReferences(manifest) {
@@ -243,5 +250,17 @@ function normalizeDefinition(environmentId, manifest) {
 }
 
 function idlePreview() {
-    return { status: VISUAL_PREVIEW_STATUS.idle, error: null };
+    return { status: VISUAL_PREVIEW_STATUS.idle, error: null, residency: null };
+}
+
+function visualInterestFromData(data) {
+    const camera = data?.simulation?.()?.camera;
+    const position = camera?.position;
+    return {
+        position: {
+            x: Number(position?.x ?? 0) || 0,
+            y: Number(position?.y ?? 0) || 0,
+            z: Number(position?.z ?? 0) || 0,
+        },
+    };
 }

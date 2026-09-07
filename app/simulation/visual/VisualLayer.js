@@ -70,7 +70,12 @@ export const VISUAL_PREVIEW_ERROR_CODES = Object.freeze({
     SUPERSEDED: "VISUAL_PREVIEW_SUPERSEDED",
     MEDIA_MISMATCH: "VISUAL_PREVIEW_MEDIA_MISMATCH",
     SIZE_MISMATCH: "VISUAL_PREVIEW_SIZE_MISMATCH",
+    BUDGET_EXCEEDED: "VISUAL_PREVIEW_BUDGET_EXCEEDED",
+    CONTEXT_LOST: "VISUAL_PREVIEW_CONTEXT_LOST",
 });
+export const VISUAL_LOD_POLICY_KIND = "cev-sim.visual-lod-policy";
+export const VISUAL_LOD_POLICY_VERSION = 1;
+export const VISUAL_LOD_DISTANCE_BANDS_METERS = Object.freeze([0, 80, 200]);
 export const VISUAL_ASSET_PROFILE = Object.freeze({ id: "static-gltf-surface", version: 1 });
 export const VISUAL_CONTRACT_VERSIONS = Object.freeze({
     runBundle: 1,
@@ -1214,4 +1219,111 @@ export function assertPinnedKtx2TranscoderPath(value, path = "transcoderPath") {
         fail(path, `must be the pinned Basis transcoder path ${VISUAL_KTX2_TRANSCODER_PATH}`);
     }
     return result;
+}
+
+/**
+ * Normalize the hashed VIS-05b camera/provider LOD policy.
+ * Version 1 freezes distance bands at [0, 80, 200] meters. Hardware profiles
+ * must hash this exact policy and must not select a coarser LOD to relieve
+ * memory pressure.
+ * @param {unknown} [value]
+ * @returns {{ kind: string, version: number, distanceBandsMeters: number[] }}
+ */
+export function normalizeVisualLodPolicy(value = defaultVisualLodPolicyInput()) {
+    const source = plainObject(value, "visualLodPolicy");
+    assertKeys(source, ["kind", "version", "distanceBandsMeters"], "visualLodPolicy");
+    if (!Array.isArray(source.distanceBandsMeters)) {
+        fail("visualLodPolicy.distanceBandsMeters", "expected an array");
+    }
+    assertDenseJsonArray(source.distanceBandsMeters, "visualLodPolicy.distanceBandsMeters");
+    const distanceBandsMeters = source.distanceBandsMeters.map((entry, index) => (
+        boundedNumber(entry, 0, Number.MAX_SAFE_INTEGER, `visualLodPolicy.distanceBandsMeters.${index}`)
+    ));
+    if (distanceBandsMeters.length !== VISUAL_LOD_DISTANCE_BANDS_METERS.length) {
+        fail("visualLodPolicy.distanceBandsMeters", "version 1 requires exactly three distance bands");
+    }
+    for (const [index, expected] of VISUAL_LOD_DISTANCE_BANDS_METERS.entries()) {
+        if (distanceBandsMeters[index] !== expected) {
+            fail(
+                `visualLodPolicy.distanceBandsMeters.${index}`,
+                `must equal the frozen band ${expected}`,
+            );
+        }
+        if (index > 0 && distanceBandsMeters[index] <= distanceBandsMeters[index - 1]) {
+            fail("visualLodPolicy.distanceBandsMeters", "bands must be strictly increasing");
+        }
+    }
+    const result = {
+        kind: source.kind ?? VISUAL_LOD_POLICY_KIND,
+        version: source.version ?? VISUAL_LOD_POLICY_VERSION,
+        distanceBandsMeters: [...distanceBandsMeters],
+    };
+    if (result.kind !== VISUAL_LOD_POLICY_KIND || result.version !== VISUAL_LOD_POLICY_VERSION) {
+        fail("visualLodPolicy", `expected ${VISUAL_LOD_POLICY_KIND} version ${VISUAL_LOD_POLICY_VERSION}`);
+    }
+    return result;
+}
+
+function defaultVisualLodPolicyInput() {
+    return {
+        kind: VISUAL_LOD_POLICY_KIND,
+        version: VISUAL_LOD_POLICY_VERSION,
+        distanceBandsMeters: [...VISUAL_LOD_DISTANCE_BANDS_METERS],
+    };
+}
+
+/** @returns {{ kind: string, version: number, distanceBandsMeters: number[] }} */
+export function defaultVisualLodPolicy() {
+    return normalizeVisualLodPolicy(defaultVisualLodPolicyInput());
+}
+
+/** @param {unknown} value */
+export function assertVisualLodPolicy(value) {
+    const normalized = normalizeVisualLodPolicy(value);
+    if (canonicalExactStringify(normalized) !== canonicalExactStringify(value)) {
+        fail("visualLodPolicy", "immutable policy is not in canonical normalized form");
+    }
+    return value;
+}
+
+/** @param {unknown} value @returns {string} */
+export function hashVisualLodPolicy(value) {
+    assertVisualLodPolicy(value);
+    return sha256ExactUtf8(canonicalExactStringify(value));
+}
+
+/**
+ * Select a LOD index from camera distance. Index 0 is highest detail.
+ * Hardware budgets must not change this decision.
+ * @param {number} distanceMeters
+ * @param {{ distanceBandsMeters: number[] }} [policy]
+ * @returns {number}
+ */
+export function selectVisualLodIndex(distanceMeters, policy = defaultVisualLodPolicy()) {
+    const distance = Number(distanceMeters);
+    const bands = policy?.distanceBandsMeters ?? VISUAL_LOD_DISTANCE_BANDS_METERS;
+    if (!Number.isFinite(distance) || distance < 0) return 0;
+    let index = 0;
+    for (let bandIndex = 1; bandIndex < bands.length; bandIndex += 1) {
+        if (distance >= bands[bandIndex]) index = bandIndex;
+        else break;
+    }
+    return index;
+}
+
+/**
+ * Choose the declared LOD URI for an instance. Missing coarser levels clamp to
+ * the last authored entry; memory pressure never skips to a coarser URI.
+ * @param {{ lodLevels: string[] }} instance
+ * @param {number} distanceMeters
+ * @param {{ distanceBandsMeters: number[] }} [policy]
+ * @returns {string}
+ */
+export function selectVisualLodUri(instance, distanceMeters, policy = defaultVisualLodPolicy()) {
+    const levels = instance?.lodLevels ?? [];
+    if (!Array.isArray(levels) || levels.length === 0) {
+        fail("instance.lodLevels", "expected a non-empty ordered array");
+    }
+    const index = Math.min(selectVisualLodIndex(distanceMeters, policy), levels.length - 1);
+    return levels[index];
 }

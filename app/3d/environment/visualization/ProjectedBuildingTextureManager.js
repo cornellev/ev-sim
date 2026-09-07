@@ -252,34 +252,38 @@ function buildMaskPolygonGeometry({
 export class ProjectedBuildingTextureManager {
     /**
      * @param {THREE.Scene} scene
+     * @param {{ ledger?: import("./BakeMemoryLedger.js").BakeMemoryLedger, maxProjections?: number }} [options]
      */
-    constructor(scene) {
+    constructor(scene, options = {}) {
         this.scene = scene;
         this.overlayGroup = new THREE.Group();
         this.overlayGroup.name = "BakeProjectedTextureOverlay";
         this.scene.add(this.overlayGroup);
-        this.activeTextures = [];
-        this.activeMaterials = [];
-        this.activeGeometries = [];
+        this.ledger = options.ledger ?? null;
+        this.maxProjections = options.maxProjections ?? 64;
+        this.entries = [];
+        this.evictions = 0;
+        this._clock = 0;
+    }
+
+    snapshot() {
+        return {
+            projections: this.entries.length,
+            maxProjections: this.maxProjections,
+            required: this.entries.filter((entry) => entry.required).length,
+            evictions: this.evictions,
+            bytes: this.entries.reduce((sum, entry) => sum + entry.bytes, 0),
+        };
     }
 
     reset() {
+        for (const entry of this.entries) {
+            if (entry.reservationId != null) this.ledger?.removeProjection(entry.reservationId);
+            this._disposeEntry(entry);
+        }
         this.overlayGroup.clear();
-
-        for (const texture of this.activeTextures) {
-            texture.dispose?.();
-        }
-        this.activeTextures = [];
-
-        for (const material of this.activeMaterials) {
-            material.dispose?.();
-        }
-        this.activeMaterials = [];
-
-        for (const geometry of this.activeGeometries) {
-            geometry.dispose?.();
-        }
-        this.activeGeometries = [];
+        this.entries = [];
+        this.evictions = 0;
     }
 
     dispose() {
@@ -302,6 +306,7 @@ export class ProjectedBuildingTextureManager {
      * @param {number} [options.maxDepthDelta]
      * @param {number} [options.maxTriangleDepthDelta]
      * @param {number} [options.surfaceOffset]
+     * @param {boolean} [options.required]
      * @returns {{ updatedMeshes: number, vertexCount: number, triangleCount: number }}
      */
     applyProjection({
@@ -317,6 +322,7 @@ export class ProjectedBuildingTextureManager {
         maxDepthDelta = 1.5,
         maxTriangleDepthDelta = 1,
         surfaceOffset = 0.005,
+        required = false,
     }) {
         if (!image?.data || !maskImage?.data || !intrinsics || !matrixWorld?.length) {
             return { updatedMeshes: 0, vertexCount: 0, triangleCount: 0 };
@@ -340,20 +346,31 @@ export class ProjectedBuildingTextureManager {
             return { updatedMeshes: 0, vertexCount: 0, triangleCount: 0 };
         }
 
+        const bytes = projectionBytes(image, polygon);
+        this._ensureCapacity({ bytes, required });
+
         const projectionTexture = createDataTexture(image, {
             colorSpace: image.colorSpace === "srgb" ? THREE.SRGBColorSpace : THREE.NoColorSpace,
         });
-        this.activeTextures.push(projectionTexture);
-
         const material = createPolygonMaterial(projectionTexture, opacity);
         const mesh = new THREE.Mesh(polygon.geometry, material);
         mesh.name = `BakeMaskPolygonProjection:${this.overlayGroup.children.length}`;
         mesh.renderOrder = 10;
         mesh.frustumCulled = false;
-
-        this.activeMaterials.push(material);
-        this.activeGeometries.push(polygon.geometry);
         this.overlayGroup.add(mesh);
+
+        const reservationId = this.ledger?.addProjection(bytes) ?? null;
+        this.entries.push({
+            mesh,
+            texture: projectionTexture,
+            material,
+            geometry: polygon.geometry,
+            bytes,
+            required,
+            refs: required ? 1 : 0,
+            lastUsed: this._clock += 1,
+            reservationId,
+        });
 
         return {
             updatedMeshes: 1,
@@ -361,4 +378,54 @@ export class ProjectedBuildingTextureManager {
             triangleCount: polygon.triangleCount,
         };
     }
+
+    releaseProjection(mesh) {
+        const entry = this.entries.find((candidate) => candidate.mesh === mesh);
+        if (!entry) return;
+        entry.refs = Math.max(0, entry.refs - 1);
+        entry.lastUsed = this._clock += 1;
+    }
+
+    _ensureCapacity({ bytes, required }) {
+        const overCount = () => this.entries.length >= this.maxProjections;
+        const overBytes = () => this.ledger && !this.ledger.canReserve(bytes);
+        if (!overCount() && !overBytes()) {
+            this.ledger?.assertProjectionBudget({ count: 1, bytes, required });
+            return;
+        }
+        this._evictUnused();
+        if (this.ledger) this.ledger.assertProjectionBudget({ count: 1, bytes, required });
+        if (this.entries.length >= this.maxProjections) {
+            this.ledger?.assertProjectionBudget({ count: 1, bytes, required: true });
+        }
+    }
+
+    _evictUnused() {
+        const unused = this.entries
+            .filter((entry) => entry.refs === 0 && !entry.required)
+            .sort((left, right) => left.lastUsed - right.lastUsed);
+        for (const entry of unused) {
+            this._removeEntry(entry);
+            this.evictions += 1;
+        }
+    }
+
+    _removeEntry(entry) {
+        this.overlayGroup.remove(entry.mesh);
+        this._disposeEntry(entry);
+        this.entries = this.entries.filter((candidate) => candidate !== entry);
+        if (entry.reservationId != null) this.ledger?.removeProjection(entry.reservationId);
+    }
+
+    _disposeEntry(entry) {
+        entry.texture?.dispose?.();
+        entry.material?.dispose?.();
+        entry.geometry?.dispose?.();
+    }
+}
+
+function projectionBytes(image, polygon) {
+    const textureBytes = (image.width ?? 0) * (image.height ?? 0) * 4;
+    const geometryBytes = (polygon.vertexCount * 32) + (polygon.triangleCount * 12);
+    return textureBytes + geometryBytes;
 }

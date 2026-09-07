@@ -25,7 +25,7 @@ a VIS, GOOG, or GS PR changes a contract, hash, gate, or milestone status.
 
 ## Status and release verdict
 
-- Next milestone: **VIS-06a — not started**. VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, and VIS-05a are implemented.
+- Next milestone: **VIS-06a — not started**. VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, VIS-05a, and VIS-05b are implemented.
 - Review verdict: **NO-GO for the original ordering and for claiming visual
   runtime support.** The five Blocker findings below require implementation
   and evidence. This revision supplies the corrected handoff; editing the
@@ -33,13 +33,15 @@ a VIS, GOOG, or GS PR changes a contract, hash, gate, or milestone status.
 - Core assumption: **Google approval, Google-derived assets, Gaussian
   splatting, and a model service are unavailable.**
 - Default implementation/review reasoning level: **Extra High**.
-- Last updated: **2026-09-06 — VIS-05a validated browser preview materialization implemented**.
-- VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, and VIS-05a acceptance evidence is recorded in
+- Last updated: **2026-09-06 — VIS-05b bounded residency and NVIDIA scale prototype implemented**.
+- VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, VIS-05a, and VIS-05b acceptance evidence is recorded in
   the progress ledger and decision log. Protocol 1.3 advertises `world-bound@2`.
   Only `canonical-analytic@1` and GPU sensor backend v1 remain runtime-capable;
   no visual renderer or package-admission capability is advertised. Environment
   v3 references may include `accessHash`. Preview materialization is display-only
-  and does not enable `pbr-mesh@1`. Admission profiles stay empty.
+  and does not enable `pbr-mesh@1`. Admission profiles stay empty. Advertised
+  D06 hardware reports remain required from protected x64/Orin/Thor runners
+  before G-SCALE is closed on those stacks.
 
 The owned/synthetic-asset core must independently deliver author/import →
 preview → no-model bake → atomic promotion → reload → portable package →
@@ -50,7 +52,8 @@ may improve appearance, but cannot be prerequisites for this path.
 
 Original VIS numbers remain workstream identifiers. Suffixes below identify
 actual PRs; completing one suffix does not complete its entire workstream.
-All required entries except VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, and VIS-05a remain unstarted.
+All required entries except VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, VIS-05a,
+and VIS-05b remain unstarted.
 
 | Workstream | Required core PRs | Optional enrichment |
 | --- | --- | --- |
@@ -1789,7 +1792,16 @@ all other required core PRs remain **not started**. VIS-12a landed at commit
     `npm run build` succeeded. `npm run fixtures:headless` produced no
     characterization delta.
 - [ ] VIS-06a
-- [ ] VIS-05b
+- [x] VIS-05b — Bounded residency and NVIDIA scale prototype (2026-09-06).
+  Hashed `cev-sim.visual-lod-policy@1` freezes `[0, 80, 200]` m bands for every
+  D06 profile; memory pressure cannot coarsen LOD. Identity hashes are
+  unchanged. Renderer-scoped caches, 100/120 m residency, 128-chunk cap,
+  bake ledgers/spatial index, access verification metadata, and AGX host
+  roles are implemented. Software G-SCALE cases and the hosted quick
+  `cev-sim.visual-scale-report@1` run locally. Advertised x64/Orin/Thor
+  hardware reports remain required from protected runners before G-SCALE is
+  closed on those stacks; F14 stays open. `pbr-mesh@1` stays disabled.
+  See the VIS-05b decision-log entry for local counts.
 - [ ] VIS-06b
 - [ ] VIS-07
 - [ ] VIS-08
@@ -2094,5 +2106,41 @@ independence suites 28/28; related environment/identity/asset suites 35/35;
 `npm run lint` 0 errors / 2 pre-existing warnings; `npm test` 732/734 with two
 hardware GPU skips; `npm run test:headless` 87/87; `npm run build` succeeded;
 `npm run fixtures:headless` produced no characterization delta.
+
+### 2026-09-06 — Implement VIS-05b bounded residency and NVIDIA scale prototype
+
+Replace eager whole-layer preview loading and unbounded bake overlays with
+reference-counted caches, deterministic LOD/chunk streaming, aggregate memory
+limits, bounded work queues, and indexed bake queries.
+
+Commit D06 advertised profiles `nvidia-x64-consumer-v1`, `jetson-agx-orin-v1`,
+and `jetson-agx-thor-v1` with the numeric workload, ceiling, and latency
+targets in `VisualScaleProfile.js`. Orin support means Jetson AGX Orin
+32/64 GB; Orin NX/Nano remain unsupported. Hardware profiles hash the same
+`cev-sim.visual-lod-policy@1` and may not select a coarser LOD under memory
+pressure. Hardware budgets, cache state, prefetching, and eviction stay
+operational and out of `worldHash` / `visualLayerHash` / episode identity.
+
+Host roles `jetson-agx-orin` and `jetson-agx-thor` validate architecture,
+`/proc/device-tree/model`, unified-memory minima, JetPack/L4T, power mode,
+device permissions, configured Chromium, and production hardware WebGL2.
+Generic `cev-sim-jetson-arm64` remains the CPU/capability-negative lane and
+cannot establish VIS-05b. Hosted CI runs `benchmark:visual-scale:quick`.
+Protected runners `cev-sim-gpu-x64`, `cev-sim-jetson-orin-arm64`, and
+`cev-sim-jetson-thor-arm64` own the advertised reports; machine-specific
+reports are artifacts, not commits.
+
+Measured PBR cameras and `pbr-mesh@1` remain disabled. VIS-06a is next.
+G-SCALE on advertised stacks remains open until the three hardware reports
+exist.
+
+Local acceptance: focused cache/residency/bake/host/access/LOD suites plus
+`npm run benchmark:visual-scale:quick`. `npm run lint` completed with 0 errors
+and 2 pre-existing warnings. `npm test` passed 748/750 with two declared
+hardware GPU skips. `npm run test:headless` passed 87/87. `npm run build`
+succeeded. `npm run fixtures:headless` produced no characterization delta.
+This workstation is not an x64 NVIDIA, AGX Orin, or AGX Thor runner, so those
+hardware reports are not recorded here.
+
 
 

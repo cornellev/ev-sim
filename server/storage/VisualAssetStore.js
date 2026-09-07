@@ -346,6 +346,90 @@ export class VisualAssetStore {
         };
     }
 
+    async validateAccessSet({ useHashes = [], operations = VISUAL_ASSET_ACCESS_OPERATIONS } = {}) {
+        await this.initialize();
+        const requested = [...new Set(useHashes.map((hash) => assertSha256Digest(hash, "useHash")))].sort();
+        const uses = new Map();
+        const validations = new Map();
+        const sourceIds = new Set();
+        const digests = new Set();
+        let decodedBytes = 0;
+        let depth = 1;
+        const visit = async (useHash, currentDepth) => {
+            if (uses.has(useHash)) {
+                depth = Math.max(depth, currentDepth);
+                return;
+            }
+            if (currentDepth > this.limits.graphDepth) {
+                throw visualAssetError(
+                    VISUAL_ASSET_ERROR_CODES.REQUEST_TOO_LARGE,
+                    `Use closure depth exceeds the ${this.limits.graphDepth} ceiling.`,
+                );
+            }
+            const use = await this._readUse(useHash);
+            const validation = await this._readValidation(useHash, { optional: true });
+            uses.set(useHash, use);
+            validations.set(useHash, validation);
+            depth = Math.max(depth, currentDepth);
+            for (const sourceId of use.sourceIds) sourceIds.add(sourceId);
+            if (!digests.has(use.asset.sha256)) {
+                digests.add(use.asset.sha256);
+                decodedBytes += validation?.decodedBytesEstimate ?? use.asset.sizeBytes;
+            }
+            for (const child of Object.values(use.dependencies)) await visit(child, currentDepth + 1);
+        };
+        for (const useHash of requested) await visit(useHash, 1);
+        if (digests.size > this.limits.assetEntries) {
+            throw visualAssetError(
+                VISUAL_ASSET_ERROR_CODES.REQUEST_TOO_LARGE,
+                `Use closure has ${digests.size} assets, exceeding the ${this.limits.assetEntries} ceiling.`,
+            );
+        }
+        if (decodedBytes > this.limits.decodedClosureBytes) {
+            throw visualAssetError(
+                VISUAL_ASSET_ERROR_CODES.REQUEST_TOO_LARGE,
+                "Use closure exceeds the aggregate decoded-size budget.",
+            );
+        }
+        const decision = await this._assertRights([...sourceIds], operations);
+        return {
+            ok: true,
+            operations: [...operations],
+            assetCount: digests.size,
+            useCount: uses.size,
+            depth,
+            decodedBytesEstimate: decodedBytes,
+            obligations: decision.obligations,
+            evaluatedSourceIds: decision.evaluatedSourceIds,
+            uses: requested.map((useHash) => {
+                const use = uses.get(useHash);
+                const validation = validations.get(useHash);
+                return {
+                    useHash,
+                    sha256: use.asset.sha256,
+                    mediaType: use.asset.mediaType,
+                    sizeBytes: use.asset.sizeBytes,
+                    role: use.asset.role,
+                    decodedBytesEstimate: validation?.decodedBytesEstimate ?? use.asset.sizeBytes,
+                    graph: validation?.graph
+                        ? {
+                            nodes: validation.graph.nodes ?? 0,
+                            triangles: validation.graph.triangles ?? 0,
+                            depth: validation.graph.depth ?? 0,
+                        }
+                        : null,
+                    inspected: validation?.inspected
+                        ? {
+                            width: validation.inspected.width ?? 0,
+                            height: validation.inspected.height ?? 0,
+                            mipLevels: validation.inspected.mipLevels ?? 0,
+                        }
+                        : null,
+                };
+            }),
+        };
+    }
+
     async acquireRoot({ ownerId, ownerKind = "synthetic", useHash, operations }) {
         await this.initialize();
         return this._lifecycleMutex(async () => {

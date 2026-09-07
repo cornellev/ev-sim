@@ -246,9 +246,11 @@ descriptor/evidence hashes. Those references stay out of `worldHash`. VIS-04
 stores validated visual-asset bytes and source-bound use records. VIS-05a
 stores `cev-sim.visual-layer-access@1` sidecars and materializes owned preview
 geometry in the display scene only; `pbr-mesh@1` and package admission stay
-inactive. Visual descriptors are appearance resources bound to `worldHash`;
-their meshes never enter metric world, collision, LiDAR, object-registry, or
-oracle truth.
+inactive. VIS-05b streams AOI chunks through a renderer-scoped cache and
+hashed LOD policy without changing `worldHash`, `visualLayerHash`, simulation
+identity, or episode identity. Visual descriptors are appearance resources bound
+to `worldHash`; their meshes never enter metric world, collision, LiDAR,
+object-registry, or oracle truth.
 
 ## External Integration
 

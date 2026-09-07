@@ -7,6 +7,7 @@ import process from "node:process";
 
 import { runGpuPreflight } from "../server/headless/GpuPreflight.js";
 import { readSupervisorConfig } from "../server/headless/SupervisorConfig.js";
+import { evaluateVisualHostRole } from "../server/headless/VisualHostValidation.js";
 import { parseOptions, processProvenance, run, writeReport } from "./lib/headless-release-support.mjs";
 
 async function optionalFile(file) {
@@ -86,6 +87,7 @@ async function main() {
     const egl = await executable("eglinfo");
     const nvidiaSmi = await executable("nvidia-smi");
     const nvpmodel = await executable("nvpmodel");
+    const tegrastats = await executable("tegrastats");
     const dpkgQuery = await executable("dpkg-query");
     const id = await executable("id");
     const python = await executable("python3");
@@ -106,6 +108,7 @@ async function main() {
         version: 1,
         createdAt: new Date().toISOString(),
         role: options.role,
+        architecture: process.arch,
         provenance: processProvenance(),
         operatingSystem: {
             release: os.release(),
@@ -117,6 +120,9 @@ async function main() {
             l4tRelease: await optionalFile("/etc/nv_tegra_release"),
             jetpack: await commandVersion(dpkgQuery, ["-W", "-f=${Version}", "nvidia-jetpack"]),
             powerMode: await commandVersion(nvpmodel, ["-q"]),
+            tegrastats: tegrastats
+                ? { available: true, output: tegrastats, exitCode: 0 }
+                : { available: false, output: null, exitCode: null },
         },
         execution: {
             uid: typeof process.getuid === "function" ? process.getuid() : null,
@@ -134,7 +140,15 @@ async function main() {
             vulkan: await commandVersion(vulkan, ["--summary"]),
             egl: await commandVersion(egl, ["-B"]),
             nvidia: await commandVersion(nvidiaSmi, ["--query-gpu=name,driver_version,memory.total", "--format=csv,noheader"]),
+            tegrastats: tegrastats
+                ? { available: true, output: tegrastats, exitCode: 0 }
+                : { available: false, output: null, exitCode: null },
         },
+        configuration: configuration ? {
+            renderer: {
+                chromiumExecutable: configuration.renderer?.chromiumExecutable ?? null,
+            },
+        } : null,
         sandbox: configuration ? {
             disabled: configuration.renderer?.disableSandbox === true,
             launchArgs: configuration.renderer?.launchArgs || [],
@@ -143,6 +157,15 @@ async function main() {
         checks,
         passed: Object.values(checks).every(Boolean),
     };
+    const visualHost = evaluateVisualHostRole({
+        ...report,
+        configuration,
+    }, {
+        requireGpu: options.requireGpu || options.role === "jetson-agx-orin" || options.role === "jetson-agx-thor",
+    });
+    report.visualHost = visualHost;
+    report.checks = { ...report.checks, ...visualHost.checks };
+    report.passed = Object.values(report.checks).every(Boolean);
     await writeReport(report, options.output);
     if (!report.passed) process.exitCode = 1;
 }

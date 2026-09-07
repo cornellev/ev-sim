@@ -17,6 +17,8 @@ const MESSAGES = {
     VISUAL_PREVIEW_UNSUPPORTED_RENDERER: "KTX2 transcoding is unavailable on this renderer.",
     VISUAL_PREVIEW_MEDIA_MISMATCH: "Visual asset media type did not match its record.",
     VISUAL_PREVIEW_SIZE_MISMATCH: "Visual asset size did not match its record.",
+    VISUAL_PREVIEW_BUDGET_EXCEEDED: "Visual residency exceeded the memory or chunk budget.",
+    VISUAL_PREVIEW_CONTEXT_LOST: "The visual renderer context was lost.",
 };
 
 export function VisualPreviewDiagnostic({ data }) {

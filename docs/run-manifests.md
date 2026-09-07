@@ -75,8 +75,8 @@ Visual-layer publish/read:
 - `POST /api/storage/visual-layers` accepts `{ descriptor, assetUses }` and
   returns `{ descriptorHash, accessHash }`.
 - `GET /api/storage/visual-layers/:descriptorHash/access/:accessHash` returns
-  the verified descriptor and access sidecar after re-evaluating `display`
-  rights.
+  the verified descriptor, access sidecar, and additive verification metadata
+  after re-evaluating `display` rights. `accessHash` is unchanged.
 
 ## Runtime guarantees
 

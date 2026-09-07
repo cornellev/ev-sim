@@ -341,13 +341,12 @@ export class StorageService {
                 error.message,
             );
         }
+        let verification;
         try {
-            for (const entry of access.assets) {
-                await this.visualAssets.validateClosure({
-                    useHash: entry.useHash,
-                    operations: [...VISUAL_ASSET_ACCESS_OPERATIONS],
-                });
-            }
+            verification = await this.visualAssets.validateAccessSet({
+                useHashes: access.assets.map((entry) => entry.useHash),
+                operations: [...VISUAL_ASSET_ACCESS_OPERATIONS],
+            });
         } catch (error) {
             if (error.code === "VISUAL_ASSET_RIGHTS_DENIED") {
                 throw visualAssetError(
@@ -358,7 +357,22 @@ export class StorageService {
             }
             throw error;
         }
-        return { descriptor, access };
+        return {
+            descriptor,
+            access,
+            verification: {
+                decodedBytesEstimate: verification.decodedBytesEstimate,
+                assetCount: verification.assetCount,
+                depth: verification.depth,
+                uses: verification.uses,
+                permissions: {
+                    allowed: true,
+                    operations: verification.operations,
+                    evaluatedSourceIds: verification.evaluatedSourceIds,
+                    obligations: verification.obligations,
+                },
+            },
+        };
     }
 
     async _loadAccessUses(access) {

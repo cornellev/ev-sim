@@ -138,7 +138,12 @@ test("publish and read canonical access sidecars and reject coverage errors", as
         assert.deepEqual(loaded.descriptor, descriptor);
         assert.deepEqual(loaded.access, access);
         assert.equal(JSON.stringify(loaded).includes(dir), false);
-        assert.deepEqual(Object.keys(loaded).sort(), ["access", "descriptor"]);
+        assert.deepEqual(Object.keys(loaded).sort(), ["access", "descriptor", "verification"]);
+        assert.equal(typeof loaded.verification.decodedBytesEstimate, "number");
+        assert.equal(loaded.verification.assetCount, 1);
+        assert.equal(loaded.verification.permissions.allowed, true);
+        assert.equal(JSON.stringify(loaded.verification).includes("file:"), false);
+        assert.equal(JSON.stringify(loaded).includes("/sha256/"), false);
 
         await assert.rejects(
             () => client.publish({

@@ -99,6 +99,22 @@ export class ChunkManager {
         return this.index.listChunks();
     }
 
+    queryKeysInRadius(point, radius) {
+        return this.index.queryKeysInRadius(point, radius);
+    }
+
+    queryKeysInBounds(bounds) {
+        return this.index.queryKeysInBounds(bounds);
+    }
+
+    queryObjectsInRadius(point, radius) {
+        return this.index.queryObjectsInRadius(point, radius);
+    }
+
+    queryObjectsInBounds(bounds) {
+        return this.index.queryObjectsInBounds(bounds);
+    }
+
     toManifest() {
         return {
             chunkSize: this.chunkSize,
