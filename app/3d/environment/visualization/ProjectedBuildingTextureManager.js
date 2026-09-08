@@ -3,6 +3,7 @@ import {
     maskAllowsPixel,
     pixelInSliver,
 } from "./BakeImageMask.js";
+import { buildProjectedCaptureGeometry } from "../visual/ProjectedCaptureGeometry.js";
 
 /**
  * @param {{ enabled?: boolean, xMin?: number, xMax?: number }|null} sliverBounds
@@ -72,7 +73,7 @@ function cameraSampleForPoint(point, intrinsics, cameraMatrix, invCameraMatrix) 
     };
 }
 
-function worldFromPixelDepth(px, py, depth, intrinsics, cameraMatrix, surfaceOffset = 0.02) {
+function worldFromPixelDepth(px, py, depth, intrinsics, cameraMatrix) {
     const calibrated = Boolean(intrinsics.visualCalibration);
     const cameraPoint = new THREE.Vector3(
         ((px - intrinsics.cx) * depth) / intrinsics.fx,
@@ -80,9 +81,7 @@ function worldFromPixelDepth(px, py, depth, intrinsics, cameraMatrix, surfaceOff
         -depth,
     );
     const world = cameraPoint.applyMatrix4(cameraMatrix);
-    const cameraPosition = new THREE.Vector3().setFromMatrixPosition(cameraMatrix);
-    const towardCamera = cameraPosition.sub(world).normalize();
-    return world.addScaledVector(towardCamera, surfaceOffset);
+    return { x: world.x, y: world.y, z: world.z };
 }
 
 function nearestSample(samples, px, py, maxDistancePx) {
@@ -128,18 +127,6 @@ function interpolatedSample(samples, px, py, maxDistancePx, maxDepthDelta) {
     };
 }
 
-function triangleIsContinuous(vertices, a, b, c, maxTriangleDepthDelta) {
-    const va = vertices[a];
-    const vb = vertices[b];
-    const vc = vertices[c];
-    if (!va || !vb || !vc) return false;
-    if (va.buildingId !== vb.buildingId || va.buildingId !== vc.buildingId) return false;
-
-    const minDepth = Math.min(va.depth, vb.depth, vc.depth);
-    const maxDepth = Math.max(va.depth, vb.depth, vc.depth);
-    return maxDepth - minDepth <= maxTriangleDepthDelta;
-}
-
 function buildMaskPolygonGeometry({
     maskImage,
     imageWidth,
@@ -165,88 +152,36 @@ function buildMaskPolygonGeometry({
         .filter(Boolean);
     if (!samples.length) return null;
 
-    const xMin = sliverBounds?.enabled ? sliverBounds.xMin : 0;
-    const xMax = sliverBounds?.enabled ? sliverBounds.xMax : imageWidth;
-    const cell = Math.max(2, Math.round(cellSizePx));
-    const vertices = [];
-    const vertexMeta = [];
-    const uvs = [];
-    const indices = [];
-    const vertexByGrid = new Map();
-    const columns = [];
-    const rows = [];
-
-    for (let x = xMin; x <= xMax; x += cell) columns.push(Math.min(imageWidth - 1, Math.round(x)));
-    if (columns[columns.length - 1] !== xMax - 1) columns.push(Math.max(xMin, xMax - 1));
-    for (let y = 0; y < imageHeight; y += cell) rows.push(Math.min(imageHeight - 1, Math.round(y)));
-    if (rows[rows.length - 1] !== imageHeight - 1) rows.push(imageHeight - 1);
-
-    for (let yi = 0; yi < rows.length; yi += 1) {
-        const py = rows[yi];
-        for (let xi = 0; xi < columns.length; xi += 1) {
-            const px = columns[xi];
-            if (!pixelInSliver(px, sliverBounds) || !maskAllowsPixel(maskImage, px, py)) continue;
-
+    const built = buildProjectedCaptureGeometry({
+        width: imageWidth,
+        height: imageHeight,
+        cameraMatrix: matrixWorld,
+        cellSizePx,
+        maxTriangleDepthDelta,
+        surfaceOffset,
+        isValid: (px, py) => pixelInSliver(px, sliverBounds) && maskAllowsPixel(maskImage, px, py),
+        worldAtPixel: (px, py) => {
             const sample = interpolatedSample(samples, px, py, maxPixelDistancePx, maxDepthDelta);
-            if (!sample) continue;
-
-            const world = worldFromPixelDepth(
-                px,
-                py,
-                sample.depth,
-                intrinsics,
-                cameraMatrix,
-                surfaceOffset,
-            );
-            const index = vertices.length / 3;
-            vertices.push(world.x, world.y, world.z);
-            vertexMeta.push({
+            if (!sample) return null;
+            return {
+                ...worldFromPixelDepth(px, py, sample.depth, intrinsics, cameraMatrix),
                 buildingId: sample.buildingId,
-                depth: sample.depth,
-            });
-            uvs.push(px / Math.max(1, imageWidth - 1), py / Math.max(1, imageHeight - 1));
-            vertexByGrid.set(`${xi}:${yi}`, index);
-        }
-    }
-
-    for (let yi = 0; yi < rows.length - 1; yi += 1) {
-        for (let xi = 0; xi < columns.length - 1; xi += 1) {
-            const a = vertexByGrid.get(`${xi}:${yi}`);
-            const b = vertexByGrid.get(`${xi + 1}:${yi}`);
-            const c = vertexByGrid.get(`${xi}:${yi + 1}`);
-            const d = vertexByGrid.get(`${xi + 1}:${yi + 1}`);
-
-            if (
-                a !== undefined
-                && b !== undefined
-                && c !== undefined
-                && triangleIsContinuous(vertexMeta, a, b, c, maxTriangleDepthDelta)
-            ) {
-                indices.push(a, b, c);
-            }
-            if (
-                b !== undefined
-                && d !== undefined
-                && c !== undefined
-                && triangleIsContinuous(vertexMeta, b, d, c, maxTriangleDepthDelta)
-            ) {
-                indices.push(b, d, c);
-            }
-        }
-    }
-
-    if (vertices.length === 0 || indices.length === 0) return null;
+            };
+        },
+    });
+    if (!built) return null;
 
     const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute("position", new THREE.Float32BufferAttribute(vertices, 3));
-    geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
-    geometry.setIndex(indices);
+    geometry.setAttribute("position", new THREE.Float32BufferAttribute(built.positions, 3));
+    geometry.setAttribute("uv", new THREE.Float32BufferAttribute(built.uvs, 2));
+    geometry.setIndex(Array.from(built.indices));
     geometry.computeVertexNormals();
     geometry.computeBoundingSphere();
     return {
         geometry,
-        vertexCount: vertices.length / 3,
-        triangleCount: indices.length / 3,
+        vertexCount: built.vertexCount,
+        triangleCount: built.triangleCount,
+        matrix: built.matrix,
     };
 }
 
@@ -358,6 +293,10 @@ export class ProjectedBuildingTextureManager {
         mesh.name = `BakeMaskPolygonProjection:${this.overlayGroup.children.length}`;
         mesh.renderOrder = 10;
         mesh.frustumCulled = false;
+        if (polygon.matrix) {
+            mesh.matrix.fromArray(polygon.matrix);
+            mesh.matrixAutoUpdate = false;
+        }
         this.overlayGroup.add(mesh);
 
         const reservationId = this.ledger?.addProjection(bytes) ?? null;

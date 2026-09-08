@@ -78,6 +78,8 @@ export class VisualAssetStore {
         this._reservations = new Map();
         this._roots = await this._readJson(this.rootsPath, this._roots);
         this._pins = await this._readJson(this.pinsPath, this._pins);
+        this._roots.roots = migrateRootMap(this._roots.roots);
+        this._pins.pins = migratePinMap(this._pins.pins);
         await this._recoverRootJournals();
         await this._expirePins();
         const stagingIds = await this._listDir(this.stagingDir);
@@ -430,18 +432,20 @@ export class VisualAssetStore {
         };
     }
 
-    async acquireRoot({ ownerId, ownerKind = "synthetic", useHash, operations }) {
+    async acquireRoot({ ownerId, ownerKind = "synthetic", useHash, useHashes, operations }) {
         await this.initialize();
         return this._lifecycleMutex(async () => {
             if (this._roots.roots[ownerId]) {
                 throw visualAssetError(VISUAL_ASSET_ERROR_CODES.CONFLICT, `Visual asset root ${ownerId} already exists.`);
             }
-            await this.validateClosure({ useHash, operations });
+            const hashes = normalizeUseHashSet({ useHash, useHashes });
+            await this._validateUseHashSet(hashes, operations);
             const record = {
                 ownerId,
                 ownerKind,
                 generation: 1,
-                useHash: assertSha256Digest(useHash, "useHash"),
+                useHashes: hashes,
+                useHash: hashes[0] ?? null,
                 acquiredAt: this.now().toISOString(),
             };
             this._roots.roots[ownerId] = record;
@@ -450,10 +454,10 @@ export class VisualAssetStore {
         });
     }
 
-    async replaceRoot({ ownerId, expectedGeneration, useHash, operations, ownerKind }) {
+    async replaceRoot({ ownerId, expectedGeneration, useHash, useHashes, operations, ownerKind }) {
         await this.initialize();
         return this._lifecycleMutex(async () => {
-            const current = this._roots.roots[ownerId];
+            const current = migrateRootRecord(this._roots.roots[ownerId]);
             if (!current) throw visualAssetError(VISUAL_ASSET_ERROR_CODES.USE_NOT_FOUND, `Visual asset root ${ownerId} was not found.`);
             if (current.generation !== expectedGeneration) {
                 throw visualAssetError(
@@ -461,12 +465,14 @@ export class VisualAssetStore {
                     `Visual asset root ${ownerId} generation ${expectedGeneration} does not match ${current.generation}.`,
                 );
             }
-            await this.validateClosure({ useHash, operations });
+            const hashes = normalizeUseHashSet({ useHash, useHashes });
+            await this._validateUseHashSet(hashes, operations);
             const next = {
                 ownerId,
                 ownerKind: ownerKind ?? current.ownerKind,
                 generation: current.generation + 1,
-                useHash: assertSha256Digest(useHash, "useHash"),
+                useHashes: hashes,
+                useHash: hashes[0] ?? null,
                 acquiredAt: this.now().toISOString(),
             };
             const journalPath = this._rootJournalPath(ownerId);
@@ -478,6 +484,8 @@ export class VisualAssetStore {
                 newGeneration: next.generation,
                 oldUseHash: current.useHash,
                 newUseHash: next.useHash,
+                oldUseHashes: current.useHashes ?? (current.useHash ? [current.useHash] : []),
+                newUseHashes: next.useHashes,
             };
             await this._writeState(journalPath, journal);
             await fsyncDir(path.dirname(journalPath), this.faults);
@@ -508,15 +516,17 @@ export class VisualAssetStore {
         });
     }
 
-    async acquirePin({ ownerId, useHash, operations, leaseMs = this.limits.abandonedStageTtlMs }) {
+    async acquirePin({ ownerId, useHash, useHashes, operations, leaseMs = this.limits.abandonedStageTtlMs }) {
         await this.initialize();
         return this._lifecycleMutex(async () => {
-            await this.validateClosure({ useHash, operations });
+            const hashes = normalizeUseHashSet({ useHash, useHashes });
+            await this._validateUseHashSet(hashes, operations);
             const handle = randomBytes(16).toString("hex");
             const record = {
                 handle,
                 ownerId,
-                useHash: assertSha256Digest(useHash, "useHash"),
+                useHashes: hashes,
+                useHash: hashes[0] ?? null,
                 acquiredAt: this.now().toISOString(),
                 expiresAt: new Date(this.now().getTime() + leaseMs).toISOString(),
             };
@@ -882,11 +892,15 @@ export class VisualAssetStore {
                 continue;
             }
             if (journal.phase === "acquire-new") {
+                const useHashes = Array.isArray(journal.newUseHashes)
+                    ? journal.newUseHashes
+                    : journal.newUseHash ? [journal.newUseHash] : [];
                 this._roots.roots[journal.ownerId] = {
                     ownerId: journal.ownerId,
                     ownerKind: journal.ownerKind,
                     generation: journal.newGeneration,
-                    useHash: journal.newUseHash,
+                    useHashes,
+                    useHash: useHashes[0] ?? journal.newUseHash ?? null,
                     acquiredAt: this.now().toISOString(),
                 };
                 await this._writeState(this.rootsPath, this._roots);
@@ -906,10 +920,44 @@ export class VisualAssetStore {
         }
         if (changed) await this._writeState(this.pinsPath, this._pins);
     }
+
+    async _validateUseHashSet(useHashes, operations) {
+        if (!useHashes.length) return { ok: true, useHashes: [], assetCount: 0 };
+        if (useHashes.length === 1) return this.validateClosure({ useHash: useHashes[0], operations });
+        return this.validateAccessSet({ useHashes, operations });
+    }
 }
 
 function asReadable(source) {
     if (source instanceof Readable) return source;
     if (Buffer.isBuffer(source) || source instanceof Uint8Array) return Readable.from(Buffer.from(source));
     throw visualAssetError(VISUAL_ASSET_ERROR_CODES.INVALID_METADATA, "Upload content must be a stream or buffer.");
+}
+
+export function normalizeUseHashSet(input = {}) {
+    let hashes = [];
+    if (Array.isArray(input)) hashes = input;
+    else if (Array.isArray(input.useHashes)) hashes = input.useHashes;
+    else if (input.useHash) hashes = [input.useHash];
+    return [...new Set(hashes.map((hash) => assertSha256Digest(hash, "useHash")))].sort();
+}
+
+function migrateRootRecord(record) {
+    if (!record) return record;
+    const useHashes = Array.isArray(record.useHashes) && record.useHashes.length
+        ? [...new Set(record.useHashes)].sort()
+        : record.useHash ? [record.useHash] : [];
+    return {
+        ...record,
+        useHashes,
+        useHash: useHashes[0] ?? record.useHash ?? null,
+    };
+}
+
+function migrateRootMap(roots = {}) {
+    return Object.fromEntries(Object.entries(roots).map(([id, record]) => [id, migrateRootRecord(record)]));
+}
+
+function migratePinMap(pins = {}) {
+    return Object.fromEntries(Object.entries(pins).map(([id, record]) => [id, migrateRootRecord(record)]));
 }

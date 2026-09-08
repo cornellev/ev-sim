@@ -50,12 +50,15 @@ test("core preview paths do not probe Google tiles or a model server", async () 
     const catalog = await read("app/3d/environment/visual/BakeRunCatalog.js");
     const jobRunner = await read("app/3d/environment/visual/BakeJobRunner.js");
     const snapshot = await read("app/3d/environment/visual/BakeSnapshotBuilder.js");
+    const writer = await read("app/3d/environment/visual/BakeArtifactWriter.js");
+    const geometry = await read("app/3d/environment/visual/ProjectedCaptureGeometry.js");
+    const media = await read("app/3d/environment/visual/BakeDeterministicMedia.js");
     for (const source of [scene, optional, materializer]) {
         assert.doesNotMatch(source, /maps\.googleapis\.com/);
         assert.doesNotMatch(source, /tiles\.googleapis\.com/);
         assert.doesNotMatch(source, /localhost:8000/);
     }
-    for (const source of [catalog, jobRunner, snapshot]) {
+    for (const source of [catalog, jobRunner, snapshot, geometry, media]) {
         assert.doesNotMatch(source, /maps\.googleapis\.com/);
         assert.doesNotMatch(source, /tiles\.googleapis\.com/);
         assert.doesNotMatch(source, /\bfetch\s*\(/);
@@ -63,7 +66,12 @@ test("core preview paths do not probe Google tiles or a model server", async () 
         assert.doesNotMatch(source, /checkBakeServerHealth/);
         assert.doesNotMatch(source, /clearBakeServer/);
         assert.doesNotMatch(source, /pollBakedImage/);
-        assert.doesNotMatch(source, /uploadBake/);
+        assert.doesNotMatch(source, /uploadBakeBinary|uploadBakeFrame|uploadRunManifest/);
     }
+    assert.doesNotMatch(writer, /\bfetch\s*\(/);
+    assert.doesNotMatch(writer, /checkBakeServerHealth/);
+    assert.doesNotMatch(writer, /@sparkjsdev\/spark/);
+    assert.match(scene, /createPersistentBakeRunConfig/);
+    assert.match(scene, /runPersistentPromotion/);
     assert.doesNotMatch(materializer, /pbr-mesh@1/);
 });

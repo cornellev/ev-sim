@@ -136,3 +136,20 @@ test("clean external updates adopt the acknowledged server revision", async () =
     assert.equal(persistence.acknowledgedRevision, 4);
     assert.equal(persistence.conflict, null);
 });
+
+test("promoted visual references adopt the committed revision without clearing local metric dirtiness", () => {
+    const { environment, persistence } = createHarness({ revision: 2 });
+    environment.visualLayer = { descriptorHash: "a".repeat(64), accessHash: "b".repeat(64) };
+    persistence._dirty = true;
+    persistence.adoptPromotedVisualLayer({
+        revision: 3,
+        visualLayer: { descriptorHash: "c".repeat(64), accessHash: "d".repeat(64) },
+        manifest: { evidence: null, visualLayer: { descriptorHash: "c".repeat(64), accessHash: "d".repeat(64) } },
+    });
+    assert.equal(persistence.acknowledgedRevision, 3);
+    assert.equal(environment.revision, 3);
+    assert.equal(environment.visualLayer.descriptorHash, "c".repeat(64));
+    assert.equal(environment.evidence, null);
+    assert.equal(persistence.isDirty, true);
+    assert.equal(persistence.conflict, null);
+});

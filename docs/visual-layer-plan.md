@@ -25,7 +25,7 @@ a VIS, GOOG, or GS PR changes a contract, hash, gate, or milestone status.
 
 ## Status and release verdict
 
-- Next milestone: **VIS-08 — atomic persistent bake promotion**. VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, VIS-05a, VIS-05b, VIS-06a, VIS-06b, and VIS-07 are implemented.
+- Next milestone: **VIS-09 — dependency-based incremental reuse**. VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, VIS-05a, VIS-05b, VIS-06a, VIS-06b, VIS-07, and VIS-08 are implemented.
 - Review verdict: **NO-GO for the original ordering and for claiming visual
   runtime support.** The five Blocker findings below require implementation
   and evidence. This revision supplies the corrected handoff; editing the
@@ -33,8 +33,8 @@ a VIS, GOOG, or GS PR changes a contract, hash, gate, or milestone status.
 - Core assumption: **Google approval, Google-derived assets, Gaussian
   splatting, and a model service are unavailable.**
 - Default implementation/review reasoning level: **Extra High**.
-- Last updated: **2026-09-07 — VIS-07 bake catalog, snapshot, and provider job contract implemented**.
-- VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, VIS-05a, VIS-05b, VIS-06a, VIS-06b, and VIS-07 acceptance evidence is recorded in
+- Last updated: **2026-09-08 — VIS-08 atomic persistent bake promotion implemented**.
+-   VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, VIS-05a, VIS-05b, VIS-06a, VIS-06b, VIS-07, and VIS-08 acceptance evidence is recorded in
   the progress ledger and decision log. Protocol 1.3 advertises `world-bound@2`.
   Only `canonical-analytic@1` and GPU sensor backend v1 remain runtime-capable;
   no visual renderer or package-admission capability is advertised. Environment
@@ -43,8 +43,10 @@ a VIS, GOOG, or GS PR changes a contract, hash, gate, or milestone status.
   D06 hardware reports remain required from protected x64/Orin/Thor runners
   before G-SCALE is closed on those stacks. VIS-06b closes F08 and
   G-GBUFFER; VIS-07 closes the G-PROVENANCE config/planning/capture-input
-  cases and G-INDEPENDENCE no-model startup. Later non-capture G-RIGHTS
-  boundaries, G-ATOMIC promotion, and remaining F10/F16 work remain open.
+  cases and G-INDEPENDENCE no-model startup. VIS-08 closes G-ATOMIC promotion,
+  G-PROVENANCE fixed-input outputs, G-LIFECYCLE promotion, and G-INDEPENDENCE
+  bake/reload. Later non-capture G-RIGHTS boundaries and remaining F10/F16
+  work remain open.
 
 The owned/synthetic-asset core must independently deliver author/import →
 preview → no-model bake → atomic promotion → reload → portable package →
@@ -56,7 +58,7 @@ may improve appearance, but cannot be prerequisites for this path.
 Original VIS numbers remain workstream identifiers. Suffixes below identify
 actual PRs; completing one suffix does not complete its entire workstream.
 All required entries except VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, VIS-05a,
-VIS-05b, VIS-06a, VIS-06b, and VIS-07 remain unstarted.
+VIS-05b, VIS-06a, VIS-06b, VIS-07, and VIS-08 remain unstarted.
 
 | Workstream | Required core PRs | Optional enrichment |
 | --- | --- | --- |
@@ -95,7 +97,7 @@ environment rebind/transaction cases. VIS-04 supplies F11's bounded CAS
 validator, F12's storage roots/pins/quotas/no-delete policy, and F15's
 ingestion/content/root-pin rights enforcement. Neither F01 nor F06 is fully
 closed: selected visual resources still require VIS-12b, and bake-promotion
-races remain VIS-08. F09 product completeness remains later VIS work. F11
+races are closed by VIS-08. F09 product completeness remains later VIS work. F11
 loader cases remain VIS-05a/VIS-13a. F12 execution-root wiring remains
 VIS-13b/VIS-15b. F15 import/bake/package/worker denial remains later VIS/GOOG
 work. The other runtime findings retain their owning gates.
@@ -106,18 +108,18 @@ work. The other runtime findings retain their owning gates.
 | F02 **Blocker** | [EnvironmentLoader.js](../app/3d/environment/EnvironmentLoader.js) rebuilds the shared scene and restores editor/sky state. [ManifestCamera.js](../app/3d/devices/ManifestCamera.js) passes that scene to [CameraRenderProducts.js](../app/3d/perception/CameraRenderProducts.js), which renders current materials/visibility. Loading VIS-05 visuals there can alter measured analytic RGB before VIS-12 has hashed them. | Put VIS-06a isolation before VIS-05a and enable measured PBR only in VIS-14. G-ISOLATION changes preview assets, sky, visibility, and bake state during a resolved run and proves its captures stay immutable. |
 | F03 **Blocker** | [headless.proto](../proto/cev_sim/headless/v1/headless.proto) transports bundle JSON, not asset bytes. [Cli.js](../server/headless/Cli.js) reads JSON; [bundle.py](../python/src/cev_sim/bundle.py) does the same. [HeadlessSupervisor.js](../server/headless/HeadlessSupervisor.js) initializes workers from bundles. An archive exporter alone cannot execute a portable visual run. [build-headless-dist.mjs](../scripts/build-headless-dist.mjs) follows JavaScript imports, not arbitrary renderer pages or decoder assets. | Split VIS-13 into strict packaging and asset admission, and VIS-15c into installed runtime closure. G-PACKAGE and G-INSTALLED execute a package with no checkout, authoring server, or network. |
 | F04 **Blocker** | [ManagedHeadlessSession.js](../server/headless/ManagedHeadlessSession.js) rejects cameras/GPU backends, creates a runtime without a renderer, and advances synchronously. The managed branch in [HeadlessSupervisor.js](../server/headless/HeadlessSupervisor.js) lacks the renderer handler used by normal workers. A new renderer alone cannot run VIS-17 experiments. | Split VIS-15b from VIS-15a and make it a dependency of managed correspondence/fidelity gates. G-MANAGED exercises queued cameras, restart, cancellation, and infrastructure errors. |
-| F05 **Blocker** | [StorageService.js](../server/storage/StorageService.js), `putEnvironment`, silently returns current data only for older finite client revisions; equal/missing revisions can overwrite. [EnvironmentPersistence.js](../app/3d/environment/EnvironmentPersistence.js) suspension does not cancel queued writes and later client timestamps can overtake edits. [BakeHarness.js](../app/3d/environment/visualization/BakeHarness.js) ignores individual upload outcomes through `allSettled`. A partial or stale bake can appear successful or overwrite concurrent authoring. | Establish server revision compare-and-swap in VIS-03; make VIS-08 a closure-verified, generation-checked reference transaction. G-ATOMIC injects edit/upload/crash races and proves the previous committed layer remains intact. |
+| F05 **Blocker** | VIS-03 added environment revision compare-and-swap. VIS-08 replaced bake `allSettled` false-success with fail-fast uploads and a generation-checked commit that cannot attach a partial layer. Remaining F05 work is EnvironmentPersistence queued-write/suspend races outside bake promotion. | VIS-03 revision CAS plus VIS-08 G-ATOMIC promotion. Persistence queue races stay tracked until later editor work. |
 | F06 **High** | [WorldDescription.js](../app/simulation/world/WorldDescription.js) hashes `environmentId`; [StorageService.js](../server/storage/StorageService.js) duplication, ID changes, and conflicting imports change IDs. Retaining a visual descriptor unchanged makes `sourceWorldHash` stale. [RunBundle.js](../server/headless/RunBundle.js) accepts the current resolved manifest version, not every historical authored version. A global GPU identity bump can invalidate old analytic selections. | Correct VIS-03 rebind behavior and VIS-12a migration/version dispatch; preserve old provider identities. G-MIGRATION distinguishes rename, duplicate, import, integrity verification, and executable support. |
 | F07 **High** | [SensorTypeRegistry.js](../app/3d/devices/SensorTypeRegistry.js) accepts unequal/off-center intrinsics; [ManifestCamera.js](../app/3d/devices/ManifestCamera.js) and [PooledGpuRenderer.js](../server/headless/PooledGpuRenderer.js) construct FOV/aspect projections. [BakeView.js](../app/3d/environment/visualization/BakeView.js) uses a different pixel-center convention. Published calibration can disagree with pixels even when both renderers agree. | Put shared versioned K-to-projection math in VIS-06a. G-CALIBRATION uses independently calculated points, unequal focal lengths, off-center principal points, and rotated mounts. |
 | F08 **High** | [BakeView.js](../app/3d/environment/visualization/BakeView.js) hides non-target mask geometry, forces depth visibility, and boosts beauty road materials; these are not aligned samples. [CameraRenderProducts.js](../app/3d/perception/CameraRenderProducts.js) changes materials on scene meshes rather than selecting independent truth twins. Fusion or correspondence can accept occluded/misregistered samples. | Split VIS-06b from legacy calibration/isolation; define separate visual G-buffer and analytic oracle pass families. G-GBUFFER proves occlusion, validity, alpha policy, encoding, and exception-safe restoration. |
 | F09 **High** | [HeadlessGpuSensorManager.js](../app/simulation/sensors/HeadlessGpuSensorManager.js) shares `renderScene || lidarGeometry`; its camera implementation produces RGB/CameraInfo rather than every authored oracle product. [SensorTypeRegistry.js](../app/3d/devices/SensorTypeRegistry.js), `normalizeRunSensor`, has a fixed authored field set. [PerceptionTruthIndex.js](../app/autonomy/PerceptionTruthIndex.js) and [EnvironmentRegistry.js](../app/3d/editor/EnvironmentRegistry.js) discover truth from scene metadata. PBR geometry or imported GLTF extras can cross the truth boundary, while unsupported products can disappear. | VIS-02 added provider/profile schemas and explicit validation; remaining product-completeness and selected-visual resolution belong to later VIS/VIS-12b. Separate truth resources and sanitize imported metadata in VIS-05a/VIS-14/VIS-15a. G-CAPABILITY and G-ORACLE prove product completeness and observation isolation. |
-| F10 **High** | [BakeRunConfig.js](../app/3d/environment/visualization/BakeRunConfig.js) does not serialize all view planning inputs; [BuildingRegionPlanner.js](../app/3d/environment/visualization/BuildingRegionPlanner.js) depends on traversal order. [bakeUpload.js](../app/3d/environment/visualization/bakeUpload.js) uses browser image encoding. [process.py](../baking/process.py) loads an unpinned model and runtime options. [ProjectedBuildingTextureManager.js](../app/3d/environment/visualization/ProjectedBuildingTextureManager.js) stores unlit captured radiance, not intrinsic PBR base color. Repeated jobs can diverge or double-light captured appearance. | Combine the provider job contract with VIS-07; split deterministic atlas construction (VIS-10a) from optional material estimation (VIS-10b/VIS-11). G-PROVENANCE and G-ATLAS separate fixed-input determinism from GPU/model nondeterminism and test material semantics. |
+| F10 **High** | VIS-07 serializes bake planning inputs and canonicalizes planner order. VIS-08 emits deterministic PNG/GLB captured-radiance artifacts with explicit unlit semantics. Remaining F10 work is browser `bakeUpload.js` encoding on the legacy path, unpinned Python model options, and VIS-10a atlas consolidation. | Combine the provider job contract with VIS-07; split deterministic atlas construction (VIS-10a) from optional material estimation (VIS-10b/VIS-11). G-PROVENANCE and G-ATLAS separate fixed-input determinism from GPU/model nondeterminism and test material semantics. |
 | F11 **High** | The installed `three/examples/jsm/loaders/GLTFLoader.js` resolves buffer/image URIs, copies extras into `userData`, and can warn rather than reject an unknown required extension; `three/examples/jsm/loaders/KTX2Loader.js` loads transcoder resources and allocates decoded textures. Three is declared in [package.json](../package.json). Existing [StorageService.js](../server/storage/StorageService.js) has no visual graph/archive validator. The proposed VIS-05 loader path therefore needs more than digest/MIME checks to prevent network/file access, expansion bombs, unsupported content, or metadata injection. | Require a restricted asset profile, bounded parser/decoder, closed digest graph, and hostile archive validation in VIS-04/VIS-13a before loaders become usable. G-SECURITY proves rejection before external access or unbounded allocation. |
 | F12 **High** | [StorageService.js](../server/storage/StorageService.js) persists queued experiment bundle sidecars under `headless-run-bundles`; environment/package references are not the whole live set. Worker resets, queued jobs, replay, bake staging, and validation reports also need blobs. Environment-only reference checks allow deletion of required assets or indefinite growth. | Put pins, durable roots, quotas, staging recovery, and a no-unsafe-delete policy in VIS-04; wire execution roots in VIS-13b/VIS-15b. G-LIFECYCLE races deletion against queueing, promotion, restart, reset, and cancellation. |
 | F13 **High** | [ChunkIndex.js](../app/3d/editor/chunks/ChunkIndex.js) already dirties old/new assignments, but [ChunkManager.js](../app/3d/editor/chunks/ChunkManager.js) loading/dirty state is not a deterministic dependency graph. Whole-world `sourceWorldHash` conflicts with local reuse; distant occluders and global lighting exceed immediate neighbors. | Make VIS-09 depend on snapshot/provenance contracts; separate layer binding from chunk input digests and conservatively invalidate global dependencies. G-INCREMENTAL compares a complete rebuild with incremental output. |
 | F14 **High** | [ProjectedBuildingTextureManager.js](../app/3d/environment/visualization/ProjectedBuildingTextureManager.js) creates per-projection textures/meshes with culling disabled. [BakeCaptureMemory.js](../app/3d/environment/visualization/BakeCaptureMemory.js) bounds a capture buffer, not aggregate residency. [BakeHarness.js](../app/3d/environment/visualization/BakeHarness.js) performs repeated scene searches. [PooledGpuRenderer.js](../server/headless/PooledGpuRenderer.js) accounts JSON/output bytes and transfers whole scene data in its analytic path. City-scale memory and work can grow with all views/geometry per frame. | Add VIS-05b before camera delivery and require resident asset handles/dynamic deltas in VIS-15a. G-SCALE imposes owned workload, CPU/GPU memory, latency, throughput, and cancellation budgets. |
 | F15 **High** | [EarthTilesManager.js](../app/3d/earth/EarthTilesManager.js) uses preview exclusion tags, but those do not enforce lineage after import/bake/package. Putting all denial policy in an optional agreement PR leaves the core without fail-closed enforcement when approval never arrives. | Move generic source-operation denial into VIS-01/VIS-04/VIS-06/VIS-13. GOOG-01 only grants reviewed exceptions. G-RIGHTS tests every boundary using synthetic restricted-source fixtures. |
-| F16 **High** | [Scene.js](../app/3d/Scene.js) eagerly imports/constructs Spark and creates a splat accumulator in bake setup. [BakeRunConfig.js](../app/3d/environment/visualization/BakeRunConfig.js) defaults to a model round trip; [BakeHarness.js](../app/3d/environment/visualization/BakeHarness.js) contacts the bake server at startup. Core availability can therefore depend on nominally optional components. | Lazy-load GS, make new persistent no-model jobs self-contained in VIS-05a/VIS-07/VIS-08, and remove VIS-11 → VIS-14. G-INDEPENDENCE runs the complete core with optional services/modules unavailable. |
+| F16 **High** | VIS-05a/VIS-07/VIS-08 made the default editor `b` path a self-contained no-model job: no model-server health check, no Spark import, and reload through `VisualLayerMaterializer`. Leftover F16 work is explicit `legacyBake=1` / `start()` health-checks and optional splat construction. | Lazy-load GS, make new persistent no-model jobs self-contained in VIS-05a/VIS-07/VIS-08, and remove VIS-11 → VIS-14. G-INDEPENDENCE runs the complete core with optional services/modules unavailable. |
 | F17 **High** | [ExperimentSuite.js](../app/experiments/ExperimentSuite.js), `experimentCaseKey`, lacks fidelity identity; [ExperimentResult.js](../app/experiments/ExperimentResult.js) uses those keys. Proposed reports omit calibration/sample coverage/policy versions. [headless-hardware.yml](../.github/workflows/headless-hardware.yml) is main-only and permits Jetson GPU-unavailable paths; [verify-headless-dist.mjs](../scripts/verify-headless-dist.mjs) and current soak are not PBR release evidence. Cases can collapse, reports become stale, and skipped tests can look like support. | Split VIS-16 into early report contracts and evaluators, and VIS-17 into identity, UI, and release evidence. G-CORRESPONDENCE, G-FIDELITY, and G-RELEASE bind exact inputs and require executed PBR tests on every advertised platform. |
 
 ## Normative contracts
@@ -1838,8 +1840,14 @@ started**. VIS-12a landed at commit
   VIS-06b aligned capture into `captured-appearance@1`, and explicit provider
   dispatch with no network. Legacy `start()` and capability advertisement
   remain unchanged. See the VIS-07 decision-log entry for exact evidence.
-  VIS-08 is next.
-- [ ] VIS-08
+- [x] VIS-08 — Atomic persistent bake promotion (2026-09-08). Converted the
+  VIS-07 in-memory no-model bake into a deterministic, reloadable visual layer:
+  environment-scoped generation reservation and source pins, `BakeArtifactWriter`
+  PNG/GLB projected captured-radiance assets, fail-fast `VisualAssetClient`
+  uploads, and a journaled commit that atomically promotes descriptor/access
+  references. Editor `b` is this path; legacy model baking remains only through
+  explicit `legacyBake=1` / `createLegacyCompatibleBakeRunConfig`. See the VIS-08
+  decision-log entry for exact evidence. VIS-09 is next.
 - [ ] VIS-09
 - [ ] VIS-10a
 - [ ] VIS-16a
@@ -2307,11 +2315,11 @@ and Python/model adapters remain VIS-08 / VIS-10a / VIS-11.
 
 This closes the G-PROVENANCE config/planning/capture-input cases and
 G-INDEPENDENCE no-model startup. F10 remains open for browser image encoding,
-unpinned Python model options, and unlit captured appearance versus intrinsic
-PBR. F16 remains open for editor `start()` health-checks and VIS-08 bake/reload.
-No editor catalog UI is added. Protocol 1.3, advertised capabilities, Python,
-`BakeRoundTrip.js`, bake upload, `pbr-mesh@1`, and GPU backend v2 are unchanged.
-VIS-08 is next.
+unpinned Python model options, and VIS-10a atlas consolidation; unlit
+captured appearance is now explicit on the no-model path. F16 remains open
+for explicit legacy `start()` health-checks. No editor catalog UI is added.
+Protocol 1.3, advertised capabilities, Python, `BakeRoundTrip.js`, bake
+upload, `pbr-mesh@1`, and GPU backend v2 are unchanged.
 
 Local acceptance: focused bake and independence suites passed 57/57 with no
 skips. Catalog/job-contract coverage includes manifest round-trip, stable JCS
@@ -2322,3 +2330,42 @@ jobs. `npm run lint` completed with zero errors and two pre-existing warnings.
 `npm test` passed 782/784 with the two declared hardware GPU skips.
 `npm run test:headless` passed 87/87. `npm run build` succeeded.
 `npm run fixtures:headless` produced no characterization delta.
+
+### 2026-09-08 — Implement VIS-08 atomic persistent bake promotion
+
+Convert the VIS-07 in-memory catalog into a reloadable visual layer without a
+model service. The server reserves an environment-scoped bake generation, pins
+the current visual closure, and issues trusted generated-output source IDs from
+`CEV_SIM_BAKE_OUTPUT_SOURCE_IDS`. `BakeHarness.runPersistentPromotion()` flushes
+acknowledged autosaves, captures aligned `beauty` / `world-position` /
+`validity` products, and `BakeArtifactWriter` re-hashes retained buffers before
+emitting one centered GLB and masked RGBA8 PNG per sample. PNG uses filter 0
+and stored DEFLATE; GLB uses stable JSON order, 4-byte padding, and
+`KHR_materials_unlit` MASK materials. Descriptor materials are
+`unlit-captured-radiance` and are not re-lit or sRGB-converted at preview.
+Uploads are fail-fast exact-result checks; partial bytes remain unreferenced.
+
+Commit revalidates revision, world/snapshot binding, generation, VIS-07 hashes,
+output bytes, descriptor/access closure, trusted lineage, and current rights
+under the environment write lock. The recovery journal acquires a temporary
+new-output root, publishes the environment revision, replaces the durable
+visual root, then releases the temporary root and input pin. Pre-publication
+crashes roll back; post-publication crashes complete by comparing the
+environment's referenced descriptor. Retrying a committed generation returns the
+same receipt. Visual correspondence evidence is cleared when the layer
+changes. Environment schema v3, run manifests, protobuf, world/episode hashes,
+and advertised renderer capabilities are unchanged. `pbr-mesh@1` and GPU
+backend v2 stay unavailable. Atlas consolidation remains VIS-10a.
+
+This closes G-ATOMIC promotion, G-PROVENANCE fixed-input outputs,
+G-LIFECYCLE promotion, and G-INDEPENDENCE bake/reload. F05's bake false-success
+path is closed; persistence queue races remain. F10 remains open for legacy
+browser encoding, unpinned Python models, and VIS-10a. F16 remains open for
+explicit legacy `start()`. VIS-09 is next.
+
+Local acceptance: focused bake/promotion/persistence/materializer suites
+passed 114/114. `npm run lint` completed with zero errors and two pre-existing
+warnings. `npm test` passed 799/801 with the two declared hardware GPU skips.
+`npm run test:headless` passed 87/87. `npm run build` succeeded.
+`npm run fixtures:headless` produced no characterization delta. `npm run test:ui`
+was skipped at operator request in this session.

@@ -54,7 +54,7 @@ Display-name rename keeps visual and evidence references when `worldHash` is unc
 
 The environment switcher in both 3D workspaces selects, creates, duplicates, renames, and deletes environments using the acknowledged revision. Selection is shared between Simulation and Editor and stored in server settings. The saved payload is `Environment.toManifest()` at `server/data/environments/<id>.json`. See [development.md](development.md) for the storage backend.
 
-Validated visual-asset bytes live in the VIS-04 CAS under `server/data/visual-assets/`. Browser access is `VisualAssetClient` at `/api/storage/visual-assets` and `VisualLayerClient` at `/api/storage/visual-layers`. Public asset identities are source-bound use hashes, not filesystem paths or digest-only content URLs. Published assets cannot be deleted; only abandoned staging and expired reservations are cleaned. Uploads fail closed unless an operator configures owned-source grants in `visual-source-registry.json` (or `CEV_SIM_VISUAL_SOURCE_REGISTRY`). Spark and splat construction are initialized only when an explicitly started bake selects the splat path. `pbr-mesh@1`, package admission, and automatic GC remain later work.
+Validated visual-asset bytes live in the VIS-04 CAS under `server/data/visual-assets/`. Browser access is `VisualAssetClient` at `/api/storage/visual-assets` and `VisualLayerClient` at `/api/storage/visual-layers`. Public asset identities are source-bound use hashes, not filesystem paths or digest-only content URLs. Published assets cannot be deleted; only abandoned staging and expired reservations are cleaned. Uploads fail closed unless an operator configures owned-source grants in `visual-source-registry.json` (or `CEV_SIM_VISUAL_SOURCE_REGISTRY`). Generated bake outputs additionally require `CEV_SIM_BAKE_OUTPUT_SOURCE_IDS`. Spark and splat construction are initialized only when an explicitly started legacy bake selects the splat path. `pbr-mesh@1`, package admission, and automatic GC remain later work.
 
 Building transforms update their authoritative footprint/height records as the gizmo moves; prop transforms update position and heading. Reload therefore reconstructs the edited location rather than the original runtime mesh.
 
@@ -94,11 +94,15 @@ other surfaces remain occluders. Oracle products require a separate
 bake-job catalog: serializable `BakeRunConfig`, frozen `bake-snapshot` scenes,
 UTF-8-stable planning, VIS-06b aligned capture, and local
 `captured-appearance@1` with no model network. Version-1 jobs use
-`BakeHarness.runVersion1Job()`. Press `b` still runs legacy `start()`, which
-may health-check the bake server; `createLegacyCompatibleBakeRunConfig`
-preserves `roundTrip.useModel`. `capturePasses()` and `captureFrame()` remain
-legacy defaults. Artifact persistence and promotion begin in VIS-08; VIS-17b
-owns the evidence catalog UI.
+`BakeHarness.runVersion1Job()`. Press `b` runs the VIS-08 atomic no-model
+path: flush acknowledged autosaves, reserve a bake generation, capture aligned
+beauty/world-position/validity products, write deterministic PNG/GLB projection
+assets, commit the descriptor/access closure, and rematerialize preview
+without rebuilding metric truth. `createLegacyCompatibleBakeRunConfig` and
+`?legacyBake=1` still reach `BakeHarness.start()`, which may health-check the
+bake server; that path cannot promote through VIS-08. `capturePasses()` and
+`captureFrame()` remain legacy defaults. Deterministic atlas consolidation
+remains VIS-10a; VIS-17b owns the evidence catalog UI.
 
 Press `b` in the environment editor to start or stop a bake run when a harness is configured. See the bake tests under `tests/bake-*.test.js` for expected behavior around determinism, splats, and render bundles.
 

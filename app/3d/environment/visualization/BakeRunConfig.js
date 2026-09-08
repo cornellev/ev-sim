@@ -202,4 +202,52 @@ export function createLegacyCompatibleBakeRunConfig(overrides = {}) {
     });
 }
 
+export const PERSISTENT_BAKE_OUTPUT_ROLES = Object.freeze(["beauty", "world-position", "validity"]);
+
+function withPersistentRoles(roles) {
+    const next = Array.isArray(roles) ? [...roles] : [...PERSISTENT_BAKE_OUTPUT_ROLES];
+    for (const role of PERSISTENT_BAKE_OUTPUT_ROLES) {
+        if (!next.includes(role)) next.push(role);
+    }
+    return next;
+}
+
+export function isLegacyModelBakeConfig(config) {
+    if (!config) return false;
+    if (config.roundTrip?.useModel === true) return true;
+    if (config.operational?.roundTrip?.useModel === true) return true;
+    if (typeof config.document === "function") return config.document()?.operational?.roundTrip?.useModel === true;
+    return false;
+}
+
+export function createPersistentBakeRunConfig(overrides = {}) {
+    const roles = withPersistentRoles(overrides.outputRoles);
+    if (overrides?.kind === "cev-sim.bake-run-config") {
+        return new BakeRunConfig({
+            ...overrides,
+            outputRoles: roles,
+            views: (overrides.views ?? [{}]).map((view) => ({
+                ...view,
+                products: withPersistentRoles(view.products ?? roles),
+            })),
+            operational: {
+                ...overrides.operational,
+                roundTrip: {
+                    useModel: false,
+                    ...(overrides.operational?.roundTrip ?? {}),
+                },
+            },
+        });
+    }
+    return new BakeRunConfig({
+        ...overrides,
+        outputRoles: roles,
+        views: (overrides.views ?? [{}]).map((view) => ({
+            ...view,
+            products: withPersistentRoles(view.products ?? overrides.outputRoles),
+        })),
+        roundTrip: { useModel: false, ...(overrides.roundTrip ?? {}) },
+    });
+}
+
 export { interpolateBakePathSample, pathLengthMeters, planIntegerSampleDistances };

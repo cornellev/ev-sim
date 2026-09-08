@@ -129,6 +129,12 @@ export class EnvironmentLoader {
         this.previewHost = null;
     }
 
+    async rematerializePreview(worldResource = null) {
+        const environment = this.data.environment();
+        const world = worldResource ?? createWorldResource(environment.toManifest());
+        return this._materializePreview(world);
+    }
+
     async _materializePreview(worldResource) {
         if (!this.materializer) return idlePreview();
         const reference = this.data.environment()?.visualLayer ?? null;

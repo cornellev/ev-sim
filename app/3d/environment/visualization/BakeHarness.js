@@ -48,6 +48,14 @@ import {
     isTerminalBakeState,
 } from "../visual/BakeRunCatalog.js";
 import { runVersion1BakeJob } from "../visual/BakeJobRunner.js";
+import { BakePromotionClient } from "../visual/BakePromotionClient.js";
+import { VisualAssetClient } from "../visual/VisualAssetClient.js";
+import { VisualLayerClient } from "../visual/VisualLayerClient.js";
+import { uploadBakeArtifacts, writeBakeArtifacts } from "../visual/BakeArtifactWriter.js";
+import {
+    createPersistentBakeRunConfig,
+    isLegacyModelBakeConfig,
+} from "./BakeRunConfig.js";
 
 const TELEMETRY_PREVIEW_MAX_EDGE = 256;
 
@@ -406,7 +414,20 @@ export class BakeHarness {
             controller: null,
             snapshot: null,
             views: [],
+            productBuffers: null,
         };
+        this.promotionClient = options.promotionClient ?? null;
+        this.assetClient = options.assetClient ?? null;
+        this.layerClient = options.layerClient ?? null;
+        this._promotion = {
+            generation: null,
+            environmentId: null,
+            promoting: false,
+        };
+    }
+
+    get promoting() {
+        return this._promotion.promoting === true;
     }
 
     getSnapshot() {
@@ -734,6 +755,7 @@ export class BakeHarness {
         this.memoryLedger?.releaseAll?.();
         this.spatialIndex = null;
         this.telemetryListeners.clear();
+        void this.cancelPersistentPromotion();
         this._disposeVersion1Job();
 
         // Telemetry previews deliberately contain pixel arrays. Drop them
@@ -1822,6 +1844,7 @@ export class BakeHarness {
         this._version1.snapshot?.dispose?.();
         this._version1.snapshot = null;
         this._version1.controller = null;
+        this._version1.productBuffers = null;
     }
 
     cancelVersion1Job(jobId = this._version1.jobId) {
@@ -1842,6 +1865,200 @@ export class BakeHarness {
      */
     async runVersion1Job(options = {}) {
         return runVersion1BakeJob(this, options);
+    }
+
+    /**
+     * VIS-08 atomic no-model promotion: reserve a generation, capture, write
+     * deterministic artifacts, upload, commit, then reload the promoted layer.
+     * Telemetry reports success only after commit and rematerialization.
+     */
+    async runPersistentPromotion(options = {}) {
+        if (isLegacyModelBakeConfig(options.config ?? this.data?.bakeRunConfig?.())) {
+            throw new Error("Legacy model baking cannot promote through VIS-08.");
+        }
+        if (this._promotion.promoting) {
+            await this.cancelPersistentPromotion();
+        }
+        const environment = this.data?.environment?.();
+        const environmentId = options.environmentId
+            ?? environment?.environmentId
+            ?? this.data?.bakeRunConfig?.()?.environmentId;
+        if (!environmentId) throw new Error("An environment id is required to promote a bake.");
+        const persistence = environment?.persistence
+            ?? this.data?.simulation?.()?.environmentRuntime?.persistence
+            ?? null;
+        if (persistence?.conflict) {
+            throw Object.assign(new Error("Resolve the environment conflict before baking."), {
+                code: "ENVIRONMENT_REVISION_CONFLICT",
+            });
+        }
+        if (persistence) await persistence.flush({ throwOnError: true });
+        const expectedRevision = options.expectedRevision
+            ?? persistence?.acknowledgedRevision
+            ?? environment?.revision
+            ?? 0;
+        const promotionClient = this._promotionClients().promotionClient;
+        const reservation = await promotionClient.begin(environmentId, { expectedRevision });
+        this._promotion = {
+            generation: reservation.generation,
+            environmentId,
+            promoting: true,
+        };
+        this._updateTelemetry({
+            status: "running",
+            stage: "Capturing",
+            runId: this.runId,
+            control: { ...this._controlSnapshot(), persistent: true, manualAdvance: false },
+            server: { ...this._telemetrySnapshot.server, useModel: false },
+        }, {
+            type: "persistent-begin",
+            message: `Reserved bake generation ${reservation.generation}`,
+        });
+        let committed = false;
+        try {
+            const config = createPersistentBakeRunConfig(
+                options.config
+                    ?? this.data?.bakeRunConfig?.()?.document?.()
+                    ?? { environmentId, seed: 42 },
+            ).document();
+            const { descriptor: currentDescriptor, access: currentAccess } = await this._currentVisualDocuments(
+                reservation,
+            );
+            const job = await this.runVersion1Job({
+                ...options,
+                config,
+                generation: reservation.generation,
+                environmentRevision: reservation.environmentRevision,
+                worldHash: reservation.worldHash,
+                visualDescriptorHash: reservation.visualDescriptorHash,
+                visualAccessHash: reservation.visualAccessHash,
+                sourceUseHashes: reservation.sourceUseHashes,
+                descriptor: currentDescriptor,
+                access: currentAccess,
+                materializer: this._environmentLoader()?.materializer,
+            });
+            if (this._promotion.generation !== reservation.generation) {
+                throw Object.assign(new Error("Bake generation is no longer reserved."), {
+                    code: "BAKE_PROMOTION_STALE",
+                });
+            }
+            this._updateTelemetry({ stage: "Writing artifacts" });
+            const written = writeBakeArtifacts({
+                job,
+                buffers: job.productBuffers ?? this._version1.productBuffers,
+                sourceIds: reservation.outputSourceIds,
+                currentDescriptor,
+                currentAccess,
+                worldHash: reservation.worldHash,
+            });
+            this._updateTelemetry({ stage: "Uploading artifacts" });
+            await uploadBakeArtifacts(this._promotionClients().assetClient, written.uploads);
+            this._updateTelemetry({ stage: "Committing" });
+            const receipt = await promotionClient.commit(environmentId, reservation.generation, {
+                config: job.config,
+                snapshot: job.snapshot,
+                plan: job.plan,
+                request: job.request,
+                response: job.response,
+                artifactSet: written.artifactSet,
+                descriptor: written.descriptor,
+                access: written.access,
+            });
+            committed = true;
+            persistence?.adoptPromotedVisualLayer(receipt);
+            this._updateTelemetry({ stage: "Reloading preview" });
+            await this._environmentLoader()?.rematerializePreview?.();
+            this._promotion = { generation: null, environmentId: null, promoting: false };
+            this._updateTelemetry(
+                {
+                    status: "success",
+                    stage: "Promoted and reloaded",
+                    completedSamples: job.plan?.samples?.length ?? this._totalSamples(),
+                    finishedAt: Date.now(),
+                },
+                {
+                    type: "success",
+                    message: "Bake promotion committed and reloaded",
+                    detail: {
+                        generation: reservation.generation,
+                        revision: receipt.revision,
+                        descriptorHash: receipt.descriptorHash,
+                        accessHash: receipt.accessHash,
+                        artifactHash: receipt.artifactHash,
+                    },
+                },
+            );
+            return receipt;
+        } catch (error) {
+            if (!committed) await this.cancelPersistentPromotion().catch(() => {});
+            else this._promotion = { generation: null, environmentId: null, promoting: false };
+            this._telemetrySnapshot = markBakeErrored(this._telemetrySnapshot, error);
+            this._emitTelemetry();
+            throw error;
+        }
+    }
+
+    async cancelPersistentPromotion() {
+        const { environmentId, generation } = this._promotion;
+        this._promotion.promoting = false;
+        this._version1.controller?.abort(new Error("Bake promotion cancelled."));
+        if (environmentId != null && generation != null) {
+            try {
+                await this._promotionClients().promotionClient.cancel(environmentId, generation);
+            } catch {
+                // Idempotent: a missing or already-committed generation is not a client error.
+            }
+        }
+        this._promotion.generation = null;
+        this._promotion.environmentId = null;
+        if (this._telemetrySnapshot.status === "running" || this._telemetrySnapshot.status === "preparing") {
+            this._updateTelemetry({
+                status: "stopped",
+                stage: "Cancelled",
+                finishedAt: Date.now(),
+            }, {
+                type: "stopped",
+                severity: "warning",
+                message: "Bake promotion cancelled",
+            });
+        }
+        return { cancelled: true, generation };
+    }
+
+    _promotionClients() {
+        this.promotionClient ??= new BakePromotionClient();
+        this.assetClient ??= new VisualAssetClient();
+        this.layerClient ??= new VisualLayerClient();
+        return {
+            promotionClient: this.promotionClient,
+            assetClient: this.assetClient,
+            layerClient: this.layerClient,
+        };
+    }
+
+    _environmentLoader() {
+        return this.data?.simulation?.()?.environmentRuntime?.loader ?? null;
+    }
+
+    async _currentVisualDocuments(reservation) {
+        const visual = this.data?.environment?.()?.visualLayer
+            ?? (reservation.visualDescriptorHash && reservation.visualAccessHash
+                ? {
+                    descriptorHash: reservation.visualDescriptorHash,
+                    accessHash: reservation.visualAccessHash,
+                }
+                : null);
+        if (!visual?.descriptorHash || !visual?.accessHash) {
+            return { descriptor: null, access: null };
+        }
+        const documents = await this._promotionClients().layerClient.getAccess(
+            visual.descriptorHash,
+            visual.accessHash,
+        );
+        return {
+            descriptor: documents.descriptor ?? null,
+            access: documents.access ?? null,
+        };
     }
 }
 

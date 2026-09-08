@@ -51,7 +51,7 @@ function stopEvent(event) {
 }
 
 function statusTone(status) {
-    if (status === "complete") return "border-emerald-400/70 bg-emerald-500/20 text-emerald-100";
+    if (status === "complete" || status === "success") return "border-emerald-400/70 bg-emerald-500/20 text-emerald-100";
     if (status === "error") return "border-rose-400/70 bg-rose-500/20 text-rose-100";
     if (status === "stopped") return "border-amber-400/70 bg-amber-500/20 text-amber-100";
     if (status === "preparing") return "border-sky-400/70 bg-sky-500/20 text-sky-100";
@@ -463,13 +463,15 @@ export function BakeProgressOverlay({ data }) {
 
     const progress = clamp01((snapshot.percent ?? 0) / 100);
     const canStop = snapshot.status === "running" || snapshot.status === "preparing";
-    const canAdvance = snapshot.status === "running" || snapshot.status === "preparing";
+    const canAdvance = !snapshot.control?.persistent
+        && (snapshot.status === "running" || snapshot.status === "preparing");
     const manualAdvance = Boolean(snapshot.control?.manualAdvance);
     const pendingManualSamples = snapshot.control?.pendingManualSamples ?? 0;
 
     const stopBake = () => {
         const harness = data?.baking?.();
-        harness?.stop?.();
+        if (harness?.promoting) void harness.cancelPersistentPromotion();
+        else harness?.stop?.();
         data?.simulation?.()?.setModule?.("baking", false);
     };
 

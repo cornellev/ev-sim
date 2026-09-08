@@ -10,6 +10,7 @@ import {
     composeBakePoses,
     createBakeProductDigest,
     hashBakeProviderRequest,
+    hashCaptureProductBuffer,
     interpolateBakePathSample,
     isTerminalBakeState,
     normalizeBakeProviderRequest,
@@ -196,6 +197,7 @@ export async function runVersion1BakeJob(host, options = {}) {
             ? options.captureAlignedProducts
             : async (view, args) => view.captureAlignedProducts(args);
         const inputs = [];
+        const productBuffers = new Map();
         for (const sample of plan.samples) {
             throwIfAborted();
             const view = viewsById.get(sample.viewId) ?? { name: sample.viewId };
@@ -218,11 +220,17 @@ export async function runVersion1BakeJob(host, options = {}) {
                 if (!data) {
                     throw new Error(`Aligned capture missing product ${role} for ${sample.sampleId}.`);
                 }
+                const copied = data instanceof Float32Array
+                    ? new Float32Array(data)
+                    : data instanceof Uint32Array
+                        ? new Uint32Array(data)
+                        : new Uint8Array(data);
+                productBuffers.set(`${sample.sampleId}:${sample.viewId}:${role}`, copied);
                 inputs.push(createBakeProductDigest({
                     sampleId: sample.sampleId,
                     viewId: sample.viewId,
                     role,
-                    data,
+                    data: copied,
                     width,
                     height,
                 }));
@@ -254,8 +262,18 @@ export async function runVersion1BakeJob(host, options = {}) {
             requestHash: hashBakeProviderRequest(request),
         });
         catalog.attachResponse(job.jobId, response, { generation });
+        const completed = catalog.get(job.jobId);
+        for (const output of completed.response.outputs) {
+            const retained = productBuffers.get(`${output.sampleId}:${output.viewId}:${output.role}`);
+            if (!retained || hashCaptureProductBuffer(retained) !== output.sha256) {
+                throw new Error(`Retained ${output.role} buffer does not match the provider response digest.`);
+            }
+        }
+        if (host._version1) host._version1.productBuffers = productBuffers;
         catalog.complete(job.jobId);
-        return catalog.get(job.jobId);
+        const result = catalog.get(job.jobId);
+        result.productBuffers = productBuffers;
+        return result;
     } catch (error) {
         const current = job ? catalog.get(job.jobId) : null;
         if (current && !isTerminalBakeState(current.status.state)) {

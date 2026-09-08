@@ -144,6 +144,24 @@ export class EnvironmentPersistence {
     }
 
     /**
+     * Adopt visual references and the committed revision after VIS-08 promotion.
+     * Local metric dirtiness stays visible; this never overwrites a conflicted draft.
+     */
+    adoptPromotedVisualLayer(receipt) {
+        const next = Number(receipt?.revision);
+        if (!Number.isInteger(next) || next < 0) return;
+        this._acknowledgedRevision = next;
+        const environment = this.data.environment();
+        if (!environment) return;
+        environment.revision = next;
+        environment.visualLayer = receipt.visualLayer
+            ?? receipt.manifest?.visualLayer
+            ?? environment.visualLayer
+            ?? null;
+        environment.evidence = receipt.manifest?.evidence ?? null;
+    }
+
+    /**
      * Adopt a server revision after a successful response or a clean remote apply.
      * Never advances over a dirty/in-flight local draft.
      */

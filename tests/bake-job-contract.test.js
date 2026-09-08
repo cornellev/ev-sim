@@ -321,5 +321,8 @@ test("legacy BakeRunConfig still exposes the editor capture defaults used by sta
     assert.match(harnessSource, /roundTrip\.useModel === true/);
     const sceneSource = await readFile(new URL("app/3d/Scene.js", root), "utf8");
     assert.match(sceneSource, /createLegacyCompatibleBakeRunConfig/);
+    assert.match(sceneSource, /createPersistentBakeRunConfig/);
+    assert.match(sceneSource, /runPersistentPromotion/);
+    assert.match(sceneSource, /isLegacyModelBakeConfig/);
     assert.match(sceneSource, /harness\.start/);
 });

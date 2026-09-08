@@ -30,6 +30,15 @@ export function createStorageRouter(service) {
     )));
     router.get("/environments/:id", handle(async (req) => service.getEnvironment(req.params.id)));
     router.put("/environments/:id", handle(async (req) => service.putEnvironment(req.params.id, req.body ?? {})));
+    router.post("/environments/:id/bake-promotions", handle(async (req) => (
+        service.beginBakePromotion(req.params.id, req.body ?? {})
+    )));
+    router.post("/environments/:id/bake-promotions/:generation/commit", handle(async (req) => (
+        service.commitBakePromotion(req.params.id, req.params.generation, req.body ?? {})
+    )));
+    router.delete("/environments/:id/bake-promotions/:generation", handle(async (req) => (
+        service.cancelBakePromotion(req.params.id, req.params.generation)
+    )));
 
     // --- Scripts ---
     router.get("/scripts", handle(async () => service.listScripts()));

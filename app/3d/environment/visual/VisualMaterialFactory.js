@@ -75,6 +75,7 @@ export function createDescriptorMaterial(THREE, descriptorMaterial, texturesBySl
     material.opacity = alpha;
     material.transparent = false;
     material.depthWrite = true;
+    material.toneMapped = !unlit;
     material.side = descriptorMaterial.doubleSided ? THREE.DoubleSide : THREE.FrontSide;
     if (descriptorMaterial.alphaMode === "MASK") {
         material.alphaTest = descriptorMaterial.alphaCutoff;
@@ -99,6 +100,7 @@ export function createDescriptorMaterial(THREE, descriptorMaterial, texturesBySl
         if (!source) continue;
         const applied = source.clone();
         applied.colorSpace = SRGB_SLOTS.has(texture.slot) ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+        if (unlit) applied.flipY = false;
         if ("channel" in applied) applied.channel = texture.texCoord;
         applied.offset.set(texture.transform.offset[0], texture.transform.offset[1]);
         applied.rotation = texture.transform.rotation;

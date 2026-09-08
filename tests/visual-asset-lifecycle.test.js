@@ -208,6 +208,64 @@ test("G-LIFECYCLE roots use compare-and-swap, pins expire on restart, and reader
     }, { now: () => new Date(now) });
 });
 
+test("legacy single-use roots and pins migrate to sorted use-hash sets", async () => {
+    await withStore(async (store, dir) => {
+        const published = await publishAsset(store, makePng({ width: 2, height: 2 }), {
+            mediaType: "image/png",
+            role: "texture",
+        });
+        const other = await publishAsset(store, makePng({ width: 3, height: 1, green: 0x40 }), {
+            mediaType: "image/png",
+            role: "texture",
+        });
+        await fs.writeFile(path.join(dir, "visual-assets", "roots.json"), JSON.stringify({
+            kind: "cev-sim.visual-asset-roots",
+            version: 1,
+            roots: {
+                "synthetic-env": {
+                    ownerId: "synthetic-env",
+                    ownerKind: "environment",
+                    generation: 4,
+                    useHash: published.useHash,
+                },
+            },
+        }));
+        await fs.writeFile(path.join(dir, "visual-assets", "pins.json"), JSON.stringify({
+            kind: "cev-sim.visual-asset-pins",
+            version: 1,
+            pins: {
+                "legacy-pin": {
+                    ownerId: "synthetic-worker",
+                    handle: "legacy-pin",
+                    useHash: other.useHash,
+                    expiresAt: "2099-01-01T00:00:00.000Z",
+                },
+            },
+        }));
+        const recovered = new VisualAssetStore(dir, {
+            registryPath: path.join(dir, "visual-source-registry.json"),
+            limits,
+        });
+        await recovered.initialize();
+        const replaced = await recovered.replaceRoot({
+            ownerId: "synthetic-env",
+            expectedGeneration: 4,
+            useHashes: [other.useHash, published.useHash],
+            operations: VISUAL_ASSET_ACCESS_OPERATIONS,
+        });
+        assert.deepEqual(replaced.useHashes, [other.useHash, published.useHash].sort());
+        assert.equal(replaced.useHash, replaced.useHashes[0]);
+        const pin = await recovered.acquirePin({
+            ownerId: "synthetic-worker-2",
+            useHashes: [published.useHash, other.useHash],
+            operations: VISUAL_ASSET_ACCESS_OPERATIONS,
+        });
+        assert.deepEqual(pin.useHashes, [other.useHash, published.useHash].sort());
+        await recovered.releasePin({ handle: pin.handle });
+        await recovered.releaseRoot({ ownerId: "synthetic-env", expectedGeneration: replaced.generation });
+    }, { limits: { ...limits, publishedBytes: 1024 * 1024, stagingBytes: 1024 * 1024 } });
+});
+
 function makeJpegSafe() {
     return Buffer.from([
         0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00,

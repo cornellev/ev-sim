@@ -21,6 +21,7 @@ app.prepare().then(async () => {
         visualAssets: {
             registryPath: process.env.CEV_SIM_VISUAL_SOURCE_REGISTRY || undefined,
         },
+        bakeOutputSourceIds: process.env.CEV_SIM_BAKE_OUTPUT_SOURCE_IDS,
     });
     const logService = new LogService(process.env.CEV_SIM_LOGS_DIR);
     const headlessExperimentService = new HeadlessExperimentService(storageService, logService);

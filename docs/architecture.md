@@ -266,8 +266,8 @@ analytic depth/labels use a distinct truth scene and explicit truth bindings.
 The opt-in corrected path is atomic and exception-safe, while legacy camera
 and bake entry points are unchanged. VIS-07 adds an in-memory bake-job catalog,
 frozen `bake-snapshot` scenes, deterministic capture plans, and local
-`captured-appearance@1` dispatch; it does not write CAS artifacts or promote
-environment references. VIS-08 owns persistent promotion. VIS-14/VIS-15 own
+`captured-appearance@1` dispatch. VIS-08 persists projected captured-radiance
+PNG/GLB assets and atomically promotes environment visual references. VIS-14/VIS-15 own
 runtime provider routing. `pbr-mesh@1`, corrected GPU backend
 v2, manifests, hashes, protobuf, and advertised capabilities remain unchanged.
 
@@ -290,10 +290,13 @@ Validated visual assets are stored under `CEV_SIM_DATA_DIR` (default
 
 - `visual-layer-descriptors/sha256/<hash>.json` — immutable visual-layer descriptors
 - `visual-layer-access/sha256/<accessHash>.json` — source-bound access sidecars
+- `environment-bake-promotions/<id>.json` — bake generation state and receipts
+- `environment-bake-journals/<id>--<generation>.json` — promotion recovery journals
 - `visual-assets/sha256/<digest>` — immutable published bytes
 - `visual-assets/uses/sha256/<useHash>.json` — source-bound use records
 - `visual-assets/validation/sha256/<useHash>.json` — validation evidence
 - `visual-assets/staging/`, `visual-assets/roots.json`, `visual-assets/pins.json`
 - `visual-source-registry.json` or `CEV_SIM_VISUAL_SOURCE_REGISTRY`
+- generated bake output source IDs from `CEV_SIM_BAKE_OUTPUT_SOURCE_IDS`
 
 There is no public digest-only content URL and no published-asset deletion API.

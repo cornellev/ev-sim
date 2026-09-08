@@ -35,7 +35,11 @@ import { FIII3 } from "./igvc/mini/fiii3";
 import Unit from "../scripting/units/Unit";
 import { BakeHarness } from "./environment/visualization/BakeHarness";
 import { BakePath } from "./environment/visualization/BakePath";
-import { createLegacyCompatibleBakeRunConfig } from "./environment/visualization/BakeRunConfig";
+import {
+    createLegacyCompatibleBakeRunConfig,
+    createPersistentBakeRunConfig,
+    isLegacyModelBakeConfig,
+} from "./environment/visualization/BakeRunConfig";
 import { isSplatBakePath } from "./environment/visualization/optionalSplatRuntime";
 import { EnvironmentSkyManager } from "./skybox/EnvironmentSkyManager";
 import { EarthTilesManager } from "./earth/EarthTilesManager";
@@ -607,7 +611,7 @@ function queueRuntimeMode(runtime, mode) {
  * @param {THREE.Scene} scene
  */
 function setupBaking(data, scene) {
-    const bakeConfig = data.bakeRunConfig() || createLegacyCompatibleBakeRunConfig({
+    const bakeConfig = data.bakeRunConfig() || createPersistentBakeRunConfig({
         environmentId: "igvc",
         seed: 42,
     });
@@ -642,40 +646,61 @@ function setupBaking(data, scene) {
         throw error;
     }
 
-    return registerBakeKey(data, harness);
+    const disposeKey = registerBakeKey(data, harness);
+    return () => {
+        disposeKey?.();
+        void harness.cancelPersistentPromotion?.();
+    };
 }
 
 function registerBakeKey(data, harness) {
     if (!harness) return null;
-    return data.keys().registerKeyPress("b", async () => {
+    const disposeKey = data.keys().registerKeyPress("b", async () => {
         const sim = data.simulation();
-        if (harness.running) {
-            harness.stop();
+        if (harness.running || harness.promoting) {
+            if (harness.promoting) await harness.cancelPersistentPromotion();
+            else harness.stop();
             sim.setModule("baking", false);
             sim.pause();
             console.log("Bake run stopped");
             return;
         }
 
-        if (isSplatBakePath(harness.splatConfig)) {
-            try {
-                const { ensureSplatAccumulator } = await import("./environment/visualization/optionalSplatRuntime.js");
-                await ensureSplatAccumulator({
-                    data,
-                    scene: data.scene,
-                    renderer: data.renderer,
-                    splatConfig: harness.splatConfig,
-                });
-            } catch (error) {
-                console.warn("[bake] splat runtime unavailable:", error);
-                throw error;
+        if (isLegacyModelBakeConfig(data.bakeRunConfig()) || isLegacyModelBakeConfig(harness)) {
+            if (isSplatBakePath(harness.splatConfig)) {
+                try {
+                    const { ensureSplatAccumulator } = await import("./environment/visualization/optionalSplatRuntime.js");
+                    await ensureSplatAccumulator({
+                        data,
+                        scene: data.scene,
+                        renderer: data.renderer,
+                        splatConfig: harness.splatConfig,
+                    });
+                } catch (error) {
+                    console.warn("[bake] splat runtime unavailable:", error);
+                    throw error;
+                }
             }
+            await harness.start();
+            sim.setModule("baking", true);
+            sim.play();
+            console.log("Bake run started", harness.runId);
+            return;
         }
-        await harness.start();
+
         sim.setModule("baking", true);
-        sim.play();
-        console.log("Bake run started", harness.runId);
+        sim.pause();
+        try {
+            await harness.runPersistentPromotion();
+            console.log("Bake promotion complete", harness.runId);
+        } catch (error) {
+            console.warn("[bake] persistent promotion failed:", error);
+            throw error;
+        } finally {
+            sim.setModule("baking", false);
+        }
     });
+    return disposeKey;
 }
 
 export default function TotalScene({
@@ -741,7 +766,13 @@ export default function TotalScene({
 
             data.simulation().configure({ scene, camera, renderer, controls });
 
-            const bakeConfig = createLegacyCompatibleBakeRunConfig({
+            const bakeFactory = (
+                typeof window !== "undefined"
+                && new URLSearchParams(window.location.search).get("legacyBake") === "1"
+            )
+                ? createLegacyCompatibleBakeRunConfig
+                : createPersistentBakeRunConfig;
+            const bakeConfig = bakeFactory({
                 environmentId,
                 seed: 42,
             });

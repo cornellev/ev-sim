@@ -7,6 +7,7 @@ import { JsonFileStore } from "./JsonFileStore.js";
 import { VisualLayerDescriptorStore } from "./VisualLayerDescriptorStore.js";
 import { VisualLayerAccessStore } from "./VisualLayerAccessStore.js";
 import { VisualAssetStore } from "./VisualAssetStore.js";
+import { BakePromotionController, parseBakeOutputSourceIds } from "./BakePromotionController.js";
 import {
     environmentRevisionConflict,
     unguardedEnvironmentWriteError,
@@ -234,6 +235,11 @@ export class StorageService {
         this._visualLayerDescriptors = new VisualLayerDescriptorStore(dataDir);
         this._visualLayerAccess = new VisualLayerAccessStore(dataDir);
         this.visualAssets = new VisualAssetStore(dataDir, options.visualAssets ?? {});
+        this.bakeOutputSourceIds = parseBakeOutputSourceIds(
+            options.bakeOutputSourceIds ?? process.env.CEV_SIM_BAKE_OUTPUT_SOURCE_IDS,
+        );
+        this.faults = options.faults ?? {};
+        this.bakePromotions = new BakePromotionController(this);
         this.environmentTransactionsDir = path.join(dataDir, "environment-transactions");
         this._environmentRecovery = null;
         this._runManifestWriteChains = new Map();
@@ -278,7 +284,20 @@ export class StorageService {
     /** @returns {Promise<object|null>} the saved manifest, or null if none. */
     async getEnvironment(environmentId) {
         await this._recoverEnvironmentTransactions();
+        await this.bakePromotions.recover(environmentId);
         return this._readEnvironment(environmentId);
+    }
+
+    beginBakePromotion(environmentId, body = {}) {
+        return this.bakePromotions.begin(environmentId, body);
+    }
+
+    commitBakePromotion(environmentId, generation, body = {}) {
+        return this.bakePromotions.commit(environmentId, Number(generation), body);
+    }
+
+    cancelBakePromotion(environmentId, generation) {
+        return this.bakePromotions.cancel(environmentId, Number(generation));
     }
 
     /**
