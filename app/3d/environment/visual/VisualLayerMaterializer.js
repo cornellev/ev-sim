@@ -654,12 +654,21 @@ export class VisualLayerMaterializer {
         const resources = await this._dependencyResourceMap(use, signal);
         const urlMap = this._objectUrlMap(resources);
         const manager = new THREE.LoadingManager();
-        manager.setURLModifier(createDigestUrlModifier(urlMap));
+        manager.setURLModifier(createDigestUrlModifier(urlMap, { allowInternalBlobUrls: true }));
         const loader = new GLTFLoader(manager);
         const ktx2 = await this._ensureKtx2(manager, resources);
         if (ktx2) loader.setKTX2Loader(ktx2);
         try {
             const gltf = await loader.parseAsync(toArrayBuffer(encodedBytes), "");
+            const textures = gltf.parser?.json?.textures?.length
+                ? await gltf.parser.getDependencies("texture")
+                : [];
+            if (textures.some((texture) => !texture)) {
+                throw new VisualPreviewError(
+                    VISUAL_PREVIEW_ERROR_CODES.DECODER_FAILED,
+                    "A validated glTF texture failed to decode.",
+                );
+            }
             this._throwIfStale(this._generation, signal);
             return {
                 scene: gltf.scene,

@@ -15,7 +15,7 @@ export function assertAllowedGltfUri(uri, allowedDigests) {
     );
 }
 
-export function createDigestUrlModifier(resourceMap) {
+export function createDigestUrlModifier(resourceMap, { allowInternalBlobUrls = false } = {}) {
     const allowedObjectUrls = new Set(
         [...resourceMap.values()].map((entry) => entry.objectUrl).filter(Boolean),
     );
@@ -28,6 +28,9 @@ export function createDigestUrlModifier(resourceMap) {
             );
         }
         if (allowedObjectUrls.has(url)) return url;
+        // Authored blob: URIs are rejected by server preflight. This opt-in is
+        // only for object URLs created by GLTFLoader from validated bufferViews.
+        if (allowInternalBlobUrls && url.startsWith("blob:")) return url;
         const digest = sha256FromUri(url);
         if (digest && resourceMap.has(digest) && resourceMap.get(digest).objectUrl) {
             return resourceMap.get(digest).objectUrl;

@@ -20,6 +20,9 @@ never enter `visualLayerHash`, `worldHash`, or episode identity. VIS-10a
 defaults new persistent bakes to deterministic per-chunk atlases under
 bake-contract v2; `projected-captured-radiance@1` remains an explicit
 compatibility mode.
+VIS-16a adds strict visual-evaluation, correspondence-report, threshold-profile,
+and admission contracts with synthetic boundary fixtures. It does not run a
+validator or activate managed visual execution.
 Photoreal `pbr-mesh@1` rendering,
 corrected GPU backend v2, measured PBR cameras, and package admission remain
 unavailable.
@@ -57,6 +60,10 @@ become collision, route, LiDAR, registry, or oracle truth.
 | Bake atlas contribution | `cev-sim.bake-atlas-contribution@1` | VIS-10a sparse reuse codec |
 | Bake reuse manifest | `cev-sim.bake-reuse-manifest@1` / `@2` | VIS-09 fragments; VIS-10a contributions and chunk hashes |
 | Bake reuse report | `cev-sim.bake-reuse-report@1` | VIS-09 audit evidence only |
+| Visual evaluation input | `cev-sim.visual-evaluation-input@1` | VIS-16a contract only |
+| Visual correspondence report | `cev-sim.visual-correspondence-report@1` | VIS-16a diagnostic/synthetic evidence only |
+| Visual threshold profile | `cev-sim.visual-threshold-profile@1` | VIS-16a synthetic profiles; production registry empty |
+| Visual evidence admission | contract-level checker | VIS-16a; managed execution integration VIS-16b |
 | Identity negotiation | Protocol 1.3 | VIS-12a |
 | Environment schema | 3 | VIS-03 |
 | Package admission | Protocol 1.4 | VIS-13b |
@@ -162,7 +169,7 @@ source-bound `cev-sim.visual-asset-use@1` records at
 `uses/sha256/<useHash>.json`. A use record contains the asset reference, sorted
 trusted source IDs, and exact dependency-use mappings. Use hashes are RFC
 8785/JCS SHA-256 values; identical bytes uploaded under different provenance
-produce distinct use hashes. Validation evidence is stored beside the use and
+produce distinct use hashes. Version-2 validation evidence is stored beside the use and
 does not enter `visualLayerHash`, semantic hashes, or episode hashes.
 `normalizeVisualAssetReference` / `assertVisualAssetReference` are the reusable
 asset-reference validators.
@@ -185,6 +192,20 @@ per asset, 16,384 assets, depth 64, 100,000 nodes, 4,000,000 triangles, 8192
 pixels, 14 mips, 4 GiB decoded closure, two uploads, one validation, 32 readers,
 60-second validation, and a one-hour abandoned-stage TTL.
 
+Every content read, closure check, access-sidecar check, and cached
+materialization requires current version-2 validation evidence. Missing or old
+records are revalidated against immutable CAS bytes and the current restricted
+profile without changing the asset digest or source-bound use hash. Preflight
+uses the same total timeout as the validator and iteratively bounds arbitrary
+object and node graphs. Required, used, and instantiated glTF extensions share
+one allowlist. Data-URI, buffer-view, and digest-backed images are inspected for
+media type, dimensions, mip expansion, bounds, and decoded-memory cost before
+`GLTFLoader` or an image decoder runs. Loader-created object URLs are allowed
+only inside that validated materialization call; authored blob, relative,
+network, and file URIs remain denied. Texture and decoder failures abort the
+whole staged preview. Archive extraction and USTAR admission remain unavailable
+until VIS-13a supplies their separate hostile-input gate.
+
 The operator-controlled `cev-sim.visual-source-registry@1` file is the only
 trusted grant source. There is no mutation API. Missing registries and unknown,
 expired, revoked, or incomplete grants fail closed. Upload creation and
@@ -205,6 +226,44 @@ logs, and timestamps are separate evidence documents. A resolved run or
 package may reference their exact digests. Evidence does not enter
 `visualLayerHash`, and pixel-identical evidence changes do not enter semantic
 or episode identity.
+
+## Correspondence evidence contract
+
+`app/validation/VisualCorrespondence.js` is an ES module without Three.js,
+DOM, or renderer dependencies. It strictly normalizes, asserts, parses,
+serializes, and hashes `cev-sim.visual-evaluation-input@1`,
+`cev-sim.visual-correspondence-report@1`, and
+`cev-sim.visual-threshold-profile@1` using exact JSON ingestion and JCS
+SHA-256. Unknown fields, duplicate keys, unsupported versions, unsafe counts,
+non-finite values, bad hashes, missing cells, and zero denominators fail.
+
+An evaluation input binds the metric world and visual layer, render-scene and
+provider configuration, complete asset/use closure, exact per-camera calibrated
+K bodies and hashes, calibration bundle, capture recipe/pass policy, ordered
+sample times and pose/dynamic-state hashes, AOI, seed/action tape, and all
+sample-selection, metric, confidence, aggregation, and threshold-policy
+versions. It cannot contain a report digest or report-containing resolved hash.
+Attaching a report may therefore change a later full resolved identity while
+preserving evaluation-input, world, visual-layer, simulation-semantic, and
+episode hashes when capture inputs are unchanged.
+
+Reports bind the evaluation-input and threshold-profile hashes, exact captured
+input/output artifact digests, validator/build identity, runtime, GPU, driver,
+and decoder provenance. Metric cells cover every required camera, AOI region,
+and distance band for depth residual, silhouette/reprojection error,
+semantic/instance alignment, joint coverage, and photometric difference. Each
+cell records expected, jointly valid, missing visual/analytic, and low-confidence
+counts plus aggregate and worst-region values. Admission recomputes coverage and
+threshold results and ignores the submitted `declaredPassed` value.
+
+Diagnostic admission can generate or inspect bounded reports without prior
+correspondence evidence after current asset-validation, capability, and rights checks, but its
+result is never managed-eligible. Managed admission requires exact report
+bytes, a production profile from an external approved registry, current asset,
+rights, and capability decisions, and a matching trusted local-validation record kept
+outside report JSON. Imported reports are diagnostic only. The repository ships
+one synthetic boundary fixture and no approved production profile. Queue,
+worker, recovery, and real evaluator integration remain VIS-16b work.
 
 ## Materials and assets
 
@@ -231,8 +290,8 @@ channels belong to the optional estimation track.
 Material meaning follows the
 [glTF 2.0 specification](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html)
 and its [Khronos extensions](https://github.com/KhronosGroup/glTF/tree/main/extensions/2.0/Khronos).
-The restricted profile is stricter than a general glTF loader: later asset
-validation must reject every unknown required extension and every uncontrolled
+The restricted profile is stricter than a general glTF loader: asset
+validation rejects every extension outside the allowlist and every uncontrolled
 network or filesystem dependency before decoding.
 
 ## Camera and product contract
@@ -381,6 +440,17 @@ dirty atlas chunks, commit a new layer or a revision-free no-op, and
 rematerialize preview. Legacy `BakeHarness.start()` remains only for explicit
 `legacyBake=1` / `createLegacyCompatibleBakeRunConfig`.
 
+Promotion recovery, environment reads, and environment mutations share the
+same per-environment transaction lane. Recovery recognizes publication only
+when the exact intended revision and complete manifest, including access and
+reuse references, match. Journals and roots are durably ordered; ambiguous or
+corrupt journals retain protective roots and fail explicitly. Commit retries
+are bound to their original request. A cancellation that loses the commit race
+adopts the returned receipt. A committed promotion whose preview reload fails
+keeps its receipt and reports `BAKE_PREVIEW_RELOAD_FAILED`; retry reloads only
+the materialization. Legacy model uploads require every request to return
+`true` before completion or success telemetry.
+
 VIS-05a materializes owned preview geometry in the display scene only.
 `VisualLayerMaterializer` verifies descriptor/access hashes, world bindings,
 asset closure, and current `display` rights before decoding. Assets are fetched
@@ -491,6 +561,13 @@ pointers; neither enters `worldHash` or the descriptor's `visualLayerHash`.
 `sourceWorldHash` binds the promoted layer to the current metric world and does
 not enter per-unit reuse keys. An older client cannot erase visual fields by omitting them, and cannot use
 `clientRevision` as a concurrency token.
+Explicit server `null` visual/evidence fields do clear local references. Client
+autosave tracks edit generations independently from request generations, so an
+edit made during a save remains dirty. Suspension blocks debounce, manual,
+hide, and unload entry points, drains the current request, and explicitly
+resumes pending work. Strict promotion flushes retain any joined autosave
+failure, and responses or receipts from another environment or an older
+revision are never adopted.
 
 ## Source policy
 

@@ -1,0 +1,157 @@
+{
+  "profile": {
+    "kind": "cev-sim.visual-threshold-profile",
+    "version": 1,
+    "id": "synthetic-correspondence-boundary",
+    "purpose": "synthetic",
+    "distanceBands": [
+      { "id": "near", "minMeters": 0, "maxMeters": 25 }
+    ],
+    "requiredRegions": ["center"],
+    "requirements": {
+      "minimumExpectedSamples": 10,
+      "minimumJointValidSamples": 9,
+      "minimumCoverageRatio": 0.9,
+      "maximumMissingRatio": 0.1,
+      "maximumLowConfidenceRatio": 0.1
+    },
+    "metrics": [
+      { "id": "depth-residual", "version": 1, "operator": "max", "limit": 0.1, "worstRegionLimit": 0.2 },
+      { "id": "instance-alignment", "version": 1, "operator": "min", "limit": 0.9, "worstRegionLimit": 0.8 },
+      { "id": "joint-coverage", "version": 1, "operator": "min", "limit": 0.9, "worstRegionLimit": 0.8 },
+      { "id": "photometric-difference", "version": 1, "operator": "max", "limit": 5, "worstRegionLimit": 8 },
+      { "id": "semantic-alignment", "version": 1, "operator": "min", "limit": 0.9, "worstRegionLimit": 0.8 },
+      { "id": "silhouette-reprojection", "version": 1, "operator": "max", "limit": 1.5, "worstRegionLimit": 2.5 }
+    ]
+  },
+  "input": {
+    "kind": "cev-sim.visual-evaluation-input",
+    "version": 1,
+    "worldHash": "1111111111111111111111111111111111111111111111111111111111111111",
+    "visualLayerHash": "2222222222222222222222222222222222222222222222222222222222222222",
+    "renderSceneHash": "3333333333333333333333333333333333333333333333333333333333333333",
+    "provider": { "id": "pbr-mesh", "version": 1, "configHash": "4444444444444444444444444444444444444444444444444444444444444444" },
+    "assets": [
+      {
+        "sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+        "mediaType": "model/gltf-binary",
+        "sizeBytes": 256,
+        "role": "mesh",
+        "useHash": "6666666666666666666666666666666666666666666666666666666666666666"
+      }
+    ],
+    "assetClosureHash": "7777777777777777777777777777777777777777777777777777777777777777",
+    "cameras": [
+      {
+        "id": "front",
+        "calibration": {
+          "kind": "cev-sim.visual-camera-calibration",
+          "version": 1,
+          "image": { "width": 8, "height": 6, "origin": "top-left", "pixelCenters": "integer" },
+          "intrinsics": { "fx": 5, "fy": 7, "cx": 2.25, "cy": 1.75 },
+          "clipping": { "near": 0.1, "far": 20 },
+          "distortion": { "model": "none", "coefficients": [] },
+          "frames": {
+            "mount": "REP-103-camera-link",
+            "optical": "REP-103-camera-optical",
+            "mountToOptical": { "x": -0.5, "y": 0.4999999999999999, "z": -0.5, "w": 0.5000000000000001 },
+            "rotationOrder": "intrinsic-XYZ"
+          },
+          "matrixConvention": { "layout": "column-major", "clipSpace": "OpenGL", "cameraForward": "-Z" }
+        },
+        "calibrationHash": "6b7f5c43dd05d7f795df646fafa26d3f3323dbca4dde2812c2fa44676f2c80f6"
+      }
+    ],
+    "calibrationBundleHash": "9999999999999999999999999999999999999999999999999999999999999999",
+    "captureRecipeHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "capturePolicy": { "id": "aligned-pass-set", "version": 1, "configHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" },
+    "samples": [
+      {
+        "id": "sample-0",
+        "cameraId": "front",
+        "captureTimeNs": 1000000000,
+        "poseHash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "dynamicStateHash": null,
+        "captureInputHashes": {
+          "visual": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+          "analytic": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+        }
+      }
+    ],
+    "aoi": {
+      "hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "regions": ["center"]
+    },
+    "seed": 42,
+    "actionTapeHash": null,
+    "policies": {
+      "sampleSelection": { "id": "synthetic-grid", "version": 1, "configHash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" },
+      "metrics": [
+        { "id": "depth-residual", "version": 1, "configHash": "1010101010101010101010101010101010101010101010101010101010101010" },
+        { "id": "instance-alignment", "version": 1, "configHash": "2020202020202020202020202020202020202020202020202020202020202020" },
+        { "id": "joint-coverage", "version": 1, "configHash": "3030303030303030303030303030303030303030303030303030303030303030" },
+        { "id": "photometric-difference", "version": 1, "configHash": "4040404040404040404040404040404040404040404040404040404040404040" },
+        { "id": "semantic-alignment", "version": 1, "configHash": "5050505050505050505050505050505050505050505050505050505050505050" },
+        { "id": "silhouette-reprojection", "version": 1, "configHash": "6060606060606060606060606060606060606060606060606060606060606060" }
+      ],
+      "confidence": { "id": "joint-validity", "version": 1, "configHash": "7070707070707070707070707070707070707070707070707070707070707070" },
+      "aggregation": { "id": "worst-region", "version": 1, "configHash": "8080808080808080808080808080808080808080808080808080808080808080" },
+      "thresholdProfile": {
+        "id": "synthetic-correspondence-boundary",
+        "version": 1,
+        "hash": "9b28e8242815e46993dd8ccba8610a1ff4c22e1249da17ddfc881c39fced3004"
+      }
+    }
+  },
+  "report": {
+    "kind": "cev-sim.visual-correspondence-report",
+    "version": 1,
+    "evaluationInputHash": "3c6af1ab2f8917f924a98f958e41bd2e3dedbc221b34d9db1540946abdcd6d46",
+    "thresholdProfile": {
+      "id": "synthetic-correspondence-boundary",
+      "version": 1,
+      "hash": "9b28e8242815e46993dd8ccba8610a1ff4c22e1249da17ddfc881c39fced3004"
+    },
+    "validator": {
+      "id": "cev-sim.synthetic-correspondence",
+      "version": "1.0.0",
+      "buildHash": "9090909090909090909090909090909090909090909090909090909090909090"
+    },
+    "artifacts": [
+      {
+        "sampleId": "sample-0",
+        "cameraId": "front",
+        "family": "analytic",
+        "product": "axial-depth",
+        "inputHash": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "outputHash": "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2",
+        "sizeBytes": 64
+      },
+      {
+        "sampleId": "sample-0",
+        "cameraId": "front",
+        "family": "visual",
+        "product": "beauty",
+        "inputHash": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+        "outputHash": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+        "sizeBytes": 64
+      }
+    ],
+    "metrics": [
+      { "id": "depth-residual", "version": 1, "cells": [{ "cameraId": "front", "regionId": "center", "distanceBandId": "near", "expectedSamples": 10, "jointValidSamples": 9, "missingVisualSamples": 1, "missingAnalyticSamples": 1, "lowConfidenceSamples": 1, "coverageRatio": 0.9, "value": 0.1, "worstValue": 0.2 }] },
+      { "id": "instance-alignment", "version": 1, "cells": [{ "cameraId": "front", "regionId": "center", "distanceBandId": "near", "expectedSamples": 10, "jointValidSamples": 9, "missingVisualSamples": 1, "missingAnalyticSamples": 1, "lowConfidenceSamples": 1, "coverageRatio": 0.9, "value": 0.9, "worstValue": 0.8 }] },
+      { "id": "joint-coverage", "version": 1, "cells": [{ "cameraId": "front", "regionId": "center", "distanceBandId": "near", "expectedSamples": 10, "jointValidSamples": 9, "missingVisualSamples": 1, "missingAnalyticSamples": 1, "lowConfidenceSamples": 1, "coverageRatio": 0.9, "value": 0.9, "worstValue": 0.8 }] },
+      { "id": "photometric-difference", "version": 1, "cells": [{ "cameraId": "front", "regionId": "center", "distanceBandId": "near", "expectedSamples": 10, "jointValidSamples": 9, "missingVisualSamples": 1, "missingAnalyticSamples": 1, "lowConfidenceSamples": 1, "coverageRatio": 0.9, "value": 5, "worstValue": 8 }] },
+      { "id": "semantic-alignment", "version": 1, "cells": [{ "cameraId": "front", "regionId": "center", "distanceBandId": "near", "expectedSamples": 10, "jointValidSamples": 9, "missingVisualSamples": 1, "missingAnalyticSamples": 1, "lowConfidenceSamples": 1, "coverageRatio": 0.9, "value": 0.9, "worstValue": 0.8 }] },
+      { "id": "silhouette-reprojection", "version": 1, "cells": [{ "cameraId": "front", "regionId": "center", "distanceBandId": "near", "expectedSamples": 10, "jointValidSamples": 9, "missingVisualSamples": 1, "missingAnalyticSamples": 1, "lowConfidenceSamples": 1, "coverageRatio": 0.9, "value": 1.5, "worstValue": 2.5 }] }
+    ],
+    "declaredPassed": false,
+    "provenance": {
+      "runtime": { "id": "cev-sim", "version": 1, "configHash": "c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1" },
+      "gpu": { "vendor": "synthetic", "renderer": "fixture", "driver": "none" },
+      "decoders": [
+        { "id": "fixture-decoder", "version": 1, "configHash": "d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1" }
+      ]
+    }
+  }
+}

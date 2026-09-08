@@ -56,6 +56,11 @@ import {
     createPersistentBakeRunConfig,
     isLegacyModelBakeConfig,
 } from "./BakeRunConfig.js";
+import {
+    adoptCommittedPromotion,
+    assertPromotionPreviewReload,
+    settleRequiredBakeUploads,
+} from "./BakePromotionResult.js";
 
 const TELEMETRY_PREVIEW_MAX_EDGE = 256;
 
@@ -1635,7 +1640,7 @@ export class BakeHarness {
             const blob = await rgbaToPngBlob(bakedImage.data, bakedImage.width, bakedImage.height, {
                 linearToSrgb: true,
             });
-            await uploadBakeFrame(this.server, blob, {
+            return uploadBakeFrame(this.server, blob, {
                 ...sharedMetadata,
                 filename: `render_beauty_${viewSlug}.png`,
                 fileRole: "render",
@@ -1674,7 +1679,7 @@ export class BakeHarness {
                 processMask.height,
                 { linearToSrgb: false },
             );
-            await uploadBakeFrame(this.server, blob, {
+            return uploadBakeFrame(this.server, blob, {
                 ...sharedMetadata,
                 filename: `${processMask.passId || "mask_process"}_${viewSlug}.png`,
                 fileRole: "mask",
@@ -1708,7 +1713,7 @@ export class BakeHarness {
                     capture.depth.height,
                     { linearToSrgb: false },
                 );
-                await uploadBakeFrame(this.server, blob, {
+                return uploadBakeFrame(this.server, blob, {
                     ...sharedMetadata,
                     filename: `depth_${viewSlug}.png`,
                     fileRole: "depth",
@@ -1717,7 +1722,17 @@ export class BakeHarness {
             })());
         }
 
-        await Promise.allSettled(uploads);
+        let uploaded;
+        try {
+            uploaded = await settleRequiredBakeUploads(uploads);
+        } catch (error) {
+            console.warn("Bake capture upload failed for", metadata.sampleId, error);
+            return null;
+        }
+        if (!uploaded) {
+            console.warn("Bake capture upload was rejected for", metadata.sampleId);
+            return null;
+        }
         this._updateTelemetry(
             {
                 stage: "Capture bundle uploaded",
@@ -1987,7 +2002,8 @@ export class BakeHarness {
             committed = true;
             persistence?.adoptPromotedVisualLayer(receipt);
             this._updateTelemetry({ stage: "Reloading preview" });
-            await this._environmentLoader()?.rematerializePreview?.();
+            const preview = await this._environmentLoader()?.rematerializePreview?.();
+            assertPromotionPreviewReload(preview, receipt);
             this._promotion = { generation: null, environmentId: null, promoting: false };
             this._updateTelemetry(
                 {
@@ -2022,15 +2038,34 @@ export class BakeHarness {
         const { environmentId, generation } = this._promotion;
         this._promotion.promoting = false;
         this._version1.controller?.abort(new Error("Bake promotion cancelled."));
+        let outcome = { cancelled: true, generation };
         if (environmentId != null && generation != null) {
             try {
-                await this._promotionClients().promotionClient.cancel(environmentId, generation);
+                outcome = await this._promotionClients().promotionClient.cancel(environmentId, generation);
             } catch {
                 // Idempotent: a missing or already-committed generation is not a client error.
             }
         }
         this._promotion.generation = null;
         this._promotion.environmentId = null;
+        if (outcome?.committed && outcome.receipt) {
+            const environment = this.data?.environment?.();
+            const persistence = environment?.persistence
+                ?? this.data?.simulation?.()?.environmentRuntime?.persistence
+                ?? null;
+            adoptCommittedPromotion(outcome, persistence);
+            this._updateTelemetry({
+                status: "success",
+                stage: "Committed before cancellation",
+                finishedAt: Date.now(),
+            }, {
+                type: "persistent-commit",
+                severity: "info",
+                message: "Bake promotion committed before cancellation",
+                detail: { generation, revision: outcome.receipt.revision },
+            });
+            return outcome;
+        }
         if (this._telemetrySnapshot.status === "running" || this._telemetrySnapshot.status === "preparing") {
             this._updateTelemetry({
                 status: "stopped",
@@ -2042,7 +2077,7 @@ export class BakeHarness {
                 message: "Bake promotion cancelled",
             });
         }
-        return { cancelled: true, generation };
+        return outcome;
     }
 
     _promotionClients() {
@@ -2090,4 +2125,3 @@ export class BakeHarness {
 
 /** @deprecated Use BakeHarness */
 export { BakeHarness as BakingHarness };
-

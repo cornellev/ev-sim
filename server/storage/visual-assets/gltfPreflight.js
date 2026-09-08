@@ -7,7 +7,7 @@ import {
 import { VISUAL_ASSET_ERROR_CODES, visualAssetError } from "../StorageErrors.js";
 import { graphError, mediaError } from "./mediaInspectors.js";
 
-const ALLOWED_REQUIRED_EXTENSIONS = new Set(VISUAL_MATERIAL_EXTENSIONS);
+const ALLOWED_EXTENSIONS = new Set(VISUAL_MATERIAL_EXTENSIONS);
 const FORBIDDEN_URI = /^(?:[a-z][a-z0-9+.-]*:|\/\/|[\\/]|[a-zA-Z]:[\\/]|\.\.(?:[\\/]|$))/i;
 
 export function gltfJsonFromChunk(jsonBytes) {
@@ -23,12 +23,12 @@ export function gltfJsonFromChunk(jsonBytes) {
     }
 }
 
-export function preflightGltf({ json, binBytes = null, limits, declaredDependencies = {} }) {
+export function preflightGltf({ json, binBytes = null, limits, declaredDependencies = {}, deadline = Infinity }) {
     if (!json || typeof json !== "object" || Array.isArray(json)) {
         throw graphError("glTF JSON must be an object.");
     }
     if (json.asset?.version !== "2.0") throw graphError("Only glTF 2.0 assets are accepted.");
-    assertNoExtras(json, "gltf");
+    assertRestrictedGraphObjects(json, { limits, deadline });
     if (hasItems(json.animations)) throw graphError("Animation is not permitted in visual profile v1.");
     if (hasItems(json.skins)) throw graphError("Skins are not permitted in visual profile v1.");
     for (const [index, mesh] of enumerate(json.meshes)) {
@@ -49,15 +49,16 @@ export function preflightGltf({ json, binBytes = null, limits, declaredDependenc
             throw graphError(`materials.${index}.alphaMode ${JSON.stringify(alphaMode)} is not permitted.`);
         }
     }
-    for (const extension of json.extensionsRequired ?? []) {
-        if (!ALLOWED_REQUIRED_EXTENSIONS.has(extension)) {
-            throw graphError(`Required glTF extension ${JSON.stringify(extension)} is not permitted.`);
+    for (const extension of [...(json.extensionsUsed ?? []), ...(json.extensionsRequired ?? [])]) {
+        if (!ALLOWED_EXTENSIONS.has(extension)) {
+            throw graphError(`glTF extension ${JSON.stringify(extension)} is not permitted.`);
         }
     }
 
     const discovered = [];
     let embeddedBytes = 0;
     for (const [index, buffer] of enumerate(json.buffers)) {
+        assertDeadline(deadline);
         const uri = buffer?.uri;
         if (uri) {
             discovered.push({ field: `buffers.${index}.uri`, uri });
@@ -70,6 +71,7 @@ export function preflightGltf({ json, binBytes = null, limits, declaredDependenc
         assertSafeCount(buffer?.byteLength, `buffers.${index}.byteLength`);
     }
     for (const [index, image] of enumerate(json.images)) {
+        assertDeadline(deadline);
         if (image?.uri) {
             discovered.push({ field: `images.${index}.uri`, uri: image.uri });
             embeddedBytes += estimateDataUriBytes(image.uri);
@@ -79,6 +81,7 @@ export function preflightGltf({ json, binBytes = null, limits, declaredDependenc
     const expected = new Set(Object.keys(declaredDependencies));
     const seen = new Set();
     for (const entry of discovered) {
+        assertDeadline(deadline);
         const digest = classifyUri(entry.uri, entry.field);
         if (!digest) continue;
         const key = `sha256:${digest}`;
@@ -94,7 +97,22 @@ export function preflightGltf({ json, binBytes = null, limits, declaredDependenc
     const accessors = json.accessors ?? [];
     const bufferViews = json.bufferViews ?? [];
     const buffers = json.buffers ?? [];
+    for (const [index, view] of enumerate(bufferViews)) {
+        const buffer = buffers[view?.buffer];
+        if (!buffer) throw graphError(`bufferViews.${index} references a missing buffer.`);
+        const offset = Number(view.byteOffset) || 0;
+        const length = Number(view.byteLength) || 0;
+        assertSafeCount(offset, `bufferViews.${index}.byteOffset`);
+        assertSafeCount(length, `bufferViews.${index}.byteLength`);
+        if (offset + length > (Number(buffer.byteLength) || 0)) {
+            throw graphError(`bufferViews.${index} overflows its buffer.`);
+        }
+        if (binBytes && view.buffer === 0 && !buffer.uri && offset + length > binBytes.length) {
+            throw graphError(`bufferViews.${index} overflows the GLB BIN chunk.`);
+        }
+    }
     for (const [index, accessor] of enumerate(accessors)) {
+        assertDeadline(deadline);
         assertSafeCount(accessor?.count, `accessors.${index}.count`);
         if (accessor?.bufferView !== undefined) {
             const view = bufferViews[accessor.bufferView];
@@ -113,6 +131,7 @@ export function preflightGltf({ json, binBytes = null, limits, declaredDependenc
     let triangles = 0;
     let vertices = 0;
     for (const [meshIndex, mesh] of enumerate(json.meshes)) {
+        assertDeadline(deadline);
         let meshTriangles = 0;
         let meshVertices = 0;
         for (const [primitiveIndex, primitive] of enumerate(mesh?.primitives)) {
@@ -149,7 +168,6 @@ export function preflightGltf({ json, binBytes = null, limits, declaredDependenc
         vertices += meshVertices;
     }
 
-    const depth = sceneGraphDepth(json, limits.graphDepth);
     const nodeCount = (json.nodes ?? []).length;
     if (nodeCount > limits.nodesPerMesh) {
         throw visualAssetError(
@@ -157,6 +175,7 @@ export function preflightGltf({ json, binBytes = null, limits, declaredDependenc
             `glTF node count ${nodeCount} exceeds the ${limits.nodesPerMesh} ceiling.`,
         );
     }
+    const depth = sceneGraphDepth(json, limits.graphDepth, deadline);
 
     return {
         uris: discovered,
@@ -167,6 +186,61 @@ export function preflightGltf({ json, binBytes = null, limits, declaredDependenc
         embeddedBytes,
         decodedBytesEstimate: embeddedBytes,
     };
+}
+
+function assertRestrictedGraphObjects(value, { limits, deadline }) {
+    const maxObjects = Math.max(4096, limits.nodesPerMesh * 16);
+    const maxDepth = limits.graphDepth + 16;
+    const pending = [{ value, path: "gltf", depth: 0 }];
+    let visited = 0;
+    while (pending.length > 0) {
+        const current = pending.pop();
+        if (!current.value || typeof current.value !== "object") continue;
+        visited += 1;
+        if ((visited & 1023) === 0) assertDeadline(deadline);
+        if (visited > maxObjects || current.depth > maxDepth) {
+            throw visualAssetError(
+                VISUAL_ASSET_ERROR_CODES.REQUEST_TOO_LARGE,
+                "glTF object graph exceeds the bounded validation profile.",
+            );
+        }
+        if (Array.isArray(current.value)) {
+            for (let index = current.value.length - 1; index >= 0; index -= 1) {
+                pending.push({
+                    value: current.value[index],
+                    path: `${current.path}.${index}`,
+                    depth: current.depth + 1,
+                });
+            }
+            continue;
+        }
+        if (Object.hasOwn(current.value, "extras")) {
+            throw graphError(`${current.path}.extras is not permitted in visual profile v1.`);
+        }
+        if (current.value.extensions !== undefined) {
+            if (!current.value.extensions || typeof current.value.extensions !== "object"
+                || Array.isArray(current.value.extensions)) {
+                throw graphError(`${current.path}.extensions must be an object.`);
+            }
+            for (const extension of Object.keys(current.value.extensions)) {
+                if (!ALLOWED_EXTENSIONS.has(extension)) {
+                    throw graphError(`${current.path}.extensions.${extension} is not permitted.`);
+                }
+            }
+        }
+        for (const [key, child] of Object.entries(current.value)) {
+            pending.push({ value: child, path: `${current.path}.${key}`, depth: current.depth + 1 });
+        }
+    }
+}
+
+function assertDeadline(deadline) {
+    if (Date.now() > deadline) {
+        throw visualAssetError(
+            VISUAL_ASSET_ERROR_CODES.VALIDATION_TIMEOUT,
+            "glTF preflight validation exceeded its time limit.",
+        );
+    }
 }
 
 function classifyUri(uri, field) {
@@ -191,18 +265,6 @@ function estimateDataUriBytes(uri) {
         return Math.max(0, Math.floor(data.length * 3 / 4) - padding);
     }
     return Buffer.byteLength(data, "utf8");
-}
-
-function assertNoExtras(value, path) {
-    if (!value || typeof value !== "object") return;
-    if (Array.isArray(value)) {
-        value.forEach((entry, index) => assertNoExtras(entry, `${path}.${index}`));
-        return;
-    }
-    if (Object.prototype.hasOwnProperty.call(value, "extras")) {
-        throw graphError(`${path}.extras is not permitted in visual profile v1.`);
-    }
-    for (const [key, child] of Object.entries(value)) assertNoExtras(child, `${path}.${key}`);
 }
 
 function assertNodeTransform(node, path) {
@@ -231,28 +293,46 @@ function assertNodeTransform(node, path) {
     }
 }
 
-function sceneGraphDepth(json, limit) {
+function sceneGraphDepth(json, limit, deadline) {
     const nodes = json.nodes ?? [];
-    let max = 0;
-    const visit = (index, depth, stack) => {
-        if (!Number.isInteger(index) || index < 0 || index >= nodes.length) {
-            throw graphError("glTF node index is out of range.");
+    const indegree = new Uint32Array(nodes.length);
+    const depth = new Uint32Array(nodes.length);
+    for (const [index, node] of nodes.entries()) {
+        if ((index & 1023) === 0) assertDeadline(deadline);
+        for (const child of node?.children ?? []) {
+            if (!Number.isInteger(child) || child < 0 || child >= nodes.length) {
+                throw graphError(`nodes.${index} contains an out-of-range child.`);
+            }
+            indegree[child] += 1;
         }
-        if (stack.has(index)) throw graphError("glTF node graph contains a cycle.");
-        if (depth > limit) {
+    }
+    const queue = [];
+    for (let index = 0; index < nodes.length; index += 1) {
+        if (indegree[index] === 0) {
+            queue.push(index);
+            depth[index] = 1;
+        }
+    }
+    let processed = 0;
+    let max = 0;
+    for (let cursor = 0; cursor < queue.length; cursor += 1) {
+        if ((cursor & 1023) === 0) assertDeadline(deadline);
+        const index = queue[cursor];
+        processed += 1;
+        max = Math.max(max, depth[index]);
+        if (depth[index] > limit) {
             throw visualAssetError(
                 VISUAL_ASSET_ERROR_CODES.REQUEST_TOO_LARGE,
                 `glTF scene graph depth exceeds the ${limit} ceiling.`,
             );
         }
-        max = Math.max(max, depth);
-        stack.add(index);
-        for (const child of nodes[index]?.children ?? []) visit(child, depth + 1, stack);
-        stack.delete(index);
-    };
-    for (const scene of json.scenes ?? []) {
-        for (const root of scene?.nodes ?? []) visit(root, 1, new Set());
+        for (const child of nodes[index]?.children ?? []) {
+            depth[child] = Math.max(depth[child], depth[index] + 1);
+            indegree[child] -= 1;
+            if (indegree[child] === 0) queue.push(child);
+        }
     }
+    if (processed !== nodes.length) throw graphError("glTF node graph contains a cycle.");
     return max;
 }
 

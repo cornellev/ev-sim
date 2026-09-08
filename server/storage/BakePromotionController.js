@@ -8,6 +8,7 @@ import {
     assertVisualLayer,
     assertVisualLayerAccess,
     assertVisualLayerAccessMatches,
+    canonicalExactStringify,
     evaluateVisualSourcePolicy,
     hashVisualLayer,
     hashVisualLayerAccess,
@@ -89,6 +90,15 @@ function sameStringSets(left = [], right = []) {
 
 function sha256Bytes(bytes) {
     return createHash("sha256").update(bytes).digest("hex");
+}
+
+function commitRequestHash(body) {
+    const json = JSON.parse(JSON.stringify(body));
+    return sha256Bytes(Buffer.from(canonicalExactStringify(json), "utf8"));
+}
+
+function sameManifest(left, right) {
+    return canonicalExactStringify(left) === canonicalExactStringify(right);
 }
 
 export class BakePromotionController {
@@ -201,7 +211,16 @@ export class BakePromotionController {
             await this.recover(environmentId);
             const state = await this.readState(environmentId);
             const existing = state.receipts?.[String(generation)];
-            if (existing) return existing;
+            const requestHash = commitRequestHash(body);
+            if (existing) {
+                if (existing.commitRequestHash && existing.commitRequestHash !== requestHash) {
+                    throw bakeError(
+                        BAKE_PROMOTION_ERROR_CODES.GENERATION_CONFLICT,
+                        `Bake generation ${generation} was already committed with different inputs.`,
+                    );
+                }
+                return existing;
+            }
             if (!state.active || state.active.generation !== generation) {
                 throw bakeError(
                     BAKE_PROMOTION_ERROR_CODES.STALE,
@@ -218,7 +237,7 @@ export class BakePromotionController {
                 throw bakeError(BAKE_PROMOTION_ERROR_CODES.BINDING_MISMATCH, "World hash changed during the bake.");
             }
             if (body.mode === "noop") {
-                return this._commitNoop(environmentId, generation, body, state, current, world);
+                return this._commitNoop(environmentId, generation, body, state, current, world, requestHash);
             }
             const documents = this._assertDocuments(body, state.active, world.hash, environmentId);
             await this._assertOutputSourceGrants(state.active.outputSourceIds);
@@ -268,6 +287,7 @@ export class BakePromotionController {
                 mode: "promote",
                 visualLayer,
                 manifest: nextManifest,
+                commitRequestHash: requestHash,
             };
             const journal = {
                 kind: JOURNAL_KIND,
@@ -326,9 +346,11 @@ export class BakePromotionController {
             let journal;
             try {
                 journal = JSON.parse(await fs.readFile(path.join(this.journalDir, name), "utf8"));
-            } catch {
-                await fs.rm(path.join(this.journalDir, name), { force: true });
-                continue;
+            } catch (error) {
+                throw bakeError(
+                    BAKE_PROMOTION_ERROR_CODES.RECOVERY_CONFLICT,
+                    `Bake promotion journal ${name} is unreadable; protective references were retained: ${error.message}`,
+                );
             }
             if (environmentId && journal.environmentId !== environmentId) continue;
             await this._recoverJournal(journal);
@@ -430,7 +452,7 @@ export class BakePromotionController {
         return null;
     }
 
-    async _commitNoop(environmentId, generation, body, state, current, world) {
+    async _commitNoop(environmentId, generation, body, state, current, world, requestHash) {
         const report = body.reuseReport ? normalizeBakeReuseReport(body.reuseReport) : null;
         if (!report || report.mode !== "noop" || report.captured.length || report.uploaded.length) {
             throw bakeError(
@@ -479,6 +501,7 @@ export class BakePromotionController {
             mode: "noop",
             visualLayer: visual,
             manifest: current,
+            commitRequestHash: requestHash,
         };
         state.receipts[String(generation)] = receipt;
         await this.writeState(state);
@@ -700,13 +723,29 @@ export class BakePromotionController {
         state.active = null;
         state.receipts[String(journal.generation)] = journal.receipt;
         await this.writeState(state);
-        await fs.rm(journalPath, { force: true });
+        await this.service._removeFileDurably(journalPath);
     }
 
     async _recoverJournal(journal) {
         const current = await this.service._readEnvironment(journal.environmentId);
-        const referenced = current?.visualLayer?.descriptorHash ?? null;
-        const published = referenced === journal.newDescriptorHash;
+        if (journal?.kind !== JOURNAL_KIND || !JOURNAL_PHASES.includes(journal.phase)
+            || !journal.nextManifest || !journal.receipt) {
+            throw bakeError(
+                BAKE_PROMOTION_ERROR_CODES.RECOVERY_CONFLICT,
+                "Bake promotion journal is malformed; protective references were retained.",
+            );
+        }
+        const currentRevision = current?.revision ?? 0;
+        const targetRevision = journal.nextManifest.revision;
+        const published = currentRevision === targetRevision && sameManifest(current, journal.nextManifest);
+        if (currentRevision > targetRevision
+            || (currentRevision === targetRevision && !published)
+            || currentRevision < targetRevision - 1) {
+            throw bakeError(
+                BAKE_PROMOTION_ERROR_CODES.RECOVERY_CONFLICT,
+                `Cannot reconcile bake generation ${journal.generation} with environment revision ${currentRevision}.`,
+            );
+        }
         if (!published && (journal.phase === "acquire-temp" || journal.phase === "publish-revision")) {
             await this._rollbackPrePublish(journal);
             return;
@@ -731,7 +770,7 @@ export class BakePromotionController {
             state.receipts[String(journal.generation)] = journal.receipt;
             await this.writeState(state);
         }
-        await fs.rm(this.journalPath(journal.environmentId, journal.generation), { force: true });
+        await this.service._removeFileDurably(this.journalPath(journal.environmentId, journal.generation));
     }
 
     async _acquireTempRoot(journal) {
@@ -820,7 +859,7 @@ export class BakePromotionController {
         const state = await this.readState(journal.environmentId);
         if (state.active?.generation === journal.generation) state.active = null;
         await this.writeState(state);
-        await fs.rm(this.journalPath(journal.environmentId, journal.generation), { force: true });
+        await this.service._removeFileDurably(this.journalPath(journal.environmentId, journal.generation));
     }
 
     async _cancelActive(environmentId, state, { invalidate = false } = {}) {

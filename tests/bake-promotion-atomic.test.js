@@ -349,3 +349,132 @@ test("legacy model configs cannot promote through VIS-08", async () => {
     assert.match(sceneSource, /harness\.start/);
     assert.equal(createPersistentBakeRunConfig({ environmentId: "yard" }).roundTrip.useModel, false);
 });
+
+test("G-ATOMIC: environment get and list serialize through every promotion phase", async () => {
+    const phases = [
+        "acquire-temp",
+        "publish-revision",
+        "replace-root",
+        "replace-reuse-root",
+        "release-temp",
+        "receipt",
+    ];
+    for (const blockedPhase of phases) {
+        let reachedPhase;
+        let resumePhase;
+        const reached = new Promise((resolve) => { reachedPhase = resolve; });
+        const faults = {
+            bakePromotion: async (phase) => {
+                if (phase !== blockedPhase) return;
+                reachedPhase();
+                await new Promise((resolve) => { resumePhase = resolve; });
+            },
+        };
+        const { dir, service } = await promotionService({ faults });
+        try {
+            const started = await beginAndCapture(service);
+            const committing = commitWritten(service, started.reservation, started.job, started.written);
+            await reached;
+            let getSettled = false;
+            let listSettled = false;
+            const reading = service.getEnvironment("yard").then((value) => {
+                getSettled = true;
+                return value;
+            });
+            const listing = service.listEnvironments().then((value) => {
+                listSettled = true;
+                return value;
+            });
+            await Promise.resolve();
+            await Promise.resolve();
+            assert.equal(getSettled, false, blockedPhase);
+            assert.equal(listSettled, false, blockedPhase);
+            assert.equal(
+                (await service.bakePromotions.readState("yard")).active.generation,
+                started.reservation.generation,
+                blockedPhase,
+            );
+            resumePhase();
+            const [receipt, stored, catalog] = await Promise.all([committing, reading, listing]);
+            assert.equal(stored.revision, receipt.revision, blockedPhase);
+            assert.equal(stored.visualLayer.descriptorHash, receipt.descriptorHash, blockedPhase);
+            assert.equal(catalog.find((entry) => entry.id === "yard").revision, receipt.revision, blockedPhase);
+        } finally {
+            await fs.rm(dir, { recursive: true, force: true });
+        }
+    }
+});
+
+test("G-ATOMIC: repeated descriptor recovery uses complete manifest identity and target revision", async () => {
+    const faults = {};
+    const { dir, service } = await promotionService({ faults });
+    try {
+        const first = await beginAndCapture(service);
+        const firstReceipt = await commitWritten(service, first.reservation, first.job, first.written);
+        const second = await beginAndCapture(service);
+        assert.equal(second.written.artifactSet.descriptorHash, firstReceipt.descriptorHash);
+        faults.bakePromotionPhase = "replace-root";
+        await assert.rejects(
+            () => commitWritten(service, second.reservation, second.job, second.written),
+            (error) => error.code === "BAKE_PROMOTION_FAULT",
+        );
+        const restarted = new StorageService(dir, {
+            visualAssets: { registryPath: path.join(dir, "visual-source-registry.json") },
+            bakeOutputSourceIds: ["owned-lab"],
+        });
+        const recovered = await restarted.getEnvironment("yard");
+        const state = await restarted.bakePromotions.readState("yard");
+        const receipt = state.receipts[String(second.reservation.generation)];
+        assert.equal(recovered.revision, firstReceipt.revision + 1);
+        assert.equal(receipt.revision, recovered.revision);
+        assert.deepEqual(recovered.visualLayer, receipt.visualLayer);
+    } finally {
+        await fs.rm(dir, { recursive: true, force: true });
+    }
+});
+
+test("G-ATOMIC: committed generation retries are bound to the original request", async () => {
+    const { dir, service } = await promotionService();
+    try {
+        const started = await beginAndCapture(service);
+        await commitWritten(service, started.reservation, started.job, started.written);
+        await assert.rejects(
+            () => service.commitBakePromotion("yard", started.reservation.generation, {
+                config: { ...started.job.config, seed: started.job.config.seed + 1 },
+                snapshot: started.job.snapshot,
+                plan: started.job.plan,
+                request: started.job.request,
+                response: started.job.response,
+                artifactSet: started.written.artifactSet,
+                descriptor: started.written.descriptor,
+                access: started.written.access,
+            }),
+            (error) => error.code === BAKE_PROMOTION_ERROR_CODES.GENERATION_CONFLICT,
+        );
+    } finally {
+        await fs.rm(dir, { recursive: true, force: true });
+    }
+});
+
+test("G-ATOMIC: corrupt recovery journals remain in place with protective state", async () => {
+    const { dir, service } = await promotionService();
+    try {
+        const current = await service.getEnvironment("yard");
+        const reservation = await service.beginBakePromotion("yard", { expectedRevision: current.revision });
+        const journalPath = service.bakePromotions.journalPath("yard", reservation.generation);
+        await fs.mkdir(path.dirname(journalPath), { recursive: true });
+        await fs.writeFile(journalPath, "{broken");
+        const restarted = new StorageService(dir, {
+            visualAssets: { registryPath: path.join(dir, "visual-source-registry.json") },
+            bakeOutputSourceIds: ["owned-lab"],
+        });
+        await assert.rejects(
+            () => restarted.getEnvironment("yard"),
+            (error) => error.code === BAKE_PROMOTION_ERROR_CODES.RECOVERY_CONFLICT,
+        );
+        assert.equal(await fs.readFile(journalPath, "utf8"), "{broken");
+        assert.equal((await restarted.bakePromotions.readState("yard")).active.generation, reservation.generation);
+    } finally {
+        await fs.rm(dir, { recursive: true, force: true });
+    }
+});

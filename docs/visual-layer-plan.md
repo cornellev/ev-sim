@@ -25,7 +25,7 @@ a VIS, GOOG, or GS PR changes a contract, hash, gate, or milestone status.
 
 ## Status and release verdict
 
-- Next milestone: **VIS-16a — evidence schema and admission contract**. VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, VIS-05a, VIS-05b, VIS-06a, VIS-06b, VIS-07, VIS-08, VIS-09, and VIS-10a are implemented.
+- Next milestone: **VIS-12b — conditional visual run resolution**. VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, VIS-05a, VIS-05b, VIS-06a, VIS-06b, VIS-07, VIS-08, VIS-09, VIS-10a, and VIS-16a are implemented.
 - Review verdict: **NO-GO for the original ordering and for claiming visual
   runtime support.** The five Blocker findings below require implementation
   and evidence. This revision supplies the corrected handoff; editing the
@@ -33,8 +33,8 @@ a VIS, GOOG, or GS PR changes a contract, hash, gate, or milestone status.
 - Core assumption: **Google approval, Google-derived assets, Gaussian
   splatting, and a model service are unavailable.**
 - Default implementation/review reasoning level: **Extra High**.
-- Last updated: **2026-09-08 — VIS-10a deterministic atlas construction implemented**.
--   VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, VIS-05a, VIS-05b, VIS-06a, VIS-06b, VIS-07, VIS-08, VIS-09, and VIS-10a acceptance evidence is recorded in
+- Last updated: **2026-09-08 — VIS-16a evidence contracts and corrective maintenance implemented**.
+-   VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, VIS-05a, VIS-05b, VIS-06a, VIS-06b, VIS-07, VIS-08, VIS-09, VIS-10a, and VIS-16a acceptance evidence is recorded in
   the progress ledger and decision log. Protocol 1.3 advertises `world-bound@2`.
   Only `canonical-analytic@1` and GPU sensor backend v1 remain runtime-capable;
   no visual renderer or package-admission capability is advertised. Environment
@@ -47,6 +47,9 @@ a VIS, GOOG, or GS PR changes a contract, hash, gate, or milestone status.
   G-PROVENANCE fixed-input outputs, G-LIFECYCLE promotion, and G-INDEPENDENCE
   bake/reload. VIS-09 closes F13 reuse authorization and G-INCREMENTAL.
   VIS-10a closes G-ATLAS and atlas-path G-INCREMENTAL/G-SCALE fusion bounds.
+  VIS-16a closes the schema/tamper/cycle portion of G-CORRESPONDENCE with
+  synthetic thresholds. Real correspondence evaluation and managed-runtime
+  enforcement remain VIS-16b.
   Later non-capture G-RIGHTS boundaries and remaining F10/F16 work remain open.
 
 The owned/synthetic-asset core must independently deliver author/import →
@@ -59,7 +62,7 @@ may improve appearance, but cannot be prerequisites for this path.
 Original VIS numbers remain workstream identifiers. Suffixes below identify
 actual PRs; completing one suffix does not complete its entire workstream.
 All required entries except VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, VIS-05a,
-VIS-05b, VIS-06a, VIS-06b, VIS-07, VIS-08, VIS-09, and VIS-10a remain unstarted.
+VIS-05b, VIS-06a, VIS-06b, VIS-07, VIS-08, VIS-09, VIS-10a, and VIS-16a remain unstarted.
 
 | Workstream | Required core PRs | Optional enrichment |
 | --- | --- | --- |
@@ -98,8 +101,9 @@ environment rebind/transaction cases. VIS-04 supplies F11's bounded CAS
 validator, F12's storage roots/pins/quotas/no-delete policy, and F15's
 ingestion/content/root-pin rights enforcement. Neither F01 nor F06 is fully
 closed: selected visual resources still require VIS-12b, and bake-promotion
-races are closed by VIS-08. F09 product completeness remains later VIS work. F11
-loader cases remain VIS-05a/VIS-13a. F12 execution-root wiring remains
+races are closed by VIS-08 and the VIS-16a corrective maintenance. F09 product completeness remains later VIS work. F11
+loader cases are closed by corrected VIS-04/VIS-05a validation; hostile archive
+extraction remains VIS-13a. F12 execution-root wiring remains
 VIS-13b/VIS-15b. F15 import/bake/package/worker denial remains later VIS/GOOG
 work. The other runtime findings retain their owning gates.
 
@@ -109,13 +113,13 @@ work. The other runtime findings retain their owning gates.
 | F02 **Blocker** | [EnvironmentLoader.js](../app/3d/environment/EnvironmentLoader.js) rebuilds the shared scene and restores editor/sky state. [ManifestCamera.js](../app/3d/devices/ManifestCamera.js) passes that scene to [CameraRenderProducts.js](../app/3d/perception/CameraRenderProducts.js), which renders current materials/visibility. Loading VIS-05 visuals there can alter measured analytic RGB before VIS-12 has hashed them. | Put VIS-06a isolation before VIS-05a and enable measured PBR only in VIS-14. G-ISOLATION changes preview assets, sky, visibility, and bake state during a resolved run and proves its captures stay immutable. |
 | F03 **Blocker** | [headless.proto](../proto/cev_sim/headless/v1/headless.proto) transports bundle JSON, not asset bytes. [Cli.js](../server/headless/Cli.js) reads JSON; [bundle.py](../python/src/cev_sim/bundle.py) does the same. [HeadlessSupervisor.js](../server/headless/HeadlessSupervisor.js) initializes workers from bundles. An archive exporter alone cannot execute a portable visual run. [build-headless-dist.mjs](../scripts/build-headless-dist.mjs) follows JavaScript imports, not arbitrary renderer pages or decoder assets. | Split VIS-13 into strict packaging and asset admission, and VIS-15c into installed runtime closure. G-PACKAGE and G-INSTALLED execute a package with no checkout, authoring server, or network. |
 | F04 **Blocker** | [ManagedHeadlessSession.js](../server/headless/ManagedHeadlessSession.js) rejects cameras/GPU backends, creates a runtime without a renderer, and advances synchronously. The managed branch in [HeadlessSupervisor.js](../server/headless/HeadlessSupervisor.js) lacks the renderer handler used by normal workers. A new renderer alone cannot run VIS-17 experiments. | Split VIS-15b from VIS-15a and make it a dependency of managed correspondence/fidelity gates. G-MANAGED exercises queued cameras, restart, cancellation, and infrastructure errors. |
-| F05 **Blocker** | VIS-03 added environment revision compare-and-swap. VIS-08 replaced bake `allSettled` false-success with fail-fast uploads and a generation-checked commit that cannot attach a partial layer. Remaining F05 work is EnvironmentPersistence queued-write/suspend races outside bake promotion. | VIS-03 revision CAS plus VIS-08 G-ATOMIC promotion. Persistence queue races stay tracked until later editor work. |
+| F05 **Blocker** | VIS-03 added server compare-and-swap. VIS-16a corrective maintenance added edit-generation acknowledgements, suspension across every save entry point, strict joined-flush failures, explicit-null application, and stale response/receipt rejection. VIS-08 promotion recovery now shares the environment lane, checks exact target revision and complete manifest identity, durably orders journal/root/receipt changes, binds retries, reconciles cancel/commit races, and rejects every failed legacy upload before completion telemetry. | Closed by corrected VIS-03/VIS-08 G-ATOMIC and persistence race regressions. |
 | F06 **High** | [WorldDescription.js](../app/simulation/world/WorldDescription.js) hashes `environmentId`; [StorageService.js](../server/storage/StorageService.js) duplication, ID changes, and conflicting imports change IDs. Retaining a visual descriptor unchanged makes `sourceWorldHash` stale. [RunBundle.js](../server/headless/RunBundle.js) accepts the current resolved manifest version, not every historical authored version. A global GPU identity bump can invalidate old analytic selections. | Correct VIS-03 rebind behavior and VIS-12a migration/version dispatch; preserve old provider identities. G-MIGRATION distinguishes rename, duplicate, import, integrity verification, and executable support. |
 | F07 **High** | [SensorTypeRegistry.js](../app/3d/devices/SensorTypeRegistry.js) accepts unequal/off-center intrinsics; [ManifestCamera.js](../app/3d/devices/ManifestCamera.js) and [PooledGpuRenderer.js](../server/headless/PooledGpuRenderer.js) construct FOV/aspect projections. [BakeView.js](../app/3d/environment/visualization/BakeView.js) uses a different pixel-center convention. Published calibration can disagree with pixels even when both renderers agree. | Put shared versioned K-to-projection math in VIS-06a. G-CALIBRATION uses independently calculated points, unequal focal lengths, off-center principal points, and rotated mounts. |
 | F08 **High** | [BakeView.js](../app/3d/environment/visualization/BakeView.js) hides non-target mask geometry, forces depth visibility, and boosts beauty road materials; these are not aligned samples. [CameraRenderProducts.js](../app/3d/perception/CameraRenderProducts.js) changes materials on scene meshes rather than selecting independent truth twins. Fusion or correspondence can accept occluded/misregistered samples. | Split VIS-06b from legacy calibration/isolation; define separate visual G-buffer and analytic oracle pass families. G-GBUFFER proves occlusion, validity, alpha policy, encoding, and exception-safe restoration. |
 | F09 **High** | [HeadlessGpuSensorManager.js](../app/simulation/sensors/HeadlessGpuSensorManager.js) shares `renderScene || lidarGeometry`; its camera implementation produces RGB/CameraInfo rather than every authored oracle product. [SensorTypeRegistry.js](../app/3d/devices/SensorTypeRegistry.js), `normalizeRunSensor`, has a fixed authored field set. [PerceptionTruthIndex.js](../app/autonomy/PerceptionTruthIndex.js) and [EnvironmentRegistry.js](../app/3d/editor/EnvironmentRegistry.js) discover truth from scene metadata. PBR geometry or imported GLTF extras can cross the truth boundary, while unsupported products can disappear. | VIS-02 added provider/profile schemas and explicit validation; remaining product-completeness and selected-visual resolution belong to later VIS/VIS-12b. Separate truth resources and sanitize imported metadata in VIS-05a/VIS-14/VIS-15a. G-CAPABILITY and G-ORACLE prove product completeness and observation isolation. |
 | F10 **High** | VIS-07 serializes bake planning inputs and canonicalizes planner order. VIS-08 emits deterministic PNG/GLB captured-radiance artifacts with explicit unlit semantics. VIS-10a emits per-chunk atlas pages with hashed construction policy. Remaining F10 work is browser `bakeUpload.js` encoding on the legacy path, unpinned Python model options, and VIS-10b material estimation. | Combine the provider job contract with VIS-07; split deterministic atlas construction (VIS-10a) from optional material estimation (VIS-10b/VIS-11). G-PROVENANCE and G-ATLAS separate fixed-input determinism from GPU/model nondeterminism and test material semantics. |
-| F11 **High** | The installed `three/examples/jsm/loaders/GLTFLoader.js` resolves buffer/image URIs, copies extras into `userData`, and can warn rather than reject an unknown required extension; `three/examples/jsm/loaders/KTX2Loader.js` loads transcoder resources and allocates decoded textures. Three is declared in [package.json](../package.json). Existing [StorageService.js](../server/storage/StorageService.js) has no visual graph/archive validator. The proposed VIS-05 loader path therefore needs more than digest/MIME checks to prevent network/file access, expansion bombs, unsupported content, or metadata injection. | Require a restricted asset profile, bounded parser/decoder, closed digest graph, and hostile archive validation in VIS-04/VIS-13a before loaders become usable. G-SECURITY proves rejection before external access or unbounded allocation. |
+| F11 **High** | Corrected VIS-04/VIS-05a now require current versioned validation before content or materialization; iteratively bound glTF preflight; apply one extension allowlist to declarations and objects; inspect embedded/digest-backed images and decoded memory before loaders; authorize only loader-created object URLs; sanitize metadata; and propagate decoder failures. Archive support remains unavailable. | GLB/glTF loader boundary closed by G-SECURITY. Hostile USTAR validation remains a mandatory VIS-13a prerequisite before extraction or package-loader access. |
 | F12 **High** | [StorageService.js](../server/storage/StorageService.js) persists queued experiment bundle sidecars under `headless-run-bundles`; environment/package references are not the whole live set. Worker resets, queued jobs, replay, bake staging, and validation reports also need blobs. Environment-only reference checks allow deletion of required assets or indefinite growth. | Put pins, durable roots, quotas, staging recovery, and a no-unsafe-delete policy in VIS-04; wire execution roots in VIS-13b/VIS-15b. G-LIFECYCLE races deletion against queueing, promotion, restart, reset, and cancellation. |
 | F13 **High** | VIS-09 added per-unit dependency keys, typed chunk mutations, and conservative global invalidation. VIS-10a fuses one chunk/page at a time under ledger reservations and rebuilds only dirty atlas chunks. Remaining F13/G-SCALE risk is advertised hardware city-scale reports, not reuse authorization. | VIS-09 G-INCREMENTAL compares complete vs incremental descriptor/access/asset identity. Residency never authorizes reuse. |
 | F14 **High** | [ProjectedBuildingTextureManager.js](../app/3d/environment/visualization/ProjectedBuildingTextureManager.js) creates per-projection textures/meshes with culling disabled. [BakeCaptureMemory.js](../app/3d/environment/visualization/BakeCaptureMemory.js) bounds a capture buffer, not aggregate residency. [BakeHarness.js](../app/3d/environment/visualization/BakeHarness.js) performs repeated scene searches. [PooledGpuRenderer.js](../server/headless/PooledGpuRenderer.js) accounts JSON/output bytes and transfers whole scene data in its analytic path. City-scale memory and work can grow with all views/geometry per frame. | Add VIS-05b before camera delivery and require resident asset handles/dynamic deltas in VIS-15a. G-SCALE imposes owned workload, CPU/GPU memory, latency, throughput, and cancellation budgets. |
@@ -1538,8 +1542,8 @@ person and commit their decision/evidence before the specified gate.
 | **D04** | Runtime packaging/release owner | Delivery of renderer/decoder runtime assets, dependency/license closure, package size ceiling or separately verified runtime artifact choice, and offline installation expectations. No scene/model data in the runtime tarball. | VIS-15c; constraints recorded in VIS-01 |
 | **D05** | Repository owner (interim baseline); applicable legal/source owner for grants | **Resolved baseline; ingestion enforced in VIS-04:** only the configured local operator registry is trusted; permissions intersect through ancestry; unknown/revoked/expired sources and ungranted Google-derived operations fail closed. VIS-04 loads the operator file with no mutation API and re-evaluates grants at upload, content access, and root/pin acquisition. | VIS-04 ingestion evidence recorded; every GOOG activation still needs its source owner |
 | **D06** | Performance + deployment owners | Numeric city workload and CPU/GPU/storage/decode budgets, camera rate/latency, concurrency, bake duration and recovery thresholds per supported hardware stack. Decide the advertised capacity from measurements. | VIS-05b; rerun for VIS-15a and VIS-17c |
-| **D07** | Perception validation + experiment owners | Geometric/photometric thresholds, coverage minimums, near/far bands, worst-region limits, confidence/no-hit denominators and matched-fidelity experiment policy. | VIS-16a schema; fixed before VIS-16b evaluates acceptance |
-| **D08** | Validation + runtime owners | Accepted validator/tool provenance, locally recomputed versus trusted imported reports, stale-evidence handling and admission/recovery authority. Define who can approve a threshold/report profile. | VIS-16a; enforced by VIS-16b |
+| **D07** | Repository owner (interim); perception validation + experiment owners | **Resolved for VIS-16a contracts:** versioned profiles carry required metrics, sample/coverage minimums, non-overlapping distance bands, comparison operators, worst-region limits, and confidence/no-hit denominators. Only synthetic boundary profiles are present. No production threshold profile is approved until VIS-16b records real matched-fidelity evidence. | Synthetic schema decision recorded; production values remain a VIS-16b gate |
+| **D08** | Repository owner (interim); validation + runtime owners | **Resolved for VIS-16a trust policy:** only exact report bytes recomputed through a trusted local runtime boundary can become managed evidence. Imported/self-attested reports are diagnostic. Profile approval and local-validation records are trusted context outside report JSON; current asset-validation, rights, and capability checks remain mandatory. VIS-16b must refresh applicability at queue, worker start, and recovery. | Contract policy recorded; runtime enforcement remains VIS-16b |
 | **D09** | Product + runtime/hardware owners | Supported release platforms and precision/replay guarantees, candidate workflow/runner access, soak duration, and actual x64/Jetson evidence. Any narrower support claim needs explicit sign-off. | Any PBR capability activation; VIS-17c release |
 
 Default denials, preserved world semantics, explicit errors, immutable
@@ -1549,9 +1553,9 @@ requirements with silent fallback or unsupported claims.
 
 ## Progress and acceptance ledger
 
-VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, VIS-05a, VIS-05b, and VIS-06a are
-complete in the working tree; all other required core PRs remain **not
-started**. VIS-12a landed at commit
+VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, VIS-05a, VIS-05b, VIS-06a, VIS-06b,
+VIS-07, VIS-08, VIS-09, VIS-10a, and VIS-16a are complete in the working tree;
+all other required core PRs remain **not started**. VIS-12a landed at commit
 `e4f756a`. Its accountable owner remains the repository owner under D01.
 
 - [x] VIS-01 — contract helpers, docs, additive protocol declarations, owned
@@ -1863,8 +1867,21 @@ started**. VIS-12a landed at commit
   codecs, artifact-set/reuse-manifest v2, Three-independent chart packing and
   fusion, and a durable bake-reuse root replaced transactionally with the visual
   root. Projected captured-radiance remains an explicit compatibility mode. See
-  the VIS-10a decision-log entry for exact evidence. VIS-16a is next.
-- [ ] VIS-16a
+  the VIS-10a decision-log entry for exact evidence. VIS-16a followed.
+- [x] VIS-16a — Strict `cev-sim.visual-evaluation-input@1`,
+  `cev-sim.visual-correspondence-report@1`, and
+  `cev-sim.visual-threshold-profile@1` normalization, exact JSON/JCS hashes,
+  complete camera/AOI/distance-band metric cells, synthetic threshold vectors,
+  and diagnostic/managed contract admission. Managed checks ignore submitted
+  pass flags and require exact report bytes, an approved production-profile
+  registry, current rights/capability decisions, and matching local-validation
+  trust outside report JSON. No production profile, evaluator endpoint,
+  provider/backend activation, or managed-runtime integration was added.
+  Corrective maintenance closes the reviewed VIS-03 persistence races,
+  VIS-04/VIS-05a hostile GLB loader gaps, VIS-06a production-adapter browser
+  evidence gap, and VIS-08 recovery/success-reporting gaps. Hostile USTAR
+  validation remains VIS-13a; real correspondence remains VIS-16b. See the
+  VIS-16a decision-log entry for exact acceptance evidence. VIS-12b is next.
 - [ ] VIS-12b
 - [ ] VIS-13a
 - [ ] VIS-13b
@@ -2468,7 +2485,61 @@ equivalence, plus bounded fusion reservations from G-SCALE. F10 remains
 partially open for legacy `bakeUpload.js` encoding, unpinned Python model
 options, and VIS-10b. F16 remains open for explicit legacy `start()`.
 Protocol 1.3, advertised capabilities, Python, run manifests, protobuf,
-`pbr-mesh@1`, and GPU backend v2 are unchanged. VIS-16a is next.
+`pbr-mesh@1`, and GPU backend v2 are unchanged. VIS-16a followed; VIS-12b is next.
 
 Local acceptance: focused atlas/incremental/promotion/catalog/artifact/chunk/persistence/independence suites passed 82/82 with no skips. Coverage includes bake-contract v1/v2 dispatch, unknown-field rejection, contribution tamper detection and golden hashes, G-ATLAS seams/missing UVs/chunk clipping/holes/fusion order/overflow/unlit-vs-Lambert/shuffled inputs, G-INCREMENTAL no-op/insert/delete/material/move/sky/v1-migration/dirty-chunk contribution reuse, fusion ceiling, and bake-reuse root replacement/cancel/journal recovery. `npm run lint` completed with zero errors and two pre-existing warnings. `npm test` passed 825/827 with the two declared hardware GPU skips. `npm run test:headless` passed 87/87. `npm run build` succeeded. `npm run fixtures:headless` produced no characterization delta. `npm run benchmark:visual-scale:quick` passed with the hosted `hardware-telemetry` skip. `npm run test:ui` was not run.
 
+### 2026-09-08 — Implement VIS-16a evidence contracts and corrective maintenance
+
+Add pure-ES-module contracts for versioned visual evaluation inputs,
+correspondence reports, and threshold profiles. Strict parsing rejects duplicate
+JSON keys, unknown fields, unsupported versions, unsafe counts, non-finite
+values, and hash/body mismatches. Evaluation identity binds the visual and
+simulation inputs, exact camera calibration, capture policy, ordered poses and
+integer times, expected capture artifacts, AOI, distance bands, dynamic state,
+action tape, seeds, and metric-policy versions without creating a report hash
+cycle. Reports bind exact input/output artifact digests and validator, build,
+runtime, GPU, driver, and decoder provenance. Their exact byte digest remains
+outside the report body.
+
+Admission recomputes integrity, applicability, validator/build eligibility,
+profile compatibility, coverage, thresholds, rights, and capabilities without
+trusting a submitted pass flag. Diagnostic reports may be generated after
+asset-validation, rights, and capability checks but cannot become managed experiment results.
+Managed admission requires an externally approved production profile and an
+exact trusted local-validation record; neither can be self-attested in report
+JSON. Only synthetic boundary fixtures ship in VIS-16a. D07 and D08 name the
+repository owner as interim owner. Real matched-fidelity evaluation, production
+threshold approval, queue/start/recovery enforcement, and evidence UI remain
+VIS-16b and VIS-17 work.
+
+Corrective maintenance makes VIS-03 autosave acknowledgements generation-aware,
+blocks all save entry points during suspension, preserves joined strict-flush
+failures, applies explicit null references, and rejects stale environment
+responses and receipts. VIS-04 validation evidence is version 2 and performs
+bounded extension, graph, accessor, buffer, embedded-image, digest-image, and
+decoded-memory checks before image decoding or `GLTFLoader`; stale or missing
+evidence is revalidated from immutable CAS bytes. Loader-owned object URLs are
+explicit and texture/decoder failures propagate. Archive support remains
+unavailable pending hostile USTAR verification in VIS-13a.
+
+VIS-08 promotion recovery now shares the environment transaction lane with
+reads and writes, requires the intended revision and complete manifest identity,
+retains ambiguous journals and protective roots, and durably orders journal,
+environment, root, and receipt changes. Idempotent retries bind the original
+commit request, cancellation reconciles a winning commit, legacy uploads require
+every fulfilled `true` result, and preview reload failures retain the committed
+receipt. VIS-06a browser evidence now imports the production capture pipeline
+and camera adapter, mutates an isolated preview during capture, and verifies
+unequal focal lengths, off-center principal points, rotated mounts, and stable
+measured/analytic output. Measured PBR, GPU backend v2, protocol changes, package
+admission, and new capabilities remain unavailable.
+
+Local acceptance: the focused correspondence, persistence, hostile-asset,
+materializer/cache, promotion, and bake-result suites passed 47/47. `npm run lint`
+completed with zero errors and two pre-existing warnings. `npm test` passed
+845/847 with the two declared hardware GPU skips. `npm run test:headless` passed
+87/87. The production isolation Playwright case passed 1/1, and the aligned
+G-buffer cases passed 2/2 with one software-rendered case assigned a 60-second
+test budget. The Playwright web server build succeeded. No simulator behavior
+changed, so the committed action-tape characterization was not refreshed.

@@ -43,11 +43,15 @@ export class EnvironmentPersistence {
         this._queued = false;
         this._queuedKeepalive = false;
         this._discarded = false;
+        this._suspended = false;
         this._generation = 0;
+        this._editGeneration = 0;
+        this._acknowledgedEditGeneration = 0;
         this._acknowledgedRevision = Math.max(0, Number(revision) || 0);
         this._dirty = false;
         this._conflict = null;
         this._sending = false;
+        this._saveThrowOnError = false;
         this._chain = Promise.resolve();
 
         this._flushForUnload = () => this.flush({ keepalive: true });
@@ -72,6 +76,7 @@ export class EnvironmentPersistence {
 
     attach() {
         this._discarded = false;
+        this._suspended = false;
         const environment = this.data.environment();
         const onChange = () => this._handleChange();
 
@@ -126,6 +131,7 @@ export class EnvironmentPersistence {
      */
     async suspendAutosave() {
         this._attached = false;
+        this._suspended = true;
         this._clearTimer();
         this._firstPendingAt = 0;
         this._queued = false;
@@ -140,7 +146,9 @@ export class EnvironmentPersistence {
     /** Resume watching for local edits after an external apply. */
     resumeAutosave() {
         if (this._discarded) return;
+        this._suspended = false;
         this._attached = true;
+        if (this._dirty && !this._conflict) this._saveNow();
     }
 
     /**
@@ -149,16 +157,20 @@ export class EnvironmentPersistence {
      */
     adoptPromotedVisualLayer(receipt) {
         const next = Number(receipt?.revision);
-        if (!Number.isInteger(next) || next < 0) return;
-        this._acknowledgedRevision = next;
+        if (!Number.isInteger(next) || next < this._acknowledgedRevision) return;
+        if (receipt?.environmentId && receipt.environmentId !== this.environmentId) return;
         const environment = this.data.environment();
-        if (!environment) return;
+        if (!environment || environment.environmentId !== this.environmentId) return;
+        this._acknowledgedRevision = next;
         environment.revision = next;
-        environment.visualLayer = receipt.visualLayer
-            ?? receipt.manifest?.visualLayer
-            ?? environment.visualLayer
-            ?? null;
-        environment.evidence = receipt.manifest?.evidence ?? null;
+        if (Object.hasOwn(receipt ?? {}, "visualLayer")) {
+            environment.visualLayer = receipt.visualLayer;
+        } else if (Object.hasOwn(receipt?.manifest ?? {}, "visualLayer")) {
+            environment.visualLayer = receipt.manifest.visualLayer;
+        }
+        if (Object.hasOwn(receipt?.manifest ?? {}, "evidence")) {
+            environment.evidence = receipt.manifest.evidence;
+        }
     }
 
     /**
@@ -167,13 +179,15 @@ export class EnvironmentPersistence {
      */
     adoptRevision(revision, { force = false } = {}) {
         const next = Number(revision);
-        if (!Number.isInteger(next) || next < 0) return;
+        if (!Number.isInteger(next) || next < this._acknowledgedRevision) return;
         if (!force && (this._dirty || this._sending || this._conflict)) return;
-        this._acknowledgedRevision = next;
         const environment = this.data.environment();
-        if (environment) environment.revision = next;
+        if (!environment || environment.environmentId !== this.environmentId) return;
+        this._acknowledgedRevision = next;
+        environment.revision = next;
         if (force) {
             this._dirty = false;
+            this._acknowledgedEditGeneration = this._editGeneration;
             this._conflict = null;
         }
     }
@@ -200,6 +214,7 @@ export class EnvironmentPersistence {
     _handleChange() {
         if (!this._attached) return;
 
+        this._editGeneration += 1;
         this._dirty = true;
         const now = Date.now();
         if (!this._firstPendingAt) this._firstPendingAt = now;
@@ -216,19 +231,25 @@ export class EnvironmentPersistence {
     _saveNow() {
         this._clearTimer();
         this._firstPendingAt = 0;
-        this._save();
+        this._save().catch(() => {
+            // Strict flush callers observe the shared rejection. Autosave has
+            // no awaiting caller and conflict/error state remains recorded.
+        });
     }
 
     async _save({ keepalive = false, throwOnError = false } = {}) {
         if (this._discarded) return null;
+        if (this._suspended) return this._chain;
         if (keepalive) this._queuedKeepalive = true;
         if (this._sending) {
-            this._queued = true;
+            if (this._dirty) this._queued = true;
+            if (throwOnError) this._saveThrowOnError = true;
             return this._chain;
         }
 
         const generation = this._generation;
         this._sending = true;
+        this._saveThrowOnError = throwOnError;
         this._chain = (async () => {
             let last = null;
             try {
@@ -240,11 +261,12 @@ export class EnvironmentPersistence {
                 } while (this._queued && !this._discarded && !this._conflict && generation === this._generation);
                 return last;
             } catch (error) {
-                if (!throwOnError) console.warn("[environment] autosave failed:", error);
-                if (throwOnError) throw error;
+                if (!this._saveThrowOnError) console.warn("[environment] autosave failed:", error);
+                if (this._saveThrowOnError) throw error;
                 return null;
             } finally {
                 this._sending = false;
+                this._saveThrowOnError = false;
             }
         })();
         return this._chain;
@@ -252,6 +274,7 @@ export class EnvironmentPersistence {
 
     async _sendLatest({ keepalive = false, generation }) {
         const expectedRevision = this._acknowledgedRevision;
+        const editGeneration = this._editGeneration;
         const manifest = this.data.environment().toManifest();
         try {
             const stored = await this._put(
@@ -260,14 +283,17 @@ export class EnvironmentPersistence {
                 { keepalive },
             );
             if (this._discarded) return stored;
-            this._acknowledgedRevision = Number(stored?.revision) || expectedRevision + 1;
+            if (stored?.environmentId && stored.environmentId !== this.environmentId) return stored;
+            const storedRevision = Number(stored?.revision) || expectedRevision + 1;
+            if (storedRevision < this._acknowledgedRevision) return stored;
             const environment = this.data.environment();
-            if (environment) {
-                environment.revision = this._acknowledgedRevision;
-                environment.visualLayer = stored?.visualLayer ?? environment.visualLayer ?? null;
-                environment.evidence = stored?.evidence ?? environment.evidence ?? null;
-            }
-            if (generation !== this._generation) {
+            if (!environment || environment.environmentId !== this.environmentId) return stored;
+            this._acknowledgedRevision = storedRevision;
+            environment.revision = storedRevision;
+            if (Object.hasOwn(stored ?? {}, "visualLayer")) environment.visualLayer = stored.visualLayer;
+            if (Object.hasOwn(stored ?? {}, "evidence")) environment.evidence = stored.evidence;
+            this._acknowledgedEditGeneration = Math.max(this._acknowledgedEditGeneration, editGeneration);
+            if (generation !== this._generation || this._editGeneration > editGeneration) {
                 this._dirty = true;
                 return stored;
             }
@@ -291,6 +317,10 @@ export class EnvironmentPersistence {
      */
     flush({ keepalive = false, throwOnError = false } = {}) {
         if (this._discarded) return Promise.resolve();
+        if (this._suspended) {
+            if (throwOnError && this._sending) this._saveThrowOnError = true;
+            return this._chain;
+        }
         if (!this._dirty && !this._sending && !this._queued) return Promise.resolve();
         this._clearTimer();
         this._firstPendingAt = 0;

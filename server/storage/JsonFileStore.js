@@ -99,6 +99,18 @@ function clone(value) {
 async function flushToDisk(filePath, value) {
     await fs.mkdir(path.dirname(filePath), { recursive: true });
     const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-    await fs.writeFile(tempPath, JSON.stringify(value, null, 2), "utf8");
+    const handle = await fs.open(tempPath, "w");
+    try {
+        await handle.writeFile(JSON.stringify(value, null, 2), "utf8");
+        await handle.sync();
+    } finally {
+        await handle.close();
+    }
     await fs.rename(tempPath, filePath);
+    const directory = await fs.open(path.dirname(filePath), "r");
+    try {
+        await directory.sync();
+    } finally {
+        await directory.close();
+    }
 }

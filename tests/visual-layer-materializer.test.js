@@ -267,6 +267,12 @@ test("glTF URI guard rejects relative, network, file, and unknown URIs before a 
         }
         assert.equal(modifier("blob:allowed"), "blob:allowed");
         assert.equal(modifier(`sha256:${"a".repeat(64)}`), "blob:allowed");
+        assert.throws(
+            () => modifier("blob:loader-created"),
+            (error) => error.code === VISUAL_PREVIEW_ERROR_CODES.URI_REJECTED,
+        );
+        const embeddedModifier = createDigestUrlModifier(new Map(), { allowInternalBlobUrls: true });
+        assert.equal(embeddedModifier("blob:loader-created"), "blob:loader-created");
         assert.equal(requested.length, 0);
     } finally {
         globalThis.fetch = originalFetch;

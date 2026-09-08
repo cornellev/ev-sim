@@ -8,6 +8,7 @@ import { inspectKtx2, inspectPng } from "../server/storage/visual-assets/mediaIn
 import { resolveVisualAssetLimits } from "../server/storage/VisualAssetLimits.js";
 import {
     createAssetStore,
+    buildGlb,
     makeHostileGlb,
     makeJpeg,
     makeKtx2,
@@ -15,6 +16,7 @@ import {
     makeTriangleGlb,
     publishAsset,
     sha256Hex,
+    triangleGltfJson,
 } from "./helpers/visual-assets.js";
 
 const limits = resolveVisualAssetLimits({
@@ -151,4 +153,82 @@ test("KTX2 inspector allows the reviewed Basis/UASTC profile and rejects expansi
     const bomb = Buffer.from(makeKtx2());
     bomb.writeBigUInt64LE(0xffffffffffffn, 80 + 16);
     assert.throws(() => inspectKtx2(bomb, limits), /decoded-size|safe integer|uncompressed/);
+});
+
+test("G-SECURITY rejects optional extension bypasses and oversized embedded images before loaders", async () => {
+    await withStore(async (store) => {
+        const transmission = makeHostileGlb((json) => {
+            json.extensionsUsed = ["KHR_materials_transmission"];
+            json.materials = [{ extensions: { KHR_materials_transmission: { transmissionFactor: 1 } } }];
+            json.meshes[0].primitives[0].material = 0;
+        });
+        await assert.rejects(
+            () => publishAsset(store, transmission, { mediaType: "model/gltf-binary", role: "mesh" }),
+            (error) => error.code === VISUAL_ASSET_ERROR_CODES.INVALID_GRAPH,
+        );
+        const usedOnly = makeHostileGlb((json) => {
+            json.extensionsUsed = ["KHR_materials_transmission"];
+        });
+        await assert.rejects(
+            () => publishAsset(store, usedOnly, { mediaType: "model/gltf-binary", role: "mesh" }),
+            (error) => error.code === VISUAL_ASSET_ERROR_CODES.INVALID_GRAPH,
+        );
+        const hostileObjectGraph = makeHostileGlb((json) => {
+            let nested = {};
+            json.materials = [{ extensions: { KHR_materials_unlit: nested } }];
+            json.meshes[0].primitives[0].material = 0;
+            for (let index = 0; index < 100; index += 1) {
+                nested.child = {};
+                nested = nested.child;
+            }
+        });
+        await assert.rejects(
+            () => publishAsset(store, hostileObjectGraph, { mediaType: "model/gltf-binary", role: "mesh" }),
+            (error) => error.code === VISUAL_ASSET_ERROR_CODES.REQUEST_TOO_LARGE,
+        );
+
+        const base = makeTriangleGlb();
+        const jsonLength = base.readUInt32LE(12);
+        const bin = base.subarray(20 + jsonLength + 8);
+        const uv = Buffer.alloc(24);
+        const json = triangleGltfJson(bin.length + uv.length);
+        json.bufferViews.push({ buffer: 0, byteOffset: bin.length, byteLength: uv.length });
+        json.accessors.push({ bufferView: 2, componentType: 5126, count: 3, type: "VEC2" });
+        json.meshes[0].primitives[0].attributes.TEXCOORD_0 = 2;
+        json.meshes[0].primitives[0].material = 0;
+        json.images = [{ uri: `data:image/png;base64,${makePng({ width: 8, height: 8 }).toString("base64")}` }];
+        json.textures = [{ source: 0 }];
+        json.materials = [{ pbrMetallicRoughness: { baseColorTexture: { index: 0 } } }];
+        const embedded = buildGlb(json, Buffer.concat([bin, uv]));
+        const tight = resolveVisualAssetLimits({
+            ...limits,
+            textureDimension: 4,
+        });
+        const { dir, store: tightStore } = await createAssetStore({ limits: tight });
+        try {
+            await assert.rejects(
+                () => publishAsset(tightStore, embedded, { mediaType: "model/gltf-binary", role: "mesh" }),
+                (error) => error.code === VISUAL_ASSET_ERROR_CODES.REQUEST_TOO_LARGE,
+            );
+        } finally {
+            await fs.rm(dir, { recursive: true, force: true });
+        }
+    });
+});
+
+test("content access revalidates missing and stale validation evidence without changing use identity", async () => {
+    await withStore(async (store, dir) => {
+        const published = await publishAsset(store, makePng(), { mediaType: "image/png", role: "texture" });
+        const validationPath = path.join(dir, "visual-assets", "validation", "sha256", `${published.useHash}.json`);
+        const stale = { ...published.validation, version: 1 };
+        await fs.writeFile(validationPath, JSON.stringify(stale));
+        await store.statUseContent(published.useHash);
+        assert.equal((await store.getValidation(published.useHash)).version, 2);
+
+        await fs.rm(validationPath);
+        const opened = await store.openUseContent(published.useHash);
+        await opened.release();
+        assert.equal((await store.getValidation(published.useHash)).version, 2);
+        assert.equal((await store.getUse(published.useHash)).asset.sha256, published.use.asset.sha256);
+    });
 });

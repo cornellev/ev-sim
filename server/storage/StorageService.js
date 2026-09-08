@@ -285,9 +285,11 @@ export class StorageService {
 
     /** @returns {Promise<object|null>} the saved manifest, or null if none. */
     async getEnvironment(environmentId) {
-        await this._recoverEnvironmentTransactions();
-        await this.bakePromotions.recover(environmentId);
-        return this._readEnvironment(environmentId);
+        return this._withEnvironmentWrite(environmentId, async () => {
+            await this._recoverEnvironmentTransactions();
+            await this.bakePromotions.recover(environmentId);
+            return this._readEnvironment(environmentId);
+        });
     }
 
     beginBakePromotion(environmentId, body = {}) {
@@ -412,6 +414,7 @@ export class StorageService {
     putEnvironment(environmentId, input = {}, options = {}) {
         return this._withEnvironmentWrite(environmentId, async () => {
             await this._recoverEnvironmentTransactions();
+            await this.bakePromotions.recover(environmentId);
             if (this._deletedEnvironmentIds.has(environmentId)) {
                 throw new Error(`Environment "${environmentId}" was deleted.`);
             }
@@ -455,11 +458,13 @@ export class StorageService {
         return this._withEnvironmentWrite(ids[0], () => (
             this._withEnvironmentWrite(ids[1], async () => {
                 await this._recoverEnvironmentTransactions();
-                if (BUILT_IN_ENVIRONMENTS.some((entry) => entry.id === id) || await this.getEnvironment(id)) {
+                await this.bakePromotions.recover(sourceId);
+                if (id !== sourceId) await this.bakePromotions.recover(id);
+                if (BUILT_IN_ENVIRONMENTS.some((entry) => entry.id === id) || await this._readEnvironment(id)) {
                     throw new Error(`Environment "${id}" already exists.`);
                 }
 
-                const source = await this.getEnvironment(sourceId);
+                const source = await this._readEnvironment(sourceId);
                 const builtIn = BUILT_IN_ENVIRONMENTS.find((entry) => entry.id === sourceId);
                 if (!source && !builtIn) throw new Error(`Environment "${sourceId}" does not exist.`);
                 requireEnvironmentRevision(expectedRevision, source?.revision ?? 0);
@@ -495,7 +500,8 @@ export class StorageService {
             : input;
         return this._withEnvironmentWrite(environmentId, async () => {
             await this._recoverEnvironmentTransactions();
-            const current = await this.getEnvironment(environmentId);
+            await this.bakePromotions.recover(environmentId);
+            const current = await this._readEnvironment(environmentId);
             const builtIn = BUILT_IN_ENVIRONMENTS.find((entry) => entry.id === environmentId);
             if (!current && !builtIn) throw new Error(`Environment "${environmentId}" does not exist.`);
             requireEnvironmentRevision(expectedRevision, current?.revision ?? 0);
@@ -527,7 +533,9 @@ export class StorageService {
         return this._withEnvironmentWrite(ids[0], () => (
             this._withEnvironmentWrite(ids[1], async () => {
                 await this._recoverEnvironmentTransactions();
-                const current = await this.getEnvironment(currentId);
+                await this.bakePromotions.recover(currentId);
+                if (nextId !== currentId) await this.bakePromotions.recover(nextId);
+                const current = await this._readEnvironment(currentId);
                 if (!current) throw new Error(`Environment "${currentId}" does not exist.`);
                 if (BUILT_IN_ENVIRONMENTS.some((entry) => entry.id === currentId)) {
                     throw new Error(`Built-in environment "${currentId}" cannot change its id.`);
@@ -537,7 +545,7 @@ export class StorageService {
                 if (BUILT_IN_ENVIRONMENTS.some((entry) => entry.id === nextId)) {
                     throw new Error(`Environment "${nextId}" already exists.`);
                 }
-                if (await this.getEnvironment(nextId)) {
+                if (await this._readEnvironment(nextId)) {
                     throw new Error(`Environment "${nextId}" already exists.`);
                 }
 
@@ -574,7 +582,8 @@ export class StorageService {
         }
         return this._withEnvironmentWrite(environmentId, async () => {
             await this._recoverEnvironmentTransactions();
-            const current = await this.getEnvironment(environmentId);
+            await this.bakePromotions.recover(environmentId);
+            const current = await this._readEnvironment(environmentId);
             if (!current) {
                 requireEnvironmentRevision(expectedRevision, 0);
                 return true;
@@ -2320,8 +2329,31 @@ export class StorageService {
     async _writeJsonFile(filePath, value) {
         await fs.mkdir(path.dirname(filePath), { recursive: true });
         const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-        await fs.writeFile(tempPath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+        const handle = await fs.open(tempPath, "w");
+        try {
+            await handle.writeFile(`${JSON.stringify(value, null, 2)}\n`, "utf8");
+            await handle.sync();
+        } finally {
+            await handle.close();
+        }
         await fs.rename(tempPath, filePath);
+        const directory = await fs.open(path.dirname(filePath), "r");
+        try {
+            await directory.sync();
+        } finally {
+            await directory.close();
+        }
+    }
+
+    async _removeFileDurably(filePath) {
+        await fs.rm(filePath, { force: true });
+        let directory;
+        try {
+            directory = await fs.open(path.dirname(filePath), "r");
+            await directory.sync();
+        } finally {
+            await directory?.close();
+        }
     }
 
     _environmentTransactionPath(sourceId, destinationId) {

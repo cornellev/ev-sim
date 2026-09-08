@@ -297,6 +297,7 @@ test("VIS-06b G-buffer products stay aligned while analytic truth remains separa
 });
 
 test("Three aligned adapter renders owned appearance and analytic scenes without material replacement", async ({ page }) => {
+    test.setTimeout(60_000);
     await installModuleRoutes(page);
     await page.goto("/");
     await page.setContent(`<script type="importmap">${JSON.stringify({

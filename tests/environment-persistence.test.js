@@ -39,7 +39,7 @@ function createHarness({ revision = 0, put } = {}) {
     const data = { environment: () => environment };
     const persistence = new EnvironmentPersistence({ data, scene: {}, revision, put });
     persistence.attach();
-    return { environment, persistence };
+    return { data, environment, persistence };
 }
 
 test("edits arriving during a save produce a second guarded save from the latest draft", async () => {
@@ -153,4 +153,92 @@ test("promoted visual references adopt the committed revision without clearing l
     assert.equal(environment.evidence, null);
     assert.equal(persistence.isDirty, true);
     assert.equal(persistence.conflict, null);
+});
+
+test("an edit during an in-flight save stays dirty even before another flush is queued", async () => {
+    let release;
+    let calls = 0;
+    const { environment, persistence } = createHarness({
+        revision: 1,
+        put: async (_path, body) => {
+            calls += 1;
+            await new Promise((resolve) => { release = resolve; });
+            return { ...body.manifest, revision: 2, visualLayer: null, evidence: null };
+        },
+    });
+    persistence._dirty = true;
+    const pending = persistence.flush();
+    environment.name = "Edited while saving";
+    persistence._handleChange();
+    release();
+    await pending;
+    assert.equal(calls, 1);
+    assert.equal(persistence.isDirty, true);
+    assert.equal(environment.visualLayer, null);
+    assert.equal(environment.evidence, null);
+});
+
+test("suspension blocks flush entry points and resume explicitly drains the pending draft", async () => {
+    let calls = 0;
+    const { persistence } = createHarness({
+        put: async (_path, body) => {
+            calls += 1;
+            return { ...body.manifest, revision: body.expectedRevision + 1 };
+        },
+    });
+    persistence._dirty = true;
+    await persistence.suspendAutosave();
+    await persistence.flush({ keepalive: true });
+    assert.equal(calls, 0);
+    persistence.resumeAutosave();
+    await persistence._chain;
+    assert.equal(calls, 1);
+    assert.equal(persistence.isDirty, false);
+});
+
+test("a strict flush joining an autosave observes its failure", async () => {
+    let reject;
+    const { persistence } = createHarness({
+        put: async () => new Promise((_resolve, rejectPromise) => { reject = rejectPromise; }),
+    });
+    persistence._dirty = true;
+    persistence._saveNow();
+    const strict = persistence.flush({ throwOnError: true });
+    reject(new Error("disk unavailable"));
+    await assert.rejects(strict, /disk unavailable/);
+    assert.equal(persistence.isDirty, true);
+});
+
+test("explicit null references are applied and stale promotion receipts cannot regress revision", async () => {
+    const { environment, persistence } = createHarness({
+        revision: 4,
+        put: async (_path, body) => ({ ...body.manifest, revision: 5, visualLayer: null, evidence: null }),
+    });
+    environment.visualLayer = { descriptorHash: "a".repeat(64) };
+    environment.evidence = { reportHash: "b".repeat(64) };
+    persistence._dirty = true;
+    await persistence.flush({ throwOnError: true });
+    assert.equal(environment.visualLayer, null);
+    assert.equal(environment.evidence, null);
+    persistence.adoptPromotedVisualLayer({ revision: 3, visualLayer: { descriptorHash: "c".repeat(64) } });
+    assert.equal(persistence.acknowledgedRevision, 5);
+    assert.equal(environment.visualLayer, null);
+    persistence.adoptPromotedVisualLayer({
+        environmentId: "other-yard",
+        revision: 6,
+        visualLayer: { descriptorHash: "d".repeat(64) },
+    });
+    assert.equal(persistence.acknowledgedRevision, 5);
+    assert.equal(environment.visualLayer, null);
+});
+
+test("a save response for another environment cannot advance the local revision", async () => {
+    const { persistence } = createHarness({
+        revision: 2,
+        put: async () => ({ environmentId: "other-yard", revision: 99, visualLayer: null, evidence: null }),
+    });
+    persistence._dirty = true;
+    await persistence.flush({ throwOnError: true });
+    assert.equal(persistence.acknowledgedRevision, 2);
+    assert.equal(persistence.isDirty, true);
 });

@@ -8,6 +8,7 @@ import {
     VISUAL_ASSET_UPLOAD_OPERATIONS,
     VISUAL_ASSET_USE_KIND,
     VISUAL_ASSET_USE_VERSION,
+    VISUAL_ASSET_PROFILE,
     assertSha256Digest,
     canonicalExactStringify,
     evaluateVisualSourcePolicy,
@@ -28,7 +29,11 @@ import {
     writeExclusiveFile,
 } from "./visual-assets/atomicFs.js";
 import { Semaphore, createMutex } from "./visual-assets/semaphore.js";
-import { canonicalValidationRecord, validateVisualAssetBytes } from "./visual-assets/validateVisualAsset.js";
+import {
+    VISUAL_ASSET_VALIDATION_VERSION,
+    canonicalValidationRecord,
+    validateVisualAssetBytes,
+} from "./visual-assets/validateVisualAsset.js";
 
 const DIGEST = /^[a-f0-9]{64}$/;
 
@@ -244,8 +249,8 @@ export class VisualAssetStore {
     async statUseContent(useHash, { operations = VISUAL_ASSET_ACCESS_OPERATIONS } = {}) {
         await this.initialize();
         const use = await this.getUse(useHash);
-        const validation = await this.getValidation(useHash, { optional: true });
-        const closure = await this._collectClosure(use, validation?.decodedBytesEstimate ?? use.asset.sizeBytes);
+        const validation = await this._requireCurrentValidation(useHash, use);
+        const closure = await this._collectClosure(use, validation.decodedBytesEstimate);
         await this._assertRights(closure.sourceIds, operations);
         const identity = await hashRegularFile(this._casPath(use.asset.sha256));
         if (!identity || identity.size !== use.asset.sizeBytes || identity.digest !== use.asset.sha256) {
@@ -262,8 +267,8 @@ export class VisualAssetStore {
     async openUseContent(useHash, { start = 0, end = undefined, operations = VISUAL_ASSET_ACCESS_OPERATIONS } = {}) {
         await this.initialize();
         const use = await this.getUse(useHash);
-        const validation = await this.getValidation(useHash, { optional: true });
-        const closure = await this._collectClosure(use, validation?.decodedBytesEstimate ?? use.asset.sizeBytes);
+        const validation = await this._requireCurrentValidation(useHash, use);
+        const closure = await this._collectClosure(use, validation.decodedBytesEstimate);
         await this._assertRights(closure.sourceIds, operations);
         const identity = await hashRegularFile(this._casPath(use.asset.sha256));
         if (!identity) {
@@ -317,8 +322,8 @@ export class VisualAssetStore {
     async validateClosure({ useHash, operations = VISUAL_ASSET_ACCESS_OPERATIONS } = {}) {
         await this.initialize();
         const use = await this.getUse(useHash);
-        const validation = await this.getValidation(useHash, { optional: true });
-        const closure = await this._collectClosure(use, validation?.decodedBytesEstimate ?? use.asset.sizeBytes);
+        const validation = await this._requireCurrentValidation(useHash, use);
+        const closure = await this._collectClosure(use, validation.decodedBytesEstimate);
         if (closure.depth > this.limits.graphDepth) {
             throw visualAssetError(
                 VISUAL_ASSET_ERROR_CODES.REQUEST_TOO_LARGE,
@@ -369,14 +374,14 @@ export class VisualAssetStore {
                 );
             }
             const use = await this._readUse(useHash);
-            const validation = await this._readValidation(useHash, { optional: true });
+            const validation = await this._requireCurrentValidation(useHash, use);
             uses.set(useHash, use);
             validations.set(useHash, validation);
             depth = Math.max(depth, currentDepth);
             for (const sourceId of use.sourceIds) sourceIds.add(sourceId);
             if (!digests.has(use.asset.sha256)) {
                 digests.add(use.asset.sha256);
-                decodedBytes += validation?.decodedBytesEstimate ?? use.asset.sizeBytes;
+                decodedBytes += validation.decodedBytesEstimate;
             }
             for (const child of Object.values(use.dependencies)) await visit(child, currentDepth + 1);
         };
@@ -412,7 +417,7 @@ export class VisualAssetStore {
                     mediaType: use.asset.mediaType,
                     sizeBytes: use.asset.sizeBytes,
                     role: use.asset.role,
-                    decodedBytesEstimate: validation?.decodedBytesEstimate ?? use.asset.sizeBytes,
+                    decodedBytesEstimate: validation.decodedBytesEstimate,
                     graph: validation?.graph
                         ? {
                             nodes: validation.graph.nodes ?? 0,
@@ -660,11 +665,7 @@ export class VisualAssetStore {
                 throw visualAssetError(VISUAL_ASSET_ERROR_CODES.CONFLICT, "Visual asset use digest collision.");
             }
         }
-        await writeExclusiveFile(
-            this._validationPath(meta.useHash),
-            `${canonicalExactStringify(meta.validation)}\n`,
-            { faults: this.faults },
-        );
+        await this._writeState(this._validationPath(meta.useHash), meta.validation);
         await this._quotaMutex(async () => this._reservations.delete(meta.id));
         meta.phase = "published";
         await this._writeStagingMeta(meta);
@@ -700,6 +701,42 @@ export class VisualAssetStore {
         } finally {
             await opened.handle.close();
         }
+    }
+
+    async _requireCurrentValidation(useHash, use = null) {
+        const record = use ?? await this._readUse(useHash);
+        const validation = await this._readValidation(useHash, { optional: true });
+        if (
+            validation?.kind === "cev-sim.visual-asset-validation"
+            && validation.version === VISUAL_ASSET_VALIDATION_VERSION
+            && validation.useHash === useHash
+            && canonicalExactStringify(validation.asset) === canonicalExactStringify(record.asset)
+            && canonicalExactStringify(validation.profile) === canonicalExactStringify(VISUAL_ASSET_PROFILE)
+        ) {
+            return validation;
+        }
+        const opened = await openRegularFile(this._casPath(record.asset.sha256));
+        if (!opened) {
+            throw visualAssetError(VISUAL_ASSET_ERROR_CODES.CORRUPT, `Asset bytes for ${useHash} are missing.`);
+        }
+        let bytes;
+        try {
+            bytes = await opened.handle.readFile();
+        } finally {
+            await opened.handle.close();
+        }
+        const resources = await this._loadDependencyBytes(record);
+        const refreshed = await this._validationSlots.run(() => validateVisualAssetBytes(bytes, {
+            asset: record.asset,
+            limits: this.limits,
+            declaredDependencies: record.dependencies,
+            resources,
+            timeoutMs: this.limits.validationTimeoutMs,
+            memoryMb: this.limits.validatorMemoryMb,
+        }));
+        const canonical = canonicalValidationRecord(refreshed, useHash);
+        await this._writeState(this._validationPath(useHash), canonical);
+        return canonical;
     }
 
     async _assertDependencies(use) {
@@ -752,10 +789,10 @@ export class VisualAssetStore {
             useHashes.add(useHash);
             depth = Math.max(depth, currentDepth);
             const record = await this._readUse(useHash);
-            const validation = await this._readValidation(useHash, { optional: true });
+            const validation = await this._requireCurrentValidation(useHash, record);
             for (const sourceId of record.sourceIds) sourceIds.add(sourceId);
             digests.add(record.asset.sha256);
-            decodedBytes += validation?.decodedBytesEstimate ?? record.asset.sizeBytes;
+            decodedBytes += validation.decodedBytesEstimate;
             for (const child of Object.values(record.dependencies)) await visit(child, currentDepth + 1);
         };
         for (const child of Object.values(use.dependencies)) await visit(child, 2);

@@ -44,6 +44,16 @@ access hashes are likewise excluded from those identities. Attaching or
 changing `accessHash` may change normalized authoring/resolved environment
 identity as provenance changes.
 
+VIS-16a defines `cev-sim.visual-evaluation-input@1` independently from any
+report-containing run bundle. It binds exact camera calibration, capture
+samples, provider/configuration, visual assets, policies, world, visual-layer,
+and render-scene inputs. A correspondence report references that input hash and
+is itself referenced by exact byte digest outside its body. Attaching evidence
+may change a later full resolved identity, but preserves the evaluation-input,
+world, visual-layer, simulation-semantic, and episode hashes when capture
+inputs are unchanged. The repository contains synthetic threshold fixtures
+only; VIS-12b/VIS-16b own resolved evidence attachment and managed enforcement.
+
 ## HTTP API
 
 The storage service exposes these endpoints under `/api/storage`:
