@@ -90,9 +90,15 @@ the same visible surfaces and OPAQUE/MASK alpha tests; no target visibility
 filter, forced hidden-object visibility, or road-material boost is applied.
 Target/building/tag masks are derived from the frontmost object-ID product so
 other surfaces remain occluders. Oracle products require a separate
-`analytic-truth` handle and explicit truth bindings. VIS-07 owns adoption by
-persistent bake jobs; `capturePasses()` and `captureFrame()` remain legacy
-defaults.
+`analytic-truth` handle and explicit truth bindings. VIS-07 adds an in-memory
+bake-job catalog: serializable `BakeRunConfig`, frozen `bake-snapshot` scenes,
+UTF-8-stable planning, VIS-06b aligned capture, and local
+`captured-appearance@1` with no model network. Version-1 jobs use
+`BakeHarness.runVersion1Job()`. Press `b` still runs legacy `start()`, which
+may health-check the bake server; `createLegacyCompatibleBakeRunConfig`
+preserves `roundTrip.useModel`. `capturePasses()` and `captureFrame()` remain
+legacy defaults. Artifact persistence and promotion begin in VIS-08; VIS-17b
+owns the evidence catalog UI.
 
 Press `b` in the environment editor to start or stop a bake run when a harness is configured. See the bake tests under `tests/bake-*.test.js` for expected behavior around determinism, splats, and render bundles.
 

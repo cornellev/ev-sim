@@ -47,10 +47,23 @@ test("core preview paths do not probe Google tiles or a model server", async () 
     const scene = await read("app/3d/Scene.js");
     const optional = await read("app/3d/environment/visualization/optionalSplatRuntime.js");
     const materializer = await read("app/3d/environment/visual/VisualLayerMaterializer.js");
+    const catalog = await read("app/3d/environment/visual/BakeRunCatalog.js");
+    const jobRunner = await read("app/3d/environment/visual/BakeJobRunner.js");
+    const snapshot = await read("app/3d/environment/visual/BakeSnapshotBuilder.js");
     for (const source of [scene, optional, materializer]) {
         assert.doesNotMatch(source, /maps\.googleapis\.com/);
         assert.doesNotMatch(source, /tiles\.googleapis\.com/);
         assert.doesNotMatch(source, /localhost:8000/);
+    }
+    for (const source of [catalog, jobRunner, snapshot]) {
+        assert.doesNotMatch(source, /maps\.googleapis\.com/);
+        assert.doesNotMatch(source, /tiles\.googleapis\.com/);
+        assert.doesNotMatch(source, /\bfetch\s*\(/);
+        assert.doesNotMatch(source, /@sparkjsdev\/spark/);
+        assert.doesNotMatch(source, /checkBakeServerHealth/);
+        assert.doesNotMatch(source, /clearBakeServer/);
+        assert.doesNotMatch(source, /pollBakedImage/);
+        assert.doesNotMatch(source, /uploadBake/);
     }
     assert.doesNotMatch(materializer, /pbr-mesh@1/);
 });

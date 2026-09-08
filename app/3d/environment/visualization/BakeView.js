@@ -907,9 +907,8 @@ export class BakeView {
     }
 
     /**
-     * VIS-06b opt-in aligned capture. The legacy capturePasses/captureFrame
-     * contract above remains the default until VIS-07 adopts the pass-set
-     * schema for persistent bake jobs.
+     * VIS-06b opt-in aligned capture. Version-1 bake jobs in VIS-07 call this
+     * entry point; capturePasses/captureFrame remain the legacy defaults.
      */
     async captureAlignedProducts({
         captureTimeNs = 0,

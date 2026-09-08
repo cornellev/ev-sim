@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { canonicalizePlannerCandidates, compareUtf8 } from "../visual/BakeRunCatalog.js";
 import {
     DEFAULT_BEAUTY_PASS,
     resolveViewPasses,
@@ -101,16 +102,19 @@ export class BuildingRegionPlanner {
      * @param {THREE.PerspectiveCamera} camera
      */
     planForView(sceneOrIndex, camera) {
-        const visibleBuildingIds = [];
+        const candidates = [];
         const indexHits = sceneOrIndex?.queryFrustum
             ? sceneOrIndex.queryFrustum(camera)
             : null;
 
         if (indexHits) {
             for (const entry of indexHits) {
-                const projected = this._projectedBounds(entry.bounds, camera);
-                if (projected <= 0) continue;
-                if (!visibleBuildingIds.includes(entry.id)) visibleBuildingIds.push(entry.id);
+                candidates.push({
+                    id: String(entry.id),
+                    entityId: String(entry.entityId ?? entry.id),
+                    bounds: entry.bounds,
+                    object3D: entry.object3D ?? null,
+                });
             }
         } else {
             const scene = sceneOrIndex;
@@ -126,10 +130,33 @@ export class BuildingRegionPlanner {
                 if (!buildingId) return;
                 const box = new THREE.Box3().setFromObject(object);
                 if (!frustum.intersectsBox(box)) return;
-                const projected = this._projectedArea(object, camera);
-                if (projected <= 0) return;
-                if (!visibleBuildingIds.includes(buildingId)) visibleBuildingIds.push(buildingId);
+                candidates.push({
+                    id: String(buildingId),
+                    entityId: String(object.userData?.entityId ?? buildingId),
+                    object3D: object,
+                    bounds: {
+                        minX: box.min.x,
+                        minY: box.min.y,
+                        minZ: box.min.z,
+                        maxX: box.max.x,
+                        maxY: box.max.y,
+                        maxZ: box.max.z,
+                    },
+                });
             });
+        }
+
+        const ordered = canonicalizePlannerCandidates(candidates);
+        const visibleBuildingIds = [];
+        const seen = new Set();
+        for (const entry of ordered) {
+            const projected = entry.object3D
+                ? this._projectedArea(entry.object3D, camera)
+                : this._projectedBounds(entry.bounds, camera);
+            if (projected <= 0) continue;
+            if (seen.has(entry.id)) continue;
+            seen.add(entry.id);
+            visibleBuildingIds.push(entry.id);
         }
 
         if (!visibleBuildingIds.length) {
@@ -147,7 +174,7 @@ export class BuildingRegionPlanner {
         return {
             activeBuildingId,
             hasVisibleBuilding: true,
-            visibleBuildingIds,
+            visibleBuildingIds: [...visibleBuildingIds].sort(compareUtf8),
         };
     }
 

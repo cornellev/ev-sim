@@ -1,24 +1,24 @@
 import * as THREE from "three";
-import { BakeView } from "./BakeView";
-import { BakePath } from "./BakePath";
-import { buildSampleId, resolveViewPasses } from "./BakePass";
+import { BakeView } from "./BakeView.js";
+import { BakePath } from "./BakePath.js";
+import { buildSampleId, resolveViewPasses } from "./BakePass.js";
 import {
     BuildingRegionPlanner,
     resolvePassesForSample,
-} from "./BuildingRegionPlanner";
-import { getRawBeautyImage, pollBakedImage } from "./BakeRoundTrip";
+} from "./BuildingRegionPlanner.js";
+import { getRawBeautyImage, pollBakedImage } from "./BakeRoundTrip.js";
 import {
     filterForSplatting,
     hitsToWorldPoints,
     worldToPixel,
-} from "./LidarSplatProjector";
+} from "./LidarSplatProjector.js";
 import {
     buildCenterSliverBounds,
     composeImageThroughMask,
     countMaskPixelsInSliver,
     maskAllowsPixel,
     pixelInSliver,
-} from "./BakeImageMask";
+} from "./BakeImageMask.js";
 import {
     checkBakeServerHealth,
     clearBakeServer,
@@ -27,15 +27,15 @@ import {
     uploadBakeFrame,
     uploadRunManifest,
     uploadSampleComplete,
-} from "./bakeUpload";
+} from "./bakeUpload.js";
 import {
     applyBakeTelemetryPatch,
     calculateBakeTotalSamples,
     createBakeTelemetrySnapshot,
     markBakeErrored,
     markBakeStopped,
-} from "./BakeTelemetry";
-import { ProjectedBuildingTextureManager } from "./ProjectedBuildingTextureManager";
+} from "./BakeTelemetry.js";
+import { ProjectedBuildingTextureManager } from "./ProjectedBuildingTextureManager.js";
 import {
     BakeMemoryLedger,
     BAKE_MEMORY_KINDS,
@@ -43,8 +43,31 @@ import {
 } from "./BakeMemoryLedger.js";
 import { BakeSpatialIndex } from "./BakeSpatialIndex.js";
 import { getVisualScaleProfile } from "../../../simulation/visual/VisualScaleProfile.js";
+import {
+    BakeRunCatalog,
+    isTerminalBakeState,
+} from "../visual/BakeRunCatalog.js";
+import { runVersion1BakeJob } from "../visual/BakeJobRunner.js";
 
 const TELEMETRY_PREVIEW_MAX_EDGE = 256;
+
+function asVector3(value) {
+    if (!value) return new THREE.Vector3();
+    if (value.isVector3 || typeof value.clone === "function") return value.clone();
+    return new THREE.Vector3(value.x ?? 0, value.y ?? 0, value.z ?? 0);
+}
+
+function asEuler(value) {
+    if (!value) return new THREE.Euler(0, 0, 0, "XYZ");
+    if (value.isEuler) return value.clone();
+    if (value.w !== undefined) {
+        return new THREE.Euler().setFromQuaternion(
+            new THREE.Quaternion(value.x, value.y, value.z, value.w),
+            "XYZ",
+        );
+    }
+    return new THREE.Euler(value.x ?? 0, value.y ?? 0, value.z ?? 0, value.order || "XYZ");
+}
 
 function countBy(items, getKey) {
     const counts = {};
@@ -376,6 +399,14 @@ export class BakeHarness {
         this.profile = options.profile ?? getVisualScaleProfile();
         this.memoryLedger = options.memoryLedger ?? new BakeMemoryLedger({ profile: this.profile });
         this.spatialIndex = options.spatialIndex ?? null;
+        this.catalog = options.catalog ?? new BakeRunCatalog();
+        this._version1 = {
+            jobId: null,
+            generation: 0,
+            controller: null,
+            snapshot: null,
+            views: [],
+        };
     }
 
     getSnapshot() {
@@ -484,8 +515,8 @@ export class BakeHarness {
         );
 
         for (const viewConfig of this.viewConfigs) {
-            const localPosition = viewConfig.position.clone();
-            const localRotation = viewConfig.rotation.clone();
+            const localPosition = asVector3(viewConfig.position ?? viewConfig.pose?.position);
+            const localRotation = asEuler(viewConfig.rotation ?? viewConfig.pose?.rotation);
 
             const view = new BakeView(viewConfig.name, {
                 position: localPosition,
@@ -703,6 +734,7 @@ export class BakeHarness {
         this.memoryLedger?.releaseAll?.();
         this.spatialIndex = null;
         this.telemetryListeners.clear();
+        this._disposeVersion1Job();
 
         // Telemetry previews deliberately contain pixel arrays. Drop them
         // when the editor runtime is released so reloads can reclaim memory.
@@ -1774,7 +1806,45 @@ export class BakeHarness {
             console.warn("BakeHarness: debug raw capture upload failed", error);
         }
     }
+
+    _disposeVersion1Job({ supersede = false } = {}) {
+        if (this._version1.controller && !this._version1.controller.signal.aborted) {
+            this._version1.controller.abort(new Error("Bake job superseded."));
+        }
+        if (supersede && this._version1.jobId && this.catalog.get(this._version1.jobId)) {
+            const job = this.catalog.get(this._version1.jobId);
+            if (job && !isTerminalBakeState(job.status.state)) {
+                this.catalog.supersede(this._version1.jobId);
+            }
+        }
+        for (const view of this._version1.views) view.dispose?.();
+        this._version1.views = [];
+        this._version1.snapshot?.dispose?.();
+        this._version1.snapshot = null;
+        this._version1.controller = null;
+    }
+
+    cancelVersion1Job(jobId = this._version1.jobId) {
+        if (!jobId) return null;
+        const job = this.catalog.cancel(jobId);
+        this._version1.controller?.abort(new Error("Bake job cancelled."));
+        return job;
+    }
+
+    attachProviderResponse(jobId, response, { generation = this._version1.generation } = {}) {
+        return this.catalog.attachResponse(jobId, response, { generation });
+    }
+
+    /**
+     * VIS-07 version-1 bake job: prepare, freeze snapshot, capture aligned
+     * products, dispatch the local captured-appearance provider, then terminal.
+     * Legacy start()/update() capturePasses remain unchanged.
+     */
+    async runVersion1Job(options = {}) {
+        return runVersion1BakeJob(this, options);
+    }
 }
 
 /** @deprecated Use BakeHarness */
 export { BakeHarness as BakingHarness };
+

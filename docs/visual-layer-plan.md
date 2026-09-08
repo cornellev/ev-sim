@@ -25,7 +25,7 @@ a VIS, GOOG, or GS PR changes a contract, hash, gate, or milestone status.
 
 ## Status and release verdict
 
-- Next milestone: **VIS-07 — bake catalog and provider job contract**. VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, VIS-05a, VIS-05b, VIS-06a, and VIS-06b are implemented.
+- Next milestone: **VIS-08 — atomic persistent bake promotion**. VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, VIS-05a, VIS-05b, VIS-06a, VIS-06b, and VIS-07 are implemented.
 - Review verdict: **NO-GO for the original ordering and for claiming visual
   runtime support.** The five Blocker findings below require implementation
   and evidence. This revision supplies the corrected handoff; editing the
@@ -33,8 +33,8 @@ a VIS, GOOG, or GS PR changes a contract, hash, gate, or milestone status.
 - Core assumption: **Google approval, Google-derived assets, Gaussian
   splatting, and a model service are unavailable.**
 - Default implementation/review reasoning level: **Extra High**.
-- Last updated: **2026-09-07 — VIS-06b aligned capture products implemented**.
-- VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, VIS-05a, VIS-05b, VIS-06a, and VIS-06b acceptance evidence is recorded in
+- Last updated: **2026-09-07 — VIS-07 bake catalog, snapshot, and provider job contract implemented**.
+- VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, VIS-05a, VIS-05b, VIS-06a, VIS-06b, and VIS-07 acceptance evidence is recorded in
   the progress ledger and decision log. Protocol 1.3 advertises `world-bound@2`.
   Only `canonical-analytic@1` and GPU sensor backend v1 remain runtime-capable;
   no visual renderer or package-admission capability is advertised. Environment
@@ -42,7 +42,9 @@ a VIS, GOOG, or GS PR changes a contract, hash, gate, or milestone status.
   and does not enable `pbr-mesh@1`. Admission profiles stay empty. Advertised
   D06 hardware reports remain required from protected x64/Orin/Thor runners
   before G-SCALE is closed on those stacks. VIS-06b closes F08 and
-  G-GBUFFER; later non-capture G-RIGHTS boundaries remain open.
+  G-GBUFFER; VIS-07 closes the G-PROVENANCE config/planning/capture-input
+  cases and G-INDEPENDENCE no-model startup. Later non-capture G-RIGHTS
+  boundaries, G-ATOMIC promotion, and remaining F10/F16 work remain open.
 
 The owned/synthetic-asset core must independently deliver author/import →
 preview → no-model bake → atomic promotion → reload → portable package →
@@ -54,7 +56,7 @@ may improve appearance, but cannot be prerequisites for this path.
 Original VIS numbers remain workstream identifiers. Suffixes below identify
 actual PRs; completing one suffix does not complete its entire workstream.
 All required entries except VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, VIS-05a,
-VIS-05b, VIS-06a, and VIS-06b remain unstarted.
+VIS-05b, VIS-06a, VIS-06b, and VIS-07 remain unstarted.
 
 | Workstream | Required core PRs | Optional enrichment |
 | --- | --- | --- |
@@ -1418,7 +1420,9 @@ claim and no dependency from this gate into VIS-17c.
 ## Acceptance gates and omitted tests now required
 
 The VIS-01 contract portions, VIS-12a identity/compatibility portions of
-G-HASH and G-MIGRATION, and the VIS-02 registry/schema portion of G-CAPABILITY
+G-HASH and G-MIGRATION, the VIS-02 registry/schema portion of G-CAPABILITY,
+the VIS-06b G-GBUFFER cases, and the VIS-07 G-PROVENANCE
+config/planning/capture-input plus G-INDEPENDENCE no-model-startup cases
 have passed with the evidence below. Remaining gate portions are **pending**. The original plan's high-level gates did not prove
 these failure cases. Every implementation PR must link its
 executed evidence; a document change, a mock, an unsupported-path success
@@ -1827,7 +1831,14 @@ started**. VIS-12a landed at commit
   points are opt-in and atomic; legacy capture remains unchanged. Real WebGL2
   G-GBUFFER coverage and fault/rights contract tests pass. See the VIS-06b
   decision-log entry for exact evidence. VIS-07 is next.
-- [ ] VIS-07
+- [x] VIS-07 — Bake catalog, snapshot, and provider job contract (2026-09-07).
+  Added in-memory `cev-sim.bake-run-config@1` / snapshot / plan / provider
+  request/response / job-status contracts, strict JCS hashes, integer-index
+  sampling, UTF-8 planner canonicalization, detached `bake-snapshot` scenes,
+  VIS-06b aligned capture into `captured-appearance@1`, and explicit provider
+  dispatch with no network. Legacy `start()` and capability advertisement
+  remain unchanged. See the VIS-07 decision-log entry for exact evidence.
+  VIS-08 is next.
 - [ ] VIS-08
 - [ ] VIS-09
 - [ ] VIS-10a
@@ -2258,5 +2269,56 @@ suites passed 59/59 with no skips. The raw-product and actual Three-adapter
 Chromium WebGL2 G-GBUFFER gates passed 2/2. `npm run lint` completed with zero
 errors and two pre-existing warnings. `npm test` passed 767/769 with the two
 declared hardware GPU skips.
+`npm run test:headless` passed 87/87. `npm run build` succeeded.
+`npm run fixtures:headless` produced no characterization delta.
+
+### 2026-09-07 — Implement VIS-07 bake catalog, snapshot, and provider jobs
+
+Add a Three/DOM-free in-memory `BakeRunCatalog` for `cev-sim.bake-run-config@1`,
+`cev-sim.bake-source-snapshot@1`, `cev-sim.bake-capture-plan@1`,
+`cev-sim.bake-provider-request@1`, `cev-sim.bake-provider-response@1`, and
+`cev-sim.bake-job-status@1`. Separate `recipeHash`, `snapshotHash`, `planHash`,
+`requestHash`, and `responseHash` from mutable job IDs, timestamps, progress,
+logs, and failures. Strict normalize/assert/hash helpers reject unknown fields,
+non-finite values, invalid rotations, duplicate IDs, and unsupported versions.
+
+`BakeRunConfig` is now a plain JSON document. Pixel-affecting view poses,
+calibration, clipping/distortion, pass products, masks, planner options,
+integer-index sampling, ordering, seed keys, output roles, provider selection,
+effective provider options, and cache policy enter `recipeHash`. Operational
+host, timeout, debug, and raw-capture retention do not. New jobs default to
+local `captured-appearance@1`; `roundTrip.useModel` remains only through
+`createLegacyCompatibleBakeRunConfig` for the editor `b` key. Path samples use
+integer indices with explicit endpoints and hold-start zero-length segments.
+Planner candidates are UTF-8-sorted by entity ID before projection, dedup,
+active selection, and pass generation.
+
+`BakeHarness` prepares, freezes a detached `bake-snapshot` owned scene,
+resolves the capture plan, captures VIS-06b aligned products, hashes exact
+typed-array buffers into a provider request, validates the response, and
+enters a terminal state. The snapshot clones transforms, materials, visibility,
+and lighting, shares geometry/textures only through read-only leases, and never
+wraps the live preview root. Environment switches, replacement bakes, and
+cancellation abort in-flight work; late responses must match generation and
+`requestHash`. The production registry exposes only `captured-appearance@1`:
+local, no model capability, no `fetch`, identity outputs. Unavailable providers
+fail before snapshot capture with no fallback. CAS persistence, atlas fusion,
+and Python/model adapters remain VIS-08 / VIS-10a / VIS-11.
+
+This closes the G-PROVENANCE config/planning/capture-input cases and
+G-INDEPENDENCE no-model startup. F10 remains open for browser image encoding,
+unpinned Python model options, and unlit captured appearance versus intrinsic
+PBR. F16 remains open for editor `start()` health-checks and VIS-08 bake/reload.
+No editor catalog UI is added. Protocol 1.3, advertised capabilities, Python,
+`BakeRoundTrip.js`, bake upload, `pbr-mesh@1`, and GPU backend v2 are unchanged.
+VIS-08 is next.
+
+Local acceptance: focused bake and independence suites passed 57/57 with no
+skips. Catalog/job-contract coverage includes manifest round-trip, stable JCS
+hashes, planner/path determinism, snapshot immutability, capture-buffer
+`requestHash` changes, status mutability, provider preflight, response
+validation, cancelled/superseded late responses, and zero network on no-model
+jobs. `npm run lint` completed with zero errors and two pre-existing warnings.
+`npm test` passed 782/784 with the two declared hardware GPU skips.
 `npm run test:headless` passed 87/87. `npm run build` succeeded.
 `npm run fixtures:headless` produced no characterization delta.

@@ -11,6 +11,9 @@ for owned GLB/glTF and PNG/JPEG/KTX2. VIS-06a adds the headless-safe
 `cev-sim.visual-camera-calibration@1` and immutable calibrated-capture seam.
 VIS-06b adds the internal `cev-sim.visual-capture-pass-set@1` contract and
 aligned visual/analytic capture adapter without activating a provider.
+VIS-07 adds the in-memory bake-job catalog, frozen `bake-snapshot` scenes,
+deterministic capture plans, and local `captured-appearance@1` provider
+dispatch. Artifact persistence remains VIS-08.
 Photoreal `pbr-mesh@1` rendering,
 corrected GPU backend v2, measured PBR cameras, and package admission remain
 unavailable.
@@ -35,7 +38,13 @@ become collision, route, LiDAR, registry, or oracle truth.
 | Corrected GPU sensor backend | `chromium-webgl2-rendered-sensors@2` | VIS-14/VIS-15 |
 | Visual camera calibration | `cev-sim.visual-camera-calibration@1` | VIS-06a internal opt-in; provider activation VIS-14/VIS-15 |
 | Immutable visual capture input | `cev-sim.visual-capture-input@1` | VIS-06a internal opt-in |
-| Aligned capture pass set | `cev-sim.visual-capture-pass-set@1` | VIS-06b internal opt-in; bake-job adoption VIS-07 |
+| Aligned capture pass set | `cev-sim.visual-capture-pass-set@1` | VIS-06b internal opt-in; VIS-07 version-1 bake jobs |
+| Bake run config | `cev-sim.bake-run-config@1` | VIS-07 in-memory catalog; CAS persistence VIS-08 |
+| Bake source snapshot | `cev-sim.bake-source-snapshot@1` | VIS-07 `static-snapshot@1` |
+| Bake capture plan | `cev-sim.bake-capture-plan@1` | VIS-07 |
+| Bake provider request | `cev-sim.bake-provider-request@1` | VIS-07 |
+| Bake provider response | `cev-sim.bake-provider-response@1` | VIS-07 local `captured-appearance@1` |
+| Bake job status | `cev-sim.bake-job-status@1` | VIS-07 mutable status |
 | Identity negotiation | Protocol 1.3 | VIS-12a |
 | Environment schema | 3 | VIS-03 |
 | Package admission | Protocol 1.4 | VIS-13b |
@@ -330,9 +339,24 @@ the old FOV projection, framebuffer orientation, request shapes, and bake
 behavior.
 
 This foundation does not activate a render provider or backend. Only
-`canonical-analytic@1` and GPU backend v1 are available. VIS-07 owns persistent
-bake-job adoption; VIS-14 and VIS-15 own resolved-provider browser/headless
-routing.
+`canonical-analytic@1` and GPU backend v1 are available. VIS-07 adopted
+aligned capture for in-memory version-1 bake jobs using local
+`captured-appearance@1`; it does not persist artifacts or promote environment
+references. VIS-08 owns CAS writing and atomic promotion. VIS-14 and VIS-15
+own resolved-provider browser/headless routing.
+
+`app/3d/environment/visual/BakeRunCatalog.js` is Three/DOM-free. Version-1 jobs
+hash `recipeHash` (pixel-affecting config), `snapshotHash` (frozen world,
+revision, generation, appearance, and resource closure), `planHash` (canonical
+views and samples), `requestHash` (provider options plus exact captured-buffer
+digests), and `responseHash` (output digests and provenance). Job IDs,
+timestamps, progress, logs, and failures never enter those hashes. The default
+provider is local `captured-appearance@1`: no model capability, no network, and
+identity references to aligned capture products. External providers are
+injectable but unavailable unless a later adapter registers them. Detached
+`bake-snapshot` scenes clone transforms/materials/visibility/lighting, share
+geometry and textures only through read-only leases, and never wrap the live
+preview root. The editor `b` key still uses legacy `BakeHarness.start()`.
 
 VIS-05a materializes owned preview geometry in the display scene only.
 `VisualLayerMaterializer` verifies descriptor/access hashes, world bindings,

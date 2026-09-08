@@ -35,7 +35,7 @@ import { FIII3 } from "./igvc/mini/fiii3";
 import Unit from "../scripting/units/Unit";
 import { BakeHarness } from "./environment/visualization/BakeHarness";
 import { BakePath } from "./environment/visualization/BakePath";
-import { createDefaultBakeRunConfig } from "./environment/visualization/BakeRunConfig";
+import { createLegacyCompatibleBakeRunConfig } from "./environment/visualization/BakeRunConfig";
 import { isSplatBakePath } from "./environment/visualization/optionalSplatRuntime";
 import { EnvironmentSkyManager } from "./skybox/EnvironmentSkyManager";
 import { EarthTilesManager } from "./earth/EarthTilesManager";
@@ -607,7 +607,7 @@ function queueRuntimeMode(runtime, mode) {
  * @param {THREE.Scene} scene
  */
 function setupBaking(data, scene) {
-    const bakeConfig = data.bakeRunConfig() || createDefaultBakeRunConfig({
+    const bakeConfig = data.bakeRunConfig() || createLegacyCompatibleBakeRunConfig({
         environmentId: "igvc",
         seed: 42,
     });
@@ -741,7 +741,7 @@ export default function TotalScene({
 
             data.simulation().configure({ scene, camera, renderer, controls });
 
-            const bakeConfig = createDefaultBakeRunConfig({
+            const bakeConfig = createLegacyCompatibleBakeRunConfig({
                 environmentId,
                 seed: 42,
             });

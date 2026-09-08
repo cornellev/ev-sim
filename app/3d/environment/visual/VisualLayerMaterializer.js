@@ -107,6 +107,28 @@ export class VisualLayerMaterializer {
         return new Map(this._bindings);
     }
 
+    bakeSnapshotInputs() {
+        if (!this._documents) return null;
+        const selectedChunks = [...this._resident.entries()]
+            .map(([id, resident]) => ({
+                id: String(id),
+                lodSignature: String(resident.lodSignature ?? ""),
+            }))
+            .sort((left, right) => String(left.id).localeCompare(String(right.id)));
+        return {
+            descriptor: this._documents.descriptor,
+            access: this._documents.access,
+            uses: [...this._uses.values()],
+            selectedChunks,
+            generation: this._generation,
+            previewRoot: this.previewRoot,
+            cache: this.cache,
+            worldHash: this._committedWorldHash,
+            bindings: this.visualBindings(),
+            lodPolicyHash: this.lodPolicyHash,
+        };
+    }
+
     residencySnapshot() {
         return this._residencyMetrics();
     }

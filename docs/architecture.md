@@ -264,8 +264,11 @@ manifests, hashes, and capabilities remain unchanged. VIS-06b adds aligned
 Visual beauty/G-buffers use descriptor-backed bindings and source-use rights;
 analytic depth/labels use a distinct truth scene and explicit truth bindings.
 The opt-in corrected path is atomic and exception-safe, while legacy camera
-and bake entry points are unchanged. VIS-07 owns persistent bake-job adoption;
-VIS-14/VIS-15 own runtime provider routing. `pbr-mesh@1`, corrected GPU backend
+and bake entry points are unchanged. VIS-07 adds an in-memory bake-job catalog,
+frozen `bake-snapshot` scenes, deterministic capture plans, and local
+`captured-appearance@1` dispatch; it does not write CAS artifacts or promote
+environment references. VIS-08 owns persistent promotion. VIS-14/VIS-15 own
+runtime provider routing. `pbr-mesh@1`, corrected GPU backend
 v2, manifests, hashes, protobuf, and advertised capabilities remain unchanged.
 
 ## External Integration

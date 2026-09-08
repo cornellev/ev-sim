@@ -1,6 +1,14 @@
-import * as THREE from "three";
+import {
+    adaptLegacyBakeRunConfigInput,
+    bakeRecipeIdentity,
+    hashBakeRunConfig,
+    interpolateBakePathSample,
+    normalizeBakeRunConfig,
+    pathLengthMeters,
+    planIntegerSampleDistances,
+    rotationToQuaternion,
+} from "../visual/BakeRunCatalog.js";
 import { SeededRNG } from "../../../util/SeededRNG.js";
-
 
 /**
  * @typedef {Object} BuildingRecord
@@ -12,110 +20,112 @@ import { SeededRNG } from "../../../util/SeededRNG.js";
  * @property {string} meshName
  */
 
-/**
- * @typedef {Object} BakeRunManifest
- * @property {string} runId
- * @property {string} environmentId
- * @property {number} seed
- * @property {string} createdAt
- * @property {BuildingRecord[]} buildings
- * @property {Object} passPolicy
- * @property {Object} modelSettings
- */
+function eulerFromQuaternion(rotation) {
+    const q = rotationToQuaternion(rotation, "rotation");
+    const sinrCosp = 2 * (q.w * q.x + q.y * q.z);
+    const cosrCosp = 1 - 2 * (q.x * q.x + q.y * q.y);
+    const sinp = 2 * (q.w * q.y - q.z * q.x);
+    const sinyCosp = 2 * (q.w * q.z + q.x * q.y);
+    const cosyCosp = 1 - 2 * (q.y * q.y + q.z * q.z);
+    const pitch = Math.abs(sinp) >= 1 ? Math.sign(sinp) * (Math.PI / 2) : Math.asin(sinp);
+    return {
+        x: Math.atan2(sinrCosp, cosrCosp),
+        y: pitch,
+        z: Math.atan2(sinyCosp, cosyCosp),
+        order: "XYZ",
+    };
+}
 
-const DEFAULT_SAMPLE_PATH = [
-    {
-        position: new THREE.Vector3(-25.120153743222073, 0.5, 1.1525929487085005),
-        rotation: new THREE.Euler(0, Math.PI / 4, 0),
-    },
-    {
-        position: new THREE.Vector3(-24.40545504348329, 0.5, 50.754401939102294),
-        rotation: new THREE.Euler(0, Math.PI / 4, 0),
-    },
-];
+function classView(view) {
+    return {
+        name: view.id,
+        id: view.id,
+        position: { ...view.pose.position },
+        rotation: eulerFromQuaternion(view.pose.rotation),
+        pose: {
+            position: { ...view.pose.position },
+            rotation: { ...view.pose.rotation },
+        },
+        camera: { ...view.camera, distortion: [...view.camera.distortion] },
+        calibration: view.calibration,
+        includeTags: [...view.includeTags],
+        excludeTags: [...view.excludeTags],
+        products: [...view.products],
+        passes: view.passes.map((pass) => ({ ...pass, includeTags: [...pass.includeTags], excludeTags: [...pass.excludeTags], maskTags: [...pass.maskTags] })),
+        masks: { ...view.masks },
+    };
+}
+
+function classPathVertices(path) {
+    return path.vertices.map((vertex) => ({
+        position: { ...vertex.position },
+        rotation: eulerFromQuaternion(vertex.rotation),
+    }));
+}
 
 /**
- * Central bake-run configuration and manifest for deterministic captures.
+ * Serializable bake-run configuration. Pixel-affecting fields live on the
+ * versioned `cev-sim.bake-run-config@1` document; endpoints, timeouts, debug
+ * logging, and raw-capture retention stay in `operational` and never enter
+ * `recipeHash`.
  */
 export class BakeRunConfig {
     /**
      * @param {Object} [options]
      */
     constructor(options = {}) {
-        this.runId = options.runId || `bake-${options.seed ?? 42}`;
-        this.environmentId = options.environmentId || "igvc";
-        this.seed = options.seed ?? 42;
-        this.host = options.host ?? "http://localhost:8000";
-        this.deltaDistance = options.deltaDistance ?? 2.0;
-        this.maskMinPixels = options.maskMinPixels ?? 64;
-        this.passPolicy = {
-            beautyAlways: true,
-            activeBuildingMask: true,
-            processAllVisibleBuildings: true,
-            contextMask: false,
-            skipEmptyMasks: true,
-            ...options.passPolicy,
-        };
-        this.modelSettings = {
-            steps: 36,
-            guidance: 14,
-            ...options.modelSettings,
-        };
-        /** @type {BuildingRecord[]} */
-        this.buildings = Array.isArray(options.buildings) ? options.buildings : [];
-        this.views = options.views ?? BakeRunConfig.defaultViews();
-        this.pathVertices = options.pathVertices ?? DEFAULT_SAMPLE_PATH;
-        this.createdAt = options.createdAt || new Date().toISOString();
-        this.roundTrip = {
-            useModel: true,
-            pollIntervalMs: 1000,
-            timeoutMs: 1000 * 60 * 5, // 5 minutes
-            resultEndpoint: "/bake/result",
-            ...options.roundTrip,
-        };
-        this.debug = {
-            saveRawCaptures: true,
-            logPipeline: false,
-            ...options.debug,
-        };
+        const document = normalizeBakeRunConfig(adaptLegacyBakeRunConfigInput(options));
+        this._document = document;
+        this.environmentId = document.environmentId;
+        this.seed = document.seed;
+        this.runId = document.operational.runId;
+        this.host = document.operational.host;
+        this.endpoint = document.operational.endpoint;
+        this.deltaDistance = document.sampling.deltaDistance;
+        this.maskMinPixels = document.views[0]?.masks.minPixels ?? 64;
+        this.passPolicy = { ...document.passPolicy };
+        this.modelSettings = { ...document.operational.modelSettings };
+        this.buildings = document.buildings.map((building) => ({
+            ...building,
+            footprint: building.footprint.map((point) => ({ ...point })),
+            tags: [...building.tags],
+        }));
+        this.views = document.views.map(classView);
+        this.pathVertices = classPathVertices(document.paths[0] ?? { vertices: [] });
+        this.paths = document.paths.map((path) => ({
+            id: path.id,
+            vertices: classPathVertices(path),
+        }));
+        this.createdAt = document.operational.createdAt;
+        this.roundTrip = { ...document.operational.roundTrip };
+        this.debug = { ...document.operational.debug };
         this.splat = {
-            enabled: true,
-            excludeTags: ["road"],
-            bandNear: 0,
-            bandFar: 15,
-            maxSplatDistance: 60,
-            renderMode: "projectedTexture",
-            maxPointsPerFrame: 20000,
-            // Neighbor-aware coverage enforces ~1 splat per voxel neighborhood,
-            // so the effective min splat spacing is ~voxel..2*voxel. Keep the
-            // voxel small enough for building detail while still de-duplicating
-            // the same surface seen from successive frames.
-            coverageVoxelSize: 0.02,
-            coverageNeighbor: true,
-            radius: 0.01,
-            adaptiveRadius: true,
-            hideBakedGeometry: false,
-            hideThreshold: 50,
-            maxSplats: 500000,
-            ...options.splat,
-            projectedTexture: {
-                enabled: true,
-                opacity: 1,
-                cellSizePx: 10,
-                maxPixelDistancePx: 16,
-                maxDepthDelta: 1.5,
-                maxTriangleDepthDelta: 1,
-                surfaceOffset: 0.005,
-                ...(options.splat?.projectedTexture ?? {}),
-            },
-            updateSliver: {
-                enabled: true,
-                widthPx: 320,
-                minMaskPixels: 1,
-                requireBuildingHit: true,
-                ...(options.splat?.updateSliver ?? {}),
-            },
+            ...document.operational.splat,
+            excludeTags: [...document.operational.splat.excludeTags],
+            projectedTexture: { ...document.operational.splat.projectedTexture },
+            updateSliver: { ...document.operational.splat.updateSliver },
         };
+        this.provider = { ...document.provider };
+        this.providerOptions = { ...document.providerOptions };
+        this.outputRoles = [...document.outputRoles];
+        this.sampling = { ...document.sampling };
+        this.planner = { ...document.planner };
+        this.cachePolicy = { ...document.cachePolicy };
+        this.snapshotPolicy = { ...document.snapshotPolicy };
+        this.kind = document.kind;
+        this.version = document.version;
+    }
+
+    document() {
+        return this._document;
+    }
+
+    recipeHash() {
+        return hashBakeRunConfig(this._document);
+    }
+
+    recipeIdentity() {
+        return bakeRecipeIdentity(this._document);
     }
 
     /**
@@ -129,56 +139,34 @@ export class BakeRunConfig {
      * @returns {Object[]}
      */
     static defaultViews() {
-        return [
-            {
-                name: "bake/view/main",
-                position: new THREE.Vector3(0, 1.6, 0),
-                rotation: new THREE.Euler(0, 0, 0),
-                excludeTags: ["sign", "vehicle"],
-                camera: {
-                    width: 1920,
-                    height: 1080,
-                    fov: 75,
-                },
-                passes: [
-                    {
-                        id: "beauty",
-                        kind: "render",
-                        excludeTags: ["sign", "vehicle"],
-                    },
-                ],
-            },
-        ];
+        return createDefaultBakeRunConfig().views;
     }
 
     /**
      * @param {BuildingRecord[]} records
      */
     setBuildings(records) {
-        this.buildings = records.map((record) => ({ ...record }));
+        const next = normalizeBakeRunConfig({
+            ...this._document,
+            buildings: Array.isArray(records) ? records : [],
+        });
+        this._document = next;
+        this.buildings = next.buildings.map((building) => ({
+            ...building,
+            footprint: building.footprint.map((point) => ({ ...point })),
+            tags: [...building.tags],
+        }));
     }
 
     /**
-     * @returns {BakeRunManifest}
+     * @returns {Object}
      */
     toManifest() {
-        return {
-            runId: this.runId,
-            environmentId: this.environmentId,
-            seed: this.seed,
-            createdAt: this.createdAt,
-            buildings: this.buildings.map((building) => ({
-                ...building,
-                footprint: building.footprint.map((point) => ({ ...point })),
-            })),
-            passPolicy: { ...this.passPolicy },
-            modelSettings: { ...this.modelSettings },
-            roundTrip: { ...this.roundTrip },
-            debug: { ...this.debug },
-            splat: { ...this.splat },
-            deltaDistance: this.deltaDistance,
-            maskMinPixels: this.maskMinPixels,
-        };
+        return this._document;
+    }
+
+    static fromManifest(manifest) {
+        return new BakeRunConfig(manifest);
     }
 }
 
@@ -189,3 +177,29 @@ export class BakeRunConfig {
 export function createDefaultBakeRunConfig(overrides = {}) {
     return new BakeRunConfig(overrides);
 }
+
+export function createLegacyCompatibleBakeRunConfig(overrides = {}) {
+    if (overrides?.kind === "cev-sim.bake-run-config") {
+        return new BakeRunConfig({
+            ...overrides,
+            operational: {
+                ...overrides.operational,
+                roundTrip: {
+                    useModel: true,
+                    ...(overrides.operational?.roundTrip ?? {}),
+                },
+                debug: {
+                    saveRawCaptures: true,
+                    ...(overrides.operational?.debug ?? {}),
+                },
+            },
+        });
+    }
+    return new BakeRunConfig({
+        ...overrides,
+        roundTrip: { useModel: true, ...(overrides.roundTrip ?? {}) },
+        debug: { saveRawCaptures: true, ...(overrides.debug ?? {}) },
+    });
+}
+
+export { interpolateBakePathSample, pathLengthMeters, planIntegerSampleDistances };

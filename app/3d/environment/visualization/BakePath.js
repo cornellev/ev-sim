@@ -1,23 +1,45 @@
 import * as THREE from "three";
+import {
+    interpolateBakePathSample,
+    pathLengthMeters,
+    planIntegerSampleDistances,
+    rotationToQuaternion,
+} from "../visual/BakeRunCatalog.js";
+
+function toVector3(value) {
+    if (!value) return new THREE.Vector3();
+    if (value.isVector3 || typeof value.clone === "function") return value.clone();
+    return new THREE.Vector3(value.x ?? 0, value.y ?? 0, value.z ?? 0);
+}
+
+function toEuler(value) {
+    if (!value) return null;
+    if (value.isEuler) {
+        return new THREE.Euler(value.x, value.y, value.z, value.order || "XYZ");
+    }
+    if (value.w !== undefined) {
+        const quaternion = new THREE.Quaternion(
+            value.x,
+            value.y,
+            value.z,
+            value.w,
+        );
+        return new THREE.Euler().setFromQuaternion(quaternion, "XYZ");
+    }
+    return new THREE.Euler(value.x ?? 0, value.y ?? 0, value.z ?? 0, value.order || "XYZ");
+}
 
 /**
  * Ordered path used by the bake harness to sample camera poses.
  */
 export class BakePath {
     /**
-     * @param {Array<{ position: THREE.Vector3, rotation?: THREE.Euler }>} vertices
+     * @param {Array<{ position: THREE.Vector3|{x:number,y:number,z:number}, rotation?: THREE.Euler|object }>} vertices
      */
     constructor(vertices = []) {
         this.vertices = vertices.map((vertex) => ({
-            position: vertex.position.clone(),
-            rotation: vertex.rotation
-                ? new THREE.Euler(
-                    vertex.rotation.x,
-                    vertex.rotation.y,
-                    vertex.rotation.z,
-                    vertex.rotation.order || "XYZ"
-                )
-                : null,
+            position: toVector3(vertex.position ?? vertex),
+            rotation: toEuler(vertex.rotation),
         }));
 
         this._segmentLengths = [];
@@ -33,10 +55,8 @@ export class BakePath {
      */
     addVertex(position, rotation = null) {
         this.vertices.push({
-            position: position.clone(),
-            rotation: rotation
-                ? new THREE.Euler(rotation.x, rotation.y, rotation.z, rotation.order || "XYZ")
-                : null,
+            position: toVector3(position),
+            rotation: toEuler(rotation),
         });
         this._rebuild();
         return this;
@@ -95,7 +115,7 @@ export class BakePath {
                 continue;
             }
 
-            const segmentLength = this._segmentLengths[i] || 1e-6;
+            const segmentLength = this._segmentLengths[i];
             const localDistance = clampedDistance - segmentStart;
             const t = segmentLength > 0 ? localDistance / segmentLength : 0;
 
@@ -140,6 +160,47 @@ export class BakePath {
             distance: this.totalLength,
             segmentIndex: Math.max(0, this.vertices.length - 2),
             t: 1,
+        };
+    }
+
+    /**
+     * Integer-index sampling used by version-1 bake jobs. Distances are
+     * `sampleIndex * deltaDistance`, the final sample is the explicit path
+     * endpoint, and zero-length segments hold the start vertex.
+     * @param {number} sampleIndex
+     * @param {number} deltaDistance
+     * @param {{ includeEndpoints?: boolean }} [options]
+     */
+    sampleAtIndex(sampleIndex, deltaDistance, options = {}) {
+        const sampling = {
+            deltaDistance,
+            includeEndpoints: options.includeEndpoints !== false,
+            zeroLengthPolicy: "hold-start",
+        };
+        const vertices = this.vertices.map((vertex) => ({
+            position: { x: vertex.position.x, y: vertex.position.y, z: vertex.position.z },
+            rotation: vertex.rotation
+                ? rotationToQuaternion(vertex.rotation, "path.rotation")
+                : { x: 0, y: 0, z: 0, w: 1 },
+        }));
+        const distances = planIntegerSampleDistances(pathLengthMeters({ vertices }), sampling);
+        const distance = distances[sampleIndex];
+        if (distance == null) return null;
+        const sample = interpolateBakePathSample(vertices, distance);
+        if (!sample) return null;
+        const quaternion = new THREE.Quaternion(
+            sample.rotation.x,
+            sample.rotation.y,
+            sample.rotation.z,
+            sample.rotation.w,
+        );
+        return {
+            position: new THREE.Vector3(sample.position.x, sample.position.y, sample.position.z),
+            rotation: new THREE.Euler().setFromQuaternion(quaternion, "XYZ"),
+            distance: sample.distance,
+            segmentIndex: sample.segmentIndex,
+            t: sample.t,
+            sampleIndex,
         };
     }
 
