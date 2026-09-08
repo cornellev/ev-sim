@@ -14,7 +14,11 @@ import {
     getCoveredChunkKeysForBounds,
 } from "../../editor/chunks/ChunkIndex.js";
 import { compareUtf8 } from "./BakeRunCatalog.js";
-import { seamCosine } from "./BakeConstructionPolicy.js";
+import {
+    INTRINSIC_CHANNEL_BY_NAME,
+    isIntrinsicProposalConstruction,
+    seamCosine,
+} from "./BakeConstructionPolicy.js";
 import { quantizeConfidence, quantizeFacing } from "./BakeAtlasContribution.js";
 
 const UV_EPS = 1e-6;
@@ -717,7 +721,206 @@ export function mapCaptureToContributions({
     return records;
 }
 
+export function mapMaterialProposalsToContributions({
+    layout,
+    worldPosition,
+    geometricNormal,
+    captureConfidence,
+    validity,
+    width,
+    height,
+    cameraPosition,
+    unitId,
+    proposalUnit,
+    proposalSources,
+    proposalBuffers,
+}) {
+    if (proposalUnit.width !== width || proposalUnit.height !== height) {
+        throw atlasError("BAKE_MATERIAL_PROPOSAL_DIMENSION_MISMATCH", `Proposal dimensions for ${unitId} do not match capture dimensions.`);
+    }
+    const sourceById = proposalSources instanceof Map
+        ? proposalSources
+        : new Map((proposalSources ?? []).map((source) => [source.id, source]));
+    const records = [];
+    const pixels = width * height;
+    for (let pixel = 0; pixel < pixels; pixel += 1) {
+        if (validity && validity[pixel] === 0) continue;
+        const wx = worldPosition[pixel * 3];
+        const wy = worldPosition[pixel * 3 + 1];
+        const wz = worldPosition[pixel * 3 + 2];
+        if (![wx, wy, wz].every(Number.isFinite)) continue;
+        const point = vec(wx, wy, wz);
+        let hit = null;
+        for (const chunk of layout.chunks) {
+            const located = locateSample(chunk.index, point);
+            if (!located) continue;
+            if (!hit || located.plane < hit.plane - 1e-9) hit = { ...located, chunk };
+        }
+        if (!hit) continue;
+        const uv = interpolateUv(hit.triangle, hit);
+        if (!uv) continue;
+        const atlas = atlasUvFor(hit.triangle.placement, uv.u, uv.v);
+        const texelX = Math.floor(atlas.x);
+        const texelY = Math.floor(atlas.y);
+        const placement = hit.triangle.placement;
+        if (
+            texelX < placement.x
+            || texelY < placement.y
+            || texelX >= placement.x + placement.pixelW
+            || texelY >= placement.y + placement.pixelH
+        ) continue;
+        const nx = geometricNormal?.[pixel * 3] ?? hit.triangle.faceNormal.x;
+        const ny = geometricNormal?.[pixel * 3 + 1] ?? hit.triangle.faceNormal.y;
+        const nz = geometricNormal?.[pixel * 3 + 2] ?? hit.triangle.faceNormal.z;
+        const toward = normalize(sub(cameraPosition, point));
+        const facing = dot(normalize(vec(nx, ny, nz)), toward);
+        const distance = length(sub(cameraPosition, point));
+        const captureCertainty = Number.isFinite(captureConfidence?.[pixel]) ? captureConfidence[pixel] : 1;
+        for (const output of proposalUnit.outputs) {
+            const source = sourceById.get(output.sourceId);
+            if (!source) continue;
+            const resolved = proposalBuffers.get(`${unitId}\0${output.sourceId}\0${output.channel}\0resolved`);
+            if (!resolved) {
+                throw atlasError("BAKE_MATERIAL_PROPOSAL_BUFFER_MISSING", `Resolved proposal buffers are missing for ${unitId}/${output.sourceId}/${output.channel}.`);
+            }
+            const definition = INTRINSIC_CHANNEL_BY_NAME[output.channel];
+            const known = resolved.knownMask[pixel] === 1;
+            const values = Array.from(
+                resolved.values.subarray(pixel * definition.components, (pixel + 1) * definition.components),
+            );
+            const proposalCertainty = resolved.confidence[pixel];
+            records.push({
+                chunkKey: hit.chunk.chunkKey,
+                pageIndex: hit.triangle.pageIndex,
+                texelX,
+                texelY,
+                channel: output.channel,
+                sourceId: output.sourceId,
+                sourceType: source.type,
+                known,
+                values,
+                combinedConfidence: known ? captureCertainty * proposalCertainty : 0,
+                facing: Number.isFinite(facing) ? facing : -1,
+                distance: Number.isFinite(distance) ? distance : Number.POSITIVE_INFINITY,
+                pixelIndex: pixel,
+                triangleIndex: hit.triangle.triangleIndex,
+                unitId,
+            });
+        }
+    }
+    return records;
+}
+
+export function compareMaterialObservations(left, right, channelPolicy) {
+    const priority = new Map(channelPolicy.sourcePriority.map((sourceType, index) => [sourceType, index]));
+    const leftPriority = priority.get(left.sourceType) ?? Number.MAX_SAFE_INTEGER;
+    const rightPriority = priority.get(right.sourceType) ?? Number.MAX_SAFE_INTEGER;
+    if (leftPriority !== rightPriority) return leftPriority - rightPriority;
+    if (left.confidenceQ !== right.confidenceQ) return right.confidenceQ - left.confidenceQ;
+    if (left.facingQ !== right.facingQ) return right.facingQ - left.facingQ;
+    if (left.distance !== right.distance) return left.distance - right.distance;
+    const source = compareUtf8(left.sourceId, right.sourceId);
+    if (source) return source;
+    const unit = compareUtf8(left.unitId, right.unitId);
+    if (unit) return unit;
+    return left.pixelIndex - right.pixelIndex;
+}
+
+function pageGeometry(chunk, pageIndex, pageSize) {
+    const positions = [];
+    const uvs = [];
+    const indices = [];
+    for (const placement of chunk.placements) {
+        if (placement.pageIndex !== pageIndex) continue;
+        placement.triangles.forEach((triangle, triangleIndex) => {
+            const base = positions.length / 3;
+            const uv = placement.uvs[triangleIndex];
+            for (let vertexIndex = 0; vertexIndex < 3; vertexIndex += 1) {
+                positions.push(
+                    triangle.positions[vertexIndex * 3],
+                    triangle.positions[vertexIndex * 3 + 1],
+                    triangle.positions[vertexIndex * 3 + 2],
+                );
+                const atlas = atlasUvFor(placement, uv[vertexIndex * 2], uv[vertexIndex * 2 + 1]);
+                uvs.push(atlas.x / pageSize, atlas.y / pageSize);
+            }
+            indices.push(base, base + 1, base + 2);
+        });
+    }
+    return {
+        positions: Float32Array.from(positions),
+        uvs: Float32Array.from(uvs),
+        indices: Uint32Array.from(indices),
+    };
+}
+
+export function fuseIntrinsicChunkPages({ chunk, contributions, construction }) {
+    const pageSize = construction.pageSizePx;
+    const pixelCount = pageSize * pageSize;
+    const pages = [];
+    for (let pageIndex = 0; pageIndex < chunk.pageCount; pageIndex += 1) {
+        const intrinsic = {};
+        for (const channelPolicy of construction.intrinsicChannels) {
+            const definition = INTRINSIC_CHANNEL_BY_NAME[channelPolicy.name];
+            const values = new Float32Array(pixelCount * definition.components);
+            for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+                values.set(channelPolicy.declaredDefault, pixel * definition.components);
+            }
+            const confidence = new Float32Array(pixelCount);
+            const knownMask = new Uint8Array(pixelCount);
+            const candidatesByTexel = new Map();
+            for (const record of contributions) {
+                if (record.pageIndex !== pageIndex || record.channel !== channelPolicy.name) continue;
+                const key = `${record.texelX}:${record.texelY}`;
+                const list = candidatesByTexel.get(key) ?? [];
+                list.push({
+                    ...record,
+                    confidenceQ: record.confidenceQ ?? quantizeConfidence(record.combinedConfidence),
+                    facingQ: record.facingQ ?? quantizeFacing(record.facing),
+                });
+                candidatesByTexel.set(key, list);
+            }
+            let coverageCount = 0;
+            let conflictCount = 0;
+            for (const [key, candidates] of candidatesByTexel) {
+                const known = candidates.filter((candidate) => candidate.known);
+                if (!known.length) continue;
+                known.sort((left, right) => compareMaterialObservations(left, right, channelPolicy));
+                const winner = known[0];
+                const [x, y] = key.split(":").map(Number);
+                const pixel = y * pageSize + x;
+                values.set(winner.values, pixel * definition.components);
+                confidence[pixel] = winner.confidenceQ / 65535;
+                knownMask[pixel] = 1;
+                coverageCount += 1;
+                if (known.length > 1) conflictCount += 1;
+            }
+            intrinsic[channelPolicy.name] = Object.freeze({
+                values,
+                confidence,
+                knownMask,
+                state: coverageCount > 0 ? "supported" : (candidatesByTexel.size > 0 ? "defaulted" : "unknown"),
+                coverageCount,
+                conflictCount,
+                defaultAppliedCount: pixelCount - coverageCount,
+                unknownCount: pixelCount - coverageCount,
+            });
+        }
+        pages.push(Object.freeze({
+            pageIndex,
+            intrinsic: Object.freeze(intrinsic),
+            coverageCount: Object.values(intrinsic).reduce((sum, entry) => sum + entry.coverageCount, 0),
+            conflictCount: Object.values(intrinsic).reduce((sum, entry) => sum + entry.conflictCount, 0),
+            ...pageGeometry(chunk, pageIndex, pageSize),
+        }));
+    }
+    return pages;
+}
+
 export function fuseChunkPages({ chunk, contributions, construction, intrinsicByTexel = null }) {
+    if (isIntrinsicProposalConstruction(construction)) {
+        return fuseIntrinsicChunkPages({ chunk, contributions, construction });
+    }
     const pageSize = construction.pageSizePx;
     const pages = [];
     for (let pageIndex = 0; pageIndex < chunk.pageCount; pageIndex += 1) {
@@ -764,35 +967,14 @@ export function fuseChunkPages({ chunk, contributions, construction, intrinsicBy
                 }
             }
         }
-        const positions = [];
-        const uvs = [];
-        const indices = [];
-        for (const placement of chunk.placements) {
-            if (placement.pageIndex !== pageIndex) continue;
-            placement.triangles.forEach((triangle, triangleIndex) => {
-                const base = positions.length / 3;
-                const uv = placement.uvs[triangleIndex];
-                for (let vertexIndex = 0; vertexIndex < 3; vertexIndex += 1) {
-                    positions.push(
-                        triangle.positions[vertexIndex * 3],
-                        triangle.positions[vertexIndex * 3 + 1],
-                        triangle.positions[vertexIndex * 3 + 2],
-                    );
-                    const atlas = atlasUvFor(placement, uv[vertexIndex * 2], uv[vertexIndex * 2 + 1]);
-                    uvs.push(atlas.x / pageSize, atlas.y / pageSize);
-                }
-                indices.push(base, base + 1, base + 2);
-            });
-        }
+        const geometry = pageGeometry(chunk, pageIndex, pageSize);
         pages.push({
             pageIndex,
             radiance,
             confidence,
             coverageCount,
             conflictCount,
-            positions: Float32Array.from(positions),
-            uvs: Float32Array.from(uvs),
-            indices: Uint32Array.from(indices),
+            ...geometry,
         });
     }
     return pages;

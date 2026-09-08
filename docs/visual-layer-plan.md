@@ -25,7 +25,7 @@ a VIS, GOOG, or GS PR changes a contract, hash, gate, or milestone status.
 
 ## Status and release verdict
 
-- Next milestone: **VIS-12b — conditional visual run resolution**. VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, VIS-05a, VIS-05b, VIS-06a, VIS-06b, VIS-07, VIS-08, VIS-09, VIS-10a, and VIS-16a are implemented.
+- Next milestone: **VIS-12b — conditional visual run resolution**. VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, VIS-05a, VIS-05b, VIS-06a, VIS-06b, VIS-07, VIS-08, VIS-09, VIS-10a, VIS-10b, and VIS-16a are implemented.
 - Review verdict: **NO-GO for the original ordering and for claiming visual
   runtime support.** The five Blocker findings below require implementation
   and evidence. This revision supplies the corrected handoff; editing the
@@ -33,8 +33,8 @@ a VIS, GOOG, or GS PR changes a contract, hash, gate, or milestone status.
 - Core assumption: **Google approval, Google-derived assets, Gaussian
   splatting, and a model service are unavailable.**
 - Default implementation/review reasoning level: **Extra High**.
-- Last updated: **2026-09-08 — VIS-16a evidence contracts and corrective maintenance implemented**.
--   VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, VIS-05a, VIS-05b, VIS-06a, VIS-06b, VIS-07, VIS-08, VIS-09, VIS-10a, and VIS-16a acceptance evidence is recorded in
+- Last updated: **2026-09-08 — VIS-10b intrinsic material proposals implemented**.
+-   VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, VIS-05a, VIS-05b, VIS-06a, VIS-06b, VIS-07, VIS-08, VIS-09, VIS-10a, VIS-10b, and VIS-16a acceptance evidence is recorded in
   the progress ledger and decision log. Protocol 1.3 advertises `world-bound@2`.
   Only `canonical-analytic@1` and GPU sensor backend v1 remain runtime-capable;
   no visual renderer or package-admission capability is advertised. Environment
@@ -46,7 +46,10 @@ a VIS, GOOG, or GS PR changes a contract, hash, gate, or milestone status.
   cases and G-INDEPENDENCE no-model startup. VIS-08 closes G-ATOMIC promotion,
   G-PROVENANCE fixed-input outputs, G-LIFECYCLE promotion, and G-INDEPENDENCE
   bake/reload. VIS-09 closes F13 reuse authorization and G-INCREMENTAL.
-  VIS-10a closes G-ATLAS and atlas-path G-INCREMENTAL/G-SCALE fusion bounds.
+  VIS-10a closes captured-radiance G-ATLAS and atlas-path
+  G-INCREMENTAL/G-SCALE fusion bounds. VIS-10b closes fixed-proposal
+  G-ATLAS/G-PROVENANCE, per-unit proposal invalidation, and intrinsic fusion
+  bounds without activating a model or runtime provider.
   VIS-16a closes the schema/tamper/cycle portion of G-CORRESPONDENCE with
   synthetic thresholds. Real correspondence evaluation and managed-runtime
   enforcement remain VIS-16b.
@@ -118,7 +121,7 @@ work. The other runtime findings retain their owning gates.
 | F07 **High** | [SensorTypeRegistry.js](../app/3d/devices/SensorTypeRegistry.js) accepts unequal/off-center intrinsics; [ManifestCamera.js](../app/3d/devices/ManifestCamera.js) and [PooledGpuRenderer.js](../server/headless/PooledGpuRenderer.js) construct FOV/aspect projections. [BakeView.js](../app/3d/environment/visualization/BakeView.js) uses a different pixel-center convention. Published calibration can disagree with pixels even when both renderers agree. | Put shared versioned K-to-projection math in VIS-06a. G-CALIBRATION uses independently calculated points, unequal focal lengths, off-center principal points, and rotated mounts. |
 | F08 **High** | [BakeView.js](../app/3d/environment/visualization/BakeView.js) hides non-target mask geometry, forces depth visibility, and boosts beauty road materials; these are not aligned samples. [CameraRenderProducts.js](../app/3d/perception/CameraRenderProducts.js) changes materials on scene meshes rather than selecting independent truth twins. Fusion or correspondence can accept occluded/misregistered samples. | Split VIS-06b from legacy calibration/isolation; define separate visual G-buffer and analytic oracle pass families. G-GBUFFER proves occlusion, validity, alpha policy, encoding, and exception-safe restoration. |
 | F09 **High** | [HeadlessGpuSensorManager.js](../app/simulation/sensors/HeadlessGpuSensorManager.js) shares `renderScene || lidarGeometry`; its camera implementation produces RGB/CameraInfo rather than every authored oracle product. [SensorTypeRegistry.js](../app/3d/devices/SensorTypeRegistry.js), `normalizeRunSensor`, has a fixed authored field set. [PerceptionTruthIndex.js](../app/autonomy/PerceptionTruthIndex.js) and [EnvironmentRegistry.js](../app/3d/editor/EnvironmentRegistry.js) discover truth from scene metadata. PBR geometry or imported GLTF extras can cross the truth boundary, while unsupported products can disappear. | VIS-02 added provider/profile schemas and explicit validation; remaining product-completeness and selected-visual resolution belong to later VIS/VIS-12b. Separate truth resources and sanitize imported metadata in VIS-05a/VIS-14/VIS-15a. G-CAPABILITY and G-ORACLE prove product completeness and observation isolation. |
-| F10 **High** | VIS-07 serializes bake planning inputs and canonicalizes planner order. VIS-08 emits deterministic PNG/GLB captured-radiance artifacts with explicit unlit semantics. VIS-10a emits per-chunk atlas pages with hashed construction policy. Remaining F10 work is browser `bakeUpload.js` encoding on the legacy path, unpinned Python model options, and VIS-10b material estimation. | Combine the provider job contract with VIS-07; split deterministic atlas construction (VIS-10a) from optional material estimation (VIS-10b/VIS-11). G-PROVENANCE and G-ATLAS separate fixed-input determinism from GPU/model nondeterminism and test material semantics. |
+| F10 **High** | VIS-07 serializes bake planning inputs and canonicalizes planner order. VIS-08 emits deterministic PNG/GLB captured-radiance artifacts with explicit unlit semantics. VIS-10a emits per-chunk atlas pages with hashed construction policy. VIS-10b adds fixed supplied/inferred intrinsic proposals, per-channel fusion, PBR packing, and durable evidence. Remaining F10 work is browser `bakeUpload.js` encoding on the legacy path and unpinned Python model options owned by VIS-11. | Combine the provider job contract with VIS-07; split deterministic atlas construction (VIS-10a) from optional material estimation (VIS-10b/VIS-11). G-PROVENANCE and G-ATLAS separate fixed-input determinism from GPU/model nondeterminism and test material semantics. |
 | F11 **High** | Corrected VIS-04/VIS-05a now require current versioned validation before content or materialization; iteratively bound glTF preflight; apply one extension allowlist to declarations and objects; inspect embedded/digest-backed images and decoded memory before loaders; authorize only loader-created object URLs; sanitize metadata; and propagate decoder failures. Archive support remains unavailable. | GLB/glTF loader boundary closed by G-SECURITY. Hostile USTAR validation remains a mandatory VIS-13a prerequisite before extraction or package-loader access. |
 | F12 **High** | [StorageService.js](../server/storage/StorageService.js) persists queued experiment bundle sidecars under `headless-run-bundles`; environment/package references are not the whole live set. Worker resets, queued jobs, replay, bake staging, and validation reports also need blobs. Environment-only reference checks allow deletion of required assets or indefinite growth. | Put pins, durable roots, quotas, staging recovery, and a no-unsafe-delete policy in VIS-04; wire execution roots in VIS-13b/VIS-15b. G-LIFECYCLE races deletion against queueing, promotion, restart, reset, and cancellation. |
 | F13 **High** | VIS-09 added per-unit dependency keys, typed chunk mutations, and conservative global invalidation. VIS-10a fuses one chunk/page at a time under ledger reservations and rebuilds only dirty atlas chunks. Remaining F13/G-SCALE risk is advertised hardware city-scale reports, not reuse authorization. | VIS-09 G-INCREMENTAL compares complete vs incremental descriptor/access/asset identity. Residency never authorizes reuse. |
@@ -1273,6 +1276,21 @@ browser/headless cameras, packaging, or managed experiments.
 
 **Depends on:** VIS-06b, VIS-07, VIS-10a.
 
+**Implemented 2026-09-08.** `cev-sim.bake-material-proposal-set@1` binds
+recipe, snapshot, plan, request, and response hashes plus strict supplied or
+inferred source provenance and exact per-unit/channel output digests.
+`cev-sim.bake-construction@2` fixes the six intrinsic channel meanings,
+rendering defaults, typed little-endian Float32/Uint8 buffers, and an ordered
+per-channel `sourcePriority` whose normalized default is
+`["supplied", "inferred"]`. Contribution v2, atlas-manifest v2, and
+artifact-set v3 dispatch preserve all previous-version reads and hashes.
+Proposal evidence is stored at
+`bake-material-proposals/sha256/<hash>.json`, bound into the artifact and
+promotion receipt, and excluded from visual/world/semantic/episode identity.
+The default persistent bake remains construction v1
+`captured-radiance-unlit`; no model, Python, editor UI, run-manifest/protobuf,
+or runtime capability was added.
+
 Define physically meaningful material proposal channels, units/ranges,
 illumination/decomposition assumptions, confidence and unknown-texel policy.
 Fuse supplied/model proposals into base color, normal, roughness, metalness,
@@ -1554,7 +1572,7 @@ requirements with silent fallback or unsupported claims.
 ## Progress and acceptance ledger
 
 VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, VIS-05a, VIS-05b, VIS-06a, VIS-06b,
-VIS-07, VIS-08, VIS-09, VIS-10a, and VIS-16a are complete in the working tree;
+VIS-07, VIS-08, VIS-09, VIS-10a, VIS-10b, and VIS-16a are complete in the working tree;
 all other required core PRs remain **not started**. VIS-12a landed at commit
 `e4f756a`. Its accountable owner remains the repository owner under D01.
 
@@ -1894,9 +1912,12 @@ all other required core PRs remain **not started**. VIS-12a landed at commit
 - [ ] VIS-17b
 - [ ] VIS-17c
 
-Optional work remains **not started**:
+Optional work after the completed VIS-10b contract/fusion milestone remains
+**not started**:
 
-- [ ] VIS-10b
+- [x] VIS-10b — strict proposal evidence, per-channel fusion, intrinsic PBR
+  atlas outputs, incremental proposal keys, durable promotion receipts, and
+  fixed-fixture relighting evidence. Model execution remains VIS-11.
 - [ ] VIS-11
 - [ ] GOOG-01
 - [ ] GOOG-02
@@ -2488,6 +2509,55 @@ Protocol 1.3, advertised capabilities, Python, run manifests, protobuf,
 `pbr-mesh@1`, and GPU backend v2 are unchanged. VIS-16a followed; VIS-12b is next.
 
 Local acceptance: focused atlas/incremental/promotion/catalog/artifact/chunk/persistence/independence suites passed 82/82 with no skips. Coverage includes bake-contract v1/v2 dispatch, unknown-field rejection, contribution tamper detection and golden hashes, G-ATLAS seams/missing UVs/chunk clipping/holes/fusion order/overflow/unlit-vs-Lambert/shuffled inputs, G-INCREMENTAL no-op/insert/delete/material/move/sky/v1-migration/dirty-chunk contribution reuse, fusion ceiling, and bake-reuse root replacement/cancel/journal recovery. `npm run lint` completed with zero errors and two pre-existing warnings. `npm test` passed 825/827 with the two declared hardware GPU skips. `npm run test:headless` passed 87/87. `npm run build` succeeded. `npm run fixtures:headless` produced no characterization delta. `npm run benchmark:visual-scale:quick` passed with the hosted `hardware-telemetry` skip. `npm run test:ui` was not run.
+
+### 2026-09-08 — Implement VIS-10b intrinsic material proposals
+
+Add strict `cev-sim.bake-material-proposal-set@1` normalization, canonical
+hashing, and validation for supplied and inferred sources. Evidence binds the
+completed recipe/snapshot/plan/request/response hashes; source records bind
+algorithm, provider, model, weights, nondeterminism, and source-use provenance;
+per-unit outputs bind exact little-endian Float32 values/confidence and Uint8
+known masks. Invalid dimensions, masks, ranges, non-finite values, non-unit
+normals, unknown fields, missing channels, and digest or job-binding tampering
+fail before intrinsic output can be uploaded.
+
+Freeze `cev-sim.bake-construction@2` with base-color, tangent normal, glTF
+roughness, metalness, emissive, and occlusion semantics and rendering defaults.
+Each channel orders supplied/inferred priority independently; the default is
+supplied first. Fusion then orders combined capture/proposal confidence,
+camera-facing score, distance, UTF-8 source and unit IDs, and source pixel.
+Defaults retain zero known masks and confidence. Contribution v2 binds the
+affected proposal-unit digest, allowing one proposal-unit change to invalidate
+only that unit and its chunks. Atlas-manifest v2 records runtime,
+confidence/mask digests and supported/defaulted/unknown counts. Artifact-set v3
+binds the complete proposal-set hash. All previous construction, contribution,
+atlas, artifact, reuse, and visual-layer versions keep their existing dispatch,
+bytes, and hashes.
+
+Emit deterministic base-color, tangent-normal, glTF metallic-roughness,
+emissive, and occlusion PNGs plus confidence and known-mask PNGs per logical
+channel. Intrinsic descriptor materials use the five correct PBR texture slots;
+captured beauty is never read for intrinsic output. Proposal provenance is
+stored separately under `bake-material-proposals/sha256`, reverified with
+contribution and atlas closure at promotion, and returned in the durable
+receipt. It is excluded from the unchanged environment schema,
+`visualLayerHash`, world, semantic, episode, run-manifest, protobuf, and
+correspondence identities. Proposal, contribution, and multi-channel fusion
+allocations fail through the bake ledger. The default persistent bake remains
+`captured-radiance-unlit`; no model/Python execution, raw-output cache, editor
+UI, provider capability, `pbr-mesh@1`, or GPU backend v2 is activated. Those
+quality/runtime obligations remain VIS-11 and later runtime milestones.
+
+Local acceptance: focused VIS-10b/atlas/incremental/reuse/promotion suites
+passed 30/30 with no skips; the wider bake matrix passed after its loopback
+case was rerun outside the filesystem/network sandbox. `npm run lint` completed
+with zero errors and two pre-existing warnings. `npm test` passed 853/855 with
+the two declared hardware GPU skips. `npm run test:headless` passed 87/87.
+`npm run build` succeeded. `npm run fixtures:headless` produced no
+characterization delta. `npm run benchmark:visual-scale:quick` passed with the
+hosted `hardware-telemetry` skip. The focused Chromium relighting test passed
+1/1, proving one light response for intrinsic diffuse and no light response for
+the captured-radiance control.
 
 ### 2026-09-08 — Implement VIS-16a evidence contracts and corrective maintenance
 

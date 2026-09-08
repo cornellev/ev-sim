@@ -328,6 +328,7 @@ export function buildBakeDependencyGraph({
     spatialIndex = null,
     chunkIndex = null,
     writer = null,
+    proposalUnitDigests = null,
 } = {}) {
     const construction = constructionFromConfig(config);
     const resolvedWriter = writer ?? writerForConstruction(construction);
@@ -406,6 +407,7 @@ export function buildBakeDependencyGraph({
                     localEntities,
                     intersectingChunkKeys: unitChunkKeys,
                     captureAssets: [...new Set(localEntities.flatMap((entry) => entry.captureAssets))].sort(compareUtf8),
+                    proposalUnitDigest: proposalUnitDigests?.get(unitId) ?? null,
                 });
                 units.push({
                     unitId,

@@ -59,6 +59,7 @@ import { writeAtlasArtifacts } from "./BakeAtlasArtifactWriter.js";
 export const BAKE_ARTIFACT_SET_KIND = "cev-sim.bake-artifact-set";
 export const BAKE_ARTIFACT_SET_VERSION = 1;
 export const BAKE_ARTIFACT_SET_VERSION_V2 = 2;
+export const BAKE_ARTIFACT_SET_VERSION_V3 = 3;
 export const PERSISTENT_BAKE_OUTPUT_ROLES = ATLAS_PERSISTENT_BAKE_OUTPUT_ROLES;
 export { PROJECTED_PERSISTENT_BAKE_OUTPUT_ROLES, ATLAS_PERSISTENT_BAKE_OUTPUT_ROLES };
 
@@ -72,12 +73,20 @@ const ARTIFACT_IDENTITY_KEYS_V2 = Object.freeze([
     ...ARTIFACT_IDENTITY_KEYS,
     "constructionHash", "atlasManifestDigest",
 ]);
+const ARTIFACT_IDENTITY_KEYS_V3 = Object.freeze([
+    ...ARTIFACT_IDENTITY_KEYS_V2,
+    "materialProposalHash",
+]);
 const ARTIFACT_DOCUMENT_KEYS = Object.freeze([
     ...ARTIFACT_IDENTITY_KEYS,
     "jobId", "timestamps", "progress", "logs",
 ]);
 const ARTIFACT_DOCUMENT_KEYS_V2 = Object.freeze([
     ...ARTIFACT_IDENTITY_KEYS_V2,
+    "jobId", "timestamps", "progress", "logs",
+]);
+const ARTIFACT_DOCUMENT_KEYS_V3 = Object.freeze([
+    ...ARTIFACT_IDENTITY_KEYS_V3,
     "jobId", "timestamps", "progress", "logs",
 ]);
 const WRITER_KEYS = Object.freeze(["id", "version", "options"]);
@@ -152,7 +161,9 @@ function unitIdForSample(sample) {
 }
 
 function identityRecord(value) {
-    const keys = value.version >= 2 ? ARTIFACT_IDENTITY_KEYS_V2 : ARTIFACT_IDENTITY_KEYS;
+    const keys = value.version >= 3
+        ? ARTIFACT_IDENTITY_KEYS_V3
+        : (value.version >= 2 ? ARTIFACT_IDENTITY_KEYS_V2 : ARTIFACT_IDENTITY_KEYS);
     const identity = {};
     for (const key of keys) identity[key] = value[key];
     return identity;
@@ -348,12 +359,14 @@ function generatedAssetRecord(entry, index, version) {
 
 export function normalizeBakeArtifactSet(value = {}) {
     const version = integer(value.version ?? BAKE_ARTIFACT_SET_VERSION, "version", { min: 1 });
-    if (version !== BAKE_ARTIFACT_SET_VERSION && version !== BAKE_ARTIFACT_SET_VERSION_V2) {
+    if (![BAKE_ARTIFACT_SET_VERSION, BAKE_ARTIFACT_SET_VERSION_V2, BAKE_ARTIFACT_SET_VERSION_V3].includes(version)) {
         fail("version", "unsupported bake-artifact-set version");
     }
     const source = allowedKeys(
         value,
-        version >= 2 ? ARTIFACT_DOCUMENT_KEYS_V2 : ARTIFACT_DOCUMENT_KEYS,
+        version >= 3
+            ? ARTIFACT_DOCUMENT_KEYS_V3
+            : (version >= 2 ? ARTIFACT_DOCUMENT_KEYS_V2 : ARTIFACT_DOCUMENT_KEYS),
         "bakeArtifactSet",
     );
     if ((source.kind ?? BAKE_ARTIFACT_SET_KIND) !== BAKE_ARTIFACT_SET_KIND) {
@@ -403,6 +416,7 @@ export function normalizeBakeArtifactSet(value = {}) {
         normalized.constructionHash = digest(source.constructionHash, "constructionHash");
         normalized.atlasManifestDigest = digest(source.atlasManifestDigest, "atlasManifestDigest");
     }
+    if (version >= 3) normalized.materialProposalHash = digest(source.materialProposalHash, "materialProposalHash");
     return normalized;
 }
 
@@ -725,6 +739,8 @@ export function writeBakeArtifacts({
     previousContributions = null,
     previousPages = null,
     rebuildChunkKeys = null,
+    materialProposalSet = null,
+    materialProposalBuffers = null,
 } = {}) {
     if (!job?.config || !job.snapshot || !job.plan || !job.request || !job.response) {
         throw artifactError("BAKE_ARTIFACT_INCOMPLETE", "Completed VIS-07 documents are required.");
@@ -782,6 +798,8 @@ export function writeBakeArtifacts({
             rebuildChunkKeys,
             construction,
             finalize,
+            materialProposalSet,
+            materialProposalBuffers,
         });
     }
     const writer = defaultWriter();
@@ -976,6 +994,7 @@ function finalizeArtifacts({
     artifactVersion = BAKE_ARTIFACT_SET_VERSION,
     constructionHash = null,
     atlasManifestDigest = null,
+    materialProposalHash = null,
 }) {
     const descriptorHash = hashVisualLayer(descriptor);
     const access = normalizeVisualLayerAccess({
@@ -1012,6 +1031,7 @@ function finalizeArtifacts({
         progress: job.status?.progress ?? null,
         logs: job.status?.logs ?? null,
         ...(artifactVersion >= 2 ? { constructionHash, atlasManifestDigest } : {}),
+        ...(artifactVersion >= 3 ? { materialProposalHash } : {}),
     });
     return {
         descriptor,

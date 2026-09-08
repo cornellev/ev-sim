@@ -19,7 +19,10 @@ unchanged bake units from a trusted `cev-sim.bake-reuse-manifest@1`; reports
 never enter `visualLayerHash`, `worldHash`, or episode identity. VIS-10a
 defaults new persistent bakes to deterministic per-chunk atlases under
 bake-contract v2; `projected-captured-radiance@1` remains an explicit
-compatibility mode.
+compatibility mode. VIS-10b adds opt-in `bake-construction@2` intrinsic
+proposal fusion, material-proposal evidence, multi-channel atlas outputs, and
+artifact/contribution/atlas dispatch without changing the captured-radiance
+default or visual-layer identity.
 VIS-16a adds strict visual-evaluation, correspondence-report, threshold-profile,
 and admission contracts with synthetic boundary fixtures. It does not run a
 validator or activate managed visual execution.
@@ -54,10 +57,11 @@ become collision, route, LiDAR, registry, or oracle truth.
 | Bake provider request | `cev-sim.bake-provider-request@1` | VIS-07 |
 | Bake provider response | `cev-sim.bake-provider-response@1` | VIS-07 local `captured-appearance@1` |
 | Bake job status | `cev-sim.bake-job-status@1` | VIS-07 mutable status |
-| Bake construction | `cev-sim.bake-construction@1` | VIS-10a hashed atlas/projected policy |
-| Bake artifact set | `cev-sim.bake-artifact-set@1` / `@2` | VIS-08 projected records; VIS-10a chunk/page records |
-| Bake atlas manifest | `cev-sim.bake-atlas-manifest@1` | VIS-10a appearance-dependency buffer |
-| Bake atlas contribution | `cev-sim.bake-atlas-contribution@1` | VIS-10a sparse reuse codec |
+| Bake construction | `cev-sim.bake-construction@1` / `@2` | VIS-10a captured-radiance policy; VIS-10b intrinsic proposal fusion |
+| Bake material proposal set | `cev-sim.bake-material-proposal-set@1` | VIS-10b durable provenance and exact per-unit/channel output digests |
+| Bake artifact set | `cev-sim.bake-artifact-set@1` / `@2` / `@3` | VIS-08 projected records; VIS-10a chunk/page records; VIS-10b proposal binding |
+| Bake atlas manifest | `cev-sim.bake-atlas-manifest@1` / `@2` | VIS-10a captured atlas; VIS-10b multi-channel output metadata |
+| Bake atlas contribution | `cev-sim.bake-atlas-contribution@1` / `@2` | VIS-10a radiance reuse; VIS-10b proposal reuse codec |
 | Bake reuse manifest | `cev-sim.bake-reuse-manifest@1` / `@2` | VIS-09 fragments; VIS-10a contributions and chunk hashes |
 | Bake reuse report | `cev-sim.bake-reuse-report@1` | VIS-09 audit evidence only |
 | Visual evaluation input | `cev-sim.visual-evaluation-input@1` | VIS-16a contract only |
@@ -418,7 +422,26 @@ assets, verifies the complete closure, and atomically promotes descriptor/access
 references. VIS-10a defaults new persistent jobs to per-chunk atlas PNG/GLB
 pages with `KHR_materials_unlit` captured-radiance materials, hashed
 construction policy, and contribution assets pinned on a durable bake-reuse
-root. VIS-14 and VIS-15
+root. VIS-10b construction v2 is optional and accepts only a complete,
+job-bound `cev-sim.bake-material-proposal-set@1`. Supplied and inferred
+sources carry algorithm/provider/model/weights revisions, nondeterminism scope,
+source-use hashes, and exact little-endian Float32/Uint8 output digests.
+Per-channel source priority defaults to supplied before inferred, then fusion
+ranks combined capture/proposal confidence, camera facing, distance, UTF-8
+source/unit IDs, and source pixel. Unknown candidates remain unknown: the
+declared rendering default is written with zero confidence and a zero known
+mask.
+
+Intrinsic output is base-color (linear-sRGB reflectance), tangent-space normal,
+glTF perceptual roughness, metallic fraction, relative linear-sRGB emissive,
+and ambient accessibility. Alpha remains geometry/material policy. The writer
+emits sRGB base-color and emissive PNGs, a tangent-normal PNG, a glTF-packed
+metallic-roughness PNG, an occlusion PNG, and separate confidence/known-mask
+PNGs for every logical channel. Captured beauty never enters those intrinsic
+textures. Artifact-set v3 binds the separately stored proposal hash; the
+proposal document, confidence maps, access records, reuse records, and
+promotion receipt remain outside `visualLayerHash`, `worldHash`, semantic
+identity, and episode identity. VIS-14 and VIS-15
 own resolved-provider browser/headless routing.
 
 `app/3d/environment/visual/BakeRunCatalog.js` is Three/DOM-free. Version-1 jobs
@@ -439,6 +462,13 @@ validity for atlas jobs), convert captures to sparse contributions, rebuild
 dirty atlas chunks, commit a new layer or a revision-free no-op, and
 rematerialize preview. Legacy `BakeHarness.start()` remains only for explicit
 `legacyBake=1` / `createLegacyCompatibleBakeRunConfig`.
+
+Proposal output digests participate in per-unit dependency keys, so changing
+one unit invalidates only its contribution and affected chunks. Construction-v1
+contributions are never reinterpreted as intrinsic data. Proposal, contribution,
+and multi-channel fusion allocations use the bake memory ledger and fail before
+upload on incomplete evidence or budget exhaustion; there is no captured-
+radiance fallback. VIS-11 owns model execution and raw-output caching.
 
 Promotion recovery, environment reads, and environment mutations share the
 same per-environment transaction lane. Recovery recognizes publication only
@@ -558,6 +588,8 @@ trusted bake-reuse candidate, then clears `visualLayer` and evidence. Without
 the flag the write fails closed with `VISUAL_LAYER_WORLD_MISMATCH`. Environment
 `visualLayer` may include additive `accessHash` and `bakeReuseManifestHash`
 pointers; neither enters `worldHash` or the descriptor's `visualLayerHash`.
+VIS-10b material-proposal hashes are stored in artifact-set v3 and durable bake
+promotion receipts, not in the environment manifest or correspondence evidence.
 `sourceWorldHash` binds the promoted layer to the current metric world and does
 not enter per-unit reuse keys. An older client cannot erase visual fields by omitting them, and cannot use
 `clientRevision` as a concurrency token.

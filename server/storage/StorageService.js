@@ -7,6 +7,7 @@ import { JsonFileStore } from "./JsonFileStore.js";
 import { VisualLayerDescriptorStore } from "./VisualLayerDescriptorStore.js";
 import { VisualLayerAccessStore } from "./VisualLayerAccessStore.js";
 import { BakeReuseManifestStore } from "./BakeReuseManifestStore.js";
+import { BakeMaterialProposalStore } from "./BakeMaterialProposalStore.js";
 import { VisualAssetStore } from "./VisualAssetStore.js";
 import { BakePromotionController, parseBakeOutputSourceIds } from "./BakePromotionController.js";
 import {
@@ -236,6 +237,7 @@ export class StorageService {
         this._visualLayerDescriptors = new VisualLayerDescriptorStore(dataDir);
         this._visualLayerAccess = new VisualLayerAccessStore(dataDir);
         this._bakeReuseManifests = new BakeReuseManifestStore(dataDir);
+        this._bakeMaterialProposals = new BakeMaterialProposalStore(dataDir);
         this.visualAssets = new VisualAssetStore(dataDir, options.visualAssets ?? {});
         this.bakeOutputSourceIds = parseBakeOutputSourceIds(
             options.bakeOutputSourceIds ?? process.env.CEV_SIM_BAKE_OUTPUT_SOURCE_IDS,

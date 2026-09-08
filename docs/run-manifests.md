@@ -44,6 +44,13 @@ access hashes are likewise excluded from those identities. Attaching or
 changing `accessHash` may change normalized authoring/resolved environment
 identity as provenance changes.
 
+VIS-10b bake material-proposal documents and promotion receipts are durable
+authoring evidence, not run-manifest inputs. Their hashes do not enter
+`visualLayerHash`, metric world identity, `simulationSemanticHash`, or
+`episodeHash`; only a later selected visual runtime resource can affect a
+resolved render identity. VIS-10b makes no protobuf, run-bundle, provider
+capability, or runtime activation change.
+
 VIS-16a defines `cev-sim.visual-evaluation-input@1` independently from any
 report-containing run bundle. It binds exact camera calibration, capture
 samples, provider/configuration, visual assets, policies, world, visual-layer,

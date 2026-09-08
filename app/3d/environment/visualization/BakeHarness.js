@@ -1998,6 +1998,7 @@ export class BakeHarness {
                     access: written.access,
                     reuseManifest,
                     reuseReport,
+                    ...(written.materialProposalSet ? { materialProposalSet: written.materialProposalSet } : {}),
                 });
             committed = true;
             persistence?.adoptPromotedVisualLayer(receipt);

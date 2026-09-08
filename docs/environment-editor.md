@@ -108,6 +108,18 @@ bake server; that path cannot promote through VIS-08. `capturePasses()` and
 `captureFrame()` remain legacy defaults. VIS-10b owns optional material
 estimation; VIS-17b owns the evidence catalog UI.
 
+VIS-10b intrinsic construction is API/config opt-in only; the editor has no new
+controls. A caller selects `cev-sim.bake-construction@2` and supplies a complete
+job-bound `cev-sim.bake-material-proposal-set@1` plus typed proposal buffers.
+Each of base color, normal, roughness, metalness, emissive, and occlusion may
+override its ordered `sourcePriority`; the normalized default is `supplied`,
+then `inferred`. Missing, stale, malformed, over-budget, or incomplete evidence
+fails the bake before upload rather than reverting to captured beauty. Model
+execution and raw-output caching remain VIS-11. Successful promotion records
+the proposal hash in artifact-set v3 and the durable receipt while leaving the
+environment schema, correspondence evidence, and runtime capability adverts
+unchanged.
+
 Promotion, recovery, reads, and later environment mutations share one
 environment transaction lane. Exact target revision plus the complete manifest
 proves publication; ambiguous/corrupt journals retain protective roots and

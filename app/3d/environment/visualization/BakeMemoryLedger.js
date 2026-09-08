@@ -13,6 +13,7 @@ export const BAKE_MEMORY_KINDS = Object.freeze({
     encodedAsset: "encodedAsset",
     chart: "chart",
     contribution: "contribution",
+    proposal: "proposal",
     fusion: "fusion",
     encoder: "encoder",
 });

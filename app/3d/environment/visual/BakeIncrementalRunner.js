@@ -19,6 +19,7 @@ import {
 import {
     constructionFromConfig,
     isChunkAtlasConstruction,
+    isIntrinsicProposalConstruction,
 } from "./BakeConstructionPolicy.js";
 import {
     buildBakeDependencyGraph,
@@ -37,6 +38,11 @@ import {
     encodeUnitContribution,
     loadContributionPayloads,
 } from "./BakeAtlasArtifactWriter.js";
+import {
+    bakeMaterialProposalUnitDigests,
+    normalizeBakeMaterialProposalSet,
+    validateBakeMaterialProposals,
+} from "./BakeMaterialProposals.js";
 
 function peakUsed(ledger, peak) {
     return Math.max(peak, ledger.snapshot().usedBytes);
@@ -203,11 +209,19 @@ export async function runIncrementalBake({
                 scene: options.sourceScene ?? options.scene,
             })
             : null);
-    const captureAll = reuseDisabled || !previousManifest;
-    const streamUnits = options.streamUnits === true;
-    const incremental = reuseDisabled !== true;
     const construction = constructionFromConfig(configDocument(options) ?? {});
     const atlas = isChunkAtlasConstruction(construction);
+    const intrinsic = isIntrinsicProposalConstruction(construction);
+    if (intrinsic && (!options.materialProposalSet || !options.materialProposalBuffers)) {
+        const error = new Error("Intrinsic construction requires materialProposalSet and materialProposalBuffers before capture.");
+        error.code = "BAKE_MATERIAL_PROPOSAL_MISSING";
+        throw error;
+    }
+    const proposalSet = intrinsic ? normalizeBakeMaterialProposalSet(options.materialProposalSet) : null;
+    const proposalUnitDigests = proposalSet ? bakeMaterialProposalUnitDigests(proposalSet) : null;
+    const captureAll = reuseDisabled || !previousManifest;
+    const streamUnits = options.streamUnits === true && !intrinsic;
+    const incremental = reuseDisabled !== true;
     const fragmentsByUnit = fragmentMapFromManifest(previousManifest);
     const contributionsByUnit = new Map(previousWritten?.contributionPayloads ?? options.previousContributions ?? []);
     const layoutRef = { value: null };
@@ -259,6 +273,7 @@ export async function runIncrementalBake({
         scene,
         spatialIndex,
         chunkIndex: options.chunkIndex ?? options.chunkManager?.index ?? host.chunkManager?.index ?? null,
+        proposalUnitDigests,
     });
     const compared = compareBakeReuseGraphs({
         graph,
@@ -272,6 +287,14 @@ export async function runIncrementalBake({
     });
 
     if (compared.mode === "noop") {
+        if (intrinsic) {
+            validateBakeMaterialProposals({
+                proposalSet,
+                buffers: options.materialProposalBuffers,
+                construction,
+                job,
+            });
+        }
         return {
             job,
             graph,
@@ -333,13 +356,41 @@ export async function runIncrementalBake({
         ? new Map(previousWritten.chunkOutputs.map((entry) => [entry.chunkKey, entry]))
         : null;
     const resolvedConstruction = constructionFromConfig(job.config);
-    const fusionId = atlas
-        ? ledger.reserve(
-            BAKE_MEMORY_KINDS.fusion,
-            resolvedConstruction.pageSizePx * resolvedConstruction.pageSizePx * 8,
-            { label: "atlas-fusion" },
-        )
+    const proposalBytes = proposalSet
+        ? proposalSet.units.reduce((unitTotal, unit) => unitTotal + unit.outputs.reduce((outputTotal, output) => (
+            outputTotal + output.values.byteSize + output.confidence.byteSize + output.knownMask.byteSize
+        ), 0), 0)
+        : 0;
+    const proposalId = proposalBytes
+        ? ledger.reserve(BAKE_MEMORY_KINDS.proposal, proposalBytes, { label: "material-proposals" })
         : null;
+    const contributionBytes = proposalSet
+        ? proposalSet.units.reduce((total, unit) => (
+            total + 4096 + unit.width * unit.height * unit.outputs.length * 64
+        ), 0)
+        : 0;
+    let contributionId = null;
+    try {
+        contributionId = contributionBytes
+            ? ledger.reserve(BAKE_MEMORY_KINDS.contribution, contributionBytes, { label: "material-contributions" })
+            : null;
+    } catch (error) {
+        if (proposalId != null) ledger.release(proposalId);
+        throw error;
+    }
+    const fusionBytes = atlas
+        ? resolvedConstruction.pageSizePx * resolvedConstruction.pageSizePx * (intrinsic ? 80 : 8)
+        : 0;
+    let fusionId = null;
+    try {
+        fusionId = atlas
+            ? ledger.reserve(BAKE_MEMORY_KINDS.fusion, fusionBytes, { label: "atlas-fusion" })
+            : null;
+    } catch (error) {
+        if (contributionId != null) ledger.release(contributionId);
+        if (proposalId != null) ledger.release(proposalId);
+        throw error;
+    }
     peakRef.value = peakUsed(ledger, peakRef.value);
     let written;
     try {
@@ -362,9 +413,13 @@ export async function runIncrementalBake({
             previousContributions: atlas ? contributionsByUnit : null,
             previousPages,
             rebuildChunkKeys,
+            materialProposalSet: proposalSet,
+            materialProposalBuffers: options.materialProposalBuffers,
         });
     } finally {
         if (fusionId != null) ledger.release(fusionId);
+        if (contributionId != null) ledger.release(contributionId);
+        if (proposalId != null) ledger.release(proposalId);
     }
     const pendingUploads = [
         ...(written.uploads ?? []),

@@ -22,6 +22,7 @@ import {
     writerForConstruction,
     CAPTURED_RADIANCE_UNLIT,
     INTRINSIC_PBR_SUPPLIED,
+    isIntrinsicProposalConstruction,
 } from "./BakeConstructionPolicy.js";
 import {
     encodeBakeAtlasContribution,
@@ -35,6 +36,7 @@ import {
     buildAtlasLayout,
     fuseChunkPages,
     mapCaptureToContributions,
+    mapMaterialProposalsToContributions,
 } from "./BakeAtlasCore.js";
 import { extractBakeSnapshotTriangles } from "./BakeAtlasSnapshotAdapter.js";
 import {
@@ -50,6 +52,9 @@ import {
     encodeProjectedCaptureGlb,
 } from "./BakeDeterministicMedia.js";
 import { compareUtf8 } from "./BakeRunCatalog.js";
+import {
+    validateBakeMaterialProposals,
+} from "./BakeMaterialProposals.js";
 
 function artifactError(code, message) {
     const error = new Error(message);
@@ -140,6 +145,40 @@ function generatedMaterial(id, textureUri, { unlit = true } = {}) {
     };
 }
 
+function generatedIntrinsicMaterial(id, textureUris) {
+    const transform = { offset: [0, 0], rotation: 0, scale: [1, 1] };
+    return {
+        id,
+        mode: "metallic-roughness",
+        alphaMode: "OPAQUE",
+        alphaCutoff: 0.5,
+        doubleSided: true,
+        parameters: {
+            baseColorFactor: [1, 1, 1, 1],
+            metallicFactor: 1,
+            roughnessFactor: 1,
+            emissiveFactor: [1, 1, 1],
+            emissiveStrength: 1,
+            normalScale: 1,
+            occlusionStrength: 1,
+            clearcoatFactor: 0,
+            clearcoatRoughnessFactor: 0,
+            sheenColorFactor: [0, 0, 0],
+            sheenRoughnessFactor: 0,
+            specularFactor: 1,
+            specularColorFactor: [1, 1, 1],
+        },
+        textures: [
+            { slot: "baseColor", assetUri: textureUris.baseColor, texCoord: 0, transform },
+            { slot: "metallicRoughness", assetUri: textureUris.metallicRoughness, texCoord: 0, transform },
+            { slot: "normal", assetUri: textureUris.normal, texCoord: 0, transform },
+            { slot: "occlusion", assetUri: textureUris.occlusion, texCoord: 0, transform },
+            { slot: "emissive", assetUri: textureUris.emissive, texCoord: 0, transform },
+        ],
+        extensions: [],
+    };
+}
+
 function emptyDescriptor(worldHash) {
     return normalizeVisualLayer({
         kind: VISUAL_LAYER_KIND,
@@ -212,7 +251,7 @@ function intrinsicRecords(construction) {
     }));
 }
 
-function encodePageAssets({
+function encodeCapturedPageAssets({
     chunkKey,
     page,
     construction,
@@ -376,7 +415,198 @@ function encodePageAssets({
         },
         coverageCount: page.coverageCount,
         conflictCount: page.conflictCount,
+        closureUris: [textureUri, meshUri, confidenceUri],
+        appearanceUris: [textureUri, confidenceUri],
+        outputDigests: [textureDigest, meshDigest, confidenceDigest],
+        intrinsic: false,
     };
+}
+
+
+function clampByte(value) {
+    return Math.max(0, Math.min(255, Math.round(value)));
+}
+
+function linearSrgbByte(value) {
+    const linear = Math.max(0, Math.min(1, value));
+    const encoded = linear <= 0.0031308
+        ? linear * 12.92
+        : 1.055 * (linear ** (1 / 2.4)) - 0.055;
+    return clampByte(encoded * 255);
+}
+
+function rgbaFromChannel(channel, mapper) {
+    const pixels = channel.knownMask.length;
+    const components = channel.values.length / pixels;
+    const rgba = new Uint8Array(pixels * 4);
+    for (let pixel = 0; pixel < pixels; pixel += 1) {
+        const tuple = channel.values.subarray(pixel * components, (pixel + 1) * components);
+        const color = mapper(tuple);
+        rgba[pixel * 4] = color[0];
+        rgba[pixel * 4 + 1] = color[1];
+        rgba[pixel * 4 + 2] = color[2];
+        rgba[pixel * 4 + 3] = 255;
+    }
+    return rgba;
+}
+
+function scalarDiagnostic(values, float = false) {
+    const rgba = new Uint8Array(values.length * 4);
+    for (let index = 0; index < values.length; index += 1) {
+        const byte = float ? clampByte(values[index] * 255) : (values[index] ? 255 : 0);
+        rgba[index * 4] = byte;
+        rgba[index * 4 + 1] = byte;
+        rgba[index * 4 + 2] = byte;
+        rgba[index * 4 + 3] = 255;
+    }
+    return rgba;
+}
+
+function encodeIntrinsicPageAssets({ chunkKey, page, construction, sourceIds, appearanceMode }) {
+    const size = construction.pageSizePx;
+    const channels = page.intrinsic;
+    const runtimeRgba = {
+        baseColor: rgbaFromChannel(channels["base-color"], (value) => value.map(linearSrgbByte)),
+        normal: rgbaFromChannel(channels.normal, (value) => value.map((entry) => clampByte((entry * 0.5 + 0.5) * 255))),
+        metallicRoughness: (() => {
+            const pixels = channels.roughness.knownMask.length;
+            const rgba = new Uint8Array(pixels * 4);
+            for (let pixel = 0; pixel < pixels; pixel += 1) {
+                rgba[pixel * 4] = 255;
+                rgba[pixel * 4 + 1] = clampByte(channels.roughness.values[pixel] * 255);
+                rgba[pixel * 4 + 2] = clampByte(channels.metalness.values[pixel] * 255);
+                rgba[pixel * 4 + 3] = 255;
+            }
+            return rgba;
+        })(),
+        emissive: rgbaFromChannel(channels.emissive, (value) => value.map(linearSrgbByte)),
+        occlusion: rgbaFromChannel(channels.occlusion, (value) => {
+            const byte = clampByte(value[0] * 255);
+            return [byte, 255, 255];
+        }),
+    };
+    const runtime = {};
+    const uploads = [];
+    const generatedAssets = [];
+    const addTexture = (name, bytes, kind = name) => {
+        const digest = sha256ExactBytes(bytes);
+        const asset = { sha256: digest, mediaType: "image/png", sizeBytes: bytes.length, role: "texture" };
+        const use = makeUse(asset, sourceIds);
+        const useHash = hashVisualAssetUse(use);
+        const uri = `sha256:${digest}`;
+        uploads.push({ kind, chunkKey, pageIndex: page.pageIndex, role: "texture", bytes, mediaType: "image/png", use, useHash });
+        generatedAssets.push({ chunkKey, pageIndex: page.pageIndex, role: "texture", sha256: digest, mediaType: "image/png", sizeBytes: bytes.length, useHash });
+        return { digest, uri, use, useHash, bytes };
+    };
+    for (const [name, rgba] of Object.entries(runtimeRgba)) {
+        runtime[name] = addTexture(name, encodeDeterministicRgbaPng(rgba, size, size), `intrinsic-${name}`);
+    }
+    const diagnostics = {};
+    for (const policy of construction.intrinsicChannels) {
+        const channel = channels[policy.name];
+        diagnostics[policy.name] = {
+            confidence: addTexture(
+                `${policy.name}-confidence`,
+                encodeDeterministicRgbaPng(scalarDiagnostic(channel.confidence, true), size, size),
+                "intrinsic-confidence",
+            ),
+            knownMask: addTexture(
+                `${policy.name}-known-mask`,
+                encodeDeterministicRgbaPng(scalarDiagnostic(channel.knownMask), size, size),
+                "intrinsic-known-mask",
+            ),
+        };
+    }
+    const textureUris = Object.fromEntries(Object.entries(runtime).map(([name, entry]) => [name, entry.uri]));
+    const runtimeKey = Object.values(runtime).map((entry) => entry.digest).join(":");
+    const materialId = bakeGeneratedRecordId(
+        `atlas:${chunkKey}:${page.pageIndex}:${appearanceMode}`,
+        sha256ExactBytes(new TextEncoder().encode(runtimeKey)),
+        "material",
+    );
+    const glb = encodeProjectedCaptureGlb({ positions: page.positions, uvs: page.uvs, indices: page.indices, materialId });
+    const meshDigest = sha256ExactBytes(glb);
+    const meshAsset = { sha256: meshDigest, mediaType: "model/gltf-binary", sizeBytes: glb.length, role: "mesh" };
+    const meshUse = makeUse(meshAsset, sourceIds);
+    const meshUseHash = hashVisualAssetUse(meshUse);
+    const meshUri = `sha256:${meshDigest}`;
+    uploads.push({ kind: "mesh", chunkKey, pageIndex: page.pageIndex, role: "mesh", bytes: glb, mediaType: "model/gltf-binary", use: meshUse, useHash: meshUseHash });
+    generatedAssets.push({ chunkKey, pageIndex: page.pageIndex, role: "mesh", sha256: meshDigest, mediaType: "model/gltf-binary", sizeBytes: glb.length, useHash: meshUseHash });
+    const instanceId = bakeGeneratedRecordId(`atlas:${chunkKey}:${page.pageIndex}:${appearanceMode}`, meshDigest, "instance");
+    const textureForChannel = {
+        "base-color": runtime.baseColor,
+        normal: runtime.normal,
+        roughness: runtime.metallicRoughness,
+        metalness: runtime.metallicRoughness,
+        emissive: runtime.emissive,
+        occlusion: runtime.occlusion,
+    };
+    const manifestChannels = construction.intrinsicChannels.map((policy) => {
+        const channel = channels[policy.name];
+        return {
+            name: policy.name,
+            state: channel.state,
+            textureSha256: textureForChannel[policy.name].digest,
+            confidenceSha256: diagnostics[policy.name].confidence.digest,
+            knownMaskSha256: diagnostics[policy.name].knownMask.digest,
+            units: policy.units,
+            encoding: policy.encoding,
+            declaredDefault: policy.declaredDefault,
+            coverageCount: channel.coverageCount,
+            conflictCount: channel.conflictCount,
+            defaultAppliedCount: channel.defaultAppliedCount,
+            unknownCount: channel.unknownCount,
+        };
+    });
+    const base = runtime.baseColor;
+    const baseConfidence = diagnostics["base-color"].confidence;
+    return {
+        materialId,
+        instanceId,
+        textureDigest: base.digest,
+        meshDigest,
+        confidenceDigest: baseConfidence.digest,
+        textureUri: base.uri,
+        meshUri,
+        confidenceUri: baseConfidence.uri,
+        material: generatedIntrinsicMaterial(materialId, textureUris),
+        instance: {
+            id: instanceId,
+            assetUri: meshUri,
+            lodLevels: [meshUri],
+            matrix: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+            chunkIds: [],
+            materialIds: [materialId],
+        },
+        uploads,
+        generatedAssets,
+        pageRecord: {
+            pageIndex: page.pageIndex,
+            texture: { sha256: base.digest, mediaType: "image/png", sizeBytes: base.bytes.length, useHash: base.useHash, role: "texture" },
+            mesh: { sha256: meshDigest, mediaType: "model/gltf-binary", sizeBytes: glb.length, useHash: meshUseHash, role: "mesh" },
+            confidence: { sha256: baseConfidence.digest, mediaType: "image/png", sizeBytes: baseConfidence.bytes.length, useHash: baseConfidence.useHash, role: "texture" },
+        },
+        coverageCount: manifestChannels.reduce((sum, entry) => sum + entry.coverageCount, 0),
+        conflictCount: manifestChannels.reduce((sum, entry) => sum + entry.conflictCount, 0),
+        manifestChannels,
+        closureUris: [...Object.values(runtime).map((entry) => entry.uri), meshUri],
+        appearanceUris: [
+            ...Object.values(runtime).map((entry) => entry.uri),
+            ...Object.values(diagnostics).flatMap((entry) => [entry.confidence.uri, entry.knownMask.uri]),
+        ],
+        outputDigests: [
+            meshDigest,
+            ...Object.values(runtime).map((entry) => entry.digest),
+            ...Object.values(diagnostics).flatMap((entry) => [entry.confidence.digest, entry.knownMask.digest]),
+        ],
+        intrinsic: true,
+    };
+}
+
+function encodePageAssets(options) {
+    return isIntrinsicProposalConstruction(options.construction)
+        ? encodeIntrinsicPageAssets(options)
+        : encodeCapturedPageAssets(options);
 }
 
 export function encodeUnitContribution({
@@ -386,6 +616,7 @@ export function encodeUnitContribution({
     construction,
     unitId,
     viewsById,
+    proposalValidation = null,
 }) {
     const view = viewsById.get(sample.viewId);
     const width = view?.camera?.width;
@@ -393,27 +624,52 @@ export function encodeUnitContribution({
     if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1) {
         throw artifactError("BAKE_ARTIFACT_INCOMPLETE", `Missing camera size for ${sample.viewId}.`);
     }
-    const beauty = bufferFor(buffers, sample.sampleId, sample.viewId, "beauty");
     const worldPosition = bufferFor(buffers, sample.sampleId, sample.viewId, "world-position");
     const validity = bufferFor(buffers, sample.sampleId, sample.viewId, "validity");
     const geometricNormal = bufferFor(buffers, sample.sampleId, sample.viewId, "geometric-normal");
     const confidence = bufferFor(buffers, sample.sampleId, sample.viewId, "confidence");
     const pose = sample.pose ?? view?.pose;
-    const records = mapCaptureToContributions({
-        layout,
-        beauty,
-        worldPosition,
-        geometricNormal,
-        confidence,
-        validity,
-        width,
-        height,
-        cameraPosition: cameraPosition(pose),
-        unitId,
-    });
+    let records;
+    if (isIntrinsicProposalConstruction(construction)) {
+        if (!proposalValidation) {
+            throw artifactError("BAKE_MATERIAL_PROPOSAL_MISSING", "Intrinsic construction requires validated material proposals.");
+        }
+        const proposalUnit = proposalValidation.proposalSet.units.find((entry) => entry.unitId === unitId);
+        if (!proposalUnit) throw artifactError("BAKE_MATERIAL_PROPOSAL_MISSING", `Missing proposal unit ${unitId}.`);
+        records = mapMaterialProposalsToContributions({
+            layout,
+            worldPosition,
+            geometricNormal,
+            captureConfidence: confidence,
+            validity,
+            width,
+            height,
+            cameraPosition: cameraPosition(pose),
+            unitId,
+            proposalUnit,
+            proposalSources: proposalValidation.proposalSet.sources,
+            proposalBuffers: proposalValidation.buffers,
+        });
+    } else {
+        const beauty = bufferFor(buffers, sample.sampleId, sample.viewId, "beauty");
+        records = mapCaptureToContributions({
+            layout,
+            beauty,
+            worldPosition,
+            geometricNormal,
+            confidence,
+            validity,
+            width,
+            height,
+            cameraPosition: cameraPosition(pose),
+            unitId,
+        });
+    }
     const bytes = encodeBakeAtlasContribution({
+        version: isIntrinsicProposalConstruction(construction) ? 2 : 1,
         unitId,
         constructionHash: hashBakeConstruction(construction),
+        ...(proposalValidation ? { proposalUnitHash: proposalValidation.unitDigests.get(unitId) } : {}),
         records,
     });
     return { unitId, bytes, records, decoded: decodeBakeAtlasContribution(bytes) };
@@ -462,6 +718,8 @@ export function writeAtlasArtifacts({
     rebuildChunkKeys = null,
     construction,
     finalize,
+    materialProposalSet = null,
+    materialProposalBuffers = null,
 } = {}) {
     if (!isChunkAtlasConstruction(construction)) {
         throw artifactError("BAKE_ARTIFACT_INVALID", "Atlas writer requires chunk-atlas@1 construction.");
@@ -475,6 +733,14 @@ export function writeAtlasArtifacts({
     const contributionUploads = [];
     const reuseUnits = [];
     const writer = writerForConstruction(construction);
+    const proposalValidation = isIntrinsicProposalConstruction(construction)
+        ? validateBakeMaterialProposals({
+            proposalSet: materialProposalSet,
+            buffers: materialProposalBuffers,
+            construction,
+            job,
+        })
+        : null;
 
     for (const sample of job.plan.samples) {
         const unitId = bakeCaptureUnitId(sample.pathId, sample.sampleIndex, sample.viewId);
@@ -489,11 +755,22 @@ export function writeAtlasArtifacts({
                 construction,
                 unitId,
                 viewsById,
+                proposalValidation,
             }).bytes;
             contributionPayloads.set(unitId, payload);
         }
         if (!payload) {
             throw artifactError("BAKE_REUSE_INVALID", `Missing reusable contribution for ${unitId}.`);
+        }
+        const decodedPayload = decodeBakeAtlasContribution(payload);
+        if (decodedPayload.constructionHash !== hashBakeConstruction(construction)) {
+            throw artifactError("BAKE_REUSE_INVALID", `Contribution construction binding is stale for ${unitId}.`);
+        }
+        if (proposalValidation && (
+            decodedPayload.version !== 2
+            || decodedPayload.proposalUnitHash !== proposalValidation.unitDigests.get(unitId)
+        )) {
+            throw artifactError("BAKE_REUSE_INVALID", `Contribution proposal binding is stale for ${unitId}.`);
         }
         const asset = contributionAsset(payload, sourceIds);
         contributionUploads.push({
@@ -514,7 +791,7 @@ export function writeAtlasArtifacts({
             viewId: sample.viewId,
             dependencyKey: graphUnit?.dependencyKey ?? "0".repeat(64),
             chunkKeys: graphUnit?.chunkKeys ?? [...new Set(
-                decodeBakeAtlasContribution(payload).records.map((entry) => entry.chunkKey),
+                decodedPayload.records.map((entry) => entry.chunkKey),
             )].sort(compareUtf8),
             contribution: asset.record,
         });
@@ -570,7 +847,7 @@ export function writeAtlasArtifacts({
         }
         if (!pageEncodings.length) continue;
         const outputHash = sha256ExactBytes(new TextEncoder().encode(pageEncodings.map((entry) => (
-            `${entry.textureDigest}:${entry.meshDigest}:${entry.confidenceDigest}`
+            entry.outputDigests.join(":")
         )).join("|")));
         const visualChunkId = bakeGeneratedRecordId(
             `atlas-chunk:${chunk.chunkKey}:${chunk.chartHash}`,
@@ -588,22 +865,30 @@ export function writeAtlasArtifacts({
             instanceIds.push(encoded.instanceId);
             keepGeneratedIds.add(encoded.materialId);
             keepGeneratedIds.add(encoded.instanceId);
-            dependencyUris.push(encoded.textureUri, encoded.meshUri, encoded.confidenceUri);
-            appearanceDependencies.push(encoded.textureUri, encoded.confidenceUri);
+            dependencyUris.push(...encoded.closureUris);
+            appearanceDependencies.push(...encoded.appearanceUris);
             generatedAssets.push(...encoded.generatedAssets);
             uploads.push(...encoded.uploads);
             for (const upload of encoded.uploads) usesByHash.set(upload.useHash, upload.use);
-            pages.push({
-                pageIndex: encoded.pageRecord.pageIndex,
-                width: construction.pageSizePx,
-                height: construction.pageSizePx,
-                textureSha256: encoded.textureDigest,
-                meshSha256: encoded.meshDigest,
-                confidenceSha256: encoded.confidenceDigest,
-                coverageCount: encoded.coverageCount,
-                conflictCount: encoded.conflictCount,
-                intrinsic: intrinsicRecords(construction),
-            });
+            pages.push(encoded.intrinsic
+                ? {
+                    pageIndex: encoded.pageRecord.pageIndex,
+                    width: construction.pageSizePx,
+                    height: construction.pageSizePx,
+                    meshSha256: encoded.meshDigest,
+                    channels: encoded.manifestChannels,
+                }
+                : {
+                    pageIndex: encoded.pageRecord.pageIndex,
+                    width: construction.pageSizePx,
+                    height: construction.pageSizePx,
+                    textureSha256: encoded.textureDigest,
+                    meshSha256: encoded.meshDigest,
+                    confidenceSha256: encoded.confidenceDigest,
+                    coverageCount: encoded.coverageCount,
+                    conflictCount: encoded.conflictCount,
+                    intrinsic: intrinsicRecords(construction),
+                });
         }
         generatedChunks.push({
             id: visualChunkId,
@@ -711,7 +996,8 @@ export function writeAtlasArtifacts({
         currentAccess,
         constructionHash: hashBakeConstruction(construction),
         atlasManifestDigest: atlasAsset.sha256,
-        artifactVersion: 2,
+        artifactVersion: proposalValidation ? 3 : 2,
+        ...(proposalValidation ? { materialProposalHash: proposalValidation.proposalHash } : {}),
     });
 
     const reuseManifest = graph
@@ -748,5 +1034,7 @@ export function writeAtlasArtifacts({
         atlasManifest,
         chunkOutputs,
         writer,
+        materialProposalSet: proposalValidation?.proposalSet ?? null,
+        materialProposalHash: proposalValidation?.proposalHash ?? null,
     };
 }

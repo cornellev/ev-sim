@@ -12,6 +12,7 @@ import {
     evaluateVisualSourcePolicy,
     hashVisualLayer,
     hashVisualLayerAccess,
+    parseExactJson,
 } from "../../app/simulation/visual/VisualLayer.js";
 import {
     hashBakeArtifactSet,
@@ -37,6 +38,17 @@ import {
     normalizeBakeRunConfig,
     normalizeBakeSourceSnapshot,
 } from "../../app/3d/environment/visual/BakeRunCatalog.js";
+import {
+    bakeMaterialProposalUnitDigests,
+    hashBakeMaterialProposalSet,
+    normalizeBakeMaterialProposalSet,
+} from "../../app/3d/environment/visual/BakeMaterialProposals.js";
+import { decodeBakeAtlasContribution } from "../../app/3d/environment/visual/BakeAtlasContribution.js";
+import {
+    BAKE_ATLAS_MANIFEST_VERSION_V2,
+    normalizeBakeAtlasManifest,
+} from "../../app/3d/environment/visual/BakeAtlasManifest.js";
+import { INTRINSIC_CHANNEL_DEFINITIONS } from "../../app/3d/environment/visual/BakeConstructionPolicy.js";
 import { serializeEnvironmentManifestV3 } from "../../app/3d/environment/EnvironmentManifestPolicy.js";
 import { createWorldResource } from "../../app/simulation/world/WorldDescription.js";
 import {
@@ -242,9 +254,11 @@ export class BakePromotionController {
             const documents = this._assertDocuments(body, state.active, world.hash, environmentId);
             await this._assertOutputSourceGrants(state.active.outputSourceIds);
             await this._assertGeneratedOutputs(documents.artifactSet, state.active.outputSourceIds);
+            await this._assertIntrinsicClosure(documents);
             await this._assertClosure(documents.descriptor, documents.access, documents.artifactSet);
             const reuse = await this._storeReuseDocuments(body, documents);
-            await this._assertReuseContributions(reuse.manifest);
+            const materialProposalHash = await this._storeMaterialProposal(documents);
+            await this._assertReuseContributions(reuse.manifest, documents);
             const visualUseHashes = [...new Set(documents.access.assets.map((entry) => entry.useHash))].sort();
             const reuseUseHashes = reuseContributionUseHashes(reuse.manifest);
             const newUseHashes = [...new Set([...visualUseHashes, ...reuseUseHashes])].sort();
@@ -284,6 +298,7 @@ export class BakePromotionController {
                 artifactHash: documents.artifactHash,
                 bakeReuseManifestHash: reuse.manifestHash,
                 reuseReportHash: reuse.reportHash,
+                materialProposalHash,
                 mode: "promote",
                 visualLayer,
                 manifest: nextManifest,
@@ -305,6 +320,7 @@ export class BakePromotionController {
                 newDescriptorHash: storedDescriptorHash,
                 oldDescriptorHash: current.visualLayer?.descriptorHash ?? null,
                 bakeReuseManifestHash: reuse.manifestHash,
+                materialProposalHash,
                 nextManifest,
                 receipt,
             };
@@ -498,6 +514,7 @@ export class BakePromotionController {
             artifactHash: null,
             bakeReuseManifestHash: visual.bakeReuseManifestHash ?? null,
             reuseReportHash: hashBakeReuseReport(report),
+            materialProposalHash: this._materialProposalHashForVisual(state, visual),
             mode: "noop",
             visualLayer: visual,
             manifest: current,
@@ -508,8 +525,20 @@ export class BakePromotionController {
         return receipt;
     }
 
+    _materialProposalHashForVisual(state, visual) {
+        return Object.values(state.receipts ?? {})
+            .filter((receipt) => receipt.descriptorHash === visual?.descriptorHash && receipt.materialProposalHash)
+            .sort((left, right) => right.generation - left.generation)[0]?.materialProposalHash ?? null;
+    }
+
     async _storeReuseDocuments(body, documents) {
         if (!body.reuseManifest && !body.reuseReport) {
+            if (documents.artifactSet.version >= 3) {
+                throw bakeError(
+                    BAKE_PROMOTION_ERROR_CODES.INCOMPLETE,
+                    "Intrinsic proposal commits require contribution v2 reuse evidence.",
+                );
+            }
             return { manifest: null, manifestHash: null, reportHash: null };
         }
         if (!body.reuseManifest || !body.reuseReport) {
@@ -537,8 +566,24 @@ export class BakePromotionController {
         };
     }
 
-    async _assertReuseContributions(manifest) {
+    async _storeMaterialProposal(documents) {
+        if (documents.artifactSet.version < 3) return null;
+        const stored = await this.service._bakeMaterialProposals.put(documents.materialProposalSet);
+        if (stored !== documents.materialProposalHash) {
+            throw bakeError(BAKE_PROMOTION_ERROR_CODES.HASH_MISMATCH, "Stored material proposal hash mismatch.");
+        }
+        const verified = await this.service._bakeMaterialProposals.get(stored);
+        if (!verified || hashBakeMaterialProposalSet(verified) !== stored) {
+            throw bakeError(BAKE_PROMOTION_ERROR_CODES.HASH_MISMATCH, "Stored material proposal evidence could not be verified.");
+        }
+        return stored;
+    }
+
+    async _assertReuseContributions(manifest, documents) {
         if (!isBakeReuseManifestV2(manifest)) return;
+        const proposalUnitDigests = documents?.materialProposalSet
+            ? bakeMaterialProposalUnitDigests(documents.materialProposalSet)
+            : null;
         for (const unit of manifest.units ?? []) {
             const asset = unit.contribution;
             const use = await this.service.visualAssets.getUse(asset.useHash);
@@ -565,6 +610,22 @@ export class BakePromotionController {
                     throw bakeError(
                         BAKE_PROMOTION_ERROR_CODES.HASH_MISMATCH,
                         `Contribution bytes for ${asset.useHash} do not match.`,
+                    );
+                }
+                const decoded = decodeBakeAtlasContribution(bytes);
+                if (decoded.constructionHash !== manifest.constructionHash) {
+                    throw bakeError(
+                        BAKE_PROMOTION_ERROR_CODES.BINDING_MISMATCH,
+                        `Contribution construction binding for ${unit.unitId} is stale.`,
+                    );
+                }
+                if (proposalUnitDigests && (
+                    decoded.version !== 2
+                    || decoded.proposalUnitHash !== proposalUnitDigests.get(unit.unitId)
+                )) {
+                    throw bakeError(
+                        BAKE_PROMOTION_ERROR_CODES.BINDING_MISMATCH,
+                        `Contribution proposal binding for ${unit.unitId} is stale.`,
                     );
                 }
             } finally {
@@ -604,6 +665,12 @@ export class BakePromotionController {
         const descriptorHash = hashVisualLayer(descriptor);
         const accessHash = hashVisualLayerAccess(access);
         const artifactHash = hashBakeArtifactSet(artifactSet);
+        const materialProposalSet = artifactSet.version >= 3
+            ? normalizeBakeMaterialProposalSet(body.materialProposalSet)
+            : null;
+        const materialProposalHash = materialProposalSet
+            ? hashBakeMaterialProposalSet(materialProposalSet)
+            : null;
         if (config.environmentId !== environmentId || artifactSet.environmentId !== environmentId) {
             throw bakeError(BAKE_PROMOTION_ERROR_CODES.BINDING_MISMATCH, "Bake documents are bound to a different environment.");
         }
@@ -630,6 +697,24 @@ export class BakePromotionController {
         ) {
             throw bakeError(BAKE_PROMOTION_ERROR_CODES.HASH_MISMATCH, "Artifact set hashes do not match the submitted VIS-07 documents.");
         }
+        if (artifactSet.version >= 3) {
+            if (artifactSet.materialProposalHash !== materialProposalHash) {
+                throw bakeError(BAKE_PROMOTION_ERROR_CODES.HASH_MISMATCH, "Artifact set does not bind the submitted material proposal evidence.");
+            }
+            for (const [name, expected] of Object.entries({
+                recipeHash,
+                snapshotHash,
+                planHash,
+                requestHash,
+                responseHash,
+            })) {
+                if (materialProposalSet[name] !== expected) {
+                    throw bakeError(BAKE_PROMOTION_ERROR_CODES.BINDING_MISMATCH, `Material proposal ${name} does not match the bake documents.`);
+                }
+            }
+        } else if (body.materialProposalSet != null) {
+            throw bakeError(BAKE_PROMOTION_ERROR_CODES.BINDING_MISMATCH, "Material proposal evidence requires bake-artifact-set@3.");
+        }
         if (access.descriptorHash !== descriptorHash) {
             throw bakeError(BAKE_PROMOTION_ERROR_CODES.HASH_MISMATCH, "Access sidecar does not match the descriptor.");
         }
@@ -645,6 +730,8 @@ export class BakePromotionController {
             descriptorHash,
             accessHash,
             artifactHash,
+            materialProposalSet,
+            materialProposalHash,
         };
     }
 
@@ -678,6 +765,83 @@ export class BakePromotionController {
                 }
             } finally {
                 await opened.release();
+            }
+        }
+    }
+
+    async _assertIntrinsicClosure(documents) {
+        if (documents.artifactSet.version < 3) return;
+        const atlasAsset = documents.artifactSet.assets.find((entry) => (
+            entry.sha256 === documents.artifactSet.atlasManifestDigest
+        ));
+        if (!atlasAsset) {
+            throw bakeError(BAKE_PROMOTION_ERROR_CODES.INCOMPLETE, "Intrinsic artifact set is missing its atlas-manifest asset.");
+        }
+        const opened = await this.service.visualAssets.openUseContent(atlasAsset.useHash);
+        let atlasManifest;
+        try {
+            const chunks = [];
+            for await (const chunk of opened.stream) chunks.push(chunk);
+            const bytes = Buffer.concat(chunks);
+            if (sha256Bytes(bytes) !== atlasAsset.sha256) {
+                throw bakeError(BAKE_PROMOTION_ERROR_CODES.HASH_MISMATCH, "Intrinsic atlas-manifest bytes do not match their digest.");
+            }
+            atlasManifest = normalizeBakeAtlasManifest(parseExactJson(bytes.toString("utf8")));
+        } finally {
+            await opened.release();
+        }
+        if (
+            atlasManifest.version !== BAKE_ATLAS_MANIFEST_VERSION_V2
+            || atlasManifest.constructionHash !== documents.artifactSet.constructionHash
+        ) {
+            throw bakeError(BAKE_PROMOTION_ERROR_CODES.BINDING_MISMATCH, "Intrinsic atlas manifest has a stale version or construction binding.");
+        }
+        const requiredChannels = INTRINSIC_CHANNEL_DEFINITIONS.map((entry) => entry.name).sort();
+        const artifactDigests = new Set(documents.artifactSet.assets.map((entry) => entry.sha256));
+        const descriptorDigests = new Set(documents.descriptor.assets.map((entry) => entry.sha256));
+        const appearance = new Set(documents.descriptor.appearanceDependencies);
+        const materialSlots = new Map();
+        for (const material of documents.descriptor.materials) {
+            if (material.mode !== "metallic-roughness") continue;
+            for (const texture of material.textures) materialSlots.set(texture.assetUri, texture.slot);
+        }
+        const chunkDependencies = new Set(documents.descriptor.chunks.flatMap((entry) => entry.dependencyUris));
+        const beautyDigests = new Set(documents.artifactSet.providerOutputDigests
+            .filter((entry) => entry.role === "beauty")
+            .map((entry) => entry.sha256));
+        const expectedSlot = {
+            "base-color": "baseColor",
+            normal: "normal",
+            roughness: "metallicRoughness",
+            metalness: "metallicRoughness",
+            emissive: "emissive",
+            occlusion: "occlusion",
+        };
+        for (const chunk of atlasManifest.chunks) {
+            for (const page of chunk.pages) {
+                const names = page.channels.map((entry) => entry.name).sort();
+                if (!sameStringSets(names, requiredChannels)) {
+                    throw bakeError(BAKE_PROMOTION_ERROR_CODES.INCOMPLETE, "Intrinsic atlas page does not contain all required logical channels.");
+                }
+                for (const channel of page.channels) {
+                    for (const digestValue of [channel.textureSha256, channel.confidenceSha256, channel.knownMaskSha256]) {
+                        if (!artifactDigests.has(digestValue) || !descriptorDigests.has(digestValue)) {
+                            throw bakeError(BAKE_PROMOTION_ERROR_CODES.INCOMPLETE, `Intrinsic ${channel.name} output is outside the artifact closure.`);
+                        }
+                    }
+                    const textureUri = `sha256:${channel.textureSha256}`;
+                    if (materialSlots.get(textureUri) !== expectedSlot[channel.name] || !chunkDependencies.has(textureUri)) {
+                        throw bakeError(BAKE_PROMOTION_ERROR_CODES.INCOMPLETE, `Intrinsic ${channel.name} runtime texture is not bound to the expected PBR slot and chunk closure.`);
+                    }
+                    for (const digestValue of [channel.confidenceSha256, channel.knownMaskSha256]) {
+                        if (!appearance.has(`sha256:${digestValue}`)) {
+                            throw bakeError(BAKE_PROMOTION_ERROR_CODES.INCOMPLETE, `Intrinsic ${channel.name} diagnostic map is outside appearanceDependencies.`);
+                        }
+                    }
+                    if (beautyDigests.has(channel.textureSha256)) {
+                        throw bakeError(BAKE_PROMOTION_ERROR_CODES.BINDING_MISMATCH, "Captured beauty cannot be used as an intrinsic runtime texture.");
+                    }
+                }
             }
         }
     }

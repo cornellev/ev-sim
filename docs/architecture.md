@@ -272,7 +272,12 @@ authorizes blob reuse with content-addressed `bake-reuse-manifests` and
 per-unit dependency keys; `sourceWorldHash` rebinds the layer without entering
 those keys. VIS-10a defaults new persistent bakes to hashed `chunk-atlas@1`
 construction, per-chunk atlas pages, sparse contribution codecs, and a durable
-`bake-reuse` asset root. VIS-14/VIS-15 own
+`bake-reuse` asset root. VIS-10b adds optional `bake-construction@2` intrinsic
+fusion over strict supplied/inferred proposal buffers. Proposal provenance is
+stored separately and bound through artifact-set v3 and the promotion receipt;
+only final runtime textures enter the unchanged visual-layer descriptor.
+Per-unit proposal digests extend reuse keys without entering world, semantic,
+or episode identity. VIS-14/VIS-15 own
 runtime provider routing. `pbr-mesh@1`, corrected GPU backend
 v2, manifests, hashes, protobuf, and advertised capabilities remain unchanged.
 
@@ -298,6 +303,7 @@ Validated visual assets are stored under `CEV_SIM_DATA_DIR` (default
 - `environment-bake-promotions/<id>.json` — bake generation state and receipts
 - `environment-bake-journals/<id>--<generation>.json` — promotion recovery journals
 - `bake-reuse-manifests/sha256/<hash>.json` — immutable bake reuse authorization
+- `bake-material-proposals/sha256/<hash>.json` — immutable intrinsic proposal provenance
 - `visual-assets/sha256/<digest>` — immutable published bytes
 - `visual-assets/uses/sha256/<useHash>.json` — source-bound use records
 - `visual-assets/validation/sha256/<useHash>.json` — validation evidence
