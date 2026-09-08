@@ -5,6 +5,7 @@ import {
     removeIntersectionNode,
     removeRoadEdge,
 } from "../document/documentMutations.js";
+import { syncBakeBuildingsFromDocument } from "./bakeBuildingSync.js";
 
 /**
  * @param {THREE.Scene} scene
@@ -98,12 +99,7 @@ export function deleteMapSelectionFromRuntime(data, scene, document, selection) 
             [],
         );
 
-        const bakeConfig = data.bakeRunConfig?.();
-        if (bakeConfig) {
-            bakeConfig.buildings = bakeConfig.buildings.filter(
-                (building) => building.buildingId !== selection.id,
-            );
-        }
+        syncBakeBuildingsFromDocument(data, document);
 
         data.environment().objects().unregisterEntity(`building:${selection.id}`);
         return { ok: true };

@@ -5,14 +5,21 @@ import * as THREE from "three";
 
 import { createPersistentBakeRunConfig } from "../../app/3d/environment/visualization/BakeRunConfig.js";
 import { runVersion1BakeJob } from "../../app/3d/environment/visual/BakeJobRunner.js";
+import { runIncrementalBake } from "../../app/3d/environment/visual/BakeIncrementalRunner.js";
 import { BakeRunCatalog, BAKE_PRODUCT_RESULT_KEYS } from "../../app/3d/environment/visual/BakeRunCatalog.js";
 import { uploadBakeArtifacts, writeBakeArtifacts } from "../../app/3d/environment/visual/BakeArtifactWriter.js";
+import { BakeSpatialIndex } from "../../app/3d/environment/visualization/BakeSpatialIndex.js";
+import { ChunkManager } from "../../app/3d/editor/chunks/ChunkManager.js";
 import { VISUAL_PREVIEW_USERDATA } from "../../app/3d/environment/visual/VisualPreviewIsolation.js";
+import { hashVisualLayer, hashVisualLayerAccess } from "../../app/simulation/visual/VisualLayer.js";
 import { StorageService } from "../../server/storage/StorageService.js";
 import { ownedGrant, writeRegistry } from "./visual-assets.js";
 
 export const WIDTH = 20;
 export const HEIGHT = 20;
+export const WORLD_A = "a".repeat(64);
+export const WORLD_B = "b".repeat(64);
+export const SOURCE_IDS = Object.freeze(["owned-lab"]);
 
 export function tinyPersistentConfig(overrides = {}) {
     return createPersistentBakeRunConfig({
@@ -49,11 +56,13 @@ export function sourceScene() {
     return scene;
 }
 
-export function planeBuffers(width, height, pose, { invalidatePixel = null } = {}) {
+export function planeBuffers(width, height, pose, { invalidatePixel = null, planeZOffset = 1 } = {}) {
     const beauty = new Uint8Array(width * height * 4);
     const worldPosition = new Float32Array(width * height * 3);
+    const geometricNormal = new Float32Array(width * height * 3);
+    const confidence = new Float32Array(width * height);
     const validity = new Uint8Array(width * height);
-    const planeZ = (pose?.position?.z ?? 0) - 2;
+    const planeZ = (pose?.position?.z ?? 0) - planeZOffset;
     const originX = pose?.position?.x ?? 0;
     const originY = pose?.position?.y ?? 0;
     for (let y = 0; y < height; y += 1) {
@@ -66,14 +75,19 @@ export function planeBuffers(width, height, pose, { invalidatePixel = null } = {
             worldPosition[pixel * 3] = originX + (x / Math.max(1, width - 1) - 0.5);
             worldPosition[pixel * 3 + 1] = originY + (0.5 - y / Math.max(1, height - 1));
             worldPosition[pixel * 3 + 2] = planeZ;
+            geometricNormal[pixel * 3] = 0;
+            geometricNormal[pixel * 3 + 1] = 0;
+            geometricNormal[pixel * 3 + 2] = 1;
+            confidence[pixel] = 1;
             validity[pixel] = 1;
         }
     }
     if (invalidatePixel) {
         const pixel = invalidatePixel.y * width + invalidatePixel.x;
         validity[pixel] = 0;
+        confidence[pixel] = 0;
     }
-    return { beauty, worldPosition, validity };
+    return { beauty, worldPosition, geometricNormal, confidence, validity };
 }
 
 function pixelOffset(pixel, channel) {
@@ -88,6 +102,8 @@ export function capturePlane(options = {}) {
                 const buffers = planeBuffers(WIDTH, HEIGHT, sample.pose, options);
                 if (role === "beauty") return [key, buffers.beauty];
                 if (role === "world-position") return [key, buffers.worldPosition];
+                if (role === "geometric-normal") return [key, buffers.geometricNormal];
+                if (role === "confidence") return [key, buffers.confidence];
                 if (role === "validity") return [key, buffers.validity];
                 throw new Error(`unsupported test role ${role}`);
             })),
@@ -124,6 +140,16 @@ export function storeAssetClient(store) {
         async putUploadContent(id, bytes) {
             return store.writeUploadContent(id, bytes, { contentLength: bytes.length });
         },
+        async getUseContent(useHash) {
+            const opened = await store.openUseContent(useHash);
+            try {
+                const chunks = [];
+                for await (const chunk of opened.stream) chunks.push(chunk);
+                return { bytes: new Uint8Array(Buffer.concat(chunks)) };
+            } finally {
+                await opened.release();
+            }
+        },
     };
 }
 
@@ -135,8 +161,12 @@ export async function writeAndUpload(service, reservation, job, options = {}) {
         currentDescriptor: options.currentDescriptor ?? null,
         currentAccess: options.currentAccess ?? null,
         worldHash: reservation.worldHash,
+        scene: job.sceneHandle?.scene ?? options.sourceScene ?? null,
     });
-    await uploadBakeArtifacts(storeAssetClient(service.visualAssets), written.uploads);
+    await uploadBakeArtifacts(storeAssetClient(service.visualAssets), [
+        ...written.uploads,
+        ...(written.contributionUploads ?? []),
+    ]);
     return written;
 }
 
@@ -183,3 +213,123 @@ export async function beginAndCapture(service, options = {}) {
 }
 
 void VISUAL_PREVIEW_USERDATA;
+
+export function twoSampleConfig(overrides = {}) {
+    return tinyPersistentConfig({
+        paths: [{
+            id: "path-0",
+            vertices: [
+                { position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0, order: "XYZ" } },
+                { position: { x: 80, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0, order: "XYZ" } },
+            ],
+        }],
+        sampling: { deltaDistance: 80, includeEndpoints: true, captureTimeNs: 5 },
+        ...overrides,
+    });
+}
+
+export function addTestBuilding(scene, id, {
+    x = 0,
+    y = 1,
+    z = -2,
+    color = 0xff0000,
+    castShadow = false,
+    entityId = null,
+} = {}) {
+    const mesh = new THREE.Mesh(
+        new THREE.BoxGeometry(2, 2, 2),
+        new THREE.MeshBasicMaterial({ color }),
+    );
+    mesh.name = id;
+    mesh.userData.buildingId = id;
+    if (entityId) mesh.userData.entityId = entityId;
+    mesh.position.set(x, y, z);
+    mesh.castShadow = castShadow;
+    scene.add(mesh);
+    return mesh;
+}
+
+export function twoPoleScene() {
+    const scene = new THREE.Scene();
+    addTestBuilding(scene, "alpha", { x: 0 });
+    addTestBuilding(scene, "beta", { x: 80 });
+    return scene;
+}
+
+export function chunkManagerForScene(scene) {
+    const manager = new ChunkManager({ chunkSize: 20 });
+    scene.updateMatrixWorld(true);
+    scene.traverse((object) => {
+        if (!object.isMesh) return;
+        const box = new THREE.Box3().setFromObject(object);
+        const id = object.userData.buildingId
+            ? `building:${object.userData.buildingId}`
+            : (object.userData.entityId ?? object.uuid);
+        manager.assignEntity({
+            id,
+            bounds: {
+                minX: box.min.x,
+                minY: box.min.y,
+                minZ: box.min.z,
+                maxX: box.max.x,
+                maxY: box.max.y,
+                maxZ: box.max.z,
+            },
+        });
+    });
+    return manager;
+}
+
+export async function runReuseBake(options = {}) {
+    const sourceScene = options.scene ?? twoPoleScene();
+    const config = options.config ?? twoSampleConfig().document();
+    const chunkManager = options.chunkManager ?? chunkManagerForScene(sourceScene);
+    const spatialIndex = options.spatialIndex
+        ?? BakeSpatialIndex.fromRegistry(null, chunkManager, { scene: sourceScene });
+    const catalog = options.catalog ?? new BakeRunCatalog(options.catalogOptions ?? {});
+    return runIncrementalBake({
+        host: { catalog },
+        options: {
+            config,
+            sourceScene,
+            worldHash: options.worldHash ?? WORLD_A,
+            generation: options.generation ?? 1,
+            environmentRevision: options.environmentRevision ?? 0,
+            spatialIndex,
+            chunkManager,
+            streamUnits: options.streamUnits === true,
+            memoryLedger: options.memoryLedger,
+            captureAlignedProducts: options.captureAlignedProducts ?? capturePlane(),
+            signal: options.signal,
+        },
+        previousManifest: options.previousManifest ?? null,
+        previousGraph: options.previousGraph ?? null,
+        previousWritten: options.previousWritten ?? null,
+        currentDescriptor: options.currentDescriptor ?? null,
+        currentAccess: options.currentAccess ?? null,
+        sourceIds: options.sourceIds ?? SOURCE_IDS,
+        reuseDisabled: options.reuseDisabled === true,
+        uploadClient: options.uploadClient ?? null,
+        assetClient: options.assetClient ?? options.uploadClient ?? null,
+        memoryLedger: options.memoryLedger ?? null,
+    });
+}
+
+export function semanticBakeIdentity(written) {
+    return {
+        descriptorHash: hashVisualLayer(written.descriptor),
+        accessHash: hashVisualLayerAccess(written.access),
+        sourceWorldHash: written.descriptor.sourceWorldHash,
+        ids: [
+            ...written.descriptor.materials.map((entry) => entry.id),
+            ...written.descriptor.instances.map((entry) => entry.id),
+            ...written.descriptor.chunks.map((entry) => entry.id),
+        ].sort(),
+        assets: written.descriptor.assets.map((entry) => entry.sha256).sort(),
+        uses: written.access.assets.map((entry) => entry.useHash).sort(),
+    };
+}
+
+export function unitIds(entries = []) {
+    return entries.map((entry) => entry.unitId).sort();
+}

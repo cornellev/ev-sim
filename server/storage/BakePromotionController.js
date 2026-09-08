@@ -17,6 +17,14 @@ import {
     normalizeBakeArtifactSet,
 } from "../../app/3d/environment/visual/BakeArtifactWriter.js";
 import {
+    hashBakeReuseManifest,
+    hashBakeReuseReport,
+    isBakeReuseManifestV2,
+    normalizeBakeReuseManifest,
+    normalizeBakeReuseReport,
+    reuseContributionUseHashes,
+} from "../../app/3d/environment/visual/BakeReuseContracts.js";
+import {
     hashBakeCapturePlan,
     hashBakeProviderRequest,
     hashBakeProviderResponse,
@@ -43,6 +51,7 @@ const JOURNAL_PHASES = Object.freeze([
     "acquire-temp",
     "publish-revision",
     "replace-root",
+    "replace-reuse-root",
     "release-temp",
     "receipt",
 ]);
@@ -56,6 +65,10 @@ export function parseBakeOutputSourceIds(value) {
 
 export function durableVisualRootOwner(environmentId) {
     return `environment:${environmentId}:visual`;
+}
+
+export function durableBakeReuseRootOwner(environmentId) {
+    return `environment:${environmentId}:bake-reuse`;
 }
 
 export function bakeOutputRootOwner(environmentId, generation) {
@@ -142,9 +155,14 @@ export class BakePromotionController {
             if (state.active) await this._cancelActive(environmentId, state, { invalidate: true });
             const generation = state.nextGeneration;
             const sourceUseHashes = await this._currentUseHashes(current);
+            const reuseCandidate = await this._readReuseCandidate(current, state);
+            const pinnedHashes = [...new Set([
+                ...sourceUseHashes,
+                ...reuseContributionUseHashes(reuseCandidate?.manifest),
+            ])].sort();
             const pin = await this.service.visualAssets.acquirePin({
                 ownerId: `environment:${environmentId}:bake-input`,
-                useHashes: sourceUseHashes,
+                useHashes: pinnedHashes,
                 operations: [...VISUAL_ASSET_ACCESS_OPERATIONS],
             });
             state.active = {
@@ -153,6 +171,9 @@ export class BakePromotionController {
                 worldHash: world.hash,
                 visualDescriptorHash: current.visualLayer?.descriptorHash ?? null,
                 visualAccessHash: current.visualLayer?.accessHash ?? null,
+                bakeReuseManifestHash: current.visualLayer?.bakeReuseManifestHash
+                    ?? reuseCandidate?.bakeReuseManifestHash
+                    ?? null,
                 sourceUseHashes,
                 outputSourceIds,
                 pinHandle: pin.handle,
@@ -167,8 +188,10 @@ export class BakePromotionController {
                 worldHash: world.hash,
                 visualDescriptorHash: current.visualLayer?.descriptorHash ?? null,
                 visualAccessHash: current.visualLayer?.accessHash ?? null,
+                bakeReuseManifestHash: current.visualLayer?.bakeReuseManifestHash ?? reuseCandidate?.bakeReuseManifestHash ?? null,
                 sourceUseHashes,
                 outputSourceIds,
+                reuseCandidate,
             };
         });
     }
@@ -194,20 +217,32 @@ export class BakePromotionController {
             if (world.hash !== state.active.worldHash) {
                 throw bakeError(BAKE_PROMOTION_ERROR_CODES.BINDING_MISMATCH, "World hash changed during the bake.");
             }
+            if (body.mode === "noop") {
+                return this._commitNoop(environmentId, generation, body, state, current, world);
+            }
             const documents = this._assertDocuments(body, state.active, world.hash, environmentId);
             await this._assertOutputSourceGrants(state.active.outputSourceIds);
             await this._assertGeneratedOutputs(documents.artifactSet, state.active.outputSourceIds);
             await this._assertClosure(documents.descriptor, documents.access, documents.artifactSet);
-            const newUseHashes = [...new Set(documents.access.assets.map((entry) => entry.useHash))].sort();
+            const reuse = await this._storeReuseDocuments(body, documents);
+            await this._assertReuseContributions(reuse.manifest);
+            const visualUseHashes = [...new Set(documents.access.assets.map((entry) => entry.useHash))].sort();
+            const reuseUseHashes = reuseContributionUseHashes(reuse.manifest);
+            const newUseHashes = [...new Set([...visualUseHashes, ...reuseUseHashes])].sort();
             const storedDescriptorHash = await this.service._visualLayerDescriptors.put(documents.descriptor);
             const storedAccessHash = await this.service._visualLayerAccess.put(documents.access);
             if (storedDescriptorHash !== documents.descriptorHash || storedAccessHash !== documents.accessHash) {
                 throw bakeError(BAKE_PROMOTION_ERROR_CODES.HASH_MISMATCH, "Stored descriptor/access hashes do not match.");
             }
             const nextRevision = (current.revision ?? 0) + 1;
+            const visualLayer = {
+                descriptorHash: storedDescriptorHash,
+                accessHash: storedAccessHash,
+                ...(reuse.manifestHash ? { bakeReuseManifestHash: reuse.manifestHash } : {}),
+            };
             const nextManifest = serializeEnvironmentManifestV3({
                 ...current,
-                visualLayer: { descriptorHash: storedDescriptorHash, accessHash: storedAccessHash },
+                visualLayer,
                 evidence: null,
             }, {
                 environmentId,
@@ -217,6 +252,9 @@ export class BakePromotionController {
             await this.service._assertVisualReference(nextManifest);
             const tempOwnerId = bakeOutputRootOwner(environmentId, generation);
             const durableOwnerId = durableVisualRootOwner(environmentId);
+            const reuseOwnerId = isBakeReuseManifestV2(reuse.manifest)
+                ? durableBakeReuseRootOwner(environmentId)
+                : null;
             const receipt = {
                 environmentId,
                 generation,
@@ -225,7 +263,10 @@ export class BakePromotionController {
                 descriptorHash: storedDescriptorHash,
                 accessHash: storedAccessHash,
                 artifactHash: documents.artifactHash,
-                visualLayer: { descriptorHash: storedDescriptorHash, accessHash: storedAccessHash },
+                bakeReuseManifestHash: reuse.manifestHash,
+                reuseReportHash: reuse.reportHash,
+                mode: "promote",
+                visualLayer,
                 manifest: nextManifest,
             };
             const journal = {
@@ -236,14 +277,22 @@ export class BakePromotionController {
                 phase: "acquire-temp",
                 tempOwnerId,
                 durableOwnerId,
+                reuseOwnerId,
                 pinHandle: state.active.pinHandle,
                 newUseHashes,
+                visualUseHashes,
+                reuseUseHashes,
                 newDescriptorHash: storedDescriptorHash,
                 oldDescriptorHash: current.visualLayer?.descriptorHash ?? null,
+                bakeReuseManifestHash: reuse.manifestHash,
                 nextManifest,
                 receipt,
             };
             await this._runJournal(journal, state);
+            if (state.reuseCandidate) {
+                state.reuseCandidate = null;
+                await this.writeState(state);
+            }
             return receipt;
         });
     }
@@ -311,6 +360,199 @@ export class BakePromotionController {
                 "Trusted bake output sources are missing or insufficient.",
                 { denials: decision.denials },
             );
+        }
+    }
+
+    async retainReuseCandidate(environmentId, current) {
+        if (!current?.visualLayer?.descriptorHash) return null;
+        const state = await this.readState(environmentId);
+        const world = createWorldResource(current);
+        state.reuseCandidate = {
+            worldHash: world.hash,
+            descriptorHash: current.visualLayer.descriptorHash,
+            accessHash: current.visualLayer.accessHash ?? null,
+            bakeReuseManifestHash: current.visualLayer.bakeReuseManifestHash ?? null,
+            sourceUseHashes: await this._currentUseHashes(current),
+        };
+        await this.writeState(state);
+        return state.reuseCandidate;
+    }
+
+    async _readReuseCandidate(current, state) {
+        const visual = current?.visualLayer;
+        if (visual?.bakeReuseManifestHash) {
+            const manifest = await this.service._bakeReuseManifests.get(visual.bakeReuseManifestHash);
+            if (!manifest) {
+                throw bakeError(
+                    BAKE_PROMOTION_ERROR_CODES.REUSE_UNAUTHORIZED,
+                    "Published bake reuse manifest is missing.",
+                );
+            }
+            if (
+                manifest.descriptorHash !== visual.descriptorHash
+                || (visual.accessHash && manifest.accessHash !== visual.accessHash)
+            ) {
+                throw bakeError(
+                    BAKE_PROMOTION_ERROR_CODES.REUSE_UNAUTHORIZED,
+                    "Bake reuse manifest does not match the published visual layer.",
+                );
+            }
+            return {
+                trusted: true,
+                worldHash: manifest.sourceWorldHash,
+                descriptorHash: visual.descriptorHash,
+                accessHash: visual.accessHash ?? null,
+                bakeReuseManifestHash: visual.bakeReuseManifestHash,
+                manifest,
+            };
+        }
+        if (state.reuseCandidate?.bakeReuseManifestHash) {
+            const manifest = await this.service._bakeReuseManifests.get(state.reuseCandidate.bakeReuseManifestHash);
+            return {
+                trusted: Boolean(manifest),
+                ...state.reuseCandidate,
+                manifest,
+            };
+        }
+        if (visual?.descriptorHash) {
+            return {
+                trusted: false,
+                worldHash: null,
+                descriptorHash: visual.descriptorHash,
+                accessHash: visual.accessHash ?? null,
+                bakeReuseManifestHash: null,
+                manifest: null,
+            };
+        }
+        if (state.reuseCandidate) {
+            return { trusted: false, ...state.reuseCandidate, manifest: null };
+        }
+        return null;
+    }
+
+    async _commitNoop(environmentId, generation, body, state, current, world) {
+        const report = body.reuseReport ? normalizeBakeReuseReport(body.reuseReport) : null;
+        if (!report || report.mode !== "noop" || report.captured.length || report.uploaded.length) {
+            throw bakeError(
+                BAKE_PROMOTION_ERROR_CODES.NOOP_INVALID,
+                "A no-op bake must report zero captured or uploaded units.",
+            );
+        }
+        if (report.sourceWorldHash !== world.hash) {
+            throw bakeError(
+                BAKE_PROMOTION_ERROR_CODES.NOOP_INVALID,
+                "A no-op bake requires an unchanged world hash.",
+            );
+        }
+        const visual = current.visualLayer;
+        if (!visual?.descriptorHash || !visual?.accessHash) {
+            throw bakeError(
+                BAKE_PROMOTION_ERROR_CODES.NOOP_INVALID,
+                "A no-op bake requires a published visual layer.",
+            );
+        }
+        if (body.reuseManifest) {
+            const manifest = normalizeBakeReuseManifest(body.reuseManifest);
+            if (
+                manifest.descriptorHash !== visual.descriptorHash
+                || manifest.accessHash !== visual.accessHash
+                || manifest.sourceWorldHash !== world.hash
+            ) {
+                throw bakeError(
+                    BAKE_PROMOTION_ERROR_CODES.REUSE_UNAUTHORIZED,
+                    "No-op reuse manifest does not match the published layer.",
+                );
+            }
+        }
+        await this._releaseActivePin(state);
+        state.active = null;
+        const receipt = {
+            environmentId,
+            generation,
+            revision: current.revision ?? 0,
+            worldHash: world.hash,
+            descriptorHash: visual.descriptorHash,
+            accessHash: visual.accessHash,
+            artifactHash: null,
+            bakeReuseManifestHash: visual.bakeReuseManifestHash ?? null,
+            reuseReportHash: hashBakeReuseReport(report),
+            mode: "noop",
+            visualLayer: visual,
+            manifest: current,
+        };
+        state.receipts[String(generation)] = receipt;
+        await this.writeState(state);
+        return receipt;
+    }
+
+    async _storeReuseDocuments(body, documents) {
+        if (!body.reuseManifest && !body.reuseReport) {
+            return { manifest: null, manifestHash: null, reportHash: null };
+        }
+        if (!body.reuseManifest || !body.reuseReport) {
+            throw bakeError(
+                BAKE_PROMOTION_ERROR_CODES.INCOMPLETE,
+                "Bake reuse commits require both a manifest and a report.",
+            );
+        }
+        const manifest = normalizeBakeReuseManifest(body.reuseManifest);
+        const report = normalizeBakeReuseReport(body.reuseReport);
+        if (manifest.descriptorHash !== documents.descriptorHash || manifest.accessHash !== documents.accessHash) {
+            throw bakeError(
+                BAKE_PROMOTION_ERROR_CODES.REUSE_UNAUTHORIZED,
+                "Reuse manifest does not match the committed descriptor/access hashes.",
+            );
+        }
+        const manifestHash = await this.service._bakeReuseManifests.put(manifest);
+        if (manifestHash !== hashBakeReuseManifest(manifest)) {
+            throw bakeError(BAKE_PROMOTION_ERROR_CODES.HASH_MISMATCH, "Stored reuse manifest hash mismatch.");
+        }
+        return {
+            manifest,
+            manifestHash,
+            reportHash: hashBakeReuseReport(report),
+        };
+    }
+
+    async _assertReuseContributions(manifest) {
+        if (!isBakeReuseManifestV2(manifest)) return;
+        for (const unit of manifest.units ?? []) {
+            const asset = unit.contribution;
+            const use = await this.service.visualAssets.getUse(asset.useHash);
+            if (!use) {
+                throw bakeError(BAKE_PROMOTION_ERROR_CODES.INCOMPLETE, `Contribution use ${asset.useHash} is missing.`);
+            }
+            if (
+                use.asset.sha256 !== asset.sha256
+                || use.asset.sizeBytes !== asset.sizeBytes
+                || use.asset.mediaType !== asset.mediaType
+                || use.asset.role !== asset.role
+            ) {
+                throw bakeError(
+                    BAKE_PROMOTION_ERROR_CODES.HASH_MISMATCH,
+                    `Contribution use ${asset.useHash} does not match the reuse record.`,
+                );
+            }
+            const opened = await this.service.visualAssets.openUseContent(asset.useHash);
+            try {
+                const chunks = [];
+                for await (const chunk of opened.stream) chunks.push(chunk);
+                const bytes = Buffer.concat(chunks);
+                if (bytes.length !== asset.sizeBytes || sha256Bytes(bytes) !== asset.sha256) {
+                    throw bakeError(
+                        BAKE_PROMOTION_ERROR_CODES.HASH_MISMATCH,
+                        `Contribution bytes for ${asset.useHash} do not match.`,
+                    );
+                }
+            } finally {
+                await opened.release();
+            }
+        }
+    }
+
+    async _releaseActivePin(state) {
+        if (state.active?.pinHandle) {
+            await this.service.visualAssets.releasePin({ handle: state.active.pinHandle });
         }
     }
 
@@ -444,6 +686,10 @@ export class BakePromotionController {
         await this.service._writeJsonFile(journalPath, journal);
         await this._maybeFault("replace-root");
         await this._replaceDurableRoot(journal);
+        journal.phase = "replace-reuse-root";
+        await this.service._writeJsonFile(journalPath, journal);
+        await this._maybeFault("replace-reuse-root");
+        await this._replaceReuseRoot(journal);
         journal.phase = "release-temp";
         await this.service._writeJsonFile(journalPath, journal);
         await this._maybeFault("release-temp");
@@ -475,6 +721,9 @@ export class BakePromotionController {
             }
             if (JOURNAL_PHASES.indexOf(journal.phase) <= JOURNAL_PHASES.indexOf("replace-root")) {
                 await this._replaceDurableRoot(journal);
+            }
+            if (JOURNAL_PHASES.indexOf(journal.phase) <= JOURNAL_PHASES.indexOf("replace-reuse-root")) {
+                await this._replaceReuseRoot(journal);
             }
             await this._releaseTempAndPin(journal);
             const state = await this.readState(journal.environmentId);
@@ -511,12 +760,13 @@ export class BakePromotionController {
     }
 
     async _replaceDurableRoot(journal) {
+        const useHashes = journal.visualUseHashes ?? journal.newUseHashes;
         const current = this.service.visualAssets._roots?.roots?.[journal.durableOwnerId];
         if (!current) {
             await this.service.visualAssets.acquireRoot({
                 ownerId: journal.durableOwnerId,
                 ownerKind: "environment",
-                useHashes: journal.newUseHashes,
+                useHashes,
                 operations: [...VISUAL_ASSET_ACCESS_OPERATIONS, ...VISUAL_ASSET_UPLOAD_OPERATIONS],
             });
             return;
@@ -524,9 +774,31 @@ export class BakePromotionController {
         await this.service.visualAssets.replaceRoot({
             ownerId: journal.durableOwnerId,
             expectedGeneration: current.generation,
-            useHashes: journal.newUseHashes,
+            useHashes,
             operations: [...VISUAL_ASSET_ACCESS_OPERATIONS, ...VISUAL_ASSET_UPLOAD_OPERATIONS],
             ownerKind: "environment",
+        });
+    }
+
+    async _replaceReuseRoot(journal) {
+        if (!journal.reuseOwnerId) return;
+        const useHashes = journal.reuseUseHashes ?? [];
+        const current = this.service.visualAssets._roots?.roots?.[journal.reuseOwnerId];
+        if (!current) {
+            await this.service.visualAssets.acquireRoot({
+                ownerId: journal.reuseOwnerId,
+                ownerKind: "bake-reuse",
+                useHashes,
+                operations: [...VISUAL_ASSET_ACCESS_OPERATIONS, ...VISUAL_ASSET_UPLOAD_OPERATIONS],
+            });
+            return;
+        }
+        await this.service.visualAssets.replaceRoot({
+            ownerId: journal.reuseOwnerId,
+            expectedGeneration: current.generation,
+            useHashes,
+            operations: [...VISUAL_ASSET_ACCESS_OPERATIONS, ...VISUAL_ASSET_UPLOAD_OPERATIONS],
+            ownerKind: "bake-reuse",
         });
     }
 

@@ -1,12 +1,34 @@
 import * as THREE from "three";
 
-function effectiveBuildingId(object) {
+function assignedIds(object) {
     let current = object;
     while (current) {
-        if (current.userData?.buildingId) return current.userData.buildingId;
+        const data = current.userData ?? {};
+        if (data.buildingId) {
+            return {
+                id: String(data.buildingId),
+                entityId: String(data.entityId ?? `building:${data.buildingId}`),
+                kind: "building",
+            };
+        }
+        if (data.entityId) {
+            return {
+                id: String(data.entityId),
+                entityId: String(data.entityId),
+                kind: data.kind ?? "entity",
+            };
+        }
         current = current.parent;
     }
-    return null;
+    return {
+        id: String(object.uuid),
+        entityId: String(object.uuid),
+        kind: "unassigned",
+    };
+}
+
+function effectiveBuildingId(object) {
+    return assignedIds(object).kind === "building" ? assignedIds(object).id : null;
 }
 
 function boundsFromObject(object) {
@@ -96,8 +118,11 @@ export class BakeSpatialIndex {
             const entity = registry.getEntity?.(summary.id) ?? summary;
             const object3D = entity.object3D ?? null;
             const meshes = [];
+            const assetUris = [];
             object3D?.traverse?.((child) => {
                 if (child.isMesh) meshes.push(child);
+                const uri = child.userData?.assetUri ?? child.userData?.visualAssetUri;
+                if (uri) assetUris.push(String(uri));
             });
             const buildingId = entity.sourceId
                 ?? entity.record?.buildingId
@@ -109,13 +134,14 @@ export class BakeSpatialIndex {
             index.upsert({
                 id: buildingId || entity.id,
                 entityId: entity.id,
-                kind: entity.kind,
+                kind: entity.kind ?? (buildingId ? "building" : "entity"),
                 hidden: entity.hidden === true,
                 visible: entity.visible !== false,
                 chunkKeys: entity.coveredChunks ?? [],
                 bounds,
                 object3D,
                 meshes,
+                assetUris,
             });
         }
         if (chunkManager?.index) {
@@ -133,9 +159,8 @@ export class BakeSpatialIndex {
         this.wholeSceneSearches += 1;
         scene.traverse((object) => {
             if (!object.isMesh) return;
-            const buildingId = effectiveBuildingId(object);
-            if (!buildingId) return;
-            const existing = this.entries.get(buildingId);
+            const ids = assignedIds(object);
+            const existing = this.entries.get(ids.entityId) ?? this.entries.get(ids.id);
             const bounds = boundsFromObject(object);
             if (existing) {
                 existing.meshes.push(object);
@@ -143,15 +168,16 @@ export class BakeSpatialIndex {
                 return;
             }
             this.upsert({
-                id: buildingId,
-                entityId: `building:${buildingId}`,
-                kind: "building",
+                id: ids.id,
+                entityId: ids.entityId,
+                kind: ids.kind,
                 hidden: object.visible === false,
                 visible: object.visible !== false,
                 chunkKeys: [],
                 bounds,
                 object3D: object,
                 meshes: [object],
+                assetUris: object.userData?.assetUri ? [String(object.userData.assetUri)] : [],
             });
         });
     }
@@ -161,6 +187,7 @@ export class BakeSpatialIndex {
             ...entry,
             meshes: [...(entry.meshes ?? [])],
             chunkKeys: [...(entry.chunkKeys ?? [])],
+            assetUris: [...(entry.assetUris ?? [])],
         });
         for (const key of entry.chunkKeys ?? []) {
             const list = this.byChunk.get(key) ?? [];
@@ -188,6 +215,14 @@ export class BakeSpatialIndex {
     }
 
     queryFrustum(camera) {
+        return this._queryFrustum(camera, (entry) => !entry.kind || entry.kind === "building");
+    }
+
+    queryCaptureInfluence(camera) {
+        return this._queryFrustum(camera, () => true);
+    }
+
+    _queryFrustum(camera, predicate) {
         this.searches += 1;
         const frustum = new THREE.Frustum();
         const matrix = new THREE.Matrix4().multiplyMatrices(
@@ -197,7 +232,7 @@ export class BakeSpatialIndex {
         frustum.setFromProjectionMatrix(matrix);
         const hits = [];
         for (const entry of this.entries.values()) {
-            if (entry.kind && entry.kind !== "building") continue;
+            if (!predicate(entry)) continue;
             const box = box3FromBounds(entry.bounds);
             if (!frustum.intersectsBox(box)) continue;
             hits.push(entry);
@@ -228,6 +263,10 @@ export class BakeSpatialIndex {
 
     buildings() {
         return [...this.entries.values()].filter((entry) => !entry.kind || entry.kind === "building");
+    }
+
+    entities() {
+        return [...this.entries.values()];
     }
 }
 

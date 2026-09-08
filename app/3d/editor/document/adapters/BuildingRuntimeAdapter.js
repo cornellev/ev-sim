@@ -1,4 +1,5 @@
 import { generateBuildings } from "../../../city/BuildingGenerator.js";
+import { syncBakeBuildingsFromDocument } from "../../map/bakeBuildingSync.js";
 
 /**
  * Sync building records from document into bake config and scene.
@@ -7,14 +8,7 @@ import { generateBuildings } from "../../../city/BuildingGenerator.js";
  * @param {import("../EnvironmentDocument.js").EnvironmentDocument} document
  */
 export function syncBuildingsFromDocument(scene, data, document) {
-    const bakeConfig = data.bakeRunConfig?.();
-    if (bakeConfig) {
-        bakeConfig.buildings = document.buildings.map((record) => ({
-            ...record,
-            footprint: record.footprint.map((point) => ({ ...point })),
-            tags: [...(record.tags ?? ["building"])],
-        }));
-    }
+    syncBakeBuildingsFromDocument(data, document);
 
     if (!document.buildings.length) {
         return [];

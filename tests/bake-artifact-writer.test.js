@@ -112,17 +112,20 @@ test("deterministic PNG/GLB/artifact hashes are stable under input ordering", as
     assert.equal(shuffled, first.artifactHash);
 });
 
-test("PNG rows are top-left, invalid pixels are transparent, and GLB is unlit MASK", async () => {
+test("PNG rows are top-left, atlas pages are 512px, and GLB is unlit MASK", async () => {
     const written = await artifacts();
-    const png = written.uploads.find((entry) => entry.role === "texture").bytes;
+    const png = written.uploads.find((entry) => entry.role === "texture" && entry.kind !== "confidence").bytes
+        ?? written.uploads.find((entry) => entry.kind === "texture")?.bytes;
     const decoded = pngRgba(png);
     assert.equal(decoded.colorType, 6);
-    assert.equal(decoded.width, WIDTH);
-    assert.equal(decoded.height, HEIGHT);
-    assert.equal(decoded.rgba[0], 255);
-    assert.equal(decoded.rgba[3], 255);
-    const invalid = (5 * WIDTH + 5) * 4;
-    assert.equal(decoded.rgba[invalid + 3], 0);
+    assert.equal(decoded.width, 512);
+    assert.equal(decoded.height, 512);
+    assert.equal(written.artifactSet.version, 2);
+    assert.equal(typeof written.artifactSet.constructionHash, "string");
+    assert.equal(written.artifactSet.constructionHash.length, 64);
+    assert.ok(written.uploads.some((entry) => entry.kind === "confidence"));
+    assert.ok(decoded.rgba.some((value, index) => index % 4 === 3 && value === 0), "atlas gutters stay alpha-zero");
+    assert.ok(decoded.rgba.some((value, index) => index % 4 === 3 && value === 255), "covered texels stay opaque");
     const glb = written.uploads.find((entry) => entry.role === "mesh").bytes;
     const json = glbJson(glb);
     assert.equal(json.materials[0].alphaMode, "MASK");
@@ -216,8 +219,12 @@ test("VisualLayerMaterializer reloads promoted unlit assets without model, Spark
                     };
                 },
             },
-            parseGltf: async () => {
-                const material = new THREE.MeshPhysicalMaterial({ name: written.descriptor.materials[0].id });
+            parseGltf: async (_bytes, digest) => {
+                const instance = written.descriptor.instances.find((entry) => (
+                    entry.assetUri === `sha256:${digest}`
+                ));
+                const materialId = instance?.materialIds?.[0] ?? written.descriptor.materials[0].id;
+                const material = new THREE.MeshPhysicalMaterial({ name: materialId });
                 const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 0.2), material);
                 const scene = new THREE.Group();
                 scene.add(mesh);

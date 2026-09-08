@@ -308,6 +308,24 @@ export function buildBakeSourceSnapshot({
     const leases = [];
     const clonedScene = new THREE.Scene();
     clonedScene.name = "cev-sim.bake-snapshot";
+    if (sourceScene.background?.isColor) clonedScene.background = sourceScene.background.clone();
+    else if (sourceScene.background?.isTexture) {
+        clonedScene.background = retainShared(sourceScene.background, leases, {
+            kind: "texture",
+            digest: textureDigest(sourceScene.background),
+        });
+    } else {
+        clonedScene.background = sourceScene.background ?? null;
+    }
+    if (sourceScene.environment?.isTexture) {
+        clonedScene.environment = retainShared(sourceScene.environment, leases, {
+            kind: "texture",
+            digest: textureDigest(sourceScene.environment),
+        });
+    } else {
+        clonedScene.environment = sourceScene.environment ?? null;
+    }
+    clonedScene.fog = sourceScene.fog?.clone?.() ?? sourceScene.fog ?? null;
     const state = { geometry: [], materials: [], lights: [] };
     const skipRoot = sourceScene.isScene === true;
     walkAndClone(sourceScene, clonedScene, leases, livePreviewRoot, state, { skipRoot });

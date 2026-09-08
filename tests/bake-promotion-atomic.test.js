@@ -312,8 +312,12 @@ test("HTTP promotion client begins, commits, and returns the stored environment"
             buffers: job.productBuffers,
             sourceIds: reservation.outputSourceIds,
             worldHash: reservation.worldHash,
+            scene: job.sceneHandle?.scene ?? null,
         });
-        await uploadBakeArtifacts(assets, written.uploads);
+        await uploadBakeArtifacts(assets, [
+            ...written.uploads,
+            ...(written.contributionUploads ?? []),
+        ]);
         const receipt = await client.commit("yard", reservation.generation, {
             config: job.config,
             snapshot: job.snapshot,

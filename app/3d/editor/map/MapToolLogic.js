@@ -16,7 +16,7 @@ import {
     snapPoint,
 } from "../document/documentMutations.js";
 import { syncRoadsFromDocument } from "../document/DocumentSync.js";
-import { upsertBakeBuildingRecord } from "./bakeBuildingSync.js";
+import { syncBakeBuildingsFromDocument } from "./bakeBuildingSync.js";
 import { MAP_TOOLS } from "../EditorState.js";
 import { deleteMapSelectionFromRuntime, syncFeaturePosition } from "./mapRuntimeSync.js";
 import { MAP_WORLD_SCALE, screenRadiusToWorld } from "./mapCoords.js";
@@ -224,7 +224,7 @@ export function handleBuildingRectUp({ document, editor, data, scene }) {
 
     editor.markDirty(true);
 
-    upsertBakeBuildingRecord(data, result.record);
+    syncBakeBuildingsFromDocument(data, document);
 
     generateBuildings(scene, data, { records: [result.record] });
     data.environment().objects().registerExistingContent(scene, data);

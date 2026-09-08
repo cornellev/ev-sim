@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { ChunkIndex, DEFAULT_CHUNK_SIZE } from "./ChunkIndex.js";
+import { ChunkIndex, CHUNK_MUTATION_TYPES, DEFAULT_CHUNK_SIZE } from "./ChunkIndex.js";
 
 const CHUNK_GROUP_PREFIX = "EnvironmentChunk";
 
@@ -33,10 +33,10 @@ export class ChunkManager {
         return group;
     }
 
-    assignEntity(entity) {
+    assignEntity(entity, { mutationType = null } = {}) {
         if (!entity?.id) return null;
         const bounds = entity.bounds ?? this.getObjectBounds(entity.object3D);
-        const membership = this.index.assignObject(entity.id, bounds);
+        const membership = this.index.assignObject(entity.id, bounds, { mutationType });
 
         if (entity.object3D && membership?.primaryChunk && this.scene) {
             const group = this.ensureGroup(membership.primaryChunk);
@@ -70,25 +70,37 @@ export class ChunkManager {
 
     removeEntity(entityId) {
         const canonicalId = this.entityAliases.get(entityId) ?? entityId;
-        this.index.removeObject(canonicalId);
+        const evidence = this.index.removeObject(canonicalId);
         for (const [alias, target] of this.entityAliases) {
             if (alias === entityId || target === canonicalId) this.entityAliases.delete(alias);
         }
+        return evidence;
     }
 
     aliasEntity(alias, entityId) {
         if (alias && entityId && alias !== entityId) this.entityAliases.set(alias, entityId);
     }
 
-    markEntityDirty(entityId) {
-        const membership = this.index.getObjectMembership(this.entityAliases.get(entityId) ?? entityId);
-        membership?.coveredChunks.forEach((key) => this.index.markDirty(key));
+    markEntityDirty(entityId, { mutationType = CHUNK_MUTATION_TYPES.material } = {}) {
+        return this.index.recordCoverageMutation(
+            this.entityAliases.get(entityId) ?? entityId,
+            mutationType,
+        );
     }
 
     setChunkLoaded(key, loaded) {
         this.index.setLoaded(key, loaded);
         const group = this.ensureGroup(key);
         group.visible = Boolean(loaded);
+    }
+
+    setChunkPrefetch(key, prefetch) {
+        this.index.setPrefetch(key, prefetch);
+    }
+
+    setChunkEviction(key, eviction) {
+        this.index.setEviction(key, eviction);
+        if (eviction) this.setChunkLoaded(key, false);
     }
 
     getMembership(entityId) {
@@ -118,6 +130,7 @@ export class ChunkManager {
     toManifest() {
         return {
             chunkSize: this.chunkSize,
+            semanticGeneration: this.index.semanticGeneration,
             chunks: Object.fromEntries(
                 this.listChunks().map((chunk) => [
                     chunk.key,
@@ -125,6 +138,8 @@ export class ChunkManager {
                         bounds: chunk.bounds,
                         objectIds: chunk.objectIds,
                         loaded: chunk.loaded,
+                        prefetch: chunk.prefetch,
+                        eviction: chunk.eviction,
                         dirty: chunk.dirty,
                     },
                 ]),

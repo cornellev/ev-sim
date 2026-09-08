@@ -33,6 +33,12 @@ import {
     normalizeBakeSourceSnapshot,
 } from "./BakeRunCatalog.js";
 import {
+    bakeCaptureUnitId,
+    bakeGeneratedRecordId,
+    isBakeGeneratedId,
+    normalizeBakeReuseManifest,
+} from "./BakeReuseContracts.js";
+import {
     encodeDeterministicRgbaPng,
     encodeProjectedCaptureGlb,
     PROJECTED_CAPTURED_RADIANCE_OPTIONS,
@@ -42,14 +48,19 @@ import {
     buildProjectedCaptureGeometry,
     maskedBeautyRgba,
 } from "./ProjectedCaptureGeometry.js";
+import {
+    ATLAS_PERSISTENT_BAKE_OUTPUT_ROLES,
+    PROJECTED_PERSISTENT_BAKE_OUTPUT_ROLES,
+    constructionFromConfig,
+    isChunkAtlasConstruction,
+} from "./BakeConstructionPolicy.js";
+import { writeAtlasArtifacts } from "./BakeAtlasArtifactWriter.js";
 
 export const BAKE_ARTIFACT_SET_KIND = "cev-sim.bake-artifact-set";
 export const BAKE_ARTIFACT_SET_VERSION = 1;
-export const PERSISTENT_BAKE_OUTPUT_ROLES = Object.freeze([
-    "beauty",
-    "world-position",
-    "validity",
-]);
+export const BAKE_ARTIFACT_SET_VERSION_V2 = 2;
+export const PERSISTENT_BAKE_OUTPUT_ROLES = ATLAS_PERSISTENT_BAKE_OUTPUT_ROLES;
+export { PROJECTED_PERSISTENT_BAKE_OUTPUT_ROLES, ATLAS_PERSISTENT_BAKE_OUTPUT_ROLES };
 
 const ARTIFACT_IDENTITY_KEYS = Object.freeze([
     "kind", "version", "environmentId", "worldHash", "environmentRevision",
@@ -57,13 +68,24 @@ const ARTIFACT_IDENTITY_KEYS = Object.freeze([
     "responseHash", "providerOutputDigests", "writer", "assets",
     "descriptorHash", "accessHash",
 ]);
+const ARTIFACT_IDENTITY_KEYS_V2 = Object.freeze([
+    ...ARTIFACT_IDENTITY_KEYS,
+    "constructionHash", "atlasManifestDigest",
+]);
 const ARTIFACT_DOCUMENT_KEYS = Object.freeze([
     ...ARTIFACT_IDENTITY_KEYS,
+    "jobId", "timestamps", "progress", "logs",
+]);
+const ARTIFACT_DOCUMENT_KEYS_V2 = Object.freeze([
+    ...ARTIFACT_IDENTITY_KEYS_V2,
     "jobId", "timestamps", "progress", "logs",
 ]);
 const WRITER_KEYS = Object.freeze(["id", "version", "options"]);
 const GENERATED_ASSET_KEYS = Object.freeze([
     "sampleId", "viewId", "role", "sha256", "mediaType", "sizeBytes", "useHash",
+]);
+const GENERATED_ASSET_KEYS_V2 = Object.freeze([
+    "chunkKey", "pageIndex", "role", "sha256", "mediaType", "sizeBytes", "useHash",
 ]);
 const SHA256 = /^[a-f0-9]{64}$/;
 
@@ -121,20 +143,29 @@ function productKey(sampleId, viewId, role) {
     return `${sampleId}:${viewId}:${role}`;
 }
 
-function generatedId(responseHash, sampleId, viewId, kind) {
-    return `bake-${sha256ExactUtf8(`${responseHash}:${sampleId}:${viewId}:${kind}`)}`;
+function generatedId(unitId, contentDigest, kind) {
+    return bakeGeneratedRecordId(unitId, contentDigest, kind);
+}
+
+function unitIdForSample(sample) {
+    return bakeCaptureUnitId(sample.pathId, sample.sampleIndex, sample.viewId);
 }
 
 function identityRecord(value) {
+    const keys = value.version >= 2 ? ARTIFACT_IDENTITY_KEYS_V2 : ARTIFACT_IDENTITY_KEYS;
     const identity = {};
-    for (const key of ARTIFACT_IDENTITY_KEYS) identity[key] = value[key];
+    for (const key of keys) identity[key] = value[key];
     return identity;
 }
 
-function sortDigests(records) {
+function sortDigests(records, version = 1) {
     return [...records].sort((left, right) => {
-        const leftKey = `${left.sampleId}:${left.viewId}:${left.role}`;
-        const rightKey = `${right.sampleId}:${right.viewId}:${right.role}`;
+        const leftKey = version >= 2
+            ? `${left.chunkKey}:${left.pageIndex}:${left.role}:${left.sha256}:${left.useHash}`
+            : `${left.sampleId}:${left.viewId}:${left.role}:${left.sha256}:${left.useHash}`;
+        const rightKey = version >= 2
+            ? `${right.chunkKey}:${right.pageIndex}:${right.role}:${right.sha256}:${right.useHash}`
+            : `${right.sampleId}:${right.viewId}:${right.role}:${right.sha256}:${right.useHash}`;
         if (leftKey < rightKey) return -1;
         if (leftKey > rightKey) return 1;
         return 0;
@@ -148,6 +179,8 @@ function defaultWriter(options = {}) {
         options: closedWriterOptions(options),
     };
 }
+
+export { defaultWriter as createBakeArtifactWriter };
 
 function closedWriterOptions(options = {}) {
     const cellSizePx = integer(
@@ -259,12 +292,12 @@ function rehashOutput(buffers, output) {
     return data;
 }
 
-function requirePersistentRoles(products) {
-    for (const role of PERSISTENT_BAKE_OUTPUT_ROLES) {
+function requirePersistentRoles(products, roles = PROJECTED_PERSISTENT_BAKE_OUTPUT_ROLES) {
+    for (const role of roles) {
         if (!products.includes(role)) {
             throw artifactError(
                 "BAKE_ARTIFACT_INCOMPLETE",
-                `Persistent bake artifacts require ${PERSISTENT_BAKE_OUTPUT_ROLES.join(", ")}.`,
+                `Persistent bake artifacts require ${roles.join(", ")}.`,
             );
         }
     }
@@ -288,28 +321,48 @@ export function persistentBakeOutputRoles(roles = PERSISTENT_BAKE_OUTPUT_ROLES) 
     return next;
 }
 
+function generatedAssetRecord(entry, index, version) {
+    if (version >= 2) {
+        const record = allowedKeys(entry, GENERATED_ASSET_KEYS_V2, `assets.${index}`);
+        return {
+            chunkKey: text(record.chunkKey, `assets.${index}.chunkKey`),
+            pageIndex: integer(record.pageIndex, `assets.${index}.pageIndex`),
+            role: text(record.role, `assets.${index}.role`),
+            sha256: digest(record.sha256, `assets.${index}.sha256`),
+            mediaType: text(record.mediaType, `assets.${index}.mediaType`),
+            sizeBytes: integer(record.sizeBytes, `assets.${index}.sizeBytes`),
+            useHash: digest(record.useHash, `assets.${index}.useHash`),
+        };
+    }
+    const record = allowedKeys(entry, GENERATED_ASSET_KEYS, `assets.${index}`);
+    return {
+        sampleId: text(record.sampleId, `assets.${index}.sampleId`),
+        viewId: text(record.viewId, `assets.${index}.viewId`),
+        role: text(record.role, `assets.${index}.role`),
+        sha256: digest(record.sha256, `assets.${index}.sha256`),
+        mediaType: text(record.mediaType, `assets.${index}.mediaType`),
+        sizeBytes: integer(record.sizeBytes, `assets.${index}.sizeBytes`),
+        useHash: digest(record.useHash, `assets.${index}.useHash`),
+    };
+}
+
 export function normalizeBakeArtifactSet(value = {}) {
-    const source = allowedKeys(value, ARTIFACT_DOCUMENT_KEYS, "bakeArtifactSet");
+    const version = integer(value.version ?? BAKE_ARTIFACT_SET_VERSION, "version", { min: 1 });
+    if (version !== BAKE_ARTIFACT_SET_VERSION && version !== BAKE_ARTIFACT_SET_VERSION_V2) {
+        fail("version", "unsupported bake-artifact-set version");
+    }
+    const source = allowedKeys(
+        value,
+        version >= 2 ? ARTIFACT_DOCUMENT_KEYS_V2 : ARTIFACT_DOCUMENT_KEYS,
+        "bakeArtifactSet",
+    );
     if ((source.kind ?? BAKE_ARTIFACT_SET_KIND) !== BAKE_ARTIFACT_SET_KIND) {
         fail("kind", `expected ${BAKE_ARTIFACT_SET_KIND}`);
     }
-    if ((source.version ?? BAKE_ARTIFACT_SET_VERSION) !== BAKE_ARTIFACT_SET_VERSION) {
-        fail("version", "unsupported bake-artifact-set version");
-    }
     const writerSource = allowedKeys(source.writer ?? {}, WRITER_KEYS, "writer");
     const assets = Object.freeze(sortDigests(
-        (source.assets ?? []).map((entry, index) => {
-            const record = allowedKeys(entry, GENERATED_ASSET_KEYS, `assets.${index}`);
-            return {
-                sampleId: text(record.sampleId, `assets.${index}.sampleId`),
-                viewId: text(record.viewId, `assets.${index}.viewId`),
-                role: text(record.role, `assets.${index}.role`),
-                sha256: digest(record.sha256, `assets.${index}.sha256`),
-                mediaType: text(record.mediaType, `assets.${index}.mediaType`),
-                sizeBytes: integer(record.sizeBytes, `assets.${index}.sizeBytes`),
-                useHash: digest(record.useHash, `assets.${index}.useHash`),
-            };
-        }),
+        (source.assets ?? []).map((entry, index) => generatedAssetRecord(entry, index, version)),
+        version,
     ));
     const providerOutputDigests = Object.freeze(sortDigests(
         (source.providerOutputDigests ?? []).map((entry, index) => ({
@@ -318,10 +371,11 @@ export function normalizeBakeArtifactSet(value = {}) {
             role: text(entry.role, `providerOutputDigests.${index}.role`),
             sha256: digest(entry.sha256, `providerOutputDigests.${index}.sha256`),
         })),
+        1,
     ));
-    return {
+    const normalized = {
         kind: BAKE_ARTIFACT_SET_KIND,
-        version: BAKE_ARTIFACT_SET_VERSION,
+        version,
         environmentId: text(source.environmentId, "environmentId"),
         worldHash: digest(source.worldHash, "worldHash"),
         environmentRevision: integer(source.environmentRevision, "environmentRevision"),
@@ -345,6 +399,11 @@ export function normalizeBakeArtifactSet(value = {}) {
         progress: source.progress ?? null,
         logs: source.logs ?? null,
     };
+    if (version >= 2) {
+        normalized.constructionHash = digest(source.constructionHash, "constructionHash");
+        normalized.atlasManifestDigest = digest(source.atlasManifestDigest, "atlasManifestDigest");
+    }
+    return normalized;
 }
 
 export function hashBakeArtifactSet(value) {
@@ -399,7 +458,7 @@ export async function uploadBakeArtifacts(client, uploads) {
         ) {
             throw artifactError(
                 "BAKE_UPLOAD_MISMATCH",
-                `Upload result for ${upload.sampleId}:${upload.viewId} ${upload.role} did not match the artifact set.`,
+                `Upload result for ${upload.role} did not match the artifact set.`,
             );
         }
         published.push(result);
@@ -407,9 +466,249 @@ export async function uploadBakeArtifacts(client, uploads) {
     return published;
 }
 
+function sampleRoleBuffer(buffers, sample, role, response) {
+    if (response) {
+        return rehashOutput(buffers, responseOutput(response, sample.sampleId, sample.viewId, role));
+    }
+    return bufferFor(buffers, sample.sampleId, sample.viewId, role);
+}
+
+export function encodeBakeUnitArtifacts({
+    sample,
+    buffers,
+    response = null,
+    config,
+    writer,
+    sourceIds,
+    viewsById,
+} = {}) {
+    requirePersistentRoles(sample.products);
+    const unitId = unitIdForSample(sample);
+    const resolvedWriter = defaultWriter(writer?.options ?? writer ?? {});
+    const width = config.views.find((view) => view.id === sample.viewId)?.camera.width;
+    const height = config.views.find((view) => view.id === sample.viewId)?.camera.height;
+    const beauty = sampleRoleBuffer(buffers, sample, "beauty", response);
+    const worldPosition = sampleRoleBuffer(buffers, sample, "world-position", response);
+    const validity = sampleRoleBuffer(buffers, sample, "validity", response);
+    const geometry = buildProjectedCaptureGeometry({
+        width,
+        height,
+        worldPosition,
+        validity,
+        pose: sample.pose ?? viewsById.get(sample.viewId)?.pose,
+        cellSizePx: resolvedWriter.options.cellSizePx,
+        maxTriangleDepthDelta: resolvedWriter.options.maxTriangleDepthDelta,
+        surfaceOffset: resolvedWriter.options.surfaceOffset,
+    });
+    if (!geometry) {
+        throw artifactError(
+            "BAKE_ARTIFACT_INCOMPLETE",
+            `No projectable geometry for ${sample.sampleId}:${sample.viewId}.`,
+        );
+    }
+    const rgba = maskedBeautyRgba(beauty, validity, width, height);
+    const png = encodeDeterministicRgbaPng(rgba, width, height);
+    const pngDigest = sha256ExactBytes(png);
+    const textureAsset = {
+        sha256: pngDigest,
+        mediaType: "image/png",
+        sizeBytes: png.length,
+        role: "texture",
+    };
+    const textureUse = makeUse(textureAsset, sourceIds);
+    const textureUseHash = hashVisualAssetUse(textureUse);
+    const textureUri = `sha256:${pngDigest}`;
+    const materialId = generatedId(unitId, pngDigest, "material");
+    const glb = encodeProjectedCaptureGlb({
+        positions: geometry.positions,
+        uvs: geometry.uvs,
+        indices: geometry.indices,
+        materialId,
+    });
+    const glbDigest = sha256ExactBytes(glb);
+    const meshAsset = {
+        sha256: glbDigest,
+        mediaType: "model/gltf-binary",
+        sizeBytes: glb.length,
+        role: "mesh",
+    };
+    const meshUse = makeUse(meshAsset, sourceIds);
+    const meshUseHash = hashVisualAssetUse(meshUse);
+    const meshUri = `sha256:${glbDigest}`;
+    const instanceId = generatedId(unitId, glbDigest, "instance");
+    const chunkId = generatedId(unitId, glbDigest, "chunk");
+    const fragments = {
+        materialId,
+        instanceId,
+        chunkId,
+        texture: {
+            sha256: pngDigest,
+            mediaType: "image/png",
+            sizeBytes: png.length,
+            useHash: textureUseHash,
+            role: "texture",
+        },
+        mesh: {
+            sha256: glbDigest,
+            mediaType: "model/gltf-binary",
+            sizeBytes: glb.length,
+            useHash: meshUseHash,
+            role: "mesh",
+        },
+        matrix: [...geometry.matrix],
+    };
+    return {
+        unitId,
+        fragments,
+        geometry,
+        material: generatedMaterial(materialId, textureUri),
+        instance: {
+            id: instanceId,
+            assetUri: meshUri,
+            lodLevels: [meshUri],
+            matrix: geometry.matrix,
+            chunkIds: [chunkId],
+            materialIds: [materialId],
+        },
+        chunk: {
+            id: chunkId,
+            instanceIds: [instanceId],
+            dependencyUris: [meshUri, textureUri],
+        },
+        uploads: [
+            {
+                kind: "texture",
+                sampleId: sample.sampleId,
+                viewId: sample.viewId,
+                unitId,
+                bytes: png,
+                mediaType: "image/png",
+                role: "texture",
+                use: textureUse,
+                useHash: textureUseHash,
+            },
+            {
+                kind: "mesh",
+                sampleId: sample.sampleId,
+                viewId: sample.viewId,
+                unitId,
+                bytes: glb,
+                mediaType: "model/gltf-binary",
+                role: "mesh",
+                use: meshUse,
+                useHash: meshUseHash,
+            },
+        ],
+        generatedAssets: [
+            {
+                sampleId: sample.sampleId,
+                viewId: sample.viewId,
+                role: "texture",
+                sha256: pngDigest,
+                mediaType: "image/png",
+                sizeBytes: png.length,
+                useHash: textureUseHash,
+            },
+            {
+                sampleId: sample.sampleId,
+                viewId: sample.viewId,
+                role: "mesh",
+                sha256: glbDigest,
+                mediaType: "model/gltf-binary",
+                sizeBytes: glb.length,
+                useHash: meshUseHash,
+            },
+        ],
+        uses: [textureUse, meshUse],
+    };
+}
+
+function fragmentDescriptorParts(unitId, fragments, matrix) {
+    const textureUri = `sha256:${fragments.texture.sha256}`;
+    const meshUri = `sha256:${fragments.mesh.sha256}`;
+    return {
+        unitId,
+        fragments,
+        material: generatedMaterial(fragments.materialId, textureUri),
+        instance: {
+            id: fragments.instanceId,
+            assetUri: meshUri,
+            lodLevels: [meshUri],
+            matrix,
+            chunkIds: [fragments.chunkId],
+            materialIds: [fragments.materialId],
+        },
+        chunk: {
+            id: fragments.chunkId,
+            instanceIds: [fragments.instanceId],
+            dependencyUris: [meshUri, textureUri],
+        },
+        generatedAssets: [
+            {
+                sampleId: unitId,
+                viewId: fragments.chunkId,
+                role: "texture",
+                sha256: fragments.texture.sha256,
+                mediaType: fragments.texture.mediaType,
+                sizeBytes: fragments.texture.sizeBytes,
+                useHash: fragments.texture.useHash,
+            },
+            {
+                sampleId: unitId,
+                viewId: fragments.chunkId,
+                role: "mesh",
+                sha256: fragments.mesh.sha256,
+                mediaType: fragments.mesh.mediaType,
+                sizeBytes: fragments.mesh.sizeBytes,
+                useHash: fragments.mesh.useHash,
+            },
+        ],
+    };
+}
+
+function referencedAssetDigests(descriptor) {
+    const live = new Set();
+    const visit = (uri) => {
+        if (typeof uri === "string" && uri.startsWith("sha256:")) live.add(uri.slice("sha256:".length));
+    };
+    for (const material of descriptor.materials ?? []) {
+        for (const texture of material.textures ?? []) visit(texture.assetUri);
+    }
+    for (const instance of descriptor.instances ?? []) {
+        visit(instance.assetUri);
+        for (const uri of instance.lodLevels ?? []) visit(uri);
+    }
+    for (const chunk of descriptor.chunks ?? []) {
+        for (const uri of chunk.dependencyUris ?? []) visit(uri);
+    }
+    for (const uri of descriptor.appearanceDependencies ?? []) visit(uri);
+    return live;
+}
+
+function pruneUnreachableAssets(descriptor) {
+    const live = referencedAssetDigests(descriptor);
+    return {
+        ...descriptor,
+        assets: descriptor.assets.filter((asset) => live.has(asset.sha256)),
+        appearanceDependencies: descriptor.appearanceDependencies.filter((uri) => {
+            if (!String(uri).startsWith("sha256:")) return true;
+            return live.has(uri.slice("sha256:".length));
+        }),
+    };
+}
+
+function keepTrustedBase(records, keepGeneratedIds) {
+    return records.filter((record) => {
+        if (!isBakeGeneratedId(record.id)) return true;
+        return keepGeneratedIds.has(record.id);
+    });
+}
+
 /**
  * Retain exact VIS-07 buffers, re-hash them, and emit PNG/GLB projection assets
- * plus a merged descriptor/access/artifact-set document.
+ * plus a merged descriptor/access/artifact-set document. Reused fragments are
+ * merged by stable unit identity; sourceWorldHash is rebound to the current
+ * world without entering per-unit keys.
  */
 export function writeBakeArtifacts({
     job,
@@ -418,6 +717,14 @@ export function writeBakeArtifacts({
     currentDescriptor = null,
     currentAccess = null,
     worldHash,
+    graph = null,
+    reuseFragments = null,
+    captureUnitIds = null,
+    scene = null,
+    layout = null,
+    previousContributions = null,
+    previousPages = null,
+    rebuildChunkKeys = null,
 } = {}) {
     if (!job?.config || !job.snapshot || !job.plan || !job.request || !job.response) {
         throw artifactError("BAKE_ARTIFACT_INCOMPLETE", "Completed VIS-07 documents are required.");
@@ -444,8 +751,43 @@ export function writeBakeArtifacts({
         fail("worldHash", "snapshot world hash does not match the reserved binding");
     }
     const boundWorld = worldHash ?? snapshot.worldHash;
+    const construction = constructionFromConfig(config);
+    const finalize = (fields) => finalizeArtifacts({
+        job,
+        snapshot,
+        request,
+        response,
+        recipeHash,
+        snapshotHash,
+        planHash,
+        requestHash,
+        responseHash,
+        currentAccess,
+        ...fields,
+    });
+    if (isChunkAtlasConstruction(construction)) {
+        return writeAtlasArtifacts({
+            job: { ...job, config, snapshot, plan, request, response },
+            buffers,
+            sourceIds,
+            currentDescriptor,
+            currentAccess,
+            worldHash: boundWorld,
+            graph,
+            scene,
+            layout,
+            captureUnitIds,
+            previousContributions,
+            previousPages,
+            rebuildChunkKeys,
+            construction,
+            finalize,
+        });
+    }
     const writer = defaultWriter();
     const viewsById = new Map(plan.views.map((view) => [view.viewId, view]));
+    const captureSet = captureUnitIds ? new Set(captureUnitIds) : null;
+    const fragmentsByUnit = new Map();
     const uploads = [];
     const generatedAssets = [];
     const generatedMaterials = [];
@@ -453,150 +795,115 @@ export function writeBakeArtifacts({
     const generatedChunks = [];
     const appearanceDependencies = [];
     const usesByHash = new Map();
+    const keepGeneratedIds = new Set();
+    const reuseUnits = [];
 
     for (const sample of plan.samples) {
-        requirePersistentRoles(sample.products);
-        const width = config.views.find((view) => view.id === sample.viewId)?.camera.width;
-        const height = config.views.find((view) => view.id === sample.viewId)?.camera.height;
-        const beauty = rehashOutput(buffers, responseOutput(response, sample.sampleId, sample.viewId, "beauty"));
-        const worldPosition = rehashOutput(
-            buffers,
-            responseOutput(response, sample.sampleId, sample.viewId, "world-position"),
-        );
-        const validity = rehashOutput(buffers, responseOutput(response, sample.sampleId, sample.viewId, "validity"));
-        const geometry = buildProjectedCaptureGeometry({
-            width,
-            height,
-            worldPosition,
-            validity,
-            pose: sample.pose ?? viewsById.get(sample.viewId)?.pose,
-            cellSizePx: writer.options.cellSizePx,
-            maxTriangleDepthDelta: writer.options.maxTriangleDepthDelta,
-            surfaceOffset: writer.options.surfaceOffset,
-        });
-        if (!geometry) {
-            throw artifactError(
-                "BAKE_ARTIFACT_INCOMPLETE",
-                `No projectable geometry for ${sample.sampleId}:${sample.viewId}.`,
-            );
+        const unitId = unitIdForSample(sample);
+        const shouldCapture = !captureSet || captureSet.has(unitId);
+        if (shouldCapture) {
+            const encoded = encodeBakeUnitArtifacts({
+                sample,
+                buffers,
+                response,
+                config,
+                writer,
+                sourceIds,
+                viewsById,
+            });
+            fragmentsByUnit.set(unitId, encoded.fragments);
+            generatedMaterials.push(encoded.material);
+            generatedInstances.push(encoded.instance);
+            generatedChunks.push(encoded.chunk);
+            generatedAssets.push(...encoded.generatedAssets);
+            uploads.push(...encoded.uploads);
+            for (const use of encoded.uses) usesByHash.set(hashVisualAssetUse(use), use);
+            appearanceDependencies.push(`sha256:${encoded.fragments.texture.sha256}`);
+            keepGeneratedIds.add(encoded.fragments.materialId);
+            keepGeneratedIds.add(encoded.fragments.instanceId);
+            keepGeneratedIds.add(encoded.fragments.chunkId);
+            const graphUnit = graph?.units?.find((entry) => entry.unitId === unitId);
+            reuseUnits.push({
+                unitId,
+                pathId: sample.pathId,
+                sampleIndex: sample.sampleIndex,
+                viewId: sample.viewId,
+                dependencyKey: graphUnit?.dependencyKey ?? "0".repeat(64),
+                chunkKeys: graphUnit?.chunkKeys ?? [],
+                fragments: encoded.fragments,
+            });
+            continue;
         }
-        const rgba = maskedBeautyRgba(beauty, validity, width, height);
-        const png = encodeDeterministicRgbaPng(rgba, width, height);
-        const pngDigest = sha256ExactBytes(png);
-        const textureAsset = {
-            sha256: pngDigest,
-            mediaType: "image/png",
-            sizeBytes: png.length,
-            role: "texture",
-        };
-        const textureUse = makeUse(textureAsset, sourceIds);
-        const textureUseHash = hashVisualAssetUse(textureUse);
-        usesByHash.set(textureUseHash, textureUse);
-        const materialId = generatedId(responseHash, sample.sampleId, sample.viewId, "material");
-        const instanceId = generatedId(responseHash, sample.sampleId, sample.viewId, "instance");
-        const chunkId = generatedId(responseHash, sample.sampleId, sample.viewId, "chunk");
-        const textureUri = `sha256:${pngDigest}`;
-        generatedAssets.push({
+        const reused = reuseFragments?.get(unitId);
+        if (!reused) {
+            throw artifactError("BAKE_REUSE_INVALID", `Missing reusable fragments for ${unitId}.`);
+        }
+        const parts = fragmentDescriptorParts(unitId, reused, reused.matrix);
+        fragmentsByUnit.set(unitId, reused);
+        generatedMaterials.push(parts.material);
+        generatedInstances.push(parts.instance);
+        generatedChunks.push(parts.chunk);
+        generatedAssets.push(...parts.generatedAssets.map((entry) => ({
+            ...entry,
             sampleId: sample.sampleId,
             viewId: sample.viewId,
-            role: "texture",
-            sha256: pngDigest,
-            mediaType: "image/png",
-            sizeBytes: png.length,
-            useHash: textureUseHash,
-        });
-        uploads.push({
-            kind: "texture",
-            sampleId: sample.sampleId,
+        })));
+        appearanceDependencies.push(`sha256:${reused.texture.sha256}`);
+        keepGeneratedIds.add(reused.materialId);
+        keepGeneratedIds.add(reused.instanceId);
+        keepGeneratedIds.add(reused.chunkId);
+        const graphUnit = graph?.units?.find((entry) => entry.unitId === unitId);
+        reuseUnits.push({
+            unitId,
+            pathId: sample.pathId,
+            sampleIndex: sample.sampleIndex,
             viewId: sample.viewId,
-            bytes: png,
-            mediaType: "image/png",
-            role: "texture",
-            use: textureUse,
-            useHash: textureUseHash,
-        });
-        appearanceDependencies.push(textureUri);
-        generatedMaterials.push(generatedMaterial(materialId, textureUri));
-        const glb = encodeProjectedCaptureGlb({
-            positions: geometry.positions,
-            uvs: geometry.uvs,
-            indices: geometry.indices,
-            materialId,
-        });
-        const glbDigest = sha256ExactBytes(glb);
-        const meshAsset = {
-            sha256: glbDigest,
-            mediaType: "model/gltf-binary",
-            sizeBytes: glb.length,
-            role: "mesh",
-        };
-        const meshUse = makeUse(meshAsset, sourceIds);
-        const meshUseHash = hashVisualAssetUse(meshUse);
-        usesByHash.set(meshUseHash, meshUse);
-        const meshUri = `sha256:${glbDigest}`;
-        generatedAssets.push({
-            sampleId: sample.sampleId,
-            viewId: sample.viewId,
-            role: "mesh",
-            sha256: glbDigest,
-            mediaType: "model/gltf-binary",
-            sizeBytes: glb.length,
-            useHash: meshUseHash,
-        });
-        uploads.push({
-            kind: "mesh",
-            sampleId: sample.sampleId,
-            viewId: sample.viewId,
-            bytes: glb,
-            mediaType: "model/gltf-binary",
-            role: "mesh",
-            use: meshUse,
-            useHash: meshUseHash,
-        });
-        generatedInstances.push({
-            id: instanceId,
-            assetUri: meshUri,
-            lodLevels: [meshUri],
-            matrix: geometry.matrix,
-            chunkIds: [chunkId],
-            materialIds: [materialId],
-        });
-        generatedChunks.push({
-            id: chunkId,
-            instanceIds: [instanceId],
-            dependencyUris: [meshUri, textureUri],
+            dependencyKey: graphUnit?.dependencyKey ?? "0".repeat(64),
+            chunkKeys: graphUnit?.chunkKeys ?? [],
+            fragments: reused,
         });
     }
 
     const base = currentDescriptor
         ? normalizeVisualLayer(currentDescriptor)
         : emptyDescriptor(boundWorld);
-    if (base.sourceWorldHash !== boundWorld) {
-        fail("sourceWorldHash", "current descriptor is bound to a different world");
-    }
-    const assetsByDigest = new Map(base.assets.map((asset) => [asset.sha256, asset]));
-    for (const upload of uploads) {
-        assetsByDigest.set(upload.use.asset.sha256, upload.use.asset);
-    }
-    const materialsById = new Map(base.materials.map((material) => [material.id, material]));
+    const retainedMaterials = keepTrustedBase(base.materials, keepGeneratedIds);
+    const retainedInstances = keepTrustedBase(base.instances, keepGeneratedIds);
+    const retainedChunks = keepTrustedBase(base.chunks, keepGeneratedIds);
+    const materialsById = new Map(retainedMaterials.map((material) => [material.id, material]));
     for (const material of generatedMaterials) materialsById.set(material.id, material);
-    const instancesById = new Map(base.instances.map((instance) => [instance.id, instance]));
+    const instancesById = new Map(retainedInstances.map((instance) => [instance.id, instance]));
     for (const instance of generatedInstances) instancesById.set(instance.id, instance);
-    const chunksById = new Map(base.chunks.map((chunk) => [chunk.id, chunk]));
+    const chunksById = new Map(retainedChunks.map((chunk) => [chunk.id, chunk]));
     for (const chunk of generatedChunks) chunksById.set(chunk.id, chunk);
+    const assetsByDigest = new Map(base.assets.map((asset) => [asset.sha256, asset]));
+    for (const upload of uploads) assetsByDigest.set(upload.use.asset.sha256, upload.use.asset);
+    for (const asset of generatedAssets) {
+        assetsByDigest.set(asset.sha256, {
+            sha256: asset.sha256,
+            mediaType: asset.mediaType,
+            sizeBytes: asset.sizeBytes,
+            role: asset.role,
+        });
+    }
 
-    const descriptor = normalizeVisualLayer({
+    const descriptor = normalizeVisualLayer(pruneUnreachableAssets({
         ...base,
         sourceWorldHash: boundWorld,
         assets: [...assetsByDigest.values()],
         materials: [...materialsById.values()],
         instances: [...instancesById.values()],
         chunks: [...chunksById.values()],
-        bindings: base.bindings,
-        appearanceDependencies: [...new Set([...base.appearanceDependencies, ...appearanceDependencies])],
-    });
+        bindings: base.bindings.filter((binding) => (
+            !isBakeGeneratedId(binding.instanceId) || keepGeneratedIds.has(binding.instanceId)
+        )),
+        appearanceDependencies: [...new Set([
+            ...base.appearanceDependencies,
+            ...appearanceDependencies,
+        ])],
+    }));
 
-    return finalizeArtifacts({
+    const finalized = finalizeArtifacts({
         job,
         snapshot,
         request,
@@ -613,6 +920,26 @@ export function writeBakeArtifacts({
         usesByHash,
         currentAccess,
     });
+    const reuseManifest = graph
+        ? normalizeBakeReuseManifest({
+            kind: "cev-sim.bake-reuse-manifest",
+            version: 1,
+            sourceWorldHash: boundWorld,
+            keyVersion: graph.keyVersion,
+            globalKey: graph.globalKey,
+            chunkKeys: graph.chunkKeys,
+            units: reuseUnits,
+            writer: graph.writer,
+            descriptorHash: hashVisualLayer(finalized.descriptor),
+            accessHash: hashVisualLayerAccess(finalized.access),
+        })
+        : null;
+    return {
+        ...finalized,
+        fragmentsByUnit,
+        reuseManifest,
+        reuseUnits,
+    };
 }
 
 function resolveAccessAssets(descriptor, generatedAssets, currentAccess) {
@@ -646,6 +973,9 @@ function finalizeArtifacts({
     uploads,
     usesByHash,
     currentAccess,
+    artifactVersion = BAKE_ARTIFACT_SET_VERSION,
+    constructionHash = null,
+    atlasManifestDigest = null,
 }) {
     const descriptorHash = hashVisualLayer(descriptor);
     const access = normalizeVisualLayerAccess({
@@ -657,7 +987,7 @@ function finalizeArtifacts({
     const accessHash = hashVisualLayerAccess(access);
     const artifactSet = normalizeBakeArtifactSet({
         kind: BAKE_ARTIFACT_SET_KIND,
-        version: BAKE_ARTIFACT_SET_VERSION,
+        version: artifactVersion,
         environmentId: job.config.environmentId,
         worldHash: snapshot.worldHash,
         environmentRevision: snapshot.environmentRevision,
@@ -681,6 +1011,7 @@ function finalizeArtifacts({
         timestamps: job.status?.timestamps ?? null,
         progress: job.status?.progress ?? null,
         logs: job.status?.logs ?? null,
+        ...(artifactVersion >= 2 ? { constructionHash, atlasManifestDigest } : {}),
     });
     return {
         descriptor,

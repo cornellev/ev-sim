@@ -9,6 +9,15 @@ import {
     rotationToQuaternion,
 } from "../visual/BakeRunCatalog.js";
 import { SeededRNG } from "../../../util/SeededRNG.js";
+import {
+    ATLAS_PERSISTENT_BAKE_OUTPUT_ROLES,
+    DEFAULT_ATLAS_CONSTRUCTION,
+    DEFAULT_PROJECTED_CONSTRUCTION,
+    PROJECTED_PERSISTENT_BAKE_OUTPUT_ROLES,
+    isChunkAtlasConstruction,
+    normalizeBakeConstruction,
+    persistentRolesForConstruction,
+} from "../visual/BakeConstructionPolicy.js";
 
 /**
  * @typedef {Object} BuildingRecord
@@ -114,6 +123,7 @@ export class BakeRunConfig {
         this.snapshotPolicy = { ...document.snapshotPolicy };
         this.kind = document.kind;
         this.version = document.version;
+        this.construction = document.construction ?? null;
     }
 
     document() {
@@ -202,11 +212,13 @@ export function createLegacyCompatibleBakeRunConfig(overrides = {}) {
     });
 }
 
-export const PERSISTENT_BAKE_OUTPUT_ROLES = Object.freeze(["beauty", "world-position", "validity"]);
+export const PERSISTENT_BAKE_OUTPUT_ROLES = ATLAS_PERSISTENT_BAKE_OUTPUT_ROLES;
+export { PROJECTED_PERSISTENT_BAKE_OUTPUT_ROLES, ATLAS_PERSISTENT_BAKE_OUTPUT_ROLES };
 
-function withPersistentRoles(roles) {
-    const next = Array.isArray(roles) ? [...roles] : [...PERSISTENT_BAKE_OUTPUT_ROLES];
-    for (const role of PERSISTENT_BAKE_OUTPUT_ROLES) {
+function withPersistentRoles(roles, construction) {
+    const required = persistentRolesForConstruction(construction);
+    const next = Array.isArray(roles) ? [...roles] : [...required];
+    for (const role of required) {
         if (!next.includes(role)) next.push(role);
     }
     return next;
@@ -221,15 +233,26 @@ export function isLegacyModelBakeConfig(config) {
 }
 
 export function createPersistentBakeRunConfig(overrides = {}) {
-    const roles = withPersistentRoles(overrides.outputRoles);
+    const construction = normalizeBakeConstruction(
+        overrides.construction
+            ?? (overrides.version === 1 ? DEFAULT_PROJECTED_CONSTRUCTION : DEFAULT_ATLAS_CONSTRUCTION),
+    );
+    const version = overrides.version === 1 && !isChunkAtlasConstruction(construction) ? 1 : 2;
+    const roles = withPersistentRoles(overrides.outputRoles, construction);
+    const base = {
+        ...overrides,
+        version,
+        construction: version === 2 ? construction : undefined,
+        outputRoles: roles,
+        views: (overrides.views ?? [{}]).map((view) => ({
+            ...view,
+            products: withPersistentRoles(view.products ?? roles, construction),
+        })),
+    };
+    if (version === 1) delete base.construction;
     if (overrides?.kind === "cev-sim.bake-run-config") {
         return new BakeRunConfig({
-            ...overrides,
-            outputRoles: roles,
-            views: (overrides.views ?? [{}]).map((view) => ({
-                ...view,
-                products: withPersistentRoles(view.products ?? roles),
-            })),
+            ...base,
             operational: {
                 ...overrides.operational,
                 roundTrip: {
@@ -240,12 +263,7 @@ export function createPersistentBakeRunConfig(overrides = {}) {
         });
     }
     return new BakeRunConfig({
-        ...overrides,
-        outputRoles: roles,
-        views: (overrides.views ?? [{}]).map((view) => ({
-            ...view,
-            products: withPersistentRoles(view.products ?? overrides.outputRoles),
-        })),
+        ...base,
         roundTrip: { useModel: false, ...(overrides.roundTrip ?? {}) },
     });
 }

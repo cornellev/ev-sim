@@ -132,6 +132,38 @@ test("chunk spatial queries are independent of metric loaded and dirty flags", (
     assert.deepEqual(manager.queryKeysInBounds({ minX: 0, minZ: 0, maxX: 10, maxZ: 10 }), ["0,0"]);
 });
 
+test("chunk mutations record semantic evidence and residency does not bump generation", () => {
+    const index = new ChunkIndex({ chunkSize: 20 });
+    const inserted = index.assignObject("building:near", { minX: 2, minZ: 2, maxX: 4, maxZ: 4 });
+    assert.equal(inserted.primaryChunk, "0,0");
+    assert.equal(index.semanticGeneration, 1);
+    assert.equal(index.mutations[0].type, "insert");
+    const generationAfterInsert = index.semanticGeneration;
+    index.setLoaded("0,0", false);
+    index.setPrefetch("1,0", true);
+    index.setEviction("1,0", true);
+    assert.equal(index.semanticGeneration, generationAfterInsert);
+    const moved = index.assignObject("building:near", { minX: 22, minZ: 2, maxX: 24, maxZ: 4 });
+    assert.equal(moved.primaryChunk, "1,0");
+    assert.equal(index.mutations.at(-1).type, "move");
+    assert.ok(index.mutations.at(-1).affectedChunks.includes("0,0"));
+    assert.ok(index.mutations.at(-1).affectedChunks.includes("1,0"));
+    const material = index.recordCoverageMutation("building:near", "material");
+    assert.equal(material.type, "material");
+    const removed = index.removeObject("building:near");
+    assert.equal(removed.type, "delete");
+    const manager = new ChunkManager({ chunkSize: 20 });
+    manager.assignEntity({
+        id: "building:near",
+        bounds: { minX: 2, minZ: 2, maxX: 4, maxZ: 4 },
+    });
+    const manifest = manager.toManifest();
+    assert.equal(manifest.chunkSize, 20);
+    assert.equal(manifest.semanticGeneration, 1);
+    assert.equal(manifest.chunks["0,0"].loaded, true);
+    assert.equal(manifest.chunks["0,0"].prefetch, false);
+});
+
 test("editor state publishes tool, selection, layers, and hidden objects", () => {
     const editor = new EditorState();
     const snapshots = [];

@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import { JsonFileStore } from "./JsonFileStore.js";
 import { VisualLayerDescriptorStore } from "./VisualLayerDescriptorStore.js";
 import { VisualLayerAccessStore } from "./VisualLayerAccessStore.js";
+import { BakeReuseManifestStore } from "./BakeReuseManifestStore.js";
 import { VisualAssetStore } from "./VisualAssetStore.js";
 import { BakePromotionController, parseBakeOutputSourceIds } from "./BakePromotionController.js";
 import {
@@ -234,6 +235,7 @@ export class StorageService {
         this._deletedEnvironmentIds = new Set();
         this._visualLayerDescriptors = new VisualLayerDescriptorStore(dataDir);
         this._visualLayerAccess = new VisualLayerAccessStore(dataDir);
+        this._bakeReuseManifests = new BakeReuseManifestStore(dataDir);
         this.visualAssets = new VisualAssetStore(dataDir, options.visualAssets ?? {});
         this.bakeOutputSourceIds = parseBakeOutputSourceIds(
             options.bakeOutputSourceIds ?? process.env.CEV_SIM_BAKE_OUTPUT_SOURCE_IDS,
@@ -414,12 +416,13 @@ export class StorageService {
                 throw new Error(`Environment "${environmentId}" was deleted.`);
             }
             const create = options.create === true;
-            const { manifest, expectedRevision } = create
-                ? { manifest: input, expectedRevision: undefined }
+            const parsed = create
+                ? { manifest: input, expectedRevision: undefined, detachStaleVisual: false }
                 : parseEnvironmentWriteInput(input);
-            return this._commitEnvironment(environmentId, manifest, {
-                expectedRevision,
+            return this._commitEnvironment(environmentId, parsed.manifest, {
+                expectedRevision: parsed.expectedRevision,
                 create,
+                detachStaleVisual: parsed.detachStaleVisual === true,
             });
         });
     }
@@ -2090,7 +2093,7 @@ export class StorageService {
         return null;
     }
 
-    async _commitEnvironment(environmentId, manifest, { expectedRevision, create = false } = {}) {
+    async _commitEnvironment(environmentId, manifest, { expectedRevision, create = false, detachStaleVisual = false } = {}) {
         const current = await this._readEnvironment(environmentId);
         const stored = await this._fileStore(this._environmentPath(environmentId), null).read();
         if (create && stored) {
@@ -2105,6 +2108,17 @@ export class StorageService {
             revision,
             current,
         });
+        try {
+            await this._assertVisualReference(prepared);
+        } catch (error) {
+            if (detachStaleVisual && error.code === VISUAL_LAYER_ERROR_CODES.WORLD_MISMATCH) {
+                await this.bakePromotions.retainReuseCandidate(environmentId, current);
+                prepared.visualLayer = null;
+                prepared.evidence = null;
+            } else {
+                throw error;
+            }
+        }
         await this._assertVisualReference(prepared);
         return this._fileStore(this._environmentPath(environmentId), null).write(prepared);
     }
@@ -2116,7 +2130,8 @@ export class StorageService {
         if (descriptor) {
             const world = createWorldResource(manifest);
             if (descriptor.sourceWorldHash !== world.hash) {
-                throw new Error(
+                throw visualAssetError(
+                    VISUAL_LAYER_ERROR_CODES.WORLD_MISMATCH,
                     `Visual layer descriptor ${digest} is bound to world ${descriptor.sourceWorldHash}, not ${world.hash}.`,
                 );
             }

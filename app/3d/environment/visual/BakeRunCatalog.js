@@ -11,6 +11,7 @@ import {
     VISUAL_CAPTURE_PRODUCT_LAYOUTS,
     VISUAL_CAPTURE_PRODUCTS,
 } from "./VisualCapturePipeline.js";
+import { normalizeBakeConstruction } from "./BakeConstructionPolicy.js";
 
 export const BAKE_RUN_CONFIG_KIND = "cev-sim.bake-run-config";
 export const BAKE_SOURCE_SNAPSHOT_KIND = "cev-sim.bake-source-snapshot";
@@ -19,6 +20,7 @@ export const BAKE_PROVIDER_REQUEST_KIND = "cev-sim.bake-provider-request";
 export const BAKE_PROVIDER_RESPONSE_KIND = "cev-sim.bake-provider-response";
 export const BAKE_JOB_STATUS_KIND = "cev-sim.bake-job-status";
 export const BAKE_CONTRACT_VERSION = 1;
+export const BAKE_CONTRACT_VERSION_V2 = 2;
 
 export const CAPTURED_APPEARANCE_PROVIDER = Object.freeze({
     id: "captured-appearance",
@@ -81,7 +83,9 @@ const CONFIG_KEYS = Object.freeze([
     "passPolicy", "planner", "sampling", "ordering", "seedKeys", "outputRoles",
     "provider", "providerOptions", "cachePolicy", "snapshotPolicy", "operational",
 ]);
+const CONFIG_KEYS_V2 = Object.freeze([...CONFIG_KEYS, "construction"]);
 const RECIPE_KEYS = Object.freeze(CONFIG_KEYS.filter((key) => key !== "operational"));
+const RECIPE_KEYS_V2 = Object.freeze(CONFIG_KEYS_V2.filter((key) => key !== "operational"));
 const OPERATIONAL_KEYS = Object.freeze([
     "runId", "host", "endpoint", "roundTrip", "debug", "splat", "createdAt", "modelSettings",
 ]);
@@ -737,9 +741,10 @@ export function adaptLegacyBakeRunConfigInput(options = {}) {
             excludeTags: ["sign", "vehicle"],
         }],
     }];
+    const version = source.version ?? BAKE_CONTRACT_VERSION;
     return {
         kind: BAKE_RUN_CONFIG_KIND,
-        version: BAKE_CONTRACT_VERSION,
+        version,
         environmentId: source.environmentId ?? "igvc",
         seed: source.seed ?? 42,
         paths: source.paths ?? [{
@@ -761,6 +766,7 @@ export function adaptLegacyBakeRunConfigInput(options = {}) {
         providerOptions: source.providerOptions,
         cachePolicy: source.cachePolicy,
         snapshotPolicy: source.snapshotPolicy,
+        ...(Number(version) >= 2 || source.construction ? { construction: source.construction } : {}),
         operational: {
             runId: source.runId,
             host: source.host,
@@ -777,8 +783,11 @@ export function adaptLegacyBakeRunConfigInput(options = {}) {
 export function normalizeBakeRunConfig(value = {}, { providers = null } = {}) {
     const adapted = adaptLegacyBakeRunConfigInput(value);
     if (adapted.kind !== BAKE_RUN_CONFIG_KIND) fail("kind", `expected ${BAKE_RUN_CONFIG_KIND}`);
-    if (adapted.version !== BAKE_CONTRACT_VERSION) fail("version", "unsupported bake-run-config version");
-    allowedKeys(adapted, CONFIG_KEYS, "bakeRunConfig");
+    const version = integer(adapted.version ?? BAKE_CONTRACT_VERSION, "version", { min: 1 });
+    if (version !== BAKE_CONTRACT_VERSION && version !== BAKE_CONTRACT_VERSION_V2) {
+        fail("version", "unsupported bake-run-config version");
+    }
+    allowedKeys(adapted, version >= 2 ? CONFIG_KEYS_V2 : CONFIG_KEYS, "bakeRunConfig");
     const seed = integer(adapted.seed ?? 42, "seed");
     const provider = providerRef(adapted.provider);
     const paths = Object.freeze(
@@ -800,9 +809,12 @@ export function normalizeBakeRunConfig(value = {}, { providers = null } = {}) {
     const buildingIds = buildings.map((entry) => entry.buildingId);
     if (new Set(buildingIds).size !== buildingIds.length) fail("buildings", "contains duplicate IDs");
     const roles = outputRoles(adapted.outputRoles ?? views[0]?.products);
+    const construction = version >= 2
+        ? normalizeBakeConstruction(adapted.construction ?? {})
+        : undefined;
     const config = freezeDeep({
         kind: BAKE_RUN_CONFIG_KIND,
-        version: BAKE_CONTRACT_VERSION,
+        version,
         environmentId: text(adapted.environmentId ?? "igvc", "environmentId", { identifier: true }),
         seed,
         paths: Object.freeze([...paths].sort((left, right) => compareUtf8(left.id, right.id))),
@@ -819,6 +831,7 @@ export function normalizeBakeRunConfig(value = {}, { providers = null } = {}) {
         cachePolicy: normalizeCachePolicy(adapted.cachePolicy ?? {}),
         snapshotPolicy: normalizeSnapshotPolicy(adapted.snapshotPolicy ?? {}),
         operational: normalizeOperational(adapted.operational ?? {}, seed),
+        ...(construction ? { construction } : {}),
     });
     return config;
 }
@@ -827,8 +840,9 @@ export function bakeRecipeIdentity(config) {
     const normalized = config?.kind === BAKE_RUN_CONFIG_KIND && config?.operational
         ? config
         : normalizeBakeRunConfig(config);
+    const keys = normalized.version >= 2 ? RECIPE_KEYS_V2 : RECIPE_KEYS;
     const identity = {};
-    for (const key of RECIPE_KEYS) identity[key] = normalized[key];
+    for (const key of keys) identity[key] = normalized[key];
     return freezeDeep(identity);
 }
 
@@ -1499,6 +1513,7 @@ function createCapturedAppearanceProvider() {
         local: true,
         requiresModel: false,
         available: true,
+        supportsBoundedStreaming: true,
         defaultOptions: { ...CAPTURED_APPEARANCE_DEFAULT_OPTIONS },
         normalizeOptions: capturedAppearanceOptions,
         async execute(request) {
@@ -1551,7 +1566,7 @@ export class BakeProviderRegistry {
         return Boolean(adapter && adapter.available !== false);
     }
 
-    preflight(provider) {
+    preflight(provider, { incremental = false } = {}) {
         const requested = providerRef(provider);
         const adapter = this.get(requested);
         if (!adapter || adapter.available === false) {
@@ -1566,6 +1581,12 @@ export class BakeProviderRegistry {
                 `Requested bake provider ${requested.id}@${requested.version} requires a model capability.`,
             );
         }
+        if (incremental && adapter.supportsBoundedStreaming !== true) {
+            throw bakeError(
+                "BAKE_PROVIDER_UNAVAILABLE",
+                `Requested bake provider ${requested.id}@${requested.version} does not support bounded streaming capture.`,
+            );
+        }
         return adapter;
     }
 
@@ -1576,6 +1597,7 @@ export class BakeProviderRegistry {
             available: provider.available !== false,
             local: provider.local === true,
             requiresModel: provider.requiresModel === true,
+            supportsBoundedStreaming: provider.supportsBoundedStreaming === true,
         }));
     }
 }
@@ -1603,9 +1625,9 @@ export class BakeRunCatalog {
         this._seq = 0;
     }
 
-    createJob(config, { jobId = null, generation = 1 } = {}) {
+    createJob(config, { jobId = null, generation = 1, incremental = false } = {}) {
         const normalized = normalizeBakeRunConfig(config, { providers: this.providers });
-        this.providers.preflight(normalized.provider);
+        this.providers.preflight(normalized.provider, { incremental });
         const recipeHash = hashBakeRunConfig(normalized, { providers: this.providers });
         this._seq += 1;
         const id = jobId ?? `bake-job-${this._seq}`;

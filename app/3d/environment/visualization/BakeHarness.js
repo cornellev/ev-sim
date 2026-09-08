@@ -48,10 +48,10 @@ import {
     isTerminalBakeState,
 } from "../visual/BakeRunCatalog.js";
 import { runVersion1BakeJob } from "../visual/BakeJobRunner.js";
+import { runIncrementalBake } from "../visual/BakeIncrementalRunner.js";
 import { BakePromotionClient } from "../visual/BakePromotionClient.js";
 import { VisualAssetClient } from "../visual/VisualAssetClient.js";
 import { VisualLayerClient } from "../visual/VisualLayerClient.js";
-import { uploadBakeArtifacts, writeBakeArtifacts } from "../visual/BakeArtifactWriter.js";
 import {
     createPersistentBakeRunConfig,
     isLegacyModelBakeConfig,
@@ -1924,46 +1924,66 @@ export class BakeHarness {
             const { descriptor: currentDescriptor, access: currentAccess } = await this._currentVisualDocuments(
                 reservation,
             );
-            const job = await this.runVersion1Job({
-                ...options,
-                config,
-                generation: reservation.generation,
-                environmentRevision: reservation.environmentRevision,
-                worldHash: reservation.worldHash,
-                visualDescriptorHash: reservation.visualDescriptorHash,
-                visualAccessHash: reservation.visualAccessHash,
-                sourceUseHashes: reservation.sourceUseHashes,
-                descriptor: currentDescriptor,
-                access: currentAccess,
-                materializer: this._environmentLoader()?.materializer,
+            const previousManifest = reservation.reuseCandidate?.trusted
+                ? reservation.reuseCandidate.manifest
+                : null;
+            this._updateTelemetry({ stage: previousManifest ? "Reusing unchanged units" : "Capturing" });
+            const incremental = await runIncrementalBake({
+                host: this,
+                options: {
+                    ...options,
+                    config,
+                    generation: reservation.generation,
+                    environmentRevision: reservation.environmentRevision,
+                    worldHash: reservation.worldHash,
+                    visualDescriptorHash: reservation.visualDescriptorHash,
+                    visualAccessHash: reservation.visualAccessHash,
+                    sourceUseHashes: reservation.sourceUseHashes,
+                    descriptor: currentDescriptor,
+                    access: currentAccess,
+                    materializer: this._environmentLoader()?.materializer,
+                    spatialIndex: this.spatialIndex,
+                    chunkManager: this.data?.environment?.()?.chunks?.()
+                        ?? this.data?.environment?.()?.chunkManager,
+                    streamUnits: options.streamUnits !== false,
+                    memoryLedger: this.memoryLedger,
+                    profile: this.profile,
+                },
+                previousManifest,
+                currentDescriptor,
+                currentAccess,
+                sourceIds: reservation.outputSourceIds,
+                reuseDisabled: options.reuseDisabled === true,
+                uploadClient: this._promotionClients().assetClient,
+                assetClient: this._promotionClients().assetClient,
+                memoryLedger: this.memoryLedger,
             });
             if (this._promotion.generation !== reservation.generation) {
                 throw Object.assign(new Error("Bake generation is no longer reserved."), {
                     code: "BAKE_PROMOTION_STALE",
                 });
             }
-            this._updateTelemetry({ stage: "Writing artifacts" });
-            const written = writeBakeArtifacts({
-                job,
-                buffers: job.productBuffers ?? this._version1.productBuffers,
-                sourceIds: reservation.outputSourceIds,
-                currentDescriptor,
-                currentAccess,
-                worldHash: reservation.worldHash,
-            });
-            this._updateTelemetry({ stage: "Uploading artifacts" });
-            await uploadBakeArtifacts(this._promotionClients().assetClient, written.uploads);
+            const { job, written, reuseManifest, reuseReport } = incremental;
             this._updateTelemetry({ stage: "Committing" });
-            const receipt = await promotionClient.commit(environmentId, reservation.generation, {
-                config: job.config,
-                snapshot: job.snapshot,
-                plan: job.plan,
-                request: job.request,
-                response: job.response,
-                artifactSet: written.artifactSet,
-                descriptor: written.descriptor,
-                access: written.access,
-            });
+            const receipt = reuseReport.mode === "noop"
+                ? await promotionClient.commit(environmentId, reservation.generation, {
+                    mode: "noop",
+                    reuseManifest,
+                    reuseReport,
+                })
+                : await promotionClient.commit(environmentId, reservation.generation, {
+                    mode: "promote",
+                    config: job.config,
+                    snapshot: job.snapshot,
+                    plan: job.plan,
+                    request: job.request,
+                    response: job.response,
+                    artifactSet: written.artifactSet,
+                    descriptor: written.descriptor,
+                    access: written.access,
+                    reuseManifest,
+                    reuseReport,
+                });
             committed = true;
             persistence?.adoptPromotedVisualLayer(receipt);
             this._updateTelemetry({ stage: "Reloading preview" });
@@ -2042,6 +2062,12 @@ export class BakeHarness {
 
     async _currentVisualDocuments(reservation) {
         const visual = this.data?.environment?.()?.visualLayer
+            ?? (reservation.reuseCandidate?.descriptorHash && reservation.reuseCandidate?.accessHash
+                ? {
+                    descriptorHash: reservation.reuseCandidate.descriptorHash,
+                    accessHash: reservation.reuseCandidate.accessHash,
+                }
+                : null)
             ?? (reservation.visualDescriptorHash && reservation.visualAccessHash
                 ? {
                     descriptorHash: reservation.visualDescriptorHash,

@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 import { EDITOR_TOOLS } from "../EditorState.js";
 import { transformBuilding, transformFeature } from "../document/documentMutations.js";
+import { syncBakeBuildingsFromDocument } from "../map/bakeBuildingSync.js";
 import { trianglesFromBuildingMesh } from "../../city/BuildingGenerator.js";
 
 const TRANSFORM_CONTROL_LOCK = "environment-transform-controls";
@@ -90,7 +91,10 @@ export class TransformTool {
 
         if (entity.kind === "building") {
             const result = transformBuilding(document, entity.sourceId, deltaMatrixWorld);
-            if (result.ok) entity.record = result.building;
+            if (result.ok) {
+                entity.record = result.building;
+                syncBakeBuildingsFromDocument(this.data, document);
+            }
             return;
         }
 

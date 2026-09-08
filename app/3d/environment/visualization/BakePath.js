@@ -5,6 +5,7 @@ import {
     planIntegerSampleDistances,
     rotationToQuaternion,
 } from "../visual/BakeRunCatalog.js";
+import { bakeCaptureUnitId } from "../visual/BakeReuseContracts.js";
 
 function toVector3(value) {
     if (!value) return new THREE.Vector3();
@@ -201,7 +202,12 @@ export class BakePath {
             segmentIndex: sample.segmentIndex,
             t: sample.t,
             sampleIndex,
+            unitId: this.id != null ? bakeCaptureUnitId(this.id, sampleIndex, options.viewId ?? "view") : null,
         };
+    }
+
+    captureUnitId(sampleIndex, viewId) {
+        return bakeCaptureUnitId(this.id ?? "path-0", sampleIndex, viewId);
     }
 
     /**

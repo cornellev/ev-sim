@@ -70,7 +70,7 @@ Building transforms update their authoritative footprint/height records as the g
 
 ## Chunks
 
-Large environments are indexed in a chunk grid (`ChunkIndex`, `ChunkManager`). Objects are assigned to one or more chunks based on footprint bounds. Spatial radius/bounds queries support bake planning and visual residency; metric `loaded` and `dirty` flags stay independent of which visual chunks are resident. Chunk outlines can be toggled in scene mode to see how content is partitioned for baking and streaming.
+Large environments are indexed in a chunk grid (`ChunkIndex`, `ChunkManager`). Objects are assigned to one or more chunks based on footprint bounds. Spatial radius/bounds queries support bake planning and visual residency. Semantic dirtiness is a typed mutation log (`insert`, `delete`, `move`, `material`, `visibility`, `entity-id`) with `semanticGeneration`; `loaded` / `prefetch` / `eviction` are operational only and never authorize bake reuse. Diagnostic `dirty` flags are not dependency keys. Building records used by bake planning are replaced from the canonical document (`syncBakeBuildingsFromDocument`), not appended. Chunk outlines can be toggled in scene mode to see how content is partitioned for baking and streaming.
 
 Default chunk size is 20 meters. It is stored on the document and can differ per environment.
 
@@ -94,15 +94,19 @@ other surfaces remain occluders. Oracle products require a separate
 bake-job catalog: serializable `BakeRunConfig`, frozen `bake-snapshot` scenes,
 UTF-8-stable planning, VIS-06b aligned capture, and local
 `captured-appearance@1` with no model network. Version-1 jobs use
-`BakeHarness.runVersion1Job()`. Press `b` runs the VIS-08 atomic no-model
-path: flush acknowledged autosaves, reserve a bake generation, capture aligned
-beauty/world-position/validity products, write deterministic PNG/GLB projection
-assets, commit the descriptor/access closure, and rematerialize preview
-without rebuilding metric truth. `createLegacyCompatibleBakeRunConfig` and
+`BakeHarness.runVersion1Job()`. Press `b` runs the VIS-08/VIS-09 atomic no-model
+path: flush acknowledged autosaves (`detachStaleVisual: true`), reserve a bake
+generation, reuse unchanged capture units from a trusted bake-reuse manifest,
+capture only invalidated aligned beauty/world-position/geometric-normal/
+confidence/validity products, write deterministic per-chunk atlas PNG/GLB pages
+(or explicit projected captured-radiance), commit the descriptor/access closure
+(or a revision-free no-op), replace the durable bake-reuse root, and
+rematerialize preview without rebuilding metric
+truth. `createLegacyCompatibleBakeRunConfig` and
 `?legacyBake=1` still reach `BakeHarness.start()`, which may health-check the
 bake server; that path cannot promote through VIS-08. `capturePasses()` and
-`captureFrame()` remain legacy defaults. Deterministic atlas consolidation
-remains VIS-10a; VIS-17b owns the evidence catalog UI.
+`captureFrame()` remain legacy defaults. VIS-10b owns optional material
+estimation; VIS-17b owns the evidence catalog UI.
 
 Press `b` in the environment editor to start or stop a bake run when a harness is configured. See the bake tests under `tests/bake-*.test.js` for expected behavior around determinism, splats, and render bundles.
 
@@ -129,10 +133,10 @@ flowchart TB
 
 | File | What it covers |
 |------|----------------|
-| `tests/editor-core.test.js` | Chunks, editor state, selection, environment registry |
+| `tests/editor-core.test.js` | Chunks, typed mutations vs residency, editor state, selection, environment registry |
 | `tests/editor-map-mode.test.js` | Map mode transitions, road pen, document hydration |
 | `tests/earth-import-mode.test.js` | Earth import config, geospatial math, providers, isolation |
-| `tests/bake-*.test.js` | Bake pipeline behavior |
+| `tests/bake-*.test.js` | Bake pipeline, incremental reuse, and promotion |
 
 Run everything with `npm test`.
 

@@ -116,7 +116,7 @@ test("strict schema validation rejects unknown fields, non-finite values, and ba
         /duplicate/,
     );
     assert.throws(
-        () => normalizeBakeRunConfig({ ...base, version: 2 }),
+        () => normalizeBakeRunConfig({ ...base, version: 3 }),
         /unsupported/,
     );
 });
@@ -237,6 +237,10 @@ test("mutable job status does not change immutable hashes", () => {
 
 test("unavailable providers fail before a registry execute and captured-appearance is identity-local", async () => {
     const registry = createDefaultBakeProviderRegistry();
+    const listed = createDefaultBakeProviderRegistry().list();
+    assert.equal(listed.some((entry) => (
+        entry.id === CAPTURED_APPEARANCE_PROVIDER.id && entry.supportsBoundedStreaming === true
+    )), true);
     assert.equal(registry.has(CAPTURED_APPEARANCE_PROVIDER), true);
     assert.throws(
         () => registry.preflight({ id: "pbr-mesh", version: 1 }),

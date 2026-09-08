@@ -86,11 +86,26 @@ export function getCoveredChunkKeysForPoints(points, chunkSize = DEFAULT_CHUNK_S
     return getCoveredChunkKeysForBounds(boundsFromPoints(points), chunkSize);
 }
 
+export const CHUNK_MUTATION_TYPES = Object.freeze({
+    insert: "insert",
+    delete: "delete",
+    move: "move",
+    material: "material",
+    visibility: "visibility",
+    entityId: "entity-id",
+});
+
+function uniqueKeys(keys) {
+    return [...new Set(keys)];
+}
+
 export class ChunkIndex {
     constructor(options = {}) {
         this.chunkSize = options.chunkSize ?? DEFAULT_CHUNK_SIZE;
         this.chunks = new Map();
         this.objectChunks = new Map();
+        this.semanticGeneration = 0;
+        this.mutations = [];
     }
 
     ensureChunk(key) {
@@ -100,6 +115,8 @@ export class ChunkIndex {
                 bounds: getChunkBounds(key, this.chunkSize),
                 objectIds: new Set(),
                 loaded: true,
+                prefetch: false,
+                eviction: false,
                 dirty: false,
             });
         }
@@ -107,7 +124,7 @@ export class ChunkIndex {
         return this.chunks.get(key);
     }
 
-    assignObject(objectId, boundsOrPoints) {
+    assignObject(objectId, boundsOrPoints, { mutationType = null } = {}) {
         if (!objectId) return null;
 
         const bounds = Array.isArray(boundsOrPoints)
@@ -119,8 +136,15 @@ export class ChunkIndex {
             z: (bounds.minZ + bounds.maxZ) / 2,
         };
         const primaryChunk = getChunkKeyForPoint(center, this.chunkSize);
+        const previous = this.objectChunks.get(objectId)
+            ? {
+                primaryChunk: this.objectChunks.get(objectId).primaryChunk,
+                coveredChunks: [...this.objectChunks.get(objectId).coveredChunks],
+                bounds: { ...this.objectChunks.get(objectId).bounds },
+            }
+            : null;
 
-        this.removeObject(objectId);
+        this._detachObject(objectId);
 
         coveredChunks.forEach((key) => {
             const chunk = this.ensureChunk(key);
@@ -133,20 +157,53 @@ export class ChunkIndex {
             coveredChunks: [...coveredChunks],
             bounds: { ...bounds },
         });
-
-        return this.objectChunks.get(objectId);
+        const membership = this.objectChunks.get(objectId);
+        const type = mutationType
+            ?? (previous ? CHUNK_MUTATION_TYPES.move : CHUNK_MUTATION_TYPES.insert);
+        this._recordMutation({
+            type,
+            objectId,
+            before: previous,
+            after: {
+                primaryChunk,
+                coveredChunks: [...coveredChunks],
+                bounds: { ...bounds },
+            },
+            affectedChunks: uniqueKeys([
+                ...(previous?.coveredChunks ?? []),
+                ...coveredChunks,
+            ]),
+        });
+        return membership;
     }
 
     removeObject(objectId) {
+        const previous = this.objectChunks.get(objectId);
+        if (!previous) return null;
+        const evidence = {
+            type: CHUNK_MUTATION_TYPES.delete,
+            objectId,
+            before: {
+                primaryChunk: previous.primaryChunk,
+                coveredChunks: [...previous.coveredChunks],
+                bounds: { ...previous.bounds },
+            },
+            after: null,
+            affectedChunks: [...previous.coveredChunks],
+        };
+        this._detachObject(objectId);
+        this._recordMutation(evidence);
+        return evidence;
+    }
+
+    _detachObject(objectId) {
         const membership = this.objectChunks.get(objectId);
         if (!membership) return;
-
         membership.coveredChunks.forEach((key) => {
             const chunk = this.chunks.get(key);
             chunk?.objectIds.delete(objectId);
             if (chunk) chunk.dirty = true;
         });
-
         this.objectChunks.delete(objectId);
     }
 
@@ -154,8 +211,41 @@ export class ChunkIndex {
         this.ensureChunk(key).dirty = true;
     }
 
+    recordCoverageMutation(objectId, type = CHUNK_MUTATION_TYPES.material) {
+        const membership = this.getObjectMembership(objectId);
+        if (!membership) return null;
+        membership.coveredChunks.forEach((key) => this.markDirty(key));
+        return this._recordMutation({
+            type,
+            objectId,
+            before: membership,
+            after: membership,
+            affectedChunks: [...membership.coveredChunks],
+        });
+    }
+
+    _recordMutation(evidence) {
+        this.semanticGeneration += 1;
+        const record = {
+            ...evidence,
+            semanticGeneration: this.semanticGeneration,
+        };
+        this.mutations.push(record);
+        return record;
+    }
+
     setLoaded(key, loaded) {
-        this.ensureChunk(key).loaded = Boolean(loaded);
+        const chunk = this.ensureChunk(key);
+        chunk.loaded = Boolean(loaded);
+        if (!loaded) chunk.prefetch = false;
+    }
+
+    setPrefetch(key, prefetch) {
+        this.ensureChunk(key).prefetch = Boolean(prefetch);
+    }
+
+    setEviction(key, eviction) {
+        this.ensureChunk(key).eviction = Boolean(eviction);
     }
 
     getObjectMembership(objectId) {
@@ -211,6 +301,8 @@ export class ChunkIndex {
             bounds: { ...chunk.bounds },
             objectIds: [...chunk.objectIds],
             loaded: chunk.loaded,
+            prefetch: chunk.prefetch,
+            eviction: chunk.eviction,
             dirty: chunk.dirty,
         }));
     }

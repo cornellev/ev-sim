@@ -14,8 +14,12 @@ aligned visual/analytic capture adapter without activating a provider.
 VIS-07 adds the in-memory bake-job catalog, frozen `bake-snapshot` scenes,
 deterministic capture plans, and local `captured-appearance@1` provider
 dispatch. VIS-08 persists projected captured-radiance PNG/GLB artifacts and
-atomically promotes environment descriptor/access references. Atlas
-consolidation remains VIS-10a.
+atomically promotes environment descriptor/access references. VIS-09 reuses
+unchanged bake units from a trusted `cev-sim.bake-reuse-manifest@1`; reports
+never enter `visualLayerHash`, `worldHash`, or episode identity. VIS-10a
+defaults new persistent bakes to deterministic per-chunk atlases under
+bake-contract v2; `projected-captured-radiance@1` remains an explicit
+compatibility mode.
 Photoreal `pbr-mesh@1` rendering,
 corrected GPU backend v2, measured PBR cameras, and package admission remain
 unavailable.
@@ -41,13 +45,18 @@ become collision, route, LiDAR, registry, or oracle truth.
 | Visual camera calibration | `cev-sim.visual-camera-calibration@1` | VIS-06a internal opt-in; provider activation VIS-14/VIS-15 |
 | Immutable visual capture input | `cev-sim.visual-capture-input@1` | VIS-06a internal opt-in |
 | Aligned capture pass set | `cev-sim.visual-capture-pass-set@1` | VIS-06b internal opt-in; VIS-07 version-1 bake jobs |
-| Bake run config | `cev-sim.bake-run-config@1` | VIS-07 catalog; VIS-08 persistent no-model jobs |
+| Bake run config | `cev-sim.bake-run-config@1` / `@2` | VIS-07 catalog; VIS-08/VIS-10a persistent no-model jobs |
 | Bake source snapshot | `cev-sim.bake-source-snapshot@1` | VIS-07 `static-snapshot@1` |
 | Bake capture plan | `cev-sim.bake-capture-plan@1` | VIS-07 |
 | Bake provider request | `cev-sim.bake-provider-request@1` | VIS-07 |
 | Bake provider response | `cev-sim.bake-provider-response@1` | VIS-07 local `captured-appearance@1` |
 | Bake job status | `cev-sim.bake-job-status@1` | VIS-07 mutable status |
-| Bake artifact set | `cev-sim.bake-artifact-set@1` | VIS-08 immutable promotion document |
+| Bake construction | `cev-sim.bake-construction@1` | VIS-10a hashed atlas/projected policy |
+| Bake artifact set | `cev-sim.bake-artifact-set@1` / `@2` | VIS-08 projected records; VIS-10a chunk/page records |
+| Bake atlas manifest | `cev-sim.bake-atlas-manifest@1` | VIS-10a appearance-dependency buffer |
+| Bake atlas contribution | `cev-sim.bake-atlas-contribution@1` | VIS-10a sparse reuse codec |
+| Bake reuse manifest | `cev-sim.bake-reuse-manifest@1` / `@2` | VIS-09 fragments; VIS-10a contributions and chunk hashes |
+| Bake reuse report | `cev-sim.bake-reuse-report@1` | VIS-09 audit evidence only |
 | Identity negotiation | Protocol 1.3 | VIS-12a |
 | Environment schema | 3 | VIS-03 |
 | Package admission | Protocol 1.4 | VIS-13b |
@@ -347,7 +356,10 @@ aligned capture for in-memory version-1 bake jobs using local
 `captured-appearance@1`; it does not persist artifacts or promote environment
 references. VIS-08 writes deterministic projected captured-radiance PNG/GLB
 assets, verifies the complete closure, and atomically promotes descriptor/access
-references. VIS-14 and VIS-15
+references. VIS-10a defaults new persistent jobs to per-chunk atlas PNG/GLB
+pages with `KHR_materials_unlit` captured-radiance materials, hashed
+construction policy, and contribution assets pinned on a durable bake-reuse
+root. VIS-14 and VIS-15
 own resolved-provider browser/headless routing.
 
 `app/3d/environment/visual/BakeRunCatalog.js` is Three/DOM-free. Version-1 jobs
@@ -362,8 +374,11 @@ injectable but unavailable unless a later adapter registers them. Detached
 `bake-snapshot` scenes clone transforms/materials/visibility/lighting, share
 geometry and textures only through read-only leases, and never wrap the live
 preview root. The editor `b` key runs `BakeHarness.runPersistentPromotion()`:
-reserve a generation, capture, write artifacts, commit, and rematerialize
-preview. Legacy `BakeHarness.start()` remains only for explicit
+reserve a generation, compare per-unit dependency keys, capture only
+invalidated units (beauty, world position, geometric normal, confidence, and
+validity for atlas jobs), convert captures to sparse contributions, rebuild
+dirty atlas chunks, commit a new layer or a revision-free no-op, and
+rematerialize preview. Legacy `BakeHarness.start()` remains only for explicit
 `legacyBake=1` / `createLegacyCompatibleBakeRunConfig`.
 
 VIS-05a materializes owned preview geometry in the display scene only.
@@ -467,7 +482,14 @@ Conflicting imports rebind only when the referenced descriptor is already in
 the local descriptor store; otherwise import fails explicitly. Every v3 full
 write requires `{ manifest, expectedRevision }`. Missing or stale revisions
 return HTTP 409 with `ENVIRONMENT_REVISION_CONFLICT` and `currentRevision`.
-An older client cannot erase visual fields by omitting them, and cannot use
+Optional `detachStaleVisual: true` is required to save a metric edit that
+changes `worldHash` while a visual layer is bound: the server retains the last
+trusted bake-reuse candidate, then clears `visualLayer` and evidence. Without
+the flag the write fails closed with `VISUAL_LAYER_WORLD_MISMATCH`. Environment
+`visualLayer` may include additive `accessHash` and `bakeReuseManifestHash`
+pointers; neither enters `worldHash` or the descriptor's `visualLayerHash`.
+`sourceWorldHash` binds the promoted layer to the current metric world and does
+not enter per-unit reuse keys. An older client cannot erase visual fields by omitting them, and cannot use
 `clientRevision` as a concurrency token.
 
 ## Source policy

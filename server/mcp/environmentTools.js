@@ -523,6 +523,7 @@ async function saveDocument(storage, environmentId, manifest, document) {
             updatedAt: new Date().toISOString(),
         },
         expectedRevision: Number.isInteger(manifest.revision) ? manifest.revision : 0,
+        detachStaleVisual: true,
     });
     storageEvents.publish({
         domain: "environment",

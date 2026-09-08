@@ -10,6 +10,11 @@ export const BAKE_MEMORY_KINDS = Object.freeze({
     modelStaging: "modelStaging",
     telemetryPreview: "telemetryPreview",
     projectedOverlay: "projectedOverlay",
+    encodedAsset: "encodedAsset",
+    chart: "chart",
+    contribution: "contribution",
+    fusion: "fusion",
+    encoder: "encoder",
 });
 
 function kindToLedger(kind) {

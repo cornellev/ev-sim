@@ -23,6 +23,7 @@ import {
     CORRECTED_VISUAL_CAPTURE_MODE,
 } from "./VisualCapturePipeline.js";
 import { createDefaultBakeRunConfig } from "../visualization/BakeRunConfig.js";
+import { bakeCaptureUnitId } from "./BakeReuseContracts.js";
 
 function asVector3(value) {
     if (!value) return new THREE.Vector3();
@@ -70,7 +71,11 @@ export async function runVersion1BakeJob(host, options = {}) {
     let job = null;
     try {
         throwIfAborted();
-        job = catalog.createJob(configInput, { jobId: options.jobId, generation });
+        job = catalog.createJob(configInput, {
+            jobId: options.jobId,
+            generation,
+            incremental: options.incremental === true,
+        });
         host._version1.jobId = job.jobId;
         catalog.updateStatus(job.jobId, {
             state: BAKE_JOB_STATES.running,
@@ -78,7 +83,9 @@ export async function runVersion1BakeJob(host, options = {}) {
             timestamps: { startedAt: Date.now() },
         });
         throwIfAborted();
-        const adapter = catalog.providers.preflight(job.config.provider);
+        const adapter = catalog.providers.preflight(job.config.provider, {
+            incremental: options.incremental === true,
+        });
         const materializerInputs = options.materializer?.bakeSnapshotInputs?.() ?? {};
         const sourceScene = options.sourceScene
             ?? options.scene
@@ -198,8 +205,13 @@ export async function runVersion1BakeJob(host, options = {}) {
             : async (view, args) => view.captureAlignedProducts(args);
         const inputs = [];
         const productBuffers = new Map();
+        const productDigests = new Map();
+        const captureUnitIds = options.captureUnitIds ? new Set(options.captureUnitIds) : null;
+        const retainBuffers = options.retainBuffers !== false;
         for (const sample of plan.samples) {
             throwIfAborted();
+            const unitId = bakeCaptureUnitId(sample.pathId, sample.sampleIndex, sample.viewId);
+            if (captureUnitIds && !captureUnitIds.has(unitId)) continue;
             const view = viewsById.get(sample.viewId) ?? { name: sample.viewId };
             if (view.setPose) view.setPose(asVector3(sample.pose.position), asEuler(sample.pose.rotation));
             const captured = await captureFn(view, {
@@ -214,6 +226,7 @@ export async function runVersion1BakeJob(host, options = {}) {
             const family = captured?.visual ?? captured;
             const width = job.config.views.find((entry) => entry.id === sample.viewId).camera.width;
             const height = job.config.views.find((entry) => entry.id === sample.viewId).camera.height;
+            const unitBuffers = new Map();
             for (const role of sample.products) {
                 const key = BAKE_PRODUCT_RESULT_KEYS[role] ?? role;
                 const data = family?.products?.[key] ?? family?.products?.[role];
@@ -225,15 +238,28 @@ export async function runVersion1BakeJob(host, options = {}) {
                     : data instanceof Uint32Array
                         ? new Uint32Array(data)
                         : new Uint8Array(data);
-                productBuffers.set(`${sample.sampleId}:${sample.viewId}:${role}`, copied);
-                inputs.push(createBakeProductDigest({
+                const bufferKey = `${sample.sampleId}:${sample.viewId}:${role}`;
+                unitBuffers.set(bufferKey, copied);
+                const digestRecord = createBakeProductDigest({
                     sampleId: sample.sampleId,
                     viewId: sample.viewId,
                     role,
                     data: copied,
                     width,
                     height,
-                }));
+                });
+                productDigests.set(bufferKey, digestRecord.sha256);
+                if (retainBuffers) productBuffers.set(bufferKey, copied);
+                inputs.push(digestRecord);
+            }
+            if (typeof options.onUnitCaptured === "function") {
+                await options.onUnitCaptured({
+                    sample,
+                    unitId,
+                    buffers: unitBuffers,
+                    width,
+                    height,
+                });
             }
             catalog.updateStatus(job.jobId, {
                 progress: {
@@ -264,15 +290,22 @@ export async function runVersion1BakeJob(host, options = {}) {
         catalog.attachResponse(job.jobId, response, { generation });
         const completed = catalog.get(job.jobId);
         for (const output of completed.response.outputs) {
-            const retained = productBuffers.get(`${output.sampleId}:${output.viewId}:${output.role}`);
-            if (!retained || hashCaptureProductBuffer(retained) !== output.sha256) {
+            const key = `${output.sampleId}:${output.viewId}:${output.role}`;
+            if (productDigests.get(key) !== output.sha256) {
                 throw new Error(`Retained ${output.role} buffer does not match the provider response digest.`);
+            }
+            if (retainBuffers) {
+                const retained = productBuffers.get(key);
+                if (!retained || hashCaptureProductBuffer(retained) !== output.sha256) {
+                    throw new Error(`Retained ${output.role} buffer does not match the provider response digest.`);
+                }
             }
         }
         if (host._version1) host._version1.productBuffers = productBuffers;
         catalog.complete(job.jobId);
         const result = catalog.get(job.jobId);
         result.productBuffers = productBuffers;
+        result.sceneHandle = frozen.sceneHandle;
         return result;
     } catch (error) {
         const current = job ? catalog.get(job.jobId) : null;

@@ -160,6 +160,7 @@ export function parseEnvironmentWriteEnvelope(body) {
     return {
         manifest: body.manifest,
         expectedRevision: body.expectedRevision,
+        detachStaleVisual: body.detachStaleVisual === true,
     };
 }
 
@@ -214,24 +215,36 @@ export function isVisualLayerMaterializable(value) {
 export function normalizeVisualLayerReference(value, field = "visualLayer") {
     if (value === undefined || value === null) return null;
     if (!value || typeof value !== "object" || Array.isArray(value)) {
-        throw new Error(`Environment ${field} must be null or { descriptorHash } or { descriptorHash, accessHash }.`);
+        throw new Error(`Environment ${field} must be null or { descriptorHash [, accessHash] [, bakeReuseManifestHash] }.`);
     }
     const keys = Object.keys(value);
-    const allowed = keys.every((key) => key === "descriptorHash" || key === "accessHash");
-    if (!allowed || !keys.includes("descriptorHash") || keys.length > 2) {
-        throw new Error(`Environment ${field} must be null or { descriptorHash } or { descriptorHash, accessHash }.`);
+    const allowed = keys.every((key) => (
+        key === "descriptorHash" || key === "accessHash" || key === "bakeReuseManifestHash"
+    ));
+    if (!allowed || !keys.includes("descriptorHash")) {
+        throw new Error(`Environment ${field} must be null or { descriptorHash [, accessHash] [, bakeReuseManifestHash] }.`);
     }
     const descriptorHash = value.descriptorHash;
     if (!isSha256Digest(descriptorHash)) {
         throw new Error(`Environment ${field}.descriptorHash must be a lowercase SHA-256 digest.`);
     }
-    if (!keys.includes("accessHash")) {
-        return { descriptorHash };
+    const result = { descriptorHash };
+    if (keys.includes("accessHash")) {
+        if (!isSha256Digest(value.accessHash)) {
+            throw new Error(`Environment ${field}.accessHash must be a lowercase SHA-256 digest.`);
+        }
+        result.accessHash = value.accessHash;
     }
-    if (!isSha256Digest(value.accessHash)) {
-        throw new Error(`Environment ${field}.accessHash must be a lowercase SHA-256 digest.`);
+    if (keys.includes("bakeReuseManifestHash")) {
+        if (!result.accessHash) {
+            throw new Error(`Environment ${field}.bakeReuseManifestHash requires accessHash.`);
+        }
+        if (!isSha256Digest(value.bakeReuseManifestHash)) {
+            throw new Error(`Environment ${field}.bakeReuseManifestHash must be a lowercase SHA-256 digest.`);
+        }
+        result.bakeReuseManifestHash = value.bakeReuseManifestHash;
     }
-    return { descriptorHash, accessHash: value.accessHash };
+    return result;
 }
 
 function resolveVisualLayerField(manifest, current) {
@@ -242,7 +255,14 @@ function resolveVisualLayerField(manifest, current) {
             : null;
         if (incoming && !incoming.accessHash && existing?.accessHash) {
             if (existing.descriptorHash === incoming.descriptorHash) {
-                return { descriptorHash: existing.descriptorHash, accessHash: existing.accessHash };
+                const preserved = {
+                    descriptorHash: existing.descriptorHash,
+                    accessHash: existing.accessHash,
+                };
+                if (existing.bakeReuseManifestHash) {
+                    preserved.bakeReuseManifestHash = existing.bakeReuseManifestHash;
+                }
+                return preserved;
             }
             const error = new Error(
                 "Environment visualLayer descriptor replacement requires a matching accessHash.",
@@ -250,6 +270,18 @@ function resolveVisualLayerField(manifest, current) {
             error.code = "VISUAL_LAYER_ACCESS_REQUIRED";
             error.statusCode = 409;
             throw error;
+        }
+        if (incoming && incoming.accessHash && !incoming.bakeReuseManifestHash && existing?.bakeReuseManifestHash) {
+            if (
+                existing.descriptorHash === incoming.descriptorHash
+                && existing.accessHash === incoming.accessHash
+            ) {
+                return {
+                    descriptorHash: existing.descriptorHash,
+                    accessHash: existing.accessHash,
+                    bakeReuseManifestHash: existing.bakeReuseManifestHash,
+                };
+            }
         }
         return incoming;
     }

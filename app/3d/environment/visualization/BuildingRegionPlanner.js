@@ -103,17 +103,22 @@ export class BuildingRegionPlanner {
      */
     planForView(sceneOrIndex, camera) {
         const candidates = [];
-        const indexHits = sceneOrIndex?.queryFrustum
-            ? sceneOrIndex.queryFrustum(camera)
-            : null;
+        const indexHits = sceneOrIndex?.queryCaptureInfluence
+            ? sceneOrIndex.queryCaptureInfluence(camera)
+            : sceneOrIndex?.queryFrustum
+                ? sceneOrIndex.queryFrustum(camera)
+                : null;
 
         if (indexHits) {
             for (const entry of indexHits) {
                 candidates.push({
                     id: String(entry.id),
                     entityId: String(entry.entityId ?? entry.id),
+                    kind: entry.kind ?? "entity",
                     bounds: entry.bounds,
                     object3D: entry.object3D ?? null,
+                    chunkKeys: entry.chunkKeys ?? [],
+                    assetUris: entry.assetUris ?? [],
                 });
             }
         } else {
@@ -126,14 +131,17 @@ export class BuildingRegionPlanner {
             frustum.setFromProjectionMatrix(matrix);
             scene.traverse((object) => {
                 if (!object.isMesh) return;
-                const buildingId = effectiveBuildingId(object);
-                if (!buildingId) return;
                 const box = new THREE.Box3().setFromObject(object);
                 if (!frustum.intersectsBox(box)) return;
+                const buildingId = effectiveBuildingId(object);
+                const entityId = String(object.userData?.entityId ?? buildingId ?? object.uuid);
                 candidates.push({
-                    id: String(buildingId),
-                    entityId: String(object.userData?.entityId ?? buildingId),
+                    id: String(buildingId ?? entityId),
+                    entityId,
+                    kind: buildingId ? "building" : "entity",
                     object3D: object,
+                    chunkKeys: [],
+                    assetUris: object.userData?.assetUri ? [String(object.userData.assetUri)] : [],
                     bounds: {
                         minX: box.min.x,
                         minY: box.min.y,
@@ -148,22 +156,36 @@ export class BuildingRegionPlanner {
 
         const ordered = canonicalizePlannerCandidates(candidates);
         const visibleBuildingIds = [];
+        const intersectingEntityIds = [];
+        const intersectingChunkKeys = new Set();
+        const intersectingAssetUris = new Set();
         const seen = new Set();
         for (const entry of ordered) {
+            intersectingEntityIds.push(String(entry.entityId ?? entry.id));
+            for (const key of entry.chunkKeys ?? []) intersectingChunkKeys.add(key);
+            for (const uri of entry.assetUris ?? []) intersectingAssetUris.add(uri);
             const projected = entry.object3D
                 ? this._projectedArea(entry.object3D, camera)
                 : this._projectedBounds(entry.bounds, camera);
             if (projected <= 0) continue;
-            if (seen.has(entry.id)) continue;
-            seen.add(entry.id);
-            visibleBuildingIds.push(entry.id);
+            if (!seen.has(entry.id) && (!entry.kind || entry.kind === "building")) {
+                seen.add(entry.id);
+                visibleBuildingIds.push(entry.id);
+            }
         }
+
+        const coverage = {
+            intersectingEntityIds: [...new Set(intersectingEntityIds)].sort(compareUtf8),
+            intersectingChunkKeys: [...intersectingChunkKeys].sort(compareUtf8),
+            intersectingAssetUris: [...intersectingAssetUris].sort(compareUtf8),
+        };
 
         if (!visibleBuildingIds.length) {
             return {
                 activeBuildingId: null,
                 hasVisibleBuilding: false,
                 visibleBuildingIds: [],
+                ...coverage,
             };
         }
 
@@ -175,6 +197,9 @@ export class BuildingRegionPlanner {
             activeBuildingId,
             hasVisibleBuilding: true,
             visibleBuildingIds: [...visibleBuildingIds].sort(compareUtf8),
+            intersectingEntityIds: coverage.intersectingEntityIds,
+            intersectingChunkKeys: coverage.intersectingChunkKeys,
+            intersectingAssetUris: coverage.intersectingAssetUris,
         };
     }
 

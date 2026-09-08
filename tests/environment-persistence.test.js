@@ -67,6 +67,7 @@ test("edits arriving during a save produce a second guarded save from the latest
     assert.equal(puts[0].body.manifest.name, "First");
     assert.equal(puts[1].body.expectedRevision, 2);
     assert.equal(puts[1].body.manifest.name, "Second");
+    assert.equal(puts[0].body.detachStaleVisual, true);
     assert.equal(persistence.acknowledgedRevision, 3);
     assert.equal(persistence.conflict, null);
 });
