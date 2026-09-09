@@ -64,3 +64,26 @@ test("backend identity mismatch is rejected during runtime preparation", async (
     await assert.rejects(() => kernel.prepare(resolved), /backend mismatch.*version/i);
     kernel.clearRun();
 });
+
+test("VIS-15a headless rendering preparation is awaited and async disposal releases its immutable handle", async () => {
+    let finishPreparation;
+    let released = 0;
+    const rendererClient = {
+        preparePbr() {
+            return new Promise((resolve) => { finishPreparation = resolve; });
+        },
+        async releasePbr() { released += 1; },
+    };
+    const runtime = createHeadlessRuntimeContext({ rendererClient });
+    const preparation = runtime.context.rendering.prepare({
+        renderScene: { description: { provider: { id: "pbr-mesh", version: 1 } } },
+        manifest: { sensorRig: { sensors: [] } },
+    });
+    assert.equal(runtime.context.rendering.current(), null);
+    finishPreparation({ generation: 4, renderSceneHash: "a".repeat(64), status: { state: "ready" } });
+    const handle = await preparation;
+    assert.equal(runtime.context.rendering.current(), handle);
+    await runtime.context.rendering.dispose();
+    assert.equal(released, 1);
+    assert.equal(runtime.context.rendering.current(), null);
+});

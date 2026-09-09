@@ -257,7 +257,9 @@ export class HeadlessEpisode {
         }
         if (cameraSensors.length > 0) {
             try {
-                assertEnabledCameraRenderRuntime(resolvedRun.manifest.sensorRig?.sensors, resolvedRun.renderScene);
+                assertEnabledCameraRenderRuntime(resolvedRun.manifest.sensorRig?.sensors, resolvedRun.renderScene, {
+                    target: "headless",
+                });
             } catch (error) {
                 if (error instanceof RenderSceneProviderError) {
                     const capability = [
@@ -569,6 +571,11 @@ export class HeadlessEpisode {
 
     dispose() {
         this.kernel.dispose();
+        this.lifecycleState = "disposed";
+    }
+
+    async disposeAsync() {
+        await this.kernel.disposeAsync();
         this.lifecycleState = "disposed";
     }
 }

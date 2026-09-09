@@ -78,6 +78,22 @@ test("BakeRunConfig round-trips through a strict v1 manifest", () => {
     assert.doesNotMatch(JSON.stringify(restored.recipeIdentity()), /pollIntervalMs|localhost:8000|createdAt|saveRawCaptures/);
 });
 
+test("BakeRunConfig mirrors two-dimensional environment footprints at ground height", () => {
+    const config = createDefaultBakeRunConfig({ environmentId: "city-grid" });
+    config.setBuildings([{
+        buildingId: "building-1",
+        footprint: [{ x: 0, z: 0 }, { x: 2, z: 0 }, { x: 0, z: 2 }],
+        height: 3,
+        textureId: 0,
+        tags: ["building"],
+        meshName: "building-1",
+    }]);
+    assert.deepEqual(
+        config.buildings[0].footprint.map((point) => point.y),
+        [0, 0, 0],
+    );
+});
+
 function canonicalString(value) {
     return JSON.stringify(value);
 }

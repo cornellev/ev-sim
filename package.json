@@ -15,6 +15,8 @@
     "test:headless": "node --experimental-default-type=module --test tests/headless-*.test.js",
     "test:lidar": "node --experimental-default-type=module --test tests/lidar-*.test.js tests/headless-lidar.test.js",
     "test:gpu-sensors": "node --experimental-default-type=module --test tests/gpu-sensors.test.js",
+    "test:pbr-hardware": "node --experimental-default-type=module --test --test-name-pattern='VIS-15a hardware PBR' tests/gpu-sensors.test.js",
+    "test:managed-pbr-hardware": "node --experimental-default-type=module --test --test-name-pattern='VIS-15b hardware managed PBR' tests/managed-visual-admission.test.js",
     "test:shared-memory": "node --experimental-default-type=module --test tests/shared-memory.test.js",
     "test:supervisor": "node --experimental-default-type=module --test tests/headless-supervisor.test.js",
     "test:cli": "node --experimental-default-type=module --test tests/headless-runner.test.js tests/headless-cli.test.js",

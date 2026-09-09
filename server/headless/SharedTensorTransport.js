@@ -54,10 +54,18 @@ export function perceptionTensorBytes(sensor) {
     return 0;
 }
 
-function rawGpuTensorBytes(sensor) {
+function rawGpuTensorBytes(sensor, { pbr = false } = {}) {
     if (sensor?.enabled === false) return 0;
     if (sensor?.type === "camera") {
-        return Number(sensor.calibration?.height) * Number(sensor.calibration?.width) * 4;
+        const pixels = Number(sensor.calibration?.height) * Number(sensor.calibration?.width);
+        if (!pbr) return pixels * 4;
+        const products = sensor.calibration?.products || {};
+        return pixels * (
+            (products.rgb === true ? 4 : 0)
+            + (products.depth === true ? 4 : 0)
+            + (products.semantic === true ? 2 : 0)
+            + (products.instance === true ? 4 : 0)
+        );
     }
     if (sensor?.type === "lidar3d") {
         const azimuth = sensor.calibration?.azimuth;
@@ -75,12 +83,13 @@ export function calculateSharedTensorArenaBytes(resolved, episodeSpec = {}) {
     const sensors = (resolved.manifest?.sensorRig?.sensors || []).filter((sensor) => sensor.enabled !== false);
     const usesGpu = (episodeSpec.backendSelections || episodeSpec.backend_selections || [])
         .some((entry) => Number(entry.kind) === 4);
+    const pbr = resolved.renderScene?.description?.provider?.id === "pbr-mesh";
     const observationBytes = isPerception ? calculatePerceptionObservationBytes(resolved, episodeSpec) : 0;
     const retainedBytes = sensors.reduce((total, sensor) => (
         total + perceptionTensorBytes(sensor) * (Math.max(1, Number(sensor.maxQueueFrames || 1)) + 1)
     ), 0);
     const rawBytes = usesGpu
-        ? sensors.reduce((total, sensor) => total + rawGpuTensorBytes(sensor), 0)
+        ? sensors.reduce((total, sensor) => total + rawGpuTensorBytes(sensor, { pbr }), 0)
         : 0;
     if (observationBytes === 0 && rawBytes === 0) return 0;
     const retainedSlots = sensors.reduce(

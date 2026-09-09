@@ -122,6 +122,14 @@ jobs:
       - name: Resolve configured Chromium
         id: chromium
         run: echo "executable=$(jq -r '.renderer.chromiumExecutable' /etc/cev-sim/supervisor.json)" >> "$GITHUB_OUTPUT"
+      - name: VIS-15a Orin headless PBR products
+        env:
+          CEV_SIM_CHROMIUM_EXECUTABLE: ${{ steps.chromium.outputs.executable }}
+          CEV_SIM_SUPERVISOR_CONFIG: /etc/cev-sim/supervisor.json
+          CEV_SIM_PBR_HARDWARE: "1"
+          CEV_SIM_PBR_TARGET: jetson-agx-orin
+          CEV_SIM_PBR_REPORT: artifacts/pbr-jetson-agx-orin.json
+        run: npm run test:pbr-hardware
       - name: VIS-05b Orin visual-scale
         env:
           CEV_SIM_CHROMIUM_EXECUTABLE: ${{ steps.chromium.outputs.executable }}
@@ -159,6 +167,14 @@ jobs:
       - name: Resolve configured Chromium
         id: chromium
         run: echo "executable=$(jq -r '.renderer.chromiumExecutable' /etc/cev-sim/supervisor.json)" >> "$GITHUB_OUTPUT"
+      - name: VIS-15a Thor headless PBR products
+        env:
+          CEV_SIM_CHROMIUM_EXECUTABLE: ${{ steps.chromium.outputs.executable }}
+          CEV_SIM_SUPERVISOR_CONFIG: /etc/cev-sim/supervisor.json
+          CEV_SIM_PBR_HARDWARE: "1"
+          CEV_SIM_PBR_TARGET: jetson-agx-thor
+          CEV_SIM_PBR_REPORT: artifacts/pbr-jetson-agx-thor.json
+        run: npm run test:pbr-hardware
       - name: VIS-05b Thor visual-scale
         env:
           CEV_SIM_CHROMIUM_EXECUTABLE: ${{ steps.chromium.outputs.executable }}

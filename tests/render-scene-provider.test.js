@@ -116,20 +116,32 @@ test("render-scene registry rejects malformed and duplicate provider declaration
 test("render-scene registry distinguishes unknown id, unknown version, and known-but-unavailable providers", () => {
     assert.equal(renderSceneProviderRegistry.lookup({ id: "canonical-analytic", version: 1 }).available, true);
     assert.equal(renderSceneProviderRegistry.lookup({ id: "canonical-analytic", version: 2 }).available, false);
-    assert.equal(renderSceneProviderRegistry.lookup({ id: "pbr-mesh", version: 1 }).available, false);
+    assert.equal(renderSceneProviderRegistry.lookup({ id: "pbr-mesh", version: 1 }).available, true);
     assert.throws(() => renderSceneProviderRegistry.lookup({ id: "gaussian-splat", version: 1 }), (error) => (
         error.code === "UNKNOWN_PROVIDER"
     ));
     assert.throws(() => renderSceneProviderRegistry.lookup({ id: "canonical-analytic", version: 9 }), (error) => (
         error.code === "UNKNOWN_PROVIDER_VERSION"
     ));
-    assert.throws(() => renderSceneProviderRegistry.lookup({ id: "pbr-mesh", version: 1 }, { requireAvailable: true }), (error) => (
-        error.code === "PROVIDER_UNAVAILABLE"
-    ));
+    assert.equal(renderSceneProviderRegistry.lookup(
+        { id: "pbr-mesh", version: 1 },
+        { requireAvailable: true, target: "headless" },
+    ).runtimeAvailability.headless, true);
+    assert.equal(renderSceneProviderRegistry.lookup(
+        { id: "pbr-mesh", version: 1 },
+        { requireAvailable: true, target: "browser" },
+    ).runtimeAvailability.browser, true);
     const runtime = renderSceneProviderRegistry.runtimeCapabilities();
     assert.deepEqual(runtime.filter((entry) => entry.available).map((entry) => `${entry.id}@${entry.version}`), [
         "canonical-analytic@1",
+        "pbr-mesh@1",
     ]);
+    assert.deepEqual(
+        renderSceneProviderRegistry.runtimeCapabilities({ target: "browser" })
+            .filter((entry) => entry.available)
+            .map((entry) => `${entry.id}@${entry.version}`),
+        ["canonical-analytic@1", "pbr-mesh@1"],
+    );
 });
 
 test("omitted and explicit canonical-analytic@1 selections produce the same analytic scene bytes", async (t) => {
@@ -292,24 +304,23 @@ test("calibration, duplication, and import/export preserve camera render selecti
     assert.deepEqual(imported.sensorRig.sensors.find((sensor) => sensor.type === "camera").render, analyticRender());
 });
 
-test("GPU backend v1 identity stays locked while v2 is exported and rejected", () => {
+test("GPU backend v1 identity stays locked while v2 is activated without changing either hash", () => {
     assert.equal(GPU_SENSOR_BACKEND_VERSION, "1");
     assert.equal(GPU_SENSOR_BACKEND_CONFIG_HASH, "cdbfea7d5698356687ca5820a6d54c932a815f199eb8a2b405b94fbe8183a5c1");
     assert.notEqual(GPU_SENSOR_BACKEND_V2_CONFIG_HASH, GPU_SENSOR_BACKEND_CONFIG_HASH);
     assert.deepEqual(createGpuSensorBackendSelection().version, "1");
-    assert.equal(createGpuSensorBackendV2Selection().available, false);
-    assert.throws(() => assertGpuSensorBackendSelection(createGpuSensorBackendV2Selection()), (error) => (
-        error.message === GPU_SENSOR_BACKEND_V2_UNAVAILABLE_REASON
-    ));
+    assert.equal(createGpuSensorBackendV2Selection().available, true);
+    assert.equal(GPU_SENSOR_BACKEND_V2_UNAVAILABLE_REASON, "");
+    assert.deepEqual(assertGpuSensorBackendSelection(createGpuSensorBackendV2Selection()).configHash, GPU_SENSOR_BACKEND_V2_CONFIG_HASH);
     assert.deepEqual(assertGpuSensorBackendSelection(createGpuSensorBackendSelection()).configHash, GPU_SENSOR_BACKEND_CONFIG_HASH);
 });
 
-test("headless preparation rejects unavailable camera providers", async () => {
+test("headless preparation rejects a PBR camera bound to an analytic render scene", async () => {
     const camera = createRunSensor("camera", { id: "pbr-camera", parentId: "ego" });
     const bundle = await createPortableHeadlessBundle({ sensors: [createHeadlessImu(), camera] });
     bundle.resolved.manifest.sensorRig.sensors.find((sensor) => sensor.type === "camera").render = pbrRender();
     const episode = new HeadlessEpisode();
-    await assert.rejects(episode.prepare(bundle.resolved), /pbr-mesh@1 is known but unavailable/);
+    await assert.rejects(episode.prepare(bundle.resolved), /does not match persisted render-scene provider/);
 });
 
 test("VIS-02 explicit-camera v11 identity vectors are independent of legacy and VIS-12a goldens", async (t) => {

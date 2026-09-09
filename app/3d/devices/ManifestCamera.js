@@ -51,6 +51,12 @@ export class ManifestCamera extends Device {
         this.captureSceneHandle = this.captureMode === CORRECTED_VISUAL_CAPTURE_MODE
             ? assertOwnedCaptureScene(options.captureSceneHandle, { role: "measured-appearance" })
             : options.captureSceneHandle ?? null;
+        this.analyticSceneHandle = this.captureMode === CORRECTED_VISUAL_CAPTURE_MODE
+            ? assertOwnedCaptureScene(options.analyticSceneHandle, { role: "analytic-truth" })
+            : options.analyticSceneHandle ?? null;
+        this.authorizeSourceUse = options.authorizeSourceUse ?? null;
+        this.renderPolicy = options.renderPolicy ?? null;
+        this.renderRuntime = options.renderRuntime ?? null;
         this.visualCalibration = this.captureMode === CORRECTED_VISUAL_CAPTURE_MODE
             ? createVisualCameraCalibration(config.calibration)
             : null;
@@ -85,6 +91,9 @@ export class ManifestCamera extends Device {
             captureMode: this.captureMode,
             calibration: this.visualCalibration,
             sceneHandle: this.captureSceneHandle,
+            analyticSceneHandle: this.analyticSceneHandle,
+            authorizeSourceUse: this.authorizeSourceUse,
+            renderPolicy: this.renderPolicy,
         });
     }
 
@@ -128,7 +137,9 @@ export class ManifestCamera extends Device {
         const calibration = this.config.calibration;
         const products = calibration.products || {};
         const outputs = this.config.outputs || {};
-        const warp = this.captureMode === CORRECTED_VISUAL_CAPTURE_MODE
+        const warp = captured.aligned === true
+            ? (pixels) => pixels
+            : this.captureMode === CORRECTED_VISUAL_CAPTURE_MODE
             ? (pixels, channels, interpolation) => warpCalibratedImage({
                 data: pixels,
                 calibration: this.visualCalibration,
@@ -294,7 +305,71 @@ export class ManifestCamera extends Device {
         return messages;
     }
 
+    async _captureAlignedAt({ captureTimeNs, sampleIndex, rng }) {
+        const data = this.getParent()?.getParent?.();
+        const renderer = data?.renderer;
+        const scene = data?.scene;
+        if (!renderer || !scene || !this.sensorCamera || !this.renderProducts) return [];
+        if (!this.renderRuntime) {
+            const error = new Error("Corrected browser camera is missing its resolved render runtime.");
+            error.code = "PBR_RENDER_RUNTIME_MISSING";
+            error.infrastructureFailure = true;
+            throw error;
+        }
+        const vehicles = data?.vehicles?.()?.vehicles || [];
+        const frameResolution = this.transformRuntime?.resolveCaptureFrames?.(
+            this.config,
+            vehicles,
+            captureTimeNs,
+        );
+        if (frameResolution && frameResolution.ok === false) {
+            this.contractPublisher?._event?.("frame-invalid", "error", {
+                reason: frameResolution.message,
+            });
+            return [];
+        }
+        const noise = this.config.noise;
+        if (noise.dropoutProbability > 0 && rng.next() < noise.dropoutProbability) {
+            this.contractPublisher?.recordFrameDrop?.("camera-frame-dropout", sampleIndex);
+            return [];
+        }
+
+        this._applyPose();
+        this.lastCaptureInput = createVisualCaptureInput({
+            calibration: this.visualCalibration,
+            pose: {
+                matrixWorld: this.sensorCamera.matrixWorld.elements,
+                quaternion: this.sensorCamera.quaternion,
+            },
+            sceneHandle: this.captureSceneHandle,
+            captureTimeNs,
+        });
+        const truth = this._refreshTruth(data, scene, vehicles);
+        const calibration = this.config.calibration;
+        const imageDetections = projectTruthBoundsToImage(
+            truth.filter((record) => record.visible && record.semanticId !== 0),
+            this.sensorCamera,
+            calibration.width,
+            calibration.height,
+        );
+        const captured = await this.renderRuntime.captureCamera({
+            captureInput: this.lastCaptureInput,
+            enabled: this._enabledProducts(),
+            renderProducts: this.renderProducts,
+        });
+        return this._buildMessages({
+            captureTimeNs,
+            sampleIndex,
+            rng,
+            truth,
+            imageDetections,
+        }, captured);
+    }
+
     captureAt({ captureTimeNs, sampleIndex, rng }) {
+        if (this.captureMode === CORRECTED_VISUAL_CAPTURE_MODE) {
+            return this._captureAlignedAt({ captureTimeNs, sampleIndex, rng });
+        }
         const data = this.getParent()?.getParent?.();
         const renderer = data?.renderer;
         const scene = data?.scene;
@@ -416,6 +491,9 @@ export class ManifestCamera extends Device {
         this.renderProducts?.dispose?.();
         this.sensorCamera = null;
         this.renderProducts = null;
+        this.renderRuntime = null;
+        this.analyticSceneHandle = null;
+        this.authorizeSourceUse = null;
         super.dispose();
     }
 }

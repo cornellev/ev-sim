@@ -234,6 +234,25 @@ test("residency controller selects required AOI chunks and sheds optional prefet
     assert.equal(crowded.prefetchShed, plan.shedPrefetch.length);
 });
 
+test("residency uses the union of enabled camera positions for required chunks and LODs", () => {
+    const documents = multiChunkDocuments();
+    const controller = new VisualChunkResidencyController({
+        maxResidentChunks: 4,
+        requiredRadiusMeters: 10,
+        prefetchRadiusMeters: 20,
+    });
+    const plan = controller.plan(documents.descriptor, {
+        positions: [
+            { x: 0, y: 0, z: 0 },
+            { x: 250, y: 0, z: 0 },
+        ],
+    });
+    assert.deepEqual(plan.required.map((chunk) => chunk.id), ["chunk-0", "chunk-2"]);
+    assert.equal(plan.selectedLods["building-0"].index, 0);
+    assert.equal(plan.selectedLods["building-2"].index, 0);
+    assert.equal(plan.interest.positions.length, 2);
+});
+
 test("materializer loads selected LODs for the AOI and does not fetch the whole layer", async () => {
     const documents = multiChunkDocuments();
     const { materializer, previewRoot, fetched } = createMaterializer(documents);

@@ -131,7 +131,145 @@ test("route verification builds deterministic sections, traversal, hashes, and a
         { id: "finish", x: 1, z: 0 },
     ]);
     assert.equal(wrongWay.ok, false);
-    assert.ok(wrongWay.issues.some((issue) => issue.code === "route.section.disconnected"));
+    assert.ok(wrongWay.issues.some((issue) => issue.code === "route.section.illegal-direction"));
+});
+
+test("two-way routes sit on the right-hand travel side of the road", () => {
+    const environment = {
+        environmentId: "rht-two-way",
+        roads: {
+            nodes: [
+                { id: "a", x: 0, z: 0, kind: "endpoint" },
+                { id: "b", x: 20, z: 0, kind: "endpoint" },
+            ],
+            edges: [
+                { id: "ab", startNodeId: "a", endNodeId: "b", bidirectional: true, width: 8, laneCount: 2 },
+            ],
+        },
+    };
+
+    const outbound = verifyRoute(environment, [
+        { id: "start", x: 2, z: 0 },
+        { id: "finish", x: 18, z: 0 },
+    ]);
+    assert.equal(outbound.ok, true);
+    assert.equal(outbound.route.verification.algorithmVersion, 2);
+    for (const point of outbound.route.polyline) {
+        assert.ok(Math.abs(point.z - (-2)) < 1e-6, `expected z=-2 (width/4 right of +X travel), got ${point.z}`);
+    }
+    assert.ok(Math.abs(outbound.route.waypoints[0].z - (-2)) < 1e-6);
+    assert.ok(Math.abs(outbound.route.waypoints[1].z - (-2)) < 1e-6);
+
+    const inbound = verifyRoute(environment, [
+        { id: "start", x: 18, z: 0 },
+        { id: "finish", x: 2, z: 0 },
+    ]);
+    assert.equal(inbound.ok, true);
+    for (const point of inbound.route.polyline) {
+        assert.ok(Math.abs(point.z - 2) < 1e-6, `expected z=+2 (width/4 right of -X travel), got ${point.z}`);
+    }
+});
+
+test("one-way legal travel stays on centerline and reverse is illegal-direction", () => {
+    const environment = {
+        environmentId: "rht-one-way",
+        roads: {
+            nodes: [
+                { id: "a", x: 0, z: 0, kind: "endpoint" },
+                { id: "b", x: 20, z: 0, kind: "endpoint" },
+            ],
+            edges: [
+                { id: "ab", startNodeId: "a", endNodeId: "b", bidirectional: false, width: 8, laneCount: 2 },
+            ],
+        },
+    };
+
+    const legal = verifyRoute(environment, [
+        { id: "start", x: 2, z: 0 },
+        { id: "finish", x: 18, z: 0 },
+    ]);
+    assert.equal(legal.ok, true);
+    for (const point of legal.route.polyline) {
+        assert.ok(Math.abs(point.z) < 1e-6, `one-way offset must be 0, got z=${point.z}`);
+    }
+
+    const illegal = verifyRoute(environment, [
+        { id: "start", x: 18, z: 0 },
+        { id: "finish", x: 2, z: 0 },
+    ]);
+    assert.equal(illegal.ok, false);
+    assert.ok(illegal.issues.some((issue) => issue.code === "route.section.illegal-direction"));
+});
+
+test("missing road connectivity is disconnected rather than illegal-direction", () => {
+    const environment = {
+        environmentId: "disconnected",
+        roads: {
+            nodes: [
+                { id: "a", x: 0, z: 0, kind: "endpoint" },
+                { id: "b", x: 10, z: 0, kind: "endpoint" },
+                { id: "c", x: 30, z: 0, kind: "endpoint" },
+                { id: "d", x: 40, z: 0, kind: "endpoint" },
+            ],
+            edges: [
+                { id: "ab", startNodeId: "a", endNodeId: "b", bidirectional: true, width: 4 },
+                { id: "cd", startNodeId: "c", endNodeId: "d", bidirectional: true, width: 4 },
+            ],
+        },
+    };
+
+    const result = verifyRoute(environment, [
+        { id: "start", x: 2, z: 0 },
+        { id: "finish", x: 35, z: 0 },
+    ]);
+    assert.equal(result.ok, false);
+    assert.ok(result.issues.some((issue) => issue.code === "route.section.disconnected"));
+    assert.equal(result.issues.some((issue) => issue.code === "route.section.illegal-direction"), false);
+});
+
+test("intersection L-path stitches offset edge ends without the node center", () => {
+    const environment = {
+        environmentId: "rht-l",
+        roads: {
+            nodes: [
+                { id: "a", x: 0, z: 0, kind: "endpoint" },
+                { id: "b", x: 20, z: 0, kind: "intersection" },
+                { id: "c", x: 20, z: 20, kind: "endpoint" },
+            ],
+            edges: [
+                { id: "ab", startNodeId: "a", endNodeId: "b", bidirectional: true, width: 8, laneCount: 2 },
+                { id: "bc", startNodeId: "b", endNodeId: "c", bidirectional: true, width: 8, laneCount: 2 },
+            ],
+        },
+    };
+
+    const result = verifyRoute(environment, [
+        { id: "start", x: 2, z: 0 },
+        { id: "finish", x: 20, z: 18 },
+    ]);
+    assert.equal(result.ok, true);
+    assert.equal(result.route.verification.algorithmVersion, 2);
+    assert.equal(
+        result.route.polyline.some((point) => Math.abs(point.x - 20) < 1e-6 && Math.abs(point.z) < 1e-6),
+        false,
+        "polyline must not include the raw intersection node center",
+    );
+
+    // Travel +X on ab: right offset z=-2. Travel +Z on bc: right offset x=+22.
+    assert.ok(
+        result.route.polyline.some((point) => Math.abs(point.x - 20) < 1e-6 && Math.abs(point.z - (-2)) < 1e-6),
+        "expected inbound exit at (20, -2)",
+    );
+    assert.ok(
+        result.route.polyline.some((point) => Math.abs(point.x - 22) < 1e-6 && Math.abs(point.z) < 1e-6),
+        "expected outbound entry at (22, 0)",
+    );
+    assert.ok(Math.abs(result.route.polyline[0].z - (-2)) < 1e-6);
+    assert.ok(Math.abs(result.route.polyline.at(-1).x - 22) < 1e-6);
+
+    const again = verifyRoute(environment, result.route);
+    assert.equal(again.ok, true);
+    assert.deepEqual(again.route.polyline, result.route.polyline);
 });
 
 test("route sampling clamps percentages and samples each section by arc length", () => {

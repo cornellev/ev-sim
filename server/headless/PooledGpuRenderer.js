@@ -1,21 +1,250 @@
 import { createRequire } from "node:module";
+import { promises as fs } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { supervisorError } from "./HeadlessProtocol.js";
 import {
     assertVisualCaptureInput,
     CORRECTED_VISUAL_CAPTURE_MODE,
+    createVisualCameraCalibration,
 } from "../../app/3d/environment/visual/VisualCapturePipeline.js";
 
 const PACKAGE_VERSION = createRequire(import.meta.url)("../../package.json").version;
+const REQUIRE = createRequire(import.meta.url);
+const REPOSITORY_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const BASIS_ROOT = path.dirname(REQUIRE.resolve("three/examples/jsm/libs/basis/basis_transcoder.js"));
+const RUNTIME_ORIGIN = "http://cev-sim.invalid";
 const SOFTWARE_RENDERERS = /swiftshader|llvmpipe|software rasterizer/i;
+const RUNTIME_ENTRY = path.join(REPOSITORY_ROOT, "app/3d/perception/HeadlessPbrPageRuntime.js");
+const THREE_ROOT = path.join(REPOSITORY_ROOT, "node_modules/three");
+const NOBLE_HASHES_ROOT = path.join(REPOSITORY_ROOT, "node_modules/@noble/hashes");
+
+const MIME = Object.freeze({
+    ".html": "text/html; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".wasm": "application/wasm",
+});
+
+function runtimeHtml() {
+    return `<!doctype html><meta charset="utf-8"><script type="importmap">${JSON.stringify({
+        imports: {
+            three: "/runtime/node_modules/three/build/three.module.js",
+            "three/addons/": "/runtime/node_modules/three/examples/jsm/",
+            "three/examples/jsm/": "/runtime/node_modules/three/examples/jsm/",
+            "@noble/hashes/": "/runtime/node_modules/@noble/hashes/",
+        },
+    })}</script><script type="module" src="/runtime/app/3d/perception/HeadlessPbrPageRuntime.js"></script>`;
+}
+
+function safeRuntimePath(pathname, allowedFiles) {
+    const decoded = decodeURIComponent(pathname);
+    const candidates = [
+        ["/runtime/app/", path.join(REPOSITORY_ROOT, "app")],
+        ["/runtime/node_modules/three/", THREE_ROOT],
+        ["/runtime/node_modules/@noble/hashes/", NOBLE_HASHES_ROOT],
+        ["/vendor/basis/", BASIS_ROOT],
+    ];
+    for (const [prefix, root] of candidates) {
+        if (!decoded.startsWith(prefix)) continue;
+        const relative = decoded.slice(prefix.length);
+        if (!relative || relative.split("/").some((part) => !part || part === "." || part === "..")) return null;
+        const resolved = path.resolve(root, relative);
+        if (!resolved.startsWith(`${root}${path.sep}`)) return null;
+        if (![".js", ".wasm"].includes(path.extname(resolved))) return null;
+        if (!allowedFiles.has(resolved)) return null;
+        return resolved;
+    }
+    return null;
+}
+
+function resolveRuntimeImport(specifier, importer) {
+    if (specifier === "three") return path.join(THREE_ROOT, "build/three.module.js");
+    if (specifier.startsWith("three/examples/jsm/")) {
+        return path.join(THREE_ROOT, specifier.slice("three/".length));
+    }
+    if (specifier.startsWith("three/addons/")) {
+        return path.join(THREE_ROOT, "examples/jsm", specifier.slice("three/addons/".length));
+    }
+    if (specifier.startsWith("@noble/hashes/")) {
+        return path.join(NOBLE_HASHES_ROOT, specifier.slice("@noble/hashes/".length));
+    }
+    if (specifier.startsWith(".")) return path.resolve(path.dirname(importer), specifier);
+    throw new Error(`Headless PBR runtime import "${specifier}" is not allowlisted.`);
+}
+
+function isRuntimeModule(file) {
+    return [path.join(REPOSITORY_ROOT, "app"), THREE_ROOT, NOBLE_HASHES_ROOT]
+        .some((root) => file.startsWith(`${root}${path.sep}`));
+}
+
+async function buildRuntimeClosure() {
+    const allowed = new Set();
+    const pending = [RUNTIME_ENTRY];
+    const importPattern = /(?:\b(?:import|export)\s+(?:[^"'()]*?\s+from\s+)?["']([^"']+)["']|\bimport\s*\(\s*["']([^"']+)["']\s*\))/gu;
+    while (pending.length > 0) {
+        const file = pending.pop();
+        if (allowed.has(file)) continue;
+        const source = await fs.readFile(file, "utf8");
+        const executableSource = source.replace(/\/\*[\s\S]*?\*\//gu, "");
+        allowed.add(file);
+        for (const match of executableSource.matchAll(importPattern)) {
+            const dependency = resolveRuntimeImport(match[1] || match[2], file);
+            if (!isRuntimeModule(dependency) || path.extname(dependency) !== ".js") {
+                throw new Error(`Headless PBR runtime dependency ${dependency} is outside the allowlisted module roots.`);
+            }
+            if (!allowed.has(dependency)) pending.push(dependency);
+        }
+    }
+    allowed.add(path.join(BASIS_ROOT, "basis_transcoder.js"));
+    allowed.add(path.join(BASIS_ROOT, "basis_transcoder.wasm"));
+    return allowed;
+}
 
 function utf8Bytes(value) {
     return Buffer.byteLength(JSON.stringify(value));
 }
 
 function outputBytes(request) {
+    if (request.provider?.id === "pbr-mesh") {
+        const pixels = request.width * request.height;
+        return pixels * (
+            (request.products?.rgb ? 4 : 0)
+            + (request.products?.depth ? 4 : 0)
+            + (request.products?.semantic ? 2 : 0)
+            + (request.products?.instance ? 4 : 0)
+        );
+    }
     if (request.type === "camera") return request.width * request.height * 4 * 3;
     return request.width * request.height * 4 * 4 * 3;
+}
+
+function pbrRetainedCameraBytes(request) {
+    const pixels = request.width * request.height;
+    const products = request.products || {};
+    const analytic = products.depth || products.semantic || products.instance;
+    // CameraRenderProducts base color/depth target and CPU decode buffers.
+    let bytes = pixels * 31;
+    if (products.rgb) bytes += pixels * 8;
+    if (analytic) bytes += pixels * 8;
+    if (products.depth) bytes += pixels * 20;
+    return bytes;
+}
+
+function pbrTransientCaptureBytes(request) {
+    const pixels = request.width * request.height;
+    const products = request.products || {};
+    const productBytes = outputBytes(request);
+    const widestReadback = products.depth ? pixels * 16 : pixels * 4;
+    // Raw readback, PBO, normalized rows, product arrays, base64/CDP payload,
+    // decoded Node buffer, and final typed copy all coexist at the boundary.
+    return widestReadback * 3 + productBytes * 6;
+}
+
+function pbrResidentBytes(prepared, cameraAllocations = prepared.cameraAllocations) {
+    return prepared.bytes + [...(cameraAllocations?.values() || [])]
+        .reduce((total, bytes) => total + bytes, 0);
+}
+
+function publicPbrHandle(record) {
+    return {
+        environmentKey: record.environmentKey,
+        generation: record.generation,
+        renderSceneHash: record.renderSceneHash,
+        analyticSceneHash: record.analyticSceneHash,
+        resourceHashes: { ...record.resourceHashes },
+        status: record.status,
+    };
+}
+
+function validatePbrRequests(requests, prepared) {
+    if (!Array.isArray(requests) || requests.length === 0) {
+        throw supervisorError("INVALID_REQUEST", "PBR capture requires at least one camera request.");
+    }
+    const ids = new Set();
+    return requests.map((request) => {
+        if (!request?.id || ids.has(request.id) || request.type !== "camera"
+            || request.provider?.id !== "pbr-mesh" || request.provider?.version !== 1) {
+            throw supervisorError("INVALID_REQUEST", "PBR capture requests require unique camera IDs and pbr-mesh@1.");
+        }
+        ids.add(request.id);
+        const input = assertVisualCaptureInput(request.captureInput);
+        if (input.scene.role !== "measured-appearance"
+            || input.scene.generation !== prepared.generation
+            || input.scene.descriptionHash !== prepared.renderSceneHash
+            || input.captureTimeNs !== request.captureTimeNs
+            || input.calibration.image.width !== request.width
+            || input.calibration.image.height !== request.height) {
+            throw supervisorError("INVALID_REQUEST", `PBR camera ${request.id} capture identity is stale or inconsistent.`);
+        }
+        const products = request.products;
+        if (!products || typeof products !== "object" || Array.isArray(products)
+            || Object.keys(products).some((name) => !["rgb", "depth", "semantic", "instance"].includes(name))
+            || Object.values(products).some((enabled) => typeof enabled !== "boolean")) {
+            throw supervisorError("INVALID_REQUEST", `PBR camera ${request.id} products are invalid.`);
+        }
+        return request;
+    });
+}
+
+function validatePbrResults(requests, results) {
+    if (!Array.isArray(results) || results.length !== requests.length) {
+        throw infrastructureError("PBR renderer returned an incomplete sync group.");
+    }
+    const byId = new Map(results.map((entry) => [entry.id, entry]));
+    if (byId.size !== results.length) throw infrastructureError("PBR renderer returned duplicate camera results.");
+    const specs = {
+        rgb: [Uint8Array, 4],
+        depth: [Float32Array, 1],
+        semantic: [Uint16Array, 1],
+        instance: [Uint32Array, 1],
+    };
+    for (const request of requests) {
+        const result = byId.get(request.id);
+        if (!result || result.type !== "camera" || result.aligned !== true
+            || result.captureTimeNs !== request.captureTimeNs) {
+            throw infrastructureError(`PBR renderer returned an invalid result for camera ${request.id}.`);
+        }
+        const pixels = request.width * request.height;
+        for (const [name, [Constructor, channels]] of Object.entries(specs)) {
+            const value = result.products?.[name];
+            if (request.products[name] === true) {
+                if (!(value instanceof Constructor) || value.length !== pixels * channels) {
+                    throw infrastructureError(`PBR renderer returned an invalid ${name} product for camera ${request.id}.`);
+                }
+            } else if (value != null) {
+                throw infrastructureError(`PBR renderer returned unrequested ${name} data for camera ${request.id}.`);
+            }
+        }
+    }
+    return requests.map((request) => byId.get(request.id));
+}
+
+async function readOpenedAsset(opened, expectedBytes) {
+    const chunks = [];
+    let total = 0;
+    try {
+        for await (const chunk of opened.stream) {
+            total += chunk.byteLength;
+            if (total > expectedBytes) throw new Error("Visual asset stream exceeded its declared size.");
+            chunks.push(Buffer.from(chunk));
+        }
+        if (total !== expectedBytes) {
+            throw new Error(`Visual asset stream size mismatch: expected ${expectedBytes}, received ${total}.`);
+        }
+        return Buffer.concat(chunks, total);
+    } finally {
+        await opened.release?.();
+    }
+}
+
+function supportedPbrTarget(target, { platform = process.platform, arch = process.arch } = {}) {
+    const selected = String(target || "");
+    if (selected === "local-development") return platform === "darwin" && arch === "arm64";
+    if (["jetson-agx-orin", "jetson-agx-thor"].includes(selected)) {
+        return platform === "linux" && arch === "arm64";
+    }
+    return false;
 }
 
 function infrastructureError(message, details = null) {
@@ -47,12 +276,14 @@ export class ChromiumWebGlRendererAdapter {
         this.browser = null;
         this.page = null;
         this.provenance = null;
+        this.pbrReady = false;
     }
 
     async start(contextCount) {
         if (!this.config.chromiumExecutable) {
             throw new Error("renderer.chromiumExecutable is not configured.");
         }
+        const allowedFiles = await buildRuntimeClosure();
         const { chromium } = await import("playwright-core");
         const args = [...(this.config.launchArgs || [])];
         if (this.config.angle) args.push(`--use-angle=${this.config.angle}`);
@@ -63,7 +294,42 @@ export class ChromiumWebGlRendererAdapter {
             args,
         });
         this.page = await this.browser.newPage();
+        const runtimeErrors = [];
+        this.page.on("pageerror", (error) => runtimeErrors.push(error.message));
+        this.page.on("console", (message) => {
+            if (message.type() === "error") runtimeErrors.push(message.text());
+        });
+        this.page.on("response", (response) => {
+            if (response.status() >= 400) runtimeErrors.push(`${response.status()} ${response.url()}`);
+        });
         this.browser.on("disconnected", () => { this.browser = null; });
+        await this.page.route("**/*", async (route) => {
+            const requestUrl = new URL(route.request().url());
+            if (requestUrl.origin !== RUNTIME_ORIGIN) {
+                await route.abort("blockedbyclient");
+                return;
+            }
+            const pathname = requestUrl.pathname;
+            if (pathname === "/" || pathname === "/index.html") {
+                await route.fulfill({ status: 200, contentType: MIME[".html"], body: runtimeHtml() });
+                return;
+            }
+            const file = safeRuntimePath(pathname, allowedFiles);
+            if (!file) {
+                await route.fulfill({ status: 404, contentType: "text/plain", body: "Not found" });
+                return;
+            }
+            try {
+                await route.fulfill({
+                    status: 200,
+                    contentType: MIME[path.extname(file)],
+                    body: await fs.readFile(file),
+                });
+            } catch {
+                await route.fulfill({ status: 404, contentType: "text/plain", body: "Not found" });
+            }
+        });
+        await this.page.goto(`${RUNTIME_ORIGIN}/index.html`, { waitUntil: "domcontentloaded" });
         const probe = await this.page.evaluate(async ({ count }) => {
             const contexts = [];
             for (let index = 0; index < count; index += 1) {
@@ -134,6 +400,19 @@ export class ChromiumWebGlRendererAdapter {
                 contextCount: contexts.length,
             };
         }, { count: contextCount });
+        try {
+            await this.page.waitForFunction(() => globalThis.__cevHeadlessPbrReady === true, null, { timeout: 10_000 });
+        } catch (error) {
+            throw new Error(`PBR page runtime failed to load: ${runtimeErrors.join(" | ") || error.message}`);
+        }
+        const pbr = await this.page.evaluate((count) => globalThis.__cevHeadlessPbrRuntime.initialize(count), contextCount);
+        const pbrProbe = pbr.slots === contextCount
+            ? await this.page.evaluate(() => globalThis.__cevHeadlessPbrRuntime.probe())
+            : { material: false, decoder: false, asyncReadback: false };
+        this.pbrReady = pbr.slots === contextCount
+            && pbrProbe.material === true
+            && pbrProbe.decoder === true
+            && pbrProbe.asyncReadback === true;
         const version = await this.browser.version();
         this.provenance = {
             chromiumVersion: version,
@@ -143,6 +422,9 @@ export class ChromiumWebGlRendererAdapter {
             sandboxEnabled: !this.config.disableSandbox,
             angle: this.config.angle || null,
             ...probe,
+            pbrRuntime: this.pbrReady,
+            pbrProbe,
+            pbrPrivateOrigin: RUNTIME_ORIGIN,
         };
         return this.provenance;
     }
@@ -531,20 +813,79 @@ export class ChromiumWebGlRendererAdapter {
         }
     }
 
+    async preparePbr(payload, contextIndex) {
+        if (!this.page || !this.browser || !this.pbrReady) {
+            throw infrastructureError("Chromium PBR runtime is not running.");
+        }
+        try {
+            return await this.page.evaluate(
+                ({ value, slot }) => globalThis.__cevHeadlessPbrRuntime.prepare({ ...value, slot }),
+                { value: payload, slot: contextIndex },
+            );
+        } catch (error) {
+            throw infrastructureError(`PBR preparation failed: ${error.message}`);
+        }
+    }
+
+    async capturePbr(environmentKey, requests) {
+        if (!this.page || !this.browser || !this.pbrReady) {
+            throw infrastructureError("Chromium PBR runtime is not running.");
+        }
+        try {
+            const values = await this.page.evaluate(
+                ({ key, jobs }) => globalThis.__cevHeadlessPbrRuntime.capture(key, jobs),
+                { key: environmentKey, jobs: requests },
+            );
+            const typed = (product) => {
+                if (!product) return null;
+                const constructors = {
+                    uint8: Uint8Array,
+                    uint16: Uint16Array,
+                    uint32: Uint32Array,
+                    float32: Float32Array,
+                };
+                const Constructor = constructors[product.type];
+                if (!Constructor) throw new Error(`Unknown PBR product type ${product.type}.`);
+                const bytes = Buffer.from(product.base64, "base64");
+                if (bytes.byteLength !== Number(product.length) * Constructor.BYTES_PER_ELEMENT) {
+                    throw new Error(`PBR product ${product.type} byte length is invalid.`);
+                }
+                const copy = Uint8Array.from(bytes).buffer;
+                return new Constructor(copy);
+            };
+            return values.map((entry) => ({
+                ...entry,
+                products: Object.fromEntries(Object.entries(entry.products).map(([name, value]) => [name, typed(value)])),
+            }));
+        } catch (error) {
+            throw infrastructureError(`PBR capture failed: ${error.message}`);
+        }
+    }
+
+    async releasePbr(environmentKey) {
+        if (!this.page || !this.pbrReady) return false;
+        return this.page.evaluate((key) => globalThis.__cevHeadlessPbrRuntime.release(key), environmentKey)
+            .catch(() => false);
+    }
+
     isRunning() {
         return Boolean(this.browser && this.page);
     }
 
     async close() {
+        if (this.page && this.pbrReady) {
+            await this.page.evaluate(() => globalThis.__cevHeadlessPbrRuntime.close()).catch(() => {});
+        }
         await this.browser?.close().catch(() => {});
         this.browser = null;
         this.page = null;
+        this.pbrReady = false;
     }
 }
 
 /** Supervisor-owned FIFO pool with a single Chromium page and fixed contexts. */
 export class PooledGpuRenderer {
-    constructor(config = {}, { adapterFactory = null } = {}) {
+    constructor(config = {}, { adapterFactory = null, hostPlatform = process.platform, hostArch = process.arch } = {}) {
         this.config = {
             contextPoolSize: 1,
             sceneCacheBytes: 512 * 1024 * 1024,
@@ -552,6 +893,8 @@ export class PooledGpuRenderer {
             ...config,
         };
         this.adapterFactory = adapterFactory || ((options) => new ChromiumWebGlRendererAdapter(options));
+        this.hostPlatform = hostPlatform;
+        this.hostArch = hostArch;
         this.adapter = null;
         this.probeResult = null;
         this.startPromise = null;
@@ -560,9 +903,14 @@ export class PooledGpuRenderer {
         this.queue = [];
         this.availableContexts = [];
         this.environmentBytes = new Map();
+        this.preparedPbr = new Map();
+        this.pbrAssetReaders = new Map();
+        this.pbrSlotLoads = [];
+        this.pbrPreparationPromise = Promise.resolve();
         this.browserLaunches = 0;
         this.busyContexts = 0;
         this.adapterGeneration = 0;
+        this.nextPbrGeneration = 1;
         this.resetPromise = null;
         this.closed = false;
     }
@@ -610,6 +958,7 @@ export class PooledGpuRenderer {
                 { length: this.config.contextPoolSize },
                 (_, index) => index,
             );
+            this.pbrSlotLoads = Array.from({ length: this.config.contextPoolSize }, () => 0);
         })();
         return this.startPromise;
     }
@@ -634,6 +983,199 @@ export class PooledGpuRenderer {
         this.scenes.set(hash, cached);
         this.sceneBytes += bytes;
         return cached;
+    }
+
+    pbrCapability() {
+        if (!this.config.pbrEnabled) {
+            return { available: false, reason: "renderer.pbrEnabled is false." };
+        }
+        if (!supportedPbrTarget(this.config.pbrTarget, {
+            platform: this.hostPlatform,
+            arch: this.hostArch,
+        })) {
+            return { available: false, reason: `PBR target ${this.config.pbrTarget} is not supported on ${this.hostPlatform}/${this.hostArch}.` };
+        }
+        const pbrProbe = this.adapter?.provenance?.pbrProbe;
+        const available = this.probeResult?.available === true
+            && this.adapter?.provenance?.pbrRuntime === true
+            && pbrProbe?.material === true
+            && pbrProbe?.decoder === true
+            && pbrProbe?.asyncReadback === true;
+        return {
+            available,
+            reason: available ? "" : this.probeResult?.reason || "The PBR runtime probe has not succeeded.",
+            target: this.config.pbrTarget,
+            products: ["rgba8", "camera-info", "32FC1", "16UC1", "32SC1"],
+            readback: "pixel-pack-buffer-fence-event-loop-poll-v1",
+        };
+    }
+
+    async preparePbr({ environmentKey, resolved, sensorRig, vehicles, maxGpuBytes, assetReader }) {
+        const operation = async () => {
+            const probe = await this.probe();
+            const capability = this.pbrCapability();
+            if (!probe.available || !capability.available) {
+                throw supervisorError("UNSUPPORTED_CAPABILITY", `Headless PBR unavailable: ${capability.reason || probe.reason}`);
+            }
+            if (!environmentKey || !resolved?.renderScene || resolved.renderScene.description?.provider?.id !== "pbr-mesh") {
+                throw supervisorError("INVALID_REQUEST", "PBR preparation requires an environment key and resolved pbr-mesh@1 scene.");
+            }
+            for (const camera of (sensorRig?.sensors || []).filter(
+                (sensor) => sensor.enabled !== false && sensor.type === "camera",
+            )) {
+                const distortion = camera.calibration?.distortion || [];
+                createVisualCameraCalibration({
+                    ...camera.calibration,
+                    distortionModel: camera.calibration?.distortionModel === "plumb_bob"
+                        ? (distortion.length ? "brown-conrady" : "none")
+                        : camera.calibration?.distortionModel,
+                });
+            }
+            await this.releasePbr(environmentKey);
+            const uses = resolved.evidence?.visualAssets?.uses || [];
+            if (uses.length > 0 && (!assetReader
+                || typeof assetReader.authorizeUse !== "function"
+                || typeof assetReader.openUse !== "function")) {
+                throw supervisorError(
+                    "UNSUPPORTED_CAPABILITY",
+                    "PBR asset bytes require exact-use access from a same-host admitted run package.",
+                );
+            }
+            const bytesByDigest = new Map();
+            for (const entry of uses) {
+                await assetReader.authorizeUse(entry.useHash, ["display", "machine-interpretation"]);
+                if (bytesByDigest.has(entry.use.asset.sha256)) continue;
+                const opened = await assetReader.openUse(entry.useHash);
+                bytesByDigest.set(entry.use.asset.sha256, await readOpenedAsset(opened, entry.use.asset.sizeBytes));
+            }
+            const staticBytes = utf8Bytes(resolved.renderScene.description)
+                + [...bytesByDigest.values()].reduce((total, bytes) => total + bytes.byteLength, 0);
+            if (staticBytes > maxGpuBytes) {
+                throw supervisorError("RESOURCE_LIMIT", `PBR preparation requires ${staticBytes} bytes; environment limit is ${maxGpuBytes}.`);
+            }
+            const slot = this.pbrSlotLoads.reduce(
+                (best, load, index, values) => load < values[best] ? index : best,
+                0,
+            );
+            const payload = {
+                environmentKey,
+                resolved,
+                sensorRig,
+                vehicles,
+                uses,
+                assets: [...bytesByDigest].map(([sha256, bytes]) => ({
+                    sha256,
+                    base64: bytes.toString("base64"),
+                })),
+            };
+            const handle = await new Promise((resolve, reject) => {
+                this.queue.push({
+                    kind: "prepare-pbr",
+                    requiredContext: slot,
+                    payload,
+                    resolve,
+                    reject,
+                    timeoutMs: 30_000,
+                });
+                this._drain();
+            });
+            const record = {
+                ...handle,
+                pageGeneration: handle.generation,
+                generation: this.nextPbrGeneration++,
+                resourceHashes: {
+                    renderScene: resolved.renderScene.hash,
+                    visualLayer: resolved.visualLayer?.hash || null,
+                    world: resolved.world?.hash || null,
+                    evidence: resolved.renderScene.description.evidenceHash || null,
+                },
+                slot,
+                bytes: staticBytes,
+                assetDigests: [...bytesByDigest.keys()].sort(),
+                useHashes: [...new Set(uses.map((entry) => entry.useHash))].sort(),
+                cameraAllocations: new Map(),
+            };
+            this.preparedPbr.set(environmentKey, record);
+            if (assetReader) this.pbrAssetReaders.set(environmentKey, assetReader);
+            this.pbrSlotLoads[slot] += 1;
+            this.environmentBytes.set(environmentKey, staticBytes);
+            return publicPbrHandle(record);
+        };
+        const pending = this.pbrPreparationPromise.then(operation, operation);
+        this.pbrPreparationPromise = pending.catch(() => {});
+        return pending;
+    }
+
+    async capturePbrGroup({ environmentKey, handle, requests, maxGpuBytes, timeoutMs = 30_000 }) {
+        if (this.closed) throw infrastructureError("GPU renderer pool is closed.");
+        const prepared = this.preparedPbr.get(environmentKey);
+        if (!prepared || handle?.environmentKey !== environmentKey
+            || handle.generation !== prepared.generation
+            || handle.renderSceneHash !== prepared.renderSceneHash) {
+            throw supervisorError("INVALID_REQUEST", "The PBR renderer handle is stale or belongs to another environment.");
+        }
+        const checkedRequests = validatePbrRequests(requests, prepared);
+        const assetReader = this.pbrAssetReaders.get(environmentKey);
+        for (const useHash of prepared.useHashes) {
+            await assetReader.authorizeUse(useHash, ["display", "machine-interpretation"]);
+        }
+        if (prepared.captureAllocations?.size > 0) {
+            throw supervisorError("INVALID_REQUEST", "Concurrent PBR captures for one environment are unsupported.");
+        }
+        const cameraAllocations = new Map(prepared.cameraAllocations);
+        for (const request of checkedRequests) {
+            const bytes = pbrRetainedCameraBytes(request);
+            cameraAllocations.set(request.id, Math.max(bytes, cameraAllocations.get(request.id) || 0));
+        }
+        const transientBytes = checkedRequests.reduce(
+            (total, request) => total + pbrTransientCaptureBytes(request),
+            0,
+        );
+        const allocation = pbrResidentBytes(prepared, cameraAllocations) + transientBytes;
+        if (allocation > maxGpuBytes) {
+            throw supervisorError("RESOURCE_LIMIT", `PBR capture requires ${allocation} bytes; environment limit is ${maxGpuBytes}.`);
+        }
+        const others = [...this.environmentBytes.entries()]
+            .filter(([key]) => key !== environmentKey)
+            .reduce((total, [, value]) => total + value, 0);
+        const environmentAllocation = Math.max(
+            allocation,
+            ...(prepared.captureAllocations?.values() || []),
+        );
+        if (others + environmentAllocation > this.config.globalGpuBytes) {
+            throw supervisorError("RESOURCE_LIMIT", "GPU renderer global allocation budget is exhausted.");
+        }
+        const allocationToken = Symbol(environmentKey);
+        prepared.captureAllocations ??= new Map();
+        prepared.captureAllocations.set(allocationToken, allocation);
+        this.environmentBytes.set(environmentKey, Math.max(
+            prepared.bytes,
+            ...prepared.captureAllocations.values(),
+        ));
+        const pending = new Promise((resolve, reject) => {
+            this.queue.push({
+                kind: "pbr",
+                requiredContext: prepared.slot,
+                environmentKey,
+                requests: checkedRequests,
+                resolve,
+                reject,
+                timeoutMs: Math.max(1, Number(timeoutMs) || 30_000),
+            });
+            this._drain();
+        });
+        return pending.then((result) => {
+            const validated = validatePbrResults(checkedRequests, result);
+            prepared.cameraAllocations = cameraAllocations;
+            return validated;
+        }).finally(() => {
+            prepared.captureAllocations?.delete(allocationToken);
+            if (this.preparedPbr.get(environmentKey) !== prepared) return;
+            this.environmentBytes.set(environmentKey, Math.max(
+                pbrResidentBytes(prepared),
+                ...prepared.captureAllocations.values(),
+            ));
+        });
     }
 
     async captureGroup({ environmentKey, scene, requests, maxGpuBytes, timeoutMs = 30_000, assetReader = null }) {
@@ -673,6 +1215,7 @@ export class PooledGpuRenderer {
         this.environmentBytes.set(environmentKey, allocation);
         return new Promise((resolve, reject) => {
             this.queue.push({
+                kind: "analytic",
                 cached,
                 requests,
                 resolve,
@@ -690,6 +1233,10 @@ export class PooledGpuRenderer {
         this.startPromise = null;
         this.probeResult = null;
         this.availableContexts = [];
+        this.preparedPbr.clear();
+        this.pbrAssetReaders.clear();
+        this.pbrSlotLoads = [];
+        this.environmentBytes.clear();
         const failure = infrastructureError(`GPU renderer must restart: ${error.message}`);
         for (const queued of this.queue.splice(0)) queued.reject(failure);
         const closing = Promise.resolve().then(() => adapter.close()).catch(() => {});
@@ -702,8 +1249,15 @@ export class PooledGpuRenderer {
 
     _drain() {
         while (this.availableContexts.length > 0 && this.queue.length > 0) {
-            const context = this.availableContexts.shift();
-            const job = this.queue.shift();
+            const jobIndex = this.queue.findIndex((entry) => (
+                entry.requiredContext === undefined || this.availableContexts.includes(entry.requiredContext)
+            ));
+            if (jobIndex < 0) return;
+            const job = this.queue.splice(jobIndex, 1)[0];
+            const contextIndex = job.requiredContext === undefined
+                ? 0
+                : this.availableContexts.indexOf(job.requiredContext);
+            const context = this.availableContexts.splice(contextIndex, 1)[0];
             const adapter = this.adapter;
             const generation = this.adapterGeneration;
             this.busyContexts += 1;
@@ -713,9 +1267,16 @@ export class PooledGpuRenderer {
                     `GPU capture exceeded its ${job.timeoutMs}-ms wall timeout.`,
                 )), job.timeoutMs);
             });
-            Promise.race([adapter.captureGroup(job.cached.description, job.requests, context, {
-                assetReader: job.assetReader,
-            }), timeout])
+            let capture;
+            if (job.kind === "prepare-pbr") capture = adapter.preparePbr(job.payload, context);
+            else if (job.kind === "release-pbr") capture = adapter.releasePbr(job.environmentKey);
+            else if (job.kind === "pbr") capture = adapter.capturePbr(job.environmentKey, job.requests);
+            else {
+                capture = adapter.captureGroup(job.cached.description, job.requests, context, {
+                    assetReader: job.assetReader,
+                });
+            }
+            Promise.race([capture, timeout])
                 .then(job.resolve)
                 .catch((error) => {
                     job.reject(error);
@@ -733,8 +1294,37 @@ export class PooledGpuRenderer {
         }
     }
 
+    async releasePbr(environmentKey) {
+        const prepared = this.preparedPbr.get(environmentKey);
+        if (!prepared) return false;
+        this.preparedPbr.delete(environmentKey);
+        this.pbrAssetReaders.delete(environmentKey);
+        this.pbrSlotLoads[prepared.slot] = Math.max(0, this.pbrSlotLoads[prepared.slot] - 1);
+        const cancellation = infrastructureError("PBR capture was cancelled while releasing its environment.");
+        this.queue = this.queue.filter((job) => {
+            if (job.kind !== "pbr" || job.environmentKey !== environmentKey) return true;
+            job.reject(cancellation);
+            return false;
+        });
+        if (this.adapter?.releasePbr) {
+            await new Promise((resolve, reject) => {
+                this.queue.push({
+                    kind: "release-pbr",
+                    requiredContext: prepared.slot,
+                    environmentKey,
+                    resolve,
+                    reject,
+                    timeoutMs: 30_000,
+                });
+                this._drain();
+            });
+        }
+        return true;
+    }
+
     releaseEnvironment(environmentKey) {
         this.environmentBytes.delete(environmentKey);
+        this.releasePbr(environmentKey).catch(() => {});
     }
 
     diagnostics() {
@@ -745,6 +1335,9 @@ export class PooledGpuRenderer {
             queuedJobs: this.queue.length,
             sceneCount: this.scenes.size,
             sceneBytes: this.sceneBytes,
+            preparedPbrEnvironments: this.preparedPbr.size,
+            pbrSlotLoads: [...this.pbrSlotLoads],
+            pbrCapability: this.pbrCapability(),
             trackedGpuBytes: [...this.environmentBytes.values()].reduce((total, value) => total + value, 0),
             provenance: this.probeResult?.provenance || null,
         };
@@ -759,6 +1352,9 @@ export class PooledGpuRenderer {
         await this.adapter?.close().catch(() => {});
         this.adapter = null;
         this.environmentBytes.clear();
+        this.preparedPbr.clear();
+        this.pbrAssetReaders.clear();
+        this.pbrSlotLoads = [];
         this.scenes.clear();
         this.sceneBytes = 0;
     }

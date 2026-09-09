@@ -7,7 +7,7 @@ import test from "node:test";
 import { createDefaultScenario } from "../app/scenarios/ScenarioDocument.js";
 import { verifyRoute } from "../app/scenarios/route/Route.js";
 import { createDefaultRunManifest, computeResolvedRunHash } from "../app/simulation/RunManifest.js";
-import { RunSessionController } from "../app/simulation/RunSessionController.js";
+import { assertEnabledCameraRenderRuntime } from "../app/simulation/render/RenderSceneProviderRegistry.js";
 import {
     computeEpisodeHash,
     computeSimulationSemanticHash,
@@ -35,6 +35,7 @@ import {
     verifyRunBundleIntegrity,
 } from "../server/headless/RunBundle.js";
 import { SupervisorRunner } from "../server/headless/SupervisorRunner.js";
+import { HeadlessSupervisor } from "../server/headless/HeadlessSupervisor.js";
 import { StorageService } from "../server/storage/StorageService.js";
 import {
     makeNamedMaterialGlb,
@@ -250,11 +251,10 @@ test("VIS-12b resolves an owned selected PBR scene with exact recipe, actor, IBL
 
     const bundle = await service.exportRunManifest("owned-pbr");
     verifyRunBundleIntegrity(bundle);
-    assert.throws(() => verifyRunBundle(bundle), (error) => (
-        error.code === "UNSUPPORTED_CAPABILITY" && /pbr-mesh@1/.test(error.message)
-    ));
+    verifyRunBundle(bundle);
     const inspection = inspectRunBundle(bundle);
-    assert.equal(inspection.execution.supported, false);
+    assert.equal(inspection.execution.implementationSupported, true);
+    assert.equal(inspection.execution.hostReady, null);
     assert.equal(inspection.renderScene.assetCount, 6);
     assert.equal(inspection.visualEvidence.correspondenceStatus, "unverified-reference");
     assert.match(inspection.visualEvidence.offlineLimitations.join(" "), /not establish current asset availability or rights/);
@@ -601,23 +601,27 @@ test("VIS-12b integrity rejects rehashed inner tampering, profile drift, and dup
     assert.throws(() => normalizePbrRenderRecipe({ actors: [{ actorId: "e\u0301go" }] }), /NFC/);
 });
 
-test("VIS-12b inspection succeeds offline while every browser/headless execution boundary rejects early", async (t) => {
+test("VIS-15a inspection separates static PBR support from supervisor host readiness", async (t) => {
     const { directory, service } = await fixture(t);
     const bundle = await service.exportRunManifest("owned-pbr");
     const bundlePath = path.join(directory, "owned-pbr.bundle.json");
     await fs.writeFile(bundlePath, canonicalRunBundleStringify(bundle));
     const inspection = await inspectTarget(bundlePath);
-    assert.equal(inspection.execution.supported, false);
+    assert.equal(inspection.execution.implementationSupported, true);
+    assert.equal(inspection.execution.hostReady, null);
+    assert.match(inspection.execution.hostReadinessReason, /PBR probes/);
     assert.match(inspection.visualEvidence.offlineLimitations.join(" "), /does not establish current asset availability or rights/);
 
-    const controller = new RunSessionController();
-    controller.snapshot.activeRunId = "existing-browser-run";
-    controller.snapshot.status = "running";
-    let stopped = false;
-    controller.stop = async () => { stopped = true; };
-    await assert.rejects(controller.prepare(bundle.resolved), /pbr-mesh@1.*unavailable/);
-    assert.equal(stopped, false);
-    assert.equal(controller.snapshot.activeRunId, "existing-browser-run");
+    assert.equal(assertEnabledCameraRenderRuntime(
+        bundle.resolved.manifest.sensorRig.sensors,
+        bundle.resolved.renderScene,
+        { target: "browser" },
+    ).provider.id, "pbr-mesh");
+    assert.equal(assertEnabledCameraRenderRuntime(
+        bundle.resolved.manifest.sensorRig.sensors,
+        bundle.resolved.renderScene,
+        { target: "headless" },
+    ).provider.id, "pbr-mesh");
 
     const session = new HeadlessSession();
     await assert.rejects(session.prepare(bundle), (error) => error.code === "UNSUPPORTED_CAPABILITY");
@@ -625,16 +629,35 @@ test("VIS-12b inspection succeeds offline while every browser/headless execution
 
     let supervisorCreated = false;
     const runner = new SupervisorRunner({
-        supervisorFactory: () => {
+        supervisorFactory: (options) => {
             supervisorCreated = true;
-            throw new Error("must not create supervisor");
+            return new HeadlessSupervisor({
+                ...options,
+                rendererAdapterFactory: () => ({
+                    provenance: null,
+                    async start() {
+                        this.provenance = {
+                            renderer: "hardware-test-gpu",
+                            floatColorBuffer: true,
+                            floatFramebufferComplete: true,
+                            readbackCheck: true,
+                            pbrRuntime: false,
+                        };
+                    },
+                    async close() {},
+                }),
+            });
         },
     });
     await assert.rejects(runner.run(bundle, {
-        config: {},
+        config: {
+            kind: "cev-sim.headless-supervisor-config",
+            version: 1,
+            renderer: { chromiumExecutable: "/fake/chromium" },
+        },
         outputUri: path.join(directory, "output"),
     }), (error) => error.code === "UNSUPPORTED_CAPABILITY");
-    assert.equal(supervisorCreated, false);
+    assert.equal(supervisorCreated, true);
 });
 
 test("VIS-12b JSON import rejects missing local dependencies without installing visual asset bytes", async (t) => {

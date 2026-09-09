@@ -138,6 +138,14 @@ import {
     validateHeadlessExperimentQueue,
 } from "../headless/HeadlessExperimentQueue.js";
 import {
+    MANAGED_BASELINE_ROOT_KIND,
+    MANAGED_RESULT_ROOT_KIND,
+    MANAGED_VISUAL_ASSET_OPERATIONS,
+    isManagedPbrRun,
+    managedBaselineRootOwner,
+    managedResultRootOwner,
+} from "../headless/ManagedVisualAssetAdmission.js";
+import {
     hashEnvironmentRoadNetwork,
     validateRouteVerification,
 } from "../../app/scenarios/route/index.js";
@@ -1292,8 +1300,8 @@ export class StorageService {
         return validateExperimentResult(source);
     }
 
-    deleteExperimentResult(resultId, expectedRevision) {
-        return this._deleteRevisionedDocument({
+    async deleteExperimentResult(resultId, expectedRevision) {
+        const deleted = await this._deleteRevisionedDocument({
             id: resultId,
             filePath: this._experimentResultPath(resultId),
             writeChains: this._experimentResultWriteChains,
@@ -1301,6 +1309,14 @@ export class StorageService {
             expectedRevision,
             label: "Experiment result",
         });
+        if (!deleted) return false;
+        const ownerId = managedResultRootOwner(resultId);
+        const root = await this.visualAssets.getRoot(ownerId);
+        if (root?.ownerKind === MANAGED_RESULT_ROOT_KIND) {
+            await this.visualAssets.releaseRoot({ ownerId, expectedGeneration: root.generation });
+        }
+        await this.deleteHeadlessRunBundles(resultId).catch(() => {});
+        return true;
     }
 
     async listExperimentBaselines(suiteId = null) {
@@ -1359,7 +1375,28 @@ export class StorageService {
             ...normalizeExperimentBaseline(validation.baseline),
             definitionHash: semanticHash(validation.baseline),
         };
-        return this._writeExperimentBaseline(stored.id, stored);
+        return this._writeExperimentBaseline(stored.id, stored, {
+            beforeWrite: async () => {
+                const sourceSidecars = stored.sourceResultId
+                    ? await this.readHeadlessRunBundles(stored.sourceResultId)
+                    : null;
+                const retainedUses = [...new Set((sourceSidecars?.bundles || [])
+                    .filter((bundle) => isManagedPbrRun(bundle.resolved))
+                    .flatMap((bundle) => (bundle.resolved.evidence?.visualAssets?.uses || []).map((entry) => entry.useHash)))]
+                    .sort();
+                if (retainedUses.length === 0) return null;
+                const root = await this.visualAssets.acquireRoot({
+                    ownerId: managedBaselineRootOwner(stored.id),
+                    ownerKind: MANAGED_BASELINE_ROOT_KIND,
+                    useHashes: retainedUses,
+                    operations: [...MANAGED_VISUAL_ASSET_OPERATIONS],
+                });
+                return async () => this.visualAssets.releaseRoot({
+                    ownerId: root.ownerId,
+                    expectedGeneration: root.generation,
+                });
+            },
+        });
     }
 
     async validateExperimentBaseline(baselineId, input = null) {
@@ -1368,8 +1405,8 @@ export class StorageService {
         return validateExperimentBaseline(source);
     }
 
-    deleteExperimentBaseline(baselineId) {
-        return this._deleteRevisionedDocument({
+    async deleteExperimentBaseline(baselineId) {
+        const deleted = await this._deleteRevisionedDocument({
             id: baselineId,
             filePath: this._experimentBaselinePath(baselineId),
             writeChains: this._experimentBaselineWriteChains,
@@ -1377,6 +1414,13 @@ export class StorageService {
             expectedRevision: undefined,
             label: "Experiment baseline",
         });
+        if (!deleted) return false;
+        const ownerId = managedBaselineRootOwner(baselineId);
+        const root = await this.visualAssets.getRoot(ownerId);
+        if (root?.ownerKind === MANAGED_BASELINE_ROOT_KIND) {
+            await this.visualAssets.releaseRoot({ ownerId, expectedGeneration: root.generation });
+        }
+        return true;
     }
 
     async _experimentPlanningContext(suiteValue, { resolveDependencies = false } = {}) {
@@ -2471,14 +2515,20 @@ export class StorageService {
         return operation;
     }
 
-    async _writeExperimentBaseline(baselineId, baseline) {
+    async _writeExperimentBaseline(baselineId, baseline, { beforeWrite = null } = {}) {
         safeSegment(baselineId);
         const previous = this._experimentBaselineWriteChains.get(baselineId) ?? Promise.resolve();
         const operation = previous.catch(() => {}).then(async () => {
             if (await this.getExperimentBaseline(baselineId)) {
                 throw new Error(`Experiment baseline "${baselineId}" already exists and is immutable.`);
             }
-            return this._fileStore(this._experimentBaselinePath(baselineId), null).write(baseline);
+            const rollback = await beforeWrite?.();
+            try {
+                return await this._fileStore(this._experimentBaselinePath(baselineId), null).write(baseline);
+            } catch (error) {
+                await rollback?.().catch(() => {});
+                throw error;
+            }
         });
         this._experimentBaselineWriteChains.set(baselineId, operation);
         operation.finally(() => {
@@ -2659,21 +2709,30 @@ export class StorageService {
         const stagingDir = `${bundleDir}.tmp-${process.pid}-${Date.now()}`;
         await fs.mkdir(stagingDir, { recursive: true });
         try {
+            const encodedBundles = bundles.map((bundle) => {
+                const bytes = runBundleBytes(bundle);
+                const verified = verifyRunBundleBytes(bytes);
+                return { bundle: verified.bundle, bytes, bundleBytesHash: verified.bundleBytesHash };
+            });
             const normalizedManifest = normalizeHeadlessRunBundleManifest({
                 ...manifest,
                 resultId,
                 caseCount: bundles.length,
+                cases: encodedBundles.map((entry, index) => ({
+                    ...(manifest.cases?.[index] ?? {}),
+                    bundleBytesHash: entry.bundleBytesHash,
+                })),
             });
             await fs.writeFile(
                 path.join(stagingDir, "manifest.json"),
                 `${JSON.stringify(normalizedManifest, null, 2)}\n`,
                 "utf8",
             );
-            for (let index = 0; index < bundles.length; index += 1) {
+            for (let index = 0; index < encodedBundles.length; index += 1) {
                 const fileName = `case-${String(index).padStart(4, "0")}.bundle.json`;
                 await fs.writeFile(
                     path.join(stagingDir, fileName),
-                    runBundleBytes(bundles[index]),
+                    encodedBundles[index].bytes,
                 );
             }
             await fs.rm(bundleDir, { recursive: true, force: true });
@@ -2698,12 +2757,25 @@ export class StorageService {
         }
         const manifest = normalizeHeadlessRunBundleManifest(JSON.parse(manifestText));
         const bundles = [];
+        const bundleRecords = [];
         for (let index = 0; index < manifest.caseCount; index += 1) {
             const fileName = `case-${String(index).padStart(4, "0")}.bundle.json`;
             const bundleBytes = await fs.readFile(path.join(bundleDir, fileName));
-            bundles.push(verifyRunBundleBytes(bundleBytes).bundle);
+            const expectedBundleBytesHash = manifest.version >= 2
+                ? manifest.cases[index]?.bundleBytesHash
+                : undefined;
+            if (manifest.version >= 2 && !/^[a-f0-9]{64}$/.test(expectedBundleBytesHash || "")) {
+                throw new Error(`Headless run-bundle sidecar ${index} has no valid exact-byte digest.`);
+            }
+            const verified = verifyRunBundleBytes(bundleBytes, { expectedBundleBytesHash });
+            bundles.push(verified.bundle);
+            bundleRecords.push({
+                bundle: verified.bundle,
+                bundleBytes: verified.bundleBytes,
+                bundleBytesHash: verified.bundleBytesHash,
+            });
         }
-        return { manifest, bundles };
+        return { manifest, bundles, bundleRecords };
     }
 
     async deleteHeadlessRunBundles(resultId) {

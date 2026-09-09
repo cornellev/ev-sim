@@ -279,6 +279,41 @@ test("glTF URI guard rejects relative, network, file, and unknown URIs before a 
     }
 });
 
+test("resolved measured materialization strips imported authority and requires capture rights", async () => {
+    const documents = layerDocuments({ meshBytes: makeNamedMaterialGlb("brick") });
+    const previewRoot = new THREE.Group();
+    const parser = parseNamedScene();
+    const clients = clientsFor(documents);
+    const operations = [];
+    clients.assetClient.validateClosure = async (request) => { operations.push(request.operations); };
+    const materializer = new VisualLayerMaterializer({
+        previewRoot,
+        THREE,
+        KTX2Loader: null,
+        parseGltf: parser.parseGltf,
+        decodeTexture: async () => fakeTexture(),
+        ...clients,
+        sceneRole: "measured-appearance",
+        requiredOperations: ["display", "machine-interpretation"],
+        strict: true,
+    });
+    const status = await materializer.replaceResolved({
+        descriptor: documents.descriptor,
+        access: documents.access,
+        uses: documents.uses,
+    }, worldResource());
+    assert.equal(status.status, VISUAL_PREVIEW_STATUS.ready);
+    const mesh = previewRoot.getObjectByProperty("type", "Mesh");
+    assert.equal(mesh.userData.perceptionSourceId, undefined);
+    assert.equal(mesh.userData.buildingId, undefined);
+    assert.equal(mesh.userData.cevSimMeasuredAppearance, true);
+    assert.ok(operations.length > 0);
+    assert.ok(operations.every((value) => (
+        JSON.stringify(value) === JSON.stringify(["display", "machine-interpretation"])
+    )));
+    materializer.dispose();
+});
+
 test("materializer applies descriptor materials, exact matrices, unlit output, and top LOD only", async () => {
     const meshBytes = makeNamedMaterialGlb("brick");
     const lodBytes = makeNamedMaterialGlb("brick", { extras: { lod: true } });

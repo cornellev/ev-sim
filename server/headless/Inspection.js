@@ -23,12 +23,13 @@ export function inspectRunBundle(bundle) {
     const renderScene = verified.resolved.renderScene ?? null;
     const provider = renderScene?.description?.provider ?? null;
     const capability = provider
-        ? renderSceneProviderRegistry.runtimeCapabilities().find((entry) => (
+        ? renderSceneProviderRegistry.runtimeCapabilities({ target: "headless" }).find((entry) => (
             entry.id === provider.id && entry.version === provider.version
         )) ?? null
         : null;
     const visualEvidence = verified.resolved.evidence?.visualAssets ?? null;
     const correspondence = verified.resolved.evidence?.correspondence ?? null;
+    const implementationSupported = provider === null || capability?.available === true;
     return {
         kind: "cev-sim.headless.bundle-inspection",
         version: 1,
@@ -52,8 +53,13 @@ export function inspectRunBundle(bundle) {
             assetCount: renderScene.description.assetClosure?.assets?.length ?? 0,
         } : null,
         execution: {
-            supported: provider === null || capability?.available === true,
-            reason: provider === null || capability?.available === true
+            supported: implementationSupported,
+            implementationSupported,
+            hostReady: null,
+            hostReadinessReason: provider?.id === "pbr-mesh"
+                ? "Host readiness requires configured target-specific PBR probes from a running supervisor."
+                : "Host readiness requires a running supervisor capability probe.",
+            reason: implementationSupported
                 ? null
                 : capability?.unavailableReason ?? "No selected render runtime capability is available.",
         },

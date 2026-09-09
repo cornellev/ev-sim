@@ -327,6 +327,43 @@ test("aligned renderer publishes visual and separate analytic products atomicall
     aligned.dispose();
 });
 
+test("VIS-15a aligned capture accepts asynchronous readback without using the browser default", async () => {
+    const state = scenes();
+    const { visualPassSet, analyticPassSet } = passSets(state);
+    const renderer = new FakeRenderer();
+    let asynchronousReads = 0;
+    const aligned = new AlignedCaptureProducts({
+        renderer,
+        camera: new THREE.PerspectiveCamera(),
+        visualSceneHandle: state.visualHandle,
+        analyticSceneHandle: state.analyticHandle,
+        authorizeSourceUse: async () => {},
+        readback: async (_renderer, target, output, { signal }) => {
+            signal.throwIfAborted();
+            await Promise.resolve();
+            renderer.readRenderTargetPixels(target, 0, 0, target.width, target.height, output);
+            asynchronousReads += 1;
+        },
+    });
+    const result = await aligned.capture({
+        visualPassSet,
+        visualRenderables: new Map([
+            ["occluder-mesh", state.occluder],
+            ["target-mesh", state.target],
+        ]),
+        analyticPassSet,
+        analyticRenderables: new Map([
+            ["truth-near", state.truthNear],
+            ["truth-far", state.truthFar],
+        ]),
+        signal: new AbortController().signal,
+    });
+    assert.ok(asynchronousReads > 1);
+    assert.equal(renderer.readCalls, asynchronousReads);
+    assert.deepEqual([...result.analytic.products.semanticId], [7, 8]);
+    aligned.dispose();
+});
+
 test("rights denial, cancellation, and readback errors restore state and publish no partial result", async () => {
     const state = scenes();
     const { visualPassSet } = passSets(state);

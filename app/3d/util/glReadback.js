@@ -154,3 +154,30 @@ export class PixelPackSlot {
         this.sync = null;
     }
 }
+
+/** Await one render-target read through a WebGL2 pixel-pack buffer and fence. */
+export async function readRenderTargetPixelsWithFence(renderer, target, buffer, {
+    signal = null,
+    timeoutMs = 2000,
+} = {}) {
+    const gl = getWebGL2Context(renderer);
+    if (!gl) throw new Error("Asynchronous PBR readback requires WebGL2 PBO/fence support.");
+    const slot = new PixelPackSlot(gl, buffer.byteLength);
+    const type = buffer instanceof Float32Array ? gl.FLOAT : gl.UNSIGNED_BYTE;
+    const started = Date.now();
+    try {
+        signal?.throwIfAborted?.();
+        slot.begin(0, 0, target.width, target.height, gl.RGBA, type);
+        while (true) {
+            signal?.throwIfAborted?.();
+            if (gl.isContextLost?.()) throw new Error("WebGL2 context was lost during asynchronous readback.");
+            if (slot.poll(buffer)) return buffer;
+            if (Date.now() - started >= timeoutMs || !slot.pending) {
+                throw new Error(`Asynchronous PBR readback exceeded ${timeoutMs} ms.`);
+            }
+            await new Promise((resolve) => setTimeout(resolve, 0));
+        }
+    } finally {
+        slot.dispose();
+    }
+}

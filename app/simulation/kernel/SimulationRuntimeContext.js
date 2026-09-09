@@ -68,6 +68,23 @@ export function createSimulationRuntimeContext(options = {}) {
                 return options.environmentState?.() ?? null;
             },
         },
+        rendering: {
+            target() {
+                return options.renderTarget ?? "headless";
+            },
+            prepare(resolvedRun, runtimeOptions) {
+                return options.prepareRendering?.(resolvedRun, runtimeOptions) ?? null;
+            },
+            current() {
+                return options.currentRendering?.() ?? null;
+            },
+            status() {
+                return options.renderingStatus?.() ?? null;
+            },
+            dispose() {
+                return options.disposeRendering?.();
+            },
+        },
         inputs: {
             update(dt) {
                 return manager(options.inputs)?.update?.(dt);

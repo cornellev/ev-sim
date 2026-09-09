@@ -992,3 +992,21 @@ CLI/Python lifecycle handling. Protocol 1.4, protobuf field numbers, exact
 bundle/episode identities, and the characterization baseline are unchanged.
 This is maintenance of the separate visual milestone, not a new headless PR
 or completion of PR 12's outstanding hosted/hardware acceptance evidence.
+
+### 2026-09-09 — VIS-15a activates configuration-gated headless PBR backend v2
+
+The separate visual program implements normal-worker `pbr-mesh@1` execution
+through the supervisor-owned Chromium pool and activates the already locked
+`chromium-webgl2-rendered-sensors@2` identity. Version 1 remains the default
+analytic backend. Version 2 is advertised only when PBR is explicitly enabled,
+the selected local-development, AGX Orin, or AGX Thor target matches the host,
+and PBR material, Basis/KTX2 decoder, float-target, and asynchronous-readback
+probes all pass. NVIDIA x64 remains unadvertised.
+
+This activation changes no protobuf declaration, protocol 1.4 surface,
+manifest or bundle version, backend configuration hash, episode/semantic hash,
+trajectory contract, or action-tape characterization. Managed execution and
+installed runtime closure remain visual milestones VIS-15b and VIS-15c. The
+headless PR 12 hosted, soak, x64 NVIDIA, and Jetson ARM64 candidate evidence
+remains governed by this roadmap and is not completed by the VIS-15a local GPU
+fixture.

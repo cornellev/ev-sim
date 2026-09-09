@@ -312,6 +312,7 @@ function prepareProxyScene(sceneHandle, passSet, renderables) {
 
     const proxy = new THREE.Scene();
     const materials = [];
+    const entries = [];
     try {
         checkedHandle.scene.traverse((object) => {
             if (!effectiveVisible(object)) return;
@@ -351,9 +352,18 @@ function prepareProxyScene(sceneHandle, passSet, renderables) {
             mesh.castShadow = false;
             mesh.receiveShadow = false;
             proxy.add(mesh);
+            entries.push({ source: object, proxy: mesh });
         });
         proxy.updateMatrixWorld(true);
-        return { scene: proxy, materials };
+        return {
+            scene: proxy,
+            materials,
+            entries,
+            bindingObjects: new Map(passSet.bindings.map((record) => [
+                record.renderableId,
+                resolved.get(record.renderableId),
+            ])),
+        };
     } catch (error) {
         for (const material of materials) material.dispose();
         proxy.clear();
@@ -395,6 +405,36 @@ function zeroInvalid(data, channels, validity) {
 
 function warpNearest(data, calibration, channels) {
     return warpCalibratedImage({ data, calibration, channels, interpolation: "nearest" });
+}
+
+function disposePrepared(prepared) {
+    for (const material of prepared?.materials ?? []) material.dispose();
+    prepared?.scene.clear();
+}
+
+function syncPrepared(prepared, sceneHandle, passSet, renderables) {
+    if (!prepared || prepared.sceneRole !== sceneHandle.role
+        || prepared.sceneGeneration !== sceneHandle.generation
+        || prepared.sceneDescriptionHash !== sceneHandle.descriptionHash
+        || prepared.bindingSignature !== JSON.stringify(passSet.bindings)) return false;
+    const resolved = renderableMap(renderables, `${passSet.family} renderables`);
+    for (const [id, object] of prepared.bindingObjects) {
+        if (resolved.get(id) !== object) return false;
+    }
+    const visibleMeshes = [];
+    sceneHandle.scene.traverse((object) => {
+        if (object.isMesh && effectiveVisible(object)) visibleMeshes.push(object);
+    });
+    if (visibleMeshes.length !== prepared.entries.length
+        || visibleMeshes.some((object, index) => object !== prepared.entries[index].source)) return false;
+    for (const entry of prepared.entries) {
+        entry.proxy.matrix.copy(entry.source.matrixWorld);
+        entry.proxy.matrixWorld.copy(entry.source.matrixWorld);
+        entry.proxy.layers.mask = entry.source.layers.mask;
+        entry.proxy.renderOrder = entry.source.renderOrder;
+    }
+    prepared.scene.updateMatrixWorld(true);
+    return true;
 }
 
 function snapshotRenderer(renderer) {
@@ -510,6 +550,8 @@ export class AlignedCaptureProducts {
         analyticSceneHandle = null,
         authorizeSourceUse = null,
         createRenderTarget = null,
+        renderPolicy = null,
+        readback = null,
     } = {}) {
         if (!renderer || !camera) {
             throw captureError("VISUAL_CAPTURE_RENDERER_INVALID", "Renderer and camera are required.");
@@ -519,6 +561,8 @@ export class AlignedCaptureProducts {
         this.visualSceneHandle = visualSceneHandle;
         this.analyticSceneHandle = analyticSceneHandle;
         this.authorizeSourceUse = authorizeSourceUse;
+        this.renderPolicy = renderPolicy;
+        this.readback = readback;
         this.createRenderTarget = createRenderTarget ?? ((width, height, options) => (
             new THREE.WebGLRenderTarget(width, height, options)
         ));
@@ -526,7 +570,21 @@ export class AlignedCaptureProducts {
             throw captureError("VISUAL_CAPTURE_RENDERER_INVALID", "createRenderTarget must be a function.");
         }
         this.targets = new Map();
+        this.preparedFamilies = new Map();
         this.disposed = false;
+    }
+
+    _prepare(passSet, sceneHandle, renderables) {
+        const existing = this.preparedFamilies.get(passSet.family);
+        if (syncPrepared(existing, sceneHandle, passSet, renderables)) return existing;
+        disposePrepared(existing);
+        const prepared = prepareProxyScene(sceneHandle, passSet, renderables);
+        prepared.sceneRole = sceneHandle.role;
+        prepared.sceneGeneration = sceneHandle.generation;
+        prepared.sceneDescriptionHash = sceneHandle.descriptionHash;
+        prepared.bindingSignature = JSON.stringify(passSet.bindings);
+        this.preparedFamilies.set(passSet.family, prepared);
+        return prepared;
     }
 
     async _authorize(passSet, signal) {
@@ -561,51 +619,58 @@ export class AlignedCaptureProducts {
         return target;
     }
 
-    _render(scene, target, ArrayType, signal, { mode = null, materials = [] } = {}) {
+    async _render(scene, target, ArrayType, signal, { mode = null, materials = [] } = {}) {
         abortIfRequested(signal);
         assertContextAvailable(this.renderer, { requireFloat: target.texture.type === THREE.FloatType });
         for (const material of materials) material.uniforms.captureMode.value = mode;
         this.renderer.setRenderTarget(target);
-        this.renderer.setClearColor(0x000000, 0);
+        const background = mode === null ? this.renderPolicy?.backgroundColorRgba : null;
+        this.renderer.setClearColor(
+            background ? new THREE.Color(background[0], background[1], background[2]) : 0x000000,
+            background ? background[3] : 0,
+        );
         this.renderer.clear?.(true, true, true);
         this.renderer.render(scene, this.camera);
         abortIfRequested(signal);
         assertContextAvailable(this.renderer, { requireFloat: target.texture.type === THREE.FloatType });
         const buffer = new ArrayType(target.width * target.height * 4);
-        withPixelPackBufferUnbound(this.renderer, () => {
-            this.renderer.readRenderTargetPixels(
-                target,
-                0,
-                0,
-                target.width,
-                target.height,
-                buffer,
-            );
-        });
+        if (this.readback) await this.readback(this.renderer, target, buffer, { signal });
+        else {
+            withPixelPackBufferUnbound(this.renderer, () => {
+                this.renderer.readRenderTargetPixels(
+                    target,
+                    0,
+                    0,
+                    target.width,
+                    target.height,
+                    buffer,
+                );
+            });
+        }
         abortIfRequested(signal);
         return normalizeImageRows(buffer, target.width, target.height, 4, { inputRows: "bottom-left" });
     }
 
-    _captureFamily(passSet, sceneHandle, prepared, signal) {
+    async _captureFamily(passSet, sceneHandle, prepared, signal) {
         const { width, height } = passSet.captureInput.calibration.image;
         const requested = new Set(passSet.products);
         const floatTarget = () => this._target("float", width, height);
         const idTarget = this._target("id", width, height);
-        const renderFloat = (mode, channels) => extractChannels(this._render(
+        const renderFloat = async (mode, channels) => extractChannels(await this._render(
             prepared.scene,
             floatTarget(),
             Float32Array,
             signal,
             { mode, materials: prepared.materials },
         ), channels);
-        const renderId = (mode) => decodeUint32(this._render(
+        const renderId = async (mode) => decodeUint32(await this._render(
             prepared.scene,
             idTarget,
             Uint8Array,
             signal,
             { mode, materials: prepared.materials },
         ));
-        const rawValidity = extractChannels(this._render(
+        const rawValidity = extractChannels(await this._render(
             prepared.scene,
             idTarget,
             Uint8Array,
@@ -620,7 +685,7 @@ export class AlignedCaptureProducts {
         const products = { validity };
         if (passSet.family === VISUAL_CAPTURE_PASS_FAMILIES.visual && requested.has("beauty")) {
             const beautyTarget = this._target("beauty", width, height);
-            const rawBeauty = this._render(
+            const rawBeauty = await this._render(
                 sceneHandle.scene,
                 beautyTarget,
                 Uint8Array,
@@ -642,7 +707,7 @@ export class AlignedCaptureProducts {
         for (const [requestName, resultName, mode, channels] of numeric) {
             if (!requested.has(requestName)) continue;
             const warped = warpNearest(
-                renderFloat(mode, channels),
+                await renderFloat(mode, channels),
                 passSet.captureInput.calibration,
                 channels,
             ).data;
@@ -660,7 +725,7 @@ export class AlignedCaptureProducts {
         for (const [requestName, resultName, mode] of ids) {
             if (!requested.has(requestName)) continue;
             const warped = warpNearest(
-                renderId(mode),
+                await renderId(mode),
                 passSet.captureInput.calibration,
                 1,
             ).data;
@@ -722,18 +787,23 @@ export class AlignedCaptureProducts {
         let analyticResult = null;
         try {
             visualPrepared = visual
-                ? prepareProxyScene(this.visualSceneHandle, visual, visualRenderables)
+                ? this._prepare(visual, this.visualSceneHandle, visualRenderables)
                 : null;
             analyticPrepared = analytic
-                ? prepareProxyScene(this.analyticSceneHandle, analytic, analyticRenderables)
+                ? this._prepare(analytic, this.analyticSceneHandle, analyticRenderables)
                 : null;
             const input = visual?.captureInput ?? analytic.captureInput;
             applyCaptureCamera(this.camera, input);
             if (this.renderer.xr) this.renderer.xr.enabled = false;
             if (this.renderer.shadowMap) this.renderer.shadowMap.enabled = false;
             this.renderer.autoClear = false;
+            if (this.renderPolicy) {
+                this.renderer.toneMapping = THREE.NoToneMapping;
+                this.renderer.toneMappingExposure = Number(this.renderPolicy.exposure ?? 1);
+                this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+            }
             if (visual) {
-                visualResult = this._captureFamily(
+                visualResult = await this._captureFamily(
                     visual,
                     this.visualSceneHandle,
                     visualPrepared,
@@ -741,7 +811,7 @@ export class AlignedCaptureProducts {
                 );
             }
             if (analytic) {
-                analyticResult = this._captureFamily(
+                analyticResult = await this._captureFamily(
                     analytic,
                     this.analyticSceneHandle,
                     analyticPrepared,
@@ -758,10 +828,6 @@ export class AlignedCaptureProducts {
             this._disposeTargets();
             throw error;
         } finally {
-            for (const prepared of [analyticPrepared, visualPrepared]) {
-                for (const material of prepared?.materials ?? []) material.dispose();
-                prepared?.scene.clear();
-            }
             restoreSceneState(analyticSceneState);
             restoreSceneState(visualSceneState);
             restoreCamera(this.camera, cameraState);
@@ -772,7 +838,10 @@ export class AlignedCaptureProducts {
     dispose() {
         if (this.disposed) return;
         this._disposeTargets();
+        for (const prepared of this.preparedFamilies.values()) disposePrepared(prepared);
+        this.preparedFamilies.clear();
         this.createRenderTarget = null;
+        this.readback = null;
         this.disposed = true;
     }
 

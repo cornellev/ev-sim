@@ -52,6 +52,9 @@ export class VisualLayerMaterializer {
         cache = null,
         profile = getVisualScaleProfile(),
         lodPolicy = defaultVisualLodPolicy(),
+        sceneRole = "preview",
+        requiredOperations = ["display"],
+        strict = false,
     } = {}) {
         this.previewRoot = previewRoot;
         this.renderer = renderer;
@@ -64,6 +67,17 @@ export class VisualLayerMaterializer {
         this.parseGltf = parseGltf;
         this.profile = profile;
         this.lodPolicy = lodPolicy;
+        if (!["preview", "measured-appearance"].includes(sceneRole)) {
+            throw new TypeError(`Unsupported visual materializer scene role "${sceneRole}".`);
+        }
+        this.sceneRole = sceneRole;
+        this.requiredOperations = [...requiredOperations];
+        this.strict = strict === true;
+        this.rightsChecker = async ({ useHash, operations }) => {
+            if (typeof this.assetClient.validateClosure === "function") {
+                await this.assetClient.validateClosure({ useHash, operations });
+            }
+        };
         this.lodPolicyHash = hashVisualLodPolicy(lodPolicy);
         this._ownsCache = false;
         this.cache = cache ?? (renderer
@@ -105,6 +119,10 @@ export class VisualLayerMaterializer {
 
     visualBindings() {
         return new Map(this._bindings);
+    }
+
+    sourceUseHashes() {
+        return [...this._uses.keys()].sort();
     }
 
     bakeSnapshotInputs() {
@@ -188,7 +206,61 @@ export class VisualLayerMaterializer {
             if (generation !== this._generation) return this.status;
             this._releaseAllResident();
             if (error?.code === VISUAL_PREVIEW_ERROR_CODES.SUPERSEDED) return this.status;
-            this._setStatus(VISUAL_PREVIEW_STATUS.error, normalizePreviewError(error));
+            const normalized = normalizePreviewError(error);
+            this._setStatus(VISUAL_PREVIEW_STATUS.error, normalized);
+            if (this.strict) throw normalized;
+            return this.status;
+        } finally {
+            if (generation === this._generation) this._layerSwitch = false;
+        }
+    }
+
+    async replaceResolved({ descriptor, access, uses }, worldResource, { interest } = {}) {
+        this._assertNotDisposed();
+        if (this.cache.dead) this.handleContextLost();
+        const generation = ++this._generation;
+        this._abortCurrent();
+        const controller = new AbortController();
+        this._controller = controller;
+        this._lastRequest = null;
+        if (interest) this._interest = this.residency.normalizeInterest(interest);
+        const worldHash = worldResource?.hash ?? null;
+        this._layerSwitch = true;
+        this._coalescedInterest = null;
+        this._setStatus(VISUAL_PREVIEW_STATUS.loading);
+        try {
+            assertVisualLayer(descriptor);
+            assertVisualLayerAccess(access);
+            if (hashVisualLayer(descriptor) !== access.descriptorHash) {
+                throw new VisualPreviewError(
+                    VISUAL_PREVIEW_ERROR_CODES.HASH_MISMATCH,
+                    "Resolved visual-layer descriptor does not match its access sidecar.",
+                );
+            }
+            const useMap = uses instanceof Map
+                ? new Map(uses)
+                : new Map((uses ?? []).map((entry) => [entry.useHash, entry.use ?? entry]));
+            this._assertWorldAndBindings(descriptor, worldResource);
+            assertVisualLayerAccessMatches(access, descriptor, useMap);
+            await this._revalidateCachedRights(useMap, controller.signal);
+            this._throwIfStale(generation, controller.signal);
+            this._releaseAllResident();
+            this._documents = { descriptor, access };
+            this._uses = useMap;
+            this._committedWorldHash = worldHash;
+            await this._reconcile({
+                generation,
+                signal: controller.signal,
+                retainCommittedAoi: false,
+            });
+            return this.status;
+        } catch (error) {
+            if (generation !== this._generation) return this.status;
+            this._releaseAllResident();
+            if (error?.code === VISUAL_PREVIEW_ERROR_CODES.SUPERSEDED) return this.status;
+            const normalized = normalizePreviewError(error);
+            this._setStatus(VISUAL_PREVIEW_STATUS.error, normalized);
+            if (this.strict) throw normalized;
             return this.status;
         } finally {
             if (generation === this._generation) this._layerSwitch = false;
@@ -223,6 +295,41 @@ export class VisualLayerMaterializer {
             this._lastRequest?.worldResource,
             { interest: this._lastRequest?.interest },
         );
+    }
+
+    async materializeAssetUse(useHash, { metadata = {} } = {}) {
+        this._assertNotDisposed();
+        if (!this._documents) {
+            throw new VisualPreviewError(
+                VISUAL_PREVIEW_ERROR_CODES.DESCRIPTOR_MISSING,
+                "Resolved visual documents must be prepared before loading an additional asset.",
+            );
+        }
+        const generation = this._generation;
+        const signal = this._controller?.signal;
+        const parsed = await this._acquireParsedUse(useHash, generation, signal);
+        try {
+            const root = parsed.value.scene.clone(true);
+            this._sanitizeObject(root, metadata);
+            return {
+                root,
+                useHash,
+                release: () => {
+                    root.removeFromParent?.();
+                    parsed.release();
+                },
+            };
+        } catch (error) {
+            parsed.release();
+            throw error;
+        }
+    }
+
+    async materializeTextureUse(useHash, { slot = "environment" } = {}) {
+        this._assertNotDisposed();
+        const generation = this._generation;
+        const signal = this._controller?.signal;
+        return this._decodeTextureUse(useHash, slot, generation, signal);
     }
 
     clear() {
@@ -387,7 +494,7 @@ export class VisualLayerMaterializer {
         const layerHash = hashVisualLayer(descriptor);
         const group = new THREE.Group();
         group.name = `cev-sim.visual-chunk:${chunk.id}`;
-        sanitizePreviewObject(group, { layerHash, instanceId: null });
+        this._sanitizeObject(group, { layerHash, instanceId: null });
         const leases = [];
         const instances = descriptor.instances.filter((instance) => instance.chunkIds.includes(chunk.id));
         try {
@@ -439,7 +546,7 @@ export class VisualLayerMaterializer {
             root.matrixAutoUpdate = false;
             root.updateMatrixWorld(true);
             const binding = this._documents.descriptor.bindings.find((entry) => entry.instanceId === instance.id);
-            sanitizePreviewObject(root, {
+            this._sanitizeObject(root, {
                 layerHash,
                 instanceId: instance.id,
                 bindingId: binding?.id ?? null,
@@ -452,16 +559,37 @@ export class VisualLayerMaterializer {
     }
 
     async _acquireParsed(digest, generation, signal) {
-        const encoded = await this._acquireEncoded(digest, generation, signal);
-        const closureLeases = await this._acquireDependencyLeases(encoded.entry?.useHash, generation, signal);
+        const useHash = this._useHashForDigest(digest);
+        if (!useHash) {
+            throw new VisualPreviewError(
+                VISUAL_PREVIEW_ERROR_CODES.ASSET_MISSING,
+                `Visual asset ${digest} is not present in the access sidecar.`,
+            );
+        }
+        return this._acquireParsedUse(useHash, generation, signal);
+    }
+
+    async _acquireParsedUse(useHash, generation, signal) {
+        const use = this._uses.get(useHash);
+        if (!use?.asset?.sha256) {
+            throw new VisualPreviewError(
+                VISUAL_PREVIEW_ERROR_CODES.ASSET_MISSING,
+                `Visual asset use ${useHash} is absent from the resolved closure.`,
+            );
+        }
+        const digest = use.asset.sha256;
+        const encoded = await this._acquireEncodedUse(useHash, generation, signal);
+        const closureLeases = await this._acquireDependencyLeases(useHash, generation, signal);
         try {
             const parsed = await this.cache.acquireParsed({
                 digest,
-                useHash: encoded.entry?.useHash,
+                useHash,
                 bytes: estimateParsedBytes(encoded.value),
                 signal,
+                operations: this.requiredOperations,
+                rightsChecker: this.rightsChecker,
                 loader: async () => {
-                    const parsedValue = await this._parsePrimaryAsset(digest, encoded.value, signal);
+                    const parsedValue = await this._parsePrimaryAsset(digest, encoded.value, signal, useHash);
                     return {
                         value: parsedValue,
                         bytes: estimateParsedBytes(encoded.value),
@@ -487,7 +615,7 @@ export class VisualLayerMaterializer {
         for (const dependencyUseHash of Object.values(use.dependencies ?? {})) {
             const dependency = this._uses.get(dependencyUseHash);
             if (!dependency?.asset?.sha256) continue;
-            leases.push(await this._acquireEncoded(dependency.asset.sha256, generation, signal));
+            leases.push(await this._acquireEncodedUse(dependencyUseHash, generation, signal));
         }
         return leases;
     }
@@ -502,7 +630,18 @@ export class VisualLayerMaterializer {
                 `Visual asset ${digest} is not present in the access sidecar.`,
             );
         }
+        return this._acquireEncodedUse(useHash, generation, signal);
+    }
+
+    async _acquireEncodedUse(useHash, generation, signal) {
         const use = this._uses.get(useHash);
+        if (!use?.asset) {
+            throw new VisualPreviewError(
+                VISUAL_PREVIEW_ERROR_CODES.ASSET_MISSING,
+                `Visual asset use ${useHash} is absent from the resolved closure.`,
+            );
+        }
+        const digest = use.asset.sha256;
         this._throwIfStale(generation, signal);
         return this.cache.acquireEncoded({
             digest,
@@ -510,6 +649,8 @@ export class VisualLayerMaterializer {
             mediaType: use.asset.mediaType,
             sizeBytes: use.asset.sizeBytes,
             signal,
+            operations: this.requiredOperations,
+            rightsChecker: this.rightsChecker,
             loader: async () => {
                 const resource = await this._fetchAsset(useHash, use.asset, signal);
                 this._collectUseClosure(useHash, this._uses, new Set());
@@ -521,7 +662,10 @@ export class VisualLayerMaterializer {
     async _revalidateCachedRights(uses, signal) {
         const useHashes = [...uses.keys()];
         try {
-            await this.cache.revalidateSourceRights(useHashes);
+            await this.cache.revalidateSourceRights(useHashes, {
+                operations: this.requiredOperations,
+                rightsChecker: this.rightsChecker,
+            });
         } catch (error) {
             this._throwIfStale(this._generation, signal);
             throw mapClientError(error, VISUAL_PREVIEW_ERROR_CODES.RIGHTS_DENIED);
@@ -634,8 +778,8 @@ export class VisualLayerMaterializer {
         return { bytes, mediaType: expected.mediaType, useHash, role: expected.role };
     }
 
-    async _parsePrimaryAsset(digest, encodedBytes, signal) {
-        const useHash = this._useHashForDigest(digest);
+    async _parsePrimaryAsset(digest, encodedBytes, signal, selectedUseHash = null) {
+        const useHash = selectedUseHash ?? this._useHashForDigest(digest);
         const use = this._uses.get(useHash);
         const mediaType = use?.asset?.mediaType;
         if (!GLTF_MEDIA.has(mediaType)) {
@@ -696,7 +840,7 @@ export class VisualLayerMaterializer {
         });
         for (const [uri, useHash] of Object.entries(use.dependencies)) {
             const digest = sha256FromUri(uri);
-            const encoded = await this._acquireEncoded(digest, this._generation, signal);
+            const encoded = await this._acquireEncodedUse(useHash, this._generation, signal);
             resources.set(digest, {
                 bytes: encoded.value,
                 mediaType: this._uses.get(useHash)?.asset?.mediaType,
@@ -724,15 +868,36 @@ export class VisualLayerMaterializer {
     }
 
     async _decodeTexture(digest, slot, generation, signal) {
-        const encoded = await this._acquireEncoded(digest, generation, signal);
+        const useHash = this._useHashForDigest(digest);
+        if (!useHash) {
+            throw new VisualPreviewError(
+                VISUAL_PREVIEW_ERROR_CODES.ASSET_MISSING,
+                `Visual texture ${digest} is not present in the access sidecar.`,
+            );
+        }
+        return this._decodeTextureUse(useHash, slot, generation, signal);
+    }
+
+    async _decodeTextureUse(useHash, slot, generation, signal) {
+        const use = this._uses.get(useHash);
+        if (!use?.asset?.sha256) {
+            throw new VisualPreviewError(
+                VISUAL_PREVIEW_ERROR_CODES.ASSET_MISSING,
+                `Visual texture use ${useHash} is absent from the resolved closure.`,
+            );
+        }
+        const digest = use.asset.sha256;
+        const encoded = await this._acquireEncodedUse(useHash, generation, signal);
         try {
             const handle = await this.cache.acquireTexture({
                 digest,
-                useHash: encoded.entry?.useHash,
+                useHash,
                 bytes: encoded.value?.byteLength ?? 0,
                 signal,
+                operations: this.requiredOperations,
+                rightsChecker: this.rightsChecker,
                 loader: async () => {
-                    const decoded = await this._decodeTextureBytes(encoded.value, this._uses.get(encoded.entry.useHash)?.asset?.mediaType, slot, signal);
+                    const decoded = await this._decodeTextureBytes(encoded.value, use.asset.mediaType, slot, signal);
                     return { value: decoded, bytes: estimateTextureBytes(decoded, encoded.value) };
                 },
             });
@@ -757,7 +922,9 @@ export class VisualLayerMaterializer {
                         "KTX2 textures require a supported GPU transcoder.",
                     );
                 }
-                return await ktx2.parse(toArrayBuffer(bytes));
+                return await new Promise((resolve, reject) => {
+                    ktx2.parse(toArrayBuffer(bytes), resolve, reject);
+                });
             }
             const blob = new Blob([bytes], { type: mediaType });
             const objectUrl = URL.createObjectURL(blob);
@@ -827,6 +994,14 @@ export class VisualLayerMaterializer {
         if (this.THREE) return this.THREE;
         this.THREE = await import("three");
         return this.THREE;
+    }
+
+    _sanitizeObject(root, metadata) {
+        if (this.sceneRole === "preview") {
+            sanitizePreviewObject(root, metadata);
+            return;
+        }
+        sanitizeMeasuredAppearanceObject(root, metadata);
     }
 
     async _loaders() {
@@ -929,15 +1104,41 @@ export class VisualLayerMaterializer {
     }
 }
 
+export function sanitizeMeasuredAppearanceObject(root, {
+    layerHash = null,
+    instanceId = null,
+    bindingId = null,
+    actorId = null,
+} = {}) {
+    root?.traverse?.((object) => {
+        // Imported userData is never an authority for perception, selection,
+        // collision, or registry membership in a measured scene.
+        object.userData = {
+            cevSimMeasuredAppearance: true,
+            ...(layerHash ? { visualLayerHash: layerHash } : {}),
+            ...(instanceId ? { visualInstanceId: instanceId } : {}),
+            ...(bindingId ? { visualBindingId: bindingId } : {}),
+            ...(actorId ? { visualActorId: actorId } : {}),
+        };
+        object.castShadow = false;
+        object.receiveShadow = false;
+        for (const material of [].concat(object.material ?? [])) {
+            if (!material) continue;
+            material.dithering = false;
+            material.transparent = false;
+            material.depthTest = true;
+            material.depthWrite = true;
+            material.needsUpdate = true;
+        }
+    });
+    return root;
+}
+
 function cacheOptions(materializer) {
     return {
         renderer: materializer.renderer,
         profile: materializer.profile,
-        rightsChecker: async ({ useHash, operations }) => {
-            if (typeof materializer.assetClient.validateClosure === "function") {
-                await materializer.assetClient.validateClosure({ useHash, operations });
-            }
-        },
+        rightsChecker: materializer.rightsChecker,
     };
 }
 

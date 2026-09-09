@@ -22,6 +22,18 @@ export const CAMERA_PRODUCT_KEYS = Object.freeze([
     ...CAMERA_SEPARATE_PRODUCT_KEYS,
 ]);
 
+export const RENDER_RUNTIME_TARGETS = Object.freeze({
+    browser: "browser",
+    headless: "headless",
+});
+
+function runtimeTarget(value = RENDER_RUNTIME_TARGETS.headless) {
+    if (!Object.values(RENDER_RUNTIME_TARGETS).includes(value)) {
+        fail("MALFORMED_RUNTIME_TARGET", `Unknown render runtime target ${JSON.stringify(value)}`);
+    }
+    return value;
+}
+
 const PRODUCT_NAME_ALIASES = Object.freeze({
     rgba: "rgb",
     "camera-info": "cameraInfo",
@@ -189,7 +201,7 @@ export class RenderSceneProviderRegistry {
         const source = plainObject(declaration, "provider");
         assertKeys(source, [
             "id", "version", "available", "resolvable", "unavailableReason", "resolutionUnavailableReason", "productProfiles",
-            "resolve", "assert",
+            "runtimeAvailability", "runtimeUnavailableReasons", "resolve", "assert",
         ], "provider");
         const id = identifier(source.id, "provider.id");
         const version = positiveInteger(source.version, "provider.version");
@@ -207,11 +219,34 @@ export class RenderSceneProviderRegistry {
             fail("DUPLICATE_PROVIDER", `Duplicate product profile declarations for ${id}@${version}`);
         }
         const available = source.available === true;
+        const runtimeAvailability = Object.freeze({
+            browser: source.runtimeAvailability?.browser === undefined
+                ? available
+                : source.runtimeAvailability.browser === true,
+            headless: source.runtimeAvailability?.headless === undefined
+                ? available
+                : source.runtimeAvailability.headless === true,
+        });
+        const runtimeUnavailableReasons = Object.freeze({
+            browser: runtimeAvailability.browser
+                ? ""
+                : String(source.runtimeUnavailableReasons?.browser
+                    || source.unavailableReason
+                    || `${id}@${version} is known but unavailable in the browser runtime`),
+            headless: runtimeAvailability.headless
+                ? ""
+                : String(source.runtimeUnavailableReasons?.headless
+                    || source.unavailableReason
+                    || `${id}@${version} is known but unavailable in the headless runtime`),
+        });
         const resolvable = source.resolvable === true || available;
         const entry = {
             id,
             version,
-            available,
+            // Unqualified availability remains headless-safe for compatibility.
+            available: runtimeAvailability.headless,
+            runtimeAvailability,
+            runtimeUnavailableReasons,
             resolvable,
             unavailableReason: available
                 ? ""
@@ -252,7 +287,11 @@ export class RenderSceneProviderRegistry {
         return entry;
     }
 
-    lookup(provider, { requireAvailable = false, requireResolvable = false } = {}) {
+    lookup(provider, {
+        requireAvailable = false,
+        requireResolvable = false,
+        target = RENDER_RUNTIME_TARGETS.headless,
+    } = {}) {
         const id = identifier(provider?.id, "provider.id");
         const version = positiveInteger(provider?.version, "provider.version");
         const versions = this.providers.get(id);
@@ -267,8 +306,13 @@ export class RenderSceneProviderRegistry {
                 { id, version },
             );
         }
-        if (requireAvailable && !entry.available) {
-            fail("PROVIDER_UNAVAILABLE", entry.unavailableReason, { id, version });
+        const selectedTarget = runtimeTarget(target);
+        if (requireAvailable && !entry.runtimeAvailability[selectedTarget]) {
+            fail("PROVIDER_UNAVAILABLE", entry.runtimeUnavailableReasons[selectedTarget], {
+                id,
+                version,
+                target: selectedTarget,
+            });
         }
         if (requireResolvable && !entry.resolvable) {
             fail("PROVIDER_UNAVAILABLE", entry.resolutionUnavailableReason, { id, version });
@@ -353,14 +397,18 @@ export class RenderSceneProviderRegistry {
         return issues;
     }
 
-    resolveEnabledCameraSelection(sensors = [], { requireAvailable = false, requireResolvable = false } = {}) {
+    resolveEnabledCameraSelection(sensors = [], {
+        requireAvailable = false,
+        requireResolvable = false,
+        target = RENDER_RUNTIME_TARGETS.headless,
+    } = {}) {
         const cameras = (Array.isArray(sensors) ? sensors : [])
             .filter((sensor) => sensor?.type === "camera" && sensor.enabled !== false);
         if (cameras.length === 0) return null;
         let selected = null;
         for (const camera of cameras) {
             const selection = effectiveCameraRenderSelection(camera);
-            this.lookup(selection.provider, { requireAvailable, requireResolvable });
+            this.lookup(selection.provider, { requireAvailable, requireResolvable, target });
             this.lookupProfile(selection.provider, selection.productProfile);
             const productIssues = this.validateCameraRender(camera);
             if (productIssues.length > 0) {
@@ -390,20 +438,26 @@ export class RenderSceneProviderRegistry {
         return entry.resolve(worldResource, vehicleDependencies, normalized, context);
     }
 
-    assertDescription(description, { requireAvailable = false } = {}) {
+    assertDescription(description, {
+        requireAvailable = false,
+        target = RENDER_RUNTIME_TARGETS.headless,
+    } = {}) {
         const provider = description?.provider;
         const entry = this.lookup({
             id: provider?.id,
             version: Number.isInteger(provider?.version) ? provider.version : provider?.version,
-        }, { requireAvailable });
+        }, { requireAvailable, target });
         if (typeof entry.assert !== "function") {
             fail("PROVIDER_UNAVAILABLE", entry.unavailableReason, entry);
         }
         return entry.assert(description);
     }
 
-    assertMatchesScene(sensors, renderScene, { requireAvailable = true } = {}) {
-        const selection = this.resolveEnabledCameraSelection(sensors, { requireAvailable });
+    assertMatchesScene(sensors, renderScene, {
+        requireAvailable = true,
+        target = RENDER_RUNTIME_TARGETS.headless,
+    } = {}) {
+        const selection = this.resolveEnabledCameraSelection(sensors, { requireAvailable, target });
         if (!selection) return null;
         const sceneProvider = renderScene?.description?.provider;
         if (sceneProvider?.id !== selection.provider.id
@@ -428,14 +482,15 @@ export class RenderSceneProviderRegistry {
         return selection;
     }
 
-    runtimeCapabilities() {
+    runtimeCapabilities({ target = RENDER_RUNTIME_TARGETS.headless } = {}) {
+        const selectedTarget = runtimeTarget(target);
         return [...this.providers.entries()]
             .flatMap(([id, versions]) => [...versions.values()].map((entry) => ({
                 id,
                 version: entry.version,
                 resolvable: entry.resolvable,
-                available: entry.available,
-                unavailableReason: entry.unavailableReason,
+                available: entry.runtimeAvailability[selectedTarget],
+                unavailableReason: entry.runtimeUnavailableReasons[selectedTarget],
                 productProfiles: entry.productProfiles.map((profile) => ({
                     id: profile.id,
                     version: profile.version,
@@ -475,7 +530,7 @@ export function createDefaultRenderSceneProviderRegistry() {
         version: VISUAL_RENDER_PROVIDERS.pbrMesh.version,
         available: false,
         resolvable: true,
-        unavailableReason: "pbr-mesh@1 is known but unavailable until PBR materialization and camera integration land",
+        runtimeAvailability: { browser: true, headless: true },
         productProfiles: [defaultProductProfile({ requireMeasured: true })],
     });
     return registry;
@@ -499,11 +554,19 @@ export function validateCameraRenderDeclaration(sensor) {
     return renderSceneProviderRegistry.validateCameraRender(sensor);
 }
 
-export function assertEnabledCameraRenderRuntime(sensors, renderScene) {
-    const selection = renderSceneProviderRegistry.resolveEnabledCameraSelection(sensors, { requireAvailable: true });
+export function assertEnabledCameraRenderRuntime(sensors, renderScene, {
+    target = RENDER_RUNTIME_TARGETS.headless,
+} = {}) {
+    const selection = renderSceneProviderRegistry.resolveEnabledCameraSelection(sensors, {
+        requireAvailable: true,
+        target,
+    });
     // The browser's historical analytic path can still synthesize its legacy
     // scene locally. Explicit/non-legacy providers must always carry and match
     // their resolved immutable scene before preparation begins.
     if (selection && !renderScene && isLegacyAnalyticSelection(selection)) return selection;
-    return renderSceneProviderRegistry.assertMatchesScene(sensors, renderScene, { requireAvailable: true });
+    return renderSceneProviderRegistry.assertMatchesScene(sensors, renderScene, {
+        requireAvailable: true,
+        target,
+    });
 }

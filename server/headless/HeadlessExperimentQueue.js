@@ -2,7 +2,8 @@ export const HEADLESS_EXPERIMENT_QUEUE_KIND = "cev-sim.headless-experiment-queue
 export const HEADLESS_EXPERIMENT_QUEUE_VERSION = 1;
 
 export const HEADLESS_RUN_BUNDLE_MANIFEST_KIND = "cev-sim.headless-run-bundle-manifest";
-export const HEADLESS_RUN_BUNDLE_MANIFEST_VERSION = 1;
+export const HEADLESS_RUN_BUNDLE_MANIFEST_VERSION = 2;
+export const HEADLESS_RUN_BUNDLE_MANIFEST_MIN_VERSION = 1;
 
 function trimmedText(value) {
     return String(value ?? "").trim();
@@ -71,9 +72,15 @@ export function validateHeadlessExperimentQueue(value) {
 
 export function normalizeHeadlessRunBundleManifest(value = {}) {
     const source = value && typeof value === "object" ? value : {};
+    const version = Number(source.version ?? HEADLESS_RUN_BUNDLE_MANIFEST_VERSION);
+    if (!Number.isInteger(version)
+        || version < HEADLESS_RUN_BUNDLE_MANIFEST_MIN_VERSION
+        || version > HEADLESS_RUN_BUNDLE_MANIFEST_VERSION) {
+        throw new TypeError(`Unsupported headless run-bundle manifest version ${source.version}.`);
+    }
     return {
         kind: HEADLESS_RUN_BUNDLE_MANIFEST_KIND,
-        version: HEADLESS_RUN_BUNDLE_MANIFEST_VERSION,
+        version,
         resultId: trimmedText(source.resultId),
         jobId: trimmedText(source.jobId),
         suiteId: trimmedText(source.suiteId),
@@ -87,6 +94,14 @@ export function normalizeHeadlessRunBundleManifest(value = {}) {
                 dependencyHashes: entry?.dependencyHashes && typeof entry.dependencyHashes === "object"
                     ? clone(entry.dependencyHashes)
                     : {},
+                ...(version >= 2 ? {
+                    bundleBytesHash: trimmedText(entry?.bundleBytesHash) || null,
+                    visualUseHashes: Array.isArray(entry?.visualUseHashes)
+                        ? [...new Set(entry.visualUseHashes.map(trimmedText).filter(Boolean))].sort()
+                        : [],
+                    assetClosureHash: trimmedText(entry?.assetClosureHash) || null,
+                    correspondenceReportHash: trimmedText(entry?.correspondenceReportHash) || null,
+                } : {}),
             }))
             : [],
     };

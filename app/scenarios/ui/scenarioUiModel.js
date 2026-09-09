@@ -128,6 +128,7 @@ export function buildRouteVerification(waypoints, environmentId) {
 
     return {
         algorithm: "directed-a-star",
+        algorithmVersion: 2,
         environmentId,
         verifiedAt: new Date().toISOString(),
         sections,

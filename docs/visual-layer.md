@@ -34,8 +34,10 @@ VIS-12b adds conditional `pbr-mesh@1` resolution, exact render/asset resources,
 and separate source-bound run evidence for export and offline inspection.
 VIS-13a adds the frozen streaming run-package codec and authoring import/export;
 VIS-13b adds same-host package admission across the supervisor, CLI, and Python.
-Photoreal rendering, corrected GPU backend v2 execution, measured PBR cameras,
-and PBR execution remain unavailable.
+VIS-14 activates measured `pbr-mesh@1` cameras in the browser through run-owned,
+detached appearance and analytic scenes. VIS-15a activates the corrected GPU
+backend v2 for configuration-gated normal-worker headless, CLI, and Python PBR
+execution after target-specific probes succeed.
 
 The implementation authority and acceptance gates remain in
 [the visual-layer roadmap](visual-layer-plan.md). JavaScript remains the only
@@ -52,12 +54,12 @@ become collision, route, LiDAR, registry, or oracle truth.
 | Simulation-semantic and episode identity | 2 | VIS-12a |
 | `cev-sim.world-description` | 1, unchanged | Existing runtime |
 | Legacy analytic scene | `canonical-analytic@1`, unchanged | Existing runtime |
-| Corrected analytic scene | `canonical-analytic@2` | VIS-02 known/unavailable; runtime VIS-06/VIS-14/VIS-15 |
-| PBR scene | `pbr-mesh@1` | VIS-12b resolution/inspection; runtime VIS-14/VIS-15 |
+| Corrected analytic scene | `canonical-analytic@2` | VIS-02 known/unavailable; no active runtime |
+| PBR scene | `pbr-mesh@1` | VIS-12b resolution/inspection; VIS-14 browser runtime; VIS-15a normal-worker headless runtime |
 | PBR render recipe | `cev-sim.pbr-render-recipe@1` | VIS-12b authoring and resolution |
 | PBR asset closure | `cev-sim.visual-asset-closure@1` | VIS-12b exact render resource |
 | PBR run evidence | `cev-sim.visual-run-evidence@1` | VIS-12b source-bound resolution evidence |
-| Corrected GPU sensor backend | `chromium-webgl2-rendered-sensors@2` | VIS-14/VIS-15 |
+| Corrected GPU sensor backend | `chromium-webgl2-rendered-sensors@2` | VIS-15a; configuration-gated and advertised only after target-specific probes |
 | Visual camera calibration | `cev-sim.visual-camera-calibration@1` | VIS-06a internal opt-in; provider activation VIS-14/VIS-15 |
 | Immutable visual capture input | `cev-sim.visual-capture-input@1` | VIS-06a internal opt-in |
 | Aligned capture pass set | `cev-sim.visual-capture-pass-set@1` | VIS-06b internal opt-in; VIS-07 version-1 bake jobs |
@@ -279,8 +281,11 @@ result is never managed-eligible. Managed admission requires exact report
 bytes, a production profile from an external approved registry, current asset,
 rights, and capability decisions, and a matching trusted local-validation record kept
 outside report JSON. Imported reports are diagnostic only. The repository ships
-one synthetic boundary fixture and no approved production profile. Queue,
-worker, recovery, and real evaluator integration remain VIS-16b work.
+one synthetic boundary fixture and no approved production profile. VIS-15b wires
+the checker into managed queue admission, worker start, and recovery through an
+injected server-only evidence-context provider, while the production default stays
+closed. VIS-16b still owns the real evaluator, approved profiles, and trusted local
+validation records that can make public managed PBR eligible.
 
 ## Materials and assets
 
@@ -326,8 +331,9 @@ New camera authoring uses:
 
 Existing pre-VIS-02 cameras may omit `render`; absence aliases to
 `canonical-analytic@1` only during resolution. `pbr-mesh@1` may be authored,
-resolved, exported, and inspected when structurally valid, but it remains
-unavailable for execution and never falls back to analytic.
+resolved, exported, and inspected when structurally valid. VIS-14 admits it
+only in browser simulation; headless and Python execution reject it without
+fallback.
 `canonical-analytic@2` remains unavailable.
 
 Existing product flags select products within that profile. Measured RGBA and
@@ -530,7 +536,9 @@ Preview objects are non-selectable and excluded from environment registry,
 perception truth, collision, LiDAR, and measured camera scans. `truthEntityId`
 stays in the materializer binding table. Failed initial or environment-switch
 loads dispose staged resources and leave an empty preview, not another world's
-visuals. `pbr-mesh@1` remains unavailable to this preview/runtime path.
+visuals. VIS-14 does not render this mutable preview. It builds a separate
+run-owned appearance scene from the resolved descriptor, access document, and
+source-use evidence.
 
 ## Conditional PBR run resources
 
@@ -588,15 +596,17 @@ changing world, render, simulation-semantic, or episode identity.
 Integrity-only bundle verification validates these resources and
 cross-references without local asset bytes or a renderer. Offline inspection
 states that it does not prove current rights, asset availability, or
-correspondence validity. Executable verification remains mandatory for browser,
-CLI run, supervisor, and worker preparation, all of which reject PBR before
-environment/sensor mutation. Provider-aware JavaScript/Python episode defaults
-select only routed GPU backend v2 for PBR and reject missing or older support.
+correspondence validity. Browser and headless preparation revalidate exact
+asset bytes, source scopes, and `display` plus `machine-interpretation` rights
+before making the run ready. Provider-aware headless and Python episode
+defaults select only routed GPU backend v2 for PBR and reject missing or older
+support before environment/sensor mutation.
 No asset bytes are installed by JSON import. VIS-13a `cev-sim.run-package@1`
 authoring export/import transfers the closed visual-asset bytes. VIS-13b adds
 protocol 1.4 same-host admission for configured Unix-socket supervisors,
 exact-byte batch binding, pinned digest-scoped access, and CLI/Python package
-flows. PBR execution remains unavailable until the renderer milestones.
+flows. VIS-15a advertises headless GPU backend v2 only when explicitly enabled
+and after all target-specific PBR probes pass.
 
 ## Identity projection and compatibility
 
@@ -616,7 +626,7 @@ then projects a clone. The implemented identity rules are:
 5. Preserve conditional analytic-camera and LiDAR resources. Explicit camera
    render selections are dispatched by VIS-02; omitted selections alias only
    to `canonical-analytic@1`. Selected `pbr-mesh@1` resources resolve through
-   VIS-12b, while runtime-unavailable providers cannot execute.
+   VIS-12b; VIS-14 permits `pbr-mesh@1` only for the browser target.
 6. Include selected render resources, calibration, product policy, and
    semantic backend configuration. Exclude evidence, logging, artifact and
    resource policy, wall pacing, host paths, admissions, and replay evidence.
@@ -628,7 +638,7 @@ Compatibility is evaluated separately at each boundary:
 | Bundle v1 / resolved v10 | Preserve received bytes and existing algorithms | Supported | Existing analytic path remains supported |
 | Older authored manifests | N/A unless a historical bundle verifier exists | Normalize and re-resolve | Only through a newly resolved supported bundle |
 | Bundle v1 / manifest v11 / `world-bound@2` | New version-dispatched algorithms | Supported | Protocol 1.3 and advertised identity profile required |
-| Bundle v1 / manifest v11 / selected `pbr-mesh@1` | Exact inner render/closure/evidence verification | Supported when local authoring dependencies exist | Rejected until PBR renderer and GPU backend v2 are available |
+| Bundle v1 / manifest v11 / selected `pbr-mesh@1` | Exact inner render/closure/evidence verification | Supported when local authoring dependencies exist | Browser simulation supported by VIS-14; normal-worker headless/Python supported by VIS-15a with same-host admission and probed backend v2 |
 | Earlier immutable bundles | Retain legacy import verification where its algorithm applies | Verify before normalizing | Explicit re-resolution required |
 | Unknown versions or identities | Explicit compatibility error | Rejected | Rejected |
 
@@ -808,8 +818,9 @@ CLI `inspect`, `validate`, `run`, and supervisor-backed `replay` accept package
 inputs. Python exposes `load_run_package`, context-managed `AssetAdmission`,
 and same-host stage/admit/release while retaining ordinary JSON bundle use.
 Older, TCP, and non-admission supervisors fail before Python staging. JSON-only
-commands remain supported. Rights-valid PBR packages may be admitted, but
-`CreateBatch` rejects their unavailable renderer before worker creation.
+commands remain supported. Rights-valid PBR packages may be admitted;
+`CreateBatch` requires the matching backend v2 selection and rejects them before
+worker creation unless the explicitly selected PBR target is ready.
 
 Durable roots include environments, promoted descriptors, retained package
 imports, queued bundles, retained results/replays/baselines, bake inputs and

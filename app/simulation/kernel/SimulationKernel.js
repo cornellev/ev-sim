@@ -146,6 +146,7 @@ export class SimulationKernel {
             trajectoryHash: this.trajectoryHash,
             assertions: this.assertionEngine.snapshot(),
             scenario: this.scenarioRuntime?.getSnapshot?.() ?? null,
+            renderProvider: this.context.rendering?.status?.() ?? null,
         });
     }
 
@@ -248,6 +249,19 @@ export class SimulationKernel {
         return shouldContinue;
     }
 
+    async stepAsync(count = 1, { afterStep = null } = {}) {
+        this.status = "paused";
+        let shouldContinue = true;
+        for (let index = 0; index < count; index += 1) {
+            const previousStep = this.steps;
+            shouldContinue = await this.advanceStepAsync(this.fixedDt);
+            if (this.steps > previousStep) afterStep?.(this.fixedDt, this.getSnapshot());
+            if (shouldContinue === false) break;
+        }
+        this.emitLifecycle("step", { count });
+        return shouldContinue;
+    }
+
     setSpeed(speed) {
         this.speed = Math.max(0, Number(speed) || 0);
     }
@@ -277,9 +291,11 @@ export class SimulationKernel {
         perceptionObservations = false,
     } = {}) {
         if (!resolved?.manifest) throw new Error("Resolved run manifest is required.");
-        assertEnabledCameraRenderRuntime(resolved.manifest.sensorRig?.sensors, resolved.renderScene);
+        assertEnabledCameraRenderRuntime(resolved.manifest.sensorRig?.sensors, resolved.renderScene, {
+            target: this.context.rendering?.target?.() ?? "headless",
+        });
 
-        if (this.resolvedRun || this.lifecycleState === "finalized") this.clearRun();
+        if (this.resolvedRun || this.lifecycleState === "finalized") await this.clearRunAsync();
         this.lifecycleState = "preparing";
         this.scenarioRuntime?.configure?.(null);
         this.resolvedRun = structuredClone(resolved);
@@ -330,6 +346,10 @@ export class SimulationKernel {
             resolvedVehicles: this.resolvedRun.vehicles || [],
         });
         this._configureControlRuntimeLimits(manifest);
+        const renderRuntime = await this.context.rendering?.prepare?.(this.resolvedRun, {
+            sensorRig: manifest.sensorRig,
+            vehicles: this.context.vehicles.list(),
+        });
 
         const selectedBindings = this.resolvedRun.bindings?.entries || [];
         await this.context.scripts.setManifest({
@@ -364,6 +384,7 @@ export class SimulationKernel {
                 ?? [],
             lidarGeometry: this.resolvedRun.lidarGeometry ?? null,
             renderScene: this.resolvedRun.renderScene ?? null,
+            renderRuntime,
             perceptionObservations,
         });
         await this.context.physics.configureRun({
@@ -859,11 +880,12 @@ export class SimulationKernel {
         return cloneSnapshot(this.finalizedResult);
     }
 
-    clearRun() {
+    _clearRun({ renderingDisposed = false } = {}) {
         if (this.lifecycleState === "disposed") return;
         this.scenarioRuntime?.dispose?.();
         this.context.physics.dispose?.();
         this.context.devices.dispose?.();
+        if (!renderingDisposed) this.context.rendering?.dispose?.();
         this.context.vehicles.dispose?.();
         this.context.scripts.dispose?.();
         this.context.inputs.dispose?.();
@@ -888,11 +910,35 @@ export class SimulationKernel {
         this.status = "stopped";
     }
 
+    clearRun() {
+        return this._clearRun();
+    }
+
+    async clearRunAsync() {
+        if (this.lifecycleState === "disposed") return;
+        try {
+            await this.context.rendering?.dispose?.();
+        } finally {
+            this._clearRun({ renderingDisposed: true });
+        }
+    }
+
     dispose() {
         if (this.lifecycleState === "disposed") return;
         this.clearRun();
         this.resetHandlers.clear();
         this.lifecycleState = "disposed";
         this.status = "stopped";
+    }
+
+    async disposeAsync() {
+        if (this.lifecycleState === "disposed") return;
+        try {
+            await this.clearRunAsync();
+        } finally {
+            this.resetHandlers.clear();
+            this.lifecycleState = "disposed";
+            this.status = "stopped";
+        }
     }
 }

@@ -11,6 +11,7 @@ import { createCpuLidarBackendSelection } from "../../app/simulation/sensors/Cpu
 import {
     createGpuSensorBackendSelection,
     gpuSensorBackendCapability,
+    routedGpuSensorBackendCapability,
 } from "../../app/simulation/sensors/GpuSensorBackend.js";
 import { computeEpisodeHash } from "../../app/simulation/kernel/SimulationHashes.js";
 import { canonicalStringify } from "../../app/simulation/RunManifest.js";
@@ -264,6 +265,8 @@ export class HeadlessSupervisor {
         this.workerFactory = options.workerFactory ?? ((workerOptions) => new WorkerHandle(workerOptions));
         this.rendererPool = options.rendererPool ?? new PooledGpuRenderer(this.config.renderer, {
             adapterFactory: options.rendererAdapterFactory,
+            hostPlatform: options.rendererHostPlatform,
+            hostArch: options.rendererHostArch,
         });
         this.admissionManager = options.admissionManager ?? new VisualAssetAdmissionManager(this.config.assetAdmission, {
             faults: options.admissionFaults,
@@ -271,6 +274,7 @@ export class HeadlessSupervisor {
         this.inlineObservations = options.inlineObservations === true;
         this.batches = new Map();
         this._creatingBatches = new Set();
+        this._managedOperations = new Set();
         this.workers = new Set();
         this.reservedWorkers = 0;
         this.startedAt = Date.now();
@@ -291,6 +295,7 @@ export class HeadlessSupervisor {
         const lidar = createCpuLidarBackendSelection();
         const gpu = createGpuSensorBackendSelection();
         const gpuProbe = await this.rendererPool.probe();
+        const pbrProbe = this.rendererPool.pbrCapability();
         return {
             protocol: HEADLESS_PROTOCOL,
             identityProfiles: [WORLD_BOUND_IDENTITY_CAPABILITY],
@@ -304,6 +309,7 @@ export class HeadlessSupervisor {
                 { id: sensors.capabilityId, version: sensors.version, kind: sensors.kind, description: "Deterministic measured state sensors.", sensorTypes: [...STATE_SENSOR_TYPES], features: ["packed-protobuf"], available: true, unavailableReason: "", determinismScope: "same-runtime-version" },
                 { id: lidar.capabilityId, version: lidar.version, kind: lidar.kind, description: "Deterministic CPU/BVH 3D LiDAR.", sensorTypes: ["lidar3d"], features: ["pointcloud2", "semantic-pointcloud2", "fixed-step"], available: true, unavailableReason: "", determinismScope: "same-build-platform-seed-action-tape" },
                 gpuSensorBackendCapability({ available: gpuProbe.available, unavailableReason: gpuProbe.reason, selection: gpu }),
+                ...(pbrProbe.available ? [routedGpuSensorBackendCapability({ available: true })] : []),
             ],
             observationProfiles: profiles.observationProfiles,
             rewardProfiles: profiles.rewardProfiles,
@@ -311,6 +317,7 @@ export class HeadlessSupervisor {
             diagnosticJson: Buffer.from(canonicalStringify({
                 gpuRenderer: this.rendererPool.diagnostics(),
                 gpuProbe,
+                pbrProbe,
             })),
             error: okStatus(),
         };
@@ -424,6 +431,16 @@ export class HeadlessSupervisor {
                 if (requestsGpu) {
                     const probe = await this.rendererPool.probe();
                     if (!probe.available) throw supervisorError("UNSUPPORTED_CAPABILITY", `GPU backend unavailable: ${probe.reason}`);
+                }
+                const requestsPbr = bundle.verified.resolved.renderScene?.description?.provider?.id === "pbr-mesh";
+                if (requestsPbr) {
+                    const pbr = this.rendererPool.pbrCapability();
+                    if (!pbr.available) {
+                        throw supervisorError("UNSUPPORTED_CAPABILITY", `Headless PBR unavailable: ${pbr.reason}`);
+                    }
+                    if (!bundle.admissionHandle && bundle.verified.resolved.evidence?.visualAssets?.uses?.length > 0) {
+                        throw supervisorError("UNSUPPORTED_CAPABILITY", "Headless PBR assets require same-host run-package admission.");
+                    }
                 }
                 if (arenaBytes > limits.maxSharedMemoryBytesPerEnvironment) {
                     throw supervisorError(
@@ -707,23 +724,69 @@ export class HeadlessSupervisor {
         };
     }
 
+    async validateManagedRuntime(resolved) {
+        const usesGpu = (resolved?.backendSelections || []).some((entry) => Number(entry.kind) === 4)
+            || (resolved?.manifest?.sensorRig?.sensors || []).some((sensor) => (
+                sensor.enabled !== false && sensor.type === "camera"
+            ));
+        if (usesGpu) {
+            const probe = await this.rendererPool.probe();
+            if (!probe.available) throw supervisorError("UNSUPPORTED_CAPABILITY", `GPU backend unavailable: ${probe.reason}`);
+        }
+        if (resolved?.renderScene?.description?.provider?.id === "pbr-mesh") {
+            const capability = this.rendererPool.pbrCapability();
+            if (!capability.available) {
+                throw supervisorError("UNSUPPORTED_CAPABILITY", `Managed PBR unavailable: ${capability.reason}`);
+            }
+        }
+        return { available: true };
+    }
+
     /**
      * Internal one-shot reference-controlled execution. This intentionally is
      * not part of the public gRPC protocol and shares worker isolation and
      * resource enforcement with policy batches.
      */
     async runManagedExperiment(request = {}, { signal = null, onStarted = null, onHealth = null } = {}) {
+        const operation = this._runManagedExperiment(request, { signal, onStarted, onHealth });
+        this._managedOperations.add(operation);
+        try { return await operation; }
+        finally { this._managedOperations.delete(operation); }
+    }
+
+    async _runManagedExperiment(request = {}, { signal = null, onStarted = null, onHealth = null } = {}) {
         if (this.shuttingDown) throw supervisorError("INTERNAL", "Supervisor is shutting down.");
         if (this.activeEnvironmentCount + this.reservedWorkers + 1 > this.config.maxWorkers) {
             throw supervisorError("RESOURCE_LIMIT", `Creating a managed environment exceeds supervisor capacity ${this.config.maxWorkers}.`);
         }
-        const verified = verifyRunBundle(request.bundle);
-        const limits = resolveBatchResourceLimits(request.resourceLimits, this.config);
-        validateStaticLimits(verified.resolved, limits, 0);
         this.reservedWorkers += 1;
         let worker = null;
         let resourceFailure = null;
+        const environmentKey = `managed:${randomUUID()}`;
         try {
+            const verified = request.bundleBytes
+                ? verifyRunBundleBytes(Buffer.from(request.bundleBytes), {
+                    expectedBundleBytesHash: request.bundleBytesHash,
+                })
+                : verifyRunBundle(request.bundle);
+            const limits = resolveBatchResourceLimits(request.resourceLimits, this.config);
+            validateStaticLimits(verified.resolved, limits, 0);
+            await this.validateManagedRuntime(verified.resolved);
+            const requestsPbr = verified.resolved.renderScene?.description?.provider?.id === "pbr-mesh";
+            if (requestsPbr
+                && (verified.resolved.evidence?.visualAssets?.uses?.length || 0) > 0
+                && !request.assetReader) {
+                throw supervisorError("UNSUPPORTED_CAPABILITY", "Managed PBR requires a scoped visual-asset reader.");
+            }
+            const environment = {
+                environmentKey,
+                bundle: { verified },
+                batch: { id: environmentKey, limits },
+                index: 0,
+                assetReader: request.assetReader ?? null,
+                sharedArena: null,
+                transportSequence: 0n,
+            };
             worker = this.workerFactory({
                 limits,
                 memoryPollIntervalMs: this.config.memoryPollIntervalMs,
@@ -741,12 +804,16 @@ export class HeadlessSupervisor {
                     if (resourceFailure) handle.terminate();
                 },
                 onExit: (_event, handle) => this.workers.delete(handle),
+                rendererHandler: (operation, payload) => this._rendererRequest(environment, operation, payload),
             });
             this.workers.add(worker);
             onStarted?.({ pid: worker.pid });
             await worker.dispatch("initialize", {
                 mode: "managed-experiment",
-                bundle: request.bundle,
+                ...(request.bundleBytes ? {
+                    bundleBytes: request.bundleBytes,
+                    bundleBytesHash: request.bundleBytesHash,
+                } : { bundle: request.bundle }),
                 metricDefinitions: request.metricDefinitions || [],
                 limits,
             }, { signal });
@@ -764,6 +831,8 @@ export class HeadlessSupervisor {
             this.reservedWorkers -= 1;
             await worker?.close().catch(() => {});
             if (worker) this.workers.delete(worker);
+            try { await this.rendererPool.releaseEnvironment(environmentKey); }
+            catch { /* best-effort cleanup after worker teardown */ }
             if (request.outputUri) await cleanupPartialDirectories(path.dirname(path.resolve(request.outputUri)));
         }
     }
@@ -778,6 +847,7 @@ export class HeadlessSupervisor {
         this.closed = true;
         this.shuttingDown = true;
         await Promise.allSettled([...this._creatingBatches]);
+        await Promise.allSettled([...this._managedOperations]);
         const ids = [...this.batches.keys()];
         await Promise.allSettled(ids.map((batchId) => this.closeBatch({ batchId, finalizeActiveEpisodes: false })));
         await Promise.allSettled([...this.workers].map((worker) => worker.close()));
@@ -959,13 +1029,79 @@ export class HeadlessSupervisor {
 
     async _rendererRequest(environment, operation, payload) {
         if (operation === "provenance") return this.rendererPool.diagnostics();
+        const environmentKey = environment.environmentKey ?? `${environment.batch.id}:${environment.index}`;
+        if (operation === "prepare-pbr") {
+            return this.rendererPool.preparePbr({
+                environmentKey,
+                resolved: environment.bundle.verified.resolved,
+                sensorRig: environment.bundle.verified.resolved.manifest.sensorRig,
+                vehicles: payload.vehicles,
+                maxGpuBytes: environment.batch.limits.maxGpuBytesPerEnvironment,
+                assetReader: environment.assetReader,
+            });
+        }
+        if (operation === "capture-pbr") {
+            const captured = await this.rendererPool.capturePbrGroup({
+                environmentKey,
+                handle: payload.handle,
+                requests: payload.requests,
+                maxGpuBytes: environment.batch.limits.maxGpuBytesPerEnvironment,
+                timeoutMs: environment.batch.limits.stepWallTimeoutMs,
+            });
+            if (!environment.sharedArena) return captured;
+            const sequence = environment.transportSequence + 1n;
+            const allocations = [];
+            const productSpecs = {
+                rgb: { dtype: 4, channels: 4 },
+                depth: { dtype: 1, channels: 1 },
+                semantic: { dtype: 6, channels: 1 },
+                instance: { dtype: 8, channels: 1 },
+            };
+            try {
+                const externalized = [];
+                for (const entry of captured) {
+                    const request = payload.requests.find((candidate) => candidate.id === entry.id);
+                    if (!request) throw new Error(`PBR result ${entry.id} has no matching request.`);
+                    const productSharedMemory = {};
+                    for (const [name, values] of Object.entries(entry.products || {})) {
+                        if (!values) continue;
+                        const product = productSpecs[name];
+                        if (!product) throw new Error(`PBR result ${entry.id} returned unknown product ${name}.`);
+                        const reference = await environment.sharedArena.publishTensor(
+                            new Uint8Array(values.buffer, values.byteOffset, values.byteLength),
+                            {
+                                dtype: product.dtype,
+                                shape: [request.height, request.width, product.channels],
+                                byteOrder: 1,
+                            },
+                            { generation: sequence, sequence },
+                        );
+                        allocations.push(reference);
+                        productSharedMemory[name] = reference;
+                    }
+                    externalized.push({
+                        ...entry,
+                        products: {},
+                        productSharedMemory,
+                    });
+                }
+                environment.transportSequence = sequence;
+                return externalized;
+            } catch (error) {
+                await Promise.allSettled(allocations.map((reference) => environment.sharedArena.release(reference)));
+                throw error;
+            }
+        }
+        if (operation === "release-pbr") {
+            return { released: await this.rendererPool.releasePbr(environmentKey) };
+        }
         if (operation === "release-shared") {
             return { released: await environment.sharedArena?.release(payload.reference) === true };
         }
         if (operation !== "capture-group") throw supervisorError("INVALID_REQUEST", `Unknown renderer operation ${operation}.`);
         const captured = await this.rendererPool.captureGroup({
             ...payload,
-            environmentKey: `${environment.batch.id}:${environment.index}`,
+            environmentKey,
             maxGpuBytes: environment.batch.limits.maxGpuBytesPerEnvironment,
             timeoutMs: environment.batch.limits.stepWallTimeoutMs,
             assetReader: environment.assetReader,

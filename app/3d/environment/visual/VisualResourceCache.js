@@ -89,14 +89,17 @@ export class VisualResourceCache {
         if (owner) this._attachments.delete(owner);
     }
 
-    async revalidateSourceRights(useHashes, { operations = ["display"] } = {}) {
+    async revalidateSourceRights(useHashes, {
+        operations = ["display"],
+        rightsChecker = this.rightsChecker,
+    } = {}) {
         this._assertLive();
         const unique = [...new Set((useHashes ?? []).filter(Boolean))];
-        if (!this.rightsChecker || unique.length === 0) return;
+        if (!rightsChecker || unique.length === 0) return;
         const denied = [];
         for (const useHash of unique) {
             try {
-                await this.rightsChecker({ useHash, operations });
+                await rightsChecker({ useHash, operations: [...operations] });
                 for (const entry of this._entries.values()) {
                     if (entry.useHash === useHash) entry.rightsEpoch = this._generation;
                 }
@@ -112,7 +115,17 @@ export class VisualResourceCache {
         if (denied.length > 0) throw denied[0];
     }
 
-    async acquireEncoded({ digest, useHash, bytes, mediaType, sizeBytes, loader, signal } = {}) {
+    async acquireEncoded({
+        digest,
+        useHash,
+        bytes,
+        mediaType,
+        sizeBytes,
+        loader,
+        signal,
+        operations = ["display"],
+        rightsChecker = this.rightsChecker,
+    } = {}) {
         const payloadBytes = sizeBytes ?? (bytes?.byteLength ?? 0);
         return this._acquire({
             key: encodedKey(digest),
@@ -124,6 +137,8 @@ export class VisualResourceCache {
             memoryKind: VISUAL_MEMORY_KINDS.encodedCpu,
             queueKind: "fetch",
             signal,
+            operations,
+            rightsChecker,
             loader: async () => {
                 const value = bytes ?? await loader();
                 return { value, bytes: value?.byteLength ?? payloadBytes };
@@ -131,7 +146,16 @@ export class VisualResourceCache {
         });
     }
 
-    async acquireParsed({ digest, decoderProfile = this.decoderProfile, useHash, bytes, loader, signal } = {}) {
+    async acquireParsed({
+        digest,
+        decoderProfile = this.decoderProfile,
+        useHash,
+        bytes,
+        loader,
+        signal,
+        operations = ["display"],
+        rightsChecker = this.rightsChecker,
+    } = {}) {
         return this._acquire({
             key: parsedKey(digest, decoderProfile),
             kind: "parsed",
@@ -141,6 +165,8 @@ export class VisualResourceCache {
             memoryKind: VISUAL_MEMORY_KINDS.decodedCpu,
             queueKind: "decode",
             signal,
+            operations,
+            rightsChecker,
             loader,
         });
     }
@@ -153,6 +179,8 @@ export class VisualResourceCache {
         loader,
         signal,
         gpuBytes = 0,
+        operations = ["display"],
+        rightsChecker = this.rightsChecker,
     } = {}) {
         const handle = await this._acquire({
             key: textureKey(digest, rendererProfile),
@@ -163,6 +191,8 @@ export class VisualResourceCache {
             memoryKind: VISUAL_MEMORY_KINDS.decodedCpu,
             queueKind: "decode",
             signal,
+            operations,
+            rightsChecker,
             loader,
         });
         if (gpuBytes > 0 && handle.entry && handle.entry.gpuReservationId == null) {
@@ -237,12 +267,24 @@ export class VisualResourceCache {
         this._contextLostHandler = null;
     }
 
-    async _acquire({ key, kind, digest, useHash, bytes, memoryKind, queueKind, loader, signal }) {
+    async _acquire({
+        key,
+        kind,
+        digest,
+        useHash,
+        bytes,
+        memoryKind,
+        queueKind,
+        loader,
+        signal,
+        operations,
+        rightsChecker,
+    }) {
         this._assertLive();
         this._throwIfAborted(signal);
         const existing = this._entries.get(key);
         if (existing) {
-            await this._assertReusable(existing);
+            await this._assertReusable(existing, { useHash, operations, rightsChecker });
             existing.refs += 1;
             existing.lastUsed = this.now();
             return this._handle(existing);
@@ -252,23 +294,26 @@ export class VisualResourceCache {
             const entry = await shared;
             this._assertLive();
             this._throwIfAborted(signal);
-            await this._assertReusable(entry);
+            await this._assertReusable(entry, { useHash, operations, rightsChecker });
             entry.refs += 1;
             entry.lastUsed = this.now();
             return this._handle(entry);
         }
 
-        const pending = this._loadEntry({
-            key,
-            kind,
-            digest,
-            useHash,
-            bytes,
-            memoryKind,
-            queueKind,
-            loader,
-            signal,
-        });
+        const pending = (async () => {
+            await this._authorize(useHash, operations, rightsChecker);
+            return this._loadEntry({
+                key,
+                kind,
+                digest,
+                useHash,
+                bytes,
+                memoryKind,
+                queueKind,
+                loader,
+                signal,
+            });
+        })();
         this._inflight.set(key, pending);
         try {
             const entry = await pending;
@@ -371,17 +416,29 @@ export class VisualResourceCache {
         entry.lastUsed = this.now();
     }
 
-    async _assertReusable(entry) {
+    async _assertReusable(entry, {
+        useHash = entry.useHash,
+        operations = ["display"],
+        rightsChecker = this.rightsChecker,
+    } = {}) {
         if (entry.disposed) {
             throw new VisualPreviewError(
                 VISUAL_PREVIEW_ERROR_CODES.ASSET_MISSING,
                 `Visual cache entry ${entry.key} was disposed.`,
             );
         }
-        if (this.rightsChecker && entry.useHash && entry.rightsEpoch !== this._generation) {
-            await this.rightsChecker({ useHash: entry.useHash, operations: ["display"] });
+        // Cache identity is byte-based, not authorization-based. Every lease
+        // rechecks the requesting source use and operation set, even when the
+        // same bytes were already decoded for preview.
+        if (rightsChecker && useHash) {
+            await rightsChecker({ useHash, operations: [...operations] });
             entry.rightsEpoch = this._generation;
         }
+    }
+
+    async _authorize(useHash, operations, rightsChecker) {
+        if (!rightsChecker || !useHash) return;
+        await rightsChecker({ useHash, operations: [...operations] });
     }
 
     _reserveWithEviction(kind, bytes, label = kind) {

@@ -9,9 +9,10 @@ import { createDefaultExperimentSuite } from "../app/experiments/ExperimentSuite
 import { createExperimentResult, interruptActiveExperimentCases } from "../app/experiments/ExperimentResult.js";
 import { createDefaultScenario } from "../app/scenarios/ScenarioDocument.js";
 import { verifyRoute } from "../app/scenarios/route/index.js";
-import { createDefaultRunManifest } from "../app/simulation/RunManifest.js";
+import { createDefaultRunManifest, RUN_BUNDLE_KIND, RUN_BUNDLE_VERSION } from "../app/simulation/RunManifest.js";
 import { createRunSensor } from "../app/3d/devices/SensorTypeRegistry.js";
-import { managedEpisodeIdentity } from "../server/headless/ManagedHeadlessSession.js";
+import { createGpuSensorBackendSelection } from "../app/simulation/sensors/GpuSensorBackend.js";
+import { ManagedHeadlessSession, managedEpisodeIdentity } from "../server/headless/ManagedHeadlessSession.js";
 import { HeadlessExperimentService } from "../server/headless/HeadlessExperimentService.js";
 import { inspectReplay, readReplaySeries } from "../server/mcp/loggingTools.js";
 import { LogService } from "../server/logging/LogService.js";
@@ -156,8 +157,8 @@ test("managed experiments complete without a browser, repeat hashes, and import 
         assert.ok(secondStart.queuePosition >= 2);
         const first = await service.waitForCompletion(firstStart.resultId);
         assert.equal(first.execution.backend, "headless");
-        assert.equal(first.status, "completed");
-        assert.equal(first.cases[0].status, "completed");
+        assert.equal(first.status, "completed", first.cases[0]?.failureReason);
+        assert.equal(first.cases[0].status, "completed", first.cases[0]?.failureReason);
         assert.equal(first.cases[0].passed, true);
         assert.equal(first.cases[0].metrics["last-step"], 4);
         assert.equal(first.cases[0].metrics["trigger-count"], 1);
@@ -222,7 +223,7 @@ test("headless start atomically rejects candidate and unbounded suites without c
     await unboundedService.close();
 });
 
-test("managed experiments accept persisted CPU LiDAR and continue rejecting cameras", async (t) => {
+test("managed experiments accept persisted CPU LiDAR and analytic cameras", async (t) => {
     const lidar = await fixture(t, {
         suiteId: "lidar-suite",
         scenarioId: "lidar-scenario",
@@ -236,6 +237,12 @@ test("managed experiments accept persisted CPU LiDAR and continue rejecting came
     })).resolvedRun;
     assert.ok(resolved.lidarGeometry);
     assert.deepEqual(managedEpisodeIdentity(resolved).backendSelections.map((entry) => entry.kind), [1, 3]);
+    const gpuLidar = structuredClone(resolved);
+    gpuLidar.backendSelections = [
+        ...gpuLidar.backendSelections.filter((entry) => Number(entry.kind) !== 3),
+        createGpuSensorBackendSelection(),
+    ];
+    assert.deepEqual(managedEpisodeIdentity(gpuLidar).backendSelections.map((entry) => entry.kind), [1, 4]);
     const lidarService = new HeadlessExperimentService(lidar.storage, lidar.logs, {
         supervisor: new FakeSupervisor(), artifactRoot: path.join(lidar.root, "artifacts"),
     });
@@ -252,11 +259,84 @@ test("managed experiments accept persisted CPU LiDAR and continue rejecting came
     const cameraService = new HeadlessExperimentService(camera.storage, camera.logs, {
         supervisor: new FakeSupervisor(), artifactRoot: path.join(camera.root, "artifacts"),
     });
-    await assert.rejects(
-        cameraService.start({ suiteId: camera.suite.id, resultId: "camera-result" }),
-        /do not support sensor.*camera/i,
-    );
+    const cameraValidation = await camera.storage.validateExperimentSuite(camera.suite.id);
+    const cameraResolved = (await camera.storage.resolveExperimentCase(camera.suite.id, {
+        case: cameraValidation.matrix.cases[0],
+    })).resolvedRun;
+    assert.deepEqual(managedEpisodeIdentity(cameraResolved).backendSelections.map((entry) => entry.kind), [1, 4]);
+    const cameraStarted = await cameraService.start({
+        suiteId: camera.suite.id,
+        resultId: "camera-result",
+        artifactProfile: "disabled",
+    });
+    assert.equal((await cameraService.waitForCompletion(cameraStarted.resultId)).status, "completed");
     await cameraService.close();
+});
+
+test("managed camera steps wait for asynchronous capture delivery before reporting completion", async (t) => {
+    const current = await fixture(t, {
+        suiteId: "async-camera-suite",
+        scenarioId: "async-camera-scenario",
+        manifestId: "async-camera-manifest",
+        sensors: [createRunSensor("camera", { id: "async-camera", parentId: "ego" })],
+        loggingPolicy: "disabled",
+    });
+    const validation = await current.storage.validateExperimentSuite(current.suite.id);
+    const resolved = (await current.storage.resolveExperimentCase(current.suite.id, {
+        case: validation.matrix.cases[0],
+    })).resolvedRun;
+    const bundle = {
+        kind: RUN_BUNDLE_KIND,
+        version: RUN_BUNDLE_VERSION,
+        exportedAt: "2026-09-09T00:00:00.000Z",
+        manifest: structuredClone(resolved.manifest),
+        resolved: structuredClone(resolved),
+        resolvedHash: resolved.resolvedHash,
+        simulationSemanticHash: resolved.simulationSemanticHash,
+    };
+    let releaseCapture;
+    let announceCapture;
+    const captureGate = new Promise((resolve) => { releaseCapture = resolve; });
+    const captureStarted = new Promise((resolve) => { announceCapture = resolve; });
+    let captures = 0;
+    const session = new ManagedHeadlessSession({
+        rendererClient: {
+            async captureGroup(payload) {
+                captures += 1;
+                announceCapture();
+                await captureGate;
+                return payload.requests.map((request) => ({
+                    id: request.id,
+                    type: request.type,
+                    data: new Uint8Array(request.width * request.height * 4),
+                }));
+            },
+            async provenance() { return { renderer: "delayed-managed-test" }; },
+        },
+    });
+    try {
+        await session.prepare(bundle);
+        const running = session.run({
+            artifactPolicy: { profile: "disabled" },
+            outputUri: path.join(current.root, "async-camera-output"),
+        });
+        await captureStarted;
+        const completedBeforeCapture = session.health().lastCompletedStep;
+        await new Promise((resolve) => setImmediate(resolve));
+        assert.equal(session.health().lastCompletedStep, completedBeforeCapture);
+        assert.ok(session.kernel.steps > completedBeforeCapture);
+        assert.equal(session.state, "running");
+        releaseCapture();
+        const finalized = await running;
+        assert.ok(captures >= 1);
+        assert.ok(session.health().lastCompletedStep >= 1);
+        assert.equal(finalized.runResult.completed, true);
+        assert.equal(finalized.runResult.passed, true);
+        assert.equal(finalized.runResult.diagnostics.gpuRenderer.renderer, "delayed-managed-test");
+    } finally {
+        releaseCapture?.();
+        await session.close();
+    }
 });
 
 test("required log import failures error a case while optional failures retain artifact warnings", async (t) => {

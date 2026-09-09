@@ -1,6 +1,7 @@
 import {
     distanceXZ,
     finiteNumber,
+    offsetPointRightOfTravel,
     pointFrom,
     projectPointToSegment,
 } from "./geometry.js";
@@ -349,11 +350,6 @@ function edgeTransitions(graph, edgeId) {
     return result.sort((left, right) => left.direction - right.direction);
 }
 
-function endpointProjection(nodeId, graph) {
-    const node = graph.nodes.get(nodeId);
-    return node ? { x: node.x, y: node.y, z: node.z } : null;
-}
-
 function startCandidates(projection, graph) {
     if (projection.nodeId) return [{ nodeId: projection.nodeId, cost: 0, traversal: null }];
     const edge = graph.edges.get(projection.edgeId);
@@ -419,14 +415,174 @@ function directCandidate(start, goal, graph) {
     return candidates.sort((left, right) => left.cost - right.cost || compareText(left.signature, right.signature))[0] ?? null;
 }
 
-function candidatePolyline(start, goal, candidate, graph) {
-    const points = [start.point];
-    for (const nodeId of candidate.nodeIds) {
-        const point = endpointProjection(nodeId, graph);
-        if (point) points.push(point);
+/**
+ * Lateral offset from the road centerline onto the legal right-hand travel
+ * bundle (RHT). Two-way roads use the right half (width/4 when even lanes);
+ * one-way roads keep the full carriageway center (offset 0).
+ */
+export function rightTravelOffsetMeters(edge) {
+    if (!edge) return 0;
+    const width = Math.max(0, finiteNumber(edge.width, DEFAULT_ROAD_WIDTH));
+    if (width <= EPSILON) return 0;
+    if (edgeIsBidirectional(edge)) return width * 0.25;
+    return 0;
+}
+
+function pointOnEdgeCenterline(edge, t, graph) {
+    const start = graph.nodes.get(edge.startNodeId);
+    const end = graph.nodes.get(edge.endNodeId);
+    if (!start || !end) return null;
+    const fraction = Math.max(0, Math.min(1, finiteNumber(t, 0)));
+    return {
+        x: start.x + ((end.x - start.x) * fraction),
+        y: finiteNumber(start.y, 0) + ((finiteNumber(end.y, 0) - finiteNumber(start.y, 0)) * fraction),
+        z: start.z + ((end.z - start.z) * fraction),
+    };
+}
+
+function travelEndpoints(edge, direction, graph) {
+    const start = graph.nodes.get(edge.startNodeId);
+    const end = graph.nodes.get(edge.endNodeId);
+    if (!start || !end) return null;
+    const forward = direction === 1 || direction === undefined || direction === null;
+    return forward
+        ? { from: { x: start.x, y: start.y, z: start.z }, to: { x: end.x, y: end.y, z: end.z } }
+        : { from: { x: end.x, y: end.y, z: end.z }, to: { x: start.x, y: start.y, z: start.z } };
+}
+
+function offsetEdgeSample(edge, t, direction, graph) {
+    const center = pointOnEdgeCenterline(edge, t, graph);
+    const endpoints = travelEndpoints(edge, direction, graph);
+    if (!center || !endpoints) return null;
+    return offsetPointRightOfTravel(
+        center,
+        endpoints.from,
+        endpoints.to,
+        rightTravelOffsetMeters(edge),
+    );
+}
+
+/**
+ * Build the canonical travel polyline for a directed path: samples sit on the
+ * right-hand travel side of each edge. Intersection node centers are omitted;
+ * consecutive edge endpoints are stitched so fillets can round corners later.
+ */
+export function offsetTravelPolyline(start, goal, candidate, graph) {
+    const traversal = Array.isArray(candidate?.traversal) ? candidate.traversal : [];
+    const points = [];
+    const push = (point) => {
+        if (!point) return;
+        const previous = points[points.length - 1];
+        if (previous && distanceXZ(previous, point) <= EPSILON) return;
+        points.push({ ...point });
+    };
+
+    const stepDirection = (step, edge) => {
+        if (step.direction === 1 || step.direction === -1) return step.direction;
+        if (step.fromNodeId === edge.startNodeId) return 1;
+        if (step.fromNodeId === edge.endNodeId) return -1;
+        if (Number.isFinite(step.fromT) && Number.isFinite(step.toT)) {
+            return step.toT >= step.fromT - EPSILON ? 1 : -1;
+        }
+        return 1;
+    };
+
+    if (traversal.length === 0) {
+        // Same-edge zero-length or same-intersection: keep endpoints, offset if on a road.
+        if (start?.edgeId && start.edgeId === goal?.edgeId) {
+            const edge = graph.edges.get(start.edgeId);
+            if (edge) {
+                const direction = (goal.t ?? 0) >= (start.t ?? 0) - EPSILON ? 1 : -1;
+                push(offsetEdgeSample(edge, start.t ?? 0, direction, graph));
+                push(offsetEdgeSample(edge, goal.t ?? start.t ?? 0, direction, graph));
+                return points;
+            }
+        }
+        if (start?.point) push(start.point);
+        if (goal?.point) push(goal.point);
+        return points;
     }
-    points.push(goal.point);
+
+    for (let index = 0; index < traversal.length; index += 1) {
+        const step = traversal[index];
+        const edge = graph.edges.get(step.edgeId);
+        if (!edge) continue;
+        const direction = stepDirection(step, edge);
+        const defaultFromT = direction === 1 ? 0 : 1;
+        const defaultToT = direction === 1 ? 1 : 0;
+        let fromT = Number.isFinite(step.fromT) ? step.fromT : defaultFromT;
+        let toT = Number.isFinite(step.toT) ? step.toT : defaultToT;
+
+        if (index === 0 && start?.kind === "road" && start.edgeId === edge.id && Number.isFinite(start.t)) {
+            fromT = start.t;
+        }
+        if (index === traversal.length - 1 && goal?.kind === "road" && goal.edgeId === edge.id && Number.isFinite(goal.t)) {
+            toT = goal.t;
+        }
+
+        push(offsetEdgeSample(edge, fromT, direction, graph));
+        push(offsetEdgeSample(edge, toT, direction, graph));
+    }
+
+    if (points.length === 0 && start?.point) push(start.point);
     return points;
+}
+
+function buildBidirectionalShadowGraph(graph) {
+    const document = {
+        environmentId: graph.document?.environmentId ?? null,
+        roads: {
+            nodes: [...graph.nodes.values()],
+            edges: [...graph.edges.values()].map((edge) => ({
+                ...edge,
+                bidirectional: true,
+                oneWay: false,
+                direction: 1,
+                oneWayDirection: 1,
+            })),
+        },
+    };
+    return buildDirectedRoadGraph(document);
+}
+
+/** Internal undirected connectivity check (no offset geometry needed). */
+function routeBetweenProjectionsUndirected(start, goal, graph) {
+    if (!start || !goal) return { ok: false };
+
+    const candidates = [];
+    const direct = directCandidate(start, goal, graph);
+    if (direct) candidates.push(direct);
+
+    for (const from of startCandidates(start, graph)) {
+        for (const to of goalCandidates(goal, graph)) {
+            const path = deterministicDirectedAStar(graph, from.nodeId, to.nodeId);
+            if (!path.ok) continue;
+            candidates.push({ cost: from.cost + path.cost + to.cost });
+        }
+    }
+
+    if (start.nodeId && goal.nodeId && start.nodeId === goal.nodeId) {
+        candidates.push({ cost: 0 });
+    }
+
+    return candidates.length > 0 ? { ok: true } : { ok: false };
+}
+
+function classifyRouteFailure(start, goal, graph) {
+    const shadow = buildBidirectionalShadowGraph(graph);
+    const undirected = routeBetweenProjectionsUndirected(start, goal, shadow);
+    if (undirected.ok) {
+        return {
+            ok: false,
+            code: "route.section.illegal-direction",
+            error: "Traveling this section would go the wrong way on a one-way road.",
+        };
+    }
+    return {
+        ok: false,
+        code: "route.section.disconnected",
+        error: "No directed road path exists between waypoints.",
+    };
 }
 
 /** Route between two already-projected road/intersection positions. */
@@ -434,7 +590,13 @@ export function routeBetweenProjections(start, goal, environmentOrGraph) {
     const graph = environmentOrGraph?.adjacency instanceof Map
         ? environmentOrGraph
         : buildDirectedRoadGraph(environmentOrGraph);
-    if (!start || !goal) return { ok: false, error: "Both route endpoints must be projected onto the road network." };
+    if (!start || !goal) {
+        return {
+            ok: false,
+            code: "route.section.disconnected",
+            error: "Both route endpoints must be projected onto the road network.",
+        };
+    }
 
     const candidates = [];
     const direct = directCandidate(start, goal, graph);
@@ -461,13 +623,13 @@ export function routeBetweenProjections(start, goal, environmentOrGraph) {
     const best = candidates.sort((left, right) => (
         left.cost - right.cost || compareText(left.signature, right.signature)
     ))[0];
-    if (!best) return { ok: false, error: "No directed road path exists between waypoints." };
+    if (!best) return classifyRouteFailure(start, goal, graph);
     return {
         ok: true,
         cost: best.cost,
         nodeIds: best.nodeIds,
         edgeIds: best.traversal.map((step) => step.edgeId),
         edgeTraversal: best.traversal,
-        polyline: candidatePolyline(start, goal, best, graph),
+        polyline: offsetTravelPolyline(start, goal, best, graph),
     };
 }

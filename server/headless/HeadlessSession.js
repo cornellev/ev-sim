@@ -268,7 +268,8 @@ export class HeadlessSession {
 
     async close() {
         await this.abort();
-        this.episode?.dispose();
+        if (this.episode?.disposeAsync) await this.episode.disposeAsync();
+        else this.episode?.dispose();
         this.episode = null;
         this.state = "closed";
     }

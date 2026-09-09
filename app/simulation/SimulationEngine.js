@@ -1,5 +1,6 @@
 import { clamp } from "three/src/math/MathUtils.js";
 import { AutonomyOverlay } from "../3d/overlay/AutonomyOverlay.js";
+import { BrowserPbrRenderRuntime } from "../3d/perception/BrowserPbrRenderRuntime.js";
 import { ScenarioDiagnostics } from "../scenarios/ScenarioDiagnostics.js";
 import { ScenarioRuntime } from "../scenarios/ScenarioRuntime.js";
 import { SimulationKernel } from "./kernel/SimulationKernel.js";
@@ -80,6 +81,9 @@ export class SimulationEngine {
         this.listeners = new Set();
         this.viewportActive = true;
         this.environmentRuntime = null;
+        this.renderRuntime = null;
+        this.renderProviderStatus = null;
+        this._asyncAdvanceTail = Promise.resolve();
 
         this.scenarioDiagnostics = new ScenarioDiagnostics();
         this.autonomyOverlay = new AutonomyOverlay();
@@ -107,6 +111,11 @@ export class SimulationEngine {
                 return this._applyResolvedEnvironment(environment, resolvedRun, worldResource);
             },
             environmentState: () => this.data.environment?.()?.getDeterministicState?.() ?? null,
+            renderTarget: "browser",
+            prepareRendering: (resolvedRun, options) => this._prepareRendering(resolvedRun, options),
+            currentRendering: () => this.renderRuntime,
+            renderingStatus: () => this.renderProviderStatus,
+            disposeRendering: () => this._disposeRendering(),
         });
         this.kernel = new SimulationKernel(this.runtimeContext, options);
         exposeKernelProperties(this);
@@ -121,6 +130,42 @@ export class SimulationEngine {
         this.controls = controls;
         this.scenarioDiagnostics.attach(scene, camera);
         this.autonomyOverlay?.attach?.(scene, camera);
+    }
+
+    async _prepareRendering(resolvedRun, options = {}) {
+        this._disposeRendering();
+        const provider = resolvedRun?.renderScene?.description?.provider;
+        const profile = resolvedRun?.renderScene?.description?.productProfile ?? null;
+        if (provider?.id !== "pbr-mesh" || Number(provider?.version) !== 1) {
+            this.renderProviderStatus = provider ? {
+                provider: { ...provider },
+                productProfile: profile ? { ...profile } : null,
+                state: "ready",
+                residency: null,
+                diagnostic: null,
+                error: null,
+            } : null;
+            return null;
+        }
+        const runtime = new BrowserPbrRenderRuntime({
+            renderer: this.renderer,
+            vehicles: () => this.data.vehicles?.()?.vehicles ?? [],
+        });
+        this.renderRuntime = runtime;
+        runtime.subscribe((status) => {
+            this.renderProviderStatus = status;
+        });
+        await runtime.prepare(resolvedRun, {
+            sensorRig: options.sensorRig,
+            vehicles: options.vehicles,
+        });
+        return runtime;
+    }
+
+    _disposeRendering() {
+        this.renderRuntime?.dispose?.();
+        this.renderRuntime = null;
+        this.renderProviderStatus = null;
     }
 
     setEnvironmentRuntime({ loader = null, persistence = null } = {}) {
@@ -229,6 +274,7 @@ export class SimulationEngine {
                         : "running",
                 terminal: scenarioRuntime.terminal,
             } : null,
+            renderProvider: this.renderProviderStatus,
             frames: this.frames,
             scenarioDiagnostics: { enabled: this.scenarioDiagnostics.enabled },
             autonomyOverlay: { ...this._autonomyOverlayEnabled },
@@ -285,6 +331,7 @@ export class SimulationEngine {
         this.renderer = null;
         this.controls = null;
         this.environmentRuntime = null;
+        this._disposeRendering();
     }
 
     play() {
@@ -319,11 +366,28 @@ export class SimulationEngine {
     }
 
     step(count = 1) {
+        if (this.renderRuntime) {
+            return this._serializeAsyncAdvance(() => this._stepAsync(count));
+        }
         this.kernel.step(count, {
             afterStep: (dt) => this._updatePresentationAfterStep(dt),
         });
         this.render();
         this._emit();
+    }
+
+    async _stepAsync(count) {
+        await this.kernel.stepAsync(count, {
+            afterStep: (dt) => this._updatePresentationAfterStep(dt),
+        });
+        this.render();
+        this._emit();
+    }
+
+    _serializeAsyncAdvance(operation) {
+        const pending = this._asyncAdvanceTail.then(operation, operation);
+        this._asyncAdvanceTail = pending.catch(() => {});
+        return pending;
     }
 
     setSpeed(speed) {
@@ -433,7 +497,7 @@ export class SimulationEngine {
         return this.kernel.queueTopicInput(info);
     }
 
-    _frame(nowMs) {
+    async _frame(nowMs) {
         if (!this.looping) return;
 
         const rawFrameDt = (nowMs - this.lastFrameMs) / 1000;
@@ -448,7 +512,22 @@ export class SimulationEngine {
         }
 
         if (this.status === "playing") {
-            this._advanceSimulation(frameDt);
+            try {
+                if (this.renderRuntime) {
+                    await this._serializeAsyncAdvance(() => this._advanceSimulationAsync(frameDt));
+                }
+                else this._advanceSimulation(frameDt);
+            } catch (error) {
+                this.kernel.pause();
+                if (this.renderProviderStatus?.state !== "error") {
+                    this.renderProviderStatus = {
+                        ...(this.renderProviderStatus ?? {}),
+                        state: "error",
+                        diagnostic: { code: error.code ?? "PBR_CAPTURE_FAILED", message: error.message },
+                        error: { code: error.code ?? "PBR_CAPTURE_FAILED", message: error.message },
+                    };
+                }
+            }
             this._emitFrame();
         }
         if (this.viewportActive && this.modules.rendering) this.render();
@@ -487,6 +566,39 @@ export class SimulationEngine {
     _fixedStep(dt) {
         const previousStep = this.steps;
         const shouldContinue = this.kernel.advanceStep(dt);
+        if (this.steps > previousStep) this._updatePresentationAfterStep(dt);
+        return shouldContinue;
+    }
+
+    async _advanceSimulationAsync(frameDt) {
+        const scaledDt = frameDt * this.speed;
+        const frameStartMs = this.realtime ? this._nowMs() : 0;
+        this.gpuCaptureEnabled = true;
+        if (!this.deterministic) {
+            await this._fixedStepAsync(scaledDt);
+            return;
+        }
+
+        this.accumulatorNs += this.realtime
+            ? Math.max(0, Math.round(scaledDt * 1e9))
+            : this.stepNs * Math.max(1, this.maxSubSteps);
+        this.accumulator = this.accumulatorNs / 1e9;
+
+        let subSteps = 0;
+        while (this.accumulatorNs >= this.stepNs && subSteps < this.maxSubSteps) {
+            const previousStep = this.steps;
+            const shouldContinue = await this._fixedStepAsync(this.fixedDt);
+            if (this.steps > previousStep) this.accumulatorNs -= this.stepNs;
+            this.accumulator = this.accumulatorNs / 1e9;
+            subSteps += 1;
+            if (shouldContinue === false) break;
+            if (this.realtime && this._nowMs() - frameStartMs > this.realtimeStepBudgetMs) break;
+        }
+    }
+
+    async _fixedStepAsync(dt) {
+        const previousStep = this.steps;
+        const shouldContinue = await this.kernel.advanceStepAsync(dt);
         if (this.steps > previousStep) this._updatePresentationAfterStep(dt);
         return shouldContinue;
     }

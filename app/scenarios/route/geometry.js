@@ -214,6 +214,36 @@ export function projectPointToPolyline(value, points, options = {}) {
     return null;
 }
 
+/**
+ * Unit normal pointing to the right of travel from `from` → `to` in XZ.
+ * Heading 0 is +Z; plant steering is positive-right, so right = (dz, -dx).
+ */
+export function rightTravelNormal(from, to) {
+    const start = pointFrom(from);
+    const end = pointFrom(to);
+    if (!start || !end) return null;
+    const dx = end.x - start.x;
+    const dz = end.z - start.z;
+    const length = Math.hypot(dx, dz);
+    if (length <= EPSILON) return null;
+    return { x: dz / length, z: -dx / length };
+}
+
+/** Offset a centerline point to the right of travel by `offsetMeters`. */
+export function offsetPointRightOfTravel(point, from, to, offsetMeters) {
+    const base = pointFrom(point);
+    if (!base) return null;
+    const offset = finiteNumber(offsetMeters, 0);
+    if (Math.abs(offset) <= EPSILON) return { ...base };
+    const normal = rightTravelNormal(from, to);
+    if (!normal) return { ...base };
+    return {
+        x: base.x + normal.x * offset,
+        y: base.y,
+        z: base.z + normal.z * offset,
+    };
+}
+
 /** Normalize an angle into (-π, π]. */
 export function normalizeAngle(value) {
     let result = finiteNumber(value);

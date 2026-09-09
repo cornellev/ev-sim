@@ -24,6 +24,15 @@ const rendererClient = {
     captureGroup(payload) {
         return this.request("capture-group", payload);
     },
+    preparePbr(payload) {
+        return this.request("prepare-pbr", payload);
+    },
+    capturePbr(payload) {
+        return this.request("capture-pbr", payload);
+    },
+    releasePbr() {
+        return this.request("release-pbr", {});
+    },
     provenance() {
         return this.request("provenance", {});
     },
@@ -69,7 +78,7 @@ async function command(name, payload = {}) {
             await session?.close();
             const managed = payload.mode === "managed-experiment";
             session = managed
-                ? new ManagedHeadlessSession({ limits: payload.limits })
+                ? new ManagedHeadlessSession({ limits: payload.limits, rendererClient })
                 : new HeadlessSession({
                     limits: payload.limits,
                     episodeFactory: () => new HeadlessEpisode({ rendererClient }),

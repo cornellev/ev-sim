@@ -191,6 +191,41 @@ export class SensorPublisher {
         }
     }
 
+    dueSyncGroupKeys(clock) {
+        if (!this.config.syncGroupId) return [];
+        this._initializeSchedule(clock);
+        const keys = [];
+        for (let step = this.nextCaptureStep; step <= clock.step; step += this.periodSteps) {
+            keys.push(`${this.config.syncGroupId}:${step}`);
+        }
+        return keys;
+    }
+
+    queueCheckpoint() {
+        return this.queue.length;
+    }
+
+    discardEnqueued(checkpoint, { syncGroupKey = null } = {}) {
+        const keep = [];
+        for (const [index, frame] of this.queue.entries()) {
+            const discard = index >= checkpoint
+                && (syncGroupKey === null || frame.syncGroupKey === syncGroupKey);
+            if (!discard) {
+                keep.push(frame);
+                continue;
+            }
+            frame.encodeCancelled = true;
+            this.device.releaseObservation?.(frame.observation);
+            frame.messages = null;
+            frame.observation = null;
+            frame.encodedByTopic = null;
+        }
+        this.queue = keep;
+        this.queuedBytes = this.queue.reduce((sum, frame) => sum + (Number(frame.bytes) || 0), 0);
+        this.health.queueDepth = this.queue.length;
+        this.health.queueBytes = this.queuedBytes;
+    }
+
     _captureContext(clock) {
         const captureTimeNs = this.nextCaptureStep * this.stepNs;
         const sampleIndex = this.sampleIndex++;

@@ -25,26 +25,40 @@ a VIS, GOOG, or GS PR changes a contract, hash, gate, or milestone status.
 
 ## Status and release verdict
 
-- Next milestone: **VIS-14 — browser measured cameras**. VIS-01, VIS-12a,
+- Next milestones: **VIS-15a AGX acceptance and VIS-15b managed hardware
+  acceptance**. The VIS-15a software path and local macOS ARM64 gate are
+  implemented; the required AGX workflow evidence is still pending. VIS-15b
+  now has its managed renderer, immutable admission, lifecycle, recovery, and
+  injected-correspondence software path, while its actual managed PBR hardware
+  run and production VIS-16b evidence provider remain pending. VIS-01, VIS-12a,
   VIS-02, VIS-03, VIS-04, VIS-05a, VIS-05b, VIS-06a, VIS-06b, VIS-07,
-  VIS-08, VIS-09, VIS-10a, VIS-10b, VIS-11, VIS-12b, VIS-13a, VIS-13b,
+  VIS-08, VIS-09, VIS-10a, VIS-10b, VIS-11, VIS-12b, VIS-13a, VIS-13b, VIS-14,
   and VIS-16a are implemented.
-- Review verdict: **NO-GO for the original ordering and for claiming visual
-  runtime support.** The five Blocker findings below require implementation
-  and evidence. This revision supplies the corrected handoff; editing the
-  plan does not close an implementation finding.
+- Review verdict: **NO-GO for a full visual-runtime release claim.** VIS-15a
+  supplies configuration-gated local headless PBR execution and VIS-15b wires
+  that renderer into managed execution under test-only evidence injection.
+  AGX, actual managed PBR hardware, installed, production correspondence, and
+  release evidence remain gated below.
 - Core assumption: **Google approval, Google-derived assets, Gaussian
   splatting, and a model service are unavailable.**
 - Default implementation/review reasoning level: **Extra High**.
-- Last updated: **2026-09-09 — VIS-13b same-host executable asset admission implemented**.
--   VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, VIS-05a, VIS-05b, VIS-06a,
+- Last updated: **2026-09-09 — VIS-15b managed software integration and injected gates implemented**.
+- Implemented evidence: VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, VIS-05a, VIS-05b, VIS-06a,
   VIS-06b, VIS-07, VIS-08, VIS-09, VIS-10a, VIS-10b, VIS-11, VIS-12b,
-  VIS-13a, VIS-13b, and VIS-16a acceptance evidence is recorded in the
-  progress ledger and decision log. Protocol 1.4 advertises `world-bound@2`.
-  Only `canonical-analytic@1` and GPU sensor backend v1 remain runtime-capable.
+  VIS-13a, VIS-13b, VIS-14, and VIS-16a acceptance evidence is recorded in the
+  progress ledger and decision log. VIS-15a implementation and local GPU
+  evidence are recorded while its two AGX gates remain open. VIS-15b software
+  and lifecycle evidence is recorded while the actual managed PBR hardware
+  gate and production evidence provider remain open. Protocol 1.4
+  advertises `world-bound@2`. `canonical-analytic@1` remains available in
+  browser and headless targets; `pbr-mesh@1` is runtime-capable in the browser
+  and in explicitly enabled, successfully probed normal headless supervisors.
+  GPU sensor backend v1 remains the analytic default; backend v2 is advertised
+  only by a PBR-enabled supervisor after its target-specific probes pass.
   `pbr-mesh@1` is resolution-capable for immutable export, integrity-only
-  inspection, authoring-store package transfer, and same-host admission, but
-  remains unavailable for execution; corrected analytic remains unavailable.
+  inspection, authoring-store package transfer, same-host admission, and
+  browser execution and configuration-gated normal-worker headless/Python PBR.
+  Corrected analytic v2 remains unavailable.
   Configured Unix-socket supervisors advertise `cev-sim.run-package@1`;
   disabled and TCP supervisors do not. Environment
   v3 references may include `accessHash`. Preview materialization is display-only
@@ -1572,14 +1586,14 @@ person and commit their decision/evidence before the specified gate.
 | ID | Accountable role | Decision required | Due before |
 | --- | --- | --- | --- |
 | **D01** | Repository owner (interim); simulation + Python/protocol implementers | **Implemented in VIS-12a:** manifest v11, `world-bound@2`, semantic/episode v2, protocol 1.3; preserve bundle v1 and current analytic execution. Nested lock/profile and JS/Python byte/episode vectors pass. | Scoped G-HASH/G-MIGRATION evidence recorded below; VIS-12b retains selected-visual cases |
-| **D02** | Repository owner (interim); rendering + perception implementers | **Implemented through VIS-12b:** provider ID/version registry, `measured-rgba-analytic-oracle@1` product profile, new-camera `canonical-analytic@1` defaults, strict camera product/profile validation, the versioned calibrated-capture core, and a separate resolution-support bit. `pbr-mesh@1` is resolvable but not executable; `canonical-analytic@2` remains unavailable. | Contract, calibration, and selected-resolution evidence recorded; VIS-14/VIS-15 retain provider/backend activation |
+| **D02** | Repository owner (interim); rendering + perception implementers | **Implemented through VIS-15a software:** provider ID/version registry, `measured-rgba-analytic-oracle@1` product profile, new-camera `canonical-analytic@1` defaults, strict camera product/profile validation, the versioned calibrated-capture core, target-specific provider admission, browser `pbr-mesh@1`, and configuration-gated normal-worker headless/Python routing through backend v2. `canonical-analytic@2` remains unavailable. | Browser and local macOS headless provider/routing/calibration/async evidence recorded; AGX Orin/Thor execution remains open |
 | **D03** | Repository owner (interim); storage + protocol implementers | **Resolved for VIS-01; storage implemented in VIS-04:** deterministic uncompressed USTAR and fixed limits; separate exact byte digests; same-host opaque admission handles; additive protocol 1.4 fields/RPCs; durable acquire-before-release roots and pins. VIS-04 stores immutable bytes, source-bound uses, quotas, staging recovery, and internal roots/pins. Protocol 1.4 and package admission remain VIS-13. | VIS-04 storage evidence recorded; VIS-13 retains package/admission |
 | **D04** | Runtime packaging/release owner | Delivery of renderer/decoder runtime assets, dependency/license closure, package size ceiling or separately verified runtime artifact choice, and offline installation expectations. No scene/model data in the runtime tarball. | VIS-15c; constraints recorded in VIS-01 |
 | **D05** | Repository owner (interim baseline); applicable legal/source owner for grants | **Resolved baseline; ingestion enforced in VIS-04:** only the configured local operator registry is trusted; permissions intersect through ancestry; unknown/revoked/expired sources and ungranted Google-derived operations fail closed. VIS-04 loads the operator file with no mutation API and re-evaluates grants at upload, content access, and root/pin acquisition. | VIS-04 ingestion evidence recorded; every GOOG activation still needs its source owner |
-| **D06** | Performance + deployment owners | Numeric city workload and CPU/GPU/storage/decode budgets, camera rate/latency, concurrency, bake duration and recovery thresholds per supported hardware stack. Decide the advertised capacity from measurements. | VIS-05b; rerun for VIS-15a and VIS-17c |
+| **D06** | Performance + deployment owners | Numeric city workload and CPU/GPU/storage/decode budgets, camera rate/latency, concurrency, bake duration and recovery thresholds per supported hardware stack. VIS-15a records local M1 Max preparation/cold/warm capture, transfer, RSS and cleanup measurements; AGX Orin/Thor measurements still decide their advertised capacity. | VIS-05b; AGX rerun for VIS-15a; final rerun for VIS-17c |
 | **D07** | Repository owner (interim); perception validation + experiment owners | **Resolved for VIS-16a contracts:** versioned profiles carry required metrics, sample/coverage minimums, non-overlapping distance bands, comparison operators, worst-region limits, and confidence/no-hit denominators. Only synthetic boundary profiles are present. No production threshold profile is approved until VIS-16b records real matched-fidelity evidence. | Synthetic schema decision recorded; production values remain a VIS-16b gate |
 | **D08** | Repository owner (interim); validation + runtime owners | **Resolved for VIS-16a trust policy:** only exact report bytes recomputed through a trusted local runtime boundary can become managed evidence. Imported/self-attested reports are diagnostic. Profile approval and local-validation records are trusted context outside report JSON; current asset-validation, rights, and capability checks remain mandatory. VIS-16b must refresh applicability at queue, worker start, and recovery. | Contract policy recorded; runtime enforcement remains VIS-16b |
-| **D09** | Product + runtime/hardware owners | Supported release platforms and precision/replay guarantees, candidate workflow/runner access, soak duration, and actual x64/Jetson evidence. Any narrower support claim needs explicit sign-off. | Any PBR capability activation; VIS-17c release |
+| **D09** | Product + runtime/hardware owners | Supported release platforms and precision/replay guarantees, candidate workflow/runner access, soak duration, and actual hardware evidence. VIS-15a allows `local-development`, `jetson-agx-orin`, and `jetson-agx-thor` targets, with v2 hidden until target probes pass; NVIDIA x64 remains unadvertised. Local development evidence is not a release-platform claim. | AGX VIS-15a evidence; VIS-17c release sign-off |
 
 Default denials, preserved world semantics, explicit errors, immutable
 workers, and no oracle leakage are already locked. Human choices may select
@@ -1590,7 +1604,7 @@ requirements with silent fallback or unsupported claims.
 
 VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, VIS-05a, VIS-05b, VIS-06a, VIS-06b,
 VIS-07, VIS-08, VIS-09, VIS-10a, VIS-10b, VIS-11, VIS-12b, VIS-13a,
-VIS-13b, and VIS-16a are complete in the working tree;
+VIS-13b, VIS-14, and VIS-16a are complete in the working tree;
 all other required core PRs remain **not started**. VIS-12a landed at commit
 `e4f756a`. Its accountable owner remains the repository owner under D01.
 
@@ -1941,9 +1955,27 @@ all other required core PRs remain **not started**. VIS-12a landed at commit
   TCP and disabled supervisors reject it. PBR packages can be admitted but
   still fail capability preflight before worker creation. See the VIS-13b
   decision-log entry for the exact acceptance record.
-- [ ] VIS-14
-- [ ] VIS-15a
-- [ ] VIS-15b
+- [x] VIS-14 — browser-target `pbr-mesh@1` admission, run-owned detached
+  appearance/analytic scenes, exact evidence and per-lease rights validation,
+  multi-camera residency, aligned calibrated capture, transactional async
+  sensor publication, serialized browser stepping, diagnostic render status,
+  and lifecycle cancellation/disposal. Legacy analytic capture remains on its
+  synchronous byte-compatible path; headless and Python PBR stay unavailable.
+  See the VIS-14 decision-log entry for the exact acceptance record.
+- [ ] VIS-15a — implementation, software regression, and local macOS ARM64
+  GPU fixture complete. The normal worker can prepare immutable PBR resources,
+  capture appearance RGBA plus analytic depth/semantic/instance products, and
+  carry them atomically through shared memory. Required AGX Orin and AGX Thor
+  hardware workflow evidence remains pending, so the milestone stays open.
+- [ ] VIS-15b — managed state, CPU/GPU LiDAR, analytic/PBR camera, and mixed-rig
+  execution now shares the asynchronous kernel and supervisor renderer. New
+  queue entries retain exact bundle bytes in version-2 sidecars, durable
+  transitive asset roots, independent execution pins/readers, ownership
+  journals, retained-result/baseline roots, and restart-safe pending work.
+  Correspondence checks use an injected server-only provider and remain closed
+  by default. Software G-MANAGED/G-LIFECYCLE regressions pass, but the actual
+  managed PBR hardware fixture was not enabled locally and VIS-16b has not
+  supplied the production provider, so the milestone stays open.
 - [ ] VIS-15c
 - [ ] VIS-16b
 - [ ] VIS-17a
@@ -3011,3 +3043,181 @@ VIS-13a/13b remain implemented with these audit corrections. This evidence
 does not claim real PBR rendering, managed queue admission, remote/TCP asset
 distribution, published-asset deletion, or the outstanding headless PR 12
 hosted/hardware acceptance gates.
+
+### 2026-09-09 — Implement VIS-14 browser measured-camera integration
+
+Provider runtime availability is now target-specific. `canonical-analytic@1`
+is available for browser and headless execution, `canonical-analytic@2` is
+unavailable for both, and `pbr-mesh@1` is available only to the browser target.
+Omitted targets remain headless-safe. Browser preparation requests the browser
+target. Offline inspection remains integrity-only and reports headless runtime
+unavailability; bundle, episode, supervisor, CLI-run, and Python paths reject
+PBR before runtime mutation.
+
+Browser PBR runs own detached appearance and analytic-truth scenes. Preparation
+rehashes the exact render scene and evidence, revalidates source-bound uses and
+`display` plus `machine-interpretation` rights, materializes static layers,
+actors, environment maps, lighting/background, and the frozen pixel recipe,
+and admits the union of all enabled camera positions for required residency.
+Cache hits reauthorize each requesting use and operation set, including reuse
+of bytes first decoded for preview. Imported metadata is stripped; semantic and
+instance bindings are created only from the resolved `analyticTruth` document.
+Neither scene is registered with or attached to the mutable editor scene.
+
+`ManifestCamera` receives the browser renderer as an opaque runtime adapter.
+For PBR it samples one calibrated pose and the run-owned actor groups at the
+scheduled integer-nanosecond time, then routes RGBA through the appearance
+scene and authored depth/semantic/instance products through the analytic scene.
+The aligned result is converted directly into the existing messages without a
+second distortion warp. Device updates are awaitable, sync-group queues are
+rolled back on any infrastructure failure, and manual/RAF advancement shares a
+serialized async barrier. Required residency loss, cancellation, context loss,
+readback failure, and OOM never fall back or publish a partial group. Runtime
+status exposes only diagnostic provider/profile, readiness, residency, and
+error data. Replacement and disposal abort the active generation and release
+scenes, targets, materializer leases, and cache leases.
+
+Local acceptance evidence:
+
+- Final focused provider, conditional-resolution, browser PBR, measured
+  materializer, per-lease rights, multi-camera residency, and status suites
+  passed **46/46**. The real-WebGL isolation/PBR UI file passed **2/2** when run
+  independently; the aggregate five-worker Playwright command was stopped
+  after unrelated environment-loading timeouts saturated the local host.
+- `npm run lint` and `npm run build` passed. `npm run test:headless` passed
+  **90/90**. `npm run test:gpu-sensors` passed **8/10** with only the two
+  declared hardware skips.
+- `npm test` passed **919/921** with the same two declared hardware skips and
+  no failures.
+- `npm run fixtures:headless` reproduced the committed characterization with
+  no delta. Action-tape and characterization SHA-256 values remain
+  `1ba8c8c40e1560ac044f4ca5384065ab83c93529d65b5672fee8dc5ed42a5ced`
+  and `60dc0bd2b02a9ec768f833070ce4d8d2047f5383838f09ea3f130dd31552dd6f`.
+
+No manifest, bundle, protobuf, ROS message, topic, sensor-product, semantic,
+episode-hash, legacy analytic, or GPU backend identity changed. This milestone
+does not enable headless/Python PBR, backend v2, Google Tiles, splats, managed
+execution, external model services, or release-platform support; those gates
+remain with VIS-15/VIS-16b/VIS-17c.
+
+### 2026-09-09 — Implement VIS-15a software and local GPU gate
+
+The existing supervisor-owned Chromium process now dispatches analytic v1 and
+PBR v2 providers through one bounded context pool. Its private intercepted
+origin serves only the PBR ES-module closure and pinned Basis transcoder files.
+Backend v2 is disabled by default and becomes ready only on an explicitly
+selected `local-development`, `jetson-agx-orin`, or `jetson-agx-thor` target
+after PBR material, KTX2 decoder, float-target, and asynchronous PBO/fence
+readback probes pass. NVIDIA x64 remains unadvertised.
+
+Normal workers await immutable PBR preparation before reset or stepping. The
+supervisor validates exact admitted source uses, calibration, decoder support,
+and required camera residency, then returns generation-scoped handles bound to
+resource hashes. Static asset bytes transfer during preparation only; warm
+captures carry timestamps, calibrated poses, and actor deltas. Shared visual
+resource caches and renderer ledgers bound encoded, decoded, GPU, target,
+readback, output, and transfer allocations. Reset retains valid immutable
+leases; close, replacement, renderer loss, or restart invalidates them.
+
+The browser and headless adapters share `BrowserPbrRenderRuntime`, detached
+appearance/analytic scenes, materialization, actor updates, recipes, and aligned
+capture helpers. Headless cameras route RGBA through appearance geometry and
+depth/semantic/instance through analytic truth; GPU LiDAR continues to use its
+dedicated `lidarGeometry`. Imported GLTF metadata is stripped. Aligned results
+are already upright and distorted, receive sensor noise once, retain the
+existing `rgba8`, `32FC1`, `16UC1`, and `32SC1` encodings, and expose only RGB
+to measured observations. Product validation, message construction, publisher
+checkpoints, and shared-arena allocation form one rollback-safe sync group.
+
+Acceptance evidence on local macOS ARM64:
+
+- Focused provider, resolution, browser PBR, lifecycle, calibration, capture,
+  capability, routing, admission, accounting, and failure suites passed
+  **40/40** plus GPU software coverage **12/12**. The dedicated real-browser
+  PBR regression passed **2/2** and the local hardware fixture passed **1/1**.
+- Chrome 152 executed on ANGLE Metal / Apple M1 Max with real GLB and UASTC
+  Zstandard KTX2 input, unequal focal lengths, off-center principal point,
+  odd/even dimensions, Brown-Conrady distortion, all four pixel products, and
+  a moving actor. PBR material, decoder, float-target, and async-readback probes
+  all passed.
+- The recorded run measured **94.26 ms** preparation, **109.16 ms** cold
+  capture, **35.39 ms** warm capture, **56,891 bytes** static transfer,
+  **280 bytes** warm capture transfer, and RSS from **95,256,576** to
+  **214,384,640 bytes**.
+  Cleanup reported zero busy contexts, queued jobs, prepared environments,
+  scene bytes, and tracked GPU bytes.
+- `npm run lint` passed with two existing warnings. `npm test` passed **925**
+  with three declared hardware skips and no failures. Headless passed **91/91**,
+  shared memory **3/3**, CLI **16/16**, Python **68/68**, protobuf regeneration
+  equality passed, and the production build passed.
+- Fixture regeneration produced no delta. Action-tape and characterization
+  SHA-256 values remain
+  `1ba8c8c40e1560ac044f4ca5384065ab83c93529d65b5672fee8dc5ed42a5ced`
+  and `60dc0bd2b02a9ec768f833070ce4d8d2047f5383838f09ea3f130dd31552dd6f`.
+
+The required PBR fixture is now a non-skippable step in the AGX Orin and AGX
+Thor hardware lanes, with reports uploaded from each lane. Those reports have
+not run in this local implementation session, so VIS-15a remains open. Managed
+execution, installed distribution, correspondence enforcement, and release
+certification remain VIS-15b, VIS-15c, VIS-16b, and VIS-17c respectively.
+
+### 2026-09-09 — Implement VIS-15b managed software integration and recovery
+
+Managed validation now accepts supported state, CPU/GPU LiDAR, analytic/PBR
+camera, and mixed rigs through the existing provider, product-profile, backend,
+and capability validators. Explicit GPU routing no longer gains a CPU-LiDAR
+default. Each invocation reserves supervisor capacity, receives a unique
+renderer environment scope, awaits preparation and every asynchronous kernel
+step, records renderer/GPU/decoder provenance, and disposes the worker before
+releasing renderer resources. Infrastructure failures remain failed results
+without a successful partial observation or fabricated truncation.
+
+The embedded experiment service now admits visual closures directly from its
+authoring `VisualAssetStore`. Version-2 sidecars preserve and digest the exact
+persisted bundle bytes and bind each case to its visual uses, closure, and
+correspondence report. Queue roots cover all transitive dependencies before
+publication; active cases hold separate execution pins and scoped readers.
+Admission journals make root, sidecar, result, and queue publication
+recoverable while preserving protective roots when ownership is ambiguous.
+Accepted results retain their sidecars and result roots, and derived baselines
+acquire independent roots before publication. Deleting either owner releases
+only its references; published-asset garbage collection remains disabled.
+
+Managed correspondence is fed only by an injected server-side provider that
+must supply exact report bytes, approved profiles, trusted local validation,
+and expected evaluation inputs bound to the frozen bundle and asset closure.
+Queue admission, worker initialization, and recovery recheck rights, closure,
+report applicability, and renderer capability. The production default remains
+unavailable pending VIS-16b. Supervisor configuration may be supplied directly
+or loaded through `CEV_SIM_HEADLESS_SUPERVISOR_CONFIG`; it cannot bypass those
+checks. Shutdown marks an uncertain active case interrupted and preserves
+pending frozen cases, while explicit cancellation removes pending work.
+
+Local G-MANAGED/G-LIFECYCLE evidence:
+
+- The focused managed, queue, supervisor-renderer, GPU, visual-asset lifecycle,
+  and correspondence command ran **43 tests: 39 passed, four declared hardware
+  skips, zero failures**. It covers delayed capture ordering, exact-byte
+  recovery after authoring changes, version-1 compatibility and PBR rejection,
+  stale or revoked evidence, journal boundary recovery, independent queue/
+  execution/result/baseline ownership, cancellation, restart interruption,
+  unique concurrent renderer scopes, and cleanup ordering. The supervisor
+  suite separately passed **18/18**.
+- `npm run lint` passed with zero errors and two existing unrelated warnings.
+  `npm test` ran **935 tests: 931 passed, four declared hardware skips, zero
+  failures**. State-only and CPU-LiDAR browser/direct/CLI/Unix/Python parity
+  passed, and `npm run test:soak:quick` passed its worker, queue, artifact,
+  shared-memory, and cleanup checks.
+- `npm run fixtures:headless` reproduced the committed characterization with
+  no delta. Action-tape and characterization SHA-256 values remain
+  `1ba8c8c40e1560ac044f4ca5384065ab83c93529d65b5672fee8dc5ed42a5ced`
+  and `60dc0bd2b02a9ec768f833070ce4d8d2047f5383838f09ea3f130dd31552dd6f`.
+
+An opt-in actual-renderer test now exercises the managed queue/worker path with
+owned assets and test-only trusted evidence, and records executed captures and
+cleanup. It was skipped because `CEV_SIM_PBR_HARDWARE=1` was not enabled, so it
+does not close the real-renderer G-MANAGED gate and VIS-15b remains open. This
+work does not claim VIS-15a AGX acceptance, VIS-15c installed distribution,
+VIS-16b evaluation, or VIS-17 fidelity/release evidence. Public MCP/REST,
+protobuf, run-bundle v1, renderer identities, experiment case identity,
+simulation ordering, and hash algorithms remain unchanged.

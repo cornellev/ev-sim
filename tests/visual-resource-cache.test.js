@@ -207,3 +207,31 @@ test("visual resource cache revalidates rights, cancels inflight work, and recre
     assert.equal(next.snapshot().entryCount, 0);
     next.dispose();
 });
+
+test("visual resource cache reauthorizes a measured lease after preview cached the same bytes", async () => {
+    const checks = [];
+    const cache = new VisualResourceCache({
+        rightsChecker: async (request) => { checks.push(request); },
+    });
+    const preview = await cache.acquireEncoded({
+        digest: DIGEST,
+        useHash: USE,
+        sizeBytes: 32,
+        operations: ["display"],
+        loader: async () => bytes(32),
+    });
+    preview.release();
+    const measured = await cache.acquireEncoded({
+        digest: DIGEST,
+        useHash: USE,
+        sizeBytes: 32,
+        operations: ["display", "machine-interpretation"],
+        loader: async () => { throw new Error("cached bytes should be reused"); },
+    });
+    measured.release();
+    assert.deepEqual(checks.map((entry) => entry.operations), [
+        ["display"],
+        ["display", "machine-interpretation"],
+    ]);
+    cache.dispose();
+});

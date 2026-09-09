@@ -107,7 +107,7 @@ The resources `fusion://run-manifests` and `fusion://run-manifests/{manifestId}`
 | `scenario_create` / `scenario_update` / `scenario_duplicate` / `scenario_delete` | Scenario CRUD with optimistic revisions |
 | `scenario_validate` | Validate actors, routes, zones, triggers, completion, outcomes, sensors, scripts, and parameters |
 | `scenario_resolve` | Freeze environment, routes, scripts, vehicles, parameter values, and dependency hashes |
-| `scenario_verify_route` | Run deterministic directed A* for an authored route without implicitly saving it |
+| `scenario_verify_route` | Run deterministic directed A* (algorithm version 2) for an authored route without implicitly saving it. The verified polyline uses right-hand travel offsets on two-way roads; reverse one-way travel returns `route.section.illegal-direction`. |
 | `scenario_catalog_get` / `scenario_catalog_update` | Read or replace the ordered folder catalog |
 
 Resources expose the catalogs and complete documents at `fusion://scenarios`, `fusion://scenario-folders`, and `fusion://scenarios/{scenarioId}`. Route verification accepts an optional unsaved scenario draft; apply the returned canonical verification to the route and save it with `scenario_update` using the current revision.

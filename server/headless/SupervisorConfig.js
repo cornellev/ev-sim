@@ -9,6 +9,7 @@ export const SUPERVISOR_CONFIG_VERSION = 1;
 
 const MiB = 1024 * 1024;
 const GiB = 1024 * MiB;
+const PBR_TARGETS = new Set(["local-development", "jetson-agx-orin", "jetson-agx-thor"]);
 
 export const RESOURCE_FIELD_NAMES = Object.freeze([
     "maxRssBytesPerEnvironment",
@@ -90,6 +91,10 @@ function normalizeRenderer(value = {}) {
     if (!Array.isArray(launchArgs) || launchArgs.some((entry) => typeof entry !== "string" || !entry)) {
         throw invalid("renderer.launchArgs must contain non-empty strings.");
     }
+    const pbrTarget = value.pbrTarget ? String(value.pbrTarget) : "local-development";
+    if (!PBR_TARGETS.has(pbrTarget)) {
+        throw invalid(`renderer.pbrTarget must be one of ${[...PBR_TARGETS].join(", ")}.`);
+    }
     return Object.freeze({
         chromiumExecutable: value.chromiumExecutable ? String(value.chromiumExecutable) : "",
         contextPoolSize: finiteInteger(value.contextPoolSize ?? 1, "renderer.contextPoolSize", { maximum: 64 }),
@@ -98,6 +103,8 @@ function normalizeRenderer(value = {}) {
         angle: value.angle ? String(value.angle) : "",
         disableSandbox: Boolean(value.disableSandbox),
         allowSoftwareRenderer: Boolean(value.allowSoftwareRenderer),
+        pbrEnabled: value.pbrEnabled === true,
+        pbrTarget,
         launchArgs: Object.freeze([...launchArgs]),
     });
 }

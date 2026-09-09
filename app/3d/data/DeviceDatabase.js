@@ -35,6 +35,7 @@ export class DeviceDatabase extends Database {
     constructor(parent) {
         super(parent);
         this.devices = [];
+        this.renderRuntime = null;
 
         this.loopDisabled = false; // set to true to disable automatic execution loop (for manual control in tests, etc.)
     }
@@ -145,6 +146,7 @@ export class DeviceDatabase extends Database {
     }
 
     configureFromManifest(sensorRig = {}, options = {}) {
+        this.renderRuntime = options.renderRuntime ?? null;
         const previous = this.devices.filter((device) => device.manifestManaged);
         for (const device of previous) {
             this.removeDevice(device);
@@ -161,7 +163,10 @@ export class DeviceDatabase extends Database {
         const byId = new Map(vehicles.map((vehicle, index) => [vehicle.telemetryId || `vehicle-${index + 1}`, vehicle]));
         for (const config of [...(sensorRig.sensors || [])].sort((left, right) => left.id.localeCompare(right.id))) {
             if (config.enabled === false) continue;
-            const device = createRunSensorDevice(config, options);
+            const deviceOptions = config.type === "camera" && this.renderRuntime
+                ? { ...options, ...this.renderRuntime.cameraOptions() }
+                : options;
+            const device = createRunSensorDevice(config, deviceOptions);
             device.transformRuntime = options.transformRuntime ?? null;
             device.calibrationHash = options.calibrationHash ?? null;
             const vehicle = byId.get(config.parentId);
@@ -193,6 +198,60 @@ export class DeviceDatabase extends Database {
             if (device.enabled && device.contractPublisher && clock) device.contractPublisher.update(clock);
             else if (device.enabled && !device.contractPublisher) device.execute(dt);
             this._publishDevice(device, clock);
+        }
+    }
+
+    async updateAsync(dt, clock = null) {
+        if (this.loopDisabled) return;
+        const ordered = [...this.devices].sort((left, right) => String(left.telemetryId || "").localeCompare(String(right.telemetryId || "")));
+        const publishers = ordered
+            .filter((device) => device.enabled && device.contractPublisher)
+            .map((device) => device.contractPublisher);
+        const checkpoints = new Map(publishers.map((publisher) => [
+            publisher,
+            publisher.queueCheckpoint?.() ?? publisher.queue?.length ?? 0,
+        ]));
+        const expectedGroups = new Map();
+        if (clock) {
+            for (const publisher of publishers) {
+                for (const key of publisher.dueSyncGroupKeys?.(clock) ?? []) {
+                    if (!expectedGroups.has(key)) expectedGroups.set(key, []);
+                    expectedGroups.get(key).push(publisher);
+                }
+            }
+        }
+        try {
+            if (this.renderRuntime && clock) {
+                await this.renderRuntime.prepareCapture({
+                    devices: ordered,
+                    vehicles: this.parent?.vehicles?.()?.vehicles || [],
+                    clock,
+                });
+            }
+            for (const device of ordered) {
+                if (device.enabled && device.contractPublisher && clock) {
+                    await device.contractPublisher.updateAsync(clock);
+                } else if (device.enabled && !device.contractPublisher) {
+                    await device.execute(dt);
+                }
+                this._publishDevice(device, clock);
+            }
+        } catch (error) {
+            for (const [publisher, checkpoint] of checkpoints) {
+                publisher.discardEnqueued?.(checkpoint);
+            }
+            throw error;
+        }
+        for (const [key, group] of expectedGroups) {
+            const complete = group.every((publisher) => (
+                publisher.queue?.some((frame, index) => (
+                    index >= checkpoints.get(publisher) && frame.syncGroupKey === key
+                ))
+            ));
+            if (complete) continue;
+            for (const publisher of group) {
+                publisher.discardEnqueued?.(checkpoints.get(publisher), { syncGroupKey: key });
+            }
         }
     }
 
@@ -251,6 +310,7 @@ export class DeviceDatabase extends Database {
             delete device._legacyEnabledBeforeRun;
         }
         this.loopDisabled = false;
+        this.renderRuntime = null;
     }
 
     _publishDevice(device, clock = null) {

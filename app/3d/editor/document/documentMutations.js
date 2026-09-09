@@ -440,6 +440,56 @@ export function addRoadEdge(document, startNodeId, endNodeId, options = {}, runt
 }
 
 /**
+ * Update mutable properties on an existing road edge.
+ * @param {import("./EnvironmentDocument.js").EnvironmentDocument} document
+ * @param {string} edgeId
+ * @param {{ bidirectional?: boolean, direction?: number | string | null, width?: number, laneCount?: number, shoulderWidth?: number | null, tension?: number | null, borderLeft?: string | null, borderRight?: string | null }} patch
+ * @param {{ notify?: boolean, markAuthored?: boolean }} [runtime]
+ */
+export function updateRoadEdge(document, edgeId, patch = {}, runtime = {}) {
+    const edge = document.roads.edges.find((entry) => entry.id === edgeId);
+    if (!edge) {
+        return { ok: false, error: `Road edge "${edgeId}" does not exist.` };
+    }
+
+    if (patch.bidirectional !== undefined) {
+        edge.bidirectional = patch.bidirectional !== false;
+        if (edge.bidirectional) {
+            delete edge.oneWay;
+            delete edge.direction;
+            delete edge.oneWayDirection;
+        } else {
+            edge.oneWay = true;
+            if (patch.direction === undefined) {
+                edge.direction = edge.direction ?? 1;
+            }
+        }
+    }
+    if (patch.direction !== undefined) {
+        if (patch.direction === null) {
+            delete edge.direction;
+            delete edge.oneWayDirection;
+        } else {
+            edge.direction = patch.direction;
+        }
+    }
+    if (patch.width !== undefined) edge.width = patch.width;
+    if (patch.laneCount !== undefined) edge.laneCount = patch.laneCount;
+    if (patch.shoulderWidth !== undefined) edge.shoulderWidth = patch.shoulderWidth;
+    if (patch.tension !== undefined) edge.tension = patch.tension;
+    if (patch.borderLeft !== undefined) edge.borderLeft = patch.borderLeft;
+    if (patch.borderRight !== undefined) edge.borderRight = patch.borderRight;
+
+    if (runtime.markAuthored !== false) {
+        markRoadsAuthored(document);
+    }
+    if (runtime.notify !== false) {
+        document.notify();
+    }
+    return { ok: true, edge };
+}
+
+/**
  * @param {{ x: number, z: number }} a
  * @param {{ x: number, z: number }} b
  * @param {number} [snapSize]

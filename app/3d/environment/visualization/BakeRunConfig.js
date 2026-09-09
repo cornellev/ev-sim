@@ -156,9 +156,16 @@ export class BakeRunConfig {
      * @param {BuildingRecord[]} records
      */
     setBuildings(records) {
+        const buildings = (Array.isArray(records) ? records : []).map((record) => ({
+            ...record,
+            footprint: (record.footprint ?? []).map((point) => ({
+                ...point,
+                y: point.y ?? 0,
+            })),
+        }));
         const next = normalizeBakeRunConfig({
             ...this._document,
-            buildings: Array.isArray(records) ? records : [],
+            buildings,
         });
         this._document = next;
         this.buildings = next.buildings.map((building) => ({

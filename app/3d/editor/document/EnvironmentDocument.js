@@ -1,6 +1,6 @@
 /**
  * @typedef {{ id: string, x: number, z: number, kind?: 'intersection' | 'endpoint' }} RoadNode
- * @typedef {{ id: string, startNodeId: string, endNodeId: string, bidirectional?: boolean, width?: number, laneCount?: number, shoulderWidth?: number, tension?: number, borderLeft?: string, borderRight?: string, startArm?: { x: number, z: number }, endArm?: { x: number, z: number } }} RoadEdge
+ * @typedef {{ id: string, startNodeId: string, endNodeId: string, bidirectional?: boolean, direction?: number | string, oneWay?: boolean, oneWayDirection?: number | string, width?: number, laneCount?: number, shoulderWidth?: number, tension?: number, borderLeft?: string, borderRight?: string, startArm?: { x: number, z: number }, endArm?: { x: number, z: number } }} RoadEdge
  * @typedef {{ id: string, type: string, x: number, z: number, dir?: number, rotationY?: number, tags?: string[] }} FeatureRecord
  * @typedef {{ lat: number, lng: number }} EarthAnchor
  * @typedef {{ north: number, south: number, east: number, west: number }} EarthBounds
@@ -177,6 +177,11 @@ function cloneEdge(edge) {
         startNodeId: edge.startNodeId,
         endNodeId: edge.endNodeId,
         bidirectional: edge.bidirectional ?? DEFAULT_ROAD_EDGE.bidirectional,
+        ...(edge.direction !== undefined && edge.direction !== null ? { direction: edge.direction } : {}),
+        ...(edge.oneWay !== undefined && edge.oneWay !== null ? { oneWay: edge.oneWay } : {}),
+        ...(edge.oneWayDirection !== undefined && edge.oneWayDirection !== null
+            ? { oneWayDirection: edge.oneWayDirection }
+            : {}),
         width: edge.width ?? DEFAULT_ROAD_EDGE.width,
         laneCount: edge.laneCount ?? DEFAULT_ROAD_EDGE.laneCount,
         shoulderWidth: edge.shoulderWidth ?? null,

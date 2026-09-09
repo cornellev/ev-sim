@@ -191,6 +191,12 @@ test("protocol 1.2, dynamic schema, presets, config precedence, and TCP protecti
     assert.equal(config.defaultLimits.maxObservationBytes, 64 * 1024 * 1024);
     assert.equal(config.assetAdmission.enabled, true);
     assert.equal(config.assetAdmission.inboxDir, "/tmp/cev-config-test.sock.run-package-inbox");
+    assert.equal(config.renderer.pbrEnabled, false);
+    assert.equal(config.renderer.pbrTarget, "local-development");
+    assert.throws(() => resolveSupervisorConfig({
+        socket: "/tmp/a",
+        config: testConfig({ renderer: { pbrEnabled: true, pbrTarget: "nvidia-x64" } }),
+    }), /renderer\.pbrTarget/);
     assert.throws(() => resolveSupervisorConfig({ socket: "/tmp/a", config: {} }), /config kind/);
     assert.throws(() => resolveSupervisorConfig({ tcp: "0.0.0.0:50051" }), /allow-remote-tcp/);
     const tcp = resolveSupervisorConfig({ tcp: "127.0.0.1:50051" });

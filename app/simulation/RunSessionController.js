@@ -136,7 +136,9 @@ export class RunSessionController {
         if (!resolved?.manifest || !resolved?.resolvedHash) throw new Error("A resolved run manifest is required.");
         // Reject unsupported measured providers before replacing or stopping an
         // active browser run and before loading any environment/sensor state.
-        assertEnabledCameraRenderRuntime(resolved.manifest.sensorRig?.sensors, resolved.renderScene);
+        assertEnabledCameraRenderRuntime(resolved.manifest.sensorRig?.sensors, resolved.renderScene, {
+            target: "browser",
+        });
         if (this.snapshot.activeRunId && ["running", "paused", "ready"].includes(this.snapshot.status)) {
             await this.stop({ status: "superseded" });
         }
@@ -290,7 +292,7 @@ export class RunSessionController {
     async step(count = 1) {
         if (!this.data || !this.snapshot.activeResolved) return null;
         await this._ensureRecording();
-        this.data.simulation?.()?.step?.(count);
+        await this.data.simulation?.()?.step?.(count);
         this._set({ status: "paused", assertionResults: this.data.simulation?.()?.assertionEngine?.snapshot?.() || [] });
         return this.getSnapshot();
     }

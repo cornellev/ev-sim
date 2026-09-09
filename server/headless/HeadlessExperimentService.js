@@ -11,6 +11,7 @@ import {
     removeQueueEntry,
 } from "./HeadlessExperimentQueue.js";
 import { validateManagedRun } from "./ManagedHeadlessSession.js";
+import { ManagedVisualAssetAdmission, isManagedPbrRun } from "./ManagedVisualAssetAdmission.js";
 import { HeadlessSupervisor } from "./HeadlessSupervisor.js";
 import { verifyRunBundle } from "./RunBundle.js";
 import { storageEvents } from "../mcp/events.js";
@@ -124,15 +125,28 @@ export class HeadlessExperimentService {
         this.now = options.now ?? Date.now;
         this.jobIdFactory = options.jobIdFactory ?? (() => `headless-${randomUUID()}`);
         this.artifactRoot = path.resolve(options.artifactRoot || path.join(storage.dataDir, "headless-runs"));
-        this.supervisor = options.supervisor ?? new HeadlessSupervisor({
-            socket: path.join(storage.dataDir, ".embedded-headless-supervisor.sock"),
-            config: {
-                kind: "cev-sim.headless-supervisor-config",
-                version: 1,
-                preset: "safety",
-                shutdownGraceMs: 250,
-                killGraceMs: 250,
-            },
+        const defaultSupervisorConfig = {
+            kind: "cev-sim.headless-supervisor-config",
+            version: 1,
+            preset: "safety",
+            shutdownGraceMs: 250,
+            killGraceMs: 250,
+        };
+        this.supervisor = options.supervisor ?? new HeadlessSupervisor(
+            options.supervisorConfig?.listener
+                ? options.supervisorConfig
+                : {
+                    socket: options.supervisorConfig?.socket
+                        ?? path.join(storage.dataDir, ".embedded-headless-supervisor.sock"),
+                    config: {
+                        ...defaultSupervisorConfig,
+                        ...(options.supervisorConfig ?? {}),
+                    },
+                },
+        );
+        this.managedAdmission = options.managedAdmission ?? new ManagedVisualAssetAdmission(storage, {
+            evidenceContextProvider: options.evidenceContextProvider,
+            executionPinLeaseMs: options.executionPinLeaseMs,
         });
         this.importLog = options.importLog ?? ((filePath, importOptions) => (
             this.logService.importStream(createReadStream(filePath), importOptions)
@@ -175,6 +189,7 @@ export class HeadlessExperimentService {
     async _reconcileOnStartup() {
         const reconciled = [];
         const queue = await this.storage.getHeadlessExperimentQueue();
+        await this.managedAdmission.reconcileOrphanJournals(queue);
         const validEntries = [];
 
         for (const entry of queue.entries) {
@@ -198,7 +213,38 @@ export class HeadlessExperimentService {
                         this.publish({ domain: "experiment-result", id: entry.resultId, action: "reconciliation-failed", data: { error: error.message } });
                     }
                 }
-                await this.storage.deleteHeadlessRunBundles(entry.resultId).catch(() => {});
+                await this._deleteTransientSidecars(entry.resultId).catch(() => {});
+                continue;
+            }
+            try {
+                await this.managedAdmission.reconcileQueueRoot(entry.resultId, sidecars);
+                for (const bundle of sidecars.bundles) {
+                    validateManagedRun(bundle.resolved);
+                    await this.supervisor.validateManagedRuntime?.(bundle.resolved);
+                }
+                await this.managedAdmission.commitQueueRoot(entry.resultId);
+            } catch (error) {
+                const next = normalizeExperimentResult({
+                    ...stored,
+                    status: "error",
+                    finishedAt: nowIso(this.now),
+                    cases: stored.cases.map((caseEntry) => ["pending", "running"].includes(caseEntry.status)
+                        ? {
+                            ...caseEntry,
+                            status: "error",
+                            completed: false,
+                            passed: false,
+                            finishedAt: nowIso(this.now),
+                            failureReason: error.message,
+                        }
+                        : caseEntry),
+                }, { allowMissingKind: true });
+                const updated = await this.storage.putExperimentResult(stored.id, {
+                    result: next,
+                    expectedRevision: stored.revision,
+                });
+                reconciled.push(updated);
+                this.publish({ domain: "experiment-result", id: stored.id, action: "reconciliation-failed", data: { error: error.message } });
                 continue;
             }
             validEntries.push(entry);
@@ -293,6 +339,21 @@ export class HeadlessExperimentService {
         };
     }
 
+    async _deleteTransientSidecars(resultId) {
+        const sidecars = await this.storage.readHeadlessRunBundles(resultId);
+        if (sidecars?.bundles.some((bundle) => isManagedPbrRun(bundle.resolved))) return false;
+        await this.storage.deleteHeadlessRunBundles(resultId);
+        return true;
+    }
+
+    async _validatePlannedBundle(bundle, phase) {
+        const verified = verifyRunBundle(bundle);
+        validateManagedRun(verified.resolved);
+        await this.supervisor.validateManagedRuntime?.(verified.resolved);
+        await this.managedAdmission.validateBundle(bundle, phase);
+        return verified;
+    }
+
     async preflight({ suiteId, expectedRevision, artifactProfile } = {}) {
         const suite = await this.storage.getExperimentSuite(suiteId);
         if (!suite) throw new Error(`Experiment suite "${suiteId}" does not exist.`);
@@ -309,7 +370,10 @@ export class HeadlessExperimentService {
         if (cases.length === 0) throw new Error("The experiment suite has no compatible cases to run.");
         for (const entry of cases) {
             const resolution = await this.storage.resolveExperimentCase(suiteId, { case: entry });
-            validateManagedRun(verifyRunBundle(bundleFromResolved(resolution.resolvedRun, nowIso(this.now))).resolved);
+            await this._validatePlannedBundle(
+                bundleFromResolved(resolution.resolvedRun, nowIso(this.now)),
+                "preflight",
+            );
             resolveArtifactPolicy(
                 artifactProfile ? { profile: artifactProfile } : null,
                 resolution.resolvedRun.manifest,
@@ -335,6 +399,9 @@ export class HeadlessExperimentService {
             this.starting = true;
             let queuedResultId = null;
             let wroteSidecars = false;
+            let acquiredManagedRoot = false;
+            let createdResult = null;
+            let queueCommitted = false;
             try {
                 const suite = await this.storage.getExperimentSuite(suiteId);
                 if (!suite) throw new Error(`Experiment suite "${suiteId}" does not exist.`);
@@ -362,8 +429,7 @@ export class HeadlessExperimentService {
                         throw new Error(`Experiment suite revision changed while resolving case "${entry.id}".`);
                     }
                     const bundle = bundleFromResolved(resolution.resolvedRun, createdAt);
-                    const verified = verifyRunBundle(bundle);
-                    validateManagedRun(verified.resolved);
+                    const verified = await this._validatePlannedBundle(bundle, "queue-preflight");
                     const policy = resolveArtifactPolicy(
                         artifactProfile ? { profile: artifactProfile } : null,
                         verified.resolved.manifest,
@@ -376,6 +442,12 @@ export class HeadlessExperimentService {
                     throw new Error("Experiment suite changed during atomic headless preflight; retry with the new revision.");
                 }
 
+                const managedRoot = await this.managedAdmission.acquireQueueRoot(
+                    queuedResultId,
+                    plannedCases.map((entry) => entry.bundle),
+                );
+                acquiredManagedRoot = Boolean(managedRoot.root);
+
                 await this.storage.writeHeadlessRunBundles(queuedResultId, {
                     manifest: {
                         jobId,
@@ -383,14 +455,18 @@ export class HeadlessExperimentService {
                         suiteRevision: suite.revision,
                         suiteHash: suite.definitionHash,
                         createdAt,
-                        cases: plannedCases.map((entry) => ({
+                        cases: plannedCases.map((entry, index) => ({
                             id: entry.case.id,
                             dependencyHashes: entry.resolution.dependencyHashes ?? {},
+                            visualUseHashes: managedRoot.cases[index]?.useHashes ?? [],
+                            assetClosureHash: managedRoot.cases[index]?.assetClosureHash ?? null,
+                            correspondenceReportHash: managedRoot.cases[index]?.correspondenceReportHash ?? null,
                         })),
                     },
                     bundles: plannedCases.map((entry) => entry.bundle),
                 });
                 wroteSidecars = true;
+                await this.managedAdmission.recordQueueStage(queuedResultId, "sidecars-published");
 
                 const pending = createExperimentResult(suite, cases, {
                     id: queuedResultId,
@@ -399,6 +475,8 @@ export class HeadlessExperimentService {
                     execution: { backend: "headless", jobId },
                 });
                 const stored = await this.storage.createExperimentResult({ result: pending });
+                createdResult = stored;
+                await this.managedAdmission.recordQueueStage(queuedResultId, "result-created");
 
                 const queue = await this.storage.getHeadlessExperimentQueue();
                 const nextQueue = appendQueueEntry(queue, {
@@ -415,6 +493,9 @@ export class HeadlessExperimentService {
                     queue: nextQueue,
                     expectedRevision: queue.revision,
                 });
+                queueCommitted = true;
+                await this.managedAdmission.recordQueueStage(queuedResultId, "queue-published").catch(() => {});
+                await this.managedAdmission.commitQueueRoot(queuedResultId).catch(() => {});
                 this.publish({
                     domain: "headless-queue",
                     id: queuedResultId,
@@ -433,8 +514,14 @@ export class HeadlessExperimentService {
                     result: stored,
                 };
             } catch (error) {
-                if (wroteSidecars && queuedResultId) {
+                if (!queueCommitted && createdResult) {
+                    await this.storage.deleteExperimentResult(createdResult.id, createdResult.revision).catch(() => {});
+                }
+                if (!queueCommitted && wroteSidecars && queuedResultId) {
                     await this.storage.deleteHeadlessRunBundles(queuedResultId).catch(() => {});
+                }
+                if (!queueCommitted && acquiredManagedRoot && queuedResultId) {
+                    await this.managedAdmission.rollbackQueueRoot(queuedResultId).catch(() => {});
                 }
                 throw error;
             } finally {
@@ -490,7 +577,7 @@ export class HeadlessExperimentService {
             expectedRevision: result.revision,
         });
         await this._removeFromQueue(resultId);
-        await this.storage.deleteHeadlessRunBundles(resultId).catch(() => {});
+        await this._deleteTransientSidecars(resultId).catch(() => {});
         this.publish({ domain: "experiment-result", id: resultId, action: "queue-cancelled", data: { revision: stored.revision } });
         this.publish({ domain: "headless-queue", id: resultId, action: "cancelled" });
         return stored;
@@ -522,7 +609,7 @@ export class HeadlessExperimentService {
         this.closing = true;
         const activeJob = this.activeJob;
         if (activeJob) {
-            activeJob.cancelRequested = true;
+            activeJob.shutdownRequested = true;
             activeJob.abortController.abort();
             await activeJob.promise.catch(() => {});
             const finishedAt = nowIso(this.now);
@@ -572,7 +659,7 @@ export class HeadlessExperimentService {
             if (this.cancelledResultIds.has(entry.resultId) || result.status === "cancelled") {
                 this.cancelledResultIds.delete(entry.resultId);
                 await this._removeFromQueue(entry.resultId);
-                await this.storage.deleteHeadlessRunBundles(entry.resultId).catch(() => {});
+                await this._deleteTransientSidecars(entry.resultId).catch(() => {});
                 continue;
             }
             if (TERMINAL_RESULT_STATUSES.has(result.status) && result.status !== "paused") {
@@ -597,7 +684,7 @@ export class HeadlessExperimentService {
                 if (current && this.activeJob && Number(current.revision) !== Number(this.activeJob.revision)) {
                     this.publish({ domain: "experiment-run", id: entry.resultId, action: "revision-conflict", data: { error: error.message } });
                     await this._removeFromQueue(entry.resultId);
-                    await this.storage.deleteHeadlessRunBundles(entry.resultId).catch(() => {});
+                    await this._deleteTransientSidecars(entry.resultId).catch(() => {});
                 } else if (entry.resultId === this.activeJob?.result.id && this.activeJob.cancelRequested) {
                     await this._finalizeCancellation(this.activeJob).catch(() => {});
                 } else {
@@ -624,6 +711,7 @@ export class HeadlessExperimentService {
     async _runJob(entry, result, sidecars) {
         const plannedCases = sidecars.bundles.map((bundle, index) => {
             const verified = verifyRunBundle(bundle);
+            const bundleRecord = sidecars.bundleRecords?.[index] ?? null;
             const meta = sidecars.manifest.cases[index] ?? {};
             const policy = resolveArtifactPolicy(
                 entry.artifactProfile ? { profile: entry.artifactProfile } : null,
@@ -633,6 +721,8 @@ export class HeadlessExperimentService {
                 case: result.cases[index],
                 resolution: { dependencyHashes: meta.dependencyHashes ?? {} },
                 bundle,
+                bundleBytes: bundleRecord?.bundleBytes ?? null,
+                bundleBytesHash: bundleRecord?.bundleBytesHash ?? null,
                 verified,
                 policy,
             };
@@ -648,6 +738,7 @@ export class HeadlessExperimentService {
             revision: result.revision,
             abortController: new AbortController(),
             cancelRequested: false,
+            shutdownRequested: false,
             workerPid: null,
             activeCaseIndex: null,
             promise: null,
@@ -691,7 +782,7 @@ export class HeadlessExperimentService {
             }
 
             for (let index = 0; index < job.plannedCases.length; index += 1) {
-                if (job.cancelRequested) break;
+                if (job.cancelRequested || job.shutdownRequested) break;
                 if (job.result.cases[index]?.status !== "pending") continue;
                 job.activeCaseIndex = index;
                 this._publishLiveHealth(job);
@@ -706,7 +797,7 @@ export class HeadlessExperimentService {
                 }, "case-started");
                 const terminal = await this._runCase(job, index, caseStartedAt);
                 await this._replaceCase(job, index, terminal, "case-finalized");
-                if (job.failurePolicy === "fail-fast" && terminal.passed !== true) {
+                if (!job.shutdownRequested && job.failurePolicy === "fail-fast" && terminal.passed !== true) {
                     const finishedAt = nowIso(this.now);
                     const casesAfterFailure = job.result.cases.map((entry) => entry.status === "pending"
                         ? {
@@ -723,7 +814,9 @@ export class HeadlessExperimentService {
                 }
             }
 
-            if (job.cancelRequested) {
+            if (job.shutdownRequested) {
+                await this._finalizeShutdown(job);
+            } else if (job.cancelRequested) {
                 await this._finalizeCancellation(job);
             } else if (!["cancelled", "error", "interrupted"].includes(job.result.status)) {
                 await this._persist(job, normalizeExperimentResult({
@@ -733,7 +826,9 @@ export class HeadlessExperimentService {
                 }, { allowMissingKind: true }), "queue-finalized");
             }
         } catch (error) {
-            if (job.cancelRequested) {
+            if (job.shutdownRequested) {
+                await this._finalizeShutdown(job).catch(() => {});
+            } else if (job.cancelRequested) {
                 await this._finalizeCancellation(job).catch(() => {});
             } else {
                 const current = await this.storage.getExperimentResult(job.result.id).catch(() => null);
@@ -795,9 +890,20 @@ export class HeadlessExperimentService {
         const outputUri = path.join(this.artifactRoot, job.id, `case-${String(index).padStart(4, "0")}`);
         let finalized = null;
         let artifacts = [];
+        let executionAdmission = null;
         try {
+            executionAdmission = await this.managedAdmission.openExecution({
+                resultId: job.result.id,
+                caseIndex: index,
+                bundle: planned.bundle,
+            });
             finalized = await this.supervisor.runManagedExperiment({
                 bundle: planned.bundle,
+                ...(planned.bundleBytes ? {
+                    bundleBytes: planned.bundleBytes,
+                    bundleBytesHash: planned.bundleBytesHash,
+                } : {}),
+                assetReader: executionAdmission?.reader ?? null,
                 metricDefinitions: job.result.metricDefinitions,
                 artifactPolicy: job.artifactProfile ? { profile: job.artifactProfile } : null,
                 outputUri,
@@ -812,6 +918,7 @@ export class HeadlessExperimentService {
                 },
             });
             job.workerPid = null;
+            if (job.shutdownRequested) return this._interruptedCase(activeCase, startedAt);
             if (job.cancelRequested) return this._cancelledCase(activeCase, startedAt);
             const runResult = finalized.runResult;
             artifacts = absoluteArtifacts(finalized);
@@ -871,6 +978,7 @@ export class HeadlessExperimentService {
             };
         } catch (error) {
             job.workerPid = null;
+            if (job.shutdownRequested) return this._interruptedCase(activeCase, startedAt);
             if (job.cancelRequested) return this._cancelledCase(activeCase, startedAt);
             const runResult = finalized?.runResult;
             return {
@@ -890,6 +998,8 @@ export class HeadlessExperimentService {
                 finishedAt: nowIso(this.now),
                 failureReason: error.message,
             };
+        } finally {
+            if (executionAdmission) await executionAdmission.close().catch(() => {});
         }
     }
 
@@ -903,6 +1013,39 @@ export class HeadlessExperimentService {
             finishedAt: nowIso(this.now),
             failureReason: "Cancelled by request.",
         };
+    }
+
+    _interruptedCase(activeCase, startedAt) {
+        return {
+            ...activeCase,
+            status: "interrupted",
+            completed: false,
+            passed: false,
+            startedAt,
+            finishedAt: nowIso(this.now),
+            failureReason: "The server stopped before the managed case completed.",
+        };
+    }
+
+    async _finalizeShutdown(job) {
+        const finishedAt = nowIso(this.now);
+        const cases = job.result.cases.map((entry) => entry.status === "running"
+            ? {
+                ...entry,
+                status: "interrupted",
+                completed: false,
+                passed: false,
+                finishedAt,
+                failureReason: "The server stopped before the managed case completed.",
+            }
+            : entry);
+        const pending = cases.some((entry) => entry.status === "pending");
+        return this._persist(job, normalizeExperimentResult({
+            ...job.result,
+            status: pending ? "paused" : "interrupted",
+            finishedAt: pending ? null : finishedAt,
+            cases,
+        }, { allowMissingKind: true }), "queue-interrupted");
     }
 
     async _linkImportedLogEvidence(logId, {
@@ -952,7 +1095,7 @@ export class HeadlessExperimentService {
             cases,
         }, { allowMissingKind: true }), "queue-cancelled");
         await this._removeFromQueue(job.result.id);
-        await this.storage.deleteHeadlessRunBundles(job.result.id).catch(() => {});
+        await this._deleteTransientSidecars(job.result.id).catch(() => {});
         this.publish({ domain: "headless-queue", id: job.result.id, action: "cancelled" });
         return stored;
     }
@@ -984,7 +1127,7 @@ export class HeadlessExperimentService {
 
     async _finalizeQueueEntry(entry) {
         await this._removeFromQueue(entry.resultId);
-        await this.storage.deleteHeadlessRunBundles(entry.resultId).catch(() => {});
+        await this._deleteTransientSidecars(entry.resultId).catch(() => {});
         this.publish({ domain: "headless-queue", id: entry.resultId, action: "dequeued" });
     }
 

@@ -38,11 +38,15 @@ serialization remains unchanged, while v11 uses JCS. See
 VIS-02 dispatches exact camera render provider ID/version. Omitted selections
 alias only to `canonical-analytic@1` during resolution. VIS-12b makes
 `pbr-mesh@1` resolution-capable for immutable export and integrity-only
-inspection, but it remains runtime-unavailable and never falls back.
+inspection. VIS-14 makes it runtime-available to browser simulation; VIS-15a
+adds configuration-gated normal-worker headless execution through the same
+shared PBR runtime and aligned capture helpers. It never falls back to analytic.
 `canonical-analytic@2` remains unavailable. VIS-13a exports and imports
 `cev-sim.run-package@1` archives through the authoring store; VIS-13b admits
 them on configured same-host Unix supervisors and wires CLI/Python package
-execution. PBR execution still fails before worker creation until VIS-15.
+execution. Headless/Python PBR requires a same-host admitted package, backend
+v2, and a supervisor whose selected PBR target passes the complete provider
+probe. PBR remains disabled by default.
 VIS-04 stores
 validated visual-asset bytes and source-bound use records; those hashes stay
 out of `visualLayerHash`, simulation-semantic, and episode identity. VIS-05a
@@ -94,8 +98,9 @@ recomputes the outer bundle hash.
 `verifyRunBundleIntegrity` and all CLI inspection paths accept a structurally
 valid PBR bundle without requiring local asset bytes or a renderer. Inspection
 explicitly does not establish current rights, local availability, or report
-validity. `verifyRunBundle` remains the executable gate and rejects PBR until
-the runtime capability exists. Browser preparation rejects it before replacing
+validity. `verifyRunBundle` accepts the implemented PBR provider contract; the
+active runtime still performs target-specific capability validation. Browser
+preparation rejects unsupported runs before replacing
 the current run or preparing environment/sensors. Headless JavaScript and
 Python select only the declared routed GPU backend v2 for PBR and reject v1 or
 missing supervisor support. JSON import transfers no asset bytes, preserves
@@ -193,8 +198,10 @@ REP-103 camera-link/optical conversion, intrinsic XYZ rotation, column-major
 OpenGL matrices, integer-nanosecond pose sampling, and top-left integer pixel
 centers. This does not change run-manifest v11, calibration-bundle v2, any run
 or episode hash, provider selection, protocol, or capability advertisement.
-The existing FOV camera path remains the only active analytic/provider route
-until VIS-14/VIS-15.
+The existing FOV camera path remains byte-compatible for
+`canonical-analytic@1`. VIS-14 browser and VIS-15a headless `pbr-mesh@1`
+cameras use the calibrated projection path and await aligned
+appearance/analytic readback.
 
 ### Localization sensor parameters (defaults)
 
@@ -232,6 +239,15 @@ context with the required float target and asynchronous readback support.
 Cameras require it; LiDAR may use either the CPU or GPU backend for the same
 logical measured tensor. Chromium, ANGLE, GPU, and driver identity are runtime
 provenance and define replay scope, but are not episode semantics.
+
+VIS-15a activates the existing provider-routed version `2` identity with its
+unchanged locked config hash. Version 2 is advertised only when
+`renderer.pbrEnabled` is true, the selected target is `local-development`,
+`jetson-agx-orin`, or `jetson-agx-thor` on its matching host, and material,
+Basis/KTX2 decoder, float-target, and asynchronous-readback probes all pass.
+It advertises `rgba8`, CameraInfo, analytic `32FC1`, `16UC1`, and `32SC1`
+products plus provider/product routing. Version 1 remains the default analytic
+backend. NVIDIA x64 and managed PBR are not advertised by VIS-15a.
 
 - Observation `measured-state` v1 has one preset. Its config hash is
   `5c81866540bbdf0031f6c700554d65c7becc6fe76b5abaa5e81a20f14aa99e6d`
@@ -359,8 +375,11 @@ fresh worker before that environment can continue.
 `experiment_run_start` with `execution: "headless"` resolves suite cases to
 portable run bundles before creating evidence. The server persists an atomic
 FIFO queue index plus write-once bundle sidecars under
-`headless-run-bundles/<resultId>/`; sidecars are verified with
-`verifyRunBundle()` on read and never re-resolved after admission. Exactly one
+`headless-run-bundles/<resultId>/`. New version-2 sidecar manifests bind every
+case to the digest of its exact bundle bytes and, for PBR, the selected visual
+use closure and correspondence report. Version-1 CPU/analytic sidecars remain
+readable. Persisted bytes are verified on every read, passed unchanged to the
+worker, and never re-resolved after admission. Exactly one
 isolated case worker runs at a time; overlapping submissions enqueue rather than
 reject. The browser **Headless Runs** workspace and `/api/headless` surface
 control the same queue without changing MCP semantics or browser-owned suite
@@ -369,10 +388,23 @@ execution.
 Managed cases require
 `controls.authority: "reference"` and route-follower, script, or
 script-with-route controllers. Candidate authority, external ROS controllers,
-camera and unknown sensor backends, unavailable LiDAR geometry, and suites
-without a provable semantic bound are rejected atomically. Supported cases may
-use no sensors, the deterministic IMU/GNSS/wheel-odometry backend, and
-deterministic CPU LiDAR.
+unknown sensor products, incompatible backend selections, unavailable renderer
+capabilities, unavailable LiDAR geometry, and suites without a provable semantic
+bound are rejected atomically. Supported cases may use no sensors, the
+deterministic IMU/GNSS/wheel-odometry backend, CPU or GPU LiDAR, analytic cameras,
+PBR cameras, and mixed rigs. The managed worker awaits renderer preparation and
+every asynchronous sensor capture before it reports a completed step.
+
+PBR queue admission evaluates current asset bytes and rights in the authoring
+`VisualAssetStore`, acquires a durable result root before queue publication, and
+gives an active case a separate execution pin plus a closure-scoped reader.
+Completed or cancelled PBR results retain their immutable sidecars and result
+roots; derived baselines acquire independent roots. Deleting one owner releases
+only that owner's root. The injected server-only correspondence provider must
+supply exact report bytes, approved production profiles, trusted local validation,
+and the evaluation input bound to the frozen scene, calibration, assets, and seed.
+No provider is installed by default, so public managed PBR remains unavailable
+until VIS-16b supplies accepted evaluation.
 
 The worker uses the default episode identity with the authored reset seed,
 action repeat one, manifest bound, and sorted backend selections. It runs the
@@ -382,6 +414,13 @@ logging defaults to evaluation and may be overridden to evaluation, training,
 or disabled; disabled logging stays disabled unless explicitly upgraded.
 These operational choices do not enter simulation, episode, or trajectory
 identity. `run_manifest_launch` remains browser-backed.
+
+Explicit cancellation removes pending work and cancels active work. Service
+shutdown interrupts only the uncertain active case and leaves later queue entries
+for restart recovery. Recovery rechecks exact bytes, closure ownership, current
+rights, correspondence applicability, and renderer capability, then creates fresh
+worker and renderer resources. Admission journals retain ambiguous roots rather
+than guessing ownership after a crash.
 
 ## PR 12 parity and release evidence
 

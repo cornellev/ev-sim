@@ -82,7 +82,9 @@ and oneof markers. There are no generated JavaScript bindings.
 
 `GetCapabilities.backends` advertises physics, deterministic state sensors,
 backend kind 3 `deterministic-cpu-bvh-lidar` version `1`, and backend kind 4
-`chromium-webgl2-rendered-sensors` version `1`. The CPU backend's locked local
+`chromium-webgl2-rendered-sensors` version `1`. A PBR-enabled supervisor also
+advertises provider-routed version `2` only after its material, Basis/KTX2,
+float-target, and async-readback probes pass on the selected target. The CPU backend's locked local
 configuration hash is
 `488de17bbf8ecf635c18841cd64a9638e011a94a8d9fbb93e4a53943f38bd96d`.
 The GPU backend's hash is
@@ -124,6 +126,8 @@ the selected preset, whose fallback is `safety`.
     "globalGpuBytes": 2147483648,
     "angle": "",
     "disableSandbox": false,
+    "pbrEnabled": false,
+    "pbrTarget": "local-development",
     "launchArgs": []
   },
   "assetAdmission": {
@@ -136,6 +140,17 @@ the selected preset, whose fallback is `safety`.
   }
 }
 ```
+
+The embedded Express service reads this document from
+`CEV_SIM_HEADLESS_SUPERVISOR_CONFIG`. When unset it keeps the existing embedded
+`safety` defaults. Renderer configuration changes capability probes and resource
+limits; it cannot bypass managed correspondence admission.
+
+`pbrEnabled` defaults to false. Initial targets are `local-development`,
+`jetson-agx-orin`, and `jetson-agx-thor`; the target must match the host.
+NVIDIA x64 remains unavailable until its separate hardware gate. PBR asset
+execution also requires same-host admission, so enabling it on a TCP supervisor
+does not make a visual package executable.
 
 Unix-socket supervisors enable same-host `cev-sim.run-package@1` admission by
 default and derive inbox/storage paths from the socket. TCP supervisors disable
@@ -261,6 +276,16 @@ An exhausted budget permanently faults only that environment. `Health`
 reports environments in stable `(batch_id, environment_index)` order and is
 degraded while any environment is restarting or faulted.
 
+The internal managed-experiment path shares worker, renderer, GPU, queue,
+artifact, preparation, and capture limits with protocol batches. Each invocation
+reserves supervisor capacity before asynchronous validation, receives a unique
+renderer environment key, passes persisted exact bundle bytes into its worker,
+and releases the worker before releasing the renderer scope. Managed health
+advances `lastCompletedStep` only after asynchronous sensor work and the rest of
+the kernel step finish. Worker death, timeout, OOM, context loss, readback failure,
+or required artifact failure therefore produces an incomplete infrastructure
+case rather than a successful partial result.
+
 ## Resource enforcement
 
 Actor and sensor counts are checked before preparation. Packed observation
@@ -331,5 +356,6 @@ admission uses the already-reserved protocol 1.4 RPCs and fields. `CreateBatch`
 requires the opaque handle, exact archived bundle digest, and canonical wire
 JSON to agree, then sends the exact archived bytes to the worker for another
 verification. Batch close and failed creation release pins; reset and worker
-restart retain them. PBR packages can be admitted but remain unavailable for
-execution before worker creation.
+restart retain them. Normal workers can execute admitted PBR packages only
+through backend v2 after the selected target passes every PBR probe. Managed
+execution continues to reject PBR packages before worker creation.

@@ -155,7 +155,13 @@ one sequential headless worker at a time. Admission writes immutable
 `headless-experiment-queue.v1.json` index; the browser Headless Runs workspace
 controls the queue through `/api/headless`. The internal managed command is not a
 gRPC/Protobuf surface: it drives `SimulationKernel` with resolved reference
-controllers and no candidate actions. A Node-safe experiment metric collector
+controllers and no candidate actions. Managed GPU cases use the supervisor's
+existing renderer IPC and unique environment scopes, await asynchronous capture
+groups in fixed-step order, and keep tensors inline under the managed IPC limits.
+Version-2 sidecar manifests bind exact case bytes and PBR asset/evidence ownership;
+the authoring visual-asset store supplies durable result roots, independent active
+pins, and closure-scoped readers. Recovery never re-resolves authoring documents
+or replays an uncertain case. A Node-safe experiment metric collector
 is shared with the browser controller. Final result revisions link immutable
 run/semantic/episode/trajectory hashes and retained artifacts; SFLogs are
 identity-checked and imported into the shared `LogService`, then linked into the
@@ -242,8 +248,10 @@ absent `render` blocks remain the legacy analytic alias during resolution.
 `canonical-analytic@2` remains unavailable. VIS-12b separates provider
 resolution support from runtime availability: `pbr-mesh@1` can resolve to an
 immutable render/asset/evidence closure for export and integrity-only
-inspection, but execution still rejects it. GPU sensor backend v1 identity is
-unchanged; backend v2 is declared but rejected.
+inspection. VIS-14 makes it available to browser simulation through an owned
+render-runtime adapter. VIS-15a activates configuration-gated normal-worker
+headless execution and backend v2 after target-specific probes. GPU sensor
+backend v1 identity is unchanged and remains the analytic default.
 VIS-03 stores environment schema v3 with a server revision and optional visual
 descriptor/evidence hashes. Those references stay out of `worldHash`. VIS-04
 stores validated visual-asset bytes and source-bound use records. VIS-05a
@@ -251,7 +259,12 @@ stores `cev-sim.visual-layer-access@1` sidecars and materializes owned preview
 geometry in the display scene only. VIS-13a adds authoring-store
 `cev-sim.run-package@1` export/import. VIS-13b adds protocol 1.4 same-host
 admission with durable roots, batch pins, scoped digest readers, and exact
-bundle-byte IPC; `pbr-mesh@1` execution stays inactive. VIS-05b streams AOI chunks through a renderer-scoped cache and
+bundle-byte IPC. VIS-14 activates browser `pbr-mesh@1`: preparation builds
+detached immutable PBR appearance and analytic-truth scenes from the resolved
+closure, camera updates await aligned readback, and mutable editor/preview state
+never enters capture. VIS-15a reuses that runtime in supervisor-owned Chromium,
+with immutable prepared handles and explicit appearance/oracle/LiDAR routing.
+VIS-05b streams AOI chunks through a renderer-scoped cache and
 hashed LOD policy without changing `worldHash`, `visualLayerHash`, simulation
 identity, or episode identity. Visual descriptors are appearance resources bound
 to `worldHash`; their meshes never enter metric world, collision, LiDAR,
@@ -285,21 +298,23 @@ Per-unit proposal digests extend reuse keys without entering world, semantic,
 or episode identity. VIS-11 adds opt-in `intrinsic-material-model@1` and a
 transport-only `bake-model-output-set@1`; those hashes stay out of episode
 identity. Real inference is disabled until an operator pins model revision,
-weights digest, and bounded service configuration. VIS-14/VIS-15 own runtime
-provider routing. VIS-12b adds conditional selected-PBR resolution after every
+weights digest, and bounded service configuration. VIS-14 owns browser runtime
+provider routing and VIS-15a implements configuration-gated normal-worker
+headless routing. VIS-12b adds conditional selected-PBR resolution after every
 authoring lock is verified. It rehashes the complete source-bound CAS use graph
 under both display and machine-interpretation policy, then binds exact
 `visualLayer` and `renderScene` pixel resources while retaining access,
 obligations, and unverified correspondence references under separate resolved
 evidence. PBR meshes never enter metric world, collision, LiDAR, registry, or
-oracle truth. Browser, CLI execution, supervisor, and workers reject the
-runtime-unavailable provider before preparation; JavaScript and Python require
-the declared GPU backend v2 for any future PBR execution. Bundle v1, manifest
+oracle truth. Browser and PBR-enabled normal headless execution revalidate and
+materialize the exact closure. CLI and Python can execute it only through a
+same-host admitted package and a supervisor that advertises the declared GPU
+backend v2 after target-specific probes pass. Bundle v1, manifest
 v11, `world-bound@2`, protobuf, and existing analytic identities remain
 unchanged. VIS-13a adds deterministic `cev-sim.run-package@1` export, strict
 USTAR verification, and journaled authoring-store import. VIS-13b activates
 protocol 1.4 package admission for configured Unix supervisors, CLI execution,
-and Python while keeping TCP distribution and PBR execution unavailable.
+and Python while keeping TCP distribution and non-browser PBR execution unavailable.
 
 ## External Integration
 

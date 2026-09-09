@@ -150,6 +150,7 @@ function verifyBundleStructure(verified, { requireRuntime = false } = {}) {
         try {
             selection = renderSceneProviderRegistry.assertMatchesScene(sensors, resolved.renderScene, {
                 requireAvailable: requireRuntime,
+                target: "headless",
             });
         } catch (error) {
             invalidRenderSelection(error);

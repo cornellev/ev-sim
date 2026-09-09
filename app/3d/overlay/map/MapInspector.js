@@ -15,7 +15,9 @@ import {
     footprintDimensions,
     getMapSelectionRecord,
     getNodeDegree,
+    updateRoadEdge,
 } from "../../editor/document/documentMutations.js";
+import { syncRoadsFromDocument } from "../../editor/document/DocumentSync.js";
 import { handleMapDelete } from "../../editor/map/MapToolLogic.js";
 import { getPlacementAsset } from "../../editor/placement/PlacementCatalog";
 import { MenuButton } from "../ui/MenuButton";
@@ -42,6 +44,10 @@ function Field({ label, value, mono = false }) {
             </p>
         </div>
     );
+}
+
+function isRoadBidirectional(record) {
+    return record?.bidirectional !== false && record?.oneWay !== true;
 }
 
 function getSelectionMeta(selection, record) {
@@ -76,12 +82,14 @@ function getSelectionMeta(selection, record) {
     }
 
     if (selection.type === MAP_SELECTION_TYPES.ROAD) {
+        const bidirectional = isRoadBidirectional(record);
         return {
             title: "Road Segment",
-            subtitle: `${record.width ?? 7}m wide`,
+            subtitle: `${record.width ?? 7}m wide · ${bidirectional ? "two-way" : "one-way"}`,
             icon: <FaRoad className="h-3 w-3" />,
             width: record.width ?? 7,
             lanes: record.laneCount ?? 2,
+            bidirectional,
         };
     }
 
@@ -141,6 +149,23 @@ export function MapInspector({ data, editorSnapshot, documentSnapshot }) {
         });
     };
 
+    const setRoadBidirectional = (bidirectional) => {
+        const editor = data?.editor?.();
+        const environment = data?.environment?.();
+        const scene = getScene(data);
+        if (!editor || !environment || !scene || !selection?.id) return;
+        const document = environment.getDocument();
+        const result = updateRoadEdge(document, selection.id, {
+            bidirectional,
+            direction: bidirectional ? null : 1,
+        });
+        if (!result.ok) return;
+        editor.markDirty(true);
+        syncRoadsFromDocument(data, scene, document);
+        data.environment()?.objects?.()?.registerExistingContent?.(scene, data);
+        data.simulation()?.render?.();
+    };
+
     if (!selection || !record) {
         return null;
     }
@@ -197,10 +222,38 @@ export function MapInspector({ data, editorSnapshot, documentSnapshot }) {
                 )}
 
                 {selection.type === MAP_SELECTION_TYPES.ROAD && (
-                    <div className="grid grid-cols-2 gap-1.5">
-                        <Field label="Width" value={`${formatNumber(meta.width)}m`} mono />
-                        <Field label="Lanes" value={meta.lanes} mono />
-                    </div>
+                    <>
+                        <div className="grid grid-cols-2 gap-1.5">
+                            <Field label="Width" value={`${formatNumber(meta.width)}m`} mono />
+                            <Field label="Lanes" value={meta.lanes} mono />
+                        </div>
+                        <div className="rounded-[var(--radius)] border border-zinc-800/90 bg-zinc-950/45 px-2 py-1.5">
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-zinc-500">Travel</p>
+                            <div className="mt-1.5 flex gap-1.5">
+                                <MenuButton
+                                    compact
+                                    variant={meta.bidirectional ? "primary" : "ghost"}
+                                    onClick={() => setRoadBidirectional(true)}
+                                    title="Two-way travel"
+                                >
+                                    Two-way
+                                </MenuButton>
+                                <MenuButton
+                                    compact
+                                    variant={!meta.bidirectional ? "primary" : "ghost"}
+                                    onClick={() => setRoadBidirectional(false)}
+                                    title="One-way travel (start to end)"
+                                >
+                                    One-way
+                                </MenuButton>
+                            </div>
+                            {!meta.bidirectional && (
+                                <p className="mt-1.5 text-[11px] text-zinc-500">
+                                    Legal direction is start → end along the segment.
+                                </p>
+                            )}
+                        </div>
+                    </>
                 )}
 
                 {selection.type === MAP_SELECTION_TYPES.INTERSECTION && (

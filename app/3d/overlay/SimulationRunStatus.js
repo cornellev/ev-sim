@@ -9,6 +9,7 @@ import {
 import {
     deriveSimulationStatus,
     formatClockMode,
+    formatRenderProviderStatus,
     formatSimulationTime,
     summarizeAssertions,
 } from "./simulationStatus.js";
@@ -121,8 +122,9 @@ export function SimulationRunStatus({ simState, runState, recordingState, sensor
                 </div>
             </div>
 
-            <div className="mx-3 grid grid-cols-[1fr_auto] border-x border-b border-zinc-800 bg-zinc-950/85 px-3 py-1 text-[11px] text-zinc-500 max-sm:hidden">
+            <div className="mx-3 grid grid-cols-[1fr_auto_auto] border-x border-b border-zinc-800 bg-zinc-950/85 px-3 py-1 text-[11px] text-zinc-500 max-sm:hidden">
                 <span className="truncate font-mono tabular-nums">{formatClockMode(simState)}</span>
+                <span className="ml-3 truncate font-mono">{formatRenderProviderStatus(simState?.renderProvider)}</span>
                 <span className={`ml-3 flex items-center gap-1.5 ${TONES[assertions.tone]}`}><FaFlagCheckered aria-hidden="true" className="h-2.5 w-2.5" />Assertions: {assertions.label}</span>
             </div>
         </header>

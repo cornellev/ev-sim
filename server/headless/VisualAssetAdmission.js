@@ -677,21 +677,31 @@ export class VisualAssetAdmissionManager {
         const closers = this._scopeClosers.get(handle) ?? new Map();
         closers.set(key, close);
         this._scopeClosers.set(handle, closers);
-        const open = async (digest, { start = 0, end } = {}) => {
+        const activeRecord = () => {
             const current = this.records.get(handle);
             if (closed || !this._activeScopes.get(handle)?.has(key)
                 || !current || current.batchPins < 1) {
                 throw visualAssetError(RUN_PACKAGE_ERROR_CODES.INVALID, "The environment asset admission is not pinned.");
             }
-            if (typeof digest !== "string" || !SHA256.test(digest)
-                || !Object.hasOwn(current.digestUses, digest)) {
-                throw visualAssetError(RUN_PACKAGE_ERROR_CODES.CLOSURE_MISMATCH, "Requested digest is outside the admitted closure.");
+            return current;
+        };
+        const openResolved = async (useHash, { start = 0, end } = {}, expectedDigest = null, mappedDigest = false) => {
+            const current = activeRecord();
+            if (typeof useHash !== "string" || !SHA256.test(useHash)
+                || (!mappedDigest && !current.useHashes.includes(useHash))) {
+                throw visualAssetError(RUN_PACKAGE_ERROR_CODES.CLOSURE_MISMATCH, "Requested use is outside the admitted closure.");
             }
             if (!Number.isSafeInteger(start) || start < 0
                 || (end !== undefined && (!Number.isSafeInteger(end) || end < start))) {
                 throw visualAssetError(RUN_PACKAGE_ERROR_CODES.INVALID, "Asset reader ranges must be non-negative safe integers.");
             }
-            const opened = await this.store.openUseContent(current.digestUses[digest], {
+            if (!mappedDigest) {
+                const use = await this.store.getUse(useHash);
+                if (expectedDigest && use.asset.sha256 !== expectedDigest) {
+                    throw visualAssetError(RUN_PACKAGE_ERROR_CODES.CLOSURE_MISMATCH, "Requested digest does not match its admitted source use.");
+                }
+            }
+            const opened = await this.store.openUseContent(useHash, {
                 start, end, operations: [...RUN_PACKAGE_ADMISSION_OPERATIONS],
             });
             let stream;
@@ -725,13 +735,35 @@ export class VisualAssetAdmissionManager {
                 size: opened.size, start: opened.start, end: opened.end,
             });
         };
+        const open = async (digest, options = {}) => {
+            const current = activeRecord();
+            if (typeof digest !== "string" || !SHA256.test(digest)
+                || !Object.hasOwn(current.digestUses, digest)) {
+                throw visualAssetError(RUN_PACKAGE_ERROR_CODES.CLOSURE_MISMATCH, "Requested digest is outside the admitted closure.");
+            }
+            return openResolved(current.digestUses[digest], options, digest, true);
+        };
+        const authorizeUse = async (useHash, operations = []) => {
+            const current = activeRecord();
+            if (!current.useHashes.includes(useHash)) {
+                throw visualAssetError(RUN_PACKAGE_ERROR_CODES.CLOSURE_MISMATCH, "Requested use is outside the active admitted closure.");
+            }
+            const requested = [...new Set(operations.map(String))].sort();
+            if (requested.some((operation) => !RUN_PACKAGE_ADMISSION_OPERATIONS.includes(operation))) {
+                throw visualAssetError(RUN_PACKAGE_ERROR_CODES.RIGHTS_DENIED, "Requested asset operation is outside worker admission rights.");
+            }
+            await this.store.statUseContent(useHash, { operations: requested });
+            return { allowed: true, useHash, operations: requested };
+        };
+        const tracked = (operation) => {
+            pending.add(operation);
+            operation.finally(() => pending.delete(operation)).catch(() => {});
+            return operation;
+        };
         return Object.freeze({
-            open: (...args) => {
-                const operation = open(...args);
-                pending.add(operation);
-                operation.finally(() => pending.delete(operation)).catch(() => {});
-                return operation;
-            },
+            open: (...args) => tracked(open(...args)),
+            openUse: (...args) => tracked(openResolved(...args)),
+            authorizeUse: (...args) => tracked(authorizeUse(...args)),
             close,
         });
     }

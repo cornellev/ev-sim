@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import test from "node:test";
 import os from "node:os";
 import path from "node:path";
+import { Readable } from "node:stream";
+import * as THREE from "three";
 
 import { HeadlessEpisode } from "../app/simulation/headless/HeadlessEpisode.js";
 import {
@@ -18,9 +21,12 @@ import {
     LIDAR_GEOMETRY_VERSION,
 } from "../app/simulation/lidar/LidarGeometry.js";
 import { CpuLidarScene } from "../app/simulation/sensors/CpuLidarScene.js";
+import { HeadlessGpuSensorManager } from "../app/simulation/sensors/HeadlessGpuSensorManager.js";
+import { createGpuSensorBackendV2Selection } from "../app/simulation/sensors/GpuSensorBackend.js";
 import { StorageService } from "../server/storage/StorageService.js";
 import { loadHeadlessGrpcSchema } from "../server/headless/GrpcSchema.js";
 import { HeadlessSupervisor } from "../server/headless/HeadlessSupervisor.js";
+import { runBundleBytes } from "../server/headless/RunBundle.js";
 import { startHeadlessSupervisor } from "../server/headless/SupervisorServer.js";
 import { createHeadlessSmokeBundle } from "../server/headless/SmokeBundle.js";
 import { SupervisorRunner } from "../server/headless/SupervisorRunner.js";
@@ -28,9 +34,17 @@ import { validateBundleWithSupervisor } from "../server/headless/SupervisorValid
 import { canonicalStringify } from "../app/simulation/RunManifest.js";
 import { routeSafetyProfileRef } from "../app/simulation/headless/ProfileRegistry.js";
 import {
+    createOwnedCaptureScene,
+    createVisualCameraCalibration,
+    createVisualCaptureInput,
+} from "../app/3d/environment/visual/VisualCapturePipeline.js";
+import {
     createHeadlessImu,
     createPortableHeadlessBundle,
+    rehashRunBundle,
 } from "./helpers/headlessRunnerBundle.js";
+import { makeNamedMaterialGlb, sha256Hex } from "./helpers/visual-assets.js";
+import { resolvedPbrRun } from "./helpers/pbrResolved.js";
 
 async function sensorFromDefault(type) {
     const resolved = await new StorageService().resolveRunManifest("igvc-default");
@@ -73,6 +87,8 @@ async function hardwareRendererConfig() {
         angle: renderer.angle || "",
         disableSandbox: Boolean(renderer.disableSandbox),
         allowSoftwareRenderer: Boolean(renderer.allowSoftwareRenderer),
+        pbrEnabled: renderer.pbrEnabled === true,
+        pbrTarget: renderer.pbrTarget || "local-development",
         launchArgs: Array.isArray(renderer.launchArgs) ? renderer.launchArgs : [],
     };
 }
@@ -368,6 +384,474 @@ test("pooled renderer launches once, fixes context count, and enforces per-envir
     await pool.close();
 });
 
+test("VIS-15a PBR handles are generation-scoped and warm captures transfer only dynamic requests", async () => {
+    const preparations = [];
+    const captures = [];
+    const releases = [];
+    const authorizedUses = [];
+    const openedUses = [];
+    const adapter = {
+        provenance: null,
+        async start(count) {
+            this.provenance = {
+                renderer: "hardware-test-gpu",
+                floatColorBuffer: true,
+                floatFramebufferComplete: true,
+                readbackCheck: true,
+                pbrRuntime: true,
+                pbrProbe: { material: true, decoder: true, asyncReadback: true },
+                contextCount: count,
+            };
+        },
+        async preparePbr(payload, slot) {
+            preparations.push({ payload, slot });
+            return {
+                environmentKey: payload.environmentKey,
+                generation: 1,
+                renderSceneHash: payload.resolved.renderScene.hash,
+                analyticSceneHash: "c".repeat(64),
+                status: { state: "ready" },
+            };
+        },
+        async capturePbr(environmentKey, requests) {
+            captures.push({ environmentKey, requests });
+            return requests.map((request) => ({
+                id: request.id,
+                type: "camera",
+                captureTimeNs: request.captureTimeNs,
+                aligned: true,
+                products: { rgb: new Uint8Array(request.width * request.height * 4) },
+            }));
+        },
+        async releasePbr(environmentKey) { releases.push(environmentKey); return true; },
+        isRunning() { return true; },
+        async close() {},
+    };
+    const pool = new PooledGpuRenderer({
+        chromiumExecutable: "/fake/chromium",
+        pbrEnabled: true,
+        pbrTarget: "local-development",
+        contextPoolSize: 1,
+        globalGpuBytes: 4096,
+    }, { adapterFactory: () => adapter, hostPlatform: "darwin", hostArch: "arm64" });
+    const resolved = {
+        renderScene: {
+            hash: "b".repeat(64),
+            description: { provider: { id: "pbr-mesh", version: 1 } },
+        },
+        evidence: { visualAssets: { uses: ["1".repeat(64), "2".repeat(64)].map((useHash) => ({
+            useHash,
+            use: {
+                asset: {
+                    sha256: "a".repeat(64),
+                    sizeBytes: 3,
+                    mediaType: "application/octet-stream",
+                },
+            },
+        })) } },
+    };
+    const assetReader = {
+        async authorizeUse(useHash, operations) { authorizedUses.push({ useHash, operations }); },
+        async openUse(useHash) {
+            openedUses.push(useHash);
+            return { stream: Readable.from([Buffer.from("abc")]), async release() {} };
+        },
+    };
+    await assert.rejects(() => pool.preparePbr({
+        environmentKey: "environment-a",
+        resolved,
+        sensorRig: { sensors: [] },
+        vehicles: [],
+        maxGpuBytes: 2048,
+        assetReader: { async open() {} },
+    }), /exact-use access/);
+    const prepared = await pool.preparePbr({
+        environmentKey: "environment-a",
+        resolved,
+        sensorRig: { sensors: [] },
+        vehicles: [],
+        maxGpuBytes: 2048,
+        assetReader,
+    });
+    const calibration = createVisualCameraCalibration({
+        width: 2,
+        height: 1,
+        intrinsics: { fx: 2, fy: 2, cx: 0.5, cy: 0 },
+        near: 0.1,
+        far: 10,
+        distortionModel: "none",
+        distortion: [],
+    });
+    const sceneHandle = createOwnedCaptureScene({
+        role: "measured-appearance",
+        scene: {},
+        generation: prepared.generation,
+        descriptionHash: resolved.renderScene.hash,
+    });
+    const request = {
+        id: "camera",
+        type: "camera",
+        provider: { id: "pbr-mesh", version: 1 },
+        width: 2,
+        height: 1,
+        captureTimeNs: 7,
+        captureInput: createVisualCaptureInput({
+            calibration,
+            pose: { matrixWorld: new THREE.Matrix4().elements },
+            sceneHandle,
+            captureTimeNs: 7,
+        }),
+        products: { rgb: true },
+        vehicles: [],
+    };
+    assert.equal(pool.pbrCapability().available, true);
+    await assert.rejects(() => pool.capturePbrGroup({
+        environmentKey: "environment-a",
+        handle: prepared,
+        requests: [request],
+        maxGpuBytes: 128,
+    }), /environment limit/);
+    const preparedBytes = pool.diagnostics().trackedGpuBytes;
+    await pool.capturePbrGroup({
+        environmentKey: "environment-a",
+        handle: prepared,
+        requests: [request],
+        maxGpuBytes: 2048,
+    });
+    assert.equal(preparations.length, 1);
+    assert.equal(captures.length, 1);
+    for (const useHash of ["1".repeat(64), "2".repeat(64)]) {
+        assert.equal(authorizedUses.filter((entry) => entry.useHash === useHash).length, 3);
+    }
+    assert.deepEqual(openedUses, ["1".repeat(64)]);
+    assert.equal("resolved" in captures[0], false);
+    assert.equal("assets" in captures[0], false);
+    assert.ok(pool.diagnostics().trackedGpuBytes > preparedBytes);
+    const replacement = await pool.preparePbr({
+        environmentKey: "environment-a",
+        resolved,
+        sensorRig: { sensors: [] },
+        vehicles: [],
+        maxGpuBytes: 2048,
+        assetReader,
+    });
+    assert.notEqual(replacement.generation, prepared.generation);
+    await assert.rejects(() => pool.capturePbrGroup({
+        environmentKey: "environment-a",
+        handle: prepared,
+        requests: [request],
+        maxGpuBytes: 2048,
+    }), /stale/);
+    await assert.rejects(() => pool.capturePbrGroup({
+        environmentKey: "environment-b",
+        handle: replacement,
+        requests: [request],
+        maxGpuBytes: 2048,
+    }), /another environment/);
+    assert.ok(releases.includes("environment-a"));
+    await pool.close();
+});
+
+test("VIS-15a advertises backend v2 only after every target-specific PBR probe succeeds", async () => {
+    const disabled = new HeadlessSupervisor({
+        socket: path.join(os.tmpdir(), "unused-vis15a-disabled-capability.sock"),
+        config: {
+            kind: "cev-sim.headless-supervisor-config",
+            version: 1,
+            renderer: { chromiumExecutable: "", pbrEnabled: false },
+        },
+    });
+    const disabledResponse = await disabled.getCapabilities({ clientProtocol: { major: 1, minor: 4 } });
+    assert.deepEqual(
+        disabledResponse.backends.filter((entry) => entry.kind === 4).map((entry) => entry.version),
+        ["1"],
+    );
+    await disabled.close();
+    const supervisor = new HeadlessSupervisor({
+        socket: path.join(os.tmpdir(), "unused-vis15a-capability.sock"),
+        config: {
+            kind: "cev-sim.headless-supervisor-config",
+            version: 1,
+            renderer: {
+                chromiumExecutable: "/fake/chromium",
+                pbrEnabled: true,
+                pbrTarget: "local-development",
+            },
+        },
+        rendererHostPlatform: "darwin",
+        rendererHostArch: "arm64",
+        rendererAdapterFactory: () => ({
+            provenance: null,
+            async start() {
+                this.provenance = {
+                    renderer: "hardware-test-gpu",
+                    floatColorBuffer: true,
+                    floatFramebufferComplete: true,
+                    readbackCheck: true,
+                    pbrRuntime: true,
+                    pbrProbe: { material: true, decoder: true, asyncReadback: true },
+                };
+            },
+            async close() {},
+        }),
+    });
+    const response = await supervisor.getCapabilities({ clientProtocol: { major: 1, minor: 4 } });
+    const gpu = response.backends.filter((entry) => entry.kind === 4);
+    assert.deepEqual(gpu.map((entry) => entry.version), ["1", "2"]);
+    assert.equal(gpu[1].available, true);
+    assert.ok(gpu[1].features.includes("analytic-instance"));
+    const diagnostics = JSON.parse(Buffer.from(response.diagnosticJson).toString("utf8"));
+    assert.equal(diagnostics.pbrProbe.target, "local-development");
+    assert.deepEqual(diagnostics.pbrProbe.products, ["rgba8", "camera-info", "32FC1", "16UC1", "32SC1"]);
+    await supervisor.close();
+});
+
+test("VIS-15a stages PBR product tensors atomically in the environment arena", async () => {
+    const values = {
+        rgb: new Uint8Array(8),
+        depth: new Float32Array(2),
+        semantic: new Uint16Array(2),
+        instance: new Uint32Array(2),
+    };
+    const published = [];
+    const released = [];
+    const rendererPool = {
+        async capturePbrGroup() {
+            return [{
+                id: "camera",
+                type: "camera",
+                captureTimeNs: 1,
+                aligned: true,
+                products: values,
+            }];
+        },
+        diagnostics() { return {}; },
+        async close() {},
+    };
+    const supervisor = new HeadlessSupervisor({
+        socket: path.join(os.tmpdir(), "unused-vis15a-arena.sock"),
+        rendererPool,
+    });
+    const arena = {
+        async publishTensor(bytes, spec) {
+            const reference = { regionName: "arena", offsetBytes: String(published.length + 1) };
+            published.push({ bytes: Uint8Array.from(bytes), spec, reference });
+            return reference;
+        },
+        async release(reference) { released.push(reference); return true; },
+    };
+    const environment = {
+        batch: { id: "batch", limits: { maxGpuBytesPerEnvironment: 4096, stepWallTimeoutMs: 1000 } },
+        index: 0,
+        sharedArena: arena,
+        transportSequence: 0n,
+    };
+    const payload = {
+        handle: { generation: 1 },
+        requests: [{ id: "camera", width: 2, height: 1 }],
+    };
+    const [captured] = await supervisor._rendererRequest(environment, "capture-pbr", payload);
+    assert.deepEqual(captured.products, {});
+    assert.deepEqual(Object.keys(captured.productSharedMemory), ["rgb", "depth", "semantic", "instance"]);
+    assert.deepEqual(published.map((entry) => entry.spec.dtype), [4, 1, 6, 8]);
+    assert.equal(environment.transportSequence, 1n);
+
+    published.length = 0;
+    released.length = 0;
+    environment.transportSequence = 1n;
+    arena.publishTensor = async (bytes, spec) => {
+        if (published.length === 2) throw Object.assign(new Error("arena exhausted"), { code: "RESOURCE_LIMIT" });
+        const reference = { regionName: "arena", offsetBytes: String(published.length + 1) };
+        published.push({ bytes: Uint8Array.from(bytes), spec, reference });
+        return reference;
+    };
+    await assert.rejects(() => supervisor._rendererRequest(environment, "capture-pbr", payload), /arena exhausted/);
+    assert.deepEqual(released, published.map((entry) => entry.reference));
+    assert.equal(environment.transportSequence, 1n);
+    await supervisor.close();
+});
+
+test("VIS-15b direct managed runs use isolated renderer scopes and release them after workers stop", async (t) => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "cev-vis15b-managed-"));
+    t.after(() => fs.rm(root, { recursive: true, force: true }));
+    const camera = await sensorFromDefault("camera");
+    camera.rateHz = 60;
+    camera.phaseNs = 0;
+    camera.calibration.width = 2;
+    camera.calibration.height = 1;
+    let bundle = await createPortableHeadlessBundle({ sensors: [camera] });
+    bundle.resolved.manifest.controls.authority = "reference";
+    bundle.resolved.manifest.clock.maxSteps = 10;
+    bundle.resolved.scenario.scenario.routes[0].controller = {
+        kind: "route-follower",
+        activation: { kind: "start" },
+    };
+    bundle = rehashRunBundle(bundle);
+    const exactBytes = runBundleBytes(bundle);
+    const scopes = [];
+    const released = [];
+    let closedWorkers = 0;
+    const rendererPool = {
+        async probe() { return { available: true, reason: "" }; },
+        pbrCapability() { return { available: false, reason: "disabled" }; },
+        diagnostics() { return { renderer: "managed-fake" }; },
+        async captureGroup({ environmentKey, requests }) {
+            scopes.push(environmentKey);
+            return requests.map((request) => ({
+                id: request.id,
+                type: request.type,
+                scope: environmentKey,
+                data: new Uint8Array(request.width * request.height * 4),
+            }));
+        },
+        async releaseEnvironment(environmentKey) { released.push(environmentKey); },
+        async close() {},
+    };
+    let nextPid = 9000;
+    const workerFactory = (options) => ({
+        pid: nextPid++,
+        pendingBytes: 0,
+        async dispatch(command, payload) {
+            if (command === "initialize") {
+                assert.equal(Buffer.from(payload.bundleBytes).equals(Buffer.from(exactBytes)), true);
+                return { descriptor: {} };
+            }
+            if (command === "run-managed") {
+                const [captured] = await options.rendererHandler("capture-group", {
+                    scene: bundle.resolved.renderScene,
+                    requests: [{ id: "camera", type: "camera", width: 2, height: 1 }],
+                });
+                return { finalized: { scope: captured.scope } };
+            }
+            throw new Error(`Unexpected command ${command}.`);
+        },
+        async close() { closedWorkers += 1; },
+        terminate() {},
+    });
+    const supervisor = new HeadlessSupervisor({
+        socket: path.join(root, "unused-vis15b-managed.sock"),
+        config: {
+            kind: "cev-sim.headless-supervisor-config",
+            version: 1,
+            maxWorkers: 2,
+        },
+        rendererPool,
+        workerFactory,
+    });
+    try {
+        const results = await Promise.all(["a", "b"].map((suffix) => supervisor.runManagedExperiment({
+            bundle,
+            bundleBytes: exactBytes,
+            bundleBytesHash: createHash("sha256").update(exactBytes).digest("hex"),
+            outputUri: path.join(root, `vis15b-${suffix}`),
+        })));
+        assert.equal(new Set(scopes).size, 2);
+        assert.deepEqual(results.map((entry) => entry.scope).sort(), [...scopes].sort());
+        assert.deepEqual([...released].sort(), [...scopes].sort());
+        assert.equal(closedWorkers, 2);
+        assert.equal(supervisor.workers.size, 0);
+        assert.equal(supervisor.reservedWorkers, 0);
+    } finally {
+        await supervisor.close();
+    }
+});
+
+test("VIS-15a routes PBR cameras and analytic LiDAR separately, then commits the sync group atomically", async () => {
+    const camera = await sensorFromDefault("camera");
+    camera.rateHz = 60;
+    camera.phaseNs = 0;
+    camera.syncGroupId = "perception";
+    camera.calibration.width = 2;
+    camera.calibration.height = 1;
+    camera.calibration.intrinsics = { fx: 2, fy: 3, cx: 0.25, cy: 0 };
+    camera.calibration.distortion = [];
+    camera.calibration.products = {
+        ...Object.fromEntries(Object.keys(camera.calibration.products).map((key) => [key, false])),
+        rgb: true,
+        cameraInfo: true,
+        depth: true,
+        semantic: true,
+        instance: true,
+    };
+    const lidar = await sensorFromDefault("lidar3d");
+    lidar.rateHz = 60;
+    lidar.phaseNs = 0;
+    lidar.syncGroupId = "perception";
+    lidar.calibration.azimuth = { startDeg: 0, endDeg: 2, stepDeg: 1 };
+    lidar.calibration.elevation = { startDeg: 0, endDeg: 1, stepDeg: 1 };
+    const calls = [];
+    const rendererClient = {
+        async capturePbr({ requests }) {
+            calls.push({ route: "pbr", requests });
+            return requests.map((request) => ({
+                id: request.id,
+                type: "camera",
+                aligned: true,
+                captureTimeNs: request.captureTimeNs,
+                products: {
+                    rgb: new Uint8Array([1, 2, 3, 255, 4, 5, 6, 255]),
+                    depth: new Float32Array([2, Number.NaN]),
+                    semantic: new Uint16Array([7, 0]),
+                    instance: new Uint32Array([70, 0]),
+                },
+            }));
+        },
+        async captureGroup({ scene, requests }) {
+            calls.push({ route: "lidar", scene, requests });
+            return requests.map((request) => ({
+                id: request.id,
+                type: "lidar3d",
+                data: new Float32Array(request.width * request.height * 4),
+            }));
+        },
+    };
+    const renderScene = {
+        hash: "d".repeat(64),
+        description: { provider: { id: "pbr-mesh", version: 1 } },
+    };
+    const lidarGeometry = { hash: "e".repeat(64), description: { staticPrimitives: [], actors: [] } };
+    const vehicles = { vehicles: [{
+        id: "ego",
+        telemetryId: "ego",
+        position: { x: 0, y: 0, z: 0 },
+        rotation: { x: 0, y: 0, z: 0, order: "XYZ" },
+    }] };
+    const manager = new HeadlessGpuSensorManager(vehicles, { rendererClient });
+    await manager.configureFromManifest({ sensors: [camera, lidar] }, {
+        backendSelection: createGpuSensorBackendV2Selection(),
+        renderScene,
+        lidarGeometry,
+        renderRuntime: { generation: 9, renderSceneHash: renderScene.hash },
+        transformRuntime: {
+            resolveCaptureFrames() {
+                return {
+                    ok: true,
+                    mapPose: {
+                        position: { x: 0, y: 0, z: 0 },
+                        rotation: { x: 0, y: 0, z: 0, order: "XYZ" },
+                    },
+                };
+            },
+        },
+        stepNs: 16_666_667,
+        topics: [],
+        perceptionObservations: true,
+    });
+    await manager.updateAsync(1 / 60, { step: 1, timeNs: 16_666_667 });
+    assert.deepEqual(calls.map((entry) => entry.route).sort(), ["lidar", "pbr"]);
+    assert.equal(calls.find((entry) => entry.route === "lidar").scene, lidarGeometry);
+    const cameraQueue = manager.devices.find((device) => device.id === camera.id).contractPublisher.queue;
+    const lidarQueue = manager.devices.find((device) => device.id === lidar.id).contractPublisher.queue;
+    assert.equal(cameraQueue.length, 1);
+    assert.equal(lidarQueue.length, 1);
+    assert.deepEqual(cameraQueue[0].messages.map((entry) => entry.value.encoding), [
+        "rgba8", undefined, "32FC1", "16UC1", "32SC1",
+    ]);
+    assert.equal(cameraQueue[0].observation.dtype, "uint8");
+    assert.equal(cameraQueue[0].observation.shape.join(","), "1,2,4");
+    manager.disposeRun();
+});
+
 test("renderer failures reject queued work, restart the sidecar, and enforce capture timeouts", async () => {
     let starts = 0;
     let captures = 0;
@@ -496,6 +980,168 @@ test("hardware WebGL2 LiDAR matches CPU range/incidence on the canonical scene",
     } finally {
         cpuScene.dispose();
         await pool.close();
+    }
+});
+
+test("VIS-15a hardware PBR fixture executes RGBA and analytic products on the selected stack", {
+    skip: process.env.CEV_SIM_PBR_HARDWARE !== "1",
+    timeout: 60_000,
+}, async () => {
+    const glb = makeNamedMaterialGlb("actor-material", {
+        extras: { semanticId: 65000, instanceId: 4_000_000_000, forged: true },
+    });
+    const ktx2 = await fs.readFile(new URL(
+        "./fixtures/visual-layer/sample_uastc_zstd.ktx2",
+        import.meta.url,
+    ));
+    const resolved = resolvedPbrRun({
+        actorSha256: sha256Hex(glb),
+        actorSizeBytes: glb.byteLength,
+        environmentMapSha256: sha256Hex(ktx2),
+        environmentMapSizeBytes: ktx2.byteLength,
+    });
+    const config = await hardwareRendererConfig();
+    config.pbrEnabled = true;
+    config.pbrTarget = process.env.CEV_SIM_PBR_TARGET || (process.platform === "darwin"
+        ? "local-development"
+        : "jetson-agx-orin");
+    const pool = new PooledGpuRenderer(config);
+    const rssBefore = process.memoryUsage().rss;
+    let report = null;
+    const vehicle = {
+        id: "ego",
+        telemetryId: "ego",
+        position: { x: 0, y: 0, z: -5 },
+        rotation: { x: 0, y: 0, z: 0, order: "XYZ" },
+    };
+    const assets = new Map([
+        [resolved.actorUseHash, glb],
+        [resolved.environmentMapUseHash, ktx2],
+    ]);
+    const assetReader = {
+        async authorizeUse(useHash, operations) {
+            assert.equal(assets.has(useHash), true);
+            assert.deepEqual(operations, ["display", "machine-interpretation"]);
+        },
+        async openUse(useHash) {
+            assert.equal(assets.has(useHash), true);
+            return { stream: Readable.from([assets.get(useHash)]), async release() {} };
+        },
+    };
+    const authoredCalibration = {
+        width: 5,
+        height: 4,
+        intrinsics: { fx: 4.5, fy: 5.25, cx: 1.75, cy: 1.25 },
+        near: 0.1,
+        far: 100,
+        distortionModel: "plumb_bob",
+        distortion: [0.01, -0.001, 0.0005, -0.00025, 0],
+    };
+    const calibration = createVisualCameraCalibration({
+        ...authoredCalibration,
+        distortionModel: "brown-conrady",
+    });
+    try {
+        const probe = await pool.probe();
+        assert.equal(probe.available, true, probe.reason);
+        assert.equal(pool.pbrCapability().available, true, pool.pbrCapability().reason);
+        const originIsolation = await pool.adapter.page.evaluate(async () => {
+            let externalBlocked = false;
+            try { await fetch("https://example.invalid/denied"); } catch { externalBlocked = true; }
+            return {
+                externalBlocked,
+                unallowlistedStatus: (await fetch("/runtime/app/client/Client.js")).status,
+            };
+        });
+        assert.deepEqual(originIsolation, { externalBlocked: true, unallowlistedStatus: 404 });
+        const preparationStarted = performance.now();
+        const handle = await pool.preparePbr({
+            environmentKey: "hardware-pbr",
+            resolved,
+            sensorRig: {
+                sensors: [{
+                    id: "camera",
+                    type: "camera",
+                    parentId: "ego",
+                    calibration: authoredCalibration,
+                    pose: {
+                        position: { x: 0, y: 0, z: 0 },
+                        rotation: { x: 0, y: 0, z: 0, order: "XYZ" },
+                    },
+                }],
+            },
+            vehicles: [vehicle],
+            maxGpuBytes: 128 * 1024 * 1024,
+            assetReader,
+        });
+        const preparationMs = performance.now() - preparationStarted;
+        const sceneHandle = createOwnedCaptureScene({
+            role: "measured-appearance",
+            scene: {},
+            generation: handle.generation,
+            descriptionHash: resolved.renderScene.hash,
+        });
+        const captureInput = createVisualCaptureInput({
+            calibration,
+            pose: { matrixWorld: new THREE.Matrix4().elements },
+            sceneHandle,
+            captureTimeNs: 1_000_000,
+        });
+        const request = {
+                id: "camera",
+                type: "camera",
+                provider: { id: "pbr-mesh", version: 1 },
+                width: 5,
+                height: 4,
+                captureTimeNs: 1_000_000,
+                captureInput,
+                products: { rgb: true, depth: true, semantic: true, instance: true },
+                vehicles: [vehicle],
+        };
+        const capture = async () => pool.capturePbrGroup({
+            environmentKey: "hardware-pbr",
+            handle,
+            requests: [request],
+            maxGpuBytes: 128 * 1024 * 1024,
+        });
+        const coldStarted = performance.now();
+        const [captured] = await capture();
+        const coldCaptureMs = performance.now() - coldStarted;
+        vehicle.position.x = 0.25;
+        const warmStarted = performance.now();
+        const [warm] = await capture();
+        const warmCaptureMs = performance.now() - warmStarted;
+        assert.equal(captured.aligned, true);
+        assert.equal(captured.products.rgb.length, 5 * 4 * 4);
+        assert.equal(captured.products.depth.length, 5 * 4);
+        assert.equal(captured.products.semantic.length, 5 * 4);
+        assert.equal(captured.products.instance.length, 5 * 4);
+        assert.equal(warm.products.rgb.length, captured.products.rgb.length);
+        assert.equal(pool.diagnostics().preparedPbrEnvironments, 1);
+        report = {
+            kind: "cev-sim.pbr-hardware-report",
+            version: 1,
+            target: config.pbrTarget,
+            platform: process.platform,
+            architecture: process.arch,
+            probe: pool.diagnostics().provenance,
+            measurements: {
+                preparationMs,
+                coldCaptureMs,
+                warmCaptureMs,
+                staticTransferBytes: glb.byteLength + ktx2.byteLength + Buffer.byteLength(JSON.stringify(resolved)),
+                captureTransferBytes: 5 * 4 * (4 + 4 + 2 + 4),
+                rssBefore,
+                rssAfterWarmCapture: process.memoryUsage().rss,
+            },
+        };
+    } finally {
+        await pool.close();
+        if (report && process.env.CEV_SIM_PBR_REPORT) {
+            report.cleanup = pool.diagnostics();
+            await fs.mkdir(path.dirname(process.env.CEV_SIM_PBR_REPORT), { recursive: true });
+            await fs.writeFile(process.env.CEV_SIM_PBR_REPORT, `${JSON.stringify(report, null, 2)}\n`);
+        }
     }
 });
 

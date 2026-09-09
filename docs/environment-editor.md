@@ -31,7 +31,7 @@ Press `Escape` to leave overlay modes. Earth Import also uses `Escape` to cancel
 
 `EnvironmentDocument` is the canonical source of truth for authored content. It holds:
 
-- **Roads** — nodes and edges (centerlines, width, lane count).
+- **Roads** — nodes and edges (centerlines, width, lane count, bidirectional / one-way travel). Scenario routing assumes right-hand traffic: two-way edges place the verified path in the right half of the paved width; one-way edges keep the path on the centerline and only allow travel start→end (or the reverse sense when `direction` is set). The map inspector can toggle two-way vs one-way on a selected segment.
 - **Buildings** — footprint records used by the bake pipeline.
 - **Features** — placed props (traffic lights, signs, etc.).
 - **Earth metadata** — anchor, bounds, provider IDs, and import timestamps after a geographic import.
@@ -54,7 +54,7 @@ Display-name rename keeps visual and evidence references when `worldHash` is unc
 
 The environment switcher in both 3D workspaces selects, creates, duplicates, renames, and deletes environments using the acknowledged revision. Selection is shared between Simulation and Editor and stored in server settings. The saved payload is `Environment.toManifest()` at `server/data/environments/<id>.json`. See [development.md](development.md) for the storage backend.
 
-Validated visual-asset bytes live in the VIS-04 CAS under `server/data/visual-assets/`. Browser access is `VisualAssetClient` at `/api/storage/visual-assets` and `VisualLayerClient` at `/api/storage/visual-layers`. Public asset identities are source-bound use hashes, not filesystem paths or digest-only content URLs. Every content/closure/materialization path requires current version-2 validation; old or missing evidence is refreshed from immutable bytes without changing asset/use identity. Embedded and digest-backed glTF images, extension use, graph bounds, and decoded memory are checked before loaders. Published assets cannot be deleted; only abandoned staging and expired reservations are cleaned. Uploads fail closed unless an operator configures owned-source grants in `visual-source-registry.json` (or `CEV_SIM_VISUAL_SOURCE_REGISTRY`). Generated bake outputs additionally require `CEV_SIM_BAKE_OUTPUT_SOURCE_IDS`. Spark and splat construction are initialized only when an explicitly started legacy bake selects the splat path. VIS-12b can resolve an enabled `pbr-mesh@1` run from these local immutable records for export and inspection; VIS-13a can transfer those bytes as a verified `cev-sim.run-package@1` archive, and VIS-13b can admit it to a same-host Unix supervisor. Runtime PBR rendering and automatic published-asset GC remain later work.
+Validated visual-asset bytes live in the VIS-04 CAS under `server/data/visual-assets/`. Browser access is `VisualAssetClient` at `/api/storage/visual-assets` and `VisualLayerClient` at `/api/storage/visual-layers`. Public asset identities are source-bound use hashes, not filesystem paths or digest-only content URLs. Every content/closure/materialization path requires current version-2 validation; old or missing evidence is refreshed from immutable bytes without changing asset/use identity. Embedded and digest-backed glTF images, extension use, graph bounds, and decoded memory are checked before loaders. Published assets cannot be deleted; only abandoned staging and expired reservations are cleaned. Uploads fail closed unless an operator configures owned-source grants in `visual-source-registry.json` (or `CEV_SIM_VISUAL_SOURCE_REGISTRY`). Generated bake outputs additionally require `CEV_SIM_BAKE_OUTPUT_SOURCE_IDS`. Spark and splat construction are initialized only when an explicitly started legacy bake selects the splat path. VIS-12b can resolve an enabled `pbr-mesh@1` run from these local immutable records for export and inspection; VIS-13a can transfer those bytes as a verified `cev-sim.run-package@1` archive, and VIS-13b can admit it to a same-host Unix supervisor. VIS-14 browser simulation materializes the exact resolved records into a separate run-owned appearance scene and rechecks measured-capture rights on every lease. It never reuses the live editor scene or preview metadata as truth. Headless PBR rendering and automatic published-asset GC remain later work.
 
 Run-manifest `renderRecipe` authoring is intentionally independent of editor
 preview sky, light, visibility, and bake state. The optional
@@ -67,7 +67,8 @@ retain the established descriptor rules, invalidate correspondence evidence,
 and fail explicitly if the destination lacks required descriptor, access, use,
 or CAS dependencies. VIS-13a package import can install those visual bytes after
 strict archive verification. VIS-13b package admission is operational, while
-PBR execution remains unavailable until the renderer milestones.
+PBR execution is browser-only in VIS-14; headless, Python, supervisor, and
+managed execution remain unavailable until their later renderer milestones.
 
 Building transforms update their authoritative footprint/height records as the gizmo moves; prop transforms update position and heading. Reload therefore reconstructs the edited location rather than the original runtime mesh.
 

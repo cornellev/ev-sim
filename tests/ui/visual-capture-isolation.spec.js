@@ -25,7 +25,11 @@ test("production calibrated capture isolates measured and analytic scenes from p
     await installModuleRoutes(page);
     await page.goto("/");
     await page.setContent(`<script type="importmap">${JSON.stringify({
-        imports: { three: "/test-modules/node_modules/three/build/three.module.js" },
+        imports: {
+            three: "/test-modules/node_modules/three/build/three.module.js",
+            "@noble/hashes/sha2.js": "/test-modules/node_modules/@noble/hashes/sha2.js",
+            "@noble/hashes/utils.js": "/test-modules/node_modules/@noble/hashes/utils.js",
+        },
     })}</script>`);
     const result = await page.evaluate(async () => {
         const THREE = await import("three");
@@ -235,4 +239,207 @@ test("production calibrated capture isolates measured and analytic scenes from p
     expect(result.pipelinePixel.pixel.y).toBeCloseTo(2.1875, 6);
     expect(result.adapterPixel.u).toBeCloseTo(result.pipelinePixel.pixel.x, 6);
     expect(result.adapterPixel.v).toBeCloseTo(result.pipelinePixel.pixel.y, 6);
+});
+
+test("VIS-14 browser PBR runtime captures measured RGB and analytic oracle products", async ({ page }) => {
+    test.setTimeout(120_000);
+    await installModuleRoutes(page);
+    await page.goto("/");
+    await page.setContent(`<script type="importmap">${JSON.stringify({
+        imports: {
+            three: "/test-modules/node_modules/three/build/three.module.js",
+            "@noble/hashes/sha2.js": "/test-modules/node_modules/@noble/hashes/sha2.js",
+            "@noble/hashes/utils.js": "/test-modules/node_modules/@noble/hashes/utils.js",
+        },
+    })}</script>`);
+    const result = await page.evaluate(async () => {
+        const THREE = await import("three");
+        const { BrowserPbrRenderRuntime } = await import(
+            "/test-modules/app/3d/perception/BrowserPbrRenderRuntime.js"
+        );
+        const { CameraRenderProducts } = await import(
+            "/test-modules/app/3d/perception/CameraRenderProducts.js"
+        );
+        const {
+            createVisualCameraCalibration,
+            createVisualCaptureInput,
+        } = await import(
+            "/test-modules/app/3d/environment/visual/VisualCapturePipeline.js"
+        );
+        const {
+            createPbrRenderSceneResource,
+            defaultPbrRenderRecipe,
+            normalizePbrAssetClosure,
+            normalizePbrRunEvidence,
+        } = await import("/test-modules/app/simulation/render/PbrRenderScene.js");
+        const {
+            hashVisualLayer,
+            hashVisualLayerAccess,
+            normalizeVisualLayer,
+            normalizeVisualLayerAccess,
+        } = await import("/test-modules/app/simulation/visual/VisualLayer.js");
+        const { createWorldResource } = await import(
+            "/test-modules/app/simulation/world/WorldDescription.js"
+        );
+        const { getBuiltInVehicleManifest } = await import(
+            "/test-modules/app/vehicles/BuiltInVehicleManifests.js"
+        );
+
+        const environment = {
+            environmentId: "vis14-browser",
+            name: "VIS-14 browser",
+            schemaVersion: 2,
+            templateId: "blank",
+            roadStylePreset: "default",
+            roadsAuthored: true,
+            buildingsAuthored: true,
+            featuresAuthored: false,
+            document: {
+                environmentId: "vis14-browser",
+                chunkSize: 20,
+                roads: {
+                    nodes: [{ id: "a", x: 20, z: 20 }, { id: "b", x: 30, z: 20 }],
+                    edges: [{ id: "road", startNodeId: "a", endNodeId: "b", bidirectional: true, width: 4, laneCount: 1 }],
+                },
+                buildings: [],
+                features: [],
+                earth: null,
+                roadsAuthored: true,
+                buildingsAuthored: true,
+                featuresAuthored: false,
+            },
+        };
+        const world = createWorldResource(environment);
+        const visualDescription = normalizeVisualLayer({
+            sourceWorldHash: world.hash,
+            assets: [], materials: [], chunks: [], instances: [], bindings: [], appearanceDependencies: [],
+        });
+        const visualLayer = { description: visualDescription, hash: hashVisualLayer(visualDescription) };
+        const access = normalizeVisualLayerAccess({ descriptorHash: visualLayer.hash, assets: [] });
+        const renderScene = createPbrRenderSceneResource({
+            worldResource: world,
+            vehicleDependencies: [{ actorId: "ego", manifest: getBuiltInVehicleManifest("big-car") }],
+            selection: {
+                provider: { id: "pbr-mesh", version: 1 },
+                productProfile: { id: "measured-rgba-analytic-oracle", version: 1 },
+            },
+            visualLayerResource: visualLayer,
+            renderRecipe: defaultPbrRenderRecipe(),
+            assetClosure: normalizePbrAssetClosure({ assets: [] }),
+        });
+        const evidence = normalizePbrRunEvidence({
+            visualAssets: {
+                descriptorHash: visualLayer.hash,
+                accessHash: hashVisualLayerAccess(access),
+                access,
+                roots: [],
+                uses: [],
+                assetClosureHash: renderScene.description.assetClosureHash,
+                permissions: {
+                    operations: ["display", "machine-interpretation"],
+                    evaluatedSourceIds: [],
+                    obligations: { attribution: [], requirements: [], retentionUntil: null },
+                },
+            },
+            correspondence: null,
+        });
+        const vehicle = {
+            telemetryId: "ego",
+            position: new THREE.Vector3(0, 0, 0),
+            rotation: new THREE.Euler(0, 0, 0),
+        };
+        const residency = {
+            requiredChunkIds: [], residentChunkIds: [], queuedChunkIds: [],
+            requiredChunks: 0, residentChunks: 0, queuedChunks: 0,
+            prefetchShed: 0, pressure: {},
+        };
+        const runtime = new BrowserPbrRenderRuntime({
+            renderer: null,
+            assetClient: { async validateClosure() {} },
+            materializerFactory: () => ({
+                async replaceResolved() { return { status: "ready", error: null, residency }; },
+                async updateInterest() { return { status: "ready", error: null, residency }; },
+                residencySnapshot() { return residency; },
+                dispose() {},
+            }),
+            vehicles: () => [vehicle],
+        });
+        const width = 16;
+        const height = 12;
+        const canvas = document.createElement("canvas");
+        const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: true });
+        renderer.setPixelRatio(1);
+        renderer.setSize(width, height, false);
+        runtime.renderer = renderer;
+        await runtime.prepare({ world, visualLayer, renderScene, evidence });
+        const calibration = createVisualCameraCalibration({
+            width,
+            height,
+            intrinsics: { fx: 14, fy: 14, cx: 7.5, cy: 5.5 },
+            near: 0.1,
+            far: 20,
+            distortionModel: "none",
+            distortion: [],
+        });
+        const camera = new THREE.PerspectiveCamera();
+        const cameraMatrix = new THREE.Matrix4().makeTranslation(0, 0.7, 5);
+        const options = runtime.cameraOptions();
+        const products = new CameraRenderProducts({
+            renderer,
+            camera,
+            captureMode: options.captureMode,
+            calibration,
+            sceneHandle: options.captureSceneHandle,
+            analyticSceneHandle: options.analyticSceneHandle,
+            authorizeSourceUse: options.authorizeSourceUse,
+            renderPolicy: options.renderPolicy,
+        });
+        const capture = async (captureTimeNs) => runtime.captureCamera({
+            captureInput: createVisualCaptureInput({
+                calibration,
+                pose: { matrixWorld: cameraMatrix.elements },
+                sceneHandle: runtime.appearanceSceneHandle,
+                captureTimeNs,
+            }),
+            enabled: { rgb: true, depth: true, semantic: true, instance: true },
+            renderProducts: products,
+            signal: new AbortController().signal,
+        });
+        await runtime.prepareCapture({
+            devices: [{ renderRuntime: runtime, getPosition: () => new THREE.Vector3(0, 0.7, 5) }],
+            vehicles: [vehicle],
+        });
+        const before = await capture(41);
+        const preview = new THREE.Scene();
+        preview.background = new THREE.Color(0xff00ff);
+        preview.add(new THREE.Mesh(
+            new THREE.BoxGeometry(100, 100, 100),
+            new THREE.MeshBasicMaterial({ color: 0x00ffff }),
+        ));
+        preview.children[0].visible = false;
+        const after = await capture(42);
+        const response = {
+            rgbBefore: [...before.rgb],
+            rgbAfter: [...after.rgb],
+            finiteDepth: [...before.depth].filter(Number.isFinite),
+            semantic: [...before.semantic],
+            instance: [...before.instance],
+            status: runtime.status,
+        };
+        products.dispose();
+        runtime.dispose();
+        renderer.dispose();
+        preview.traverse((object) => {
+            object.geometry?.dispose?.();
+            object.material?.dispose?.();
+        });
+        return response;
+    });
+
+    expect(result.rgbBefore).toEqual(result.rgbAfter);
+    expect(result.rgbBefore.some((value) => value !== 0)).toBe(true);
+    expect(result.finiteDepth.length).toBeGreaterThan(0);
+    expect(result.semantic.some((value) => value !== 0)).toBe(true);
+    expect(result.instance.some((value) => value !== 0)).toBe(true);
+    expect(["streaming", "degraded"]).toContain(result.status.state);
 });

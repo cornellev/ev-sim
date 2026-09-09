@@ -16,6 +16,7 @@ app.prepare().then(async () => {
     const { LogService } = await import('./logging/LogService.js');
     const { createLogRouter } = await import('./routes/logRouter.js');
     const { HeadlessExperimentService } = await import('./headless/HeadlessExperimentService.js');
+    const { readSupervisorConfig } = await import('./headless/SupervisorConfig.js');
     const { createHeadlessRouter } = await import('./routes/headlessRouter.js');
     const storageService = new StorageService(process.env.CEV_SIM_DATA_DIR, {
         visualAssets: {
@@ -24,7 +25,12 @@ app.prepare().then(async () => {
         bakeOutputSourceIds: process.env.CEV_SIM_BAKE_OUTPUT_SOURCE_IDS,
     });
     const logService = new LogService(process.env.CEV_SIM_LOGS_DIR);
-    const headlessExperimentService = new HeadlessExperimentService(storageService, logService);
+    const supervisorConfig = process.env.CEV_SIM_HEADLESS_SUPERVISOR_CONFIG
+        ? await readSupervisorConfig(process.env.CEV_SIM_HEADLESS_SUPERVISOR_CONFIG)
+        : undefined;
+    const headlessExperimentService = new HeadlessExperimentService(storageService, logService, {
+        supervisorConfig,
+    });
     await headlessExperimentService.initialize();
 
     // Parse JSON only for Express-owned routes. A global body parser locks the

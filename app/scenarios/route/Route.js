@@ -20,6 +20,8 @@ import { canonicalNumericTree } from "../../simulation/kernel/SimulationHashes.j
 const EPSILON = 1e-9;
 export const ROUTE_SCHEMA = "cev-sim.route";
 export const ROUTE_VERSION = 1;
+export const ROUTE_ALGORITHM = "directed-a-star";
+export const ROUTE_ALGORITHM_VERSION = 2;
 
 export function normalizeRoute(value = {}) {
     const source = Array.isArray(value) ? { waypoints: value } : { ...(value ?? {}) };
@@ -93,8 +95,8 @@ export function validateRouteVerification(route, environment = null) {
             expected: null,
         };
     }
-    if (verification.algorithm !== "directed-a-star" || verification.algorithmVersion !== 1) {
-        issues.push({ code: "route.verification.algorithm-invalid", path: "verification.algorithm", message: "Route verification must use directed-a-star version 1." });
+    if (verification.algorithm !== ROUTE_ALGORITHM || verification.algorithmVersion !== ROUTE_ALGORITHM_VERSION) {
+        issues.push({ code: "route.verification.algorithm-invalid", path: "verification.algorithm", message: `Route verification must use ${ROUTE_ALGORITHM} version ${ROUTE_ALGORITHM_VERSION}.` });
     }
     if (typeof verification.environmentHash !== "string" || !verification.environmentHash) {
         issues.push({ code: "route.verification.environment-hash-required", path: "verification.environmentHash", message: "Route verification requires an environment hash." });
@@ -208,12 +210,11 @@ function projectedWaypoint(waypoint, projection) {
 
 function projectionFromStableAnchor(waypoint, graph) {
     const anchor = waypoint?.anchor;
-    const position = pointFrom(waypoint);
-    if (!anchor?.id || !position) return null;
+    if (!anchor?.id) return null;
 
     if (anchor.kind === "intersection") {
         const node = graph.nodes.get(String(anchor.id));
-        if (!node || distance3d(position, node) > 1e-6) return null;
+        if (!node) return null;
         const point = { x: node.x, y: node.y, z: node.z };
         return {
             kind: "intersection",
@@ -223,7 +224,7 @@ function projectionFromStableAnchor(waypoint, graph) {
             point,
             position: point,
             ...point,
-            distance: distance3d(position, point),
+            distance: 0,
         };
     }
 
@@ -238,7 +239,8 @@ function projectionFromStableAnchor(waypoint, graph) {
         y: start.y + ((end.y - start.y) * t),
         z: start.z + ((end.z - start.z) * t),
     };
-    if (distance3d(position, point) > 1e-6) return null;
+    // Anchor + fraction are authoritative; displayed position may sit on the
+    // right-hand travel offset rather than the centerline.
     return {
         kind: "road",
         nodeId: null,
@@ -247,7 +249,7 @@ function projectionFromStableAnchor(waypoint, graph) {
         point,
         position: point,
         ...point,
-        distance: distance3d(position, point),
+        distance: 0,
     };
 }
 
@@ -387,9 +389,15 @@ export function verifyRoute(first, second, third) {
         const to = projected[index + 1];
         const path = routeBetweenProjections(from.projection, to.projection, graph);
         if (!path.ok) {
+            const code = path.code === "route.section.illegal-direction"
+                ? "route.section.illegal-direction"
+                : "route.section.disconnected";
+            const message = code === "route.section.illegal-direction"
+                ? `Travel from ${from.label || from.id} to ${to.label || to.id} goes the wrong way on a one-way road.`
+                : `No directed road path connects ${from.label || from.id} to ${to.label || to.id}.`;
             issues.push({
-                code: "route.section.disconnected",
-                message: `No directed road path connects ${from.label || from.id} to ${to.label || to.id}.`,
+                code,
+                message,
                 section: index,
                 fromWaypointId: from.id,
                 toWaypointId: to.id,
@@ -411,10 +419,34 @@ export function verifyRoute(first, second, third) {
         };
     }
 
+    // Align displayed waypoint positions with the offset travel polyline while
+    // keeping centerline/intersection anchors as the stable identity.
+    const aligned = projected.map((waypoint, index) => {
+        let travelPoint = null;
+        if (index === 0) {
+            travelPoint = sections[0]?.polyline?.[0] ?? null;
+        } else if (index === projected.length - 1) {
+            travelPoint = sections[sections.length - 1]?.polyline?.at(-1) ?? null;
+        } else {
+            travelPoint = sections[index]?.polyline?.[0]
+                ?? sections[index - 1]?.polyline?.at(-1)
+                ?? null;
+        }
+        if (!travelPoint) return waypoint;
+        return {
+            ...waypoint,
+            x: travelPoint.x,
+            y: travelPoint.y,
+            z: travelPoint.z,
+            position: { ...travelPoint },
+        };
+    });
+    waypointHash = hashWaypoints(aligned);
+
     const flattened = flattenSections(sections);
     const verification = canonicalNumericTree({
-        algorithm: "directed-a-star",
-        algorithmVersion: 1,
+        algorithm: ROUTE_ALGORITHM,
+        algorithmVersion: ROUTE_ALGORITHM_VERSION,
         environmentId: document.environmentId ?? null,
         environmentHash,
         waypointHash,
@@ -428,7 +460,7 @@ export function verifyRoute(first, second, third) {
         ...route,
         schema: route.schema ?? ROUTE_SCHEMA,
         version: route.version ?? ROUTE_VERSION,
-        waypoints: projected,
+        waypoints: aligned,
         verified: true,
         ...verification,
         verification,

@@ -36,8 +36,8 @@ export const GPU_SENSOR_BACKEND_V2_CONFIG = Object.freeze({
 });
 
 export const GPU_SENSOR_BACKEND_V2_CONFIG_HASH = simulationSha256(GPU_SENSOR_BACKEND_V2_CONFIG);
-export const GPU_SENSOR_BACKEND_V2_AVAILABLE = false;
-export const GPU_SENSOR_BACKEND_V2_UNAVAILABLE_REASON = "chromium-webgl2-rendered-sensors@2 is known but unavailable until provider/product routed camera capture is implemented";
+export const GPU_SENSOR_BACKEND_V2_AVAILABLE = true;
+export const GPU_SENSOR_BACKEND_V2_UNAVAILABLE_REASON = "";
 
 export function createGpuSensorBackendSelection() {
     return {
@@ -69,10 +69,9 @@ function isGpuSensorBackendV2(selection) {
 }
 
 export function assertGpuSensorBackendSelection(selection) {
-    if (isGpuSensorBackendV2(selection)) {
-        throw new Error(GPU_SENSOR_BACKEND_V2_UNAVAILABLE_REASON);
-    }
-    const expected = createGpuSensorBackendSelection();
+    const expected = isGpuSensorBackendV2(selection)
+        ? createGpuSensorBackendV2Selection()
+        : createGpuSensorBackendSelection();
     if (!selection) throw new Error(`GPU sensor backend ${GPU_SENSOR_CAPABILITY_ID} is required.`);
     for (const [camel, snake] of [["kind", "kind"], ["capabilityId", "capability_id"], ["version", "version"], ["configHash", "config_hash"]]) {
         const received = selectedField(selection, camel, snake);
@@ -94,5 +93,26 @@ export function gpuSensorBackendCapability({ available = false, unavailableReaso
         available: Boolean(available),
         unavailableReason: available ? "" : String(unavailableReason || "GPU sensor backend unavailable."),
         determinismScope: "same cev-sim build, Chromium/ANGLE build, GPU/driver stack, backend config, and render-scene resource",
+    };
+}
+
+export function routedGpuSensorBackendCapability({
+    available = false,
+    unavailableReason = "Headless PBR rendering is disabled or its provider probe has not succeeded.",
+} = {}) {
+    return {
+        id: GPU_SENSOR_CAPABILITY_ID,
+        version: GPU_SENSOR_BACKEND_V2_VERSION,
+        kind: GPU_SENSOR_BACKEND_KIND,
+        description: "Provider-routed PBR cameras and dedicated analytic LiDAR through pooled hardware-backed Chromium WebGL2.",
+        sensorTypes: ["camera", "lidar3d"],
+        features: [
+            "rgba8", "camera-info", "analytic-depth", "analytic-semantic", "analytic-instance",
+            "metric-v2", "pbo-fence-readback", "provider-routing", "product-routing",
+            "pooled-renderer", "shared-memory",
+        ],
+        available: Boolean(available),
+        unavailableReason: available ? "" : String(unavailableReason || "Headless PBR backend unavailable."),
+        determinismScope: "same cev-sim build, Chromium/ANGLE build, GPU/driver stack, backend config, render-scene resource, and decoder profile",
     };
 }

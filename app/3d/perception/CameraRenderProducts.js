@@ -130,6 +130,8 @@ export class CameraRenderProducts {
         sceneHandle = null,
         analyticSceneHandle = null,
         authorizeSourceUse = null,
+        renderPolicy = null,
+        alignedReadback = null,
     } = {}) {
         this.renderer = renderer;
         this.camera = camera;
@@ -138,6 +140,8 @@ export class CameraRenderProducts {
         this.sceneHandle = null;
         this.analyticSceneHandle = analyticSceneHandle;
         this.authorizeSourceUse = authorizeSourceUse;
+        this.renderPolicy = renderPolicy;
+        this.alignedReadback = alignedReadback;
         if (captureMode === CORRECTED_VISUAL_CAPTURE_MODE) {
             this.calibration = assertVisualCameraCalibration(calibration);
             this.sceneHandle = assertOwnedCaptureScene(sceneHandle, { role: "measured-appearance" });
@@ -178,6 +182,7 @@ export class CameraRenderProducts {
         this._semanticScratch = new Uint16Array(this.width * this.height);
         this._instanceScratch = new Uint32Array(this.width * this.height);
         this._decodeFlipScratch = new Uint8Array(this.width * this.height * 4);
+        this._alignedProducts = null;
     }
 
     _ensureSlot(key) {
@@ -469,24 +474,22 @@ export class CameraRenderProducts {
         if (analyticPassSet && !this.analyticSceneHandle) {
             throw new Error("Analytic oracle products require a separate analytic-truth scene handle.");
         }
-        const aligned = new AlignedCaptureProducts({
+        this._alignedProducts ??= new AlignedCaptureProducts({
             renderer: this.renderer,
             camera: this.camera,
             visualSceneHandle: this.sceneHandle,
             analyticSceneHandle: this.analyticSceneHandle,
             authorizeSourceUse: this.authorizeSourceUse,
+            renderPolicy: this.renderPolicy,
+            readback: this.alignedReadback,
         });
-        try {
-            return await aligned.capture({
-                visualPassSet,
-                visualRenderables,
-                analyticPassSet,
-                analyticRenderables,
-                signal,
-            });
-        } finally {
-            aligned.dispose();
-        }
+        return this._alignedProducts.capture({
+            visualPassSet,
+            visualRenderables,
+            analyticPassSet,
+            analyticRenderables,
+            signal,
+        });
     }
 
     reset() {
@@ -496,6 +499,8 @@ export class CameraRenderProducts {
     }
 
     dispose() {
+        this._alignedProducts?.dispose();
+        this._alignedProducts = null;
         this.target?.dispose?.();
         this.depthMaterial?.dispose?.();
         for (const material of this.materials.values()) material.dispose?.();
@@ -513,6 +518,7 @@ export class CameraRenderProducts {
         this._asyncDisabled = false;
         this.analyticSceneHandle = null;
         this.authorizeSourceUse = null;
+        this.renderPolicy = null;
     }
 }
 

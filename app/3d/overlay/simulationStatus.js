@@ -5,6 +5,7 @@ export function deriveSimulationStatus(runState = {}, simState = {}) {
     const hasManifest = Boolean(runState.activeResolved && runState.activeRunId);
     const runStatus = String(runState.status || "idle");
     const simulationStatus = String(simState.status || "stopped");
+    const renderProvider = simState.renderProvider;
 
     if (runStatus === "preparing") {
         return { label: "Preparing run", detail: "Resolving and applying manifest", tone: "sky", source: "manifest" };
@@ -12,9 +13,12 @@ export function deriveSimulationStatus(runState = {}, simState = {}) {
     if (TERMINAL_FAILURES.has(runStatus) || runState.error && runStatus === "error") {
         return { label: runStatus === "assertion-failed" ? "Assertion failed" : "Run error", detail: runState.error || "The run stopped with an error", tone: "rose", source: hasManifest ? "manifest" : "scene" };
     }
+    if (renderProvider?.state === "error") {
+        return { label: "Render error", detail: renderProvider.diagnostic?.message || renderProvider.error?.message || "Measured camera rendering failed", tone: "rose", source: hasManifest ? "manifest" : "scene" };
+    }
     if (hasManifest) {
-        if (runState.degraded && runStatus === "running") {
-            return { label: "Running, degraded", detail: runState.error || "An optional run service is unavailable", tone: "amber", source: "manifest" };
+        if ((runState.degraded || renderProvider?.state === "degraded") && runStatus === "running") {
+            return { label: "Running, degraded", detail: runState.error || "Optional visual prefetch is under pressure", tone: "amber", source: "manifest" };
         }
         if (runStatus === "running") {
             return { label: "Running", detail: "Deterministic manifest run", tone: "emerald", source: "manifest" };
@@ -44,6 +48,18 @@ export function deriveSimulationStatus(runState = {}, simState = {}) {
         return { label: "Scene paused", detail: "No active manifest", tone: "zinc", source: "scene" };
     }
     return { label: "Scene loaded", detail: "No run manifest is active", tone: "zinc", source: "scene" };
+}
+
+export function formatRenderProviderStatus(renderProvider = null) {
+    if (!renderProvider?.provider) return "Render: scene default";
+    const provider = `${renderProvider.provider.id}@${renderProvider.provider.version}`;
+    const state = String(renderProvider.state || "idle");
+    const label = state.charAt(0).toUpperCase() + state.slice(1);
+    const residency = renderProvider.residency;
+    const chunks = residency
+        ? ` · ${residency.residentChunks}/${residency.requiredChunks} chunks`
+        : "";
+    return `${provider} · ${label}${chunks}`;
 }
 
 export function formatSimulationTime(seconds = 0) {

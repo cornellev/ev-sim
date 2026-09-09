@@ -36,6 +36,7 @@ export function createHeadlessRuntimeContext(options = {}) {
         telemetry: signalStore,
         rendererClient: options.rendererClient,
     });
+    let renderRuntime = null;
     const data = {
         bindings: () => bindings,
         environment: () => world,
@@ -60,6 +61,31 @@ export function createHeadlessRuntimeContext(options = {}) {
         devices,
         physics,
         scenarios,
+        prepareRendering: async (resolvedRun) => {
+            const provider = resolvedRun.renderScene?.description?.provider;
+            if (provider?.id !== "pbr-mesh" || provider.version !== 1) {
+                renderRuntime = null;
+                return null;
+            }
+            if (!options.rendererClient?.preparePbr) {
+                throw new Error("Headless PBR requires a supervisor renderer preparation service.");
+            }
+            renderRuntime = await options.rendererClient.preparePbr({
+                vehicles: vehicles.vehicles.map((vehicle) => ({
+                    id: vehicle.id,
+                    telemetryId: vehicle.telemetryId,
+                    position: vehicle.position,
+                    rotation: vehicle.rotation,
+                })),
+            });
+            return renderRuntime;
+        },
+        currentRendering: () => renderRuntime,
+        renderingStatus: () => renderRuntime?.status ?? null,
+        disposeRendering: async () => {
+            if (renderRuntime) await options.rendererClient?.releasePbr?.();
+            renderRuntime = null;
+        },
     });
     return Object.freeze({
         context,

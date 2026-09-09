@@ -44,12 +44,14 @@ export function instanceTranslation(instance) {
     return translationOfMatrix(instance?.matrix);
 }
 
-function chunkDistance(chunk, instancesById, origin) {
+function chunkDistance(chunk, instancesById, origins) {
     let nearest = Number.POSITIVE_INFINITY;
     for (const instanceId of chunk.instanceIds ?? []) {
         const instance = instancesById.get(instanceId);
         if (!instance) continue;
-        nearest = Math.min(nearest, visualDistanceMeters(origin, instanceTranslation(instance)));
+        for (const origin of origins) {
+            nearest = Math.min(nearest, visualDistanceMeters(origin, instanceTranslation(instance)));
+        }
     }
     return Number.isFinite(nearest) ? nearest : Number.POSITIVE_INFINITY;
 }
@@ -103,17 +105,22 @@ export class VisualChunkResidencyController {
     normalizeInterest(interest = {}) {
         const required = [...new Set((interest.requiredChunkIds ?? []).map(String))]
             .sort(compareUtf8);
+        const positions = Array.isArray(interest.positions) && interest.positions.length > 0
+            ? interest.positions.map(toPosition)
+            : [toPosition(interest.position)];
         return {
-            position: toPosition(interest.position),
+            position: positions[0],
+            ...(positions.length > 1 ? { positions } : {}),
             requiredChunkIds: required,
         };
     }
 
     plan(descriptor, interest = {}) {
         const normalized = this.normalizeInterest(interest);
+        const origins = normalized.positions ?? [normalized.position];
         const instancesById = new Map((descriptor?.instances ?? []).map((instance) => [instance.id, instance]));
         const chunks = [...(descriptor?.chunks ?? [])].map((chunk) => {
-            const distance = chunkDistance(chunk, instancesById, normalized.position);
+            const distance = chunkDistance(chunk, instancesById, origins);
             const required = distance <= this.requiredRadiusMeters
                 || normalized.requiredChunkIds.includes(chunk.id);
             const prefetch = !required && distance <= this.prefetchRadiusMeters;
@@ -138,7 +145,9 @@ export class VisualChunkResidencyController {
         const selectedLods = {};
         const selectedLodUris = new Set();
         for (const instance of descriptor?.instances ?? []) {
-            const distance = visualDistanceMeters(normalized.position, instanceTranslation(instance));
+            const distance = Math.min(...origins.map((origin) => (
+                visualDistanceMeters(origin, instanceTranslation(instance))
+            )));
             const uri = selectVisualLodUri(instance, distance, this.policy);
             selectedLods[instance.id] = {
                 uri,
