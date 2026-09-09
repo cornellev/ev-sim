@@ -636,7 +636,7 @@ export class PooledGpuRenderer {
         return cached;
     }
 
-    async captureGroup({ environmentKey, scene, requests, maxGpuBytes, timeoutMs = 30_000 }) {
+    async captureGroup({ environmentKey, scene, requests, maxGpuBytes, timeoutMs = 30_000, assetReader = null }) {
         if (this.closed) throw infrastructureError("GPU renderer pool is closed.");
         if (this.adapter?.isRunning?.() === false) {
             this._invalidateAdapter(
@@ -677,6 +677,7 @@ export class PooledGpuRenderer {
                 requests,
                 resolve,
                 reject,
+                assetReader,
                 timeoutMs: Math.max(1, Number(timeoutMs) || 30_000),
             });
             this._drain();
@@ -712,7 +713,9 @@ export class PooledGpuRenderer {
                     `GPU capture exceeded its ${job.timeoutMs}-ms wall timeout.`,
                 )), job.timeoutMs);
             });
-            Promise.race([adapter.captureGroup(job.cached.description, job.requests, context), timeout])
+            Promise.race([adapter.captureGroup(job.cached.description, job.requests, context, {
+                assetReader: job.assetReader,
+            }), timeout])
                 .then(job.resolve)
                 .catch((error) => {
                     job.reject(error);

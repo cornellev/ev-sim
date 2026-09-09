@@ -16,7 +16,8 @@ Reset finalizes the active result and SFLog, resolves the newest saved revision,
 
 VIS-12a activates manifest v11 and
 `resolved.identityProfile = { id: "world-bound", version: 2 }`, semantic and
-episode identity v2, and protocol 1.3 identity negotiation. Existing v10
+episode identity v2, protocol 1.3 identity negotiation, and protocol 1.4
+same-host run-package admission. Existing v10
 bundles retain their bytes, legacy algorithms, analytic resources and backend
 identities. Authoring import verifies before normalization; a newly resolved
 import uses v11. Missing or unknown identity selectors fail explicitly.
@@ -38,8 +39,11 @@ VIS-02 dispatches exact camera render provider ID/version. Omitted selections
 alias only to `canonical-analytic@1` during resolution. VIS-12b makes
 `pbr-mesh@1` resolution-capable for immutable export and integrity-only
 inspection, but it remains runtime-unavailable and never falls back.
-`canonical-analytic@2` remains unavailable. Package admission remains inactive
-until VIS-13b/protocol 1.4. VIS-04 stores
+`canonical-analytic@2` remains unavailable. VIS-13a exports and imports
+`cev-sim.run-package@1` archives through the authoring store; VIS-13b admits
+them on configured same-host Unix supervisors and wires CLI/Python package
+execution. PBR execution still fails before worker creation until VIS-15.
+VIS-04 stores
 validated visual-asset bytes and source-bound use records; those hashes stay
 out of `visualLayerHash`, simulation-semantic, and episode identity. VIS-05a
 access hashes are likewise excluded from those identities. Attaching or
@@ -97,6 +101,8 @@ Python select only the declared routed GPU backend v2 for PBR and reject v1 or
 missing supervisor support. JSON import transfers no asset bytes, preserves
 normal rename/rebind behavior, invalidates correspondence evidence on rebind,
 and fails when required local descriptor/access/CAS dependencies are absent.
+VIS-13a package import can install those visual bytes after hostile-archive
+verification; it does not make the package executable.
 
 VIS-10b bake material-proposal documents and promotion receipts are durable
 authoring evidence, not run-manifest inputs. Their hashes do not enter

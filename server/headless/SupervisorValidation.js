@@ -8,10 +8,19 @@ import { ERROR_CODE, HEADLESS_PROTOCOL } from "./HeadlessProtocol.js";
 import { HeadlessRunnerError } from "./HeadlessRunnerErrors.js";
 import { HeadlessSupervisor } from "./HeadlessSupervisor.js";
 import { canonicalRunBundleStringify, verifyRunBundle } from "./RunBundle.js";
+import { verifyRunBundleIntegrity } from "./RunBundle.js";
+import { stageRunPackage } from "./VisualAssetAdmission.js";
 
 const ERROR_NAMES = Object.freeze(Object.fromEntries(
     Object.entries(ERROR_CODE).map(([name, value]) => [value, name]),
 ));
+
+function inlineSupervisorConfig(config) {
+    const resolved = { ...config };
+    delete resolved.socket;
+    delete resolved.tcp;
+    return resolved;
+}
 
 export function errorFromStatus(status = {}) {
     const code = ERROR_NAMES[Number(status.code)] || "INTERNAL";
@@ -31,18 +40,43 @@ export async function validateBundleWithSupervisor(bundle, {
     config,
     episodeSpec = {},
     supervisorFactory = (options) => new HeadlessSupervisor(options),
+    packagePath = null,
 } = {}) {
     if (!config) throw new HeadlessRunnerError("USAGE", "Supervisor-backed validation requires --config.");
-    const verified = verifyRunBundle(bundle);
+    const verified = packagePath ? verifyRunBundleIntegrity(bundle) : verifyRunBundle(bundle);
     const normalizedEpisode = normalizeEpisodeSpec(verified.resolved, episodeSpec);
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "cev-supervisor-validation-"));
     let supervisor = null;
     let batchId = null;
+    let admission = null;
     try {
         supervisor = supervisorFactory({
-            config,
+            config: inlineSupervisorConfig(config),
             socket: path.join(root, "supervisor.sock"),
+            inlineObservations: true,
         });
+        if (packagePath) {
+            const capabilities = await supervisor.getCapabilities({ clientProtocol: HEADLESS_PROTOCOL });
+            if (Number(capabilities.error?.code) !== ERROR_CODE.OK) throw errorFromStatus(capabilities.error);
+            if (!capabilities.assetAdmissionProfiles.includes("cev-sim.run-package@1")) {
+                throw new HeadlessRunnerError(
+                    "UNSUPPORTED_CAPABILITY",
+                    "Supervisor does not advertise cev-sim.run-package@1 admission.",
+                );
+            }
+            const staged = await stageRunPackage(packagePath, supervisor.config.assetAdmission.inboxDir);
+            try {
+                const admitted = await supervisor.admitRunPackage({
+                    clientProtocol: HEADLESS_PROTOCOL,
+                    stagingId: staged.stagingId,
+                    archiveHash: staged.archiveHash,
+                });
+                if (Number(admitted.error?.code) !== ERROR_CODE.OK) throw errorFromStatus(admitted.error);
+                admission = admitted.admission;
+            } finally {
+                await fs.rm(staged.path, { force: true }).catch(() => {});
+            }
+        }
         const created = await supervisor.createBatch({
             clientProtocol: HEADLESS_PROTOCOL,
             runBundles: [{
@@ -50,6 +84,7 @@ export async function validateBundleWithSupervisor(bundle, {
                 resolvedHash: verified.resolvedHash,
                 simulationSemanticHash: verified.simulationSemanticHash,
                 canonicalJson: Buffer.from(canonicalRunBundleStringify(bundle)),
+                ...(admission ? { assetAdmission: admission } : {}),
             }],
             episodes: [normalizedEpisode],
             artifactPolicy: {
@@ -76,13 +111,20 @@ export async function validateBundleWithSupervisor(bundle, {
         };
     } finally {
         try {
-            if (batchId) {
-                await supervisor.closeBatch({
-                    batchId,
-                    finalizeActiveEpisodes: false,
-                });
+            try {
+                if (batchId) {
+                    await supervisor.closeBatch({
+                        batchId,
+                        finalizeActiveEpisodes: false,
+                    });
+                }
+            } finally {
+                try {
+                    if (admission) await supervisor?.releaseAssetAdmission({ handle: admission.handle });
+                } finally {
+                    await supervisor?.close();
+                }
             }
-            await supervisor?.close();
         } finally {
             await fs.rm(root, { recursive: true, force: true });
         }

@@ -67,8 +67,8 @@ Use the long-lived listener form for Python, batching, or repeated episodes.
 
 ## Protocol and loading
 
-The server advertises protocol `1.3` and identity profile `world-bound@2`.
-It accepts clients with major `1` and a minor version no greater than `3`.
+The server advertises protocol `1.4` and identity profile `world-bound@2`.
+It accepts clients with major `1` and a minor version no greater than `4`.
 Protocol 1.1 state-only and CPU-LiDAR
 clients remain compatible and receive inline tensors. Schema changes remain
 additive within v1; `ResourceLimits` fields 11 and 12 are
@@ -125,9 +125,23 @@ the selected preset, whose fallback is `safety`.
     "angle": "",
     "disableSandbox": false,
     "launchArgs": []
+  },
+  "assetAdmission": {
+    "enabled": true,
+    "inboxDir": "/tmp/cev-sim.sock.run-package-inbox",
+    "storageDir": "/tmp/cev-sim.sock.asset-store",
+    "registryPath": "/path/to/visual-source-registry.json",
+    "unusedTtlMs": 3600000,
+    "limits": {}
   }
 }
 ```
+
+Unix-socket supervisors enable same-host `cev-sim.run-package@1` admission by
+default and derive inbox/storage paths from the socket. TCP supervisors disable
+it and cannot enable it. Admission consumes a private regular single-link inbox
+file, re-verifies rights and bytes, installs a durable read-only digest view,
+and advertises the profile only when configured.
 
 Both `defaultLimits` and `hardCeilings` may contain any resource field shown
 below. A missing field inherits the selected preset. Defaults cannot exceed
@@ -289,7 +303,7 @@ stale-generation rejection, and cleanup. The same renderer diagnostics are
 available through capabilities and are persisted in run provenance, SFLog
 metadata, and final diagnostics.
 
-### VIS-12a identity compatibility
+### VIS-12a/VIS-13b compatibility
 
 New v11 bundles require a client using protocol 1.3; admission rejects older
 clients before spawning workers. v10 bundles keep their legacy episode hashes
@@ -297,4 +311,9 @@ on existing client protocol paths. Reset and artifact paths derive identity
 version from the verified bundle, never from client overrides. The protobuf
 EpisodeSpec shape is unchanged. Exact canonical JSON is checked with the
 version-appropriate serializer and duplicate-key/UTF-8 validation. Asset
-admission profiles remain empty and the protocol 1.4 RPCs remain unavailable.
+admission uses the already-reserved protocol 1.4 RPCs and fields. `CreateBatch`
+requires the opaque handle, exact archived bundle digest, and canonical wire
+JSON to agree, then sends the exact archived bytes to the worker for another
+verification. Batch close and failed creation release pins; reset and worker
+restart retain them. PBR packages can be admitted but remain unavailable for
+execution before worker creation.

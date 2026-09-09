@@ -7,6 +7,8 @@ import test from "node:test";
 
 import { main } from "../server/headless/Cli.js";
 import { sha256ExactBytes } from "../app/simulation/visual/VisualLayer.js";
+import { simulationSha256 } from "../app/simulation/kernel/SimulationHashes.js";
+import { encodeRunPackage } from "../server/headless/VisualAssetPack.js";
 import { createPortableHeadlessBundle, successfulTape } from "./helpers/headlessRunnerBundle.js";
 
 const cliPath = path.resolve("bin/cev-sim.js");
@@ -144,6 +146,80 @@ test("CLI validate, stdin run, action-file run, and inspect emit machine-readabl
     const inspected = jsonLines(inspection.stdout)[0];
     assert.equal(inspected.kind, "cev-sim.headless.output-inspection");
     assert.equal(inspected.runResult.passed, true);
+});
+
+test("CLI inspects, admits, validates, runs, and replays analytic run packages", async (t) => {
+    const root = await temporaryRoot(t);
+    const bundle = await createPortableHeadlessBundle();
+    const exactBundle = Buffer.from(`${JSON.stringify(bundle, null, 2)}\n`);
+    const encoded = encodeRunPackage({ bundleBytes: exactBundle });
+    const packagePath = path.join(root, "analytic.run-package");
+    const configPath = path.join(root, "supervisor.json");
+    const disabledConfigPath = path.join(root, "supervisor-disabled.json");
+    const disabledInbox = path.join(root, "disabled-package-inbox");
+    const actionsPath = path.join(root, "actions.jsonl");
+    const tapePath = path.join(root, "tape.json");
+    await fs.writeFile(packagePath, encoded.bytes);
+    await writeJson(configPath, {
+        kind: "cev-sim.headless-supervisor-config",
+        version: 1,
+        preset: "safety",
+        renderer: {},
+    });
+    await writeJson(disabledConfigPath, {
+        kind: "cev-sim.headless-supervisor-config",
+        version: 1,
+        preset: "safety",
+        renderer: {},
+        assetAdmission: {
+            enabled: false,
+            inboxDir: disabledInbox,
+            storageDir: path.join(root, "disabled-asset-store"),
+            registryPath: path.join(root, "disabled-source-registry.json"),
+        },
+    });
+    await fs.writeFile(actionsPath, `${JSON.stringify({ policyStep: 1, action: [0, 0] })}\n`);
+    await writeJson(tapePath, successfulTape());
+
+    const inspection = await runCli(["inspect", packagePath]);
+    assert.equal(inspection.code, 0, inspection.stderr);
+    const inspected = jsonLines(inspection.stdout)[0];
+    assert.equal(inspected.archiveHash, encoded.archiveHash);
+    assert.equal(inspected.bundleBytesHash, encoded.bundleBytesHash);
+    assert.equal(inspected.rights.evaluated, false);
+    assert.equal(inspected.runtimeSupport.evaluated, false);
+
+    const missingConfig = await runCli(["validate", "--package", packagePath]);
+    assert.equal(missingConfig.code, 2, missingConfig.stderr);
+    const disabled = await runCli([
+        "validate", "--package", packagePath, "--config", disabledConfigPath,
+    ]);
+    assert.equal(disabled.code, 3, disabled.stderr);
+    assert.equal(jsonLines(disabled.stderr)[0].code, "UNSUPPORTED_CAPABILITY");
+    await assert.rejects(() => fs.access(disabledInbox));
+    const validation = await runCli([
+        "validate", "--package", packagePath, "--config", configPath,
+    ]);
+    assert.equal(validation.code, 0, validation.stderr);
+    assert.equal(jsonLines(validation.stdout)[0].validationMode, "supervisor");
+
+    const run = await runCli([
+        "run", "--package", packagePath, "--config", configPath,
+        "--output", path.join(root, "package-run"), "--actions", actionsPath,
+        "--artifact-profile", "disabled", "--episode", await episodeFile(root),
+    ]);
+    assert.equal(run.code, 0, run.stderr);
+    const runResult = jsonLines(run.stdout).at(-1);
+    assert.equal(runResult.executionMode, "supervisor");
+    assert.deepEqual(await fs.readFile(path.join(runResult.outputDirectory, "run-bundle.json")), exactBundle);
+
+    const replay = await runCli([
+        "replay", "--package", packagePath, "--config", configPath,
+        "--tape", tapePath, "--output", path.join(root, "package-replay"),
+        "--artifact-profile", "disabled",
+    ]);
+    assert.equal(replay.code, 0, `${replay.stderr}\n${replay.stdout}`);
+    assert.equal(jsonLines(replay.stdout).at(-1).result.actionTapeHash, simulationSha256(successfulTape()));
 });
 
 async function episodeFile(root) {

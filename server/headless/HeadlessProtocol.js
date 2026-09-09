@@ -1,6 +1,6 @@
 import { canonicalStringify } from "../../app/simulation/RunManifest.js";
 
-export const HEADLESS_PROTOCOL = Object.freeze({ major: 1, minor: 3 });
+export const HEADLESS_PROTOCOL = Object.freeze({ major: 1, minor: 4 });
 
 export const ERROR_CODE = Object.freeze({
     OK: 0,

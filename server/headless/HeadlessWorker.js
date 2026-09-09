@@ -4,6 +4,7 @@ import { HeadlessSession } from "./HeadlessSession.js";
 import { ManagedHeadlessSession } from "./ManagedHeadlessSession.js";
 import { HeadlessEpisode } from "../../app/simulation/headless/HeadlessEpisode.js";
 import { validateSharedTensorReference } from "./SharedTensorArena.js";
+import { verifyRunBundleBytes } from "./RunBundle.js";
 
 let session = null;
 let initialized = null;
@@ -73,12 +74,17 @@ async function command(name, payload = {}) {
                     limits: payload.limits,
                     episodeFactory: () => new HeadlessEpisode({ rendererClient }),
                 });
+            const bundle = payload.bundleBytes
+                ? verifyRunBundleBytes(Buffer.from(payload.bundleBytes), {
+                    expectedBundleBytesHash: payload.bundleBytesHash,
+                }).bundle
+                : payload.bundle;
             const descriptor = await session.prepare(
-                payload.bundle,
+                bundle,
                 managed ? { metricDefinitions: payload.metricDefinitions } : payload.episodeSpec,
             );
             initialized = {
-                bundle: payload.bundle,
+                bundle,
                 episodeSpec: payload.episodeSpec,
                 limits: payload.limits,
             };

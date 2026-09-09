@@ -8,13 +8,14 @@ manifests or starts the web server.
 ## Commands
 
 ```bash
-cev-sim validate --bundle bundle.json [--episode episode.json] [--config supervisor.json]
+cev-sim validate (--bundle bundle.json | --package run.run-package) [--episode episode.json] [--config supervisor.json]
 cev-sim create-smoke-bundle --output bundle.json
 cev-sim inspect bundle.json
+cev-sim inspect run.run-package
 cev-sim inspect output-directory
 cev-sim inspect output-directory/run.sflog
-cev-sim run --bundle bundle.json --output result-root [--episode episode.json] [--actions actions.jsonl] [--config supervisor.json]
-cev-sim replay --bundle bundle.json --tape tape.json --output result-dir
+cev-sim run (--bundle bundle.json | --package run.run-package) --output result-root [--episode episode.json] [--actions actions.jsonl] [--config supervisor.json]
+cev-sim replay (--bundle bundle.json | --package run.run-package) --tape tape.json --output result-dir [--config supervisor.json]
 cev-sim gpu-preflight --config supervisor.json
 ```
 
@@ -32,9 +33,12 @@ Without `--config`, it uses the direct in-process runner. With `--config`, it
 creates one process-isolated supervisor environment and executes camera or
 GPU-LiDAR captures through that config's Chromium pool. The transient
 supervisor, worker, and renderer are closed after finalization; a separately
-started supervisor is not required for this form. `replay` remains a direct
-runner command and does not accept `--config`.
-`replay` reads the versioned policy tape described below.
+started supervisor is not required for this form. Bundle replay without config
+remains direct; `--config` selects supervisor-backed replay. Package validate,
+run, and replay require config and automatically stage, admit, close the batch,
+and release the admission. Package inspection is strict offline verification
+and reports runtime support and trusted rights as unevaluated. `replay` reads
+the versioned policy tape described below.
 `gpu-preflight` launches the configured Chromium stack, validates production
 WebGL2/ANGLE identity and required formats, performs minimal camera/LiDAR
 render-readback, and verifies shared-memory round-trip, stale-generation
@@ -172,13 +176,14 @@ pool are used by `run --config`. Long-lived multi-environment and Python
 clients use the separate [headless batch supervisor](headless-supervisor.md)
 over gRPC.
 
-### VIS-12a integrity and compatibility
+### VIS-12a/VIS-13b integrity and compatibility
 
 Bundle inspection reports the exact `bundleBytesHash`, identity version, and
 required protocol minor. File ingestion preserves the original bytes and
 rejects invalid UTF-8, duplicate keys, and malformed exact JSON. v10 bundles
 remain executable with unchanged hashes; v11 uses `world-bound@2` and the
-local protocol 1.3 runtime. `run-bundle.json` artifacts preserve received bytes
+local protocol 1.4 runtime. `run-bundle.json` artifacts preserve received bytes
 for direct file execution; canonical supervisor wire serialization is a
 separate representation. Historical unsupported bundle versions require
-verified authoring import and re-resolution. Package flags remain unavailable.
+verified authoring import and re-resolution. Package artifacts preserve exact
+archived bundle bytes even when canonical supervisor wire bytes differ.

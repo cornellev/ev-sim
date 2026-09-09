@@ -248,8 +248,10 @@ VIS-03 stores environment schema v3 with a server revision and optional visual
 descriptor/evidence hashes. Those references stay out of `worldHash`. VIS-04
 stores validated visual-asset bytes and source-bound use records. VIS-05a
 stores `cev-sim.visual-layer-access@1` sidecars and materializes owned preview
-geometry in the display scene only; `pbr-mesh@1` and package admission stay
-inactive. VIS-05b streams AOI chunks through a renderer-scoped cache and
+geometry in the display scene only. VIS-13a adds authoring-store
+`cev-sim.run-package@1` export/import. VIS-13b adds protocol 1.4 same-host
+admission with durable roots, batch pins, scoped digest readers, and exact
+bundle-byte IPC; `pbr-mesh@1` execution stays inactive. VIS-05b streams AOI chunks through a renderer-scoped cache and
 hashed LOD policy without changing `worldHash`, `visualLayerHash`, simulation
 identity, or episode identity. Visual descriptors are appearance resources bound
 to `worldHash`; their meshes never enter metric world, collision, LiDAR,
@@ -293,8 +295,11 @@ evidence. PBR meshes never enter metric world, collision, LiDAR, registry, or
 oracle truth. Browser, CLI execution, supervisor, and workers reject the
 runtime-unavailable provider before preparation; JavaScript and Python require
 the declared GPU backend v2 for any future PBR execution. Bundle v1, manifest
-v11, `world-bound@2`, protocol 1.3, protobuf, and existing analytic identities
-remain unchanged.
+v11, `world-bound@2`, protobuf, and existing analytic identities remain
+unchanged. VIS-13a adds deterministic `cev-sim.run-package@1` export, strict
+USTAR verification, and journaled authoring-store import. VIS-13b activates
+protocol 1.4 package admission for configured Unix supervisors, CLI execution,
+and Python while keeping TCP distribution and PBR execution unavailable.
 
 ## External Integration
 

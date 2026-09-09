@@ -1,0 +1,26 @@
+{
+  "kind": "cev-sim.run-package-golden",
+  "version": 1,
+  "bundleUtf8": "{\"exportedAt\":\"2026-01-01T00:00:00.000Z\"}",
+  "bundleSha256": "af1c4f81694ee6aafe580eedf1e19eb5b6192392513f96b0cd63e4e6502654da",
+  "bundleSizeBytes": 41,
+  "assetUtf8": "golden-asset-bytes",
+  "asset": {
+    "sha256": "33ec91668e40f97f644d474376d37f2bc49f59bbebf049264a112720897b7033",
+    "mediaType": "application/octet-stream",
+    "sizeBytes": 18,
+    "role": "buffer"
+  },
+  "empty": {
+    "packageManifestHash": "de1c7b8e19c4d25c61928540a23db7a6445f119fb2ab77a1f4691138bb86f9d6",
+    "archiveHash": "9024900b814ed868cbcd3b4bc3afaf11a42819d6ad63b7a0428f385f4439cad0",
+    "archiveBytes": 3072,
+    "manifestJcs": "{\"assets\":[],\"bundle\":{\"sha256\":\"af1c4f81694ee6aafe580eedf1e19eb5b6192392513f96b0cd63e4e6502654da\",\"sizeBytes\":41},\"kind\":\"cev-sim.run-package\",\"version\":1}"
+  },
+  "withAsset": {
+    "packageManifestHash": "c0679c3c0558643b81a0640caabaf5c356ed990e07c69b4bebed62d2d88c274f",
+    "archiveHash": "04e463b71fdf65034bb56af55fec58240c4236141a679085609e68ffe5877c7d",
+    "archiveBytes": 4096,
+    "manifestJcs": "{\"assets\":[{\"mediaType\":\"application/octet-stream\",\"role\":\"buffer\",\"sha256\":\"33ec91668e40f97f644d474376d37f2bc49f59bbebf049264a112720897b7033\",\"sizeBytes\":18}],\"bundle\":{\"sha256\":\"af1c4f81694ee6aafe580eedf1e19eb5b6192392513f96b0cd63e4e6502654da\",\"sizeBytes\":41},\"kind\":\"cev-sim.run-package\",\"version\":1}"
+  }
+}

@@ -1,17 +1,22 @@
 import path from "node:path";
+import os from "node:os";
+import { promises as fs } from "node:fs";
 
 import { normalizeEpisodeSpec } from "../../app/simulation/headless/HeadlessEpisode.js";
+import { simulationSha256 } from "../../app/simulation/kernel/SimulationHashes.js";
 import { hashSpace, namedTensor, tensorMap } from "../../app/simulation/headless/TensorProtocol.js";
 import { ERROR_CODE, HEADLESS_PROTOCOL } from "./HeadlessProtocol.js";
 import {
     actionIterator,
     nextAction,
     normalizeActionRecord,
+    validatePolicyActionTape,
 } from "./HeadlessRunner.js";
 import { HeadlessRunnerError } from "./HeadlessRunnerErrors.js";
 import { HeadlessSupervisor } from "./HeadlessSupervisor.js";
 import { errorFromStatus } from "./SupervisorValidation.js";
-import { canonicalRunBundleStringify, verifyRunBundle } from "./RunBundle.js";
+import { canonicalRunBundleStringify, verifyRunBundle, verifyRunBundleIntegrity } from "./RunBundle.js";
+import { stageRunPackage } from "./VisualAssetAdmission.js";
 
 const ARTIFACT_PROFILES = Object.freeze({
     evaluation: 1,
@@ -66,24 +71,51 @@ export class SupervisorRunner {
         outputUri = null,
         onEvent = null,
         signal = null,
+        packagePath = null,
+        expect = null,
+        actionTapeHash = null,
     } = {}) {
         if (!config) throw new HeadlessRunnerError("USAGE", "Supervisor-backed execution requires --config.");
         if (!outputUri) throw new HeadlessRunnerError("USAGE", "Supervisor-backed execution requires --output.");
-        const verified = verifyRunBundle(bundle);
+        const verified = packagePath ? verifyRunBundleIntegrity(bundle) : verifyRunBundle(bundle);
         const episode = normalizeEpisodeSpec(verified.resolved, episodeSpec);
-        const supervisor = this.supervisorFactory({
-            config: inlineSupervisorConfig(config),
-            // No listener is bound; TCP metadata keeps CLI observations inline
-            // instead of emitting shared-memory references that expire on exit.
-            tcp: "127.0.0.1:1",
-        });
+        const supervisorRoot = await fs.mkdtemp(path.join(os.tmpdir(), "cev-supervisor-runner-"));
+        let supervisor = null;
         let batchId = null;
+        let admission = null;
         let iterator = null;
         let terminal = false;
         const emit = async (event) => {
             if (onEvent) await onEvent(event);
         };
         try {
+            supervisor = this.supervisorFactory({
+                config: inlineSupervisorConfig(config),
+                socket: path.join(supervisorRoot, "supervisor.sock"),
+                inlineObservations: true,
+            });
+            if (packagePath) {
+                const capabilities = await supervisor.getCapabilities({ clientProtocol: HEADLESS_PROTOCOL });
+                assertResponse(capabilities);
+                if (!capabilities.assetAdmissionProfiles.includes("cev-sim.run-package@1")) {
+                    throw new HeadlessRunnerError(
+                        "UNSUPPORTED_CAPABILITY",
+                        "Supervisor does not advertise cev-sim.run-package@1 admission.",
+                    );
+                }
+                const staged = await stageRunPackage(packagePath, supervisor.config.assetAdmission.inboxDir);
+                try {
+                    const admitted = await supervisor.admitRunPackage({
+                        clientProtocol: HEADLESS_PROTOCOL,
+                        stagingId: staged.stagingId,
+                        archiveHash: staged.archiveHash,
+                    });
+                    assertResponse(admitted);
+                    admission = admitted.admission;
+                } finally {
+                    await fs.rm(staged.path, { force: true }).catch(() => {});
+                }
+            }
             const created = await supervisor.createBatch({
                 clientProtocol: HEADLESS_PROTOCOL,
                 runBundles: [{
@@ -91,6 +123,7 @@ export class SupervisorRunner {
                     resolvedHash: verified.resolvedHash,
                     simulationSemanticHash: verified.simulationSemanticHash,
                     canonicalJson: Buffer.from(canonicalRunBundleStringify(bundle)),
+                    ...(admission ? { assetAdmission: admission } : {}),
                 }],
                 episodes: [episode],
                 artifactPolicy: artifactPolicyForSupervisor(artifactPolicy, outputUri),
@@ -159,6 +192,8 @@ export class SupervisorRunner {
             }, {
                 finalizeOptions: {
                     interruptedBySignal: !terminal && Boolean(signal?.aborted),
+                    expect,
+                    actionTapeHash,
                 },
             });
             const finalized = assertResponse(finalizedResponse, finalizedResponse.results?.[0]);
@@ -184,13 +219,35 @@ export class SupervisorRunner {
             }
             throw error;
         } finally {
-            if (batchId) {
-                await supervisor.closeBatch({
-                    batchId,
-                    finalizeActiveEpisodes: false,
-                });
+            try {
+                if (batchId) {
+                    await supervisor.closeBatch({
+                        batchId,
+                        finalizeActiveEpisodes: false,
+                    });
+                }
+            } finally {
+                try {
+                    if (admission) await supervisor?.releaseAssetAdmission({ handle: admission.handle });
+                } finally {
+                    try {
+                        await supervisor?.close();
+                    } finally {
+                        await fs.rm(supervisorRoot, { recursive: true, force: true });
+                    }
+                }
             }
-            await supervisor.close();
         }
+    }
+
+    async replay(bundle, tape, options = {}) {
+        const validated = validatePolicyActionTape(tape);
+        return this.run(bundle, {
+            ...options,
+            episodeSpec: { ...(validated.episodeSpec || {}), ...(options.episodeSpec || {}) },
+            actions: validated.actions,
+            expect: validated.expect || null,
+            actionTapeHash: simulationSha256(validated),
+        });
     }
 }

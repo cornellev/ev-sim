@@ -1,7 +1,8 @@
-import { promises as fs } from "node:fs";
+import { createReadStream, promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
+import { Readable } from "node:stream";
 
 import { JsonFileStore } from "./JsonFileStore.js";
 import { VisualLayerDescriptorStore } from "./VisualLayerDescriptorStore.js";
@@ -13,6 +14,8 @@ import { BakePromotionController, parseBakeOutputSourceIds } from "./BakePromoti
 import {
     environmentRevisionConflict,
     unguardedEnvironmentWriteError,
+    RUN_PACKAGE_ERROR_CODES,
+    VISUAL_ASSET_ERROR_CODES,
     VISUAL_LAYER_ERROR_CODES,
     visualAssetError,
 } from "./StorageErrors.js";
@@ -55,7 +58,21 @@ import {
 } from "../../app/autonomy/AutonomyContractCatalog.js";
 import { buildCalibrationBundle } from "../../app/autonomy/CalibrationBundle.js";
 import { WORLD_BOUND_IDENTITY } from "../../app/simulation/kernel/RunIdentity.js";
-import { runBundleBytes, verifyRunBundleBytes, verifyRunBundleIntegrity } from "../headless/RunBundle.js";
+import { canonicalRunBundleStringify, runBundleBytes, verifyRunBundleBytes, verifyRunBundleIntegrity } from "../headless/RunBundle.js";
+import {
+    collectRunPackageAssets,
+    createPackageStagingDir,
+    createRunPackageStream,
+    evaluatePackageRights,
+    recoverPackageStaging,
+    resolveRunPackageLimits,
+    RUN_PACKAGE_EXPORT_OPERATIONS,
+    RUN_PACKAGE_IMPORT_OPERATIONS,
+    sortUsesForPublish,
+    verifyRunPackageArchive,
+} from "../headless/VisualAssetPack.js";
+import { Semaphore, createMutex } from "./visual-assets/semaphore.js";
+import { writeExclusiveFile } from "./visual-assets/atomicFs.js";
 import { computeSimulationSemanticHash } from "../../app/simulation/kernel/SimulationHashes.js";
 import { createWorldResource } from "../../app/simulation/world/WorldDescription.js";
 import { createLidarGeometryResource } from "../../app/simulation/lidar/LidarGeometry.js";
@@ -252,6 +269,12 @@ export class StorageService {
         this._bakeReuseManifests = new BakeReuseManifestStore(dataDir);
         this._bakeMaterialProposals = new BakeMaterialProposalStore(dataDir);
         this.visualAssets = new VisualAssetStore(dataDir, options.visualAssets ?? {});
+        this.packageStagingDir = path.join(dataDir, "visual-packages", "staging");
+        this.packageImportJournalDir = path.join(dataDir, "visual-packages", "import-journals");
+        this._packageLimits = resolveRunPackageLimits(options.visualPackages?.limits ?? {});
+        this._packageSlots = new Semaphore(this._packageLimits.concurrentVerifications);
+        this._packageStagingMutex = createMutex();
+        this._packageImportMutex = createMutex();
         this.bakeOutputSourceIds = parseBakeOutputSourceIds(
             options.bakeOutputSourceIds ?? process.env.CEV_SIM_BAKE_OUTPUT_SOURCE_IDS,
         );
@@ -1800,6 +1823,379 @@ export class StorageService {
         }
         if (existingManifest) incoming.id = `${incoming.id}-${bundle.resolvedHash.slice(0, 8)}`;
         return this.createRunManifest(incoming);
+    }
+
+    async recoverRunPackages() {
+        const staging = await this._packageStagingMutex(async () => {
+            await fs.mkdir(this.packageStagingDir, { recursive: true });
+            return recoverPackageStaging(this.packageStagingDir, {
+                ttlMs: this._packageLimits.abandonedStageTtlMs,
+                now: this.visualAssets.now,
+            });
+        });
+        const imports = await this._recoverPackageImports();
+        return { ...staging, imports };
+    }
+
+    async _recoverPackageImports() {
+        return this._packageImportMutex(async () => {
+            await fs.mkdir(this.packageImportJournalDir, { recursive: true });
+            const names = (await fs.readdir(this.packageImportJournalDir)).filter((name) => /^[a-f0-9]{64}\.json$/.test(name));
+            let recovered = 0;
+            for (const name of names.sort()) {
+                const journalPath = path.join(this.packageImportJournalDir, name);
+                let journal;
+                try {
+                    journal = JSON.parse(await fs.readFile(journalPath, "utf8"));
+                    await this._completePackageImport(journal, journalPath);
+                    recovered += 1;
+                } catch {
+                    // Retain the journal for a later retry. _completePackageImport
+                    // releases a root acquired by a failed attempt.
+                }
+            }
+            return { recovered, pending: names.length - recovered };
+        });
+    }
+
+    async _completePackageImport(journal, journalPath) {
+        const loaded = verifyRunBundleBytes(Buffer.from(journal.bundleBytes, "base64"), { execution: false });
+        if (loaded.bundleBytesHash !== journal.bundleBytesHash) {
+            throw visualAssetError(RUN_PACKAGE_ERROR_CODES.INVALID, "Package import journal bundle bytes are corrupt.");
+        }
+        await this._assertPackageRights(loaded.bundle, [...RUN_PACKAGE_IMPORT_OPERATIONS]);
+        let root = await this.visualAssets.getRoot(journal.ownerId);
+        let acquired = false;
+        try {
+            if (!root) {
+                root = await this.visualAssets.acquireRoot({
+                    ownerId: journal.ownerId,
+                    ownerKind: "run-package",
+                    useHashes: journal.useHashes,
+                    operations: [...RUN_PACKAGE_IMPORT_OPERATIONS],
+                });
+                acquired = true;
+            }
+            const runManifest = await this.importRunBundle(loaded.bundle);
+            await fs.rm(journalPath, { force: true });
+            return { root, runManifest };
+        } catch (error) {
+            if (acquired && root) {
+                await this.visualAssets.releaseRoot({
+                    ownerId: journal.ownerId,
+                    expectedGeneration: root.generation,
+                }).catch(() => {});
+            }
+            throw error;
+        }
+    }
+
+    async _journalPackageImport(journal, journalPath) {
+        return this._packageImportMutex(async () => {
+            await fs.mkdir(this.packageImportJournalDir, { recursive: true });
+            const written = await writeExclusiveFile(journalPath, `${JSON.stringify(journal)}\n`);
+            if (written.existed) {
+                const existing = JSON.parse(await fs.readFile(journalPath, "utf8"));
+                if (existing.bundleBytesHash !== journal.bundleBytesHash) {
+                    throw visualAssetError(RUN_PACKAGE_ERROR_CODES.INVALID, "Package import journal identity conflicts.");
+                }
+                journal = existing;
+            }
+            return this._completePackageImport(journal, journalPath);
+        });
+    }
+
+    async _createPackageStaging() {
+        return this._packageStagingMutex(async () => {
+            await fs.mkdir(this.packageStagingDir, { recursive: true });
+            await recoverPackageStaging(this.packageStagingDir, {
+                ttlMs: this._packageLimits.abandonedStageTtlMs,
+                now: this.visualAssets.now,
+            });
+            return createPackageStagingDir(this.packageStagingDir);
+        });
+    }
+
+    async _loadPackageBundle(input = {}) {
+        if (input.bundleBytes != null) {
+            const bytes = Buffer.from(input.bundleBytes);
+            return verifyRunBundleBytes(bytes, { execution: false });
+        }
+        if (input.bundle) {
+            const bytes = Buffer.from(runBundleBytes(input.bundle));
+            return verifyRunBundleBytes(bytes, { execution: false });
+        }
+        if (input.manifestId) {
+            const bundle = await this.exportRunManifest(input.manifestId);
+            const bytes = Buffer.from(canonicalRunBundleStringify(bundle), "utf8");
+            return verifyRunBundleBytes(bytes, { execution: false });
+        }
+        throw visualAssetError(
+            RUN_PACKAGE_ERROR_CODES.INVALID,
+            "Run package export requires a manifest id or exact bundle bytes.",
+        );
+    }
+
+    _assertPackageRights(bundle, operations) {
+        return this.visualAssets.registry.policyMap().then((registry) => {
+            const decision = evaluatePackageRights({
+                bundle,
+                operations,
+                registry,
+                atTime: this.visualAssets.now(),
+            });
+            if (!decision.allowed) {
+                throw visualAssetError(
+                    RUN_PACKAGE_ERROR_CODES.RIGHTS_DENIED,
+                    "Visual source policy denied the requested package operation.",
+                    { denials: decision.denials },
+                );
+            }
+            return decision;
+        });
+    }
+
+    _packageIdentities(verified, extras = {}) {
+        return {
+            kind: "cev-sim.run-package",
+            version: 1,
+            packageManifestHash: verified.packageManifestHash,
+            archiveHash: verified.archiveHash,
+            bundleBytesHash: verified.bundleBytesHash,
+            resolvedHash: verified.resolvedHash,
+            simulationSemanticHash: verified.simulationSemanticHash,
+            assetCount: verified.manifest?.assets?.length ?? verified.assets?.length ?? 0,
+            ...extras,
+        };
+    }
+
+    async exportRunPackage(input = {}) {
+        await this.visualAssets.initialize();
+        await this._packageSlots.acquire();
+        let pin = null;
+        try {
+            const loaded = await this._loadPackageBundle(input);
+            const expectedAssets = collectRunPackageAssets(loaded.bundle);
+            const uses = loaded.bundle.resolved?.evidence?.visualAssets?.uses ?? [];
+            const useHashes = uses.map((entry) => entry.useHash);
+            const decision = await this._assertPackageRights(loaded.bundle, [...RUN_PACKAGE_EXPORT_OPERATIONS]);
+            if (useHashes.length) {
+                pin = await this.visualAssets.acquirePin({
+                    ownerId: `run-package-export:${loaded.bundleBytesHash}`,
+                    useHashes,
+                    operations: [...RUN_PACKAGE_EXPORT_OPERATIONS],
+                });
+            }
+            const useByDigest = new Map();
+            for (const entry of uses) {
+                if (!useByDigest.has(entry.use.asset.sha256)) useByDigest.set(entry.use.asset.sha256, entry);
+            }
+            const assets = [];
+            for (const asset of expectedAssets) {
+                const use = useByDigest.get(asset.sha256);
+                if (!use) {
+                    throw visualAssetError(
+                        RUN_PACKAGE_ERROR_CODES.CLOSURE_MISMATCH,
+                        `Package evidence is missing a source-use for ${asset.sha256}.`,
+                    );
+                }
+                assets.push({
+                    ...asset,
+                    open: async () => (await this.visualAssets.openUseContent(use.useHash, {
+                        operations: [...RUN_PACKAGE_EXPORT_OPERATIONS],
+                    })).stream,
+                });
+            }
+            const encoded = createRunPackageStream({
+                bundleBytes: loaded.bundleBytes,
+                assets,
+                deadline: Date.now() + this._packageLimits.verificationTimeoutMs,
+                limits: this._packageLimits,
+            });
+            let resolveCompletion;
+            let rejectCompletion;
+            let settled = false;
+            let cleanupPromise = null;
+            const completion = new Promise((resolve, reject) => {
+                resolveCompletion = resolve;
+                rejectCompletion = reject;
+            });
+            completion.catch(() => {});
+            const cleanup = () => {
+                cleanupPromise ??= (async () => {
+                    if (pin) await this.visualAssets.releasePin({ handle: pin.handle }).catch(() => {});
+                    this._packageSlots.release();
+                })();
+                return cleanupPromise;
+            };
+            const stream = Readable.from((async function* exportArchive(service) {
+                try {
+                    for await (const chunk of encoded.stream) yield chunk;
+                    const completed = await encoded.completion;
+                    const result = service._packageIdentities({
+                        ...completed,
+                        resolvedHash: loaded.resolvedHash,
+                        simulationSemanticHash: loaded.simulationSemanticHash,
+                    }, {
+                        manifest: completed.manifest,
+                        obligations: decision.obligations,
+                    });
+                    settled = true;
+                    resolveCompletion(result);
+                } catch (error) {
+                    settled = true;
+                    rejectCompletion(error);
+                    throw error;
+                } finally {
+                    if (!settled) {
+                        rejectCompletion(visualAssetError(
+                            RUN_PACKAGE_ERROR_CODES.IO,
+                            "Run package export stream closed before completion.",
+                        ));
+                    }
+                    await cleanup();
+                }
+            })(this));
+            stream.on("error", () => {});
+            stream.once("close", () => {
+                if (!settled) {
+                    settled = true;
+                    rejectCompletion(visualAssetError(
+                        RUN_PACKAGE_ERROR_CODES.IO,
+                        "Run package export stream closed before completion.",
+                    ));
+                }
+                cleanup().catch(() => {});
+            });
+            return {
+                kind: "cev-sim.run-package-export",
+                version: 1,
+                manifest: encoded.manifest,
+                packageManifestHash: encoded.packageManifestHash,
+                bundleBytesHash: encoded.bundleBytesHash,
+                resolvedHash: loaded.resolvedHash,
+                simulationSemanticHash: loaded.simulationSemanticHash,
+                assetCount: encoded.manifest.assets.length,
+                obligations: decision.obligations,
+                stream,
+                completion,
+                close: async () => {
+                    if (!settled) {
+                        settled = true;
+                        rejectCompletion(visualAssetError(
+                            RUN_PACKAGE_ERROR_CODES.IO,
+                            "Run package export stream closed before completion.",
+                        ));
+                    }
+                    if (!stream.destroyed) {
+                        const closed = new Promise((resolve) => stream.once("close", resolve));
+                        stream.destroy();
+                        await closed;
+                    }
+                    await cleanup();
+                },
+            };
+        } catch (error) {
+            if (pin) await this.visualAssets.releasePin({ handle: pin.handle }).catch(() => {});
+            this._packageSlots.release();
+            throw error;
+        }
+    }
+
+    async verifyRunPackage(archiveBytes, { operations } = {}) {
+        await this.visualAssets.initialize();
+        return this._packageSlots.run(async () => {
+            const staging = await this._createPackageStaging();
+            try {
+                const verified = await verifyRunPackageArchive(archiveBytes, {
+                    stagingDir: staging.dir,
+                    retainStaging: true,
+                    limits: this._packageLimits,
+                    faults: this.faults,
+                    deadline: Date.now() + this._packageLimits.verificationTimeoutMs,
+                });
+                const requested = operations ?? (
+                    verified.bundle.resolved?.evidence?.visualAssets?.permissions?.operations
+                    ?? []
+                );
+                const decision = await this._assertPackageRights(verified.bundle, [...requested]);
+                return this._packageIdentities(verified, {
+                    manifest: verified.manifest,
+                    obligations: decision.obligations,
+                    canonicalBundleBytes: Buffer.from(verified.canonicalBundle, "utf8").equals(verified.bundleBytes),
+                });
+            } finally {
+                await fs.rm(staging.dir, { recursive: true, force: true });
+            }
+        });
+    }
+
+    async importRunPackage(archiveBytes) {
+        await this.visualAssets.initialize();
+        await this._recoverPackageImports();
+        return this._packageSlots.run(async () => {
+            const staging = await this._createPackageStaging();
+            let authoring = null;
+            let root = null;
+            try {
+                const verified = await verifyRunPackageArchive(archiveBytes, {
+                    stagingDir: staging.dir,
+                    retainStaging: true,
+                    limits: this._packageLimits,
+                    faults: this.faults,
+                    deadline: Date.now() + this._packageLimits.verificationTimeoutMs,
+                });
+                const decision = await this._assertPackageRights(verified.bundle, [...RUN_PACKAGE_IMPORT_OPERATIONS]);
+                const uses = verified.bundle.resolved?.evidence?.visualAssets?.uses ?? [];
+                const bytesByDigest = new Map(verified.assets.map((asset) => [asset.sha256, asset.path]));
+                for (const { use } of sortUsesForPublish(uses)) {
+                    const filePath = bytesByDigest.get(use.asset.sha256);
+                    if (!filePath) {
+                        throw visualAssetError(
+                            RUN_PACKAGE_ERROR_CODES.CLOSURE_MISMATCH,
+                            `Package is missing bytes for source-use asset ${use.asset.sha256}.`,
+                        );
+                    }
+                    const upload = await this.visualAssets.createUpload({
+                        kind: use.kind,
+                        version: use.version,
+                        asset: use.asset,
+                        sourceIds: use.sourceIds,
+                        dependencies: use.dependencies,
+                    });
+                    await this.visualAssets.writeUploadContent(upload.id, createReadStream(filePath), {
+                        contentLength: use.asset.sizeBytes,
+                    });
+                }
+                const visualLayer = verified.bundle.resolved?.visualLayer?.description;
+                const access = verified.bundle.resolved?.evidence?.visualAssets?.access;
+                if (visualLayer) await this._visualLayerDescriptors.put(visualLayer);
+                if (access) await this._visualLayerAccess.put(access);
+                const ownerId = `run-package:${verified.archiveHash}`;
+                const useHashes = uses.map((entry) => entry.useHash);
+                const journalPath = path.join(this.packageImportJournalDir, `${verified.archiveHash}.json`);
+                const journal = {
+                    kind: "cev-sim.run-package-import-journal",
+                    version: 1,
+                    archiveHash: verified.archiveHash,
+                    ownerId,
+                    useHashes: [...useHashes].sort(),
+                    bundleBytesHash: verified.bundleBytesHash,
+                    bundleBytes: Buffer.from(verified.bundleBytes).toString("base64"),
+                };
+                ({ root, runManifest: authoring } = await this._journalPackageImport(journal, journalPath));
+                return {
+                    ...this._packageIdentities(verified, {
+                        manifest: verified.manifest,
+                        obligations: decision.obligations,
+                        root,
+                    }),
+                    runManifest: authoring,
+                };
+            } finally {
+                await fs.rm(staging.dir, { recursive: true, force: true });
+            }
+        });
     }
 
     // --- Vehicle manifests --------------------------------------------------

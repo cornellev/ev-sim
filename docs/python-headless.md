@@ -1,6 +1,6 @@
 # Python Gymnasium and Stable-Baselines3 adapter
 
-The `python/` package is a synchronous client for the cev-sim protocols 1.2 and 1.3
+The `python/` package is a synchronous client for the cev-sim protocols 1.2 through 1.4
 headless supervisor. JavaScript remains the authoritative simulator; Python
 owns Gymnasium/SB3 integration and NumPy tensors only.
 
@@ -144,12 +144,23 @@ is retained in `info["cev_sim.final_result"]`.
 
 ## Compatibility and failures
 
-The client discovers capabilities using protocol 1.2 and negotiates up to 1.3.
+The client discovers capabilities using protocol 1.2 and negotiates up to 1.4.
 It validates runtime name, profile schemas, backend versions, space layouts,
 tensor names, dtype, shape, endianness, packed length,
 boolean representation, and bounds. CPU/GPU LiDAR identities,
 `DEFAULT_CPU_LIDAR_BACKEND`, `DEFAULT_GPU_SENSOR_BACKEND`, and
 `MEASURED_PERCEPTION_OBSERVATION_PROFILE` are public package exports.
+
+`load_run_package(path)` strictly streams the frozen USTAR profile, verifies
+every entry and exact bundle digest, and returns `LoadedRunPackage` without
+retaining asset bytes. `SupervisorClient(..., package_inbox=...)` admits it
+through a context-managed `AssetAdmission`, which can be passed to
+`create_batch`. Owned supervisors derive the inbox from their private socket
+directory. External Unix supervisors require `package_inbox`; TCP, protocol
+1.2/1.3, and supervisors without `cev-sim.run-package@1` fail before staging.
+Staging uses a `0600` temporary file, streaming hash, file fsync, atomic rename,
+and directory fsync. Client shutdown releases outstanding admissions
+best-effort. Ordinary Gymnasium/SB3 bundle inputs are unchanged.
 
 On a protocol 1.2 Unix socket, tensors of at least 64 KiB use
 `grpc+unix+shared-memory-v1`; smaller tensors stay inline. Python opens the

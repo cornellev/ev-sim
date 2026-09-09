@@ -77,6 +77,8 @@ export async function startHeadlessSupervisor(options = {}) {
     });
     server.addService(service.service, {
         getCapabilities: unary((request) => supervisor.getCapabilities(request), supervisor),
+        admitRunPackage: unary((request) => supervisor.admitRunPackage(request), supervisor),
+        releaseAssetAdmission: unary((request) => supervisor.releaseAssetAdmission(request), supervisor),
         createBatch: unary((request, context) => supervisor.createBatch(request, context), supervisor),
         resetBatch: unary((request, context) => supervisor.resetBatch(request, context), supervisor),
         stepBatch: unary((request, context) => supervisor.stepBatch(request, context), supervisor),

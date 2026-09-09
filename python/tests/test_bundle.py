@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 import rfc8785
 
-from cev_sim.bundle import canonical_bundle_bytes, load_bundle
+from cev_sim.bundle import canonical_bundle_bytes, load_bundle, load_run_package
 from cev_sim.errors import CevSimConfigurationError
 
 
@@ -95,6 +95,39 @@ def test_generated_bindings_are_current(repository_root: Path) -> None:
         cwd=repository_root,
         check=True,
     )
+
+
+def test_run_package_loader_streams_frozen_ustar_and_preserves_exact_bundle(
+    repository_root: Path, tmp_path: Path,
+) -> None:
+    package_path = tmp_path / "state.run-package"
+    script = """
+import { promises as fs } from 'node:fs';
+import { encodeRunPackage } from './server/headless/VisualAssetPack.js';
+const bundle = await fs.readFile(process.argv[1]);
+await fs.writeFile(process.argv[2], encodeRunPackage({ bundleBytes: bundle }).bytes);
+"""
+    subprocess.run(
+        [
+            "node", "--experimental-default-type=module", "-e", script,
+            str(repository_root / "tests/fixtures/visual-layer/world-bound-state.v11.json"),
+            str(package_path),
+        ],
+        cwd=repository_root,
+        check=True,
+    )
+    loaded = load_run_package(package_path)
+    assert loaded.path == package_path
+    assert loaded.bundle.received_bytes == (
+        repository_root / "tests/fixtures/visual-layer/world-bound-state.v11.json"
+    ).read_bytes()
+    assert loaded.bundle_bytes_hash == loaded.bundle.bundle_bytes_hash
+    assert loaded.assets == ()
+    corrupt = bytearray(package_path.read_bytes())
+    corrupt[-1] = 1
+    (tmp_path / "corrupt.run-package").write_bytes(corrupt)
+    with pytest.raises(CevSimConfigurationError, match="USTAR|trailing|zero blocks"):
+        load_run_package(tmp_path / "corrupt.run-package")
 
 
 def test_legacy_bundle_bytes_and_digests_stay_frozen(repository_root: Path) -> None:

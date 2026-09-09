@@ -25,6 +25,7 @@ class OwnedSupervisor:
         self.process: subprocess.Popen[str] | None = None
         self.directory: Path | None = None
         self.socket_path: Path | None = None
+        self.package_inbox: Path | None = None
         self.target: str | None = None
         self._stderr: deque[str] = deque(maxlen=100)
         self._stderr_thread: threading.Thread | None = None
@@ -42,6 +43,7 @@ class OwnedSupervisor:
         socket_root = Path("/tmp") if os.name == "posix" and Path("/tmp").is_dir() else None
         self.directory = Path(tempfile.mkdtemp(prefix="cev-sim-python-", dir=socket_root))
         self.socket_path = self.directory / "supervisor.sock"
+        self.package_inbox = Path(f"{self.socket_path}.run-package-inbox")
         command = [executable, "supervisor", "--socket", str(self.socket_path)]
         if self.configuration.config_path is not None:
             command.extend(("--config", str(self.configuration.config_path)))
@@ -109,6 +111,7 @@ class OwnedSupervisor:
             shutil.rmtree(self.directory, ignore_errors=True)
         self.directory = None
         self.socket_path = None
+        self.package_inbox = None
         self.target = None
 
     def _resolve_executable(self) -> str:

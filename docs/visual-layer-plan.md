@@ -25,7 +25,10 @@ a VIS, GOOG, or GS PR changes a contract, hash, gate, or milestone status.
 
 ## Status and release verdict
 
-- Next milestone: **VIS-13a — deterministic archive codec and verification**. VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, VIS-05a, VIS-05b, VIS-06a, VIS-06b, VIS-07, VIS-08, VIS-09, VIS-10a, VIS-10b, VIS-11, VIS-12b, and VIS-16a are implemented.
+- Next milestone: **VIS-14 — browser measured cameras**. VIS-01, VIS-12a,
+  VIS-02, VIS-03, VIS-04, VIS-05a, VIS-05b, VIS-06a, VIS-06b, VIS-07,
+  VIS-08, VIS-09, VIS-10a, VIS-10b, VIS-11, VIS-12b, VIS-13a, VIS-13b,
+  and VIS-16a are implemented.
 - Review verdict: **NO-GO for the original ordering and for claiming visual
   runtime support.** The five Blocker findings below require implementation
   and evidence. This revision supplies the corrected handoff; editing the
@@ -33,15 +36,19 @@ a VIS, GOOG, or GS PR changes a contract, hash, gate, or milestone status.
 - Core assumption: **Google approval, Google-derived assets, Gaussian
   splatting, and a model service are unavailable.**
 - Default implementation/review reasoning level: **Extra High**.
-- Last updated: **2026-09-09 — VIS-12b conditional visual run resolution implemented**.
--   VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, VIS-05a, VIS-05b, VIS-06a, VIS-06b, VIS-07, VIS-08, VIS-09, VIS-10a, VIS-10b, VIS-11, VIS-12b, and VIS-16a acceptance evidence is recorded in
-  the progress ledger and decision log. Protocol 1.3 advertises `world-bound@2`.
+- Last updated: **2026-09-09 — VIS-13b same-host executable asset admission implemented**.
+-   VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, VIS-05a, VIS-05b, VIS-06a,
+  VIS-06b, VIS-07, VIS-08, VIS-09, VIS-10a, VIS-10b, VIS-11, VIS-12b,
+  VIS-13a, VIS-13b, and VIS-16a acceptance evidence is recorded in the
+  progress ledger and decision log. Protocol 1.4 advertises `world-bound@2`.
   Only `canonical-analytic@1` and GPU sensor backend v1 remain runtime-capable.
-  `pbr-mesh@1` is resolution-capable for immutable export and integrity-only
-  inspection, but remains unavailable for execution; corrected analytic remains
-  unavailable and no package-admission capability is advertised. Environment
+  `pbr-mesh@1` is resolution-capable for immutable export, integrity-only
+  inspection, authoring-store package transfer, and same-host admission, but
+  remains unavailable for execution; corrected analytic remains unavailable.
+  Configured Unix-socket supervisors advertise `cev-sim.run-package@1`;
+  disabled and TCP supervisors do not. Environment
   v3 references may include `accessHash`. Preview materialization is display-only
-  and does not enable `pbr-mesh@1`. Admission profiles stay empty. Advertised
+  and does not enable `pbr-mesh@1`. Advertised
   D06 hardware reports remain required from protected x64/Orin/Thor runners
   before G-SCALE is closed on those stacks. VIS-06b closes F08 and
   G-GBUFFER; VIS-07 closes the G-PROVENANCE config/planning/capture-input
@@ -112,7 +119,7 @@ ingestion/content/root-pin rights enforcement. Neither F01 nor F06 is fully
 closed: selected visual resources still require VIS-12b, and bake-promotion
 races are closed by VIS-08 and the VIS-16a corrective maintenance. F09 product completeness remains later VIS work. F11
 loader cases are closed by corrected VIS-04/VIS-05a validation; hostile archive
-extraction remains VIS-13a. F12 execution-root wiring remains
+verification for `cev-sim.run-package@1` is closed by VIS-13a. F12 execution-root wiring remains
 VIS-13b/VIS-15b. F15 import/bake/package/worker denial remains later VIS/GOOG
 work. The other runtime findings retain their owning gates.
 
@@ -128,7 +135,7 @@ work. The other runtime findings retain their owning gates.
 | F08 **High** | [BakeView.js](../app/3d/environment/visualization/BakeView.js) hides non-target mask geometry, forces depth visibility, and boosts beauty road materials; these are not aligned samples. [CameraRenderProducts.js](../app/3d/perception/CameraRenderProducts.js) changes materials on scene meshes rather than selecting independent truth twins. Fusion or correspondence can accept occluded/misregistered samples. | Split VIS-06b from legacy calibration/isolation; define separate visual G-buffer and analytic oracle pass families. G-GBUFFER proves occlusion, validity, alpha policy, encoding, and exception-safe restoration. |
 | F09 **High** | [HeadlessGpuSensorManager.js](../app/simulation/sensors/HeadlessGpuSensorManager.js) shares `renderScene || lidarGeometry`; its camera implementation produces RGB/CameraInfo rather than every authored oracle product. [SensorTypeRegistry.js](../app/3d/devices/SensorTypeRegistry.js), `normalizeRunSensor`, has a fixed authored field set. [PerceptionTruthIndex.js](../app/autonomy/PerceptionTruthIndex.js) and [EnvironmentRegistry.js](../app/3d/editor/EnvironmentRegistry.js) discover truth from scene metadata. PBR geometry or imported GLTF extras can cross the truth boundary, while unsupported products can disappear. | VIS-02 added provider/profile schemas and explicit validation; remaining product-completeness and selected-visual resolution belong to later VIS/VIS-12b. Separate truth resources and sanitize imported metadata in VIS-05a/VIS-14/VIS-15a. G-CAPABILITY and G-ORACLE prove product completeness and observation isolation. |
 | F10 **High** | VIS-07 serializes bake planning inputs and canonicalizes planner order. VIS-08 emits deterministic PNG/GLB captured-radiance artifacts with explicit unlit semantics. VIS-10a emits per-chunk atlas pages with hashed construction policy. VIS-10b adds fixed supplied/inferred intrinsic proposals, per-channel fusion, PBR packing, and durable evidence. VIS-11 pins fake/operator-injected backends, digest-verifies `/bake/v1` transfers, and records model provenance. Remaining F10 work is browser `bakeUpload.js` encoding on the legacy path. | Combine the provider job contract with VIS-07; split deterministic atlas construction (VIS-10a) from optional material estimation (VIS-10b/VIS-11). G-PROVENANCE and G-ATLAS separate fixed-input determinism from GPU/model nondeterminism and test material semantics. |
-| F11 **High** | Corrected VIS-04/VIS-05a now require current versioned validation before content or materialization; iteratively bound glTF preflight; apply one extension allowlist to declarations and objects; inspect embedded/digest-backed images and decoded memory before loaders; authorize only loader-created object URLs; sanitize metadata; and propagate decoder failures. Archive support remains unavailable. | GLB/glTF loader boundary closed by G-SECURITY. Hostile USTAR validation remains a mandatory VIS-13a prerequisite before extraction or package-loader access. |
+| F11 **High** | Corrected VIS-04/VIS-05a now require current versioned validation before content or materialization; iteratively bound glTF preflight; apply one extension allowlist to declarations and objects; inspect embedded/digest-backed images and decoded memory before loaders; authorize only loader-created object URLs; sanitize metadata; and propagate decoder failures. VIS-13a adds frozen USTAR verification before any package staging or CAS publication. | GLB/glTF loader boundary closed by G-SECURITY. Hostile USTAR validation is a VIS-13a prerequisite before extraction or package-loader access; CLI/supervisor admission remains VIS-13b. |
 | F12 **High** | [StorageService.js](../server/storage/StorageService.js) persists queued experiment bundle sidecars under `headless-run-bundles`; environment/package references are not the whole live set. Worker resets, queued jobs, replay, bake staging, and validation reports also need blobs. Environment-only reference checks allow deletion of required assets or indefinite growth. | Put pins, durable roots, quotas, staging recovery, and a no-unsafe-delete policy in VIS-04; wire execution roots in VIS-13b/VIS-15b. G-LIFECYCLE races deletion against queueing, promotion, restart, reset, and cancellation. |
 | F13 **High** | VIS-09 added per-unit dependency keys, typed chunk mutations, and conservative global invalidation. VIS-10a fuses one chunk/page at a time under ledger reservations and rebuilds only dirty atlas chunks. Remaining F13/G-SCALE risk is advertised hardware city-scale reports, not reuse authorization. | VIS-09 G-INCREMENTAL compares complete vs incremental descriptor/access/asset identity. Residency never authorizes reuse. |
 | F14 **High** | [ProjectedBuildingTextureManager.js](../app/3d/environment/visualization/ProjectedBuildingTextureManager.js) creates per-projection textures/meshes with culling disabled. [BakeCaptureMemory.js](../app/3d/environment/visualization/BakeCaptureMemory.js) bounds a capture buffer, not aggregate residency. [BakeHarness.js](../app/3d/environment/visualization/BakeHarness.js) performs repeated scene searches. [PooledGpuRenderer.js](../server/headless/PooledGpuRenderer.js) accounts JSON/output bytes and transfers whole scene data in its analytic path. City-scale memory and work can grow with all views/geometry per frame. | Add VIS-05b before camera delivery and require resident asset handles/dynamic deltas in VIS-15a. G-SCALE imposes owned workload, CPU/GPU memory, latency, throughput, and cancellation budgets. |
@@ -1107,7 +1114,7 @@ that do not yet support its capability.
 
 ### VIS-13a — Deterministic archive codec and verification
 
-**Depends on:** VIS-04, VIS-12b.
+**Depends on:** VIS-04, VIS-12b. **Status:** implemented.
 
 Add planned `server/headless/VisualAssetPack.js`; implement deterministic
 export and strict streaming verification/import in
@@ -1121,7 +1128,7 @@ advertise a CLI execution flag before VIS-13b.
 
 ### VIS-13b — CLI, Python, and supervisor asset admission
 
-**Depends on:** VIS-04, VIS-12b, VIS-13a.
+**Depends on:** VIS-04, VIS-12b, VIS-13a. **Status:** implemented.
 
 Implement the operational admission contract through
 [Cli.js](../server/headless/Cli.js),
@@ -1578,7 +1585,8 @@ requirements with silent fallback or unsupported claims.
 ## Progress and acceptance ledger
 
 VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, VIS-05a, VIS-05b, VIS-06a, VIS-06b,
-VIS-07, VIS-08, VIS-09, VIS-10a, VIS-10b, VIS-11, VIS-12b, and VIS-16a are complete in the working tree;
+VIS-07, VIS-08, VIS-09, VIS-10a, VIS-10b, VIS-11, VIS-12b, VIS-13a,
+VIS-13b, and VIS-16a are complete in the working tree;
 all other required core PRs remain **not started**. VIS-12a landed at commit
 `e4f756a`. Its accountable owner remains the repository owner under D01.
 
@@ -1914,8 +1922,21 @@ all other required core PRs remain **not started**. VIS-12a landed at commit
   and Python execution reject PBR without fallback; provider-aware headless
   defaults require the already-declared GPU backend v2. See the VIS-12b
   decision-log entry for the exact acceptance record.
-- [ ] VIS-13a
-- [ ] VIS-13b
+- [x] VIS-13a — deterministic `cev-sim.run-package@1` USTAR codec, hostile
+  archive verification, streaming authoring-store export/import, and audited
+  lifecycle corrections. Exact bundle bytes are preserved;
+  `packageManifestHash` and `archiveHash` stay external to the manifest.
+  Export re-evaluates `export` rights and holds an export pin through stream
+  completion. Import is journaled so package roots and run manifests reconcile
+  after late faults or restart. See the VIS-13a decision-log entry for the
+  exact acceptance record and correction list.
+- [x] VIS-13b — protocol 1.4 same-host package admission, durable rights-bound
+  records and batch pins, environment-scoped digest readers, exact-byte worker
+  handoff, CLI package inspect/validate/run/replay, and Python package/admission
+  APIs. Admission is advertised only by configured Unix-socket supervisors;
+  TCP and disabled supervisors reject it. PBR packages can be admitted but
+  still fail capability preflight before worker creation. See the VIS-13b
+  decision-log entry for the exact acceptance record.
 - [ ] VIS-14
 - [ ] VIS-15a
 - [ ] VIS-15b
@@ -2605,8 +2626,9 @@ responses and receipts. VIS-04 validation evidence is version 2 and performs
 bounded extension, graph, accessor, buffer, embedded-image, digest-image, and
 decoded-memory checks before image decoding or `GLTFLoader`; stale or missing
 evidence is revalidated from immutable CAS bytes. Loader-owned object URLs are
-explicit and texture/decoder failures propagate. Archive support remains
-unavailable pending hostile USTAR verification in VIS-13a.
+explicit and texture/decoder failures propagate. VIS-13a now verifies
+`cev-sim.run-package@1` USTAR archives before authoring-store import; CLI,
+Python, and supervisor admission were deferred to VIS-13b.
 
 VIS-08 promotion recovery now shares the environment transaction lane with
 reads and writes, requires the intended revision and complete manifest identity,
@@ -2748,3 +2770,145 @@ and `60dc0bd2b02a9ec768f833070ce4d8d2047f5383838f09ea3f130dd31552dd6f`.
 No PBR renderer, asset package/admission/pins, managed correspondence
 enforcement, model/Google/splat integration, runtime soak, or hardware gate was
 implemented or claimed. Those gates remain VIS-13 and later work.
+
+### 2026-09-08 — Implement VIS-13a deterministic archive codec and verification
+
+Add `server/headless/VisualAssetPack.js` with a dependency-free frozen USTAR
+encoder/verifier for `cev-sim.run-package@1`. Canonical `manifest.json` is
+exact JCS without a trailing newline:
+
+`{ kind: "cev-sim.run-package", version: 1, bundle: { sha256, sizeBytes }, assets: [{ sha256, mediaType, sizeBytes, role }] }`
+
+`packageManifestHash` and `archiveHash` remain external. Archives emit
+`manifest.json`, the exact received `bundle.json` bytes, and
+`assets/sha256/<digest>` in UTF-8 digest order. The asset list is the
+render-scene closure cross-checked against source-use evidence; missing,
+extra, duplicate, conflicting, or unreferenced assets are rejected. Legacy
+and pretty bundle bytes are preserved and verified without rewriting.
+
+The USTAR profile is byte-for-byte: regular files, mode `0644`, zero
+UID/GID/mtime, empty owner/group names, canonical octal numeric fields, zero
+padding, two terminal zero blocks, and no trailing data. Hostile verification
+rejects malformed checksums, alternate/PAX/GNU headers, compression,
+absolute/parent/encoded traversal, backslashes, case/Unicode collisions,
+links, devices, sparse entries, oversized entries, excessive counts,
+truncation, non-zero padding, and expansion attempts before CAS publication.
+Entries stream into generated names under an untrusted staging directory with
+archive, entry, temporary-byte, inode, concurrency, and verification-time
+limits. The VIS-13b prerequisite audit replaced production archive buffering
+with `createRunPackageStream`: bytes are counted when pulled, oversized chunks
+and stalled reads fail promptly, only bounded manifest/bundle bytes remain in
+memory, and verified assets are represented by staged paths. The bounded
+`encodeRunPackage` helper remains only for golden and unit-test use.
+
+`StorageService.exportRunPackage` resolves or accepts exact bundle bytes,
+re-evaluates current `export` rights, holds an export pin, and streams the
+deterministic archive. `verifyRunPackage` is read-only archive, bundle,
+closure, rights, and asset validation. `importRunPackage` fully verifies,
+publishes source-bound uses through `VisualAssetStore` in dependency order,
+stores descriptor/access documents, acquires a retained `run-package:` root,
+and then delegates to existing bundle import. Import requires current
+`persistent-cache`, `machine-interpretation`, and `retention`. A durable import
+journal reconciles the authoring document and package root after late failure
+or restart; immutable unreferenced CAS bytes may remain under the no-delete
+policy. Internally-created temporary roots are removed, staging/recovery is
+serialized, filesystem errors are normalized, zero verifier concurrency is
+rejected, released export-pin handles are no longer returned, and concurrent
+stream-close paths await the same durable pin-release cleanup.
+
+At the original VIS-13a milestone, protocol remained 1.3,
+`asset_admission_profiles` stayed empty, and no CLI
+`--package` flag, Python package helper, supervisor inbox, worker access, or
+admission handle was introduced. `pbr-mesh@1` execution, GPU backend v2,
+automatic GC, Google assets, and splats remain unavailable.
+
+Frozen golden identities for the synthetic codec fixture
+[run-package.canonical.v1.json](../tests/fixtures/visual-layer/run-package.canonical.v1.json):
+
+- empty-package `packageManifestHash` `de1c7b8e19c4d25c61928540a23db7a6445f119fb2ab77a1f4691138bb86f9d6`
+- empty-package `archiveHash` `9024900b814ed868cbcd3b4bc3afaf11a42819d6ad63b7a0428f385f4439cad0`
+- one-buffer-package `packageManifestHash` `c0679c3c0558643b81a0640caabaf5c356ed990e07c69b4bebed62d2d88c274f`
+- one-buffer-package `archiveHash` `04e463b71fdf65034bb56af55fec58240c4236141a679085609e68ffe5877c7d`
+
+Local acceptance: focused package codec and storage suites passed 11/11.
+The combined package, hostile-archive, rights, lifecycle, and VIS-12b
+suites passed 32/32. `npm run lint` completed with zero errors and two
+pre-existing warnings. `npm test` passed 884/886 with only the two declared
+hardware GPU skips. `npm run test:headless` passed 87/87.
+`npm run fixtures:headless` reproduced the committed characterization
+exactly; the action-tape and characterization SHA-256 values remain
+`1ba8c8c40e1560ac044f4ca5384065ab83c93529d65b5672fee8dc5ed42a5ced`
+and `60dc0bd2b02a9ec768f833070ce4d8d2047f5383838f09ea3f130dd31552dd6f`.
+No CLI `--package` flag, Python helper, supervisor inbox, worker access,
+admission handle, protocol 1.4, or PBR runtime support was added by that
+milestone. The following VIS-13b entry closes the admission omissions; PBR
+runtime support remains unavailable.
+
+### 2026-09-09 — Implement VIS-13b same-host executable asset admission
+
+Activate the VIS-01-reserved protocol 1.4 admission contract without changing
+protobuf field numbers or RPCs. Configured Unix-socket supervisors advertise
+`cev-sim.run-package@1`; TCP and disabled supervisors return unsupported
+capability before staging. Unix defaults derive a private inbox, asset store,
+and source registry from the socket path, with a one-hour unused TTL and the
+frozen VIS-13a ceilings.
+
+`VisualAssetAdmissionManager` atomically claims a lowercase 32-hex staging ID,
+accepts only a no-follow regular single-link inbox file, and removes the inbox
+artifact after every completed attempt. Admission verifies the requested
+archive hash, frozen USTAR contract, exact bundle bytes, asset closure and
+static validation, provider/profile, and current source rights for `display`,
+`machine-interpretation`, `persistent-cache`, `retention`, and `worker-access`.
+It publishes a read-only digest store and durable record containing the package
+identities, closure/use hashes, expiry, release state, and pins, then returns an
+opaque handle plus the exact archived bundle digest.
+
+`CreateBatch` independently binds the handle, exact archived
+`bundle_bytes_hash`, and canonical wire `canonical_json`; the canonical wire
+digest is intentionally not compared with the exact archived-byte digest. One
+pin is acquired per unique admission before worker creation and survives reset,
+preparation, replay, and worker restart. Failed creation and batch close release
+pins. Early client release is idempotent and defers deletion while readers are
+active. Startup reconciles records, roots, abandoned inbox files, and stale
+pins, then rechecks rights and exact bytes on recovery. Workers receive exact
+bundle bytes and rerun `verifyRunBundleBytes`; their environment-scoped digest
+reader checks closure membership and bounded ranges without exposing inbox,
+CAS, or filesystem paths. Structurally valid PBR packages may be admitted, but
+PBR execution still fails capability preflight before a worker is created.
+
+The CLI now has mutually exclusive `--package`/`--bundle` inputs. Package
+inspection is strict and offline, reporting hashes/assets while marking current
+rights and runtime support unevaluated. Package validate/run/replay require
+`--config` and automatically stage, admit, close batches, and release handles;
+bundle replay remains direct unless `--config` selects the supervisor path.
+Admission capability is checked before staging and failed attempts defensively
+unlink their staged name. Replay preserves tape expectations and
+`actionTapeHash`. Python adds
+`LoadedRunPackage`, strict streaming `load_run_package`, context-managed
+`AssetAdmission`, `SupervisorClient(..., package_inbox=None)`, atomic `0600`
+inbox staging with fsync/rename, admission-aware `create_batch`, and best-effort
+shutdown release. Existing JSON and Gymnasium/SB3 bundle workflows are
+unchanged.
+
+Local acceptance evidence:
+
+- Focused package codec/storage/admission suites passed 20/20, including the
+  VIS-13a streaming, limit, deadline, cleanup, race, concurrency, journal, and
+  unchanged-golden regressions. Focused Python bundle/client suites passed
+  26/26.
+- `npm run lint` passed with zero errors. `npm test` passed 894/896 with only
+  the two declared hardware GPU skips. `npm run test:headless` passed 88/88,
+  `npm run test:supervisor` passed 17/17, and `npm run test:cli` passed 15/15.
+- `npm run test:parity` passed state-only and CPU-LiDAR
+  browser/direct/CLI/Unix-socket/Python comparisons. Python lint passed and
+  `npm run test:python` passed 60/60. `npm run proto:python` reproduced the
+  generated bindings; `npm run build` and `npm run release:check` passed.
+- `npm run fixtures:headless` reproduced the committed characterization
+  exactly; the action-tape and characterization SHA-256 values remain
+  `1ba8c8c40e1560ac044f4ca5384065ab83c93529d65b5672fee8dc5ed42a5ced`
+  and `60dc0bd2b02a9ec768f833070ce4d8d2047f5383838f09ea3f130dd31552dd6f`.
+
+No remote/TCP distribution, managed experiment-queue admission, PBR renderer,
+installed renderer closure, Google asset, splat, registry publication, TLS, or
+authentication support was added or claimed. This protocol 1.4 activation is a
+VIS workstream change, not a headless PR 13.

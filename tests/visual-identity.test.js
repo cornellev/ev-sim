@@ -258,9 +258,9 @@ test("VIS-12a direct and supervisor reset hashes agree for legacy and v11 with e
     const supervisor = new HeadlessSupervisor({ socket: path.join(root, "supervisor.sock") });
     t.after(() => supervisor.close());
     const capabilities = await supervisor.getCapabilities({ clientProtocol: { major: 1, minor: 2 } });
-    assert.equal(capabilities.protocol.minor, 3);
+    assert.equal(capabilities.protocol.minor, 4);
     assert.deepEqual(capabilities.identityProfiles, ["world-bound@2"]);
-    assert.deepEqual(capabilities.assetAdmissionProfiles, []);
+    assert.deepEqual(capabilities.assetAdmissionProfiles, ["cev-sim.run-package@1"]);
     const legacy = await readFixture("legacy-state.v10.json");
     for (const [bundle, minor] of [[legacy, 1], [legacy, 2], [await createPortableHeadlessBundle(), 2]]) {
         const direct = new HeadlessSession();

@@ -299,6 +299,7 @@ test("supervisor-backed runner executes GPU bundles through the configured rende
 
 test("pooled renderer launches once, fixes context count, and enforces per-environment budgets", async () => {
     let starts = 0;
+    let receivedAssetReader = null;
     const adapter = {
         provenance: null,
         async start(count) {
@@ -310,7 +311,8 @@ test("pooled renderer launches once, fixes context count, and enforces per-envir
                 contextCount: count,
             };
         },
-        async captureGroup(_scene, requests) {
+        async captureGroup(_scene, requests, _context, options) {
+            receivedAssetReader = options.assetReader;
             return requests.map((request) => ({
                 id: request.id,
                 type: request.type,
@@ -328,13 +330,16 @@ test("pooled renderer launches once, fixes context count, and enforces per-envir
         globalGpuBytes: 32768,
     }, { adapterFactory: () => adapter });
     const scene = { hash: "a".repeat(64), description: { materials: [] } };
+    const assetReader = Object.freeze({ open: async () => null });
     assert.equal((await pool.probe()).available, true);
     await pool.captureGroup({
         environmentKey: "one",
         scene,
+        assetReader,
         requests: [{ id: "camera", type: "camera", width: 2, height: 2, clearColor: [0, 0, 0, 1] }],
         maxGpuBytes: 1024,
     });
+    assert.equal(receivedAssetReader, assetReader);
     assert.equal(starts, 1);
     assert.equal(pool.diagnostics().browserLaunches, 1);
     assert.equal(pool.diagnostics().contextCount, 1);
@@ -532,7 +537,7 @@ test("protocol 1.2 UDS returns large GPU observations through shared memory", {
     const capabilities = await grpcCall(client, "getCapabilities", {
         clientProtocol: { major: 1, minor: 3 },
     });
-    assert.equal(capabilities.protocol.minor, 3);
+    assert.equal(capabilities.protocol.minor, 4);
     assert.ok(capabilities.transports.includes("grpc+unix+shared-memory-v1"));
     assert.equal(capabilities.backends.find((entry) => entry.kind === 4).available, true);
     const diagnostics = JSON.parse(Buffer.from(capabilities.diagnosticJson).toString("utf8"));

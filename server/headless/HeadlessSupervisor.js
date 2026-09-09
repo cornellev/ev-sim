@@ -17,6 +17,7 @@ import { canonicalStringify } from "../../app/simulation/RunManifest.js";
 import { canonicalRunBundleStringify, verifyRunBundle, verifyRunBundleBytes } from "./RunBundle.js";
 import { WORLD_BOUND_IDENTITY_CAPABILITY } from "../../app/simulation/kernel/RunIdentity.js";
 import {
+    ERROR_CODE,
     errorStatus,
     HEADLESS_PROTOCOL,
     infrastructureResult,
@@ -29,6 +30,8 @@ import { WorkerHandle } from "./WorkerHandle.js";
 import { PooledGpuRenderer } from "./PooledGpuRenderer.js";
 import { postProcessGpuObservation } from "./GpuObservationPostProcessing.js";
 import { SharedTensorArena } from "./SharedTensorArena.js";
+import { VisualAssetAdmissionManager } from "./VisualAssetAdmission.js";
+import { RUN_PACKAGE_ERROR_CODES, VISUAL_ASSET_ERROR_CODES } from "../storage/StorageErrors.js";
 import {
     calculatePerceptionObservationBytes,
     calculateSharedTensorArenaBytes,
@@ -70,14 +73,68 @@ function ensureSortedUnique(values, label, { contiguous = false } = {}) {
     }
 }
 
-function decodeBundles(entries) {
+function admissionError(error) {
+    const mapping = {
+        [RUN_PACKAGE_ERROR_CODES.HOSTILE]: "INVALID_REQUEST",
+        [RUN_PACKAGE_ERROR_CODES.INVALID]: "BUNDLE_INVALID",
+        [RUN_PACKAGE_ERROR_CODES.CLOSURE_MISMATCH]: "BUNDLE_INVALID",
+        [RUN_PACKAGE_ERROR_CODES.RIGHTS_DENIED]: "UNSUPPORTED_CAPABILITY",
+        [RUN_PACKAGE_ERROR_CODES.TOO_LARGE]: "RESOURCE_LIMIT",
+        [RUN_PACKAGE_ERROR_CODES.TIMEOUT]: "RESOURCE_LIMIT",
+        [RUN_PACKAGE_ERROR_CODES.IO]: "ARTIFACT_FAILURE",
+        [VISUAL_ASSET_ERROR_CODES.INVALID_METADATA]: "BUNDLE_INVALID",
+        [VISUAL_ASSET_ERROR_CODES.INVALID_MEDIA]: "BUNDLE_INVALID",
+        [VISUAL_ASSET_ERROR_CODES.INVALID_GRAPH]: "BUNDLE_INVALID",
+        [VISUAL_ASSET_ERROR_CODES.RIGHTS_DENIED]: "UNSUPPORTED_CAPABILITY",
+        [VISUAL_ASSET_ERROR_CODES.REQUEST_TOO_LARGE]: "RESOURCE_LIMIT",
+        [VISUAL_ASSET_ERROR_CODES.QUOTA_EXCEEDED]: "RESOURCE_LIMIT",
+        [VISUAL_ASSET_ERROR_CODES.USE_NOT_FOUND]: "BUNDLE_INVALID",
+        [VISUAL_ASSET_ERROR_CODES.CORRUPT]: "BUNDLE_INVALID",
+        [VISUAL_ASSET_ERROR_CODES.SYMLINK]: "INVALID_REQUEST",
+        [VISUAL_ASSET_ERROR_CODES.VALIDATION_TIMEOUT]: "RESOURCE_LIMIT",
+        [VISUAL_ASSET_ERROR_CODES.DISK_FULL]: "ARTIFACT_FAILURE",
+        [VISUAL_ASSET_ERROR_CODES.SHORT_WRITE]: "ARTIFACT_FAILURE",
+    };
+    return supervisorError(mapping[error?.code] ?? "INTERNAL", error?.message || "Asset admission failed.", {
+        admissionCode: error?.code ?? "INTERNAL",
+        ...(error?.denials ? { denials: error.denials } : {}),
+    });
+}
+
+async function decodeBundles(entries, { admissionManager, protocolMinor }) {
     if (!Array.isArray(entries) || entries.length === 0) throw supervisorError("INVALID_REQUEST", "CreateBatch requires at least one run bundle.");
     const bundles = new Map();
     for (const envelope of entries) {
         const bundleId = String(envelope.bundleId || "");
         if (!bundleId || bundles.has(bundleId)) throw supervisorError("INVALID_REQUEST", "run_bundles require unique non-empty bundle_id values.");
         const bytes = Buffer.from(envelope.canonicalJson || []);
-        const verified = verifyRunBundleBytes(bytes);
+        const admissionRef = envelope.assetAdmission;
+        const admitted = Boolean(admissionRef?.handle || admissionRef?.bundleBytesHash);
+        let verified;
+        let exactBytes = bytes;
+        let admissionHandle = null;
+        if (admitted) {
+            if (protocolMinor < 4) throw supervisorError("PROTOCOL_MISMATCH", "Asset admission requires headless protocol 1.4.");
+            if (!admissionManager?.enabled) throw supervisorError("UNSUPPORTED_CAPABILITY", "Asset admission is not configured.");
+            let binding;
+            try {
+                binding = await admissionManager.bind({
+                    handle: admissionRef.handle,
+                    bundleBytesHash: admissionRef.bundleBytesHash,
+                    canonicalBytes: bytes,
+                });
+                exactBytes = Buffer.from(binding.exactBytes);
+                verified = verifyRunBundleBytes(exactBytes, {
+                    expectedBundleBytesHash: binding.record.bundleBytesHash,
+                });
+                admissionHandle = binding.record.handle;
+            } catch (error) {
+                if (Object.hasOwn(ERROR_CODE, error?.code)) throw error;
+                throw admissionError(error);
+            }
+        } else {
+            verified = verifyRunBundleBytes(bytes);
+        }
         const { bundle } = verified;
         if (!bytes.equals(Buffer.from(canonicalRunBundleStringify(bundle)))) {
             throw supervisorError("BUNDLE_INVALID", `Run bundle ${bundleId} bytes are not canonical JSON.`);
@@ -86,7 +143,7 @@ function decodeBundles(entries) {
             || String(envelope.simulationSemanticHash || "") !== verified.simulationSemanticHash) {
             throw supervisorError("BUNDLE_HASH_MISMATCH", `Run bundle ${bundleId} envelope hashes do not match its canonical bytes.`);
         }
-        bundles.set(bundleId, { bundle, verified });
+        bundles.set(bundleId, { bundle, verified, exactBytes, wireCanonicalBytes: bytes, admissionHandle });
     }
     return bundles;
 }
@@ -203,6 +260,10 @@ export class HeadlessSupervisor {
         this.rendererPool = options.rendererPool ?? new PooledGpuRenderer(this.config.renderer, {
             adapterFactory: options.rendererAdapterFactory,
         });
+        this.admissionManager = options.admissionManager ?? new VisualAssetAdmissionManager(this.config.assetAdmission, {
+            faults: options.admissionFaults,
+        });
+        this.inlineObservations = options.inlineObservations === true;
         this.batches = new Map();
         this.workers = new Set();
         this.reservedWorkers = 0;
@@ -227,7 +288,7 @@ export class HeadlessSupervisor {
         return {
             protocol: HEADLESS_PROTOCOL,
             identityProfiles: [WORLD_BOUND_IDENTITY_CAPABILITY],
-            assetAdmissionProfiles: [],
+            assetAdmissionProfiles: this.admissionManager.profile ? [this.admissionManager.profile] : [],
             runtimeName: "cev-sim",
             runtimeVersion: PACKAGE_VERSION,
             platform: process.platform,
@@ -249,14 +310,52 @@ export class HeadlessSupervisor {
         };
     }
 
+    async admitRunPackage(request = {}) {
+        const mismatch = protocolError(request.clientProtocol);
+        if (mismatch) return { error: errorStatus(mismatch) };
+        if (Number(request.clientProtocol?.minor || 0) < 4) {
+            return { error: errorStatus(supervisorError("PROTOCOL_MISMATCH", "Asset admission requires headless protocol 1.4.")) };
+        }
+        if (!this.admissionManager.enabled) {
+            return { error: errorStatus(supervisorError("UNSUPPORTED_CAPABILITY", "Same-host asset admission is unavailable on this supervisor.")) };
+        }
+        try {
+            const admission = await this.admissionManager.admit({
+                stagingId: request.stagingId,
+                archiveHash: request.archiveHash,
+            });
+            return { admission, error: okStatus() };
+        } catch (error) {
+            return { error: errorStatus(admissionError(error)) };
+        }
+    }
+
+    async releaseAssetAdmission(request = {}) {
+        if (!this.admissionManager.enabled) {
+            return { error: errorStatus(supervisorError("UNSUPPORTED_CAPABILITY", "Same-host asset admission is unavailable on this supervisor.")) };
+        }
+        try {
+            await this.admissionManager.release(String(request.handle || ""));
+            return { error: okStatus() };
+        } catch (error) {
+            return { error: errorStatus(admissionError(error)) };
+        }
+    }
+
     async createBatch(request = {}, { signal = null } = {}) {
         const created = [];
         let reservation = 0;
+        let admissionHandles = [];
+        let admissionPinsOwned = false;
         try {
             const mismatch = protocolError(request.clientProtocol);
             if (mismatch) throw mismatch;
             if (this.shuttingDown) throw supervisorError("INTERNAL", "Supervisor is shutting down.");
-            const bundles = decodeBundles(request.runBundles);
+            const protocolMinor = Number(request.clientProtocol?.minor || 0);
+            const bundles = await decodeBundles(request.runBundles, {
+                admissionManager: this.admissionManager,
+                protocolMinor,
+            });
             for (const { verified } of bundles.values()) {
                 if (Number(request.clientProtocol?.minor || 0) < verified.requiredProtocolMinor) {
                     throw supervisorError("UNSUPPORTED_CAPABILITY", "world-bound@2 requires headless protocol 1.3.");
@@ -267,6 +366,15 @@ export class HeadlessSupervisor {
             ensureSortedUnique(episodes.map((entry) => entry.environmentIndex), "episodes.environment_index", { contiguous: true });
             if (this.activeEnvironmentCount + this.reservedWorkers + episodes.length > this.config.maxWorkers) {
                 throw supervisorError("RESOURCE_LIMIT", `Creating ${episodes.length} environments exceeds supervisor capacity ${this.config.maxWorkers}.`);
+            }
+            admissionHandles = [...new Set([...bundles.values()].map((entry) => entry.admissionHandle).filter(Boolean))];
+            if (admissionHandles.length) {
+                try {
+                    await this.admissionManager.acquireBatch(admissionHandles);
+                    admissionPinsOwned = true;
+                } catch (error) {
+                    throw admissionError(error);
+                }
             }
             reservation = episodes.length;
             this.reservedWorkers += reservation;
@@ -280,8 +388,9 @@ export class HeadlessSupervisor {
                 artifactPolicy,
                 outputRoot: path.resolve(artifactPolicy.outputUri),
                 protocolMinor: Number(request.clientProtocol?.minor || 0),
-                sharedMemory: this.config.listener.kind === "socket"
+                sharedMemory: !this.inlineObservations && this.config.listener.kind === "socket"
                     && Number(request.clientProtocol?.minor || 0) >= 2,
+                admissionHandles,
             };
             for (const episodeSpec of episodes) {
                 const bundle = bundles.get(String(episodeSpec.runBundleId || ""));
@@ -343,12 +452,19 @@ export class HeadlessSupervisor {
                     recoveryPromise: null,
                     sharedArena: null,
                     transportSequence: 0n,
+                    assetReader: bundle.admissionHandle
+                        ? this.admissionManager.createDigestReader(bundle.admissionHandle, `${batch.id}:${episodeSpec.environmentIndex}`)
+                        : null,
                 };
                 if ((batch.sharedMemory || requestsGpu) && arenaBytes > 0) {
                     environment.sharedArena = await SharedTensorArena.create({
                         environmentToken: `${batch.id}:${environment.index}:${randomUUID()}`,
                         sizeBytes: Math.max(arenaBytes, 3 * 1024),
                     });
+                }
+                if (bundle.admissionHandle) {
+                    const revalidated = await this.admissionManager.revalidate(bundle.admissionHandle);
+                    bundle.exactBytes = Buffer.from(revalidated.exactBytes);
                 }
                 environment.worker = this._newWorker(environment);
                 batch.environments.push(environment);
@@ -357,6 +473,8 @@ export class HeadlessSupervisor {
             const initialized = await Promise.all(batch.environments.map(async (environment) => {
                 const response = await environment.worker.dispatch("initialize", {
                     bundle: environment.bundle.bundle,
+                    bundleBytes: environment.bundle.exactBytes,
+                    bundleBytesHash: environment.bundle.verified.bundleBytesHash,
                     episodeSpec: environment.episodeSpec,
                     limits,
                 }, { signal });
@@ -375,6 +493,7 @@ export class HeadlessSupervisor {
             }
             if (this.shuttingDown) throw supervisorError("INTERNAL", "Supervisor began shutting down during batch creation.");
             this.batches.set(batch.id, batch);
+            admissionPinsOwned = false;
             return {
                 batch: {
                     batchId: batch.id,
@@ -389,8 +508,10 @@ export class HeadlessSupervisor {
                 error: okStatus(),
             };
         } catch (error) {
+            for (const environment of created) environment.assetReader?.close();
             await Promise.allSettled(created.flatMap((environment) => [...environment.workers]).map((worker) => worker.close()));
             await Promise.allSettled(created.map((environment) => environment.sharedArena?.close()));
+            if (admissionPinsOwned) await this.admissionManager.releaseBatch(admissionHandles).catch(() => {});
             return { error: errorStatus(error) };
         } finally {
             this.reservedWorkers -= reservation;
@@ -515,6 +636,7 @@ export class HeadlessSupervisor {
             for (const environment of batch.environments) {
                 this._clearEpisodeWatchdog(environment);
                 environment.state = "closing";
+                environment.assetReader?.close();
             }
             await Promise.allSettled(batch.environments.map(async (environment) => {
                 await environment.recoveryPromise?.catch(() => {});
@@ -523,6 +645,7 @@ export class HeadlessSupervisor {
                 this.rendererPool.releaseEnvironment(`${batch.id}:${environment.index}`);
             }));
             await cleanupPartialDirectories(path.join(batch.outputRoot, batch.id));
+            await this.admissionManager.releaseBatch(batch.admissionHandles).catch(() => {});
         }
         return { batchId: batch.id, finalized, error: okStatus() };
     }
@@ -623,6 +746,7 @@ export class HeadlessSupervisor {
         await Promise.all(ids.map((batchId) => this.closeBatch({ batchId, finalizeActiveEpisodes: false })));
         await Promise.allSettled([...this.workers].map((worker) => worker.close()));
         await this.rendererPool.close();
+        await this.admissionManager.close();
     }
 
     _newWorker(environment) {
@@ -711,9 +835,15 @@ export class HeadlessSupervisor {
             }
             environment.restartCount += 1;
             try {
+                if (environment.bundle.admissionHandle) {
+                    const revalidated = await this.admissionManager.revalidate(environment.bundle.admissionHandle);
+                    environment.bundle.exactBytes = Buffer.from(revalidated.exactBytes);
+                }
                 environment.worker = this._newWorker(environment);
                 await environment.worker.dispatch("initialize", {
                     bundle: environment.bundle.bundle,
+                    bundleBytes: environment.bundle.exactBytes,
+                    bundleBytesHash: environment.bundle.verified.bundleBytesHash,
                     episodeSpec: environment.episodeSpec,
                     limits: environment.batch.limits,
                 });
@@ -802,6 +932,7 @@ export class HeadlessSupervisor {
             environmentKey: `${environment.batch.id}:${environment.index}`,
             maxGpuBytes: environment.batch.limits.maxGpuBytesPerEnvironment,
             timeoutMs: environment.batch.limits.stepWallTimeoutMs,
+            assetReader: environment.assetReader,
         });
         if (!environment.sharedArena) return captured;
         const sequence = environment.transportSequence + 1n;

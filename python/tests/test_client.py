@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+import stat
+
 import numpy as np
 import pytest
 
@@ -224,3 +227,21 @@ def test_v11_requires_explicit_identity_capability_before_batch_creation(headles
             client.create_batch(headless_fixture["bundlePath"], count=1, output_directory=tmp_path,
                                 episode=EpisodeConfig(), resource_limits=ResourceLimits(),
                                 artifact_policy=ArtifactPolicy(profile="disabled"))
+
+
+def test_python_package_staging_is_atomic_private_and_hashed(tmp_path) -> None:
+    package = tmp_path / "source.run-package"
+    package.write_bytes(b"package-bytes")
+    client = object.__new__(SupervisorClient)
+    client.package_inbox = tmp_path / "inbox"
+    expected = hashlib.sha256(b"package-bytes").hexdigest()
+    staging_id, digest, destination = client._stage_package(package, expected)
+    assert len(staging_id) == 32
+    assert digest == expected
+    assert destination.name == f"{staging_id}.run-package"
+    assert destination.read_bytes() == b"package-bytes"
+    assert stat.S_IMODE(destination.stat().st_mode) == 0o600
+    assert not list(client.package_inbox.glob("*.tmp"))
+    with pytest.raises(CevSimConfigurationError, match="changed after offline verification"):
+        client._stage_package(package, "0" * 64)
+    assert list(client.package_inbox.iterdir()) == [destination]

@@ -40,7 +40,7 @@ const DIGEST = /^[a-f0-9]{64}$/;
 export class VisualAssetStore {
     constructor(dataDir, options = {}) {
         this.dataDir = dataDir;
-        this.rootDir = path.join(dataDir, "visual-assets");
+        this.rootDir = options.rootDir ?? path.join(dataDir, "visual-assets");
         this.casDir = path.join(this.rootDir, "sha256");
         this.useDir = path.join(this.rootDir, "uses", "sha256");
         this.validationDir = path.join(this.rootDir, "validation", "sha256");
@@ -239,6 +239,31 @@ export class VisualAssetStore {
     async getUse(useHash, { optional = false } = {}) {
         await this.initialize();
         return this._readUse(useHash, { optional });
+    }
+
+    async getRoot(ownerId) {
+        await this.initialize();
+        return this._roots.roots[ownerId] ?? null;
+    }
+
+    async readPublishedBytes(digest, { expectedSize } = {}) {
+        await this.initialize();
+        const identity = await hashRegularFile(this._casPath(digest));
+        if (!identity) {
+            throw visualAssetError(VISUAL_ASSET_ERROR_CODES.CORRUPT, `Published visual asset ${digest} is missing.`);
+        }
+        if ((expectedSize != null && identity.size !== expectedSize) || identity.digest !== digest) {
+            throw visualAssetError(VISUAL_ASSET_ERROR_CODES.CORRUPT, `Published visual asset ${digest} is corrupt.`);
+        }
+        const opened = await openRegularFile(this._casPath(digest));
+        if (!opened) {
+            throw visualAssetError(VISUAL_ASSET_ERROR_CODES.CORRUPT, `Published visual asset ${digest} is missing.`);
+        }
+        try {
+            return await opened.handle.readFile();
+        } finally {
+            await opened.handle.close();
+        }
     }
 
     async getValidation(useHash, { optional = false } = {}) {

@@ -15,6 +15,7 @@ import { SupervisorRunner } from "./SupervisorRunner.js";
 import { startHeadlessSupervisor } from "./SupervisorServer.js";
 import { validateBundleWithSupervisor } from "./SupervisorValidation.js";
 import { runGpuPreflight } from "./GpuPreflight.js";
+import { verifyRunPackageArchive } from "./VisualAssetPack.js";
 
 export const CLI_EXIT = Object.freeze({
     OK: 0,
@@ -28,17 +29,17 @@ export const CLI_EXIT = Object.freeze({
 
 const VALUE_OPTIONS = new Set([
     "bundle", "episode", "output", "actions", "tape", "artifact-profile", "sflog-sample-rate",
-    "socket", "tcp", "preset", "config",
+    "socket", "tcp", "preset", "config", "package",
 ]);
 const FLAG_OPTIONS = new Set(["sflog-on-failure", "no-sflog-on-failure", "allow-remote-tcp"]);
 
 function usage() {
     return [
-        "cev-sim validate --bundle <file> [--episode <file>] [--config <supervisor.json>]",
+        "cev-sim validate (--bundle <file> | --package <file>) [--episode <file>] [--config <supervisor.json>]",
         "cev-sim create-smoke-bundle --output <bundle.json>",
-        "cev-sim inspect <bundle|output-directory|sflog>",
-        "cev-sim run --bundle <file> --output <directory> [--episode <file>] [--actions <jsonl-file>] [--config <supervisor.json>]",
-        "cev-sim replay --bundle <file> --tape <file> --output <directory>",
+        "cev-sim inspect <bundle|package|output-directory|sflog>",
+        "cev-sim run (--bundle <file> | --package <file>) --output <directory> [--episode <file>] [--actions <jsonl-file>] [--config <supervisor.json>]",
+        "cev-sim replay (--bundle <file> | --package <file>) --tape <file> --output <directory> [--config <supervisor.json>]",
         "cev-sim supervisor (--socket <path> | --tcp <host:port>) [--preset safety|permissive] [--config <json>] [--allow-remote-tcp]",
         "cev-sim gpu-preflight --config <json>",
     ].join("\n");
@@ -211,18 +212,26 @@ export async function main(argv = process.argv.slice(2), io = {}) {
             writeJson(stdout, await inspectTarget(positional[0]));
             return CLI_EXIT.OK;
         }
-        if (!options.bundle) throw new HeadlessRunnerError("USAGE", `--bundle is required for ${command}.`);
+        if (Boolean(options.bundle) === Boolean(options.package)) {
+            throw new HeadlessRunnerError("USAGE", `${command} requires exactly one of --bundle or --package.`);
+        }
+        if (options.package && !options.config) {
+            throw new HeadlessRunnerError("USAGE", `--config is required with --package for ${command}.`);
+        }
         if (positional.length > 0) throw new HeadlessRunnerError("USAGE", `Unexpected positional argument: ${positional[0]}`);
-        const { bundle } = verifyRunBundleBytes(await fs.readFile(options.bundle));
+        const packagePath = options.package || null;
+        const bundle = packagePath
+            ? (await verifyRunPackageArchive(createReadStream(packagePath))).bundle
+            : verifyRunBundleBytes(await fs.readFile(options.bundle)).bundle;
         if (command === "validate") {
-            const allowed = new Set(["bundle", "episode", "config"]);
+            const allowed = new Set(["bundle", "package", "episode", "config"]);
             const unsupported = Object.keys(options).find((key) => !allowed.has(key));
             if (unsupported) throw new HeadlessRunnerError("USAGE", `validate does not accept --${unsupported}.`);
             const episodeSpec = options.episode ? await readJson(options.episode, "episode specification") : {};
             if (options.config) {
                 const config = await readSupervisorConfig(options.config);
                 const supervisorValidator = io.supervisorValidator ?? validateBundleWithSupervisor;
-                writeJson(stdout, await supervisorValidator(bundle, { config, episodeSpec }));
+                writeJson(stdout, await supervisorValidator(bundle, { config, episodeSpec, packagePath }));
             } else {
                 writeJson(stdout, await runner.validate(bundle, { episodeSpec }));
             }
@@ -238,11 +247,15 @@ export async function main(argv = process.argv.slice(2), io = {}) {
             let final;
             if (command === "replay") {
                 if (!options.tape) throw new HeadlessRunnerError("USAGE", "--tape is required for replay.");
-                if (options.actions || options.episode || options.config) {
-                    throw new HeadlessRunnerError("USAGE", "replay takes actions and episode settings from its tape and does not accept --config.");
+                if (options.actions || options.episode) {
+                    throw new HeadlessRunnerError("USAGE", "replay takes actions and episode settings from its tape.");
                 }
                 const tape = await readJson(options.tape, "policy action tape");
-                final = await runner.replay(bundle, tape, {
+                const configured = options.config ? await readSupervisorConfig(options.config) : null;
+                const replayRunner = configured ? (io.supervisorRunner ?? new SupervisorRunner()) : runner;
+                final = await replayRunner.replay(bundle, tape, {
+                    ...(configured ? { config: configured } : {}),
+                    ...(packagePath ? { packagePath } : {}),
                     artifactPolicy: artifactPolicy(options),
                     outputUri: options.output,
                     signal: abortController.signal,
@@ -261,6 +274,7 @@ export async function main(argv = process.argv.slice(2), io = {}) {
                     : runner;
                 final = await executionRunner.run(bundle, {
                     ...(configured ? { config: configured } : {}),
+                    ...(packagePath ? { packagePath } : {}),
                     episodeSpec,
                     actions: jsonlActions(actionStream, options.actions || "stdin", abortController.signal),
                     artifactPolicy: artifactPolicy(options),

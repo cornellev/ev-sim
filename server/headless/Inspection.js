@@ -1,4 +1,4 @@
-import { promises as fs } from "node:fs";
+import { createReadStream, promises as fs } from "node:fs";
 import path from "node:path";
 
 import { decodeRecordStream } from "../../app/logging/SFLogCodec.js";
@@ -8,6 +8,7 @@ import { sha256ExactBytes } from "../../app/simulation/visual/VisualLayer.js";
 import { HeadlessRunnerError } from "./HeadlessRunnerErrors.js";
 import { renderSceneProviderRegistry } from "../../app/simulation/render/RenderSceneProviderRegistry.js";
 import { verifyRunBundleBytes, verifyRunBundleIntegrity, runBundleBytes } from "./RunBundle.js";
+import { verifyRunPackageArchive } from "./VisualAssetPack.js";
 
 async function readJson(filePath) {
     try {
@@ -111,6 +112,26 @@ export async function inspectSflog(filePath) {
     }
 }
 
+export async function inspectRunPackage(filePath) {
+    try {
+        const verified = await verifyRunPackageArchive(createReadStream(filePath));
+        return {
+            kind: "cev-sim.headless.package-inspection",
+            version: 1,
+            packageManifestHash: verified.packageManifestHash,
+            archiveHash: verified.archiveHash,
+            bundleBytesHash: verified.bundleBytesHash,
+            resolvedHash: verified.resolvedHash,
+            simulationSemanticHash: verified.simulationSemanticHash,
+            assets: verified.manifest.assets,
+            rights: { evaluated: false, reason: "Offline inspection has no trusted runtime source registry." },
+            runtimeSupport: { evaluated: false, reason: "Offline inspection validates structure, not configured renderer availability." },
+        };
+    } catch (error) {
+        throw new HeadlessRunnerError("INVALID_REQUEST", `Could not inspect run package ${filePath}: ${error.message}`, null, { cause: error });
+    }
+}
+
 export async function inspectTarget(target) {
     const absolute = path.resolve(target);
     let stat;
@@ -143,5 +164,15 @@ export async function inspectTarget(target) {
         };
     }
     if (absolute.endsWith(".sflog")) return inspectSflog(absolute);
+    const file = await fs.open(absolute, "r");
+    const prefix = Buffer.alloc(4096);
+    let length = 0;
+    try {
+        length = (await file.read(prefix, 0, prefix.length, 0)).bytesRead;
+    } finally {
+        await file.close();
+    }
+    const first = prefix.subarray(0, length).find((byte) => ![0x09, 0x0a, 0x0d, 0x20].includes(byte));
+    if (first !== 0x7b) return inspectRunPackage(absolute);
     return inspectRunBundle(verifyRunBundleBytes(await fs.readFile(absolute), { execution: false }).bundle);
 }

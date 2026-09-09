@@ -969,3 +969,16 @@ no delta; its helper explicitly retains the original v10 input contract.
 Headless PRs 1–12 remain implemented. Their hosted, release-soak, x64 NVIDIA,
 and Jetson ARM64 candidate acceptance obligations remain open as recorded;
 VIS-12a is not another numbered headless PR or visual hardware acceptance.
+
+### 2026-09-08 — VIS-13b activates same-host package admission
+
+The separate visual program raises the maximum protocol to 1.4 while retaining
+1.2 compatibility. Configured Unix-socket supervisors advertise and implement
+the already-reserved `cev-sim.run-package@1` RPC/field surface; TCP supervisors
+do not. Admission binds an opaque durable asset view to exact archived bundle
+bytes and canonical wire JSON, rechecks rights/integrity during recovery, and
+uses batch-scoped pins. CLI and Python package paths are additive; existing
+JSON bundle, Gymnasium, and SB3 behavior remains unchanged. No protobuf field
+number, episode/hash contract, simulation behavior, remote distribution, or
+PBR runtime capability changed. This is VIS-13b, not a headless PR 13, and the
+PR 12 hosted/soak/x64/Jetson candidate evidence remains outstanding.

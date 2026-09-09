@@ -1,3 +1,5 @@
+from .bundle import LoadedRunPackage, load_run_package
+from .client import AssetAdmission
 from .config import (
     CPU_LIDAR_CAPABILITY,
     CPU_LIDAR_CONFIG_HASH,
@@ -33,6 +35,7 @@ from .errors import (
 
 __all__ = [
     "ArtifactPolicy",
+    "AssetAdmission",
     "BackendSelection",
     "CPU_LIDAR_CAPABILITY",
     "CPU_LIDAR_CONFIG_HASH",
@@ -57,9 +60,11 @@ __all__ = [
     "ROUTED_GPU_SENSOR_CONFIG_HASH",
     "ROUTED_GPU_SENSOR_VERSION",
     "MEASURED_PERCEPTION_OBSERVATION_PROFILE",
+    "LoadedRunPackage",
     "ProfileRef",
     "ResourceLimits",
     "SupervisorLaunch",
+    "load_run_package",
 ]
 
 __version__ = "0.1.0"

@@ -3,7 +3,9 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import re
+import stat
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,8 +30,35 @@ class LoadedBundle:
     required_protocol_minor: int = 2
 
 
+@dataclass(frozen=True)
+class LoadedRunPackage:
+    path: Path
+    bundle: LoadedBundle
+    manifest: Mapping[str, Any]
+    archive_hash: str
+    package_manifest_hash: str
+    bundle_bytes_hash: str
+    assets: tuple[Mapping[str, Any], ...]
+
+
 BundleInput = str | Path | bytes | bytearray | Mapping[str, Any]
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
+_USTAR_BLOCK = 512
+_PACKAGE_ARCHIVE_LIMIT = 8 * 1024**3
+_PACKAGE_ASSET_LIMIT = 1024**3
+_PACKAGE_BUNDLE_LIMIT = 32 * 1024**2
+_PACKAGE_MANIFEST_LIMIT = 4 * 1024**2
+_PACKAGE_ASSET_ENTRIES = 16_384
+_ASSET_NAME_PREFIX = "assets/sha256/"
+_ASSET_MEDIA_TYPES = {
+    "application/octet-stream",
+    "image/jpeg",
+    "image/ktx2",
+    "image/png",
+    "model/gltf+json",
+    "model/gltf-binary",
+}
+_ASSET_ROLES = {"actor", "buffer", "environment-map", "mesh", "texture"}
 
 
 def _validate_sha256(value: Any, label: str) -> None:
@@ -240,4 +269,205 @@ def load_bundle(value: BundleInput, *, expected_bundle_bytes_hash: str | None = 
         canonical_json_hash=hashlib.sha256(canonical).hexdigest(),
         identity_profile=identity_profile,
         required_protocol_minor=3 if identity_profile else 2,
+    )
+
+
+def _ustar_octal(value: int, length: int) -> bytes:
+    encoded = format(value, "o").rjust(length - 1, "0")
+    if len(encoded) > length - 1:
+        raise CevSimConfigurationError("USTAR numeric field exceeds the frozen width")
+    return encoded.encode("ascii") + b"\0"
+
+
+def _ustar_header(name: str, size: int) -> bytes:
+    encoded_name = name.encode("ascii")
+    if len(encoded_name) >= 100:
+        raise CevSimConfigurationError("USTAR entry name exceeds the frozen width")
+    header = bytearray(_USTAR_BLOCK)
+    header[:len(encoded_name)] = encoded_name
+    header[100:108] = _ustar_octal(0o644, 8)
+    header[108:116] = _ustar_octal(0, 8)
+    header[116:124] = _ustar_octal(0, 8)
+    header[124:136] = _ustar_octal(size, 12)
+    header[136:148] = _ustar_octal(0, 12)
+    header[148:156] = b"        "
+    header[156] = ord("0")
+    header[257:263] = b"ustar\0"
+    header[263:265] = b"00"
+    checksum = format(sum(header), "o").rjust(6, "0").encode("ascii") + b"\0 "
+    header[148:156] = checksum
+    return bytes(header)
+
+
+def _package_manifest(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != {"kind", "version", "bundle", "assets"}:
+        raise CevSimConfigurationError("Package manifest has an invalid shape")
+    if value.get("kind") != "cev-sim.run-package" or value.get("version") != 1:
+        raise CevSimConfigurationError("Package manifest must be cev-sim.run-package version 1")
+    bundle = value.get("bundle")
+    if not isinstance(bundle, dict) or set(bundle) != {"sha256", "sizeBytes"}:
+        raise CevSimConfigurationError("Package manifest bundle identity is invalid")
+    _validate_sha256(bundle.get("sha256"), "package.bundle.sha256")
+    if type(bundle.get("sizeBytes")) is not int or not 0 <= bundle["sizeBytes"] <= _PACKAGE_BUNDLE_LIMIT:
+        raise CevSimConfigurationError("Package bundle size is invalid")
+    assets = value.get("assets")
+    if not isinstance(assets, list) or len(assets) > _PACKAGE_ASSET_ENTRIES:
+        raise CevSimConfigurationError("Package asset list exceeds its limit")
+    prior = ""
+    seen: set[str] = set()
+    for asset in assets:
+        if not isinstance(asset, dict) or set(asset) != {"sha256", "mediaType", "sizeBytes", "role"}:
+            raise CevSimConfigurationError("Package asset metadata is invalid")
+        digest = asset.get("sha256")
+        _validate_sha256(digest, "package.assets.sha256")
+        if digest in seen or digest.encode() <= prior.encode():
+            raise CevSimConfigurationError("Package assets must be unique and UTF-8 sorted")
+        seen.add(digest)
+        prior = digest
+        if type(asset.get("sizeBytes")) is not int or not 0 <= asset["sizeBytes"] <= _PACKAGE_ASSET_LIMIT:
+            raise CevSimConfigurationError("Package asset size is invalid")
+        media_type = asset.get("mediaType")
+        role = asset.get("role")
+        if media_type not in _ASSET_MEDIA_TYPES or role not in _ASSET_ROLES:
+            raise CevSimConfigurationError("Package asset media type or role is unsupported")
+        if (role == "buffer") != (media_type == "application/octet-stream"):
+            raise CevSimConfigurationError("Package buffer metadata is inconsistent")
+        if role in {"mesh", "actor"} and media_type not in {"model/gltf-binary", "model/gltf+json"}:
+            raise CevSimConfigurationError("Package mesh and actor assets must be glTF")
+        if role == "texture" and media_type not in {"image/png", "image/jpeg", "image/ktx2"}:
+            raise CevSimConfigurationError("Package texture assets must use a supported image media type")
+    return value
+
+
+def _package_closure(bundle: LoadedBundle) -> list[Mapping[str, Any]]:
+    resolved = bundle.document["resolved"]
+    render_scene = resolved.get("renderScene")
+    description = render_scene.get("description") if isinstance(render_scene, Mapping) else None
+    provider = description.get("provider") if isinstance(description, Mapping) else None
+    if not isinstance(provider, Mapping) or provider.get("id") != "pbr-mesh" or provider.get("version") != 1:
+        return []
+    closure = description.get("assetClosure")
+    assets = closure.get("assets") if isinstance(closure, Mapping) else None
+    if not isinstance(assets, list):
+        raise CevSimConfigurationError("PBR package is missing its exact asset closure")
+    return assets
+
+
+def load_run_package(path_value: str | Path) -> LoadedRunPackage:
+    # Keep the final path component unresolved so O_NOFOLLOW remains meaningful.
+    package_path = Path(path_value).expanduser().absolute()
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(package_path, flags)
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise CevSimConfigurationError("Run package must be a regular file")
+    except OSError as error:
+        raise CevSimConfigurationError(f"Could not open run package: {error}") from error
+    except Exception:
+        os.close(descriptor)
+        raise
+    archive_hasher = hashlib.sha256()
+    received = 0
+
+    def read_exact(stream: Any, size: int) -> bytes:
+        nonlocal received
+        chunks: list[bytes] = []
+        remaining = size
+        while remaining:
+            chunk = stream.read(min(1024 * 1024, remaining))
+            if not chunk:
+                raise CevSimConfigurationError("Run package archive is truncated")
+            received += len(chunk)
+            if received > _PACKAGE_ARCHIVE_LIMIT:
+                raise CevSimConfigurationError("Run package exceeds the archive-byte ceiling")
+            archive_hasher.update(chunk)
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        return b"".join(chunks)
+
+    def header(stream: Any) -> tuple[str, int] | None:
+        raw = read_exact(stream, _USTAR_BLOCK)
+        if raw == bytes(_USTAR_BLOCK):
+            return None
+        name_bytes = raw[:100].split(b"\0", 1)[0]
+        try:
+            name = name_bytes.decode("ascii")
+            size_field = raw[124:136]
+            if size_field[-1:] != b"\0" or not re.fullmatch(rb"[0-7]{11}\0", size_field):
+                raise ValueError("invalid size")
+            size = int(size_field[:-1], 8)
+        except (UnicodeError, ValueError) as error:
+            raise CevSimConfigurationError("Run package has a malformed USTAR header") from error
+        if raw != _ustar_header(name, size):
+            raise CevSimConfigurationError("Run package header does not match the frozen USTAR profile")
+        if name.startswith("/") or "\\" in name or any(part in {"", ".", ".."} for part in name.split("/")):
+            raise CevSimConfigurationError("Run package contains an unsafe entry name")
+        return name, size
+
+    def padding(stream: Any, size: int) -> None:
+        length = (-size) % _USTAR_BLOCK
+        if length and any(read_exact(stream, length)):
+            raise CevSimConfigurationError("Run package entry padding must be zero")
+
+    try:
+        with os.fdopen(descriptor, "rb", closefd=True) as stream:
+            first = header(stream)
+            if first is None or first[0] != "manifest.json" or first[1] > _PACKAGE_MANIFEST_LIMIT:
+                raise CevSimConfigurationError("manifest.json must be the first bounded package entry")
+            manifest_bytes = read_exact(stream, first[1])
+            padding(stream, first[1])
+            try:
+                manifest_value = json.loads(
+                    manifest_bytes.decode("utf-8"),
+                    object_pairs_hook=_unique_object,
+                    parse_constant=_invalid_constant,
+                )
+            except (UnicodeError, ValueError) as error:
+                raise CevSimConfigurationError(f"Package manifest JSON is invalid: {error}") from error
+            manifest = _package_manifest(manifest_value)
+            if rfc8785.dumps(manifest) != manifest_bytes:
+                raise CevSimConfigurationError("Package manifest must be exact JCS bytes")
+
+            second = header(stream)
+            if second is None or second[0] != "bundle.json" or second[1] != manifest["bundle"]["sizeBytes"]:
+                raise CevSimConfigurationError("bundle.json must match the second package entry")
+            bundle_bytes = read_exact(stream, second[1])
+            padding(stream, second[1])
+            bundle = load_bundle(bundle_bytes, expected_bundle_bytes_hash=manifest["bundle"]["sha256"])
+            if list(manifest["assets"]) != list(_package_closure(bundle)):
+                raise CevSimConfigurationError("Package asset manifest does not equal the run-bundle closure")
+
+            for asset in manifest["assets"]:
+                entry = header(stream)
+                expected_name = f"{_ASSET_NAME_PREFIX}{asset['sha256']}"
+                if entry is None or entry != (expected_name, asset["sizeBytes"]):
+                    raise CevSimConfigurationError("Package asset entries do not match the closed manifest order")
+                asset_hasher = hashlib.sha256()
+                remaining = entry[1]
+                while remaining:
+                    chunk = read_exact(stream, min(1024 * 1024, remaining))
+                    asset_hasher.update(chunk)
+                    remaining -= len(chunk)
+                if asset_hasher.hexdigest() != asset["sha256"]:
+                    raise CevSimConfigurationError("Package asset bytes do not match their digest entry")
+                padding(stream, entry[1])
+            if header(stream) is not None or header(stream) is not None:
+                raise CevSimConfigurationError("Run package must end with exactly two zero blocks")
+            if stream.read(1):
+                raise CevSimConfigurationError("Run package must not contain trailing bytes")
+    except Exception:
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+        raise
+    return LoadedRunPackage(
+        path=package_path,
+        bundle=bundle,
+        manifest=manifest,
+        archive_hash=archive_hasher.hexdigest(),
+        package_manifest_hash=hashlib.sha256(manifest_bytes).hexdigest(),
+        bundle_bytes_hash=bundle.bundle_bytes_hash,
+        assets=tuple(manifest["assets"]),
     )

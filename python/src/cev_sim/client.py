@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
+import os
+import secrets
+import stat
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
 import grpc
 
-from .bundle import BundleInput, LoadedBundle, load_bundle
+from .bundle import BundleInput, LoadedBundle, LoadedRunPackage, load_bundle, load_run_package
 from .config import (
     CPU_LIDAR_KIND,
     DEFAULT_CPU_LIDAR_BACKEND,
@@ -61,6 +65,8 @@ _COMPATIBILITY_CODES = {
     pb.ERROR_CODE_INCOMPATIBLE_SPACE,
     pb.ERROR_CODE_UNSUPPORTED_CAPABILITY,
 }
+_ASSET_ADMISSION_PROFILE = "cev-sim.run-package@1"
+_PACKAGE_ARCHIVE_LIMIT = 8 * 1024**3
 
 
 def _decode_json(value: bytes, label: str) -> Any:
@@ -185,8 +191,38 @@ def _resolved_backends(bundle: LoadedBundle, configuration: EpisodeConfig) -> tu
     return tuple(backends)
 
 
+class AssetAdmission:
+    """Context-managed same-host admission of one exact run package."""
+
+    def __init__(
+        self,
+        client: SupervisorClient,
+        package: LoadedRunPackage,
+        handle: str,
+        bundle_bytes_hash: str,
+    ) -> None:
+        self.client = client
+        self.package = package
+        self.handle = handle
+        self.bundle_bytes_hash = bundle_bytes_hash
+        self.released = False
+
+    def release(self) -> None:
+        if self.released:
+            return
+        self.client._release_admission(self)
+
+    def __enter__(self) -> AssetAdmission:
+        if self.released:
+            raise CevSimConfigurationError("Asset admission has already been released")
+        return self
+
+    def __exit__(self, _type: Any, _value: Any, _traceback: Any) -> None:
+        self.release()
+
+
 class SupervisorClient:
-    """Synchronous protocol 1.2/1.3 connection with optional process ownership."""
+    """Synchronous protocol 1.2-1.4 connection with optional process ownership."""
 
     def __init__(
         self,
@@ -195,6 +231,7 @@ class SupervisorClient:
         launch: SupervisorLaunch | None = None,
         rpc_timeout_s: float = 30.0,
         max_message_bytes: int = 64 * 1024 * 1024,
+        package_inbox: str | Path | None = None,
     ) -> None:
         if (target is None) == (launch is None):
             raise CevSimConfigurationError("Exactly one of target or launch must be supplied")
@@ -215,8 +252,14 @@ class SupervisorClient:
         self.capabilities: pb.GetCapabilitiesResponse | None = None
         self.closed = False
         self.shared_memory_transport = False
+        self.package_inbox = Path(package_inbox).expanduser().resolve() if package_inbox is not None else None
+        self._admissions: dict[str, AssetAdmission] = {}
         try:
             self.target = self._owned.start() if self._owned is not None else self._validate_target(target)
+            if self._owned is not None:
+                self.package_inbox = self._owned.package_inbox
+            elif not self.target.startswith("unix:") and self.package_inbox is not None:
+                raise CevSimConfigurationError("package_inbox is valid only for a Unix-socket supervisor")
             self.channel = grpc.insecure_channel(
                 self.target,
                 options=(
@@ -262,7 +305,7 @@ class SupervisorClient:
 
     def create_batch(
         self,
-        bundle_input: BundleInput,
+        bundle_input: BundleInput | AssetAdmission,
         *,
         count: int,
         output_directory: str | Path,
@@ -270,7 +313,13 @@ class SupervisorClient:
         resource_limits: ResourceLimits,
         artifact_policy: ArtifactPolicy,
     ) -> CevSimBatch:
-        bundle = load_bundle(bundle_input)
+        admission = bundle_input if isinstance(bundle_input, AssetAdmission) else None
+        if admission is not None:
+            if admission.client is not self or admission.released:
+                raise CevSimConfigurationError("AssetAdmission must be active and owned by this client")
+            bundle = admission.package.bundle
+        else:
+            bundle = load_bundle(bundle_input)
         if bundle.identity_profile and (self.protocol_minor < bundle.required_protocol_minor
                                        or bundle.identity_profile not in self.capabilities.identity_profiles):
             raise CevSimCompatibilityError("world-bound@2 requires supervisor protocol 1.3 and identity capability")
@@ -294,6 +343,14 @@ class SupervisorClient:
                         resolved_hash=bundle.resolved_hash,
                         canonical_json=bundle.canonical_json,
                         simulation_semantic_hash=bundle.simulation_semantic_hash,
+                        asset_admission=(
+                            pb.AssetAdmissionRef(
+                                handle=admission.handle,
+                                bundle_bytes_hash=admission.bundle_bytes_hash,
+                            )
+                            if admission is not None
+                            else None
+                        ),
                     )
                 ],
                 episodes=initial_specs,
@@ -327,6 +384,120 @@ class SupervisorClient:
             except Exception:
                 pass
             raise
+
+    def admit_run_package(self, package: LoadedRunPackage | str | Path) -> AssetAdmission:
+        loaded = package if isinstance(package, LoadedRunPackage) else load_run_package(package)
+        if self.protocol_minor < 4 or self.capabilities is None:
+            raise CevSimCompatibilityError("Run-package admission requires supervisor protocol 1.4")
+        if _ASSET_ADMISSION_PROFILE not in self.capabilities.asset_admission_profiles:
+            raise CevSimCompatibilityError("Supervisor does not advertise cev-sim.run-package@1 admission")
+        if not self.target.startswith("unix:"):
+            raise CevSimCompatibilityError("Run-package admission is available only over a same-host Unix socket")
+        if self.package_inbox is None:
+            raise CevSimConfigurationError("Externally managed Unix supervisors require package_inbox")
+        staging_id, archive_hash, staged_path = self._stage_package(loaded.path, loaded.archive_hash)
+        assert self.stub is not None
+        try:
+            response = self.call(
+                self.stub.AdmitRunPackage,
+                pb.AdmitRunPackageRequest(
+                    client_protocol=pb.ProtocolVersion(major=PROTOCOL_MAJOR, minor=self.protocol_minor),
+                    staging_id=staging_id,
+                    archive_hash=archive_hash,
+                ),
+            )
+            _raise_status(response.error)
+        finally:
+            try:
+                staged_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        if not response.admission.handle or response.admission.bundle_bytes_hash != loaded.bundle_bytes_hash:
+            if response.admission.handle:
+                try:
+                    self.call(
+                        self.stub.ReleaseAssetAdmission,
+                        pb.ReleaseAssetAdmissionRequest(handle=response.admission.handle),
+                    )
+                except Exception:
+                    pass
+            raise CevSimCompatibilityError("Supervisor returned an invalid exact-byte asset admission")
+        admission = AssetAdmission(
+            self,
+            loaded,
+            response.admission.handle,
+            response.admission.bundle_bytes_hash,
+        )
+        self._admissions[admission.handle] = admission
+        return admission
+
+    def _stage_package(self, package_path: Path, expected_archive_hash: str) -> tuple[str, str, Path]:
+        assert self.package_inbox is not None
+        self.package_inbox.mkdir(mode=0o700, parents=True, exist_ok=True)
+        staging_id = secrets.token_hex(16)
+        temporary = self.package_inbox / f".{staging_id}.{secrets.token_hex(8)}.tmp"
+        destination = self.package_inbox / f"{staging_id}.run-package"
+        hasher = hashlib.sha256()
+        source_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        output_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        source: int | None = None
+        output: int | None = None
+        published = False
+        received = 0
+        try:
+            source = os.open(package_path, source_flags)
+            source_stat = os.fstat(source)
+            if not stat.S_ISREG(source_stat.st_mode):
+                raise CevSimConfigurationError("Run package staging source must remain a regular file")
+            output = os.open(temporary, output_flags, 0o600)
+            while chunk := os.read(source, 1024 * 1024):
+                received += len(chunk)
+                if received > _PACKAGE_ARCHIVE_LIMIT:
+                    raise CevSimConfigurationError("Run package exceeds the archive-byte ceiling")
+                hasher.update(chunk)
+                offset = 0
+                while offset < len(chunk):
+                    written = os.write(output, chunk[offset:])
+                    if written <= 0:
+                        raise CevSimConfigurationError("Package staging write made no progress")
+                    offset += written
+            archive_hash = hasher.hexdigest()
+            if archive_hash != expected_archive_hash:
+                raise CevSimConfigurationError("Run package changed after offline verification")
+            os.fsync(output)
+            os.replace(temporary, destination)
+            directory = os.open(self.package_inbox, os.O_RDONLY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+            published = True
+            return staging_id, archive_hash, destination
+        finally:
+            if source is not None:
+                os.close(source)
+            if output is not None:
+                os.close(output)
+            if not published:
+                try:
+                    temporary.unlink(missing_ok=True)
+                    destination.unlink(missing_ok=True)
+                except OSError:
+                    pass
+
+    def _release_admission(self, admission: AssetAdmission) -> None:
+        if admission.released:
+            return
+        try:
+            if self.stub is not None and self.channel is not None:
+                response = self.call(
+                    self.stub.ReleaseAssetAdmission,
+                    pb.ReleaseAssetAdmissionRequest(handle=admission.handle),
+                )
+                _raise_status(response.error)
+        finally:
+            admission.released = True
+            self._admissions.pop(admission.handle, None)
 
     def _validate_capabilities(self, capabilities: pb.GetCapabilitiesResponse) -> None:
         protocol = capabilities.protocol
@@ -445,6 +616,11 @@ class SupervisorClient:
             return
         self.closed = True
         try:
+            for admission in list(self._admissions.values()):
+                try:
+                    self._release_admission(admission)
+                except Exception:
+                    pass
             if self.channel is not None:
                 self.channel.close()
         finally:

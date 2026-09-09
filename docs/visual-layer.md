@@ -32,8 +32,10 @@ and admission contracts with synthetic boundary fixtures. It does not run a
 validator or activate managed visual execution.
 VIS-12b adds conditional `pbr-mesh@1` resolution, exact render/asset resources,
 and separate source-bound run evidence for export and offline inspection.
+VIS-13a adds the frozen streaming run-package codec and authoring import/export;
+VIS-13b adds same-host package admission across the supervisor, CLI, and Python.
 Photoreal rendering, corrected GPU backend v2 execution, measured PBR cameras,
-and package admission remain unavailable.
+and PBR execution remain unavailable.
 
 The implementation authority and acceptance gates remain in
 [the visual-layer roadmap](visual-layer-plan.md). JavaScript remains the only
@@ -81,10 +83,11 @@ become collision, route, LiDAR, registry, or oracle truth.
 | Environment schema | 3 | VIS-03 |
 | Package admission | Protocol 1.4 | VIS-13b |
 
-The current runtime advertises protocol 1.3 and `identity_profiles: ["world-bound@2"]`.
-Package admission remains inactive: `asset_admission_profiles` is empty and
-the protocol 1.4 RPCs remain unimplemented. Unknown required versions, profiles,
-providers, products, or extensions fail explicitly.
+The current runtime advertises protocol 1.4 and `identity_profiles: ["world-bound@2"]`.
+Configured Unix-socket supervisors additionally advertise
+`asset_admission_profiles: ["cev-sim.run-package@1"]`; TCP and explicitly
+disabled admission advertise none and reject the admission RPC. Unknown
+required versions, profiles, providers, products, or extensions fail explicitly.
 
 ## Visual layer descriptor
 
@@ -216,8 +219,9 @@ media type, dimensions, mip expansion, bounds, and decoded-memory cost before
 `GLTFLoader` or an image decoder runs. Loader-created object URLs are allowed
 only inside that validated materialization call; authored blob, relative,
 network, and file URIs remain denied. Texture and decoder failures abort the
-whole staged preview. Archive extraction and USTAR admission remain unavailable
-until VIS-13a supplies their separate hostile-input gate.
+whole staged preview. VIS-13a verifies `cev-sim.run-package@1` USTAR archives
+and can import them into the authoring store; CLI/supervisor package execution
+remains VIS-13b.
 
 The operator-controlled `cev-sim.visual-source-registry@1` file is the only
 trusted grant source. There is no mutation API. Missing registries and unknown,
@@ -588,7 +592,11 @@ correspondence validity. Executable verification remains mandatory for browser,
 CLI run, supervisor, and worker preparation, all of which reject PBR before
 environment/sensor mutation. Provider-aware JavaScript/Python episode defaults
 select only routed GPU backend v2 for PBR and reject missing or older support.
-No asset bytes are installed by JSON import; asset packaging remains VIS-13.
+No asset bytes are installed by JSON import. VIS-13a `cev-sim.run-package@1`
+authoring export/import transfers the closed visual-asset bytes. VIS-13b adds
+protocol 1.4 same-host admission for configured Unix-socket supervisors,
+exact-byte batch binding, pinned digest-scoped access, and CLI/Python package
+flows. PBR execution remains unavailable until the renderer milestones.
 
 ## Identity projection and compatibility
 
@@ -654,11 +662,11 @@ uses exact JCS for v11. Canonical wire bytes and original pretty-printed file
 bytes can have different digests without changing normalized run identity.
 Neither byte digest is inserted into its own bundle.
 
-Python discovers capabilities with protocol 1.2, then negotiates up to 1.3.
+Python discovers capabilities with protocol 1.2, then negotiates up to 1.4.
 Legacy bundles still work with 1.2 supervisors. A v11 request requires both
 protocol 1.3 and `world-bound@2` before batch creation; the JavaScript
 supervisor remains the authoritative semantic verifier. No protobuf field
-numbers or EpisodeSpec fields changed in VIS-12a.
+numbers or EpisodeSpec fields changed in VIS-12a or VIS-13b.
 
 For environment v3, a display-only rename retains a visual binding only if the
 recomputed world hash is equal. Duplication, environment-ID changes, and
@@ -715,56 +723,84 @@ interpretation, ML, worker access, and export unless the trusted registry
 contains a reviewed operation-specific grant. Live human preview remains a
 separate permission. VIS-04 enforces these rules at visual-asset upload,
 content access, closure validation, and internal root/pin acquisition.
-Enforcement at import, bake, promotion, package, admission, and worker recovery
-lands in the owning later milestones.
+Enforcement at bake and promotion lands in their owning later milestones.
+VIS-13b re-evaluates admission rights and byte integrity at admission, batch
+pin acquisition, and worker recovery. VIS-13a re-evaluates `export` on package
+export and `persistent-cache`, `machine-interpretation`, and `retention` on
+authoring-store package import.
 
 ## Deterministic run packages
 
-`cev-sim.run-package@1` is an uncompressed USTAR archive. Entries are:
+`cev-sim.run-package@1` is an uncompressed USTAR archive. VIS-13a implements
+the codec, hostile verification, and authoring-store export/import. Entries are:
 
 1. `manifest.json`
 2. Exact received `bundle.json` bytes
 3. `assets/sha256/<digest>` entries in UTF-8 digest order
 
-The asset list includes the complete selected scene closure and referenced
-descriptor/evidence objects. The USTAR profile permits regular files only,
-mode `0644`, UID/GID and mtime zero, empty owner/group names, zero padding,
-and exactly two terminal zero blocks. It rejects compression, additional or
-duplicate entries, alternate headers, absolute/parent/encoded traversal,
-noncanonical separators, name collisions, links, devices, sparse entries,
-and trailing content.
+The canonical package manifest is exact JCS without a trailing newline:
+
+- `{ kind: "cev-sim.run-package", version: 1 }`
+- `bundle: { sha256, sizeBytes }` for the archived `bundle.json` bytes
+- digest-sorted `assets: [{ sha256, mediaType, sizeBytes, role }]`
+
+The asset list is the complete selected render-scene closure, cross-checked
+against source-use evidence. Descriptor and evidence documents travel inside
+`bundle.json`, not as extra archive entries. The USTAR profile permits regular
+files only, mode `0644`, UID/GID and mtime zero, empty owner/group names,
+canonical numeric fields, zero padding, and exactly two terminal zero blocks.
+It rejects compression, additional or duplicate entries, alternate/PAX/GNU
+headers, absolute/parent/encoded traversal, backslashes, case/Unicode
+collisions, links, devices, sparse entries, oversized entries, excessive
+counts, truncation, expansion attempts, and trailing content. Verification
+streams into an untrusted generated staging directory and never uses archive
+paths as extraction destinations.
 
 Hard ceilings are 8 GiB per archive, 1 GiB per asset, 32 MiB per bundle,
 4 MiB per package manifest, and 16,384 assets. Static asset validation also
 limits graph depth to 64, nodes to 100,000 per mesh, triangles to 4,000,000 per
 mesh, texture dimensions to 8192, and mip levels to 14. Deployments may set
-lower limits. Later implementations must additionally bound aggregate
-decoded CPU/GPU memory, concurrency, temporary bytes, and validation time.
+lower limits. VIS-13a also bounds temporary bytes, staging inodes, concurrent
+verifications, and verification time.
 
-The package manifest records `bundleBytesHash` and every asset digest. Its own
 `packageManifestHash` and the final `archiveHash` are external to the manifest
 to avoid self-reference. These exact digests are distinct from normalized
-`resolvedHash` and `simulationSemanticHash`.
+`resolvedHash` and `simulationSemanticHash`. Received legacy or pretty bundle
+bytes are preserved; the parsed document is verified separately without
+rewriting archived bytes.
 
-Protocol 1.4 admission follows this same-host flow:
+Authoring export requires current `export` permission and holds an export pin
+for the lifetime of its returned archive stream; production export never
+retains complete archive or asset buffers.
+Authoring import requires current `persistent-cache`, `machine-interpretation`,
+and `retention` permissions. The authoring document and durable package root
+are published only after every archive entry succeeds. Immutable unreferenced
+CAS bytes may remain after a late failure because published deletion stays
+disabled. Package import is storage/authoring functionality only.
+
+Protocol 1.4 admission implements this same-host flow:
 
 1. CLI or Python publishes a package under an opaque staging ID into a
    configured supervisor inbox using temp-file, file fsync, atomic rename, and
    directory fsync ordering.
-2. The supervisor independently verifies archive profile, source permissions,
-   exact bytes, full closure, provider support, and resource limits.
+2. The supervisor atomically consumes a regular single-link inbox file and
+   independently verifies archive profile/hash, source permissions, exact
+   bundle bytes, full closure, known provider/profile, static assets, and limits.
 3. It returns an opaque `AssetAdmissionRef { handle, bundle_bytes_hash }` and
    pins the read-only digest view.
-4. `CreateBatch` binds that admission to matching canonical bundle JSON. Paths,
-   handles, and roots remain operational and outside episode identity.
+4. `CreateBatch` requires handle, archived exact-byte digest, and canonical
+   wire JSON to agree. The canonical wire digest is not compared to the exact
+   archived-byte digest. Paths, handles, and roots remain operational and
+   outside episode identity.
 5. Workers receive scoped digest access. Reset candidates, queued work,
    renderer restart, and replay retain pins until access has ended.
 
-CLI `inspect`, `validate`, `run`, and supervisor-backed `replay` will accept
-package inputs after VIS-13b. Python will expose same-host stage/admit/release
-helpers while retaining ordinary JSON bundle use. Older supervisors return an
-explicit compatibility error for package inputs. JSON-only commands remain
-supported.
+CLI `inspect`, `validate`, `run`, and supervisor-backed `replay` accept package
+inputs. Python exposes `load_run_package`, context-managed `AssetAdmission`,
+and same-host stage/admit/release while retaining ordinary JSON bundle use.
+Older, TCP, and non-admission supervisors fail before Python staging. JSON-only
+commands remain supported. Rights-valid PBR packages may be admitted, but
+`CreateBatch` rejects their unavailable renderer before worker creation.
 
 Durable roots include environments, promoted descriptors, retained package
 imports, queued bundles, retained results/replays/baselines, bake inputs and

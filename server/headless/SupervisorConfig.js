@@ -2,6 +2,7 @@ import { promises as fs } from "node:fs";
 import net from "node:net";
 
 import { HeadlessRunnerError } from "./HeadlessRunnerErrors.js";
+import { resolveRunPackageLimits } from "./VisualAssetPack.js";
 
 export const SUPERVISOR_CONFIG_KIND = "cev-sim.headless-supervisor-config";
 export const SUPERVISOR_CONFIG_VERSION = 1;
@@ -101,6 +102,31 @@ function normalizeRenderer(value = {}) {
     });
 }
 
+function normalizeAssetAdmission(value, listener) {
+    const supplied = value ?? {};
+    if (!supplied || typeof supplied !== "object" || Array.isArray(supplied)) {
+        throw invalid("assetAdmission must be an object.");
+    }
+    const unix = listener.kind === "socket";
+    const enabled = supplied.enabled === undefined ? unix : Boolean(supplied.enabled);
+    if (enabled && !unix) throw invalid("assetAdmission may only be enabled for a Unix-socket supervisor.");
+    const prefix = unix ? listener.path : "";
+    const inboxDir = String(supplied.inboxDir ?? (unix ? `${prefix}.run-package-inbox` : ""));
+    const storageDir = String(supplied.storageDir ?? (unix ? `${prefix}.asset-store` : ""));
+    const registryPath = String(supplied.registryPath ?? (unix ? `${prefix}.visual-source-registry.json` : ""));
+    if (enabled && (!inboxDir || !storageDir || !registryPath)) {
+        throw invalid("Enabled assetAdmission requires inboxDir, storageDir, and registryPath.");
+    }
+    return Object.freeze({
+        enabled,
+        inboxDir,
+        storageDir,
+        registryPath,
+        unusedTtlMs: finiteInteger(supplied.unusedTtlMs ?? 60 * 60 * 1000, "assetAdmission.unusedTtlMs"),
+        limits: resolveRunPackageLimits(supplied.limits ?? {}),
+    });
+}
+
 export async function readSupervisorConfig(filePath) {
     try {
         return JSON.parse(await fs.readFile(filePath, "utf8"));
@@ -152,6 +178,7 @@ export function resolveSupervisorConfig(options = {}) {
     if (tcp && !allowRemoteTcp && !isLoopbackHost(tcp.host)) {
         throw invalid(`Refusing insecure non-loopback TCP listener ${tcp.address}; pass --allow-remote-tcp to opt in.`);
     }
+    const listener = socket ? { kind: "socket", path: String(socket) } : { kind: "tcp", ...tcp };
     return Object.freeze({
         kind: SUPERVISOR_CONFIG_KIND,
         version: SUPERVISOR_CONFIG_VERSION,
@@ -163,9 +190,10 @@ export function resolveSupervisorConfig(options = {}) {
         memoryPollIntervalMs: finiteInteger(supplied.memoryPollIntervalMs ?? 250, "memoryPollIntervalMs"),
         shutdownGraceMs: finiteInteger(supplied.shutdownGraceMs ?? 5_000, "shutdownGraceMs"),
         killGraceMs: finiteInteger(supplied.killGraceMs ?? 5_000, "killGraceMs"),
-        listener: socket ? { kind: "socket", path: String(socket) } : { kind: "tcp", ...tcp },
+        listener,
         allowRemoteTcp,
         renderer: normalizeRenderer(supplied.renderer),
+        assetAdmission: normalizeAssetAdmission(supplied.assetAdmission, listener),
     });
 }
 

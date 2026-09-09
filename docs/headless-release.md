@@ -140,11 +140,11 @@ GitHub OIDC and provenance, not long-lived tokens.
 | --- | --- | --- |
 | npm CLI/worker | `cev-sim@0.1.0` | Node `>=22.14`; Linux/macOS x64/ARM64 |
 | Python adapter | `cev-sim==0.1.0` | Python `>=3.10,<3.14`; pure Python wheel and sdist |
-| Headless protocol | `1.2` | Server accepts protocol `1.0`–`1.2`; protocol 1.1/TCP tensors remain inline |
+| Headless protocol | `1.4` | Server accepts historical JSON clients through `1.4`; package admission requires configured Unix protocol `1.4` |
 | Run manifest / bundle | `9` / `1` | Unchanged by PR 12 |
 | SFLog | `1` | Unchanged by PR 12 |
 
 `release:check` enforces coordinated root package, plugin, MCP, Python project,
-and Python runtime versions; the Apache-2.0 license; protocol 1.2; generated
+and Python runtime versions; the Apache-2.0 license; protocol 1.4; generated
 stub presence; and byte-for-byte PR 1 characterization stability. With
 `--dist`, it also verifies artifact sizes and SHA-256 records.
