@@ -302,7 +302,7 @@ def _ustar_header(name: str, size: int) -> bytes:
 def _package_manifest(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict) or set(value) != {"kind", "version", "bundle", "assets"}:
         raise CevSimConfigurationError("Package manifest has an invalid shape")
-    if value.get("kind") != "cev-sim.run-package" or value.get("version") != 1:
+    if value.get("kind") != "cev-sim.run-package" or type(value.get("version")) is not int or value["version"] != 1:
         raise CevSimConfigurationError("Package manifest must be cev-sim.run-package version 1")
     bundle = value.get("bundle")
     if not isinstance(bundle, dict) or set(bundle) != {"sha256", "sizeBytes"}:
@@ -328,7 +328,8 @@ def _package_manifest(value: Any) -> dict[str, Any]:
             raise CevSimConfigurationError("Package asset size is invalid")
         media_type = asset.get("mediaType")
         role = asset.get("role")
-        if media_type not in _ASSET_MEDIA_TYPES or role not in _ASSET_ROLES:
+        if (not isinstance(media_type, str) or not isinstance(role, str)
+                or media_type not in _ASSET_MEDIA_TYPES or role not in _ASSET_ROLES):
             raise CevSimConfigurationError("Package asset media type or role is unsupported")
         if (role == "buffer") != (media_type == "application/octet-stream"):
             raise CevSimConfigurationError("Package buffer metadata is inconsistent")
@@ -356,16 +357,22 @@ def _package_closure(bundle: LoadedBundle) -> list[Mapping[str, Any]]:
 def load_run_package(path_value: str | Path) -> LoadedRunPackage:
     # Keep the final path component unresolved so O_NOFOLLOW remains meaningful.
     package_path = Path(path_value).expanduser().absolute()
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    descriptor = None
     try:
         descriptor = os.open(package_path, flags)
         metadata = os.fstat(descriptor)
         if not stat.S_ISREG(metadata.st_mode):
             raise CevSimConfigurationError("Run package must be a regular file")
+        if metadata.st_size > _PACKAGE_ARCHIVE_LIMIT:
+            raise CevSimConfigurationError("Run package exceeds the archive-byte ceiling")
     except OSError as error:
+        if descriptor is not None:
+            os.close(descriptor)
         raise CevSimConfigurationError(f"Could not open run package: {error}") from error
     except Exception:
-        os.close(descriptor)
+        if descriptor is not None:
+            os.close(descriptor)
         raise
     archive_hasher = hashlib.sha256()
     received = 0
@@ -411,7 +418,9 @@ def load_run_package(path_value: str | Path) -> LoadedRunPackage:
             raise CevSimConfigurationError("Run package entry padding must be zero")
 
     try:
-        with os.fdopen(descriptor, "rb", closefd=True) as stream:
+        # The outer finally is the sole descriptor owner, including parse
+        # failures. Double-close can close an unrelated thread's reused fd.
+        with os.fdopen(descriptor, "rb", closefd=False) as stream:
             first = header(stream)
             if first is None or first[0] != "manifest.json" or first[1] > _PACKAGE_MANIFEST_LIMIT:
                 raise CevSimConfigurationError("manifest.json must be the first bounded package entry")
@@ -456,12 +465,10 @@ def load_run_package(path_value: str | Path) -> LoadedRunPackage:
                 raise CevSimConfigurationError("Run package must end with exactly two zero blocks")
             if stream.read(1):
                 raise CevSimConfigurationError("Run package must not contain trailing bytes")
-    except Exception:
-        try:
-            os.close(descriptor)
-        except OSError:
-            pass
-        raise
+    except OSError as error:
+        raise CevSimConfigurationError(f"Could not read run package: {error}") from error
+    finally:
+        os.close(descriptor)
     return LoadedRunPackage(
         path=package_path,
         bundle=bundle,

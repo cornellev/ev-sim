@@ -143,6 +143,22 @@ it and cannot enable it. Admission consumes a private regular single-link inbox
 file, re-verifies rights and bytes, installs a durable read-only digest view,
 and advertises the profile only when configured.
 
+The inbox and admission store must be on the same filesystem: claiming moves
+the file atomically into the store's private `processing` directory. Do not
+share one store between live supervisors. `admission-owner.json` excludes a
+live second owner; ordinary dead-owner startup recovers automatically. An
+ambiguous owner record or an interrupted stale-owner takeover fails closed.
+In that case, stop all users of the store and inspect ownership before
+removing a stale `admission-owner.json.recovery` directory; never remove a
+live owner's lock.
+
+The unused TTL starts again when the last batch pin is released (or recovered
+after process death). Client release cannot invalidate active batches.
+Shutdown drains in-flight creation and scoped readers before dropping their
+pins. Startup removes only recognized inbox staging names, preserving
+unrelated files. Python-owned supervisors derive the inbox from their private
+socket unless their launch config explicitly overrides `assetAdmission.inboxDir`.
+
 Both `defaultLimits` and `hardCeilings` may contain any resource field shown
 below. A missing field inherits the selected preset. Defaults cannot exceed
 ceilings. A batch value of zero selects the configured default; a nonzero

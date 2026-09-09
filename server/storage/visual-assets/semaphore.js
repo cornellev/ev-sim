@@ -11,13 +11,15 @@ export class Semaphore {
             return;
         }
         await new Promise((resolve) => this.waiters.push(resolve));
-        this.active += 1;
     }
 
     release() {
-        this.active = Math.max(0, this.active - 1);
         const next = this.waiters.shift();
+        // Transfer the occupied permit directly to the queued waiter. Making
+        // it briefly free lets a new acquire race the waiter's continuation
+        // and exceed the configured concurrency ceiling.
         if (next) next();
+        else this.active = Math.max(0, this.active - 1);
     }
 
     async run(fn) {

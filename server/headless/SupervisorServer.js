@@ -87,13 +87,23 @@ export async function startHeadlessSupervisor(options = {}) {
         health: unary((request) => supervisor.health(request), supervisor, { allowDuringShutdown: true }),
     });
     let address;
-    if (config.listener.kind === "socket") {
-        await prepareSocket(config.listener.path);
-        address = `unix:${config.listener.path}`;
-    } else {
-        address = config.listener.address;
+    let boundPort;
+    try {
+        // Reconcile records and acquire exclusive store ownership before
+        // announcing readiness or replacing a previous Unix socket.
+        await supervisor.admissionManager.initialize();
+        if (config.listener.kind === "socket") {
+            await prepareSocket(config.listener.path);
+            address = `unix:${config.listener.path}`;
+        } else {
+            address = config.listener.address;
+        }
+        boundPort = await bind(server, address, grpc.ServerCredentials.createInsecure());
+    } catch (error) {
+        server.forceShutdown();
+        await supervisor.close().catch(() => {});
+        throw error;
     }
-    const boundPort = await bind(server, address, grpc.ServerCredentials.createInsecure());
     let closed = false;
     return {
         supervisor,

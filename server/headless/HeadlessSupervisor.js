@@ -94,6 +94,11 @@ function admissionError(error) {
         [VISUAL_ASSET_ERROR_CODES.VALIDATION_TIMEOUT]: "RESOURCE_LIMIT",
         [VISUAL_ASSET_ERROR_CODES.DISK_FULL]: "ARTIFACT_FAILURE",
         [VISUAL_ASSET_ERROR_CODES.SHORT_WRITE]: "ARTIFACT_FAILURE",
+        ENOENT: "BUNDLE_INVALID",
+        ELOOP: "INVALID_REQUEST",
+        ENOSPC: "ARTIFACT_FAILURE",
+        EACCES: "ARTIFACT_FAILURE",
+        EIO: "ARTIFACT_FAILURE",
     };
     return supervisorError(mapping[error?.code] ?? "INTERNAL", error?.message || "Asset admission failed.", {
         admissionCode: error?.code ?? "INTERNAL",
@@ -265,6 +270,7 @@ export class HeadlessSupervisor {
         });
         this.inlineObservations = options.inlineObservations === true;
         this.batches = new Map();
+        this._creatingBatches = new Set();
         this.workers = new Set();
         this.reservedWorkers = 0;
         this.startedAt = Date.now();
@@ -343,6 +349,13 @@ export class HeadlessSupervisor {
     }
 
     async createBatch(request = {}, { signal = null } = {}) {
+        const operation = this._createBatch(request, { signal });
+        this._creatingBatches.add(operation);
+        try { return await operation; }
+        finally { this._creatingBatches.delete(operation); }
+    }
+
+    async _createBatch(request = {}, { signal = null } = {}) {
         const created = [];
         let reservation = 0;
         let admissionHandles = [];
@@ -367,6 +380,10 @@ export class HeadlessSupervisor {
             if (this.activeEnvironmentCount + this.reservedWorkers + episodes.length > this.config.maxWorkers) {
                 throw supervisorError("RESOURCE_LIMIT", `Creating ${episodes.length} environments exceeds supervisor capacity ${this.config.maxWorkers}.`);
             }
+            // Reserve synchronously with the capacity check, before admission
+            // pinning yields to another CreateBatch request.
+            reservation = episodes.length;
+            this.reservedWorkers += reservation;
             admissionHandles = [...new Set([...bundles.values()].map((entry) => entry.admissionHandle).filter(Boolean))];
             if (admissionHandles.length) {
                 try {
@@ -376,8 +393,6 @@ export class HeadlessSupervisor {
                     throw admissionError(error);
                 }
             }
-            reservation = episodes.length;
-            this.reservedWorkers += reservation;
             const limits = resolveBatchResourceLimits(request.resourceLimits, this.config);
             const artifactPolicy = normalizedArtifactPolicy(request.artifactPolicy);
             if (!artifactPolicy.outputUri) throw supervisorError("INVALID_REQUEST", "artifact_policy.output_uri is required.");
@@ -456,6 +471,7 @@ export class HeadlessSupervisor {
                         ? this.admissionManager.createDigestReader(bundle.admissionHandle, `${batch.id}:${episodeSpec.environmentIndex}`)
                         : null,
                 };
+                created.push(environment);
                 if ((batch.sharedMemory || requestsGpu) && arenaBytes > 0) {
                     environment.sharedArena = await SharedTensorArena.create({
                         environmentToken: `${batch.id}:${environment.index}:${randomUUID()}`,
@@ -468,7 +484,6 @@ export class HeadlessSupervisor {
                 }
                 environment.worker = this._newWorker(environment);
                 batch.environments.push(environment);
-                created.push(environment);
             }
             const initialized = await Promise.all(batch.environments.map(async (environment) => {
                 const response = await environment.worker.dispatch("initialize", {
@@ -508,8 +523,11 @@ export class HeadlessSupervisor {
                 error: okStatus(),
             };
         } catch (error) {
-            for (const environment of created) environment.assetReader?.close();
             await Promise.allSettled(created.flatMap((environment) => [...environment.workers]).map((worker) => worker.close()));
+            await Promise.allSettled(created.map(async (environment) => {
+                await this.rendererPool.releaseEnvironment(`${environment.batch.id}:${environment.index}`);
+                await environment.assetReader?.close();
+            }));
             await Promise.allSettled(created.map((environment) => environment.sharedArena?.close()));
             if (admissionPinsOwned) await this.admissionManager.releaseBatch(admissionHandles).catch(() => {});
             return { error: errorStatus(error) };
@@ -522,6 +540,7 @@ export class HeadlessSupervisor {
         const batch = this.batches.get(String(request.batchId || ""));
         if (!batch) return { batchId: String(request.batchId || ""), error: errorStatus(supervisorError("BATCH_NOT_FOUND", "Batch was not found.")) };
         try {
+            if (batch.closePromise) throw supervisorError("INVALID_REQUEST", "Batch is closing.");
             const episodes = request.episodes || [];
             if (episodes.length === 0) throw supervisorError("INVALID_REQUEST", "ResetBatch requires a non-empty episode subset.");
             ensureSortedUnique(episodes.map((entry) => entry.environmentIndex), "episodes.environment_index");
@@ -568,6 +587,7 @@ export class HeadlessSupervisor {
         const batch = this.batches.get(String(request.batchId || ""));
         if (!batch) return { batchId: String(request.batchId || ""), error: errorStatus(supervisorError("BATCH_NOT_FOUND", "Batch was not found.")) };
         try {
+            if (batch.closePromise) throw supervisorError("INVALID_REQUEST", "Batch is closing.");
             const ready = batch.environments.filter((environment) => environment.state === "ready");
             const actions = request.actions || [];
             ensureSortedUnique(actions.map((entry) => entry.environmentIndex), "actions.environment_index");
@@ -605,6 +625,7 @@ export class HeadlessSupervisor {
         const batch = this.batches.get(String(request.batchId || ""));
         if (!batch) return { batchId: String(request.batchId || ""), error: errorStatus(supervisorError("BATCH_NOT_FOUND", "Batch was not found.")) };
         try {
+            if (batch.closePromise) throw supervisorError("INVALID_REQUEST", "Batch is closing.");
             const supplied = request.environmentIndices || [];
             ensureSortedUnique(supplied, "environment_indices");
             const selected = supplied.length === 0
@@ -625,6 +646,12 @@ export class HeadlessSupervisor {
     async closeBatch(request = {}, { signal = null } = {}) {
         const batch = this.batches.get(String(request.batchId || ""));
         if (!batch) return { batchId: String(request.batchId || ""), error: errorStatus(supervisorError("BATCH_NOT_FOUND", "Batch was not found.")) };
+        // One close operation owns finalization, readers, and the batch pin.
+        batch.closePromise ??= this._closeBatch(batch, request, signal);
+        return batch.closePromise;
+    }
+
+    async _closeBatch(batch, request, signal) {
         const finalized = [];
         try {
             if (request.finalizeActiveEpisodes) {
@@ -632,20 +659,23 @@ export class HeadlessSupervisor {
                 finalized.push(...await Promise.all(active.map((environment) => this._finalizeEnvironment(environment, { signal }))));
             }
         } finally {
-            this.batches.delete(batch.id);
             for (const environment of batch.environments) {
                 this._clearEpisodeWatchdog(environment);
                 environment.state = "closing";
-                environment.assetReader?.close();
             }
             await Promise.allSettled(batch.environments.map(async (environment) => {
                 await environment.recoveryPromise?.catch(() => {});
                 await Promise.allSettled([...environment.workers].map((worker) => worker.close()));
                 await environment.sharedArena?.close();
-                this.rendererPool.releaseEnvironment(`${batch.id}:${environment.index}`);
+                await this.rendererPool.releaseEnvironment(`${batch.id}:${environment.index}`);
+                await environment.assetReader?.close();
             }));
-            await cleanupPartialDirectories(path.join(batch.outputRoot, batch.id));
-            await this.admissionManager.releaseBatch(batch.admissionHandles).catch(() => {});
+            try {
+                await cleanupPartialDirectories(path.join(batch.outputRoot, batch.id));
+            } finally {
+                await this.admissionManager.releaseBatch(batch.admissionHandles);
+                this.batches.delete(batch.id);
+            }
         }
         return { batchId: batch.id, finalized, error: okStatus() };
     }
@@ -739,11 +769,17 @@ export class HeadlessSupervisor {
     }
 
     async close() {
+        this._closePromise ??= this._close();
+        return this._closePromise;
+    }
+
+    async _close() {
         if (this.closed) return;
         this.closed = true;
         this.shuttingDown = true;
+        await Promise.allSettled([...this._creatingBatches]);
         const ids = [...this.batches.keys()];
-        await Promise.all(ids.map((batchId) => this.closeBatch({ batchId, finalizeActiveEpisodes: false })));
+        await Promise.allSettled(ids.map((batchId) => this.closeBatch({ batchId, finalizeActiveEpisodes: false })));
         await Promise.allSettled([...this.workers].map((worker) => worker.close()));
         await this.rendererPool.close();
         await this.admissionManager.close();

@@ -55,7 +55,9 @@ export async function openRegularFile(filePath, flags = constants.O_RDONLY) {
     if (!lstat.isFile()) {
         throw visualAssetError(VISUAL_ASSET_ERROR_CODES.CORRUPT, "Visual asset paths must be regular files.");
     }
-    const follow = constants.O_NOFOLLOW ?? 0;
+    // NONBLOCK prevents a regular-file-to-FIFO swap from blocking open before
+    // fstat can reject it. It has no effect on regular-file reads.
+    const follow = (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
     const numericFlags = typeof flags === "string"
         ? (flags.includes("w") ? constants.O_RDWR : constants.O_RDONLY) | follow
         : flags | follow;
@@ -64,6 +66,9 @@ export async function openRegularFile(filePath, flags = constants.O_RDONLY) {
         const stat = await handle.stat();
         if (stat.isSymbolicLink?.() || !stat.isFile()) {
             throw visualAssetError(VISUAL_ASSET_ERROR_CODES.SYMLINK, "Visual asset paths must be regular files, not symlinks.");
+        }
+        if (stat.dev !== lstat.dev || stat.ino !== lstat.ino) {
+            throw visualAssetError(VISUAL_ASSET_ERROR_CODES.CORRUPT, "Visual asset path changed while opening it.");
         }
         return { handle, stat };
     } catch (error) {

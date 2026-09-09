@@ -24,6 +24,7 @@ import {
 } from "../server/headless/VisualAssetPack.js";
 import { RUN_PACKAGE_ERROR_CODES } from "../server/storage/StorageErrors.js";
 import { StorageService } from "../server/storage/StorageService.js";
+import { Semaphore } from "../server/storage/visual-assets/semaphore.js";
 
 const goldenUrl = new URL("fixtures/visual-layer/run-package.canonical.v1.json", import.meta.url);
 const golden = JSON.parse(await fs.readFile(goldenUrl, "utf8"));
@@ -189,6 +190,82 @@ test("G-LIMITS reject oversized pulls, stalled streams, and zero verifier concur
         assert.deepEqual(await fs.readdir(stagingRoot), []);
     });
     assert.throws(() => resolveRunPackageLimits({ concurrentVerifications: 0 }), /greater than or equal to 1/);
+});
+
+test("G-LIMITS export deadlines and oversized pulls cannot hang in iterator cleanup", { timeout: 2000 }, async () => {
+    const { bundleBytes, assets } = goldenInputs();
+    const stalled = createRunPackageStream({
+        bundleBytes,
+        assets: [{ ...assets[0], open: async function* () { await new Promise(() => {}); } }],
+        limits: { verificationTimeoutMs: 30 },
+    });
+    await assert.rejects(async () => {
+        for await (const chunk of stalled.stream) assert.ok(chunk);
+    }, (error) => error.code === RUN_PACKAGE_ERROR_CODES.TIMEOUT);
+    await assert.rejects(stalled.completion, (error) => error.code === RUN_PACKAGE_ERROR_CODES.TIMEOUT);
+    const oversized = async function* () {
+        yield Buffer.alloc(32 * 1024 * 1024 + 1);
+        await new Promise(() => {});
+    };
+    await assert.rejects(() => verifyRunPackageArchive(oversized()),
+        (error) => error.code === RUN_PACKAGE_ERROR_CODES.TOO_LARGE);
+    const expired = createRunPackageStream({ bundleBytes, deadline: Date.now() - 1 });
+    await assert.rejects(async () => {
+        for await (const chunk of expired.stream) assert.ok(chunk);
+    }, (error) => error.code === RUN_PACKAGE_ERROR_CODES.TIMEOUT);
+});
+
+test("G-LIMITS stalled staging writes stop before cleanup and map filesystem errors", { timeout: 3000 }, async () => {
+    const analytic = await analyticArchive();
+    await withStaging(async (stagingRoot) => {
+        let unblock;
+        const gate = new Promise((resolve) => { unblock = resolve; });
+        await assert.rejects(() => verifyRunPackageArchive(analytic.bytes, {
+            stagingRoot, limits: { verificationTimeoutMs: 30 }, faults: { write: () => gate },
+        }), (error) => error.code === RUN_PACKAGE_ERROR_CODES.TIMEOUT);
+        assert.deepEqual(await fs.readdir(stagingRoot), []);
+        unblock();
+        await new Promise((resolve) => setImmediate(resolve));
+        assert.deepEqual(await fs.readdir(stagingRoot), []);
+        await assert.rejects(() => verifyRunPackageArchive(analytic.bytes, {
+            stagingRoot, faults: { write: () => { throw Object.assign(new Error("I/O fault"), { code: "EIO" }); } },
+        }), (error) => error.code === RUN_PACKAGE_ERROR_CODES.IO);
+    });
+});
+
+test("G-LIFECYCLE retained verification exposes explicit cleanup and failures retain no files", async () => {
+    const analytic = await analyticArchive();
+    const verified = await verifyRunPackageArchive(analytic.bytes, { retainStaging: true });
+    const ownedRoot = path.dirname(verified.stagingDir);
+    await fs.access(verified.stagingDir);
+    await verified.cleanup();
+    await verified.cleanup();
+    await assert.rejects(() => fs.access(ownedRoot));
+    await withStaging(async (stagingRoot) => {
+        await assert.rejects(() => verifyRunPackageArchive(Buffer.from("bad archive"), { stagingRoot, retainStaging: true }));
+        assert.deepEqual(await fs.readdir(stagingRoot), []);
+    });
+    assert.throws(() => encodeRunPackage({
+        bundleBytes: Buffer.from("{}"),
+        assets: [{ bytes: Buffer.alloc(64 * 1024 * 1024), mediaType: "application/octet-stream", role: "buffer" }],
+    }), /Buffered package encoding/);
+});
+
+test("G-LIMITS verifier permits transfer atomically to waiting requests", async () => {
+    const slots = new Semaphore(1);
+    await slots.acquire();
+    const waiting = slots.acquire();
+    slots.release();
+    let newerAcquired = false;
+    const newer = slots.acquire().then(() => { newerAcquired = true; });
+    await waiting;
+    assert.equal(slots.active, 1);
+    assert.equal(newerAcquired, false);
+    slots.release();
+    await newer;
+    assert.equal(slots.active, 1);
+    slots.release();
+    assert.equal(slots.active, 0);
 });
 
 test("G-PACKAGE identical exact inputs reproduce archive bytes while exportedAt changes identity", async () => {

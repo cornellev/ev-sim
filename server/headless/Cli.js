@@ -117,6 +117,8 @@ function artifactPolicy(options) {
 }
 
 function exitForError(error) {
+    if (error.name === "AbortError") return CLI_EXIT.INTERRUPTED;
+    if (error.code?.startsWith("RUN_PACKAGE_") || error.code?.startsWith("BUNDLE_") || error.code === "ENOENT") return CLI_EXIT.INVALID_INPUT;
     if (error instanceof HeadlessRunnerError) {
         if (error.code === "USAGE") return CLI_EXIT.USAGE;
         if (error.code === "ARTIFACT_FAILURE") return CLI_EXIT.ARTIFACT_FAILURE;
@@ -220,30 +222,32 @@ export async function main(argv = process.argv.slice(2), io = {}) {
         }
         if (positional.length > 0) throw new HeadlessRunnerError("USAGE", `Unexpected positional argument: ${positional[0]}`);
         const packagePath = options.package || null;
-        const bundle = packagePath
-            ? (await verifyRunPackageArchive(createReadStream(packagePath))).bundle
-            : verifyRunBundleBytes(await fs.readFile(options.bundle)).bundle;
-        if (command === "validate") {
-            const allowed = new Set(["bundle", "package", "episode", "config"]);
-            const unsupported = Object.keys(options).find((key) => !allowed.has(key));
-            if (unsupported) throw new HeadlessRunnerError("USAGE", `validate does not accept --${unsupported}.`);
-            const episodeSpec = options.episode ? await readJson(options.episode, "episode specification") : {};
-            if (options.config) {
-                const config = await readSupervisorConfig(options.config);
-                const supervisorValidator = io.supervisorValidator ?? validateBundleWithSupervisor;
-                writeJson(stdout, await supervisorValidator(bundle, { config, episodeSpec, packagePath }));
-            } else {
-                writeJson(stdout, await runner.validate(bundle, { episodeSpec }));
-            }
-            return CLI_EXIT.OK;
-        }
-        if (!["run", "replay"].includes(command)) throw new HeadlessRunnerError("USAGE", `Unknown command ${command}.`);
-        if (!options.output) throw new HeadlessRunnerError("USAGE", `--output is required for ${command}.`);
         const abortController = new AbortController();
-        let actionStream = null;
-        const onSigint = () => abortController.abort();
-        process.once("SIGINT", onSigint);
+        const onSignal = () => abortController.abort();
+        process.once("SIGINT", onSignal);
+        process.once("SIGTERM", onSignal);
         try {
+            const bundle = packagePath
+                ? (await verifyRunPackageArchive(createReadStream(packagePath, { signal: abortController.signal }))).bundle
+                : verifyRunBundleBytes(await fs.readFile(options.bundle)).bundle;
+            abortController.signal.throwIfAborted();
+            if (command === "validate") {
+                const allowed = new Set(["bundle", "package", "episode", "config"]);
+                const unsupported = Object.keys(options).find((key) => !allowed.has(key));
+                if (unsupported) throw new HeadlessRunnerError("USAGE", `validate does not accept --${unsupported}.`);
+                const episodeSpec = options.episode ? await readJson(options.episode, "episode specification") : {};
+                if (options.config) {
+                    const config = await readSupervisorConfig(options.config);
+                    const supervisorValidator = io.supervisorValidator ?? validateBundleWithSupervisor;
+                    writeJson(stdout, await supervisorValidator(bundle, { config, episodeSpec, packagePath, signal: abortController.signal }));
+                } else {
+                    writeJson(stdout, await runner.validate(bundle, { episodeSpec }));
+                }
+                return CLI_EXIT.OK;
+            }
+            if (!["run", "replay"].includes(command)) throw new HeadlessRunnerError("USAGE", `Unknown command ${command}.`);
+            if (!options.output) throw new HeadlessRunnerError("USAGE", `--output is required for ${command}.`);
+            let actionStream = null;
             let final;
             if (command === "replay") {
                 if (!options.tape) throw new HeadlessRunnerError("USAGE", "--tape is required for replay.");
@@ -286,7 +290,8 @@ export async function main(argv = process.argv.slice(2), io = {}) {
             if (abortController.signal.aborted || final.result.interruptedBySignal) return CLI_EXIT.INTERRUPTED;
             return final.result.passed ? CLI_EXIT.OK : CLI_EXIT.SEMANTIC_FAILURE;
         } finally {
-            process.removeListener("SIGINT", onSigint);
+            process.removeListener("SIGINT", onSignal);
+            process.removeListener("SIGTERM", onSignal);
         }
     } catch (error) {
         writeJson(stderr, {

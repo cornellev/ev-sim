@@ -365,7 +365,8 @@ test("G-LIFECYCLE import journals reconcile roots and authoring manifests after 
         throw new Error("late authoring failure");
     };
     await assert.rejects(() => target.importRunPackage(encoded.bytes), /late authoring failure/);
-    assert.equal(await target.visualAssets.getRoot(`run-package:${encoded.archiveHash}`), null);
+    assert.ok(await target.visualAssets.getRoot(`run-package:${encoded.archiveHash}`));
+    assert.equal((await fs.readdir(target.packageImportJournalDir)).length, 1);
     assert.equal(await target.getRunManifest("owned-pbr"), null);
     target.importRunBundle = original;
 
@@ -374,6 +375,65 @@ test("G-LIFECYCLE import journals reconcile roots and authoring manifests after 
     assert.equal(recovered.imports.recovered, 1);
     assert.ok(await restarted.visualAssets.getRoot(`run-package:${encoded.archiveHash}`));
     assert.ok(await restarted.getRunManifest("owned-pbr"));
+});
+
+test("G-LIFECYCLE post-commit faults retain roots and replay imports idempotently", async (t) => {
+    const { service: source } = await pbrFixture(t);
+    const encoded = await exportPackage(source, { manifestId: "owned-pbr" });
+    const targetDir = await fs.mkdtemp(path.join(os.tmpdir(), "cev-vis13-commit-fault-"));
+    t.after(() => fs.rm(targetDir, { recursive: true, force: true }));
+    const registryPath = await writeRegistry(targetDir, [ownedGrant()]);
+    const target = new StorageService(targetDir, {
+        visualAssets: { registryPath },
+        faults: { packageImportCommit: () => { throw new Error("after manifest commit"); } },
+    });
+    await assert.rejects(() => target.importRunPackage(encoded.bytes), /after manifest commit/);
+    const manifest = await target.getRunManifest("owned-pbr");
+    assert.ok(manifest);
+    assert.ok(await target.visualAssets.getRoot(`run-package:${encoded.archiveHash}`));
+    const restarted = new StorageService(targetDir, { visualAssets: { registryPath } });
+    assert.equal((await restarted.recoverRunPackages()).imports.recovered, 1);
+    assert.deepEqual(await restarted.getRunManifest("owned-pbr"), manifest);
+    assert.equal((await fs.readdir(restarted.packageImportJournalDir)).length, 0);
+    const repeated = await restarted.importRunPackage(encoded.bytes);
+    assert.equal(repeated.runManifest.id, manifest.id);
+    assert.equal(repeated.runManifest.revision, manifest.revision);
+});
+
+test("G-LIMITS unconsumed exports time out and release their pin and verifier slot", { timeout: 5000 }, async (t) => {
+    const { service } = await pbrFixture(t);
+    service._packageLimits = { ...service._packageLimits, verificationTimeoutMs: 30 };
+    const exported = await service.exportRunPackage({ manifestId: "owned-pbr" });
+    // Keep the event loop alive while the intentionally unref'ed watchdog runs.
+    const keepAlive = setInterval(() => {}, 100);
+    try {
+        await assert.rejects(exported.completion, (error) => error.code === RUN_PACKAGE_ERROR_CODES.TIMEOUT);
+        await exported.close();
+        assert.equal(Object.keys(service.visualAssets._pins.pins).length, 0);
+        assert.equal(service._packageSlots.active, 0);
+    } finally { clearInterval(keepAlive); }
+});
+
+test("G-LIFECYCLE recovery never removes a live verifier's staging directory", async (t) => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "cev-vis13-stage-race-"));
+    t.after(() => fs.rm(directory, { recursive: true, force: true }));
+    const service = new StorageService(directory);
+    const encoded = await exportPackage(service, { manifestId: "igvc-default" });
+    let unblock;
+    let entered;
+    const gate = new Promise((resolve) => { unblock = resolve; });
+    const started = new Promise((resolve) => { entered = resolve; });
+    service.faults.write = async () => { entered(); await gate; };
+    const checking = service.verifyRunPackage(encoded.bytes);
+    await started;
+    const dirs = await fs.readdir(service.packageStagingDir);
+    service.visualAssets.now = () => new Date("2099-01-01T00:00:00Z");
+    try {
+        await service.recoverRunPackages();
+        assert.deepEqual(await fs.readdir(service.packageStagingDir), dirs);
+    } finally { unblock(); }
+    await checking;
+    assert.deepEqual(await fs.readdir(service.packageStagingDir), []);
 });
 
 test("VIS-13b admits a rights-valid PBR package but rejects execution before worker creation", async (t) => {

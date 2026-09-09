@@ -1137,17 +1137,21 @@ Implement the operational admission contract through
 [HeadlessSupervisor.js](../server/headless/HeadlessSupervisor.js),
 [HeadlessWorker.js](../server/headless/HeadlessWorker.js),
 [bundle.py](../python/src/cev_sim/bundle.py), and the Python client.
-Add negotiated protobuf fields/methods if required by VIS-01's design,
-preserving field numbers and regenerating bindings.
+Activate VIS-01's already-reserved protocol 1.4 admission RPCs and fields
+unchanged; retain protocol 1.2/1.3 JSON compatibility and generated-binding
+equality. No protobuf schema or field-number change is needed.
 
 Wire exact bundle-to-package admission binding, read-only digest access,
-queued/batch/reset pins, cleanup, and inspect/validate/run/replay behavior.
+batch pins retained across reset/recovery, cleanup, and
+inspect/validate/run/replay behavior. Managed experiment-queue admission is
+VIS-15b, not part of this milestone. Inbox and admission storage must be on
+the same filesystem for atomic claiming; each store has one supervisor owner.
 Static package import can succeed independently of a renderer; execution
 still requires its advertised capability.
 
 **Merge gate:** G-PACKAGE operational paths, G-LIFECYCLE execution pins,
 G-MIGRATION protocol compatibility, Python bundle/client tests, and CLI
-tests with a fake renderer. Unsupported PBR execution fails at preflight;
+tests with a fake scoped asset reader. Unsupported PBR execution fails at preflight;
 all legacy JSON-only flows remain operational.
 
 ### VIS-14 — Browser measured cameras
@@ -2804,7 +2808,9 @@ memory, and verified assets are represented by staged paths. The bounded
 `StorageService.exportRunPackage` resolves or accepts exact bundle bytes,
 re-evaluates current `export` rights, holds an export pin, and streams the
 deterministic archive. `verifyRunPackage` is read-only archive, bundle,
-closure, rights, and asset validation. `importRunPackage` fully verifies,
+closure, rights, and asset-byte hash verification. Static media validation is
+performed during import/admission publication, not claimed by offline
+inspection. `importRunPackage` fully verifies,
 publishes source-bound uses through `VisualAssetStore` in dependency order,
 stores descriptor/access documents, acquires a retained `run-package:` root,
 and then delegates to existing bundle import. Import requires current
@@ -2912,3 +2918,96 @@ No remote/TCP distribution, managed experiment-queue admission, PBR renderer,
 installed renderer closure, Google asset, splat, registry publication, TLS, or
 authentication support was added or claimed. This protocol 1.4 activation is a
 VIS workstream change, not a headless PR 13.
+
+### 2026-09-09 — Audit VIS-13a/13b failure paths and plan boundaries
+
+Audited the VIS-13 plan, reserved wire contract, implementation, and acceptance
+claims. The plan now explicitly activates the existing protocol 1.4 fields
+unchanged and removes queued admission pins from VIS-13b; managed queue
+integration remains VIS-15b. Offline inspection verifies archive structure,
+bundle identities, closure, and asset-byte hashes. Static media validation
+happens on import/admission; offline inspection does not assert trusted rights
+or executable renderer support.
+
+VIS-13a corrections:
+
+- Stalled export producers and oversized input chunks could hang during
+  iterator cleanup. Export now has a default deadline, checks buffered output,
+  bounds chunks, and closes late-opened sources. Buffered test encoding has a
+  separate 64 MiB ceiling; production still streams the frozen full profile.
+  Unconsumed exports propagate their encoder timeout and release their pin
+  and verifier slot. Semaphore permits transfer directly to queued waiters,
+  preventing a new request from exceeding the concurrency ceiling mid-transfer.
+- Racing an entire staging writer against a timeout could leave it writing
+  after directory cleanup; small-entry writes were not deadline bounded.
+  Staging now checks each read/write boundary, bounds fault hooks, settles
+  filesystem operations before cleanup, and normalizes filesystem failures.
+- Live staging is excluded from recovery even after its TTL. Failed creation
+  and retained-verification failures clean their temporary roots; successful
+  retained verification provides explicit idempotent cleanup. Automatically
+  removed staging paths are no longer returned as usable paths.
+- Late import failures could release a root after its manifest was durable.
+  Recovery now validates journal identities/closure, preserves the journal's
+  protective root, and rolls forward idempotently using normalized authoring
+  definitions, including collision-renamed manifests. Successful export
+  completion also waits for pin cleanup.
+
+VIS-13b corrections:
+
+- Worker capacity is reserved before asynchronous pin acquisition. Failed pin
+  persistence leaves no phantom count. Concurrent batch closes share one
+  cleanup operation, partially-created environments are tracked before
+  fallible setup, and shutdown waits for in-flight creation before closing
+  the admission store.
+- Digest readers validate own closure membership, wrap filesystem streams,
+  and drain outstanding streams/pending opens on scope close. Recovery reads
+  exact bundle bytes through one bounded no-follow descriptor. Regular-file
+  opens reject inode swaps and cannot block on a substituted FIFO.
+- Admission claims move into private processing storage; malformed hash
+  attempts consume their valid staging IDs. Recovery preserves unrelated
+  inbox files and cleans abandoned package staging. Durable release tombstones
+  precede root removal, idle TTL restarts after the last batch, and exclusive
+  store ownership prevents a live second supervisor from clearing pins.
+  Network startup now completes recovery/ownership before socket readiness,
+  instead of postponing reconciliation until the first admission request.
+  Inbox/store must share a filesystem. Ambiguous ownership or a crash during
+  stale-owner takeover fails closed for operator inspection.
+- CLI package staging is size/deadline bounded, and SIGINT/SIGTERM cover
+  package verification and validation as well as execution. Python honors
+  configured owned-supervisor inboxes, closes tracked batches before releasing
+  admissions, retains failed close/release operations for retry, closes parser
+  descriptors exactly once, and rejects boolean manifest versions and malformed
+  asset metadata with typed errors.
+
+Published CAS bytes are never deleted. PBR admission remains independent of
+renderer availability, and PBR execution still fails before worker creation.
+No semantic, golden archive, protobuf, or characterization change is intended.
+
+Audit acceptance evidence (local macOS ARM64; socket suites rerun with local
+socket permission after sandbox `EPERM` failures):
+
+- Focused package codec/storage/admission suites: **33/33**. Coverage includes
+  stalled and idle exports, oversized pulls, deadline write cleanup, retained
+  temporary roots, active-stage recovery, semaphore transfer, post-commit
+  journal replay, double-close pins, capacity/shutdown races, ownership,
+  pending scoped reads, exact-byte bindings, rights revocation, and PBR
+  pre-worker rejection.
+- `npm run lint`: zero errors, two existing unrelated warnings. `npm test`:
+  **909 passed, 2 declared hardware GPU skips, 0 failures**. Headless:
+  **90/90**; supervisor: **18/18**; CLI/runner: **16/16** (including SIGTERM
+  package cleanup).
+- Python lint and full tests: **68/68**, including a real owned Unix
+  supervisor package round-trip, configured inbox, release while a batch is
+  active, shutdown cleanup, failed close/release retries, and unsupported
+  supervisors failing before staging. Protobuf regeneration equality passed.
+- State-only and CPU-LiDAR browser/direct/CLI/Unix/Python parity passed.
+  Production build and release checks passed. Fixture regeneration and
+  `git diff` confirm no golden, generated-binding, or characterization delta;
+  action-tape and characterization SHA-256 values remain
+  `1ba8c8c40e1560ac044f4ca5384065ab83c93529d65b5672fee8dc5ed42a5ced`
+  and `60dc0bd2b02a9ec768f833070ce4d8d2047f5383838f09ea3f130dd31552dd6f`.
+
+VIS-13a/13b remain implemented with these audit corrections. This evidence
+does not claim real PBR rendering, managed queue admission, remote/TCP asset
+distribution, published-asset deletion, or the outstanding headless PR 12
+hosted/hardware acceptance gates.

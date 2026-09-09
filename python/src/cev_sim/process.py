@@ -51,6 +51,11 @@ class OwnedSupervisor:
             command.extend(("--preset", self.configuration.preset))
         command.extend(self.configuration.extra_args)
         try:
+            if self.configuration.config_path is not None:
+                config = json.loads(Path(self.configuration.config_path).read_text())
+                configured_inbox = config.get("assetAdmission", {}).get("inboxDir")
+                if configured_inbox is not None:
+                    self.package_inbox = Path(configured_inbox).absolute()
             self.process = subprocess.Popen(
                 command,
                 stdin=subprocess.DEVNULL,

@@ -982,3 +982,13 @@ JSON bundle, Gymnasium, and SB3 behavior remains unchanged. No protobuf field
 number, episode/hash contract, simulation behavior, remote distribution, or
 PBR runtime capability changed. This is VIS-13b, not a headless PR 13, and the
 PR 12 hosted/soak/x64/Jetson candidate evidence remains outstanding.
+
+### 2026-09-09 — VIS-13 lifecycle audit follow-up
+
+The [VIS-13 audit decision](visual-layer-plan.md#2026-09-09--audit-vis-13a13b-failure-paths-and-plan-boundaries)
+records fixes to package import recovery, bounded streaming, admission-store
+ownership, batch pin/reservation/shutdown races, scoped-reader cleanup, and
+CLI/Python lifecycle handling. Protocol 1.4, protobuf field numbers, exact
+bundle/episode identities, and the characterization baseline are unchanged.
+This is maintenance of the separate visual milestone, not a new headless PR
+or completion of PR 12's outstanding hosted/hardware acceptance evidence.

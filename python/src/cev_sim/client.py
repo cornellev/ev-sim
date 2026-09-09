@@ -254,6 +254,7 @@ class SupervisorClient:
         self.shared_memory_transport = False
         self.package_inbox = Path(package_inbox).expanduser().resolve() if package_inbox is not None else None
         self._admissions: dict[str, AssetAdmission] = {}
+        self._batches: dict[str, CevSimBatch] = {}
         try:
             self.target = self._owned.start() if self._owned is not None else self._validate_target(target)
             if self._owned is not None:
@@ -361,20 +362,22 @@ class SupervisorClient:
         _raise_status(response.error)
         if not response.HasField("batch") or not response.batch.batch_id:
             raise CevSimCompatibilityError("CreateBatch succeeded without a batch descriptor")
-        expected_indexes = list(range(count))
-        actual_indexes = [entry.environment_index for entry in response.batch.environments]
-        if actual_indexes != expected_indexes:
-            raise CevSimCompatibilityError(
-                f"CreateBatch returned environment indexes {actual_indexes!r}, expected {expected_indexes!r}"
-            )
         try:
-            return CevSimBatch(
+            expected_indexes = list(range(count))
+            actual_indexes = [entry.environment_index for entry in response.batch.environments]
+            if actual_indexes != expected_indexes:
+                raise CevSimCompatibilityError(
+                    f"CreateBatch returned environment indexes {actual_indexes!r}, expected {expected_indexes!r}"
+                )
+            batch = CevSimBatch(
                 client=self,
                 bundle=bundle,
                 configuration=episode,
                 backends=backends,
                 descriptor=response.batch,
             )
+            self._batches[batch.batch_id] = batch
+            return batch
         except Exception:
             try:
                 self.call(
@@ -438,7 +441,7 @@ class SupervisorClient:
         temporary = self.package_inbox / f".{staging_id}.{secrets.token_hex(8)}.tmp"
         destination = self.package_inbox / f"{staging_id}.run-package"
         hasher = hashlib.sha256()
-        source_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        source_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
         output_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
         source: int | None = None
         output: int | None = None
@@ -449,6 +452,8 @@ class SupervisorClient:
             source_stat = os.fstat(source)
             if not stat.S_ISREG(source_stat.st_mode):
                 raise CevSimConfigurationError("Run package staging source must remain a regular file")
+            if source_stat.st_size > _PACKAGE_ARCHIVE_LIMIT:
+                raise CevSimConfigurationError("Run package exceeds the archive-byte ceiling")
             output = os.open(temporary, output_flags, 0o600)
             while chunk := os.read(source, 1024 * 1024):
                 received += len(chunk)
@@ -488,16 +493,16 @@ class SupervisorClient:
     def _release_admission(self, admission: AssetAdmission) -> None:
         if admission.released:
             return
-        try:
-            if self.stub is not None and self.channel is not None:
-                response = self.call(
-                    self.stub.ReleaseAssetAdmission,
-                    pb.ReleaseAssetAdmissionRequest(handle=admission.handle),
-                )
-                _raise_status(response.error)
-        finally:
-            admission.released = True
-            self._admissions.pop(admission.handle, None)
+        if self.stub is not None and self.channel is not None:
+            response = self.call(
+                self.stub.ReleaseAssetAdmission,
+                pb.ReleaseAssetAdmissionRequest(handle=admission.handle),
+            )
+            _raise_status(response.error)
+        else:
+            raise CevSimTransportError("Cannot release admission after the supervisor channel has closed")
+        admission.released = True
+        self._admissions.pop(admission.handle, None)
 
     def _validate_capabilities(self, capabilities: pb.GetCapabilitiesResponse) -> None:
         protocol = capabilities.protocol
@@ -616,6 +621,11 @@ class SupervisorClient:
             return
         self.closed = True
         try:
+            for batch in list(self._batches.values()):
+                try:
+                    batch.close(finalize_active_episodes=False)
+                except Exception:
+                    pass
             for admission in list(self._admissions.values()):
                 try:
                     self._release_admission(admission)
@@ -837,7 +847,7 @@ class CevSimBatch:
     def close(self, *, finalize_active_episodes: bool = True) -> None:
         if self.closed:
             return
-        self.closed = True
+        remote_closed = False
         try:
             response = self.client.call(
                 self.client.stub.CloseBatch,
@@ -846,12 +856,18 @@ class CevSimBatch:
                     finalize_active_episodes=finalize_active_episodes,
                 ),
             )
+            remote_closed = response.error.code in (pb.ERROR_CODE_OK, pb.ERROR_CODE_BATCH_NOT_FOUND)
+            if response.error.code == pb.ERROR_CODE_BATCH_NOT_FOUND:
+                return
             _raise_status(response.error)
             for result in response.finalized:
                 _raise_status(result.error, environment_index=result.environment_index)
         finally:
+            self.closed = remote_closed
             self.observation_codec.close()
             self.states = ["closed"] * self.count
+            if remote_closed:
+                self.client._batches.pop(self.batch_id, None)
 
     def _validate_result_indexes(
         self,

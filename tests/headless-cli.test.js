@@ -325,3 +325,41 @@ test("SIGINT finalizes an interrupted result and exits 130", async (t) => {
     assert.equal(final.result.interruptedBySignal, true);
     assert.equal(await fs.stat(path.join(output, "run-results.json")).then(() => true), true);
 });
+
+test("SIGTERM package execution closes its batch before releasing admission", { timeout: 20000 }, async (t) => {
+    const root = await temporaryRoot(t);
+    const packagePath = path.join(root, "input.run-package");
+    const configPath = path.join(root, "config.json");
+    const store = path.join(root, "store");
+    const inbox = path.join(root, "inbox");
+    await fs.writeFile(packagePath, encodeRunPackage({
+        bundleBytes: Buffer.from(JSON.stringify(await createPortableHeadlessBundle())),
+    }).bytes);
+    await writeJson(configPath, { kind: "cev-sim.headless-supervisor-config", version: 1,
+        assetAdmission: { storageDir: store, inboxDir: inbox } });
+    const result = await new Promise((resolve, reject) => {
+        const child = spawn(cliPath, ["run", "--package", packagePath, "--config", configPath,
+            "--output", path.join(root, "output"), "--artifact-profile", "disabled"],
+        { cwd: path.resolve("."), stdio: ["pipe", "pipe", "pipe"] });
+        t.after(() => { if (child.exitCode === null) child.kill("SIGKILL"); });
+        let stdout = "";
+        let stderr = "";
+        let interrupted = false;
+        child.stdout.setEncoding("utf8");
+        child.stderr.setEncoding("utf8");
+        child.stdout.on("data", (chunk) => {
+            stdout += chunk;
+            if (!interrupted && stdout.includes("cev-sim.headless.reset")) {
+                interrupted = true;
+                child.kill("SIGTERM");
+            }
+        });
+        child.stderr.on("data", (chunk) => { stderr += chunk; });
+        child.on("error", reject);
+        child.on("close", (code, signal) => resolve({ code, signal, stdout, stderr }));
+    });
+    assert.equal(result.code, 130, result.stderr);
+    assert.equal(jsonLines(result.stdout).at(-1).result.interruptedBySignal, true);
+    assert.deepEqual(await fs.readdir(path.join(store, "admissions")), []);
+    assert.deepEqual(await fs.readdir(inbox), []);
+});

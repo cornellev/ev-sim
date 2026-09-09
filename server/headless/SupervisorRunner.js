@@ -103,7 +103,9 @@ export class SupervisorRunner {
                         "Supervisor does not advertise cev-sim.run-package@1 admission.",
                     );
                 }
-                const staged = await stageRunPackage(packagePath, supervisor.config.assetAdmission.inboxDir);
+                const staged = await stageRunPackage(packagePath, supervisor.config.assetAdmission.inboxDir, {
+                    signal, limits: supervisor.config.assetAdmission.limits,
+                });
                 try {
                     const admitted = await supervisor.admitRunPackage({
                         clientProtocol: HEADLESS_PROTOCOL,
@@ -116,6 +118,7 @@ export class SupervisorRunner {
                     await fs.rm(staged.path, { force: true }).catch(() => {});
                 }
             }
+            signal?.throwIfAborted();
             const created = await supervisor.createBatch({
                 clientProtocol: HEADLESS_PROTOCOL,
                 runBundles: [{

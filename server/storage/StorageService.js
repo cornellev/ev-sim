@@ -72,7 +72,7 @@ import {
     verifyRunPackageArchive,
 } from "../headless/VisualAssetPack.js";
 import { Semaphore, createMutex } from "./visual-assets/semaphore.js";
-import { writeExclusiveFile } from "./visual-assets/atomicFs.js";
+import { fsyncDir, maybeFault, writeExclusiveFile } from "./visual-assets/atomicFs.js";
 import { computeSimulationSemanticHash } from "../../app/simulation/kernel/SimulationHashes.js";
 import { createWorldResource } from "../../app/simulation/world/WorldDescription.js";
 import { createLidarGeometryResource } from "../../app/simulation/lidar/LidarGeometry.js";
@@ -274,6 +274,7 @@ export class StorageService {
         this._packageLimits = resolveRunPackageLimits(options.visualPackages?.limits ?? {});
         this._packageSlots = new Semaphore(this._packageLimits.concurrentVerifications);
         this._packageStagingMutex = createMutex();
+        this._activePackageStages = new Set();
         this._packageImportMutex = createMutex();
         this.bakeOutputSourceIds = parseBakeOutputSourceIds(
             options.bakeOutputSourceIds ?? process.env.CEV_SIM_BAKE_OUTPUT_SOURCE_IDS,
@@ -1818,10 +1819,12 @@ export class StorageService {
             }
         }
         const existingManifest = await this.getRunManifest(incoming.id);
-        if (existingManifest && semanticHash(existingManifest) === semanticHash(incoming)) {
+        if (existingManifest && semanticHash(normalizeRunManifest(existingManifest)) === semanticHash(incoming)) {
             return existingManifest;
         }
         if (existingManifest) incoming.id = `${incoming.id}-${bundle.resolvedHash.slice(0, 8)}`;
+        const retryManifest = await this.getRunManifest(incoming.id);
+        if (retryManifest && semanticHash(normalizeRunManifest(retryManifest)) === semanticHash(incoming)) return retryManifest;
         return this.createRunManifest(incoming);
     }
 
@@ -1831,6 +1834,7 @@ export class StorageService {
             return recoverPackageStaging(this.packageStagingDir, {
                 ttlMs: this._packageLimits.abandonedStageTtlMs,
                 now: this.visualAssets.now,
+                active: this._activePackageStages,
             });
         });
         const imports = await this._recoverPackageImports();
@@ -1850,8 +1854,8 @@ export class StorageService {
                     await this._completePackageImport(journal, journalPath);
                     recovered += 1;
                 } catch {
-                    // Retain the journal for a later retry. _completePackageImport
-                    // releases a root acquired by a failed attempt.
+                    // Keep the write-ahead journal and its protective root. A
+                    // failed authoring write may already be durably committed.
                 }
             }
             return { recovered, pending: names.length - recovered };
@@ -1859,35 +1863,39 @@ export class StorageService {
     }
 
     async _completePackageImport(journal, journalPath) {
+        if (journal.kind !== "cev-sim.run-package-import-journal" || journal.version !== 1
+            || !/^[a-f0-9]{64}$/.test(journal.archiveHash)
+            || journal.ownerId !== `run-package:${journal.archiveHash}`
+            || path.basename(journalPath) !== `${journal.archiveHash}.json`) {
+            throw visualAssetError(RUN_PACKAGE_ERROR_CODES.INVALID, "Package import journal identity is invalid.");
+        }
         const loaded = verifyRunBundleBytes(Buffer.from(journal.bundleBytes, "base64"), { execution: false });
         if (loaded.bundleBytesHash !== journal.bundleBytesHash) {
             throw visualAssetError(RUN_PACKAGE_ERROR_CODES.INVALID, "Package import journal bundle bytes are corrupt.");
         }
         await this._assertPackageRights(loaded.bundle, [...RUN_PACKAGE_IMPORT_OPERATIONS]);
-        let root = await this.visualAssets.getRoot(journal.ownerId);
-        let acquired = false;
-        try {
-            if (!root) {
-                root = await this.visualAssets.acquireRoot({
-                    ownerId: journal.ownerId,
-                    ownerKind: "run-package",
-                    useHashes: journal.useHashes,
-                    operations: [...RUN_PACKAGE_IMPORT_OPERATIONS],
-                });
-                acquired = true;
-            }
-            const runManifest = await this.importRunBundle(loaded.bundle);
-            await fs.rm(journalPath, { force: true });
-            return { root, runManifest };
-        } catch (error) {
-            if (acquired && root) {
-                await this.visualAssets.releaseRoot({
-                    ownerId: journal.ownerId,
-                    expectedGeneration: root.generation,
-                }).catch(() => {});
-            }
-            throw error;
+        const useHashes = [...new Set((loaded.bundle.resolved?.evidence?.visualAssets?.uses ?? []).map((entry) => entry.useHash))].sort();
+        if (JSON.stringify(journal.useHashes) !== JSON.stringify(useHashes)) {
+            throw visualAssetError(RUN_PACKAGE_ERROR_CODES.INVALID, "Package import journal closure is corrupt.");
         }
+        let root = await this.visualAssets.getRoot(journal.ownerId);
+        if (!root) {
+            root = await this.visualAssets.acquireRoot({
+                ownerId: journal.ownerId,
+                ownerKind: "run-package",
+                useHashes,
+                operations: [...RUN_PACKAGE_IMPORT_OPERATIONS],
+            });
+        } else if (root.ownerKind !== "run-package" || JSON.stringify(root.useHashes) !== JSON.stringify(useHashes)) {
+            throw visualAssetError(RUN_PACKAGE_ERROR_CODES.INVALID, "Package import root closure is corrupt.");
+        }
+        // Roll forward, never release the root after an ambiguous authoring
+        // failure. The journal durably owns it until idempotent replay succeeds.
+        const runManifest = await this.importRunBundle(loaded.bundle);
+        await maybeFault(this.faults, "packageImportCommit");
+        await fs.rm(journalPath, { force: true });
+        await fsyncDir(this.packageImportJournalDir);
+        return { root, runManifest };
     }
 
     async _journalPackageImport(journal, journalPath) {
@@ -1911,8 +1919,11 @@ export class StorageService {
             await recoverPackageStaging(this.packageStagingDir, {
                 ttlMs: this._packageLimits.abandonedStageTtlMs,
                 now: this.visualAssets.now,
+                active: this._activePackageStages,
             });
-            return createPackageStagingDir(this.packageStagingDir);
+            const staging = await createPackageStagingDir(this.packageStagingDir);
+            this._activePackageStages.add(staging.dir);
+            return staging;
         });
     }
 
@@ -2040,6 +2051,7 @@ export class StorageService {
                         manifest: completed.manifest,
                         obligations: decision.obligations,
                     });
+                    await cleanup();
                     settled = true;
                     resolveCompletion(result);
                 } catch (error) {
@@ -2057,6 +2069,17 @@ export class StorageService {
                 }
             })(this));
             stream.on("error", () => {});
+            // The encoder can time out before this wrapper is ever pulled.
+            // Propagate that failure so idle exports cannot retain a pin and
+            // verification slot indefinitely.
+            encoded.completion.catch(async (error) => {
+                if (!settled) {
+                    settled = true;
+                    rejectCompletion(error);
+                }
+                stream.destroy(error);
+                await cleanup();
+            }).catch(() => {});
             stream.once("close", () => {
                 if (!settled) {
                     settled = true;
@@ -2125,6 +2148,7 @@ export class StorageService {
                     canonicalBundleBytes: Buffer.from(verified.canonicalBundle, "utf8").equals(verified.bundleBytes),
                 });
             } finally {
+                this._activePackageStages.delete(staging.dir);
                 await fs.rm(staging.dir, { recursive: true, force: true });
             }
         });
@@ -2193,6 +2217,7 @@ export class StorageService {
                     runManifest: authoring,
                 };
             } finally {
+                this._activePackageStages.delete(staging.dir);
                 await fs.rm(staging.dir, { recursive: true, force: true });
             }
         });

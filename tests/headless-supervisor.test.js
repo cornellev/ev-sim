@@ -152,6 +152,23 @@ async function waitFor(predicate, timeoutMs = 10_000) {
     throw new Error(`Condition was not met within ${timeoutMs} ms.`);
 }
 
+test("VIS-13b Unix startup owns and reconciles admission storage before the first RPC", async (t) => {
+    const root = await temporaryRoot(t);
+    const socket = path.join(root, "startup.sock");
+    const storageDir = `${socket}.asset-store`;
+    const processingDir = path.join(storageDir, "processing");
+    await fs.mkdir(processingDir, { recursive: true });
+    const abandoned = path.join(processingDir, `${"a".repeat(32)}-${"a".repeat(36)}.run-package`);
+    await fs.writeFile(abandoned, "abandoned");
+    const running = await startHeadlessSupervisor({ socket });
+    t.after(() => running.close());
+    assert.ok(running.supervisor.admissionManager._ownerToken);
+    await assert.rejects(() => fs.access(abandoned));
+    await fs.access(path.join(storageDir, "admission-owner.json"));
+    await running.close();
+    await assert.rejects(() => fs.access(path.join(storageDir, "admission-owner.json")));
+});
+
 test("protocol 1.2, dynamic schema, presets, config precedence, and TCP protection", async () => {
     const { service } = loadHeadlessGrpcSchema();
     assert.ok(service.service.CreateBatch);

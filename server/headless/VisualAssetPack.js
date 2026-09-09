@@ -15,8 +15,8 @@ import {
     sha256ExactBytes,
 } from "../../app/simulation/visual/VisualLayer.js";
 import { compareUtf8 } from "../../app/simulation/world/WorldDescription.js";
-import { RUN_PACKAGE_ERROR_CODES, visualAssetError } from "../storage/StorageErrors.js";
-import { maybeFault, streamToFile, writeExclusiveFile } from "../storage/visual-assets/atomicFs.js";
+import { RUN_PACKAGE_ERROR_CODES, VISUAL_ASSET_ERROR_CODES, visualAssetError } from "../storage/StorageErrors.js";
+import { fsyncDir, mapFsError, maybeFault, writeExclusiveFile } from "../storage/visual-assets/atomicFs.js";
 import { canonicalRunBundleStringify, verifyRunBundleBytes } from "./RunBundle.js";
 
 export const USTAR_BLOCK_SIZE = 512;
@@ -87,6 +87,8 @@ function deadlineError() {
 }
 
 async function beforeDeadline(promise, deadline) {
+    // Observe the operation even when the deadline expired before this call.
+    Promise.resolve(promise).catch(() => {});
     if (!Number.isFinite(deadline)) return promise;
     const remaining = deadline - Date.now();
     if (remaining <= 0) throw deadlineError();
@@ -101,6 +103,62 @@ async function beforeDeadline(promise, deadline) {
     } finally {
         clearTimeout(timer);
     }
+}
+
+function checkDeadline(deadline) {
+    if (Date.now() >= deadline) throw deadlineError();
+}
+
+async function closeIterator(iterator, readable) {
+    readable?.destroy?.();
+    const closing = Promise.resolve(iterator?.return?.()).catch(() => {});
+    // A pending next() on an uncooperative producer must not hold cleanup open.
+    await Promise.race([closing, new Promise((resolve) => setImmediate(resolve))]);
+}
+
+export function mapRunPackageError(error) {
+    const mapped = mapFsError(error);
+    if (Object.values(RUN_PACKAGE_ERROR_CODES).includes(mapped?.code)
+        || Object.values(VISUAL_ASSET_ERROR_CODES).includes(mapped?.code)
+        || mapped?.name === "AbortError") return mapped;
+    return runPackageError(RUN_PACKAGE_ERROR_CODES.IO, `Run package I/O failed: ${mapped.message}`);
+}
+
+// Do not race a whole writer against a timer: it could continue writing after
+// its staging directory has been removed. Bound producers/fault hooks, and
+// settle each filesystem operation before cleanup, checking every boundary.
+async function stageFile(chunks, filePath, size, deadline, faults) {
+    checkDeadline(deadline);
+    const handle = await fs.open(filePath, "wx", 0o600);
+    const hasher = createHash("sha256");
+    let received = 0;
+    try {
+        for await (const chunk of chunks) {
+            checkDeadline(deadline);
+            received += chunk.length;
+            if (received > size) throw runPackageError(RUN_PACKAGE_ERROR_CODES.INVALID, "Staged entry exceeds its declared size.");
+            await beforeDeadline(maybeFault(faults, "write"), deadline);
+            checkDeadline(deadline);
+            const written = await handle.write(chunk);
+            if (written.bytesWritten !== chunk.length) {
+                throw visualAssetError(VISUAL_ASSET_ERROR_CODES.SHORT_WRITE, "Package staging write was shorter than requested.");
+            }
+            checkDeadline(deadline);
+            hasher.update(chunk);
+        }
+        if (received !== size) throw runPackageError(RUN_PACKAGE_ERROR_CODES.INVALID, "Staged entry is truncated.");
+        await beforeDeadline(maybeFault(faults, "fsync"), deadline);
+        checkDeadline(deadline);
+        await handle.sync();
+        checkDeadline(deadline);
+    } finally {
+        await handle.close();
+    }
+    await beforeDeadline(maybeFault(faults, "dirFsync"), deadline);
+    checkDeadline(deadline);
+    await fsyncDir(path.dirname(filePath));
+    checkDeadline(deadline);
+    return { received, digest: hasher.digest("hex") };
 }
 
 function asBytes(value, path = "bytes") {
@@ -388,8 +446,16 @@ function assertAssetListMatch(expected, actual, label) {
 
 export function encodeRunPackage({ bundleBytes, assets = [] }) {
     const bundle = asBytes(bundleBytes, "bundle.json");
+    // This test convenience must not attempt multi-gigabyte Buffer.concat.
+    // Operational callers use createRunPackageStream and the full profile.
+    const bufferedLimit = 64 * 1024 * 1024;
+    let contentBytes = bundle.length;
     const prepared = assets.map((entry, index) => {
         const bytes = asBytes(entry.bytes, `assets[${index}]`);
+        contentBytes += bytes.length;
+        if (contentBytes > bufferedLimit) {
+            throw runPackageError(RUN_PACKAGE_ERROR_CODES.TOO_LARGE, "Buffered package encoding is limited to 64 MiB; use createRunPackageStream.");
+        }
         return {
             ...normalizeVisualAssetReference({
                 sha256: entry.sha256 ?? sha256ExactBytes(bytes),
@@ -410,6 +476,11 @@ export function encodeRunPackage({ bundleBytes, assets = [] }) {
     const manifestBytes = Buffer.from(canonicalExactStringify(manifest), "utf8");
     if (manifestBytes.length > RUN_PACKAGE_PROFILE.limits.manifestBytes) {
         throw runPackageError(RUN_PACKAGE_ERROR_CODES.TOO_LARGE, "Package manifest exceeds the 4 MiB ceiling.");
+    }
+    const archiveBytes = 1024 + [manifestBytes, bundle, ...prepared.map((asset) => asset.bytes)]
+        .reduce((size, bytes) => size + 512 + bytes.length + padToBlock(bytes.length), 0);
+    if (archiveBytes > bufferedLimit) {
+        throw runPackageError(RUN_PACKAGE_ERROR_CODES.TOO_LARGE, "Buffered package encoding is limited to 64 MiB; use createRunPackageStream.");
     }
     const hasher = createHash("sha256");
     const chunks = [];
@@ -449,10 +520,11 @@ export function encodeRunPackage({ bundleBytes, assets = [] }) {
 export function createRunPackageStream({
     bundleBytes,
     assets = [],
-    deadline = Number.POSITIVE_INFINITY,
+    deadline,
     limits: limitOverrides = {},
 } = {}) {
     const limits = resolveRunPackageLimits(limitOverrides);
+    deadline ??= Date.now() + limits.verificationTimeoutMs;
     const bundle = asBytes(bundleBytes, "bundle.json");
     if (bundle.length > limits.bundleBytes) {
         throw runPackageError(RUN_PACKAGE_ERROR_CODES.TOO_LARGE, "Package bundle exceeds the 32 MiB ceiling.");
@@ -501,6 +573,7 @@ export function createRunPackageStream({
         const archiveHasher = createHash("sha256");
         let archiveBytes = 0;
         const emit = (chunk) => {
+            checkDeadline(deadline);
             archiveBytes += chunk.length;
             if (archiveBytes > limits.archiveBytes) {
                 throw runPackageError(RUN_PACKAGE_ERROR_CODES.TOO_LARGE, "Package archive exceeds the 8 GiB ceiling.");
@@ -519,12 +592,23 @@ export function createRunPackageStream({
             yield* emitSmallEntry(BUNDLE_ENTRY_NAME, bundle);
             for (const asset of prepared) {
                 yield emit(encodeUstarHeader({ name: expectedAssetName(asset.sha256), size: asset.sizeBytes }));
-                const source = asset.source?.open
-                    ? await beforeDeadline(Promise.resolve(asset.source.open()), deadline)
-                    : asset.source?.stream ?? (asset.source?.path
+                let cancelledOpen = false;
+                const opening = asset.source?.open ? Promise.resolve(asset.source.open()).then(async (source) => {
+                    if (cancelledOpen) await closeIterator(source?.[Symbol.asyncIterator]?.(), source);
+                    return source;
+                }) : null;
+                let source;
+                try {
+                    source = opening ? await beforeDeadline(opening, deadline)
+                        : asset.source?.stream ?? (asset.source?.path
                         ? createReadStream(asset.source.path)
                         : Readable.from(asBytes(asset.source?.bytes, asset.sha256)));
-                const iterator = Readable.from(source)[Symbol.asyncIterator]();
+                } catch (error) {
+                    cancelledOpen = true;
+                    throw error;
+                }
+                const readable = Readable.from(source);
+                const iterator = readable[Symbol.asyncIterator]();
                 const assetHasher = createHash("sha256");
                 let received = 0;
                 try {
@@ -532,6 +616,9 @@ export function createRunPackageStream({
                         const next = await beforeDeadline(iterator.next(), deadline);
                         if (next.done) break;
                         const chunk = Buffer.isBuffer(next.value) ? next.value : Buffer.from(next.value);
+                        if (chunk.length > MAX_ARCHIVE_INPUT_CHUNK_BYTES) {
+                            throw runPackageError(RUN_PACKAGE_ERROR_CODES.TOO_LARGE, "Package asset input chunk exceeds the streaming ceiling.");
+                        }
                         received += chunk.length;
                         if (received > asset.sizeBytes) {
                             throw runPackageError(RUN_PACKAGE_ERROR_CODES.INVALID, `Asset ${asset.sha256} exceeds its declared size.`);
@@ -540,7 +627,7 @@ export function createRunPackageStream({
                         yield emit(chunk);
                     }
                 } finally {
-                    await Promise.resolve(iterator.return?.()).catch(() => {});
+                    await closeIterator(iterator, readable);
                 }
                 if (received !== asset.sizeBytes || assetHasher.digest("hex") !== asset.sha256) {
                     throw runPackageError(RUN_PACKAGE_ERROR_CODES.INVALID, `Asset ${asset.sha256} bytes do not match their declared identity.`);
@@ -567,7 +654,14 @@ export function createRunPackageStream({
         }
     };
     const stream = Readable.from(generator());
+    stream.on("error", () => {});
+    const timer = Number.isFinite(deadline) ? setTimeout(() => {
+        rejectCompletion(deadlineError());
+        stream.destroy(deadlineError());
+    }, Math.max(1, deadline - Date.now())) : null;
+    timer?.unref?.();
     stream.once("close", () => {
+        clearTimeout(timer);
         if (settled) return;
         settled = true;
         rejectCompletion(runPackageError(RUN_PACKAGE_ERROR_CODES.IO, "Run package stream was closed before completion."));
@@ -658,6 +752,7 @@ class ArchiveReader {
     }
 
     async fill(size) {
+        checkDeadline(this.deadline);
         while (this.pending.length < size && this.iterator) {
             const next = await beforeDeadline(this.iterator.next(), this.deadline);
             if (next.done) {
@@ -667,8 +762,7 @@ class ArchiveReader {
             const chunk = Buffer.isBuffer(next.value) ? next.value : Buffer.from(next.value);
             this.pulled += chunk.length;
             if (chunk.length > MAX_ARCHIVE_INPUT_CHUNK_BYTES || this.pulled > this.limits.archiveBytes) {
-                await Promise.resolve(this.iterator.return?.()).catch(() => {});
-                this.iterator = null;
+                await this.close();
                 throw runPackageError(
                     RUN_PACKAGE_ERROR_CODES.TOO_LARGE,
                     chunk.length > MAX_ARCHIVE_INPUT_CHUNK_BYTES
@@ -712,10 +806,7 @@ class ArchiveReader {
         if (!this.iterator) return;
         const iterator = this.iterator;
         this.iterator = null;
-        const closing = Promise.resolve(iterator.return?.()).catch(() => {});
-        // An async generator may still have a timed-out `next()` pending. Its
-        // queued return cannot be allowed to defeat the verification deadline.
-        await Promise.race([closing, new Promise((resolve) => setImmediate(resolve))]);
+        await closeIterator(iterator, this.readable);
     }
 }
 
@@ -773,11 +864,16 @@ export async function createPackageStagingDir(rootDir) {
         phase: "created",
         entries: [],
     };
-    await writeExclusiveFile(path.join(dir, "meta.json"), `${JSON.stringify(meta, null, 2)}\n`);
+    try {
+        await writeExclusiveFile(path.join(dir, "meta.json"), `${JSON.stringify(meta, null, 2)}\n`);
+    } catch (error) {
+        await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+        throw mapRunPackageError(error);
+    }
     return { id, dir, meta };
 }
 
-export async function recoverPackageStaging(rootDir, { ttlMs = RUN_PACKAGE_RUNTIME_LIMITS.abandonedStageTtlMs, now = () => new Date() } = {}) {
+export async function recoverPackageStaging(rootDir, { ttlMs = RUN_PACKAGE_RUNTIME_LIMITS.abandonedStageTtlMs, now = () => new Date(), active = new Set() } = {}) {
     let names;
     try {
         names = await fs.readdir(rootDir);
@@ -789,6 +885,7 @@ export async function recoverPackageStaging(rootDir, { ttlMs = RUN_PACKAGE_RUNTI
     let removed = 0;
     for (const name of names) {
         const dir = path.join(rootDir, name);
+        if (active.has(dir)) continue;
         let createdAt = Number.NaN;
         try {
             const meta = JSON.parse(await fs.readFile(path.join(dir, "meta.json"), "utf8"));
@@ -813,15 +910,9 @@ export async function verifyRunPackageArchive(input, options = {}) {
     const deadline = options.deadline ?? (Date.now() + limits.verificationTimeoutMs);
     const faults = options.faults ?? {};
     let ownedRoot = null;
-    const staging = options.stagingDir
-        ? { dir: options.stagingDir, cleanup: options.cleanupStaging === true }
-        : await (async () => {
-            const root = options.stagingRoot ?? await fs.mkdtemp(path.join(os.tmpdir(), "cev-run-package-"));
-            if (!options.stagingRoot) ownedRoot = root;
-            const created = await createPackageStagingDir(root);
-            return { dir: created.dir, cleanup: true };
-        })();
+    let staging = null;
     let reader = null;
+    let succeeded = false;
     const archiveHasher = createHash("sha256");
     const seenExact = new Set();
     const seenFold = new Set();
@@ -854,13 +945,9 @@ export async function verifyRunPackageArchive(input, options = {}) {
     const stage = async (archiveName, bytes, maxBytes) => {
         reserveStage(bytes.length);
         const stagingName = `e${String(staged.length).padStart(6, "0")}`;
-        await maybeFault(faults, "write");
         const destPath = path.join(staging.dir, stagingName);
-        await streamToFile(Readable.from(bytes), destPath, {
-            expectedBytes: bytes.length,
-            maxBytes,
-            faults,
-        });
+        if (bytes.length > maxBytes) throw runPackageError(RUN_PACKAGE_ERROR_CODES.TOO_LARGE, "Package entry exceeds its ceiling.");
+        await stageFile([bytes], destPath, bytes.length, deadline, faults);
         staged.push({
             archiveName,
             stagingName,
@@ -875,11 +962,8 @@ export async function verifyRunPackageArchive(input, options = {}) {
         reserveStage(header.size);
         const stagingName = `e${String(staged.length).padStart(6, "0")}`;
         const destPath = path.join(staging.dir, stagingName);
-        const result = await beforeDeadline(streamToFile(
-            Readable.from(reader.readChunks(header.size, archiveHasher)),
-            destPath,
-            { expectedBytes: header.size, maxBytes, faults },
-        ), deadline);
+        if (header.size > maxBytes) throw runPackageError(RUN_PACKAGE_ERROR_CODES.TOO_LARGE, "Package entry exceeds its ceiling.");
+        const result = await stageFile(reader.readChunks(header.size, archiveHasher), destPath, header.size, deadline, faults);
         const paddingSize = padToBlock(header.size);
         if (paddingSize) {
             const padding = await reader.readExact(paddingSize, archiveHasher);
@@ -897,6 +981,13 @@ export async function verifyRunPackageArchive(input, options = {}) {
     };
 
     try {
+        checkDeadline(deadline);
+        if (options.stagingDir) staging = { dir: options.stagingDir, cleanup: options.cleanupStaging === true };
+        else {
+            const root = options.stagingRoot ?? await fs.mkdtemp(path.join(os.tmpdir(), "cev-run-package-"));
+            if (!options.stagingRoot) ownedRoot = root;
+            staging = { ...await createPackageStagingDir(root), cleanup: true };
+        }
         reader = new ArchiveReader(input, limits, deadline);
         const prefix = await reader.peek(2);
         if (prefix.length < 2) throw runPackageError(RUN_PACKAGE_ERROR_CODES.HOSTILE, "Archive is truncated.");
@@ -992,6 +1083,8 @@ export async function verifyRunPackageArchive(input, options = {}) {
         const trailing = await reader.peek(1);
         if (trailing.length) hostile("Package archives must not contain trailing data after the terminal zero blocks.");
 
+        const retainsPaths = options.retainStaging === true || !staging.cleanup;
+        succeeded = true;
         return {
             manifest,
             manifestBytes,
@@ -1003,23 +1096,25 @@ export async function verifyRunPackageArchive(input, options = {}) {
             resolvedHash: verifiedBundle.resolvedHash,
             simulationSemanticHash: verifiedBundle.simulationSemanticHash,
             identityVersion: verifiedBundle.identityVersion,
-            assets: assetFiles,
-            staged,
-            stagingDir: staging.dir,
+            assets: retainsPaths ? assetFiles : assetFiles.map(({ path: _path, ...asset }) => asset),
+            staged: retainsPaths ? staged : [],
+            stagingDir: retainsPaths ? staging.dir : null,
+            cleanup: async () => {
+                if (staging.cleanup) await fs.rm(ownedRoot ?? staging.dir, { recursive: true, force: true });
+            },
             canonicalBundle: canonicalRunBundleStringify(verifiedBundle.bundle),
             receivedBundleCanonical: verifiedBundle.identityVersion === 2
                 ? canonicalExactStringify(verifiedBundle.bundle)
                 : null,
         };
     } catch (error) {
-        if (error?.code || error?.name === "AbortError") throw error;
-        throw runPackageError(RUN_PACKAGE_ERROR_CODES.IO, `Run package I/O failed: ${error.message}`);
+        throw mapRunPackageError(error);
     } finally {
         await reader?.close();
-        if (staging.cleanup && options.retainStaging !== true) {
+        if (staging?.cleanup && (!succeeded || options.retainStaging !== true)) {
             await fs.rm(staging.dir, { recursive: true, force: true }).catch(() => {});
         }
-        if (ownedRoot && options.retainStaging !== true) {
+        if (ownedRoot && (!succeeded || options.retainStaging !== true)) {
             await fs.rm(ownedRoot, { recursive: true, force: true }).catch(() => {});
         }
     }

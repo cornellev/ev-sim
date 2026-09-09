@@ -792,8 +792,17 @@ Protocol 1.4 admission implements this same-host flow:
    wire JSON to agree. The canonical wire digest is not compared to the exact
    archived-byte digest. Paths, handles, and roots remain operational and
    outside episode identity.
-5. Workers receive scoped digest access. Reset candidates, queued work,
-   renderer restart, and replay retain pins until access has ended.
+5. Workers receive environment-scoped digest access without filesystem-backed
+   streams or file descriptors. Batch reset, worker restart, and replay retain
+   pins until access has ended. Managed queued-work admission remains VIS-15b.
+
+Claims move into supervisor-owned processing storage on the same filesystem
+as the inbox. One live supervisor owns each store; recovery never clears
+another live owner's pins. Scope closure drains pending opens and closes
+outstanding streams before the last pin is dropped. The unused TTL runs only
+without batch readers. Import failures retain a write-ahead journal and its
+protective root for idempotent roll-forward, including failures after a
+manifest write has already committed.
 
 CLI `inspect`, `validate`, `run`, and supervisor-backed `replay` accept package
 inputs. Python exposes `load_run_package`, context-managed `AssetAdmission`,

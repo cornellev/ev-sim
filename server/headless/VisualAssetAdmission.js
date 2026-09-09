@@ -2,16 +2,21 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createReadStream, promises as fs } from "node:fs";
 import { constants } from "node:fs";
 import path from "node:path";
+import { Readable } from "node:stream";
+import { finished } from "node:stream/promises";
 
 import { canonicalExactStringify } from "../../app/simulation/visual/VisualLayer.js";
 import { RUN_PACKAGE_ERROR_CODES, VISUAL_ASSET_ERROR_CODES, visualAssetError } from "../storage/StorageErrors.js";
 import { VisualAssetStore } from "../storage/VisualAssetStore.js";
 import { createMutex } from "../storage/visual-assets/semaphore.js";
-import { fsyncDir, hashRegularFile, openRegularFile } from "../storage/visual-assets/atomicFs.js";
+import { fsyncDir, maybeFault, openRegularFile, writeExclusiveFile } from "../storage/visual-assets/atomicFs.js";
 import { canonicalRunBundleStringify, verifyRunBundleBytes } from "./RunBundle.js";
 import {
     createPackageStagingDir,
     evaluatePackageRights,
+    mapRunPackageError,
+    recoverPackageStaging,
+    RUN_PACKAGE_RUNTIME_LIMITS,
     sortUsesForPublish,
     verifyRunPackageArchive,
 } from "./VisualAssetPack.js";
@@ -53,14 +58,27 @@ async function writeAtomic(filePath, bytes, mode = 0o600) {
     }
 }
 
-async function readJson(filePath) {
+async function readBounded(filePath, maxBytes) {
     const opened = await openRegularFile(filePath);
     if (!opened) return null;
     try {
-        return JSON.parse(await opened.handle.readFile("utf8"));
+        if (opened.stat.size > maxBytes) throw visualAssetError(RUN_PACKAGE_ERROR_CODES.TOO_LARGE, "Admission metadata exceeds its byte ceiling.");
+        const chunks = [];
+        let size = 0;
+        for await (const chunk of opened.handle.createReadStream({ autoClose: false })) {
+            size += chunk.length;
+            if (size > maxBytes) throw visualAssetError(RUN_PACKAGE_ERROR_CODES.TOO_LARGE, "Admission metadata exceeds its byte ceiling.");
+            chunks.push(chunk);
+        }
+        return Buffer.concat(chunks, size);
     } finally {
         await opened.handle.close();
     }
+}
+
+async function readJson(filePath) {
+    const bytes = await readBounded(filePath, RUN_PACKAGE_RUNTIME_LIMITS.bundleBytes * 3);
+    return bytes === null ? null : JSON.parse(bytes.toString("utf8"));
 }
 
 function admissionOwner(handle) {
@@ -110,6 +128,9 @@ export class VisualAssetAdmissionManager {
         this.recordsDir = path.join(this.storageDir, "admissions");
         this.bundlesDir = path.join(this.storageDir, "bundles");
         this.stagingDir = path.join(this.storageDir, "staging");
+        this.processingDir = path.join(this.storageDir, "processing");
+        this.ownerPath = path.join(this.storageDir, "admission-owner.json");
+        this._ownerToken = null;
         this.now = now;
         this.faults = faults;
         this.store = new VisualAssetStore(this.storageDir, {
@@ -125,6 +146,8 @@ export class VisualAssetAdmissionManager {
         });
         this.records = new Map();
         this._activeScopes = new Map();
+        this._scopeClosers = new Map();
+        this._closed = false;
         this._ready = null;
         this._mutex = createMutex();
         this._sweepTimer = null;
@@ -143,17 +166,21 @@ export class VisualAssetAdmissionManager {
     }
 
     async initialize() {
+        if (this._closed) throw visualAssetError(RUN_PACKAGE_ERROR_CODES.IO, "Asset admission manager is closed.");
         if (!this.enabled) return this;
         this._ready ??= this._initialize();
         return this._ready;
     }
 
     async _initialize() {
+        await fs.mkdir(this.storageDir, { recursive: true, mode: 0o700 });
+        await this._acquireOwner();
         await Promise.all([
             fs.mkdir(this.inboxDir, { recursive: true, mode: 0o700 }),
             fs.mkdir(this.recordsDir, { recursive: true, mode: 0o700 }),
             fs.mkdir(this.bundlesDir, { recursive: true, mode: 0o700 }),
             fs.mkdir(this.stagingDir, { recursive: true, mode: 0o700 }),
+            fs.mkdir(this.processingDir, { recursive: true, mode: 0o700 }),
             this.store.initialize(),
         ]);
         const names = await fs.readdir(this.recordsDir);
@@ -165,6 +192,9 @@ export class VisualAssetAdmissionManager {
                 || !Number.isSafeInteger(record.batchPins) || record.batchPins < 0) {
                 await fs.rm(path.join(this.recordsDir, name), { force: true });
                 continue;
+            }
+            if (record.batchPins > 0 && !record.released) {
+                record.expiresAt = new Date(this.now().getTime() + this.config.unusedTtlMs).toISOString();
             }
             record.batchPins = 0;
             try {
@@ -214,13 +244,49 @@ export class VisualAssetAdmissionManager {
             }
         }
         await this._reconcileInbox();
+        await recoverPackageStaging(this.stagingDir, { ttlMs: 0 });
         this._scheduleSweep();
         return this;
+    }
+
+    async _acquireOwner() {
+        const owner = { pid: process.pid, token: randomUUID() };
+        const bytes = JSON.stringify(owner);
+        if (!(await writeExclusiveFile(this.ownerPath, bytes)).existed) {
+            this._ownerToken = owner.token;
+            return;
+        }
+        const previous = await readJson(this.ownerPath);
+        if (!Number.isSafeInteger(previous?.pid) || previous.pid < 1 || typeof previous.token !== "string") {
+            throw visualAssetError(RUN_PACKAGE_ERROR_CODES.IO, "Admission storage ownership is ambiguous; refusing recovery.");
+        }
+        let alive = true;
+        try { process.kill(previous.pid, 0); }
+        catch (error) { if (error.code === "ESRCH") alive = false; }
+        if (alive) throw visualAssetError(RUN_PACKAGE_ERROR_CODES.IO, "Admission storage already has a live supervisor owner.");
+        // Serialize stale-owner takeover too. If a process itself crashes
+        // during takeover, fail closed for operator inspection rather than
+        // ever clearing another live supervisor's pins.
+        const recovery = `${this.ownerPath}.recovery`;
+        await fs.mkdir(recovery, { mode: 0o700 });
+        try {
+            if ((await readJson(this.ownerPath))?.token !== previous.token) {
+                throw visualAssetError(RUN_PACKAGE_ERROR_CODES.IO, "Admission storage owner changed during recovery.");
+            }
+            await fs.rm(this.ownerPath);
+            if ((await writeExclusiveFile(this.ownerPath, bytes)).existed) {
+                throw visualAssetError(RUN_PACKAGE_ERROR_CODES.IO, "Admission storage was claimed during recovery.");
+            }
+            this._ownerToken = owner.token;
+        } finally {
+            await fs.rmdir(recovery);
+        }
     }
 
     _scheduleSweep() {
         if (this._sweepTimer) clearTimeout(this._sweepTimer);
         this._sweepTimer = null;
+        if (this._closed) return;
         const expiries = [...this.records.values()]
             .filter((record) => record.batchPins === 0)
             .map((record) => Date.parse(record.expiresAt))
@@ -254,19 +320,28 @@ export class VisualAssetAdmissionManager {
     async _reconcileInbox() {
         const cutoff = this.now().getTime() - this.config.unusedTtlMs;
         for (const name of await fs.readdir(this.inboxDir)) {
+            const abandonedClaim = /^\.[a-f0-9]{32}\.processing-[a-f0-9-]{36}$/.test(name);
+            const stagedInput = /^(?:[a-f0-9]{32}\.run-package|\.[a-f0-9]{32}\.[a-f0-9-]+\.tmp)$/.test(name);
+            if (!abandonedClaim && !stagedInput) continue;
             const filePath = path.join(this.inboxDir, name);
             try {
                 const stat = await fs.lstat(filePath);
-                if (name.includes(".processing-") || stat.mtimeMs <= cutoff) {
+                if (abandonedClaim || stat.mtimeMs <= cutoff) {
                     await fs.rm(filePath, { recursive: true, force: true });
                 }
             } catch (error) {
                 if (error.code !== "ENOENT") throw error;
             }
         }
+        for (const name of await fs.readdir(this.processingDir)) {
+            if (/^[a-f0-9]{32}-[a-f0-9-]{36}\.run-package$/.test(name)) {
+                await fs.rm(path.join(this.processingDir, name), { recursive: true, force: true });
+            }
+        }
     }
 
     async _persist(record) {
+        await maybeFault(this.faults, "persistAdmission");
         await writeAtomic(this._recordPath(record.handle), `${canonicalExactStringify(recordShape(record))}\n`);
     }
 
@@ -298,11 +373,10 @@ export class VisualAssetAdmissionManager {
             || ![record.createdAt, record.lastUsedAt, record.expiresAt].every((value) => Number.isFinite(Date.parse(value)))) {
             throw visualAssetError(RUN_PACKAGE_ERROR_CODES.INVALID, "Admission record metadata is invalid.");
         }
-        const identity = await hashRegularFile(this._bundlePath(record.handle));
-        if (!identity || identity.digest !== record.bundleBytesHash) {
+        const exactBytes = await readBounded(this._bundlePath(record.handle), this.config.limits.bundleBytes);
+        if (!exactBytes || createHash("sha256").update(exactBytes).digest("hex") !== record.bundleBytesHash) {
             throw visualAssetError(RUN_PACKAGE_ERROR_CODES.INVALID, "Admitted bundle bytes are missing or corrupt.");
         }
-        const exactBytes = await fs.readFile(this._bundlePath(record.handle));
         const verified = verifyRunBundleBytes(exactBytes, {
             expectedBundleBytesHash: record.bundleBytesHash,
             execution: false,
@@ -335,31 +409,36 @@ export class VisualAssetAdmissionManager {
         if (!STAGING_ID.test(String(stagingId || ""))) {
             throw visualAssetError(RUN_PACKAGE_ERROR_CODES.HOSTILE, "staging_id must be exactly 32 lowercase hexadecimal characters.");
         }
-        if (!SHA256.test(String(archiveHash || ""))) {
-            throw visualAssetError(RUN_PACKAGE_ERROR_CODES.INVALID, "archive_hash must be a lowercase SHA-256 digest.");
-        }
         await this.initialize();
         return this._mutex(async () => {
+            if (this._closed) throw visualAssetError(RUN_PACKAGE_ERROR_CODES.IO, "Asset admission manager is closed.");
             const sourcePath = path.join(this.inboxDir, `${stagingId}.run-package`);
-            const processingPath = path.join(this.inboxDir, `.${stagingId}.processing-${randomUUID()}`);
+            const processingPath = path.join(this.processingDir, `${stagingId}-${randomUUID()}.run-package`);
             let staging = null;
             let record = null;
+            const deadline = Date.now() + this.config.limits.verificationTimeoutMs;
+            const checkDeadline = () => {
+                if (Date.now() >= deadline) throw visualAssetError(RUN_PACKAGE_ERROR_CODES.TIMEOUT, "Asset admission exceeded its time budget.");
+            };
             try {
                 await fs.rename(sourcePath, processingPath);
+                if (!SHA256.test(String(archiveHash || ""))) {
+                    throw visualAssetError(RUN_PACKAGE_ERROR_CODES.INVALID, "archive_hash must be a lowercase SHA-256 digest.");
+                }
                 const opened = await openRegularFile(processingPath);
                 if (!opened) throw visualAssetError(RUN_PACKAGE_ERROR_CODES.INVALID, "Staged run package was not found.");
                 if (opened.stat.nlink !== 1) {
                     await opened.handle.close();
                     throw visualAssetError(RUN_PACKAGE_ERROR_CODES.HOSTILE, "Staged run packages must have exactly one link.");
                 }
-                staging = await createPackageStagingDir(this.stagingDir);
                 let verified;
                 try {
+                    staging = await createPackageStagingDir(this.stagingDir);
                     verified = await verifyRunPackageArchive(opened.handle.createReadStream({ autoClose: true }), {
                         stagingDir: staging.dir,
                         retainStaging: true,
                         limits: this.config.limits,
-                        deadline: Date.now() + this.config.limits.verificationTimeoutMs,
+                        deadline,
                     });
                 } finally {
                     await opened.handle.close().catch(() => {});
@@ -371,15 +450,24 @@ export class VisualAssetAdmissionManager {
                 const uses = verified.bundle.resolved?.evidence?.visualAssets?.uses ?? [];
                 const assets = new Map(verified.assets.map((asset) => [asset.sha256, asset.path]));
                 for (const { use } of sortUsesForPublish(uses)) {
+                    checkDeadline();
                     const assetPath = assets.get(use.asset.sha256);
                     if (!assetPath) {
                         throw visualAssetError(RUN_PACKAGE_ERROR_CODES.CLOSURE_MISMATCH, `Package is missing ${use.asset.sha256}.`);
                     }
                     const upload = await this.store.createUpload(use);
-                    await this.store.writeUploadContent(upload.id, createReadStream(assetPath), {
-                        contentLength: use.asset.sizeBytes,
-                    });
+                    try {
+                        checkDeadline();
+                        await this.store.writeUploadContent(upload.id, createReadStream(assetPath), {
+                            contentLength: use.asset.sizeBytes,
+                            signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())),
+                        });
+                    } catch (error) {
+                        await this.store.abortUpload(upload.id).catch(() => {});
+                        throw error;
+                    }
                 }
+                checkDeadline();
                 const handle = randomBytes(32).toString("hex");
                 const createdAt = this.now().toISOString();
                 const root = await this.store.acquireRoot({
@@ -411,13 +499,15 @@ export class VisualAssetAdmissionManager {
                     obligations: decision.obligations,
                 };
                 await writeAtomic(this._bundlePath(handle), verified.bundleBytes);
+                checkDeadline();
                 await this._persist(record);
+                checkDeadline();
                 this.records.set(handle, record);
                 this._scheduleSweep();
                 return { handle, bundleBytesHash: record.bundleBytesHash };
             } catch (error) {
                 if (record) await this._disposeRecord(record).catch(() => {});
-                throw error;
+                throw mapRunPackageError(error);
             } finally {
                 if (staging) await fs.rm(staging.dir, { recursive: true, force: true }).catch(() => {});
                 await fs.rm(processingPath, { recursive: true, force: true }).catch(() => {});
@@ -432,7 +522,7 @@ export class VisualAssetAdmissionManager {
             if (record && Date.parse(record.expiresAt) <= this.now().getTime() && record.batchPins === 0) {
                 await this._disposeRecord(record);
             }
-            if (!record || record.released || Date.parse(record.expiresAt) <= this.now().getTime()) {
+            if (!record || record.released || (record.batchPins === 0 && Date.parse(record.expiresAt) <= this.now().getTime())) {
                 throw visualAssetError(RUN_PACKAGE_ERROR_CODES.INVALID, "Asset admission is stale, released, or unknown.");
             }
             if (record.bundleBytesHash !== String(bundleBytesHash || "")) {
@@ -459,14 +549,14 @@ export class VisualAssetAdmissionManager {
             try {
                 for (const handle of unique) {
                     const record = this.records.get(handle);
-                    if (!record || record.released || Date.parse(record.expiresAt) <= this.now().getTime()) {
+                    if (!record || record.released || (record.batchPins === 0 && Date.parse(record.expiresAt) <= this.now().getTime())) {
                         if (record && record.batchPins === 0) await this._disposeRecord(record);
                         throw visualAssetError(RUN_PACKAGE_ERROR_CODES.INVALID, "Asset admission is unavailable.");
                     }
                     await this._verifyRecord(record, { rights: true });
-                    record.batchPins += 1;
-                    record.lastUsedAt = this.now().toISOString();
-                    await this._persist(record);
+                    const next = { ...record, batchPins: record.batchPins + 1, lastUsedAt: this.now().toISOString() };
+                    await this._persist(next);
+                    this.records.set(handle, next);
                     pinned.push(handle);
                 }
                 return pinned;
@@ -502,10 +592,13 @@ export class VisualAssetAdmissionManager {
                 const record = this.records.get(handle);
                 if (!record) continue;
                 record.batchPins = Math.max(0, record.batchPins - 1);
-                if (record.batchPins === 0 && (record.released || Date.parse(record.expiresAt) <= this.now().getTime())) {
+                if (record.batchPins === 0 && record.released) {
                     await this._disposeRecord(record);
                 }
-                else await this._persist(record);
+                else {
+                    if (record.batchPins === 0) record.expiresAt = new Date(this.now().getTime() + this.config.unusedTtlMs).toISOString();
+                    await this._persist(record);
+                }
             }
             this._scheduleSweep();
         });
@@ -526,19 +619,27 @@ export class VisualAssetAdmissionManager {
     }
 
     async _disposeRecord(record) {
-        this.records.delete(record.handle);
+        await Promise.all([...this._scopeClosers.get(record.handle)?.values() ?? []].map((close) => close()));
+        // Persist the tombstone before removing the root. A crash or failed
+        // unlink must never turn a released admission back into a usable one.
+        record.released = true;
+        await writeAtomic(this._recordPath(record.handle), canonicalExactStringify({
+            kind: "cev-sim.asset-admission", version: 1, handle: record.handle, released: true, batchPins: 0,
+        }));
         this._activeScopes.delete(record.handle);
-        const root = await this.store.getRoot(admissionOwner(record.handle)).catch(() => null);
+        const root = await this.store.getRoot(admissionOwner(record.handle));
         if (root) {
             await this.store.releaseRoot({
                 ownerId: admissionOwner(record.handle),
                 expectedGeneration: root.generation,
-            }).catch(() => {});
+            });
         }
         await Promise.all([
             fs.rm(this._recordPath(record.handle), { force: true }),
             fs.rm(this._bundlePath(record.handle), { force: true }),
         ]);
+        await Promise.all([fsyncDir(this.recordsDir), fsyncDir(this.bundlesDir)]);
+        this.records.delete(record.handle);
     }
 
     createDigestReader(handle, environmentKey) {
@@ -555,54 +656,105 @@ export class VisualAssetAdmissionManager {
         scopes.add(key);
         this._activeScopes.set(handle, scopes);
         let closed = false;
-        return Object.freeze({
-            open: async (digest, { start = 0, end } = {}) => {
-                const current = this.records.get(handle);
-                if (closed || !this._activeScopes.get(handle)?.has(key)
-                    || !current || current.batchPins < 1) {
-                    throw visualAssetError(RUN_PACKAGE_ERROR_CODES.INVALID, "The environment asset admission is not pinned.");
-                }
-                const useHash = current.digestUses[digest];
-                if (!useHash) {
-                    throw visualAssetError(RUN_PACKAGE_ERROR_CODES.CLOSURE_MISMATCH, "Requested digest is outside the admitted closure.");
-                }
-                if (!Number.isSafeInteger(start) || start < 0
-                    || (end !== undefined && (!Number.isSafeInteger(end) || end < start))) {
-                    throw visualAssetError(RUN_PACKAGE_ERROR_CODES.INVALID, "Asset reader ranges must be non-negative safe integers.");
-                }
-                const opened = await this.store.openUseContent(useHash, {
-                    start,
-                    end,
-                    operations: [...RUN_PACKAGE_ADMISSION_OPERATIONS],
-                });
-                return Object.freeze({
-                    stream: opened.stream,
-                    release: opened.release,
-                    mediaType: opened.mediaType,
-                    digest: opened.digest,
-                    size: opened.size,
-                    start: opened.start,
-                    end: opened.end,
-                });
-            },
-            close: () => {
-                if (closed) return;
-                closed = true;
+        let closing = null;
+        const pending = new Set();
+        const leases = new Set();
+        const close = () => {
+            if (closing) return closing;
+            closed = true;
+            closing = (async () => {
+                await Promise.allSettled([...leases].map((release) => release()));
+                await Promise.allSettled([...pending]);
                 const active = this._activeScopes.get(handle);
                 active?.delete(key);
                 if (active?.size === 0) this._activeScopes.delete(handle);
+                const closers = this._scopeClosers.get(handle);
+                closers?.delete(key);
+                if (closers?.size === 0) this._scopeClosers.delete(handle);
+            })();
+            return closing;
+        };
+        const closers = this._scopeClosers.get(handle) ?? new Map();
+        closers.set(key, close);
+        this._scopeClosers.set(handle, closers);
+        const open = async (digest, { start = 0, end } = {}) => {
+            const current = this.records.get(handle);
+            if (closed || !this._activeScopes.get(handle)?.has(key)
+                || !current || current.batchPins < 1) {
+                throw visualAssetError(RUN_PACKAGE_ERROR_CODES.INVALID, "The environment asset admission is not pinned.");
+            }
+            if (typeof digest !== "string" || !SHA256.test(digest)
+                || !Object.hasOwn(current.digestUses, digest)) {
+                throw visualAssetError(RUN_PACKAGE_ERROR_CODES.CLOSURE_MISMATCH, "Requested digest is outside the admitted closure.");
+            }
+            if (!Number.isSafeInteger(start) || start < 0
+                || (end !== undefined && (!Number.isSafeInteger(end) || end < start))) {
+                throw visualAssetError(RUN_PACKAGE_ERROR_CODES.INVALID, "Asset reader ranges must be non-negative safe integers.");
+            }
+            const opened = await this.store.openUseContent(current.digestUses[digest], {
+                start, end, operations: [...RUN_PACKAGE_ADMISSION_OPERATIONS],
+            });
+            let stream;
+            let releasing = null;
+            const sourceFinished = finished(opened.stream, { cleanup: true }).catch(() => {});
+            const release = () => {
+                releasing ??= (async () => {
+                    stream?.destroy();
+                    await opened.release();
+                    await sourceFinished;
+                    leases.delete(release);
+                })();
+                return releasing;
+            };
+            if (closed) {
+                await release();
+                throw visualAssetError(RUN_PACKAGE_ERROR_CODES.INVALID, "The environment asset admission is not pinned.");
+            }
+            // Never expose the filesystem-backed stream (or its fd/path).
+            stream = Readable.from((async function* () {
+                try {
+                    for await (const chunk of opened.stream) yield chunk;
+                } finally {
+                    await release();
+                }
+            })());
+            stream.once("close", () => { release().catch(() => {}); });
+            leases.add(release);
+            return Object.freeze({
+                stream, release, mediaType: opened.mediaType, digest: opened.digest,
+                size: opened.size, start: opened.start, end: opened.end,
+            });
+        };
+        return Object.freeze({
+            open: (...args) => {
+                const operation = open(...args);
+                pending.add(operation);
+                operation.finally(() => pending.delete(operation)).catch(() => {});
+                return operation;
             },
+            close,
         });
     }
 
     async close() {
         // Durable admissions intentionally outlive a supervisor process.
+        this._closed = true;
+        await this._ready?.catch(() => {});
+        await this._mutex(async () => {
+            await Promise.all([...this._scopeClosers.values()].flatMap((scopes) => [...scopes.values()].map((close) => close())));
+            if (this._ownerToken && (await readJson(this.ownerPath))?.token === this._ownerToken) {
+                await fs.rm(this.ownerPath);
+                await fsyncDir(this.storageDir);
+                this._ownerToken = null;
+            }
+        });
         if (this._sweepTimer) clearTimeout(this._sweepTimer);
         this._sweepTimer = null;
     }
 }
 
-export async function stageRunPackage(packagePath, inboxDir) {
+export async function stageRunPackage(packagePath, inboxDir, { signal, limits = RUN_PACKAGE_RUNTIME_LIMITS } = {}) {
+    signal?.throwIfAborted();
     await fs.mkdir(inboxDir, { recursive: true, mode: 0o700 });
     const stagingId = randomBytes(16).toString("hex");
     const temporary = path.join(inboxDir, `.${stagingId}.${randomUUID()}.tmp`);
@@ -612,18 +764,32 @@ export async function stageRunPackage(packagePath, inboxDir) {
     let output = null;
     let published = false;
     const hasher = createHash("sha256");
+    const deadline = Date.now() + limits.verificationTimeoutMs;
+    let received = 0;
+    const check = () => {
+        signal?.throwIfAborted();
+        if (Date.now() >= deadline) throw visualAssetError(RUN_PACKAGE_ERROR_CODES.TIMEOUT, "Package staging exceeded its time budget.");
+        if (received > limits.archiveBytes) throw visualAssetError(RUN_PACKAGE_ERROR_CODES.TOO_LARGE, "Package staging exceeds the archive-byte ceiling.");
+    };
     try {
+        received = source.stat.size;
+        check();
+        received = 0;
         output = await fs.open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
-        for await (const chunk of source.handle.createReadStream({ autoClose: false })) {
+        for await (const chunk of source.handle.createReadStream({ autoClose: false, signal })) {
+            received += chunk.length;
+            check();
             hasher.update(chunk);
             let offset = 0;
             while (offset < chunk.length) {
+                check();
                 const written = await output.write(chunk, offset, chunk.length - offset);
                 if (written.bytesWritten <= 0) throw visualAssetError(RUN_PACKAGE_ERROR_CODES.IO, "Package staging write made no progress.");
                 offset += written.bytesWritten;
             }
         }
         await output.sync();
+        check();
         await output.close();
         output = null;
         await fs.rename(temporary, destination);

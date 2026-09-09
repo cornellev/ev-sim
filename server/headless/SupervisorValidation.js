@@ -41,6 +41,7 @@ export async function validateBundleWithSupervisor(bundle, {
     episodeSpec = {},
     supervisorFactory = (options) => new HeadlessSupervisor(options),
     packagePath = null,
+    signal = null,
 } = {}) {
     if (!config) throw new HeadlessRunnerError("USAGE", "Supervisor-backed validation requires --config.");
     const verified = packagePath ? verifyRunBundleIntegrity(bundle) : verifyRunBundle(bundle);
@@ -64,7 +65,9 @@ export async function validateBundleWithSupervisor(bundle, {
                     "Supervisor does not advertise cev-sim.run-package@1 admission.",
                 );
             }
-            const staged = await stageRunPackage(packagePath, supervisor.config.assetAdmission.inboxDir);
+            const staged = await stageRunPackage(packagePath, supervisor.config.assetAdmission.inboxDir, {
+                signal, limits: supervisor.config.assetAdmission.limits,
+            });
             try {
                 const admitted = await supervisor.admitRunPackage({
                     clientProtocol: HEADLESS_PROTOCOL,
@@ -77,6 +80,7 @@ export async function validateBundleWithSupervisor(bundle, {
                 await fs.rm(staged.path, { force: true }).catch(() => {});
             }
         }
+        signal?.throwIfAborted();
         const created = await supervisor.createBatch({
             clientProtocol: HEADLESS_PROTOCOL,
             runBundles: [{
@@ -91,7 +95,7 @@ export async function validateBundleWithSupervisor(bundle, {
                 profile: 3,
                 outputUri: path.join(root, "artifacts"),
             },
-        });
+        }, { signal });
         if (Number(created.error?.code) !== ERROR_CODE.OK) throw errorFromStatus(created.error);
         batchId = created.batch.batchId;
         const environment = created.batch.environments[0];
