@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import time
 from pathlib import Path
 
 import bpy
@@ -220,21 +221,46 @@ def save_render(scene: bpy.types.Scene, output_base: Path) -> tuple[str, str]:
     return str(display_path), str(linear_path)
 
 
-def render_sample(scene: bpy.types.Scene, camera: bpy.types.Object, pose: dict, output_base: Path) -> tuple[str, str]:
+def planned_sample_count(schedule: dict, full: bool, limit: int) -> int:
+    candidates = 2
+    conditions = len(schedule["conditions"])
+    edit_variants = schedule["editVariants"]
+    viewpoints = len(schedule["viewpoints"])
+    path_samples = sum(len(path_record["samples"]) for path_record in schedule["paths"]) if full else 0
+    planned = 0
+    for _candidate in range(candidates):
+        for _condition in range(conditions):
+            for edit_variant in edit_variants:
+                planned += viewpoints
+                if full and edit_variant == "base":
+                    planned += path_samples
+    if limit > 0:
+        return min(planned, limit)
+    return planned
+
+
+def render_sample(scene: bpy.types.Scene, camera: bpy.types.Object, pose: dict, output_base: Path) -> tuple[str, str, str, float]:
     display_path = output_base.with_suffix(".png")
     linear_path = output_base.with_suffix(".exr")
     if display_path.exists() and linear_path.exists():
-        return str(display_path), str(linear_path)
+        return str(display_path), str(linear_path), "skip", 0.0
+    started = time.perf_counter()
     set_camera(camera, pose)
     scene.render.filepath = str(output_base)
     bpy.ops.render.render()
-    return save_render(scene, output_base)
+    display, linear = save_render(scene, output_base)
+    return display, linear, "render", time.perf_counter() - started
+
+
+def emit_progress(done: int, total: int, kind: str, seconds: float, label: str) -> None:
+    print(f"cev-sim-cycles {done} {total} {kind} {seconds:.6f} {label}", flush=True)
 
 
 def main() -> None:
     args = arguments()
     schedule = json.loads(Path(args.schedule).read_text())
     output_dir = Path(args.output_dir)
+    total = planned_sample_count(schedule, args.full, args.limit)
     scene = bpy.context.scene
     renderer = configure_cycles(scene)
     if renderer["engine"] != "cycles":
@@ -258,21 +284,23 @@ def main() -> None:
                     if args.limit and rendered >= args.limit:
                         break
                     base = output_dir / candidate_id / output_id / "stills" / viewpoint["id"]
-                    display, linear = render_sample(scene, camera, viewpoint["pose"], base)
+                    display, linear, kind, seconds = render_sample(scene, camera, viewpoint["pose"], base)
                     record["displayFiles"].append(display)
                     record["linearFiles"].append(linear)
                     rendered += 1
-                    print(f"Rendered {rendered}: {output_id} / {viewpoint['id']}", flush=True)
+                    emit_progress(rendered, total, kind, seconds, f"{output_id}/{viewpoint['id']}")
                 if record["includePaths"] and (not args.limit or rendered < args.limit):
                     for path_record in schedule["paths"]:
                         for sample in path_record["samples"]:
                             if args.limit and rendered >= args.limit:
                                 break
-                            base = output_dir / candidate_id / output_id / path_record["id"] / f"{sample['sampleIndex']:04d}"
-                            display, linear = render_sample(scene, camera, sample["pose"], base)
+                            sample_id = f"{sample['sampleIndex']:04d}"
+                            base = output_dir / candidate_id / output_id / path_record["id"] / sample_id
+                            display, linear, kind, seconds = render_sample(scene, camera, sample["pose"], base)
                             record["displayFiles"].append(display)
                             record["linearFiles"].append(linear)
                             rendered += 1
+                            emit_progress(rendered, total, kind, seconds, f"{output_id}/{path_record['id']}/{sample_id}")
                         if args.limit and rendered >= args.limit:
                             break
                 records.append(record)
