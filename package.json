@@ -37,6 +37,12 @@
     "test:bake-python": "python3 -m pytest tests/test_bake_sample_accumulator.py tests/test_bake_v1_service.py -q",
     "proto:python": "python3 python/scripts/generate_proto.py --check",
     "fixtures:headless": "node --experimental-default-type=module scripts/generate-headless-fixtures.mjs",
+    "fixtures:visual-lab": "node --experimental-default-type=module scripts/generate-visual-lab-fixtures.mjs",
+    "fixtures:visual-lab:experiment-1-assets": "node scripts/generate-experiment-one-assets.mjs",
+    "fixtures:visual-lab:experiment-1-browser-stills": "node scripts/generate-experiment-one-browser.mjs",
+    "fixtures:visual-lab:experiment-1-browser": "node scripts/generate-experiment-one-browser.mjs --full",
+    "fixtures:visual-lab:experiment-1-cycles-base": "node scripts/generate-experiment-one-cycles.mjs --base-only",
+    "fixtures:visual-lab:experiment-1-cycles": "node scripts/generate-experiment-one-cycles.mjs --full",
     "test:ui": "playwright test --grep-invert @a11y",
     "test:a11y": "playwright test --grep @a11y"
   },

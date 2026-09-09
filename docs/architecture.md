@@ -80,6 +80,12 @@ retains only the pure description and deterministic `{ worldHash }` state.
 Resolved bundles retain the authored environment resource for integrity but
 use the world hash for simulation semantics.
 
+An authored `staticMetricFixtures` domain is an optional part of that seam.
+Stable fixture/object IDs and box/triangle primitives are normalized through
+the environment document, world description, collision obstacle projection,
+truth-binding catalog, and LiDAR geometry. Absence is preserved exactly for
+legacy world identity.
+
 Vehicle motion is owned by the Three.js-free `KinematicVehiclePlant`.
 BigCar, IGVCCar, ScenarioCar, and manifest-backed browser vehicles are
 presentation adapters over the same numeric state used by
@@ -269,6 +275,13 @@ hashed LOD policy without changing `worldHash`, `visualLayerHash`, simulation
 identity, or episode identity. Visual descriptors are appearance resources bound
 to `worldHash`; their meshes never enter metric world, collision, LiDAR,
 object-registry, or oracle truth.
+
+Experiment 1 adds browser-only `pbr-mesh@2`. Its shared recipe runtime owns
+ambient, directional, and point lights and shadow resources. Locked live
+inspection and calibrated measured capture use the same lighting/exposure/color
+record; offscreen beauty runs a final output conversion pass, while numeric
+products remain on their existing raw contracts. Provider validation prevents
+headless execution from silently falling back.
 
 VIS-06a adds `VisualCapturePipeline.js`, a Three/DOM-free calibration and
 capture-input seam shared by browser camera, bake, and headless Chromium

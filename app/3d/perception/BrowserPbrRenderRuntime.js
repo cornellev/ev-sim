@@ -18,8 +18,7 @@ import {
 } from "../environment/visual/VisualLayerMaterializer.js";
 import { VisualAssetClient } from "../environment/visual/VisualAssetClient.js";
 import { rep103PoseToThree } from "../../autonomy/CoordinateFrames.js";
-
-const PROVIDER = Object.freeze({ id: "pbr-mesh", version: 1 });
+import { applyPbrRenderRecipeToScene } from "../environment/visual/PbrRenderRecipeRuntime.js";
 
 function infrastructureError(error, fallbackCode = "PBR_RENDER_RUNTIME_FAILED") {
     const result = error instanceof Error ? error : new Error(String(error || "PBR render runtime failed."));
@@ -202,6 +201,8 @@ export class BrowserPbrRenderRuntime {
         this.environmentTexture = null;
         this.rootUseHashes = [];
         this.renderPolicy = null;
+        this.recipeSceneState = null;
+        this.provider = { id: "pbr-mesh", version: 1 };
         this.listeners = new Set();
         this.status = this._snapshot("idle");
     }
@@ -240,6 +241,7 @@ export class BrowserPbrRenderRuntime {
             const renderScene = resolved?.renderScene;
             const description = renderScene?.description;
             assertPbrRenderSceneDescription(description);
+            this.provider = { ...description.provider };
             if (hashPbrRenderScene(description) !== renderScene.hash) {
                 throw new Error("Resolved PBR render-scene hash does not match its description.");
             }
@@ -284,6 +286,13 @@ export class BrowserPbrRenderRuntime {
 
             await this._buildActorAppearances(description.actors, resolved.evidence.visualAssets.roots);
             await this._loadEnvironmentMap(description.recipe, resolved.evidence.visualAssets.roots);
+            if (description.recipe.shadows.enabled) {
+                this.appearanceScene.traverse((object) => {
+                    if (!object.isMesh) return;
+                    object.castShadow = true;
+                    object.receiveShadow = true;
+                });
+            }
             this._throwIfStale(generation);
             this.rootUseHashes = [...new Set(
                 resolved.evidence.visualAssets.roots.map((entry) => entry.useHash),
@@ -410,18 +419,9 @@ export class BrowserPbrRenderRuntime {
     _configureRecipe(recipe) {
         const background = recipe.background.colorRgba;
         this.appearanceScene.background = new THREE.Color(background[0], background[1], background[2]);
-        const ambient = recipe.lighting.ambient;
-        this.appearanceScene.add(new THREE.AmbientLight(
-            new THREE.Color(...ambient.colorRgb),
-            ambient.intensity,
-        ));
+        this.recipeSceneState = applyPbrRenderRecipeToScene(this.appearanceScene, recipe);
         this.analyticScene.background = new THREE.Color(0, 0, 0);
-        this.renderPolicy = {
-            exposure: recipe.colorPipeline.exposure,
-            outputColorSpace: recipe.colorPipeline.outputColorSpace,
-            toneMapping: recipe.colorPipeline.toneMapping,
-            backgroundColorRgba: [...background],
-        };
+        this.renderPolicy = this.recipeSceneState.renderPolicy;
     }
 
     _buildAnalyticScene(analyticTruth, actorDescriptions) {
@@ -548,7 +548,7 @@ export class BrowserPbrRenderRuntime {
     _snapshot(state, error = null) {
         const residency = this.materializer?.residencySnapshot?.() ?? null;
         return {
-            provider: { ...PROVIDER },
+            provider: { ...this.provider },
             productProfile: { id: "measured-rgba-analytic-oracle", version: 1 },
             state,
             residency: residency ? {
@@ -569,6 +569,8 @@ export class BrowserPbrRenderRuntime {
     }
 
     _releaseResources() {
+        this.recipeSceneState?.dispose?.();
+        this.recipeSceneState = null;
         this.environmentTexture?.dispose?.();
         this.environmentTexture = null;
         this.environmentTextureLease?.release?.();

@@ -13,6 +13,7 @@ import VehicleEditorPage from './vehicles/editor/VehicleEditorPage';
 import ScenarioPage from './scenarios/ScenarioPage';
 import ExperimentPage from './experiments/ExperimentPage';
 import HeadlessPage from './headless/HeadlessPage';
+import VisualLabPage from './visual-lab/VisualLabPage';
 import McpExperimentBridge from './experiments/McpExperimentBridge';
 import { getExperimentRunController } from './experiments/ExperimentRunController';
 import Menu from './3d/overlay/menu/Menu';
@@ -197,6 +198,13 @@ function HomeContent() {
         });
     }, [requestWorkspace]);
 
+    const goToVisualLab = useCallback(() => {
+        requestWorkspace(() => {
+            setView(APP_VIEWS.VISUAL_LAB);
+            setMenuVisible(false);
+        });
+    }, [requestWorkspace]);
+
     const updateExperimentDiagnosticsViewport = useCallback((nextViewport) => {
         setExperimentDiagnosticsViewport((current) => {
             if (!nextViewport) return current ? null : current;
@@ -313,6 +321,7 @@ function HomeContent() {
                     onScenarios={goToScenarios}
                     onExperiments={goToExperiments}
                     onHeadlessRuns={goToHeadlessRuns}
+                    onVisualLab={goToVisualLab}
                     onReplay={goToReplay}
                     onLogs={goToLogs}
                     onAnalysis={goToAnalysis}
@@ -395,6 +404,9 @@ function HomeContent() {
         }
         {
             view === APP_VIEWS.HEADLESS_RUNS && <HeadlessPage onOpenWorkspace={() => openWorkspaceSwitcher("pointer")} onOpenReplay={goToReplay} onOpenAnalysis={goToAnalysis} preselectedSuiteId={headlessPreselectedSuiteId} />
+        }
+        {
+            view === APP_VIEWS.VISUAL_LAB && <VisualLabPage onOpenWorkspace={() => openWorkspaceSwitcher("pointer")} />
         }
         {
             activeEnvironmentId && (

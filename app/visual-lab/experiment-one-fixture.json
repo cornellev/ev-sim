@@ -1,0 +1,125 @@
+{
+  "kind": "cev-sim.visual-lab-fixture-source",
+  "version": 1,
+  "id": "experiment-1-room",
+  "dimensionsMeters": [6, 2.8, 5],
+  "materials": {
+    "plaster": { "baseColor": "#c8c3b8", "roughness": 0.82, "metalness": 0, "textureScaleMeters": 0.45, "pattern": "plaster" },
+    "floor": { "baseColor": "#6d5944", "roughness": 0.58, "metalness": 0, "textureScaleMeters": 0.18, "pattern": "wood" },
+    "oak": { "baseColor": "#9c6037", "roughness": 0.46, "metalness": 0, "textureScaleMeters": 0.12, "pattern": "wood" },
+    "dark-oak": { "baseColor": "#513323", "roughness": 0.5, "metalness": 0, "textureScaleMeters": 0.1, "pattern": "wood" },
+    "upholstery": { "baseColor": "#49606b", "roughness": 0.86, "metalness": 0, "textureScaleMeters": 0.018, "pattern": "weave" },
+    "cabinet": { "baseColor": "#a39b8d", "roughness": 0.63, "metalness": 0, "textureScaleMeters": 0.28, "pattern": "paint" },
+    "fabric": { "baseColor": "#80483f", "roughness": 0.94, "metalness": 0, "textureScaleMeters": 0.012, "pattern": "weave" },
+    "steel": { "baseColor": "#8e969b", "roughness": 0.24, "metalness": 0.88, "textureScaleMeters": 0.08, "pattern": "brushed" },
+    "black-metal": { "baseColor": "#24282b", "roughness": 0.31, "metalness": 0.74, "textureScaleMeters": 0.06, "pattern": "brushed" },
+    "paper": { "baseColor": "#c9b779", "roughness": 0.9, "metalness": 0, "textureScaleMeters": 0.05, "pattern": "paper" },
+    "box": { "baseColor": "#89745b", "roughness": 0.84, "metalness": 0, "textureScaleMeters": 0.08, "pattern": "paper" },
+    "trim": { "baseColor": "#e0ddd5", "roughness": 0.68, "metalness": 0, "textureScaleMeters": 0.3, "pattern": "paint" },
+    "gap": { "baseColor": "#292724", "roughness": 0.8, "metalness": 0, "textureScaleMeters": 0.1, "pattern": "paint" }
+  },
+  "objects": [
+    {
+      "id": "room-shell", "label": "Room shell", "category": "architecture", "editable": false,
+      "position": [0, 0, 0], "dimensionsMeters": [6, 2.8, 5],
+      "parts": [
+        { "id": "floor", "shape": "box", "size": [6, 0.08, 5], "position": [0, -0.04, 0], "material": "floor", "bevel": 0 },
+        { "id": "ceiling", "shape": "box", "size": [6, 0.08, 5], "position": [0, 2.84, 0], "material": "plaster", "bevel": 0 },
+        { "id": "west-wall", "shape": "box", "size": [0.12, 2.8, 5], "position": [-2.94, 1.4, 0], "material": "plaster", "bevel": 0.01 },
+        { "id": "east-wall", "shape": "box", "size": [0.12, 2.8, 5], "position": [2.94, 1.4, 0], "material": "plaster", "bevel": 0.01 },
+        { "id": "north-left", "shape": "box", "size": [3.4, 2.8, 0.12], "position": [-1.3, 1.4, 2.44], "material": "plaster", "bevel": 0.01 },
+        { "id": "north-right", "shape": "box", "size": [1, 2.8, 0.12], "position": [2.5, 1.4, 2.44], "material": "plaster", "bevel": 0.01 },
+        { "id": "north-sill-wall", "shape": "box", "size": [1.6, 0.95, 0.12], "position": [1.2, 0.475, 2.44], "material": "plaster", "bevel": 0.01 },
+        { "id": "north-header-wall", "shape": "box", "size": [1.6, 0.6, 0.12], "position": [1.2, 2.5, 2.44], "material": "plaster", "bevel": 0.01 },
+        { "id": "window-sill", "shape": "box", "size": [1.76, 0.08, 0.24], "position": [1.2, 0.98, 2.36], "material": "trim", "bevel": 0.015 },
+        { "id": "window-head", "shape": "box", "size": [1.76, 0.08, 0.18], "position": [1.2, 2.22, 2.4], "material": "trim", "bevel": 0.012 },
+        { "id": "window-left", "shape": "box", "size": [0.08, 1.32, 0.18], "position": [0.36, 1.6, 2.4], "material": "trim", "bevel": 0.012 },
+        { "id": "window-right", "shape": "box", "size": [0.08, 1.32, 0.18], "position": [2.04, 1.6, 2.4], "material": "trim", "bevel": 0.012 },
+        { "id": "south-right", "shape": "box", "size": [3.4, 2.8, 0.12], "position": [1.3, 1.4, -2.44], "material": "plaster", "bevel": 0.01 },
+        { "id": "south-left", "shape": "box", "size": [1, 2.8, 0.12], "position": [-2.5, 1.4, -2.44], "material": "plaster", "bevel": 0.01 },
+        { "id": "door-header-wall", "shape": "box", "size": [1, 0.7, 0.12], "position": [-1.5, 2.45, -2.44], "material": "plaster", "bevel": 0.01 },
+        { "id": "door-left", "shape": "box", "size": [0.09, 2.2, 0.2], "position": [-2.03, 1.1, -2.36], "material": "trim", "bevel": 0.012 },
+        { "id": "door-right", "shape": "box", "size": [0.09, 2.2, 0.2], "position": [-0.97, 1.1, -2.36], "material": "trim", "bevel": 0.012 },
+        { "id": "door-head", "shape": "box", "size": [1.15, 0.09, 0.2], "position": [-1.5, 2.16, -2.36], "material": "trim", "bevel": 0.012 }
+      ]
+    },
+    {
+      "id": "table", "label": "Oak table", "category": "furniture", "editable": true,
+      "position": [0.25, 0, -0.2], "dimensionsMeters": [1.8, 0.82, 0.9],
+      "parts": [
+        { "id": "top", "shape": "box", "size": [1.8, 0.1, 0.9], "position": [0, 0.77, 0], "material": "oak", "bevel": 0.045 },
+        { "id": "leg-nw", "shape": "box", "size": [0.1, 0.72, 0.1], "position": [-0.72, 0.36, -0.32], "material": "dark-oak", "bevel": 0.018 },
+        { "id": "leg-ne", "shape": "box", "size": [0.1, 0.72, 0.1], "position": [0.72, 0.36, -0.32], "material": "dark-oak", "bevel": 0.018 },
+        { "id": "leg-sw", "shape": "box", "size": [0.1, 0.72, 0.1], "position": [-0.72, 0.36, 0.32], "material": "dark-oak", "bevel": 0.018 },
+        { "id": "leg-se", "shape": "box", "size": [0.1, 0.72, 0.1], "position": [0.72, 0.36, 0.32], "material": "dark-oak", "bevel": 0.018 },
+        { "id": "apron-n", "shape": "box", "size": [1.52, 0.12, 0.07], "position": [0, 0.64, -0.36], "material": "dark-oak", "bevel": 0.01 },
+        { "id": "apron-s", "shape": "box", "size": [1.52, 0.12, 0.07], "position": [0, 0.64, 0.36], "material": "dark-oak", "bevel": 0.01 }
+      ]
+    },
+    {
+      "id": "chair-a", "label": "Chair A", "category": "furniture", "editable": true,
+      "position": [-1.15, 0, -0.15], "dimensionsMeters": [0.55, 0.92, 0.58],
+      "parts": [
+        { "id": "seat", "shape": "box", "size": [0.55, 0.09, 0.52], "position": [0, 0.48, 0], "material": "upholstery", "bevel": 0.04 },
+        { "id": "back", "shape": "box", "size": [0.55, 0.5, 0.075], "position": [0, 0.72, 0.23], "rotation": [0.08, 0, 0], "material": "upholstery", "bevel": 0.035 },
+        { "id": "leg-nw", "shape": "box", "size": [0.065, 0.47, 0.065], "position": [-0.21, 0.235, -0.18], "material": "black-metal", "bevel": 0.008 },
+        { "id": "leg-ne", "shape": "box", "size": [0.065, 0.47, 0.065], "position": [0.21, 0.235, -0.18], "material": "black-metal", "bevel": 0.008 },
+        { "id": "leg-sw", "shape": "box", "size": [0.065, 0.47, 0.065], "position": [-0.21, 0.235, 0.18], "material": "black-metal", "bevel": 0.008 },
+        { "id": "leg-se", "shape": "box", "size": [0.065, 0.47, 0.065], "position": [0.21, 0.235, 0.18], "material": "black-metal", "bevel": 0.008 },
+        { "id": "stretcher", "shape": "box", "size": [0.38, 0.045, 0.045], "position": [0, 0.2, -0.18], "material": "black-metal", "bevel": 0.006 }
+      ]
+    },
+    {
+      "id": "chair-b", "copyOf": "chair-a", "label": "Chair B", "category": "furniture", "editable": true,
+      "position": [1.55, 0, -0.2], "dimensionsMeters": [0.55, 0.92, 0.58]
+    },
+    {
+      "id": "cabinet", "label": "Low cabinet", "category": "furniture", "editable": true,
+      "position": [1.75, 0, 1.9], "dimensionsMeters": [1.65, 0.92, 0.45],
+      "parts": [
+        { "id": "body", "shape": "box", "size": [1.65, 0.82, 0.45], "position": [0, 0.47, 0], "material": "cabinet", "bevel": 0.03 },
+        { "id": "top", "shape": "box", "size": [1.68, 0.08, 0.48], "position": [0, 0.92, 0], "material": "dark-oak", "bevel": 0.02 },
+        { "id": "toe-kick", "shape": "box", "size": [1.45, 0.1, 0.32], "position": [0, 0.05, 0.04], "material": "gap", "bevel": 0.006 },
+        { "id": "seam-left", "shape": "box", "size": [0.008, 0.66, 0.012], "position": [-0.54, 0.47, -0.231], "material": "gap", "bevel": 0 },
+        { "id": "seam-center", "shape": "box", "size": [0.008, 0.66, 0.012], "position": [0, 0.47, -0.231], "material": "gap", "bevel": 0 },
+        { "id": "seam-right", "shape": "box", "size": [0.008, 0.66, 0.012], "position": [0.54, 0.47, -0.231], "material": "gap", "bevel": 0 }
+      ]
+    },
+    {
+      "id": "fabric", "label": "Folded fabric", "category": "soft-goods", "editable": true,
+      "position": [0.3, 0.84, -0.15], "dimensionsMeters": [0.72, 0.12, 0.52],
+      "parts": [
+        { "id": "fold-1", "shape": "box", "size": [0.72, 0.04, 0.52], "position": [-0.018, 0.02, 0], "rotation": [0, -0.035, 0], "material": "fabric", "bevel": 0.022 },
+        { "id": "fold-2", "shape": "box", "size": [0.685, 0.04, 0.495], "position": [0, 0.06, 0], "material": "fabric", "bevel": 0.022 },
+        { "id": "fold-3", "shape": "box", "size": [0.65, 0.04, 0.47], "position": [0.018, 0.1, 0], "rotation": [0, 0.035, 0], "material": "fabric", "bevel": 0.022 }
+      ]
+    },
+    {
+      "id": "metal-lamp", "label": "Metal task lamp", "category": "metal", "editable": true,
+      "position": [-2.15, 0, 1.6], "dimensionsMeters": [0.42, 1.45, 0.42],
+      "parts": [
+        { "id": "base", "shape": "cylinder", "size": [0.24, 0.08, 0.24], "position": [0, 0.04, 0], "material": "black-metal", "bevel": 0.01 },
+        { "id": "stem", "shape": "cylinder", "size": [0.05, 1.08, 0.05], "position": [0, 0.58, 0], "material": "steel", "bevel": 0.006 },
+        { "id": "shade", "shape": "cone", "size": [0.24, 0.34, 0.24], "position": [0, 1.15, -0.08], "rotation": [1.12, 0, 0], "material": "steel", "bevel": 0.008 }
+      ]
+    },
+    {
+      "id": "clutter-books", "label": "Book stack", "category": "clutter", "editable": true,
+      "position": [1.75, 0.94, 1.88], "dimensionsMeters": [0.48, 0.16, 0.3],
+      "parts": [
+        { "id": "book-1", "shape": "box", "size": [0.48, 0.045, 0.3], "position": [0, 0.025, 0], "rotation": [0, -0.04, 0], "material": "paper", "bevel": 0.012 },
+        { "id": "book-2", "shape": "box", "size": [0.44, 0.045, 0.285], "position": [0.015, 0.075, 0], "material": "fabric", "bevel": 0.012 },
+        { "id": "book-3", "shape": "box", "size": [0.4, 0.045, 0.27], "position": [0.03, 0.125, 0], "rotation": [0, 0.04, 0], "material": "paper", "bevel": 0.012 }
+      ]
+    },
+    {
+      "id": "clutter-box", "label": "Storage box", "category": "clutter", "editable": true,
+      "position": [-2.1, 0, -1.85], "dimensionsMeters": [0.62, 0.42, 0.5],
+      "parts": [
+        { "id": "body", "shape": "box", "size": [0.62, 0.38, 0.5], "position": [0, 0.19, 0], "material": "box", "bevel": 0.025 },
+        { "id": "lid", "shape": "box", "size": [0.66, 0.05, 0.54], "position": [0, 0.405, 0], "material": "dark-oak", "bevel": 0.018 },
+        { "id": "handle", "shape": "box", "size": [0.18, 0.06, 0.02], "position": [0, 0.24, -0.255], "material": "black-metal", "bevel": 0.008 }
+      ]
+    }
+  ]
+}

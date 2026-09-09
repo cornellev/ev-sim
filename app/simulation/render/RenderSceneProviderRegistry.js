@@ -274,17 +274,20 @@ export class RenderSceneProviderRegistry {
     }
 
     bindPbrImplementation(implementation) {
-        const entry = this.lookup(VISUAL_RENDER_PROVIDERS.pbrMesh, { requireAvailable: false });
-        entry.resolve = (worldResource, vehicleDependencies = [], selection, context = {}) => (
-            implementation.createResource({
-                worldResource,
-                vehicleDependencies,
-                selection,
-                ...context,
-            })
-        );
-        entry.assert = (description) => implementation.assertDescription(description);
-        return entry;
+        const entries = [VISUAL_RENDER_PROVIDERS.pbrMesh, VISUAL_RENDER_PROVIDERS.pbrMeshV2]
+            .map((provider) => this.lookup(provider, { requireAvailable: false }));
+        for (const entry of entries) {
+            entry.resolve = (worldResource, vehicleDependencies = [], selection, context = {}) => (
+                implementation.createResource({
+                    worldResource,
+                    vehicleDependencies,
+                    selection,
+                    ...context,
+                })
+            );
+            entry.assert = (description) => implementation.assertDescription(description);
+        }
+        return entries[0];
     }
 
     lookup(provider, {
@@ -531,6 +534,17 @@ export function createDefaultRenderSceneProviderRegistry() {
         available: false,
         resolvable: true,
         runtimeAvailability: { browser: true, headless: true },
+        productProfiles: [defaultProductProfile({ requireMeasured: true })],
+    });
+    registry.register({
+        id: VISUAL_RENDER_PROVIDERS.pbrMeshV2.id,
+        version: VISUAL_RENDER_PROVIDERS.pbrMeshV2.version,
+        available: false,
+        resolvable: true,
+        runtimeAvailability: { browser: true, headless: false },
+        runtimeUnavailableReasons: {
+            headless: "pbr-mesh@2 is initially supported only by browser execution",
+        },
         productProfiles: [defaultProductProfile({ requireMeasured: true })],
     });
     return registry;

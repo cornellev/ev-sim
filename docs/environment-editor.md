@@ -50,6 +50,13 @@ Environment edits are saved to the backend, not the browser. Loading and saving 
 
 The storage contract is environment schema v3. v2 files load as revision `0` with implied null visual/evidence references; the first guarded save writes v3 revision `1`. Full replacement is `PUT /api/storage/environments/<id>` with `{ manifest, expectedRevision }`. Rename, duplicate, ID change, and delete require the same revision. Missing or stale revisions return HTTP `409` with `ENVIRONMENT_REVISION_CONFLICT` and `currentRevision`. Unguarded legacy bodies are rejected with `ENVIRONMENT_UNGUARDED_WRITE`. Catalog entries include `revision`. `clientRevision` is not a concurrency authority and is not written into v3 documents.
 
+Schema v3 also accepts an optional authored `staticMetricFixtures` domain for
+bounded prepared scenes. Each fixture has a stable object ID and explicit
+box/triangle primitives. The domain is serialized only when authored, enters
+canonical world/sensor identity only when present, and supplies truth bindings,
+analytic geometry, and supported box collision obstacles. Environments that
+omit it retain their previous exact world description and hash.
+
 Display-name rename keeps visual and evidence references when `worldHash` is unchanged, including both descriptor and access hashes. Duplicating an environment, changing its ID, or importing onto a conflicting ID rebinds the descriptor to the destination world, creates a corresponding access sidecar with the same use selections, reuses compatible asset digests, and clears correspondence evidence. Missing or incompatible descriptors fail before the environment mutation. An older client that writes the same descriptor without `accessHash` preserves the existing sidecar; replacing the descriptor without a matching access hash is rejected.
 
 The environment switcher in both 3D workspaces selects, creates, duplicates, renames, and deletes environments using the acknowledged revision. Selection is shared between Simulation and Editor and stored in server settings. The saved payload is `Environment.toManifest()` at `server/data/environments/<id>.json`. See [development.md](development.md) for the storage backend.
@@ -69,6 +76,12 @@ or CAS dependencies. VIS-13a package import can install those visual bytes after
 strict archive verification. VIS-13b package admission is operational, while
 PBR execution is browser-only in VIS-14; headless, Python, supervisor, and
 managed execution remain unavailable until their later renderer milestones.
+
+Experiment 1 adds the opt-in `cev-sim.pbr-render-recipe@2` / `pbr-mesh@2`
+browser profile. It records bounded directional/point lights, PCF soft shadow
+maps, exposure, and `none` or AgX presentation. It is shared by locked Visual
+Lab inspection and calibrated browser beauty capture and is rejected by
+headless capability validation.
 
 Building transforms update their authoritative footprint/height records as the gizmo moves; prop transforms update position and heading. Reload therefore reconstructs the edited location rather than the original runtime mesh.
 

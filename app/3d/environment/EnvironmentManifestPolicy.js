@@ -24,11 +24,14 @@ export function getEnvironmentApplyPolicy(manifest = {}, templateId = "blank") {
     const roadsAuthored = manifest.roadsAuthored === true || document.roadsAuthored === true;
     const buildingsAuthored = manifest.buildingsAuthored === true || document.buildingsAuthored === true;
     const featuresAuthored = manifest.featuresAuthored === true || document.featuresAuthored === true;
+    const staticMetricFixturesAuthored = manifest.staticMetricFixturesAuthored === true
+        || document.staticMetricFixturesAuthored === true;
 
     return {
         roadsAuthored,
         buildingsAuthored,
         featuresAuthored,
+        staticMetricFixturesAuthored,
         rebuildRoads: templateId === "blank" || roadsAuthored,
         rebuildBuildings: buildingsAuthored,
         rebuildFeatures: featuresAuthored,
@@ -134,6 +137,9 @@ export function serializeEnvironmentManifestV3(manifest, {
         roadsAuthored: manifest.roadsAuthored ?? current?.roadsAuthored ?? false,
         buildingsAuthored: manifest.buildingsAuthored ?? current?.buildingsAuthored ?? false,
         featuresAuthored: manifest.featuresAuthored ?? current?.featuresAuthored ?? false,
+        ...(manifest.staticMetricFixturesAuthored !== undefined || current?.staticMetricFixturesAuthored !== undefined
+            ? { staticMetricFixturesAuthored: manifest.staticMetricFixturesAuthored ?? current.staticMetricFixturesAuthored }
+            : {}),
         visualLayer,
         evidence,
         document: document && typeof document === "object"

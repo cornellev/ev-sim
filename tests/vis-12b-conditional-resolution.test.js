@@ -597,7 +597,10 @@ test("VIS-12b integrity rejects rehashed inner tampering, profile drift, and dup
         colorPipeline: { exposure: -0 },
     });
     assert.equal(Object.is(negativeZero.colorPipeline.exposure, -0), false);
-    assert.throws(() => normalizePbrRenderRecipe({ kind: "cev-sim.pbr-render-recipe", version: 2 }), /version 1/);
+    assert.equal(normalizePbrRenderRecipe({
+        kind: "cev-sim.pbr-render-recipe",
+        version: 2,
+    }).version, 2);
     assert.throws(() => normalizePbrRenderRecipe({ actors: [{ actorId: "e\u0301go" }] }), /NFC/);
 });
 

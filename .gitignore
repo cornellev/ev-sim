@@ -76,3 +76,5 @@ graphify-out
 
 # local experiment / controller scaffolding (non-upstream)
 .experiments
+
+public/visual-lab

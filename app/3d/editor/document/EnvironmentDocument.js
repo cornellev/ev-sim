@@ -2,6 +2,7 @@
  * @typedef {{ id: string, x: number, z: number, kind?: 'intersection' | 'endpoint' }} RoadNode
  * @typedef {{ id: string, startNodeId: string, endNodeId: string, bidirectional?: boolean, direction?: number | string, oneWay?: boolean, oneWayDirection?: number | string, width?: number, laneCount?: number, shoulderWidth?: number, tension?: number, borderLeft?: string, borderRight?: string, startArm?: { x: number, z: number }, endArm?: { x: number, z: number } }} RoadEdge
  * @typedef {{ id: string, type: string, x: number, z: number, dir?: number, rotationY?: number, tags?: string[] }} FeatureRecord
+ * @typedef {{ id: string, tags?: string[], primitives: Array<{ id: string, shape: 'box', center: {x:number,y:number,z:number}, size: {x:number,y:number,z:number} }|{ id: string, shape: 'triangle', vertices: Array<{x:number,y:number,z:number}> }> }} StaticMetricFixtureRecord
  * @typedef {{ lat: number, lng: number }} EarthAnchor
  * @typedef {{ north: number, south: number, east: number, west: number }} EarthBounds
  * @typedef {{ anchor: EarthAnchor, bounds: EarthBounds, tileProvider: string, roadProvider: string, importedLayerIds: string[], importedAt: string|null }} EarthSourceRecord
@@ -40,6 +41,7 @@ export class EnvironmentDocument {
         this.roadsAuthored = options.roadsAuthored === true;
         this.buildingsAuthored = options.buildingsAuthored === true;
         this.featuresAuthored = options.featuresAuthored === true;
+        this.staticMetricFixturesAuthored = options.staticMetricFixturesAuthored === true;
         /** @type {RoadNode[]} */
         this.roads = {
             nodes: Array.isArray(options.roads?.nodes) ? options.roads.nodes.map(cloneNode) : [],
@@ -53,6 +55,10 @@ export class EnvironmentDocument {
         this.features = Array.isArray(options.features)
             ? options.features.map(cloneFeature)
             : [];
+        /** @type {StaticMetricFixtureRecord[]} */
+        this.staticMetricFixtures = Array.isArray(options.staticMetricFixtures)
+            ? options.staticMetricFixtures.map(cloneStaticMetricFixture)
+            : [];
         /** @type {EarthSourceRecord|null} */
         this.earth = options.earth ? cloneEarthSource(options.earth) : null;
         this.subscribers = new Set();
@@ -65,6 +71,10 @@ export class EnvironmentDocument {
             roadsAuthored: this.roadsAuthored,
             buildingsAuthored: this.buildingsAuthored,
             featuresAuthored: this.featuresAuthored,
+            ...(this.staticMetricFixturesAuthored || this.staticMetricFixtures.length > 0 ? {
+                staticMetricFixturesAuthored: this.staticMetricFixturesAuthored,
+                staticMetricFixtures: this.staticMetricFixtures.map(cloneStaticMetricFixture),
+            } : {}),
             roads: {
                 nodes: this.roads.nodes.map(cloneNode),
                 edges: this.roads.edges.map(cloneEdge),
@@ -85,6 +95,7 @@ export class EnvironmentDocument {
         this.roadsAuthored = manifest.roadsAuthored === true;
         this.buildingsAuthored = manifest.buildingsAuthored === true;
         this.featuresAuthored = manifest.featuresAuthored === true;
+        this.staticMetricFixturesAuthored = manifest.staticMetricFixturesAuthored === true;
         this.roads = {
             nodes: Array.isArray(manifest.roads?.nodes) ? manifest.roads.nodes.map(cloneNode) : [],
             edges: Array.isArray(manifest.roads?.edges) ? manifest.roads.edges.map(cloneEdge) : [],
@@ -94,6 +105,9 @@ export class EnvironmentDocument {
             : [];
         this.features = Array.isArray(manifest.features)
             ? manifest.features.map(cloneFeature)
+            : [];
+        this.staticMetricFixtures = Array.isArray(manifest.staticMetricFixtures)
+            ? manifest.staticMetricFixtures.map(cloneStaticMetricFixture)
             : [];
         this.earth = manifest.earth ? cloneEarthSource(manifest.earth) : null;
         this.notify();
@@ -213,6 +227,23 @@ function cloneFeature(feature) {
         dir: feature.dir ?? 0,
         rotationY: feature.rotationY ?? 0,
         tags: [...(feature.tags ?? [])],
+    };
+}
+
+function cloneStaticMetricFixture(fixture) {
+    return {
+        id: fixture.id,
+        tags: [...(fixture.tags ?? [])],
+        primitives: (fixture.primitives ?? []).map((primitive) => primitive.shape === "box" ? {
+            id: primitive.id,
+            shape: "box",
+            center: { ...primitive.center },
+            size: { ...primitive.size },
+        } : {
+            id: primitive.id,
+            shape: "triangle",
+            vertices: primitive.vertices.map((vertex) => ({ ...vertex })),
+        }),
     };
 }
 

@@ -122,6 +122,20 @@ import {
     validateExperimentSuite,
 } from "../../app/experiments/ExperimentSuite.js";
 import {
+    assertVisualLabCandidateMatchesCase,
+    assertVisualLabReviewMatchesCase,
+    createExperimentOneBrowserCandidates,
+    createExperimentOneCase,
+    createExperimentOneCyclesCandidates,
+    createExperimentZeroCandidates,
+    createExperimentZeroCase,
+    createVisualLabReviewPack,
+    normalizeVisualLabCandidate,
+    normalizeVisualLabCase,
+    normalizeVisualLabReview,
+    visualLabDocumentHash,
+} from "../../app/visual-lab/VisualLabDocuments.js";
+import {
     createExperimentResult as createExperimentResultDocument,
     normalizeExperimentResult,
     validateExperimentResult,
@@ -169,6 +183,12 @@ const BUILT_IN_ENVIRONMENTS = Object.freeze([
         templateId: "igvc",
         builtIn: true,
     },
+]);
+const BUILT_IN_VISUAL_LAB_CASES = Object.freeze([createExperimentZeroCase(), createExperimentOneCase()]);
+const BUILT_IN_VISUAL_LAB_CANDIDATES = Object.freeze([
+    ...createExperimentZeroCandidates(BUILT_IN_VISUAL_LAB_CASES[0]),
+    ...createExperimentOneBrowserCandidates(BUILT_IN_VISUAL_LAB_CASES[1]),
+    ...createExperimentOneCyclesCandidates(BUILT_IN_VISUAL_LAB_CASES[1]),
 ]);
 
 function publicAssetFilePath(assetUrl) {
@@ -265,6 +285,9 @@ export class StorageService {
         this.experimentSuitesDir = path.join(dataDir, "experiment-suites");
         this.experimentResultsDir = path.join(dataDir, "experiment-results");
         this.experimentBaselinesDir = path.join(dataDir, "experiment-baselines");
+        this.visualLabCasesDir = path.join(dataDir, "visual-lab", "cases");
+        this.visualLabCandidatesDir = path.join(dataDir, "visual-lab", "candidates");
+        this.visualLabReviewsDir = path.join(dataDir, "visual-lab", "reviews");
         this.vehiclesDir = path.join(dataDir, "vehicles");
         this.vehicleAssetsDir = path.join(dataDir, "vehicle-assets");
         // Cache of one JsonFileStore per file path.
@@ -297,6 +320,7 @@ export class StorageService {
         this._experimentSuiteWriteChains = new Map();
         this._experimentResultWriteChains = new Map();
         this._experimentBaselineWriteChains = new Map();
+        this._visualLabReviewWriteChains = new Map();
         this._vehicleWriteChains = new Map();
         this.headlessQueuePath = path.join(dataDir, "headless-experiment-queue.v1.json");
         this.headlessRunBundlesDir = path.join(dataDir, "headless-run-bundles");
@@ -1145,6 +1169,161 @@ export class StorageService {
         // Keep the environment envelope so the canonical road-network identity
         // includes the stable environment id, exactly as scenario resolution does.
         return verifyRoute(route.waypoints, environment);
+    }
+
+    // --- Visual Lab cases, candidates, and reviews -------------------------
+
+    async listVisualLabCases() {
+        const ids = await this._listJsonIds(this.visualLabCasesDir);
+        const saved = (await Promise.all(ids.map((id) => this._readVisualLabCase(id)))).filter(Boolean);
+        return [...BUILT_IN_VISUAL_LAB_CASES, ...saved]
+            .map((entry) => structuredClone(entry))
+            .sort((left, right) => left.name.localeCompare(right.name));
+    }
+
+    async getVisualLabCase(caseId) {
+        const stored = await this._readVisualLabCase(caseId);
+        if (stored) return stored;
+        const builtIn = BUILT_IN_VISUAL_LAB_CASES.find((entry) => entry.id === caseId);
+        return builtIn ? structuredClone(builtIn) : null;
+    }
+
+    async registerVisualLabCase(input = {}) {
+        const requested = input.case ?? input;
+        const caseDocument = normalizeVisualLabCase(requested);
+        safeSegment(caseDocument.id);
+        if (await this.getVisualLabCase(caseDocument.id)) {
+            throw new Error(`Visual Lab case "${caseDocument.id}" already exists and is immutable.`);
+        }
+        const stored = {
+            ...caseDocument,
+            definitionHash: visualLabDocumentHash(caseDocument),
+            registeredAt: new Date().toISOString(),
+        };
+        return this._fileStore(this._visualLabCasePath(caseDocument.id), null).write(stored);
+    }
+
+    async listVisualLabCandidates(caseId = null) {
+        const ids = await this._listJsonIds(this.visualLabCandidatesDir);
+        const saved = (await Promise.all(ids.map((id) => this._readVisualLabCandidate(id)))).filter(Boolean);
+        return [...BUILT_IN_VISUAL_LAB_CANDIDATES, ...saved]
+            .filter((entry) => !caseId || entry.caseId === caseId)
+            .map((entry) => structuredClone(entry))
+            .sort((left, right) => left.name.localeCompare(right.name));
+    }
+
+    async getVisualLabCandidate(candidateId) {
+        const stored = await this._readVisualLabCandidate(candidateId);
+        if (stored) return stored;
+        const builtIn = BUILT_IN_VISUAL_LAB_CANDIDATES.find((entry) => entry.id === candidateId);
+        return builtIn ? structuredClone(builtIn) : null;
+    }
+
+    async registerVisualLabCandidate(input = {}) {
+        const requested = input.candidate ?? input;
+        const candidate = normalizeVisualLabCandidate(requested);
+        safeSegment(candidate.id);
+        if (await this.getVisualLabCandidate(candidate.id)) {
+            throw new Error(`Visual Lab candidate "${candidate.id}" already exists and is immutable.`);
+        }
+        const caseDocument = await this.getVisualLabCase(candidate.caseId);
+        if (!caseDocument) throw new Error(`Visual Lab case "${candidate.caseId}" does not exist.`);
+        const validated = assertVisualLabCandidateMatchesCase(caseDocument, candidate);
+        const stored = {
+            ...validated,
+            definitionHash: visualLabDocumentHash(validated),
+            registeredAt: new Date().toISOString(),
+        };
+        return this._fileStore(this._visualLabCandidatePath(candidate.id), null).write(stored);
+    }
+
+    async listVisualLabReviews(caseId = null) {
+        const ids = await this._listJsonIds(this.visualLabReviewsDir);
+        const reviews = (await Promise.all(ids.map((id) => this.getVisualLabReview(id))))
+            .filter((entry) => entry && (!caseId || entry.caseId === caseId));
+        return reviews.sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")));
+    }
+
+    getVisualLabReview(reviewId) {
+        return this._fileStore(this._visualLabReviewPath(reviewId), null).read();
+    }
+
+    async createVisualLabReview(input = {}) {
+        const review = normalizeVisualLabReview(input.review ?? input);
+        safeSegment(review.id);
+        if (await this.getVisualLabReview(review.id)) {
+            throw new Error(`Visual Lab review "${review.id}" already exists.`);
+        }
+        return this._writeVisualLabReview(review.id, review, { expectedRevision: 0, create: true });
+    }
+
+    async putVisualLabReview(reviewId, input = {}) {
+        const requested = input.review ?? input;
+        const expectedRevision = input.expectedRevision ?? requested.revision;
+        const review = normalizeVisualLabReview({ ...requested, id: reviewId });
+        return this._writeVisualLabReview(reviewId, review, { expectedRevision });
+    }
+
+    deleteVisualLabReview(reviewId, expectedRevision) {
+        return this._deleteRevisionedDocument({
+            id: reviewId,
+            filePath: this._visualLabReviewPath(reviewId),
+            writeChains: this._visualLabReviewWriteChains,
+            getCurrent: () => this.getVisualLabReview(reviewId),
+            expectedRevision,
+            label: "Visual Lab review",
+        });
+    }
+
+    async exportVisualLabReview(reviewId) {
+        const review = await this.getVisualLabReview(reviewId);
+        if (!review) throw new Error(`Visual Lab review "${reviewId}" does not exist.`);
+        const caseDocument = await this.getVisualLabCase(review.caseId);
+        const candidates = await this.listVisualLabCandidates(review.caseId);
+        assertVisualLabReviewMatchesCase({ caseDocument, candidates, review });
+        return createVisualLabReviewPack({ caseDocument, candidates, review });
+    }
+
+    _readVisualLabCase(caseId) {
+        return this._fileStore(this._visualLabCasePath(caseId), null).read();
+    }
+
+    _readVisualLabCandidate(candidateId) {
+        return this._fileStore(this._visualLabCandidatePath(candidateId), null).read();
+    }
+
+    async _writeVisualLabReview(reviewId, review, { expectedRevision, create = false } = {}) {
+        safeSegment(reviewId);
+        const previous = this._visualLabReviewWriteChains.get(reviewId) ?? Promise.resolve();
+        const operation = previous.catch(() => {}).then(async () => {
+            const current = await this.getVisualLabReview(reviewId);
+            const currentRevision = Number(current?.revision || 0);
+            if (create && current) throw new Error(`Visual Lab review "${reviewId}" already exists.`);
+            if (!create && expectedRevision !== undefined && Number(expectedRevision) !== currentRevision) {
+                const error = new Error(`Visual Lab review revision conflict: expected ${expectedRevision}, current revision is ${currentRevision}.`);
+                error.statusCode = 409;
+                error.currentRevision = currentRevision;
+                throw error;
+            }
+            const caseDocument = await this.getVisualLabCase(review.caseId);
+            if (!caseDocument) throw new Error(`Visual Lab case "${review.caseId}" does not exist.`);
+            const candidates = await this.listVisualLabCandidates(review.caseId);
+            const normalized = assertVisualLabReviewMatchesCase({ caseDocument, candidates, review });
+            const now = new Date().toISOString();
+            return this._fileStore(this._visualLabReviewPath(reviewId), null).write({
+                ...normalized,
+                revision: currentRevision + 1,
+                createdAt: current?.createdAt ?? now,
+                updatedAt: now,
+            });
+        });
+        this._visualLabReviewWriteChains.set(reviewId, operation);
+        operation.finally(() => {
+            if (this._visualLabReviewWriteChains.get(reviewId) === operation) {
+                this._visualLabReviewWriteChains.delete(reviewId);
+            }
+        }).catch(() => {});
+        return operation;
     }
 
     // --- Experiment suites, results, and baselines ------------------------
@@ -3131,6 +3310,18 @@ export class StorageService {
         return path.join(this.experimentBaselinesDir, `${safeSegment(baselineId)}.json`);
     }
 
+    _visualLabCasePath(caseId) {
+        return path.join(this.visualLabCasesDir, `${safeSegment(caseId)}.json`);
+    }
+
+    _visualLabCandidatePath(candidateId) {
+        return path.join(this.visualLabCandidatesDir, `${safeSegment(candidateId)}.json`);
+    }
+
+    _visualLabReviewPath(reviewId) {
+        return path.join(this.visualLabReviewsDir, `${safeSegment(reviewId)}.json`);
+    }
+
     /** Lazily create (and cache) a JsonFileStore for a given file path. */
     _fileStore(filePath, fallback) {
         let store = this._stores.get(filePath);
@@ -3481,6 +3672,8 @@ function emptyEnvironmentDocument(environmentId) {
         roadsAuthored: false,
         buildingsAuthored: false,
         featuresAuthored: false,
+        staticMetricFixturesAuthored: false,
+        staticMetricFixtures: [],
     };
 }
 

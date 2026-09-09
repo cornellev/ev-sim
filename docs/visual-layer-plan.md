@@ -25,6 +25,13 @@ a VIS, GOOG, or GS PR changes a contract, hash, gate, or milestone status.
 
 ## Status and release verdict
 
+- **Execution hold, 2026-09-09:** the repository owner has frozen VIS-15c
+  and subsequent unimplemented milestones (VIS-16b and VIS-17a/b/c) while
+  the appearance direction is reassessed. Existing completed milestones,
+  including VIS-16a, retain their recorded status. Optional tracks remain
+  unstarted. The [photorealism research](photorealism-research.md) and
+  [experimental action plan](photorealism-action-plan.md) are proposals,
+  not permission to resume implementation or evidence of visual quality.
 - Next milestones: **VIS-15a AGX acceptance and VIS-15b managed hardware
   acceptance**. The VIS-15a software path and local macOS ARM64 gate are
   implemented; the required AGX workflow evidence is still pending. VIS-15b
@@ -42,7 +49,7 @@ a VIS, GOOG, or GS PR changes a contract, hash, gate, or milestone status.
 - Core assumption: **Google approval, Google-derived assets, Gaussian
   splatting, and a model service are unavailable.**
 - Default implementation/review reasoning level: **Extra High**.
-- Last updated: **2026-09-09 — VIS-15b managed software integration and injected gates implemented**.
+- Last updated: **2026-09-09 — VIS-15c onward frozen pending photorealism research and visual evidence**.
 - Implemented evidence: VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, VIS-05a, VIS-05b, VIS-06a,
   VIS-06b, VIS-07, VIS-08, VIS-09, VIS-10a, VIS-10b, VIS-11, VIS-12b,
   VIS-13a, VIS-13b, VIS-14, and VIS-16a acceptance evidence is recorded in the
@@ -1976,11 +1983,11 @@ all other required core PRs remain **not started**. VIS-12a landed at commit
   by default. Software G-MANAGED/G-LIFECYCLE regressions pass, but the actual
   managed PBR hardware fixture was not enabled locally and VIS-16b has not
   supplied the production provider, so the milestone stays open.
-- [ ] VIS-15c
-- [ ] VIS-16b
-- [ ] VIS-17a
-- [ ] VIS-17b
-- [ ] VIS-17c
+- [ ] VIS-15c — paused by owner, 2026-09-09
+- [ ] VIS-16b — paused by owner, 2026-09-09
+- [ ] VIS-17a — paused by owner, 2026-09-09
+- [ ] VIS-17b — paused by owner, 2026-09-09
+- [ ] VIS-17c — paused by owner, 2026-09-09
 
 Optional work after the completed VIS-11 adapter milestone remains
 **not started** except for the completed VIS-10b/VIS-11 items below:
@@ -2019,6 +2026,103 @@ by this plan revision.
   context to build the entire program.
 
 ## Decision log
+
+### 2026-09-09 — Implement the bounded Experiment 1 renderer and room contracts
+
+Experiment 1 remains a Visual Lab program and does not infer a VIS-18 or resume
+VIS-15c/VIS-16b/VIS-17. The implementation adds browser-only
+`cev-sim.pbr-render-recipe@2` / `pbr-mesh@2`, with explicit bounded direct
+lights, PCF soft shadows, exposure, and `none`/AgX presentation. Browser live
+inspection and measured beauty capture share the recipe applier, and measured
+offscreen output uses a final `OutputPass`. Numeric camera products retain
+their existing contracts. Headless capability validation rejects v2; v1 exact
+normalization and hashes remain unchanged.
+
+The canonical environment document also gains an optional authored static
+metric fixture domain. It enters world and sensor identity only when present,
+and legacy absent documents retain their bytes. The separate Experiment 1 case
+uses complete object bindings and retains Blender 4.5.4 source, GLB/textures,
+324 browser stills, and 48 base Cycles stills with 48 paired linear EXRs. Final Experiment 1
+acceptance stays open until the complete edit and 24 fps reference/browser
+motion manifests and reopened review evidence are recorded. See
+[Visual Lab](visual-lab-plan.md#experiment-1-rendering-bottleneck).
+
+### 2026-09-09 — Implement the Visual Lab Experiment 0 review slice
+
+The separate [Visual Lab plan](visual-lab-plan.md) now owns a frozen visual-only
+room, 12 stills, three independent 24-second PNG paths, B0/B1 retained scene
+renders, versioned immutable case/candidate records, revisioned reviews, and a
+comparison workspace. Persistent stage labels distinguish source, generated,
+baked-scene, measured-camera, and external reference material from renderer
+identity. Registration rejects undeclared cameras, samples, conditions, and
+false measured-capture claims.
+
+The live viewport operates on an explicit review copy with localized numeric
+transforms, snapping, duplicate/delete, and undo/redo. It neither changes the
+active environment nor promotes partial metric bindings. Fabric, lamp, and book
+truth correspondence remains visibly missing, so Experiment 0 is blocked from
+measured-camera capture. B2/B3 reference and generated candidates remain real
+future imports rather than fabricated results.
+
+This work adds no VIS milestone, changes no world, simulation, sensor, run
+bundle, episode, or asset hash semantics, and does not resume VIS-15c, VIS-16b,
+or VIS-17. The future Apply step must still use canonical environment adapters
+and revision-checked bake promotion. The committed B0/B1 frames have an exact
+renderer recipe and per-file SHA-256 manifest; reviews reopen without running a
+model.
+
+### 2026-09-09 — Refine the proposed realism work around product outcomes
+
+The owner clarified that the goal is a comprehensive simulation tool, rather
+than an academic research result, and requested deeper experiment execution,
+editor/workspace recommendations, PR estimates, and transformer viability/cost.
+The revised [product action plan](photorealism-action-plan.md) proposes a thin
+Visual Lab comparison page using existing services, followed by targeted editor
+work only after real-model and renderer comparisons demonstrate value.
+
+The planning estimates are 2–3 PRs for setup, 4–6 cumulative for an initial
+technical decision, and 12–16 cumulative for a bounded usable workflow. They
+are conditional estimates, not approved VIS milestones. Existing-model
+inference is included; custom training and the paused production-release
+program are excluded. Formal studies and an intervention-based optimizer
+are optional follow-ups, not prerequisites for product progress.
+
+The source audit distinguishes current render defaults from capabilities:
+environment lighting and exposure controls already exist; shadows and tone
+mapping are unsupported in the current recipe, and direct-light authoring
+is absent. No renderer, authoring, identity, acceptance, or milestone contract
+changes here. VIS-15c onward remains paused. No model run or new quality
+result is claimed. This follow-up receives documentation link/fence and
+whitespace checks; the runtime test results below belong to the earlier update.
+
+### 2026-09-09 — Freeze VIS-15c onward and reassess the realism objective
+
+The repository owner froze VIS-15c and subsequent implementation after
+identifying a mismatch between the intended generative realism bake and
+the program's model-free visual infrastructure acceptance. Record the hold
+without changing completed milestones or closing outstanding VIS-15a/15b
+hardware evidence. Optional tracks remain unstarted.
+
+The new [research methodology](photorealism-research-methodology.md) was
+written before external searches. The resulting [research report](photorealism-research.md),
+[source register](photorealism-sources.md), and [experimental action plan](photorealism-action-plan.md)
+compare alternative appearance methods and propose visible experiments
+before additional implementation. They do not change runtime contracts,
+hashes, existing acceptance thresholds, or simulator behavior. Proposed
+photorealism thresholds are research targets, not new normative VIS gates.
+
+Model-free capture, fixed-proposal fixtures, and mock-provider success are
+not evidence that an authored scene has become photographically realistic.
+No new bake, model-quality result, or real perception-transfer result is
+claimed by this documentation update. Resuming the held milestones requires
+an explicit owner decision; no headless PR 13 or replacement full roadmap
+is inferred.
+
+Documentation verification: `npm run lint` passed; `npm test` passed with
+931 tests passed, 4 skipped, and 0 failed. The test run required local HTTP
+and Unix-socket access after the sandbox denied those fixtures. Local file
+links and Markdown code fences were checked. These results do not close any
+photorealism, model-quality, hardware, or release gate.
 
 ### 2026-09-06 — Record the VIS program
 

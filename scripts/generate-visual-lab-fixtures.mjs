@@ -1,0 +1,154 @@
+import { createHash } from "node:crypto";
+import { createServer } from "node:http";
+import { promises as fs } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { chromium } from "@playwright/test";
+
+import {
+    EXPERIMENT_ZERO_PATHS,
+    EXPERIMENT_ZERO_VIEWPOINTS,
+} from "../app/visual-lab/ExperimentZeroCase.js";
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const OUTPUT_ROOT = path.join(ROOT, "public", "visual-lab", "experiment-0");
+const GENERATED_MODULE = path.join(ROOT, "app", "visual-lab", "ExperimentZeroMediaManifest.js");
+const WIDTH = 1280;
+const HEIGHT = 720;
+
+const pageHtml = `<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#101316}canvas{display:block;width:${WIDTH}px;height:${HEIGHT}px}</style><script type="importmap">{"imports":{"three":"/node_modules/three/build/three.module.js","three/":"/node_modules/three/"}}</script></head><body><script type="module">
+import * as THREE from "three";
+import { createExperimentZeroScene } from "/app/visual-lab/ExperimentZeroScene.js";
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, preserveDrawingBuffer: true });
+renderer.setSize(${WIDTH}, ${HEIGHT}, false);
+renderer.setPixelRatio(1);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.NoToneMapping;
+renderer.toneMappingExposure = 1;
+renderer.shadowMap.enabled = false;
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x171a1e);
+scene.add(new THREE.HemisphereLight(0xe8eef5, 0x2a241f, 1.55));
+const key = new THREE.DirectionalLight(0xfff3df, 1.45);
+key.position.set(-3.2, 5.4, -2.6);
+scene.add(key);
+const fill = new THREE.DirectionalLight(0xc8d8ed, 0.38);
+fill.position.set(4, 3, 3);
+scene.add(fill);
+const camera = new THREE.PerspectiveCamera(43.14, ${WIDTH / HEIGHT}, 0.05, 100);
+let fixture = null;
+let currentDetail = null;
+window.renderVisualLabFixture = ({ detail, pose }) => {
+  if (detail !== currentDetail) {
+    fixture?.dispose();
+    fixture = createExperimentZeroScene({ detail });
+    scene.add(fixture.root);
+    currentDetail = detail;
+  }
+  camera.position.set(...pose.position);
+  camera.lookAt(...pose.target);
+  camera.updateMatrixWorld(true);
+  renderer.render(scene, camera);
+  return true;
+};
+window.fixtureReady = true;
+</script></body></html>`;
+
+const server = createServer(async (request, response) => {
+    try {
+        const pathname = decodeURIComponent(new URL(request.url, "http://127.0.0.1").pathname);
+        if (pathname === "/") {
+            response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+            response.end(pageHtml);
+            return;
+        }
+        const filePath = path.resolve(ROOT, `.${pathname}`);
+        if (!filePath.startsWith(`${ROOT}${path.sep}`)) throw new Error("Path escapes repository root.");
+        const bytes = await fs.readFile(filePath);
+        response.writeHead(200, { "Content-Type": contentType(filePath), "Cache-Control": "no-store" });
+        response.end(bytes);
+    } catch (error) {
+        response.writeHead(error.code === "ENOENT" ? 404 : 400, { "Content-Type": "text/plain" });
+        response.end(error.message);
+    }
+});
+
+await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+});
+
+const address = server.address();
+const browser = await chromium.launch({ headless: true });
+const hashes = {};
+try {
+    const page = await browser.newPage({ viewport: { width: WIDTH, height: HEIGHT }, deviceScaleFactor: 1 });
+    await page.goto(`http://127.0.0.1:${address.port}/`);
+    await page.waitForFunction(() => window.fixtureReady === true);
+    for (const fixture of [
+        { id: "b0-simple", detail: "simple" },
+        { id: "b1-detailed", detail: "detailed" },
+    ]) {
+        for (const viewpoint of EXPERIMENT_ZERO_VIEWPOINTS) {
+            const outputPath = path.join(OUTPUT_ROOT, fixture.id, "stills", `${viewpoint.id}.png`);
+            await capture(page, fixture.detail, viewpoint.pose, outputPath, hashes);
+        }
+        for (const pathDocument of EXPERIMENT_ZERO_PATHS) {
+            for (const sample of pathDocument.samples) {
+                const fileName = `${String(sample.sampleIndex).padStart(4, "0")}.png`;
+                const outputPath = path.join(OUTPUT_ROOT, fixture.id, pathDocument.id, fileName);
+                await capture(page, fixture.detail, sample.pose, outputPath, hashes);
+            }
+        }
+    }
+} finally {
+    await browser.close();
+    await new Promise((resolve) => server.close(resolve));
+}
+
+const sortedHashes = Object.fromEntries(Object.entries(hashes).sort(([left], [right]) => left.localeCompare(right)));
+const moduleText = `// Generated by scripts/generate-visual-lab-fixtures.mjs.\nexport const EXPERIMENT_ZERO_MEDIA_HASHES = Object.freeze(${JSON.stringify(sortedHashes, null, 4)});\n`;
+await atomicWrite(GENERATED_MODULE, moduleText);
+await atomicWrite(path.join(OUTPUT_ROOT, "manifest.json"), `${JSON.stringify({
+    kind: "cev-sim.visual-lab-fixture-media",
+    version: 1,
+    caseId: "experiment-0-room",
+    image: { width: WIDTH, height: HEIGHT, mediaType: "image/png" },
+    renderer: {
+        id: "cev-sim.visual-lab-fixture@1",
+        threeVersion: "0.182.0",
+        colorSpace: "srgb",
+        toneMapping: "none",
+        exposure: 1,
+        shadows: false,
+        lighting: "hemisphere plus two unshadowed directional lights",
+    },
+    files: sortedHashes,
+}, null, 2)}\n`);
+console.log(`Generated ${Object.keys(sortedHashes).length} Visual Lab PNG frames.`);
+
+async function capture(page, detail, pose, outputPath, digestMap) {
+    await fs.mkdir(path.dirname(outputPath), { recursive: true });
+    await page.evaluate(({ selectedDetail, selectedPose }) => {
+        window.renderVisualLabFixture({ detail: selectedDetail, pose: selectedPose });
+    }, { selectedDetail: detail, selectedPose: pose });
+    await page.locator("canvas").screenshot({ path: outputPath, animations: "disabled" });
+    const bytes = await fs.readFile(outputPath);
+    const relative = `/${path.relative(path.join(ROOT, "public"), outputPath).split(path.sep).join("/")}`;
+    digestMap[relative] = createHash("sha256").update(bytes).digest("hex");
+}
+
+async function atomicWrite(filePath, contents) {
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    const temporary = `${filePath}.${process.pid}.tmp`;
+    await fs.writeFile(temporary, contents);
+    await fs.rename(temporary, filePath);
+}
+
+function contentType(filePath) {
+    if (filePath.endsWith(".js") || filePath.endsWith(".mjs")) return "text/javascript; charset=utf-8";
+    if (filePath.endsWith(".json")) return "application/json";
+    return "application/octet-stream";
+}

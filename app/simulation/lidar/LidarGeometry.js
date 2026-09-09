@@ -190,19 +190,35 @@ export function createLidarGeometry(worldResource, vehicleDependencies = []) {
     if (!world?.obstacles || !world?.drivableSurfaces) {
         throw new TypeError("A resolved world description is required for LiDAR geometry.");
     }
-    const sourceIds = [
-        ...world.obstacles.map((entry) => entry.sourceId),
+    const sourceIds = [...new Set([
+        ...world.obstacles
+            .filter((entry) => entry.sourceType !== "static-metric-fixture")
+            .map((entry) => entry.sourceId),
         ...world.drivableSurfaces.map((entry) => entry.sourceId),
+        ...(world.staticMetricFixtures ?? []).map((entry) => entry.id),
         ...vehicleDependencies.map((entry) => entry.actorId),
-    ];
+    ])];
     const instanceIds = allocateLidarInstanceIds(sourceIds, compareUtf8);
     const staticPrimitives = [
-        ...world.obstacles.flatMap((obstacle) => {
+        ...world.obstacles
+            .filter((obstacle) => obstacle.sourceType !== "static-metric-fixture")
+            .flatMap((obstacle) => {
             const tags = normalizedTags(
                 obstacle.sourceType === "building" ? ["building"] : [obstacle.sourceType],
             );
             return extrudedTriangles(obstacle, tags, instanceIds.get(String(obstacle.sourceId)));
         }),
+        ...(world.staticMetricFixtures ?? []).flatMap((fixture) => fixture.primitives.map((primitive, index) => {
+            const common = {
+                id: `static-metric:${fixture.id}:${primitive.id}`,
+                sourceId: fixture.id,
+                tags: fixture.tags,
+                instanceId: instanceIds.get(String(fixture.id)),
+            };
+            return primitive.shape === "box"
+                ? createBoxLidarTwin({ ...common, center: primitive.center, size: primitive.size })
+                : createTriangleLidarTwin({ ...common, vertices: primitive.vertices, triangleIndex: index });
+        })),
         ...world.drivableSurfaces.flatMap((surface) => (
             surfaceTriangles(surface, instanceIds.get(String(surface.sourceId)))
         )),

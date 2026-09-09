@@ -1,0 +1,539 @@
+.content {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+    background: #0e1114;
+}
+
+.hiddenInput {
+    display: none;
+}
+
+.caseBar {
+    display: grid;
+    grid-template-columns: minmax(240px, 340px) minmax(0, 1fr);
+    gap: 18px;
+    align-items: end;
+    border-bottom: 1px solid var(--slate-border-60);
+    background: var(--slate-surface-1);
+    padding: 10px 14px;
+}
+
+.caseBar :global(.sf-field) {
+    grid-template-columns: 46px minmax(0, 1fr);
+    align-items: center;
+}
+
+.caseFacts {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 16px;
+    color: var(--slate-muted);
+    font-size: 11px;
+    white-space: nowrap;
+}
+
+.blocked {
+    border: 1px solid rgb(222 151 73 / 0.38);
+    border-radius: var(--radius);
+    padding: 3px 6px;
+    color: #dca55f;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.workspace {
+    display: grid;
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+    min-width: 0;
+    min-height: 0;
+    flex: 1;
+}
+
+.selectionBar {
+    display: grid;
+    grid-template-columns: minmax(180px, 0.8fr) minmax(250px, 1fr) minmax(250px, 1fr) minmax(180px, 0.7fr);
+    gap: 10px;
+    align-items: end;
+    border-bottom: 1px solid var(--slate-border-60);
+    padding: 10px 14px;
+}
+
+.targetSelect {
+    display: grid;
+    grid-template-columns: 22px minmax(120px, 1fr) minmax(120px, 0.8fr);
+    gap: 6px;
+    align-items: center;
+}
+
+.targetLetter {
+    display: grid;
+    width: 22px;
+    height: 22px;
+    place-items: center;
+    border: 1px solid var(--slate-border);
+    border-radius: var(--radius);
+    color: var(--slate-fg);
+    font: 700 11px/1 ui-monospace, monospace;
+}
+
+.matchBlock {
+    display: grid;
+    min-width: 0;
+    gap: 3px;
+    border-left: 2px solid #b4614d;
+    padding: 2px 0 2px 10px;
+    color: #d88b77;
+    font-size: 12px;
+}
+
+.matchBlock[data-matched] {
+    border-color: #758f77;
+    color: #a7c2aa;
+}
+
+.matchBlock small {
+    overflow: hidden;
+    color: var(--slate-muted);
+    font-size: 10px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.viewerToolbar,
+.playback {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 6px;
+    border-bottom: 1px solid var(--slate-border-60);
+    background: var(--slate-surface-1);
+    padding: 7px 12px;
+}
+
+.playback {
+    border-top: 1px solid var(--slate-border-60);
+    border-bottom: 0;
+}
+
+.toolbarSpacer {
+    flex: 1;
+}
+
+.compactRange {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    color: var(--slate-muted);
+    font-size: 11px;
+    white-space: nowrap;
+}
+
+.compactRange input {
+    width: 92px;
+    accent-color: #d99c43;
+}
+
+.viewer {
+    position: relative;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+    background: #090b0d;
+    cursor: grab;
+    user-select: none;
+}
+
+.viewer:active {
+    cursor: grabbing;
+}
+
+.viewer[data-live] {
+    cursor: default;
+}
+
+.sideBySide {
+    display: grid;
+    width: 100%;
+    height: 100%;
+    grid-template-columns: 1fr 1fr;
+    gap: 1px;
+    background: var(--slate-border);
+}
+
+.wipe,
+.wipeTop,
+.mediaPane {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+}
+
+.sideBySide .mediaPane {
+    position: relative;
+    inset: auto;
+}
+
+.wipeTop {
+    pointer-events: none;
+}
+
+.wipeLine {
+    position: absolute;
+    z-index: 8;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: #f0ad4e;
+    box-shadow: 0 0 0 1px rgb(0 0 0 / 0.5);
+    pointer-events: none;
+}
+
+.wipeLegend {
+    position: absolute;
+    z-index: 9;
+    right: 10px;
+    bottom: 10px;
+    display: flex;
+    gap: 5px;
+    pointer-events: none;
+}
+
+.wipeLegend span {
+    border: 1px solid rgb(255 255 255 / 0.18);
+    border-radius: var(--radius);
+    background: rgb(9 11 13 / 0.9);
+    padding: 5px 7px;
+    color: #c7cdd3;
+    font: 700 9px/1 ui-monospace, monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.preload {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.mediaPane {
+    display: grid;
+    place-items: center;
+    background: #090b0d;
+}
+
+.mediaPane img,
+.annotationPlane {
+    position: absolute;
+    left: 0;
+    top: 0;
+    transform-origin: center center;
+    object-fit: contain;
+    max-width: none;
+    max-height: none;
+}
+
+.annotationPlane {
+    pointer-events: none;
+}
+
+.stageLabel,
+.rendererLabel {
+    position: absolute;
+    z-index: 6;
+    top: 10px;
+    border-radius: var(--radius);
+    font-size: 10px;
+    line-height: 1;
+    letter-spacing: 0.05em;
+}
+
+.stageLabel {
+    left: 10px;
+    background: #d99c43;
+    padding: 6px 7px;
+    color: #171108;
+    font-weight: 750;
+    text-transform: uppercase;
+}
+
+.rendererLabel {
+    right: 10px;
+    border: 1px solid rgb(255 255 255 / 0.16);
+    background: rgb(9 11 13 / 0.84);
+    padding: 5px 7px;
+    color: #bdc5cc;
+    font-family: ui-monospace, monospace;
+}
+
+.missingFrame {
+    display: grid;
+    width: 230px;
+    height: 130px;
+    place-items: center;
+    border: 1px dashed #4e545b;
+    color: #8d959e;
+    font: 11px/1.4 ui-monospace, monospace;
+}
+
+.closeupRect {
+    position: absolute;
+    border: 1px solid #e9aa51;
+    background: rgb(233 170 81 / 0.08);
+}
+
+.frameLabel {
+    width: 150px;
+    color: var(--slate-fg-2);
+    font: 11px/1 ui-monospace, monospace;
+    white-space: nowrap;
+}
+
+.scrubber {
+    min-width: 120px;
+    flex: 1;
+    accent-color: #d99c43;
+}
+
+.loopField {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    color: var(--slate-muted);
+    font-size: 11px;
+    white-space: nowrap;
+}
+
+.loopField input {
+    width: 45px;
+    border: 1px solid var(--slate-border-70);
+    border-radius: var(--radius);
+    background: var(--slate-surface-2);
+    padding: 4px;
+    color: var(--slate-fg);
+}
+
+.speedSelect {
+    width: 64px;
+    min-height: 30px;
+}
+
+.defects {
+    display: grid;
+    width: 330px;
+    height: 100%;
+    grid-template-rows: auto auto minmax(0, 1fr);
+    overflow: hidden;
+}
+
+.defects > header {
+    border-bottom: 1px solid var(--slate-border-60);
+    padding: 13px 14px;
+}
+
+.defects > header div {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+}
+
+.defects > header strong {
+    color: var(--slate-fg);
+    font-size: 13px;
+}
+
+.defects > header span {
+    color: var(--slate-muted);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.defectForm {
+    display: grid;
+    gap: 10px;
+    border-bottom: 1px solid var(--slate-border-60);
+    padding: 12px 14px;
+}
+
+.defectForm :global(.sf-textarea) {
+    min-height: 70px;
+}
+
+.formPair {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+.defectList {
+    overflow: auto;
+    padding: 8px;
+}
+
+.emptyNotes {
+    margin: 18px 10px;
+    color: var(--slate-muted);
+    font-size: 12px;
+    line-height: 1.55;
+}
+
+.defectCard {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 6px;
+    align-items: start;
+    border-bottom: 1px solid var(--slate-border-60);
+    padding: 8px 6px;
+}
+
+.defectCard[data-resolved] {
+    opacity: 0.55;
+}
+
+.defectCard > button:first-child {
+    display: grid;
+    min-width: 0;
+    gap: 5px;
+    border: 0;
+    background: transparent;
+    padding: 2px;
+    color: var(--slate-fg-2);
+    text-align: left;
+    cursor: pointer;
+}
+
+.defectCard small,
+.defectMeta {
+    color: var(--slate-muted);
+    font-size: 10px;
+}
+
+.defectMeta {
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.liveInspector,
+.liveCanvas {
+    position: absolute;
+    inset: 0;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.liveCanvas canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    touch-action: none;
+}
+
+.liveBanner {
+    position: absolute;
+    z-index: 4;
+    top: 10px;
+    left: 10px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    border: 1px solid rgb(217 156 67 / 0.4);
+    border-radius: var(--radius);
+    background: rgb(14 17 20 / 0.9);
+    padding: 7px 9px;
+    color: #e2af67;
+    font-size: 11px;
+}
+
+.liveTools {
+    position: absolute;
+    z-index: 4;
+    right: 10px;
+    bottom: 10px;
+    display: grid;
+    width: min(650px, calc(100% - 20px));
+    gap: 7px;
+    border: 1px solid var(--slate-border);
+    border-radius: var(--radius);
+    background: rgb(18 22 26 / 0.94);
+    padding: 8px;
+    box-shadow: var(--slate-shadow-overlay);
+}
+
+.liveToolRow {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 5px;
+}
+
+.liveToolRow :global(.sf-native-select) {
+    width: 180px;
+}
+
+.liveSceneField {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--slate-muted);
+    font-size: 9px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+
+.selectionName {
+    overflow: hidden;
+    color: var(--slate-muted);
+    font: 11px/1 ui-monospace, monospace;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.numericTransform {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(60px, 1fr));
+    gap: 5px;
+}
+
+.numericTransform label {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 4px;
+    color: var(--slate-muted);
+    font-size: 9px;
+    text-transform: uppercase;
+}
+
+.numericTransform input {
+    min-width: 0;
+    border: 1px solid var(--slate-border-70);
+    border-radius: var(--radius);
+    background: var(--slate-surface-2);
+    padding: 5px;
+    color: var(--slate-fg);
+    font: 10px/1 ui-monospace, monospace;
+}
+
+@media (max-width: 1180px) {
+    .selectionBar {
+        grid-template-columns: minmax(160px, 0.7fr) minmax(230px, 1fr) minmax(230px, 1fr);
+    }
+
+    .matchBlock {
+        grid-column: 1 / -1;
+    }
+
+    .caseFacts span:nth-child(2),
+    .caseFacts span:nth-child(3) {
+        display: none;
+    }
+}

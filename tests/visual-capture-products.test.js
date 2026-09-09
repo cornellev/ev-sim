@@ -67,7 +67,7 @@ class FakeRenderer {
         this.toneMappingExposure = 2;
         this.outputColorSpace = "original-space";
         this.xr = { enabled: true };
-        this.shadowMap = { enabled: true };
+        this.shadowMap = { enabled: true, type: 88, autoUpdate: false };
         this.renderCalls = 0;
         this.readCalls = 0;
         this.failRead = false;
@@ -324,6 +324,48 @@ test("aligned renderer publishes visual and separate analytic products atomicall
     assert.equal(renderer.autoClear, true);
     assert.equal(renderer.xr.enabled, true);
     assert.equal(renderer.shadowMap.enabled, true);
+    aligned.dispose();
+});
+
+test("pbr-mesh v2 beauty uses an explicit output pass and restores renderer shadow state", async () => {
+    const state = scenes();
+    const renderer = new FakeRenderer();
+    const visualPassSet = createVisualCapturePassSet({
+        family: VISUAL_CAPTURE_PASS_FAMILIES.visual,
+        captureInput: passInput(state.visualHandle),
+        products: ["beauty", "validity"],
+        bindings: [],
+    });
+    let linearRender = false;
+    let outputRender = false;
+    renderer.onRender = () => {
+        linearRender ||= renderer.target?.userData?.captureTargetKind === "beauty-linear";
+        outputRender ||= renderer.target?.userData?.captureTargetKind === "beauty";
+    };
+    const aligned = new AlignedCaptureProducts({
+        renderer,
+        camera: new THREE.PerspectiveCamera(),
+        visualSceneHandle: state.visualHandle,
+        renderPolicy: {
+            recipeVersion: 2,
+            exposure: 0.9,
+            toneMapping: "AgX",
+            threeToneMapping: THREE.AgXToneMapping,
+            shadows: { enabled: true },
+            backgroundColorRgba: [0.08, 0.09, 0.1, 1],
+        },
+    });
+    const result = await aligned.capture({
+        visualPassSet,
+        visualRenderables: new Map(),
+        signal: new AbortController().signal,
+    });
+    assert.equal(linearRender, true);
+    assert.equal(outputRender, true);
+    assert.deepEqual([...result.visual.products.beauty], [255, 0, 0, 255, 0, 255, 0, 255]);
+    assert.equal(renderer.shadowMap.enabled, true);
+    assert.equal(renderer.shadowMap.type, 88);
+    assert.equal(renderer.shadowMap.autoUpdate, false);
     aligned.dispose();
 });
 

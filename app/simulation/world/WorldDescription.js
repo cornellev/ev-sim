@@ -103,6 +103,58 @@ function pointOrNull(value, label) {
     };
 }
 
+function vector3(value, label) {
+    return {
+        x: finite(value?.x, `${label} x`),
+        y: finite(value?.y, `${label} y`),
+        z: finite(value?.z, `${label} z`),
+    };
+}
+
+function normalizeStaticMetricPrimitive(primitive, fixtureId, index) {
+    const id = identifier(primitive?.id, `Static metric fixture "${fixtureId}" primitive ${index} ID`);
+    const shape = String(primitive?.shape ?? "");
+    if (shape === "box") {
+        return {
+            id,
+            shape,
+            center: vector3(primitive.center, `Static metric primitive "${id}" center`),
+            size: {
+                x: positive(primitive.size?.x, `Static metric primitive "${id}" size x`),
+                y: positive(primitive.size?.y, `Static metric primitive "${id}" size y`),
+                z: positive(primitive.size?.z, `Static metric primitive "${id}" size z`),
+            },
+        };
+    }
+    if (shape === "triangle") {
+        if (!Array.isArray(primitive.vertices) || primitive.vertices.length !== 3) {
+            throw new TypeError(`Static metric primitive "${id}" must contain three vertices.`);
+        }
+        return {
+            id,
+            shape,
+            vertices: primitive.vertices.map((vertex, vertexIndex) => (
+                vector3(vertex, `Static metric primitive "${id}" vertex ${vertexIndex}`)
+            )),
+        };
+    }
+    throw new TypeError(`Static metric primitive "${id}" has unsupported shape "${shape}".`);
+}
+
+function normalizeStaticMetricFixture(fixture, index) {
+    const id = identifier(fixture?.id, `Static metric fixture ${index} ID`);
+    const primitives = (Array.isArray(fixture?.primitives) ? fixture.primitives : [])
+        .map((primitive, primitiveIndex) => normalizeStaticMetricPrimitive(primitive, id, primitiveIndex))
+        .sort((left, right) => compareUtf8(left.id, right.id));
+    if (primitives.length === 0) throw new TypeError(`Static metric fixture "${id}" requires primitives.`);
+    assertUnique(primitives, "id", `static metric primitive in fixture "${id}"`);
+    return {
+        id,
+        tags: [...new Set((fixture?.tags ?? ["unknown"]).map(String).filter(Boolean))].sort(compareUtf8),
+        primitives,
+    };
+}
+
 function normalizeEdge(edge, index, nodeIds) {
     const result = {
         id: identifier(edge?.id, `Road edge ${index} ID`),
@@ -340,7 +392,7 @@ function roadSurfaces(roads) {
     return [...corridors, ...intersections].sort((left, right) => compareUtf8(left.id, right.id));
 }
 
-function createObstacles(buildings, features) {
+function createObstacles(buildings, features, staticMetricFixtures = []) {
     const buildingObstacles = buildings.map((building) => {
         const bounds = footprintBounds(building.footprint, 0, building.height);
         return {
@@ -372,7 +424,30 @@ function createObstacles(buildings, features) {
             bounds: footprintBounds(footprint, minY, maxY),
         };
     });
-    return [...buildingObstacles, ...featureObstacles]
+    const fixtureObstacles = staticMetricFixtures.flatMap((fixture) => fixture.primitives
+        .filter((primitive) => primitive.shape === "box")
+        .map((primitive) => {
+            const footprint = rectangleFootprint(
+                primitive.center.x,
+                primitive.center.z,
+                primitive.size,
+                0,
+            );
+            const minY = primitive.center.y - primitive.size.y * 0.5;
+            const maxY = primitive.center.y + primitive.size.y * 0.5;
+            return {
+                id: `static-metric-fixture:${fixture.id}:${primitive.id}`,
+                sourceId: fixture.id,
+                sourceType: "static-metric-fixture",
+                shape: "oriented-box-prism",
+                footprint,
+                triangles: [[0, 1, 2], [0, 2, 3]],
+                minY,
+                maxY,
+                bounds: footprintBounds(footprint, minY, maxY),
+            };
+        }));
+    return [...buildingObstacles, ...featureObstacles, ...fixtureObstacles]
         .sort((left, right) => compareUtf8(left.id, right.id));
 }
 
@@ -417,6 +492,11 @@ export function createWorldDescription(value = {}) {
     const roadDomain = selectRoadDomain(manifest, document, fallbackDocument);
     const buildingDomain = selectArrayDomain(manifest, document, fallbackDocument, "buildings");
     const featureDomain = selectArrayDomain(manifest, document, fallbackDocument, "features");
+    const hasStaticMetricFixtures = authored(manifest, document, "staticMetricFixtures")
+        || Array.isArray(document.staticMetricFixtures) && document.staticMetricFixtures.length > 0;
+    const staticMetricFixtureDomain = hasStaticMetricFixtures
+        ? selectArrayDomain(manifest, document, null, "staticMetricFixtures")
+        : null;
     const roads = normalizeRoads(roadDomain.value);
     const buildings = buildingDomain.value
         .map(normalizeBuilding)
@@ -426,7 +506,17 @@ export function createWorldDescription(value = {}) {
         .sort((left, right) => compareUtf8(left.id, right.id));
     assertUnique(buildings, "id", "building");
     assertUnique(features, "id", "feature");
-    const obstacles = createObstacles(buildings, features);
+    const staticMetricFixtures = staticMetricFixtureDomain
+        ? staticMetricFixtureDomain.value
+            .map(normalizeStaticMetricFixture)
+            .sort((left, right) => compareUtf8(left.id, right.id))
+        : [];
+    assertUnique(staticMetricFixtures, "id", "static metric fixture");
+    const primitiveIds = staticMetricFixtures.flatMap((fixture) => fixture.primitives.map((primitive) => primitive.id));
+    if (new Set(primitiveIds).size !== primitiveIds.length) {
+        throw new TypeError("Static metric primitive IDs must be unique across fixtures.");
+    }
+    const obstacles = createObstacles(buildings, features, staticMetricFixtures);
     const drivableSurfaces = roadSurfaces(roads);
     const description = {
         kind: WORLD_DESCRIPTION_KIND,
@@ -445,12 +535,14 @@ export function createWorldDescription(value = {}) {
             roads: roadDomain.source,
             buildings: buildingDomain.source,
             features: featureDomain.source,
+            ...(staticMetricFixtureDomain ? { staticMetricFixtures: staticMetricFixtureDomain.source } : {}),
         },
         roads,
         roadNetworkHash: hashEnvironmentRoadNetwork({ environmentId, roads }),
         drivableSurfaces,
         buildings,
         features,
+        ...(staticMetricFixtureDomain ? { staticMetricFixtures } : {}),
         obstacles,
         bounds: aggregateBounds(roads, drivableSurfaces, obstacles),
     };

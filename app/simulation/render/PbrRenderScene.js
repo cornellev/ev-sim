@@ -23,6 +23,7 @@ import { compareUtf8 } from "../world/WorldDescription.js";
 
 export const PBR_RENDER_RECIPE_KIND = "cev-sim.pbr-render-recipe";
 export const PBR_RENDER_RECIPE_VERSION = 1;
+export const PBR_RENDER_RECIPE_VERSION_2 = 2;
 export const PBR_RENDER_SCENE_KIND = "cev-sim.render-scene";
 export const PBR_RENDER_SCENE_VERSION = 1;
 export const PBR_ASSET_CLOSURE_KIND = "cev-sim.visual-asset-closure";
@@ -198,7 +199,7 @@ export function defaultPbrRenderRecipe() {
 }
 
 /** Normalize optional authored measured-appearance input into a frozen recipe. */
-export function normalizePbrRenderRecipe(value = {}) {
+function normalizePbrRenderRecipeV1(value = {}) {
     const source = object(value, "renderRecipe");
     keys(source, [
         "kind", "version", "background", "lighting", "shadows", "colorPipeline",
@@ -269,6 +270,116 @@ export function normalizePbrRenderRecipe(value = {}) {
     }
     if (result.shadows.enabled) fail("renderRecipe.shadows.enabled", "pbr-mesh@1 supports only disabled shadows");
     return result;
+}
+
+function normalizeDirectionalLight(value, path) {
+    const source = object(value, path);
+    keys(source, ["id", "colorRgb", "intensity", "direction", "castShadow"], path);
+    const direction = vector(source.direction, 3, `${path}.direction`, [0, -1, 0]);
+    if (Math.hypot(...direction) === 0) fail(`${path}.direction`, "must be non-zero");
+    return {
+        id: text(source.id, `${path}.id`),
+        colorRgb: color(source.colorRgb, 3, `${path}.colorRgb`, [1, 1, 1]),
+        intensity: nonNegative(source.intensity ?? 1, `${path}.intensity`),
+        direction,
+        castShadow: bool(source.castShadow ?? false, `${path}.castShadow`),
+    };
+}
+
+function normalizePointLight(value, path) {
+    const source = object(value, path);
+    keys(source, ["id", "colorRgb", "intensity", "position", "range", "decay", "castShadow"], path);
+    return {
+        id: text(source.id, `${path}.id`),
+        colorRgb: color(source.colorRgb, 3, `${path}.colorRgb`, [1, 1, 1]),
+        intensity: nonNegative(source.intensity ?? 1, `${path}.intensity`),
+        position: vector(source.position, 3, `${path}.position`, [0, 0, 1]),
+        range: nonNegative(source.range ?? 0, `${path}.range`),
+        decay: bounded(source.decay ?? 2, 0, 2, `${path}.decay`),
+        castShadow: bool(source.castShadow ?? false, `${path}.castShadow`),
+    };
+}
+
+function powerOfTwo(value, minimum, maximum, path) {
+    if (!Number.isSafeInteger(value) || value < minimum || value > maximum || (value & (value - 1)) !== 0) {
+        fail(path, `expected a power-of-two integer in [${minimum}, ${maximum}]`);
+    }
+    return value;
+}
+
+function boundedInteger(value, minimum, maximum, path) {
+    if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
+        fail(path, `expected an integer in [${minimum}, ${maximum}]`);
+    }
+    return value;
+}
+
+function normalizePbrRenderRecipeV2(value) {
+    const source = object(value, "renderRecipe");
+    keys(source, [
+        "kind", "version", "background", "lighting", "shadows", "colorPipeline",
+        "rasterization", "lodPolicy", "decoders", "actors",
+    ], "renderRecipe");
+    if ((source.kind ?? PBR_RENDER_RECIPE_KIND) !== PBR_RENDER_RECIPE_KIND || source.version !== 2) {
+        fail("renderRecipe", `expected ${PBR_RENDER_RECIPE_KIND} version 2`);
+    }
+    const lighting = object(source.lighting ?? {}, "renderRecipe.lighting");
+    keys(lighting, ["ambient", "directional", "point"], "renderRecipe.lighting");
+    const shadows = object(source.shadows ?? {}, "renderRecipe.shadows");
+    keys(shadows, ["enabled", "algorithm", "mapSize", "bias", "normalBias", "maxLights"], "renderRecipe.shadows");
+    const colorPipeline = object(source.colorPipeline ?? {}, "renderRecipe.colorPipeline");
+    keys(colorPipeline, ["workingColorSpace", "outputColorSpace", "toneMapping", "exposure"], "renderRecipe.colorPipeline");
+    const base = normalizePbrRenderRecipeV1({
+        ...source,
+        version: 1,
+        lighting: { ambient: lighting.ambient },
+        shadows: { enabled: false, algorithm: "none" },
+        colorPipeline: { ...colorPipeline, toneMapping: "none" },
+    });
+    const directional = sortedUnique(
+        lighting.directional ?? [],
+        "renderRecipe.lighting.directional",
+        normalizeDirectionalLight,
+    );
+    const point = sortedUnique(
+        lighting.point ?? [],
+        "renderRecipe.lighting.point",
+        normalizePointLight,
+    );
+    const maxLights = boundedInteger(shadows.maxLights ?? 4, 1, 6, "renderRecipe.shadows.maxLights");
+    const shadowCasters = [...directional, ...point].filter((entry) => entry.castShadow).length;
+    const enabled = bool(shadows.enabled ?? false, "renderRecipe.shadows.enabled");
+    const algorithm = enumValue(shadows.algorithm ?? (enabled ? "pcf-soft" : "none"), ["none", "pcf-soft"], "renderRecipe.shadows.algorithm");
+    if (directional.length > 2) fail("renderRecipe.lighting.directional", "supports at most 2 lights");
+    if (point.length > 4) fail("renderRecipe.lighting.point", "supports at most 4 lights");
+    if (shadowCasters > maxLights) fail("renderRecipe.shadows.maxLights", "is smaller than the shadow-casting light count");
+    if (enabled !== (algorithm === "pcf-soft")) {
+        fail("renderRecipe.shadows.algorithm", "must be pcf-soft exactly when shadows are enabled");
+    }
+    return {
+        ...base,
+        version: 2,
+        lighting: { ambient: base.lighting.ambient, directional, point },
+        shadows: {
+            enabled,
+            algorithm,
+            mapSize: powerOfTwo(shadows.mapSize ?? 1024, 256, 2048, "renderRecipe.shadows.mapSize"),
+            bias: bounded(shadows.bias ?? -0.0001, -0.01, 0.01, "renderRecipe.shadows.bias"),
+            normalBias: bounded(shadows.normalBias ?? 0.02, 0, 0.2, "renderRecipe.shadows.normalBias"),
+            maxLights,
+        },
+        colorPipeline: {
+            ...base.colorPipeline,
+            toneMapping: enumValue(colorPipeline.toneMapping ?? "none", ["none", "AgX"], "renderRecipe.colorPipeline.toneMapping"),
+        },
+    };
+}
+
+/** Normalize the immutable v1 or browser-only v2 measured-appearance recipe. */
+export function normalizePbrRenderRecipe(value = {}) {
+    return value?.version === PBR_RENDER_RECIPE_VERSION_2
+        ? normalizePbrRenderRecipeV2(value)
+        : normalizePbrRenderRecipeV1(value);
 }
 
 export function assertPbrRenderRecipe(value) {
@@ -442,13 +553,21 @@ export function createPbrRenderSceneResource({
     if (visualLayerResource.description.sourceWorldHash !== worldResource.hash) {
         fail("visualLayer.sourceWorldHash", "does not match the resolved world");
     }
+    const provider = selection?.provider;
+    if (provider?.id !== VISUAL_RENDER_PROVIDERS.pbrMesh.id
+        || ![VISUAL_RENDER_PROVIDERS.pbrMesh.version, VISUAL_RENDER_PROVIDERS.pbrMeshV2.version].includes(provider.version)) {
+        fail("selection.provider", "expected pbr-mesh@1 or pbr-mesh@2");
+    }
     const recipe = normalizePbrRenderRecipe(renderRecipe ?? {});
+    if (recipe.version !== provider.version) {
+        fail("renderRecipe.version", `must match selected provider ${provider.id}@${provider.version}`);
+    }
     const closure = normalizePbrAssetClosure(assetClosure);
     const analyticTruth = createLidarGeometryResource(worldResource, vehicleDependencies);
     const description = {
         kind: PBR_RENDER_SCENE_KIND,
         version: PBR_RENDER_SCENE_VERSION,
-        provider: { ...VISUAL_RENDER_PROVIDERS.pbrMesh },
+        provider: { ...provider },
         productProfile: {
             id: text(selection?.productProfile?.id, "selection.productProfile.id"),
             version: selection?.productProfile?.version,
@@ -483,8 +602,9 @@ export function assertPbrRenderSceneDescription(value) {
         fail("renderScene", `expected ${PBR_RENDER_SCENE_KIND} version ${PBR_RENDER_SCENE_VERSION}`);
     }
     if (source.provider?.id !== VISUAL_RENDER_PROVIDERS.pbrMesh.id
-        || source.provider?.version !== VISUAL_RENDER_PROVIDERS.pbrMesh.version) {
-        fail("renderScene.provider", "expected pbr-mesh@1");
+        || ![VISUAL_RENDER_PROVIDERS.pbrMesh.version, VISUAL_RENDER_PROVIDERS.pbrMeshV2.version]
+            .includes(source.provider?.version)) {
+        fail("renderScene.provider", "expected pbr-mesh@1 or pbr-mesh@2");
     }
     const profile = object(source.productProfile, "renderScene.productProfile");
     keys(profile, ["id", "version"], "renderScene.productProfile");
@@ -495,6 +615,9 @@ export function assertPbrRenderSceneDescription(value) {
     digest(source.visualLayerHash, "renderScene.visualLayerHash");
     const expectedPixelRecipe = normalizePbrPixelRecipe(source.recipe);
     exact(source.recipe, expectedPixelRecipe, "renderScene.recipe");
+    if (source.recipe.version !== source.provider.version) {
+        fail("renderScene.recipe.version", "must match the provider version");
+    }
     if (digest(source.recipeHash, "renderScene.recipeHash") !== sha256ExactUtf8(canonicalExactStringify(source.recipe))) {
         fail("renderScene.recipeHash", "does not match the exact recipe");
     }

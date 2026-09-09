@@ -91,6 +91,7 @@ export const VISUAL_RENDER_PROVIDERS = Object.freeze({
     legacyAnalytic: Object.freeze({ id: "canonical-analytic", version: 1 }),
     correctedAnalytic: Object.freeze({ id: "canonical-analytic", version: 2 }),
     pbrMesh: Object.freeze({ id: "pbr-mesh", version: 1 }),
+    pbrMeshV2: Object.freeze({ id: "pbr-mesh", version: 2 }),
 });
 export const VISUAL_CAMERA_PRODUCT_PROFILE = Object.freeze({
     id: "measured-rgba-analytic-oracle",
@@ -780,6 +781,7 @@ export function visualTruthEntityIds(worldDescription) {
     for (const feature of worldDescription?.features ?? []) ids.add(feature.id);
     for (const node of worldDescription?.roads?.nodes ?? []) ids.add(node.id);
     for (const edge of worldDescription?.roads?.edges ?? []) ids.add(edge.id);
+    for (const fixture of worldDescription?.staticMetricFixtures ?? []) ids.add(fixture.id);
     return ids;
 }
 

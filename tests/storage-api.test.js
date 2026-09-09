@@ -191,6 +191,10 @@ test("storage router exposes authoring, result, baseline, and validation endpoin
         "POST /experiment-suites/:id/resolve-case",
         "POST /experiment-results/:id/validate",
         "POST /experiment-baselines/:id/validate",
+        "GET /visual-lab/cases",
+        "POST /visual-lab/candidates",
+        "PUT /visual-lab/reviews/:id",
+        "GET /visual-lab/reviews/:id/export",
     ]) {
         assert.equal(routes.has(endpoint), true, `missing ${endpoint}`);
     }

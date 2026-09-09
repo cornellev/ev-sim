@@ -68,6 +68,7 @@ export class EnvironmentLoader {
         const roadsAuthored = description.domainSources.roads === "authored";
         const buildingsAuthored = description.domainSources.buildings === "authored";
         const featuresAuthored = description.domainSources.features === "authored";
+        const staticMetricFixturesAuthored = description.domainSources.staticMetricFixtures === "authored";
 
         document.restoreSnapshot({
             environmentId: description.environmentId,
@@ -90,6 +91,10 @@ export class EnvironmentLoader {
                 rotationY: feature.rotationY,
                 tags: [...feature.tags],
             })),
+            ...(description.staticMetricFixtures ? {
+                staticMetricFixtures: structuredClone(description.staticMetricFixtures),
+                staticMetricFixturesAuthored,
+            } : {}),
             earth: manifest.document?.earth ?? null,
             roadsAuthored,
             buildingsAuthored,
@@ -102,6 +107,7 @@ export class EnvironmentLoader {
         document.roadsAuthored = roadsAuthored;
         document.buildingsAuthored = buildingsAuthored;
         document.featuresAuthored = featuresAuthored;
+        document.staticMetricFixturesAuthored = staticMetricFixturesAuthored;
         environment.setWorldDescription?.(description, worldResource.hash);
 
         environment.objects().registerExistingContent(this.scene, this.data);

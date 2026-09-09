@@ -140,8 +140,12 @@ test("render-scene registry distinguishes unknown id, unknown version, and known
         renderSceneProviderRegistry.runtimeCapabilities({ target: "browser" })
             .filter((entry) => entry.available)
             .map((entry) => `${entry.id}@${entry.version}`),
-        ["canonical-analytic@1", "pbr-mesh@1"],
+        ["canonical-analytic@1", "pbr-mesh@1", "pbr-mesh@2"],
     );
+    assert.throws(() => renderSceneProviderRegistry.lookup(
+        { id: "pbr-mesh", version: 2 },
+        { requireAvailable: true, target: "headless" },
+    ), (error) => error.code === "PROVIDER_UNAVAILABLE" && /browser/.test(error.message));
 });
 
 test("omitted and explicit canonical-analytic@1 selections produce the same analytic scene bytes", async (t) => {

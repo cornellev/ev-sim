@@ -66,6 +66,16 @@ shadows, tone mapping, antialiasing, or dithering, and the static-asset
 versioned canonical primitives and may use explicit CAS mesh/material and
 visual-to-actor transform overrides keyed by a resolved actor ID.
 
+The additive Experiment 1 profile accepts
+`cev-sim.pbr-render-recipe@2` only with `pbr-mesh@2`. It adds explicit sorted
+directional and point lights, bounded PCF soft shadow maps, exposure, and
+`none`/AgX output treatment. These fields enter the exact render-scene hash and
+therefore resolved, simulation-semantic, and episode identity. Browser
+execution is available; headless capability validation rejects the provider.
+Beauty capture uses a controlled linear intermediate plus final output pass.
+Numeric oracle products do not apply recipe lighting, shadows, exposure, or
+presentation.
+
 An enabled PBR selection requires every enabled camera to agree on exact
 provider and product profile. After all document locks pass, the resolver
 requires the effective environment's descriptor/access sidecar and verifies

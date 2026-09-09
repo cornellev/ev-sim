@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 
 import {
     applyProjectionToThreeCamera,
@@ -10,6 +11,7 @@ import {
     warpCalibratedImage,
 } from "./VisualCapturePipeline.js";
 import { withPixelPackBufferUnbound } from "../../util/glReadback.js";
+import { applyPbrBeautyRendererPolicy } from "./PbrRenderRecipeRuntime.js";
 
 const MODE = Object.freeze({
     axialDepth: 1,
@@ -450,6 +452,8 @@ function snapshotRenderer(renderer) {
         outputColorSpace: renderer.outputColorSpace,
         xrEnabled: renderer.xr?.enabled,
         shadowEnabled: renderer.shadowMap?.enabled,
+        shadowType: renderer.shadowMap?.type,
+        shadowAutoUpdate: renderer.shadowMap?.autoUpdate,
     };
 }
 
@@ -462,6 +466,8 @@ function restoreRenderer(renderer, state) {
     if (state.outputColorSpace !== undefined) renderer.outputColorSpace = state.outputColorSpace;
     if (renderer.xr && state.xrEnabled !== undefined) renderer.xr.enabled = state.xrEnabled;
     if (renderer.shadowMap && state.shadowEnabled !== undefined) renderer.shadowMap.enabled = state.shadowEnabled;
+    if (renderer.shadowMap && state.shadowType !== undefined) renderer.shadowMap.type = state.shadowType;
+    if (renderer.shadowMap && state.shadowAutoUpdate !== undefined) renderer.shadowMap.autoUpdate = state.shadowAutoUpdate;
 }
 
 function snapshotCamera(camera) {
@@ -571,6 +577,7 @@ export class AlignedCaptureProducts {
         }
         this.targets = new Map();
         this.preparedFamilies = new Map();
+        this.outputPass = new OutputPass();
         this.disposed = false;
     }
 
@@ -609,11 +616,15 @@ export class AlignedCaptureProducts {
         if (target) return target;
         target = this.createRenderTarget(width, height, {
             format: THREE.RGBAFormat,
-            type: kind === "float" ? THREE.FloatType : THREE.UnsignedByteType,
+            type: kind === "float"
+                ? THREE.FloatType
+                : kind === "beauty-linear" ? THREE.HalfFloatType : THREE.UnsignedByteType,
             depthBuffer: true,
             stencilBuffer: false,
         });
-        target.texture.colorSpace = kind === "beauty" ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+        target.texture.colorSpace = kind === "beauty"
+            ? THREE.SRGBColorSpace
+            : kind === "beauty-linear" ? THREE.LinearSRGBColorSpace : THREE.NoColorSpace;
         target.userData = { ...(target.userData ?? {}), captureTargetKind: kind };
         this.targets.set(key, target);
         return target;
@@ -622,6 +633,10 @@ export class AlignedCaptureProducts {
     async _render(scene, target, ArrayType, signal, { mode = null, materials = [] } = {}) {
         abortIfRequested(signal);
         assertContextAvailable(this.renderer, { requireFloat: target.texture.type === THREE.FloatType });
+        if (mode !== null) {
+            this.renderer.toneMapping = THREE.NoToneMapping;
+            if (this.renderer.shadowMap) this.renderer.shadowMap.enabled = false;
+        }
         for (const material of materials) material.uniforms.captureMode.value = mode;
         this.renderer.setRenderTarget(target);
         const background = mode === null ? this.renderPolicy?.backgroundColorRgba : null;
@@ -648,6 +663,42 @@ export class AlignedCaptureProducts {
             });
         }
         abortIfRequested(signal);
+        return normalizeImageRows(buffer, target.width, target.height, 4, { inputRows: "bottom-left" });
+    }
+
+    async _renderBeauty(scene, target, signal) {
+        if (this.renderPolicy?.recipeVersion !== 2) {
+            return this._render(scene, target, Uint8Array, signal);
+        }
+        abortIfRequested(signal);
+        // OutputPass writes display-encoded bytes. The destination therefore
+        // stays untagged during the pass so WebGL does not apply a second
+        // render-target transfer function.
+        target.texture.colorSpace = THREE.NoColorSpace;
+        const linearTarget = this._target("beauty-linear", target.width, target.height);
+        linearTarget.texture.colorSpace = THREE.LinearSRGBColorSpace;
+        this.renderer.toneMapping = THREE.NoToneMapping;
+        this.renderer.toneMappingExposure = 1;
+        this.renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+        if (this.renderer.shadowMap) {
+            this.renderer.shadowMap.enabled = this.renderPolicy.shadows?.enabled === true;
+            this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        }
+        this.renderer.setRenderTarget(linearTarget);
+        const background = this.renderPolicy.backgroundColorRgba;
+        this.renderer.setClearColor(new THREE.Color(background[0], background[1], background[2]), background[3]);
+        this.renderer.clear?.(true, true, true);
+        this.renderer.render(scene, this.camera);
+        applyPbrBeautyRendererPolicy(this.renderer, this.renderPolicy);
+        this.outputPass.render(this.renderer, target, linearTarget);
+        abortIfRequested(signal);
+        const buffer = new Uint8Array(target.width * target.height * 4);
+        if (this.readback) await this.readback(this.renderer, target, buffer, { signal });
+        else {
+            withPixelPackBufferUnbound(this.renderer, () => {
+                this.renderer.readRenderTargetPixels(target, 0, 0, target.width, target.height, buffer);
+            });
+        }
         return normalizeImageRows(buffer, target.width, target.height, 4, { inputRows: "bottom-left" });
     }
 
@@ -685,12 +736,7 @@ export class AlignedCaptureProducts {
         const products = { validity };
         if (passSet.family === VISUAL_CAPTURE_PASS_FAMILIES.visual && requested.has("beauty")) {
             const beautyTarget = this._target("beauty", width, height);
-            const rawBeauty = await this._render(
-                sceneHandle.scene,
-                beautyTarget,
-                Uint8Array,
-                signal,
-            );
+            const rawBeauty = await this._renderBeauty(sceneHandle.scene, beautyTarget, signal);
             products.beauty = zeroInvalid(warpCalibratedImage({
                 data: rawBeauty,
                 calibration: passSet.captureInput.calibration,
@@ -838,6 +884,8 @@ export class AlignedCaptureProducts {
     dispose() {
         if (this.disposed) return;
         this._disposeTargets();
+        this.outputPass?.dispose?.();
+        this.outputPass = null;
         for (const prepared of this.preparedFamilies.values()) disposePrepared(prepared);
         this.preparedFamilies.clear();
         this.createRenderTarget = null;

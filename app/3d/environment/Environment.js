@@ -132,6 +132,9 @@ export class Environment {
             roadsAuthored: this.document.roadsAuthored,
             buildingsAuthored: this.document.buildingsAuthored,
             featuresAuthored: this.document.featuresAuthored,
+            ...(this.document.staticMetricFixturesAuthored || this.document.staticMetricFixtures.length > 0
+                ? { staticMetricFixturesAuthored: this.document.staticMetricFixturesAuthored }
+                : {}),
             chunkSize: this.chunkSize,
             visualLayer: this.visualLayer ?? null,
             evidence: this.evidence ?? null,

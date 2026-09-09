@@ -83,6 +83,54 @@ export function createStorageRouter(service) {
         return deleted;
     }));
 
+    // --- Visual Lab cases, candidates, and mutable reviews ---
+    router.get("/visual-lab/cases", handle(async () => service.listVisualLabCases()));
+    router.post("/visual-lab/cases", handle(async (req) => (
+        service.registerVisualLabCase(req.body ?? {})
+    )));
+    router.get("/visual-lab/cases/:id", handle(async (req) => service.getVisualLabCase(req.params.id)));
+
+    router.get("/visual-lab/candidates", handle(async (req) => (
+        service.listVisualLabCandidates(req.query?.caseId || null)
+    )));
+    router.post("/visual-lab/candidates", handle(async (req) => (
+        service.registerVisualLabCandidate(req.body ?? {})
+    )));
+    router.get("/visual-lab/candidates/:id", handle(async (req) => service.getVisualLabCandidate(req.params.id)));
+
+    router.get("/visual-lab/reviews", handle(async (req) => (
+        service.listVisualLabReviews(req.query?.caseId || null)
+    )));
+    router.post("/visual-lab/reviews", handle(async (req) => {
+        const review = await service.createVisualLabReview(req.body ?? {});
+        storageEvents.publish({ domain: "visual-lab-review", id: review.id, action: "created" });
+        return review;
+    }));
+    router.get("/visual-lab/reviews/:id/export", handle(async (req) => (
+        service.exportVisualLabReview(req.params.id)
+    )));
+    router.get("/visual-lab/reviews/:id/report", async (req, res) => {
+        try {
+            const pack = await service.exportVisualLabReview(req.params.id);
+            res.setHeader("Content-Type", "text/html; charset=utf-8");
+            res.setHeader("Content-Disposition", `attachment; filename="${req.params.id}-visual-lab-report.html"`);
+            res.send(pack.htmlReport);
+        } catch (error) {
+            res.status(Number(error.statusCode) || 400).json({ error: error.message });
+        }
+    });
+    router.get("/visual-lab/reviews/:id", handle(async (req) => service.getVisualLabReview(req.params.id)));
+    router.put("/visual-lab/reviews/:id", handle(async (req) => {
+        const review = await service.putVisualLabReview(req.params.id, req.body ?? {});
+        storageEvents.publish({ domain: "visual-lab-review", id: review.id, action: "updated" });
+        return review;
+    }));
+    router.delete("/visual-lab/reviews/:id", handle(async (req) => {
+        const deleted = await service.deleteVisualLabReview(req.params.id, parseExpectedRevision(req.query?.expectedRevision));
+        if (deleted) storageEvents.publish({ domain: "visual-lab-review", id: req.params.id, action: "deleted" });
+        return deleted;
+    }));
+
     // --- Experiment suites, results, and immutable baselines ---
     router.get("/experiment-suites", handle(async () => service.listExperimentSuites()));
     router.post("/experiment-suites", handle(async (req) => {

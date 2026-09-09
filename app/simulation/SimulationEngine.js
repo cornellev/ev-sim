@@ -136,7 +136,7 @@ export class SimulationEngine {
         this._disposeRendering();
         const provider = resolvedRun?.renderScene?.description?.provider;
         const profile = resolvedRun?.renderScene?.description?.productProfile ?? null;
-        if (provider?.id !== "pbr-mesh" || Number(provider?.version) !== 1) {
+        if (provider?.id !== "pbr-mesh" || ![1, 2].includes(Number(provider?.version))) {
             this.renderProviderStatus = provider ? {
                 provider: { ...provider },
                 productProfile: profile ? { ...profile } : null,
