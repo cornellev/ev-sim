@@ -35,14 +35,68 @@ serialization remains unchanged, while v11 uses JCS. See
 [Visual Layer Contracts](visual-layer.md) for the support table and byte rules.
 
 VIS-02 dispatches exact camera render provider ID/version. Omitted selections
-alias only to `canonical-analytic@1` during resolution. `canonical-analytic@2`
-and `pbr-mesh@1` are known but unavailable and never fall back. Package
-admission remains inactive until VIS-13b/protocol 1.4. VIS-04 stores
+alias only to `canonical-analytic@1` during resolution. VIS-12b makes
+`pbr-mesh@1` resolution-capable for immutable export and integrity-only
+inspection, but it remains runtime-unavailable and never falls back.
+`canonical-analytic@2` remains unavailable. Package admission remains inactive
+until VIS-13b/protocol 1.4. VIS-04 stores
 validated visual-asset bytes and source-bound use records; those hashes stay
 out of `visualLayerHash`, simulation-semantic, and episode identity. VIS-05a
 access hashes are likewise excluded from those identities. Attaching or
 changing `accessHash` may change normalized authoring/resolved environment
 identity as provenance changes.
+
+Manifest v11 may contain optional `renderRecipe` as
+`cev-sim.pbr-render-recipe@1`. Existing manifests remain field-absent. An
+update that omits the field preserves the stored explicit recipe; `null`
+explicitly resets it. PBR resolution expands defaults and persists only the
+selected pixel meaning in `resolved.renderScene.description.recipe`, excluding
+source-bound use hashes. The default is opaque black, white unit ambient,
+linear-sRGB working space, sRGB output, exposure 1, no environment map,
+shadows, tone mapping, antialiasing, or dithering, and the static-asset
+`[0, 80, 200]` LOD/decoder/rasterization policies. Actor entries default to
+versioned canonical primitives and may use explicit CAS mesh/material and
+visual-to-actor transform overrides keyed by a resolved actor ID.
+
+An enabled PBR selection requires every enabled camera to agree on exact
+provider and product profile. After all document locks pass, the resolver
+requires the effective environment's descriptor/access sidecar and verifies
+its world/truth bindings, source policy for `display` and
+`machine-interpretation`, actual CAS bytes/sizes, and the transitive graph of
+all layer, LOD, buffer, texture, baked-appearance, actor, and environment-map
+assets. It writes:
+
+- `resolved.visualLayer = { description, hash }` and
+  `dependencyHashes.visualLayer`;
+- `resolved.renderScene = { description, hash }` and
+  `dependencyHashes.renderScene`; the exact scene binds world, layer, pixel
+  recipe, content-deduplicated closure, actors/dynamic transforms, product
+  profile, and a separate analytic truth resource;
+- `resolved.evidence` as `cev-sim.visual-run-evidence@1` plus
+  `dependencyHashes.evidence`, containing the immutable access sidecar,
+  selected roots, complete source-bound use records, operations, source IDs,
+  obligations, and an optional correspondence digest marked only
+  `unverified-reference`.
+
+Authoring `renderRecipe` and evidence are projected out of semantic identity;
+their selected pixel meaning is already represented by the exact render
+resource. Thus pixel changes alter render, resolved, simulation-semantic, and
+episode identity, while access/use/report-only changes may alter only
+`resolvedHash`. PBR inner resources use exact canonical JSON; sub-six-decimal
+changes remain identity-significant. Integrity verification recomputes and
+cross-checks every inner resource and dependency hash, even if an attacker also
+recomputes the outer bundle hash.
+
+`verifyRunBundleIntegrity` and all CLI inspection paths accept a structurally
+valid PBR bundle without requiring local asset bytes or a renderer. Inspection
+explicitly does not establish current rights, local availability, or report
+validity. `verifyRunBundle` remains the executable gate and rejects PBR until
+the runtime capability exists. Browser preparation rejects it before replacing
+the current run or preparing environment/sensors. Headless JavaScript and
+Python select only the declared routed GPU backend v2 for PBR and reject v1 or
+missing supervisor support. JSON import transfers no asset bytes, preserves
+normal rename/rebind behavior, invalidates correspondence evidence on rebind,
+and fails when required local descriptor/access/CAS dependencies are absent.
 
 VIS-10b bake material-proposal documents and promotion receipts are durable
 authoring evidence, not run-manifest inputs. Their hashes do not enter
@@ -50,6 +104,11 @@ authoring evidence, not run-manifest inputs. Their hashes do not enter
 `episodeHash`; only a later selected visual runtime resource can affect a
 resolved render identity. VIS-10b makes no protobuf, run-bundle, provider
 capability, or runtime activation change.
+
+VIS-11 `intrinsic-material-model@1` options, model-output-set digests, and
+raw-cache identities are bake-provider evidence. They do not enter
+`visualLayerHash`, metric world identity, `simulationSemanticHash`, or
+`episodeHash`.
 
 VIS-16a defines `cev-sim.visual-evaluation-input@1` independently from any
 report-containing run bundle. It binds exact camera calibration, capture

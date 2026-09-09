@@ -6,7 +6,14 @@ import {
     computeResolvedRunHash,
 } from "../../app/simulation/RunManifest.js";
 import { IDENTITY_PROTOCOL_MINOR, simulationIdentityVersion } from "../../app/simulation/kernel/RunIdentity.js";
-import { canonicalExactStringify, parseExactJson, sha256ExactBytes } from "../../app/simulation/visual/VisualLayer.js";
+import {
+    VISUAL_RENDER_PROVIDERS,
+    assertVisualLayer,
+    canonicalExactStringify,
+    hashVisualLayer,
+    parseExactJson,
+    sha256ExactBytes,
+} from "../../app/simulation/visual/VisualLayer.js";
 import { computeSimulationSemanticHash } from "../../app/simulation/kernel/SimulationHashes.js";
 import { HeadlessEpisodeError } from "../../app/simulation/headless/HeadlessErrors.js";
 import { assertWorldResource } from "../../app/simulation/world/WorldDescription.js";
@@ -16,6 +23,10 @@ import {
     RenderSceneProviderError,
     renderSceneProviderRegistry,
 } from "../../app/simulation/render/RenderSceneProviderRegistry.js";
+import {
+    assertPbrRunEvidence,
+    hashPbrRunEvidence,
+} from "../../app/simulation/render/PbrRenderScene.js";
 
 function invalid(code, message, details = null) {
     throw new HeadlessEpisodeError(code, message, details);
@@ -68,7 +79,7 @@ export function verifyRunBundleIntegrity(bundle) {
             resolved: resolved.simulationSemanticHash ?? null,
         });
     }
-    return {
+    const verified = {
         bundle,
         resolved,
         resolvedHash,
@@ -76,6 +87,10 @@ export function verifyRunBundleIntegrity(bundle) {
         identityVersion,
         requiredProtocolMinor: identityVersion === 2 ? IDENTITY_PROTOCOL_MINOR : 0,
     };
+    // Corrected v11 bundles authenticate every nested portable resource even
+    // when the caller is performing inspection rather than execution.
+    if (identityVersion === 2) verifyBundleStructure(verified, { requireRuntime: false });
+    return verified;
 }
 
 function invalidRenderSelection(error) {
@@ -90,13 +105,8 @@ function invalidRenderSelection(error) {
     invalid(capability ? "UNSUPPORTED_CAPABILITY" : "BUNDLE_INVALID", error.message, error.details);
 }
 
-/** Execution accepts only implemented immutable versions; no normalization here. */
-export function verifyRunBundle(bundle) {
-    const verified = verifyRunBundleIntegrity(bundle);
+function verifyBundleStructure(verified, { requireRuntime = false } = {}) {
     const { resolved } = verified;
-    if (![10, 11].includes(resolved.version)) {
-        invalid("UNSUPPORTED_CAPABILITY", "Historical bundles require authoring import and re-resolution before execution.");
-    }
     if (resolved.manifest?.kind !== RUN_MANIFEST_KIND || resolved.manifest.version !== resolved.version) {
         invalid("BUNDLE_INVALID", "Resolved and authored manifest versions must agree.");
     }
@@ -111,19 +121,13 @@ export function verifyRunBundle(bundle) {
     if (resolved.dependencyHashes?.world !== resolved.world.hash) {
         invalid("BUNDLE_HASH_MISMATCH", "The resolved world dependency hash does not match the world resource.");
     }
-    const requestsLidar = resolved.manifest.sensorRig?.sensors?.some(
-        (sensor) => sensor.enabled !== false && sensor.type === "lidar3d",
-    );
+    const sensors = resolved.manifest.sensorRig?.sensors ?? [];
+    const requestsLidar = sensors.some((sensor) => sensor.enabled !== false && sensor.type === "lidar3d");
     if (requestsLidar && !resolved.lidarGeometry) {
-        invalid(
-            "BUNDLE_INVALID",
-            "This LiDAR run bundle predates persisted geometry twins; re-resolve and export the run manifest.",
-        );
+        invalid("BUNDLE_INVALID", "This LiDAR run bundle predates persisted geometry twins; re-resolve and export the run manifest.");
     }
     if (resolved.lidarGeometry) {
-        if (!requestsLidar) {
-            invalid("BUNDLE_INVALID", "A non-LiDAR bundle must not persist LiDAR geometry twins.");
-        }
+        if (!requestsLidar) invalid("BUNDLE_INVALID", "A non-LiDAR bundle must not persist LiDAR geometry twins.");
         try {
             assertLidarGeometryResource(resolved.lidarGeometry);
         } catch (error) {
@@ -135,23 +139,18 @@ export function verifyRunBundle(bundle) {
     } else if (resolved.dependencyHashes?.lidarGeometry) {
         invalid("BUNDLE_INVALID", "A non-LiDAR bundle must not declare a LiDAR geometry dependency hash.");
     }
-    const requestsCamera = resolved.manifest.sensorRig?.sensors?.some(
-        (sensor) => sensor.enabled !== false && sensor.type === "camera",
-    );
+
+    const requestsCamera = sensors.some((sensor) => sensor.enabled !== false && sensor.type === "camera");
     if (requestsCamera && !resolved.renderScene) {
-        invalid(
-            "BUNDLE_INVALID",
-            "This camera run bundle predates persisted render scenes; re-resolve and export the run manifest.",
-        );
+        invalid("BUNDLE_INVALID", "This camera run bundle predates persisted render scenes; re-resolve and export the run manifest.");
     }
+    let selection = null;
     if (resolved.renderScene) {
         if (!requestsCamera) invalid("BUNDLE_INVALID", "A non-camera bundle must not persist a render scene.");
         try {
-            renderSceneProviderRegistry.assertMatchesScene(
-                resolved.manifest.sensorRig?.sensors,
-                resolved.renderScene,
-                { requireAvailable: true },
-            );
+            selection = renderSceneProviderRegistry.assertMatchesScene(sensors, resolved.renderScene, {
+                requireAvailable: requireRuntime,
+            });
         } catch (error) {
             invalidRenderSelection(error);
         }
@@ -166,9 +165,61 @@ export function verifyRunBundle(bundle) {
     } else if (resolved.dependencyHashes?.renderScene) {
         invalid("BUNDLE_INVALID", "A non-camera bundle must not declare a render-scene dependency hash.");
     }
+
+    const pbrSelected = selection?.provider?.id === VISUAL_RENDER_PROVIDERS.pbrMesh.id
+        && selection.provider.version === VISUAL_RENDER_PROVIDERS.pbrMesh.version;
+    if (pbrSelected) {
+        if (!resolved.visualLayer?.description || !resolved.visualLayer?.hash) {
+            invalid("BUNDLE_INVALID", "A pbr-mesh@1 bundle requires an immutable visual-layer resource.");
+        }
+        try {
+            assertVisualLayer(resolved.visualLayer.description);
+            if (hashVisualLayer(resolved.visualLayer.description) !== resolved.visualLayer.hash) {
+                throw new Error("Resolved visual-layer hash does not match its exact description.");
+            }
+            if (resolved.visualLayer.description.sourceWorldHash !== resolved.world.hash) {
+                throw new Error("Resolved visual layer is bound to a different world.");
+            }
+        } catch (error) {
+            invalid("BUNDLE_HASH_MISMATCH", error.message);
+        }
+        if (resolved.dependencyHashes?.visualLayer !== resolved.visualLayer.hash) {
+            invalid("BUNDLE_HASH_MISMATCH", "The visual-layer dependency hash does not match the resource.");
+        }
+        if (resolved.renderScene.description.worldHash !== resolved.world.hash
+            || resolved.renderScene.description.visualLayerHash !== resolved.visualLayer.hash) {
+            invalid("BUNDLE_HASH_MISMATCH", "The PBR render scene does not bind the resolved world and visual layer.");
+        }
+        if (!resolved.evidence) invalid("BUNDLE_INVALID", "A pbr-mesh@1 bundle requires visual asset evidence.");
+        try {
+            assertPbrRunEvidence(resolved.evidence, {
+                visualLayer: resolved.visualLayer,
+                renderScene: resolved.renderScene,
+            });
+        } catch (error) {
+            invalid("BUNDLE_HASH_MISMATCH", error.message);
+        }
+        const evidenceHash = hashPbrRunEvidence(resolved.evidence);
+        if (resolved.dependencyHashes?.evidence !== evidenceHash) {
+            invalid("BUNDLE_HASH_MISMATCH", "The visual evidence dependency hash does not match the exact evidence document.");
+        }
+    } else if (resolved.visualLayer || resolved.dependencyHashes?.visualLayer
+        || resolved.evidence || resolved.dependencyHashes?.evidence) {
+        invalid("BUNDLE_INVALID", "Only a selected pbr-mesh@1 camera may persist visual-layer run resources or evidence.");
+    }
     if (!Array.isArray(resolved.backendSelections) || resolved.backendSelections.length === 0) {
         invalid("BUNDLE_INVALID", "The resolved run is missing backend selections.");
     }
+}
+
+/** Execution accepts only implemented immutable versions; no normalization here. */
+export function verifyRunBundle(bundle) {
+    const verified = verifyRunBundleIntegrity(bundle);
+    const { resolved } = verified;
+    if (![10, 11].includes(resolved.version)) {
+        invalid("UNSUPPORTED_CAPABILITY", "Historical bundles require authoring import and re-resolution before execution.");
+    }
+    verifyBundleStructure(verified, { requireRuntime: true });
     return verified;
 }
 

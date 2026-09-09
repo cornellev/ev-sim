@@ -10,10 +10,13 @@ parentPort.on("message", async (message) => {
         const resources = new Map(
             Object.entries(message.resources ?? {}).map(([uri, bytes]) => [
                 uri,
-                bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes),
+                Uint8Array.from(bytes),
             ]),
         );
-        const report = await validator.validateBytes(new Uint8Array(message.bytes), {
+        // gltf-validator reads external resources from the start of their backing
+        // ArrayBuffer. Structured-cloned Node Buffers can retain a non-zero view
+        // offset into a pooled buffer, so copy every input into a tight view first.
+        const report = await validator.validateBytes(Uint8Array.from(message.bytes), {
             uri: message.uri ?? "asset.glb",
             maxIssues: 50,
             externalResourceFunction: (uri) => {

@@ -24,6 +24,7 @@ import { bytesToHex } from "@noble/hashes/utils.js";
 import { assertRunIdentityCounters } from "./kernel/RunIdentity.js";
 import { canonicalNumericTree } from "./kernel/SimulationHashes.js";
 import { renderSceneProviderRegistry } from "./render/RenderSceneProviderRegistry.js";
+import { normalizePbrRenderRecipe } from "./render/PbrRenderScene.js";
 
 export const RUN_MANIFEST_KIND = "cev-sim.run-manifest";
 export const RUN_MANIFEST_VERSION = 11;
@@ -729,6 +730,9 @@ export function normalizeRunManifest(value, { allowMissingKind = false } = {}) {
         controls: normalizeControlsConfig(controlsSource, { targetVehicleId: defaultTarget }),
         assertions: (Array.isArray(source.assertions) ? source.assertions : []).map(assertion),
         parameters: (Array.isArray(source.parameters) ? source.parameters : []).map(parameter),
+        ...(source.renderRecipe === undefined || source.renderRecipe === null
+            ? {}
+            : { renderRecipe: normalizePbrRenderRecipe(source.renderRecipe) }),
         logging: {
             policy: RUN_LOGGING_POLICIES.includes(source.logging?.policy) ? source.logging.policy : "optional",
             profileId: text(source.logging?.profileId, "simulation-run-full-sensors"),

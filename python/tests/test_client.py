@@ -3,7 +3,12 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from cev_sim import CevSimCompatibilityError, CevSimEnvironmentError, CevSimSupervisorError
+from cev_sim import (
+    CevSimCompatibilityError,
+    CevSimConfigurationError,
+    CevSimEnvironmentError,
+    CevSimSupervisorError,
+)
 from cev_sim.bundle import LoadedBundle
 from cev_sim.client import SupervisorClient, _decode_json, _error_from_status, _raise_status, _resolved_backends
 from cev_sim.config import (
@@ -11,6 +16,7 @@ from cev_sim.config import (
     CPU_LIDAR_KIND,
     CPU_LIDAR_VERSION,
     DEFAULT_CPU_LIDAR_BACKEND,
+    DEFAULT_GPU_SENSOR_BACKEND,
     MEASURED_PERCEPTION_PROFILE,
     MEASURED_PERCEPTION_PROFILE_VERSION,
     MEASURED_PERCEPTION_SCHEMA_HASH,
@@ -22,6 +28,7 @@ from cev_sim.config import (
     ROUTE_SAFETY_PROFILE,
     ROUTE_SAFETY_PROFILE_VERSION,
     ROUTE_SAFETY_SCHEMA_HASH,
+    ROUTED_GPU_SENSOR_BACKEND,
     STATE_SENSOR_CAPABILITY,
     STATE_SENSOR_KIND,
     STATE_SENSOR_VERSION,
@@ -146,6 +153,41 @@ def test_lidar_bundles_auto_select_the_locked_cpu_backend() -> None:
     backends = _resolved_backends(bundle, EpisodeConfig())
     assert DEFAULT_CPU_LIDAR_BACKEND in backends
     assert [entry.kind for entry in backends] == [1, STATE_SENSOR_KIND, CPU_LIDAR_KIND]
+
+
+def test_pbr_bundles_require_routed_gpu_v2_without_v1_fallback() -> None:
+    bundle = LoadedBundle(
+        document={
+            "resolved": {
+                "backendSelections": [
+                    {
+                        "kind": 1,
+                        "capabilityId": "physics",
+                        "version": "1",
+                        "configHash": "0" * 64,
+                    }
+                ],
+                "manifest": {
+                    "sensorRig": {
+                        "sensors": [{"id": "camera", "type": "camera", "enabled": True}]
+                    }
+                },
+                "renderScene": {
+                    "description": {"provider": {"id": "pbr-mesh", "version": 1}}
+                },
+            }
+        },
+        canonical_json=b"{}",
+        bundle_id="1" * 64,
+        resolved_hash="1" * 64,
+        simulation_semantic_hash="2" * 64,
+    )
+    assert ROUTED_GPU_SENSOR_BACKEND in _resolved_backends(bundle, EpisodeConfig())
+    with pytest.raises(CevSimConfigurationError, match="v1 fallback is forbidden"):
+        _resolved_backends(
+            bundle,
+            EpisodeConfig(backend_selections=(DEFAULT_GPU_SENSOR_BACKEND,)),
+        )
 
 
 def test_unseeded_seed_streams_are_reproducible() -> None:

@@ -4,7 +4,7 @@ from email.parser import BytesParser
 from email.policy import default as email_policy
 from io import BytesIO
 import json
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 on_photo_recieve = []
 
@@ -36,6 +36,7 @@ def add_clear_listener(listener):
 
 queue_status_provider = None
 result_provider = None
+v1_service = None
 
 
 def set_queue_status_provider(provider):
@@ -46,6 +47,11 @@ def set_queue_status_provider(provider):
 def set_result_provider(provider):
     global result_provider
     result_provider = provider
+
+
+def set_v1_service(service):
+    global v1_service
+    v1_service = service
 
 
 class RawImage:
@@ -112,6 +118,103 @@ class BakingRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_binary(self, payload, digest, content_type="application/octet-stream"):
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("X-Cev-Digest", f"sha256:{digest}")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def _handle_v1_error(self, error):
+        from v1_service import BakeV1Error
+
+        if isinstance(error, BakeV1Error):
+            self._send_json(error.status, {"error": str(error), "code": error.code})
+            return True
+        return False
+
+    def _v1_read_body(self):
+        length = int(self.headers.get("Content-Length", "0"))
+        if length < 0:
+            return b""
+        return self.rfile.read(length)
+
+    def _handle_v1(self, method):
+        from v1_service import BakeV1Error, parse_digest_header
+
+        parsed = urlparse(self.path)
+        if not parsed.path.startswith("/bake/v1"):
+            return False
+        if v1_service is None:
+            self._send_json(HTTPStatus.SERVICE_UNAVAILABLE, {
+                "error": "intrinsic-material-model@1 service is not configured",
+                "code": "BAKE_PROVIDER_UNAVAILABLE",
+            })
+            return True
+
+        parts = [part for part in parsed.path.split("/") if part]
+        try:
+            if method == "GET" and parts == ["bake", "v1", "capability"]:
+                payload = json.dumps(v1_service.capability()).encode("utf-8")
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(payload)
+                return True
+            if method == "POST" and parts == ["bake", "v1", "jobs"]:
+                body = json.loads(self._v1_read_body().decode("utf-8") or "{}")
+                result = v1_service.create_job(body.get("request") or {})
+                self._send_json(HTTPStatus.OK, result)
+                return True
+            if len(parts) >= 4 and parts[:3] == ["bake", "v1", "jobs"]:
+                job_id = unquote(parts[3])
+                rest = parts[4:]
+                if method == "PUT" and rest[:1] == ["inputs"] and len(rest) == 2:
+                    key = unquote(rest[1])
+                    sample_id, view_id, role = key.split(":", 2)
+                    payload = self._v1_read_body()
+                    declared = int(self.headers.get("Content-Length", "0"))
+                    if declared != len(payload):
+                        raise BakeV1Error("BAKE_TRANSFER_DIGEST_MISMATCH", "Transfer length does not match Content-Length.")
+                    digest = parse_digest_header(self.headers.get("X-Cev-Digest"))
+                    sample_id = self.headers.get("X-Cev-Sample-Id") or sample_id
+                    view_id = self.headers.get("X-Cev-View-Id") or view_id
+                    role = self.headers.get("X-Cev-Role") or role
+                    result = v1_service.upload_input(job_id, sample_id, view_id, role, payload, digest)
+                    self._send_json(HTTPStatus.OK, result)
+                    return True
+                if method == "POST" and rest == ["submit"]:
+                    body = json.loads(self._v1_read_body().decode("utf-8") or "{}")
+                    result = v1_service.submit(job_id, body.get("requestHash") or "")
+                    self._send_json(HTTPStatus.OK, result)
+                    return True
+                if method == "GET" and rest == ["status"]:
+                    self._send_json(HTTPStatus.OK, v1_service.status(job_id))
+                    return True
+                if method == "GET" and rest == ["result"]:
+                    self._send_json(HTTPStatus.OK, v1_service.result(job_id))
+                    return True
+                if method == "GET" and rest[:1] == ["buffers"] and len(rest) == 2:
+                    payload, digest = v1_service.buffer(job_id, unquote(rest[1]))
+                    self._send_binary(payload, digest)
+                    return True
+                if method == "POST" and rest == ["cancel"]:
+                    if int(self.headers.get("Content-Length", "0")):
+                        self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                    self._send_json(HTTPStatus.OK, v1_service.cancel(job_id))
+                    return True
+        except BakeV1Error as error:
+            self._handle_v1_error(error)
+            return True
+        except json.JSONDecodeError:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid json", "code": "BAKE_CONTRACT_INVALID"})
+            return True
+        return False
+
     def _send_png(self, payload):
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "image/png")
@@ -123,8 +226,8 @@ class BakingRequestHandler(BaseHTTPRequestHandler):
     def _send_cors_preflight(self):
         self.send_response(HTTPStatus.NO_CONTENT)
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Methods", "POST, GET, PUT, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Cev-Digest, X-Cev-Sample-Id, X-Cev-View-Id, X-Cev-Role")
         self.send_header("Access-Control-Max-Age", "3600")
         self.end_headers()
 
@@ -141,6 +244,9 @@ class BakingRequestHandler(BaseHTTPRequestHandler):
         self._send_cors_preflight()
 
     def do_GET(self):
+        if self._handle_v1("GET"):
+            return
+
         if self.path == "/healthz":
             self._send_json(HTTPStatus.OK, {"success": True})
             return
@@ -201,7 +307,15 @@ class BakingRequestHandler(BaseHTTPRequestHandler):
 
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "not found"})
 
+    def do_PUT(self):
+        if self._handle_v1("PUT"):
+            return
+        self._send_json(HTTPStatus.NOT_FOUND, {"error": "not found"})
+
     def do_POST(self):
+        if self._handle_v1("POST"):
+            return
+
         if self.path == "/bake/complete":
             try:
                 payload = self._read_json_body()
@@ -270,6 +384,14 @@ def begin_server_async():
 
 
 def main():
+    try:
+        from backends import load_backend
+        from v1_service import BakeV1Service
+
+        set_v1_service(BakeV1Service(backend=load_backend()))
+        print("VIS-11 intrinsic-material-model@1 listening at /bake/v1")
+    except Exception as exc:
+        print(f"VIS-11 v1 service disabled: {exc}")
     server = ThreadingHTTPServer(("0.0.0.0", 8000), BakingRequestHandler)
     print("Baking API listening on http://0.0.0.0:8000")
     server.serve_forever()

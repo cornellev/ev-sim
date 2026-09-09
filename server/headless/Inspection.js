@@ -6,7 +6,8 @@ import { LogDataset } from "../../app/logging/LogDataset.js";
 import { LogService } from "../logging/LogService.js";
 import { sha256ExactBytes } from "../../app/simulation/visual/VisualLayer.js";
 import { HeadlessRunnerError } from "./HeadlessRunnerErrors.js";
-import { verifyRunBundle, verifyRunBundleBytes, runBundleBytes } from "./RunBundle.js";
+import { renderSceneProviderRegistry } from "../../app/simulation/render/RenderSceneProviderRegistry.js";
+import { verifyRunBundleBytes, verifyRunBundleIntegrity, runBundleBytes } from "./RunBundle.js";
 
 async function readJson(filePath) {
     try {
@@ -17,7 +18,16 @@ async function readJson(filePath) {
 }
 
 export function inspectRunBundle(bundle) {
-    const verified = verifyRunBundle(bundle);
+    const verified = verifyRunBundleIntegrity(bundle);
+    const renderScene = verified.resolved.renderScene ?? null;
+    const provider = renderScene?.description?.provider ?? null;
+    const capability = provider
+        ? renderSceneProviderRegistry.runtimeCapabilities().find((entry) => (
+            entry.id === provider.id && entry.version === provider.version
+        )) ?? null
+        : null;
+    const visualEvidence = verified.resolved.evidence?.visualAssets ?? null;
+    const correspondence = verified.resolved.evidence?.correspondence ?? null;
     return {
         kind: "cev-sim.headless.bundle-inspection",
         version: 1,
@@ -31,6 +41,32 @@ export function inspectRunBundle(bundle) {
         resolvedHash: verified.resolvedHash,
         simulationSemanticHash: verified.simulationSemanticHash,
         worldHash: verified.resolved.world.hash,
+        renderScene: renderScene ? {
+            hash: renderScene.hash,
+            provider,
+            productProfile: renderScene.description.productProfile ?? null,
+            visualLayerHash: renderScene.description.visualLayerHash ?? null,
+            recipeHash: renderScene.description.recipeHash ?? null,
+            assetClosureHash: renderScene.description.assetClosureHash ?? null,
+            assetCount: renderScene.description.assetClosure?.assets?.length ?? 0,
+        } : null,
+        execution: {
+            supported: provider === null || capability?.available === true,
+            reason: provider === null || capability?.available === true
+                ? null
+                : capability?.unavailableReason ?? "No selected render runtime capability is available.",
+        },
+        visualEvidence: visualEvidence ? {
+            accessHash: visualEvidence.accessHash,
+            useCount: visualEvidence.uses.length,
+            resolutionOperations: visualEvidence.permissions.operations,
+            correspondenceReportHash: correspondence?.reportHash ?? null,
+            correspondenceStatus: correspondence?.status ?? null,
+            offlineLimitations: [
+                "Inspection does not establish current asset availability or rights.",
+                "An attached correspondence digest is not a validated or managed-eligible report.",
+            ],
+        } : null,
         backendSelections: verified.resolved.backendSelections,
         logging: verified.resolved.manifest.logging,
     };
@@ -86,7 +122,7 @@ export async function inspectTarget(target) {
     if (stat.isDirectory()) {
         const [runResult, bundle, provenance] = await Promise.all([
             readJson(path.join(absolute, "run-results.json")),
-            fs.readFile(path.join(absolute, "run-bundle.json")).then((bytes) => verifyRunBundleBytes(bytes).bundle),
+            fs.readFile(path.join(absolute, "run-bundle.json")).then((bytes) => verifyRunBundleBytes(bytes, { execution: false }).bundle),
             readJson(path.join(absolute, "provenance.json")),
         ]);
         const sflogPath = path.join(absolute, "run.sflog");
@@ -107,5 +143,5 @@ export async function inspectTarget(target) {
         };
     }
     if (absolute.endsWith(".sflog")) return inspectSflog(absolute);
-    return inspectRunBundle(verifyRunBundleBytes(await fs.readFile(absolute)).bundle);
+    return inspectRunBundle(verifyRunBundleBytes(await fs.readFile(absolute), { execution: false }).bundle);
 }

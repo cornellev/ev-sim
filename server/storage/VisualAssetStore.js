@@ -353,7 +353,12 @@ export class VisualAssetStore {
         };
     }
 
-    async validateAccessSet({ useHashes = [], operations = VISUAL_ASSET_ACCESS_OPERATIONS } = {}) {
+    async validateAccessSet({
+        useHashes = [],
+        operations = VISUAL_ASSET_ACCESS_OPERATIONS,
+        verifyBytes = false,
+        includeUseRecords = false,
+    } = {}) {
         await this.initialize();
         const requested = [...new Set(useHashes.map((hash) => assertSha256Digest(hash, "useHash")))].sort();
         const uses = new Map();
@@ -399,6 +404,20 @@ export class VisualAssetStore {
             );
         }
         const decision = await this._assertRights([...sourceIds], operations);
+        if (verifyBytes) {
+            const checked = new Set();
+            for (const use of uses.values()) {
+                if (checked.has(use.asset.sha256)) continue;
+                checked.add(use.asset.sha256);
+                const identity = await hashRegularFile(this._casPath(use.asset.sha256));
+                if (!identity || identity.size !== use.asset.sizeBytes || identity.digest !== use.asset.sha256) {
+                    throw visualAssetError(
+                        VISUAL_ASSET_ERROR_CODES.CORRUPT,
+                        `Published visual asset ${use.asset.sha256} is missing or corrupt.`,
+                    );
+                }
+            }
+        }
         return {
             ok: true,
             operations: [...operations],
@@ -434,6 +453,11 @@ export class VisualAssetStore {
                         : null,
                 };
             }),
+            ...(includeUseRecords ? {
+                closureUses: [...uses.entries()]
+                    .sort(([left], [right]) => left.localeCompare(right))
+                    .map(([useHash, use]) => ({ useHash, use })),
+            } : {}),
         };
     }
 

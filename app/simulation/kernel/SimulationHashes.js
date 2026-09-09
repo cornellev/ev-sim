@@ -253,6 +253,10 @@ export function simulationSemanticProjection(resolved = {}) {
     if (manifest) {
         manifest.environment = { worldHash };
         manifest.sensorRig = projectSensorRig(manifest.sensorRig);
+        // The selected pixel meaning is bound once by renderScene. The authored
+        // recipe may carry source-bound use hashes and must not duplicate or
+        // leak evidence into simulation semantics.
+        delete manifest.renderRecipe;
         delete manifest.logging;
         delete manifest.provenance;
         if (manifest.clock) {

@@ -3,6 +3,7 @@ import { buildRecordingOptions } from "../logging/RecordingOptions.js";
 import { builtInProfile } from "../logging/LogProfiles.js";
 import { getTelemetryStore } from "../telemetry/TelemetryRuntime.js";
 import { resolveRunManifest } from "./RunManifestClient.js";
+import { assertEnabledCameraRenderRuntime } from "./render/RenderSceneProviderRegistry.js";
 
 function clone(value) {
     return value === undefined ? undefined : structuredClone(value);
@@ -133,6 +134,9 @@ export class RunSessionController {
 
     async prepare(resolved, { autoplay = false } = {}) {
         if (!resolved?.manifest || !resolved?.resolvedHash) throw new Error("A resolved run manifest is required.");
+        // Reject unsupported measured providers before replacing or stopping an
+        // active browser run and before loading any environment/sensor state.
+        assertEnabledCameraRenderRuntime(resolved.manifest.sensorRig?.sensors, resolved.renderScene);
         if (this.snapshot.activeRunId && ["running", "paused", "ready"].includes(this.snapshot.status)) {
             await this.stop({ status: "superseded" });
         }

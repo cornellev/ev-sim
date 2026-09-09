@@ -54,7 +54,18 @@ Display-name rename keeps visual and evidence references when `worldHash` is unc
 
 The environment switcher in both 3D workspaces selects, creates, duplicates, renames, and deletes environments using the acknowledged revision. Selection is shared between Simulation and Editor and stored in server settings. The saved payload is `Environment.toManifest()` at `server/data/environments/<id>.json`. See [development.md](development.md) for the storage backend.
 
-Validated visual-asset bytes live in the VIS-04 CAS under `server/data/visual-assets/`. Browser access is `VisualAssetClient` at `/api/storage/visual-assets` and `VisualLayerClient` at `/api/storage/visual-layers`. Public asset identities are source-bound use hashes, not filesystem paths or digest-only content URLs. Every content/closure/materialization path requires current version-2 validation; old or missing evidence is refreshed from immutable bytes without changing asset/use identity. Embedded and digest-backed glTF images, extension use, graph bounds, and decoded memory are checked before loaders. Published assets cannot be deleted; only abandoned staging and expired reservations are cleaned. Uploads fail closed unless an operator configures owned-source grants in `visual-source-registry.json` (or `CEV_SIM_VISUAL_SOURCE_REGISTRY`). Generated bake outputs additionally require `CEV_SIM_BAKE_OUTPUT_SOURCE_IDS`. Spark and splat construction are initialized only when an explicitly started legacy bake selects the splat path. Archive extraction, `pbr-mesh@1`, package admission, and automatic GC remain later work.
+Validated visual-asset bytes live in the VIS-04 CAS under `server/data/visual-assets/`. Browser access is `VisualAssetClient` at `/api/storage/visual-assets` and `VisualLayerClient` at `/api/storage/visual-layers`. Public asset identities are source-bound use hashes, not filesystem paths or digest-only content URLs. Every content/closure/materialization path requires current version-2 validation; old or missing evidence is refreshed from immutable bytes without changing asset/use identity. Embedded and digest-backed glTF images, extension use, graph bounds, and decoded memory are checked before loaders. Published assets cannot be deleted; only abandoned staging and expired reservations are cleaned. Uploads fail closed unless an operator configures owned-source grants in `visual-source-registry.json` (or `CEV_SIM_VISUAL_SOURCE_REGISTRY`). Generated bake outputs additionally require `CEV_SIM_BAKE_OUTPUT_SOURCE_IDS`. Spark and splat construction are initialized only when an explicitly started legacy bake selects the splat path. VIS-12b can resolve an enabled `pbr-mesh@1` run from these local immutable records for export and inspection; runtime rendering, archive transfer/admission, and automatic GC remain later work.
+
+Run-manifest `renderRecipe` authoring is intentionally independent of editor
+preview sky, light, visibility, and bake state. The optional
+`cev-sim.pbr-render-recipe@1` field freezes selected measured appearance,
+including background/IBL, lighting/color/rasterization policy, actor visual
+overrides, and asset-use references. An older client update that omits the
+field preserves an existing recipe; explicit `null` resets it. JSON bundle
+import never installs visual bytes. Rename/duplicate/conflicting-import rebinds
+retain the established descriptor rules, invalidate correspondence evidence,
+and fail explicitly if the destination lacks required descriptor, access, use,
+or CAS dependencies. Asset transfer remains VIS-13.
 
 Building transforms update their authoritative footprint/height records as the gizmo moves; prop transforms update position and heading. Reload therefore reconstructs the edited location rather than the original runtime mesh.
 
@@ -114,8 +125,11 @@ job-bound `cev-sim.bake-material-proposal-set@1` plus typed proposal buffers.
 Each of base color, normal, roughness, metalness, emissive, and occlusion may
 override its ordered `sourcePriority`; the normalized default is `supplied`,
 then `inferred`. Missing, stale, malformed, over-budget, or incomplete evidence
-fails the bake before upload rather than reverting to captured beauty. Model
-execution and raw-output caching remain VIS-11. Successful promotion records
+fails the bake before upload rather than reverting to captured beauty. Selecting
+`intrinsic-material-model@1` is API/config opt-in only and requires pinned model,
+algorithm, and weights identity plus construction v2 `intrinsic-pbr-proposed`.
+The editor has no new model controls. The default persistent bake remains
+model-free `captured-appearance@1`. Successful promotion records
 the proposal hash in artifact-set v3 and the durable receipt while leaving the
 environment schema, correspondence evidence, and runtime capability adverts
 unchanged.

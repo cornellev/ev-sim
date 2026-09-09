@@ -130,6 +130,58 @@ def test_v11_loader_preserves_received_bytes_and_negotiation_requirements(headle
             load_bundle(document)
 
 
+def test_v11_loader_preserves_additive_pbr_metadata_for_javascript_verification(
+    headless_fixture: dict[str, object],
+) -> None:
+    document = json.loads(Path(headless_fixture["bundlePath"]).read_text())
+    resolved = document["resolved"]
+    manifest = resolved["manifest"]
+    manifest["renderRecipe"] = {
+        "kind": "cev-sim.pbr-render-recipe",
+        "version": 1,
+    }
+    document["manifest"] = manifest
+    world_hash = resolved["world"]["hash"]
+    visual_hash = "a" * 64
+    render_hash = "b" * 64
+    closure_hash = "c" * 64
+    evidence_hash = "d" * 64
+    resolved["visualLayer"] = {"description": {}, "hash": visual_hash}
+    resolved["renderScene"] = {
+        "description": {
+            "provider": {"id": "pbr-mesh", "version": 1},
+            "worldHash": world_hash,
+            "visualLayerHash": visual_hash,
+            "assetClosureHash": closure_hash,
+        },
+        "hash": render_hash,
+    }
+    resolved["evidence"] = {
+        "visualAssets": {
+            "descriptorHash": visual_hash,
+            "accessHash": "e" * 64,
+            "assetClosureHash": closure_hash,
+            "roots": [],
+            "uses": [],
+        },
+        "correspondence": {
+            "reportHash": "f" * 64,
+            "status": "unverified-reference",
+        },
+    }
+    resolved["dependencyHashes"]["visualLayer"] = visual_hash
+    resolved["dependencyHashes"]["renderScene"] = render_hash
+    resolved["dependencyHashes"]["evidence"] = evidence_hash
+    loaded = load_bundle(document)
+    assert loaded.document["resolved"]["evidence"]["correspondence"]["status"] == "unverified-reference"
+    assert b'"pbr-mesh"' in loaded.canonical_json
+    assert b'"visualLayer"' in loaded.canonical_json
+
+    document["resolved"]["evidence"]["correspondence"]["status"] = "passed"
+    with pytest.raises(CevSimConfigurationError, match="unverified reference"):
+        load_bundle(document)
+
+
 @pytest.mark.parametrize("received", [b'{"a":1,"a":2}', b'\xff', b'{"a":NaN}', b'{"a":"\\ud800"}'])
 def test_bundle_ingestion_rejects_invalid_json(received: bytes) -> None:
     with pytest.raises(CevSimConfigurationError):

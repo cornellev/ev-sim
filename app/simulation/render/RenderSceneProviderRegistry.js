@@ -188,7 +188,7 @@ export class RenderSceneProviderRegistry {
     register(declaration) {
         const source = plainObject(declaration, "provider");
         assertKeys(source, [
-            "id", "version", "available", "unavailableReason", "productProfiles",
+            "id", "version", "available", "resolvable", "unavailableReason", "resolutionUnavailableReason", "productProfiles",
             "resolve", "assert",
         ], "provider");
         const id = identifier(source.id, "provider.id");
@@ -207,13 +207,18 @@ export class RenderSceneProviderRegistry {
             fail("DUPLICATE_PROVIDER", `Duplicate product profile declarations for ${id}@${version}`);
         }
         const available = source.available === true;
+        const resolvable = source.resolvable === true || available;
         const entry = {
             id,
             version,
             available,
+            resolvable,
             unavailableReason: available
                 ? ""
                 : String(source.unavailableReason || `${id}@${version} is known but unavailable`),
+            resolutionUnavailableReason: resolvable
+                ? ""
+                : String(source.resolutionUnavailableReason || source.unavailableReason || `${id}@${version} cannot be resolved`),
             productProfiles,
             resolve: typeof source.resolve === "function" ? source.resolve : null,
             assert: typeof source.assert === "function" ? source.assert : null,
@@ -233,7 +238,21 @@ export class RenderSceneProviderRegistry {
         return entry;
     }
 
-    lookup(provider, { requireAvailable = false } = {}) {
+    bindPbrImplementation(implementation) {
+        const entry = this.lookup(VISUAL_RENDER_PROVIDERS.pbrMesh, { requireAvailable: false });
+        entry.resolve = (worldResource, vehicleDependencies = [], selection, context = {}) => (
+            implementation.createResource({
+                worldResource,
+                vehicleDependencies,
+                selection,
+                ...context,
+            })
+        );
+        entry.assert = (description) => implementation.assertDescription(description);
+        return entry;
+    }
+
+    lookup(provider, { requireAvailable = false, requireResolvable = false } = {}) {
         const id = identifier(provider?.id, "provider.id");
         const version = positiveInteger(provider?.version, "provider.version");
         const versions = this.providers.get(id);
@@ -250,6 +269,9 @@ export class RenderSceneProviderRegistry {
         }
         if (requireAvailable && !entry.available) {
             fail("PROVIDER_UNAVAILABLE", entry.unavailableReason, { id, version });
+        }
+        if (requireResolvable && !entry.resolvable) {
+            fail("PROVIDER_UNAVAILABLE", entry.resolutionUnavailableReason, { id, version });
         }
         return entry;
     }
@@ -331,14 +353,14 @@ export class RenderSceneProviderRegistry {
         return issues;
     }
 
-    resolveEnabledCameraSelection(sensors = [], { requireAvailable = false } = {}) {
+    resolveEnabledCameraSelection(sensors = [], { requireAvailable = false, requireResolvable = false } = {}) {
         const cameras = (Array.isArray(sensors) ? sensors : [])
             .filter((sensor) => sensor?.type === "camera" && sensor.enabled !== false);
         if (cameras.length === 0) return null;
         let selected = null;
         for (const camera of cameras) {
             const selection = effectiveCameraRenderSelection(camera);
-            this.lookup(selection.provider, { requireAvailable });
+            this.lookup(selection.provider, { requireAvailable, requireResolvable });
             this.lookupProfile(selection.provider, selection.productProfile);
             const productIssues = this.validateCameraRender(camera);
             if (productIssues.length > 0) {
@@ -356,24 +378,24 @@ export class RenderSceneProviderRegistry {
         return selected;
     }
 
-    resolveResource(worldResource, vehicleDependencies = [], selection) {
+    resolveResource(worldResource, vehicleDependencies = [], selection, context = {}) {
         const normalized = selection === undefined
             ? defaultCameraRenderSelection()
             : cloneSelection(normalizeCameraRenderSelection(selection, { required: true }));
-        const entry = this.lookup(normalized.provider, { requireAvailable: true });
+        const entry = this.lookup(normalized.provider, { requireResolvable: true });
         this.lookupProfile(normalized.provider, normalized.productProfile);
         if (typeof entry.resolve !== "function") {
             fail("PROVIDER_UNAVAILABLE", entry.unavailableReason, normalized.provider);
         }
-        return entry.resolve(worldResource, vehicleDependencies, normalized);
+        return entry.resolve(worldResource, vehicleDependencies, normalized, context);
     }
 
-    assertDescription(description) {
+    assertDescription(description, { requireAvailable = false } = {}) {
         const provider = description?.provider;
         const entry = this.lookup({
             id: provider?.id,
             version: Number.isInteger(provider?.version) ? provider.version : provider?.version,
-        }, { requireAvailable: true });
+        }, { requireAvailable });
         if (typeof entry.assert !== "function") {
             fail("PROVIDER_UNAVAILABLE", entry.unavailableReason, entry);
         }
@@ -392,6 +414,17 @@ export class RenderSceneProviderRegistry {
                 { selection: selection.provider, scene: sceneProvider ?? null },
             );
         }
+        const sceneProfile = renderScene?.description?.productProfile;
+        if (sceneProfile && (
+            sceneProfile.id !== selection.productProfile.id
+            || Number(sceneProfile.version) !== selection.productProfile.version
+        )) {
+            fail(
+                "RENDER_SCENE_PROFILE_MISMATCH",
+                `Enabled camera product profile ${providerKey(selection.productProfile)} does not match persisted render-scene profile ${sceneProfile.id}@${sceneProfile.version}`,
+                { selection: selection.productProfile, scene: sceneProfile },
+            );
+        }
         return selection;
     }
 
@@ -400,6 +433,7 @@ export class RenderSceneProviderRegistry {
             .flatMap(([id, versions]) => [...versions.values()].map((entry) => ({
                 id,
                 version: entry.version,
+                resolvable: entry.resolvable,
                 available: entry.available,
                 unavailableReason: entry.unavailableReason,
                 productProfiles: entry.productProfiles.map((profile) => ({
@@ -440,6 +474,7 @@ export function createDefaultRenderSceneProviderRegistry() {
         id: VISUAL_RENDER_PROVIDERS.pbrMesh.id,
         version: VISUAL_RENDER_PROVIDERS.pbrMesh.version,
         available: false,
+        resolvable: true,
         unavailableReason: "pbr-mesh@1 is known but unavailable until PBR materialization and camera integration land",
         productProfiles: [defaultProductProfile({ requireMeasured: true })],
     });
@@ -452,6 +487,10 @@ export function bindCanonicalAnalyticRenderScene(implementation) {
     return renderSceneProviderRegistry.bindAnalyticImplementation(implementation);
 }
 
+export function bindPbrRenderScene(implementation) {
+    return renderSceneProviderRegistry.bindPbrImplementation(implementation);
+}
+
 export function resolveEnabledCameraRenderSelection(sensors, options) {
     return renderSceneProviderRegistry.resolveEnabledCameraSelection(sensors, options);
 }
@@ -461,5 +500,10 @@ export function validateCameraRenderDeclaration(sensor) {
 }
 
 export function assertEnabledCameraRenderRuntime(sensors, renderScene) {
+    const selection = renderSceneProviderRegistry.resolveEnabledCameraSelection(sensors, { requireAvailable: true });
+    // The browser's historical analytic path can still synthesize its legacy
+    // scene locally. Explicit/non-legacy providers must always carry and match
+    // their resolved immutable scene before preparation begins.
+    if (selection && !renderScene && isLegacyAnalyticSelection(selection)) return selection;
     return renderSceneProviderRegistry.assertMatchesScene(sensors, renderScene, { requireAvailable: true });
 }

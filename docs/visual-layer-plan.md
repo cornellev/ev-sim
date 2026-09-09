@@ -25,7 +25,7 @@ a VIS, GOOG, or GS PR changes a contract, hash, gate, or milestone status.
 
 ## Status and release verdict
 
-- Next milestone: **VIS-12b — conditional visual run resolution**. VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, VIS-05a, VIS-05b, VIS-06a, VIS-06b, VIS-07, VIS-08, VIS-09, VIS-10a, VIS-10b, and VIS-16a are implemented.
+- Next milestone: **VIS-13a — deterministic archive codec and verification**. VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, VIS-05a, VIS-05b, VIS-06a, VIS-06b, VIS-07, VIS-08, VIS-09, VIS-10a, VIS-10b, VIS-11, VIS-12b, and VIS-16a are implemented.
 - Review verdict: **NO-GO for the original ordering and for claiming visual
   runtime support.** The five Blocker findings below require implementation
   and evidence. This revision supplies the corrected handoff; editing the
@@ -33,11 +33,13 @@ a VIS, GOOG, or GS PR changes a contract, hash, gate, or milestone status.
 - Core assumption: **Google approval, Google-derived assets, Gaussian
   splatting, and a model service are unavailable.**
 - Default implementation/review reasoning level: **Extra High**.
-- Last updated: **2026-09-08 — VIS-10b intrinsic material proposals implemented**.
--   VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, VIS-05a, VIS-05b, VIS-06a, VIS-06b, VIS-07, VIS-08, VIS-09, VIS-10a, VIS-10b, and VIS-16a acceptance evidence is recorded in
+- Last updated: **2026-09-09 — VIS-12b conditional visual run resolution implemented**.
+-   VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, VIS-05a, VIS-05b, VIS-06a, VIS-06b, VIS-07, VIS-08, VIS-09, VIS-10a, VIS-10b, VIS-11, VIS-12b, and VIS-16a acceptance evidence is recorded in
   the progress ledger and decision log. Protocol 1.3 advertises `world-bound@2`.
-  Only `canonical-analytic@1` and GPU sensor backend v1 remain runtime-capable;
-  no visual renderer or package-admission capability is advertised. Environment
+  Only `canonical-analytic@1` and GPU sensor backend v1 remain runtime-capable.
+  `pbr-mesh@1` is resolution-capable for immutable export and integrity-only
+  inspection, but remains unavailable for execution; corrected analytic remains
+  unavailable and no package-admission capability is advertised. Environment
   v3 references may include `accessHash`. Preview materialization is display-only
   and does not enable `pbr-mesh@1`. Admission profiles stay empty. Advertised
   D06 hardware reports remain required from protected x64/Orin/Thor runners
@@ -49,7 +51,12 @@ a VIS, GOOG, or GS PR changes a contract, hash, gate, or milestone status.
   VIS-10a closes captured-radiance G-ATLAS and atlas-path
   G-INCREMENTAL/G-SCALE fusion bounds. VIS-10b closes fixed-proposal
   G-ATLAS/G-PROVENANCE, per-unit proposal invalidation, and intrinsic fusion
-  bounds without activating a model or runtime provider.
+  bounds without activating a model or runtime provider. VIS-11 adds the
+  opt-in `intrinsic-material-model@1` adapter, `cev-sim.bake-model-output-set@1`,
+  and a bounded Python `/bake/v1` job service with a CI-safe fake backend.
+  Real inference stays disabled until an operator pins immutable model, revision,
+  weights digest, and runtime configuration. The default bake remains
+  model-free `captured-appearance@1`.
   VIS-16a closes the schema/tamper/cycle portion of G-CORRESPONDENCE with
   synthetic thresholds. Real correspondence evaluation and managed-runtime
   enforcement remain VIS-16b.
@@ -64,8 +71,7 @@ may improve appearance, but cannot be prerequisites for this path.
 
 Original VIS numbers remain workstream identifiers. Suffixes below identify
 actual PRs; completing one suffix does not complete its entire workstream.
-All required entries except VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, VIS-05a,
-VIS-05b, VIS-06a, VIS-06b, VIS-07, VIS-08, VIS-09, VIS-10a, and VIS-16a remain unstarted.
+Required entries not marked complete in the progress ledger remain unstarted.
 
 | Workstream | Required core PRs | Optional enrichment |
 | --- | --- | --- |
@@ -121,7 +127,7 @@ work. The other runtime findings retain their owning gates.
 | F07 **High** | [SensorTypeRegistry.js](../app/3d/devices/SensorTypeRegistry.js) accepts unequal/off-center intrinsics; [ManifestCamera.js](../app/3d/devices/ManifestCamera.js) and [PooledGpuRenderer.js](../server/headless/PooledGpuRenderer.js) construct FOV/aspect projections. [BakeView.js](../app/3d/environment/visualization/BakeView.js) uses a different pixel-center convention. Published calibration can disagree with pixels even when both renderers agree. | Put shared versioned K-to-projection math in VIS-06a. G-CALIBRATION uses independently calculated points, unequal focal lengths, off-center principal points, and rotated mounts. |
 | F08 **High** | [BakeView.js](../app/3d/environment/visualization/BakeView.js) hides non-target mask geometry, forces depth visibility, and boosts beauty road materials; these are not aligned samples. [CameraRenderProducts.js](../app/3d/perception/CameraRenderProducts.js) changes materials on scene meshes rather than selecting independent truth twins. Fusion or correspondence can accept occluded/misregistered samples. | Split VIS-06b from legacy calibration/isolation; define separate visual G-buffer and analytic oracle pass families. G-GBUFFER proves occlusion, validity, alpha policy, encoding, and exception-safe restoration. |
 | F09 **High** | [HeadlessGpuSensorManager.js](../app/simulation/sensors/HeadlessGpuSensorManager.js) shares `renderScene || lidarGeometry`; its camera implementation produces RGB/CameraInfo rather than every authored oracle product. [SensorTypeRegistry.js](../app/3d/devices/SensorTypeRegistry.js), `normalizeRunSensor`, has a fixed authored field set. [PerceptionTruthIndex.js](../app/autonomy/PerceptionTruthIndex.js) and [EnvironmentRegistry.js](../app/3d/editor/EnvironmentRegistry.js) discover truth from scene metadata. PBR geometry or imported GLTF extras can cross the truth boundary, while unsupported products can disappear. | VIS-02 added provider/profile schemas and explicit validation; remaining product-completeness and selected-visual resolution belong to later VIS/VIS-12b. Separate truth resources and sanitize imported metadata in VIS-05a/VIS-14/VIS-15a. G-CAPABILITY and G-ORACLE prove product completeness and observation isolation. |
-| F10 **High** | VIS-07 serializes bake planning inputs and canonicalizes planner order. VIS-08 emits deterministic PNG/GLB captured-radiance artifacts with explicit unlit semantics. VIS-10a emits per-chunk atlas pages with hashed construction policy. VIS-10b adds fixed supplied/inferred intrinsic proposals, per-channel fusion, PBR packing, and durable evidence. Remaining F10 work is browser `bakeUpload.js` encoding on the legacy path and unpinned Python model options owned by VIS-11. | Combine the provider job contract with VIS-07; split deterministic atlas construction (VIS-10a) from optional material estimation (VIS-10b/VIS-11). G-PROVENANCE and G-ATLAS separate fixed-input determinism from GPU/model nondeterminism and test material semantics. |
+| F10 **High** | VIS-07 serializes bake planning inputs and canonicalizes planner order. VIS-08 emits deterministic PNG/GLB captured-radiance artifacts with explicit unlit semantics. VIS-10a emits per-chunk atlas pages with hashed construction policy. VIS-10b adds fixed supplied/inferred intrinsic proposals, per-channel fusion, PBR packing, and durable evidence. VIS-11 pins fake/operator-injected backends, digest-verifies `/bake/v1` transfers, and records model provenance. Remaining F10 work is browser `bakeUpload.js` encoding on the legacy path. | Combine the provider job contract with VIS-07; split deterministic atlas construction (VIS-10a) from optional material estimation (VIS-10b/VIS-11). G-PROVENANCE and G-ATLAS separate fixed-input determinism from GPU/model nondeterminism and test material semantics. |
 | F11 **High** | Corrected VIS-04/VIS-05a now require current versioned validation before content or materialization; iteratively bound glTF preflight; apply one extension allowlist to declarations and objects; inspect embedded/digest-backed images and decoded memory before loaders; authorize only loader-created object URLs; sanitize metadata; and propagate decoder failures. Archive support remains unavailable. | GLB/glTF loader boundary closed by G-SECURITY. Hostile USTAR validation remains a mandatory VIS-13a prerequisite before extraction or package-loader access. |
 | F12 **High** | [StorageService.js](../server/storage/StorageService.js) persists queued experiment bundle sidecars under `headless-run-bundles`; environment/package references are not the whole live set. Worker resets, queued jobs, replay, bake staging, and validation reports also need blobs. Environment-only reference checks allow deletion of required assets or indefinite growth. | Put pins, durable roots, quotas, staging recovery, and a no-unsafe-delete policy in VIS-04; wire execution roots in VIS-13b/VIS-15b. G-LIFECYCLE races deletion against queueing, promotion, restart, reset, and cancellation. |
 | F13 **High** | VIS-09 added per-unit dependency keys, typed chunk mutations, and conservative global invalidation. VIS-10a fuses one chunk/page at a time under ledger reservations and rebuilds only dirty atlas chunks. Remaining F13/G-SCALE risk is advertised hardware city-scale reports, not reuse authorization. | VIS-09 G-INCREMENTAL compares complete vs incremental descriptor/access/asset identity. Residency never authorizes reuse. |
@@ -1084,7 +1090,7 @@ schema-only report validates a real visual layer.
 
 ### VIS-12b — Conditional visual run resolution
 
-**Depends on:** VIS-02, VIS-03, VIS-04, VIS-12a, VIS-16a.
+**Depends on:** VIS-02, VIS-03, VIS-04, VIS-12a, VIS-16a. **Status:** implemented.
 
 Extend [RunManifest.js](../app/simulation/RunManifest.js),
 [StorageService.js](../server/storage/StorageService.js),
@@ -1555,7 +1561,7 @@ person and commit their decision/evidence before the specified gate.
 | ID | Accountable role | Decision required | Due before |
 | --- | --- | --- | --- |
 | **D01** | Repository owner (interim); simulation + Python/protocol implementers | **Implemented in VIS-12a:** manifest v11, `world-bound@2`, semantic/episode v2, protocol 1.3; preserve bundle v1 and current analytic execution. Nested lock/profile and JS/Python byte/episode vectors pass. | Scoped G-HASH/G-MIGRATION evidence recorded below; VIS-12b retains selected-visual cases |
-| **D02** | Repository owner (interim); rendering + perception implementers | **Implemented in VIS-02 and VIS-06a:** provider ID/version registry, `measured-rgba-analytic-oracle@1` product profile, new-camera `canonical-analytic@1` defaults, strict camera product/profile validation, and the versioned calibrated-capture core. `canonical-analytic@2` and `pbr-mesh@1` stay known but unavailable. | Contract and calibration evidence recorded; VIS-14/VIS-15 retain provider/backend activation |
+| **D02** | Repository owner (interim); rendering + perception implementers | **Implemented through VIS-12b:** provider ID/version registry, `measured-rgba-analytic-oracle@1` product profile, new-camera `canonical-analytic@1` defaults, strict camera product/profile validation, the versioned calibrated-capture core, and a separate resolution-support bit. `pbr-mesh@1` is resolvable but not executable; `canonical-analytic@2` remains unavailable. | Contract, calibration, and selected-resolution evidence recorded; VIS-14/VIS-15 retain provider/backend activation |
 | **D03** | Repository owner (interim); storage + protocol implementers | **Resolved for VIS-01; storage implemented in VIS-04:** deterministic uncompressed USTAR and fixed limits; separate exact byte digests; same-host opaque admission handles; additive protocol 1.4 fields/RPCs; durable acquire-before-release roots and pins. VIS-04 stores immutable bytes, source-bound uses, quotas, staging recovery, and internal roots/pins. Protocol 1.4 and package admission remain VIS-13. | VIS-04 storage evidence recorded; VIS-13 retains package/admission |
 | **D04** | Runtime packaging/release owner | Delivery of renderer/decoder runtime assets, dependency/license closure, package size ceiling or separately verified runtime artifact choice, and offline installation expectations. No scene/model data in the runtime tarball. | VIS-15c; constraints recorded in VIS-01 |
 | **D05** | Repository owner (interim baseline); applicable legal/source owner for grants | **Resolved baseline; ingestion enforced in VIS-04:** only the configured local operator registry is trusted; permissions intersect through ancestry; unknown/revoked/expired sources and ungranted Google-derived operations fail closed. VIS-04 loads the operator file with no mutation API and re-evaluates grants at upload, content access, and root/pin acquisition. | VIS-04 ingestion evidence recorded; every GOOG activation still needs its source owner |
@@ -1572,7 +1578,7 @@ requirements with silent fallback or unsupported claims.
 ## Progress and acceptance ledger
 
 VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, VIS-05a, VIS-05b, VIS-06a, VIS-06b,
-VIS-07, VIS-08, VIS-09, VIS-10a, VIS-10b, and VIS-16a are complete in the working tree;
+VIS-07, VIS-08, VIS-09, VIS-10a, VIS-10b, VIS-11, VIS-12b, and VIS-16a are complete in the working tree;
 all other required core PRs remain **not started**. VIS-12a landed at commit
 `e4f756a`. Its accountable owner remains the repository owner under D01.
 
@@ -1900,7 +1906,14 @@ all other required core PRs remain **not started**. VIS-12a landed at commit
   evidence gap, and VIS-08 recovery/success-reporting gaps. Hostile USTAR
   validation remains VIS-13a; real correspondence remains VIS-16b. See the
   VIS-16a decision-log entry for exact acceptance evidence. VIS-12b is next.
-- [ ] VIS-12b
+- [x] VIS-12b — optional `cev-sim.pbr-render-recipe@1` authoring,
+  exact `cev-sim.visual-asset-closure@1` and `pbr-mesh@1` render resources,
+  source-bound `cev-sim.visual-run-evidence@1`, conditional CAS/rights
+  resolution, and integrity-only bundle inspection. Full locks fail before
+  visual I/O. Browser, CLI execution, supervisor admission, worker preparation,
+  and Python execution reject PBR without fallback; provider-aware headless
+  defaults require the already-declared GPU backend v2. See the VIS-12b
+  decision-log entry for the exact acceptance record.
 - [ ] VIS-13a
 - [ ] VIS-13b
 - [ ] VIS-14
@@ -1912,13 +1925,15 @@ all other required core PRs remain **not started**. VIS-12a landed at commit
 - [ ] VIS-17b
 - [ ] VIS-17c
 
-Optional work after the completed VIS-10b contract/fusion milestone remains
-**not started**:
+Optional work after the completed VIS-11 adapter milestone remains
+**not started** except for the completed VIS-10b/VIS-11 items below:
 
 - [x] VIS-10b — strict proposal evidence, per-channel fusion, intrinsic PBR
   atlas outputs, incremental proposal keys, durable promotion receipts, and
   fixed-fixture relighting evidence. Model execution remains VIS-11.
-- [ ] VIS-11
+- [x] VIS-11 — opt-in `intrinsic-material-model@1` adapter, model-output-set
+  transport, pinned fake/operator-injected backends, and bounded `/bake/v1`
+  jobs. No real-model quality claim.
 - [ ] GOOG-01
 - [ ] GOOG-02
 - [ ] GOOG-03
@@ -2613,3 +2628,123 @@ completed with zero errors and two pre-existing warnings. `npm test` passed
 G-buffer cases passed 2/2 with one software-rendered case assigned a 60-second
 test budget. The Playwright web server build succeeded. No simulator behavior
 changed, so the committed action-tape characterization was not refreshed.
+
+### 2026-09-08 — Implement VIS-11 versioned external intrinsic-material adapter
+
+Add opt-in `intrinsic-material-model@1` that converts VIS-07 aligned captures
+into VIS-10b's six intrinsic channels. Preserve
+`cev-sim.bake-provider-request@1`, `bake-provider-response@1`, and
+`bake-material-proposal-set@1`. Introduce transport-only
+`cev-sim.bake-model-output-set@1` for per-sample/view digests of base color,
+tangent-space normal, roughness, metalness, emissive, occlusion, confidence,
+and known-mask buffers. Provider-response outputs remain verified acknowledgements
+of captured inputs. Model pixels belong to the model-output set and the
+generated proposal set.
+
+Provider options are recipe-hashed and require pinned model, algorithm, and
+weights identity plus prompts, resize policy, inference steps/guidance/precision,
+and expected nondeterminism scope. Endpoint, timeout, polling, queue, and
+cache limits stay operational. Adapter v1 requires a common source resolution;
+any model resize is declared, recorded as `effectiveDimensions`, and restored
+to source resolution. The default `captured-appearance@1` path remains
+model-free and performs no network or model probing. The registry lists
+`intrinsic-material-model@1` lazily and probes it only when selected.
+
+The Python `/bake/v1` service uses one worker pool, bounded queue/storage/
+upload/processing, digest-verified transfers, idempotent request-hash retries,
+and cooperative cancellation. Raw outputs cache atomically by exact
+`requestHash` only for `reuse-request`; every cache read is rehashed.
+Corruption, publication failure, cancellation, and partial output are terminal.
+`process.py` FLUX/image-fill remains legacy-only and non-promotable; hard-coded
+remote and unpinned production defaults are removed. The fake backend is the CI
+default. An operator-injected real backend refuses startup without immutable
+model revision, weights digest, and algorithm identity, and still has no
+bundled delegate.
+
+Callers may supply proposals or consume model-generated proposals, never both.
+External-model jobs capture fully so `requestHash` is exact. Cached inference
+can skip model execution; artifact reuse still compares proposal-unit digests.
+There is no beauty-to-PBR fallback. Headless proto, run-bundle identity, render
+providers, camera backends, and simulation hashes are unchanged. No real-model
+quality claim is made.
+
+Local acceptance: focused VIS-11 Node tests passed 8/8; shared fixture, proposal, and catalog suites that load the adapter passed. `npm run lint` completed with zero errors and two pre-existing warnings. `npm test` passed 861/863 with the two declared hardware GPU skips. `npm run lint:python` passed. `npm run test:bake-python` passed 18/18 without Torch or model weights, covering schema/hash parity, fake inference, upload/queue bounds, digest verification, cancellation, idempotency, atomic cache publication, corrupted cache, incomplete backend output, and `/bake/v1` HTTP transfers. `npm run test:python` passed 56/56. `npm run build` succeeded. `npm run fixtures:headless` produced no characterization delta. No real-model quality claim is made.
+
+### 2026-09-09 — Implement VIS-12b conditional visual run resolution
+
+Add optional `manifest.renderRecipe` as strict
+`cev-sim.pbr-render-recipe@1`. Normalization expands selected PBR recipes to
+black/opaque background, white unit ambient, linear-sRGB working and sRGB
+output, exposure 1, and disabled environment map, shadows, tone mapping,
+antialiasing, and dithering. It also freezes alpha, sampler, ordering, culling,
+depth, precision/readback, decoder/transcoder, and `[0, 80, 200]` LOD policy.
+Actor appearance defaults to versioned analytic primitives; source-bound actor
+asset/material overrides and visual-to-actor transforms are explicit and must
+name a resolved actor. Older-client updates preserve an existing recipe when
+the field is omitted; explicit `null` resets it. Analytic manifests remain
+field-absent, and saves, duplication, resolution, and import/export preserve
+explicit recipes.
+
+Separate provider resolution support from runtime availability.
+`pbr-mesh@1` can now resolve, export, and pass integrity-only inspection, while
+it and GPU backend v2 remain unavailable for execution. Corrected analytic also
+remains unavailable. Resolution first validates original/effective environment,
+scenario, script, binding, and embedded locks. Only an enabled PBR camera then
+loads the selected environment descriptor and access sidecar, verifies their
+world/truth bindings, and walks every layer, LOD, buffer, texture, baked
+appearance, actor, and environment-map use. CAS bytes and declared sizes are
+rehash-verified; the source registry re-evaluates both `display` and
+`machine-interpretation` through each use's ancestry. Non-PBR, disabled-PBR,
+state-only, and LiDAR-only runs do no visual-store work.
+
+Persist exact `resolved.visualLayer`, provider-dispatched
+`resolved.renderScene`, and matching dependency hashes. The render scene binds
+the world, visual layer, product profile, normalized pixel recipe, full
+content-deduplicated asset closure, actor appearance/transforms, and a separate
+analytic truth resource. Access sidecars, complete source-bound use records,
+permission decisions, source IDs, and obligations live under exact
+`cev-sim.visual-run-evidence@1`. An optional correspondence digest is copied
+only as `unverified-reference`; it neither claims validation nor enters an
+evaluation-input cycle. Access/use/report changes can change `resolvedHash`
+without changing render, world, simulation-semantic, or episode identity when
+pixel/behavior meaning is unchanged.
+
+PBR recipe, closure, render, and evidence hashes use strict exact JCS and reject
+duplicate keys, invalid Unicode, non-finite values, negative zero, unsupported
+versions, noncanonical ordering, and inner-resource tampering even if an outer
+hash is recomputed. Existing analytic/world/resolved algorithms and bundle v1,
+manifest v11, `world-bound@2`, protocol 1.3, and generated protobuf remain
+unchanged. CLI inspection is integrity-only and states that offline inspection
+does not prove present rights, local bytes, or correspondence validity.
+Browser session replacement and shared preparation reject PBR before environment
+or sensor setup. CLI run, direct headless, supervisor, and worker preparation
+retain executable verification. JavaScript and Python select GPU backend v2 for
+PBR and reject missing, unavailable, or explicit v1 capability without
+substitution. Python preserves exact received bytes and carries only additive
+metadata; JavaScript remains the semantic verifier. JSON import installs no
+asset bytes and fails explicitly when local visual dependencies are absent.
+
+Owned fixture acceptance covers a static glTF mesh with external buffer and
+texture dependencies, multiple LODs, an actor override, and an environment map.
+Direct and scenario-backed resolution, stale/refreshed nested locks, precise
+transforms/settings, material/asset/actor/lighting/calibration/product/backend/
+seed/scenario changes, disabled selection, source ancestry and revocation,
+shared bytes with distinct uses, corrupt CAS, incomplete graphs, evidence-only
+changes, import behavior, and early execution rejection pass. Focused Node
+VIS-12b plus run-session tests passed 20/20; the wider focused identity,
+manifest, rights, visual-layer, and provider matrix passed 55/55. Focused Python
+bundle/client tests passed 24/24.
+
+`npm run lint` completed with zero errors and two pre-existing warnings.
+`npm test` passed 873/875 with only the two declared hardware GPU skips.
+`npm run test:headless` passed 87/87, `npm run test:supervisor` passed 17/17,
+and `npm run test:cli` passed 14/14. `npm run test:parity` passed state-only and
+CPU-LiDAR browser/direct/CLI/UDS/Python comparisons. `npm run lint:python`,
+`npm run test:python` (58/58), `npm run proto:python`, and `npm run build`
+passed. `npm run fixtures:headless` reproduced the committed characterization
+exactly; the action-tape and characterization SHA-256 values remain
+`1ba8c8c40e1560ac044f4ca5384065ab83c93529d65b5672fee8dc5ed42a5ced`
+and `60dc0bd2b02a9ec768f833070ce4d8d2047f5383838f09ea3f130dd31552dd6f`.
+No PBR renderer, asset package/admission/pins, managed correspondence
+enforcement, model/Google/splat integration, runtime soak, or hardware gate was
+implemented or claimed. Those gates remain VIS-13 and later work.

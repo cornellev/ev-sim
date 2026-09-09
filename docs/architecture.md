@@ -239,8 +239,11 @@ default browser profiles. Byte verification is separate from authoring import
 and executable capability validation. VIS-02 dispatches exact camera render
 provider ID/version. Newly created cameras author `canonical-analytic@1`;
 absent `render` blocks remain the legacy analytic alias during resolution.
-`canonical-analytic@2` and `pbr-mesh@1` are known but unavailable. GPU sensor
-backend v1 identity is unchanged; backend v2 is declared but rejected.
+`canonical-analytic@2` remains unavailable. VIS-12b separates provider
+resolution support from runtime availability: `pbr-mesh@1` can resolve to an
+immutable render/asset/evidence closure for export and integrity-only
+inspection, but execution still rejects it. GPU sensor backend v1 identity is
+unchanged; backend v2 is declared but rejected.
 VIS-03 stores environment schema v3 with a server revision and optional visual
 descriptor/evidence hashes. Those references stay out of `worldHash`. VIS-04
 stores validated visual-asset bytes and source-bound use records. VIS-05a
@@ -277,9 +280,21 @@ fusion over strict supplied/inferred proposal buffers. Proposal provenance is
 stored separately and bound through artifact-set v3 and the promotion receipt;
 only final runtime textures enter the unchanged visual-layer descriptor.
 Per-unit proposal digests extend reuse keys without entering world, semantic,
-or episode identity. VIS-14/VIS-15 own
-runtime provider routing. `pbr-mesh@1`, corrected GPU backend
-v2, manifests, hashes, protobuf, and advertised capabilities remain unchanged.
+or episode identity. VIS-11 adds opt-in `intrinsic-material-model@1` and a
+transport-only `bake-model-output-set@1`; those hashes stay out of episode
+identity. Real inference is disabled until an operator pins model revision,
+weights digest, and bounded service configuration. VIS-14/VIS-15 own runtime
+provider routing. VIS-12b adds conditional selected-PBR resolution after every
+authoring lock is verified. It rehashes the complete source-bound CAS use graph
+under both display and machine-interpretation policy, then binds exact
+`visualLayer` and `renderScene` pixel resources while retaining access,
+obligations, and unverified correspondence references under separate resolved
+evidence. PBR meshes never enter metric world, collision, LiDAR, registry, or
+oracle truth. Browser, CLI execution, supervisor, and workers reject the
+runtime-unavailable provider before preparation; JavaScript and Python require
+the declared GPU backend v2 for any future PBR execution. Bundle v1, manifest
+v11, `world-bound@2`, protocol 1.3, protobuf, and existing analytic identities
+remain unchanged.
 
 ## External Integration
 

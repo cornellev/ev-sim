@@ -4,8 +4,8 @@ import uuid
 from urllib import error, request
 
 
-SERVER_HOST = os.environ.get("BAKE_PROCESS_SERVER", "http://thor.tail4ccb95.ts.net:8001")
-SERVER_ENDPOINT = os.environ.get("BAKE_PROCESS_ENDPOINT", f"{SERVER_HOST}/process")
+SERVER_HOST = os.environ.get("BAKE_PROCESS_SERVER")
+SERVER_ENDPOINT = os.environ.get("BAKE_PROCESS_ENDPOINT")
 
 
 def _multipart_body(fields, files):
@@ -47,6 +47,10 @@ def process_image(image_path, mask_path, tag, save_path=None, metadata=None):
 
     Returns the saved output path on success, otherwise None.
     """
+    endpoint = SERVER_ENDPOINT or (f"{SERVER_HOST.rstrip('/')}/process" if SERVER_HOST else None)
+    if not endpoint:
+        print("Legacy image-fill endpoint is not configured; refusing unpinned remote defaults.")
+        return None
     output_path = save_path or f"baked_{tag}.png"
     fields = {
         "tag": tag,
@@ -59,7 +63,7 @@ def process_image(image_path, mask_path, tag, save_path=None, metadata=None):
     boundary, body = _multipart_body(fields, files)
 
     req = request.Request(
-        SERVER_ENDPOINT,
+        endpoint,
         data=body,
         method="POST",
         headers={

@@ -43,6 +43,7 @@ import {
     normalizeBakeMaterialProposalSet,
     validateBakeMaterialProposals,
 } from "./BakeMaterialProposals.js";
+import { isIntrinsicMaterialModelProvider } from "./BakeModelOutput.js";
 
 function peakUsed(ledger, peak) {
     return Math.max(peak, ledger.snapshot().usedBytes);
@@ -212,14 +213,22 @@ export async function runIncrementalBake({
     const construction = constructionFromConfig(configDocument(options) ?? {});
     const atlas = isChunkAtlasConstruction(construction);
     const intrinsic = isIntrinsicProposalConstruction(construction);
-    if (intrinsic && (!options.materialProposalSet || !options.materialProposalBuffers)) {
+    const modelProvider = isIntrinsicMaterialModelProvider(configDocument(options)?.provider);
+    const hasCallerProposals = Boolean(options.materialProposalSet && options.materialProposalBuffers);
+    if (intrinsic && modelProvider && hasCallerProposals) {
+        const error = new Error("Intrinsic model jobs cannot mix caller-supplied proposals with model-generated proposals.");
+        error.code = "BAKE_MATERIAL_PROPOSAL_CONFLICT";
+        throw error;
+    }
+    if (intrinsic && !modelProvider && !hasCallerProposals) {
         const error = new Error("Intrinsic construction requires materialProposalSet and materialProposalBuffers before capture.");
         error.code = "BAKE_MATERIAL_PROPOSAL_MISSING";
         throw error;
     }
-    const proposalSet = intrinsic ? normalizeBakeMaterialProposalSet(options.materialProposalSet) : null;
-    const proposalUnitDigests = proposalSet ? bakeMaterialProposalUnitDigests(proposalSet) : null;
-    const captureAll = reuseDisabled || !previousManifest;
+    let proposalSet = intrinsic && !modelProvider ? normalizeBakeMaterialProposalSet(options.materialProposalSet) : null;
+    let proposalUnitDigests = proposalSet ? bakeMaterialProposalUnitDigests(proposalSet) : null;
+    const proposalBuffers = intrinsic && !modelProvider ? options.materialProposalBuffers : null;
+    const captureAll = reuseDisabled || !previousManifest || modelProvider;
     const streamUnits = options.streamUnits === true && !intrinsic;
     const incremental = reuseDisabled !== true;
     const fragmentsByUnit = fragmentMapFromManifest(previousManifest);
@@ -256,6 +265,16 @@ export async function runIncrementalBake({
         retainBuffers: !(streamUnits && captureAll),
         onUnitCaptured: streamUnits && captureAll ? streamHandler : undefined,
     });
+    if (modelProvider) {
+        if (!job.materialProposalSet || !job.materialProposalBuffers) {
+            const error = new Error("intrinsic-material-model@1 did not return a complete material proposal set.");
+            error.code = "BAKE_MODEL_INCOMPLETE";
+            throw error;
+        }
+        proposalSet = job.materialProposalSet;
+        proposalUnitDigests = bakeMaterialProposalUnitDigests(proposalSet);
+    }
+    const resolvedProposalBuffers = modelProvider ? job.materialProposalBuffers : proposalBuffers;
     const scene = host._version1?.snapshot?.sceneHandle?.scene
         ?? job.sceneHandle?.scene
         ?? options.sourceScene
@@ -290,7 +309,7 @@ export async function runIncrementalBake({
         if (intrinsic) {
             validateBakeMaterialProposals({
                 proposalSet,
-                buffers: options.materialProposalBuffers,
+                buffers: resolvedProposalBuffers,
                 construction,
                 job,
             });
@@ -414,7 +433,7 @@ export async function runIncrementalBake({
             previousPages,
             rebuildChunkKeys,
             materialProposalSet: proposalSet,
-            materialProposalBuffers: options.materialProposalBuffers,
+            materialProposalBuffers: resolvedProposalBuffers,
         });
     } finally {
         if (fusionId != null) ledger.release(fusionId);

@@ -26,11 +26,14 @@ import {
 } from "../../app/3d/environment/EnvironmentManifestPolicy.js";
 import {
     VISUAL_ASSET_ACCESS_OPERATIONS,
+    VISUAL_RENDER_PROVIDERS,
     assertVisualLayer,
     assertVisualLayerAccess,
     assertVisualLayerAccessMatches,
+    assertVisualLayerTruthBindings,
     canonicalExactStringify,
     hashVisualLayer,
+    hashVisualLayerAccess,
     normalizeVisualLayerAccess,
     rebindVisualLayer,
     rebindVisualLayerAccess,
@@ -58,6 +61,16 @@ import { createWorldResource } from "../../app/simulation/world/WorldDescription
 import { createLidarGeometryResource } from "../../app/simulation/lidar/LidarGeometry.js";
 import { createRenderSceneResource } from "../../app/simulation/render/RenderScene.js";
 import { resolveEnabledCameraRenderSelection } from "../../app/simulation/render/RenderSceneProviderRegistry.js";
+import {
+    PBR_MEASURED_ASSET_OPERATIONS,
+    PBR_RUN_EVIDENCE_KIND,
+    PBR_RUN_EVIDENCE_VERSION,
+    assertPbrRunEvidence,
+    hashPbrRunEvidence,
+    normalizePbrAssetClosure,
+    normalizePbrRenderRecipe,
+    pbrRenderRecipeAssetRoots,
+} from "../../app/simulation/render/PbrRenderScene.js";
 import {
     createPhysicsBackendSelection,
     sortBackendSelections,
@@ -406,6 +419,199 @@ export class StorageService {
             uses.set(entry.useHash, await this.visualAssets.getUse(entry.useHash));
         }
         return uses;
+    }
+
+    async _resolvePbrVisualRun({ environment, world, vehicles, selection, renderRecipe }) {
+        await this.visualAssets.initialize();
+        const descriptorHash = environment?.visualLayer?.descriptorHash;
+        const accessHash = environment?.visualLayer?.accessHash;
+        if (!descriptorHash) {
+            throw visualAssetError(
+                VISUAL_LAYER_ERROR_CODES.DESCRIPTOR_NOT_FOUND,
+                "pbr-mesh@1 requires the selected environment to reference an immutable visual-layer descriptor.",
+            );
+        }
+        if (!accessHash) {
+            throw visualAssetError(
+                VISUAL_LAYER_ERROR_CODES.ACCESS_REQUIRED,
+                "pbr-mesh@1 requires an accessHash covering the selected visual layer.",
+            );
+        }
+        const descriptor = await this._visualLayerDescriptors.get(descriptorHash);
+        if (!descriptor) {
+            throw visualAssetError(
+                VISUAL_LAYER_ERROR_CODES.DESCRIPTOR_NOT_FOUND,
+                `Visual layer descriptor ${descriptorHash} was not found.`,
+            );
+        }
+        const access = await this._visualLayerAccess.get(accessHash);
+        if (!access) {
+            throw visualAssetError(
+                VISUAL_LAYER_ERROR_CODES.ACCESS_NOT_FOUND,
+                `Visual layer access ${accessHash} was not found.`,
+            );
+        }
+        assertVisualLayer(descriptor);
+        assertVisualLayerAccess(access);
+        if (hashVisualLayer(descriptor) !== descriptorHash
+            || hashVisualLayerAccess(access) !== accessHash
+            || access.descriptorHash !== descriptorHash) {
+            throw visualAssetError(
+                VISUAL_LAYER_ERROR_CODES.ACCESS_MISMATCH,
+                "The selected visual descriptor or access sidecar has an invalid identity.",
+            );
+        }
+        if (descriptor.sourceWorldHash !== world.hash) {
+            throw visualAssetError(
+                VISUAL_LAYER_ERROR_CODES.WORLD_MISMATCH,
+                `Visual layer ${descriptorHash} is bound to world ${descriptor.sourceWorldHash}, not ${world.hash}.`,
+            );
+        }
+        assertVisualLayerTruthBindings(descriptor, world.description);
+
+        const recipe = normalizePbrRenderRecipe(renderRecipe ?? {});
+        const actorIds = new Set(vehicles.map((entry) => entry.actorId));
+        const unknownActor = recipe.actors.find((entry) => !actorIds.has(entry.actorId));
+        if (unknownActor) {
+            throw visualAssetError(
+                VISUAL_LAYER_ERROR_CODES.INVALID_ACCESS,
+                `Render recipe references unknown actor ${unknownActor.actorId}.`,
+            );
+        }
+        const recipeRoots = pbrRenderRecipeAssetRoots(recipe);
+        const layerRoots = access.assets.map((entry) => ({
+            scope: "visual-layer",
+            sha256: entry.sha256,
+            useHash: entry.useHash,
+        }));
+        const evidenceRecipeRoots = recipeRoots.map((entry) => ({
+            scope: entry.scope,
+            sha256: entry.asset.sha256,
+            useHash: entry.useHash,
+        }));
+        const rootUseHashes = [...new Set([
+            ...layerRoots.map((entry) => entry.useHash),
+            ...recipeRoots.map((entry) => entry.useHash),
+        ])].sort();
+        let verification;
+        try {
+            verification = await this.visualAssets.validateAccessSet({
+                useHashes: rootUseHashes,
+                operations: [...PBR_MEASURED_ASSET_OPERATIONS],
+                verifyBytes: true,
+                includeUseRecords: true,
+            });
+        } catch (error) {
+            if (error.code === "VISUAL_ASSET_RIGHTS_DENIED") {
+                throw visualAssetError(
+                    VISUAL_LAYER_ERROR_CODES.RIGHTS_DENIED,
+                    error.message,
+                    { denials: error.denials },
+                );
+            }
+            throw error;
+        }
+        const closureUseMap = new Map(verification.closureUses.map((entry) => [entry.useHash, entry.use]));
+        assertVisualLayerAccessMatches(access, descriptor, closureUseMap);
+        for (const root of recipeRoots) {
+            const use = closureUseMap.get(root.useHash);
+            if (!use || canonicalExactStringify(use.asset) !== canonicalExactStringify(root.asset)) {
+                throw visualAssetError(
+                    VISUAL_LAYER_ERROR_CODES.INVALID_ACCESS,
+                    `Render recipe root ${root.scope} does not match use ${root.useHash}.`,
+                );
+            }
+        }
+        const assetsByDigest = new Map();
+        for (const { use } of verification.closureUses) {
+            const prior = assetsByDigest.get(use.asset.sha256);
+            if (prior && canonicalExactStringify(prior) !== canonicalExactStringify(use.asset)) {
+                throw visualAssetError(
+                    VISUAL_LAYER_ERROR_CODES.INVALID_ACCESS,
+                    `Conflicting metadata for visual asset ${use.asset.sha256}.`,
+                );
+            }
+            assetsByDigest.set(use.asset.sha256, use.asset);
+        }
+        const assetClosure = normalizePbrAssetClosure({ assets: [...assetsByDigest.values()] });
+        const visualLayer = { description: descriptor, hash: descriptorHash };
+        const renderScene = createRenderSceneResource(world, vehicles, selection, {
+            visualLayerResource: visualLayer,
+            renderRecipe: recipe,
+            assetClosure,
+        });
+        const evidence = {
+            kind: PBR_RUN_EVIDENCE_KIND,
+            version: PBR_RUN_EVIDENCE_VERSION,
+            visualAssets: {
+                descriptorHash,
+                accessHash,
+                access,
+                roots: [...layerRoots, ...evidenceRecipeRoots]
+                    .sort((left, right) => `${left.scope}:${left.sha256}:${left.useHash}`
+                        .localeCompare(`${right.scope}:${right.sha256}:${right.useHash}`)),
+                uses: verification.closureUses,
+                assetClosureHash: renderScene.description.assetClosureHash,
+                permissions: {
+                    operations: [...PBR_MEASURED_ASSET_OPERATIONS],
+                    evaluatedSourceIds: [...verification.evaluatedSourceIds].sort(),
+                    obligations: verification.obligations,
+                },
+            },
+            correspondence: environment.evidence?.reportHash
+                ? { reportHash: environment.evidence.reportHash, status: "unverified-reference" }
+                : null,
+        };
+        assertPbrRunEvidence(evidence, { visualLayer, renderScene });
+        return { visualLayer, renderScene, evidence, evidenceHash: hashPbrRunEvidence(evidence) };
+    }
+
+    async _assertLocalPbrImportDependencies(resolved) {
+        const renderProvider = resolved?.renderScene?.description?.provider;
+        if (renderProvider?.id !== VISUAL_RENDER_PROVIDERS.pbrMesh.id
+            || renderProvider.version !== VISUAL_RENDER_PROVIDERS.pbrMesh.version) return;
+
+        const expectedDescriptor = resolved.visualLayer.description;
+        const expectedAccess = resolved.evidence.visualAssets.access;
+        const descriptorHash = resolved.visualLayer.hash;
+        const accessHash = resolved.evidence.visualAssets.accessHash;
+        const descriptor = await this._visualLayerDescriptors.get(descriptorHash);
+        if (!descriptor) {
+            throw visualAssetError(
+                VISUAL_LAYER_ERROR_CODES.DESCRIPTOR_NOT_FOUND,
+                `Visual layer descriptor ${descriptorHash} is not installed locally; JSON import does not transfer asset data.`,
+            );
+        }
+        const access = await this._visualLayerAccess.get(accessHash);
+        if (!access) {
+            throw visualAssetError(
+                VISUAL_LAYER_ERROR_CODES.ACCESS_NOT_FOUND,
+                `Visual layer access ${accessHash} is not installed locally; JSON import does not transfer asset data.`,
+            );
+        }
+        if (hashVisualLayer(descriptor) !== descriptorHash
+            || canonicalExactStringify(descriptor) !== canonicalExactStringify(expectedDescriptor)
+            || hashVisualLayerAccess(access) !== accessHash
+            || canonicalExactStringify(access) !== canonicalExactStringify(expectedAccess)) {
+            throw visualAssetError(
+                VISUAL_LAYER_ERROR_CODES.ACCESS_MISMATCH,
+                "Installed visual descriptor/access data does not match the imported PBR bundle.",
+            );
+        }
+
+        const verification = await this.visualAssets.validateAccessSet({
+            useHashes: resolved.evidence.visualAssets.roots.map((entry) => entry.useHash),
+            operations: [...PBR_MEASURED_ASSET_OPERATIONS],
+            verifyBytes: true,
+            includeUseRecords: true,
+        });
+        if (canonicalExactStringify(verification.closureUses)
+            !== canonicalExactStringify(resolved.evidence.visualAssets.uses)) {
+            throw visualAssetError(
+                VISUAL_LAYER_ERROR_CODES.ACCESS_MISMATCH,
+                "Installed visual asset uses do not match the imported PBR bundle closure.",
+            );
+        }
     }
 
     /**
@@ -1218,7 +1424,12 @@ export class StorageService {
     async putRunManifest(manifestId, input = {}) {
         const manifest = input.manifest ?? input;
         const expectedRevision = input.expectedRevision ?? manifest.revision;
-        const validation = validateRunManifest({ ...manifest, id: manifestId });
+        const current = await this.getRunManifest(manifestId);
+        const candidate = { ...manifest, id: manifestId };
+        if (!Object.hasOwn(manifest, "renderRecipe") && Object.hasOwn(current ?? {}, "renderRecipe")) {
+            candidate.renderRecipe = structuredClone(current.renderRecipe);
+        }
+        const validation = validateRunManifest(candidate);
         if (!validation.ok) throw validationError(validation.issues);
         return this._writeRunManifest(manifestId, validation.manifest, { expectedRevision });
     }
@@ -1363,6 +1574,9 @@ export class StorageService {
             ?? await this._resolveEnvironment(manifest.environment.id);
         const environmentHash = semanticHash(environment);
         const world = createWorldResource(environment);
+        if (manifest.environment.expectedHash && manifest.environment.expectedHash !== environmentHash) {
+            throw new Error(`Environment "${manifest.environment.id}" changed: expected ${manifest.environment.expectedHash}, received ${environmentHash}.`);
+        }
         const lidarGeometry = manifest.sensorRig.sensors.some(
             (sensor) => sensor.enabled !== false && sensor.type === "lidar3d",
         ) ? createLidarGeometryResource(world, resolvedVehicles) : null;
@@ -1370,14 +1584,12 @@ export class StorageService {
             (sensor) => sensor.enabled !== false && sensor.type === "camera",
         );
         const renderSelection = cameraSensors.length > 0
-            ? resolveEnabledCameraRenderSelection(manifest.sensorRig.sensors, { requireAvailable: true })
+            ? resolveEnabledCameraRenderSelection(manifest.sensorRig.sensors, { requireResolvable: true })
             : null;
-        const renderScene = renderSelection
-            ? createRenderSceneResource(world, resolvedVehicles, renderSelection)
-            : null;
-        if (manifest.environment.expectedHash && manifest.environment.expectedHash !== environmentHash) {
-            throw new Error(`Environment "${manifest.environment.id}" changed: expected ${manifest.environment.expectedHash}, received ${environmentHash}.`);
-        }
+        let visualLayer = null;
+        let renderScene = null;
+        let evidence = null;
+        let evidenceHash = null;
 
         const allBindings = await this.getBindings();
         const explicitBindingIds = new Set(manifest.scripts.bindingIds);
@@ -1440,6 +1652,21 @@ export class StorageService {
             throw new Error(`Script bindings changed: expected ${manifest.scripts.expectedBindingsHash}, received ${bindingsHash}.`);
         }
 
+        // All full-document locks are now validated. Only after this point may
+        // selected PBR resolution touch visual access records or CAS bytes.
+        if (renderSelection?.provider?.id === VISUAL_RENDER_PROVIDERS.pbrMesh.id
+            && renderSelection.provider.version === VISUAL_RENDER_PROVIDERS.pbrMesh.version) {
+            ({ visualLayer, renderScene, evidence, evidenceHash } = await this._resolvePbrVisualRun({
+                environment,
+                world,
+                vehicles: resolvedVehicles,
+                selection: renderSelection,
+                renderRecipe: manifest.renderRecipe,
+            }));
+        } else if (renderSelection) {
+            renderScene = createRenderSceneResource(world, resolvedVehicles, renderSelection);
+        }
+
         const definitionHash = semanticHash(manifest);
         const calibration = buildCalibrationBundle(manifest);
         const resolved = resolvedRunJsonSnapshot({
@@ -1452,7 +1679,9 @@ export class StorageService {
             environment: { hash: environmentHash, manifest: environment },
             world,
             ...(lidarGeometry ? { lidarGeometry } : {}),
+            ...(visualLayer ? { visualLayer } : {}),
             ...(renderScene ? { renderScene } : {}),
+            ...(evidence ? { evidence } : {}),
             backendSelections: sortBackendSelections([createPhysicsBackendSelection()]),
             scripts,
             bindings: { hash: bindingsHash, entries: selectedBindings },
@@ -1477,7 +1706,9 @@ export class StorageService {
                 environment: environmentHash,
                 world: world.hash,
                 ...(lidarGeometry ? { lidarGeometry: lidarGeometry.hash } : {}),
+                ...(visualLayer ? { visualLayer: visualLayer.hash } : {}),
                 ...(renderScene ? { renderScene: renderScene.hash } : {}),
+                ...(evidenceHash ? { evidence: evidenceHash } : {}),
                 calibration: calibration.hash,
                 scripts: Object.fromEntries(scripts.map((entry) => [entry.scriptId, entry.hash])),
                 bindings: bindingsHash,
@@ -1506,6 +1737,7 @@ export class StorageService {
 
     async importRunBundle(bundle = {}) {
         verifyRunBundleIntegrity(bundle);
+        await this._assertLocalPbrImportDependencies(bundle.resolved);
         const incoming = normalizeRunManifest(bundle.manifest);
         const importedEnvironment = bundle.resolved.environment?.manifest;
         if (importedEnvironment) {

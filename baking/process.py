@@ -8,9 +8,10 @@ import os
 import traceback
 
 
-MODEL_ID = os.environ.get("BAKE_PROCESS_MODEL", "black-forest-labs/FLUX.1-Fill-dev")
+MODEL_ID = os.environ.get("BAKE_PROCESS_MODEL")
 SERVER_HOST = os.environ.get("BAKE_PROCESS_HOST", "0.0.0.0")
 SERVER_PORT = int(os.environ.get("BAKE_PROCESS_PORT", "8001"))
+LEGACY_IMAGE_FILL = os.environ.get("BAKE_LEGACY_IMAGE_FILL") == "1"
 
 _pipe = None
 _torch = None
@@ -114,6 +115,10 @@ def _load_pipeline():
     global _pipe, _torch
     if _pipe is not None:
         return _pipe
+    if not LEGACY_IMAGE_FILL:
+        raise RuntimeError("legacy image-fill is disabled unless BAKE_LEGACY_IMAGE_FILL=1")
+    if not MODEL_ID:
+        raise RuntimeError("legacy image-fill requires an explicit BAKE_PROCESS_MODEL pin")
 
     import torch
     from diffusers import FluxFillPipeline
@@ -291,6 +296,13 @@ class ProcessRequestHandler(BaseHTTPRequestHandler):
 
 
 def main():
+    if not LEGACY_IMAGE_FILL:
+        raise SystemExit(
+            "process.py legacy image-fill is disabled and non-promotable. "
+            "Use bake_server.py /bake/v1 with a pinned fake or operator-injected backend.",
+        )
+    if not MODEL_ID:
+        raise SystemExit("BAKE_LEGACY_IMAGE_FILL requires BAKE_PROCESS_MODEL")
     server = ThreadingHTTPServer((SERVER_HOST, SERVER_PORT), ProcessRequestHandler)
     print(f"Bake processing API listening on http://{SERVER_HOST}:{SERVER_PORT}")
     server.serve_forever()

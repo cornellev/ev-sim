@@ -27,6 +27,7 @@ from .config import (
     ROUTE_SAFETY_PROFILE,
     ROUTE_SAFETY_PROFILE_VERSION,
     ROUTE_SAFETY_SCHEMA_HASH,
+    ROUTED_GPU_SENSOR_BACKEND,
     STATE_SENSOR_CAPABILITY,
     STATE_SENSOR_KIND,
     STATE_SENSOR_VERSION,
@@ -124,12 +125,20 @@ def _artifact_message(policy: ArtifactPolicy, output_directory: Path) -> pb.Arti
 
 
 def _resolved_backends(bundle: LoadedBundle, configuration: EpisodeConfig) -> tuple[BackendSelection, ...]:
+    resolved = bundle.document.get("resolved")
+    if not isinstance(resolved, Mapping):
+        raise CevSimConfigurationError("Run bundle resolved value must be an object")
+    render_scene = resolved.get("renderScene")
+    description = render_scene.get("description", {}) if isinstance(render_scene, Mapping) else {}
+    provider = description.get("provider", {}) if isinstance(description, Mapping) else {}
+    requests_pbr = (
+        isinstance(provider, Mapping)
+        and provider.get("id") == "pbr-mesh"
+        and provider.get("version") == 1
+    )
     if configuration.backend_selections is not None:
         backends = list(configuration.backend_selections)
     else:
-        resolved = bundle.document.get("resolved")
-        if not isinstance(resolved, Mapping):
-            raise CevSimConfigurationError("Run bundle resolved value must be an object")
         entries = resolved.get("backendSelections", [])
         if not isinstance(entries, list):
             raise CevSimConfigurationError("Run bundle resolved.backendSelections must be an array")
@@ -164,7 +173,14 @@ def _resolved_backends(bundle: LoadedBundle, configuration: EpisodeConfig) -> tu
             for sensor in sensors
         )
         if requests_camera and not any(entry.kind == GPU_SENSOR_KIND for entry in backends):
-            backends.append(DEFAULT_GPU_SENSOR_BACKEND)
+            backends.append(ROUTED_GPU_SENSOR_BACKEND if requests_pbr else DEFAULT_GPU_SENSOR_BACKEND)
+    if requests_pbr:
+        gpu_backends = [entry for entry in backends if entry.kind == GPU_SENSOR_KIND]
+        if gpu_backends != [ROUTED_GPU_SENSOR_BACKEND]:
+            raise CevSimConfigurationError(
+                "pbr-mesh@1 requires the locked chromium-webgl2-rendered-sensors@2 backend; "
+                "v1 fallback is forbidden"
+            )
     backends.sort(key=lambda entry: (entry.kind, entry.capability_id.encode("utf-8")))
     return tuple(backends)
 
@@ -382,8 +398,11 @@ class SupervisorClient:
                 raise CevSimCompatibilityError("The locked deterministic state-sensor backend identity is required")
             if requested.kind == CPU_LIDAR_KIND and requested != DEFAULT_CPU_LIDAR_BACKEND:
                 raise CevSimCompatibilityError("The locked deterministic CPU LiDAR backend identity is required")
-            if requested.kind == GPU_SENSOR_KIND and requested != DEFAULT_GPU_SENSOR_BACKEND:
-                raise CevSimCompatibilityError("The locked Chromium WebGL2 sensor backend identity is required")
+            if requested.kind == GPU_SENSOR_KIND and requested not in {
+                DEFAULT_GPU_SENSOR_BACKEND,
+                ROUTED_GPU_SENSOR_BACKEND,
+            }:
+                raise CevSimCompatibilityError("A locked Chromium WebGL2 sensor backend identity is required")
             capability = next(
                 (
                     entry

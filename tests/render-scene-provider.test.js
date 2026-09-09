@@ -143,13 +143,18 @@ test("omitted and explicit canonical-analytic@1 selections produce the same anal
     assert.equal(resolved.renderScene.hash, omitted.hash);
 });
 
-test("unsupported selections fail before render-scene creation and never fall back", async (t) => {
+test("resolvable PBR requires its immutable context while unsupported selections never fall back", async (t) => {
     const { service } = await temporaryService(t);
     const resolved = await service.resolveRunManifest("igvc-default");
     const analytic = createRenderSceneResource(resolved.world, resolved.vehicles);
-    assert.throws(() => createRenderSceneResource(resolved.world, resolved.vehicles, pbrRender()), (error) => (
-        error instanceof RenderSceneProviderError && error.code === "PROVIDER_UNAVAILABLE"
-    ));
+    assert.equal(renderSceneProviderRegistry.lookup(
+        { id: "pbr-mesh", version: 1 },
+        { requireResolvable: true },
+    ).resolvable, true);
+    assert.throws(
+        () => createRenderSceneResource(resolved.world, resolved.vehicles, pbrRender()),
+        /visualLayer: expected an object/,
+    );
     assert.throws(() => createRenderSceneResource(resolved.world, resolved.vehicles, {
         provider: { id: "canonical-analytic", version: 2 },
         productProfile: analyticRender().productProfile,
@@ -227,14 +232,14 @@ test("camera authoring rejects malformed profiles, non-booleans, unknown product
     assert.deepEqual(selection.provider, DEFAULT_CAMERA_RENDER_SELECTION.provider);
 });
 
-test("known-but-unavailable selections can be stored but cannot resolve or prepare", async (t) => {
+test("known PBR selections can be stored but require selected visual resources", async (t) => {
     const { service } = await temporaryService(t);
     const manifest = createDefaultRunManifest({ id: "pbr-authored" });
     const camera = manifest.sensorRig.sensors.find((sensor) => sensor.type === "camera");
     camera.render = pbrRender();
     const stored = await service.createRunManifest(manifest);
     assert.deepEqual(stored.sensorRig.sensors.find((sensor) => sensor.type === "camera").render, pbrRender());
-    await assert.rejects(service.resolveRunManifest(stored.id), /pbr-mesh@1 is known but unavailable/);
+    await assert.rejects(service.resolveRunManifest(stored.id), /requires the selected environment.*visual-layer descriptor/);
 });
 
 test("matching explicit analytic bundles verify; mismatches and unavailable providers fail without rewriting bytes", async (t) => {
@@ -253,8 +258,7 @@ test("matching explicit analytic bundles verify; mismatches and unavailable prov
     const mismatched = rehashDocument(analytic);
     mismatched.resolved.renderScene.description.provider = { id: "pbr-mesh", version: 1 };
     const mismatchHashed = rehashDocument(mismatched);
-    verifyRunBundleIntegrity(mismatchHashed);
-    assert.throws(() => verifyRunBundle(mismatchHashed), (error) => (
+    assert.throws(() => verifyRunBundleIntegrity(mismatchHashed), (error) => (
         error.code === "BUNDLE_INVALID" && /does not match persisted render-scene provider/.test(error.message)
     ));
 
@@ -263,9 +267,8 @@ test("matching explicit analytic bundles verify; mismatches and unavailable prov
         if (sensor.type === "camera" && sensor.enabled !== false) sensor.render = pbrRender();
     }
     const unavailableHashed = rehashDocument(unavailable);
-    verifyRunBundleIntegrity(unavailableHashed);
-    assert.throws(() => verifyRunBundle(unavailableHashed), (error) => (
-        error.code === "UNSUPPORTED_CAPABILITY" && /pbr-mesh@1 is known but unavailable/.test(error.message)
+    assert.throws(() => verifyRunBundleIntegrity(unavailableHashed), (error) => (
+        error.code === "BUNDLE_INVALID" && /does not match persisted render-scene provider/.test(error.message)
     ));
 
     const bytes = Buffer.from(canonicalRunBundleStringify(analytic));

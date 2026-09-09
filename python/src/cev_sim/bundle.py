@@ -32,6 +32,11 @@ BundleInput = str | Path | bytes | bytearray | Mapping[str, Any]
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 
 
+def _validate_sha256(value: Any, label: str) -> None:
+    if not isinstance(value, str) or _SHA256_PATTERN.fullmatch(value) is None:
+        raise CevSimConfigurationError(f"{label} must be a lowercase SHA-256 hex digest")
+
+
 def _legacy_json(value: Any) -> bytes:
     # Preserve JS Object/JSON.stringify integer-key ordering, including its
     # historical difference from JCS. Never use this for the exact v11 contract.
@@ -110,6 +115,64 @@ def _check_counters(manifest: Mapping[str, Any], scenario: Mapping[str, Any]) ->
         check(condition.get("cadence", {}).get("everyN"), "scenario.completion.cadence.everyN")
 
 
+def _check_pbr_shape(resolved: Mapping[str, Any], manifest: Mapping[str, Any]) -> None:
+    recipe = manifest.get("renderRecipe")
+    if recipe is not None and (
+        not isinstance(recipe, Mapping)
+        or recipe.get("kind") != "cev-sim.pbr-render-recipe"
+        or recipe.get("version") != 1
+    ):
+        raise CevSimConfigurationError("renderRecipe must be cev-sim.pbr-render-recipe version 1")
+    render_scene = resolved.get("renderScene")
+    description = render_scene.get("description") if isinstance(render_scene, Mapping) else None
+    provider = description.get("provider") if isinstance(description, Mapping) else None
+    if not isinstance(provider, Mapping) or provider.get("id") != "pbr-mesh":
+        return
+    if provider.get("version") != 1:
+        raise CevSimConfigurationError("Unsupported PBR render provider version")
+    visual_layer = resolved.get("visualLayer")
+    evidence = resolved.get("evidence")
+    dependencies = resolved.get("dependencyHashes")
+    world = resolved.get("world")
+    if not all(isinstance(value, Mapping) for value in (render_scene, visual_layer, evidence, dependencies, world)):
+        raise CevSimConfigurationError(
+            "PBR bundles require world, visualLayer, renderScene, evidence, and dependency hashes"
+        )
+    for label, value in (
+        ("world.hash", world.get("hash")),
+        ("visualLayer.hash", visual_layer.get("hash")),
+        ("renderScene.hash", render_scene.get("hash")),
+        ("renderScene.visualLayerHash", description.get("visualLayerHash")),
+        ("renderScene.worldHash", description.get("worldHash")),
+        ("renderScene.assetClosureHash", description.get("assetClosureHash")),
+        ("dependencyHashes.evidence", dependencies.get("evidence")),
+    ):
+        _validate_sha256(value, label)
+    if (
+        dependencies.get("visualLayer") != visual_layer.get("hash")
+        or dependencies.get("renderScene") != render_scene.get("hash")
+        or description.get("visualLayerHash") != visual_layer.get("hash")
+        or description.get("worldHash") != world.get("hash")
+    ):
+        raise CevSimConfigurationError("PBR bundle resource cross-references do not agree")
+    visual_assets = evidence.get("visualAssets")
+    if not isinstance(visual_assets, Mapping):
+        raise CevSimConfigurationError("PBR evidence requires visualAssets metadata")
+    for label in ("descriptorHash", "accessHash", "assetClosureHash"):
+        _validate_sha256(visual_assets.get(label), f"evidence.visualAssets.{label}")
+    if visual_assets.get("descriptorHash") != visual_layer.get("hash"):
+        raise CevSimConfigurationError("PBR evidence descriptor does not match visualLayer")
+    if visual_assets.get("assetClosureHash") != description.get("assetClosureHash"):
+        raise CevSimConfigurationError("PBR evidence asset closure does not match renderScene")
+    if not isinstance(visual_assets.get("roots"), list) or not isinstance(visual_assets.get("uses"), list):
+        raise CevSimConfigurationError("PBR evidence roots and uses must be arrays")
+    correspondence = evidence.get("correspondence")
+    if correspondence is not None:
+        if not isinstance(correspondence, Mapping) or correspondence.get("status") != "unverified-reference":
+            raise CevSimConfigurationError("Attached correspondence evidence must remain an unverified reference")
+        _validate_sha256(correspondence.get("reportHash"), "evidence.correspondence.reportHash")
+
+
 def _invalid_constant(value: str) -> None:
     raise ValueError(f"Non-finite JSON number {value}")
 
@@ -162,6 +225,7 @@ def load_bundle(value: BundleInput, *, expected_bundle_bytes_hash: str | None = 
     if version == 11:
         try:
             _check_counters(manifest, (resolved.get("scenario") or {}).get("scenario") or {})
+            _check_pbr_shape(resolved, manifest)
         except (AttributeError, TypeError) as error:
             raise CevSimConfigurationError(f"Invalid run identity counter structure: {error}") from error
     canonical = canonical_bundle_bytes(document)

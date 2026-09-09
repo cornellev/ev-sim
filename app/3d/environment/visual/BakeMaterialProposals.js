@@ -1,7 +1,7 @@
 /**
- * VIS-10b material proposal evidence. The document records provenance and exact
- * output digests; proposal buffers remain caller-owned inputs until VIS-11 adds
- * model execution and raw-output caching.
+ * VIS-10b material proposal evidence. VIS-11 may generate inferred proposal
+ * buffers from `intrinsic-material-model@1`; caller-supplied and model-generated
+ * proposal sets remain mutually exclusive.
  */
 
 import {

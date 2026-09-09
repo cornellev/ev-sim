@@ -12,6 +12,12 @@ import {
     VISUAL_CAPTURE_PRODUCTS,
 } from "./VisualCapturePipeline.js";
 import { normalizeBakeConstruction } from "./BakeConstructionPolicy.js";
+import {
+    INTRINSIC_MATERIAL_MODEL_PROVIDER,
+    isIntrinsicMaterialModelProvider,
+    normalizeIntrinsicMaterialOptions,
+} from "./BakeModelOutput.js";
+import { createIntrinsicMaterialModelProvider } from "./BakeIntrinsicMaterialAdapter.js";
 
 export const BAKE_RUN_CONFIG_KIND = "cev-sim.bake-run-config";
 export const BAKE_SOURCE_SNAPSHOT_KIND = "cev-sim.bake-source-snapshot";
@@ -26,6 +32,7 @@ export const CAPTURED_APPEARANCE_PROVIDER = Object.freeze({
     id: "captured-appearance",
     version: 1,
 });
+export { INTRINSIC_MATERIAL_MODEL_PROVIDER, isIntrinsicMaterialModelProvider };
 export const STATIC_SNAPSHOT_POLICY = Object.freeze({
     id: "static-snapshot",
     version: 1,
@@ -626,6 +633,9 @@ function normalizeProviderOptions(value, provider, providers) {
     if (provider.id === CAPTURED_APPEARANCE_PROVIDER.id && provider.version === 1) {
         return capturedAppearanceOptions({ ...CAPTURED_APPEARANCE_DEFAULT_OPTIONS, ...incoming });
     }
+    if (isIntrinsicMaterialModelProvider(provider)) {
+        return normalizeIntrinsicMaterialOptions(incoming);
+    }
     const keys = Object.keys(incoming).sort(compareUtf8);
     const normalized = {};
     for (const key of keys) {
@@ -642,12 +652,18 @@ function normalizeProviderOptions(value, provider, providers) {
 function normalizeRoundTrip(value = {}) {
     const source = allowedKeys(value, [
         "useModel", "pollIntervalMs", "timeoutMs", "resultEndpoint",
+        "apiBase", "maxUploadBytes", "maxQueueJobs", "maxStorageBytes", "maxProcessingMs",
     ], "operational.roundTrip");
     return Object.freeze({
         useModel: boolean(source.useModel ?? false, "operational.roundTrip.useModel"),
         pollIntervalMs: integer(source.pollIntervalMs ?? 1000, "operational.roundTrip.pollIntervalMs", { min: 1 }),
         timeoutMs: integer(source.timeoutMs ?? 300000, "operational.roundTrip.timeoutMs", { min: 1 }),
         resultEndpoint: text(source.resultEndpoint ?? "/bake/result", "operational.roundTrip.resultEndpoint"),
+        apiBase: text(source.apiBase ?? "/bake/v1", "operational.roundTrip.apiBase"),
+        maxUploadBytes: integer(source.maxUploadBytes ?? 32 * 1024 * 1024, "operational.roundTrip.maxUploadBytes", { min: 1 }),
+        maxQueueJobs: integer(source.maxQueueJobs ?? 4, "operational.roundTrip.maxQueueJobs", { min: 1 }),
+        maxStorageBytes: integer(source.maxStorageBytes ?? 256 * 1024 * 1024, "operational.roundTrip.maxStorageBytes", { min: 1 }),
+        maxProcessingMs: integer(source.maxProcessingMs ?? 300000, "operational.roundTrip.maxProcessingMs", { min: 1 }),
     });
 }
 
@@ -1546,6 +1562,7 @@ function createCapturedAppearanceProvider() {
 export class BakeProviderRegistry {
     constructor(providers = []) {
         this._providers = new Map();
+        this._lazy = new Map();
         for (const provider of providers) this.register(provider);
     }
 
@@ -1557,16 +1574,35 @@ export class BakeProviderRegistry {
         return this;
     }
 
+    registerLazy(descriptor, factory) {
+        if (!descriptor?.id || !Number.isSafeInteger(descriptor.version) || typeof factory !== "function") {
+            throw bakeError("BAKE_PROVIDER_INVALID", "A lazy provider descriptor and factory are required.");
+        }
+        this._lazy.set(providerKey({ id: descriptor.id, version: descriptor.version }), { descriptor, factory });
+        return this;
+    }
+
     get(provider) {
-        return this._providers.get(providerKey(providerRef(provider))) ?? null;
+        const key = providerKey(providerRef(provider));
+        if (!this._providers.has(key) && this._lazy.has(key)) {
+            const { factory } = this._lazy.get(key);
+            this.register(factory());
+            this._lazy.delete(key);
+        }
+        return this._providers.get(key) ?? null;
     }
 
     has(provider) {
-        const adapter = this.get(provider);
-        return Boolean(adapter && adapter.available !== false);
+        const requested = providerRef(provider);
+        const key = providerKey(requested);
+        if (this._providers.has(key)) {
+            return this._providers.get(key).available !== false;
+        }
+        const lazy = this._lazy.get(key);
+        return Boolean(lazy && lazy.descriptor.available !== false);
     }
 
-    preflight(provider, { incremental = false } = {}) {
+    preflight(provider, { incremental = false, config = null } = {}) {
         const requested = providerRef(provider);
         const adapter = this.get(requested);
         if (!adapter || adapter.available === false) {
@@ -1575,35 +1611,58 @@ export class BakeProviderRegistry {
                 `Requested bake provider ${requested.id}@${requested.version} is unavailable.`,
             );
         }
-        if (adapter.requiresModel === true) {
-            throw bakeError(
-                "BAKE_PROVIDER_UNAVAILABLE",
-                `Requested bake provider ${requested.id}@${requested.version} requires a model capability.`,
-            );
-        }
         if (incremental && adapter.supportsBoundedStreaming !== true) {
             throw bakeError(
                 "BAKE_PROVIDER_UNAVAILABLE",
                 `Requested bake provider ${requested.id}@${requested.version} does not support bounded streaming capture.`,
             );
         }
+        if (typeof adapter.validateSelection === "function") {
+            adapter.validateSelection({ config, incremental });
+        }
         return adapter;
     }
 
     list() {
-        return [...this._providers.values()].map((provider) => ({
-            id: provider.id,
-            version: provider.version,
-            available: provider.available !== false,
-            local: provider.local === true,
-            requiresModel: provider.requiresModel === true,
-            supportsBoundedStreaming: provider.supportsBoundedStreaming === true,
-        }));
+        const seen = new Set();
+        const listed = [];
+        for (const provider of this._providers.values()) {
+            seen.add(providerKey(provider));
+            listed.push({
+                id: provider.id,
+                version: provider.version,
+                available: provider.available !== false,
+                local: provider.local === true,
+                requiresModel: provider.requiresModel === true,
+                supportsBoundedStreaming: provider.supportsBoundedStreaming === true,
+            });
+        }
+        for (const { descriptor } of this._lazy.values()) {
+            const key = providerKey(descriptor);
+            if (seen.has(key)) continue;
+            listed.push({
+                id: descriptor.id,
+                version: descriptor.version,
+                available: descriptor.available !== false,
+                local: descriptor.local === true,
+                requiresModel: descriptor.requiresModel === true,
+                supportsBoundedStreaming: descriptor.supportsBoundedStreaming === true,
+            });
+        }
+        return listed;
     }
 }
 
 export function createDefaultBakeProviderRegistry() {
-    return new BakeProviderRegistry([createCapturedAppearanceProvider()]);
+    const registry = new BakeProviderRegistry([createCapturedAppearanceProvider()]);
+    registry.registerLazy({
+        ...INTRINSIC_MATERIAL_MODEL_PROVIDER,
+        local: false,
+        requiresModel: true,
+        available: true,
+        supportsBoundedStreaming: true,
+    }, () => createIntrinsicMaterialModelProvider());
+    return registry;
 }
 
 function cloneStatus(status, patch = {}) {
@@ -1627,7 +1686,7 @@ export class BakeRunCatalog {
 
     createJob(config, { jobId = null, generation = 1, incremental = false } = {}) {
         const normalized = normalizeBakeRunConfig(config, { providers: this.providers });
-        this.providers.preflight(normalized.provider, { incremental });
+        this.providers.preflight(normalized.provider, { incremental, config: normalized });
         const recipeHash = hashBakeRunConfig(normalized, { providers: this.providers });
         this._seq += 1;
         const id = jobId ?? `bake-job-${this._seq}`;

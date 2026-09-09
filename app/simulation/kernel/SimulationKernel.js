@@ -6,6 +6,7 @@ import { createLocalizationTruthPublisher } from "../LocalizationTruthPublisher.
 import { TopicContractRouter } from "../TopicContractRouter.js";
 import { TopicInputQueue } from "../TopicInputQueue.js";
 import { TransformRuntime } from "../TransformRuntime.js";
+import { assertEnabledCameraRenderRuntime } from "../render/RenderSceneProviderRegistry.js";
 import {
     computeEpisodeHash,
     computeSimulationSemanticHash,
@@ -276,6 +277,7 @@ export class SimulationKernel {
         perceptionObservations = false,
     } = {}) {
         if (!resolved?.manifest) throw new Error("Resolved run manifest is required.");
+        assertEnabledCameraRenderRuntime(resolved.manifest.sensorRig?.sensors, resolved.renderScene);
 
         if (this.resolvedRun || this.lifecycleState === "finalized") this.clearRun();
         this.lifecycleState = "preparing";

@@ -22,13 +22,18 @@ bake-contract v2; `projected-captured-radiance@1` remains an explicit
 compatibility mode. VIS-10b adds opt-in `bake-construction@2` intrinsic
 proposal fusion, material-proposal evidence, multi-channel atlas outputs, and
 artifact/contribution/atlas dispatch without changing the captured-radiance
-default or visual-layer identity.
+default or visual-layer identity. VIS-11 adds an opt-in
+`intrinsic-material-model@1` adapter that converts VIS-07 captures into VIS-10b
+intrinsic proposals through a pinned fake or operator-injected backend. The
+default `captured-appearance@1` path remains model-free and performs no network
+or model probing.
 VIS-16a adds strict visual-evaluation, correspondence-report, threshold-profile,
 and admission contracts with synthetic boundary fixtures. It does not run a
 validator or activate managed visual execution.
-Photoreal `pbr-mesh@1` rendering,
-corrected GPU backend v2, measured PBR cameras, and package admission remain
-unavailable.
+VIS-12b adds conditional `pbr-mesh@1` resolution, exact render/asset resources,
+and separate source-bound run evidence for export and offline inspection.
+Photoreal rendering, corrected GPU backend v2 execution, measured PBR cameras,
+and package admission remain unavailable.
 
 The implementation authority and acceptance gates remain in
 [the visual-layer roadmap](visual-layer-plan.md). JavaScript remains the only
@@ -46,7 +51,10 @@ become collision, route, LiDAR, registry, or oracle truth.
 | `cev-sim.world-description` | 1, unchanged | Existing runtime |
 | Legacy analytic scene | `canonical-analytic@1`, unchanged | Existing runtime |
 | Corrected analytic scene | `canonical-analytic@2` | VIS-02 known/unavailable; runtime VIS-06/VIS-14/VIS-15 |
-| PBR scene | `pbr-mesh@1` | VIS-02 known/unavailable; runtime VIS-05/VIS-14/VIS-15 |
+| PBR scene | `pbr-mesh@1` | VIS-12b resolution/inspection; runtime VIS-14/VIS-15 |
+| PBR render recipe | `cev-sim.pbr-render-recipe@1` | VIS-12b authoring and resolution |
+| PBR asset closure | `cev-sim.visual-asset-closure@1` | VIS-12b exact render resource |
+| PBR run evidence | `cev-sim.visual-run-evidence@1` | VIS-12b source-bound resolution evidence |
 | Corrected GPU sensor backend | `chromium-webgl2-rendered-sensors@2` | VIS-14/VIS-15 |
 | Visual camera calibration | `cev-sim.visual-camera-calibration@1` | VIS-06a internal opt-in; provider activation VIS-14/VIS-15 |
 | Immutable visual capture input | `cev-sim.visual-capture-input@1` | VIS-06a internal opt-in |
@@ -55,7 +63,8 @@ become collision, route, LiDAR, registry, or oracle truth.
 | Bake source snapshot | `cev-sim.bake-source-snapshot@1` | VIS-07 `static-snapshot@1` |
 | Bake capture plan | `cev-sim.bake-capture-plan@1` | VIS-07 |
 | Bake provider request | `cev-sim.bake-provider-request@1` | VIS-07 |
-| Bake provider response | `cev-sim.bake-provider-response@1` | VIS-07 local `captured-appearance@1` |
+| Bake provider response | `cev-sim.bake-provider-response@1` | VIS-07 local `captured-appearance@1`; VIS-11 input acknowledgements |
+| Bake model output set | `cev-sim.bake-model-output-set@1` | VIS-11 transport-only intrinsic channel/confidence/mask digests |
 | Bake job status | `cev-sim.bake-job-status@1` | VIS-07 mutable status |
 | Bake construction | `cev-sim.bake-construction@1` / `@2` | VIS-10a captured-radiance policy; VIS-10b intrinsic proposal fusion |
 | Bake material proposal set | `cev-sim.bake-material-proposal-set@1` | VIS-10b durable provenance and exact per-unit/channel output digests |
@@ -312,9 +321,10 @@ New camera authoring uses:
 ```
 
 Existing pre-VIS-02 cameras may omit `render`; absence aliases to
-`canonical-analytic@1` only during resolution. `canonical-analytic@2` and
-`pbr-mesh@1` may be authored when structurally valid, but they remain
-unavailable and never fall back to analytic.
+`canonical-analytic@1` only during resolution. `pbr-mesh@1` may be authored,
+resolved, exported, and inspected when structurally valid, but it remains
+unavailable for execution and never falls back to analytic.
+`canonical-analytic@2` remains unavailable.
 
 Existing product flags select products within that profile. Measured RGBA and
 matching CameraInfo are required for PBR camera support. Analytic depth,
@@ -451,8 +461,15 @@ views and samples), `requestHash` (provider options plus exact captured-buffer
 digests), and `responseHash` (output digests and provenance). Job IDs,
 timestamps, progress, logs, and failures never enter those hashes. The default
 provider is local `captured-appearance@1`: no model capability, no network, and
-identity references to aligned capture products. External providers are
-injectable but unavailable unless a later adapter registers them. Detached
+identity references to aligned capture products. `intrinsic-material-model@1`
+is registered lazily and is probed only when selected. It requires construction
+v2 `intrinsic-pbr-proposed`, all six intrinsic channels, a common source
+resolution, and pinned model/algorithm/weights identity. Provider-response
+outputs remain acknowledgements of the captured inputs; model pixels live in
+`cev-sim.bake-model-output-set@1` and the resulting VIS-10b proposal set.
+External upload reauthorizes machine-interpretation, derivatives, ML, worker
+access, and transient caching, plus persistent-cache and retention for
+`reuse-request`. Detached
 `bake-snapshot` scenes clone transforms/materials/visibility/lighting, share
 geometry and textures only through read-only leases, and never wrap the live
 preview root. The editor `b` key runs `BakeHarness.runPersistentPromotion()`:
@@ -468,7 +485,13 @@ one unit invalidates only its contribution and affected chunks. Construction-v1
 contributions are never reinterpreted as intrinsic data. Proposal, contribution,
 and multi-channel fusion allocations use the bake memory ledger and fail before
 upload on incomplete evidence or budget exhaustion; there is no captured-
-radiance fallback. VIS-11 owns model execution and raw-output caching.
+radiance fallback. VIS-11 caches raw model outputs atomically by exact
+`requestHash` only for `reuse-request`. Cached inference can skip model execution;
+artifact reuse still compares proposal-unit digests. Fresh and cached fake
+outputs must produce identical proposal, atlas, contribution, artifact,
+descriptor, and access hashes. Missing or malformed channels, cancellation, and
+stale generations fail without captured-radiance fallback. No real-model
+quality claim is made until separate measured evidence exists.
 
 Promotion recovery, environment reads, and environment mutations share the
 same per-environment transaction lane. Recovery recognizes publication only
@@ -503,7 +526,69 @@ Preview objects are non-selectable and excluded from environment registry,
 perception truth, collision, LiDAR, and measured camera scans. `truthEntityId`
 stays in the materializer binding table. Failed initial or environment-switch
 loads dispose staged resources and leave an empty preview, not another world's
-visuals. `pbr-mesh@1` remains unavailable.
+visuals. `pbr-mesh@1` remains unavailable to this preview/runtime path.
+
+## Conditional PBR run resources
+
+VIS-12b introduces optional manifest `renderRecipe` as strict
+`cev-sim.pbr-render-recipe@1`. Omission preserves legacy analytic manifest
+shape. On stored-manifest update, omission also preserves an existing explicit
+recipe; explicit `null` resets it. Save, duplication, resolution, and JSON
+import/export preserve an explicit recipe.
+
+Normalization freezes the complete pixel contract: opaque black background;
+white unit ambient light; exposure 1; linear-sRGB working and sRGB output; no
+environment map, shadows, tone mapping, antialiasing, or dithering; OPAQUE/MASK
+alpha; glTF-declared or linear-repeat sampler defaults; UTF-8-stable ordering;
+material-driven double-sided culling; less-equal depth; high precision; and
+top-left RGBA8 readback. It reuses the static glTF/KTX2 profile, pinned decoder
+and transcoder policy, and `cev-sim.visual-lod-policy@1` bands `[0, 80, 200]`.
+Unsupported overrides fail rather than becoming host-dependent choices.
+Environment-map and actor mesh inputs are `{ asset, useHash }` pairs. Every
+resolved actor receives a versioned canonical-primitive appearance unless a
+recipe entry keyed by that actor ID provides a CAS-backed mesh/material and
+visual-to-actor transform. Unknown actor IDs and mutable model URLs fail.
+
+All enabled cameras must select the same `pbr-mesh@1` provider and product
+profile. The resolver validates original and effective environment, scenario,
+script, binding, and embedded locks before touching a visual store. It then
+requires the effective environment's exact descriptor/access sidecar, matching
+`sourceWorldHash` and truth bindings, and complete source-bound coverage.
+Every selected root is traversed through its immutable use graph, including
+all declared LODs, mesh buffers/textures, appearance dependencies, actor
+overrides, and background/IBL. Resolution rehashes actual CAS bytes and sizes
+and re-evaluates both `display` and `machine-interpretation` against the trusted
+operator registry through every source ancestry. Shared content bytes remain
+separate uses for rights evaluation. State-only, LiDAR-only, analytic, and
+disabled-PBR runs perform no visual descriptor/access/CAS acquisition.
+
+The resolved snapshot contains exact `visualLayer` and `renderScene` resources
+with matching dependency hashes. The PBR scene binds world, layer, product
+profile, normalized pixel recipe, full content-deduplicated asset closure,
+actor appearance/transforms, and an independently hashed analytic truth
+resource. Visual meshes never become truth or LiDAR geometry. Source-bound
+access, roots, complete use records, policy operations/source IDs/obligations,
+and optional correspondence attachment live separately in
+`cev-sim.visual-run-evidence@1`. Correspondence is only
+`{ reportHash, status: "unverified-reference" }`; its presence neither proves a
+report nor grants managed eligibility.
+
+Recipe, scene, closure, and evidence hashes use exact canonical JSON and reject
+invalid Unicode/numbers, negative zero, duplicate keys, ordering/version drift,
+and recomputed-outer-hash attacks on inner resources. Authoring-only recipe
+uses and evidence are excluded from semantic identity; the pixel recipe and
+content closure in the render resource carry selected appearance meaning.
+Evidence/access/report-only changes may therefore change `resolvedHash` without
+changing world, render, simulation-semantic, or episode identity.
+
+Integrity-only bundle verification validates these resources and
+cross-references without local asset bytes or a renderer. Offline inspection
+states that it does not prove current rights, asset availability, or
+correspondence validity. Executable verification remains mandatory for browser,
+CLI run, supervisor, and worker preparation, all of which reject PBR before
+environment/sensor mutation. Provider-aware JavaScript/Python episode defaults
+select only routed GPU backend v2 for PBR and reject missing or older support.
+No asset bytes are installed by JSON import; asset packaging remains VIS-13.
 
 ## Identity projection and compatibility
 
@@ -522,8 +607,8 @@ then projects a clone. The implemented identity rules are:
    hashes.
 5. Preserve conditional analytic-camera and LiDAR resources. Explicit camera
    render selections are dispatched by VIS-02; omitted selections alias only
-   to `canonical-analytic@1`. Selected visual resource resolution belongs to
-   VIS-12b. Unavailable providers may be stored but cannot resolve or execute.
+   to `canonical-analytic@1`. Selected `pbr-mesh@1` resources resolve through
+   VIS-12b, while runtime-unavailable providers cannot execute.
 6. Include selected render resources, calibration, product policy, and
    semantic backend configuration. Exclude evidence, logging, artifact and
    resource policy, wall pacing, host paths, admissions, and replay evidence.
@@ -535,6 +620,7 @@ Compatibility is evaluated separately at each boundary:
 | Bundle v1 / resolved v10 | Preserve received bytes and existing algorithms | Supported | Existing analytic path remains supported |
 | Older authored manifests | N/A unless a historical bundle verifier exists | Normalize and re-resolve | Only through a newly resolved supported bundle |
 | Bundle v1 / manifest v11 / `world-bound@2` | New version-dispatched algorithms | Supported | Protocol 1.3 and advertised identity profile required |
+| Bundle v1 / manifest v11 / selected `pbr-mesh@1` | Exact inner render/closure/evidence verification | Supported when local authoring dependencies exist | Rejected until PBR renderer and GPU backend v2 are available |
 | Earlier immutable bundles | Retain legacy import verification where its algorithm applies | Verify before normalizing | Explicit re-resolution required |
 | Unknown versions or identities | Explicit compatibility error | Rejected | Rejected |
 
@@ -590,6 +676,8 @@ the flag the write fails closed with `VISUAL_LAYER_WORLD_MISMATCH`. Environment
 pointers; neither enters `worldHash` or the descriptor's `visualLayerHash`.
 VIS-10b material-proposal hashes are stored in artifact-set v3 and durable bake
 promotion receipts, not in the environment manifest or correspondence evidence.
+VIS-11 model-output-set, provider, weights, and raw-cache identities likewise
+stay out of `visualLayerHash`, world, semantic, and episode identity.
 `sourceWorldHash` binds the promoted layer to the current metric world and does
 not enter per-unit reuse keys. An older client cannot erase visual fields by omitting them, and cannot use
 `clientRevision` as a concurrency token.

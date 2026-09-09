@@ -24,6 +24,11 @@ import {
 } from "./VisualCapturePipeline.js";
 import { createDefaultBakeRunConfig } from "../visualization/BakeRunConfig.js";
 import { bakeCaptureUnitId } from "./BakeReuseContracts.js";
+import {
+    buildProposalArtifactsFromModelOutput,
+    isIntrinsicMaterialModelProvider,
+} from "./BakeModelOutput.js";
+import { normalizeBakeMaterialProposalSet, validateBakeMaterialProposals } from "./BakeMaterialProposals.js";
 
 function asVector3(value) {
     if (!value) return new THREE.Vector3();
@@ -85,7 +90,15 @@ export async function runVersion1BakeJob(host, options = {}) {
         throwIfAborted();
         const adapter = catalog.providers.preflight(job.config.provider, {
             incremental: options.incremental === true,
+            config: job.config,
         });
+        if (typeof adapter.probe === "function") {
+            await adapter.probe({
+                config: job.config,
+                operational: job.config.operational,
+                signal,
+            });
+        }
         const materializerInputs = options.materializer?.bakeSnapshotInputs?.() ?? {};
         const sourceScene = options.sourceScene
             ?? options.scene
@@ -165,6 +178,13 @@ export async function runVersion1BakeJob(host, options = {}) {
         const bindings = options.bindings ?? [];
         const renderables = options.renderables ?? new Map();
         const sourceUseHashes = frozen.snapshot.sourceUseHashes;
+        if (typeof adapter.authorizeUses === "function") {
+            await adapter.authorizeUses({
+                sourceUseHashes,
+                authorizeSourceUse: options.authorizeSourceUse,
+                cachePolicy: job.config.cachePolicy,
+            });
+        }
         const injectCapture = typeof options.captureAlignedProducts === "function";
         const viewsById = new Map();
         if (!injectCapture) {
@@ -283,10 +303,18 @@ export async function runVersion1BakeJob(host, options = {}) {
         });
         catalog.attachRequest(job.jobId, request);
         throwIfAborted();
-        const response = await adapter.execute(request, {
+        const execution = await adapter.execute(request, {
             generation,
             requestHash: hashBakeProviderRequest(request),
+            buffers: productBuffers,
+            operational: job.config.operational,
+            construction: job.config.construction,
+            config: job.config,
+            authorizeSourceUse: options.authorizeSourceUse,
+            sourceUseHashes,
+            signal,
         });
+        const response = execution?.response ?? execution;
         catalog.attachResponse(job.jobId, response, { generation });
         const completed = catalog.get(job.jobId);
         for (const output of completed.response.outputs) {
@@ -300,6 +328,35 @@ export async function runVersion1BakeJob(host, options = {}) {
                     throw new Error(`Retained ${output.role} buffer does not match the provider response digest.`);
                 }
             }
+        }
+        if (isIntrinsicMaterialModelProvider(job.config.provider)) {
+            if (options.materialProposalSet || options.materialProposalBuffers) {
+                const error = new Error("Intrinsic model jobs cannot mix caller-supplied proposals with model-generated proposals.");
+                error.code = "BAKE_MATERIAL_PROPOSAL_CONFLICT";
+                throw error;
+            }
+            if (!execution?.modelOutputSet || !execution?.modelBuffers) {
+                const error = new Error("intrinsic-material-model@1 did not return a complete model-output set.");
+                error.code = "BAKE_MODEL_INCOMPLETE";
+                throw error;
+            }
+            const artifacts = buildProposalArtifactsFromModelOutput({
+                job: completed,
+                modelOutputSet: execution.modelOutputSet,
+                buffers: execution.modelBuffers,
+                options: job.config.providerOptions,
+                sourceUseHashes,
+                response: completed.response,
+            });
+            const validated = validateBakeMaterialProposals({
+                proposalSet: artifacts.proposalSet,
+                buffers: artifacts.buffers,
+                construction: job.config.construction,
+                job: completed,
+            });
+            completed.materialProposalSet = validated.proposalSet ?? normalizeBakeMaterialProposalSet(artifacts.proposalSet);
+            completed.materialProposalBuffers = artifacts.buffers;
+            completed.modelOutputSet = execution.modelOutputSet;
         }
         if (host._version1) host._version1.productBuffers = productBuffers;
         catalog.complete(job.jobId);

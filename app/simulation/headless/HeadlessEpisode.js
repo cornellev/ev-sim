@@ -35,6 +35,7 @@ import {
 import {
     assertGpuSensorBackendSelection,
     createGpuSensorBackendSelection,
+    createGpuSensorBackendV2Selection,
     GPU_SENSOR_BACKEND_KIND,
 } from "../sensors/GpuSensorBackend.js";
 import { assertEnabledCameraRenderRuntime, RenderSceneProviderError } from "../render/RenderSceneProviderRegistry.js";
@@ -91,13 +92,29 @@ export function normalizeEpisodeSpec(resolvedRun, spec = {}) {
     const requestsCamera = resolvedRun.manifest.sensorRig?.sensors?.some(
         (sensor) => sensor.enabled !== false && sensor.type === "camera",
     );
+    const requestsPbr = resolvedRun.renderScene?.description?.provider?.id === "pbr-mesh"
+        && resolvedRun.renderScene?.description?.provider?.version === 1;
     const requestedBackends = spec.backendSelections ?? spec.backend_selections;
     const backends = ((Array.isArray(requestedBackends) && requestedBackends.length > 0) ? requestedBackends : [
         ...(resolvedRun.backendSelections || []),
         createStateSensorBackendSelection(),
         ...(requestsLidar ? [createCpuLidarBackendSelection()] : []),
-        ...(requestsCamera ? [createGpuSensorBackendSelection()] : []),
+        ...(requestsCamera ? [requestsPbr
+            ? createGpuSensorBackendV2Selection()
+            : createGpuSensorBackendSelection()] : []),
     ]).map(normalizedBackend);
+    if (requestsPbr) {
+        const required = normalizedBackend(createGpuSensorBackendV2Selection());
+        const selected = backends.filter((entry) => entry.kind === GPU_SENSOR_BACKEND_KIND);
+        if (selected.length !== 1 || compareBackends(selected[0], required) !== 0
+            || selected[0].version !== required.version
+            || selected[0].configHash !== required.configHash) {
+            throw new HeadlessEpisodeError(
+                "UNSUPPORTED_CAPABILITY",
+                "pbr-mesh@1 requires the locked chromium-webgl2-rendered-sensors@2 backend; v1 fallback is forbidden.",
+            );
+        }
+    }
     return {
         identityVersion: simulationIdentityVersion(resolvedRun),
         protocolMajor: 1,

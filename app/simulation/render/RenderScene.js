@@ -8,8 +8,15 @@ import { canonicalizeSimulationValue, simulationSha256 } from "../kernel/Simulat
 import { compareUtf8 } from "../world/WorldDescription.js";
 import {
     bindCanonicalAnalyticRenderScene,
+    bindPbrRenderScene,
     renderSceneProviderRegistry,
 } from "./RenderSceneProviderRegistry.js";
+import {
+    assertPbrRenderSceneDescription,
+    createPbrRenderSceneResource,
+    hashPbrRenderScene,
+} from "./PbrRenderScene.js";
+import { VISUAL_RENDER_PROVIDERS } from "../visual/VisualLayer.js";
 
 export const RENDER_SCENE_KIND = "cev-sim.render-scene";
 export const RENDER_SCENE_VERSION = 1;
@@ -113,17 +120,26 @@ bindCanonicalAnalyticRenderScene({
     assertDescription: assertCanonicalAnalyticRenderSceneDescription,
 });
 
-export function assertRenderSceneDescription(description) {
-    return renderSceneProviderRegistry.assertDescription(description);
+bindPbrRenderScene({
+    createResource: createPbrRenderSceneResource,
+    assertDescription: assertPbrRenderSceneDescription,
+});
+
+export function assertRenderSceneDescription(description, options = {}) {
+    return renderSceneProviderRegistry.assertDescription(description, options);
 }
 
 export function hashRenderScene(description) {
     assertRenderSceneDescription(description);
+    if (description.provider?.id === VISUAL_RENDER_PROVIDERS.pbrMesh.id
+        && description.provider?.version === VISUAL_RENDER_PROVIDERS.pbrMesh.version) {
+        return hashPbrRenderScene(description);
+    }
     return simulationSha256(description);
 }
 
-export function createRenderSceneResource(worldResource, vehicleDependencies = [], selection) {
-    return renderSceneProviderRegistry.resolveResource(worldResource, vehicleDependencies, selection);
+export function createRenderSceneResource(worldResource, vehicleDependencies = [], selection, context = {}) {
+    return renderSceneProviderRegistry.resolveResource(worldResource, vehicleDependencies, selection, context);
 }
 
 export class CanonicalAnalyticRenderSceneProvider extends RenderSceneProvider {
