@@ -155,6 +155,372 @@ export const EXPERIMENT_ONE_CYCLES_MEDIA_MANIFEST = Object.freeze({
             ]
         },
         {
+            "id": "b2-cycles-ordinary-environment-chair-translated",
+            "candidateId": "b2-cycles",
+            "conditionId": "ordinary-environment",
+            "editVariantId": "chair-translated",
+            "includePaths": false,
+            "rendererSettings": {
+                "engine": "cycles",
+                "samples": 512,
+                "denoising": false,
+                "seed": 4831,
+                "device": "GPU",
+                "bounces": {
+                    "max": 10,
+                    "diffuse": 4,
+                    "glossy": 4,
+                    "transmission": 4,
+                    "transparent": 4,
+                    "volume": 0
+                },
+                "viewTransform": "AgX",
+                "look": "AgX - Medium High Contrast"
+            },
+            "lightingSettings": {
+                "world": {
+                    "colorLinearRgb": [
+                        0.055,
+                        0.065,
+                        0.08
+                    ],
+                    "strength": 0.12
+                },
+                "lights": [
+                    {
+                        "id": "room-key",
+                        "type": "area-disk",
+                        "position": [
+                            -1.7,
+                            2.62,
+                            -1.45
+                        ],
+                        "target": [
+                            0.35,
+                            1.1,
+                            0.15
+                        ],
+                        "energyW": 760,
+                        "colorLinearRgb": [
+                            1,
+                            0.91,
+                            0.78
+                        ],
+                        "sizeM": 1.25
+                    },
+                    {
+                        "id": "room-fill",
+                        "type": "area-disk",
+                        "position": [
+                            2.35,
+                            2.35,
+                            1.35
+                        ],
+                        "target": [
+                            0,
+                            1,
+                            0
+                        ],
+                        "energyW": 310,
+                        "colorLinearRgb": [
+                            0.67,
+                            0.78,
+                            1
+                        ],
+                        "sizeM": 1.5
+                    },
+                    {
+                        "id": "lamp-light",
+                        "type": "point",
+                        "position": [
+                            -2.12,
+                            1.72,
+                            1.58
+                        ],
+                        "energyW": 105,
+                        "colorLinearRgb": [
+                            1,
+                            0.58,
+                            0.31
+                        ],
+                        "radiusM": 0.18
+                    }
+                ]
+            },
+            "displayFiles": [
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/room-north-west.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/room-south-east.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/room-window.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/room-door.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/table-edge.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/chair-contact.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/chair-underside.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/cabinet-seams.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/fabric-folds.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/metal-response.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/window-recess.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/clutter-scale.png"
+            ],
+            "linearFiles": [
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/room-north-west.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/room-south-east.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/room-window.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/room-door.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/table-edge.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/chair-contact.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/chair-underside.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/cabinet-seams.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/fabric-folds.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/metal-response.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/window-recess.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/clutter-scale.exr"
+            ]
+        },
+        {
+            "id": "b2-cycles-ordinary-environment-chair-rotated",
+            "candidateId": "b2-cycles",
+            "conditionId": "ordinary-environment",
+            "editVariantId": "chair-rotated",
+            "includePaths": false,
+            "rendererSettings": {
+                "engine": "cycles",
+                "samples": 512,
+                "denoising": false,
+                "seed": 4831,
+                "device": "GPU",
+                "bounces": {
+                    "max": 10,
+                    "diffuse": 4,
+                    "glossy": 4,
+                    "transmission": 4,
+                    "transparent": 4,
+                    "volume": 0
+                },
+                "viewTransform": "AgX",
+                "look": "AgX - Medium High Contrast"
+            },
+            "lightingSettings": {
+                "world": {
+                    "colorLinearRgb": [
+                        0.055,
+                        0.065,
+                        0.08
+                    ],
+                    "strength": 0.12
+                },
+                "lights": [
+                    {
+                        "id": "room-key",
+                        "type": "area-disk",
+                        "position": [
+                            -1.7,
+                            2.62,
+                            -1.45
+                        ],
+                        "target": [
+                            0.35,
+                            1.1,
+                            0.15
+                        ],
+                        "energyW": 760,
+                        "colorLinearRgb": [
+                            1,
+                            0.91,
+                            0.78
+                        ],
+                        "sizeM": 1.25
+                    },
+                    {
+                        "id": "room-fill",
+                        "type": "area-disk",
+                        "position": [
+                            2.35,
+                            2.35,
+                            1.35
+                        ],
+                        "target": [
+                            0,
+                            1,
+                            0
+                        ],
+                        "energyW": 310,
+                        "colorLinearRgb": [
+                            0.67,
+                            0.78,
+                            1
+                        ],
+                        "sizeM": 1.5
+                    },
+                    {
+                        "id": "lamp-light",
+                        "type": "point",
+                        "position": [
+                            -2.12,
+                            1.72,
+                            1.58
+                        ],
+                        "energyW": 105,
+                        "colorLinearRgb": [
+                            1,
+                            0.58,
+                            0.31
+                        ],
+                        "radiusM": 0.18
+                    }
+                ]
+            },
+            "displayFiles": [
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/room-north-west.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/room-south-east.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/room-window.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/room-door.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/table-edge.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/chair-contact.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/chair-underside.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/cabinet-seams.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/fabric-folds.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/metal-response.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/window-recess.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/clutter-scale.png"
+            ],
+            "linearFiles": [
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/room-north-west.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/room-south-east.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/room-window.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/room-door.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/table-edge.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/chair-contact.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/chair-underside.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/cabinet-seams.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/fabric-folds.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/metal-response.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/window-recess.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/clutter-scale.exr"
+            ]
+        },
+        {
+            "id": "b2-cycles-ordinary-environment-light-moved",
+            "candidateId": "b2-cycles",
+            "conditionId": "ordinary-environment",
+            "editVariantId": "light-moved",
+            "includePaths": false,
+            "rendererSettings": {
+                "engine": "cycles",
+                "samples": 512,
+                "denoising": false,
+                "seed": 4831,
+                "device": "GPU",
+                "bounces": {
+                    "max": 10,
+                    "diffuse": 4,
+                    "glossy": 4,
+                    "transmission": 4,
+                    "transparent": 4,
+                    "volume": 0
+                },
+                "viewTransform": "AgX",
+                "look": "AgX - Medium High Contrast"
+            },
+            "lightingSettings": {
+                "world": {
+                    "colorLinearRgb": [
+                        0.055,
+                        0.065,
+                        0.08
+                    ],
+                    "strength": 0.12
+                },
+                "lights": [
+                    {
+                        "id": "room-key",
+                        "type": "area-disk",
+                        "position": [
+                            2.4,
+                            2.5,
+                            -1.8
+                        ],
+                        "target": [
+                            0,
+                            0.9,
+                            0
+                        ],
+                        "energyW": 760,
+                        "colorLinearRgb": [
+                            1,
+                            0.91,
+                            0.78
+                        ],
+                        "sizeM": 1.25
+                    },
+                    {
+                        "id": "room-fill",
+                        "type": "area-disk",
+                        "position": [
+                            2.35,
+                            2.35,
+                            1.35
+                        ],
+                        "target": [
+                            0,
+                            1,
+                            0
+                        ],
+                        "energyW": 310,
+                        "colorLinearRgb": [
+                            0.67,
+                            0.78,
+                            1
+                        ],
+                        "sizeM": 1.5
+                    },
+                    {
+                        "id": "lamp-light",
+                        "type": "point",
+                        "position": [
+                            -2.12,
+                            1.72,
+                            1.58
+                        ],
+                        "energyW": 105,
+                        "colorLinearRgb": [
+                            1,
+                            0.58,
+                            0.31
+                        ],
+                        "radiusM": 0.18
+                    }
+                ]
+            },
+            "displayFiles": [
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/room-north-west.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/room-south-east.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/room-window.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/room-door.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/table-edge.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/chair-contact.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/chair-underside.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/cabinet-seams.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/fabric-folds.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/metal-response.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/window-recess.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/clutter-scale.png"
+            ],
+            "linearFiles": [
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/room-north-west.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/room-south-east.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/room-window.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/room-door.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/table-edge.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/chair-contact.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/chair-underside.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/cabinet-seams.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/fabric-folds.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/metal-response.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/window-recess.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/clutter-scale.exr"
+            ]
+        },
+        {
             "id": "b2-cycles-directional-challenge-base",
             "candidateId": "b2-cycles",
             "conditionId": "directional-challenge",
@@ -274,6 +640,372 @@ export const EXPERIMENT_ONE_CYCLES_MEDIA_MANIFEST = Object.freeze({
                 "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-base/stills/metal-response.exr",
                 "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-base/stills/window-recess.exr",
                 "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-base/stills/clutter-scale.exr"
+            ]
+        },
+        {
+            "id": "b2-cycles-directional-challenge-chair-translated",
+            "candidateId": "b2-cycles",
+            "conditionId": "directional-challenge",
+            "editVariantId": "chair-translated",
+            "includePaths": false,
+            "rendererSettings": {
+                "engine": "cycles",
+                "samples": 512,
+                "denoising": false,
+                "seed": 4831,
+                "device": "GPU",
+                "bounces": {
+                    "max": 10,
+                    "diffuse": 4,
+                    "glossy": 4,
+                    "transmission": 4,
+                    "transparent": 4,
+                    "volume": 0
+                },
+                "viewTransform": "AgX",
+                "look": "AgX - Medium High Contrast"
+            },
+            "lightingSettings": {
+                "world": {
+                    "colorLinearRgb": [
+                        0.055,
+                        0.065,
+                        0.08
+                    ],
+                    "strength": 0.035
+                },
+                "lights": [
+                    {
+                        "id": "room-key",
+                        "type": "area-disk",
+                        "position": [
+                            -1.7,
+                            2.62,
+                            -1.45
+                        ],
+                        "target": [
+                            0.35,
+                            1.1,
+                            0.15
+                        ],
+                        "energyW": 1450,
+                        "colorLinearRgb": [
+                            1,
+                            0.91,
+                            0.78
+                        ],
+                        "sizeM": 0.42
+                    },
+                    {
+                        "id": "room-fill",
+                        "type": "area-disk",
+                        "position": [
+                            2.35,
+                            2.35,
+                            1.35
+                        ],
+                        "target": [
+                            0,
+                            1,
+                            0
+                        ],
+                        "energyW": 45,
+                        "colorLinearRgb": [
+                            0.67,
+                            0.78,
+                            1
+                        ],
+                        "sizeM": 1.5
+                    },
+                    {
+                        "id": "lamp-light",
+                        "type": "point",
+                        "position": [
+                            -2.12,
+                            1.72,
+                            1.58
+                        ],
+                        "energyW": 65,
+                        "colorLinearRgb": [
+                            1,
+                            0.58,
+                            0.31
+                        ],
+                        "radiusM": 0.18
+                    }
+                ]
+            },
+            "displayFiles": [
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/room-north-west.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/room-south-east.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/room-window.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/room-door.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/table-edge.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/chair-contact.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/chair-underside.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/cabinet-seams.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/fabric-folds.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/metal-response.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/window-recess.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/clutter-scale.png"
+            ],
+            "linearFiles": [
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/room-north-west.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/room-south-east.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/room-window.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/room-door.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/table-edge.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/chair-contact.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/chair-underside.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/cabinet-seams.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/fabric-folds.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/metal-response.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/window-recess.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/clutter-scale.exr"
+            ]
+        },
+        {
+            "id": "b2-cycles-directional-challenge-chair-rotated",
+            "candidateId": "b2-cycles",
+            "conditionId": "directional-challenge",
+            "editVariantId": "chair-rotated",
+            "includePaths": false,
+            "rendererSettings": {
+                "engine": "cycles",
+                "samples": 512,
+                "denoising": false,
+                "seed": 4831,
+                "device": "GPU",
+                "bounces": {
+                    "max": 10,
+                    "diffuse": 4,
+                    "glossy": 4,
+                    "transmission": 4,
+                    "transparent": 4,
+                    "volume": 0
+                },
+                "viewTransform": "AgX",
+                "look": "AgX - Medium High Contrast"
+            },
+            "lightingSettings": {
+                "world": {
+                    "colorLinearRgb": [
+                        0.055,
+                        0.065,
+                        0.08
+                    ],
+                    "strength": 0.035
+                },
+                "lights": [
+                    {
+                        "id": "room-key",
+                        "type": "area-disk",
+                        "position": [
+                            -1.7,
+                            2.62,
+                            -1.45
+                        ],
+                        "target": [
+                            0.35,
+                            1.1,
+                            0.15
+                        ],
+                        "energyW": 1450,
+                        "colorLinearRgb": [
+                            1,
+                            0.91,
+                            0.78
+                        ],
+                        "sizeM": 0.42
+                    },
+                    {
+                        "id": "room-fill",
+                        "type": "area-disk",
+                        "position": [
+                            2.35,
+                            2.35,
+                            1.35
+                        ],
+                        "target": [
+                            0,
+                            1,
+                            0
+                        ],
+                        "energyW": 45,
+                        "colorLinearRgb": [
+                            0.67,
+                            0.78,
+                            1
+                        ],
+                        "sizeM": 1.5
+                    },
+                    {
+                        "id": "lamp-light",
+                        "type": "point",
+                        "position": [
+                            -2.12,
+                            1.72,
+                            1.58
+                        ],
+                        "energyW": 65,
+                        "colorLinearRgb": [
+                            1,
+                            0.58,
+                            0.31
+                        ],
+                        "radiusM": 0.18
+                    }
+                ]
+            },
+            "displayFiles": [
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/room-north-west.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/room-south-east.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/room-window.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/room-door.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/table-edge.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/chair-contact.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/chair-underside.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/cabinet-seams.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/fabric-folds.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/metal-response.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/window-recess.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/clutter-scale.png"
+            ],
+            "linearFiles": [
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/room-north-west.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/room-south-east.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/room-window.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/room-door.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/table-edge.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/chair-contact.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/chair-underside.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/cabinet-seams.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/fabric-folds.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/metal-response.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/window-recess.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/clutter-scale.exr"
+            ]
+        },
+        {
+            "id": "b2-cycles-directional-challenge-light-moved",
+            "candidateId": "b2-cycles",
+            "conditionId": "directional-challenge",
+            "editVariantId": "light-moved",
+            "includePaths": false,
+            "rendererSettings": {
+                "engine": "cycles",
+                "samples": 512,
+                "denoising": false,
+                "seed": 4831,
+                "device": "GPU",
+                "bounces": {
+                    "max": 10,
+                    "diffuse": 4,
+                    "glossy": 4,
+                    "transmission": 4,
+                    "transparent": 4,
+                    "volume": 0
+                },
+                "viewTransform": "AgX",
+                "look": "AgX - Medium High Contrast"
+            },
+            "lightingSettings": {
+                "world": {
+                    "colorLinearRgb": [
+                        0.055,
+                        0.065,
+                        0.08
+                    ],
+                    "strength": 0.035
+                },
+                "lights": [
+                    {
+                        "id": "room-key",
+                        "type": "area-disk",
+                        "position": [
+                            2.4,
+                            2.5,
+                            -1.8
+                        ],
+                        "target": [
+                            0,
+                            0.9,
+                            0
+                        ],
+                        "energyW": 1450,
+                        "colorLinearRgb": [
+                            1,
+                            0.91,
+                            0.78
+                        ],
+                        "sizeM": 0.42
+                    },
+                    {
+                        "id": "room-fill",
+                        "type": "area-disk",
+                        "position": [
+                            2.35,
+                            2.35,
+                            1.35
+                        ],
+                        "target": [
+                            0,
+                            1,
+                            0
+                        ],
+                        "energyW": 45,
+                        "colorLinearRgb": [
+                            0.67,
+                            0.78,
+                            1
+                        ],
+                        "sizeM": 1.5
+                    },
+                    {
+                        "id": "lamp-light",
+                        "type": "point",
+                        "position": [
+                            -2.12,
+                            1.72,
+                            1.58
+                        ],
+                        "energyW": 65,
+                        "colorLinearRgb": [
+                            1,
+                            0.58,
+                            0.31
+                        ],
+                        "radiusM": 0.18
+                    }
+                ]
+            },
+            "displayFiles": [
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/room-north-west.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/room-south-east.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/room-window.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/room-door.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/table-edge.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/chair-contact.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/chair-underside.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/cabinet-seams.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/fabric-folds.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/metal-response.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/window-recess.png",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/clutter-scale.png"
+            ],
+            "linearFiles": [
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/room-north-west.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/room-south-east.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/room-window.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/room-door.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/table-edge.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/chair-contact.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/chair-underside.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/cabinet-seams.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/fabric-folds.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/metal-response.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/window-recess.exr",
+                "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/clutter-scale.exr"
             ]
         },
         {
@@ -399,6 +1131,372 @@ export const EXPERIMENT_ONE_CYCLES_MEDIA_MANIFEST = Object.freeze({
             ]
         },
         {
+            "id": "b3-cycles-ordinary-environment-chair-translated",
+            "candidateId": "b3-cycles",
+            "conditionId": "ordinary-environment",
+            "editVariantId": "chair-translated",
+            "includePaths": false,
+            "rendererSettings": {
+                "engine": "cycles",
+                "samples": 512,
+                "denoising": false,
+                "seed": 4831,
+                "device": "GPU",
+                "bounces": {
+                    "max": 10,
+                    "diffuse": 4,
+                    "glossy": 4,
+                    "transmission": 4,
+                    "transparent": 4,
+                    "volume": 0
+                },
+                "viewTransform": "AgX",
+                "look": "AgX - Medium High Contrast"
+            },
+            "lightingSettings": {
+                "world": {
+                    "colorLinearRgb": [
+                        0.055,
+                        0.065,
+                        0.08
+                    ],
+                    "strength": 0.12
+                },
+                "lights": [
+                    {
+                        "id": "room-key",
+                        "type": "area-disk",
+                        "position": [
+                            -1.7,
+                            2.62,
+                            -1.45
+                        ],
+                        "target": [
+                            0.35,
+                            1.1,
+                            0.15
+                        ],
+                        "energyW": 760,
+                        "colorLinearRgb": [
+                            1,
+                            0.91,
+                            0.78
+                        ],
+                        "sizeM": 1.25
+                    },
+                    {
+                        "id": "room-fill",
+                        "type": "area-disk",
+                        "position": [
+                            2.35,
+                            2.35,
+                            1.35
+                        ],
+                        "target": [
+                            0,
+                            1,
+                            0
+                        ],
+                        "energyW": 310,
+                        "colorLinearRgb": [
+                            0.67,
+                            0.78,
+                            1
+                        ],
+                        "sizeM": 1.5
+                    },
+                    {
+                        "id": "lamp-light",
+                        "type": "point",
+                        "position": [
+                            -2.12,
+                            1.72,
+                            1.58
+                        ],
+                        "energyW": 105,
+                        "colorLinearRgb": [
+                            1,
+                            0.58,
+                            0.31
+                        ],
+                        "radiusM": 0.18
+                    }
+                ]
+            },
+            "displayFiles": [
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/room-north-west.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/room-south-east.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/room-window.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/room-door.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/table-edge.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/chair-contact.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/chair-underside.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/cabinet-seams.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/fabric-folds.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/metal-response.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/window-recess.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/clutter-scale.png"
+            ],
+            "linearFiles": [
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/room-north-west.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/room-south-east.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/room-window.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/room-door.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/table-edge.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/chair-contact.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/chair-underside.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/cabinet-seams.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/fabric-folds.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/metal-response.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/window-recess.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/clutter-scale.exr"
+            ]
+        },
+        {
+            "id": "b3-cycles-ordinary-environment-chair-rotated",
+            "candidateId": "b3-cycles",
+            "conditionId": "ordinary-environment",
+            "editVariantId": "chair-rotated",
+            "includePaths": false,
+            "rendererSettings": {
+                "engine": "cycles",
+                "samples": 512,
+                "denoising": false,
+                "seed": 4831,
+                "device": "GPU",
+                "bounces": {
+                    "max": 10,
+                    "diffuse": 4,
+                    "glossy": 4,
+                    "transmission": 4,
+                    "transparent": 4,
+                    "volume": 0
+                },
+                "viewTransform": "AgX",
+                "look": "AgX - Medium High Contrast"
+            },
+            "lightingSettings": {
+                "world": {
+                    "colorLinearRgb": [
+                        0.055,
+                        0.065,
+                        0.08
+                    ],
+                    "strength": 0.12
+                },
+                "lights": [
+                    {
+                        "id": "room-key",
+                        "type": "area-disk",
+                        "position": [
+                            -1.7,
+                            2.62,
+                            -1.45
+                        ],
+                        "target": [
+                            0.35,
+                            1.1,
+                            0.15
+                        ],
+                        "energyW": 760,
+                        "colorLinearRgb": [
+                            1,
+                            0.91,
+                            0.78
+                        ],
+                        "sizeM": 1.25
+                    },
+                    {
+                        "id": "room-fill",
+                        "type": "area-disk",
+                        "position": [
+                            2.35,
+                            2.35,
+                            1.35
+                        ],
+                        "target": [
+                            0,
+                            1,
+                            0
+                        ],
+                        "energyW": 310,
+                        "colorLinearRgb": [
+                            0.67,
+                            0.78,
+                            1
+                        ],
+                        "sizeM": 1.5
+                    },
+                    {
+                        "id": "lamp-light",
+                        "type": "point",
+                        "position": [
+                            -2.12,
+                            1.72,
+                            1.58
+                        ],
+                        "energyW": 105,
+                        "colorLinearRgb": [
+                            1,
+                            0.58,
+                            0.31
+                        ],
+                        "radiusM": 0.18
+                    }
+                ]
+            },
+            "displayFiles": [
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/room-north-west.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/room-south-east.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/room-window.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/room-door.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/table-edge.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/chair-contact.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/chair-underside.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/cabinet-seams.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/fabric-folds.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/metal-response.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/window-recess.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/clutter-scale.png"
+            ],
+            "linearFiles": [
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/room-north-west.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/room-south-east.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/room-window.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/room-door.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/table-edge.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/chair-contact.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/chair-underside.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/cabinet-seams.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/fabric-folds.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/metal-response.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/window-recess.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/clutter-scale.exr"
+            ]
+        },
+        {
+            "id": "b3-cycles-ordinary-environment-light-moved",
+            "candidateId": "b3-cycles",
+            "conditionId": "ordinary-environment",
+            "editVariantId": "light-moved",
+            "includePaths": false,
+            "rendererSettings": {
+                "engine": "cycles",
+                "samples": 512,
+                "denoising": false,
+                "seed": 4831,
+                "device": "GPU",
+                "bounces": {
+                    "max": 10,
+                    "diffuse": 4,
+                    "glossy": 4,
+                    "transmission": 4,
+                    "transparent": 4,
+                    "volume": 0
+                },
+                "viewTransform": "AgX",
+                "look": "AgX - Medium High Contrast"
+            },
+            "lightingSettings": {
+                "world": {
+                    "colorLinearRgb": [
+                        0.055,
+                        0.065,
+                        0.08
+                    ],
+                    "strength": 0.12
+                },
+                "lights": [
+                    {
+                        "id": "room-key",
+                        "type": "area-disk",
+                        "position": [
+                            2.4,
+                            2.5,
+                            -1.8
+                        ],
+                        "target": [
+                            0,
+                            0.9,
+                            0
+                        ],
+                        "energyW": 760,
+                        "colorLinearRgb": [
+                            1,
+                            0.91,
+                            0.78
+                        ],
+                        "sizeM": 1.25
+                    },
+                    {
+                        "id": "room-fill",
+                        "type": "area-disk",
+                        "position": [
+                            2.35,
+                            2.35,
+                            1.35
+                        ],
+                        "target": [
+                            0,
+                            1,
+                            0
+                        ],
+                        "energyW": 310,
+                        "colorLinearRgb": [
+                            0.67,
+                            0.78,
+                            1
+                        ],
+                        "sizeM": 1.5
+                    },
+                    {
+                        "id": "lamp-light",
+                        "type": "point",
+                        "position": [
+                            -2.12,
+                            1.72,
+                            1.58
+                        ],
+                        "energyW": 105,
+                        "colorLinearRgb": [
+                            1,
+                            0.58,
+                            0.31
+                        ],
+                        "radiusM": 0.18
+                    }
+                ]
+            },
+            "displayFiles": [
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/room-north-west.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/room-south-east.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/room-window.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/room-door.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/table-edge.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/chair-contact.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/chair-underside.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/cabinet-seams.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/fabric-folds.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/metal-response.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/window-recess.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/clutter-scale.png"
+            ],
+            "linearFiles": [
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/room-north-west.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/room-south-east.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/room-window.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/room-door.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/table-edge.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/chair-contact.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/chair-underside.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/cabinet-seams.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/fabric-folds.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/metal-response.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/window-recess.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/clutter-scale.exr"
+            ]
+        },
+        {
             "id": "b3-cycles-directional-challenge-base",
             "candidateId": "b3-cycles",
             "conditionId": "directional-challenge",
@@ -519,6 +1617,372 @@ export const EXPERIMENT_ONE_CYCLES_MEDIA_MANIFEST = Object.freeze({
                 "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-base/stills/window-recess.exr",
                 "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-base/stills/clutter-scale.exr"
             ]
+        },
+        {
+            "id": "b3-cycles-directional-challenge-chair-translated",
+            "candidateId": "b3-cycles",
+            "conditionId": "directional-challenge",
+            "editVariantId": "chair-translated",
+            "includePaths": false,
+            "rendererSettings": {
+                "engine": "cycles",
+                "samples": 512,
+                "denoising": false,
+                "seed": 4831,
+                "device": "GPU",
+                "bounces": {
+                    "max": 10,
+                    "diffuse": 4,
+                    "glossy": 4,
+                    "transmission": 4,
+                    "transparent": 4,
+                    "volume": 0
+                },
+                "viewTransform": "AgX",
+                "look": "AgX - Medium High Contrast"
+            },
+            "lightingSettings": {
+                "world": {
+                    "colorLinearRgb": [
+                        0.055,
+                        0.065,
+                        0.08
+                    ],
+                    "strength": 0.035
+                },
+                "lights": [
+                    {
+                        "id": "room-key",
+                        "type": "area-disk",
+                        "position": [
+                            -1.7,
+                            2.62,
+                            -1.45
+                        ],
+                        "target": [
+                            0.35,
+                            1.1,
+                            0.15
+                        ],
+                        "energyW": 1450,
+                        "colorLinearRgb": [
+                            1,
+                            0.91,
+                            0.78
+                        ],
+                        "sizeM": 0.42
+                    },
+                    {
+                        "id": "room-fill",
+                        "type": "area-disk",
+                        "position": [
+                            2.35,
+                            2.35,
+                            1.35
+                        ],
+                        "target": [
+                            0,
+                            1,
+                            0
+                        ],
+                        "energyW": 45,
+                        "colorLinearRgb": [
+                            0.67,
+                            0.78,
+                            1
+                        ],
+                        "sizeM": 1.5
+                    },
+                    {
+                        "id": "lamp-light",
+                        "type": "point",
+                        "position": [
+                            -2.12,
+                            1.72,
+                            1.58
+                        ],
+                        "energyW": 65,
+                        "colorLinearRgb": [
+                            1,
+                            0.58,
+                            0.31
+                        ],
+                        "radiusM": 0.18
+                    }
+                ]
+            },
+            "displayFiles": [
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/room-north-west.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/room-south-east.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/room-window.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/room-door.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/table-edge.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/chair-contact.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/chair-underside.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/cabinet-seams.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/fabric-folds.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/metal-response.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/window-recess.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/clutter-scale.png"
+            ],
+            "linearFiles": [
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/room-north-west.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/room-south-east.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/room-window.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/room-door.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/table-edge.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/chair-contact.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/chair-underside.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/cabinet-seams.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/fabric-folds.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/metal-response.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/window-recess.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/clutter-scale.exr"
+            ]
+        },
+        {
+            "id": "b3-cycles-directional-challenge-chair-rotated",
+            "candidateId": "b3-cycles",
+            "conditionId": "directional-challenge",
+            "editVariantId": "chair-rotated",
+            "includePaths": false,
+            "rendererSettings": {
+                "engine": "cycles",
+                "samples": 512,
+                "denoising": false,
+                "seed": 4831,
+                "device": "GPU",
+                "bounces": {
+                    "max": 10,
+                    "diffuse": 4,
+                    "glossy": 4,
+                    "transmission": 4,
+                    "transparent": 4,
+                    "volume": 0
+                },
+                "viewTransform": "AgX",
+                "look": "AgX - Medium High Contrast"
+            },
+            "lightingSettings": {
+                "world": {
+                    "colorLinearRgb": [
+                        0.055,
+                        0.065,
+                        0.08
+                    ],
+                    "strength": 0.035
+                },
+                "lights": [
+                    {
+                        "id": "room-key",
+                        "type": "area-disk",
+                        "position": [
+                            -1.7,
+                            2.62,
+                            -1.45
+                        ],
+                        "target": [
+                            0.35,
+                            1.1,
+                            0.15
+                        ],
+                        "energyW": 1450,
+                        "colorLinearRgb": [
+                            1,
+                            0.91,
+                            0.78
+                        ],
+                        "sizeM": 0.42
+                    },
+                    {
+                        "id": "room-fill",
+                        "type": "area-disk",
+                        "position": [
+                            2.35,
+                            2.35,
+                            1.35
+                        ],
+                        "target": [
+                            0,
+                            1,
+                            0
+                        ],
+                        "energyW": 45,
+                        "colorLinearRgb": [
+                            0.67,
+                            0.78,
+                            1
+                        ],
+                        "sizeM": 1.5
+                    },
+                    {
+                        "id": "lamp-light",
+                        "type": "point",
+                        "position": [
+                            -2.12,
+                            1.72,
+                            1.58
+                        ],
+                        "energyW": 65,
+                        "colorLinearRgb": [
+                            1,
+                            0.58,
+                            0.31
+                        ],
+                        "radiusM": 0.18
+                    }
+                ]
+            },
+            "displayFiles": [
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/room-north-west.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/room-south-east.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/room-window.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/room-door.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/table-edge.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/chair-contact.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/chair-underside.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/cabinet-seams.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/fabric-folds.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/metal-response.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/window-recess.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/clutter-scale.png"
+            ],
+            "linearFiles": [
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/room-north-west.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/room-south-east.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/room-window.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/room-door.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/table-edge.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/chair-contact.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/chair-underside.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/cabinet-seams.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/fabric-folds.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/metal-response.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/window-recess.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/clutter-scale.exr"
+            ]
+        },
+        {
+            "id": "b3-cycles-directional-challenge-light-moved",
+            "candidateId": "b3-cycles",
+            "conditionId": "directional-challenge",
+            "editVariantId": "light-moved",
+            "includePaths": false,
+            "rendererSettings": {
+                "engine": "cycles",
+                "samples": 512,
+                "denoising": false,
+                "seed": 4831,
+                "device": "GPU",
+                "bounces": {
+                    "max": 10,
+                    "diffuse": 4,
+                    "glossy": 4,
+                    "transmission": 4,
+                    "transparent": 4,
+                    "volume": 0
+                },
+                "viewTransform": "AgX",
+                "look": "AgX - Medium High Contrast"
+            },
+            "lightingSettings": {
+                "world": {
+                    "colorLinearRgb": [
+                        0.055,
+                        0.065,
+                        0.08
+                    ],
+                    "strength": 0.035
+                },
+                "lights": [
+                    {
+                        "id": "room-key",
+                        "type": "area-disk",
+                        "position": [
+                            2.4,
+                            2.5,
+                            -1.8
+                        ],
+                        "target": [
+                            0,
+                            0.9,
+                            0
+                        ],
+                        "energyW": 1450,
+                        "colorLinearRgb": [
+                            1,
+                            0.91,
+                            0.78
+                        ],
+                        "sizeM": 0.42
+                    },
+                    {
+                        "id": "room-fill",
+                        "type": "area-disk",
+                        "position": [
+                            2.35,
+                            2.35,
+                            1.35
+                        ],
+                        "target": [
+                            0,
+                            1,
+                            0
+                        ],
+                        "energyW": 45,
+                        "colorLinearRgb": [
+                            0.67,
+                            0.78,
+                            1
+                        ],
+                        "sizeM": 1.5
+                    },
+                    {
+                        "id": "lamp-light",
+                        "type": "point",
+                        "position": [
+                            -2.12,
+                            1.72,
+                            1.58
+                        ],
+                        "energyW": 65,
+                        "colorLinearRgb": [
+                            1,
+                            0.58,
+                            0.31
+                        ],
+                        "radiusM": 0.18
+                    }
+                ]
+            },
+            "displayFiles": [
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/room-north-west.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/room-south-east.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/room-window.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/room-door.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/table-edge.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/chair-contact.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/chair-underside.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/cabinet-seams.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/fabric-folds.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/metal-response.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/window-recess.png",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/clutter-scale.png"
+            ],
+            "linearFiles": [
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/room-north-west.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/room-south-east.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/room-window.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/room-door.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/table-edge.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/chair-contact.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/chair-underside.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/cabinet-seams.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/fabric-folds.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/metal-response.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/window-recess.exr",
+                "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/clutter-scale.exr"
+            ]
         }
     ],
     "files": {
@@ -546,6 +2010,78 @@ export const EXPERIMENT_ONE_CYCLES_MEDIA_MANIFEST = Object.freeze({
         "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-base/stills/table-edge.png": "1ba2c3b866774b4a55c3305488b4726916c6d82bd669a9a21977e9908025ce3f",
         "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-base/stills/window-recess.exr": "3968f534b94c8bfa98a72e79216f54e423e76272427304bd5115e42801b2484a",
         "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-base/stills/window-recess.png": "018fbf89eab3b3696a7062de8c259dd0d5f4a055fb48c0e2f921fee23ba26754",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/cabinet-seams.exr": "de3a954bc12f92b15cc7959d7346e2a69aa650da7e389622c5078165fe240bc8",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/cabinet-seams.png": "64dca5f7341a02bbd263cb26ccb408c19c5f6bcec895a9465777d88e1a536d12",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/chair-contact.exr": "00b18b116714f16a649f605170cb8785896f4e58681f808af4852c58367c4303",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/chair-contact.png": "a9ea593f532b099775a967a0d9277485c82451e1a5fc5fc62b897e8b7bee4229",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/chair-underside.exr": "d55aae9ed6ecbb8b40d4d23c2d97976b10f9f1e89041c88bd94aba3890e4ca52",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/chair-underside.png": "c1f24d91df5d967fc0ab826bc7535ef55f3cead84ce5fce503e422278b7b97bd",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/clutter-scale.exr": "23823fe16c22edda3cfa151f5a77d6567a8b38630afb375958642308446cef72",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/clutter-scale.png": "ae902e4b1511a2bfc8eb5a0aae6123f58138e8354e41ca021b51dbb09fd5f74f",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/fabric-folds.exr": "98f4ada08d331ff5b9bc0403980355f979e071ebbc758f6ca4c635ca9aea38ac",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/fabric-folds.png": "0e6551d1aa7d8529ba787226fd93a1e9b6fdf94a2c6c3e5e390c04d0fa0b6bc8",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/metal-response.exr": "f8dd8b1e817f19d9a5d9b8464d7a75b8481214e5148bdf35380183a87dc732d8",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/metal-response.png": "873fcfb4f37d5c8f6a8e0a92293d3a88fa7aa4882b47acf508f4da71120c7c78",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/room-door.exr": "b949b9d0bb930bc122032552e9d5a5dd3e6f2b725a0707b1351fe83598340ca1",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/room-door.png": "bc7ad9bd358728bfb8d90238c5b6ddab2f6639e27f35c2ab5bd1ee6ccf820876",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/room-north-west.exr": "7416a5c39e5a87fcd51caa1b25bf4bca097eac3a39c9a02d015f5bc3c9c6562c",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/room-north-west.png": "0e6a75a6ca9388dda0957318e0a0561a945be5db4e8b64da0986ba17972877c6",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/room-south-east.exr": "ffde85c8169f82720072e9391c5e131f59495ae4c8918a682f5bd992581c2f34",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/room-south-east.png": "ef4b7f93829b1b836a91a87c74b4f9907a9468dcdd9fbe107847e26dbe6ab7e8",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/room-window.exr": "924b15bab8dd30cc6ab5fbf7ec6bb0f647e7f6f40959fa7798db5479944afaf4",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/room-window.png": "37245ad1e06bfcc6c39382e0a00d2a420debc4a261387d71ae0408f71e32916d",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/table-edge.exr": "12ceec033032d1f7c91d4e719ce2e268e0109fd1ad10e20bf9103caaa4ff702e",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/table-edge.png": "32e633f891d563968b130233ecfedd3a97fc77be178629367b9c0290acb60b1d",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/window-recess.exr": "ddc6eb7b113139c71c84a453a106c3dba87ae6c1ecdc4f57cb8fef4956b2b8b8",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/window-recess.png": "d77a008542f3b71d07e3eec8b2fed0bbe108f953755a6a566356bf4ba1c743de",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/cabinet-seams.exr": "92ff2d37f299f3b01deac61fac04cfc7d0293549336c8f60c8fe9575e2ee7bea",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/cabinet-seams.png": "0f75585349663cbdf064814e5b055379024d250ae038cdb8f9d62164eca3f5df",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/chair-contact.exr": "d20ecf528431c120b536947e5d57e1876f32e27629ce6c9855024e0b924a1ee8",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/chair-contact.png": "71fce7d8ba840e5e7d977199db5d010f5fccd803d4b991aee56e7bdb58f5d385",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/chair-underside.exr": "922ad7d3d3dfcb042be7ad600391519a91d01ba1c4e40b89d6b85dd9ce9438d8",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/chair-underside.png": "972f39d2ab5b9b220a8a7d88a9f2e9523b5381a6fa24856d6455f7c38f1df86f",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/clutter-scale.exr": "dc43e3959a2b7be6dc59ec021358608d01cd215af3c7c313dd7828c37d7ceadf",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/clutter-scale.png": "5a7f370707ea55c432dc186ce27659a9a60270804cf7b156c8af2d763479f5d1",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/fabric-folds.exr": "cf36a4fd03ff83fa024f36c502aa55c5c17e9c5dc11454ac681c69cfe3424b79",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/fabric-folds.png": "b9936ea3cbcf1a2959dcdf129d69fbdca3a2294e89439959091e75e9f7973945",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/metal-response.exr": "0b8c6a15045232f86e8f75f47b5a74e35121b2a0b2b9a3b75e3b89f259af9dc7",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/metal-response.png": "d0e215b9e01102c589301021613092e72932e6a92d02380c401910d20253c12a",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/room-door.exr": "a8068c8dbe61e7615709abf3e92eb61ac5bc9b6251d950fad5e64a87966a7bc6",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/room-door.png": "f535d4db50b2a8eefd5ad67ce8dadb0f3e95473c01bd53dbfac28901190bd71e",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/room-north-west.exr": "06dd30346dde84cf1f4c1966d0040f242c2629581e8f163c2e325cde3eb8fe8d",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/room-north-west.png": "ab2dc515623551ce792d5a5840a17874ad885e6a70501efe6bbcede1b3a3790c",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/room-south-east.exr": "6a191d5da57a2dcd8daa192d2e2e98c33f97d6a60e012df7e8d2c5771f70c592",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/room-south-east.png": "00bed6e7f4214b78d2e4961991a83be10050c151446a6443280206d0484e230d",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/room-window.exr": "7d1c905613745e8f577093613e798e91ff0007f7c4a90fd8f5a348329e9598fd",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/room-window.png": "2ba9188e274bf373625c3a29c17c2dbb14836a48e71fad3b6c5a5d2964628aff",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/table-edge.exr": "862e3c10bcba1164388c0b3cab5f7d2ae1cdca141b7f027245fceea1d4c46b53",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/table-edge.png": "784d86d63a4acdc76d8bacd764ebbd5fda35b589538dd9e92be7807a7773f175",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/window-recess.exr": "a5d38f2a8559cb666650f8926d5ae3ed4c79d6e7bbedfbde41455dc2e9b83f71",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/window-recess.png": "74570ca3ef599f11f30af2d27458cabb1f039af1d6bb856832b77aba2c02abd5",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/cabinet-seams.exr": "ba665d9434d228e5fc262f0d872847f088c0518812a988f9c6e8e7d9f1f201e7",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/cabinet-seams.png": "f0d9e45a890c00e3958b064587897420626dba170a2857ab4620e3c83ae8f466",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/chair-contact.exr": "e721c13f64eba838e8fec438787473c89f4803ad793ec84edccecfefaff1dfdd",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/chair-contact.png": "d5b94707fb1dfc342f6e936900856a0e907d7d97c4f53c7435856b8f6f33c700",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/chair-underside.exr": "21f6c6d99f03ba2a3c6b27b6536f9b393ccce9353e4ca74b834a5ca610eb31e8",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/chair-underside.png": "27e589f903b71c168eddb4008d03a8ec26716888d6b7ba29b3b0ca06acd82a7a",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/clutter-scale.exr": "559f1d8f2cdaac559e35f806dfc7edb05f09b1350c7077d6e165447cc1ed1334",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/clutter-scale.png": "c257a644008d072018616784e3df463f28802dd0e9f41e3232a5e2ec210ab126",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/fabric-folds.exr": "7f5464b206943048be8fa0da8dcdd98b7314deee89200195a8509797415e40b9",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/fabric-folds.png": "e3f8f295b628cf8e2186c68e8a2c515a0af0e90fdf8fe17ce688be166eda4834",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/metal-response.exr": "a8c69ec63f1a37746d4ef9b554ac2a93df9b052b8594f9ebc43cc6b905a56d35",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/metal-response.png": "507d6ae629ff606808344eaecf7097dbe75e5b17fd1b2aeda8f31115db284659",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/room-door.exr": "5608338ed959b3565513e44246cf3e16ce4837964325d40b05ea2c21b887ad1d",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/room-door.png": "1e7e09be53160ecdb96e9005bb44f3898c068e4af5a9e5b977e5cd543952f04b",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/room-north-west.exr": "d2ccbdfbb8d827e9a7dd4176c5dbcb2ce70771853840581073e479e67905d925",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/room-north-west.png": "65ec249ef158caa637adcddea1a51a3953f151c9e6abf919e7a3ecc3dd45ab41",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/room-south-east.exr": "494a3ae9b88aae8e29afa0ab0f92f40b7894f0a3c99513ed36b9c96198e9faa3",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/room-south-east.png": "2fa8837caa064b3d58ce0fee8c8154881e2d8bbe0f3934e2ba5273d74b46e724",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/room-window.exr": "221c8af95a2b2f3530e0c19db631847ffa24131b0a040c22603184fa9077a1fa",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/room-window.png": "2fb9d510adc368ad678a2c7eb6cb9de2311ae8126b4c2ef862942456d2b64c48",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/table-edge.exr": "5225043e8b03c6c61b71f7f3ffc8f4831099d043b8404c44f958cf6f653d34c2",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/table-edge.png": "c1b22d492f6dd4b6cda490d488609b71ce340e1853c410f9fb1edda22ddd3f41",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/window-recess.exr": "c4306e6d5b03e949336c16e0c2462aed1ff9175b1c0dcf0ab64f3d00417c90bb",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/window-recess.png": "b9e4258d86fe8b06ebaacc69d954a54b324899a231f310e5a58a37ea98a9dbbb",
         "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-base/stills/cabinet-seams.exr": "6748d8be4378442f33104aa009a8241cbcbc7cc8d0b6d87d9a9a2526291052c4",
         "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-base/stills/cabinet-seams.png": "c4012d40fcb2af531e65f0be4882a3366420a3a07e56691bd0a7ce5caec223f8",
         "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-base/stills/chair-contact.exr": "a6b8ad85f23595bab5e53e23bf7823c56b1abe509a297e5ad3130a977eace4e3",
@@ -570,6 +2106,78 @@ export const EXPERIMENT_ONE_CYCLES_MEDIA_MANIFEST = Object.freeze({
         "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-base/stills/table-edge.png": "3d0e2f59f327fdbb1af89bf41df2c48703872e00e2ffed57e79056225ce26877",
         "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-base/stills/window-recess.exr": "b958e5d86d52f510a0059a56bcb83ba1bd3a68e1edec453adf42aa617e0df28b",
         "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-base/stills/window-recess.png": "49b627446f1f916184db7cf27c6a3d37847a2e913445ac34d45f37eedfb3c791",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/cabinet-seams.exr": "f6d5805cdb852176235fab8922db692a952ed4d0ee909c782025cb23907ca8dd",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/cabinet-seams.png": "1ad5e0c1a0e0ce92957e1838ce664d07ddd1396b2f733a89f564658577865c5d",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/chair-contact.exr": "03519ca5e379f2dfba67f37df485f9470a5efbfcc98a0ec6fbf55a7e5683e016",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/chair-contact.png": "1c1eefcfa1bb13969dd2b3c4d8626124c67737665b5227c41dcc2af45bce692b",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/chair-underside.exr": "e3aec90a37ef742742460a71bbc97cd1b021d5743f8e49666aecb6dc640416dd",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/chair-underside.png": "886a75c639accc1491eba7b533a185c65461a451d8feea4899ca02fc3264c82b",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/clutter-scale.exr": "bc1a8e03eb0ca23183d16a44a977c40785bfde180d76b6f6981418e2270b2e96",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/clutter-scale.png": "55ab9e603d3e4ca17ace55a794d805bc4b7cbbc03688059e89a10441db72a702",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/fabric-folds.exr": "a7245510b02fd59239a5bee72afcc1352bf22c7201a8da3bda5941081577dd00",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/fabric-folds.png": "78ae6622e6e0db8a66f9c11b3c905562865fa4a8408ab5c3e313055c12f0b5bf",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/metal-response.exr": "cf2809170aefdbac5d71cd88a6888ed58b23a3a0513df6eb51ebd394729c43a3",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/metal-response.png": "eb3444beb191d6f9827df965e9f5cd0def08289dbba84d48faae511727664eac",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/room-door.exr": "28c415cdd0112141f9609ba6355ac50a028f20ce4e0b315d095bf9d0ee5d4d58",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/room-door.png": "b61a72756b7906671fef833e851398138d7bc3043f901ce1a9060aaa85b27ab0",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/room-north-west.exr": "c49288e3e82c4197da492f7a9177bd9ee8a035c2bf9f45457164f35c5b2aae39",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/room-north-west.png": "048ddd13467e24a1af1bbae596a0071ca8fb2fca1e4542a0f2beec685c04dc57",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/room-south-east.exr": "8605e6d323b9a001c003489ef139eb172d48f543bfbcef14a03a3a5b9cfc3399",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/room-south-east.png": "0e3b4e86ecb5f191861e9af379da0bcf63400029c27a1515837d3209a3b37f60",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/room-window.exr": "35437b80ba9c28a55867686cc39f775c58555c88dde827e633da385ef8b3ddc2",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/room-window.png": "f40952ad27059c3d5a62bed735b2d430a3ccb1cf6b3dcd6866e9e76ee43b2131",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/table-edge.exr": "8aa3e69b446d5d48d500a27f9d1ca574788e2ff05a320f4041b33260cf7c77cb",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/table-edge.png": "dff2004059a6f01e47b0ace10fe8c39e239783ace5a1e0fd2012d9874a51b512",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/window-recess.exr": "697faf147db1bff2ddefe5e25adc6c61d75bfd211b74096d60e236e36239ec4d",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/window-recess.png": "3987fda9079bba38ffe2ba2fe3b8b9cfea35088ea6c3e255ea3ea55cf74ee2bc",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/cabinet-seams.exr": "d1b6f93ffba248e41447caec16f44ba5192b8d08c97ad8dc57e21c3faa5bc547",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/cabinet-seams.png": "81e5e58be2a75866accd4a0e85712dd6039b6271faaa1244c27128228994efe4",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/chair-contact.exr": "8da401858b8629d1e626778f0db833ee72a1e74a1bad4be1993c009258dd06c8",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/chair-contact.png": "dee4b2de71fddb58fac2e78bd0cb8303925b618e030933977a0051e37963e7bd",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/chair-underside.exr": "a76400c5c20c793a8b1e188be63cc12bdeeb3ebaac3352d26a27df41d3ad4755",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/chair-underside.png": "2d37a46a5255f64cefd0cd87e379f9ba79ec476d00d3dbe86ac3ed42060e3b7e",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/clutter-scale.exr": "66f05faf12191120baf0a7361234a19d8189c2245396a3c1ca7170b980275c3c",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/clutter-scale.png": "36d8bfd2bf7402ce59913645f4effade9af53a7e6787b50296f3e1a5d82ed3ee",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/fabric-folds.exr": "80e9d57a47208caa3e328ae3d42699cc920ed9d5128fc8d04e420831f622696a",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/fabric-folds.png": "228831678941a380f9b0cacf3b68317e50b29fef4dfdc1daa0591a1261115789",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/metal-response.exr": "7d1315aad0c4dd38890c45d859556028970085f5136f51f25e499264a8e07883",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/metal-response.png": "1cf6a0ef6dd985a541b9a38cd2b7eefa04d17f56ae53ad6c7064a47a08a9e894",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/room-door.exr": "871b711d1ea4274a76d65194686e3b6519f42ee2e29f6ede76e41a43b04431ad",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/room-door.png": "fd0ecadbd8a9718dab09a40e604b3e71045e9fddc15b7f8a460049ccdf397db2",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/room-north-west.exr": "38be7c20f905ab9818e356da4282232e50ee32bc3a3b77d79ff86f6ac7be1bc3",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/room-north-west.png": "4bc7c423fec31873b833a15e70366d6035b1fdd6e5ad0134cb71b24909a885a0",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/room-south-east.exr": "7fd2d9d660f0af572ba146e50e0881bcaf2653b19ef96c38ad2ffadbc2f4d0f9",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/room-south-east.png": "63d0fe42460ee6870e9c973e7e33f9ab2e093faf2170d3586ad0a84805851d97",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/room-window.exr": "1617babf20a61d356844968ec5a0fe508b8edcc0f801a8af0995256e2039993d",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/room-window.png": "d0175da7a4c834d6ced53242500347ec8b714f93792c71762c70b2c922ea23d7",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/table-edge.exr": "5295ba349daaf1c0cc5c4e91831110635349f59c7b90f8b80a96bf006213a2d7",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/table-edge.png": "b131b5f3a446f9fc25a455c3a8ecb3a953402364aa2e5d474ec9cd1fe50fe0eb",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/window-recess.exr": "0b05b0f76ccd4c0f3d2b2b2d9efcd4421c1de5df156504444ee85623f390001f",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/window-recess.png": "c08a4e3286ed23fb1100a5a2f1246462eb26e6bbc3973a4df0ee088f6ad1ed40",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/cabinet-seams.exr": "ec936a75f2c2e2699947529d8076588c16cbfcbd10c7bb8a2f7d43d576bc4d09",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/cabinet-seams.png": "188d88353bbbfa35b3c650d3399d175d8f422af2a709a8311a9c2ef5b0947dbd",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/chair-contact.exr": "72d9440ad300c3ece3e1e51a38bed1f4f9cf750d90edaec66b3d36f456e018ab",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/chair-contact.png": "76a15429df8f110a3f482274354f05d37743120b81fbd9e2e6fddb4b8790ec42",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/chair-underside.exr": "146f533571b8b4dcc4cf2381af144d14becbd4b150962c14b6ef7438a375a8d2",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/chair-underside.png": "46a769cc5a97896625f5a137112dfa619870383c86deb9de02d3958be482cf21",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/clutter-scale.exr": "a97f0aa9fac3ec751c40b70ea268629017dffcb76252ed49595477e776e88aa7",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/clutter-scale.png": "2da7c7edc556c53e3003a76e2e4e9be5bdf819395e8708553ed435a8b7e89cb9",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/fabric-folds.exr": "7c25e9290bdb313c5a376470850a60744035363726cdbcdd2507e9bcf50c3ffe",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/fabric-folds.png": "a800e103dac7453fa305c4da54c18c036767a0d01c05da64450f70e185009502",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/metal-response.exr": "6434a0cff744763cfbb92dc924c89e6f26a75a21640f89a6863b34290561d1fb",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/metal-response.png": "674b45ca05c28e13c17f09a28b85ad5e27cb42f02af2ea82b13f371a10e91601",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/room-door.exr": "9bbfc90036314174b6c98033019c9414c1a5797afcc13ebeb0d7035dc1166685",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/room-door.png": "3f0fa124499ed4b84720b905b6a91fc1e6d4614e4d366b241a7f6cc80d6b9eb5",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/room-north-west.exr": "d72898d0f1bcb0f027f2802e2f460e7262eb37ae54ba2923a7d13307c2d6b9e9",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/room-north-west.png": "1cb62521b2fac72462336ae7a1492ca0123e145b9ba2c247ea84b2e14fcea196",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/room-south-east.exr": "1f226f656c2bc6aa84588552d8b9ae7c07021961d097596529cda0cffa344780",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/room-south-east.png": "d6b32de1a24f9eba6e1f3735daff61c796dee0ee38969b7fca95fa83ae9ec8f2",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/room-window.exr": "16889047201f17a590f2d2a8162a3b5a75833230a0aabd9c75df0e96d50a3942",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/room-window.png": "97d443b44cf0c7babfeba37f1e4d8cbcbc7ddae39118f4fad23487c4fd2dc87c",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/table-edge.exr": "032afc25d8e2fdf3902e3969097c37fa7e0c1ebaf373d8fa3615e474e333ccfe",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/table-edge.png": "874599ffb972342c2dae34a8561552f957244ed05fbd4e4542944bcbcaed98d2",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/window-recess.exr": "166c036e8e59d3f9017a134837fba8c55518623b22214a406b016f9b418e23be",
+        "/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/window-recess.png": "40a6dfc5a943932f396122c79cde845d8ee55f7b8bbf3cdc8f40d8885832a2ce",
         "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-base/stills/cabinet-seams.exr": "1eeaa104020ea30d05cedb962e12d673ed2ad9604779684651d848f08c23a8dc",
         "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-base/stills/cabinet-seams.png": "5e211c0bbfffaf28ff96b59f1da0a593d0ce027664f69185d2418397c9a1329c",
         "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-base/stills/chair-contact.exr": "757efa42c4baa1beeb2869b0fda1c15bf8ce6b7ae46120e388242d76975a8fa7",
@@ -594,6 +2202,78 @@ export const EXPERIMENT_ONE_CYCLES_MEDIA_MANIFEST = Object.freeze({
         "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-base/stills/table-edge.png": "0a8acebfad98da19390459f27adef4845f899ba3d0cbb0357162777722c4b334",
         "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-base/stills/window-recess.exr": "8bc2dbbf411866282d7b06f31b693259a29bbb52427ab8bd8f7fdb2493fab99d",
         "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-base/stills/window-recess.png": "5906650a5c3942c157ec306285727cb12b3d75a63b55191e57d3ccf22b6531f3",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/cabinet-seams.exr": "d4251d3381440c0a68e347fc31c822e4066fe4cdb8a71b412a2f423ae2f97868",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/cabinet-seams.png": "45535cd62ed27f3154e02fe61fe951cc925d4e45d020ac95ce7dad45558265bd",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/chair-contact.exr": "5e0a07337788693a05746ae310820ffb91077c0071879c291b790e6494bc2d40",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/chair-contact.png": "9120d032340971600b774dabb4758e57a6f24803960dec550bba7a6760c0ebb6",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/chair-underside.exr": "4c5dfc2d0e03bc6643e420a387ccabbd743d2b426600885faffb52b6aae84223",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/chair-underside.png": "238e22a0070a58426eba87cd2ec508fe529bda883419b16461a3c3942a0c6e19",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/clutter-scale.exr": "8fcbeab9f5aa12a1911d2c19ce2483dfa8e57f9c25fdd639c477cc67585f1b4e",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/clutter-scale.png": "c098ddabf9214fc5f1c111083b468fe2f4402306930a608b3fdbb42ef46012b8",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/fabric-folds.exr": "2b067ef4da6390b55f6bff5b1394c0fdfd904736fe4f380c6208ddf75b5a3165",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/fabric-folds.png": "9e888434e62b99c74703601e46cab02b8f390160386854a8d25bb116c94d87ef",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/metal-response.exr": "fd42c073b09f19a1511abc7c8ed3dfa5042981648f640d9554722c8a13299bf8",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/metal-response.png": "b56e105be01e386a323b3d0dd187832af13dd1c7ecf384cf1a724d0b59c068ba",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/room-door.exr": "b1130a8b341b1cdb981a19c46e88b7e2d19e16b97095543b1cf585cdf31b06ad",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/room-door.png": "dddcafa7baf15b99fdf5272f47177d6ac31bc700a3e875055cc199b82fd04f60",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/room-north-west.exr": "17b280cf21a7c1a7c7e69fb509760271db4fac02fc056ffa7148b387bd59013a",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/room-north-west.png": "11e1c3fce4f0e6b5e43f38fe2c47cd563594bce17191cd77d7eedcfd05785e74",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/room-south-east.exr": "651d5c15f00510fc8edfbfe2e5d76004d98d8217859ed606f28a71f88876e501",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/room-south-east.png": "1072bde69ee0207451cbce4883d22a67453b54ea383df4ae639195c6fbb3cae1",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/room-window.exr": "4e90c4a864c3b2c8fdc6ab7c7448f803d293b02a77bd02c7a25ed0afdf49c114",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/room-window.png": "568c21d16d99e54e86eaed9a7db9c8457f774585f74b121fe4466263afe17968",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/table-edge.exr": "f6e9c5b7422860d6ddabcd92da8d7a36ec208b713603589475f982e3cc5c6ac5",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/table-edge.png": "a7258664eb79ed97098c3733664da092a5b6af6edce359c17df529970dcbba18",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/window-recess.exr": "ed188f6753e047f0f8663869a824407cbdf50c3bfc12addb468d1047f782b983",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/window-recess.png": "58299aa94daa2ba719363084304b97d27eec83b750ab469a91e2d001e7a48a46",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/cabinet-seams.exr": "519b6d235897eb2a1fb85a2e25fefdeaa221c62df52ac478f8b2e84adcc24643",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/cabinet-seams.png": "3b728ffe029ecd6250c509e58ed46d99c48c4dae3d228243c932da2db9513520",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/chair-contact.exr": "6d95700ffa0d4fca6a888f18efbf4d2696e7f2b286543fbe0046d53488a54ed9",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/chair-contact.png": "18da0a06b8255384aab76a8f3c81c625956816ba23da7e78540f57f12094d5d5",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/chair-underside.exr": "c628a4242a0f05f33669d82a81468b8666a8aa2701b519732c38145536a1d6d1",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/chair-underside.png": "98b2f0f7e621f5eb537d2d5c90f53348dfc0becacc803ce14d0a19833097bb0d",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/clutter-scale.exr": "77e200e27c5e5ba35fdad81875d214c9c46f7959ff77b878d4915a19a7583aed",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/clutter-scale.png": "146f31d7f7c16bf0c2551a35fb868609df1b076c894fcfd4440d320094c6c52e",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/fabric-folds.exr": "fa0db558c578ec075c448dba808ac65f2f87d06c829f205f54a531c5f5e27935",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/fabric-folds.png": "f72bfe8a7b147b63074978095e2cbdc2528c848b615e404dad02d9fb4a58fcf0",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/metal-response.exr": "9b84001bf4e3cca62dff256e10e8bb172b89400eca4658015542e891ff0fc557",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/metal-response.png": "072d883c8b969ac4d94e8659a68431f60acacf4550dfcf6cd45cbcd825715691",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/room-door.exr": "d2e3f0f2cb49700b7d9a056a9c9de15013b51e894cbaf1d1cf75054d039a7847",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/room-door.png": "50e1fe5c0f683800c32a16001ac3e3042b1c3c7b8723ef96a2738a972e0cd26e",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/room-north-west.exr": "913cfc6a2b1c331427c65a7280e2cd369ab48301956c76db9088305fce040544",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/room-north-west.png": "34598d4b37964b617c4fcd46be6795e1a5d2501bf7ca02395136346b17112dfe",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/room-south-east.exr": "1c03407ff276bc5d1de37343c9f9b0b0002da8191d8ad27874757a13a1a16101",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/room-south-east.png": "9747be4a026f0060ee647053fe0b9b42dc1c91f08ae4bdeefc5942758c2a5dae",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/room-window.exr": "318a724860e75af1d1c77b91825bcdee31b2c87f7d6da04aa4a81753bc1bb41c",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/room-window.png": "be0684283f929c23f5644c9580c5c18df520bc1f76d19626adc9338adcff97b0",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/table-edge.exr": "69478312447e01adaf45f57c117c3186beb75e166570b75368645d5071a63473",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/table-edge.png": "c138d1e131da949393b71a29bad1599e823e2c5a0d0fd873ee92e238982c5955",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/window-recess.exr": "697574e2de9414e665ea54996633b29e260224d4110e326722de8f050870ab8c",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/window-recess.png": "93ef9d90eeb5bd7bd2087cca8879cd3464240dd49cfa234d0318ceb3406a4ebe",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/cabinet-seams.exr": "75cc554bd69a4a2e94c412c6e5126a953192be90d81061ed5a44ca76b5d9b86f",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/cabinet-seams.png": "9b1813edd287f6e41e97360052edd7b2c7421eb690db5b3c881a115495d04212",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/chair-contact.exr": "99ceda2e747cc8863e9d4be7cadc841f46e1bd687f059aaf76f89c97da5c3162",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/chair-contact.png": "5835ea87cd29f562dd8fa7c956daa015d0a00c66d79a90c2e49d8d0d77e99c36",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/chair-underside.exr": "386bae4e9fc644dc1c20e2429e834b151a5f628f7d9dd6b701aa10f44318bdb0",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/chair-underside.png": "3651b9182096d54316a9008d02d710ce969d5856dbf1c2866dab08f4a8db5766",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/clutter-scale.exr": "f300d45bf5e7300c0913988a2cdda5a2de360240867f7ff548cd0b084a520f92",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/clutter-scale.png": "ce2c23e93a4ad32dbd5f2ccb631e9221334fe09d67775dc8443a5bec36603fef",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/fabric-folds.exr": "811972f1357652e02def93e12c9683a4b20f41b1eebd8962c13d9f743b9ef1c3",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/fabric-folds.png": "5b2532214227290ab4c04fe9adc4aa68a52adb38dd2a85b6036ec90190c0e205",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/metal-response.exr": "0b8c815dcdb2941cee322c22d906785fdbd5937d38ae0cee5ee29f7796f068d4",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/metal-response.png": "46950f654f153209f265b539af8281ec697dd0bc1b3b9ef20ce351ee41b35cae",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/room-door.exr": "e7429d4f71fcf52f1f45aabeba4c2f334f6b94b9030585443cdd7841350a946e",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/room-door.png": "d70f918718076bfdd04548ea01b0f2f9e8a6596471f12156bccff7bbae35bed9",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/room-north-west.exr": "556a29463737b3bcfb323febcef2d66174a3abc4f835aa81a557bd6962faa578",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/room-north-west.png": "db975cd810f4256f753a7ebc521fd541ba239cc26d68c93878fa1ec90d1ec8a5",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/room-south-east.exr": "173150918a510b3d1f92bb25f118c6e7cc57946c409bff18ecee540550b20813",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/room-south-east.png": "da1fba8b411714a348a382927cd951df776584fc5f3914aeed075c65ba1454ab",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/room-window.exr": "77fc488a3af9826dfd1bfe5a3521f9d475d6951017e6c6b44bb83230da6d8c38",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/room-window.png": "864650da40cc7080d0726a8b84405d3937da6b0d342ad01b0305962140e450b8",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/table-edge.exr": "f8f013fcf203e54ef5b82ef33ececf899f18f2b7adcf219f88d171e3a36a548f",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/table-edge.png": "fabcd7e2d711e67549f85e4f3a5b3ed5aa32612c92aec817ec26e98a35d41a36",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/window-recess.exr": "c83703e3df4f0f31c36aab0c607b3d3380b00ecca3fb68907638b73e741be221",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/window-recess.png": "e23a85d5c68778be127357718e582fbbc5a6b4bcf704d518bb784b3ebe644559",
         "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-base/stills/cabinet-seams.exr": "29b80917e4d103e255ffff0691469b46605d90e48e2500ae6b1856d4d5f87822",
         "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-base/stills/cabinet-seams.png": "ea8818f52e9750018bc96047d8b55121e0d3ddd9817b5f81f60c25b87df76995",
         "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-base/stills/chair-contact.exr": "9b0931af6bdb8abe81c4b102165040b66fbdcefaefd430013d6c8fb9588c5d67",
@@ -617,6 +2297,78 @@ export const EXPERIMENT_ONE_CYCLES_MEDIA_MANIFEST = Object.freeze({
         "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-base/stills/table-edge.exr": "3d2d11cc6de9041c1d54b85049a98c55b6664aca6aaf1650dfb9c0729424b7f0",
         "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-base/stills/table-edge.png": "f34047fd6b6099d2dc617c6bea097c8d84071c20376a06bab920c1e033d76e0e",
         "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-base/stills/window-recess.exr": "53c6edf01c3bc5559751b7e7846d77a0b4d2e61aa24e187256173bb4fefdeed0",
-        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-base/stills/window-recess.png": "9b945f30aa4bad4e6302fd5c19141223669563e0eccee330f9f7ba8c62819318"
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-base/stills/window-recess.png": "9b945f30aa4bad4e6302fd5c19141223669563e0eccee330f9f7ba8c62819318",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/cabinet-seams.exr": "e773651a6e16d821250c49e85e9773ec8bd20cfe6c15b1e90db416d530cfc1f2",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/cabinet-seams.png": "3052e0a2e6d96d03a070e64479a065433bb49a86fe8dedbb9b91552c2bfe0591",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/chair-contact.exr": "1854657a39a5f0e1a17f2cab3cb220f180adc6c638d7fc3fe29368f7cd40a499",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/chair-contact.png": "0a3437490c75262406b00dd1f68bd78854cc09f89f22dd0fedb70483526e3702",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/chair-underside.exr": "bf0d9e781789c5a4ba7b4fea5f5b312ac3655f10a2ee1706f59fb3e8a024b7d0",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/chair-underside.png": "d3923b028514b8ec0865de9dbd9e62626a20214162e3f746f27287ca72cfdadb",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/clutter-scale.exr": "9246ccfb0d230dacf076cfad7be071562a0287760dd664014ee82f21587c459d",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/clutter-scale.png": "0be41047651522a2407a0a8c4d6be165c1974244a3887df7278fd7679ebed2b3",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/fabric-folds.exr": "b60e2e8b485bbf5d3dd5cf4b6ab20b28b638cea72057f727a39655fa5e2a8f7e",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/fabric-folds.png": "cf84f9bfce00361d5afb83628203a0933963cf54b634d7973c4829455cf2cf36",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/metal-response.exr": "21f7d18c16781919a17778aace451f7f3b14befff5c008227235d4d2d1cb49d9",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/metal-response.png": "16a0d0682263a9f1f7ae510b8df5a06c75f32033911c4eb836f04e5e0c3a9a3b",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/room-door.exr": "03daffdba5ce52e0329f3402ba987d3bd63595a52a4184b44b77eca4d003e308",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/room-door.png": "87ed15a73a6136c5ff90516f7bd1303dfcc56a2e178e0a849b45c14d936f6add",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/room-north-west.exr": "8ac599ab47e292994081fa56bbdd8c43227220eb43735627dc83b791445a336e",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/room-north-west.png": "e4f0e71060721fbc22764781fe548c23dae17a1ba81b3691d4b252a7cdce4dc4",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/room-south-east.exr": "07ec27cb878d83c9a4d489b29b34fd8371b046555b2f0ad27379eb71409a91b3",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/room-south-east.png": "e739a3c4aa14949c468a3b49ab25fb58076964adaa74c2de9b81539d0b01ee76",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/room-window.exr": "c915c8341cc053e9de1989febc8a9c59cd7a3f07193778aa98aa9c24e58fe03a",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/room-window.png": "dd6d88fc0339acc085957b185d4632afa93a866a4e24b9b586fa8ac0daad84c5",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/table-edge.exr": "95f289f184b3c90e0e16d0b730547c44278757521a0d83b45677e3a2ac61ad07",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/table-edge.png": "066db04984b729982476c2b425e102e8bfe3a1f97682714ce7ae8072e7f3adc6",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/window-recess.exr": "ef73f08089433357951c9a80f473e404d80f291fa205fc1ffcb671319568aa69",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/window-recess.png": "067fbb314c2b2a6487c6c8f7644bcf353b48a03e6af272c22043008e543eff93",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/cabinet-seams.exr": "6eb90272732ac93d7c8d43ceb5e78b9416c23e202dc6b903eeb4f3a82e89facf",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/cabinet-seams.png": "02dce631ed018f5a7e488047b29a2c0cfb3f6195676c630f577a5a2e74f83de2",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/chair-contact.exr": "2e164de2b48baca55bb194ba81c21c228774591e5412ad57554dfc180f4e5ff5",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/chair-contact.png": "acb826152caa43de32621d4082edb8bfb7d8df376b45c4c4e04ec508205a28a8",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/chair-underside.exr": "f2c05c8ee4607b95b3240123592ed7f499cf6229fa900943661fe4f8e5ec5b31",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/chair-underside.png": "37ce179eafaf058fcd96603c39f01e5a7af6bfd47d4861cd5434972cd7956707",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/clutter-scale.exr": "854120a3c5a3f5b1d6405179e5a9f51592e18c42e3081e6a78e1de396f2f7118",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/clutter-scale.png": "02faa4efb1e406aaaf9448802ebf0bd42720a9727dd1923a46482faa87dda94c",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/fabric-folds.exr": "fd1153cf82a53f140ca7460a24ef5103f8a5a77cbb785408016a113d9c5cf7c0",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/fabric-folds.png": "5fb89c99807ef9184c8ae29a441db9953b69910fbf19d21d24ba565822565d18",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/metal-response.exr": "c3169b02ee71a70b3ec069c0071439747d965a814b9c9c5d698e2485db8b0ff4",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/metal-response.png": "ddfc0ab8d6ca66dc9488caa5e981de06615353b0093fe12a3f18347214c10606",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/room-door.exr": "eba2e6a6cf169d70633962b3d700e49379e4479e571c7d565190352a3bc88656",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/room-door.png": "5abdb761c06cab17c469acc2946f70760735fcaf6e555607c94f4dc269361121",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/room-north-west.exr": "33bacc3a3ef7ae3d72478c217ba44a5d0ddcb21a460d921aa861151ce300191e",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/room-north-west.png": "13e2dc57a9569e6c26ed18ed5cfbf66f185b170ad1737970105c63f5e5b955ff",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/room-south-east.exr": "5740e7ee797cefaf5e53b3f4bbd64e8ffcd4de081fdad41754ccd4539f0e82bd",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/room-south-east.png": "274119582a3de410f3516c01cfc9d24e14ec3f369663c2bc06be57e0eb1ad790",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/room-window.exr": "0e997addb4647708ef7ca521f227b754a13b8e17ac0f1c7816d296a5b411fe81",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/room-window.png": "8eda6d37481d94b83b360891c19f6681bebf57ebc2510470c47792db56a92272",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/table-edge.exr": "94a313bee1388ef5026d9f107e38dbc8d659d93e07280e90653b54c658a7e76a",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/table-edge.png": "aefe0bb923b8f8ee335bf56a6a3d507acde5bdf30d4337542117c6675ad12e15",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/window-recess.exr": "c3d7ffea5350bccd5c476415dd273d6750666295f767c5ea92e744fafd3741db",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/window-recess.png": "f2e2ae97fec71e0a5761db38761868f3532c9617ccfcb992ed00175f411203eb",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/cabinet-seams.exr": "985d072a30e3319cdfee0a8ce0583922bb1f6013f1eb823b9ca28e61b2bcd846",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/cabinet-seams.png": "c27835c9b44b10dca53484e6c6ebb40a1dd340d6895a5c3c65a06d7171d767b9",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/chair-contact.exr": "d972f2a2f2f003d73f317d54c85c890938e308be74c48d98d4029c95c398ab3a",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/chair-contact.png": "a0a1dacf2ce125d5012db9c2f1e31677ff27d1d60770d2a8a8f387409fa11029",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/chair-underside.exr": "5f7dbdbd77d30521a4ecd082a0aebfc7153a6df63f987cf538915fa78124cf21",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/chair-underside.png": "4071bd4486b4b88fecc32310dcc1d015e988f32f9301d71499250e7184798ff2",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/clutter-scale.exr": "7923d83fb3a564a3404bf3292ef1811d65ca630dc2e3db3d5f90a5c73bb5e479",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/clutter-scale.png": "1ae863f883c1c451b2578ce5f9c46ebaf9d8f2c0654fd23f6be0fc860cbbc9ab",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/fabric-folds.exr": "a5b6f26c3fa4bc9e72935802cdca9813302d9a7fde793744ec7a0d1cd6a2c042",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/fabric-folds.png": "8b9dffe580b4d7efb7a26ee5c9611c001ac343af1984b2e3ea87bef48544a3b7",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/metal-response.exr": "f38020e962259f645859e4e2bd2cbf8b0d2c258f474b42a9d497b4eef0742317",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/metal-response.png": "89453105ffd128b8c5e67af9c9ee0d2d6c994a0c8d7802bbc6a16434a62f8503",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/room-door.exr": "c87aadffec9dc8738cec510f90394eb4f9ca43df197def74cec631efc174f393",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/room-door.png": "778bf76d2d3ef9ee0e8f1cf12cef307e950499d872a45479e74b07b7ed0b1875",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/room-north-west.exr": "7778dafbff1f58fd2dee666917c5d39898b75dc0273ea7928c661981643e1baf",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/room-north-west.png": "8f0228a7096b923f680e78f248cbf76f0d53968f0f1d5d68314582e3404c8935",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/room-south-east.exr": "3bbc4a01704546c06d3a12637fbf05754ec9ba2fab6ffc95d39469b8821fda38",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/room-south-east.png": "0484a54dae070d1e280a437f6edc5e551dd649acf7e5c39c601743f2073360b8",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/room-window.exr": "fe3eb775d53edf05a800c9fed1068cc6920e08a6338459b067b8551ae7a0c3d1",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/room-window.png": "f73f31069375792d709a17500bf36b65d40fe85bf2fce75bf7e2c4e10cf0ca85",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/table-edge.exr": "b862648fe646e7544a45b4d24c55c171f195579f7fc9cbd62d2fc9f2bd8ac5fc",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/table-edge.png": "8fd8e7c763ed8bf767ffef11e08409e4798acd23eabd1df8e74beedc794a3b64",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/window-recess.exr": "9d1dcd04322cb8218ac6b238623b4927790b54bcb8330ea9a7682b563dd203d5",
+        "/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/window-recess.png": "7d2e0b0136465ce9785721091a3f3fb2cda7b986524d079411cb9f648aaf4df8"
     }
 });

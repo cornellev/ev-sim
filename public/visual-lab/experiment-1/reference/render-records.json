@@ -140,6 +140,372 @@
       ]
     },
     {
+      "id": "b2-cycles-ordinary-environment-chair-translated",
+      "candidateId": "b2-cycles",
+      "conditionId": "ordinary-environment",
+      "editVariantId": "chair-translated",
+      "includePaths": false,
+      "rendererSettings": {
+        "engine": "cycles",
+        "samples": 512,
+        "denoising": false,
+        "seed": 4831,
+        "device": "GPU",
+        "bounces": {
+          "max": 10,
+          "diffuse": 4,
+          "glossy": 4,
+          "transmission": 4,
+          "transparent": 4,
+          "volume": 0
+        },
+        "viewTransform": "AgX",
+        "look": "AgX - Medium High Contrast"
+      },
+      "lightingSettings": {
+        "world": {
+          "colorLinearRgb": [
+            0.055,
+            0.065,
+            0.08
+          ],
+          "strength": 0.12
+        },
+        "lights": [
+          {
+            "id": "room-key",
+            "type": "area-disk",
+            "position": [
+              -1.7,
+              2.62,
+              -1.45
+            ],
+            "target": [
+              0.35,
+              1.1,
+              0.15
+            ],
+            "energyW": 760,
+            "colorLinearRgb": [
+              1,
+              0.91,
+              0.78
+            ],
+            "sizeM": 1.25
+          },
+          {
+            "id": "room-fill",
+            "type": "area-disk",
+            "position": [
+              2.35,
+              2.35,
+              1.35
+            ],
+            "target": [
+              0,
+              1,
+              0
+            ],
+            "energyW": 310,
+            "colorLinearRgb": [
+              0.67,
+              0.78,
+              1
+            ],
+            "sizeM": 1.5
+          },
+          {
+            "id": "lamp-light",
+            "type": "point",
+            "position": [
+              -2.12,
+              1.72,
+              1.58
+            ],
+            "energyW": 105,
+            "colorLinearRgb": [
+              1,
+              0.58,
+              0.31
+            ],
+            "radiusM": 0.18
+          }
+        ]
+      },
+      "displayFiles": [
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/room-north-west.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/room-south-east.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/room-window.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/room-door.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/table-edge.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/chair-contact.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/chair-underside.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/cabinet-seams.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/fabric-folds.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/metal-response.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/window-recess.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/clutter-scale.png"
+      ],
+      "linearFiles": [
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/room-north-west.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/room-south-east.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/room-window.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/room-door.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/table-edge.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/chair-contact.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/chair-underside.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/cabinet-seams.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/fabric-folds.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/metal-response.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/window-recess.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-translated/stills/clutter-scale.exr"
+      ]
+    },
+    {
+      "id": "b2-cycles-ordinary-environment-chair-rotated",
+      "candidateId": "b2-cycles",
+      "conditionId": "ordinary-environment",
+      "editVariantId": "chair-rotated",
+      "includePaths": false,
+      "rendererSettings": {
+        "engine": "cycles",
+        "samples": 512,
+        "denoising": false,
+        "seed": 4831,
+        "device": "GPU",
+        "bounces": {
+          "max": 10,
+          "diffuse": 4,
+          "glossy": 4,
+          "transmission": 4,
+          "transparent": 4,
+          "volume": 0
+        },
+        "viewTransform": "AgX",
+        "look": "AgX - Medium High Contrast"
+      },
+      "lightingSettings": {
+        "world": {
+          "colorLinearRgb": [
+            0.055,
+            0.065,
+            0.08
+          ],
+          "strength": 0.12
+        },
+        "lights": [
+          {
+            "id": "room-key",
+            "type": "area-disk",
+            "position": [
+              -1.7,
+              2.62,
+              -1.45
+            ],
+            "target": [
+              0.35,
+              1.1,
+              0.15
+            ],
+            "energyW": 760,
+            "colorLinearRgb": [
+              1,
+              0.91,
+              0.78
+            ],
+            "sizeM": 1.25
+          },
+          {
+            "id": "room-fill",
+            "type": "area-disk",
+            "position": [
+              2.35,
+              2.35,
+              1.35
+            ],
+            "target": [
+              0,
+              1,
+              0
+            ],
+            "energyW": 310,
+            "colorLinearRgb": [
+              0.67,
+              0.78,
+              1
+            ],
+            "sizeM": 1.5
+          },
+          {
+            "id": "lamp-light",
+            "type": "point",
+            "position": [
+              -2.12,
+              1.72,
+              1.58
+            ],
+            "energyW": 105,
+            "colorLinearRgb": [
+              1,
+              0.58,
+              0.31
+            ],
+            "radiusM": 0.18
+          }
+        ]
+      },
+      "displayFiles": [
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/room-north-west.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/room-south-east.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/room-window.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/room-door.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/table-edge.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/chair-contact.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/chair-underside.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/cabinet-seams.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/fabric-folds.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/metal-response.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/window-recess.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/clutter-scale.png"
+      ],
+      "linearFiles": [
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/room-north-west.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/room-south-east.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/room-window.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/room-door.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/table-edge.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/chair-contact.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/chair-underside.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/cabinet-seams.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/fabric-folds.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/metal-response.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/window-recess.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-chair-rotated/stills/clutter-scale.exr"
+      ]
+    },
+    {
+      "id": "b2-cycles-ordinary-environment-light-moved",
+      "candidateId": "b2-cycles",
+      "conditionId": "ordinary-environment",
+      "editVariantId": "light-moved",
+      "includePaths": false,
+      "rendererSettings": {
+        "engine": "cycles",
+        "samples": 512,
+        "denoising": false,
+        "seed": 4831,
+        "device": "GPU",
+        "bounces": {
+          "max": 10,
+          "diffuse": 4,
+          "glossy": 4,
+          "transmission": 4,
+          "transparent": 4,
+          "volume": 0
+        },
+        "viewTransform": "AgX",
+        "look": "AgX - Medium High Contrast"
+      },
+      "lightingSettings": {
+        "world": {
+          "colorLinearRgb": [
+            0.055,
+            0.065,
+            0.08
+          ],
+          "strength": 0.12
+        },
+        "lights": [
+          {
+            "id": "room-key",
+            "type": "area-disk",
+            "position": [
+              2.4,
+              2.5,
+              -1.8
+            ],
+            "target": [
+              0,
+              0.9,
+              0
+            ],
+            "energyW": 760,
+            "colorLinearRgb": [
+              1,
+              0.91,
+              0.78
+            ],
+            "sizeM": 1.25
+          },
+          {
+            "id": "room-fill",
+            "type": "area-disk",
+            "position": [
+              2.35,
+              2.35,
+              1.35
+            ],
+            "target": [
+              0,
+              1,
+              0
+            ],
+            "energyW": 310,
+            "colorLinearRgb": [
+              0.67,
+              0.78,
+              1
+            ],
+            "sizeM": 1.5
+          },
+          {
+            "id": "lamp-light",
+            "type": "point",
+            "position": [
+              -2.12,
+              1.72,
+              1.58
+            ],
+            "energyW": 105,
+            "colorLinearRgb": [
+              1,
+              0.58,
+              0.31
+            ],
+            "radiusM": 0.18
+          }
+        ]
+      },
+      "displayFiles": [
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/room-north-west.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/room-south-east.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/room-window.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/room-door.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/table-edge.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/chair-contact.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/chair-underside.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/cabinet-seams.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/fabric-folds.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/metal-response.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/window-recess.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/clutter-scale.png"
+      ],
+      "linearFiles": [
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/room-north-west.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/room-south-east.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/room-window.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/room-door.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/table-edge.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/chair-contact.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/chair-underside.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/cabinet-seams.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/fabric-folds.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/metal-response.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/window-recess.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-ordinary-environment-light-moved/stills/clutter-scale.exr"
+      ]
+    },
+    {
       "id": "b2-cycles-directional-challenge-base",
       "candidateId": "b2-cycles",
       "conditionId": "directional-challenge",
@@ -259,6 +625,372 @@
         "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-base/stills/metal-response.exr",
         "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-base/stills/window-recess.exr",
         "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-base/stills/clutter-scale.exr"
+      ]
+    },
+    {
+      "id": "b2-cycles-directional-challenge-chair-translated",
+      "candidateId": "b2-cycles",
+      "conditionId": "directional-challenge",
+      "editVariantId": "chair-translated",
+      "includePaths": false,
+      "rendererSettings": {
+        "engine": "cycles",
+        "samples": 512,
+        "denoising": false,
+        "seed": 4831,
+        "device": "GPU",
+        "bounces": {
+          "max": 10,
+          "diffuse": 4,
+          "glossy": 4,
+          "transmission": 4,
+          "transparent": 4,
+          "volume": 0
+        },
+        "viewTransform": "AgX",
+        "look": "AgX - Medium High Contrast"
+      },
+      "lightingSettings": {
+        "world": {
+          "colorLinearRgb": [
+            0.055,
+            0.065,
+            0.08
+          ],
+          "strength": 0.035
+        },
+        "lights": [
+          {
+            "id": "room-key",
+            "type": "area-disk",
+            "position": [
+              -1.7,
+              2.62,
+              -1.45
+            ],
+            "target": [
+              0.35,
+              1.1,
+              0.15
+            ],
+            "energyW": 1450,
+            "colorLinearRgb": [
+              1,
+              0.91,
+              0.78
+            ],
+            "sizeM": 0.42
+          },
+          {
+            "id": "room-fill",
+            "type": "area-disk",
+            "position": [
+              2.35,
+              2.35,
+              1.35
+            ],
+            "target": [
+              0,
+              1,
+              0
+            ],
+            "energyW": 45,
+            "colorLinearRgb": [
+              0.67,
+              0.78,
+              1
+            ],
+            "sizeM": 1.5
+          },
+          {
+            "id": "lamp-light",
+            "type": "point",
+            "position": [
+              -2.12,
+              1.72,
+              1.58
+            ],
+            "energyW": 65,
+            "colorLinearRgb": [
+              1,
+              0.58,
+              0.31
+            ],
+            "radiusM": 0.18
+          }
+        ]
+      },
+      "displayFiles": [
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/room-north-west.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/room-south-east.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/room-window.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/room-door.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/table-edge.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/chair-contact.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/chair-underside.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/cabinet-seams.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/fabric-folds.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/metal-response.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/window-recess.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/clutter-scale.png"
+      ],
+      "linearFiles": [
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/room-north-west.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/room-south-east.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/room-window.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/room-door.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/table-edge.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/chair-contact.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/chair-underside.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/cabinet-seams.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/fabric-folds.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/metal-response.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/window-recess.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-translated/stills/clutter-scale.exr"
+      ]
+    },
+    {
+      "id": "b2-cycles-directional-challenge-chair-rotated",
+      "candidateId": "b2-cycles",
+      "conditionId": "directional-challenge",
+      "editVariantId": "chair-rotated",
+      "includePaths": false,
+      "rendererSettings": {
+        "engine": "cycles",
+        "samples": 512,
+        "denoising": false,
+        "seed": 4831,
+        "device": "GPU",
+        "bounces": {
+          "max": 10,
+          "diffuse": 4,
+          "glossy": 4,
+          "transmission": 4,
+          "transparent": 4,
+          "volume": 0
+        },
+        "viewTransform": "AgX",
+        "look": "AgX - Medium High Contrast"
+      },
+      "lightingSettings": {
+        "world": {
+          "colorLinearRgb": [
+            0.055,
+            0.065,
+            0.08
+          ],
+          "strength": 0.035
+        },
+        "lights": [
+          {
+            "id": "room-key",
+            "type": "area-disk",
+            "position": [
+              -1.7,
+              2.62,
+              -1.45
+            ],
+            "target": [
+              0.35,
+              1.1,
+              0.15
+            ],
+            "energyW": 1450,
+            "colorLinearRgb": [
+              1,
+              0.91,
+              0.78
+            ],
+            "sizeM": 0.42
+          },
+          {
+            "id": "room-fill",
+            "type": "area-disk",
+            "position": [
+              2.35,
+              2.35,
+              1.35
+            ],
+            "target": [
+              0,
+              1,
+              0
+            ],
+            "energyW": 45,
+            "colorLinearRgb": [
+              0.67,
+              0.78,
+              1
+            ],
+            "sizeM": 1.5
+          },
+          {
+            "id": "lamp-light",
+            "type": "point",
+            "position": [
+              -2.12,
+              1.72,
+              1.58
+            ],
+            "energyW": 65,
+            "colorLinearRgb": [
+              1,
+              0.58,
+              0.31
+            ],
+            "radiusM": 0.18
+          }
+        ]
+      },
+      "displayFiles": [
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/room-north-west.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/room-south-east.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/room-window.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/room-door.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/table-edge.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/chair-contact.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/chair-underside.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/cabinet-seams.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/fabric-folds.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/metal-response.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/window-recess.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/clutter-scale.png"
+      ],
+      "linearFiles": [
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/room-north-west.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/room-south-east.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/room-window.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/room-door.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/table-edge.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/chair-contact.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/chair-underside.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/cabinet-seams.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/fabric-folds.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/metal-response.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/window-recess.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-chair-rotated/stills/clutter-scale.exr"
+      ]
+    },
+    {
+      "id": "b2-cycles-directional-challenge-light-moved",
+      "candidateId": "b2-cycles",
+      "conditionId": "directional-challenge",
+      "editVariantId": "light-moved",
+      "includePaths": false,
+      "rendererSettings": {
+        "engine": "cycles",
+        "samples": 512,
+        "denoising": false,
+        "seed": 4831,
+        "device": "GPU",
+        "bounces": {
+          "max": 10,
+          "diffuse": 4,
+          "glossy": 4,
+          "transmission": 4,
+          "transparent": 4,
+          "volume": 0
+        },
+        "viewTransform": "AgX",
+        "look": "AgX - Medium High Contrast"
+      },
+      "lightingSettings": {
+        "world": {
+          "colorLinearRgb": [
+            0.055,
+            0.065,
+            0.08
+          ],
+          "strength": 0.035
+        },
+        "lights": [
+          {
+            "id": "room-key",
+            "type": "area-disk",
+            "position": [
+              2.4,
+              2.5,
+              -1.8
+            ],
+            "target": [
+              0,
+              0.9,
+              0
+            ],
+            "energyW": 1450,
+            "colorLinearRgb": [
+              1,
+              0.91,
+              0.78
+            ],
+            "sizeM": 0.42
+          },
+          {
+            "id": "room-fill",
+            "type": "area-disk",
+            "position": [
+              2.35,
+              2.35,
+              1.35
+            ],
+            "target": [
+              0,
+              1,
+              0
+            ],
+            "energyW": 45,
+            "colorLinearRgb": [
+              0.67,
+              0.78,
+              1
+            ],
+            "sizeM": 1.5
+          },
+          {
+            "id": "lamp-light",
+            "type": "point",
+            "position": [
+              -2.12,
+              1.72,
+              1.58
+            ],
+            "energyW": 65,
+            "colorLinearRgb": [
+              1,
+              0.58,
+              0.31
+            ],
+            "radiusM": 0.18
+          }
+        ]
+      },
+      "displayFiles": [
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/room-north-west.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/room-south-east.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/room-window.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/room-door.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/table-edge.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/chair-contact.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/chair-underside.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/cabinet-seams.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/fabric-folds.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/metal-response.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/window-recess.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/clutter-scale.png"
+      ],
+      "linearFiles": [
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/room-north-west.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/room-south-east.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/room-window.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/room-door.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/table-edge.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/chair-contact.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/chair-underside.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/cabinet-seams.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/fabric-folds.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/metal-response.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/window-recess.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b2-cycles/b2-cycles-directional-challenge-light-moved/stills/clutter-scale.exr"
       ]
     },
     {
@@ -384,6 +1116,372 @@
       ]
     },
     {
+      "id": "b3-cycles-ordinary-environment-chair-translated",
+      "candidateId": "b3-cycles",
+      "conditionId": "ordinary-environment",
+      "editVariantId": "chair-translated",
+      "includePaths": false,
+      "rendererSettings": {
+        "engine": "cycles",
+        "samples": 512,
+        "denoising": false,
+        "seed": 4831,
+        "device": "GPU",
+        "bounces": {
+          "max": 10,
+          "diffuse": 4,
+          "glossy": 4,
+          "transmission": 4,
+          "transparent": 4,
+          "volume": 0
+        },
+        "viewTransform": "AgX",
+        "look": "AgX - Medium High Contrast"
+      },
+      "lightingSettings": {
+        "world": {
+          "colorLinearRgb": [
+            0.055,
+            0.065,
+            0.08
+          ],
+          "strength": 0.12
+        },
+        "lights": [
+          {
+            "id": "room-key",
+            "type": "area-disk",
+            "position": [
+              -1.7,
+              2.62,
+              -1.45
+            ],
+            "target": [
+              0.35,
+              1.1,
+              0.15
+            ],
+            "energyW": 760,
+            "colorLinearRgb": [
+              1,
+              0.91,
+              0.78
+            ],
+            "sizeM": 1.25
+          },
+          {
+            "id": "room-fill",
+            "type": "area-disk",
+            "position": [
+              2.35,
+              2.35,
+              1.35
+            ],
+            "target": [
+              0,
+              1,
+              0
+            ],
+            "energyW": 310,
+            "colorLinearRgb": [
+              0.67,
+              0.78,
+              1
+            ],
+            "sizeM": 1.5
+          },
+          {
+            "id": "lamp-light",
+            "type": "point",
+            "position": [
+              -2.12,
+              1.72,
+              1.58
+            ],
+            "energyW": 105,
+            "colorLinearRgb": [
+              1,
+              0.58,
+              0.31
+            ],
+            "radiusM": 0.18
+          }
+        ]
+      },
+      "displayFiles": [
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/room-north-west.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/room-south-east.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/room-window.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/room-door.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/table-edge.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/chair-contact.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/chair-underside.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/cabinet-seams.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/fabric-folds.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/metal-response.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/window-recess.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/clutter-scale.png"
+      ],
+      "linearFiles": [
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/room-north-west.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/room-south-east.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/room-window.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/room-door.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/table-edge.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/chair-contact.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/chair-underside.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/cabinet-seams.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/fabric-folds.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/metal-response.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/window-recess.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-translated/stills/clutter-scale.exr"
+      ]
+    },
+    {
+      "id": "b3-cycles-ordinary-environment-chair-rotated",
+      "candidateId": "b3-cycles",
+      "conditionId": "ordinary-environment",
+      "editVariantId": "chair-rotated",
+      "includePaths": false,
+      "rendererSettings": {
+        "engine": "cycles",
+        "samples": 512,
+        "denoising": false,
+        "seed": 4831,
+        "device": "GPU",
+        "bounces": {
+          "max": 10,
+          "diffuse": 4,
+          "glossy": 4,
+          "transmission": 4,
+          "transparent": 4,
+          "volume": 0
+        },
+        "viewTransform": "AgX",
+        "look": "AgX - Medium High Contrast"
+      },
+      "lightingSettings": {
+        "world": {
+          "colorLinearRgb": [
+            0.055,
+            0.065,
+            0.08
+          ],
+          "strength": 0.12
+        },
+        "lights": [
+          {
+            "id": "room-key",
+            "type": "area-disk",
+            "position": [
+              -1.7,
+              2.62,
+              -1.45
+            ],
+            "target": [
+              0.35,
+              1.1,
+              0.15
+            ],
+            "energyW": 760,
+            "colorLinearRgb": [
+              1,
+              0.91,
+              0.78
+            ],
+            "sizeM": 1.25
+          },
+          {
+            "id": "room-fill",
+            "type": "area-disk",
+            "position": [
+              2.35,
+              2.35,
+              1.35
+            ],
+            "target": [
+              0,
+              1,
+              0
+            ],
+            "energyW": 310,
+            "colorLinearRgb": [
+              0.67,
+              0.78,
+              1
+            ],
+            "sizeM": 1.5
+          },
+          {
+            "id": "lamp-light",
+            "type": "point",
+            "position": [
+              -2.12,
+              1.72,
+              1.58
+            ],
+            "energyW": 105,
+            "colorLinearRgb": [
+              1,
+              0.58,
+              0.31
+            ],
+            "radiusM": 0.18
+          }
+        ]
+      },
+      "displayFiles": [
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/room-north-west.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/room-south-east.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/room-window.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/room-door.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/table-edge.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/chair-contact.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/chair-underside.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/cabinet-seams.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/fabric-folds.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/metal-response.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/window-recess.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/clutter-scale.png"
+      ],
+      "linearFiles": [
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/room-north-west.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/room-south-east.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/room-window.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/room-door.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/table-edge.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/chair-contact.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/chair-underside.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/cabinet-seams.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/fabric-folds.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/metal-response.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/window-recess.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-chair-rotated/stills/clutter-scale.exr"
+      ]
+    },
+    {
+      "id": "b3-cycles-ordinary-environment-light-moved",
+      "candidateId": "b3-cycles",
+      "conditionId": "ordinary-environment",
+      "editVariantId": "light-moved",
+      "includePaths": false,
+      "rendererSettings": {
+        "engine": "cycles",
+        "samples": 512,
+        "denoising": false,
+        "seed": 4831,
+        "device": "GPU",
+        "bounces": {
+          "max": 10,
+          "diffuse": 4,
+          "glossy": 4,
+          "transmission": 4,
+          "transparent": 4,
+          "volume": 0
+        },
+        "viewTransform": "AgX",
+        "look": "AgX - Medium High Contrast"
+      },
+      "lightingSettings": {
+        "world": {
+          "colorLinearRgb": [
+            0.055,
+            0.065,
+            0.08
+          ],
+          "strength": 0.12
+        },
+        "lights": [
+          {
+            "id": "room-key",
+            "type": "area-disk",
+            "position": [
+              2.4,
+              2.5,
+              -1.8
+            ],
+            "target": [
+              0,
+              0.9,
+              0
+            ],
+            "energyW": 760,
+            "colorLinearRgb": [
+              1,
+              0.91,
+              0.78
+            ],
+            "sizeM": 1.25
+          },
+          {
+            "id": "room-fill",
+            "type": "area-disk",
+            "position": [
+              2.35,
+              2.35,
+              1.35
+            ],
+            "target": [
+              0,
+              1,
+              0
+            ],
+            "energyW": 310,
+            "colorLinearRgb": [
+              0.67,
+              0.78,
+              1
+            ],
+            "sizeM": 1.5
+          },
+          {
+            "id": "lamp-light",
+            "type": "point",
+            "position": [
+              -2.12,
+              1.72,
+              1.58
+            ],
+            "energyW": 105,
+            "colorLinearRgb": [
+              1,
+              0.58,
+              0.31
+            ],
+            "radiusM": 0.18
+          }
+        ]
+      },
+      "displayFiles": [
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/room-north-west.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/room-south-east.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/room-window.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/room-door.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/table-edge.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/chair-contact.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/chair-underside.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/cabinet-seams.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/fabric-folds.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/metal-response.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/window-recess.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/clutter-scale.png"
+      ],
+      "linearFiles": [
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/room-north-west.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/room-south-east.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/room-window.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/room-door.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/table-edge.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/chair-contact.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/chair-underside.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/cabinet-seams.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/fabric-folds.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/metal-response.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/window-recess.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-ordinary-environment-light-moved/stills/clutter-scale.exr"
+      ]
+    },
+    {
       "id": "b3-cycles-directional-challenge-base",
       "candidateId": "b3-cycles",
       "conditionId": "directional-challenge",
@@ -503,6 +1601,372 @@
         "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-base/stills/metal-response.exr",
         "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-base/stills/window-recess.exr",
         "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-base/stills/clutter-scale.exr"
+      ]
+    },
+    {
+      "id": "b3-cycles-directional-challenge-chair-translated",
+      "candidateId": "b3-cycles",
+      "conditionId": "directional-challenge",
+      "editVariantId": "chair-translated",
+      "includePaths": false,
+      "rendererSettings": {
+        "engine": "cycles",
+        "samples": 512,
+        "denoising": false,
+        "seed": 4831,
+        "device": "GPU",
+        "bounces": {
+          "max": 10,
+          "diffuse": 4,
+          "glossy": 4,
+          "transmission": 4,
+          "transparent": 4,
+          "volume": 0
+        },
+        "viewTransform": "AgX",
+        "look": "AgX - Medium High Contrast"
+      },
+      "lightingSettings": {
+        "world": {
+          "colorLinearRgb": [
+            0.055,
+            0.065,
+            0.08
+          ],
+          "strength": 0.035
+        },
+        "lights": [
+          {
+            "id": "room-key",
+            "type": "area-disk",
+            "position": [
+              -1.7,
+              2.62,
+              -1.45
+            ],
+            "target": [
+              0.35,
+              1.1,
+              0.15
+            ],
+            "energyW": 1450,
+            "colorLinearRgb": [
+              1,
+              0.91,
+              0.78
+            ],
+            "sizeM": 0.42
+          },
+          {
+            "id": "room-fill",
+            "type": "area-disk",
+            "position": [
+              2.35,
+              2.35,
+              1.35
+            ],
+            "target": [
+              0,
+              1,
+              0
+            ],
+            "energyW": 45,
+            "colorLinearRgb": [
+              0.67,
+              0.78,
+              1
+            ],
+            "sizeM": 1.5
+          },
+          {
+            "id": "lamp-light",
+            "type": "point",
+            "position": [
+              -2.12,
+              1.72,
+              1.58
+            ],
+            "energyW": 65,
+            "colorLinearRgb": [
+              1,
+              0.58,
+              0.31
+            ],
+            "radiusM": 0.18
+          }
+        ]
+      },
+      "displayFiles": [
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/room-north-west.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/room-south-east.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/room-window.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/room-door.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/table-edge.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/chair-contact.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/chair-underside.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/cabinet-seams.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/fabric-folds.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/metal-response.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/window-recess.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/clutter-scale.png"
+      ],
+      "linearFiles": [
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/room-north-west.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/room-south-east.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/room-window.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/room-door.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/table-edge.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/chair-contact.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/chair-underside.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/cabinet-seams.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/fabric-folds.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/metal-response.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/window-recess.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-translated/stills/clutter-scale.exr"
+      ]
+    },
+    {
+      "id": "b3-cycles-directional-challenge-chair-rotated",
+      "candidateId": "b3-cycles",
+      "conditionId": "directional-challenge",
+      "editVariantId": "chair-rotated",
+      "includePaths": false,
+      "rendererSettings": {
+        "engine": "cycles",
+        "samples": 512,
+        "denoising": false,
+        "seed": 4831,
+        "device": "GPU",
+        "bounces": {
+          "max": 10,
+          "diffuse": 4,
+          "glossy": 4,
+          "transmission": 4,
+          "transparent": 4,
+          "volume": 0
+        },
+        "viewTransform": "AgX",
+        "look": "AgX - Medium High Contrast"
+      },
+      "lightingSettings": {
+        "world": {
+          "colorLinearRgb": [
+            0.055,
+            0.065,
+            0.08
+          ],
+          "strength": 0.035
+        },
+        "lights": [
+          {
+            "id": "room-key",
+            "type": "area-disk",
+            "position": [
+              -1.7,
+              2.62,
+              -1.45
+            ],
+            "target": [
+              0.35,
+              1.1,
+              0.15
+            ],
+            "energyW": 1450,
+            "colorLinearRgb": [
+              1,
+              0.91,
+              0.78
+            ],
+            "sizeM": 0.42
+          },
+          {
+            "id": "room-fill",
+            "type": "area-disk",
+            "position": [
+              2.35,
+              2.35,
+              1.35
+            ],
+            "target": [
+              0,
+              1,
+              0
+            ],
+            "energyW": 45,
+            "colorLinearRgb": [
+              0.67,
+              0.78,
+              1
+            ],
+            "sizeM": 1.5
+          },
+          {
+            "id": "lamp-light",
+            "type": "point",
+            "position": [
+              -2.12,
+              1.72,
+              1.58
+            ],
+            "energyW": 65,
+            "colorLinearRgb": [
+              1,
+              0.58,
+              0.31
+            ],
+            "radiusM": 0.18
+          }
+        ]
+      },
+      "displayFiles": [
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/room-north-west.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/room-south-east.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/room-window.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/room-door.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/table-edge.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/chair-contact.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/chair-underside.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/cabinet-seams.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/fabric-folds.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/metal-response.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/window-recess.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/clutter-scale.png"
+      ],
+      "linearFiles": [
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/room-north-west.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/room-south-east.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/room-window.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/room-door.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/table-edge.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/chair-contact.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/chair-underside.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/cabinet-seams.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/fabric-folds.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/metal-response.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/window-recess.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-chair-rotated/stills/clutter-scale.exr"
+      ]
+    },
+    {
+      "id": "b3-cycles-directional-challenge-light-moved",
+      "candidateId": "b3-cycles",
+      "conditionId": "directional-challenge",
+      "editVariantId": "light-moved",
+      "includePaths": false,
+      "rendererSettings": {
+        "engine": "cycles",
+        "samples": 512,
+        "denoising": false,
+        "seed": 4831,
+        "device": "GPU",
+        "bounces": {
+          "max": 10,
+          "diffuse": 4,
+          "glossy": 4,
+          "transmission": 4,
+          "transparent": 4,
+          "volume": 0
+        },
+        "viewTransform": "AgX",
+        "look": "AgX - Medium High Contrast"
+      },
+      "lightingSettings": {
+        "world": {
+          "colorLinearRgb": [
+            0.055,
+            0.065,
+            0.08
+          ],
+          "strength": 0.035
+        },
+        "lights": [
+          {
+            "id": "room-key",
+            "type": "area-disk",
+            "position": [
+              2.4,
+              2.5,
+              -1.8
+            ],
+            "target": [
+              0,
+              0.9,
+              0
+            ],
+            "energyW": 1450,
+            "colorLinearRgb": [
+              1,
+              0.91,
+              0.78
+            ],
+            "sizeM": 0.42
+          },
+          {
+            "id": "room-fill",
+            "type": "area-disk",
+            "position": [
+              2.35,
+              2.35,
+              1.35
+            ],
+            "target": [
+              0,
+              1,
+              0
+            ],
+            "energyW": 45,
+            "colorLinearRgb": [
+              0.67,
+              0.78,
+              1
+            ],
+            "sizeM": 1.5
+          },
+          {
+            "id": "lamp-light",
+            "type": "point",
+            "position": [
+              -2.12,
+              1.72,
+              1.58
+            ],
+            "energyW": 65,
+            "colorLinearRgb": [
+              1,
+              0.58,
+              0.31
+            ],
+            "radiusM": 0.18
+          }
+        ]
+      },
+      "displayFiles": [
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/room-north-west.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/room-south-east.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/room-window.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/room-door.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/table-edge.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/chair-contact.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/chair-underside.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/cabinet-seams.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/fabric-folds.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/metal-response.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/window-recess.png",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/clutter-scale.png"
+      ],
+      "linearFiles": [
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/room-north-west.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/room-south-east.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/room-window.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/room-door.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/table-edge.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/chair-contact.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/chair-underside.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/cabinet-seams.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/fabric-folds.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/metal-response.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/window-recess.exr",
+        "/Users/jgrimminck/Coding/js/sensor-fusion/public/visual-lab/experiment-1/reference/b3-cycles/b3-cycles-directional-challenge-light-moved/stills/clutter-scale.exr"
       ]
     }
   ]
