@@ -76,3 +76,13 @@ graphify-out
 
 # local experiment / controller scaffolding (non-upstream)
 .experiments
+
+# exclude all .png from the public/visual-lab/experiment-0/ directory and subdirectories
+public/visual-lab/experiment-0/b0-simple/**/*.png
+public/visual-lab/experiment-0/b0-simple/**/*.exr
+
+public/visual-lab/experiment-1/reference/**/*.png
+public/visual-lab/experiment-1/reference/**/*.exr
+
+public/visual-lab/experiment-1/browser/**/*.png
+public/visual-lab/experiment-1/browser/**/*.exr
