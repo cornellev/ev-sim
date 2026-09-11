@@ -55,8 +55,8 @@ Live sessions stay in sync: MCP writes and workspace commands publish Server-Sen
 | `environment_create` / `environment_rename` / `environment_delete` | Catalog CRUD |
 | `environment_get` | Summary or full document |
 | `environment_set_active` | Change the app's active environment |
-| `environment_add_road` | Polyline of xz points → snapped nodes + edges |
-| `environment_remove_road` / `environment_move_road_node` | Road edits |
+| `environment_add_road` | Polyline of xz points (optional `y`) → snapped nodes + edges |
+| `environment_remove_road` / `environment_move_road_node` | Road edits; move accepts optional `y`, intersections are y-only |
 | `environment_add_building` / `environment_remove_building` | Rectangle buildings |
 | `environment_add_object` / `environment_move_object` / `environment_remove_object` | Props (`stop-sign`, `one-way-sign`, `barrel`, `tire`, `cone`) |
 | `environment_validate` | Full geometric conflict report |
@@ -107,7 +107,7 @@ The resources `fusion://run-manifests` and `fusion://run-manifests/{manifestId}`
 | `scenario_create` / `scenario_update` / `scenario_duplicate` / `scenario_delete` | Scenario CRUD with optimistic revisions |
 | `scenario_validate` | Validate actors, routes, zones, triggers, completion, outcomes, sensors, scripts, and parameters |
 | `scenario_resolve` | Freeze environment, routes, scripts, vehicles, parameter values, and dependency hashes |
-| `scenario_verify_route` | Run deterministic directed A* (algorithm version 2) for an authored route without implicitly saving it. The verified polyline uses right-hand travel offsets on two-way roads; reverse one-way travel returns `route.section.illegal-direction`. |
+| `scenario_verify_route` | Run deterministic lane-constrained directed A* (algorithm version 5) for an authored route without implicitly saving it. Proofs include fixed/automatic lane anchors, physical lane assignments and road-arm subnodes; preserve incoming edge, direction and lane across waypoints; honor sparse intersection turn rules; and classify unreachable lanes, wrong-way, restricted-turn, disconnected and invalid-layout failures separately. |
 | `scenario_catalog_get` / `scenario_catalog_update` | Read or replace the ordered folder catalog |
 
 Resources expose the catalogs and complete documents at `fusion://scenarios`, `fusion://scenario-folders`, and `fusion://scenarios/{scenarioId}`. Route verification accepts an optional unsaved scenario draft; apply the returned canonical verification to the route and save it with `scenario_update` using the current revision.

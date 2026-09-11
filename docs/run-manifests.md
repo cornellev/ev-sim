@@ -177,6 +177,18 @@ aggregate bounds. The physics backend selection is pinned to
 vehicle AABB semantics, and contact-model version. Preparation rejects a
 mismatched selection.
 
+Canonical roads may include sparse `turnRules` entries shaped as
+`{ nodeId, fromEdgeId, toEdgeId, allowed }`. Rule references, incidence,
+one-way movement feasibility, uniqueness, and lane layouts are validated
+while constructing the world. Explicit rule changes participate in
+`roadNetworkHash` and therefore `worldHash`; an absent/empty rule list retains
+the legacy road-network projection. Scenario route proofs use algorithm
+version 5 and hash fixed/automatic lane anchor intent plus traversal lane
+assignments. Each traversal also freezes its lane-entry and lane-exit subnodes
+and the canonical junction connector. Version 3 and 4 proofs must be
+re-verified before new scenario resolution; immutable received bundles retain
+version-scoped compatibility validation.
+
 Simulation time is `stepIndex * stepNs`, using integer nanoseconds. Realtime speed changes pacing only. Managed `timer` and `simulation-timer` bindings both advance from this integer clock; wall timers remain available only to library/editor execution. Each fixed step applies inputs, scripts, scenario pre-motion, **controls** (actuator selection/delay/limits), vehicle motion, physics, contacts, clock, transforms (`/tf`, `/tf_static`, and oracle odometry), sensor capture, delayed delivery, assertions, and telemetry in that order. Stable IDs order topics, bindings, vehicles, sensors, colliders, and contact events. Managed runs never write `vehicle.velocity` / `steeringAngle` from raw topic handlers; only `ControlRuntime` applied setpoints reach the plant.
 
 ## Frames, calibration, and synchronization

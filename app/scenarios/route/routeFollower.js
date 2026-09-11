@@ -26,6 +26,8 @@ const MIN_TURN_SPEED_MPS = 0.35;
 const STOP_DISTANCE_M = 0.15;
 /** Allow a little backward jitter, but never snap to an earlier overlapping visit. */
 const PROGRESS_SLACK_M = 0.75;
+/** Cap how far ahead projection may jump (blocks later overlapping visits). */
+const PROGRESS_FORWARD_WINDOW_M = Math.max(LOOKAHEAD_MAX_M * 2, 24);
 
 export function resolveFollowerKinematics(candidates = []) {
     for (const source of candidates) {
@@ -105,19 +107,29 @@ export function routeFollowerCommand({
     }
 
     const end = arc.polyline[arc.polyline.length - 1];
-    const remainingToEnd = arc.totalLength - Math.max(0, finiteNumber(minDistanceAlong, 0));
-    const remaining = Math.min(distanceXZ(pose, end), remainingToEnd);
-    if (remaining <= STOP_DISTANCE_M || arc.totalLength <= EPSILON) {
+    if (arc.totalLength <= EPSILON) {
         return { speedMps: 0, steeringRad: 0, lookaheadM: LOOKAHEAD_MIN_M, alpha: 0, kappa: 0, distanceAlong: arc.totalLength };
     }
 
     const forwardMin = Number.isFinite(minDistanceAlong)
         ? minDistanceAlong - PROGRESS_SLACK_M
         : Number.NEGATIVE_INFINITY;
+    const forwardMax = Number.isFinite(minDistanceAlong)
+        ? minDistanceAlong + PROGRESS_FORWARD_WINDOW_M
+        : Number.POSITIVE_INFINITY;
     const projection = projectPointToPolyline(pose, arc.polyline, {
         minDistanceAlong: forwardMin,
+        maxDistanceAlong: forwardMax,
     });
     const along = finiteNumber(projection?.distanceAlong, 0);
+    const remainingAlong = arc.totalLength - along;
+    // Stop from arc remaining (and proximity to the path end point), never
+    // Euclidean-to-end alone — that false-stops when the finish overlaps an earlier visit.
+    if (remainingAlong <= STOP_DISTANCE_M
+        || (remainingAlong <= LOOKAHEAD_MIN_M && distanceXZ(pose, end) <= STOP_DISTANCE_M)) {
+        return { speedMps: 0, steeringRad: 0, lookaheadM: LOOKAHEAD_MIN_M, alpha: 0, kappa: 0, distanceAlong: arc.totalLength };
+    }
+
     const speedHint = Math.abs(finiteNumber(
         achievedSpeedMps == null ? cruise : achievedSpeedMps,
         cruise,

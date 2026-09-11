@@ -145,6 +145,9 @@ export function projectPointToPolyline(value, points, options = {}) {
     const minDistanceAlong = Number.isFinite(options.minDistanceAlong)
         ? options.minDistanceAlong
         : Number.NEGATIVE_INFINITY;
+    const maxDistanceAlong = Number.isFinite(options.maxDistanceAlong)
+        ? options.maxDistanceAlong
+        : Number.POSITIVE_INFINITY;
 
     let best = null;
     for (let index = 0; index < arc.polyline.length - 1; index += 1) {
@@ -152,6 +155,7 @@ export function projectPointToPolyline(value, points, options = {}) {
         const segmentLength = arc.cumulativeDistances[index + 1] - arc.cumulativeDistances[index];
         const distanceAlong = arc.cumulativeDistances[index] + projection.t * segmentLength;
         if (distanceAlong + EPSILON < minDistanceAlong) continue;
+        if (distanceAlong > maxDistanceAlong + EPSILON) continue;
         const start = arc.polyline[index];
         const end = arc.polyline[index + 1];
         const dx = end.x - start.x;
@@ -176,8 +180,8 @@ export function projectPointToPolyline(value, points, options = {}) {
     }
     if (best) return best;
 
-    // Forward search found nothing (min is past the path or skipped every segment).
-    // Stay on the remaining path instead of snapping backward to an overlapping visit.
+    // Window search found nothing (min past the path, empty window, or overshot max).
+    // Stay on the remaining path instead of snapping to an out-of-window overlapping visit.
     if (Number.isFinite(options.minDistanceAlong) && arc.totalLength > EPSILON) {
         const target = Math.max(0, Math.min(arc.totalLength, minDistanceAlong));
         let segment = arc.polyline.length - 2;
@@ -216,7 +220,8 @@ export function projectPointToPolyline(value, points, options = {}) {
 
 /**
  * Unit normal pointing to the right of travel from `from` → `to` in XZ.
- * Heading 0 is +Z; plant steering is positive-right, so right = (dz, -dx).
+ * Matches Road.js mesh right edge (UP × tangent is left; right = -that):
+ * travel +X → +Z, travel +Z → -X.
  */
 export function rightTravelNormal(from, to) {
     const start = pointFrom(from);
@@ -226,7 +231,7 @@ export function rightTravelNormal(from, to) {
     const dz = end.z - start.z;
     const length = Math.hypot(dx, dz);
     if (length <= EPSILON) return null;
-    return { x: dz / length, z: -dx / length };
+    return { x: -dz / length, z: dx / length };
 }
 
 /** Offset a centerline point to the right of travel by `offsetMeters`. */
@@ -241,6 +246,32 @@ export function offsetPointRightOfTravel(point, from, to, offsetMeters) {
         x: base.x + normal.x * offset,
         y: base.y,
         z: base.z + normal.z * offset,
+    };
+}
+
+/**
+ * Intersection of two infinite XZ lines given as origin + unit tangent.
+ * Returns null when the lines are parallel (cross product near zero).
+ */
+export function intersectTravelLinesXZ(originA, tangentA, originB, tangentB) {
+    const a = pointFrom(originA);
+    const b = pointFrom(originB);
+    if (!a || !b || !tangentA || !tangentB) return null;
+    const tax = finiteNumber(tangentA.x);
+    const taz = finiteNumber(tangentA.z);
+    const tbx = finiteNumber(tangentB.x);
+    const tbz = finiteNumber(tangentB.z);
+    const cross = tax * tbz - taz * tbx;
+    if (Math.abs(cross) <= EPSILON) return null;
+    const dx = b.x - a.x;
+    const dz = b.z - a.z;
+    const t = (dx * tbz - dz * tbx) / cross;
+    return {
+        x: a.x + tax * t,
+        y: a.y,
+        z: a.z + taz * t,
+        tAlongA: t,
+        tAlongB: (dx * taz - dz * tax) / cross,
     };
 }
 

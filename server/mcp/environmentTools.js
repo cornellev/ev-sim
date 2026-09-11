@@ -5,11 +5,13 @@ import {
     addFeature,
     addRoadEdge,
     getOrCreateNode,
+    isIntersectionNode,
     moveFeature,
     moveRoadNode,
     removeBuilding,
     removeFeature,
     removeRoadEdge,
+    setRoadNodeElevation,
 } from "../../app/3d/editor/document/documentMutations.js";
 import {
     conflictsForNewEntities,
@@ -23,6 +25,7 @@ const ACTIVE_ENVIRONMENT_SETTING = "activeEnvironmentId";
 
 const PointSchema = z.object({
     x: z.number(),
+    y: z.number().optional(),
     z: z.number(),
 });
 
@@ -190,10 +193,10 @@ export function registerEnvironmentTools(server, storage) {
         {
             title: "Add road",
             description:
-                "Add a road polyline (sequence of xz points). Points snap to nearby nodes. Returns created nodes/edges and any geometric conflicts.",
+                "Add a road polyline (sequence of xz points, optional y elevation). Points snap to nearby nodes. Returns created nodes/edges and any geometric conflicts.",
             inputSchema: {
                 environmentId: z.string().min(1),
-                points: z.array(PointSchema).min(2).describe("Polyline points in world xz meters"),
+                points: z.array(PointSchema).min(2).describe("Polyline points in world meters (x, optional y, z)"),
                 width: z.number().positive().optional(),
                 laneCount: z.number().int().positive().optional(),
                 bidirectional: z.boolean().optional(),
@@ -290,7 +293,8 @@ export function registerEnvironmentTools(server, storage) {
         "environment_move_road_node",
         {
             title: "Move road node",
-            description: "Move a free endpoint road node (intersections cannot move).",
+            description:
+                "Move a free endpoint road node in xz (optional y). Intersections accept y-only elevation changes.",
             inputSchema: {
                 environmentId: z.string().min(1),
                 nodeId: z.string().min(1),
@@ -301,7 +305,23 @@ export function registerEnvironmentTools(server, storage) {
         async ({ environmentId, nodeId, point, strict }) => {
             try {
                 const { manifest, document } = await loadDocument(storage, environmentId);
-                const result = moveRoadNode(document, nodeId, point);
+                const node = document.getNode(nodeId);
+                if (!node) return fail("Road node not found.");
+
+                let result;
+                if (isIntersectionNode(document, node)) {
+                    const dx = Math.abs(Number(point.x) - Number(node.x));
+                    const dz = Math.abs(Number(point.z) - Number(node.z));
+                    if (dx > 1e-6 || dz > 1e-6) {
+                        return fail("Intersection nodes cannot move in xz; supply matching x/z and a new y.");
+                    }
+                    if (point.y === undefined) {
+                        return fail("Intersection elevation requires point.y.");
+                    }
+                    result = setRoadNodeElevation(document, nodeId, point.y);
+                } else {
+                    result = moveRoadNode(document, nodeId, point);
+                }
                 if (!result.ok) return fail(result.error);
                 const edgeIds = document.roads.edges
                     .filter((edge) => edge.startNodeId === nodeId || edge.endNodeId === nodeId)

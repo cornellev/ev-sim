@@ -1,4 +1,10 @@
 import { createBuiltInIGVCEnvironmentDocument } from "../../3d/igvc/IGVCEnvironmentDocument.js";
+import {
+    edgeAllowsArrivalAtNode,
+    edgeAllowsDepartureFromNode,
+    movementRuleKey,
+    validateRoadLaneLayout,
+} from "../../roads/RoadLaneModel.js";
 import { hashEnvironmentRoadNetwork } from "../../scenarios/route/roadGraph.js";
 import { canonicalFiniteNumber, canonicalizeSimulationValue, simulationSha256 } from "../kernel/SimulationHashes.js";
 
@@ -130,7 +136,49 @@ function normalizeEdge(edge, index, nodeIds) {
     if (result.startNodeId === result.endNodeId) {
         throw new TypeError(`Road edge "${result.id}" cannot reference the same node twice.`);
     }
+    const laneLayout = validateRoadLaneLayout(result);
+    if (!laneLayout.ok) {
+        throw new TypeError(`Road edge "${result.id}" has an invalid lane layout: ${laneLayout.error}`);
+    }
     return result;
+}
+
+function normalizeTurnRules(source, nodes, edges) {
+    const nodeById = new Map(nodes.map((node) => [node.id, node]));
+    const edgeById = new Map(edges.map((edge) => [edge.id, edge]));
+    const seen = new Set();
+    const result = (Array.isArray(source) ? source : []).map((rule, index) => {
+        const normalized = {
+            nodeId: identifier(rule?.nodeId, `Road turn rule ${index} nodeId`),
+            fromEdgeId: identifier(rule?.fromEdgeId, `Road turn rule ${index} fromEdgeId`),
+            toEdgeId: identifier(rule?.toEdgeId, `Road turn rule ${index} toEdgeId`),
+            allowed: rule?.allowed,
+        };
+        if (typeof normalized.allowed !== "boolean") {
+            throw new TypeError(`Road turn rule ${index} allowed must be a boolean.`);
+        }
+        const fromEdge = edgeById.get(normalized.fromEdgeId);
+        const toEdge = edgeById.get(normalized.toEdgeId);
+        if (!nodeById.has(normalized.nodeId) || !fromEdge || !toEdge) {
+            throw new TypeError(`Road turn rule ${index} references a missing node or edge.`);
+        }
+        if (!edgeAllowsArrivalAtNode(fromEdge, normalized.nodeId)) {
+            throw new TypeError(`Road turn rule ${index} fromEdgeId cannot arrive at its node.`);
+        }
+        if (!edgeAllowsDepartureFromNode(toEdge, normalized.nodeId)) {
+            throw new TypeError(`Road turn rule ${index} toEdgeId cannot depart from its node.`);
+        }
+        const key = movementRuleKey(normalized.nodeId, normalized.fromEdgeId, normalized.toEdgeId);
+        if (seen.has(key)) throw new TypeError(`Duplicate road turn rule movement "${key}".`);
+        seen.add(key);
+        return normalized;
+    });
+    return result.sort((left, right) => (
+        compareUtf8(
+            movementRuleKey(left.nodeId, left.fromEdgeId, left.toEdgeId),
+            movementRuleKey(right.nodeId, right.fromEdgeId, right.toEdgeId),
+        )
+    ));
 }
 
 function normalizeRoads(source) {
@@ -143,7 +191,12 @@ function normalizeRoads(source) {
         .map((edge, index) => normalizeEdge(edge, index, nodeIds))
         .sort((left, right) => compareUtf8(left.id, right.id));
     assertUnique(edges, "id", "road edge");
-    return { nodes, edges };
+    const turnRules = normalizeTurnRules(source?.turnRules, nodes, edges);
+    return {
+        nodes,
+        edges,
+        ...(turnRules.length > 0 ? { turnRules } : {}),
+    };
 }
 
 function normalizeFootprint(source, label) {

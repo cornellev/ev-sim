@@ -23,14 +23,17 @@ async function roadPoints(map) {
         const y1 = Number(line.getAttribute("y1"));
         const x2 = Number(line.getAttribute("x2"));
         const y2 = Number(line.getAttribute("y2"));
-        const screenPoint = (fraction) => {
+        const length = Math.hypot(x2 - x1, y2 - y1) || 1;
+        const normal = { x: -(y2 - y1) / length, y: (x2 - x1) / length };
+        const opposingOffset = -(Number(line.getAttribute("stroke-width")) || 8) * 0.25;
+        const screenPoint = (fraction, offset = 0) => {
             const point = svg.createSVGPoint();
-            point.x = x1 + ((x2 - x1) * fraction);
-            point.y = y1 + ((y2 - y1) * fraction);
+            point.x = x1 + ((x2 - x1) * fraction) + normal.x * offset;
+            point.y = y1 + ((y2 - y1) * fraction) + normal.y * offset;
             const screen = point.matrixTransform(matrix);
             return { x: screen.x, y: screen.y };
         };
-        return [screenPoint(0.25), screenPoint(0.5), screenPoint(0.75)];
+        return [screenPoint(0.25, opposingOffset), screenPoint(0.5), screenPoint(0.75, opposingOffset)];
     });
 }
 
@@ -124,13 +127,44 @@ test("scenario authoring rejects off-road points, supports keyboard editing, and
     await page.emulateMedia({ reducedMotion: "reduce" });
     const name = `Playwright route ${Date.now()}`;
     const scenarioId = slug(name);
+    const environmentId = `pw-lane-map-${Date.now()}`;
 
     try {
+        const createdEnvironment = await postJson(request, "/api/storage/environments", {
+            id: environmentId,
+            name: `Lane map ${environmentId}`,
+            templateId: "blank",
+        });
+        await putJson(request, `/api/storage/environments/${environmentId}`, {
+            expectedRevision: createdEnvironment.revision,
+            manifest: {
+                ...createdEnvironment,
+                roadsAuthored: true,
+                document: {
+                    ...createdEnvironment.document,
+                    roadsAuthored: true,
+                    roads: {
+                        nodes: [
+                            { id: "a", x: 0, y: 0, z: 0, kind: "endpoint" },
+                            { id: "b", x: 40, y: 0, z: 0, kind: "endpoint" },
+                            { id: "c", x: 0, y: 0, z: 20, kind: "endpoint" },
+                            { id: "d", x: 40, y: 0, z: 20, kind: "endpoint" },
+                        ],
+                        edges: [
+                            { id: "two-way", startNodeId: "a", endNodeId: "b", bidirectional: true, width: 8, laneCount: 2 },
+                            { id: "one-way", startNodeId: "c", endNodeId: "d", bidirectional: false, direction: 1, width: 8, laneCount: 2 },
+                        ],
+                        turnRules: [],
+                    },
+                },
+            },
+        });
         await page.goto("/");
         await openWorkspace(page, "Scenarios");
         await page.getByRole("button", { name: "New" }).click();
         await page.getByRole("textbox", { name: "Scenario name" }).fill(name);
         await page.getByRole("textbox", { name: "Description" }).fill("Browser-authored deterministic finish-zone scenario.");
+        await page.getByLabel("Environment").selectOption(environmentId);
         await page.getByRole("button", { name: "Create scenario", exact: true }).click();
         await expect(page.getByRole("heading", { name: "Routes" })).toBeVisible();
         await expect(page.getByRole("tab", { name: "Route editor" })).toHaveCount(0);
@@ -138,6 +172,8 @@ test("scenario authoring rejects off-road points, supports keyboard editing, and
 
         const map = page.getByRole("img", { name: /^Road map for placing/i });
         await expect(map).toBeVisible();
+        await expect(map.locator('[data-lane-divider="opposing"]').first()).toHaveAttribute("stroke", "#facc15");
+        await expect(map.locator("[data-one-way-arrow]").first()).toBeVisible();
         const routeViewport = map.locator("..");
         const initialZoom = await routeViewport.getAttribute("data-map-zoom");
         await routeViewport.getByRole("button", { name: "Zoom in" }).click();
@@ -150,7 +186,7 @@ test("scenario authoring rejects off-road points, supports keyboard editing, and
         await page.mouse.move(bounds.x + (bounds.width * 0.65), bounds.y + (bounds.height * 0.75));
         await page.mouse.up();
         await expect(routeViewport).not.toHaveAttribute("data-map-center", initialCenter);
-        await page.mouse.click(bounds.x + 5, bounds.y + 5);
+        await page.mouse.click(bounds.x + (bounds.width * 0.5), bounds.y + (bounds.height * 0.5));
         await expect(page.getByText("Waypoints must sit on a road or intersection.")).toBeVisible();
 
         const [start, middle, finish] = await roadPoints(map);
@@ -161,6 +197,25 @@ test("scenario authoring rejects off-road points, supports keyboard editing, and
         );
         expect(transitionDuration).toBe("0s");
 
+        const startMarker = map.getByRole("button", { name: "start S" });
+        await startMarker.click();
+        const inspector = page.getByLabel("Selected waypoint");
+        await expect(inspector.getByText("start")).toBeVisible();
+        const xBefore = await inspector.locator("dd").first().textContent();
+        const centerBeforeDrag = await routeViewport.getAttribute("data-map-center");
+        const startBox = await startMarker.boundingBox();
+        expect(startBox).not.toBeNull();
+        const dragTarget = {
+            x: start.x + ((middle.x - start.x) * 0.4),
+            y: start.y + ((middle.y - start.y) * 0.4),
+        };
+        await page.mouse.move(startBox.x + (startBox.width / 2), startBox.y + (startBox.height / 2));
+        await page.mouse.down();
+        await page.mouse.move(dragTarget.x, dragTarget.y, { steps: 8 });
+        await page.mouse.up();
+        await expect(routeViewport).toHaveAttribute("data-map-center", centerBeforeDrag);
+        await expect(inspector.locator("dd").first()).not.toHaveText(xBefore);
+
         await page.getByRole("button", { name: "Waypoint", exact: true }).click();
         await page.mouse.click(middle.x, middle.y);
         await expect(map.getByRole("button", { name: "intermediate 1" })).toHaveCount(1);
@@ -169,8 +224,47 @@ test("scenario authoring rejects off-road points, supports keyboard editing, and
 
         await page.getByRole("button", { name: "Finish", exact: true }).click();
         await page.mouse.click(finish.x, finish.y);
+        const finishMarker = map.getByRole("button", { name: "finish F" });
+
+        let releaseVerification;
+        let verificationIntercepted = false;
+        const verificationGate = new Promise((resolve) => { releaseVerification = resolve; });
+        const verificationPattern = `**/api/storage/scenarios/${scenarioId}/verify-route`;
+        await page.route(verificationPattern, async (interceptedRoute) => {
+            verificationIntercepted = true;
+            await verificationGate;
+            await interceptedRoute.continue();
+        });
+        await page.getByRole("button", { name: "Verify" }).click();
+        await expect.poll(() => verificationIntercepted).toBe(true);
+        const finishDragBox = await finishMarker.boundingBox();
+        expect(finishDragBox).not.toBeNull();
+        const finishDragTarget = {
+            x: finish.x + ((start.x - finish.x) * 0.08),
+            y: finish.y + ((start.y - finish.y) * 0.08),
+        };
+        await page.mouse.move(finishDragBox.x + finishDragBox.width / 2, finishDragBox.y + finishDragBox.height / 2);
+        await page.mouse.down();
+        await page.mouse.move(finishDragTarget.x, finishDragTarget.y, { steps: 5 });
+        await page.mouse.up();
+        releaseVerification();
+        await expect(page.getByText("Route changed while verification was running")).toBeVisible();
+        await page.unroute(verificationPattern);
+
+        const finishBeforeVerification = await finishMarker.boundingBox();
         await page.getByRole("button", { name: "Verify" }).click();
         await expect(page.getByText("Route verified against the directed road graph")).toBeVisible();
+        const verifiedPath = map.locator('[data-route-path="verified"]');
+        const drivingPath = map.locator('[data-route-path="driving"]');
+        await expect(verifiedPath).toBeVisible();
+        await expect(drivingPath).toHaveAttribute("points", await verifiedPath.getAttribute("points"));
+        const finishAfterVerification = await finishMarker.boundingBox();
+        expect(finishBeforeVerification).not.toBeNull();
+        expect(finishAfterVerification).not.toBeNull();
+        expect(Math.hypot(
+            (finishAfterVerification.x + finishAfterVerification.width / 2) - (finishBeforeVerification.x + finishBeforeVerification.width / 2),
+            (finishAfterVerification.y + finishAfterVerification.height / 2) - (finishBeforeVerification.y + finishBeforeVerification.height / 2),
+        )).toBeLessThan(1);
         await expect(page.getByRole("button", { name: /Continue/ })).toBeEnabled();
         await page.getByRole("button", { name: /Continue/ }).click();
         await expect(page.getByRole("heading", { name: "Routes" })).toBeVisible();
@@ -185,7 +279,7 @@ test("scenario authoring rejects off-road points, supports keyboard editing, and
 
         await page.getByRole("tab", { name: "Zones & triggers" }).click();
         const zoneMap = page.getByRole("img", { name: /Scenario zone map/i });
-        await expect(zoneMap.locator("[data-map-layer='roads'] line").first()).toBeVisible();
+        await expect(zoneMap.locator("[data-map-layer='roads'] line").first()).toHaveCount(1);
         const zoneViewport = zoneMap.locator("..");
         const zoneInitialZoom = await zoneViewport.getAttribute("data-map-zoom");
         await zoneViewport.getByRole("button", { name: "Zoom out" }).click();
@@ -235,8 +329,39 @@ test("scenario authoring rejects off-road points, supports keyboard editing, and
             .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
             .analyze();
         expect(axe.violations.filter((violation) => ["critical", "serious"].includes(violation.impact))).toEqual([]);
+
+        const storedResponse = await request.get(`/api/storage/scenarios/${scenarioId}`);
+        expect(storedResponse.ok()).toBeTruthy();
+        const stored = await storedResponse.json();
+        const stale = {
+            ...stored,
+            routes: stored.routes.map((route) => ({
+                ...route,
+                verification: route.verification ? {
+                    ...route.verification,
+                    algorithmVersion: 4,
+                } : null,
+            })),
+        };
+        await putJson(request, `/api/storage/scenarios/${scenarioId}`, {
+            scenario: stale,
+            expectedRevision: stored.revision,
+        });
+        await page.reload();
+        await openWorkspace(page, "Scenarios");
+        await page.getByRole("button", { name: new RegExp(name) }).click();
+        await page.getByRole("tab", { name: "Routes" }).click();
+        await page.getByRole("button", { name: "Edit route" }).click();
+        await expect(page.getByText("Needs verification with the current lane-routing algorithm.")).toBeVisible();
+        await expect(page.getByRole("button", { name: /Continue/ })).toBeDisabled();
+        await expect(page.locator('[data-route-path="driving"]')).toHaveCount(0);
     } finally {
         await request.delete(`/api/storage/scenarios/${scenarioId}`);
+        const environment = await request.get(`/api/storage/environments/${environmentId}`);
+        if (environment.ok()) {
+            const manifest = await environment.json();
+            await request.delete(`/api/storage/environments/${environmentId}?expectedRevision=${manifest.revision}`);
+        }
     }
 });
 

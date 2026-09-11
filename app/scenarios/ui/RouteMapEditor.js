@@ -12,7 +12,12 @@ import {
 } from "@tabler/icons-react";
 
 import { Button, Field, NativeSelect } from "../../ui";
-import { environmentDocumentFrom, filletPolyline, followRadiusM, FOLLOW_PATH_DEFAULT_KINEMATICS, projectPointToRoadNetwork } from "../route/index.js";
+import {
+    environmentDocumentFrom,
+    isRouteVerificationCurrent,
+    moveWaypoint,
+    projectPointToRoadNetwork,
+} from "../route/index.js";
 import ScenarioMapViewport from "./ScenarioMapViewport.js";
 import { orderedWaypoints, renumberWaypoints } from "./scenarioUiModel.js";
 import styles from "./ScenarioWorkspace.module.css";
@@ -26,6 +31,24 @@ function waypointLabel(point) {
     if (point.kind === "start") return "S";
     if (point.kind === "finish") return "F";
     return String(point.order);
+}
+
+function snapWaypointToRoad(authoredPosition, environment) {
+    const projection = projectPointToRoadNetwork({ ...authoredPosition, y: 0 }, environment);
+    if (!projection) return null;
+    return {
+        authoredPosition: { ...authoredPosition, y: 0 },
+        position: { ...projection.point },
+        anchor: {
+            kind: projection.kind,
+            id: projection.nodeId ?? projection.edgeId,
+            fraction: projection.t ?? 0,
+            ...(projection.kind === "road" ? {
+                laneMode: projection.laneMode === "auto" ? "auto" : "fixed",
+                ...(projection.laneMode === "auto" ? {} : { laneIndex: projection.laneIndex }),
+            } : {}),
+        },
+    };
 }
 
 export default function RouteMapEditor({
@@ -43,7 +66,7 @@ export default function RouteMapEditor({
     const graphAvailable = useMemo(() => hasRoadGraph(environment), [environment]);
     const waypoints = orderedWaypoints(route?.waypoints || []);
     const selected = waypoints.find((point) => point.id === selectedId) || null;
-    const verified = Boolean(route?.verification);
+    const verified = isRouteVerificationCurrent(route, environment);
 
     const removeSelected = () => {
         if (!selectedId) return;
@@ -65,20 +88,11 @@ export default function RouteMapEditor({
 
     const place = (authoredPosition) => {
         if (!graphAvailable) return;
-        const projection = projectPointToRoadNetwork({ ...authoredPosition, y: 0 }, environment);
-        if (!projection) {
+        const snapped = snapWaypointToRoad(authoredPosition, environment);
+        if (!snapped) {
             setPlacementError("Waypoints must sit on a road or intersection.");
             return;
         }
-        const snapped = {
-            authoredPosition: { ...authoredPosition, y: 0 },
-            position: { ...projection.point },
-            anchor: {
-                kind: projection.kind,
-                id: projection.nodeId ?? projection.edgeId,
-                fraction: projection.t ?? 0,
-            },
-        };
         setPlacementError(null);
         const ids = new Set(waypoints.map((point) => point.id));
         let nextIndex = waypoints.length + 1;
@@ -98,6 +112,18 @@ export default function RouteMapEditor({
         if (tool === "start") setTool("intermediate");
     };
 
+    const relocate = (waypointId, authoredPosition) => {
+        if (!graphAvailable || !waypointId) return;
+        const snapped = snapWaypointToRoad(authoredPosition, environment);
+        if (!snapped) {
+            setPlacementError("Waypoints must sit on a road or intersection.");
+            return;
+        }
+        setPlacementError(null);
+        const next = moveWaypoint(route?.waypoints || [], waypointId, snapped);
+        onChange({ ...route, waypoints: next, verification: null });
+    };
+
     const reorder = (order) => {
         if (!selected || selected.kind !== "intermediate") return;
         const middle = waypoints.filter((point) => point.kind === "intermediate" && point.id !== selected.id);
@@ -108,12 +134,9 @@ export default function RouteMapEditor({
         onChange({ ...route, waypoints: renumberWaypoints([start, ...middle, finish].filter(Boolean)), verification: null });
     };
 
-    const pathPoints = route?.verification?.polyline
+    const pathPoints = verified ? route?.verification?.polyline
         || route?.verification?.sections?.flatMap((section, index) => index ? section.polyline?.slice(1) || [] : section.polyline || [])
-        || [];
-    const followPoints = pathPoints.length > 2
-        ? filletPolyline(pathPoints, followRadiusM(FOLLOW_PATH_DEFAULT_KINEMATICS))
-        : pathPoints;
+        || [] : [];
 
     return (
         <section className={styles.routeEditor} aria-label={`${route?.name || "Actor"} route editor`}>
@@ -130,7 +153,7 @@ export default function RouteMapEditor({
                         <IconFlag3 size={14} stroke={1.75} /> Finish
                     </button>
                 </div>
-                <span className={styles.mapHint}>Click to place · drag to pan · scroll to zoom.</span>
+                <span className={styles.mapHint}>Click to place · drag a waypoint to move · drag the map to pan · scroll to zoom.</span>
                 <div className={styles.mapActions}>
                     <Button size="compact" onClick={onVerify} loading={verifying} disabled={waypoints.length < 2}>
                         <IconCheck size={14} stroke={1.75} /> Verify
@@ -147,22 +170,27 @@ export default function RouteMapEditor({
                     ariaLabel={`Road map for placing ${route?.name || "the actor route"}`}
                     interaction="place"
                     onPlace={place}
+                    onSelectEntity={(id) => setSelectedId(id)}
+                    onDragEntity={relocate}
+                    onDragEntityEnd={relocate}
                 >
-                    {({ toScreen }) => (
+                    {({ toScreen, draggingId }) => (
                         <>
                             {pathPoints.length > 1 && (
                                 <polyline
                                     className={styles.verifiedPath}
+                                    data-route-path="verified"
                                     points={pathPoints.map((point) => {
                                         const screen = toScreen(point);
                                         return `${screen.x},${screen.y}`;
                                     }).join(" ")}
                                 />
                             )}
-                            {followPoints.length > 1 && (
+                            {pathPoints.length > 1 && (
                                 <polyline
                                     className={styles.followPath}
-                                    points={followPoints.map((point) => {
+                                    data-route-path="driving"
+                                    points={pathPoints.map((point) => {
                                         const screen = toScreen(point);
                                         return `${screen.x},${screen.y}`;
                                     }).join(" ")}
@@ -176,12 +204,13 @@ export default function RouteMapEditor({
                                             key={point.id}
                                             className={styles.mapWaypoint}
                                             data-map-interactive
+                                            data-map-draggable={point.id}
                                             data-kind={point.kind}
                                             data-selected={point.id === selectedId || undefined}
+                                            data-dragging={point.id === draggingId || undefined}
                                             role="button"
                                             tabIndex="0"
                                             aria-label={`${point.kind} ${waypointLabel(point)}`}
-                                            onPointerDown={(event) => { event.stopPropagation(); setSelectedId(point.id); }}
                                             onKeyDown={(event) => { if (["Enter", " "].includes(event.key)) setSelectedId(point.id); }}
                                         >
                                             <circle cx={screen.x} cy={screen.y} r="16" />
@@ -203,6 +232,9 @@ export default function RouteMapEditor({
                 )}
 
                 {placementError && <div className={styles.placementError} role="status">{placementError}</div>}
+                {!verified && route?.verification && (
+                    <div className={styles.placementError} role="status">Needs verification with the current lane-routing algorithm.</div>
+                )}
 
                 <aside className={styles.waypointInspector} aria-label="Selected waypoint">
                     <span className={styles.eyebrow}>Waypoint inspector</span>

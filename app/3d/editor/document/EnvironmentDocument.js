@@ -1,6 +1,8 @@
 /**
- * @typedef {{ id: string, x: number, z: number, kind?: 'intersection' | 'endpoint' }} RoadNode
- * @typedef {{ id: string, startNodeId: string, endNodeId: string, bidirectional?: boolean, direction?: number | string, oneWay?: boolean, oneWayDirection?: number | string, width?: number, laneCount?: number, shoulderWidth?: number, tension?: number, borderLeft?: string, borderRight?: string, startArm?: { x: number, z: number }, endArm?: { x: number, z: number } }} RoadEdge
+ * @typedef {{ id: string, x: number, y?: number, z: number, kind?: 'intersection' | 'endpoint' }} RoadNode
+ * @typedef {{ x: number, y?: number, z: number }} RoadPoint
+ * @typedef {{ id: string, startNodeId: string, endNodeId: string, bidirectional?: boolean, direction?: number | string, oneWay?: boolean, oneWayDirection?: number | string, width?: number, laneCount?: number, shoulderWidth?: number, tension?: number, borderLeft?: string, borderRight?: string, startArm?: RoadPoint, endArm?: RoadPoint }} RoadEdge
+ * @typedef {{ nodeId: string, fromEdgeId: string, toEdgeId: string, allowed: boolean }} RoadTurnRule
  * @typedef {{ id: string, type: string, x: number, z: number, dir?: number, rotationY?: number, tags?: string[] }} FeatureRecord
  * @typedef {{ lat: number, lng: number }} EarthAnchor
  * @typedef {{ north: number, south: number, east: number, west: number }} EarthBounds
@@ -44,6 +46,9 @@ export class EnvironmentDocument {
         this.roads = {
             nodes: Array.isArray(options.roads?.nodes) ? options.roads.nodes.map(cloneNode) : [],
             edges: Array.isArray(options.roads?.edges) ? options.roads.edges.map(cloneEdge) : [],
+            turnRules: Array.isArray(options.roads?.turnRules)
+                ? options.roads.turnRules.map(cloneTurnRule).sort(compareTurnRules)
+                : [],
         };
         /** @type {import("../../environment/visualization/BakeRunConfig.js").BuildingRecord[]} */
         this.buildings = Array.isArray(options.buildings)
@@ -68,6 +73,9 @@ export class EnvironmentDocument {
             roads: {
                 nodes: this.roads.nodes.map(cloneNode),
                 edges: this.roads.edges.map(cloneEdge),
+                ...((this.roads.turnRules ?? []).length > 0
+                    ? { turnRules: this.roads.turnRules.map(cloneTurnRule) }
+                    : {}),
             },
             buildings: this.buildings.map(cloneBuilding),
             features: this.features.map(cloneFeature),
@@ -88,6 +96,9 @@ export class EnvironmentDocument {
         this.roads = {
             nodes: Array.isArray(manifest.roads?.nodes) ? manifest.roads.nodes.map(cloneNode) : [],
             edges: Array.isArray(manifest.roads?.edges) ? manifest.roads.edges.map(cloneEdge) : [],
+            turnRules: Array.isArray(manifest.roads?.turnRules)
+                ? manifest.roads.turnRules.map(cloneTurnRule).sort(compareTurnRules)
+                : [],
         };
         this.buildings = Array.isArray(manifest.buildings)
             ? manifest.buildings.map(cloneBuilding)
@@ -162,10 +173,25 @@ export class EnvironmentDocument {
     }
 }
 
+function nodeY(value) {
+    const y = Number(value);
+    return Number.isFinite(y) ? y : 0;
+}
+
+function cloneRoadPoint(point) {
+    if (!point) return null;
+    return {
+        x: point.x,
+        y: nodeY(point.y),
+        z: point.z,
+    };
+}
+
 function cloneNode(node) {
     return {
         id: node.id,
         x: node.x,
+        y: nodeY(node.y),
         z: node.z,
         kind: node.kind ?? null,
     };
@@ -188,9 +214,24 @@ function cloneEdge(edge) {
         tension: edge.tension ?? null,
         borderLeft: edge.borderLeft ?? null,
         borderRight: edge.borderRight ?? null,
-        startArm: edge.startArm ? { ...edge.startArm } : null,
-        endArm: edge.endArm ? { ...edge.endArm } : null,
+        startArm: cloneRoadPoint(edge.startArm),
+        endArm: cloneRoadPoint(edge.endArm),
     };
+}
+
+function cloneTurnRule(rule) {
+    return {
+        nodeId: String(rule.nodeId),
+        fromEdgeId: String(rule.fromEdgeId),
+        toEdgeId: String(rule.toEdgeId),
+        allowed: rule.allowed === true,
+    };
+}
+
+function compareTurnRules(left, right) {
+    const leftKey = `${left.nodeId}\u0000${left.fromEdgeId}\u0000${left.toEdgeId}`;
+    const rightKey = `${right.nodeId}\u0000${right.fromEdgeId}\u0000${right.toEdgeId}`;
+    return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
 }
 
 function cloneBuilding(building) {

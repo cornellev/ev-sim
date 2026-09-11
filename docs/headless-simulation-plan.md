@@ -1010,3 +1010,62 @@ installed runtime closure remain visual milestones VIS-15b and VIS-15c. The
 headless PR 12 hosted, soak, x64 NVIDIA, and Jetson ARM64 candidate evidence
 remains governed by this roadmap and is not completed by the VIS-15a local GPU
 fixture.
+
+### 2026-09-10 — Lane-aware scenario route proof version 4
+
+Scenario route verification now uses a shared right-hand-traffic lane model,
+incoming-edge A* state, and sparse authored intersection turn rules. Physical
+lane assignments and lane anchors are part of canonical route proofs;
+`roads.turnRules` is part of road-network/world identity when non-empty.
+Environment and route schema versions remain additive at v3 and v1, while the
+route algorithm advances from 3 to 4 and older proofs require re-verification.
+This changes authoring/resolution contracts but not fixed-step ordering,
+protobuf fields, run-bundle format, physics, sensors, trajectory hashing, or
+the PR 1 action-tape input. It is maintenance after PRs 1–12, not PR 13, and
+does not alter the outstanding PR 12 hosted/soak/x64/Jetson evidence gates.
+
+The implementation gate passed `npm run lint` with zero errors and one
+pre-existing warning, and `npm test` ran **969 tests: 965 passed, four declared
+hardware skips, zero failures**. The focused route/editor/elevation command
+passed **93/93**, the affected CLI/identity/editor regression command passed
+**49/49**, the production build passed, and the lane-aware scenario Playwright
+flow passed. `npm run fixtures:headless` reproduced the committed
+characterization byte-for-byte; its SHA-256 remains
+`60dc0bd2b02a9ec768f833070ce4d8d2047f5383838f09ea3f130dd31552dd6f`.
+There is no action-tape characterization delta.
+
+Immutable received v10 bundles retain their original route version-3 proofs
+and exact-byte identities through the headless compatibility path. Authoring,
+server verification, and newly resolved bundles require version 4, so a
+version-3 proof submitted as current authoring state is rejected and must be
+re-verified.
+
+### 2026-09-10 — Fixed-lane scenario route proof version 5
+
+Route algorithm version 5 makes a snapped road waypoint's physical lane a
+search constraint rather than a preference applied after A*. Staged itinerary
+state now retains incoming edge, direction, and lane, so an opposing lane at
+the same centerline fraction cannot complete a waypoint. Legal detours are
+selected when available; otherwise verification reports a lane-unreachable,
+wrong-way, restricted-turn, disconnected, or invalid-layout failure without
+moving the fixed waypoint across the divider.
+
+Canonical traversal records now include lane-center entry/exit subnodes at
+road-arm boundaries and deterministic sampled junction connectors. This curve
+is shared by the editor, diagnostics, metrics, scripts, and route follower;
+version-5 runtime execution no longer applies an unrestricted second fillet.
+Environment schema v3, route schema v1, protobuf v1, run-bundle v1, fixed-step
+ordering, physics, sensors, and the numbered PR 1–12 roadmap remain unchanged.
+Authoring and new resolution reject versions 3 and 4; immutable received
+bundles retain version-scoped compatibility.
+
+The implementation gate passed `npm run lint` with zero errors and one
+pre-existing warning, and `npm test` ran **971 tests: 967 passed, four declared
+hardware skips, zero failures**. The final focused route/document/follower and
+identity command passed **61/61**, the scenario-authoring Playwright regression
+passed, and the production build completed. `npm run fixtures:headless`
+reproduced the committed characterization byte-for-byte; action-tape and
+characterization SHA-256 values remain
+`1ba8c8c40e1560ac044f4ca5384065ab83c93529d65b5672fee8dc5ed42a5ced`
+and `60dc0bd2b02a9ec768f833070ce4d8d2047f5383838f09ea3f130dd31552dd6f`.
+There is no simulator characterization delta.

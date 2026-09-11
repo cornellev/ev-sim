@@ -1,5 +1,8 @@
 import * as THREE from "three";
-import { documentToRoadNetworkInputs } from "../documentMutations.js";
+import {
+    canMoveNode,
+    documentToRoadNetworkInputs,
+} from "../documentMutations.js";
 import buildRoadNetwork from "../../../city/RoadNetwork.js";
 import { EDITOR_LAYERS } from "../../EditorState.js";
 import { getRoadStylePreset } from "../../../environment/road/RoadStylePresets.js";
@@ -10,11 +13,37 @@ function getRoadRegistry(data) {
 
 function unregisterRoadEntities(registry) {
     registry?.listEntities?.()
-        ?.filter((entity) => entity.kind === "road" || entity.kind === "intersection")
-        ?.forEach((entity) => registry.unregisterEntity(entity.id));
+        ?.filter((entity) => (
+            entity.kind === "road"
+            || entity.kind === "intersection"
+            || entity.kind === "road-node"
+        ))
+        ?.forEach((entity) => {
+            if (entity.kind === "road-node") {
+                entity.object3D?.parent?.remove?.(entity.object3D);
+            }
+            registry.unregisterEntity(entity.id);
+        });
 }
 
-function registerRoadEntities(registry, result) {
+function createEndpointHandle(node) {
+    const geometry = new THREE.SphereGeometry(0.45, 12, 12);
+    const material = new THREE.MeshStandardMaterial({
+        color: 0x38bdf8,
+        emissive: 0x0ea5e9,
+        emissiveIntensity: 0.35,
+        roughness: 0.45,
+        metalness: 0.1,
+    });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.name = "RoadNodeHandle";
+    mesh.position.set(node.x, Number.isFinite(Number(node.y)) ? Number(node.y) : 0, node.z);
+    mesh.userData.bakeIgnore = true;
+    mesh.userData.roadNodeId = node.id;
+    return mesh;
+}
+
+function registerRoadEntities(registry, result, document, scene) {
     if (!registry) return;
 
     result.roads.forEach((road, index) => {
@@ -48,6 +77,21 @@ function registerRoadEntities(registry, result) {
             intersection,
         });
     });
+
+    for (const node of document.roads.nodes) {
+        if (!canMoveNode(document, node.id)) continue;
+        const handle = createEndpointHandle(node);
+        scene.add(handle);
+        registry.registerEntity({
+            id: `road-node:${node.id}`,
+            sourceId: node.id,
+            kind: "road-node",
+            label: `Road node ${node.id}`,
+            layer: EDITOR_LAYERS.ROADS,
+            object3D: handle,
+            node,
+        });
+    }
 }
 
 /**
@@ -104,19 +148,29 @@ export function syncRoadsFromDocument(data, scene, document) {
         for (const intersection of result.intersections) {
             city.addIntersection(intersection);
         }
-        const roadTriangles = result.roads.flatMap((road) => (road.triangles ?? []).map((triangle, triangleIndex) => {
-            const sourceId = road.network?.edgeId ?? "road";
-            triangle.environmentGeometryType = "road";
-            triangle.environmentSourceId = sourceId;
-            triangle.lidarTwinId = `road:${sourceId}:${triangleIndex}`;
-            triangle.lidarTriangleIndex = triangleIndex;
-            return triangle;
-        }));
+        const roadTriangles = [
+            ...result.roads.flatMap((road) => (road.triangles ?? []).map((triangle, triangleIndex) => {
+                const sourceId = road.network?.edgeId ?? "road";
+                triangle.environmentGeometryType = "road";
+                triangle.environmentSourceId = sourceId;
+                triangle.lidarTwinId = `road:${sourceId}:${triangleIndex}`;
+                triangle.lidarTriangleIndex = triangleIndex;
+                return triangle;
+            })),
+            ...result.intersections.flatMap((intersection) => (intersection.triangles ?? []).map((triangle, triangleIndex) => {
+                const sourceId = intersection.networkNodeId ?? "intersection";
+                triangle.environmentGeometryType = "road";
+                triangle.environmentSourceId = sourceId;
+                triangle.lidarTwinId = `intersection:${sourceId}:${triangleIndex}`;
+                triangle.lidarTriangleIndex = triangleIndex;
+                return triangle;
+            })),
+        ];
         data.objects?.()?.replaceTriangles?.(
             (triangle) => triangle.environmentGeometryType === "road",
             roadTriangles,
         );
-        registerRoadEntities(registry, result);
+        registerRoadEntities(registry, result, document, scene);
 
         return result;
     };

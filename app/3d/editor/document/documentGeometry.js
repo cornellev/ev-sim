@@ -190,6 +190,30 @@ export function roadCorridorFootprint(start, end, width) {
     ];
 }
 
+/**
+ * Vertical range occupied by a road corridor between two nodes.
+ * A thin slab around flat roads still overlaps coplanar neighbors.
+ * @param {{ y?: number }} start
+ * @param {{ y?: number }} end
+ * @param {number} [halfThickness]
+ */
+export function roadCorridorYRange(start, end, halfThickness = 0.25) {
+    const startY = Number.isFinite(Number(start?.y)) ? Number(start.y) : 0;
+    const endY = Number.isFinite(Number(end?.y)) ? Number(end.y) : 0;
+    return {
+        minY: Math.min(startY, endY) - halfThickness,
+        maxY: Math.max(startY, endY) + halfThickness,
+    };
+}
+
+/**
+ * @param {{ minY: number, maxY: number }} a
+ * @param {{ minY: number, maxY: number }} b
+ */
+export function yRangesOverlap(a, b) {
+    return a.maxY > b.minY && b.maxY > a.minY;
+}
+
 function getNodeMap(document) {
     const nodes = document.roads?.nodes ?? [];
     return new Map(nodes.map((node) => [node.id, node]));
@@ -200,8 +224,8 @@ function edgeEndpoints(edge, nodeMap) {
     const end = nodeMap.get(edge.endNodeId);
     if (!start || !end) return null;
     return {
-        start: toXZ(start),
-        end: toXZ(end),
+        start: { ...toXZ(start), y: Number.isFinite(Number(start.y)) ? Number(start.y) : 0 },
+        end: { ...toXZ(end), y: Number.isFinite(Number(end.y)) ? Number(end.y) : 0 },
         width: Number(edge.width) > 0 ? Number(edge.width) : 7,
     };
 }
@@ -247,6 +271,10 @@ export function findDocumentConflicts(document, options = {}) {
             const endsB = edgeEndpoints(edgeB, nodeMap);
             if (!endsB) continue;
 
+            const yA = roadCorridorYRange(endsA.start, endsA.end);
+            const yB = roadCorridorYRange(endsB.start, endsB.end);
+            if (!yRangesOverlap(yA, yB)) continue;
+
             const centerlineHit = segmentsIntersect(endsA.start, endsA.end, endsB.start, endsB.end);
             const clearance = (endsA.width + endsB.width) / 2;
             const corridorHit = !centerlineHit
@@ -291,10 +319,15 @@ export function findDocumentConflicts(document, options = {}) {
     // Building–road overlaps.
     for (const building of buildings) {
         if (buildingFilter && !buildingFilter.has(building.buildingId)) continue;
+        const buildingY = {
+            minY: 0,
+            maxY: Math.max(0, Number(building.height) || 0),
+        };
         const corridorHits = [];
         for (const edge of edges) {
             const ends = edgeEndpoints(edge, nodeMap);
             if (!ends) continue;
+            if (!yRangesOverlap(buildingY, roadCorridorYRange(ends.start, ends.end))) continue;
             const corridor = roadCorridorFootprint(ends.start, ends.end, ends.width);
             if (footprintsOverlap(building.footprint, corridor, 0)) {
                 corridorHits.push(edge.id);
@@ -332,6 +365,9 @@ export function findDocumentConflicts(document, options = {}) {
         for (const edge of edges) {
             const ends = edgeEndpoints(edge, nodeMap);
             if (!ends) continue;
+            // Props sit on the ground plane; ignore elevated overpasses.
+            const featureY = { minY: -0.25, maxY: 2.5 };
+            if (!yRangesOverlap(featureY, roadCorridorYRange(ends.start, ends.end))) continue;
             const dist = pointToSegmentDistance(point, ends.start, ends.end);
             if (dist < ends.width / 2 + radius) {
                 conflicts.push({

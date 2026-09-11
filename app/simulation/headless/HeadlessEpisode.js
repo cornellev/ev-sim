@@ -342,7 +342,11 @@ export class HeadlessEpisode {
                 },
             );
         }
-        const routeValidation = validateRouteVerification(route, resolvedRun.environment?.manifest);
+        const routeValidation = validateRouteVerification(route, resolvedRun.environment?.manifest, {
+            // Immutable exported bundles retain their historical proof bytes;
+            // authoring/server validation still requires the current algorithm.
+            allowLegacyVersions: true,
+        });
         if (!routeValidation.ok) {
             throw new HeadlessEpisodeError("BUNDLE_INVALID", "The ego route verification is stale or non-canonical.", routeValidation.issues);
         }

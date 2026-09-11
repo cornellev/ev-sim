@@ -3221,3 +3221,39 @@ work does not claim VIS-15a AGX acceptance, VIS-15c installed distribution,
 VIS-16b evaluation, or VIS-17 fidelity/release evidence. Public MCP/REST,
 protobuf, run-bundle v1, renderer identities, experiment case identity,
 simulation ordering, and hash algorithms remain unchanged.
+
+### 2026-09-10 — Lane-aware map rendering remains metric authoring UI
+
+The shared SVG map layer now visualizes metric road boundaries, lane dividers,
+and one-way arrows and the environment inspector authors sparse intersection
+turn rules. These fields belong to the canonical metric road domain: explicit
+turn rules change `roadNetworkHash` / `worldHash` and invalidate dependent
+route proofs. The work introduces no visual descriptor, asset, correspondence,
+render-scene-provider, measured-camera, or visual-package contract and is not
+a new VIS milestone. Existing VIS acceptance gates and evidence remain
+unchanged.
+
+The current v11 world-bound golden was intentionally re-resolved with the
+version-4 scenario route proof. Its world hash remains
+`d358aef1dc46de1f1d2f15e679a93fc0d9812e92d419f407d4fe30d399fcfa5f`;
+the new bundle byte hash is
+`595c1826f711722fa866c49d1aca57e295733ce8e726b6bccf970183f5ad581a`.
+The legacy v10 bytes and identities remain frozen and pass the compatibility
+suite. This is an intentional route-proof identity update, not a visual asset
+or renderer identity change.
+
+### 2026-09-10 — Route proof version 5 remains metric-only
+
+Fixed waypoint lanes, road-arm subnodes, and sampled intersection connectors
+advance the scenario route algorithm from version 4 to 5. The SVG map and
+runtime follower consume the same canonical metric curve. This changes route
+and newly resolved bundle identities but no visual descriptor, asset,
+correspondence, render provider, measured-camera, world hash, or VIS acceptance
+gate. Immutable version-3/4 bundle compatibility remains version-scoped.
+
+The current v11 world-bound golden was intentionally re-resolved with the
+version-5 proof. Its world hash remains
+`d358aef1dc46de1f1d2f15e679a93fc0d9812e92d419f407d4fe30d399fcfa5f`;
+the bundle byte hash is
+`6d3b4c5a2c9040377312de01795047ade35d0866c14f903bf8c713394a813c1d`.
+Legacy v10 bytes and identities remain frozen.

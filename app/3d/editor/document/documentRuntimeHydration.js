@@ -29,11 +29,17 @@ function getRoadDocumentOptions(road, overrides = {}) {
     };
 }
 
-function upsertDocumentNode(document, x, z, preferredId = null, kind = null) {
+function nodeElevation(value) {
+    const y = Number(value);
+    return Number.isFinite(y) ? y : 0;
+}
+
+function upsertDocumentNode(document, x, z, preferredId = null, kind = null, y = 0) {
     if (preferredId) {
         const byId = getDocumentNode(document, preferredId);
         if (byId) {
             if (kind) byId.kind = kind;
+            if (!Number.isFinite(Number(byId.y))) byId.y = nodeElevation(y);
             return byId;
         }
     }
@@ -43,6 +49,7 @@ function upsertDocumentNode(document, x, z, preferredId = null, kind = null) {
     );
     if (existing) {
         if (kind) existing.kind = kind;
+        if (!Number.isFinite(Number(existing.y))) existing.y = nodeElevation(y);
         return existing;
     }
 
@@ -51,17 +58,17 @@ function upsertDocumentNode(document, x, z, preferredId = null, kind = null) {
         id = createId("node");
     }
 
-    const node = { id, x, z, kind: kind ?? null };
+    const node = { id, x, y: nodeElevation(y), z, kind: kind ?? null };
     document.roads.nodes.push(node);
     return node;
 }
 
-function upsertIntersectionNode(document, id, x, z) {
-    return upsertDocumentNode(document, x, z, id, "intersection");
+function upsertIntersectionNode(document, id, x, z, y = 0) {
+    return upsertDocumentNode(document, x, z, id, "intersection", y);
 }
 
-function upsertEndpointNode(document, x, z, preferredId = null) {
-    return upsertDocumentNode(document, x, z, preferredId, "endpoint");
+function upsertEndpointNode(document, x, z, preferredId = null, y = 0) {
+    return upsertDocumentNode(document, x, z, preferredId, "endpoint", y);
 }
 
 function upsertDocumentBuilding(document, record) {
@@ -157,16 +164,19 @@ function hydrateRoadsFromIntersections(city, document) {
         if (!sides.length) continue;
 
         let centerX = 0;
+        let centerY = 0;
         let centerZ = 0;
         for (const side of sides) {
             centerX += side.center.x;
+            centerY += nodeElevation(side.center.y);
             centerZ += side.center.z;
         }
         centerX /= sides.length;
+        centerY /= sides.length;
         centerZ /= sides.length;
 
         const intersectionId = `intersection:${i}`;
-        upsertIntersectionNode(document, intersectionId, centerX, centerZ);
+        upsertIntersectionNode(document, intersectionId, centerX, centerZ, centerY);
 
         for (let j = 0; j < intersection.roads.length; j++) {
             const road = intersection.roads[j];
@@ -180,7 +190,7 @@ function hydrateRoadsFromIntersections(city, document) {
             if (!roadLinks.has(roadIndex)) roadLinks.set(roadIndex, []);
             roadLinks.get(roadIndex).push({
                 intersectionId,
-                arm: { x: side.center.x, z: side.center.z },
+                arm: { x: side.center.x, y: nodeElevation(side.center.y), z: side.center.z },
                 useEnd,
             });
         }
@@ -211,6 +221,7 @@ function hydrateRoadsFromIntersections(city, document) {
                 farPoint.x,
                 farPoint.z,
                 `endpoint:road-${roadIndex}`,
+                farPoint.y,
             );
 
             if (hasEdgeBetween(document, link.intersectionId, endpoint.id)) continue;
@@ -236,8 +247,8 @@ function hydrateRoadsFromEndpoints(city, document) {
 
         const start = points[0];
         const end = points[points.length - 1];
-        const startNode = upsertEndpointNode(document, start.x, start.z);
-        const endNode = upsertEndpointNode(document, end.x, end.z);
+        const startNode = upsertEndpointNode(document, start.x, start.z, null, start.y);
+        const endNode = upsertEndpointNode(document, end.x, end.z, null, end.y);
 
         if (hasEdgeBetween(document, startNode.id, endNode.id)) continue;
 

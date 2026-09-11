@@ -160,6 +160,7 @@ test("documentToRoadNetworkInputs matches buildRoadNetwork tuple format", () => 
 
     const { vectorMap, connections } = documentToRoadNetworkInputs(document);
     assert.equal(vectorMap.get("a").x, 0);
+    assert.equal(vectorMap.get("a").y, 0);
     assert.equal(connections[0][0], "a");
     assert.equal(connections[0][1], "b");
     assert.equal(connections[0][2], true);

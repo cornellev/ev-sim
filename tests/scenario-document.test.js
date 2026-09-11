@@ -143,6 +143,10 @@ test("route verification endpoint produces the same canonical proof consumed by 
             routeId: authored.routes[0].id,
         });
         assert.equal(verified.ok, true);
+        assert.equal(verified.verification.algorithmVersion, 5);
+        assert.ok(verified.verification.edgeTraversal.every((step) => (
+            Number.isInteger(step.fromLaneIndex) && Number.isInteger(step.toLaneIndex)
+        )));
         authored.routes[0].waypoints = verified.waypoints;
         authored.routes[0].verification = verified.verification;
 

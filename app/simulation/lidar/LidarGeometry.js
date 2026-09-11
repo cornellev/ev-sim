@@ -118,14 +118,30 @@ function extrudedTriangles(obstacle, tags, instanceId) {
     return triangles;
 }
 
-function surfaceTriangles(surface, instanceId) {
+function surfaceTriangles(surface, instanceId, roads = null) {
     const tags = ["road"];
     if (surface.kind === "road-corridor") {
-        const y = (surface.minY + surface.maxY) * 0.5;
+        // Footprint winding: 0 start-left, 1 end-left, 2 end-right, 3 start-right.
+        let startY = (surface.minY + surface.maxY) * 0.5;
+        let endY = startY;
+        const edge = roads?.edges?.find((entry) => entry.id === surface.sourceId) ?? null;
+        if (edge && Array.isArray(roads?.nodes)) {
+            const nodes = new Map(roads.nodes.map((node) => [node.id, node]));
+            const start = nodes.get(edge.startNodeId);
+            const end = nodes.get(edge.endNodeId);
+            if (start && end) {
+                startY = Number.isFinite(Number(start.y)) ? Number(start.y) : 0;
+                endY = Number.isFinite(Number(end.y)) ? Number(end.y) : 0;
+            }
+        }
+        const yAt = [startY, endY, endY, startY];
         return [[0, 1, 2], [0, 2, 3]].map((face, index) => createTriangleLidarTwin({
             id: `${surface.id}:${index}`,
             sourceId: surface.sourceId,
-            vertices: face.map((pointIndex) => ({ ...surface.footprint[pointIndex], y })),
+            vertices: face.map((pointIndex) => ({
+                ...surface.footprint[pointIndex],
+                y: yAt[pointIndex],
+            })),
             tags,
             semanticId: perceptionClassId("road"),
             instanceId,
@@ -204,7 +220,7 @@ export function createLidarGeometry(worldResource, vehicleDependencies = []) {
             return extrudedTriangles(obstacle, tags, instanceIds.get(String(obstacle.sourceId)));
         }),
         ...world.drivableSurfaces.flatMap((surface) => (
-            surfaceTriangles(surface, instanceIds.get(String(surface.sourceId)))
+            surfaceTriangles(surface, instanceIds.get(String(surface.sourceId)), world.roads)
         )),
     ].sort((left, right) => compareUtf8(left.id, right.id));
     const actors = vehicleDependencies

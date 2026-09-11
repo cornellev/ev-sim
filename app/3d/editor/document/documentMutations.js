@@ -1,5 +1,11 @@
 import * as THREE from "three";
 import { buildingIdFromFootprint } from "../../city/buildingIds.js";
+import {
+    edgeAllowsArrivalAtNode,
+    edgeAllowsDepartureFromNode,
+    movementDefaultAllowed,
+    movementRuleKey,
+} from "../../../roads/RoadLaneModel.js";
 import { createId, DEFAULT_ROAD_EDGE } from "./EnvironmentDocument.js";
 
 export const MAX_INTERSECTION_DEGREE = 4;
@@ -8,6 +14,29 @@ export const DEFAULT_INTERSECTION_INSET = 5;
 
 function markRoadsAuthored(document) {
     document.roadsAuthored = true;
+}
+
+function sortTurnRules(turnRules) {
+    turnRules.sort((left, right) => {
+        const leftKey = movementRuleKey(left.nodeId, left.fromEdgeId, left.toEdgeId);
+        const rightKey = movementRuleKey(right.nodeId, right.fromEdgeId, right.toEdgeId);
+        return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+    });
+}
+
+function pruneInfeasibleTurnRules(document) {
+    const edgeById = new Map(document.roads.edges.map((edge) => [edge.id, edge]));
+    document.roads.turnRules ??= [];
+    document.roads.turnRules = document.roads.turnRules.filter((rule) => {
+        const fromEdge = edgeById.get(rule.fromEdgeId);
+        const toEdge = edgeById.get(rule.toEdgeId);
+        return Boolean(
+            getDocumentNode(document, rule.nodeId)
+            && edgeAllowsArrivalAtNode(fromEdge, rule.nodeId)
+            && edgeAllowsDepartureFromNode(toEdge, rule.nodeId)
+        );
+    });
+    sortTurnRules(document.roads.turnRules);
 }
 
 function roadEdgeKey(startNodeId, endNodeId) {
@@ -67,9 +96,14 @@ export function findNearestNode(point, nodes, radiusWorld) {
     return nearest;
 }
 
+function nodeElevation(point) {
+    const y = Number(point?.y);
+    return Number.isFinite(y) ? y : 0;
+}
+
 /**
  * @param {import("./EnvironmentDocument.js").EnvironmentDocument} document
- * @param {{ x: number, z: number }} point
+ * @param {{ x: number, y?: number, z: number }} point
  * @param {number} [snapRadius]
  */
 export function getOrCreateNode(document, point, snapRadius = 2) {
@@ -81,7 +115,7 @@ export function getOrCreateNode(document, point, snapRadius = 2) {
         id = createId("node");
     }
 
-    const node = { id, x: point.x, z: point.z };
+    const node = { id, x: point.x, y: nodeElevation(point), z: point.z };
     document.roads.nodes.push(node);
     return node;
 }
@@ -135,19 +169,20 @@ export function refreshNodeKinds(document) {
 }
 
 /**
- * @param {{ x: number, z: number }} from
- * @param {{ x: number, z: number }} to
+ * @param {{ x: number, y?: number, z: number }} from
+ * @param {{ x: number, y?: number, z: number }} to
  * @param {number} inset
  */
 export function computeArmPoint(from, to, inset = DEFAULT_INTERSECTION_INSET) {
     const dx = to.x - from.x;
     const dz = to.z - from.z;
     const length = Math.hypot(dx, dz);
+    const y = nodeElevation(from);
     if (length <= inset) {
-        return { x: to.x, z: to.z };
+        return { x: to.x, y, z: to.z };
     }
     const scale = inset / length;
-    return { x: from.x + dx * scale, z: from.z + dz * scale };
+    return { x: from.x + dx * scale, y, z: from.z + dz * scale };
 }
 
 /**
@@ -159,17 +194,25 @@ export function getEdgeRenderEndpoints(document, edge) {
     const endNode = getDocumentNode(document, edge.endNodeId);
     if (!startNode || !endNode) return null;
 
-    let startPoint = { x: startNode.x, z: startNode.z };
-    let endPoint = { x: endNode.x, z: endNode.z };
+    let startPoint = { x: startNode.x, y: nodeElevation(startNode), z: startNode.z };
+    let endPoint = { x: endNode.x, y: nodeElevation(endNode), z: endNode.z };
 
     if (edge.startArm) {
-        startPoint = { ...edge.startArm };
+        startPoint = {
+            x: edge.startArm.x,
+            y: nodeElevation(edge.startArm.y !== undefined ? edge.startArm : startNode),
+            z: edge.startArm.z,
+        };
     } else if (isIntersectionNode(document, startNode)) {
         startPoint = computeArmPoint(startNode, endNode);
     }
 
     if (edge.endArm) {
-        endPoint = { ...edge.endArm };
+        endPoint = {
+            x: edge.endArm.x,
+            y: nodeElevation(edge.endArm.y !== undefined ? edge.endArm : endNode),
+            z: edge.endArm.z,
+        };
     } else if (isIntersectionNode(document, endNode)) {
         endPoint = computeArmPoint(endNode, startNode);
     }
@@ -191,7 +234,7 @@ export function getEdgeIntersectionConnectors(document, edge) {
     const endNode = getDocumentNode(document, edge.endNodeId);
 
     const addConnector = (node, armPoint) => {
-        const center = { x: node.x, z: node.z };
+        const center = { x: node.x, y: nodeElevation(node), z: node.z };
         if (Math.hypot(armPoint.x - center.x, armPoint.z - center.z) > 0.05) {
             connectors.push({
                 from: armPoint,
@@ -229,6 +272,7 @@ export function createIntersectionNode(document, point) {
     const node = {
         id,
         x: point.x,
+        y: nodeElevation(point),
         z: point.z,
         kind: "intersection",
     };
@@ -253,11 +297,49 @@ export function getOrCreateEndpointNode(document, point, snapRadius = 2) {
     const node = {
         id,
         x: point.x,
+        y: nodeElevation(point),
         z: point.z,
         kind: "endpoint",
     };
     document.roads.nodes.push(node);
     return node;
+}
+
+/**
+ * Set elevation (y) on a road endpoint or intersection node. XZ is unchanged.
+ * @param {import("./EnvironmentDocument.js").EnvironmentDocument} document
+ * @param {string} nodeId
+ * @param {number} y
+ * @param {{ notify?: boolean, markAuthored?: boolean }} [runtime]
+ */
+export function setRoadNodeElevation(document, nodeId, y, runtime = {}) {
+    const node = getDocumentNode(document, nodeId);
+    if (!node) {
+        return { ok: false, error: "Road node not found." };
+    }
+    if (!Number.isFinite(Number(y))) {
+        return { ok: false, error: "Elevation must be a finite number." };
+    }
+
+    node.y = Number(y);
+
+    // Keep junction arms on the plateau at the junction elevation.
+    for (const edge of document.roads.edges) {
+        if (edge.startNodeId === nodeId && edge.startArm) {
+            edge.startArm = { ...edge.startArm, y: node.y };
+        }
+        if (edge.endNodeId === nodeId && edge.endArm) {
+            edge.endArm = { ...edge.endArm, y: node.y };
+        }
+    }
+
+    if (runtime.markAuthored !== false) {
+        markRoadsAuthored(document);
+    }
+    if (runtime.notify !== false) {
+        document.notify();
+    }
+    return { ok: true, node };
 }
 
 export function moveRoadNode(document, nodeId, point, options = {}) {
@@ -280,13 +362,22 @@ export function moveRoadNode(document, nodeId, point, options = {}) {
         }
         const intersection = findNearestIntersection(point, document, snapRadius, excludeIds);
         if (intersection) {
-            targetPoint = { x: intersection.x, z: intersection.z };
+            targetPoint = {
+                x: intersection.x,
+                y: nodeElevation(intersection),
+                z: intersection.z,
+            };
         }
     }
 
     const node = getDocumentNode(document, nodeId);
     node.x = targetPoint.x;
     node.z = targetPoint.z;
+    if (targetPoint.y !== undefined && Number.isFinite(Number(targetPoint.y))) {
+        node.y = Number(targetPoint.y);
+    } else if (!Number.isFinite(Number(node.y))) {
+        node.y = 0;
+    }
     node.kind = "endpoint";
     markRoadsAuthored(document);
     document.notify();
@@ -417,8 +508,12 @@ export function addRoadEdge(document, startNodeId, endNodeId, options = {}, runt
         tension: options.tension ?? null,
         borderLeft: options.borderLeft ?? null,
         borderRight: options.borderRight ?? null,
-        startArm: options.startArm ? { ...options.startArm } : null,
-        endArm: options.endArm ? { ...options.endArm } : null,
+        startArm: options.startArm
+            ? { x: options.startArm.x, y: nodeElevation(options.startArm), z: options.startArm.z }
+            : null,
+        endArm: options.endArm
+            ? { x: options.endArm.x, y: nodeElevation(options.endArm), z: options.endArm.z }
+            : null,
     };
 
     document.roads.edges.push(edge);
@@ -480,6 +575,8 @@ export function updateRoadEdge(document, edgeId, patch = {}, runtime = {}) {
     if (patch.borderLeft !== undefined) edge.borderLeft = patch.borderLeft;
     if (patch.borderRight !== undefined) edge.borderRight = patch.borderRight;
 
+    pruneInfeasibleTurnRules(document);
+
     if (runtime.markAuthored !== false) {
         markRoadsAuthored(document);
     }
@@ -490,14 +587,84 @@ export function updateRoadEdge(document, edgeId, patch = {}, runtime = {}) {
 }
 
 /**
+ * Return deterministic incoming/outgoing movement cells for an intersection.
+ * One-way-impossible movements are omitted from the feasible matrix.
+ */
+export function getIntersectionMovements(document, nodeId) {
+    const degree = getNodeDegree(document, nodeId);
+    const incident = document.roads.edges
+        .filter((edge) => edge.startNodeId === nodeId || edge.endNodeId === nodeId)
+        .sort((left, right) => String(left.id).localeCompare(String(right.id)));
+    const incoming = incident.filter((edge) => edgeAllowsArrivalAtNode(edge, nodeId));
+    const outgoing = incident.filter((edge) => edgeAllowsDepartureFromNode(edge, nodeId));
+    const ruleByKey = new Map((document.roads.turnRules ?? []).map((rule) => [
+        movementRuleKey(rule.nodeId, rule.fromEdgeId, rule.toEdgeId),
+        rule,
+    ]));
+
+    return {
+        incident,
+        incoming,
+        outgoing,
+        cells: incoming.flatMap((fromEdge) => outgoing.map((toEdge) => {
+            const defaultAllowed = movementDefaultAllowed(degree, fromEdge.id, toEdge.id);
+            const rule = ruleByKey.get(movementRuleKey(nodeId, fromEdge.id, toEdge.id));
+            return {
+                nodeId,
+                fromEdgeId: fromEdge.id,
+                toEdgeId: toEdge.id,
+                defaultAllowed,
+                allowed: rule ? rule.allowed === true : defaultAllowed,
+                overridden: Boolean(rule),
+            };
+        })),
+    };
+}
+
+/** Store only sparse movement overrides; choosing the default removes the rule. */
+export function setTurnMovementAllowed(document, nodeId, fromEdgeId, toEdgeId, allowed, runtime = {}) {
+    const node = getDocumentNode(document, nodeId);
+    const fromEdge = document.roads.edges.find((edge) => edge.id === fromEdgeId);
+    const toEdge = document.roads.edges.find((edge) => edge.id === toEdgeId);
+    if (!node || !fromEdge || !toEdge) {
+        return { ok: false, error: "Intersection movement references a missing node or road." };
+    }
+    if (!edgeAllowsArrivalAtNode(fromEdge, nodeId) || !edgeAllowsDepartureFromNode(toEdge, nodeId)) {
+        return { ok: false, error: "The movement is impossible under the road one-way directions." };
+    }
+
+    const defaultAllowed = movementDefaultAllowed(getNodeDegree(document, nodeId), fromEdgeId, toEdgeId);
+    const desiredAllowed = allowed === true;
+    const key = movementRuleKey(nodeId, fromEdgeId, toEdgeId);
+    document.roads.turnRules ??= [];
+    document.roads.turnRules = document.roads.turnRules.filter((rule) => (
+        movementRuleKey(rule.nodeId, rule.fromEdgeId, rule.toEdgeId) !== key
+    ));
+    if (desiredAllowed !== defaultAllowed) {
+        document.roads.turnRules.push({ nodeId, fromEdgeId, toEdgeId, allowed: desiredAllowed });
+    }
+    sortTurnRules(document.roads.turnRules);
+    if (runtime.markAuthored !== false) markRoadsAuthored(document);
+    if (runtime.notify !== false) document.notify();
+    return { ok: true, defaultAllowed, overridden: desiredAllowed !== defaultAllowed };
+}
+
+/**
  * @param {{ x: number, z: number }} a
  * @param {{ x: number, z: number }} b
  * @param {number} [snapSize]
  */
 export function snapPoint(point, snapSize = 1) {
-    if (!snapSize || snapSize <= 0) return { ...point };
+    if (!snapSize || snapSize <= 0) {
+        return {
+            x: point.x,
+            ...(point.y !== undefined ? { y: point.y } : {}),
+            z: point.z,
+        };
+    }
     return {
         x: Math.round(point.x / snapSize) * snapSize,
+        ...(point.y !== undefined ? { y: point.y } : {}),
         z: Math.round(point.z / snapSize) * snapSize,
     };
 }
@@ -709,6 +876,9 @@ export function removeRoadEdge(document, edgeId) {
 
     const edge = document.roads.edges[edgeIndex];
     document.roads.edges.splice(edgeIndex, 1);
+    document.roads.turnRules = (document.roads.turnRules ?? []).filter((rule) => (
+        rule.fromEdgeId !== edgeId && rule.toEdgeId !== edgeId
+    ));
 
     for (const nodeId of [edge.startNodeId, edge.endNodeId]) {
         if (getNodeDegree(document, nodeId) > 0) continue;
@@ -746,6 +916,12 @@ export function removeIntersectionNode(document, nodeId) {
         (edge) => edge.startNodeId !== nodeId && edge.endNodeId !== nodeId,
     );
     document.roads.nodes = document.roads.nodes.filter((candidate) => candidate.id !== nodeId);
+    const removedEdgeIds = new Set(connectedEdges.map((edge) => edge.id));
+    document.roads.turnRules = (document.roads.turnRules ?? []).filter((rule) => (
+        rule.nodeId !== nodeId
+        && !removedEdgeIds.has(rule.fromEdgeId)
+        && !removedEdgeIds.has(rule.toEdgeId)
+    ));
 
     for (const farNodeId of farNodeIds) {
         if (getNodeDegree(document, farNodeId) > 0) continue;
@@ -825,7 +1001,7 @@ export function getEndpointNodes(document) {
 export function documentToRoadNetworkInputs(document) {
     const vectorMap = new Map();
     for (const node of document.roads.nodes) {
-        vectorMap.set(node.id, { x: node.x, y: 0, z: node.z });
+        vectorMap.set(node.id, { x: node.x, y: nodeElevation(node), z: node.z });
     }
 
     const connections = document.roads.edges.map((edge) => [

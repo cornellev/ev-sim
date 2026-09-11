@@ -15,6 +15,14 @@ import {
 import { DEFAULT_ROAD_EDGE } from "../../editor/document/EnvironmentDocument.js";
 import { MAP_SELECTION_TYPES } from "../../editor/EditorState.js";
 import { DEFAULT_CHUNK_SIZE } from "../../editor/chunks/ChunkIndex.js";
+import {
+    laneCenterPoint,
+    laneDividerDescriptors,
+    offsetRoadPoint,
+    roadIsBidirectional,
+    roadIsReversed,
+    roadLaneCount,
+} from "../../../roads/RoadLaneModel.js";
 
 function GridLines({ viewport, size, visible }) {
     if (!visible) return null;
@@ -62,7 +70,7 @@ function GridLines({ viewport, size, visible }) {
     return <g className="pointer-events-none">{lines}</g>;
 }
 
-function RoadEdges({ documentSnapshot, viewport, size, layers, mapSelection }) {
+function RoadEdges({ documentSnapshot, viewport, size, layers, mapSelection, showDetail }) {
     if (!layers.roads) return null;
 
     return documentSnapshot.roads.edges.map((edge) => {
@@ -73,17 +81,95 @@ function RoadEdges({ documentSnapshot, viewport, size, layers, mapSelection }) {
         const selected = mapSelection?.type === MAP_SELECTION_TYPES.ROAD
             && mapSelection.id === edge.id;
         const roadWidthPx = worldSizeToScreen(edge.width ?? DEFAULT_ROAD_EDGE.width, viewport);
+        const width = edge.width ?? DEFAULT_ROAD_EDGE.width;
+        const boundaries = [-width * 0.5, width * 0.5].map((rightOffset) => {
+            const start = worldToScreen(offsetRoadPoint(endpoints.startPoint, endpoints.startPoint, endpoints.endPoint, rightOffset), viewport, size);
+            const end = worldToScreen(offsetRoadPoint(endpoints.endPoint, endpoints.startPoint, endpoints.endPoint, rightOffset), viewport, size);
+            return { start, end, rightOffset };
+        });
+        const dividers = laneDividerDescriptors(edge).map((divider) => {
+            const start = worldToScreen(offsetRoadPoint(endpoints.startPoint, endpoints.startPoint, endpoints.endPoint, divider.rightOffset), viewport, size);
+            const end = worldToScreen(offsetRoadPoint(endpoints.endPoint, endpoints.startPoint, endpoints.endPoint, divider.rightOffset), viewport, size);
+            return { ...divider, start, end };
+        });
+        const arrows = [];
+        if (showDetail && !roadIsBidirectional(edge)) {
+            const reversed = roadIsReversed(edge);
+            const startPoint = reversed ? endpoints.endPoint : endpoints.startPoint;
+            const endPoint = reversed ? endpoints.startPoint : endpoints.endPoint;
+            for (let laneIndex = 0; laneIndex < roadLaneCount(edge); laneIndex += 1) {
+                const center = {
+                    x: (endpoints.startPoint.x + endpoints.endPoint.x) * 0.5,
+                    y: ((endpoints.startPoint.y ?? 0) + (endpoints.endPoint.y ?? 0)) * 0.5,
+                    z: (endpoints.startPoint.z + endpoints.endPoint.z) * 0.5,
+                };
+                const lanePoint = laneCenterPoint(center, endpoints.startPoint, endpoints.endPoint, edge, laneIndex);
+                const screen = worldToScreen(lanePoint, viewport, size);
+                const screenStart = worldToScreen(startPoint, viewport, size);
+                const screenEnd = worldToScreen(endPoint, viewport, size);
+                const dx = screenEnd.x - screenStart.x;
+                const dy = screenEnd.y - screenStart.y;
+                const length = Math.hypot(dx, dy) || 1;
+                const tx = dx / length;
+                const ty = dy / length;
+                const nx = -ty;
+                const ny = tx;
+                arrows.push({
+                    laneIndex,
+                    points: [
+                        `${screen.x + tx * 6},${screen.y + ty * 6}`,
+                        `${screen.x - tx * 4 + nx * 3.5},${screen.y - ty * 4 + ny * 3.5}`,
+                        `${screen.x - tx * 4 - nx * 3.5},${screen.y - ty * 4 - ny * 3.5}`,
+                    ].join(" "),
+                });
+            }
+        }
         return (
-            <line
-                key={edge.id}
-                x1={a.x}
-                y1={a.y}
-                x2={b.x}
-                y2={b.y}
-                stroke={selected ? "#38bdf8" : "#52525b"}
-                strokeWidth={roadWidthPx}
-                strokeLinecap="butt"
-            />
+            <g key={edge.id} data-road-id={edge.id} data-lane-count={roadLaneCount(edge)}>
+                <line
+                    x1={a.x}
+                    y1={a.y}
+                    x2={b.x}
+                    y2={b.y}
+                    stroke={selected ? "#38bdf8" : "#52525b"}
+                    strokeWidth={roadWidthPx}
+                    strokeLinecap="butt"
+                />
+                {boundaries.map((boundary) => (
+                    <line
+                        key={`boundary-${boundary.rightOffset}`}
+                        data-road-boundary
+                        x1={boundary.start.x}
+                        y1={boundary.start.y}
+                        x2={boundary.end.x}
+                        y2={boundary.end.y}
+                        stroke="#d4d4d8"
+                        strokeWidth={1}
+                    />
+                ))}
+                {dividers.map((divider) => (
+                    <line
+                        key={`divider-${divider.dividerIndex}`}
+                        data-lane-divider={divider.opposing ? "opposing" : "same-direction"}
+                        x1={divider.start.x}
+                        y1={divider.start.y}
+                        x2={divider.end.x}
+                        y2={divider.end.y}
+                        stroke={divider.opposing ? "#facc15" : "#f4f4f5"}
+                        strokeWidth={divider.opposing ? 1.5 : 1}
+                        strokeDasharray={divider.opposing ? undefined : "7 6"}
+                    />
+                ))}
+                {arrows.map((arrow) => (
+                    <polygon
+                        key={`arrow-${arrow.laneIndex}`}
+                        data-one-way-arrow
+                        points={arrow.points}
+                        fill="#f4f4f5"
+                        opacity={0.9}
+                    />
+                ))}
+            </g>
         );
     });
 }
@@ -311,6 +397,7 @@ export function MapSurfaceLayers({
                     size={size}
                     layers={layers}
                     mapSelection={mapSelection}
+                    showDetail={showDetail}
                 />
             </g>
             <RoadConnectors

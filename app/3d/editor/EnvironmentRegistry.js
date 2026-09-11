@@ -10,7 +10,7 @@ function shortId(value) {
 
 function getKindLayer(kind) {
     if (kind === "building") return EDITOR_LAYERS.BUILDINGS;
-    if (kind === "road" || kind === "intersection") return EDITOR_LAYERS.ROADS;
+    if (kind === "road" || kind === "intersection" || kind === "road-node") return EDITOR_LAYERS.ROADS;
     return EDITOR_LAYERS.PROPS;
 }
 

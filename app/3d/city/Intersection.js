@@ -1,20 +1,31 @@
 import * as THREE from "three";
 import Unit from "../../util/Unit.js";
+import { Triangle } from "../data/objects/Triangle.js";
 import { buildStripGeometry, createSolidLine, Road } from "./Road.js";
 
 const UP = new THREE.Vector3(0, 1, 0);
 
-function computeOffsetPoint(curve, u, lateralOffset, y) {
+function computeOffsetPoint(curve, u, lateralOffset, paintOffset = 0) {
     const point = curve.getPointAt(u);
+    const centerlineY = point.y;
     const tangent = curve.getTangentAt(u).normalize();
-    const normal = new THREE.Vector3().crossVectors(UP, tangent);
+    const flatTangent = new THREE.Vector3(tangent.x, 0, tangent.z);
+    const normal = new THREE.Vector3().crossVectors(UP, flatTangent.lengthSq() > 0 ? flatTangent : tangent);
 
     if (normal.lengthSq() === 0) {
         normal.set(-tangent.z, 0, tangent.x);
     }
 
-    normal.normalize();
-    return point.addScaledVector(normal, lateralOffset).setY(y);
+    normal.y = 0;
+    if (normal.lengthSq() === 0) {
+        normal.set(-tangent.z, 0, tangent.x).normalize();
+    } else {
+        normal.normalize();
+    }
+
+    const offset = point.addScaledVector(normal, lateralOffset);
+    offset.y = centerlineY + paintOffset;
+    return offset;
 }
 
 function sampleOffsetCenterline(curve, lateralOffset, y, segments, startU = 0, endU = 1) {
@@ -78,6 +89,9 @@ export class Intersection {
         // Stop-line geometry for 3-/4-way intersections (used as YieldBoundaries).
         // Array of polylines: THREE.Vector3[]
         this.yieldBoundaries = [];
+
+        /** @type {import("../data/objects/Triangle.js").Triangle[]} */
+        this.triangles = [];
     }
 
     calculateSides() {
@@ -215,6 +229,7 @@ export class Intersection {
         root.userData.bakeRoadSurface = true;
 
         this.yieldBoundaries = [];
+        this.triangles = [];
 
         let verticies = [];
 
@@ -222,7 +237,7 @@ export class Intersection {
         // special-case decisions (e.g. 3-way intersections).
         const vertexRoadIndex = new WeakMap();
 
-        const centerPoint = new THREE.Vector3(0, this.roadEdges[0].center.y, 0);
+        const centerPoint = new THREE.Vector3(0, 0, 0);
 
         for (let i = 0; i < this.roadEdges.length; i++) {
             const edge = this.roadEdges[i];
@@ -324,12 +339,12 @@ export class Intersection {
                 0.01,
                 laneWidth - (this.roads?.[0]?.options?.laneMarkingWidth ?? 0.14) * 1.2
             );
-            const laneY = (p1.y + p2.y) * 0.5 + 0.01;
+            const laneYOffset = 0.01;
             const laneSegments = Math.max(32, Math.ceil(curve.getLength() * 10));
 
             for (let laneIndex = 0; laneIndex < laneCount; laneIndex++) {
                 const offset = -widthMeters * 0.5 + laneWidth * (laneIndex + 0.5);
-                const lanePoints = sampleOffsetCenterline(curve, offset, laneY, laneSegments);
+                const lanePoints = sampleOffsetCenterline(curve, offset, laneYOffset, laneSegments);
                 this.lanes.push(lanePoints);
 
                 const laneGeometry = createPolylineRibbon(lanePoints, laneRibbonWidth);
@@ -541,9 +556,11 @@ export class Intersection {
         }
 
 
-        // now, add a polygon for the intersection fill (optional)
-        const shape = new THREE.Shape(verticies.map(v => new THREE.Vector2(v.x, v.z)));
-        const geometry = new THREE.ShapeGeometry(shape);
+        // Flat plateau fill at junction elevation (slightly below road paint).
+        const fillY = centerPoint.y - 0.01;
+        const fillCenter = new THREE.Vector3(centerPoint.x, fillY, centerPoint.z);
+        const fillRim = verticies.map((vertex) => new THREE.Vector3(vertex.x, fillY, vertex.z));
+        const fillGeometry = buildIntersectionFanGeometry(fillCenter, fillRim);
 
         const material = new THREE.MeshStandardMaterial({ 
             color: this.roads[0].options.surfaceColor, 
@@ -551,13 +568,13 @@ export class Intersection {
             metalness: this.roads[0].options.metalness,
             side: THREE.DoubleSide
         });
-        const mesh = new THREE.Mesh(geometry, material);
-        mesh.rotation.x = Math.PI / 2;
-        mesh.position.y = -0.01; // slight offset to prevent z-fighting with the road surfaces
+        const mesh = new THREE.Mesh(fillGeometry, material);
         mesh.receiveShadow = true;
         mesh.name = "IntersectionSurface";
         mesh.userData.bakeRoadSurface = true;
         root.add(mesh);
+
+        this.triangles = buildIntersectionFanTriangles(fillCenter, fillRim);
 
         // for each curve, create a shoulder with a thickness of options.sholderWidth, and the same curve but offset to the left and right by options.shoulderWidth, and add it to the scene
         for (let curve of curves) {
@@ -566,6 +583,7 @@ export class Intersection {
             const segments = this.options.cornerSamples;
             const up = new THREE.Vector3(0, 1, 0);
             const offsetDist = this.roads[0].options.laneMarkingWidth / 2;
+            const shoulderPaint = -0.02;
 
             const leftPoints = [];
             const rightPoints = [];
@@ -573,6 +591,7 @@ export class Intersection {
             for (let i = 0; i <= segments; i++) {
                 const t = segments === 0 ? 0 : i / segments;
                 const p = curve.getPointAt(t);
+                const centerlineY = p.y;
                 const tangent = curve.getTangentAt(t).clone();
                 tangent.y = 0;
 
@@ -588,8 +607,12 @@ export class Intersection {
                     normal = new THREE.Vector3().crossVectors(up, dir).normalize();
                 }
 
-                leftPoints.push(p.clone().add(normal.clone().multiplyScalar(offsetDist)));
-                rightPoints.push(p.clone().add(normal.clone().multiplyScalar(-offsetDist )));
+                const left = p.clone().add(normal.clone().multiplyScalar(offsetDist));
+                const right = p.clone().add(normal.clone().multiplyScalar(-offsetDist));
+                left.y = centerlineY + shoulderPaint;
+                right.y = centerlineY + shoulderPaint;
+                leftPoints.push(left);
+                rightPoints.push(right);
             }
 
             const shoulderGeometry = buildStripGeometry(leftPoints, rightPoints);
@@ -600,8 +623,6 @@ export class Intersection {
                 side: THREE.DoubleSide
             });
             const shoulderMesh = new THREE.Mesh(shoulderGeometry, mat);
-            // shoulderMesh.rotation.x = Math.PI / 2;
-            shoulderMesh.position.y = -0.02; // slight offset to prevent z-fighting with the road surfaces and intersection fill
             shoulderMesh.receiveShadow = true;
             shoulderMesh.name = "IntersectionShoulder";
             shoulderMesh.userData.bakeRoadSurface = true;
@@ -619,4 +640,50 @@ export class Intersection {
         this.root = root;
         scene.add(root);
     }
+}
+
+function buildIntersectionFanGeometry(center, rim) {
+    if (!rim || rim.length < 3) {
+        return new THREE.BufferGeometry();
+    }
+
+    const positions = new Float32Array((rim.length + 1) * 3);
+    positions[0] = center.x;
+    positions[1] = center.y;
+    positions[2] = center.z;
+    for (let i = 0; i < rim.length; i++) {
+        const offset = (i + 1) * 3;
+        positions[offset] = rim[i].x;
+        positions[offset + 1] = rim[i].y;
+        positions[offset + 2] = rim[i].z;
+    }
+
+    const indices = new Uint32Array(rim.length * 3);
+    for (let i = 0; i < rim.length; i++) {
+        const next = (i + 1) % rim.length;
+        const base = i * 3;
+        indices[base] = 0;
+        indices[base + 1] = i + 1;
+        indices[base + 2] = next + 1;
+    }
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+    geometry.computeVertexNormals();
+    geometry.computeBoundingSphere();
+    return geometry;
+}
+
+function buildIntersectionFanTriangles(center, rim) {
+    if (!rim || rim.length < 3) return [];
+    const triangles = [];
+    for (let i = 0; i < rim.length; i++) {
+        const next = rim[(i + 1) % rim.length];
+        const triangle = new Triangle(center.clone(), rim[i].clone(), next.clone());
+        triangle.setTags(["road"]);
+        triangle.visible = false;
+        triangles.push(triangle);
+    }
+    return triangles;
 }

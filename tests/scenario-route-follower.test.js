@@ -107,6 +107,7 @@ test("followPolylineFromRoute does not mutate directed-A* verification", () => {
     const before = stableStringify(result.route.verification);
     const follow = followPolylineFromRoute(result.route, FOLLOW_PATH_DEFAULT_KINEMATICS);
     assert.ok(follow.length >= 2);
+    assert.deepEqual(follow, result.route.verification.polyline);
     assert.equal(stableStringify(result.route.verification), before);
     assert.equal(sameEndpoints(follow, result.route.verification.polyline), true);
 });
@@ -233,4 +234,78 @@ test("overlapping out-and-back visits keep forward progress instead of looping t
     assert.ok(firstPass.distanceAlong < 80, `first pass should stay on the early visit, got ${firstPass.distanceAlong}`);
     assert.ok(secondPass.distanceAlong > 180, `second pass must not snap back (got ${secondPass.distanceAlong})`);
     assert.ok(secondPass.distanceAlong > firstPass.distanceAlong + 50);
+});
+
+test("block loop rejoin does not skip ahead onto the final overlapping way", () => {
+    const kinematics = FOLLOW_PATH_DEFAULT_KINEMATICS;
+    // Loop a block, rejoin the eastbound street, then continue past the junction.
+    const path = [
+        { x: 0, y: 0, z: 0 },
+        { x: 40, y: 0, z: 0 },
+        { x: 40, y: 0, z: 40 },
+        { x: 80, y: 0, z: 40 },
+        { x: 80, y: 0, z: 0 },
+        { x: 40, y: 0, z: 0 },
+        { x: 120, y: 0, z: 0 },
+    ];
+    const follow = filletPolyline(path, followRadiusM(kinematics));
+    // Pose just past the junction on the shared pavement — geometrically closer to the
+    // final (40→120) way than to the northbound peel-off of the first visit.
+    const atDivergence = routeFollowerCommand({
+        position: { x: 41, y: 0, z: 0 },
+        yaw: 0,
+        cruiseSpeedMps: 2,
+        achievedSpeedMps: 2,
+        followPolyline: follow,
+        kinematics,
+        minDistanceAlong: 35,
+    });
+    assert.ok(
+        atDivergence.distanceAlong < 80,
+        `first visit must keep the loop, not snap to final way (got ${atDivergence.distanceAlong})`,
+    );
+    assert.ok(Math.abs(atDivergence.speedMps) > 0.1, "must keep cruising through the loop");
+
+    const afterRejoin = routeFollowerCommand({
+        position: { x: 41, y: 0, z: 0 },
+        yaw: 0,
+        cruiseSpeedMps: 2,
+        achievedSpeedMps: 2,
+        followPolyline: follow,
+        kinematics,
+        minDistanceAlong: 200,
+    });
+    assert.ok(
+        afterRejoin.distanceAlong > 180,
+        `second visit of the street must still win once past the loop (got ${afterRejoin.distanceAlong})`,
+    );
+});
+
+test("finish near an earlier visit does not stop during the first pass", () => {
+    const kinematics = FOLLOW_PATH_DEFAULT_KINEMATICS;
+    const path = [
+        { x: 0, y: 0, z: 0 },
+        { x: 40, y: 0, z: 0 },
+        { x: 40, y: 0, z: 40 },
+        { x: 0, y: 0, z: 40 },
+        { x: 0, y: 0, z: 0.1 },
+    ];
+    const follow = filletPolyline(path, followRadiusM(kinematics));
+    const firstPass = routeFollowerCommand({
+        position: { x: 0.05, y: 0, z: 0 },
+        yaw: 0,
+        cruiseSpeedMps: 2,
+        achievedSpeedMps: 2,
+        followPolyline: follow,
+        kinematics,
+        minDistanceAlong: 0,
+    });
+    assert.ok(
+        firstPass.distanceAlong < 40,
+        `should stay on the outbound leg, got ${firstPass.distanceAlong}`,
+    );
+    assert.ok(
+        Math.abs(firstPass.speedMps) > 0.1,
+        `must not stop because Euclidean distance to finish is tiny (speed=${firstPass.speedMps})`,
+    );
 });

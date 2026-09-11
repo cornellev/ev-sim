@@ -1,7 +1,12 @@
 import * as THREE from "three";
 import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 import { EDITOR_TOOLS } from "../EditorState.js";
-import { transformBuilding, transformFeature } from "../document/documentMutations.js";
+import {
+    setRoadNodeElevation,
+    transformBuilding,
+    transformFeature,
+} from "../document/documentMutations.js";
+import { syncRoadsFromDocument } from "../document/DocumentSync.js";
 import { syncBakeBuildingsFromDocument } from "../map/bakeBuildingSync.js";
 import { trianglesFromBuildingMesh } from "../../city/BuildingGenerator.js";
 
@@ -13,6 +18,17 @@ const TOOL_MODES = Object.freeze({
     [EDITOR_TOOLS.SCALE]: "scale",
 });
 
+function isElevationEntity(entity) {
+    return entity?.kind === "road"
+        || entity?.kind === "intersection"
+        || entity?.kind === "road-node";
+}
+
+function nodeElevation(node) {
+    const y = Number(node?.y);
+    return Number.isFinite(y) ? y : 0;
+}
+
 export class TransformTool {
     constructor({ data, scene, camera, renderer }) {
         this.data = data;
@@ -23,6 +39,7 @@ export class TransformTool {
         this.registry = data.environment().objects();
         this.selectedEntityId = null;
         this.previousPivotMatrixWorld = new THREE.Matrix4();
+        this.elevationDrag = null;
 
         this.pivot = new THREE.Group();
         this.pivot.name = "EnvironmentTransformPivot";
@@ -46,6 +63,13 @@ export class TransformTool {
             const delta = currentPivotMatrixWorld.clone()
                 .multiply(this.previousPivotMatrixWorld.clone().invert());
 
+            if (isElevationEntity(entity)) {
+                // Keep the road mesh authoritative; only the pivot tracks the drag.
+                this.previousPivotMatrixWorld.copy(currentPivotMatrixWorld);
+                this.data.simulation()?.render?.();
+                return;
+            }
+
             applyWorldDelta(entity.object3D, delta);
             this.previousPivotMatrixWorld.copy(currentPivotMatrixWorld);
             this.persistEntityTransform(entity, delta);
@@ -57,10 +81,23 @@ export class TransformTool {
         this.onDraggingChanged = (event) => {
             if (event.value) {
                 this.data.settings()?.disableControls?.(TRANSFORM_CONTROL_LOCK);
+                const entity = this.registry.getEntity(this.selectedEntityId);
+                if (isElevationEntity(entity)) {
+                    this.elevationDrag = {
+                        entityId: entity.id,
+                        startY: this.pivot.position.y,
+                    };
+                } else {
+                    this.elevationDrag = null;
+                }
             } else {
                 this.editor.suppressSelection?.(300);
                 this.data.settings()?.enableControls?.(TRANSFORM_CONTROL_LOCK);
-                this.syncBuildingSensorGeometry();
+                if (this.elevationDrag) {
+                    this.commitElevationDrag();
+                } else {
+                    this.syncBuildingSensorGeometry();
+                }
             }
             this.data.simulation()?.render?.();
         };
@@ -68,6 +105,74 @@ export class TransformTool {
         this.controls.addEventListener("objectChange", this.onObjectChange);
         this.controls.addEventListener("dragging-changed", this.onDraggingChanged);
         this.disposeEditor = this.editor.subscribe((snapshot) => this.sync(snapshot));
+    }
+
+    commitElevationDrag() {
+        const drag = this.elevationDrag;
+        this.elevationDrag = null;
+        if (!drag) return;
+
+        const entity = this.registry.getEntity(drag.entityId);
+        if (!entity) return;
+
+        const deltaY = this.pivot.position.y - drag.startY;
+        if (!Number.isFinite(deltaY) || Math.abs(deltaY) < 1e-6) {
+            this.sync(this.editor.snapshot());
+            return;
+        }
+
+        const document = this.data.environment().getDocument();
+        let changed = false;
+
+        if (entity.kind === "road-node") {
+            const node = document.getNode(entity.sourceId);
+            if (node) {
+                const result = setRoadNodeElevation(document, entity.sourceId, nodeElevation(node) + deltaY);
+                changed = result.ok;
+            }
+        } else if (entity.kind === "intersection") {
+            const node = document.getNode(entity.sourceId);
+            if (node) {
+                const result = setRoadNodeElevation(document, entity.sourceId, nodeElevation(node) + deltaY);
+                changed = result.ok;
+            }
+        } else if (entity.kind === "road") {
+            const edge = document.getEdge(entity.sourceId);
+            if (edge) {
+                const start = document.getNode(edge.startNodeId);
+                const end = document.getNode(edge.endNodeId);
+                if (start) {
+                    const result = setRoadNodeElevation(
+                        document,
+                        edge.startNodeId,
+                        nodeElevation(start) + deltaY,
+                        { notify: false },
+                    );
+                    changed = result.ok || changed;
+                }
+                if (end) {
+                    const result = setRoadNodeElevation(
+                        document,
+                        edge.endNodeId,
+                        nodeElevation(end) + deltaY,
+                        { notify: false },
+                    );
+                    changed = result.ok || changed;
+                }
+                if (changed) document.notify();
+            }
+        }
+
+        if (!changed) {
+            this.sync(this.editor.snapshot());
+            return;
+        }
+
+        this.editor.markDirty(true);
+        syncRoadsFromDocument(this.data, this.scene, document);
+        this.data.environment()?.objects?.()?.registerExistingContent?.(this.scene, this.data);
+        // Selection may have been rebuilt; reattach to the same entity id.
+        this.sync(this.editor.snapshot());
     }
 
     syncBuildingSensorGeometry() {
@@ -124,8 +229,10 @@ export class TransformTool {
         const selectedId = snapshot.selection?.id ?? null;
         const entity = selectedId ? this.registry.getEntity(selectedId) : null;
         const unsupportedPropScale = entity?.layer === "props" && mode === "scale";
+        const elevationOnly = isElevationEntity(entity);
+        const unsupportedElevationMode = elevationOnly && mode !== "translate";
 
-        if (!mode || !entity?.object3D || unsupportedPropScale) {
+        if (!mode || !entity?.object3D || unsupportedPropScale || unsupportedElevationMode) {
             this.selectedEntityId = null;
             this.controls.detach();
             this.helper.visible = false;
@@ -141,9 +248,15 @@ export class TransformTool {
         const groundEntity = entity.kind === "building" || entity.layer === "props";
         const planarTranslation = groundEntity && mode === "translate";
         const yawOnlyRotation = groundEntity && mode === "rotate";
-        this.controls.showX = !yawOnlyRotation;
-        this.controls.showY = !planarTranslation;
-        this.controls.showZ = !yawOnlyRotation;
+        if (elevationOnly) {
+            this.controls.showX = false;
+            this.controls.showY = true;
+            this.controls.showZ = false;
+        } else {
+            this.controls.showX = !yawOnlyRotation;
+            this.controls.showY = !planarTranslation;
+            this.controls.showZ = !yawOnlyRotation;
+        }
         positionPivotAtObjectCenter(this.pivot, entity.object3D);
         this.pivot.visible = true;
         this.pivot.updateMatrixWorld(true);

@@ -34,6 +34,7 @@ import {
     terminalTrigger,
 } from "./scenarioUiModel.js";
 import ScenarioMapViewport from "./ScenarioMapViewport.js";
+import { isRouteVerificationCurrent } from "../route/index.js";
 import styles from "./ScenarioWorkspace.module.css";
 
 function nextId(prefix, values) {
@@ -219,7 +220,7 @@ export function RoutesSection({ scenario, onUpdate, onAddActor, onEditRoute }) {
                         <article className={styles.routeCard} key={route.id}>
                             <header>
                                 <div className={styles.roleMarker}>{actor?.role === "ego" ? "EGO" : `A${index}`}</div>
-                                <div><h3>{route.name}</h3><p>{route.waypoints.length} waypoints · {route.verification ? "verified" : "verification required"}</p></div>
+                                <div><h3>{route.name}</h3><p>{route.waypoints.length} waypoints · {isRouteVerificationCurrent(route) ? "verified" : "verification required"}</p></div>
                                 <div className={styles.routeActions}><Button size="compact" onClick={() => onEditRoute?.(index)}><IconMap2 size={13} /> Edit route</Button>{index > 0 && <RemoveButton label={`Remove route ${route.name}`} onClick={() => onUpdate(["routes"], scenario.routes.filter((entry) => entry.id !== route.id))} />}</div>
                             </header>
                             <div className={styles.formGrid}>

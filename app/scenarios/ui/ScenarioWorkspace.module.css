@@ -1318,7 +1318,11 @@
 }
 
 .mapWaypoint {
-    cursor: pointer;
+    cursor: grab;
+}
+
+.mapWaypoint[data-dragging] {
+    cursor: grabbing;
 }
 
 .mapWaypoint circle {
@@ -1334,6 +1338,15 @@
 .mapWaypoint[data-selected] circle {
     fill: #d2dbd0;
     transform: scale(1.12);
+}
+
+.mapWaypoint[data-dragging] circle {
+    transition: none;
+    transform: scale(1.12);
+}
+
+.scenarioMapViewport[data-dragging] {
+    cursor: grabbing;
 }
 
 .mapWaypoint[data-kind="finish"] circle {

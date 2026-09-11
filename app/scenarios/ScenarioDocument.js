@@ -105,6 +105,7 @@ function normalizeWaypoint(value = {}, index = 0, count = 1) {
     const source = object(value);
     const kind = index === 0 ? "start" : index === count - 1 ? "finish" : "intermediate";
     const anchor = object(source.anchor ?? source.roadRef);
+    const hasLaneIndex = Object.prototype.hasOwnProperty.call(anchor, "laneIndex");
     return {
         id: text(source.id, makeId("waypoint", index)),
         order: index,
@@ -115,6 +116,15 @@ function normalizeWaypoint(value = {}, index = 0, count = 1) {
             kind: anchor.kind === "intersection" ? "intersection" : "road",
             id: text(anchor.id),
             fraction: Math.max(0, Math.min(1, finite(anchor.fraction, 0))),
+            ...(anchor.kind !== "intersection"
+                && (anchor.laneMode === "auto" || anchor.laneMode === "fixed" || hasLaneIndex)
+                ? { laneMode: anchor.laneMode === "auto" ? "auto" : "fixed" }
+                : {}),
+            ...(anchor.kind !== "intersection"
+                && anchor.laneMode !== "auto"
+                && hasLaneIndex
+                ? { laneIndex: anchor.laneIndex }
+                : {}),
         },
     };
 }
@@ -534,6 +544,11 @@ export function validateScenario(value, { requireVerifiedRoutes = true } = {}) {
         route.waypoints.forEach((waypoint, waypointIndex) => {
             if (!waypoint.anchor.id) {
                 issues.push({ path: `routes.${index}.waypoints.${waypointIndex}.anchor`, message: "Waypoint must be anchored to a road or intersection." });
+            }
+            if (waypoint.anchor.kind === "road"
+                && waypoint.anchor.laneMode === "fixed"
+                && (!Number.isInteger(waypoint.anchor.laneIndex) || waypoint.anchor.laneIndex < 0)) {
+                issues.push({ path: `routes.${index}.waypoints.${waypointIndex}.anchor.laneIndex`, message: "A fixed-lane waypoint requires a physical lane index." });
             }
         });
         if (requireVerifiedRoutes && !route.verification) {

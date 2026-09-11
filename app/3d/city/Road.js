@@ -150,18 +150,28 @@ export function buildStripGeometry(leftPoints, rightPoints) {
     return geometry;
 }
 
-function computeOffsetPoint(curve, u, lateralOffset, y) {
+function computeOffsetPoint(curve, u, lateralOffset, paintOffset = 0) {
     const point = curve.getPointAt(u);
+    const centerlineY = point.y;
     const tangent = curve.getTangentAt(u).normalize();
-    const normal = new THREE.Vector3().crossVectors(UP, tangent);
+    // Keep plan width in XZ so half-width and routing stay consistent with grade.
+    const flatTangent = new THREE.Vector3(tangent.x, 0, tangent.z);
+    const normal = new THREE.Vector3().crossVectors(UP, flatTangent.lengthSq() > 0 ? flatTangent : tangent);
 
     if (normal.lengthSq() === 0) {
         normal.set(-tangent.z, 0, tangent.x);
     }
 
-    normal.normalize();
+    normal.y = 0;
+    if (normal.lengthSq() === 0) {
+        normal.set(-tangent.z, 0, tangent.x).normalize();
+    } else {
+        normal.normalize();
+    }
 
-    return point.addScaledVector(normal, lateralOffset).setY(y);
+    const offset = point.addScaledVector(normal, lateralOffset);
+    offset.y = centerlineY + paintOffset;
+    return offset;
 }
 
 function sampleRoadEdges(curve, width, y, segments) {
@@ -202,6 +212,7 @@ function createPolylineRibbon(points, width) {
         const next = points[Math.min(i + 1, points.length - 1)];
         const tangent = next.clone().sub(prev);
 
+        // Flatten tangent for plan-width markings; keep sample point Y.
         tangent.y = 0;
 
         if (tangent.lengthSq() === 0) {

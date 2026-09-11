@@ -72,7 +72,81 @@ export function removeWaypoint(values, waypointOrIndex, options = {}) {
 
 export const removeWaypointById = removeWaypoint;
 
+/**
+ * Patch one waypoint's position/anchor without reordering or retagging kinds.
+ * Editor lists may use kind-based start/finish; avoid normalizeWaypoints here.
+ */
+export function moveWaypoint(values, waypointOrIndex, patch = {}) {
+    const list = Array.isArray(values) ? values : values?.waypoints ?? [];
+    const index = Number.isInteger(waypointOrIndex)
+        ? waypointOrIndex
+        : list.findIndex((waypoint) => waypoint?.id === waypointOrIndex);
+    if (index < 0 || index >= list.length) return list;
+
+    const current = list[index] && typeof list[index] === "object" ? list[index] : {};
+    const positionSource = patch.position ?? patch;
+    const point = pointFrom(positionSource, pointFrom(current.position ?? current, { x: 0, y: 0, z: 0 }));
+    if (!point) return list;
+
+    const next = { ...current };
+    next.position = { ...point };
+    next.x = point.x;
+    next.y = point.y;
+    next.z = point.z;
+    if (patch.authoredPosition) {
+        const authored = pointFrom(patch.authoredPosition);
+        if (authored) next.authoredPosition = { ...authored };
+    }
+    if (patch.anchor && typeof patch.anchor === "object") {
+        next.anchor = { ...patch.anchor };
+    }
+    const result = [...list];
+    result[index] = next;
+    return result;
+}
+
 export function hashWaypoints(values) {
+    return deterministicHash(normalizeWaypoints(values).map((waypoint) => ({
+        ...pointFrom(waypoint, { x: waypoint.x, y: waypoint.y, z: waypoint.z }),
+        id: waypoint.id,
+        kind: waypoint.kind,
+        order: waypoint.order,
+        anchor: waypoint.anchor?.id ? {
+            kind: waypoint.anchor.kind === "intersection" ? "intersection" : "road",
+            id: String(waypoint.anchor.id),
+            fraction: Number(waypoint.anchor.fraction) || 0,
+            ...(waypoint.anchor.kind === "road" ? {
+                laneMode: waypoint.anchor.laneMode === "auto" ? "auto" : "fixed",
+            } : {}),
+            ...(waypoint.anchor.kind === "road"
+                && waypoint.anchor.laneMode !== "auto"
+                && Number.isInteger(waypoint.anchor.laneIndex)
+                ? { laneIndex: waypoint.anchor.laneIndex }
+                : {}),
+        } : null,
+    })));
+}
+
+/** Compatibility hash used only while validating immutable algorithm-v4 bundles. */
+export function hashWaypointsV4(values) {
+    return deterministicHash(normalizeWaypoints(values).map((waypoint) => ({
+        ...pointFrom(waypoint, { x: waypoint.x, y: waypoint.y, z: waypoint.z }),
+        id: waypoint.id,
+        kind: waypoint.kind,
+        order: waypoint.order,
+        anchor: waypoint.anchor?.id ? {
+            kind: waypoint.anchor.kind === "intersection" ? "intersection" : "road",
+            id: String(waypoint.anchor.id),
+            fraction: Number(waypoint.anchor.fraction) || 0,
+            ...(waypoint.anchor.kind === "road" && Number.isInteger(waypoint.anchor.laneIndex)
+                ? { laneIndex: waypoint.anchor.laneIndex }
+                : {}),
+        } : null,
+    })));
+}
+
+/** Compatibility hash used only while validating immutable algorithm-v3 bundles. */
+export function hashWaypointsV3(values) {
     return deterministicHash(normalizeWaypoints(values).map((waypoint) => ({
         ...pointFrom(waypoint, { x: waypoint.x, y: waypoint.y, z: waypoint.z }),
         id: waypoint.id,

@@ -80,6 +80,18 @@ retains only the pure description and deterministic `{ worldHash }` state.
 Resolved bundles retain the authored environment resource for integrity but
 use the world hash for simulation semantics.
 
+The canonical road domain also owns lane layout and sparse edge-to-edge turn
+rules. `app/roads/RoadLaneModel.js` is the DOM/Three-free source shared by
+route verification and SVG map rendering. Turn rules and route lane anchors
+are semantic: they change road/world or waypoint hashes respectively. Raw
+waypoint pointer coordinates remain editor state and are excluded from saved
+scenario identity. Route algorithm version 5 treats fixed physical lanes as
+A* state rather than post-processing preferences, carries incoming edge,
+direction, and lane through every waypoint, and freezes road-arm entry/exit
+subnodes plus bounded junction connectors in the canonical proof. Editable
+version-3/4 proofs require re-verification; immutable bundles use explicit
+version-scoped compatibility validation.
+
 Vehicle motion is owned by the Three.js-free `KinematicVehiclePlant`.
 BigCar, IGVCCar, ScenarioCar, and manifest-backed browser vehicles are
 presentation adapters over the same numeric state used by
@@ -230,7 +242,7 @@ backends is specified in the
 
 ## Environment Editor
 
-The environment editor authors static world content through an `EnvironmentDocument` (roads, buildings, features, earth metadata). Runtime road/intersection entities retain UI compatibility aliases while their `sourceId` and canonical entity identity derive from document road/node IDs rather than array position. `EditorState` tracks three sub-modes within the editor: scene editing, 2D map authoring, and earth import.
+The environment editor authors static world content through an `EnvironmentDocument` (road nodes, edges, turn rules, buildings, features, and earth metadata). Runtime road/intersection entities retain UI compatibility aliases while their `sourceId` and canonical entity identity derive from document road/node IDs rather than array position. `EditorState` tracks three sub-modes within the editor: scene editing, 2D map authoring, and earth import.
 
 - [Environment Editor](environment-editor.md) — document model, editor modes, baking, and chrome UI.
 - [Earth Import](earth-import.md) — Google 3D Tiles preview, OSM road import, and geospatial configuration.

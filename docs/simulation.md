@@ -68,14 +68,15 @@ Managed-run control input uses `/controls/command` (`sensor_fusion_msgs/StampedA
 
 ### Built-in route follower
 
-The scenario `route-follower` controller closes the loop with bicycle Pure Pursuit on a **runtime-only follow polyline**:
+The scenario `route-follower` controller closes the loop with bicycle Pure Pursuit on the canonical verified route:
 
-- Directed A\* `verification.polyline` (algorithm version 2) is the hashed travel-path proof used by metrics, scripts, and spatial planned-route overlays. Geometry sits on the **right-hand travel side** of two-way roads (center of the legal half) and on the carriageway center for one-way roads. Intersection node centers are omitted; consecutive offset edge ends are stitched so fillets can round corners.
-- Reverse travel on a one-way edge fails verification with `route.section.illegal-direction`; missing road connectivity remains `route.section.disconnected`.
-- At configure/reset, the follower fillets sharp vertices with circular arcs sized from vehicle wheelbase and a **road-scale** steer budget (plant emergency max-steer near π/2 is not used for fillet radius), then tracks that curve.
+- Directed A\* `verification.polyline` algorithm version 5 is the hashed travel-path proof used by the follower, metrics, scripts, and spatial planned-route overlays. The staged search carries incoming edge, direction, and lane across ordered waypoints. A fixed road waypoint can only be satisfied in its selected lane; an opposing lane at the same centerline fraction is a different state and requires a legal detour.
+- Traversal records contain physical `fromLaneIndex` / `toLaneIndex` assignments plus lane-center `fromSubnode` / `toSubnode` road-arm boundaries. Intersection connectors are sampled canonically between those subnodes. Same-direction lane changes use eight smoothstep samples and never cross an opposing-flow divider.
+- Reverse one-way travel fails with `route.section.illegal-direction`, unreachable fixed lanes with `route.section.lane-unreachable`, exhausted turn-rule paths with `route.section.turn-restricted`, missing connectivity with `route.section.disconnected`, and ambiguous/invalid lane counts with `route.environment.lane-layout-invalid`.
+- Version-5 proofs already contain their bounded driving curve, so the follower does not apply the legacy unrestricted whole-polyline fillet. Historical immutable version-3/4 bundles retain their version-scoped compatibility behavior.
 - Lookahead scales with speed (minimum ~4 m); commanded speed is limited by previewed path curvature so corners are entered slower than cruise.
-- Projection is **forward-only**: overlapping later visits of the same travel path (out-and-back city routes) cannot snap progress back to the first pass.
-- Authoring map and scenario diagnostics draw both the A\* proof (muted) and the filleted follow path (brighter). Follow geometry is never persisted on the scenario document.
+- Projection uses a **forward window** around latched progress: overlapping later visits of the same travel path cannot snap progress back to the first pass, and a later rejoin cannot skip a block loop while the vehicle is still on the early visit.
+- Authoring maps and scenario diagnostics draw the canonical path. Waypoints snap to physical lane centers while placed or dragged; `anchor.laneMode: "fixed"` preserves that lane during verification, while intersection and explicit centerline anchors remain direction-flexible. Every move invalidates verification.
 - The plant only applies these commands when `controls.authority` is `reference`. With `candidate` + `referenceShadow`, the follower still runs for comparison but the vehicle keeps its initial cruise unless an external candidate command arrives — set **Config → Controls → Authority** to **reference** for built-in following.
 
 ## Scenario Assets

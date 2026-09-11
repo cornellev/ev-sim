@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
     IconAlertTriangle,
     IconCheck,
@@ -52,6 +52,7 @@ import {
 } from "../../ui";
 import ScenarioCatalog from "./ScenarioCatalog.js";
 import RouteMapEditor from "./RouteMapEditor.js";
+import { hashWaypoints } from "../route/index.js";
 import {
     ActorsSection,
     CompletionSection,
@@ -107,9 +108,16 @@ export default function ScenarioWorkspace({ onOpenWorkspace }) {
     const [error, setError] = useState(null);
     const [feedback, setFeedback] = useState(null);
     const [validation, setValidation] = useState(null);
+    const draftRef = useRef(null);
+    const routeRevisionRef = useRef(0);
+    const verificationRequestRef = useRef(0);
 
     const folders = useMemo(() => folderEntries(catalog), [catalog]);
     const dirty = Boolean(draft && saved && stableDocument(draft) !== stableDocument(saved));
+
+    useEffect(() => {
+        draftRef.current = draft;
+    }, [draft]);
 
     const applyDocument = useCallback((id, value, nextTab = null) => {
         const document = scenarioDocument(value);
@@ -117,6 +125,8 @@ export default function ScenarioWorkspace({ onOpenWorkspace }) {
         setSelectedId(id || normalized.id);
         setSaved(document);
         setDraft(normalized);
+        draftRef.current = normalized;
+        routeRevisionRef.current += 1;
         setCreating(false);
         setValidation(null);
         setError(null);
@@ -181,7 +191,12 @@ export default function ScenarioWorkspace({ onOpenWorkspace }) {
     }, [draft?.environment?.id]);
 
     const update = useCallback((path, value) => {
-        setDraft((current) => withUpdatedPath(current, path, typeof value === "function" ? value(current) : value));
+        routeRevisionRef.current += 1;
+        setDraft((current) => {
+            const next = withUpdatedPath(current, path, typeof value === "function" ? value(current) : value);
+            draftRef.current = next;
+            return next;
+        });
         setValidation(null);
         setFeedback(null);
         setError(null);
@@ -205,7 +220,12 @@ export default function ScenarioWorkspace({ onOpenWorkspace }) {
     }, [applyDocument, draft, saved?.revision, selectedId]);
 
     const discard = useCallback(() => {
-        if (saved) setDraft(normalizeScenario(saved));
+        routeRevisionRef.current += 1;
+        if (saved) {
+            const normalized = normalizeScenario(saved);
+            draftRef.current = normalized;
+            setDraft(normalized);
+        }
         setError(null);
         setValidation(null);
     }, [saved]);
@@ -339,10 +359,25 @@ export default function ScenarioWorkspace({ onOpenWorkspace }) {
     const verifyRoute = async () => {
         const route = draft?.routes?.[routeEditorIndex];
         if (!route || !selectedId) return;
+        const requestId = ++verificationRequestRef.current;
+        const requestRevision = routeRevisionRef.current;
+        const requestWaypointHash = hashWaypoints(route.waypoints);
+        const requestScenarioId = selectedId;
+        const requestRouteId = route.id;
         setVerifying(true);
         setError(null);
         try {
             const result = await verifyScenarioRoute(selectedId, draft, route.id);
+            const currentRoute = draftRef.current?.routes?.find((entry) => entry.id === requestRouteId);
+            const stale = verificationRequestRef.current !== requestId
+                || routeRevisionRef.current !== requestRevision
+                || selectedId !== requestScenarioId
+                || !currentRoute
+                || hashWaypoints(currentRoute.waypoints) !== requestWaypointHash;
+            if (stale) {
+                setFeedback("Route changed while verification was running; verify the current waypoints again.");
+                return;
+            }
             if (result?.ok === false) {
                 if (result.route || result.waypoints) update(["routes", routeEditorIndex], {
                     ...route,
@@ -366,7 +401,7 @@ export default function ScenarioWorkspace({ onOpenWorkspace }) {
         } catch (verifyError) {
             setError(verifyError?.message || "The route could not be connected.");
         } finally {
-            setVerifying(false);
+            if (verificationRequestRef.current === requestId) setVerifying(false);
         }
     };
 

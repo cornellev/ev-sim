@@ -126,10 +126,12 @@ export default function ScenarioMapViewport({
     onDrawStart,
     onDrawMove,
     onDrawEnd,
+    onSelectEntity,
+    onDragEntity,
+    onDragEntityEnd,
     children,
     className = "",
     fitPoints = null,
-    fitKey = "",
 }) {
     const containerRef = useRef(null);
     const gestureRef = useRef(null);
@@ -137,9 +139,10 @@ export default function ScenarioMapViewport({
     const document = useMemo(() => normalizeScenarioMapDocument(environment), [environment]);
     const fittedViewport = useMemo(
         () => (fitPoints?.length ? fitPointsViewport(fitPoints, size) : fitScenarioMapViewport(document, size)),
-        [document, fitKey, fitPoints, size],
+        [document, fitPoints, size],
     );
     const [viewportOverride, setViewportOverride] = useState(null);
+    const [draggingId, setDraggingId] = useState(null);
     const viewport = viewportOverride?.document === document ? viewportOverride.viewport : fittedViewport;
     const updateViewport = useCallback((updater) => setViewportOverride((current) => {
         const currentViewport = current?.document === document ? current.viewport : fittedViewport;
@@ -164,7 +167,7 @@ export default function ScenarioMapViewport({
     };
 
     const begin = (event) => {
-        if (event.target.closest?.("[data-map-control], [data-map-interactive]")) return;
+        if (event.target.closest?.("[data-map-control]")) return;
         if (event.button !== 0 && event.button !== 1) return;
         const context = eventContext(event);
         if (!context) return;
@@ -181,6 +184,24 @@ export default function ScenarioMapViewport({
             };
             return;
         }
+        const draggable = event.target.closest?.("[data-map-draggable]");
+        if (draggable && interaction !== "draw" && interaction !== "pan") {
+            const entityId = draggable.getAttribute("data-map-draggable");
+            if (entityId) {
+                onSelectEntity?.(entityId, context);
+                gestureRef.current = {
+                    kind: "pending-drag",
+                    entityId,
+                    startX: event.clientX,
+                    startY: event.clientY,
+                    start: context,
+                    current: context,
+                    moved: false,
+                };
+                return;
+            }
+        }
+        if (event.target.closest?.("[data-map-interactive]")) return;
         if (interaction === "draw") {
             gestureRef.current = {
                 kind: "draw",
@@ -213,6 +234,20 @@ export default function ScenarioMapViewport({
             onDrawMove?.(context.world, context);
             return;
         }
+        if (gesture.kind === "pending-drag" || gesture.kind === "drag") {
+            const totalDistance = Math.hypot(event.clientX - gesture.startX, event.clientY - gesture.startY);
+            if (gesture.kind === "pending-drag" && totalDistance < PAN_THRESHOLD_PX) return;
+            const context = eventContext(event);
+            if (!context) return;
+            if (gesture.kind === "pending-drag") {
+                gesture.kind = "drag";
+                gesture.moved = true;
+                setDraggingId(gesture.entityId);
+            }
+            gesture.current = context;
+            onDragEntity?.(gesture.entityId, context.world, context);
+            return;
+        }
         const totalDistance = Math.hypot(event.clientX - gesture.startX, event.clientY - gesture.startY);
         if (gesture.kind === "pending-place" && totalDistance < PAN_THRESHOLD_PX) return;
         gesture.kind = "pan";
@@ -232,6 +267,13 @@ export default function ScenarioMapViewport({
         if (gesture.kind === "draw") {
             const distancePx = Math.hypot(event.clientX - gesture.startX, event.clientY - gesture.startY);
             onDrawEnd?.(context?.world, { ...context, distancePx, start: gesture.start });
+            return;
+        }
+        if (gesture.kind === "pending-drag" || gesture.kind === "drag") {
+            setDraggingId(null);
+            if (gesture.kind === "drag" && context) {
+                onDragEntityEnd?.(gesture.entityId, context.world, context);
+            }
             return;
         }
         if (gesture.kind === "pending-place" && !gesture.moved && context) onPlace?.(context.world, context);
@@ -259,12 +301,16 @@ export default function ScenarioMapViewport({
         factor,
     ));
     const showDetail = isMapDetailZoom(viewport);
+    const toScreen = (point) => worldToScreen(point, viewport, size);
+    const toWorld = (screen) => screenToWorld(screen, viewport, size);
     const overlay = typeof children === "function"
         ? children({
             document,
             size,
             viewport,
-            toScreen: (point) => worldToScreen(point, viewport, size),
+            toScreen,
+            toWorld,
+            draggingId,
         })
         : children;
 
@@ -275,6 +321,7 @@ export default function ScenarioMapViewport({
             data-interaction={interaction}
             data-map-center={`${viewport.centerX.toFixed(3)},${viewport.centerZ.toFixed(3)}`}
             data-map-zoom={viewport.zoom.toFixed(3)}
+            data-dragging={draggingId || undefined}
             onPointerDown={begin}
             onPointerMove={move}
             onPointerUp={end}
