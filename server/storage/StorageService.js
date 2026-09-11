@@ -12,20 +12,24 @@ import { BakeMaterialProposalStore } from "./BakeMaterialProposalStore.js";
 import { VisualAssetStore } from "./VisualAssetStore.js";
 import { BakePromotionController, parseBakeOutputSourceIds } from "./BakePromotionController.js";
 import {
-    environmentRevisionConflict,
-    unguardedEnvironmentWriteError,
     RUN_PACKAGE_ERROR_CODES,
     VISUAL_ASSET_ERROR_CODES,
     VISUAL_LAYER_ERROR_CODES,
+    environmentPolicyError,
+    environmentRevisionConflict,
+    unguardedEnvironmentWriteError,
     visualAssetError,
 } from "./StorageErrors.js";
 import {
     ENVIRONMENT_SCHEMA_VERSION,
     ENVIRONMENT_UNGUARDED_WRITE,
+    assertNoObjectGraphDowngrade,
+    environmentRevisionOf,
     environmentSummaryFields,
     parseEnvironmentWriteEnvelope,
     presentStoredEnvironment,
-    serializeEnvironmentManifestV3,
+    readSchemaVersion,
+    serializeEnvironmentManifest,
 } from "../../app/3d/environment/EnvironmentManifestPolicy.js";
 import {
     VISUAL_ASSET_ACCESS_OPERATIONS,
@@ -226,8 +230,9 @@ async function hashPublicVehicleAssets(manifest) {
  * callers talk to this domain API and never touch file paths directly.
  *
  * Layout under the data directory (default: `server/data/`):
- *   environments/<environmentId>.json  schema v3 environment manifests
+ *   environments/<environmentId>.json  schema v3 (or opt-in v4) environment manifests
  *   environment-transactions/          recoverable environment ID-change journals
+ *   environment-migrations/<id>.pre-v4.json  write-once copy of a file before its first v4 save
  *   visual-layer-descriptors/sha256/   immutable visual-layer descriptor JSON
  *   visual-assets/sha256/              immutable visual-asset bytes
  *   visual-assets/uses/sha256/         immutable source-bound use records
@@ -290,6 +295,10 @@ export class StorageService {
         this.faults = options.faults ?? {};
         this.bakePromotions = new BakePromotionController(this);
         this.environmentTransactionsDir = path.join(dataDir, "environment-transactions");
+        this.environmentMigrationsDir = path.join(dataDir, "environment-migrations");
+        // Guarded writes emit schema v3 unless the server opts into v4. Tests
+        // construct services directly, so the env flag is read in App.js only.
+        this.environmentWriteSchemaVersion = options.environmentSchemaVersion === 4 ? 4 : 3;
         this._environmentRecovery = null;
         this._runManifestWriteChains = new Map();
         this._scenarioWriteChains = new Map();
@@ -799,7 +808,7 @@ export class StorageService {
                 const rebound = await this._rebindEnvironmentVisuals(current, moved, {
                     requireDescriptor: Boolean(current.visualLayer?.descriptorHash),
                 });
-                const committed = serializeEnvironmentManifestV3(rebound, {
+                const committed = this._serializeEnvironment(rebound, {
                     environmentId: nextId,
                     revision: 1,
                     current,
@@ -2837,13 +2846,21 @@ export class StorageService {
         }
         if (!create) {
             requireEnvironmentRevision(expectedRevision, current?.revision ?? 0);
+            try {
+                assertNoObjectGraphDowngrade(manifest, current, environmentId);
+            } catch (error) {
+                throw environmentPolicyError(error);
+            }
         }
         const revision = create ? 1 : (current?.revision ?? 0) + 1;
-        const prepared = serializeEnvironmentManifestV3(manifest, {
+        const prepared = this._serializeEnvironment(manifest, {
             environmentId,
             revision,
             current,
         });
+        if (stored && prepared.schemaVersion >= 4 && readSchemaVersion(stored) < 4) {
+            await this._retainPreMigrationCopy(environmentId, stored, prepared.schemaVersion);
+        }
         try {
             await this._assertVisualReference(prepared);
         } catch (error) {
@@ -2857,6 +2874,48 @@ export class StorageService {
         }
         await this._assertVisualReference(prepared);
         return this._fileStore(this._environmentPath(environmentId), null).write(prepared);
+    }
+
+    /**
+     * Version-aware writer: v3 by default, v4 when configured or when the
+     * stored file is already v4. Policy errors surface in their HTTP form.
+     */
+    _serializeEnvironment(manifest, { environmentId, revision, current = null } = {}) {
+        try {
+            return serializeEnvironmentManifest(manifest, {
+                environmentId,
+                revision,
+                current,
+                schemaVersion: this.environmentWriteSchemaVersion,
+            });
+        } catch (error) {
+            throw environmentPolicyError(error);
+        }
+    }
+
+    _environmentMigrationPath(environmentId, toSchemaVersion) {
+        return path.join(this.environmentMigrationsDir, `${safeSegment(environmentId)}.pre-v${toSchemaVersion}.json`);
+    }
+
+    /**
+     * Keep the last pre-v4 bytes of an environment so an upgrade is
+     * recoverable. Write-once: later saves never replace the first copy.
+     */
+    async _retainPreMigrationCopy(environmentId, stored, toSchemaVersion) {
+        const store = this._fileStore(this._environmentMigrationPath(environmentId, toSchemaVersion), null);
+        if (await store.read()) return null;
+        const envelope = {
+            kind: "cev-sim.environment-pre-migration",
+            version: 1,
+            environmentId,
+            fromSchemaVersion: readSchemaVersion(stored),
+            toSchemaVersion,
+            revision: environmentRevisionOf(stored),
+            migratedAt: new Date().toISOString(),
+            manifest: stored,
+        };
+        await store.write(envelope);
+        return envelope;
     }
 
     async _assertVisualReference(manifest) {

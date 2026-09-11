@@ -1,0 +1,68 @@
+{
+  "environmentId": "all-props",
+  "name": "All Props",
+  "schemaVersion": 3,
+  "revision": 3,
+  "templateId": "blank",
+  "roadStylePreset": "default",
+  "roadsAuthored": true,
+  "buildingsAuthored": true,
+  "featuresAuthored": true,
+  "chunkSize": 20,
+  "visualLayer": null,
+  "evidence": null,
+  "document": {
+    "environmentId": "all-props",
+    "chunkSize": 20,
+    "roadsAuthored": true,
+    "buildingsAuthored": true,
+    "featuresAuthored": true,
+    "roads": {
+      "nodes": [
+        { "id": "node-a", "x": -20, "y": 0, "z": 0, "kind": null },
+        { "id": "node-b", "x": 20, "y": 0.5, "z": 0, "kind": null }
+      ],
+      "edges": [
+        {
+          "id": "edge-ab",
+          "startNodeId": "node-a",
+          "endNodeId": "node-b",
+          "bidirectional": true,
+          "width": 7,
+          "laneCount": 2,
+          "shoulderWidth": 0.5,
+          "tension": null,
+          "borderLeft": null,
+          "borderRight": null,
+          "startArm": null,
+          "endArm": null
+        }
+      ]
+    },
+    "buildings": [
+      {
+        "buildingId": "building-1",
+        "footprint": [{ "x": 10, "y": 0, "z": 10 }, { "x": 16, "y": 0, "z": 10 }, { "x": 16, "y": 0, "z": 16 }, { "x": 10, "y": 0, "z": 16 }],
+        "height": 6,
+        "textureId": 1,
+        "tags": ["building"],
+        "meshName": "building-1"
+      }
+    ],
+    "features": [
+      { "id": "prop-stop-sign", "type": "stop-sign", "x": 2, "z": -6, "dir": 3, "rotationY": 0, "tags": ["sign"] },
+      { "id": "prop-one-way-sign", "type": "one-way-sign", "x": -8, "z": 6, "dir": 2, "rotationY": 0.5, "tags": ["sign"] },
+      { "id": "prop-barrel", "type": "barrel", "x": 4, "z": 8, "dir": 0, "rotationY": 0, "tags": ["barrel"] },
+      { "id": "prop-tire", "type": "tire", "x": -4, "z": 8, "dir": 0, "rotationY": 0.75, "tags": ["tire"] },
+      { "id": "prop-cone", "type": "cone", "x": 0, "z": 10, "dir": 0, "rotationY": 0, "tags": ["cone"] }
+    ],
+    "earth": {
+      "anchor": { "lat": 42.6779, "lng": -83.1952 },
+      "bounds": { "north": 42.68, "south": 42.675, "east": -83.19, "west": -83.2 },
+      "tileProvider": "google-photorealistic",
+      "roadProvider": "overpass",
+      "importedLayerIds": [],
+      "importedAt": null
+    }
+  }
+}

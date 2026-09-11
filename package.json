@@ -37,6 +37,7 @@
     "test:bake-python": "python3 -m pytest tests/test_bake_sample_accumulator.py tests/test_bake_v1_service.py -q",
     "proto:python": "python3 python/scripts/generate_proto.py --check",
     "fixtures:headless": "node --experimental-default-type=module scripts/generate-headless-fixtures.mjs",
+    "fixtures:environment-editor": "node --experimental-default-type=module scripts/generate-environment-editor-fixtures.mjs",
     "test:ui": "playwright test --grep-invert @a11y",
     "test:a11y": "playwright test --grep @a11y"
   },

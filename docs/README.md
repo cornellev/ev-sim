@@ -10,6 +10,7 @@ This folder is the contributor guide for cev-sim. Start here when you need to ru
 - Telemetry work: [Telemetry, Logging, Replay, and Analysis](telemetry-logging.md), then [SFLog](sflog.md) for the binary format, recording pipeline, recovery, and HTTP API.
 - Environment authoring: [Environment Editor](environment-editor.md), then [Earth Import](earth-import.md) for geographic imports.
 - Photoreal visual layer: [Visual Layer Contracts](visual-layer.md), then the agent-facing [Visual Layer Implementation Plan](visual-layer-plan.md) — truth-first mesh/PBR baking, hashed assets, optional Google and 3DGS tracks.
+- Environment editor program (agents): [Environment Editor Implementation Plan](environment-editor-plan.md) — object registry and options contracts, the schema-v4 authoring overlay, and the presentation/command seams for the unified workspace.
 - Visual scripting work: [Scripting Overview](scripting/README.md), then [Scripting Architecture](scripting/architecture.md) and [Extension Guide](scripting/extension-guide.md).
 - Running scripts on live data: [Script Bindings](script-bindings.md) (topics, fixed updates, signals, timers).
 - Agent tooling: [MCP Server](mcp.md) — environment, scripting, binding, logging, and replay tools for AI agents. Portable skill + MCP config: root `plugin.json` / `mcp.json` and [`skills/cev-sim/`](../skills/cev-sim/).

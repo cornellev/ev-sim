@@ -1,0 +1,327 @@
+{
+  "kind": "cev-sim.environment-editor.compatibility-baseline",
+  "version": 1,
+  "placementCatalog": [
+    {
+      "id": "stop-sign",
+      "label": "Stop Sign",
+      "kind": "sign",
+      "mapColor": "#ef4444"
+    },
+    {
+      "id": "one-way-sign",
+      "label": "One Way",
+      "kind": "sign",
+      "mapColor": "#38bdf8"
+    },
+    {
+      "id": "barrel",
+      "label": "Barrel",
+      "kind": "barrel",
+      "mapColor": "#f97316"
+    },
+    {
+      "id": "tire",
+      "label": "Tire",
+      "kind": "tire",
+      "mapColor": "#71717a"
+    },
+    {
+      "id": "cone",
+      "label": "Cone",
+      "kind": "cone",
+      "mapColor": "#f97316"
+    }
+  ],
+  "cases": [
+    {
+      "id": "igvc-builtin",
+      "source": "createBuiltInIGVCEnvironmentManifest()",
+      "schemaVersion": 2,
+      "worldHash": "bff91ee537a5fcea48a8e5d683b3cfd4a105fb27f11a9b1034291e525ab5e3d9",
+      "roadNetworkHash": "hash-v1-c1fc36d9a6ebf075",
+      "lidarGeometryHash": "96fdfcb91fef2806167f343ae1eb625735bf221b7a82fa637c0211709a3e0919",
+      "domainSources": {
+        "buildings": "persisted-template",
+        "features": "persisted-template",
+        "roads": "persisted-template"
+      },
+      "counts": {
+        "nodes": 11,
+        "edges": 12,
+        "buildings": 18,
+        "features": 8,
+        "obstacles": 26,
+        "drivableSurfaces": 19
+      },
+      "features": [
+        {
+          "id": "igvc:barrel:0",
+          "type": "barrel",
+          "centerY": 0.5,
+          "yaw": 0,
+          "size": {
+            "x": 0.75,
+            "y": 1,
+            "z": 0.75
+          }
+        },
+        {
+          "id": "igvc:barrel:1",
+          "type": "barrel",
+          "centerY": 0.5,
+          "yaw": 0,
+          "size": {
+            "x": 0.75,
+            "y": 1,
+            "z": 0.75
+          }
+        },
+        {
+          "id": "igvc:barrel:2",
+          "type": "barrel",
+          "centerY": 0.5,
+          "yaw": 0,
+          "size": {
+            "x": 0.75,
+            "y": 1,
+            "z": 0.75
+          }
+        },
+        {
+          "id": "igvc:barrel:3",
+          "type": "barrel",
+          "centerY": 0.5,
+          "yaw": 0,
+          "size": {
+            "x": 0.75,
+            "y": 1,
+            "z": 0.75
+          }
+        },
+        {
+          "id": "igvc:barrel:4",
+          "type": "barrel",
+          "centerY": 0.5,
+          "yaw": 0,
+          "size": {
+            "x": 0.75,
+            "y": 1,
+            "z": 0.75
+          }
+        },
+        {
+          "id": "igvc:stop-sign:0",
+          "type": "stop-sign",
+          "centerY": 1.0668,
+          "yaw": 1.570796,
+          "size": {
+            "x": 0.0508,
+            "y": 2.1336,
+            "z": 0.9144
+          }
+        },
+        {
+          "id": "igvc:stop-sign:1",
+          "type": "stop-sign",
+          "centerY": 1.0668,
+          "yaw": 4.712389,
+          "size": {
+            "x": 0.0508,
+            "y": 2.1336,
+            "z": 0.9144
+          }
+        },
+        {
+          "id": "igvc:stop-sign:2",
+          "type": "stop-sign",
+          "centerY": 1.0668,
+          "yaw": 0,
+          "size": {
+            "x": 0.0508,
+            "y": 2.1336,
+            "z": 0.9144
+          }
+        }
+      ]
+    },
+    {
+      "id": "yard-v2",
+      "source": "legacy-v2.yard.json",
+      "schemaVersion": 2,
+      "worldHash": "a7f579038712e166762c5d13f097b25fa7877798b354e07116c54954d763eff8",
+      "roadNetworkHash": "hash-v1-9dfa747707a881db",
+      "lidarGeometryHash": "14a8138d715983df1e015873b75774db715d3f47d3366016f86e5a6494c62430",
+      "domainSources": {
+        "buildings": "authored",
+        "features": "authored",
+        "roads": "authored"
+      },
+      "counts": {
+        "nodes": 5,
+        "edges": 4,
+        "buildings": 1,
+        "features": 5,
+        "obstacles": 6,
+        "drivableSurfaces": 6
+      },
+      "features": [
+        {
+          "id": "feature-barrel",
+          "type": "barrel",
+          "centerY": 0.5,
+          "yaw": 0,
+          "size": {
+            "x": 0.75,
+            "y": 1,
+            "z": 0.75
+          }
+        },
+        {
+          "id": "feature-cone",
+          "type": "cone",
+          "centerY": 0.35,
+          "yaw": 0,
+          "size": {
+            "x": 0.36,
+            "y": 0.7,
+            "z": 0.36
+          }
+        },
+        {
+          "id": "feature-one-way",
+          "type": "one-way-sign",
+          "centerY": 1.9812,
+          "yaw": 3.391593,
+          "size": {
+            "x": 0.0254,
+            "y": 0.3048,
+            "z": 0.6096
+          }
+        },
+        {
+          "id": "feature-stop",
+          "type": "stop-sign",
+          "centerY": 1.0668,
+          "yaw": 1.570796,
+          "size": {
+            "x": 0.0508,
+            "y": 2.1336,
+            "z": 0.9144
+          }
+        },
+        {
+          "id": "feature-tire",
+          "type": "tire",
+          "centerY": 0.06,
+          "yaw": 1.5,
+          "size": {
+            "x": 0.44,
+            "y": 0.12,
+            "z": 0.44
+          }
+        }
+      ]
+    },
+    {
+      "id": "city-grid-v3",
+      "source": "legacy-v3.city-grid.json",
+      "schemaVersion": 3,
+      "worldHash": "96077456e1675345872ce60fe5e5ac3895d2b1ba475249ff41049b6ae71a5871",
+      "roadNetworkHash": "hash-v1-0046ac2f5b60ca73",
+      "lidarGeometryHash": "8674615d66e4ae832194b6d073bf77dff9d649c84e1ae341ea7e0901fce237f7",
+      "domainSources": {
+        "buildings": "authored",
+        "features": "empty-default",
+        "roads": "authored"
+      },
+      "counts": {
+        "nodes": 9,
+        "edges": 12,
+        "buildings": 4,
+        "features": 0,
+        "obstacles": 4,
+        "drivableSurfaces": 21
+      },
+      "features": []
+    },
+    {
+      "id": "all-props-v3",
+      "source": "all-props.v3.json",
+      "schemaVersion": 3,
+      "worldHash": "648b79d12bc0e1c6f20528dd771d2dad718ec27b523397922ffc3a03f8a1a234",
+      "roadNetworkHash": "hash-v1-ecaee6d4a98a6ee8",
+      "lidarGeometryHash": "cdca2b19abeaf835b0a576131a995048d2d07d5b3f7bc9c22509455a0721cd62",
+      "domainSources": {
+        "buildings": "authored",
+        "features": "authored",
+        "roads": "authored"
+      },
+      "counts": {
+        "nodes": 2,
+        "edges": 1,
+        "buildings": 1,
+        "features": 5,
+        "obstacles": 6,
+        "drivableSurfaces": 1
+      },
+      "features": [
+        {
+          "id": "prop-barrel",
+          "type": "barrel",
+          "centerY": 0.5,
+          "yaw": 0,
+          "size": {
+            "x": 0.75,
+            "y": 1,
+            "z": 0.75
+          }
+        },
+        {
+          "id": "prop-cone",
+          "type": "cone",
+          "centerY": 0.35,
+          "yaw": 0,
+          "size": {
+            "x": 0.36,
+            "y": 0.7,
+            "z": 0.36
+          }
+        },
+        {
+          "id": "prop-one-way-sign",
+          "type": "one-way-sign",
+          "centerY": 1.9812,
+          "yaw": 3.641593,
+          "size": {
+            "x": 0.0254,
+            "y": 0.3048,
+            "z": 0.6096
+          }
+        },
+        {
+          "id": "prop-stop-sign",
+          "type": "stop-sign",
+          "centerY": 1.0668,
+          "yaw": 4.712389,
+          "size": {
+            "x": 0.0508,
+            "y": 2.1336,
+            "z": 0.9144
+          }
+        },
+        {
+          "id": "prop-tire",
+          "type": "tire",
+          "centerY": 0.06,
+          "yaw": 0.75,
+          "size": {
+            "x": 0.44,
+            "y": 0.12,
+            "z": 0.44
+          }
+        }
+      ]
+    }
+  ]
+}

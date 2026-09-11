@@ -53,13 +53,13 @@ Live sessions stay in sync: MCP writes and workspace commands publish Server-Sen
 |------|---------|
 | `environment_list` | List worlds + active id |
 | `environment_create` / `environment_rename` / `environment_delete` | Catalog CRUD |
-| `environment_get` | Summary or full document |
+| `environment_get` | Summary or full document; summaries include `placementCatalog` and registered `objectTypes` |
 | `environment_set_active` | Change the app's active environment |
 | `environment_add_road` | Polyline of xz points (optional `y`) → snapped nodes + edges |
 | `environment_remove_road` / `environment_move_road_node` | Road edits; move accepts optional `y`, intersections are y-only |
 | `environment_add_building` / `environment_remove_building` | Rectangle buildings |
 | `environment_add_object` / `environment_move_object` / `environment_remove_object` | Props (`stop-sign`, `one-way-sign`, `barrel`, `tire`, `cone`) |
-| `environment_validate` | Full geometric conflict report |
+| `environment_validate` | Full geometric conflict report plus schema-v4 object-graph `issues` (`{ path, code, message, severity }`) |
 
 Mutating placement tools return a `conflicts` array (road crossings, corridor overlaps, building overlaps, object proximity). Pass `strict: true` to reject instead of keeping the edit.
 

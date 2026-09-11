@@ -1,3 +1,4 @@
+import { featureSemanticLabel } from "../../3d/editor/objects/types/builtinProp.js";
 import { perceptionClassId } from "../../autonomy/PerceptionLabelCatalog.js";
 import { compareUtf8 } from "../world/WorldDescription.js";
 import { canonicalFiniteNumber, canonicalizeSimulationValue, simulationSha256 } from "../kernel/SimulationHashes.js";
@@ -28,8 +29,7 @@ function normalizedTags(tags, fallback = "unknown") {
 }
 
 function semanticName(sourceType, tags) {
-    if (["stop-sign", "one-way-sign"].includes(sourceType)) return "sign";
-    return tags[0] ?? sourceType ?? "unknown";
+    return featureSemanticLabel(sourceType) ?? tags[0] ?? sourceType ?? "unknown";
 }
 
 export function createTriangleLidarTwin({

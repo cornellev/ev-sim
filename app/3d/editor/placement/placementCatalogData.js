@@ -1,44 +1,31 @@
-export const PLACEMENT_CATALOG = Object.freeze([
-    {
-        id: "stop-sign",
-        label: "Stop Sign",
-        kind: "sign",
-        mapColor: "#ef4444",
-    },
-    {
-        id: "one-way-sign",
-        label: "One Way",
-        kind: "sign",
-        mapColor: "#38bdf8",
-    },
-    {
-        id: "barrel",
-        label: "Barrel",
-        kind: "barrel",
-        mapColor: "#f97316",
-    },
-    {
-        id: "tire",
-        label: "Tire",
-        kind: "tire",
-        mapColor: "#71717a",
-    },
-    {
-        id: "cone",
-        label: "Cone",
-        kind: "cone",
-        mapColor: "#f97316",
-    },
-]);
+/**
+ * Placement catalog for built-in props. A Three-free view over
+ * `BUILTIN_PROP_ASSETS` so the server, MCP tools, and map rendering share one
+ * table with the object registry. Shape and order are frozen contracts.
+ */
+
+import {
+    BUILTIN_PROP_ASSETS,
+    DEFAULT_MAP_COLOR,
+    getBuiltinPropAsset,
+} from "../objects/types/builtinProp.js";
+
+export const PLACEMENT_CATALOG = Object.freeze(BUILTIN_PROP_ASSETS.map((asset) => Object.freeze({
+    id: asset.id,
+    label: asset.label,
+    kind: asset.kind,
+    mapColor: asset.mapColor,
+})));
 
 const CATALOG_BY_ID = new Map(PLACEMENT_CATALOG.map((asset) => [asset.id, asset]));
+const CATALOG_ID_BY_CONSTRUCTOR = new Map(BUILTIN_PROP_ASSETS.map((asset) => [asset.constructorName, asset.id]));
 
 export function getPlacementAsset(assetId) {
     return CATALOG_BY_ID.get(assetId) ?? null;
 }
 
 export function getMapColorForAsset(assetId) {
-    return getPlacementAsset(assetId)?.mapColor ?? "#a1a1aa";
+    return getBuiltinPropAsset(assetId)?.mapColor ?? DEFAULT_MAP_COLOR;
 }
 
 /**
@@ -46,12 +33,8 @@ export function getMapColorForAsset(assetId) {
  * @returns {string | null}
  */
 export function fusionObjectToCatalogType(fusionObject) {
-    const name = fusionObject?.constructor?.name;
-    if (name === "StopSign") return "stop-sign";
-    if (name === "OneWaySign") return "one-way-sign";
-    if (name === "Tire") return "tire";
-    if (name === "Cone") return "cone";
-    if (name === "Barrel") return "barrel";
+    const byConstructor = CATALOG_ID_BY_CONSTRUCTOR.get(fusionObject?.constructor?.name);
+    if (byConstructor) return byConstructor;
 
     const tags = fusionObject?.tags ?? [];
     if (tags.includes("cone")) return "cone";

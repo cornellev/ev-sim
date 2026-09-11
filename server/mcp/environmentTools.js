@@ -18,6 +18,13 @@ import {
     findDocumentConflicts,
 } from "../../app/3d/editor/document/documentGeometry.js";
 import { PLACEMENT_CATALOG, getPlacementAsset } from "../../app/3d/editor/placement/placementCatalogData.js";
+import {
+    listObjectTypes,
+    objectTypeRegistry,
+    reconcileObjectGraph,
+    validateObjectGraph,
+} from "../../app/3d/editor/objects/index.js";
+import { environmentObjectTypeUnsupportedError } from "../storage/StorageErrors.js";
 import { storageEvents } from "./events.js";
 import { fail, maybeFailStrict, ok } from "./toolResult.js";
 
@@ -157,6 +164,7 @@ export function registerEnvironmentTools(server, storage) {
                         features: snapshot.features.length,
                     },
                     placementCatalog: PLACEMENT_CATALOG,
+                    objectTypes: listObjectTypes().map(summarizeObjectType),
                 });
             } catch (error) {
                 return fail(error);
@@ -412,9 +420,7 @@ export function registerEnvironmentTools(server, storage) {
         async ({ environmentId, type, x, z, rotationY, dir, strict }) => {
             try {
                 if (!getPlacementAsset(type)) {
-                    return fail(
-                        `Unknown object type "${type}". Valid: ${PLACEMENT_CATALOG.map((a) => a.id).join(", ")}`,
-                    );
+                    return fail(environmentObjectTypeUnsupportedError(type, PLACEMENT_CATALOG.map((a) => a.id)));
                 }
                 const { manifest, document } = await loadDocument(storage, environmentId);
                 const result = addFeature(document, {
@@ -494,20 +500,24 @@ export function registerEnvironmentTools(server, storage) {
     server.registerTool(
         "environment_validate",
         {
-            title: "Validate environment geometry",
-            description: "Run all geometric conflict checks over an environment document.",
+            title: "Validate environment",
+            description: "Run geometric conflict checks and object-graph validation over an environment document.",
             inputSchema: {
                 environmentId: z.string().min(1),
             },
         },
         async ({ environmentId }) => {
             try {
-                const { document } = await loadDocument(storage, environmentId);
+                const { manifest, document } = await loadDocument(storage, environmentId);
                 const conflicts = findDocumentConflicts(document);
+                const graph = validateObjectGraph(document.snapshot(), objectTypeRegistry, { sky: manifest.sky ?? null });
                 return ok({
                     ok: true,
                     conflictCount: conflicts.length,
                     conflicts,
+                    objectGraphOk: graph.ok,
+                    issueCount: graph.issues.length,
+                    issues: graph.issues,
                 });
             } catch (error) {
                 return fail(error);
@@ -527,10 +537,38 @@ async function loadDocument(storage, environmentId) {
         buildings: [],
         features: [],
     });
+    reconcileDocumentObjects(manifest, document);
     return { manifest, document };
 }
 
+/**
+ * Keep the schema-v4 overlay complete around legacy mutations: every legacy
+ * entity gains a record, orphans are dropped, unknown types are preserved.
+ * Default (v3) storage strips the overlay again on write.
+ */
+function reconcileDocumentObjects(manifest, document) {
+    const { records } = reconcileObjectGraph(
+        document.snapshot(),
+        document.objects,
+        objectTypeRegistry,
+        { sky: manifest.sky ?? null },
+    );
+    document.replaceObjectGraph(records);
+}
+
+function summarizeObjectType(definition) {
+    return {
+        typeId: definition.typeId,
+        version: definition.version,
+        label: definition.label,
+        catalog: definition.catalog,
+        capabilities: definition.getCapabilities(null),
+        legacyDomain: definition.legacy?.domain ?? null,
+    };
+}
+
 async function saveDocument(storage, environmentId, manifest, document) {
+    reconcileDocumentObjects(manifest, document);
     const snapshot = document.toManifest();
     const saved = await storage.putEnvironment(environmentId, {
         manifest: {

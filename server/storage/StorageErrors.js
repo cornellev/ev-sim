@@ -1,5 +1,16 @@
 export const ENVIRONMENT_REVISION_CONFLICT = "ENVIRONMENT_REVISION_CONFLICT";
 export const ENVIRONMENT_UNGUARDED_WRITE = "ENVIRONMENT_UNGUARDED_WRITE";
+export const ENVIRONMENT_SCHEMA_DOWNGRADE = "ENVIRONMENT_SCHEMA_DOWNGRADE";
+export const ENVIRONMENT_OBJECT_GRAPH_INVALID = "ENVIRONMENT_OBJECT_GRAPH_INVALID";
+export const ENVIRONMENT_OBJECT_TYPE_UNSUPPORTED = "ENVIRONMENT_OBJECT_TYPE_UNSUPPORTED";
+
+export const ENVIRONMENT_ERROR_CODES = Object.freeze({
+    REVISION_CONFLICT: ENVIRONMENT_REVISION_CONFLICT,
+    UNGUARDED_WRITE: ENVIRONMENT_UNGUARDED_WRITE,
+    SCHEMA_DOWNGRADE: ENVIRONMENT_SCHEMA_DOWNGRADE,
+    OBJECT_GRAPH_INVALID: ENVIRONMENT_OBJECT_GRAPH_INVALID,
+    OBJECT_TYPE_UNSUPPORTED: ENVIRONMENT_OBJECT_TYPE_UNSUPPORTED,
+});
 
 export const VISUAL_LAYER_ERROR_CODES = Object.freeze({
     INVALID_ACCESS: "VISUAL_LAYER_INVALID_ACCESS",
@@ -56,6 +67,11 @@ export const RUN_PACKAGE_ERROR_CODES = Object.freeze({
 });
 
 const VISUAL_ASSET_STATUS = Object.freeze({
+    ENVIRONMENT_REVISION_CONFLICT: 409,
+    ENVIRONMENT_UNGUARDED_WRITE: 400,
+    ENVIRONMENT_SCHEMA_DOWNGRADE: 409,
+    ENVIRONMENT_OBJECT_GRAPH_INVALID: 400,
+    ENVIRONMENT_OBJECT_TYPE_UNSUPPORTED: 400,
     VISUAL_ASSET_INVALID_METADATA: 400,
     VISUAL_ASSET_INVALID_MEDIA: 400,
     VISUAL_ASSET_INVALID_GRAPH: 400,
@@ -134,6 +150,72 @@ export function unguardedEnvironmentWriteError() {
         "Unguarded environment writes are not accepted. Send { manifest, expectedRevision }.",
         { statusCode: 400, code: ENVIRONMENT_UNGUARDED_WRITE },
     );
+}
+
+/**
+ * A stored schema-v4 environment cannot be overwritten by a manifest that
+ * lacks its object graph; accepting it would silently drop authored data.
+ */
+export function environmentSchemaDowngradeError({
+    message,
+    storedSchemaVersion = 4,
+    incomingSchemaVersion = null,
+    currentRevision = undefined,
+} = {}) {
+    const error = new StorageHttpError(
+        message ?? "Environment stores a schema v4 object graph; writes must include document.objects.",
+        { statusCode: 409, code: ENVIRONMENT_SCHEMA_DOWNGRADE, currentRevision },
+    );
+    error.storedSchemaVersion = storedSchemaVersion;
+    error.incomingSchemaVersion = incomingSchemaVersion;
+    const original = error.toJSON.bind(error);
+    error.toJSON = () => ({
+        ...original(),
+        storedSchemaVersion,
+        incomingSchemaVersion,
+    });
+    return error;
+}
+
+export function environmentObjectGraphInvalidError(issues = [], message = null) {
+    const first = issues.find((entry) => entry.severity === "error") ?? issues[0];
+    const error = new StorageHttpError(
+        message ?? (first ? `Environment object graph is invalid: ${first.message}` : "Environment object graph is invalid."),
+        { statusCode: 400, code: ENVIRONMENT_OBJECT_GRAPH_INVALID },
+    );
+    error.issues = issues;
+    const original = error.toJSON.bind(error);
+    error.toJSON = () => ({ ...original(), issues });
+    return error;
+}
+
+export function environmentObjectTypeUnsupportedError(typeId, known = []) {
+    const error = new StorageHttpError(
+        `Unknown object type "${typeId}". Valid: ${known.join(", ")}`,
+        { statusCode: 400, code: ENVIRONMENT_OBJECT_TYPE_UNSUPPORTED },
+    );
+    error.typeId = typeId;
+    error.known = [...known];
+    const original = error.toJSON.bind(error);
+    error.toJSON = () => ({ ...original(), typeId, known: [...known] });
+    return error;
+}
+
+/** Convert a shared-policy error (plain Error with `code`) into its HTTP form. */
+export function environmentPolicyError(error) {
+    if (error instanceof StorageHttpError) return error;
+    switch (error?.code) {
+        case ENVIRONMENT_UNGUARDED_WRITE:
+            return unguardedEnvironmentWriteError();
+        case ENVIRONMENT_REVISION_CONFLICT:
+            return environmentRevisionConflict(undefined, error.currentRevision);
+        case ENVIRONMENT_SCHEMA_DOWNGRADE:
+            return environmentSchemaDowngradeError(error);
+        case ENVIRONMENT_OBJECT_GRAPH_INVALID:
+            return environmentObjectGraphInvalidError(error.issues ?? [], error.message);
+        default:
+            return error;
+    }
 }
 
 export function visualAssetError(code, message, { statusCode, headers, denials } = {}) {

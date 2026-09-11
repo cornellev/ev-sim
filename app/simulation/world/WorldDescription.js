@@ -1,3 +1,4 @@
+import { FEATURE_GEOMETRY_BY_TYPE } from "../../3d/editor/objects/types/builtinProp.js";
 import { createBuiltInIGVCEnvironmentDocument } from "../../3d/igvc/IGVCEnvironmentDocument.js";
 import {
     edgeAllowsArrivalAtNode,
@@ -13,13 +14,6 @@ export const WORLD_DESCRIPTION_VERSION = 1;
 
 const textEncoder = new TextEncoder();
 const DEFAULT_ROAD_WIDTH = 7;
-const FEATURE_GEOMETRY = Object.freeze({
-    barrel: { size: { x: 0.75, y: 1, z: 0.75 }, centerY: 0.5 },
-    cone: { size: { x: 0.36, y: 0.7, z: 0.36 }, centerY: 0.35 },
-    tire: { size: { x: 0.44, y: 0.12, z: 0.44 }, centerY: 0.06 },
-    "stop-sign": { size: { x: 0.0508, y: 2.1336, z: 0.9144 }, centerY: 1.0668, directional: true },
-    "one-way-sign": { size: { x: 0.0254, y: 0.3048, z: 0.6096 }, centerY: 1.9812, directional: true },
-});
 
 export function compareUtf8(left, right) {
     const a = textEncoder.encode(String(left));
@@ -317,7 +311,7 @@ function rectangleFootprint(x, z, size, yaw) {
 function normalizeFeature(feature, index) {
     const id = identifier(feature?.id, `Feature ${index} ID`);
     const type = identifier(feature?.type, `Feature "${id}" type`);
-    const geometry = FEATURE_GEOMETRY[type];
+    const geometry = FEATURE_GEOMETRY_BY_TYPE[type];
     if (!geometry) throw new TypeError(`Feature "${id}" has unknown type "${type}".`);
     const dir = Math.floor(finite(feature?.dir ?? 0, `Feature "${id}" direction`));
     const rotationY = finite(feature?.rotationY ?? 0, `Feature "${id}" rotationY`);

@@ -7,7 +7,10 @@
  * @typedef {{ lat: number, lng: number }} EarthAnchor
  * @typedef {{ north: number, south: number, east: number, west: number }} EarthBounds
  * @typedef {{ anchor: EarthAnchor, bounds: EarthBounds, tileProvider: string, roadProvider: string, importedLayerIds: string[], importedAt: string|null }} EarthSourceRecord
+ * @typedef {import("../objects/objectRecord.js").ObjectRecord} ObjectRecord
  */
+
+import { OBJECT_GRAPH_VERSION, cloneObjectRecord } from "../objects/objectRecord.js";
 
 const DEFAULT_ROAD_EDGE = Object.freeze({
     bidirectional: true,
@@ -60,6 +63,11 @@ export class EnvironmentDocument {
             : [];
         /** @type {EarthSourceRecord|null} */
         this.earth = options.earth ? cloneEarthSource(options.earth) : null;
+        // Schema-v4 authoring overlay. Records share ids with the legacy
+        // domains above; geometry never lives here. Empty for v2/v3 documents
+        // until a loader or writer reconciles the graph.
+        /** @type {ObjectRecord[]} */
+        this.objects = Array.isArray(options.objects) ? options.objects.map(cloneObjectRecord) : [];
         this.subscribers = new Set();
     }
 
@@ -80,6 +88,9 @@ export class EnvironmentDocument {
             buildings: this.buildings.map(cloneBuilding),
             features: this.features.map(cloneFeature),
             earth: this.earth ? cloneEarthSource(this.earth) : null,
+            ...(this.objects.length > 0
+                ? { objectGraphVersion: OBJECT_GRAPH_VERSION, objects: this.objects.map(cloneObjectRecord) }
+                : {}),
         };
     }
 
@@ -107,6 +118,13 @@ export class EnvironmentDocument {
             ? manifest.features.map(cloneFeature)
             : [];
         this.earth = manifest.earth ? cloneEarthSource(manifest.earth) : null;
+        this.objects = Array.isArray(manifest.objects) ? manifest.objects.map(cloneObjectRecord) : [];
+        this.notify();
+    }
+
+    /** Replace the authoring overlay without touching geometry. */
+    replaceObjectGraph(records) {
+        this.objects = Array.isArray(records) ? records.map(cloneObjectRecord) : [];
         this.notify();
     }
 
@@ -159,6 +177,10 @@ export class EnvironmentDocument {
 
     getFeature(featureId) {
         return this.features.find((feature) => feature.id === featureId) ?? null;
+    }
+
+    getObject(objectId) {
+        return this.objects.find((record) => record.id === objectId) ?? null;
     }
 
     toManifest() {

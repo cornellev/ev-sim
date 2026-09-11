@@ -1,0 +1,1550 @@
+{
+  "environmentId": "city-grid",
+  "name": "City Grid",
+  "schemaVersion": 3,
+  "revision": 2,
+  "templateId": "blank",
+  "roadStylePreset": "default",
+  "roadsAuthored": true,
+  "buildingsAuthored": true,
+  "featuresAuthored": false,
+  "chunkSize": 20,
+  "visualLayer": null,
+  "evidence": null,
+  "document": {
+    "environmentId": "city-grid",
+    "chunkSize": 20,
+    "roadsAuthored": true,
+    "buildingsAuthored": true,
+    "featuresAuthored": false,
+    "roads": {
+      "nodes": [
+        {
+          "id": "node-mrvk62d4-1",
+          "x": 0,
+          "y": 0,
+          "z": 0,
+          "kind": "intersection"
+        },
+        {
+          "id": "node-mrvk62d4-2",
+          "x": 40,
+          "y": 0,
+          "z": 0,
+          "kind": "intersection"
+        },
+        {
+          "id": "node-mrvk62d4-3",
+          "x": 80,
+          "y": 0,
+          "z": 0,
+          "kind": "intersection"
+        },
+        {
+          "id": "node-mrvk62dh-b",
+          "x": 0,
+          "y": 0,
+          "z": 40,
+          "kind": "intersection"
+        },
+        {
+          "id": "node-mrvk62dh-c",
+          "x": 40,
+          "y": 0,
+          "z": 40,
+          "kind": "intersection"
+        },
+        {
+          "id": "node-mrvk62dh-d",
+          "x": 80,
+          "y": 0,
+          "z": 40,
+          "kind": "intersection"
+        },
+        {
+          "id": "node-mrvk64vj-g",
+          "x": 0,
+          "y": 0,
+          "z": 80,
+          "kind": "intersection"
+        },
+        {
+          "id": "node-mrvk65kh-j",
+          "x": 40,
+          "y": 0,
+          "z": 80,
+          "kind": "intersection"
+        },
+        {
+          "id": "node-mrvk65km-m",
+          "x": 80,
+          "y": 0,
+          "z": 80,
+          "kind": "intersection"
+        }
+      ],
+      "edges": [
+        {
+          "id": "edge-mrvk62d5-4",
+          "startNodeId": "node-mrvk62d4-1",
+          "endNodeId": "node-mrvk62d4-2",
+          "bidirectional": true,
+          "direction": 1,
+          "width": 8,
+          "laneCount": 2,
+          "shoulderWidth": 0,
+          "tension": null,
+          "borderLeft": null,
+          "borderRight": null,
+          "startArm": null,
+          "endArm": null
+        },
+        {
+          "id": "edge-mrvk62d5-5",
+          "startNodeId": "node-mrvk62d4-2",
+          "endNodeId": "node-mrvk62d4-3",
+          "bidirectional": true,
+          "direction": 1,
+          "width": 8,
+          "laneCount": 2,
+          "shoulderWidth": 0,
+          "tension": null,
+          "borderLeft": null,
+          "borderRight": null,
+          "startArm": null,
+          "endArm": null
+        },
+        {
+          "id": "edge-mrvk62dh-e",
+          "startNodeId": "node-mrvk62dh-b",
+          "endNodeId": "node-mrvk62dh-c",
+          "bidirectional": true,
+          "direction": 1,
+          "width": 8,
+          "laneCount": 2,
+          "shoulderWidth": 0,
+          "tension": null,
+          "borderLeft": null,
+          "borderRight": null,
+          "startArm": null,
+          "endArm": null
+        },
+        {
+          "id": "edge-mrvk62dh-f",
+          "startNodeId": "node-mrvk62dh-c",
+          "endNodeId": "node-mrvk62dh-d",
+          "bidirectional": true,
+          "direction": 1,
+          "width": 8,
+          "laneCount": 2,
+          "shoulderWidth": 0,
+          "tension": null,
+          "borderLeft": null,
+          "borderRight": null,
+          "startArm": null,
+          "endArm": null
+        },
+        {
+          "id": "edge-mrvk64vj-h",
+          "startNodeId": "node-mrvk62d4-1",
+          "endNodeId": "node-mrvk62dh-b",
+          "bidirectional": true,
+          "direction": 1,
+          "width": 8,
+          "laneCount": 2,
+          "shoulderWidth": 0,
+          "tension": null,
+          "borderLeft": null,
+          "borderRight": null,
+          "startArm": null,
+          "endArm": null
+        },
+        {
+          "id": "edge-mrvk64vj-i",
+          "startNodeId": "node-mrvk62dh-b",
+          "endNodeId": "node-mrvk64vj-g",
+          "bidirectional": true,
+          "direction": 1,
+          "width": 8,
+          "laneCount": 2,
+          "shoulderWidth": 0,
+          "tension": null,
+          "borderLeft": null,
+          "borderRight": null,
+          "startArm": null,
+          "endArm": null
+        },
+        {
+          "id": "edge-mrvk65kh-k",
+          "startNodeId": "node-mrvk62d4-2",
+          "endNodeId": "node-mrvk62dh-c",
+          "bidirectional": true,
+          "direction": 1,
+          "width": 8,
+          "laneCount": 2,
+          "shoulderWidth": 0,
+          "tension": null,
+          "borderLeft": null,
+          "borderRight": null,
+          "startArm": null,
+          "endArm": null
+        },
+        {
+          "id": "edge-mrvk65kh-l",
+          "startNodeId": "node-mrvk62dh-c",
+          "endNodeId": "node-mrvk65kh-j",
+          "bidirectional": true,
+          "direction": 1,
+          "width": 8,
+          "laneCount": 2,
+          "shoulderWidth": 0,
+          "tension": null,
+          "borderLeft": null,
+          "borderRight": null,
+          "startArm": null,
+          "endArm": null
+        },
+        {
+          "id": "edge-mrvk65km-n",
+          "startNodeId": "node-mrvk62d4-3",
+          "endNodeId": "node-mrvk62dh-d",
+          "bidirectional": true,
+          "direction": 1,
+          "width": 8,
+          "laneCount": 2,
+          "shoulderWidth": 0,
+          "tension": null,
+          "borderLeft": null,
+          "borderRight": null,
+          "startArm": null,
+          "endArm": null
+        },
+        {
+          "id": "edge-mrvk65km-o",
+          "startNodeId": "node-mrvk62dh-d",
+          "endNodeId": "node-mrvk65km-m",
+          "bidirectional": true,
+          "direction": 1,
+          "width": 8,
+          "laneCount": 2,
+          "shoulderWidth": 0,
+          "tension": null,
+          "borderLeft": null,
+          "borderRight": null,
+          "startArm": null,
+          "endArm": null
+        },
+        {
+          "id": "edge-mrvkbh4s-1",
+          "startNodeId": "node-mrvk64vj-g",
+          "endNodeId": "node-mrvk65kh-j",
+          "bidirectional": true,
+          "direction": 1,
+          "width": 8,
+          "laneCount": 2,
+          "shoulderWidth": 0,
+          "tension": null,
+          "borderLeft": null,
+          "borderRight": null,
+          "startArm": null,
+          "endArm": null
+        },
+        {
+          "id": "edge-mrvkbh4s-2",
+          "startNodeId": "node-mrvk65kh-j",
+          "endNodeId": "node-mrvk65km-m",
+          "bidirectional": true,
+          "direction": 1,
+          "width": 8,
+          "laneCount": 2,
+          "shoulderWidth": 0,
+          "tension": null,
+          "borderLeft": null,
+          "borderRight": null,
+          "startArm": null,
+          "endArm": null
+        }
+      ]
+    },
+    "buildings": [
+      {
+        "buildingId": "bldg-09dd71cf",
+        "footprint": [
+          {
+            "x": 8,
+            "z": 7.703539
+          },
+          {
+            "x": 32,
+            "z": 7.703539
+          },
+          {
+            "x": 32,
+            "z": 31.703539
+          },
+          {
+            "x": 8,
+            "z": 31.703539
+          }
+        ],
+        "height": 18,
+        "textureId": 0,
+        "tags": [
+          "building"
+        ],
+        "meshName": "bldg-09dd71cf"
+      },
+      {
+        "buildingId": "bldg-510176c9",
+        "footprint": [
+          {
+            "x": 8,
+            "z": 48
+          },
+          {
+            "x": 32,
+            "z": 48
+          },
+          {
+            "x": 32,
+            "z": 72
+          },
+          {
+            "x": 8,
+            "z": 72
+          }
+        ],
+        "height": 15,
+        "textureId": 2,
+        "tags": [
+          "building"
+        ],
+        "meshName": "bldg-510176c9"
+      },
+      {
+        "buildingId": "bldg-ed07fd49",
+        "footprint": [
+          {
+            "x": 48,
+            "z": 48
+          },
+          {
+            "x": 72,
+            "z": 48
+          },
+          {
+            "x": 72,
+            "z": 72
+          },
+          {
+            "x": 48,
+            "z": 72
+          }
+        ],
+        "height": 28,
+        "textureId": 3,
+        "tags": [
+          "building"
+        ],
+        "meshName": "bldg-ed07fd49"
+      },
+      {
+        "buildingId": "bldg-f1e97b4c",
+        "footprint": [
+          {
+            "x": 48,
+            "z": 8
+          },
+          {
+            "x": 72,
+            "z": 8
+          },
+          {
+            "x": 72,
+            "z": 32
+          },
+          {
+            "x": 48,
+            "z": 32
+          }
+        ],
+        "height": 22,
+        "textureId": 1,
+        "tags": [
+          "building"
+        ],
+        "meshName": "bldg-f1e97b4c"
+      }
+    ],
+    "features": [],
+    "earth": null
+  },
+  "semanticGeneration": 188,
+  "chunks": {
+    "0,-1": {
+      "bounds": {
+        "minX": 0,
+        "minZ": -20,
+        "maxX": 20,
+        "maxZ": 0
+      },
+      "objectIds": [
+        "road:edge-mrvk62d5-4",
+        "intersection:node-mrvk62d4-1"
+      ],
+      "loaded": true,
+      "prefetch": false,
+      "eviction": false,
+      "dirty": true
+    },
+    "0,0": {
+      "bounds": {
+        "minX": 0,
+        "minZ": 0,
+        "maxX": 20,
+        "maxZ": 20
+      },
+      "objectIds": [
+        "road:edge-mrvk62d5-4",
+        "road:edge-mrvk64vj-h",
+        "intersection:node-mrvk62d4-1",
+        "building:bldg-09dd71cf"
+      ],
+      "loaded": true,
+      "prefetch": false,
+      "eviction": false,
+      "dirty": true
+    },
+    "1,-1": {
+      "bounds": {
+        "minX": 20,
+        "minZ": -20,
+        "maxX": 40,
+        "maxZ": 0
+      },
+      "objectIds": [
+        "road:edge-mrvk62d5-4",
+        "intersection:node-mrvk62d4-2"
+      ],
+      "loaded": true,
+      "prefetch": false,
+      "eviction": false,
+      "dirty": true
+    },
+    "1,0": {
+      "bounds": {
+        "minX": 20,
+        "minZ": 0,
+        "maxX": 40,
+        "maxZ": 20
+      },
+      "objectIds": [
+        "road:edge-mrvk62d5-4",
+        "road:edge-mrvk65kh-k",
+        "intersection:node-mrvk62d4-2",
+        "building:bldg-09dd71cf"
+      ],
+      "loaded": true,
+      "prefetch": false,
+      "eviction": false,
+      "dirty": true
+    },
+    "2,-1": {
+      "bounds": {
+        "minX": 40,
+        "minZ": -20,
+        "maxX": 60,
+        "maxZ": 0
+      },
+      "objectIds": [
+        "road:edge-mrvk62d5-5",
+        "intersection:node-mrvk62d4-2"
+      ],
+      "loaded": true,
+      "prefetch": false,
+      "eviction": false,
+      "dirty": true
+    },
+    "2,0": {
+      "bounds": {
+        "minX": 40,
+        "minZ": 0,
+        "maxX": 60,
+        "maxZ": 20
+      },
+      "objectIds": [
+        "road:edge-mrvk62d5-5",
+        "road:edge-mrvk65kh-k",
+        "intersection:node-mrvk62d4-2",
+        "building:bldg-f1e97b4c"
+      ],
+      "loaded": true,
+      "prefetch": false,
+      "eviction": false,
+      "dirty": true
+    },
+    "3,-1": {
+      "bounds": {
+        "minX": 60,
+        "minZ": -20,
+        "maxX": 80,
+        "maxZ": 0
+      },
+      "objectIds": [
+        "road:edge-mrvk62d5-5",
+        "intersection:node-mrvk62d4-3"
+      ],
+      "loaded": true,
+      "prefetch": false,
+      "eviction": false,
+      "dirty": true
+    },
+    "3,0": {
+      "bounds": {
+        "minX": 60,
+        "minZ": 0,
+        "maxX": 80,
+        "maxZ": 20
+      },
+      "objectIds": [
+        "road:edge-mrvk62d5-5",
+        "road:edge-mrvk65km-n",
+        "intersection:node-mrvk62d4-3",
+        "building:bldg-f1e97b4c"
+      ],
+      "loaded": true,
+      "prefetch": false,
+      "eviction": false,
+      "dirty": true
+    },
+    "0,1": {
+      "bounds": {
+        "minX": 0,
+        "minZ": 20,
+        "maxX": 20,
+        "maxZ": 40
+      },
+      "objectIds": [
+        "road:edge-mrvk62dh-e",
+        "road:edge-mrvk64vj-h",
+        "intersection:node-mrvk62dh-b",
+        "building:bldg-09dd71cf"
+      ],
+      "loaded": true,
+      "prefetch": false,
+      "eviction": false,
+      "dirty": true
+    },
+    "0,2": {
+      "bounds": {
+        "minX": 0,
+        "minZ": 40,
+        "maxX": 20,
+        "maxZ": 60
+      },
+      "objectIds": [
+        "road:edge-mrvk62dh-e",
+        "road:edge-mrvk64vj-i",
+        "intersection:node-mrvk62dh-b",
+        "building:bldg-510176c9"
+      ],
+      "loaded": true,
+      "prefetch": false,
+      "eviction": false,
+      "dirty": true
+    },
+    "1,1": {
+      "bounds": {
+        "minX": 20,
+        "minZ": 20,
+        "maxX": 40,
+        "maxZ": 40
+      },
+      "objectIds": [
+        "road:edge-mrvk62dh-e",
+        "road:edge-mrvk65kh-k",
+        "intersection:node-mrvk62dh-c",
+        "building:bldg-09dd71cf"
+      ],
+      "loaded": true,
+      "prefetch": false,
+      "eviction": false,
+      "dirty": true
+    },
+    "1,2": {
+      "bounds": {
+        "minX": 20,
+        "minZ": 40,
+        "maxX": 40,
+        "maxZ": 60
+      },
+      "objectIds": [
+        "road:edge-mrvk62dh-e",
+        "road:edge-mrvk65kh-l",
+        "intersection:node-mrvk62dh-c",
+        "building:bldg-510176c9"
+      ],
+      "loaded": true,
+      "prefetch": false,
+      "eviction": false,
+      "dirty": true
+    },
+    "2,1": {
+      "bounds": {
+        "minX": 40,
+        "minZ": 20,
+        "maxX": 60,
+        "maxZ": 40
+      },
+      "objectIds": [
+        "road:edge-mrvk62dh-f",
+        "road:edge-mrvk65kh-k",
+        "intersection:node-mrvk62dh-c",
+        "building:bldg-f1e97b4c"
+      ],
+      "loaded": true,
+      "prefetch": false,
+      "eviction": false,
+      "dirty": true
+    },
+    "2,2": {
+      "bounds": {
+        "minX": 40,
+        "minZ": 40,
+        "maxX": 60,
+        "maxZ": 60
+      },
+      "objectIds": [
+        "road:edge-mrvk62dh-f",
+        "road:edge-mrvk65kh-l",
+        "intersection:node-mrvk62dh-c",
+        "building:bldg-ed07fd49"
+      ],
+      "loaded": true,
+      "prefetch": false,
+      "eviction": false,
+      "dirty": true
+    },
+    "3,1": {
+      "bounds": {
+        "minX": 60,
+        "minZ": 20,
+        "maxX": 80,
+        "maxZ": 40
+      },
+      "objectIds": [
+        "road:edge-mrvk62dh-f",
+        "road:edge-mrvk65km-n",
+        "intersection:node-mrvk62dh-d",
+        "building:bldg-f1e97b4c"
+      ],
+      "loaded": true,
+      "prefetch": false,
+      "eviction": false,
+      "dirty": true
+    },
+    "3,2": {
+      "bounds": {
+        "minX": 60,
+        "minZ": 40,
+        "maxX": 80,
+        "maxZ": 60
+      },
+      "objectIds": [
+        "road:edge-mrvk62dh-f",
+        "road:edge-mrvk65km-o",
+        "intersection:node-mrvk62dh-d",
+        "building:bldg-ed07fd49"
+      ],
+      "loaded": true,
+      "prefetch": false,
+      "eviction": false,
+      "dirty": true
+    },
+    "-1,0": {
+      "bounds": {
+        "minX": -20,
+        "minZ": 0,
+        "maxX": 0,
+        "maxZ": 20
+      },
+      "objectIds": [
+        "road:edge-mrvk64vj-h",
+        "intersection:node-mrvk62d4-1"
+      ],
+      "loaded": true,
+      "prefetch": false,
+      "eviction": false,
+      "dirty": true
+    },
+    "-1,1": {
+      "bounds": {
+        "minX": -20,
+        "minZ": 20,
+        "maxX": 0,
+        "maxZ": 40
+      },
+      "objectIds": [
+        "road:edge-mrvk64vj-h",
+        "intersection:node-mrvk62dh-b"
+      ],
+      "loaded": true,
+      "prefetch": false,
+      "eviction": false,
+      "dirty": true
+    },
+    "-1,2": {
+      "bounds": {
+        "minX": -20,
+        "minZ": 40,
+        "maxX": 0,
+        "maxZ": 60
+      },
+      "objectIds": [
+        "road:edge-mrvk64vj-i",
+        "intersection:node-mrvk62dh-b"
+      ],
+      "loaded": true,
+      "prefetch": false,
+      "eviction": false,
+      "dirty": true
+    },
+    "-1,3": {
+      "bounds": {
+        "minX": -20,
+        "minZ": 60,
+        "maxX": 0,
+        "maxZ": 80
+      },
+      "objectIds": [
+        "road:edge-mrvk64vj-i",
+        "intersection:node-mrvk64vj-g"
+      ],
+      "loaded": true,
+      "prefetch": false,
+      "eviction": false,
+      "dirty": true
+    },
+    "0,3": {
+      "bounds": {
+        "minX": 0,
+        "minZ": 60,
+        "maxX": 20,
+        "maxZ": 80
+      },
+      "objectIds": [
+        "road:edge-mrvk64vj-i",
+        "road:edge-mrvkbh4s-1",
+        "intersection:node-mrvk64vj-g",
+        "building:bldg-510176c9"
+      ],
+      "loaded": true,
+      "prefetch": false,
+      "eviction": false,
+      "dirty": true
+    },
+    "1,3": {
+      "bounds": {
+        "minX": 20,
+        "minZ": 60,
+        "maxX": 40,
+        "maxZ": 80
+      },
+      "objectIds": [
+        "road:edge-mrvk65kh-l",
+        "road:edge-mrvkbh4s-1",
+        "intersection:node-mrvk65kh-j",
+        "building:bldg-510176c9"
+      ],
+      "loaded": true,
+      "prefetch": false,
+      "eviction": false,
+      "dirty": true
+    },
+    "2,3": {
+      "bounds": {
+        "minX": 40,
+        "minZ": 60,
+        "maxX": 60,
+        "maxZ": 80
+      },
+      "objectIds": [
+        "road:edge-mrvk65kh-l",
+        "road:edge-mrvkbh4s-2",
+        "intersection:node-mrvk65kh-j",
+        "building:bldg-ed07fd49"
+      ],
+      "loaded": true,
+      "prefetch": false,
+      "eviction": false,
+      "dirty": true
+    },
+    "4,0": {
+      "bounds": {
+        "minX": 80,
+        "minZ": 0,
+        "maxX": 100,
+        "maxZ": 20
+      },
+      "objectIds": [
+        "road:edge-mrvk65km-n",
+        "intersection:node-mrvk62d4-3"
+      ],
+      "loaded": true,
+      "prefetch": false,
+      "eviction": false,
+      "dirty": true
+    },
+    "4,1": {
+      "bounds": {
+        "minX": 80,
+        "minZ": 20,
+        "maxX": 100,
+        "maxZ": 40
+      },
+      "objectIds": [
+        "road:edge-mrvk65km-n",
+        "intersection:node-mrvk62dh-d"
+      ],
+      "loaded": true,
+      "prefetch": false,
+      "eviction": false,
+      "dirty": true
+    },
+    "3,3": {
+      "bounds": {
+        "minX": 60,
+        "minZ": 60,
+        "maxX": 80,
+        "maxZ": 80
+      },
+      "objectIds": [
+        "road:edge-mrvk65km-o",
+        "road:edge-mrvkbh4s-2",
+        "intersection:node-mrvk65km-m",
+        "building:bldg-ed07fd49"
+      ],
+      "loaded": true,
+      "prefetch": false,
+      "eviction": false,
+      "dirty": true
+    },
+    "4,2": {
+      "bounds": {
+        "minX": 80,
+        "minZ": 40,
+        "maxX": 100,
+        "maxZ": 60
+      },
+      "objectIds": [
+        "road:edge-mrvk65km-o",
+        "intersection:node-mrvk62dh-d"
+      ],
+      "loaded": true,
+      "prefetch": false,
+      "eviction": false,
+      "dirty": true
+    },
+    "4,3": {
+      "bounds": {
+        "minX": 80,
+        "minZ": 60,
+        "maxX": 100,
+        "maxZ": 80
+      },
+      "objectIds": [
+        "road:edge-mrvk65km-o",
+        "intersection:node-mrvk65km-m"
+      ],
+      "loaded": true,
+      "prefetch": false,
+      "eviction": false,
+      "dirty": true
+    },
+    "0,4": {
+      "bounds": {
+        "minX": 0,
+        "minZ": 80,
+        "maxX": 20,
+        "maxZ": 100
+      },
+      "objectIds": [
+        "road:edge-mrvkbh4s-1",
+        "intersection:node-mrvk64vj-g"
+      ],
+      "loaded": true,
+      "prefetch": false,
+      "eviction": false,
+      "dirty": true
+    },
+    "1,4": {
+      "bounds": {
+        "minX": 20,
+        "minZ": 80,
+        "maxX": 40,
+        "maxZ": 100
+      },
+      "objectIds": [
+        "road:edge-mrvkbh4s-1",
+        "intersection:node-mrvk65kh-j"
+      ],
+      "loaded": true,
+      "prefetch": false,
+      "eviction": false,
+      "dirty": true
+    },
+    "2,4": {
+      "bounds": {
+        "minX": 40,
+        "minZ": 80,
+        "maxX": 60,
+        "maxZ": 100
+      },
+      "objectIds": [
+        "road:edge-mrvkbh4s-2",
+        "intersection:node-mrvk65kh-j"
+      ],
+      "loaded": true,
+      "prefetch": false,
+      "eviction": false,
+      "dirty": true
+    },
+    "3,4": {
+      "bounds": {
+        "minX": 60,
+        "minZ": 80,
+        "maxX": 80,
+        "maxZ": 100
+      },
+      "objectIds": [
+        "road:edge-mrvkbh4s-2",
+        "intersection:node-mrvk65km-m"
+      ],
+      "loaded": true,
+      "prefetch": false,
+      "eviction": false,
+      "dirty": true
+    },
+    "-1,-1": {
+      "bounds": {
+        "minX": -20,
+        "minZ": -20,
+        "maxX": 0,
+        "maxZ": 0
+      },
+      "objectIds": [
+        "intersection:node-mrvk62d4-1"
+      ],
+      "loaded": true,
+      "prefetch": false,
+      "eviction": false,
+      "dirty": true
+    },
+    "4,-1": {
+      "bounds": {
+        "minX": 80,
+        "minZ": -20,
+        "maxX": 100,
+        "maxZ": 0
+      },
+      "objectIds": [
+        "intersection:node-mrvk62d4-3"
+      ],
+      "loaded": true,
+      "prefetch": false,
+      "eviction": false,
+      "dirty": true
+    },
+    "-1,4": {
+      "bounds": {
+        "minX": -20,
+        "minZ": 80,
+        "maxX": 0,
+        "maxZ": 100
+      },
+      "objectIds": [
+        "intersection:node-mrvk64vj-g"
+      ],
+      "loaded": true,
+      "prefetch": false,
+      "eviction": false,
+      "dirty": true
+    },
+    "4,4": {
+      "bounds": {
+        "minX": 80,
+        "minZ": 80,
+        "maxX": 100,
+        "maxZ": 100
+      },
+      "objectIds": [
+        "intersection:node-mrvk65km-m"
+      ],
+      "loaded": true,
+      "prefetch": false,
+      "eviction": false,
+      "dirty": true
+    }
+  },
+  "objects": {
+    "road:edge-mrvk62d5-4": {
+      "id": "road:edge-mrvk62d5-4",
+      "sourceId": "edge-mrvk62d5-4",
+      "kind": "road",
+      "layer": "roads",
+      "primaryChunk": "1,0",
+      "coveredChunks": [
+        "0,-1",
+        "0,0",
+        "1,-1",
+        "1,0"
+      ],
+      "record": null,
+      "tags": []
+    },
+    "road:edge-mrvk62d5-5": {
+      "id": "road:edge-mrvk62d5-5",
+      "sourceId": "edge-mrvk62d5-5",
+      "kind": "road",
+      "layer": "roads",
+      "primaryChunk": "3,0",
+      "coveredChunks": [
+        "2,-1",
+        "2,0",
+        "3,-1",
+        "3,0"
+      ],
+      "record": null,
+      "tags": []
+    },
+    "road:edge-mrvk62dh-e": {
+      "id": "road:edge-mrvk62dh-e",
+      "sourceId": "edge-mrvk62dh-e",
+      "kind": "road",
+      "layer": "roads",
+      "primaryChunk": "1,2",
+      "coveredChunks": [
+        "0,1",
+        "0,2",
+        "1,1",
+        "1,2"
+      ],
+      "record": null,
+      "tags": []
+    },
+    "road:edge-mrvk62dh-f": {
+      "id": "road:edge-mrvk62dh-f",
+      "sourceId": "edge-mrvk62dh-f",
+      "kind": "road",
+      "layer": "roads",
+      "primaryChunk": "3,2",
+      "coveredChunks": [
+        "2,1",
+        "2,2",
+        "3,1",
+        "3,2"
+      ],
+      "record": null,
+      "tags": []
+    },
+    "road:edge-mrvk64vj-h": {
+      "id": "road:edge-mrvk64vj-h",
+      "sourceId": "edge-mrvk64vj-h",
+      "kind": "road",
+      "layer": "roads",
+      "primaryChunk": "0,1",
+      "coveredChunks": [
+        "-1,0",
+        "-1,1",
+        "0,0",
+        "0,1"
+      ],
+      "record": null,
+      "tags": []
+    },
+    "road:edge-mrvk64vj-i": {
+      "id": "road:edge-mrvk64vj-i",
+      "sourceId": "edge-mrvk64vj-i",
+      "kind": "road",
+      "layer": "roads",
+      "primaryChunk": "0,3",
+      "coveredChunks": [
+        "-1,2",
+        "-1,3",
+        "0,2",
+        "0,3"
+      ],
+      "record": null,
+      "tags": []
+    },
+    "road:edge-mrvk65kh-k": {
+      "id": "road:edge-mrvk65kh-k",
+      "sourceId": "edge-mrvk65kh-k",
+      "kind": "road",
+      "layer": "roads",
+      "primaryChunk": "2,1",
+      "coveredChunks": [
+        "1,0",
+        "1,1",
+        "2,0",
+        "2,1"
+      ],
+      "record": null,
+      "tags": []
+    },
+    "road:edge-mrvk65kh-l": {
+      "id": "road:edge-mrvk65kh-l",
+      "sourceId": "edge-mrvk65kh-l",
+      "kind": "road",
+      "layer": "roads",
+      "primaryChunk": "2,3",
+      "coveredChunks": [
+        "1,2",
+        "1,3",
+        "2,2",
+        "2,3"
+      ],
+      "record": null,
+      "tags": []
+    },
+    "road:edge-mrvk65km-n": {
+      "id": "road:edge-mrvk65km-n",
+      "sourceId": "edge-mrvk65km-n",
+      "kind": "road",
+      "layer": "roads",
+      "primaryChunk": "4,1",
+      "coveredChunks": [
+        "3,0",
+        "3,1",
+        "4,0",
+        "4,1"
+      ],
+      "record": null,
+      "tags": []
+    },
+    "road:edge-mrvk65km-o": {
+      "id": "road:edge-mrvk65km-o",
+      "sourceId": "edge-mrvk65km-o",
+      "kind": "road",
+      "layer": "roads",
+      "primaryChunk": "4,3",
+      "coveredChunks": [
+        "3,2",
+        "3,3",
+        "4,2",
+        "4,3"
+      ],
+      "record": null,
+      "tags": []
+    },
+    "road:edge-mrvkbh4s-1": {
+      "id": "road:edge-mrvkbh4s-1",
+      "sourceId": "edge-mrvkbh4s-1",
+      "kind": "road",
+      "layer": "roads",
+      "primaryChunk": "1,4",
+      "coveredChunks": [
+        "0,3",
+        "0,4",
+        "1,3",
+        "1,4"
+      ],
+      "record": null,
+      "tags": []
+    },
+    "road:edge-mrvkbh4s-2": {
+      "id": "road:edge-mrvkbh4s-2",
+      "sourceId": "edge-mrvkbh4s-2",
+      "kind": "road",
+      "layer": "roads",
+      "primaryChunk": "3,4",
+      "coveredChunks": [
+        "2,3",
+        "2,4",
+        "3,3",
+        "3,4"
+      ],
+      "record": null,
+      "tags": []
+    },
+    "intersection:node-mrvk62d4-1": {
+      "id": "intersection:node-mrvk62d4-1",
+      "sourceId": "node-mrvk62d4-1",
+      "kind": "intersection",
+      "layer": "roads",
+      "primaryChunk": "0,0",
+      "coveredChunks": [
+        "-1,-1",
+        "-1,0",
+        "0,-1",
+        "0,0"
+      ],
+      "record": null,
+      "tags": []
+    },
+    "intersection:node-mrvk62d4-2": {
+      "id": "intersection:node-mrvk62d4-2",
+      "sourceId": "node-mrvk62d4-2",
+      "kind": "intersection",
+      "layer": "roads",
+      "primaryChunk": "2,0",
+      "coveredChunks": [
+        "1,-1",
+        "1,0",
+        "2,-1",
+        "2,0"
+      ],
+      "record": null,
+      "tags": []
+    },
+    "intersection:node-mrvk62d4-3": {
+      "id": "intersection:node-mrvk62d4-3",
+      "sourceId": "node-mrvk62d4-3",
+      "kind": "intersection",
+      "layer": "roads",
+      "primaryChunk": "3,0",
+      "coveredChunks": [
+        "3,-1",
+        "3,0",
+        "4,-1",
+        "4,0"
+      ],
+      "record": null,
+      "tags": []
+    },
+    "intersection:node-mrvk62dh-b": {
+      "id": "intersection:node-mrvk62dh-b",
+      "sourceId": "node-mrvk62dh-b",
+      "kind": "intersection",
+      "layer": "roads",
+      "primaryChunk": "0,2",
+      "coveredChunks": [
+        "-1,1",
+        "-1,2",
+        "0,1",
+        "0,2"
+      ],
+      "record": null,
+      "tags": []
+    },
+    "intersection:node-mrvk62dh-c": {
+      "id": "intersection:node-mrvk62dh-c",
+      "sourceId": "node-mrvk62dh-c",
+      "kind": "intersection",
+      "layer": "roads",
+      "primaryChunk": "2,2",
+      "coveredChunks": [
+        "1,1",
+        "1,2",
+        "2,1",
+        "2,2"
+      ],
+      "record": null,
+      "tags": []
+    },
+    "intersection:node-mrvk62dh-d": {
+      "id": "intersection:node-mrvk62dh-d",
+      "sourceId": "node-mrvk62dh-d",
+      "kind": "intersection",
+      "layer": "roads",
+      "primaryChunk": "3,2",
+      "coveredChunks": [
+        "3,1",
+        "3,2",
+        "4,1",
+        "4,2"
+      ],
+      "record": null,
+      "tags": []
+    },
+    "intersection:node-mrvk64vj-g": {
+      "id": "intersection:node-mrvk64vj-g",
+      "sourceId": "node-mrvk64vj-g",
+      "kind": "intersection",
+      "layer": "roads",
+      "primaryChunk": "0,3",
+      "coveredChunks": [
+        "-1,3",
+        "-1,4",
+        "0,3",
+        "0,4"
+      ],
+      "record": null,
+      "tags": []
+    },
+    "intersection:node-mrvk65kh-j": {
+      "id": "intersection:node-mrvk65kh-j",
+      "sourceId": "node-mrvk65kh-j",
+      "kind": "intersection",
+      "layer": "roads",
+      "primaryChunk": "2,3",
+      "coveredChunks": [
+        "1,3",
+        "1,4",
+        "2,3",
+        "2,4"
+      ],
+      "record": null,
+      "tags": []
+    },
+    "intersection:node-mrvk65km-m": {
+      "id": "intersection:node-mrvk65km-m",
+      "sourceId": "node-mrvk65km-m",
+      "kind": "intersection",
+      "layer": "roads",
+      "primaryChunk": "3,3",
+      "coveredChunks": [
+        "3,3",
+        "3,4",
+        "4,3",
+        "4,4"
+      ],
+      "record": null,
+      "tags": []
+    },
+    "building:bldg-09dd71cf": {
+      "id": "building:bldg-09dd71cf",
+      "sourceId": "bldg-09dd71cf",
+      "kind": "building",
+      "layer": "buildings",
+      "primaryChunk": "1,0",
+      "coveredChunks": [
+        "0,0",
+        "0,1",
+        "1,0",
+        "1,1"
+      ],
+      "record": {
+        "buildingId": "bldg-09dd71cf",
+        "footprint": [
+          {
+            "x": 8,
+            "y": 0,
+            "z": 7.703539
+          },
+          {
+            "x": 32,
+            "y": 0,
+            "z": 7.703539
+          },
+          {
+            "x": 32,
+            "y": 0,
+            "z": 31.703539
+          },
+          {
+            "x": 8,
+            "y": 0,
+            "z": 31.703539
+          }
+        ],
+        "height": 18,
+        "textureId": 2,
+        "tags": [
+          "building"
+        ],
+        "meshName": "bldg-09dd71cf"
+      },
+      "tags": [
+        "building"
+      ]
+    },
+    "building:bldg-510176c9": {
+      "id": "building:bldg-510176c9",
+      "sourceId": "bldg-510176c9",
+      "kind": "building",
+      "layer": "buildings",
+      "primaryChunk": "1,3",
+      "coveredChunks": [
+        "0,2",
+        "0,3",
+        "1,2",
+        "1,3"
+      ],
+      "record": {
+        "buildingId": "bldg-510176c9",
+        "footprint": [
+          {
+            "x": 8,
+            "y": 0,
+            "z": 48
+          },
+          {
+            "x": 32,
+            "y": 0,
+            "z": 48
+          },
+          {
+            "x": 32,
+            "y": 0,
+            "z": 72
+          },
+          {
+            "x": 8,
+            "y": 0,
+            "z": 72
+          }
+        ],
+        "height": 15,
+        "textureId": 2,
+        "tags": [
+          "building"
+        ],
+        "meshName": "bldg-510176c9"
+      },
+      "tags": [
+        "building"
+      ]
+    },
+    "building:bldg-ed07fd49": {
+      "id": "building:bldg-ed07fd49",
+      "sourceId": "bldg-ed07fd49",
+      "kind": "building",
+      "layer": "buildings",
+      "primaryChunk": "3,3",
+      "coveredChunks": [
+        "2,2",
+        "2,3",
+        "3,2",
+        "3,3"
+      ],
+      "record": {
+        "buildingId": "bldg-ed07fd49",
+        "footprint": [
+          {
+            "x": 48,
+            "y": 0,
+            "z": 48
+          },
+          {
+            "x": 72,
+            "y": 0,
+            "z": 48
+          },
+          {
+            "x": 72,
+            "y": 0,
+            "z": 72
+          },
+          {
+            "x": 48,
+            "y": 0,
+            "z": 72
+          }
+        ],
+        "height": 28,
+        "textureId": 3,
+        "tags": [
+          "building"
+        ],
+        "meshName": "bldg-ed07fd49"
+      },
+      "tags": [
+        "building"
+      ]
+    },
+    "building:bldg-f1e97b4c": {
+      "id": "building:bldg-f1e97b4c",
+      "sourceId": "bldg-f1e97b4c",
+      "kind": "building",
+      "layer": "buildings",
+      "primaryChunk": "3,1",
+      "coveredChunks": [
+        "2,0",
+        "2,1",
+        "3,0",
+        "3,1"
+      ],
+      "record": {
+        "buildingId": "bldg-f1e97b4c",
+        "footprint": [
+          {
+            "x": 48,
+            "y": 0,
+            "z": 8
+          },
+          {
+            "x": 72,
+            "y": 0,
+            "z": 8
+          },
+          {
+            "x": 72,
+            "y": 0,
+            "z": 32
+          },
+          {
+            "x": 48,
+            "y": 0,
+            "z": 32
+          }
+        ],
+        "height": 22,
+        "textureId": 1,
+        "tags": [
+          "building"
+        ],
+        "meshName": "bldg-f1e97b4c"
+      },
+      "tags": [
+        "building"
+      ]
+    }
+  },
+  "editor": {
+    "layers": {
+      "buildings": true,
+      "roads": true,
+      "props": true
+    },
+    "hiddenEntityIds": [],
+    "editorMode": "scene",
+    "map": {
+      "centerX": 40,
+      "centerZ": 40,
+      "zoom": 1.5,
+      "snapEnabled": true,
+      "snapSize": 1,
+      "gridVisible": true,
+      "activeMapTool": "map-select",
+      "activeFeatureType": null,
+      "draft": null,
+      "selection": null
+    },
+    "earthImport": {
+      "anchorLat": 42.443,
+      "anchorLng": -76.502,
+      "boundsNorth": 42.448,
+      "boundsSouth": 42.437999999999995,
+      "boundsEast": -76.497,
+      "boundsWest": -76.50699999999999,
+      "tileProvider": "google-photorealistic",
+      "roadProvider": "overpass",
+      "maxScreenSpaceError": 1,
+      "status": "idle",
+      "statusMessage": null,
+      "previewActive": false,
+      "tilesVisible": true,
+      "roadsVisible": true
+    }
+  },
+  "sky": {
+    "mode": "takram",
+    "takram": {
+      "cloudsEnabled": true,
+      "cloudCoverage": 0.38,
+      "cloudQuality": "high",
+      "atmosphereIntensity": 1,
+      "timeOfDay": 14.4,
+      "date": "2026-06-28",
+      "haze": true,
+      "lightShafts": false
+    },
+    "image": {
+      "url": "assets/skybox/sky.exr",
+      "exposure": 1
+    }
+  },
+  "createdAt": "2026-07-22T04:04:07.395Z",
+  "updatedAt": "2026-09-11T04:17:20.400Z"
+}

@@ -37,8 +37,11 @@ Waypoint placement and dragging snap immediately to the nearest physical lane ce
 - **Buildings** — footprint records used by the bake pipeline.
 - **Features** — placed props (traffic lights, signs, etc.).
 - **Earth metadata** — anchor, bounds, provider IDs, and import timestamps after a geographic import.
+- **Objects (schema v4)** — the authoring overlay `document.objects`, one record per authored thing: `{ id, typeId, typeVersion, name, parentId, order, components }`. Records share ids with the legacy records they describe (`feature.id`, `buildingId`, edge `id`, junction node `id`); only `group`, the single `skybox`, and the single `tile` (from `earth`) exist without a legacy counterpart. Geometry never lives here — roads, buildings, features, and earth stay canonical, so the overlay is excluded from `worldHash` by construction. `components` holds `tags`, `locked`, and `editorHidden` (plus a `transform` on groups); unknown component keys are preserved verbatim on records whose `typeId` is not registered, and such records are reported as `object.type.unsupported` rather than substituted. Object ids are a different namespace from runtime registry ids (`road:<edgeId>`, `fusion:…`).
 
-The document supports `snapshot()` / `restoreSnapshot()` so preview flows (especially Earth Import) can stage changes and roll back safely.
+Object types live in the kernel-safe registry under `app/3d/editor/objects/` (`ObjectTypeRegistry`, `ObjectOptions`, `objectGraph`). A type supplies `options` (`getDefaults` / `getFields` / `normalize` / `validate` with `{ path, code, message, severity }` issues), capability flags, a read-only transform binding, dependencies, `compileMetric`, and `migrate`. Built-ins: `group`, `skybox`, `tile`, `road`, `intersection`, `building`, `builtin-prop` (the five props as one type with an `assetId` option), and the contract-only `asset-instance`. `deriveObjectGraph` builds the overlay for a v2/v3 document, `reconcileObjectGraph` merges it with stored records (adds uncovered legacy entities, drops orphans, keeps groups and unknown types), and `validateObjectGraph` reports the issue taxonomy (`object.parent.cycle`, `object.legacy.missing`, `object.skybox.multiple`, …) without mutating anything.
+
+The document supports `snapshot()` / `restoreSnapshot()` so preview flows (especially Earth Import) can stage changes and roll back safely. `snapshot()` emits `objectGraphVersion` and `objects` only when the overlay is non-empty, so v2/v3 snapshots are byte-identical to before.
 
 Runtime meshes are rebuilt from the document through adapters such as `RoadRuntimeAdapter.syncRoadsFromDocument()`. Editing the document does not automatically update every 3D mesh; sync happens on explicit actions like Apply in Earth Import or hydration when entering map mode.
 
@@ -50,7 +53,9 @@ Environment edits are saved to the backend, not the browser. Loading and saving 
 - **`EnvironmentPersistence`** watches the document, registry, editor, and sky. It tracks edit generations separately from requests, retains the last acknowledged server revision, allows one `PUT` in flight, and builds queued saves from the latest `Environment.toManifest()` at send time. An edit made during a request stays dirty until its own captured draft is acknowledged. Explicit server `null` visual/evidence references are applied. Older revisions, other-environment responses, and stale promotion receipts are ignored. External MCP updates over a dirty or in-flight draft expose a conflict and keep the local edits.
 - **On page unload / tab hide** it flushes through the same queue with `keepalive`. Autosave suspension blocks every save entry point, cancels timers and queued work, drains the current request, preserves unsaved edits, and explicitly saves them after resume. A strict promotion flush joining an autosave observes the shared failure.
 
-The storage contract is environment schema v3. v2 files load as revision `0` with implied null visual/evidence references; the first guarded save writes v3 revision `1`. Full replacement is `PUT /api/storage/environments/<id>` with `{ manifest, expectedRevision }`. Rename, duplicate, ID change, and delete require the same revision. Missing or stale revisions return HTTP `409` with `ENVIRONMENT_REVISION_CONFLICT` and `currentRevision`. Unguarded legacy bodies are rejected with `ENVIRONMENT_UNGUARDED_WRITE`. Catalog entries include `revision`. `clientRevision` is not a concurrency authority and is not written into v3 documents.
+The storage contract is environment schema v3 by default, with schema v4 readable everywhere and written on opt-in. v2 files load as revision `0` with implied null visual/evidence references; the first guarded save writes v3 revision `1`. Full replacement is `PUT /api/storage/environments/<id>` with `{ manifest, expectedRevision }`. Rename, duplicate, ID change, and delete require the same revision. Missing or stale revisions return HTTP `409` with `ENVIRONMENT_REVISION_CONFLICT` and `currentRevision`. Unguarded legacy bodies are rejected with `ENVIRONMENT_UNGUARDED_WRITE`. Catalog entries include `revision`. `clientRevision` is not a concurrency authority and is not written into v3 documents.
+
+Schema v4 (ED-01) adds `document.objects` and `document.objectGraphVersion: 1`. Reads accept v2, v3, and v4; v2/v3 read views never inject a graph (`presentEnvironmentObjectGraph` derives one in memory). The server writes v4 only when started with `CEV_SIM_ENVIRONMENT_SCHEMA_V4=1` (`StorageService` option `environmentSchemaVersion: 4`); the default writer strips `objects` so v3 files stay pure v3. A v4 write reconciles the incoming graph against the legacy domains, validates it, and rejects error-severity issues atomically with HTTP `400` `ENVIRONMENT_OBJECT_GRAPH_INVALID` and an `issues` array. The first v4 save over a v2/v3 file stores a write-once copy at `server/data/environment-migrations/<id>.pre-v4.json` (`cev-sim.environment-pre-migration` v1); recovery is a manual restore of `manifest`. Once a file is v4 it stays v4 even if the flag is cleared. A write whose `document` lacks an `objects` array over a stored v4 graph is an old client and is rejected with HTTP `409` `ENVIRONMENT_SCHEMA_DOWNGRADE` instead of dropping the graph; writes that omit `document` (rename) and graph-aware clients that still declare `schemaVersion: 3` pass. MCP `environment_add_object` rejects unregistered types with `ENVIRONMENT_OBJECT_TYPE_UNSUPPORTED`.
 
 Display-name rename keeps visual and evidence references when `worldHash` is unchanged, including both descriptor and access hashes. Duplicating an environment, changing its ID, or importing onto a conflicting ID rebinds the descriptor to the destination world, creates a corresponding access sidecar with the same use selections, reuses compatible asset digests, and clears correspondence evidence. Missing or incompatible descriptors fail before the environment mutation. An older client that writes the same descriptor without `accessHash` preserves the existing sidecar; replacing the descriptor without a matching access hash is rejected.
 
@@ -174,6 +179,9 @@ flowchart TB
 |------|----------------|
 | `tests/editor-core.test.js` | Chunks, typed mutations vs residency, editor state, selection, environment registry |
 | `tests/editor-map-mode.test.js` | Map mode transitions, road pen, document hydration |
+| `tests/object-registry.test.js` | ED-01 object-type registry, `ObjectOptions` contracts, field descriptors, built-in prop table consolidation, kernel-safety of `app/3d/editor/objects/` |
+| `tests/object-graph.test.js` | ED-01 overlay derivation, reconciliation, transform bindings, the `object-graph-cases.v1.json` validation matrix, `worldHash` invariance |
+| `tests/environment-v4.test.js` | ED-01 compatibility baseline, v2/v3/v4 read and write policy, flagged v4 upgrade and pre-migration copy, downgrade rejection, MCP round-trip |
 | `tests/earth-import-mode.test.js` | Earth import config, geospatial math, providers, isolation |
 | `tests/bake-*.test.js` | Bake pipeline, incremental reuse, and promotion |
 
@@ -181,6 +189,7 @@ Run everything with `npm test`.
 
 ## Related docs
 
+- [Environment Editor Implementation Plan](environment-editor-plan.md) — the `ED-*` program: object registry, schema-v4 overlay, unified workspace, roads, assets, and imports.
 - [Visual Layer Implementation Plan](visual-layer-plan.md) — truth-first photoreal baking, hashed visual assets, and optional Google/3DGS tracks.
 - [Earth Import](earth-import.md) — geographic preview, road import, API keys, and troubleshooting.
 - [Simulation](simulation.md) — how the simulation workspace differs from environment authoring.
@@ -190,6 +199,7 @@ Run everything with `npm test`.
 
 ```
 app/3d/editor/              EditorState, tools, chunks, document model
+app/3d/editor/objects/      Kernel-safe object-type registry, options, object graph (schema v4)
 app/3d/environment/         Environment container and visualization
 app/3d/overlay/             React chrome (menus, inspectors, map/earth modes)
 app/3d/earth/               Earth Import implementation

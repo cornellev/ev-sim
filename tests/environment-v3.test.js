@@ -167,9 +167,10 @@ test("unknown schema versions and malformed hashes are rejected", async () => {
     const { dir, service } = await tempService();
     try {
         const created = await service.createEnvironment({ id: "yard", name: "Yard" });
+        // Schema v4 is readable and writable since ED-01; 9 stays unknown.
         await assert.rejects(
             () => service.putEnvironment("yard", {
-                manifest: { ...created, schemaVersion: 4 },
+                manifest: { ...created, schemaVersion: 9 },
                 expectedRevision: created.revision,
             }),
             /Unsupported environment schema version/,

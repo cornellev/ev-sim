@@ -4,14 +4,7 @@
  * no Three.js scene required.
  */
 
-const DEFAULT_FEATURE_RADIUS = 0.6;
-const FEATURE_RADIUS_BY_TYPE = Object.freeze({
-    "stop-sign": 0.4,
-    "one-way-sign": 0.4,
-    barrel: 0.5,
-    tire: 0.3,
-    cone: 0.25,
-});
+import { DEFAULT_FEATURE_RADIUS, FEATURE_RADIUS_BY_TYPE } from "../objects/types/builtinProp.js";
 
 /**
  * @param {{ x: number, y?: number, z: number } | { x: number, z: number }} point

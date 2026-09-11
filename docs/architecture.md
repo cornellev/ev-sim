@@ -66,12 +66,18 @@ received serialized bytes; the separate
 pacing, and presentation settings before episode identity is computed.
 
 `app/simulation/world/WorldDescription.js` is the UI-independent world seam.
-It normalizes schema-v2 and schema-v3 environment documents into canonical
+It normalizes schema-v2, v3, and v4 environment documents into canonical
 `cev-sim.world-description` v1 JSON with stable road/building/feature IDs,
 drivable surfaces, exact obstacle prisms, aggregate bounds, route-network
 identity, and a world SHA-256. Schema v3 adds a server-owned `revision` and
 optional `visualLayer` / `evidence` hash references; those fields are excluded
-from `worldHash`. `accessHash` is provenance for preview materialization and
+from `worldHash`. Schema v4 adds `document.objects`, the editor's authoring
+overlay (names, hierarchy, locks, editor visibility) keyed by the legacy
+record ids; it is also excluded from `worldHash`. Built-in prop metric
+geometry comes from the frozen table in
+`app/3d/editor/objects/types/builtinProp.js`, the same table that feeds the
+placement catalog, editor collision radii, and LiDAR semantic labels, so the
+kernel never depends on runtime object-type registration. `accessHash` is provenance for preview materialization and
 also stays out of `worldHash`, `visualLayerHash`, simulation-semantic identity,
 and episode identity. The browser `EnvironmentLoader` rebuilds metric geometry
 first, then materializes a preview-only visual layer; measured cameras,

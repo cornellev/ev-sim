@@ -41,6 +41,24 @@ Update the progress and decision log in
 `docs/visual-layer-plan.md` whenever a VIS, GOOG, or GS PR changes a
 contract, hash, acceptance criterion, or milestone status.
 
+## Environment-editor roadmap
+
+Before changing the environment document, object registry, editor chrome,
+road authoring, asset catalog, or environment persistence code, read:
+
+1. [`docs/environment-editor-plan.md`](docs/environment-editor-plan.md)
+2. [`docs/environment-editor.md`](docs/environment-editor.md)
+3. [`docs/architecture.md`](docs/architecture.md)
+
+This is a separate `ED-*` program. Do not treat it as a headless PR 13 or a
+VIS milestone. Legacy geometry domains stay canonical and `worldHash` stays
+unchanged until a milestone explicitly versions the world description.
+Schema-v4 writes stay behind `CEV_SIM_ENVIRONMENT_SCHEMA_V4` until ED-03.
+
+Update the progress and decision log in
+`docs/environment-editor-plan.md` whenever an ED PR changes a contract, hash,
+acceptance criterion, or milestone status.
+
 ## Architectural invariants
 
 - JavaScript remains the single authoritative simulator implementation.

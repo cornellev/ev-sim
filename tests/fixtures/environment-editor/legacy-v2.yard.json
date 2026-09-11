@@ -1,0 +1,51 @@
+{
+  "environmentId": "yard",
+  "name": "Yard",
+  "schemaVersion": 2,
+  "clientRevision": 7,
+  "templateId": "blank",
+  "roadStylePreset": "default",
+  "roadsAuthored": true,
+  "buildingsAuthored": true,
+  "featuresAuthored": true,
+  "document": {
+    "environmentId": "yard",
+    "chunkSize": 20,
+    "roadsAuthored": true,
+    "buildingsAuthored": true,
+    "featuresAuthored": true,
+    "roads": {
+      "nodes": [
+        { "id": "n0", "x": 0, "z": 0 },
+        { "id": "n1", "x": 40, "z": 0 },
+        { "id": "n2", "x": 40, "z": 40, "kind": "intersection" },
+        { "id": "n3", "x": 80, "z": 40 },
+        { "id": "n4", "x": 40, "z": 80 }
+      ],
+      "edges": [
+        { "id": "e0", "startNodeId": "n0", "endNodeId": "n1", "bidirectional": true, "width": 7, "laneCount": 2 },
+        { "id": "e1", "startNodeId": "n1", "endNodeId": "n2", "bidirectional": true, "width": 7, "laneCount": 2 },
+        { "id": "e2", "startNodeId": "n2", "endNodeId": "n3", "bidirectional": false, "direction": 1, "width": 4, "laneCount": 1 },
+        { "id": "e3", "startNodeId": "n2", "endNodeId": "n4", "bidirectional": true, "width": 7, "laneCount": 2 }
+      ]
+    },
+    "buildings": [
+      {
+        "buildingId": "building-0",
+        "footprint": [{ "x": 10, "z": 10 }, { "x": 18, "z": 10 }, { "x": 18, "z": 18 }, { "x": 10, "z": 18 }],
+        "height": 8,
+        "textureId": 0,
+        "tags": ["building"],
+        "meshName": "building-0"
+      }
+    ],
+    "features": [
+      { "id": "feature-stop", "type": "stop-sign", "x": 22, "z": 3, "dir": 1, "rotationY": 0, "tags": ["sign"] },
+      { "id": "feature-one-way", "type": "one-way-sign", "x": 44, "z": 12, "dir": 2, "rotationY": 0.25, "tags": ["sign"] },
+      { "id": "feature-barrel", "type": "barrel", "x": 30, "z": 30, "dir": 0, "rotationY": 0, "tags": ["barrel"] },
+      { "id": "feature-tire", "type": "tire", "x": 5, "z": 30, "dir": 0, "rotationY": 1.5, "tags": ["tire"] },
+      { "id": "feature-cone", "type": "cone", "x": 60, "z": 44, "dir": 0, "rotationY": 0, "tags": ["cone"] }
+    ],
+    "earth": null
+  }
+}

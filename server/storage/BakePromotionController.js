@@ -49,7 +49,6 @@ import {
     normalizeBakeAtlasManifest,
 } from "../../app/3d/environment/visual/BakeAtlasManifest.js";
 import { INTRINSIC_CHANNEL_DEFINITIONS } from "../../app/3d/environment/visual/BakeConstructionPolicy.js";
-import { serializeEnvironmentManifestV3 } from "../../app/3d/environment/EnvironmentManifestPolicy.js";
 import { createWorldResource } from "../../app/simulation/world/WorldDescription.js";
 import {
     BAKE_PROMOTION_ERROR_CODES,
@@ -273,7 +272,7 @@ export class BakePromotionController {
                 accessHash: storedAccessHash,
                 ...(reuse.manifestHash ? { bakeReuseManifestHash: reuse.manifestHash } : {}),
             };
-            const nextManifest = serializeEnvironmentManifestV3({
+            const nextManifest = this.service._serializeEnvironment({
                 ...current,
                 visualLayer,
                 evidence: null,

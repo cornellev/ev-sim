@@ -2,6 +2,7 @@ import { syncBuildingsFromDocument, syncRoadsFromDocument } from "../editor/docu
 import { removeBuildingMeshesFromScene, removeFeatureFromRuntime } from "../editor/map/mapRuntimeSync.js";
 import { placeFusionObjectInScene } from "../editor/placement/placeFusionObject.js";
 import { getEnvironmentManifest } from "./EnvironmentCatalogClient.js";
+import { objectTypeRegistry, reconcileObjectGraph } from "../editor/objects/index.js";
 import { applyEnvironmentVisualReferences } from "./EnvironmentManifestPolicy.js";
 import { VisualPreviewHost } from "./visual/VisualPreviewHost.js";
 import { VisualLayerMaterializer } from "./visual/VisualLayerMaterializer.js";
@@ -69,7 +70,7 @@ export class EnvironmentLoader {
         const buildingsAuthored = description.domainSources.buildings === "authored";
         const featuresAuthored = description.domainSources.features === "authored";
 
-        document.restoreSnapshot({
+        const restored = {
             environmentId: description.environmentId,
             chunkSize: manifest.chunkSize ?? 20,
             roads: structuredClone(description.roads),
@@ -94,7 +95,20 @@ export class EnvironmentLoader {
             roadsAuthored,
             buildingsAuthored,
             featuresAuthored,
-        });
+        };
+        // The world description carries geometry only. Carry the schema-v4
+        // authoring overlay from the stored document and reconcile it so every
+        // legacy entity has a record; v2/v3 manifests derive one in memory.
+        const objectGraph = reconcileObjectGraph(
+            restored,
+            manifest.document?.objects ?? [],
+            objectTypeRegistry,
+            { sky: manifest.sky ?? null },
+        );
+        if (objectGraph.orphaned.length > 0) {
+            console.warn("[environment] dropped orphan object records:", objectGraph.orphaned.join(", "));
+        }
+        document.restoreSnapshot({ ...restored, objects: objectGraph.records });
 
         syncRoadsFromDocument(this.data, this.scene, document);
         this._rebuildBuildings();

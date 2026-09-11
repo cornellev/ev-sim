@@ -83,6 +83,7 @@ For environment editor or earth import changes, also verify:
 - Scene, map, and earth-import modes enter and exit cleanly.
 - Earth Import preview and apply work with a valid `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` in `.env.local`.
 - `npm test` passes for `tests/editor-*.test.js` and `tests/earth-import-mode.test.js`.
+- For object-registry, document, or schema changes: `tests/object-registry.test.js`, `tests/object-graph.test.js`, `tests/environment-v3.test.js`, and `tests/environment-v4.test.js` pass, and `npm run fixtures:environment-editor` produces no diff in `tests/fixtures/environment-editor/compatibility-baseline.v1.json` (a diff is a metric-identity contract change).
 
 ## Conventions
 
@@ -96,5 +97,6 @@ For environment editor or earth import changes, also verify:
 | Variable | Required for | Notes |
 |----------|--------------|-------|
 | `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` | Earth Import tile preview | Map Tiles API (Photorealistic 3D Tiles). Set in `.env.local`, not committed. |
+| `CEV_SIM_ENVIRONMENT_SCHEMA_V4` | Environment storage (server) | Set to `1` to write schema-v4 environment manifests (`document.objects` authoring overlay) on guarded saves. Default writes v3; v4 files stay v4 once written. See [environment-editor.md](environment-editor.md#persistence-server-side). |
 
 See [Earth Import](earth-import.md) for setup and troubleshooting.

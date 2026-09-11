@@ -1,0 +1,344 @@
+{
+  "environmentId": "schema-v4-sample",
+  "name": "Schema v4 sample",
+  "schemaVersion": 4,
+  "revision": 5,
+  "templateId": "blank",
+  "roadStylePreset": "default",
+  "roadsAuthored": true,
+  "buildingsAuthored": true,
+  "featuresAuthored": true,
+  "chunkSize": 20,
+  "visualLayer": null,
+  "evidence": null,
+  "document": {
+    "environmentId": "schema-v4-sample",
+    "chunkSize": 20,
+    "roadsAuthored": true,
+    "buildingsAuthored": true,
+    "featuresAuthored": true,
+    "roads": {
+      "nodes": [
+        {
+          "id": "node-a",
+          "x": -20,
+          "y": 0,
+          "z": 0,
+          "kind": null
+        },
+        {
+          "id": "node-b",
+          "x": 20,
+          "y": 0.5,
+          "z": 0,
+          "kind": null
+        }
+      ],
+      "edges": [
+        {
+          "id": "edge-ab",
+          "startNodeId": "node-a",
+          "endNodeId": "node-b",
+          "bidirectional": true,
+          "width": 7,
+          "laneCount": 2,
+          "shoulderWidth": 0.5,
+          "tension": null,
+          "borderLeft": null,
+          "borderRight": null,
+          "startArm": null,
+          "endArm": null
+        }
+      ]
+    },
+    "buildings": [
+      {
+        "buildingId": "building-1",
+        "footprint": [
+          {
+            "x": 10,
+            "y": 0,
+            "z": 10
+          },
+          {
+            "x": 16,
+            "y": 0,
+            "z": 10
+          },
+          {
+            "x": 16,
+            "y": 0,
+            "z": 16
+          },
+          {
+            "x": 10,
+            "y": 0,
+            "z": 16
+          }
+        ],
+        "height": 6,
+        "textureId": 1,
+        "tags": [
+          "building"
+        ],
+        "meshName": "building-1"
+      }
+    ],
+    "features": [
+      {
+        "id": "prop-stop-sign",
+        "type": "stop-sign",
+        "x": 2,
+        "z": -6,
+        "dir": 3,
+        "rotationY": 0,
+        "tags": [
+          "sign"
+        ]
+      },
+      {
+        "id": "prop-one-way-sign",
+        "type": "one-way-sign",
+        "x": -8,
+        "z": 6,
+        "dir": 2,
+        "rotationY": 0.5,
+        "tags": [
+          "sign"
+        ]
+      },
+      {
+        "id": "prop-barrel",
+        "type": "barrel",
+        "x": 4,
+        "z": 8,
+        "dir": 0,
+        "rotationY": 0,
+        "tags": [
+          "barrel"
+        ]
+      },
+      {
+        "id": "prop-tire",
+        "type": "tire",
+        "x": -4,
+        "z": 8,
+        "dir": 0,
+        "rotationY": 0.75,
+        "tags": [
+          "tire"
+        ]
+      },
+      {
+        "id": "prop-cone",
+        "type": "cone",
+        "x": 0,
+        "z": 10,
+        "dir": 0,
+        "rotationY": 0,
+        "tags": [
+          "cone"
+        ]
+      }
+    ],
+    "earth": {
+      "anchor": {
+        "lat": 42.6779,
+        "lng": -83.1952
+      },
+      "bounds": {
+        "north": 42.68,
+        "south": 42.675,
+        "east": -83.19,
+        "west": -83.2
+      },
+      "tileProvider": "google-photorealistic",
+      "roadProvider": "overpass",
+      "importedLayerIds": [],
+      "importedAt": null
+    },
+    "objectGraphVersion": 1,
+    "objects": [
+      {
+        "id": "skybox",
+        "typeId": "skybox",
+        "typeVersion": 1,
+        "name": "Skybox",
+        "parentId": null,
+        "order": 0,
+        "components": {
+          "tags": [],
+          "locked": false,
+          "editorHidden": false
+        }
+      },
+      {
+        "id": "tile",
+        "typeId": "tile",
+        "typeVersion": 1,
+        "name": "Tile",
+        "parentId": null,
+        "order": 1,
+        "components": {
+          "tags": [],
+          "locked": false,
+          "editorHidden": false
+        }
+      },
+      {
+        "id": "edge-ab",
+        "typeId": "road",
+        "typeVersion": 1,
+        "name": "Road",
+        "parentId": null,
+        "order": 2,
+        "components": {
+          "tags": [],
+          "locked": false,
+          "editorHidden": false
+        }
+      },
+      {
+        "id": "building-1",
+        "typeId": "building",
+        "typeVersion": 1,
+        "name": "Building",
+        "parentId": null,
+        "order": 3,
+        "components": {
+          "tags": [],
+          "locked": false,
+          "editorHidden": false
+        }
+      },
+      {
+        "id": "prop-barrel",
+        "typeId": "builtin-prop",
+        "typeVersion": 1,
+        "name": "Barrel",
+        "parentId": "group-course-a",
+        "order": 4,
+        "components": {
+          "tags": [],
+          "locked": true,
+          "editorHidden": false
+        }
+      },
+      {
+        "id": "prop-cone",
+        "typeId": "builtin-prop",
+        "typeVersion": 1,
+        "name": "Entry cone",
+        "parentId": "group-course-a",
+        "order": 5,
+        "components": {
+          "tags": [],
+          "locked": false,
+          "editorHidden": false
+        }
+      },
+      {
+        "id": "prop-one-way-sign",
+        "typeId": "builtin-prop",
+        "typeVersion": 1,
+        "name": "One Way",
+        "parentId": null,
+        "order": 6,
+        "components": {
+          "tags": [],
+          "locked": false,
+          "editorHidden": false
+        }
+      },
+      {
+        "id": "prop-stop-sign",
+        "typeId": "builtin-prop",
+        "typeVersion": 1,
+        "name": "Stop Sign",
+        "parentId": null,
+        "order": 7,
+        "components": {
+          "tags": [],
+          "locked": false,
+          "editorHidden": false
+        }
+      },
+      {
+        "id": "prop-tire",
+        "typeId": "builtin-prop",
+        "typeVersion": 1,
+        "name": "Tire",
+        "parentId": null,
+        "order": 8,
+        "components": {
+          "tags": [],
+          "locked": false,
+          "editorHidden": false
+        }
+      },
+      {
+        "id": "group-course-a",
+        "typeId": "group",
+        "typeVersion": 1,
+        "name": "Course A",
+        "parentId": null,
+        "order": 100,
+        "components": {
+          "tags": [
+            "course"
+          ],
+          "locked": false,
+          "editorHidden": false,
+          "transform": {
+            "position": {
+              "x": 0,
+              "y": 0,
+              "z": 0
+            },
+            "rotationY": 0,
+            "scale": 1
+          }
+        }
+      },
+      {
+        "id": "vendor-thing-1",
+        "typeId": "vendor.unknown-thing",
+        "typeVersion": 3,
+        "name": "Vendor widget",
+        "parentId": null,
+        "order": 101,
+        "components": {
+          "tags": [
+            "vendor"
+          ],
+          "locked": false,
+          "editorHidden": true,
+          "opaque": {
+            "payload": [
+              1,
+              2,
+              3
+            ]
+          }
+        }
+      }
+    ]
+  },
+  "sky": {
+    "mode": "takram",
+    "takram": {
+      "cloudsEnabled": true,
+      "cloudCoverage": 0.2,
+      "cloudQuality": "high",
+      "atmosphereIntensity": 1,
+      "timeOfDay": 9.5,
+      "date": "2026-06-28",
+      "haze": true,
+      "lightShafts": false
+    },
+    "image": {
+      "url": "assets/skybox/sky.exr",
+      "exposure": 1
+    }
+  }
+}

@@ -1,0 +1,116 @@
+{
+  "kind": "cev-sim.environment-editor.object-graph-cases",
+  "version": 1,
+  "documents": {
+    "yard": {
+      "roads": {
+        "nodes": [
+          { "id": "n0", "x": 0, "z": 0 },
+          { "id": "n1", "x": 40, "z": 0 },
+          { "id": "n2", "x": 40, "z": 40, "kind": "intersection" }
+        ],
+        "edges": [
+          { "id": "e0", "startNodeId": "n0", "endNodeId": "n1", "bidirectional": true, "width": 7, "laneCount": 2 },
+          { "id": "e1", "startNodeId": "n1", "endNodeId": "n2", "bidirectional": true, "width": 7, "laneCount": 2 }
+        ]
+      },
+      "buildings": [
+        { "buildingId": "b0", "footprint": [{ "x": 10, "z": 10 }, { "x": 18, "z": 10 }, { "x": 18, "z": 18 }, { "x": 10, "z": 18 }], "height": 8 }
+      ],
+      "features": [
+        { "id": "f-cone", "type": "cone", "x": 60, "z": 44, "dir": 0, "rotationY": 0, "tags": ["cone"] },
+        { "id": "f-sign", "type": "stop-sign", "x": 22, "z": 3, "dir": 1, "rotationY": 0, "tags": ["sign"] }
+      ],
+      "earth": null
+    },
+    "earth-bad-bounds": {
+      "roads": { "nodes": [], "edges": [] },
+      "buildings": [],
+      "features": [],
+      "earth": {
+        "anchor": { "lat": 1, "lng": 2 },
+        "bounds": { "north": 1, "south": 2, "east": 3, "west": 1 },
+        "tileProvider": "google-photorealistic",
+        "roadProvider": "overpass",
+        "importedLayerIds": [],
+        "importedAt": null
+      }
+    },
+    "empty": { "roads": { "nodes": [], "edges": [] }, "buildings": [], "features": [], "earth": null }
+  },
+  "yardComplete": [
+    { "id": "skybox", "typeId": "skybox", "typeVersion": 1, "name": "Skybox", "parentId": null, "order": 0, "components": {} },
+    { "id": "e0", "typeId": "road", "typeVersion": 1, "name": "Road", "parentId": null, "order": 1, "components": {} },
+    { "id": "e1", "typeId": "road", "typeVersion": 1, "name": "Road", "parentId": null, "order": 2, "components": {} },
+    { "id": "n1", "typeId": "intersection", "typeVersion": 1, "name": "Intersection", "parentId": null, "order": 3, "components": {} },
+    { "id": "n2", "typeId": "intersection", "typeVersion": 1, "name": "Intersection", "parentId": null, "order": 4, "components": {} },
+    { "id": "b0", "typeId": "building", "typeVersion": 1, "name": "Building", "parentId": null, "order": 5, "components": {} },
+    { "id": "f-cone", "typeId": "builtin-prop", "typeVersion": 1, "name": "Cone", "parentId": null, "order": 6, "components": {} },
+    { "id": "f-sign", "typeId": "builtin-prop", "typeVersion": 1, "name": "Stop Sign", "parentId": null, "order": 7, "components": {} }
+  ],
+  "cases": [
+    { "id": "complete-overlay", "document": "yard", "extend": true, "objects": [], "expect": { "ok": true, "codes": [] } },
+    { "id": "group-with-children", "document": "yard", "extend": true, "objects": [
+        { "id": "g", "typeId": "group", "typeVersion": 1, "name": "G", "parentId": null, "order": 10, "components": { "transform": { "position": { "x": 1, "y": 0, "z": 2 }, "rotationY": 0.5, "scale": 1 } } },
+        { "id": "f-cone", "typeId": "builtin-prop", "typeVersion": 1, "name": "Cone", "parentId": "g", "order": 0, "components": { "locked": true } }
+      ], "replace": ["f-cone"], "expect": { "ok": true, "codes": [] } },
+    { "id": "duplicate-id", "document": "yard", "extend": true, "objects": [
+        { "id": "g", "typeId": "group", "order": 10 }, { "id": "g", "typeId": "group", "order": 11 }
+      ], "expect": { "ok": false, "codes": ["object.id.duplicate"] } },
+    { "id": "malformed-record", "document": "yard", "extend": true, "objects": [
+        { "id": "", "typeId": "group", "order": 10 },
+        { "id": "no-type", "order": 11 },
+        { "id": "bad-name", "typeId": "group", "name": 7, "order": 12 },
+        { "id": "bad-order", "typeId": "group", "order": 1.5 }
+      ], "expect": { "ok": false, "codes": ["object.id.missing", "object.name.invalid", "object.order.invalid", "object.type.missing"] } },
+    { "id": "missing-parent", "document": "yard", "extend": true, "objects": [
+        { "id": "g", "typeId": "group", "parentId": "nope", "order": 10 }
+      ], "expect": { "ok": false, "codes": ["object.parent.missing"] } },
+    { "id": "self-parent", "document": "yard", "extend": true, "objects": [
+        { "id": "g", "typeId": "group", "parentId": "g", "order": 10 }
+      ], "expect": { "ok": false, "codes": ["object.parent.self"] } },
+    { "id": "parent-cycle", "document": "yard", "extend": true, "objects": [
+        { "id": "a", "typeId": "group", "parentId": "b", "order": 10 },
+        { "id": "b", "typeId": "group", "parentId": "c", "order": 11 },
+        { "id": "c", "typeId": "group", "parentId": "a", "order": 12 }
+      ], "expect": { "ok": false, "codes": ["object.parent.cycle"] } },
+    { "id": "parent-not-group", "document": "yard", "extend": true, "objects": [
+        { "id": "f-cone", "typeId": "builtin-prop", "typeVersion": 1, "parentId": "b0", "order": 6 }
+      ], "replace": ["f-cone"], "expect": { "ok": false, "codes": ["object.parent.not-group"] } },
+    { "id": "parent-unsupported-type-is-tolerated", "document": "yard", "extend": true, "objects": [
+        { "id": "v", "typeId": "vendor.container", "order": 10 },
+        { "id": "g", "typeId": "group", "parentId": "v", "order": 11 }
+      ], "expect": { "ok": true, "codes": ["object.type.unsupported"] } },
+    { "id": "multiple-skybox", "document": "yard", "extend": true, "objects": [
+        { "id": "sky2", "typeId": "skybox", "order": 10 }
+      ], "expect": { "ok": false, "codes": ["object.legacy.missing", "object.skybox.id", "object.skybox.multiple"] } },
+    { "id": "tile-orphan", "document": "yard", "extend": true, "objects": [
+        { "id": "tile", "typeId": "tile", "order": 10 }
+      ], "expect": { "ok": false, "codes": ["object.tile.orphan"] } },
+    { "id": "tile-bad-bounds", "document": "earth-bad-bounds", "extend": false, "objects": [
+        { "id": "skybox", "typeId": "skybox", "order": 0 },
+        { "id": "tile", "typeId": "tile", "order": 1 }
+      ], "expect": { "ok": false, "codes": ["object.options.invalid"] } },
+    { "id": "graph-version", "document": "yard", "extend": true, "objectGraphVersion": 2, "objects": [], "expect": { "ok": false, "codes": ["graph.version.unsupported"] } },
+    { "id": "unsupported-type-preserved", "document": "yard", "extend": true, "objects": [
+        { "id": "v", "typeId": "vendor.thing", "typeVersion": 3, "order": 10, "components": { "opaque": true } }
+      ], "expect": { "ok": true, "codes": ["object.type.unsupported"] } },
+    { "id": "version-unsupported", "document": "yard", "extend": true, "objects": [
+        { "id": "f-cone", "typeId": "builtin-prop", "typeVersion": 2, "order": 6 }
+      ], "replace": ["f-cone"], "expect": { "ok": true, "codes": ["object.type.version-unsupported"] } },
+    { "id": "legacy-missing", "document": "yard", "extend": true, "objects": [
+        { "id": "ghost", "typeId": "builtin-prop", "typeVersion": 1, "order": 10 }
+      ], "expect": { "ok": false, "codes": ["object.legacy.missing"] } },
+    { "id": "legacy-type-mismatch", "document": "yard", "extend": true, "objects": [
+        { "id": "f-cone", "typeId": "building", "typeVersion": 1, "order": 6 }
+      ], "replace": ["f-cone"], "expect": { "ok": false, "codes": ["object.legacy.type-mismatch"] } },
+    { "id": "components-invalid", "document": "yard", "extend": true, "objects": [
+        { "id": "f-cone", "typeId": "builtin-prop", "typeVersion": 1, "order": 6, "components": { "weird": 1, "locked": "no", "tags": [1] } }
+      ], "replace": ["f-cone"], "expect": { "ok": false, "codes": ["object.components.invalid"] } },
+    { "id": "order-duplicate", "document": "yard", "extend": true, "objects": [
+        { "id": "g1", "typeId": "group", "order": 10 }, { "id": "g2", "typeId": "group", "order": 10 }
+      ], "expect": { "ok": true, "codes": ["object.order.duplicate"] } },
+    { "id": "uncovered-legacy", "document": "yard", "extend": true, "objects": [], "omit": ["f-sign", "e1"], "expect": { "ok": true, "codes": ["object.legacy.uncovered"] } },
+    { "id": "empty-document-needs-skybox", "document": "empty", "extend": false, "objects": [], "expect": { "ok": true, "codes": ["object.legacy.uncovered"] } }
+  ]
+}
