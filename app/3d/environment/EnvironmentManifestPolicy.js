@@ -7,7 +7,7 @@
  * keyed by the legacy record ids whose geometry stays canonical in
  * `roads`/`buildings`/`features`/`earth`, so the graph never enters
  * `worldHash`. v4 is read everywhere but written only when the server opts in
- * (`CEV_SIM_ENVIRONMENT_SCHEMA_V4=1`); once a file is v4 it stays v4.
+ * (the ED-02 default; `CEV_SIM_ENVIRONMENT_SCHEMA_V4=0` opts out); once a file is v4 it stays v4.
  * `accessHash` is provenance for preview materialization and stays out of
  * `worldHash`. Preview meshes are isolated from measured cameras, registries,
  * and oracle scans.
@@ -15,11 +15,11 @@
 
 import {
     OBJECT_GRAPH_VERSION,
+    deriveObjectGraph,
     normalizeObjectRecord,
     objectTypeRegistry,
     reconcileObjectGraph,
     sortObjectRecords,
-    deriveObjectGraph,
     validateObjectGraph,
 } from "../editor/objects/index.js";
 
@@ -157,11 +157,34 @@ export function resolveEnvironmentWriteSchemaVersion(configured, current = null)
 /**
  * Reject writes that would silently drop a stored object graph: the current
  * file is v4 with records, and the incoming manifest supplies a `document`
- * without an `objects` array (an old client). Writes that omit `document`
- * entirely reuse the stored document and pass. The check keys on the objects
- * array rather than the declared version because graph-aware browsers still
- * declare v3 in ED-01.
+ * without an `objects` array (an old client) and the stored overlay carries
+ * authored data. Writes that omit `document` entirely reuse the stored
+ * document and pass. The check keys on the objects array rather than the
+ * declared version because graph-aware browsers still declare v3.
  */
+/**
+ * True when a stored overlay carries information a graph-unaware write would
+ * lose: groups, unknown types, renamed records, parents, tags, locks, hidden
+ * flags, or group frames. A purely derived overlay (what the writer produces
+ * for a v2/v3 document) can always be re-derived, so dropping it loses nothing.
+ */
+export function objectGraphHasAuthoredData(document, registry = objectTypeRegistry) {
+    const stored = Array.isArray(document?.objects) ? document.objects.map(normalizeObjectRecord) : [];
+    if (stored.length === 0) return false;
+    const derived = new Map(deriveObjectGraph(document).map((record) => [record.id, record]));
+    if (stored.length !== derived.size) return true;
+    for (const record of stored) {
+        const expected = derived.get(record.id);
+        if (!expected) return true;
+        if (!registry.get(record.typeId)) return true;
+        if (record.typeId !== expected.typeId || record.typeVersion !== expected.typeVersion) return true;
+        if (record.name !== expected.name) return true;
+        if (record.parentId !== null && record.parentId !== undefined) return true;
+        if (JSON.stringify(record.components) !== JSON.stringify(expected.components)) return true;
+    }
+    return false;
+}
+
 export function assertNoObjectGraphDowngrade(incoming, current, environmentId = current?.environmentId) {
     if (!current || readSchemaVersion(current) < ENVIRONMENT_OBJECT_SCHEMA_VERSION) return;
     const stored = current.document?.objects;
@@ -169,6 +192,9 @@ export function assertNoObjectGraphDowngrade(incoming, current, environmentId = 
     const document = incoming?.document;
     if (document === undefined || document === null || typeof document !== "object") return;
     if (Array.isArray(document.objects)) return;
+    // ED-02: a graph-unaware write only downgrades when authored overlay data
+    // would be lost; a purely derived overlay is re-derived from the geometry.
+    if (!objectGraphHasAuthoredData(current.document)) return;
     const error = new Error(
         `Environment "${environmentId}" stores a schema v4 object graph; writes must include document.objects.`,
     );

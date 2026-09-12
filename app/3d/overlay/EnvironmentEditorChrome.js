@@ -9,6 +9,7 @@ import { MapModeChrome } from "./map/MapModeChrome";
 import { ObjectInspector } from "./ObjectInspector";
 import { SceneHierarchy } from "./SceneHierarchy";
 import { SelectionVisualizer } from "./SelectionVisualizer";
+import { EditorCommandShortcuts } from "./EditorCommandShortcuts";
 import { EDITOR_MODES } from "../editor/EditorState";
 import { useEffect, useState } from "react";
 import { EnvironmentSwitcher } from "./EnvironmentSwitcher";
@@ -47,6 +48,7 @@ export function EnvironmentEditorChrome({ data, activeEnvironmentId, onEnvironme
                 activeEnvironmentId={activeEnvironmentId}
                 onEnvironmentChange={onEnvironmentChange}
             />
+            <EditorCommandShortcuts data={data} />
             {!inOverlayMode && <ChunkOutlines data={data} />}
             {!inOverlayMode && <SelectionVisualizer data={data} />}
             {!inOverlayMode && <SceneHierarchy data={data} compactOpen={hierarchyOpen} />}

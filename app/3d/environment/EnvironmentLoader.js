@@ -1,6 +1,7 @@
 import { syncBuildingsFromDocument, syncRoadsFromDocument } from "../editor/document/DocumentSync.js";
 import { removeBuildingMeshesFromScene, removeFeatureFromRuntime } from "../editor/map/mapRuntimeSync.js";
 import { placeFusionObjectInScene } from "../editor/placement/placeFusionObject.js";
+import { createBrowserProjectorRuntime } from "../editor/projection/browserProjectorRuntime.js";
 import { getEnvironmentManifest } from "./EnvironmentCatalogClient.js";
 import { objectTypeRegistry, reconcileObjectGraph } from "../editor/objects/index.js";
 import { applyEnvironmentVisualReferences } from "./EnvironmentManifestPolicy.js";
@@ -52,7 +53,7 @@ export class EnvironmentLoader {
         environment.getDocument().environmentId = definition.environmentId;
 
         this.data.objects().scene(this.scene);
-        environment.setup(this.scene);
+        environment.setup(this.scene, { projectorRuntime: createBrowserProjectorRuntime() });
         await this.apply(this.manifest ?? {
             environmentId: definition.environmentId,
             templateId: definition.templateId,
@@ -119,6 +120,9 @@ export class EnvironmentLoader {
         environment.setWorldDescription?.(description, worldResource.hash);
 
         environment.objects().registerExistingContent(this.scene, this.data);
+        // A full load replaces the world; prior history and gestures no longer apply.
+        environment.commands?.()?.reset?.();
+        environment.selection?.()?.prune?.(new Set(document.objects.map((record) => String(record.id))));
         this._restoreSky(manifest.sky);
         this._restoreEditorState(manifest.editor);
         this._restoreVisualReferences(manifest);

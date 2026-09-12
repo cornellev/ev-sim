@@ -68,7 +68,9 @@ export function createAssetInstanceType() {
         legacy: null,
         options,
         components: Object.freeze(["asset"]),
-        capabilities: { selectable: true, transformable: true, deletable: true, groupable: true, hasOptions: true },
+        // Transformable once ED-06 supplies the instance binding; until then
+        // planners reject transforms through NO_TRANSFORM_BINDING.
+        capabilities: { selectable: true, transformable: false, deletable: true, groupable: true, hasOptions: true },
         create() {
             throw new ObjectTypeError(
                 OBJECT_TYPE_ERROR_CODES.NOT_IMPLEMENTED,

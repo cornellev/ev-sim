@@ -11,6 +11,7 @@
 
 import { hasErrorIssue, isPlainObject, issue, text } from "./ObjectOptions.js";
 import { objectTypeRegistry } from "./ObjectTypeRegistry.js";
+import { TRANSFORM_ISSUE_CODES } from "./transformDelta.js";
 import {
     OBJECT_GRAPH_VERSION,
     SKYBOX_OBJECT_ID,
@@ -440,4 +441,45 @@ export function readObjectTransform(record, snapshot, registry = objectTypeRegis
     const legacy = definition.legacy ? legacyRecordFor(index, definition, record.id, context) : null;
     const binding = definition.getTransformBinding(record);
     return binding?.read?.(legacy, { nodes: index.nodes, record }) ?? null;
+}
+
+/**
+ * Plan the document changes that carry one record through a world delta.
+ * Pure: returns `{ steps, issues }` from the type's binding and never
+ * mutates. `index` is a `legacyIndex`-shaped index of the current state.
+ */
+export function planObjectTransform(record, index, registry = objectTypeRegistry, delta, context = {}) {
+    const objectId = record?.id ?? null;
+    const definition = registry.get(record?.typeId, record?.typeVersion) ?? registry.get(record?.typeId);
+    if (!definition) {
+        return {
+            steps: [],
+            issues: [issue(["transform"], TRANSFORM_ISSUE_CODES.NOT_TRANSFORMABLE, `Object type "${record?.typeId}" is not registered.`, { objectId })],
+        };
+    }
+    if (!definition.getCapabilities(record)?.transformable) {
+        return {
+            steps: [],
+            issues: [issue(["transform"], TRANSFORM_ISSUE_CODES.NOT_TRANSFORMABLE, `Objects of type "${definition.typeId}" cannot be transformed.`, { objectId })],
+        };
+    }
+    const legacy = definition.legacy ? legacyRecordFor(index, definition, record.id, context) : null;
+    if (definition.legacy && legacy === null) {
+        return {
+            steps: [],
+            issues: [issue(["transform"], TRANSFORM_ISSUE_CODES.MISSING, `Object "${record.id}" has no document record.`, { objectId })],
+        };
+    }
+    const binding = definition.getTransformBinding(record);
+    if (typeof binding?.plan !== "function") {
+        return {
+            steps: [],
+            issues: [issue(["transform"], TRANSFORM_ISSUE_CODES.NOT_TRANSFORMABLE, `Object "${record.id}" has no transform binding.`, { objectId })],
+        };
+    }
+    const result = binding.plan(delta, { ...context, legacy, nodes: index.nodes, index, record });
+    return {
+        steps: Array.isArray(result?.steps) ? result.steps : [],
+        issues: Array.isArray(result?.issues) ? result.issues : [],
+    };
 }

@@ -11,6 +11,7 @@
  */
 
 import {
+    issue,
     ObjectOptions,
     enumOf,
     field,
@@ -20,6 +21,7 @@ import {
     validateFieldConstraints,
 } from "../ObjectOptions.js";
 import { defineObjectType, NO_TRANSFORM_BINDING } from "../ObjectTypeRegistry.js";
+import { TRANSFORM_ISSUE_CODES, applyDeltaToPoint, decomposeDelta } from "../transformDelta.js";
 
 export const BUILTIN_PROP_TYPE_ID = "builtin-prop";
 export const DEFAULT_MAP_COLOR = "#a1a1aa";
@@ -173,7 +175,7 @@ export const BUILTIN_PROP_FIELDS = Object.freeze([
     field({ path: ["dir"], label: "Facing", control: "number", min: 0, max: 3, step: 1, group: "Placement", advanced: true }),
 ]);
 
-/** Read-only transform binding over a legacy feature record. */
+/** Transform binding over a legacy feature record. */
 export function featureTransformBinding(record) {
     return Object.freeze({
         kind: "legacy-feature",
@@ -183,6 +185,39 @@ export function featureTransformBinding(record) {
             return {
                 position: { x: finite(feature.x, 0), y: 0, z: finite(feature.z, 0) },
                 rotationY: finite(feature.rotationY, 0),
+            };
+        },
+        /**
+         * Props accept yaw and planar translation. Scale is rejected (props
+         * have no scale field); Y translation is ignored (ground-authored).
+         */
+        plan(delta, context = {}) {
+            const feature = context.legacy ?? null;
+            if (!feature) {
+                return {
+                    steps: [],
+                    issues: [issue(["transform"], TRANSFORM_ISSUE_CODES.MISSING, `Prop "${record.id}" has no feature record.`, { objectId: record.id })],
+                };
+            }
+            const parts = decomposeDelta(delta);
+            const issues = [];
+            if (!parts.yawOnly) {
+                issues.push(issue(["transform"], TRANSFORM_ISSUE_CODES.ROTATION_UNSUPPORTED, "Props rotate about the vertical axis only.", { objectId: record.id }));
+            }
+            if (parts.hasScale) {
+                issues.push(issue(["transform"], TRANSFORM_ISSUE_CODES.SCALE_UNSUPPORTED, "Props cannot be scaled.", { objectId: record.id }));
+            }
+            if (issues.length > 0) return { steps: [], issues };
+            const moved = applyDeltaToPoint(delta, { x: finite(feature.x, 0), y: 0, z: finite(feature.z, 0) });
+            return {
+                steps: [{
+                    op: "set-feature-transform",
+                    featureId: String(record.id),
+                    x: moved.x,
+                    z: moved.z,
+                    rotationY: finite(feature.rotationY, 0) + parts.rotationY,
+                }],
+                issues: [],
             };
         },
     });

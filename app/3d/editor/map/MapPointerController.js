@@ -1,25 +1,34 @@
-import { findNearestMovableNode } from "../document/documentMutations.js";
+import { findNearestNode } from "../document/documentMutations.js";
 import { MAP_SELECTION_TYPES, MAP_TOOLS } from "../EditorState.js";
 import { pickMapTarget } from "./mapHitTest.js";
 import {
+    beginFeatureDrag,
+    beginNodeDrag,
+    cancelDrag,
+    finishFeatureDrag,
+    finishNodeDrag,
     handleBuildingRectDown,
     handleBuildingRectMove,
     handleBuildingRectUp,
-    handleEndpointMove,
-    handleFeatureMove,
     handleFeaturePlace,
     handleIntersectionPlace,
     handleRoadPenClick,
     panViewport,
     shouldPanImmediately,
     SNAP_RADIUS_SCREEN,
+    updateFeatureDrag,
+    updateNodeDrag,
     zoomViewport,
 } from "./MapToolLogic.js";
 import { advancePanDrag } from "./mapPointerInteractions.js";
 import { screenRadiusToWorld } from "./mapCoords.js";
 
-function getScene(data) {
-    return data?.three?.()?.scene ?? data?.scene ?? null;
+function selectionOf(data) {
+    return data?.selection?.() ?? data?.environment?.()?.selection?.() ?? null;
+}
+
+function isAdditive(event) {
+    return Boolean(event?.shiftKey || event?.metaKey || event?.ctrlKey);
 }
 
 /**
@@ -28,8 +37,8 @@ function getScene(data) {
  * Interaction shapes:
  * - { mode: "pan" | "pending-pan", x, y }
  * - { type: "building-rect" }
- * - { type: "move-endpoint", nodeId }
- * - { type: "move-feature", featureId }
+ * - { type: "move-node", nodeId, gestureId, start }
+ * - { type: "move-feature", featureId, gestureId, start }
  */
 export class MapPointerController {
     constructor() {
@@ -38,6 +47,14 @@ export class MapPointerController {
 
     reset() {
         this.activeInteraction = null;
+    }
+
+    /** Cancel an in-progress drag gesture (pointer cancel, Escape). */
+    cancel(ctx) {
+        const interaction = this.activeInteraction;
+        this.activeInteraction = null;
+        if (interaction?.gestureId) cancelDrag({ interaction, data: ctx?.data });
+        if (interaction?.type === "building-rect") ctx?.data?.editor?.()?.clearMapDraft?.();
     }
 
     handleWheel({ data, containerRect, size }, event) {
@@ -61,7 +78,6 @@ export class MapPointerController {
         const { data, getWorldFromEvent, layers, showDetail } = ctx;
         const editor = data?.editor?.();
         const environment = data?.environment?.();
-        const scene = getScene(data);
         if (!editor || !environment) return false;
 
         const world = getWorldFromEvent(event);
@@ -69,32 +85,21 @@ export class MapPointerController {
 
         const tool = editor.snapshot().map.activeMapTool;
         const document = environment.getDocument();
+        const selection = selectionOf(data);
         const altPan = event.altKey || event.button === 1;
 
         if (shouldPanImmediately(tool, altPan)) {
-            this.activeInteraction = {
-                x: event.clientX,
-                y: event.clientY,
-                mode: "pan",
-            };
+            this.activeInteraction = { x: event.clientX, y: event.clientY, mode: "pan" };
             return true;
         }
 
         if (tool === MAP_TOOLS.INTERSECTION) {
-            handleIntersectionPlace({ worldPoint: world, document, editor });
+            handleIntersectionPlace({ worldPoint: world, document, editor, data });
             return true;
         }
 
         if (tool === MAP_TOOLS.ROAD_PEN) {
-            if (!scene) return false;
-            handleRoadPenClick({
-                worldPoint: world,
-                document,
-                editor,
-                data,
-                scene,
-                size: ctx.size,
-            });
+            handleRoadPenClick({ worldPoint: world, document, editor, data, size: ctx.size });
             return true;
         }
 
@@ -105,28 +110,20 @@ export class MapPointerController {
         }
 
         if (tool === MAP_TOOLS.FEATURE_PLACE) {
-            if (!scene) return false;
-            handleFeaturePlace({
-                worldPoint: world,
-                document,
-                editor,
-                data,
-                scene,
-            });
+            handleFeaturePlace({ worldPoint: world, document, editor, data });
             return true;
         }
 
         if (tool === MAP_TOOLS.SELECT) {
             const snapRadius = screenRadiusToWorld(SNAP_RADIUS_SCREEN, editor.snapshot().map);
             if (showDetail) {
-                const endpoint = findNearestMovableNode(document, world, snapRadius);
-                if (endpoint) {
-                    editor.clearMapSelection();
-                    this.activeInteraction = {
-                        type: "move-endpoint",
-                        nodeId: endpoint.id,
-                    };
-                    return true;
+                const node = findNearestNode(world, document.roads.nodes, snapRadius);
+                if (node) {
+                    const interaction = beginNodeDrag({ document, data, nodeId: node.id });
+                    if (interaction) {
+                        this.activeInteraction = interaction;
+                        return true;
+                    }
                 }
             }
 
@@ -138,35 +135,26 @@ export class MapPointerController {
                 SNAP_RADIUS_SCREEN,
             );
 
-            if (pick?.type === MAP_SELECTION_TYPES.FEATURE) {
-                editor.selectMapItem(pick);
-                this.activeInteraction = {
-                    type: "move-feature",
-                    featureId: pick.id,
-                };
-                return true;
+            if (pick?.type === MAP_SELECTION_TYPES.FEATURE && !isAdditive(event)) {
+                const interaction = beginFeatureDrag({ document, data, featureId: pick.id });
+                if (interaction) {
+                    this.activeInteraction = interaction;
+                    return true;
+                }
             }
 
             if (pick) {
-                editor.selectMapItem(pick);
-            } else {
-                editor.clearMapSelection();
+                selection?.select(pick.id, { mode: isAdditive(event) ? "toggle" : "replace" });
+            } else if (!isAdditive(event)) {
+                selection?.clear();
             }
 
-            this.activeInteraction = {
-                x: event.clientX,
-                y: event.clientY,
-                mode: "pending-pan",
-            };
+            this.activeInteraction = { x: event.clientX, y: event.clientY, mode: "pending-pan" };
             return true;
         }
 
         if (tool === MAP_TOOLS.PAN) {
-            this.activeInteraction = {
-                x: event.clientX,
-                y: event.clientY,
-                mode: "pan",
-            };
+            this.activeInteraction = { x: event.clientX, y: event.clientY, mode: "pan" };
             return true;
         }
 
@@ -176,36 +164,17 @@ export class MapPointerController {
     handlePointerMove(ctx, event) {
         const { data, getWorldFromEvent, documentSnapshot } = ctx;
         const editor = data?.editor?.();
-        const environment = data?.environment?.();
-        const scene = getScene(data);
         if (!editor) return;
 
-        if (this.activeInteraction?.type === "move-endpoint") {
+        if (this.activeInteraction?.type === "move-node") {
             const world = getWorldFromEvent(event);
-            if (world && scene && environment) {
-                handleEndpointMove({
-                    document: environment.getDocument(),
-                    editor,
-                    data,
-                    scene,
-                    nodeId: this.activeInteraction.nodeId,
-                    worldPoint: world,
-                });
-            }
+            if (world) updateNodeDrag({ interaction: this.activeInteraction, editor, data, worldPoint: world });
             return;
         }
 
         if (this.activeInteraction?.type === "move-feature") {
             const world = getWorldFromEvent(event);
-            if (world && environment) {
-                handleFeatureMove({
-                    document: environment.getDocument(),
-                    editor,
-                    data,
-                    featureId: this.activeInteraction.featureId,
-                    worldPoint: world,
-                });
-            }
+            if (world) updateFeatureDrag({ interaction: this.activeInteraction, editor, data, worldPoint: world });
             return;
         }
 
@@ -246,41 +215,24 @@ export class MapPointerController {
         const { data, getWorldFromEvent } = ctx;
         const editor = data?.editor?.();
         const environment = data?.environment?.();
-        const scene = getScene(data);
+        const interaction = this.activeInteraction;
+        this.activeInteraction = null;
 
-        if (!editor || !environment) {
-            this.reset();
+        if (!editor || !environment || !interaction) return;
+
+        if (interaction.type === "building-rect") {
+            handleBuildingRectUp({ editor, data });
             return;
         }
 
-        if (this.activeInteraction?.type === "building-rect") {
-            if (scene) {
-                handleBuildingRectUp({
-                    document: environment.getDocument(),
-                    editor,
-                    data,
-                    scene,
-                });
-            } else {
-                editor.clearMapDraft();
-            }
+        const world = getWorldFromEvent(event);
+        if (interaction.type === "move-node") {
+            finishNodeDrag({ interaction, document: environment.getDocument(), editor, data, worldPoint: world });
+            return;
         }
 
-        if (this.activeInteraction?.type === "move-endpoint" && scene) {
-            const world = getWorldFromEvent(event);
-            if (world) {
-                handleEndpointMove({
-                    document: environment.getDocument(),
-                    editor,
-                    data,
-                    scene,
-                    nodeId: this.activeInteraction.nodeId,
-                    worldPoint: world,
-                    finalize: true,
-                });
-            }
+        if (interaction.type === "move-feature") {
+            finishFeatureDrag({ interaction, editor, data, worldPoint: world });
         }
-
-        this.reset();
     }
 }

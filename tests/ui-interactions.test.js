@@ -70,3 +70,29 @@ test("workspace decisions save or discard before navigating and stay put on fail
     }), /save failed/);
     assert.deepEqual(failed, []);
 });
+
+test("ED-02 shortcuts understand Mod, Ctrl, Shift, and Alt prefixes and keep bare letters distinct", async () => {
+    const { matchesShortcut, parseShortcut } = await import("../app/ui/shortcutUtils.js");
+    const plain = (key, extra = {}) => ({ key, metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, ...extra });
+    assert.deepEqual(parseShortcut("Shift+Mod+z"), { key: "z", mod: true, ctrl: false, alt: false, shift: true, meta: false, hasModifiers: true });
+    assert.equal(parseShortcut(""), null);
+    assert.equal(parseShortcut("Escape").hasModifiers, false);
+    assert.equal(matchesShortcut(plain("z", { metaKey: true }), "Mod+z"), true, "Cmd counts as Mod");
+    assert.equal(matchesShortcut(plain("z", { ctrlKey: true }), "Mod+z"), true, "Ctrl counts as Mod");
+    assert.equal(matchesShortcut(plain("z"), "Mod+z"), false);
+    assert.equal(matchesShortcut(plain("z", { metaKey: true }), "z"), false, "a bare letter never fires with Cmd held");
+    assert.equal(matchesShortcut(plain("z"), "z"), true);
+    assert.equal(matchesShortcut(plain("z", { metaKey: true, shiftKey: true }), "Shift+Mod+z"), true);
+    assert.equal(matchesShortcut(plain("z", { metaKey: true }), "Shift+Mod+z"), false);
+    assert.equal(matchesShortcut(plain("z", { metaKey: true, shiftKey: true }), "Mod+z"), false, "extra Shift does not match a Shift-less binding");
+    assert.equal(matchesShortcut(plain("y", { ctrlKey: true }), "Ctrl+y"), true);
+    assert.equal(matchesShortcut(plain("y", { metaKey: true }), "Ctrl+y"), false, "Ctrl bindings are literal");
+    assert.equal(matchesShortcut(plain("Escape", { ctrlKey: true }), "Escape"), true, "named keys keep matching regardless of modifiers");
+    assert.equal(matchesShortcut(plain("Delete"), ["Delete", "Backspace"]), true);
+    assert.equal(matchesShortcut(plain("g", { metaKey: true, altKey: true }), "Mod+g"), false);
+    assert.equal(matchesShortcut(plain("g", { metaKey: true, altKey: true }), "Alt+Mod+g"), true);
+    assert.equal(matchesShortcut({ key: undefined }, "Mod+z"), false);
+    const entries = [{ id: "undo", keys: "Mod+z", priority: 15 }, { id: "letter", keys: "z", priority: 0 }];
+    assert.deepEqual(getShortcutCandidates(entries, { key: "z", metaKey: true, defaultPrevented: false, target: targetInside(false) }).map((entry) => entry.id), ["undo"]);
+    assert.deepEqual(getShortcutCandidates(entries, { key: "z", defaultPrevented: false, target: targetInside(false) }).map((entry) => entry.id), ["letter"]);
+});

@@ -9,6 +9,7 @@ import {
 } from "../app/3d/editor/chunks/ChunkIndex.js";
 import { ChunkManager } from "../app/3d/editor/chunks/ChunkManager.js";
 import { EDITOR_TOOLS, EditorState } from "../app/3d/editor/EditorState.js";
+import { SelectionStore } from "../app/3d/editor/selection/SelectionStore.js";
 import { EnvironmentRegistry } from "../app/3d/editor/EnvironmentRegistry.js";
 import { EnvironmentDocument } from "../app/3d/editor/document/EnvironmentDocument.js";
 import {
@@ -164,36 +165,44 @@ test("chunk mutations record semantic evidence and residency does not bump gener
     assert.equal(manifest.chunks["0,0"].prefetch, false);
 });
 
-test("editor state publishes tool, selection, layers, and hidden objects", () => {
+test("editor state publishes tool, layers, and hidden objects; selection lives in the SelectionStore", () => {
     const editor = new EditorState();
     const snapshots = [];
     const unsubscribe = editor.subscribe((snapshot) => snapshots.push(snapshot));
 
     editor.setActiveTool(EDITOR_TOOLS.TRANSLATE);
-    editor.selectEntity({ id: "building:a", kind: "building", layer: "buildings" });
     editor.setLayerVisible("props", false);
     editor.setEntityHidden("building:a", true);
     unsubscribe();
 
     const latest = snapshots.at(-1);
     assert.equal(latest.activeTool, EDITOR_TOOLS.TRANSLATE);
-    assert.deepEqual(latest.selection, {
-        id: "building:a",
-        kind: "building",
-        layer: "buildings",
-    });
+    assert.equal("selection" in latest, false, "ED-02 moved selection out of EditorState");
     assert.equal(latest.layers.props, false);
     assert.equal(latest.hiddenEntityIds.has("building:a"), true);
+    assert.equal(typeof editor.selectEntity, "undefined");
+    assert.deepEqual(Object.keys(editor.persistedSnapshot()).sort(), ["earthImport", "editorMode", "hiddenEntityIds", "layers", "map"]);
+    assert.deepEqual(editor.persistedSnapshot().hiddenEntityIds, ["building:a"]);
+    assert.equal("draft" in editor.persistedSnapshot().map, false);
+
+    const selection = new SelectionStore({ now: () => 0 });
+    selection.select(["building-a", "feature-b"]);
+    assert.deepEqual(selection.ids, ["building-a", "feature-b"]);
+    assert.equal(selection.primary, "feature-b");
 });
 
-test("editor state tracks chunk outline visibility and selection suppression", () => {
+test("editor state tracks chunk outline visibility; selection suppression lives in the SelectionStore", () => {
     const editor = new EditorState();
     editor.setChunkOutlinesVisible(false);
     assert.equal(editor.snapshot().chunkOutlinesVisible, false);
 
-    assert.equal(editor.isSelectionSuppressed(), false);
-    editor.suppressSelection(1000);
-    assert.equal(editor.isSelectionSuppressed(), true);
+    let now = 0;
+    const selection = new SelectionStore({ now: () => now });
+    assert.equal(selection.isSuppressed(), false);
+    selection.suppress(1000);
+    assert.equal(selection.isSuppressed(), true);
+    now = 1001;
+    assert.equal(selection.isSuppressed(), false);
 });
 
 test("registry resolves entities from env ids, building ids, and fusion objects", () => {

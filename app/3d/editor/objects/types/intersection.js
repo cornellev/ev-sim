@@ -4,8 +4,9 @@
  * than one edge — the same rule the world compiler uses for intersection discs.
  */
 
-import { ObjectOptions, field, finite, isPlainObject, validateFieldConstraints } from "../ObjectOptions.js";
+import { ObjectOptions, field, finite, isPlainObject, issue, validateFieldConstraints } from "../ObjectOptions.js";
 import { defineObjectType } from "../ObjectTypeRegistry.js";
+import { TRANSFORM_ISSUE_CODES, applyDeltaToPoint } from "../transformDelta.js";
 
 export const INTERSECTION_TYPE_ID = "intersection";
 
@@ -45,6 +46,20 @@ export function nodeTransformBinding(record) {
                 rotationY: 0,
             };
         },
+        /** Plan one `move-node` step; connected roads follow the node. */
+        plan(delta, context = {}) {
+            const node = context.legacy ?? context.nodes?.get?.(record.id) ?? null;
+            if (!node) {
+                return {
+                    steps: [],
+                    issues: [issue(["transform"], TRANSFORM_ISSUE_CODES.MISSING, `Intersection "${record.id}" has no node.`, { objectId: record.id })],
+                };
+            }
+            return {
+                steps: [{ op: "move-node", nodeId: String(record.id), position: applyDeltaToPoint(delta, node) }],
+                issues: [],
+            };
+        },
     });
 }
 
@@ -61,7 +76,7 @@ export function createIntersectionType() {
         catalog: { label: "Intersection", kind: "intersection", layer: "roads" },
         legacy: { domain: "roads.nodes", idField: "id" },
         options,
-        capabilities: { selectable: true, transformable: false, deletable: false, groupable: true, hasOptions: true },
+        capabilities: { selectable: true, transformable: true, deletable: true, groupable: true, hasOptions: true },
         getTransformBinding(record) {
             return nodeTransformBinding(record);
         },

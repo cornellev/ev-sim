@@ -80,10 +80,26 @@ export class EnvironmentPersistence {
         const environment = this.data.environment();
         const onChange = () => this._handleChange();
 
+        // ED-02: transient gesture frames and gesture cancels never reach the
+        // save queue; only committed document changes do. Editor state marks
+        // dirty only when its persisted subset changes (never on selection).
+        let lastEditorKey;
         this._unsubscribers = [
-            environment.getDocument().subscribe(onChange),
+            environment.getDocument().subscribe((snapshot, event) => {
+                if (event?.transient === true || event?.source === "cancel") return;
+                onChange();
+            }),
             environment.objects().subscribe(onChange),
-            environment.editor().subscribe(onChange),
+            environment.editor().subscribe((snapshot) => {
+                const editor = environment.editor();
+                const persisted = typeof editor?.persistedSnapshot === "function"
+                    ? editor.persistedSnapshot()
+                    : persistedEditorStateFromSnapshot(snapshot);
+                const key = JSON.stringify(persisted);
+                if (lastEditorKey !== undefined && key === lastEditorKey) return;
+                lastEditorKey = key;
+                onChange();
+            }),
             environment.sky().subscribe(onChange),
         ];
 
@@ -336,6 +352,25 @@ export class EnvironmentPersistence {
         }
         this._saveTimer = null;
     }
+}
+
+function persistedEditorStateFromSnapshot(snapshot) {
+    if (!snapshot) return null;
+    const map = snapshot.map ?? {};
+    return {
+        layers: snapshot.layers ?? null,
+        hiddenEntityIds: [...(snapshot.hiddenEntityIds ?? [])].sort(),
+        editorMode: snapshot.editorMode ?? null,
+        map: {
+            centerX: map.centerX,
+            centerZ: map.centerZ,
+            zoom: map.zoom,
+            snapEnabled: map.snapEnabled,
+            snapSize: map.snapSize,
+            gridVisible: map.gridVisible,
+        },
+        earthImport: snapshot.earthImport ?? null,
+    };
 }
 
 function isRevisionConflict(error) {

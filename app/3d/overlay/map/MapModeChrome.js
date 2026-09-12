@@ -19,6 +19,7 @@ import {
 } from "../../editor/EditorState";
 import { PLACEMENT_CATALOG } from "../../editor/placement/PlacementCatalog";
 import { cancelRoadPen, finalizeRoadPen, handleMapDelete } from "../../editor/map/MapToolLogic";
+import { mapSelectionFromSelection } from "../../editor/selection/selectionIds.js";
 import {
     fitMapViewportToContent,
     hydrateDocumentFromRuntime,
@@ -34,6 +35,7 @@ const MENU_CONTROL_LOCK = "map-editor-menu";
 
 export function MapModeChrome({ data }) {
     const [editorSnapshot, setEditorSnapshot] = useState(null);
+    const [selectionSnapshot, setSelectionSnapshot] = useState(null);
     const [documentSnapshot, setDocumentSnapshot] = useState(null);
     const [openPanel, setOpenPanel] = useState(null);
 
@@ -46,6 +48,7 @@ export function MapModeChrome({ data }) {
     }, [data]);
 
     useEffect(() => data?.editor?.()?.subscribe?.(setEditorSnapshot), [data]);
+    useEffect(() => data?.selection?.()?.subscribe?.(setSelectionSnapshot), [data]);
 
     useEffect(() => {
         const document = data?.environment?.()?.getDocument?.();
@@ -74,6 +77,12 @@ export function MapModeChrome({ data }) {
         const disposers = [
             keys.registerKeyDown?.("Escape", () => {
                 const editor = data.editor();
+                if (editor.snapshot().editorMode !== EDITOR_MODES.MAP) return;
+                const bus = data.commands?.();
+                if (bus?.activeGesture) {
+                    bus.cancelGesture(bus.activeGesture.id);
+                    return;
+                }
                 const draft = editor.snapshot().map.draft;
                 if (draft?.type === "road-pen") {
                     cancelRoadPen(editor);
@@ -83,8 +92,9 @@ export function MapModeChrome({ data }) {
                     editor.clearMapDraft();
                     return;
                 }
-                if (editor.snapshot().map.selection) {
-                    editor.clearMapSelection();
+                const selection = data.selection?.();
+                if (selection && !selection.isEmpty()) {
+                    selection.clear();
                     return;
                 }
                 editor.setEditorMode(EDITOR_MODES.SCENE);
@@ -97,20 +107,10 @@ export function MapModeChrome({ data }) {
             }),
             keys.registerKeyDown?.("Delete", () => {
                 const editor = data.editor();
-                const selection = editor.snapshot().map.selection;
-                if (!selection) return;
-
-                const environment = data.environment?.();
-                const scene = data?.three?.()?.scene ?? data?.scene ?? null;
-                if (!environment || !scene) return;
-
-                handleMapDelete({
-                    document: environment.getDocument(),
-                    editor,
-                    data,
-                    scene,
-                    selection,
-                });
+                if (editor.snapshot().editorMode !== EDITOR_MODES.MAP) return;
+                const selection = data.selection?.();
+                if (!selection || selection.isEmpty()) return;
+                handleMapDelete({ data, objectIds: selection.ids });
             }),
         ].filter(Boolean);
 
@@ -124,6 +124,7 @@ export function MapModeChrome({ data }) {
     const map = editorSnapshot.map;
     const layers = editorSnapshot.layers;
     const activeTool = map.activeMapTool;
+    const mapSelection = mapSelectionFromSelection(selectionSnapshot, documentSnapshot);
 
     const setTool = (tool) => data?.editor?.()?.setActiveMapTool?.(tool);
     const setFeature = (type) => data?.editor?.()?.setMapFeatureType?.(type);
@@ -135,12 +136,14 @@ export function MapModeChrome({ data }) {
                 data={data}
                 editorSnapshot={editorSnapshot}
                 documentSnapshot={documentSnapshot ?? { roads: { nodes: [], edges: [] }, buildings: [], features: [] }}
+                mapSelection={mapSelection}
             />
 
             <MapInspector
                 data={data}
                 editorSnapshot={editorSnapshot}
                 documentSnapshot={documentSnapshot ?? { roads: { nodes: [], edges: [] }, buildings: [], features: [] }}
+                mapSelection={mapSelection}
             />
 
             <div className="fixed bottom-0 left-0 right-0 z-[20] px-3 pb-3 pointer-events-auto">

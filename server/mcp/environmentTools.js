@@ -1,18 +1,7 @@
 import { z } from "zod";
 import { EnvironmentDocument } from "../../app/3d/editor/document/EnvironmentDocument.js";
-import {
-    addBuildingRectangle,
-    addFeature,
-    addRoadEdge,
-    getOrCreateNode,
-    isIntersectionNode,
-    moveFeature,
-    moveRoadNode,
-    removeBuilding,
-    removeFeature,
-    removeRoadEdge,
-    setRoadNodeElevation,
-} from "../../app/3d/editor/document/documentMutations.js";
+import { isIntersectionNode } from "../../app/3d/editor/document/documentMutations.js";
+import { createEnvironmentCommandService } from "../../app/3d/editor/commands/EnvironmentCommandService.js";
 import {
     conflictsForNewEntities,
     findDocumentConflicts,
@@ -214,40 +203,12 @@ export function registerEnvironmentTools(server, storage) {
         },
         async ({ environmentId, points, width, laneCount, bidirectional, snapRadius, strict }) => {
             try {
-                const { manifest, document } = await loadDocument(storage, environmentId);
-                const createdNodes = [];
-                const createdEdges = [];
-                const errors = [];
-
-                const nodeIds = points.map((point) => {
-                    const before = new Set(document.roads.nodes.map((node) => node.id));
-                    const node = getOrCreateNode(document, point, snapRadius ?? 2);
-                    if (!before.has(node.id)) createdNodes.push(node);
-                    return node.id;
-                });
-
-                for (let i = 0; i < nodeIds.length - 1; i++) {
-                    const result = addRoadEdge(
-                        document,
-                        nodeIds[i],
-                        nodeIds[i + 1],
-                        {
-                            width,
-                            laneCount,
-                            bidirectional,
-                        },
-                    );
-                    if (!result.ok) {
-                        errors.push(result.error);
-                        continue;
-                    }
-                    createdEdges.push(result.edge);
+                const { manifest, document, service } = await loadDocument(storage, environmentId);
+                const result = service.run("addRoad", { points, width, laneCount, bidirectional, snapRadius: snapRadius ?? 2 });
+                if (!result.ok) {
+                    return fail(result.error, { errors: result.issues.map((issue) => issue.message), issues: result.issues });
                 }
-
-                if (createdEdges.length === 0 && errors.length > 0) {
-                    return fail(errors[0], { errors });
-                }
-
+                const { createdNodes, createdEdges, errors } = result.result;
                 const conflicts = conflictsForNewEntities(document, {
                     edgeIds: createdEdges.map((edge) => edge.id),
                 });
@@ -286,9 +247,9 @@ export function registerEnvironmentTools(server, storage) {
         },
         async ({ environmentId, edgeId }) => {
             try {
-                const { manifest, document } = await loadDocument(storage, environmentId);
-                const result = removeRoadEdge(document, edgeId);
-                if (!result.ok) return fail(result.error);
+                const { manifest, document, service } = await loadDocument(storage, environmentId);
+                const result = service.run("removeRoad", { edgeId });
+                if (!result.ok) return fail(result.error, { issues: result.issues });
                 await saveDocument(storage, environmentId, manifest, document);
                 return ok({ ok: true, removed: edgeId });
             } catch (error) {
@@ -302,7 +263,7 @@ export function registerEnvironmentTools(server, storage) {
         {
             title: "Move road node",
             description:
-                "Move a free endpoint road node in xz (optional y). Intersections accept y-only elevation changes.",
+                "Move any road node in xz (optional y). Connected roads stay connected: junction moves reshape every incident road and recompute their arms. Supplying only a new y with matching x/z changes elevation.",
             inputSchema: {
                 environmentId: z.string().min(1),
                 nodeId: z.string().min(1),
@@ -312,25 +273,21 @@ export function registerEnvironmentTools(server, storage) {
         },
         async ({ environmentId, nodeId, point, strict }) => {
             try {
-                const { manifest, document } = await loadDocument(storage, environmentId);
+                const { manifest, document, service } = await loadDocument(storage, environmentId);
                 const node = document.getNode(nodeId);
                 if (!node) return fail("Road node not found.");
 
+                const dx = Math.abs(Number(point.x) - Number(node.x));
+                const dz = Math.abs(Number(point.z) - Number(node.z));
                 let result;
-                if (isIntersectionNode(document, node)) {
-                    const dx = Math.abs(Number(point.x) - Number(node.x));
-                    const dz = Math.abs(Number(point.z) - Number(node.z));
-                    if (dx > 1e-6 || dz > 1e-6) {
-                        return fail("Intersection nodes cannot move in xz; supply matching x/z and a new y.");
-                    }
-                    if (point.y === undefined) {
-                        return fail("Intersection elevation requires point.y.");
-                    }
-                    result = setRoadNodeElevation(document, nodeId, point.y);
+                if (dx <= 1e-6 && dz <= 1e-6 && point.y !== undefined) {
+                    result = service.run("setRoadNodeElevation", { nodeId, y: point.y });
+                } else if (isIntersectionNode(document, node)) {
+                    result = service.run("translateRoadNodes", { positions: { [nodeId]: point } });
                 } else {
-                    result = moveRoadNode(document, nodeId, point);
+                    result = service.run("moveRoadNode", { nodeId, point });
                 }
-                if (!result.ok) return fail(result.error);
+                if (!result.ok) return fail(result.error, { issues: result.issues });
                 const edgeIds = document.roads.edges
                     .filter((edge) => edge.startNodeId === nodeId || edge.endNodeId === nodeId)
                     .map((edge) => edge.id);
@@ -339,7 +296,7 @@ export function registerEnvironmentTools(server, storage) {
                     return fail("Rejected due to geometric conflicts (strict=true).", { conflicts });
                 }
                 await saveDocument(storage, environmentId, manifest, document);
-                return ok({ ok: true, nodeId, point, conflicts });
+                return ok({ ok: true, nodeId, point, edgeIds, conflicts });
             } catch (error) {
                 return fail(error);
             }
@@ -362,13 +319,14 @@ export function registerEnvironmentTools(server, storage) {
         },
         async ({ environmentId, cornerA, cornerB, height, textureId, strict }) => {
             try {
-                const { manifest, document } = await loadDocument(storage, environmentId);
-                const result = addBuildingRectangle(document, cornerA, cornerB, { height, textureId });
-                if (!result.ok) return fail(result.error);
+                const { manifest, document, service } = await loadDocument(storage, environmentId);
+                const result = service.run("addBuilding", { cornerA, cornerB, height, textureId });
+                if (!result.ok) return fail(result.error, { issues: result.issues });
+                const building = result.result.building;
                 const conflicts = conflictsForNewEntities(document, {
-                    buildingIds: [result.record.buildingId],
+                    buildingIds: [building.buildingId],
                 });
-                const response = maybeFailStrict(strict, conflicts, { building: result.record });
+                const response = maybeFailStrict(strict, conflicts, { building });
                 if (response.isError) return response;
                 await saveDocument(storage, environmentId, manifest, document);
                 return response;
@@ -390,9 +348,9 @@ export function registerEnvironmentTools(server, storage) {
         },
         async ({ environmentId, buildingId }) => {
             try {
-                const { manifest, document } = await loadDocument(storage, environmentId);
-                const result = removeBuilding(document, buildingId);
-                if (!result.ok) return fail(result.error);
+                const { manifest, document, service } = await loadDocument(storage, environmentId);
+                const result = service.run("removeBuilding", { buildingId });
+                if (!result.ok) return fail(result.error, { issues: result.issues });
                 await saveDocument(storage, environmentId, manifest, document);
                 return ok({ ok: true, removed: buildingId });
             } catch (error) {
@@ -422,8 +380,8 @@ export function registerEnvironmentTools(server, storage) {
                 if (!getPlacementAsset(type)) {
                     return fail(environmentObjectTypeUnsupportedError(type, PLACEMENT_CATALOG.map((a) => a.id)));
                 }
-                const { manifest, document } = await loadDocument(storage, environmentId);
-                const result = addFeature(document, {
+                const { manifest, document, service } = await loadDocument(storage, environmentId);
+                const result = service.run("addFeature", {
                     type,
                     x,
                     z,
@@ -431,11 +389,12 @@ export function registerEnvironmentTools(server, storage) {
                     dir: dir ?? 0,
                     tags: [type],
                 });
-                if (!result.ok) return fail(result.error ?? "Could not add feature.");
+                if (!result.ok) return fail(result.error ?? "Could not add feature.", { issues: result.issues });
+                const feature = result.result.feature;
                 const conflicts = conflictsForNewEntities(document, {
-                    featureIds: [result.record.id],
+                    featureIds: [feature.id],
                 });
-                const response = maybeFailStrict(strict, conflicts, { feature: result.record });
+                const response = maybeFailStrict(strict, conflicts, { feature });
                 if (response.isError) return response;
                 await saveDocument(storage, environmentId, manifest, document);
                 return response;
@@ -460,11 +419,11 @@ export function registerEnvironmentTools(server, storage) {
         },
         async ({ environmentId, featureId, x, z, strict }) => {
             try {
-                const { manifest, document } = await loadDocument(storage, environmentId);
-                const result = moveFeature(document, featureId, { x, z });
-                if (!result.ok) return fail(result.error);
+                const { manifest, document, service } = await loadDocument(storage, environmentId);
+                const result = service.run("moveFeature", { featureId, x, z });
+                if (!result.ok) return fail(result.error, { issues: result.issues });
                 const conflicts = conflictsForNewEntities(document, { featureIds: [featureId] });
-                const response = maybeFailStrict(strict, conflicts, { feature: result.feature });
+                const response = maybeFailStrict(strict, conflicts, { feature: result.result.feature });
                 if (response.isError) return response;
                 await saveDocument(storage, environmentId, manifest, document);
                 return response;
@@ -486,9 +445,9 @@ export function registerEnvironmentTools(server, storage) {
         },
         async ({ environmentId, featureId }) => {
             try {
-                const { manifest, document } = await loadDocument(storage, environmentId);
-                const result = removeFeature(document, featureId);
-                if (!result.ok) return fail(result.error);
+                const { manifest, document, service } = await loadDocument(storage, environmentId);
+                const result = service.run("removeFeature", { featureId });
+                if (!result.ok) return fail(result.error, { issues: result.issues });
                 await saveDocument(storage, environmentId, manifest, document);
                 return ok({ ok: true, removed: featureId });
             } catch (error) {
@@ -538,13 +497,16 @@ async function loadDocument(storage, environmentId) {
         features: [],
     });
     reconcileDocumentObjects(manifest, document);
-    return { manifest, document };
+    // ED-02: MCP mutations run the same pure commands as the browser editor.
+    const service = createEnvironmentCommandService({ document, sky: manifest.sky ?? null });
+    return { manifest, document, service };
 }
 
 /**
  * Keep the schema-v4 overlay complete around legacy mutations: every legacy
  * entity gains a record, orphans are dropped, unknown types are preserved.
- * Default (v3) storage strips the overlay again on write.
+ * Commands keep the overlay live in-session, so on save this is a no-op
+ * except for documents mutated outside the command layer.
  */
 function reconcileDocumentObjects(manifest, document) {
     const { records } = reconcileObjectGraph(

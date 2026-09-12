@@ -256,7 +256,7 @@ test("StorageService rejects unguarded and stale environment revisions", async (
         expectedRevision: 1,
     });
     assert.equal(updated.revision, 2);
-    assert.equal(updated.schemaVersion, 3);
+    assert.equal(updated.schemaVersion, 4, "ED-02: schema v4 is the default writer");
 });
 
 test("StorageService sequences deletion after pending writes and rejects stale recreation", async () => {

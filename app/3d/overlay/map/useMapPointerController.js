@@ -70,9 +70,15 @@ export function useMapPointerController({
         controllerRef.current.handlePointerUp(pointerContext, event);
     }, [containerRef, pointerContext]);
 
+    const onPointerCancel = useCallback((event) => {
+        containerRef.current?.releasePointerCapture?.(event.pointerId);
+        controllerRef.current.cancel(pointerContext);
+    }, [containerRef, pointerContext]);
+
     return {
         onPointerDown,
         onPointerMove,
         onPointerUp,
+        onPointerCancel,
     };
 }

@@ -1,11 +1,14 @@
 /**
- * Group objects: pure hierarchy containers. ED-01 persists an identity local
- * transform component so ED-02 can attach nested transforms without a schema
- * change; no geometry or metric behavior.
+ * Group objects: hierarchy containers whose `transform` component is a world
+ * pivot frame (position, yaw, uniform scale). A group gesture bakes its world
+ * delta into descendants' legacy records and composes it into this frame, so
+ * the frame follows the group without becoming a second source of truth for
+ * child placement. No geometry or metric behavior.
  */
 
-import { ObjectOptions, field, finite, isPlainObject, validateFieldConstraints } from "../ObjectOptions.js";
+import { ObjectOptions, field, finite, isPlainObject, issue, validateFieldConstraints } from "../ObjectOptions.js";
 import { defineObjectType } from "../ObjectTypeRegistry.js";
+import { TRANSFORM_ISSUE_CODES, applyDeltaToFrame, decomposeDelta } from "../transformDelta.js";
 
 export const GROUP_TYPE_ID = "group";
 
@@ -54,6 +57,40 @@ export class GroupOptions extends ObjectOptions {
     }
 }
 
+/** Frame binding: reads the pivot component and plans its composition with a delta. */
+export function groupFrameBinding(record, options = new GroupOptions()) {
+    return Object.freeze({
+        kind: "group-frame",
+        legacyId: null,
+        read(_legacy, context = {}) {
+            const frame = options.normalize((context.record ?? record)?.components?.transform ?? {});
+            return { position: { ...frame.position }, rotationY: frame.rotationY, scale: frame.scale };
+        },
+        plan(delta, context = {}) {
+            const current = context.record ?? record;
+            const parts = decomposeDelta(delta);
+            const issues = [];
+            if (!parts.yawOnly) {
+                issues.push(issue(["transform"], TRANSFORM_ISSUE_CODES.ROTATION_UNSUPPORTED, "Groups rotate about the vertical axis only.", { objectId: current.id }));
+            }
+            if (!parts.uniformScale) {
+                issues.push(issue(["transform"], TRANSFORM_ISSUE_CODES.NON_UNIFORM_SCALE, "Groups scale uniformly only.", { objectId: current.id }));
+            }
+            if (issues.length > 0) return { steps: [], issues };
+            const frame = options.normalize(current?.components?.transform ?? {});
+            return {
+                steps: [{
+                    op: "set-object-component",
+                    objectId: String(current.id),
+                    key: "transform",
+                    value: options.normalize(applyDeltaToFrame(delta, frame)),
+                }],
+                issues: [],
+            };
+        },
+    });
+}
+
 export function createGroupType() {
     const options = new GroupOptions();
     return defineObjectType({
@@ -70,6 +107,9 @@ export function createGroupType() {
                 name: input.name ?? "Group",
                 components: { transform: options.normalize(input.transform) },
             };
+        },
+        getTransformBinding(record) {
+            return groupFrameBinding(record, options);
         },
     });
 }

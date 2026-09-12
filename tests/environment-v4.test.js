@@ -30,6 +30,7 @@ import {
     ENVIRONMENT_SCHEMA_VERSION,
     ENVIRONMENT_SUPPORTED_SCHEMA_VERSIONS,
     assertNoObjectGraphDowngrade,
+    objectGraphHasAuthoredData,
     presentEnvironmentObjectGraph,
     presentStoredEnvironment,
     readSchemaVersion,
@@ -109,26 +110,40 @@ test("ED-01 write version resolution is sticky for v4 files and the downgrade gu
     );
 });
 
-test("ED-01 default writer keeps v3 on disk and strips a client-supplied object graph", async () => {
+test("ED-02 default writer emits v4 with the object graph; environmentSchemaVersion: 3 opts out and strips it", async () => {
     const { dir, service } = await tempService();
+    const legacyOptOut = await tempService({ environmentSchemaVersion: 3 });
     try {
-        const created = await service.createEnvironment({ id: "yard", name: "Yard", templateId: "blank" });
         const legacy = await readEnvironmentEditorFixture("legacy-v2.yard.json");
         const document = { ...legacy.document, objectGraphVersion: 1, objects: deriveObjectGraph(legacy.document) };
+
+        const created = await service.createEnvironment({ id: "yard", name: "Yard", templateId: "blank" });
         const saved = await service.putEnvironment("yard", {
             manifest: { ...created, ...legacy, schemaVersion: 3, document },
             expectedRevision: created.revision,
         });
-        assert.equal(saved.schemaVersion, 3);
-        assert.equal(Object.hasOwn(saved.document, "objects"), false);
-        assert.equal(Object.hasOwn(saved.document, "objectGraphVersion"), false);
+        assert.equal(saved.schemaVersion, 4);
+        assert.equal(saved.document.objectGraphVersion, 1);
+        assert.deepEqual(saved.document.objects.map((record) => record.id), document.objects.map((record) => record.id));
         const onDisk = await readDisk(dir, "yard");
-        assert.equal(onDisk.schemaVersion, 3);
-        assert.equal(Object.hasOwn(onDisk.document, "objects"), false);
-        assert.equal(createWorldResource(onDisk).hash, createWorldResource({ ...legacy, document }).hash);
-        assert.equal(serializeEnvironmentManifestV3(saved, { environmentId: "yard", revision: 9, current: saved }).schemaVersion, 3);
+        assert.equal(onDisk.schemaVersion, 4);
+        assert.equal(Array.isArray(onDisk.document.objects), true);
+        assert.equal(createWorldResource(onDisk).hash, createWorldResource({ ...legacy, document }).hash, "the overlay never enters worldHash");
+
+        const optOutCreated = await legacyOptOut.service.createEnvironment({ id: "yard", name: "Yard", templateId: "blank" });
+        const optOutSaved = await legacyOptOut.service.putEnvironment("yard", {
+            manifest: { ...optOutCreated, ...legacy, schemaVersion: 3, document },
+            expectedRevision: optOutCreated.revision,
+        });
+        assert.equal(optOutSaved.schemaVersion, 3);
+        assert.equal(Object.hasOwn(optOutSaved.document, "objects"), false);
+        assert.equal(Object.hasOwn(optOutSaved.document, "objectGraphVersion"), false);
+        const optOutDisk = await readDisk(legacyOptOut.dir, "yard");
+        assert.equal(optOutDisk.schemaVersion, 3);
+        assert.equal(serializeEnvironmentManifestV3(optOutSaved, { environmentId: "yard", revision: 9, current: optOutSaved }).schemaVersion, 3);
     } finally {
         await fs.rm(dir, { recursive: true, force: true });
+        await fs.rm(legacyOptOut.dir, { recursive: true, force: true });
     }
 });
 
@@ -245,7 +260,7 @@ test("ED-01 invalid graphs are rejected atomically with ENVIRONMENT_OBJECT_GRAPH
     }
 });
 
-test("ED-01 an old-client write without document.objects over a v4 file is rejected and v4 files stay v4 when the flag is off", async () => {
+test("ED-02 an old-client write without document.objects is re-derived over a derived graph and rejected once the graph is authored; v4 files stay v4 under the opt-out", async () => {
     const flagged = await tempService({ environmentSchemaVersion: 4 });
     try {
         const legacy = await readEnvironmentEditorFixture("legacy-v2.yard.json");
@@ -253,16 +268,45 @@ test("ED-01 an old-client write without document.objects over a v4 file is rejec
         const upgraded = await flagged.service.putEnvironment("yard", { manifest: await flagged.service.getEnvironment("yard"), expectedRevision: 0 });
         assert.equal(upgraded.schemaVersion, 4);
 
-        // Same data directory, flag cleared: reads still work and writes stay v4.
-        const unflagged = new StorageService(flagged.dir);
-        const loaded = await unflagged.getEnvironment("yard");
+        // Same data directory, opted out: reads still work and writes stay v4.
+        const unflagged = new StorageService(flagged.dir, { environmentSchemaVersion: 3 });
+        let loaded = await unflagged.getEnvironment("yard");
         assert.equal(loaded.schemaVersion, 4);
         assert.equal(loaded.document.objects.length, 13);
+        assert.equal(objectGraphHasAuthoredData(loaded.document), false, "the first save stores a purely derived graph");
 
+        // A graph-unaware write over a derived graph loses nothing: it is accepted and the graph re-derived.
         const { objects: _dropped, objectGraphVersion: _version, ...oldClientDocument } = loaded.document;
+        const rederived = await unflagged.putEnvironment("yard", {
+            manifest: { ...loaded, schemaVersion: 3, name: "Unaware", document: oldClientDocument },
+            expectedRevision: loaded.revision,
+        });
+        assert.equal(rederived.schemaVersion, 4);
+        assert.equal(rederived.document.objects.length, 13);
+        loaded = await unflagged.getEnvironment("yard");
+
+        // Once the graph carries authored data (a group and a rename), the same write is a downgrade.
+        const authored = await unflagged.putEnvironment("yard", {
+            manifest: {
+                ...loaded,
+                schemaVersion: 3,
+                document: {
+                    ...loaded.document,
+                    objects: [
+                        ...loaded.document.objects.map((record) => (record.id === "feature-cone" ? { ...record, name: "Front cone", parentId: "group-a" } : record)),
+                        { id: "group-a", typeId: "group", typeVersion: 1, name: "Course", parentId: null, order: 99, components: {} },
+                    ],
+                },
+            },
+            expectedRevision: loaded.revision,
+        });
+        assert.equal(authored.document.objects.length, 14);
+        assert.equal(objectGraphHasAuthoredData(authored.document), true);
+        loaded = await unflagged.getEnvironment("yard");
+        const { objects: _dropped2, objectGraphVersion: _version2, ...oldClientDocument2 } = loaded.document;
         await assert.rejects(
             () => unflagged.putEnvironment("yard", {
-                manifest: { ...loaded, schemaVersion: 3, document: oldClientDocument },
+                manifest: { ...loaded, schemaVersion: 3, document: oldClientDocument2 },
                 expectedRevision: loaded.revision,
             }),
             (error) => error.code === ENVIRONMENT_SCHEMA_DOWNGRADE && error.statusCode === 409
@@ -270,18 +314,19 @@ test("ED-01 an old-client write without document.objects over a v4 file is rejec
         );
         assert.equal((await unflagged.getEnvironment("yard")).revision, loaded.revision);
 
-        // Graph-aware clients still declare v3 in ED-01; they are accepted and the file stays v4.
+        // Graph-aware clients still declare v3; they are accepted and the file stays v4.
         const graphAware = await unflagged.putEnvironment("yard", {
             manifest: { ...loaded, schemaVersion: 3, name: "Aware" },
             expectedRevision: loaded.revision,
         });
         assert.equal(graphAware.schemaVersion, 4);
-        assert.equal(graphAware.document.objects.length, 13);
+        assert.equal(graphAware.document.objects.length, 14);
+        assert.equal(graphAware.document.objects.find((record) => record.id === "feature-cone").name, "Front cone");
 
         // Rename-style writes that omit the document pass and keep the graph.
         const renamed = await unflagged.renameEnvironment("yard", { name: "Yard 2", expectedRevision: graphAware.revision });
         assert.equal(renamed.schemaVersion, 4);
-        assert.equal((await readDisk(flagged.dir, "yard")).document.objects.length, 13);
+        assert.equal((await readDisk(flagged.dir, "yard")).document.objects.length, 14);
     } finally {
         await fs.rm(flagged.dir, { recursive: true, force: true });
     }
@@ -372,6 +417,52 @@ test("ED-01 MCP tools round-trip a v4 document, validate the graph, and list obj
         const flagged = await call("environment_validate", { environmentId: "yard" });
         assert.equal(flagged.objectGraphOk, true);
         assert.deepEqual(flagged.issues.map((issue) => issue.code), ["object.type.unsupported"]);
+    } finally {
+        await fs.rm(dir, { recursive: true, force: true });
+    }
+});
+
+test("ED-02 MCP mutations run through the command service: junction moves stay connected and saves reconcile as a no-op", async () => {
+    const { dir, service } = await tempService({ environmentSchemaVersion: 4 });
+    try {
+        const call = mcpTools(service);
+        await service.createEnvironment({ id: "cross", name: "Cross", templateId: "blank" });
+        const first = await call("environment_add_road", { environmentId: "cross", points: [{ x: 0, z: 0 }, { x: 40, z: 0 }] });
+        assert.equal(first.ok, true);
+        const second = await call("environment_add_road", { environmentId: "cross", points: [{ x: 40, z: 0 }, { x: 40, z: 40 }, { x: 80, z: 40 }] });
+        assert.equal(second.ok, true);
+        const stored = await service.getEnvironment("cross");
+        const junction = stored.document.roads.nodes.find((node) => node.x === 40 && node.z === 0);
+        assert.equal(stored.document.objects.filter((record) => record.typeId === "intersection").map((record) => record.id).includes(junction.id), true, "the junction gained a record when the second road joined it");
+        assert.equal(stored.document.objects.filter((record) => record.typeId === "road").length, 3);
+
+        const moved = await call("environment_move_road_node", { environmentId: "cross", nodeId: junction.id, point: { x: 50, z: 10 } });
+        assert.equal(moved.ok, true, moved.error);
+        assert.equal(moved.edgeIds.length, 2);
+        const after = await service.getEnvironment("cross");
+        const movedNode = after.document.roads.nodes.find((node) => node.id === junction.id);
+        assert.deepEqual([movedNode.x, movedNode.z, movedNode.kind], [50, 10, "intersection"]);
+        assert.ok(after.document.roads.edges.every((edge) => after.document.roads.nodes.some((node) => node.id === edge.startNodeId) && after.document.roads.nodes.some((node) => node.id === edge.endNodeId)), "connected roads stay connected");
+
+        const elevated = await call("environment_move_road_node", { environmentId: "cross", nodeId: junction.id, point: { x: 50, y: 2, z: 10 } });
+        assert.equal(elevated.ok, true);
+        assert.equal((await service.getEnvironment("cross")).document.roads.nodes.find((node) => node.id === junction.id).y, 2);
+
+        const missing = await call("environment_move_road_node", { environmentId: "cross", nodeId: "ghost", point: { x: 0, z: 0 } });
+        assert.equal(missing.isError, true);
+
+        // The overlay a command leaves behind is already complete: save-time reconcile adds and drops nothing.
+        const { manifest, document } = await loadDocument(service, "cross");
+        const { added, orphaned } = reconcileObjectGraph(document.snapshot(), document.objects, objectTypeRegistry, { sky: manifest.sky ?? null });
+        assert.deepEqual({ added, orphaned }, { added: [], orphaned: [] });
+        const removed = await call("environment_remove_road", { environmentId: "cross", edgeId: first.createdEdges[0].id });
+        assert.equal(removed.ok, true);
+        const final = await service.getEnvironment("cross");
+        assert.equal(final.document.objects.some((record) => record.id === first.createdEdges[0].id), false);
+        assert.equal(final.document.objects.some((record) => record.id === junction.id), true, "a node with two remaining roads stays a junction");
+        const failing = await call("environment_add_object", { environmentId: "nope", type: "cone", x: 0, z: 0 });
+        assert.equal(failing.isError, true);
+        assert.match(failing.error, /not found/i);
     } finally {
         await fs.rm(dir, { recursive: true, force: true });
     }

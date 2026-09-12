@@ -245,6 +245,8 @@ export class EarthImportController {
         if (scene) {
             syncRoadsFromDocument(this.data, scene, this.document);
         }
+        // The import replaced the road graph wholesale; editor history no longer applies.
+        this.data.environment?.()?.commands?.()?.reset?.();
 
         this.earthTilesManager.disposeTiles();
         this.editor.setEditorMode(EDITOR_MODES.SCENE);

@@ -263,7 +263,7 @@ export function findNearestIntersection(point, document, radiusWorld, excludeNod
     return findNearestNode(point, candidates, radiusWorld);
 }
 
-export function createIntersectionNode(document, point) {
+export function createIntersectionNode(document, point, runtime = {}) {
     let id = createId("intersection");
     while (getDocumentNode(document, id)) {
         id = createId("intersection");
@@ -278,7 +278,7 @@ export function createIntersectionNode(document, point) {
     };
     document.roads.nodes.push(node);
     markRoadsAuthored(document);
-    document.notify();
+    if (runtime.notify !== false) document.notify();
     return node;
 }
 
@@ -380,8 +380,62 @@ export function moveRoadNode(document, nodeId, point, options = {}) {
     }
     node.kind = "endpoint";
     markRoadsAuthored(document);
-    document.notify();
+    if (options.notify !== false) document.notify();
     return { ok: true, node };
+}
+
+/**
+ * Move any road nodes in XZ (and Y when supplied) regardless of degree or
+ * kind. Connected roads stay connected: incident edges keep their node ids
+ * and any explicit arm points are recomputed from the moved geometry. Node
+ * kinds are unchanged; `canMoveNode` keeps gating only the map pen's
+ * snap/connect path.
+ * @param {import("./EnvironmentDocument.js").EnvironmentDocument} document
+ * @param {Map<string, { x: number, y?: number, z: number }> | Array<[string, { x: number, y?: number, z: number }]> | Record<string, { x: number, y?: number, z: number }>} positions
+ * @param {{ notify?: boolean, markAuthored?: boolean }} [runtime]
+ */
+export function translateRoadNodes(document, positions, runtime = {}) {
+    const entries = positions instanceof Map
+        ? [...positions.entries()]
+        : Array.isArray(positions)
+            ? positions
+            : Object.entries(positions ?? {});
+    const moved = new Map();
+    for (const [nodeId, point] of entries) {
+        const node = getDocumentNode(document, String(nodeId));
+        if (!node || !point) continue;
+        if (!Number.isFinite(Number(point.x)) || !Number.isFinite(Number(point.z))) {
+            return { ok: false, error: `Road node "${nodeId}" received a non-finite position.` };
+        }
+        node.x = Number(point.x);
+        node.z = Number(point.z);
+        if (point.y !== undefined && point.y !== null && Number.isFinite(Number(point.y))) {
+            node.y = Number(point.y);
+        } else if (!Number.isFinite(Number(node.y))) {
+            node.y = 0;
+        }
+        moved.set(node.id, node);
+    }
+    if (moved.size === 0) {
+        return { ok: false, error: "No road nodes found to move." };
+    }
+
+    const edgeIds = [];
+    for (const edge of document.roads.edges) {
+        const touchesStart = moved.has(edge.startNodeId);
+        const touchesEnd = moved.has(edge.endNodeId);
+        if (!touchesStart && !touchesEnd) continue;
+        edgeIds.push(edge.id);
+        const startNode = getDocumentNode(document, edge.startNodeId);
+        const endNode = getDocumentNode(document, edge.endNodeId);
+        if (!startNode || !endNode) continue;
+        if (edge.startArm) edge.startArm = computeArmPoint(startNode, endNode);
+        if (edge.endArm) edge.endArm = computeArmPoint(endNode, startNode);
+    }
+
+    if (runtime.markAuthored !== false) markRoadsAuthored(document);
+    if (runtime.notify !== false) document.notify();
+    return { ok: true, nodeIds: [...moved.keys()], edgeIds };
 }
 
 /**
@@ -391,7 +445,7 @@ export function moveRoadNode(document, nodeId, point, options = {}) {
  * @param {{ x: number, z: number }} point
  * @param {number} snapRadius
  */
-export function connectEndpointToIntersection(document, endpointId, point, snapRadius) {
+export function connectEndpointToIntersection(document, endpointId, point, snapRadius, runtime = {}) {
     if (!canMoveNode(document, endpointId)) {
         return { ok: false, error: "Only free road endpoints can be connected." };
     }
@@ -438,7 +492,7 @@ export function connectEndpointToIntersection(document, endpointId, point, snapR
     document.roads.nodes = document.roads.nodes.filter((node) => node.id !== endpointId);
     refreshNodeKinds(document);
     markRoadsAuthored(document);
-    document.notify();
+    if (runtime.notify !== false) document.notify();
     return { ok: true, connected: true, intersection, edge };
 }
 
@@ -709,7 +763,7 @@ export function footprintDimensions(footprint) {
  * @param {{ x: number, z: number }} cornerB
  * @param {Object} [options]
  */
-export function addBuildingRectangle(document, cornerA, cornerB, options = {}) {
+export function addBuildingRectangle(document, cornerA, cornerB, options = {}, runtime = {}) {
     const footprint = normalizeRectangleFootprint(cornerA, cornerB, options.snapSize ?? 0);
     const { width, depth } = footprintDimensions(footprint);
 
@@ -729,15 +783,79 @@ export function addBuildingRectangle(document, cornerA, cornerB, options = {}) {
 
     document.buildings.push(record);
     document.buildingsAuthored = true;
-    document.notify();
+    if (runtime.notify !== false) document.notify();
     return { ok: true, record };
+}
+
+/**
+ * Add a building from an explicit footprint polygon.
+ * @param {import("./EnvironmentDocument.js").EnvironmentDocument} document
+ * @param {{ buildingId?: string, footprint: Array<{ x: number, y?: number, z: number }>, height?: number, textureId?: number, tags?: string[], meshName?: string }} building
+ * @param {{ notify?: boolean }} [runtime]
+ */
+export function addBuildingRecord(document, building, runtime = {}) {
+    const footprint = Array.isArray(building?.footprint)
+        ? building.footprint.map((point) => ({ x: Number(point.x) || 0, y: Number(point.y) || 0, z: Number(point.z) || 0 }))
+        : [];
+    if (footprint.length < 3) {
+        return { ok: false, error: "Building footprints need at least three points." };
+    }
+    let buildingId = building.buildingId ?? buildingIdFromFootprint(footprint, document.buildings.length);
+    if (document.getBuilding(buildingId)) {
+        return { ok: false, error: `Building "${buildingId}" already exists.` };
+    }
+    const record = {
+        buildingId,
+        footprint,
+        height: Number.isFinite(Number(building.height)) ? Number(building.height) : 10,
+        textureId: building.textureId ?? 0,
+        tags: [...(building.tags ?? ["building"])],
+        meshName: building.meshName ?? buildingId,
+    };
+    document.buildings.push(record);
+    document.buildingsAuthored = true;
+    if (runtime.notify !== false) document.notify();
+    return { ok: true, record };
+}
+
+/**
+ * Replace a building's footprint and height with absolute values.
+ * @param {import("./EnvironmentDocument.js").EnvironmentDocument} document
+ * @param {string} buildingId
+ * @param {{ footprint?: Array<{ x: number, y?: number, z: number }>, height?: number }} shape
+ * @param {{ notify?: boolean }} [runtime]
+ */
+export function setBuildingFootprint(document, buildingId, shape = {}, runtime = {}) {
+    const building = document.getBuilding(buildingId);
+    if (!building) return { ok: false, error: "Building not found." };
+    if (Array.isArray(shape.footprint)) {
+        if (shape.footprint.length < 3) {
+            return { ok: false, error: "Building footprints need at least three points." };
+        }
+        building.footprint = shape.footprint.map((point) => ({
+            x: Number(point.x) || 0,
+            y: Number(point.y) || 0,
+            z: Number(point.z) || 0,
+        }));
+    }
+    if (shape.height !== undefined) {
+        const height = Number(shape.height);
+        if (!Number.isFinite(height) || height <= 0) {
+            return { ok: false, error: "Building height must be a positive number." };
+        }
+        building.height = height;
+    }
+    document.buildingsAuthored = true;
+    if (runtime.notify !== false) document.notify();
+    return { ok: true, building };
 }
 
 /**
  * @param {import("./EnvironmentDocument.js").EnvironmentDocument} document
  * @param {Object} feature
+ * @param {{ notify?: boolean }} [runtime]
  */
-export function addFeature(document, feature) {
+export function addFeature(document, feature, runtime = {}) {
     const record = {
         id: feature.id ?? createId("feature"),
         type: feature.type,
@@ -748,9 +866,12 @@ export function addFeature(document, feature) {
         tags: [...(feature.tags ?? [])],
     };
 
+    if (document.getFeature(record.id)) {
+        return { ok: false, error: `Feature "${record.id}" already exists.` };
+    }
     document.features.push(record);
     document.featuresAuthored = true;
-    document.notify();
+    if (runtime.notify !== false) document.notify();
     return { ok: true, record };
 }
 
@@ -758,7 +879,7 @@ export function addFeature(document, feature) {
  * @param {import("./EnvironmentDocument.js").EnvironmentDocument} document
  * @param {string} buildingId
  */
-export function removeBuilding(document, buildingId) {
+export function removeBuilding(document, buildingId, runtime = {}) {
     const index = document.buildings.findIndex((building) => building.buildingId === buildingId);
     if (index === -1) {
         return { ok: false, error: "Building not found." };
@@ -766,7 +887,7 @@ export function removeBuilding(document, buildingId) {
 
     document.buildings.splice(index, 1);
     document.buildingsAuthored = true;
-    document.notify();
+    if (runtime.notify !== false) document.notify();
     return { ok: true };
 }
 
@@ -774,7 +895,7 @@ export function removeBuilding(document, buildingId) {
  * @param {import("./EnvironmentDocument.js").EnvironmentDocument} document
  * @param {string} featureId
  */
-export function removeFeature(document, featureId) {
+export function removeFeature(document, featureId, runtime = {}) {
     const index = document.features.findIndex((feature) => feature.id === featureId);
     if (index === -1) {
         return { ok: false, error: "Feature not found." };
@@ -782,7 +903,7 @@ export function removeFeature(document, featureId) {
 
     document.features.splice(index, 1);
     document.featuresAuthored = true;
-    document.notify();
+    if (runtime.notify !== false) document.notify();
     return { ok: true };
 }
 
@@ -791,7 +912,7 @@ export function removeFeature(document, featureId) {
  * @param {string} featureId
  * @param {{ x: number, z: number }} point
  */
-export function moveFeature(document, featureId, point) {
+export function moveFeature(document, featureId, point, runtime = {}) {
     const feature = document.features.find((record) => record.id === featureId);
     if (!feature) {
         return { ok: false, error: "Feature not found." };
@@ -800,7 +921,7 @@ export function moveFeature(document, featureId, point) {
     feature.x = point.x;
     feature.z = point.z;
     document.featuresAuthored = true;
-    document.notify();
+    if (runtime.notify !== false) document.notify();
     return { ok: true, feature };
 }
 
@@ -864,11 +985,15 @@ export function transformFeature(document, featureId, transform, options = {}) {
     return { ok: true, feature };
 }
 
+/** Absolute setter alias used by transform plans. */
+export const setFeatureTransform = transformFeature;
+
 /**
  * @param {import("./EnvironmentDocument.js").EnvironmentDocument} document
  * @param {string} edgeId
+ * @param {{ notify?: boolean }} [runtime]
  */
-export function removeRoadEdge(document, edgeId) {
+export function removeRoadEdge(document, edgeId, runtime = {}) {
     const edgeIndex = document.roads.edges.findIndex((edge) => edge.id === edgeId);
     if (edgeIndex === -1) {
         return { ok: false, error: "Road not found." };
@@ -891,7 +1016,7 @@ export function removeRoadEdge(document, edgeId) {
 
     refreshNodeKinds(document);
     markRoadsAuthored(document);
-    document.notify();
+    if (runtime.notify !== false) document.notify();
     return { ok: true };
 }
 
@@ -899,7 +1024,7 @@ export function removeRoadEdge(document, edgeId) {
  * @param {import("./EnvironmentDocument.js").EnvironmentDocument} document
  * @param {string} nodeId
  */
-export function removeIntersectionNode(document, nodeId) {
+export function removeIntersectionNode(document, nodeId, runtime = {}) {
     const node = getDocumentNode(document, nodeId);
     if (!node || !isIntersectionNode(document, node)) {
         return { ok: false, error: "Intersection not found." };
@@ -934,7 +1059,7 @@ export function removeIntersectionNode(document, nodeId) {
 
     refreshNodeKinds(document);
     markRoadsAuthored(document);
-    document.notify();
+    if (runtime.notify !== false) document.notify();
     return { ok: true, removedEdges: connectedEdges.length };
 }
 
@@ -1009,6 +1134,7 @@ export function documentToRoadNetworkInputs(document) {
         edge.endNodeId,
         edge.bidirectional !== false,
         {
+            id: edge.id,
             width: edge.width,
             laneCount: edge.laneCount,
             shoulderWidth: edge.shoulderWidth,

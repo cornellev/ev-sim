@@ -10,7 +10,15 @@
  * @typedef {import("../objects/objectRecord.js").ObjectRecord} ObjectRecord
  */
 
-import { OBJECT_GRAPH_VERSION, cloneObjectRecord } from "../objects/objectRecord.js";
+import { OBJECT_GRAPH_VERSION, cloneObjectRecord, sortObjectRecords } from "../objects/objectRecord.js";
+import { legacyIndex } from "../objects/objectGraph.js";
+import {
+    CHANGE_DOMAINS,
+    CHANGE_SCALARS,
+    diffSnapshots,
+    domainKeyOf,
+    isEmptyChangeSet,
+} from "./ChangeSet.js";
 
 const DEFAULT_ROAD_EDGE = Object.freeze({
     bidirectional: true,
@@ -69,6 +77,12 @@ export class EnvironmentDocument {
         /** @type {ObjectRecord[]} */
         this.objects = Array.isArray(options.objects) ? options.objects.map(cloneObjectRecord) : [];
         this.subscribers = new Set();
+        // ED-02: monotonic change counter and transaction state. Every
+        // delivered notification bumps `version`; nested transactions collapse
+        // into one notification carrying a merged change set.
+        this.version = 0;
+        this.transactionDepth = 0;
+        this.pendingNotify = false;
     }
 
     snapshot() {
@@ -98,7 +112,7 @@ export class EnvironmentDocument {
      * Restore a prior snapshot produced by {@link snapshot}.
      * @param {ReturnType<EnvironmentDocument["snapshot"]>} manifest
      */
-    restoreSnapshot(manifest) {
+    restoreSnapshot(manifest, { notify = true } = {}) {
         this.environmentId = manifest.environmentId ?? this.environmentId;
         this.chunkSize = manifest.chunkSize ?? this.chunkSize;
         this.roadsAuthored = manifest.roadsAuthored === true;
@@ -119,13 +133,112 @@ export class EnvironmentDocument {
             : [];
         this.earth = manifest.earth ? cloneEarthSource(manifest.earth) : null;
         this.objects = Array.isArray(manifest.objects) ? manifest.objects.map(cloneObjectRecord) : [];
-        this.notify();
+        if (notify) this.notify({ source: "restore" });
     }
 
-    /** Replace the authoring overlay without touching geometry. */
-    replaceObjectGraph(records) {
-        this.objects = Array.isArray(records) ? records.map(cloneObjectRecord) : [];
-        this.notify();
+    /** Replace the authoring overlay without touching geometry. Stored in canonical `(order, id)` order. */
+    replaceObjectGraph(records, { notify = true } = {}) {
+        this.objects = sortObjectRecords(Array.isArray(records) ? records.map(cloneObjectRecord) : []);
+        if (notify) this.notify();
+    }
+
+    /**
+     * Replace, insert, or delete records of one change domain by key. A null
+     * record deletes. Clones through the domain's canonical shape and keeps
+     * turn rules and object records in canonical order.
+     * @param {string} domain one of CHANGE_DOMAINS
+     * @param {Iterable<[string, object|null]>} entries
+     */
+    replaceDomainRecords(domain, entries, { notify = true } = {}) {
+        if (!CHANGE_DOMAINS.includes(domain)) throw new TypeError(`Unknown change domain "${domain}".`);
+        const list = domainArray(this, domain);
+        const cloner = DOMAIN_CLONERS[domain];
+        let changed = false;
+        for (const [key, record] of entries instanceof Map ? entries.entries() : entries) {
+            const index = list.findIndex((candidate) => domainKeyOf(domain, candidate) === String(key));
+            if (record === null || record === undefined) {
+                if (index >= 0) {
+                    list.splice(index, 1);
+                    changed = true;
+                }
+                continue;
+            }
+            const cloned = cloner(record);
+            if (index >= 0) list[index] = cloned;
+            else list.push(cloned);
+            changed = true;
+        }
+        if (domain === "roads.turnRules") list.sort(compareTurnRules);
+        if (domain === "objects") this.objects = sortObjectRecords(list);
+        if (changed && notify) this.notify();
+        return changed;
+    }
+
+    /** Set one tracked scalar (`earth`, authored flags, `chunkSize`). */
+    setScalar(name, value, { notify = true } = {}) {
+        if (!CHANGE_SCALARS.includes(name)) throw new TypeError(`Unknown change scalar "${name}".`);
+        if (name === "earth") this.earth = value ? cloneEarthSource(value) : null;
+        else if (name === "chunkSize") this.chunkSize = Number.isFinite(Number(value)) ? Number(value) : this.chunkSize;
+        else this[name] = value === true;
+        if (notify) this.notify();
+    }
+
+    /**
+     * Run `fn` as one unit of change. Mutations inside may call `notify()`
+     * freely; subscribers receive a single notification afterwards carrying
+     * the change set between the entry and exit snapshots. Nested
+     * transactions fold into the outermost one.
+     * @template T
+     * @param {(document: EnvironmentDocument) => T} fn
+     * @param {{ source?: string, transient?: boolean, label?: string }} [meta]
+     * @returns {{ result: T, changeSet: object|null }}
+     */
+    transaction(fn, meta = {}) {
+        if (this.transactionDepth > 0) {
+            this.transactionDepth += 1;
+            try {
+                return { result: fn(this), changeSet: null };
+            } finally {
+                this.transactionDepth -= 1;
+            }
+        }
+        const before = this.snapshot();
+        this.transactionDepth = 1;
+        this.pendingNotify = false;
+        let result;
+        try {
+            result = fn(this);
+        } finally {
+            this.transactionDepth = 0;
+        }
+        const changeSet = diffSnapshots(before, this.snapshot(), {
+            source: meta.source ?? "command",
+            transient: meta.transient === true,
+            ...(meta.label ? { label: meta.label } : {}),
+            ...(meta.commandId ? { commandId: meta.commandId } : {}),
+            ...(meta.gestureId ? { gestureId: meta.gestureId } : {}),
+            ...(meta.delta ? { delta: meta.delta } : {}),
+        });
+        const hadPending = this.pendingNotify;
+        this.pendingNotify = false;
+        if (!isEmptyChangeSet(changeSet)) {
+            this.notify({ source: changeSet.meta.source, transient: changeSet.meta.transient, changeSet });
+        } else if (hadPending && meta.notifyEmpty === true) {
+            this.notify({ source: meta.source ?? "command", transient: meta.transient === true, changeSet: null });
+        }
+        return { result, changeSet: isEmptyChangeSet(changeSet) ? null : changeSet };
+    }
+
+    /**
+     * Canonical legacy index plus an object-record map for the current
+     * document state. Recomputed on every call; callers hold it for the span
+     * of one plan or diff.
+     */
+    index() {
+        const index = legacyIndex(this);
+        const objects = new Map();
+        for (const record of this.objects) objects.set(String(record.id), record);
+        return { ...index, objects };
     }
 
     /**
@@ -149,18 +262,44 @@ export class EnvironmentDocument {
         this.notify();
     }
 
+    /**
+     * Subscribe to document changes. The callback receives
+     * `(snapshot, event)` where `event` is
+     * `{ version, transient, changeSet, source }`; the immediate call on
+     * subscribe carries `source: "subscribe"`.
+     */
     subscribe(callback) {
         if (typeof callback !== "function") return () => {};
         this.subscribers.add(callback);
-        callback(this.snapshot());
+        callback(this.snapshot(), { version: this.version, transient: false, changeSet: null, source: "subscribe" });
         return () => {
             this.subscribers.delete(callback);
         };
     }
 
-    notify() {
+    /**
+     * Notify subscribers. Inside a transaction the call is deferred so the
+     * transaction can publish once with its change set.
+     * @param {{ source?: string, transient?: boolean, changeSet?: object|null }} [event]
+     */
+    notify(event = null) {
+        if (this.transactionDepth > 0) {
+            this.pendingNotify = true;
+            return;
+        }
+        this.version += 1;
+        const payload = {
+            version: this.version,
+            transient: event?.transient === true,
+            changeSet: event?.changeSet ?? null,
+            source: event?.source ?? "mutation",
+        };
         const snapshot = this.snapshot();
-        this.subscribers.forEach((callback) => callback(snapshot));
+        this.subscribers.forEach((callback) => callback(snapshot, payload));
+    }
+
+    get inTransaction() {
+        return this.transactionDepth > 0;
     }
 
     getNode(nodeId) {
@@ -301,5 +440,34 @@ function cloneEarthSource(earth) {
         importedAt: earth?.importedAt ?? null,
     };
 }
+
+function domainArray(document, domain) {
+    switch (domain) {
+        case "roads.nodes":
+            return document.roads.nodes;
+        case "roads.edges":
+            return document.roads.edges;
+        case "roads.turnRules":
+            document.roads.turnRules ??= [];
+            return document.roads.turnRules;
+        case "buildings":
+            return document.buildings;
+        case "features":
+            return document.features;
+        case "objects":
+            return document.objects;
+        default:
+            throw new TypeError(`Unknown change domain "${domain}".`);
+    }
+}
+
+const DOMAIN_CLONERS = Object.freeze({
+    "roads.nodes": cloneNode,
+    "roads.edges": cloneEdge,
+    "roads.turnRules": cloneTurnRule,
+    buildings: cloneBuilding,
+    features: cloneFeature,
+    objects: cloneObjectRecord,
+});
 
 export { DEFAULT_ROAD_EDGE };

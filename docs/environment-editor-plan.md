@@ -24,11 +24,15 @@ ED PR changes a contract, hash, gate, or milestone status.
 
 ## Status
 
-- Next milestone: **ED-02 — Commands and hierarchy**.
+- Next milestone: **ED-03 — Workspace and inspector**.
 - Implemented: **ED-01 — Contracts** (object registry, options validation,
-  schema-v4 adapters behind `CEV_SIM_ENVIRONMENT_SCHEMA_V4`, compatibility
-  fixtures). Existing environments retain their legacy behavior; the default
-  writer still emits schema v3.
+  schema-v4 adapters, compatibility fixtures) and **ED-02 — Commands and
+  hierarchy** (`SelectionStore`, `CommandBus` with transactions, gestures, and
+  undo/redo, nested groups with baked transforms, transform bindings that plan
+  document changes, the incremental `SceneProjector`,
+  `EditorPresentationRegistry`, MCP routed through the same commands, and the
+  schema-v4 default writer). Existing environments retain their legacy
+  behavior; `CEV_SIM_ENVIRONMENT_SCHEMA_V4=0` is a temporary v3 opt-out.
 - Program goal: one consistent interaction model across hierarchy, scene, map,
   inspector, and asset library, with a modular object system that adds a type
   through one definition, one options validator, and its metric/render
@@ -42,7 +46,7 @@ ED PR changes a contract, hash, gate, or milestone status.
   proxies are set up; LiDAR authoring supports generated meshes and editable
   primitives.
 - Default implementation/review reasoning level: **Extra High**.
-- Last updated: **2026-09-11 — ED-01 implemented**.
+- Last updated: **2026-09-11 — ED-02 implemented**.
 
 ## Normative contracts
 
@@ -65,14 +69,21 @@ ED PR changes a contract, hash, gate, or milestone status.
   locks, and editor visibility do not affect metric identity. Geometry, lane
   direction, and enabled proxies do.
 - Standard components are `tags: string[]`, `locked: boolean`, and
-  `editorHidden: boolean`; groups additionally persist `transform`
-  (position, yaw, uniform scale; identity until ED-02 attaches nested
-  transforms). Registered types reject unknown component keys. Records whose
+  `editorHidden: boolean`; groups additionally persist `transform`, a world
+  pivot frame (position, yaw, uniform scale). A group transform bakes the
+  world delta into every non-group descendant's legacy record exactly once
+  and composes it into every descendant group's frame exactly once; the frame
+  is never re-applied to children, so legacy domains stay absolute and
+  `worldHash` is unchanged. Registered types reject unknown component keys. Records whose
   `typeId` is not registered are preserved verbatim, reported as
   `object.type.unsupported`, and never substituted; simulation admission fails
   when required metric behavior is unavailable.
-- Canonical order is `(order, id)`. Object ids are a separate namespace from
-  runtime registry ids (`road:<edgeId>`, `fusion:…`).
+- Canonical order is `(order, id)`; `order` is sibling-relative and dense
+  (reparent, group, ungroup, and duplicate renumber the affected siblings).
+  Object ids are the editor's selection identity and a separate namespace from
+  runtime registry ids (`road:<edgeId>`, `intersection:<nodeId>`,
+  `building:<buildingId>`, `fusion:<featureId>`), which
+  `app/3d/editor/selection/selectionIds.js` derives and never stores.
 
 ### Object types, options, and validation
 
@@ -89,6 +100,18 @@ ED PR changes a contract, hash, gate, or milestone status.
   `get(typeId)` resolves the latest version; `get(typeId, version)` is exact.
   `defineObjectType()` fills standard implementations so a type needs only the
   members that differ.
+- A transform binding is `{ kind, read(legacy, context), plan(delta, context) }`.
+  A `TransformDelta` is a world-space column-major 4×4 matrix
+  (`objects/transformDelta.js`, kernel-safe). `plan()` returns plain
+  `PlanStep`s (`move-node`, `set-feature-transform`, `set-building-footprint`,
+  `set-object-component`) or structured `transform.*` issues
+  (`not-transformable`, `locked`, `scale.unsupported`, `scale.non-uniform`,
+  `rotation.unsupported`, `object.missing`) and never mutates. Props accept yaw
+  and planar translation; buildings accept yaw, translation, and scale (height
+  follows the Y scale); road edges and intersections translate their nodes;
+  groups compose the delta into their frame; `asset-instance` is not
+  transformable until ED-06. `road`/`intersection` are transformable and
+  intersections are deletable.
 - `ObjectOptions` subclasses must implement `getDefaults`, `getFields`,
   `normalize`, and `validate`; the base constructor rejects partial subclasses.
   Field descriptors are frozen `{ path: string[], label, control, units?, min?,
@@ -123,25 +146,134 @@ ED PR changes a contract, hash, gate, or milestone status.
   groups and unknown types), adds records for uncovered legacy entities, and
   drops legacy-bound records whose counterpart vanished. It never touches
   geometry. The loader, MCP `loadDocument`/`saveDocument`, and the v4 writer
-  reconcile; ED-02's CommandBus keeps overlays live in-session.
+  reconcile; the CommandBus keeps the overlay live in-session, so save-time
+  reconcile is a no-op after any committed command.
+
+### Commands, gestures, and history
+
+- `app/3d/editor/commands/` is the single mutation path for tools, chrome, and
+  MCP. It may import Three math and the document layer; it never imports
+  React, DOM globals, scene adapters, the runtime registry, or `/city/`,
+  `/earth/`, `/overlay/`, `/map/`, `/tools/`, `/projection/` (grep test in
+  `tests/command-bus.test.js`). Ownership: `objects/` plans, `commands/`
+  applies, `projection/` renders.
+- `EnvironmentDocument` carries a monotonic `version`, `transaction(fn, meta)`,
+  `replaceDomainRecords(domain, entries)`, `setScalar(name, value)`, and
+  `index()`. Every notification delivers `(snapshot, event)` with
+  `event = { version, transient, changeSet, source }`. Transient events
+  describe in-progress gesture frames; persistence ignores them (and
+  `source: "cancel"`) and the projector consumes them. Every
+  `documentMutations` helper honors `{ notify: false }`.
+- A `ChangeSet` (`document/ChangeSet.js`) records, per domain (`roads.nodes`,
+  `roads.edges`, `roads.turnRules`, `buildings`, `features`, `objects`) and per
+  scalar (`earth`, `*Authored`, `chunkSize`), the complete before and after
+  record keyed by id. `applyChangeSet(document, changeSet, "before" | "after")`
+  is total and idempotent; undo and redo are exactly these calls.
+- `translateRoadNodes` moves any road node in XZ (and optionally Y) regardless
+  of degree or kind and rewrites the explicit arm points of incident edges;
+  connected roads stay connected. `canMoveNode` gates only the map pen's
+  snap/connect path.
+- `CommandBus.execute(command)` runs `command.run(ctx)` inside one document
+  transaction, reconciles the live overlay, validates the object graph with
+  `validateObjectRecords`, and either commits exactly one change set to history
+  or restores the document byte-identically and returns structured issues
+  (`command.*`, `transform.*`, or `object.*` codes). `bus.transaction(label, fn)`
+  groups several commands into one history entry and aborts atomically. History
+  is bounded (200) and reset by `EnvironmentLoader.apply` and Earth Import apply.
+- Gestures: `beginGesture({ objectIds, sub, label })` captures the pristine
+  records of the transform closure (roots pruned to ancestors, groups expanded
+  to descendants, legacy dependencies collected through `getDependencies` with
+  `context.legacy`, incident edges included); each `updateGesture(delta)`
+  restores that capture and re-applies the cumulative delta (idempotent) and
+  notifies `transient: true` with a change set relative to the last frame;
+  `commitGesture` publishes one non-transient change set (none for a no-op
+  drag; a rejected last frame commits nothing); `cancelGesture` restores the
+  capture and publishes `source: "cancel"`, never entering history. One gesture
+  is active at a time; executing a command or undo cancels it first.
+- Shared road nodes reached through several selected objects (an edge and its
+  junction, two edges sharing a node) are planned exactly once. Locked objects,
+  non-transformable types, non-uniform scale on groups or multi-selections, and
+  scale on props reject the whole plan before any mutation.
+- Reparent validates the complete candidate array before commit; cycles,
+  self-parenting, missing or non-group parents, and non-groupable roots are
+  rejected atomically; world placement is unchanged because no geometry or
+  frame changes. Group creates a group at the first root's slot with its frame
+  at the roots' centroid; ungroup releases children into the group's slot;
+  duplicate copies props, buildings, and groups (new ids, `name copy`, placed
+  after the source) and rejects roads, intersections, skybox, and tile until
+  ED-04; delete cascades through descendants and rejects skybox, tile,
+  asset-instance, unknown types, and locked records atomically.
+- MCP mutations run the same commands through `EnvironmentCommandService`
+  (`loadDocument` builds the service); `environment_move_road_node` moves
+  junctions in XZ and keeps connected roads connected.
+
+### Selection and projection
+
+- Selection identity is object ids plus an optional sub-object
+  `{ kind: "road-node", id }` for endpoint nodes without a record
+  (`SelectionStore`: ordered ids, primary, modes `replace | add | toggle |
+  remove`, `prune`, `suppress`). Registry entity ids are derived, never stored.
+  Selection never marks the environment dirty; the persisted editor state is
+  `EditorState.persistedSnapshot()` (layers, hidden ids, mode, map viewport,
+  earth import).
+- `SceneProjector.applyChanges(changeSet)` is the only path from a document
+  change to runtime meshes, registry entities, chunk membership, and LiDAR
+  truth triangles; `EnvironmentLoader.apply` and Earth Import apply remain the
+  load-time full rebuilds. Props move in place; buildings follow the cumulative
+  delta on their existing mesh during a gesture and regenerate once on any
+  non-transient change with triangles replaced only for that building; roads
+  rebuild the local closure only (E1 = changed edges and edges incident to
+  changed nodes; J1 = junctions at their endpoints that are or were rendered;
+  E2 = E1 plus every edge incident to J1), keyed by id, with intersections
+  outside J1 relinked to replaced `Road` objects and `replaceTriangles` scoped
+  by source id. Insets are planned over the whole graph
+  (`planRoadNetwork`); only the closure is materialized
+  (`materializeRoadNetwork`). Browser-only helpers (placement catalog,
+  building generator) are injected by the loader so `Environment` and the
+  projector load under node.
+- Runtime road identity is `road:<edgeId>` / `intersection:<nodeId>` /
+  `road-node:<nodeId>`; `road:<index>` aliases exist only after a full load.
+  Runtime hydration marks junction kinds sticky, so a junction reduced to one
+  road keeps its intersection record without a runtime entity (ED-04 revisits
+  topology).
+
+### Presentation and shortcuts
+
+- `EditorPresentationRegistry` (`app/3d/editor/presentation/`) maps a `typeId`
+  to `{ icon, label, getMenuOptions(ctx, defaults), getInspectorSections(ctx,
+  defaults), renderPreview }`. Unregistered types fall back to a
+  capability-derived default (rename, frame, duplicate, group, ungroup,
+  hide/show, lock/unlock, delete; object, transform, options, and unsupported
+  sections). Hierarchy and inspector consume it exclusively; the hierarchy tree
+  model (`hierarchyModel.js`) is pure. A new type appears in both by
+  registration alone (`tests/editor-presentation.test.js`).
+- Editor shortcuts (`Mod+Z`, `Shift+Mod+Z` / `Ctrl+Y`, `Mod+D`, `Delete` /
+  `Backspace`, `Mod+G`, `Shift+Mod+G`, `F`) register through
+  `ShortcutProvider`, never fire in editable fields, and consume the event only
+  when the command succeeds. `matchesShortcut` understands `Mod`, `Ctrl`,
+  `Alt`, and `Shift` prefixes; bare letters never fire with Cmd/Ctrl/Alt held.
+  Escape cancels an active gesture, then exits the tool, then clears the
+  selection (`EditorToolController`).
+- The only development flag is the localStorage preference
+  `cev-sim.ui.environmentEditor.groupFrameFields` (default off) gating the
+  bespoke editable group-frame inputs that ED-03's generic fields replace.
 
 ### Schema v4 and write policy
 
 - Readers accept schema versions `2`, `3`, and `4`. v2/v3 read views never
   inject a graph ("implied, not injected"); `presentEnvironmentObjectGraph`
   derives one in memory. v4 read views structurally normalize `objects`.
-- Writes produce v3 unless the server is started with
-  `CEV_SIM_ENVIRONMENT_SCHEMA_V4=1` (`StorageService` option
-  `environmentSchemaVersion: 4`; the constructor does not read the environment
-  so tests stay deterministic). The default writer strips `objects` and
-  `objectGraphVersion`, which is lossless in ED-01 because the overlay is fully
-  derivable and no UI yet writes names, locks, or groups.
+- Writes produce v4 by default since ED-02 (`StorageService` option
+  `environmentSchemaVersion` defaults to `4`; `3` opts out, and the server maps
+  `CEV_SIM_ENVIRONMENT_SCHEMA_V4=0` to `3` as a temporary escape hatch retired
+  in ED-03; the constructor does not read the environment so tests stay
+  deterministic). The v3 writer strips `objects` and `objectGraphVersion`,
+  which is lossy once names, groups, locks, or hidden flags are authored.
 - A v4 write reconciles the incoming graph against the legacy domains,
   validates it, and rejects error-severity issues atomically with HTTP `400`
   `ENVIRONMENT_OBJECT_GRAPH_INVALID` and an `issues` array. Nothing is written
   on rejection.
-- Sticky v4: a stored v4 file is never rewritten as v3, even if the flag is
-  cleared.
+- Sticky v4: a stored v4 file is never rewritten as v3, even under the opt-out.
 - The first v4 save over a v2/v3 file stores a write-once copy at
   `<dataDir>/environment-migrations/<id>.pre-v4.json`
   (`{ kind: "cev-sim.environment-pre-migration", version: 1, environmentId,
@@ -149,13 +281,16 @@ ED PR changes a contract, hash, gate, or milestone status.
   The directory is separate because `environments/` is catalog-scanned and
   `environment-transactions/` is journal-scanned. Recovery is a manual restore
   of `manifest` in ED-01.
-- Downgrade rejection: when the stored file is v4 with records and the
-  incoming `document` is an object without an `objects` array, the write is an
+- Downgrade rejection: when the stored file is v4 with records, the incoming
+  `document` is an object without an `objects` array, and the stored overlay
+  carries authored data (`objectGraphHasAuthoredData`: groups, unknown types,
+  renames, parents, tags, locks, hidden flags, group frames), the write is an
   old client and fails with HTTP `409` `ENVIRONMENT_SCHEMA_DOWNGRADE`
-  (`storedSchemaVersion`, `incomingSchemaVersion`, `currentRevision`). The
-  guard keys on the objects array, not the declared version, because
-  graph-aware browsers still declare `schemaVersion: 3` in ED-01. Writes that
-  omit `document` (rename) reuse the stored document and pass.
+  (`storedSchemaVersion`, `incomingSchemaVersion`, `currentRevision`). A purely
+  derived overlay loses nothing and is re-derived instead (ED-02). The guard
+  keys on the objects array, not the declared version, because graph-aware
+  browsers still declare `schemaVersion: 3`. Writes that omit `document`
+  (rename) reuse the stored document and pass.
 - MCP `environment_add_object` rejects unregistered types with
   `ENVIRONMENT_OBJECT_TYPE_UNSUPPORTED`; `environment_validate` returns
   geometric `conflicts` plus object-graph `issues`; `environment_get`
@@ -225,7 +360,15 @@ in-session overlay is kept live by commands instead of reconciled on write.
 **Merge gate:** cross-panel changes agree immediately; interaction tests for
 select, drag, cancel, undo, redo, duplicate, reparent, and reload; group tests
 for nested transforms, preserved world placement, cycle rejection, shared road
-nodes moved once, and atomic rejection of unsupported transforms.
+nodes moved once, and atomic rejection of unsupported transforms. Delivered as
+five slices: ED-02a document core (`version`, transactions, `ChangeSet`,
+`translateRoadNodes`, `transformDelta`, `binding.plan()`), ED-02b commands
+(`CommandBus`, gestures, planner, object and legacy commands, live overlay,
+`SelectionStore`, `EnvironmentCommandService`, MCP), ED-02c projection
+(`SceneProjector`, `planRoadNetwork`/`materializeRoadNetwork`, tool and map
+rewiring, persistence subscription), ED-02d presentation
+(`EditorPresentationRegistry`, hierarchy tree, inspector, shortcuts), ED-02e
+the schema-v4 default and documentation.
 
 ### ED-03 — Workspace and inspector
 
@@ -240,8 +383,8 @@ and active states, editable generic fields (`NumberField`, `Vector3Field`,
 from `getFields()`, mixed values during multi-selection, the Skybox inspector,
 keyboard interactions (Q/W/E/R, F, Escape, Delete, undo/redo) scoped to the
 workspace and never consuming typing in fields, a usable layout at 1280 × 720
-with the desktop-size guard retained, and the default flip of the schema-v4
-writer.
+with the desktop-size guard retained, and retirement of the
+`CEV_SIM_ENVIRONMENT_SCHEMA_V4=0` opt-out.
 
 **Merge gate:** Playwright and accessibility checks for the main workflow at
 1280 × 720; virtualized large hierarchies; canvas and camera projection resize
@@ -364,7 +507,11 @@ node --experimental-default-type=module --test \
   tests/environment-persistence.test.js tests/environment-loader.test.js \
   tests/document-geometry.test.js tests/authoring-mode.test.js \
   tests/storage-service.test.js tests/storage-events.test.js \
-  tests/object-registry.test.js tests/object-graph.test.js tests/mcp-tools.test.js
+  tests/object-registry.test.js tests/object-graph.test.js tests/mcp-tools.test.js \
+  tests/document-changeset.test.js tests/command-bus.test.js tests/command-groups.test.js \
+  tests/scene-projector.test.js tests/editor-interactions.test.js \
+  tests/editor-presentation.test.js tests/road-elevation.test.js \
+  tests/ui-interactions.test.js tests/ui-conventions.test.js
 npm run lint
 npm test
 npm run fixtures:headless && git diff --exit-code -- tests/fixtures/headless/characterization.v1.json
@@ -383,7 +530,22 @@ Record in the ledger: focused-suite pass counts, `npm run lint` result,
   `PYTHON=python3.12 npm run dist:verify` ok (the kernel bundle now reaches
   `app/3d/editor/objects/types/builtinProp.js`; the local default `python3`
   is 3.14 and outside the wheel's declared range, unrelated to ED-01).
-- [ ] ED-02 — Commands and hierarchy.
+- [x] ED-02 — Commands and hierarchy. Local acceptance evidence (2026-09-11):
+  focused ED suites 231/231 passed across the 22 files in the verification
+  block (the ED-01 baseline was 162 across 13); `npm run lint` zero errors, one
+  pre-existing warning in `app/client/Client.js`; `npm test` 1068/1072 passed
+  with four declared hardware/host skips and zero failures; `npm run
+  fixtures:headless` no delta; `npm run fixtures:environment-editor` no delta
+  (`worldHash`, `roadNetworkHash`, and `lidarGeometryHash` unchanged with group
+  transforms baked into legacy records); `npm run dist:headless` ok (the kernel
+  bundle now also reaches `app/3d/editor/objects/transformDelta.js`). Merge-gate
+  coverage: select/drag/cancel/undo/redo/duplicate/reparent/reload in
+  `tests/editor-interactions.test.js`; nested transforms, preserved world
+  placement, cycle rejection, shared nodes moved once, and atomic rejection in
+  `tests/command-groups.test.js`; the drag-does-not-rebuild-the-world check in
+  `tests/scene-projector.test.js`; the extension demonstration in
+  `tests/editor-presentation.test.js`. Playwright/accessibility checks arrive
+  with ED-03's workspace.
 - [ ] ED-03 — Workspace and inspector.
 - [ ] ED-04 — Road geometry.
 - [ ] ED-05 — Lane authoring.
@@ -403,6 +565,63 @@ React, Three.js, Radix, styling tokens, and Tabler icons, the
 revision-guarded environment `PUT`, and the `worldHash` / visual-identity
 rules from the headless and visual plans. Legacy geometry domains remain
 canonical until a milestone explicitly versions the world description.
+
+### 2026-09-11 — Implement ED-02 commands and hierarchy
+
+Three decisions were taken with the human before implementation. Group
+transforms bake into children: the group `transform` component is a world
+pivot frame, a group gesture applies the world delta once to every non-group
+descendant's legacy record and composes it once into every descendant group's
+frame, and legacy domains stay absolute, so `createWorldDescription`,
+`worldHash`, and the compatibility baseline are untouched (persisting
+parent-relative transforms would have required versioning the world
+description inside ED-02). Roads rebuild only their local closure (changed
+edges, the intersections at their endpoints, and those intersections' other
+incident edges) with insets planned over the whole graph; per-edge geometry
+waits for ED-04's `RoadGeometry`. Schema v4 became the default writer in ED-02
+rather than ED-03 because the overlay stops being derivable the moment a group,
+rename, lock, or hidden flag is authored; `CEV_SIM_ENVIRONMENT_SCHEMA_V4=0` is
+a temporary opt-out retired in ED-03, and AGENTS.md was updated accordingly.
+
+Layering: `objects/` plans (bindings return plain `PlanStep`s from a
+kernel-safe `TransformDelta`), `commands/` applies (the only mutation path,
+grep-tested against React, DOM, scene adapters, and the registry), and
+`projection/` renders (`SceneProjector` is the only path from a change set to
+runtime meshes, registry, chunks, and LiDAR truth). `ChangeSet` lives in
+`document/` so the document can diff its own transactions without importing
+the command layer. Undo and redo are whole-record before/after replacement,
+which makes the non-idempotent footprint transform safe. Gesture frames restore
+the pristine capture and re-apply the cumulative delta, so a drag is one
+history entry whatever the pointer does; frames are `transient` and persistence
+ignores them and cancels. `order` is sibling-relative and dense. MCP mutations
+run the same commands and `environment_move_road_node` moves junctions in XZ.
+Duplicate covers props, buildings, and groups until ED-04 owns road topology.
+
+The old-client downgrade guard was refined: a graph-unaware write over a stored
+v4 overlay is rejected only when the overlay carries authored data
+(`objectGraphHasAuthoredData`); a purely derived overlay is re-derived from the
+new geometry, so visual-reference, duplicate, rename, and import flows that
+never touch the overlay keep working after the default flip. For the same
+reason the run-bundle import identity (`environmentImportHash`) now ignores
+`document.objects` and `objectGraphVersion` alongside `schemaVersion`,
+`visualLayer`, and `evidence`, so a v2/v3 bundle environment re-resolves
+against its stored v4 twin instead of importing a conflicting copy (the VIS-12a
+legacy import test would otherwise change `roadNetworkHash` through the
+suffixed environment id). Runtime hydration
+marks junction kinds sticky, so a junction reduced to one road keeps its
+intersection record without a runtime entity; ED-04 revisits topology.
+
+The placement catalog and building generator are browser-only (bundler
+aliases, DOM texture loading), so the projector receives them by injection
+(`browserProjectorRuntime.js` from the loader); `Environment`, the bus, and the
+projector load under node and the interaction suites drive a real
+`TransformControls` against a stub DOM element. React panels cannot be
+imported by node, so the presentation registry and the hierarchy tree model
+are pure and tested directly; the extension demonstration registers a
+test-only `test.marker` type with a custom icon and inspector section and
+shows it nested in the hierarchy tree without editing hierarchy or inspector
+code. The only development flag is the localStorage preference
+`cev-sim.ui.environmentEditor.groupFrameFields`.
 
 ### 2026-09-11 — Implement ED-01 contracts
 

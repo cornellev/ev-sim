@@ -10,6 +10,7 @@ export * from "./ObjectTypeRegistry.js";
 export * from "./objectRecord.js";
 export * from "./objectGraph.js";
 export * from "./builtinObjectTypes.js";
+export * from "./transformDelta.js";
 export {
     BUILTIN_PROP_ASSETS,
     BUILTIN_PROP_IDS,
@@ -21,7 +22,7 @@ export {
     FEATURE_SEMANTIC_LABEL_BY_TYPE,
     getBuiltinPropAsset,
 } from "./types/builtinProp.js";
-export { GROUP_TYPE_ID } from "./types/group.js";
+export { GROUP_TYPE_ID, IDENTITY_TRANSFORM, groupFrameBinding } from "./types/group.js";
 export { SKYBOX_TYPE_ID } from "./types/skybox.js";
 export { TILE_TYPE_ID } from "./types/tile.js";
 export { ROAD_TYPE_ID } from "./types/road.js";

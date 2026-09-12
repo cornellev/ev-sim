@@ -97,6 +97,6 @@ For environment editor or earth import changes, also verify:
 | Variable | Required for | Notes |
 |----------|--------------|-------|
 | `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` | Earth Import tile preview | Map Tiles API (Photorealistic 3D Tiles). Set in `.env.local`, not committed. |
-| `CEV_SIM_ENVIRONMENT_SCHEMA_V4` | Environment storage (server) | Set to `1` to write schema-v4 environment manifests (`document.objects` authoring overlay) on guarded saves. Default writes v3; v4 files stay v4 once written. See [environment-editor.md](environment-editor.md#persistence-server-side). |
+| `CEV_SIM_ENVIRONMENT_SCHEMA_V4` | Environment storage (server) | Schema v4 (`document.objects` authoring overlay) is the default writer since ED-02. Set to `0` to write v3 on hosts that must stay on the old schema; v4 files stay v4 once written. The opt-out is retired in ED-03. See [environment-editor.md](environment-editor.md#persistence-server-side). |
 
 See [Earth Import](earth-import.md) for setup and troubleshooting.

@@ -165,6 +165,7 @@ test("documentToRoadNetworkInputs matches buildRoadNetwork tuple format", () => 
     assert.equal(connections[0][1], "b");
     assert.equal(connections[0][2], true);
     assert.deepEqual(connections[0][3], {
+        id: "e1",
         width: 7,
         laneCount: 2,
         shoulderWidth: null,

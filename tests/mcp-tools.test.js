@@ -114,7 +114,7 @@ test("environment tools path: create, add road/building/object, persist conflict
         assert.equal(reloaded.document.features.length, 1);
         assert.equal(reloaded.document.features[0].type, "cone");
         assert.ok(reloaded.revision >= 1);
-        assert.equal(reloaded.schemaVersion, 3);
+        assert.equal(reloaded.schemaVersion, 4, "ED-02: MCP saves land on the default v4 writer");
         assert.equal("clientRevision" in reloaded, false);
     });
 });

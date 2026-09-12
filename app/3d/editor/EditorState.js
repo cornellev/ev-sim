@@ -64,12 +64,7 @@ const DEFAULT_MAP_STATE = Object.freeze({
     activeMapTool: MAP_TOOLS.SELECT,
     activeFeatureType: null,
     draft: null,
-    selection: null,
 });
-
-function cloneSelection(selection) {
-    return selection ? { ...selection } : null;
-}
 
 function cloneSet(set) {
     return new Set(set ?? []);
@@ -80,7 +75,6 @@ function cloneMapState(map) {
         ...DEFAULT_MAP_STATE,
         ...(map ?? {}),
         draft: map?.draft ? { ...map.draft } : null,
-        selection: map?.selection ? { ...map.selection } : null,
     };
 }
 
@@ -98,7 +92,6 @@ export class EditorState {
             ? options.activeTool
             : EDITOR_TOOLS.SELECT;
         this.editorMode = normalizeEditorMode(options.editorMode);
-        this.selection = cloneSelection(options.selection);
         this.layers = {
             ...DEFAULT_LAYERS,
             ...(options.layers ?? {}),
@@ -116,7 +109,6 @@ export class EditorState {
         return {
             activeTool: this.activeTool,
             editorMode: this.editorMode,
-            selection: cloneSelection(this.selection),
             layers: { ...this.layers },
             hiddenEntityIds: cloneSet(this.hiddenEntityIds),
             activePlacement: this.activePlacement ? { ...this.activePlacement } : null,
@@ -124,6 +116,28 @@ export class EditorState {
             map: cloneMapState(this.map),
             earthImport: cloneEarthImportState(this.earthImport),
             dirty: this.dirty,
+        };
+    }
+
+    /**
+     * The subset of editor state that persists with the environment manifest.
+     * Selection, tools, drafts, and dirtiness are session state and excluded.
+     */
+    persistedSnapshot() {
+        const map = cloneMapState(this.map);
+        return {
+            layers: { ...this.layers },
+            hiddenEntityIds: [...this.hiddenEntityIds].sort(),
+            editorMode: this.editorMode,
+            map: {
+                centerX: map.centerX,
+                centerZ: map.centerZ,
+                zoom: map.zoom,
+                snapEnabled: map.snapEnabled,
+                snapSize: map.snapSize,
+                gridVisible: map.gridVisible,
+            },
+            earthImport: cloneEarthImportState(this.earthImport),
         };
     }
 
@@ -155,7 +169,6 @@ export class EditorState {
 
         if (next !== EDITOR_MODES.MAP) {
             this.map.draft = null;
-            this.map.selection = null;
         }
 
         if (next === EDITOR_MODES.MAP) {
@@ -297,27 +310,6 @@ export class EditorState {
         this.notify();
     }
 
-    selectMapItem(selection) {
-        const next = selection
-            ? {
-                type: selection.type,
-                id: selection.id,
-            }
-            : null;
-
-        if (this.map.selection?.type === next?.type && this.map.selection?.id === next?.id) {
-            return;
-        }
-
-        this.map.selection = next;
-        this.notify();
-    }
-
-    clearMapSelection() {
-        if (!this.map.selection) return;
-        this.map.selection = null;
-        this.notify();
-    }
 
     setPlacementAsset(asset) {
         this.activePlacement = asset ? { ...asset } : null;
@@ -327,28 +319,6 @@ export class EditorState {
         this.notify();
     }
 
-    selectEntity(entity) {
-        const selection = entity
-            ? {
-                id: entity.id,
-                kind: entity.kind,
-                layer: entity.layer,
-            }
-            : null;
-
-        if (this.selection?.id === selection?.id && this.selection?.kind === selection?.kind) {
-            return;
-        }
-
-        this.selection = selection;
-        this.notify();
-    }
-
-    clearSelection() {
-        if (!this.selection) return;
-        this.selection = null;
-        this.notify();
-    }
 
     setLayerVisible(layer, visible) {
         if (!(layer in this.layers) || this.layers[layer] === visible) return;
@@ -363,14 +333,6 @@ export class EditorState {
         this.notify();
     }
 
-    suppressSelection(ms = 250) {
-        this.selectionSuppressedUntil = performance.now() + ms;
-    }
-
-    isSelectionSuppressed() {
-        return Number.isFinite(this.selectionSuppressedUntil)
-            && performance.now() < this.selectionSuppressedUntil;
-    }
 
     setEntityHidden(entityId, hidden) {
         if (!entityId) return;

@@ -10,12 +10,28 @@ import {
     describeObjectSupport,
     legacyIndex,
     objectTypeRegistry,
+    planObjectTransform,
     readObjectTransform,
     reconcileObjectGraph,
     sortObjectRecords,
     validateObjectGraph,
     validateObjectRecords,
 } from "../app/3d/editor/objects/index.js";
+import {
+    IDENTITY_DELTA,
+    TRANSFORM_ISSUE_CODES,
+    applyDeltaToFrame,
+    applyDeltaToPoint,
+    composeDeltas,
+    decomposeDelta,
+    deltaBetweenFrames,
+    deltaFromScale,
+    deltaFromTranslation,
+    deltaFromYaw,
+    invertDelta,
+    isIdentityDelta,
+    normalizeDelta,
+} from "../app/3d/editor/objects/transformDelta.js";
 import { createWorldResource } from "../app/simulation/world/WorldDescription.js";
 import { readEnvironmentEditorFixture } from "./helpers/environmentEditorBaseline.js";
 
@@ -59,6 +75,113 @@ test("ED-01 derived transform bindings read legacy placement without mutating it
     assert.equal(readObjectTransform(byId.get("skybox"), snapshot), null);
     assert.equal(readObjectTransform({ id: "x", typeId: "vendor.thing" }, snapshot), null);
     assert.deepEqual(snapshot, manifest.document);
+});
+
+test("ED-02 transform deltas compose, invert, and decompose without Three", () => {
+    const near = (left, right, message) => assert.ok(Math.abs(left - right) < 1e-9, message ?? `${left} ≈ ${right}`);
+    const translate = deltaFromTranslation({ x: 1, y: 2, z: 3 });
+    const yaw = deltaFromYaw(Math.PI / 2, { x: 10, z: 0 });
+    const scale = deltaFromScale(2, { x: 0, y: 0, z: 0 });
+    assert.deepEqual(applyDeltaToPoint(translate, { x: 0, y: 0, z: 0 }), { x: 1, y: 2, z: 3 });
+    const turned = applyDeltaToPoint(yaw, { x: 11, y: 0, z: 0 });
+    near(turned.x, 10);
+    near(turned.z, -1, "yaw follows the Three.js Y-rotation convention");
+    assert.deepEqual(applyDeltaToPoint(scale, { x: 1, y: 1, z: 1 }), { x: 2, y: 2, z: 2 });
+    const composed = composeDeltas(translate, yaw);
+    const stepwise = applyDeltaToPoint(translate, applyDeltaToPoint(yaw, { x: 11, y: 0, z: 0 }));
+    const direct = applyDeltaToPoint(composed, { x: 11, y: 0, z: 0 });
+    near(direct.x, stepwise.x);
+    near(direct.z, stepwise.z);
+    assert.equal(isIdentityDelta(composeDeltas(composed, invertDelta(composed))), true);
+    assert.equal(isIdentityDelta(IDENTITY_DELTA), true);
+    const parts = decomposeDelta(composeDeltas(translate, composeDeltas(yaw, scale)));
+    near(parts.rotationY, Math.PI / 2);
+    assert.equal(parts.yawOnly, true);
+    assert.equal(parts.uniformScale, true);
+    near(parts.scale.x, 2);
+    const tilted = decomposeDelta(normalizeDelta([1, 0, 0, 0, 0, 0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 1]));
+    assert.equal(tilted.yawOnly, false);
+    assert.equal(decomposeDelta(deltaFromScale({ x: 1, y: 2, z: 1 })).uniformScale, false);
+    assert.throws(() => normalizeDelta([1, 2, 3]), /16-element/);
+    assert.throws(() => invertDelta(deltaFromScale(0)), /singular/);
+    // Frames: composing a delta into a frame and measuring the delta between frames round-trips.
+    const frame = { position: { x: 3, y: 0, z: 4 }, rotationY: 0.7, scale: 2 };
+    const next = applyDeltaToFrame(deltaFromYaw(0.3, { x: 1, z: 1 }), frame);
+    near(next.rotationY, 1);
+    near(next.scale, 2);
+    const between = decomposeDelta(deltaBetweenFrames(frame, next));
+    near(between.rotationY, 0.3);
+    assert.equal(between.uniformScale, true);
+    assert.equal(isIdentityDelta(deltaBetweenFrames(frame, frame)), true);
+});
+
+test("ED-02 transform bindings plan document steps per type and reject unsupported deltas atomically", async () => {
+    const manifest = await readEnvironmentEditorFixture("legacy-v2.yard.json");
+    const snapshot = structuredClone(manifest.document);
+    const index = legacyIndex(snapshot);
+    const records = new Map(deriveObjectGraph(snapshot).map((record) => [record.id, record]));
+    const plan = (record, delta, context) => planObjectTransform(record, index, objectTypeRegistry, delta, context);
+    const codes = (result) => result.issues.map((entry) => entry.code);
+    const translate = deltaFromTranslation({ x: 1, y: 5, z: -2 });
+
+    // Props: yaw + planar translation; Y translation ignored; scale rejected.
+    const tire = plan(records.get("feature-tire"), composeDeltas(translate, deltaFromYaw(0.5, { x: 5, z: 30 })));
+    assert.deepEqual(tire.issues, []);
+    assert.equal(tire.steps.length, 1);
+    assert.equal(tire.steps[0].op, "set-feature-transform");
+    assert.equal(tire.steps[0].featureId, "feature-tire");
+    assert.ok(Math.abs(tire.steps[0].x - 6) < 1e-9 && Math.abs(tire.steps[0].z - 28) < 1e-9);
+    assert.ok(Math.abs(tire.steps[0].rotationY - 2) < 1e-9);
+    assert.deepEqual(codes(plan(records.get("feature-tire"), deltaFromScale(2))), [TRANSFORM_ISSUE_CODES.SCALE_UNSUPPORTED]);
+    const tiltedDelta = normalizeDelta([1, 0, 0, 0, 0, 0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 1]);
+    assert.deepEqual(codes(plan(records.get("feature-tire"), tiltedDelta)), [TRANSFORM_ISSUE_CODES.ROTATION_UNSUPPORTED]);
+
+    // Buildings: footprint through the delta, height follows Y scale, pitch rejected.
+    const building = plan(records.get("building-0"), deltaFromScale(2, { x: 14, y: 0, z: 14 }));
+    assert.deepEqual(building.issues, []);
+    assert.deepEqual(building.steps[0], {
+        op: "set-building-footprint",
+        buildingId: "building-0",
+        footprint: [{ x: 6, y: 0, z: 6 }, { x: 22, y: 0, z: 6 }, { x: 22, y: 0, z: 22 }, { x: 6, y: 0, z: 22 }],
+        height: 16,
+    });
+    assert.deepEqual(codes(plan(records.get("building-0"), tiltedDelta)), [TRANSFORM_ISSUE_CODES.ROTATION_UNSUPPORTED]);
+
+    // Roads move both endpoints; intersections move their node; any delta is a valid point map.
+    const road = plan(records.get("e1"), translate);
+    assert.deepEqual(road.issues, []);
+    assert.deepEqual(road.steps, [
+        { op: "move-node", nodeId: "n1", position: { x: 41, y: 5, z: -2 } },
+        { op: "move-node", nodeId: "n2", position: { x: 41, y: 5, z: 38 } },
+    ]);
+    assert.deepEqual(plan(records.get("n2"), deltaFromScale(2)).steps, [
+        { op: "move-node", nodeId: "n2", position: { x: 80, y: 0, z: 80 } },
+    ]);
+
+    // Groups compose the delta into their pivot frame; non-uniform scale rejected.
+    const group = { id: "g", typeId: "group", typeVersion: 1, name: "G", parentId: null, order: 0, components: { transform: { position: { x: 1, y: 0, z: 1 }, rotationY: 0, scale: 1 } } };
+    const grouped = plan(group, deltaFromYaw(Math.PI / 2, { x: 0, z: 0 }));
+    assert.deepEqual(grouped.issues, []);
+    assert.equal(grouped.steps[0].op, "set-object-component");
+    assert.equal(grouped.steps[0].key, "transform");
+    assert.ok(Math.abs(grouped.steps[0].value.rotationY - Math.PI / 2) < 1e-9);
+    assert.ok(Math.abs(grouped.steps[0].value.position.x - 1) < 1e-9 && Math.abs(grouped.steps[0].value.position.z + 1) < 1e-9);
+    assert.deepEqual(codes(plan(group, deltaFromScale({ x: 1, y: 1, z: 2 }))), [TRANSFORM_ISSUE_CODES.NON_UNIFORM_SCALE]);
+
+    // Not transformable: skybox, unknown types, asset instances, missing legacy.
+    assert.deepEqual(codes(plan(records.get("skybox"), translate)), [TRANSFORM_ISSUE_CODES.NOT_TRANSFORMABLE]);
+    assert.deepEqual(codes(plan({ id: "x", typeId: "vendor.thing" }, translate)), [TRANSFORM_ISSUE_CODES.NOT_TRANSFORMABLE]);
+    assert.deepEqual(codes(plan({ id: "ai", typeId: "asset-instance", components: { asset: { assetId: "a" } } }, translate)), [TRANSFORM_ISSUE_CODES.NOT_TRANSFORMABLE]);
+    assert.deepEqual(codes(plan({ id: "ghost", typeId: "builtin-prop" }, translate)), [TRANSFORM_ISSUE_CODES.MISSING]);
+    // Planning never mutates.
+    assert.deepEqual(snapshot, manifest.document);
+    // Capabilities agree with bindings.
+    for (const typeId of ["road", "intersection", "building", "builtin-prop", "group"]) {
+        assert.equal(objectTypeRegistry.get(typeId).capabilities.transformable, true, typeId);
+    }
+    for (const typeId of ["skybox", "tile", "asset-instance"]) {
+        assert.equal(objectTypeRegistry.get(typeId).capabilities.transformable, false, typeId);
+    }
 });
 
 test("ED-01 reconcileObjectGraph adds overlays for uncovered legacy records and drops orphans", async () => {

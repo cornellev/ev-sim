@@ -8,7 +8,7 @@ import { MapSurfaceLayers } from "./MapSurfaceLayers.js";
 import { useMapPointerController } from "./useMapPointerController.js";
 import { useMapSize } from "./useMapSize.js";
 
-export function MapSurface({ data, editorSnapshot, documentSnapshot }) {
+export function MapSurface({ data, editorSnapshot, documentSnapshot, mapSelection = null }) {
     const containerRef = useRef(null);
     const size = useMapSize(containerRef);
 
@@ -31,6 +31,7 @@ export function MapSurface({ data, editorSnapshot, documentSnapshot }) {
         onPointerDown,
         onPointerMove,
         onPointerUp,
+        onPointerCancel,
     } = useMapPointerController({
         containerRef,
         data,
@@ -56,7 +57,7 @@ export function MapSurface({ data, editorSnapshot, documentSnapshot }) {
             onPointerMove={onPointerMove}
             onPointerUp={onPointerUp}
             onPointerLeave={onPointerUp}
-            onPointerCancel={onPointerUp}
+            onPointerCancel={onPointerCancel}
         >
             <svg
                 width={size.width}
@@ -68,7 +69,7 @@ export function MapSurface({ data, editorSnapshot, documentSnapshot }) {
                     size={size}
                     layers={layers}
                     documentSnapshot={documentSnapshot}
-                    mapSelection={viewport.selection ?? null}
+                    mapSelection={mapSelection}
                     showDetail={showDetail}
                     draft={viewport.draft}
                 />

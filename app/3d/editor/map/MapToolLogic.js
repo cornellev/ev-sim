@@ -1,29 +1,36 @@
-import { generateBuildings } from "../../city/BuildingGenerator.js";
-import { placeFusionObjectInScene } from "../placement/placeFusionObject.js";
+/**
+ * Map tool logic. Every document change dispatches a CommandBus command;
+ * the SceneProjector updates the 3D runtime from the resulting change set.
+ * Node and feature drags are gestures (begin/update/commit/cancel) so they
+ * are one undoable operation and never rebuild the whole world.
+ */
+
 import {
-    addBuildingRectangle,
-    addFeature,
-    addRoadEdge,
     computeArmPoint,
-    connectEndpointToIntersection,
-    createIntersectionNode,
     findNearestIntersection,
+    findNearestNode,
     getDocumentNode,
-    getOrCreateEndpointNode,
     isIntersectionNode,
-    moveFeature,
-    moveRoadNode,
     snapPoint,
 } from "../document/documentMutations.js";
-import { syncRoadsFromDocument } from "../document/DocumentSync.js";
-import { syncBakeBuildingsFromDocument } from "./bakeBuildingSync.js";
 import { MAP_TOOLS } from "../EditorState.js";
-import { deleteMapSelectionFromRuntime, syncFeaturePosition } from "./mapRuntimeSync.js";
+import { deltaFromTranslation } from "../objects/transformDelta.js";
+import * as legacyCommands from "../commands/legacyCommands.js";
+import { deleteObjects } from "../commands/objectCommands.js";
+import { commandFailure, commandIssue, commandSuccess, COMMAND_ISSUE_CODES } from "../commands/commandIssues.js";
 import { MAP_WORLD_SCALE, screenRadiusToWorld } from "./mapCoords.js";
 
 const SNAP_RADIUS_SCREEN = 12;
 
 export { SNAP_RADIUS_SCREEN };
+
+function busOf(data) {
+    return data?.commands?.() ?? data?.environment?.()?.commands?.() ?? null;
+}
+
+function selectionOf(data) {
+    return data?.selection?.() ?? data?.environment?.()?.selection?.() ?? null;
+}
 
 /**
  * @param {{ x: number, z: number }} worldPoint
@@ -35,143 +42,176 @@ export function applySnap(worldPoint, editor) {
     return snapPoint(worldPoint, map.snapSize);
 }
 
-function resolveRoadNode(document, point, snapRadius) {
-    const intersection = findNearestIntersection(point, document, snapRadius);
-    if (intersection) return intersection;
-    return getOrCreateEndpointNode(document, point, snapRadius);
-}
-
 function buildEdgeArms(document, startNode, endNode) {
     const options = {};
-
-    if (isIntersectionNode(document, startNode)) {
-        options.startArm = computeArmPoint(startNode, endNode);
-    }
-
-    if (isIntersectionNode(document, endNode)) {
-        options.endArm = computeArmPoint(endNode, startNode);
-    }
-
+    if (isIntersectionNode(document, startNode)) options.startArm = computeArmPoint(startNode, endNode);
+    if (isIntersectionNode(document, endNode)) options.endArm = computeArmPoint(endNode, startNode);
     return options;
 }
 
+/** Command: resolve the node under the pen (nearest intersection, else an endpoint node, creating one if needed). */
+export function resolveRoadPenNode({ point, snapRadius, label = "Start road" }) {
+    return {
+        id: "resolve-road-pen-node",
+        label,
+        run(ctx) {
+            const intersection = findNearestIntersection(point, ctx.document, snapRadius);
+            if (intersection) return commandSuccess({ node: intersection, created: false });
+            const endpointCandidates = ctx.document.roads.nodes.filter((node) => !isIntersectionNode(ctx.document, node));
+            const existing = findNearestNode(point, endpointCandidates, snapRadius);
+            if (existing) return commandSuccess({ node: existing, created: false });
+            const created = legacyCommands.createEndpointNode({ point }).run(ctx);
+            if (!created.ok) return created;
+            return commandSuccess({ node: created.result.node, created: true });
+        },
+    };
+}
+
 /**
- * Road pen: handle click at world point.
+ * Road pen: first click starts a draft at a node; later clicks draw an edge
+ * from the previous node to the clicked node as one transaction.
  */
-export function handleRoadPenClick({
-    worldPoint,
-    document,
-    editor,
-    data,
-    scene,
-    size,
-}) {
+export function handleRoadPenClick({ worldPoint, document, editor, data }) {
+    const bus = busOf(data);
     const snapRadius = screenRadiusToWorld(SNAP_RADIUS_SCREEN, editor.snapshot().map);
     const snapped = applySnap(worldPoint, editor);
     const draft = editor.snapshot().map.draft;
-    const node = resolveRoadNode(document, snapped, snapRadius);
 
     if (!draft?.type || draft.type !== "road-pen") {
-        editor.setMapDraft({
-            type: "road-pen",
-            activeNodeId: node.id,
-            cursor: { x: snapped.x, z: snapped.z },
-        });
-        document.notify();
+        const started = bus.execute(resolveRoadPenNode({ point: snapped, snapRadius }));
+        if (!started.ok) return { error: started.error };
+        const node = started.result.node;
+        editor.setMapDraft({ type: "road-pen", activeNodeId: node.id, cursor: { x: snapped.x, z: snapped.z } });
         return { node };
     }
 
-    if (draft.activeNodeId === node.id) {
-        return { node };
-    }
-
-    const startNode = getDocumentNode(document, draft.activeNodeId);
-    const edgeOptions = buildEdgeArms(document, startNode, node);
-    const result = addRoadEdge(document, draft.activeNodeId, node.id, edgeOptions);
-    if (!result.ok) {
-        return { error: result.error, node };
-    }
-
-    editor.markDirty(true);
-    syncRoadsFromDocument(data, scene, document);
-    data.environment().objects().registerExistingContent(scene, data);
-    data.simulation()?.render?.();
-
-    editor.setMapDraft({
-        type: "road-pen",
-        activeNodeId: node.id,
-        cursor: { x: snapped.x, z: snapped.z },
-    });
-
-    return { edge: result.edge, node };
-}
-
-export function handleIntersectionPlace({ worldPoint, document, editor }) {
-    const snapped = applySnap(worldPoint, editor);
-    const snapRadius = 2;
-    const existing = findNearestIntersection(snapped, document, snapRadius);
-    if (existing) return { node: existing, reused: true };
-
-    const node = createIntersectionNode(document, snapped);
-    editor.selectEntity(null);
-    return { node, reused: false };
-}
-
-export function handleEndpointMove({
-    document,
-    editor,
-    data,
-    scene,
-    nodeId,
-    worldPoint,
-    finalize = false,
-}) {
-    const snapped = applySnap(worldPoint, editor);
-    const snapRadius = screenRadiusToWorld(SNAP_RADIUS_SCREEN, editor.snapshot().map);
-
-    if (finalize) {
-        const result = connectEndpointToIntersection(document, nodeId, snapped, snapRadius);
-        if (!result.ok) return result;
-        if (!result.connected) {
-            return { ok: true, node: getDocumentNode(document, nodeId) };
+    let outcome = null;
+    const result = bus.transaction("Draw road", (run) => {
+        const resolved = run(resolveRoadPenNode({ point: snapped, snapRadius }));
+        const node = resolved.result.node;
+        if (draft.activeNodeId === node.id) {
+            outcome = { node };
+            return;
         }
-
-        editor.markDirty(true);
-        syncRoadsFromDocument(data, scene, document);
-        data.environment().objects().registerExistingContent(scene, data);
-        data.simulation()?.render?.();
-        return { ok: true, connected: true, intersection: result.intersection };
+        const startNode = getDocumentNode(document, draft.activeNodeId);
+        if (!startNode) {
+            throw new Error("The road pen lost its start node.");
+        }
+        const edge = run(legacyCommands.addRoadEdge({
+            startNodeId: draft.activeNodeId,
+            endNodeId: node.id,
+            options: buildEdgeArms(document, startNode, node),
+        }));
+        outcome = { node, edge: edge.result.edge };
+    });
+    if (!result.ok) return { error: result.error, issues: result.issues };
+    if (outcome?.node) {
+        editor.setMapDraft({ type: "road-pen", activeNodeId: outcome.node.id, cursor: { x: snapped.x, z: snapped.z } });
     }
-
-    const result = moveRoadNode(document, nodeId, snapped, { snapRadius });
-    if (!result.ok) return result;
-
-    editor.markDirty(true);
-    syncRoadsFromDocument(data, scene, document);
-    data.environment().objects().registerExistingContent(scene, data);
     data.simulation()?.render?.();
-    return result;
+    return outcome ?? {};
 }
 
-export function handleFeatureMove({ document, editor, data, featureId, worldPoint }) {
+export function handleIntersectionPlace({ worldPoint, document, editor, data }) {
     const snapped = applySnap(worldPoint, editor);
-    const result = moveFeature(document, featureId, snapped);
-    if (!result.ok) return result;
+    const existing = findNearestIntersection(snapped, document, 2);
+    if (existing) return { node: existing, reused: true };
+    const result = busOf(data).execute(legacyCommands.createIntersection({ point: snapped }));
+    if (!result.ok) return { error: result.error };
+    selectionOf(data)?.select(result.result.objectId);
+    return { node: result.result.node, reused: false };
+}
 
-    syncFeaturePosition(data, result.feature);
-    editor.markDirty(true);
+/**
+ * Begin a node drag. Junction nodes drag through their intersection record;
+ * free endpoints drag as a sub-object. Returns the interaction state.
+ */
+export function beginNodeDrag({ document, data, nodeId }) {
+    const bus = busOf(data);
+    const node = getDocumentNode(document, nodeId);
+    if (!node) return null;
+    const record = document.getObject?.(nodeId) ?? null;
+    const begun = bus.beginGesture({
+        objectIds: record ? [nodeId] : [],
+        sub: record ? null : { kind: "road-node", id: nodeId },
+        label: "Move road node",
+    });
+    if (!begun.ok) return null;
+    if (record) selectionOf(data)?.select(nodeId);
+    return { type: "move-node", nodeId, gestureId: begun.gestureId, start: { x: node.x, z: node.z } };
+}
+
+export function updateNodeDrag({ interaction, editor, data, worldPoint }) {
+    const bus = busOf(data);
+    if (!interaction?.gestureId) return { ok: false };
+    const snapped = applySnap(worldPoint, editor);
+    const result = bus.updateGesture(interaction.gestureId, deltaFromTranslation({
+        x: snapped.x - interaction.start.x,
+        z: snapped.z - interaction.start.z,
+    }));
     data.simulation()?.render?.();
     return result;
 }
 
-export function handleMapDelete({ document, editor, data, scene, selection }) {
-    const result = deleteMapSelectionFromRuntime(data, scene, document, selection);
-    if (!result.ok) return result;
-
-    editor.clearMapSelection();
-    editor.markDirty(true);
+/**
+ * Finish a node drag: commit, then let a free endpoint merge into a nearby
+ * intersection (the legacy snap/connect rule).
+ */
+export function finishNodeDrag({ interaction, document, editor, data, worldPoint }) {
+    const bus = busOf(data);
+    if (!interaction?.gestureId) return { ok: false };
+    if (worldPoint) updateNodeDrag({ interaction, editor, data, worldPoint });
+    const committed = bus.commitGesture(interaction.gestureId);
+    const snapRadius = screenRadiusToWorld(SNAP_RADIUS_SCREEN, editor.snapshot().map);
+    const node = getDocumentNode(document, interaction.nodeId);
+    if (committed.ok && node && !isIntersectionNode(document, node)) {
+        const connected = bus.execute(legacyCommands.connectEndpoint({
+            endpointId: interaction.nodeId,
+            point: { x: node.x, z: node.z },
+            snapRadius,
+        }));
+        data.simulation()?.render?.();
+        return { ok: true, connected: connected.ok && connected.result?.connected === true };
+    }
     data.simulation()?.render?.();
-    return result;
+    return { ok: committed.ok, connected: false, issues: committed.issues };
+}
+
+export function cancelDrag({ interaction, data }) {
+    const bus = busOf(data);
+    if (interaction?.gestureId) bus.cancelGesture(interaction.gestureId);
+    data.simulation()?.render?.();
+}
+
+export function beginFeatureDrag({ document, data, featureId }) {
+    const bus = busOf(data);
+    const feature = document.getFeature(featureId);
+    if (!feature) return null;
+    selectionOf(data)?.select(featureId);
+    const begun = bus.beginGesture({ objectIds: [featureId], label: "Move prop" });
+    if (!begun.ok) return null;
+    return { type: "move-feature", featureId, gestureId: begun.gestureId, start: { x: feature.x, z: feature.z } };
+}
+
+export function updateFeatureDrag({ interaction, editor, data, worldPoint }) {
+    return updateNodeDrag({ interaction, editor, data, worldPoint });
+}
+
+export function finishFeatureDrag({ interaction, editor, data, worldPoint }) {
+    const bus = busOf(data);
+    if (!interaction?.gestureId) return { ok: false };
+    if (worldPoint) updateNodeDrag({ interaction, editor, data, worldPoint });
+    const committed = bus.commitGesture(interaction.gestureId);
+    data.simulation()?.render?.();
+    return committed;
+}
+
+export function handleMapDelete({ data, objectIds }) {
+    const ids = [...(objectIds ?? [])];
+    if (ids.length === 0) return { ok: false, error: "Nothing selected." };
+    const result = busOf(data).execute(deleteObjects({ objectIds: ids }));
+    data.simulation()?.render?.();
+    return result.ok ? { ok: true, deleted: result.result.deleted } : { ok: false, error: result.error, issues: result.issues };
 }
 
 export function cancelRoadPen(editor) {
@@ -201,73 +241,30 @@ export function handleBuildingRectMove({ worldPoint, editor }) {
     });
 }
 
-export function handleBuildingRectUp({ document, editor, data, scene }) {
+export function handleBuildingRectUp({ editor, data }) {
     const draft = editor.snapshot().map.draft;
     if (draft?.type !== "building-rect" || !draft.cornerA || !draft.cornerB) {
         editor.clearMapDraft();
         return null;
     }
-
     const snapSize = editor.snapshot().map.snapEnabled ? editor.snapshot().map.snapSize : 0;
-    const result = addBuildingRectangle(
-        document,
-        draft.cornerA,
-        draft.cornerB,
-        { snapSize },
-    );
-
     editor.clearMapDraft();
-
-    if (!result.ok) {
-        return { error: result.error };
-    }
-
-    editor.markDirty(true);
-
-    syncBakeBuildingsFromDocument(data, document);
-
-    generateBuildings(scene, data, { records: [result.record] });
-    data.environment().objects().registerExistingContent(scene, data);
-
-    return { record: result.record };
+    const result = busOf(data).execute(legacyCommands.addBuilding({ cornerA: draft.cornerA, cornerB: draft.cornerB, snapSize }));
+    if (!result.ok) return { error: result.error, issues: result.issues };
+    selectionOf(data)?.select(result.result.objectId);
+    data.simulation()?.render?.();
+    return { record: result.result.building };
 }
 
-export function handleFeaturePlace({
-    worldPoint,
-    document,
-    editor,
-    data,
-    scene,
-}) {
+export function handleFeaturePlace({ worldPoint, editor, data }) {
     const featureType = editor.snapshot().map.activeFeatureType;
     if (!featureType) return null;
-
     const snapped = applySnap(worldPoint, editor);
-    const registry = data.environment().objects();
-
-    const { entity, object } = placeFusionObjectInScene({
-        data,
-        scene,
-        registry,
-        assetId: featureType,
-        point: { x: snapped.x, y: 0, z: snapped.z },
-    });
-
-    const result = addFeature(document, {
-        id: object._uuid,
-        type: featureType,
-        x: snapped.x,
-        z: snapped.z,
-        dir: object.dir ?? 0,
-    });
-
+    const result = busOf(data).execute(legacyCommands.addFeature({ type: featureType, x: snapped.x, z: snapped.z }));
     if (!result.ok) return null;
-
-    editor.markDirty(true);
-    if (entity) editor.selectEntity(entity);
+    selectionOf(data)?.select(result.result.objectId);
     data.simulation()?.render?.();
-
-    return { record: result.record, entity };
+    return { record: result.result.feature, objectId: result.result.objectId };
 }
 
 export function panViewport(editor, deltaX, deltaY) {
@@ -303,4 +300,8 @@ export function shouldPanOnPointer(activeMapTool) {
 
 export function shouldPanImmediately(activeMapTool, altKey) {
     return activeMapTool === MAP_TOOLS.PAN || altKey;
+}
+
+export function emptySelectionFailure() {
+    return commandFailure(commandIssue(COMMAND_ISSUE_CODES.SELECTION_EMPTY, "Nothing selected."));
 }

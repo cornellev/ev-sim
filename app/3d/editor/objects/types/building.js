@@ -4,6 +4,7 @@
 
 import { ObjectOptions, field, finite, integer, isPlainObject, issue, stringList, validateFieldConstraints } from "../ObjectOptions.js";
 import { defineObjectType } from "../ObjectTypeRegistry.js";
+import { TRANSFORM_ISSUE_CODES, applyDeltaToPoint, decomposeDelta } from "../transformDelta.js";
 
 export const BUILDING_TYPE_ID = "building";
 
@@ -57,6 +58,37 @@ export function buildingTransformBinding(record) {
             return {
                 position: { x: sum.x / footprint.length, y: 0, z: sum.z / footprint.length },
                 rotationY: 0,
+            };
+        },
+        /**
+         * Buildings are ground-authored polygons: yaw, planar translation, and
+         * scale bake into the footprint; height follows the Y scale. Pitch or
+         * roll is rejected; Y translation is ignored.
+         */
+        plan(delta, context = {}) {
+            const building = context.legacy ?? null;
+            const footprint = Array.isArray(building?.footprint) ? building.footprint : [];
+            if (footprint.length === 0) {
+                return {
+                    steps: [],
+                    issues: [issue(["transform"], TRANSFORM_ISSUE_CODES.MISSING, `Building "${record.id}" has no footprint.`, { objectId: record.id })],
+                };
+            }
+            const parts = decomposeDelta(delta);
+            if (!parts.yawOnly) {
+                return {
+                    steps: [],
+                    issues: [issue(["transform"], TRANSFORM_ISSUE_CODES.ROTATION_UNSUPPORTED, "Buildings rotate about the vertical axis only.", { objectId: record.id })],
+                };
+            }
+            const nextFootprint = footprint.map((point) => {
+                const moved = applyDeltaToPoint(delta, { x: finite(point.x, 0), y: 0, z: finite(point.z, 0) });
+                return { x: moved.x, y: finite(point.y, 0), z: moved.z };
+            });
+            const height = finite(building.height, 0) * (parts.scale.y > 0 ? parts.scale.y : 1);
+            return {
+                steps: [{ op: "set-building-footprint", buildingId: String(record.id), footprint: nextFootprint, height }],
+                issues: [],
             };
         },
     });

@@ -242,3 +242,58 @@ test("a save response for another environment cannot advance the local revision"
     assert.equal(persistence.acknowledgedRevision, 2);
     assert.equal(persistence.isDirty, true);
 });
+
+test("ED-02 transient gesture frames and cancels never mark dirty; committed changes do", () => {
+    let documentNotify = () => {};
+    const environment = {
+        environmentId: "yard",
+        revision: 0,
+        toManifest() { return { environmentId: "yard", document: {} }; },
+        getDocument() {
+            return { subscribe(listener) { documentNotify = listener; return () => {}; } };
+        },
+        objects() { return { subscribe() { return () => {}; } }; },
+        editor() { return { subscribe() { return () => {}; } }; },
+        sky() { return { subscribe() { return () => {}; } }; },
+    };
+    const persistence = new EnvironmentPersistence({ data: { environment: () => environment }, scene: {}, revision: 0, put: async () => ({}) });
+    persistence.attach();
+    assert.equal(persistence.isDirty, false);
+    documentNotify({}, { version: 1, transient: true, source: "gesture", changeSet: {} });
+    assert.equal(persistence.isDirty, false, "transient frames stay out of the save queue");
+    documentNotify({}, { version: 2, transient: false, source: "cancel", changeSet: {} });
+    assert.equal(persistence.isDirty, false, "a cancelled gesture restores the saved state");
+    documentNotify({}, { version: 3, transient: false, source: "gesture", changeSet: {} });
+    assert.equal(persistence.isDirty, true, "a committed gesture enters the autosave queue");
+    persistence._clearTimer();
+});
+
+test("ED-02 editor notifications mark dirty only when the persisted editor state changes", () => {
+    let editorNotify = () => {};
+    let persisted = { layers: { roads: true }, hiddenEntityIds: [], editorMode: "scene", map: { zoom: 1 }, earthImport: null };
+    const environment = {
+        environmentId: "yard",
+        revision: 0,
+        toManifest() { return { environmentId: "yard", document: {} }; },
+        getDocument() { return { subscribe() { return () => {}; } }; },
+        objects() { return { subscribe() { return () => {}; } }; },
+        editor() {
+            return {
+                subscribe(listener) { editorNotify = listener; return () => {}; },
+                persistedSnapshot: () => persisted,
+            };
+        },
+        sky() { return { subscribe() { return () => {}; } }; },
+    };
+    const persistence = new EnvironmentPersistence({ data: { environment: () => environment }, scene: {}, revision: 0, put: async () => ({}) });
+    persistence.attach();
+    editorNotify({ activeTool: "select" });
+    const afterFirst = persistence._editGeneration;
+    editorNotify({ activeTool: "translate" });
+    editorNotify({ activeTool: "rotate" });
+    assert.equal(persistence._editGeneration, afterFirst, "tool and selection changes do not touch the save queue");
+    persisted = { ...persisted, layers: { roads: false } };
+    editorNotify({ activeTool: "rotate" });
+    assert.equal(persistence._editGeneration, afterFirst + 1, "layer visibility is persisted and marks dirty");
+    persistence._clearTimer();
+});

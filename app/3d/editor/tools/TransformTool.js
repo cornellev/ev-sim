@@ -1,14 +1,9 @@
 import * as THREE from "three";
 import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 import { EDITOR_TOOLS } from "../EditorState.js";
-import {
-    setRoadNodeElevation,
-    transformBuilding,
-    transformFeature,
-} from "../document/documentMutations.js";
-import { syncRoadsFromDocument } from "../document/DocumentSync.js";
-import { syncBakeBuildingsFromDocument } from "../map/bakeBuildingSync.js";
-import { trianglesFromBuildingMesh } from "../../city/BuildingGenerator.js";
+import { descendantIds, indexObjectsById } from "../commands/objectMutations.js";
+import { GROUP_TYPE_ID } from "../objects/types/group.js";
+import { entityIdForObject, entityIdForSub } from "../selection/selectionIds.js";
 
 const TRANSFORM_CONTROL_LOCK = "environment-transform-controls";
 
@@ -18,15 +13,73 @@ const TOOL_MODES = Object.freeze({
     [EDITOR_TOOLS.SCALE]: "scale",
 });
 
-function isElevationEntity(entity) {
-    return entity?.kind === "road"
-        || entity?.kind === "intersection"
-        || entity?.kind === "road-node";
+const GROUND_TYPES = new Set(["builtin-prop", "building"]);
+const ROAD_TYPES = new Set(["road", "intersection"]);
+
+/**
+ * Resolve what a selection transforms: the sub-object handle alone when a
+ * sub-selection is set, otherwise every selected record (groups expand to
+ * their descendants) that has a runtime entity. Pure over the registry and
+ * document; exported for tests.
+ */
+export function resolveTransformTargets({ selectionSnapshot, document, registry }) {
+    const empty = { objectIds: [], sub: null, object3Ds: [], typeIds: new Set(), hasGroup: false };
+    if (!selectionSnapshot || !document || !registry) return empty;
+    if (selectionSnapshot.sub) {
+        const entity = registry.getEntity(entityIdForSub(selectionSnapshot.sub));
+        return {
+            objectIds: [],
+            sub: { ...selectionSnapshot.sub },
+            object3Ds: entity?.object3D ? [entity.object3D] : [],
+            typeIds: new Set(["road-node"]),
+            hasGroup: false,
+        };
+    }
+    const byId = indexObjectsById(document.objects);
+    const object3Ds = [];
+    const typeIds = new Set();
+    let hasGroup = false;
+    const visit = (id) => {
+        const record = byId.get(String(id));
+        if (!record) return;
+        if (record.typeId === GROUP_TYPE_ID) {
+            hasGroup = true;
+            for (const child of descendantIds(byId, record.id)) visit(child);
+            return;
+        }
+        typeIds.add(record.typeId);
+        const entityId = entityIdForObject(record, registry);
+        const entity = entityId ? registry.getEntity(entityId) : null;
+        if (entity?.object3D) object3Ds.push(entity.object3D);
+    };
+    for (const id of selectionSnapshot.ids ?? []) visit(id);
+    return { objectIds: [...(selectionSnapshot.ids ?? [])], sub: null, object3Ds, typeIds, hasGroup };
 }
 
-function nodeElevation(node) {
-    const y = Number(node?.y);
-    return Number.isFinite(y) ? y : 0;
+/**
+ * Axis gating per selection kind. Props: planar translate, yaw, no scale.
+ * Buildings: planar translate, yaw, scale (per-axis alone, uniform in groups).
+ * Roads and nodes: translate XYZ, yaw, uniform scale. Mixed and groups: the
+ * most restrictive combination.
+ */
+export function resolveGizmoPolicy(targets, mode) {
+    const types = targets.typeIds;
+    const hasProps = types.has("builtin-prop");
+    const hasBuildings = types.has("building");
+    const hasRoads = [...types].some((typeId) => ROAD_TYPES.has(typeId) || typeId === "road-node");
+    const onlyRoads = hasRoads && !hasProps && !hasBuildings;
+    const multi = targets.hasGroup || (targets.objectIds?.length ?? 0) > 1;
+    if (mode === "scale") {
+        if (hasProps) return { supported: false, reason: "Props cannot be scaled." };
+        const uniformOnly = multi || hasRoads;
+        return { supported: true, showX: !uniformOnly, showY: !uniformOnly, showZ: !uniformOnly, uniformOnly };
+    }
+    if (mode === "rotate") {
+        return { supported: true, showX: false, showY: true, showZ: false, uniformOnly: false };
+    }
+    // translate
+    const planar = hasProps || hasBuildings;
+    return { supported: true, showX: true, showY: !planar || onlyRoads, showZ: true, uniformOnly: false };
 }
 
 export class TransformTool {
@@ -37,9 +90,14 @@ export class TransformTool {
         this.renderer = renderer;
         this.editor = data.editor();
         this.registry = data.environment().objects();
-        this.selectedEntityId = null;
-        this.previousPivotMatrixWorld = new THREE.Matrix4();
-        this.elevationDrag = null;
+        this.document = data.environment().getDocument();
+        this.selection = data.selection?.() ?? data.environment().selection?.();
+        this.bus = data.commands?.() ?? data.environment().commands?.();
+        this.gestureId = null;
+        this.gestureCancelled = false;
+        this.pivotStart = new THREE.Matrix4();
+        this.lastIssues = [];
+        this.targets = resolveTransformTargets({ selectionSnapshot: null, document: this.document, registry: this.registry });
 
         this.pivot = new THREE.Group();
         this.pivot.name = "EnvironmentTransformPivot";
@@ -54,213 +112,118 @@ export class TransformTool {
         scene.add(this.helper);
 
         this.onObjectChange = () => {
-            if (!this.selectedEntityId) return;
-            const entity = this.registry.getEntity(this.selectedEntityId);
-            if (!entity?.object3D) return;
-
+            if (!this.gestureId || this.gestureCancelled) return;
             this.pivot.updateMatrixWorld(true);
-            const currentPivotMatrixWorld = this.pivot.matrixWorld.clone();
-            const delta = currentPivotMatrixWorld.clone()
-                .multiply(this.previousPivotMatrixWorld.clone().invert());
-
-            if (isElevationEntity(entity)) {
-                // Keep the road mesh authoritative; only the pivot tracks the drag.
-                this.previousPivotMatrixWorld.copy(currentPivotMatrixWorld);
-                this.data.simulation()?.render?.();
-                return;
-            }
-
-            applyWorldDelta(entity.object3D, delta);
-            this.previousPivotMatrixWorld.copy(currentPivotMatrixWorld);
-            this.persistEntityTransform(entity, delta);
-            this.registry.updateEntityTransform(this.selectedEntityId);
-            this.editor.markDirty(true, false);
+            const delta = this.pivot.matrixWorld.clone().multiply(this.pivotStart.clone().invert());
+            const result = this.bus.updateGesture(this.gestureId, { matrix: [...delta.elements] });
+            this.lastIssues = result.ok ? [] : result.issues;
             this.data.simulation()?.render?.();
         };
 
         this.onDraggingChanged = (event) => {
-            if (event.value) {
-                this.data.settings()?.disableControls?.(TRANSFORM_CONTROL_LOCK);
-                const entity = this.registry.getEntity(this.selectedEntityId);
-                if (isElevationEntity(entity)) {
-                    this.elevationDrag = {
-                        entityId: entity.id,
-                        startY: this.pivot.position.y,
-                    };
-                } else {
-                    this.elevationDrag = null;
-                }
-            } else {
-                this.editor.suppressSelection?.(300);
-                this.data.settings()?.enableControls?.(TRANSFORM_CONTROL_LOCK);
-                if (this.elevationDrag) {
-                    this.commitElevationDrag();
-                } else {
-                    this.syncBuildingSensorGeometry();
-                }
-            }
+            if (event.value) this.beginDrag();
+            else this.endDrag();
             this.data.simulation()?.render?.();
         };
 
         this.controls.addEventListener("objectChange", this.onObjectChange);
         this.controls.addEventListener("dragging-changed", this.onDraggingChanged);
-        this.disposeEditor = this.editor.subscribe((snapshot) => this.sync(snapshot));
-    }
-
-    commitElevationDrag() {
-        const drag = this.elevationDrag;
-        this.elevationDrag = null;
-        if (!drag) return;
-
-        const entity = this.registry.getEntity(drag.entityId);
-        if (!entity) return;
-
-        const deltaY = this.pivot.position.y - drag.startY;
-        if (!Number.isFinite(deltaY) || Math.abs(deltaY) < 1e-6) {
-            this.sync(this.editor.snapshot());
-            return;
-        }
-
-        const document = this.data.environment().getDocument();
-        let changed = false;
-
-        if (entity.kind === "road-node") {
-            const node = document.getNode(entity.sourceId);
-            if (node) {
-                const result = setRoadNodeElevation(document, entity.sourceId, nodeElevation(node) + deltaY);
-                changed = result.ok;
-            }
-        } else if (entity.kind === "intersection") {
-            const node = document.getNode(entity.sourceId);
-            if (node) {
-                const result = setRoadNodeElevation(document, entity.sourceId, nodeElevation(node) + deltaY);
-                changed = result.ok;
-            }
-        } else if (entity.kind === "road") {
-            const edge = document.getEdge(entity.sourceId);
-            if (edge) {
-                const start = document.getNode(edge.startNodeId);
-                const end = document.getNode(edge.endNodeId);
-                if (start) {
-                    const result = setRoadNodeElevation(
-                        document,
-                        edge.startNodeId,
-                        nodeElevation(start) + deltaY,
-                        { notify: false },
-                    );
-                    changed = result.ok || changed;
-                }
-                if (end) {
-                    const result = setRoadNodeElevation(
-                        document,
-                        edge.endNodeId,
-                        nodeElevation(end) + deltaY,
-                        { notify: false },
-                    );
-                    changed = result.ok || changed;
-                }
-                if (changed) document.notify();
-            }
-        }
-
-        if (!changed) {
-            this.sync(this.editor.snapshot());
-            return;
-        }
-
-        this.editor.markDirty(true);
-        syncRoadsFromDocument(this.data, this.scene, document);
-        this.data.environment()?.objects?.()?.registerExistingContent?.(this.scene, this.data);
-        // Selection may have been rebuilt; reattach to the same entity id.
-        this.sync(this.editor.snapshot());
-    }
-
-    syncBuildingSensorGeometry() {
-        const entity = this.registry.getEntity(this.selectedEntityId);
-        if (entity?.kind !== "building" || !entity.object3D) return;
-
-        const triangles = trianglesFromBuildingMesh(entity.object3D);
-        triangles.forEach((triangle) => {
-            triangle.environmentGeometryType = "building";
-            triangle.environmentSourceId = entity.sourceId;
+        this.disposeEditor = this.editor.subscribe(() => this.sync());
+        this.disposeSelection = this.selection?.subscribe?.(() => this.sync()) ?? null;
+        this.disposeDocument = this.document.subscribe((snapshot, event) => {
+            if (event?.transient) return;
+            this.sync();
         });
-        this.data.objects().replaceTriangles?.(
-            (triangle) => triangle.environmentGeometryType === "building"
-                && triangle.environmentSourceId === entity.sourceId,
-            triangles,
-        );
+        this.disposeBus = this.bus?.subscribe?.((snapshot) => {
+            if (this.gestureId && snapshot.activeGesture?.id !== this.gestureId) {
+                // Cancelled or committed elsewhere (Escape, another command).
+                this.gestureCancelled = true;
+            }
+        }) ?? null;
     }
 
-    persistEntityTransform(entity, deltaMatrixWorld) {
-        const document = this.data.environment().getDocument();
+    get isDragging() {
+        return this.gestureId !== null;
+    }
 
-        if (entity.kind === "building") {
-            const result = transformBuilding(document, entity.sourceId, deltaMatrixWorld);
-            if (result.ok) {
-                entity.record = result.building;
-                syncBakeBuildingsFromDocument(this.data, document);
-            }
+    beginDrag() {
+        this.data.settings()?.disableControls?.(TRANSFORM_CONTROL_LOCK);
+        const mode = TOOL_MODES[this.editor.snapshot().activeTool];
+        const label = mode === "rotate" ? "Rotate" : mode === "scale" ? "Scale" : "Move";
+        const begun = this.bus.beginGesture({ objectIds: this.targets.objectIds, sub: this.targets.sub, label });
+        if (!begun.ok) {
+            this.gestureId = null;
+            this.gestureCancelled = true;
+            this.lastIssues = begun.issues;
+            console.warn("[environment] transform rejected:", begun.issues.map((issue) => issue.message).join("; "));
             return;
         }
-
-        if (entity.layer === "props") {
-            const feature = document.getFeature(entity.sourceId);
-            if (!feature) return;
-            const position = new THREE.Vector3(feature.x, 0, feature.z)
-                .applyMatrix4(deltaMatrixWorld);
-            if (entity.fusionObject?.position) {
-                entity.fusionObject.position.applyMatrix4(deltaMatrixWorld);
-                entity.fusionObject._notifyTexture?.(entity.fusionObject);
-            }
-            const quaternion = new THREE.Quaternion();
-            entity.object3D.getWorldQuaternion(quaternion);
-            const rotationY = new THREE.Euler().setFromQuaternion(quaternion, "YXZ").y;
-            transformFeature(document, entity.sourceId, {
-                x: position.x,
-                z: position.z,
-                dir: entity.fusionObject?.dir,
-                rotationY,
-            });
-        }
+        this.gestureId = begun.gestureId;
+        this.gestureCancelled = false;
+        this.lastIssues = [];
+        this.pivot.updateMatrixWorld(true);
+        this.pivotStart.copy(this.pivot.matrixWorld);
     }
 
-    sync(snapshot) {
-        const mode = TOOL_MODES[snapshot.activeTool];
-        const selectedId = snapshot.selection?.id ?? null;
-        const entity = selectedId ? this.registry.getEntity(selectedId) : null;
-        const unsupportedPropScale = entity?.layer === "props" && mode === "scale";
-        const elevationOnly = isElevationEntity(entity);
-        const unsupportedElevationMode = elevationOnly && mode !== "translate";
+    endDrag() {
+        this.data.settings()?.enableControls?.(TRANSFORM_CONTROL_LOCK);
+        this.selection?.suppress?.(300);
+        const gestureId = this.gestureId;
+        this.gestureId = null;
+        if (gestureId && !this.gestureCancelled && this.bus.activeGesture?.id === gestureId) {
+            const committed = this.bus.commitGesture(gestureId);
+            if (!committed.ok) this.lastIssues = committed.issues;
+        }
+        this.gestureCancelled = false;
+        this.sync();
+    }
 
-        if (!mode || !entity?.object3D || unsupportedPropScale || unsupportedElevationMode) {
-            this.selectedEntityId = null;
-            this.controls.detach();
-            this.helper.visible = false;
-            this.pivot.visible = false;
+    /** Escape during a drag: restore the pristine records and ignore the rest of the drag. */
+    cancelActiveGesture() {
+        const gestureId = this.gestureId;
+        if (gestureId && this.bus.activeGesture?.id === gestureId) {
+            this.bus.cancelGesture(gestureId);
+        }
+        if (!gestureId) return false;
+        this.gestureCancelled = true;
+        this.gestureId = null;
+        this.sync();
+        return true;
+    }
+
+    detach() {
+        this.controls.detach();
+        this.helper.visible = false;
+        this.pivot.visible = false;
+    }
+
+    sync() {
+        if (this.gestureId) return; // never move the pivot mid-drag
+        const snapshot = this.editor.snapshot();
+        const mode = TOOL_MODES[snapshot.activeTool];
+        this.targets = resolveTransformTargets({
+            selectionSnapshot: this.selection?.snapshot?.() ?? null,
+            document: this.document,
+            registry: this.registry,
+        });
+        if (!mode || this.targets.object3Ds.length === 0) {
+            this.detach();
             this.data.simulation()?.render?.();
             return;
         }
-
-        this.selectedEntityId = entity.id;
-        this.controls.setMode(mode);
-        // Buildings and props are ground-authored records. Keep controls to the
-        // transform components their document schemas can round-trip.
-        const groundEntity = entity.kind === "building" || entity.layer === "props";
-        const planarTranslation = groundEntity && mode === "translate";
-        const yawOnlyRotation = groundEntity && mode === "rotate";
-        if (elevationOnly) {
-            this.controls.showX = false;
-            this.controls.showY = true;
-            this.controls.showZ = false;
-        } else {
-            this.controls.showX = !yawOnlyRotation;
-            this.controls.showY = !planarTranslation;
-            this.controls.showZ = !yawOnlyRotation;
+        const policy = resolveGizmoPolicy(this.targets, mode);
+        if (!policy.supported) {
+            this.detach();
+            this.data.simulation()?.render?.();
+            return;
         }
-        positionPivotAtObjectCenter(this.pivot, entity.object3D);
+        this.controls.setMode(mode);
+        this.controls.showX = policy.showX;
+        this.controls.showY = policy.showY;
+        this.controls.showZ = policy.showZ;
+        positionPivotAtCenter(this.pivot, this.targets.object3Ds);
         this.pivot.visible = true;
         this.pivot.updateMatrixWorld(true);
-        this.previousPivotMatrixWorld.copy(this.pivot.matrixWorld);
         this.controls.attach(this.pivot);
         this.helper.visible = true;
         this.data.simulation()?.render?.();
@@ -268,6 +231,9 @@ export class TransformTool {
 
     dispose() {
         this.disposeEditor?.();
+        this.disposeSelection?.();
+        this.disposeDocument?.();
+        this.disposeBus?.();
         this.controls.removeEventListener("objectChange", this.onObjectChange);
         this.controls.removeEventListener("dragging-changed", this.onDraggingChanged);
         this.controls.detach();
@@ -277,35 +243,27 @@ export class TransformTool {
     }
 }
 
-function getObjectCenter(object3D) {
-    const box = new THREE.Box3().setFromObject(object3D);
-    const center = new THREE.Vector3();
-
-    if (box.isEmpty()) {
-        object3D.getWorldPosition(center);
-    } else {
-        box.getCenter(center);
+export function unionBounds(object3Ds) {
+    const box = new THREE.Box3();
+    for (const object3D of object3Ds) {
+        object3D.updateMatrixWorld(true);
+        const objectBox = new THREE.Box3().setFromObject(object3D);
+        if (objectBox.isEmpty()) {
+            const position = new THREE.Vector3();
+            object3D.getWorldPosition(position);
+            objectBox.setFromCenterAndSize(position, new THREE.Vector3(0.001, 0.001, 0.001));
+        }
+        box.union(objectBox);
     }
-
-    return center;
+    return box;
 }
 
-function positionPivotAtObjectCenter(pivot, object3D) {
-    const center = getObjectCenter(object3D);
+function positionPivotAtCenter(pivot, object3Ds) {
+    const box = unionBounds(object3Ds);
+    const center = new THREE.Vector3();
+    if (!box.isEmpty()) box.getCenter(center);
     pivot.position.copy(center);
     pivot.rotation.set(0, 0, 0);
     pivot.scale.set(1, 1, 1);
     pivot.updateMatrixWorld(true);
-}
-
-function applyWorldDelta(object3D, deltaMatrixWorld) {
-    object3D.updateMatrixWorld(true);
-    const nextWorldMatrix = deltaMatrixWorld.clone().multiply(object3D.matrixWorld);
-    const parentWorldInverse = object3D.parent
-        ? object3D.parent.matrixWorld.clone().invert()
-        : new THREE.Matrix4();
-    const nextLocalMatrix = parentWorldInverse.multiply(nextWorldMatrix);
-
-    nextLocalMatrix.decompose(object3D.position, object3D.quaternion, object3D.scale);
-    object3D.updateMatrixWorld(true);
 }

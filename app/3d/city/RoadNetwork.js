@@ -211,14 +211,14 @@ function createRoadFromEdge(edge, trimmedEndpoints, networkOptions) {
 }
 
 /**
- * 
- * @param {THREE.Scene} scene 
- * @param {Map<string, THREE.Vector3>} vectorMap A map to store named vectors (e.g. "center", "leftBoundary", etc.) for use in road generation.
- * @param {Array<Array>} connections A list of connections/tuples between roads, where first element is the start vector name, second element is the end vector name, and third is whether the relation is bidirectional (e.g. [["center", "leftBoundary", true], ...])
+ * Plan a road network without creating meshes: resolve edges, adjacency,
+ * intersection nodes, and insets from the WHOLE graph. Insets depend on every
+ * incident edge, so callers that rebuild a subset still plan over all edges.
+ * @param {Map<string, THREE.Vector3>} vectorMap
+ * @param {Array<Array>} connections `[startName, endName, bidirectional, metadata]`
  * @param {Object} options
- * @returns {{roads: Road[], intersections: Intersection[], graph: {nodes: Map<string, THREE.Vector3>, edges: Array<Object>, adjacency: Map<string, Array<Object>>}}}
  */
-export function buildRoadNetwork(scene, vectorMap, connections, options = {}) {
+export function planRoadNetwork(vectorMap, connections, options = {}) {
     const networkOptions = {
         ...DEFAULT_NETWORK_OPTIONS,
         ...options,
@@ -289,19 +289,55 @@ export function buildRoadNetwork(scene, vectorMap, connections, options = {}) {
         );
     }
 
-    const roads = [];
-
     for (const edge of edges) {
-        const trimmedEndpoints = computeTrimmedEndpoints(
+        edge.trimmedEndpoints = computeTrimmedEndpoints(
             edge,
             edge.hasExplicitStart ? 0 : (nodeInsetMap.get(edge.startName) ?? 0),
             edge.hasExplicitEnd ? 0 : (nodeInsetMap.get(edge.endName) ?? 0),
             networkOptions.minRoadLength,
         );
-        const road = createRoadFromEdge(edge, trimmedEndpoints, networkOptions);
+    }
+
+    return {
+        networkOptions,
+        edges,
+        adjacency,
+        intersectionNodes,
+        nodeInsetMap,
+        nodes: vectorMap,
+    };
+}
+
+/**
+ * Create Road and Intersection objects from a plan. With `edgeIds` / `nodeIds`
+ * only that subset is built; intersections outside the subset are untouched
+ * and intersections inside it receive existing Road objects for edges that
+ * were not rebuilt (`existingRoads`, keyed by edge id).
+ * @param {THREE.Scene|null} scene
+ * @param {ReturnType<typeof planRoadNetwork>} plan
+ * @param {{ edgeIds?: Iterable<string>|null, nodeIds?: Iterable<string>|null, existingRoads?: Map<string, Road> }} [subset]
+ */
+export function materializeRoadNetwork(scene, plan, { edgeIds = null, nodeIds = null, existingRoads = new Map() } = {}) {
+    const { networkOptions, edges, adjacency, intersectionNodes } = plan;
+    const edgeFilter = edgeIds ? new Set([...edgeIds].map(String)) : null;
+    const nodeFilter = nodeIds ? new Set([...nodeIds].map(String)) : null;
+
+    const roads = [];
+    const roadByEdge = new Map();
+
+    for (const edge of edges) {
+        if (edgeFilter && !edgeFilter.has(String(edge.id))) {
+            const existing = existingRoads.get(String(edge.id));
+            if (existing) {
+                edge.road = existing;
+                roadByEdge.set(String(edge.id), existing);
+            }
+            continue;
+        }
+        const road = createRoadFromEdge(edge, edge.trimmedEndpoints, networkOptions);
         edge.road = road;
-        edge.trimmedEndpoints = trimmedEndpoints;
         roads.push(road);
+        if (edge.id !== null) roadByEdge.set(String(edge.id), road);
 
         if (scene) {
             road.setup(scene);
@@ -311,6 +347,7 @@ export function buildRoadNetwork(scene, vectorMap, connections, options = {}) {
     const intersections = [];
 
     for (const nodeName of intersectionNodes) {
+        if (nodeFilter && !nodeFilter.has(String(nodeName))) continue;
         const nodeEdges = adjacency.get(nodeName) ?? [];
         const intersectionRoads = nodeEdges
             .map((edge) => edge.road)
@@ -327,13 +364,28 @@ export function buildRoadNetwork(scene, vectorMap, connections, options = {}) {
         }
     }
 
+    return { roads, intersections, roadByEdge };
+}
+
+/**
+ * 
+ * @param {THREE.Scene} scene 
+ * @param {Map<string, THREE.Vector3>} vectorMap A map to store named vectors (e.g. "center", "leftBoundary", etc.) for use in road generation.
+ * @param {Array<Array>} connections A list of connections/tuples between roads, where first element is the start vector name, second element is the end vector name, and third is whether the relation is bidirectional (e.g. [["center", "leftBoundary", true], ...])
+ * @param {Object} options
+ * @returns {{roads: Road[], intersections: Intersection[], graph: {nodes: Map<string, THREE.Vector3>, edges: Array<Object>, adjacency: Map<string, Array<Object>>}}}
+ */
+export function buildRoadNetwork(scene, vectorMap, connections, options = {}) {
+    const plan = planRoadNetwork(vectorMap, connections, options);
+    const { roads, intersections } = materializeRoadNetwork(scene, plan);
+
     return {
         roads,
         intersections,
         graph: {
             nodes: vectorMap,
-            edges,
-            adjacency,
+            edges: plan.edges,
+            adjacency: plan.adjacency,
         },
     };
 }

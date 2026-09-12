@@ -298,7 +298,8 @@ export class StorageService {
         this.environmentMigrationsDir = path.join(dataDir, "environment-migrations");
         // Guarded writes emit schema v3 unless the server opts into v4. Tests
         // construct services directly, so the env flag is read in App.js only.
-        this.environmentWriteSchemaVersion = options.environmentSchemaVersion === 4 ? 4 : 3;
+        // ED-02: v4 by default; `environmentSchemaVersion: 3` opts a service out (tests, legacy hosts).
+        this.environmentWriteSchemaVersion = options.environmentSchemaVersion === 3 ? 3 : 4;
         this._environmentRecovery = null;
         this._runManifestWriteChains = new Map();
         this._scenarioWriteChains = new Map();
@@ -3223,6 +3224,12 @@ function environmentImportHash(manifest) {
     delete clone.schemaVersion;
     delete clone.visualLayer;
     delete clone.evidence;
+    // The schema-v4 authoring overlay is editor state, not world identity: a v2/v3
+    // bundle environment must re-resolve against its stored v4 twin (ED-02).
+    if (clone.document && typeof clone.document === "object") {
+        delete clone.document.objects;
+        delete clone.document.objectGraphVersion;
+    }
     return semanticHash(clone);
 }
 

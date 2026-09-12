@@ -1,7 +1,12 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
+import { descendantIds, indexObjectsById } from "../editor/commands/objectMutations.js";
+import { GROUP_TYPE_ID } from "../editor/objects/types/group.js";
+import { entityIdForObject, entityIdForSub } from "../editor/selection/selectionIds.js";
 
 const HIGHLIGHT_COLOR = 0x38bdf8;
+const SUB_HIGHLIGHT_COLOR = 0xfbbf24;
+const GROUP_COLOR = 0xa78bfa;
 const HIGHLIGHT_EMISSIVE = new THREE.Color(HIGHLIGHT_COLOR);
 const MATERIAL_SNAPSHOTS = new WeakMap();
 
@@ -43,59 +48,141 @@ function resetMaterialHighlight(object) {
     });
 }
 
+/**
+ * Resolve the runtime objects a selection highlights: one entry per selected
+ * leaf (groups expand to their descendants) plus the sub-object handle.
+ * Exported for tests.
+ */
+export function resolveSelectionVisuals({ selectionSnapshot, document, registry }) {
+    const leaves = [];
+    const groups = [];
+    if (!selectionSnapshot || !registry) return { leaves, groups, sub: null };
+    const byId = indexObjectsById(document?.objects ?? []);
+    const seen = new Set();
+    const pushEntity = (record) => {
+        const entityId = entityIdForObject(record, registry);
+        const entity = entityId ? registry.getEntity(entityId) : null;
+        if (entity?.object3D && entity.visible !== false && !seen.has(entity.id)) {
+            seen.add(entity.id);
+            leaves.push({ id: record.id, entity });
+            return entity;
+        }
+        return null;
+    };
+    for (const id of selectionSnapshot.ids ?? []) {
+        const record = byId.get(String(id));
+        if (!record) continue;
+        if (record.typeId === GROUP_TYPE_ID) {
+            const members = [];
+            for (const descendant of descendantIds(byId, record.id)) {
+                const child = byId.get(descendant);
+                if (!child || child.typeId === GROUP_TYPE_ID) continue;
+                const entity = pushEntity(child);
+                if (entity) members.push(entity);
+            }
+            groups.push({ id: record.id, members });
+        } else {
+            pushEntity(record);
+        }
+    }
+    const subEntity = selectionSnapshot.sub ? registry.getEntity(entityIdForSub(selectionSnapshot.sub)) : null;
+    return { leaves, groups, sub: subEntity?.object3D ? subEntity : null };
+}
+
+function createBoxHelper(object3D, color, name) {
+    const helper = new THREE.BoxHelper(object3D, color);
+    helper.name = name;
+    helper.renderOrder = 999;
+    helper.userData.skipEnvironmentSelection = true;
+    if (helper.material) {
+        helper.material.depthTest = false;
+        helper.material.transparent = true;
+        helper.material.opacity = 0.95;
+    }
+    return helper;
+}
+
+function createUnionHelper(object3Ds, color, name) {
+    const box = new THREE.Box3();
+    for (const object3D of object3Ds) {
+        object3D.updateMatrixWorld(true);
+        box.union(new THREE.Box3().setFromObject(object3D));
+    }
+    if (box.isEmpty()) return null;
+    const helper = new THREE.Box3Helper(box, new THREE.Color(color));
+    helper.name = name;
+    helper.renderOrder = 998;
+    helper.userData.skipEnvironmentSelection = true;
+    if (helper.material) {
+        helper.material.depthTest = false;
+        helper.material.transparent = true;
+        helper.material.opacity = 0.7;
+    }
+    return helper;
+}
+
 export function SelectionVisualizer({ data }) {
-    const helperRef = useRef(null);
-    const highlightedRef = useRef(null);
+    const helpersRef = useRef([]);
+    const highlightedRef = useRef([]);
 
     useEffect(() => {
-        const editor = data?.editor?.();
+        const selection = data?.selection?.();
         const registry = data?.environment?.()?.objects?.();
+        const document = data?.environment?.()?.getDocument?.();
         const scene = data?.three?.()?.scene;
-        if (!editor || !registry || !scene) return undefined;
+        if (!selection || !registry || !scene || !document) return undefined;
 
         function clear() {
-            if (highlightedRef.current) {
-                resetMaterialHighlight(highlightedRef.current);
-                highlightedRef.current = null;
+            for (const object of highlightedRef.current) resetMaterialHighlight(object);
+            highlightedRef.current = [];
+            for (const helper of helpersRef.current) {
+                helper.parent?.remove?.(helper);
+                helper.geometry?.dispose?.();
+                helper.material?.dispose?.();
             }
-
-            if (helperRef.current) {
-                helperRef.current.parent?.remove?.(helperRef.current);
-                helperRef.current.geometry?.dispose?.();
-                helperRef.current.material?.dispose?.();
-                helperRef.current = null;
-            }
+            helpersRef.current = [];
         }
 
-        return editor.subscribe((snapshot) => {
+        function rebuild() {
             clear();
-            const entity = snapshot.selection?.id
-                ? registry.getEntity(snapshot.selection.id)
-                : null;
+            const visuals = resolveSelectionVisuals({ selectionSnapshot: selection.snapshot(), document, registry });
+            for (const { id, entity } of visuals.leaves) {
+                applyMaterialHighlight(entity.object3D);
+                highlightedRef.current.push(entity.object3D);
+                const helper = createBoxHelper(entity.object3D, HIGHLIGHT_COLOR, `EnvironmentSelection:${id}`);
+                scene.add(helper);
+                helpersRef.current.push(helper);
+            }
+            for (const group of visuals.groups) {
+                const helper = createUnionHelper(group.members.map((entity) => entity.object3D), GROUP_COLOR, `EnvironmentSelectionGroup:${group.id}`);
+                if (helper) {
+                    scene.add(helper);
+                    helpersRef.current.push(helper);
+                }
+            }
+            if (visuals.sub) {
+                const helper = createBoxHelper(visuals.sub.object3D, SUB_HIGHLIGHT_COLOR, `EnvironmentSelectionSub:${visuals.sub.id}`);
+                scene.add(helper);
+                helpersRef.current.push(helper);
+            }
+            data?.simulation?.()?.render?.();
+        }
 
-            if (!entity?.object3D || entity.visible === false) {
+        const disposeSelection = selection.subscribe(rebuild);
+        const disposeDocument = document.subscribe((snapshot, event) => {
+            if (event?.source === "subscribe") return;
+            if (event?.transient) {
+                for (const helper of helpersRef.current) helper.update?.();
                 data?.simulation?.()?.render?.();
                 return;
             }
-
-            applyMaterialHighlight(entity.object3D);
-            highlightedRef.current = entity.object3D;
-
-            const helper = new THREE.BoxHelper(entity.object3D, HIGHLIGHT_COLOR);
-            helper.name = `EnvironmentSelection:${entity.id}`;
-            helper.renderOrder = 999;
-            helper.userData.skipEnvironmentSelection = true;
-
-            if (helper.material) {
-                helper.material.depthTest = false;
-                helper.material.transparent = true;
-                helper.material.opacity = 0.95;
-            }
-
-            scene.add(helper);
-            helperRef.current = helper;
-            data?.simulation?.()?.render?.();
+            rebuild();
         });
+        return () => {
+            disposeSelection?.();
+            disposeDocument?.();
+            clear();
+        };
     }, [data]);
 
     useEffect(() => {
@@ -103,19 +190,10 @@ export function SelectionVisualizer({ data }) {
         if (!registry?.subscribe) return undefined;
 
         return registry.subscribe(() => {
-            helperRef.current?.update?.();
+            for (const helper of helpersRef.current) helper.update?.();
             data?.simulation?.()?.render?.();
         });
     }, [data]);
-
-    useEffect(() => () => {
-        helperRef.current?.parent?.remove?.(helperRef.current);
-        helperRef.current?.geometry?.dispose?.();
-        helperRef.current?.material?.dispose?.();
-        if (highlightedRef.current) {
-            resetMaterialHighlight(highlightedRef.current);
-        }
-    }, []);
 
     return null;
 }

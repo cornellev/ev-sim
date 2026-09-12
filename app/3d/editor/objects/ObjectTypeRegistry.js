@@ -8,7 +8,8 @@
  * `RenderSceneProviderRegistry`. Kernel-safe.
  */
 
-import { isObjectOptions, isPlainObject, text } from "./ObjectOptions.js";
+import { isObjectOptions, isPlainObject, issue, text } from "./ObjectOptions.js";
+import { TRANSFORM_ISSUE_CODES } from "./transformDelta.js";
 
 export const OBJECT_TYPE_ERROR_CODES = Object.freeze({
     INVALID_DEFINITION: "OBJECT_TYPE_INVALID_DEFINITION",
@@ -55,11 +56,25 @@ export const DEFAULT_CAPABILITIES = Object.freeze({
     hasOptions: false,
 });
 
-/** Transform binding returned by types without a transform. */
+/**
+ * Transform binding returned by types without a transform. `plan()` reports
+ * the object as not transformable so planners reject the gesture atomically.
+ */
 export const NO_TRANSFORM_BINDING = Object.freeze({
     kind: "none",
     read() {
         return null;
+    },
+    plan(_delta, context = {}) {
+        return {
+            steps: [],
+            issues: [issue(
+                ["transform"],
+                TRANSFORM_ISSUE_CODES.NOT_TRANSFORMABLE,
+                "This object has no transform.",
+                { objectId: context.record?.id ?? null },
+            )],
+        };
     },
 });
 
@@ -74,7 +89,8 @@ export function objectTypeKey(typeId, version) {
  *   options: import("./ObjectOptions.js").ObjectOptions,
  *   create(input: object, context: object): object,
  *   getCapabilities(record: object): object,
- *   getTransformBinding(record: object): object,
+ *   getTransformBinding(record: object): { kind: string, read(legacy: object, context: object): object|null,
+ *     plan(delta: { matrix: number[] }, context: object): { steps: object[], issues: object[] } },
  *   getDependencies(record: object, context?: object): Array<{ kind: string, id: string }>,
  *   compileMetric(record: object, context: object): object|null,
  *   migrate(record: object, fromVersion: number): object }} ObjectTypeDefinition

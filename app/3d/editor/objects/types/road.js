@@ -1,11 +1,15 @@
 /**
  * Road objects reference edges in the canonical road topology table. Options
- * are projected from the edge record; transforms edit shared nodes through a
- * specialized binding delivered in ED-04, so ED-01 exposes a read-only binding.
+ * are projected from the edge record. The transform binding reads the edge
+ * midpoint and plans node moves for both endpoints; a planner dedupes nodes
+ * shared with other edges so each moves exactly once. Curve handles arrive
+ * with ED-04.
  */
 
 import { ObjectOptions, boolean, field, finite, integer, isPlainObject, issue, validateFieldConstraints } from "../ObjectOptions.js";
 import { defineObjectType } from "../ObjectTypeRegistry.js";
+import { applyDeltaToPoint } from "../transformDelta.js";
+import { TRANSFORM_ISSUE_CODES } from "../transformDelta.js";
 
 export const ROAD_TYPE_ID = "road";
 
@@ -63,6 +67,25 @@ export function edgeTransformBinding(record) {
                 rotationY: Math.atan2(-(finite(end.z, 0) - finite(start.z, 0)), finite(end.x, 0) - finite(start.x, 0)),
             };
         },
+        /** Plan `move-node` steps for both endpoints; any affine delta is a valid point map. */
+        plan(delta, context = {}) {
+            const edge = context.legacy ?? null;
+            const start = context.nodes?.get?.(edge?.startNodeId) ?? null;
+            const end = context.nodes?.get?.(edge?.endNodeId) ?? null;
+            if (!edge || !start || !end) {
+                return {
+                    steps: [],
+                    issues: [issue(["transform"], TRANSFORM_ISSUE_CODES.MISSING, `Road "${record.id}" is missing its nodes.`, { objectId: record.id })],
+                };
+            }
+            return {
+                steps: [
+                    { op: "move-node", nodeId: String(edge.startNodeId), position: applyDeltaToPoint(delta, start) },
+                    { op: "move-node", nodeId: String(edge.endNodeId), position: applyDeltaToPoint(delta, end) },
+                ],
+                issues: [],
+            };
+        },
     });
 }
 
@@ -75,7 +98,7 @@ export function createRoadType() {
         catalog: { label: "Road", kind: "road", layer: "roads" },
         legacy: { domain: "roads.edges", idField: "id" },
         options,
-        capabilities: { selectable: true, transformable: false, deletable: true, groupable: true, hasOptions: true },
+        capabilities: { selectable: true, transformable: true, deletable: true, groupable: true, hasOptions: true },
         getTransformBinding(record) {
             return edgeTransformBinding(record);
         },

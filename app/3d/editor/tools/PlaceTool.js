@@ -1,8 +1,8 @@
 import * as THREE from "three";
 import { EDITOR_TOOLS } from "../EditorState.js";
-import { placeFusionObjectInScene } from "../placement/placeFusionObject.js";
+import { addFeature } from "../commands/legacyCommands.js";
+import { getPlacementAsset } from "../placement/placementCatalogData.js";
 import { getGroundPointFromEvent, isOverlayEvent } from "../editorPointerUtils.js";
-import { addFeature } from "../document/documentMutations.js";
 
 function createGhost() {
     const geometry = new THREE.CylinderGeometry(0.45, 0.45, 0.12, 24);
@@ -18,6 +18,11 @@ function createGhost() {
     return mesh;
 }
 
+/** Signs face +X by default (legacy quadrant 1); other props have no facing. */
+export function defaultFacingForAsset(assetId) {
+    return getPlacementAsset(assetId)?.kind === "sign" ? 1 : 0;
+}
+
 export class PlaceTool {
     constructor({ data, scene, camera, renderer }) {
         this.data = data;
@@ -26,6 +31,8 @@ export class PlaceTool {
         this.renderer = renderer;
         this.editor = data.editor();
         this.registry = data.environment().objects();
+        this.selection = data.selection?.() ?? data.environment().selection?.();
+        this.bus = data.commands?.() ?? data.environment().commands?.();
         this.ghost = null;
         this.disposeMove = data.mouse()?.registerMove?.((event) => this.handleMove(event));
         this.disposeClick = data.mouse()?.registerClick?.((event) => this.handleClick(event));
@@ -73,26 +80,21 @@ export class PlaceTool {
         const point = getGroundPointFromEvent(event, this.camera, this.renderer);
         if (!point) return;
 
-        const { entity, object } = placeFusionObjectInScene({
-            data: this.data,
-            scene: this.scene,
-            registry: this.registry,
-            assetId: asset.id,
-            point,
-            label: asset.label,
-        });
-        addFeature(this.data.environment().getDocument(), {
-            id: object._uuid,
+        // The command creates the record; the SceneProjector places the mesh.
+        const result = this.bus.execute(addFeature({
             type: asset.id,
             x: point.x,
             z: point.z,
-            dir: object.dir ?? 0,
-            rotationY: object._mesh?.rotation?.y ?? 0,
-            tags: object.tags,
-        });
-
-        this.editor.selectEntity(entity);
-        this.editor.markDirty(true);
+            dir: defaultFacingForAsset(asset.id),
+            rotationY: 0,
+            name: asset.label,
+            label: `Place ${asset.label ?? asset.id}`,
+        }));
+        if (result.ok && result.result?.objectId) {
+            this.selection?.select(result.result.objectId);
+        } else if (!result.ok) {
+            console.warn("[environment] placement rejected:", result.issues.map((issue) => issue.message).join("; "));
+        }
         this.data.simulation()?.render?.();
     }
 

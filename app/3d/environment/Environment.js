@@ -4,6 +4,9 @@ import { EnvironmentDocument } from "../editor/document/EnvironmentDocument.js";
 import { hydrateDocumentFromRuntime } from "../editor/document/documentRuntimeHydration.js";
 import { EditorState } from "../editor/EditorState.js";
 import { EnvironmentRegistry } from "../editor/EnvironmentRegistry.js";
+import { CommandBus } from "../editor/commands/CommandBus.js";
+import { SceneProjector } from "../editor/projection/SceneProjector.js";
+import { SelectionStore } from "../editor/selection/SelectionStore.js";
 import { EnvironmentSkyState } from "../skybox/EnvironmentSkyState.js";
 import { ENVIRONMENT_SCHEMA_VERSION } from "./EnvironmentManifestPolicy.js";
 
@@ -47,6 +50,15 @@ export class Environment {
         this.registry = new EnvironmentRegistry({
             chunkManager: this.chunkManager,
         });
+        // ED-02: shared selection (object ids), the single mutation path, and
+        // the incremental projector that keeps the runtime in step with it.
+        this.selectionStore = new SelectionStore();
+        this.commandBus = new CommandBus({
+            document: this.document,
+            selection: this.selectionStore,
+            sky: () => this.skyState?.toManifest?.() ?? null,
+        });
+        this.sceneProjector = null;
 
         // A list of all the static objects (as in, that don't move) in the environment.
         // These are particularly objects can still interact with LiDAR and other sensors, but they don't move.
@@ -70,15 +82,41 @@ export class Environment {
         this.evidence = options.evidence ?? null;
     }
 
-    setup(scene) {
+    /**
+     * @param {THREE.Scene} scene
+     * @param {{ projectorRuntime?: object|null }} [options] browser-only projector helpers (placement, buildings)
+     */
+    setup(scene, { projectorRuntime = null } = {}) {
         this.scene = scene;
         this.chunkManager.setScene(scene);
         this.registry.registerExistingContent(scene, this.data);
         hydrateDocumentFromRuntime(this.data, this.document);
+        this.sceneProjector?.dispose?.();
+        this.sceneProjector = new SceneProjector({
+            data: this.data,
+            scene,
+            document: this.document,
+            registry: this.registry,
+            runtime: projectorRuntime,
+        }).attach();
     }
 
     editor() {
         return this.editorState;
+    }
+
+    /** Shared selection store (object ids plus optional sub-object). */
+    selection() {
+        return this.selectionStore;
+    }
+
+    /** CommandBus: transactions, gestures, undo/redo. */
+    commands() {
+        return this.commandBus;
+    }
+
+    projector() {
+        return this.sceneProjector;
     }
 
     sky() {
@@ -118,6 +156,8 @@ export class Environment {
     dispose() {
         this.toolController?.dispose?.();
         this.toolController = null;
+        this.sceneProjector?.dispose?.();
+        this.sceneProjector = null;
     }
 
     toManifest() {

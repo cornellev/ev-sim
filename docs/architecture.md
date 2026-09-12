@@ -248,7 +248,7 @@ backends is specified in the
 
 ## Environment Editor
 
-The environment editor authors static world content through an `EnvironmentDocument` (road nodes, edges, turn rules, buildings, features, and earth metadata). Runtime road/intersection entities retain UI compatibility aliases while their `sourceId` and canonical entity identity derive from document road/node IDs rather than array position. `EditorState` tracks three sub-modes within the editor: scene editing, 2D map authoring, and earth import.
+The environment editor authors static world content through an `EnvironmentDocument` (road nodes, edges, turn rules, buildings, features, earth metadata, and the schema-v4 `objects` overlay). Every edit is a `CommandBus` command or gesture that commits one `ChangeSet`; the `SceneProjector` applies change sets incrementally to runtime meshes, registry entities, chunks, and LiDAR truth (roads rebuild only their local closure), so a drag never rebuilds the world. Selection is a shared `SelectionStore` of object ids; runtime road/intersection entities are keyed `road:<edgeId>` / `intersection:<nodeId>` (index aliases exist only after a full load). `EditorState` tracks three sub-modes within the editor: scene editing, 2D map authoring, and earth import.
 
 - [Environment Editor](environment-editor.md) — document model, editor modes, baking, and chrome UI.
 - [Earth Import](earth-import.md) — Google 3D Tiles preview, OSM road import, and geospatial configuration.

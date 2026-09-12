@@ -104,7 +104,7 @@ function boundLayerFor(worldHash) {
     });
 }
 
-test("v2 environments load as revision 0 and guarded saves produce v3 revision 1", async () => {
+test("v2 environments load as revision 0 and guarded saves produce revision 1 on the default (v4) writer", async () => {
     const { dir, service } = await tempService();
     try {
         await fs.mkdir(path.join(dir, "environments"), { recursive: true });
@@ -119,14 +119,15 @@ test("v2 environments load as revision 0 and guarded saves produce v3 revision 1
             manifest: loaded,
             expectedRevision: 0,
         });
-        assert.equal(saved.schemaVersion, ENVIRONMENT_SCHEMA_VERSION);
+        assert.equal(saved.schemaVersion, 4, "ED-02: guarded saves write schema v4 by default");
+        assert.equal(ENVIRONMENT_SCHEMA_VERSION, 3, "the browser still declares v3; the downgrade guard keys on the objects array");
         assert.equal(saved.revision, 1);
         assert.equal(saved.visualLayer, null);
         assert.equal(saved.evidence, null);
         assert.equal("clientRevision" in saved, false);
 
         const onDisk = JSON.parse(await fs.readFile(path.join(dir, "environments", "yard.json"), "utf8"));
-        assert.equal(onDisk.schemaVersion, 3);
+        assert.equal(onDisk.schemaVersion, 4);
         assert.equal(onDisk.revision, 1);
         assert.equal("clientRevision" in onDisk, false);
     } finally {
@@ -505,8 +506,11 @@ test("catalog and MCP summaries include revision", async () => {
         const catalog = await service.listEnvironments();
         assert.equal(catalog.find((entry) => entry.id === "igvc").revision, 0);
         assert.equal(catalog.find((entry) => entry.id === "yard").revision, created.revision);
-        const serialized = serializeEnvironmentManifestV3(created, { environmentId: "yard", revision: 2, current: created });
+        // The explicit V3 alias still writes v3 for a v3 manifest; a stored v4 file stays v4 (sticky).
+        const { objects: _objects, objectGraphVersion: _graphVersion, ...v3Document } = created.document;
+        const serialized = serializeEnvironmentManifestV3({ ...created, schemaVersion: 3, document: v3Document }, { environmentId: "yard", revision: 2, current: null });
         assert.equal(serialized.schemaVersion, 3);
+        assert.equal(serializeEnvironmentManifestV3(created, { environmentId: "yard", revision: 2, current: created }).schemaVersion, 4);
         assert.equal(canonicalExactStringify(layerFor("c".repeat(64))).includes("sourceWorldHash"), true);
     } finally {
         await fs.rm(dir, { recursive: true, force: true });

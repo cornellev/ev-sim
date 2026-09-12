@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { EDITOR_TOOLS } from "../EditorState.js";
 import { getCanvasPointer, isOverlayEvent } from "../editorPointerUtils.js";
+import { objectIdForEntity, subForEntity } from "../selection/selectionIds.js";
 
 const POINTER_DRAG_THRESHOLD_PX = 5;
 const POINTER_DRAG_THRESHOLD_SQ = POINTER_DRAG_THRESHOLD_PX * POINTER_DRAG_THRESHOLD_PX;
@@ -55,6 +56,33 @@ export function pickEnvironmentEntity({
     return null;
 }
 
+/** Additive selection modifier: Shift, Cmd, or Ctrl. */
+export function isAdditiveSelectionEvent(event) {
+    return Boolean(event?.shiftKey || event?.metaKey || event?.ctrlKey);
+}
+
+/**
+ * Translate a picked runtime entity into a selection change. Road-node
+ * handles select their incident edge with the node as sub-selection so the
+ * gizmo can move the endpoint alone. Exported for tests.
+ */
+export function applyPickToSelection({ selection, document, entity, additive = false, activeTool = EDITOR_TOOLS.SELECT }) {
+    if (!selection) return;
+    if (!entity) {
+        if (activeTool === EDITOR_TOOLS.SELECT && !additive) selection.clear();
+        return;
+    }
+    const sub = subForEntity(entity);
+    if (sub) {
+        const edge = document?.roads?.edges?.find((candidate) => candidate.startNodeId === sub.id || candidate.endNodeId === sub.id) ?? null;
+        selection.select(edge ? [edge.id] : [], { mode: "replace", sub });
+        return;
+    }
+    const objectId = objectIdForEntity(entity);
+    if (!objectId) return;
+    selection.select(objectId, { mode: additive ? "toggle" : "replace" });
+}
+
 export class SelectTool {
     constructor({ data, scene, camera, renderer }) {
         this.data = data;
@@ -63,6 +91,7 @@ export class SelectTool {
         this.renderer = renderer;
         this.registry = data.environment().objects();
         this.editor = data.editor();
+        this.selection = data.selection?.() ?? data.environment().selection?.() ?? null;
         this.pointerDown = null;
         this.disposeDown = data.mouse()?.registerDown?.((event) => this.handlePointerDown(event));
         this.disposeUp = data.mouse()?.registerUp?.((event) => this.handlePointerUp(event));
@@ -84,7 +113,7 @@ export class SelectTool {
         this.pointerDown = null;
 
         if (event.button !== 0 || !pointerDown || pointerDown.button !== 0) return;
-        if (this.editor.isSelectionSuppressed?.()) return;
+        if (this.selection?.isSuppressed?.()) return;
         if (isOverlayEvent(event)) return;
         if (isPointerDrag(pointerDown, event)) return;
 
@@ -108,11 +137,13 @@ export class SelectTool {
             layers,
         });
 
-        if (entity) {
-            this.editor.selectEntity(entity);
-        } else if (activeTool === EDITOR_TOOLS.SELECT) {
-            this.editor.clearSelection();
-        }
+        applyPickToSelection({
+            selection: this.selection,
+            document: this.data.environment().getDocument(),
+            entity,
+            additive: isAdditiveSelectionEvent(event),
+            activeTool,
+        });
 
         this.data.simulation()?.render?.();
     }

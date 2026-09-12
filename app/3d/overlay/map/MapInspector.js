@@ -16,12 +16,9 @@ import {
     getIntersectionMovements,
     getMapSelectionRecord,
     getNodeDegree,
-    setRoadNodeElevation,
-    setTurnMovementAllowed,
-    updateRoadEdge,
 } from "../../editor/document/documentMutations.js";
-import { syncRoadsFromDocument } from "../../editor/document/DocumentSync.js";
 import { handleMapDelete } from "../../editor/map/MapToolLogic.js";
+import { setRoadNodeElevation as setRoadNodeElevationCommand, setTurnRule, updateRoadEdge as updateRoadEdgeCommand } from "../../editor/commands/legacyCommands.js";
 import { getPlacementAsset } from "../../editor/placement/PlacementCatalog";
 import { MenuButton } from "../ui/MenuButton";
 
@@ -151,12 +148,8 @@ function getSelectionMeta(selection, record) {
     };
 }
 
-function getScene(data) {
-    return data?.three?.()?.scene ?? data?.scene ?? null;
-}
-
-export function MapInspector({ data, editorSnapshot, documentSnapshot }) {
-    const selection = editorSnapshot?.map?.selection ?? null;
+export function MapInspector({ data, editorSnapshot, documentSnapshot, mapSelection = null }) {
+    const selection = mapSelection;
     const record = selection
         ? getMapSelectionRecord(documentSnapshot, selection)
         : null;
@@ -185,68 +178,32 @@ export function MapInspector({ data, editorSnapshot, documentSnapshot }) {
     }, [data]);
 
     const clearSelection = () => {
-        data?.editor?.()?.clearMapSelection?.();
+        data?.selection?.()?.clear?.();
     };
 
     const deleteSelection = () => {
-        const editor = data?.editor?.();
-        const environment = data?.environment?.();
-        const scene = getScene(data);
-        if (!editor || !environment || !scene || !selection) return;
-
-        handleMapDelete({
-            document: environment.getDocument(),
-            editor,
-            data,
-            scene,
-            selection,
-        });
+        if (!selection) return;
+        handleMapDelete({ data, objectIds: [selection.id] });
     };
 
     const setRoadBidirectional = (bidirectional) => {
-        const editor = data?.editor?.();
-        const environment = data?.environment?.();
-        const scene = getScene(data);
-        if (!editor || !environment || !scene || !selection?.id) return;
-        const document = environment.getDocument();
-        const result = updateRoadEdge(document, selection.id, {
-            bidirectional,
-            direction: bidirectional ? null : 1,
-        });
-        if (!result.ok) return;
-        editor.markDirty(true);
-        syncRoadsFromDocument(data, scene, document);
-        data.environment()?.objects?.()?.registerExistingContent?.(scene, data);
+        if (!selection?.id) return;
+        data?.commands?.()?.execute(updateRoadEdgeCommand({
+            edgeId: selection.id,
+            patch: { bidirectional, direction: bidirectional ? null : 1 },
+        }));
         data.simulation()?.render?.();
     };
 
     const commitNodeElevation = (nodeId, y) => {
-        const editor = data?.editor?.();
-        const environment = data?.environment?.();
-        const scene = getScene(data);
-        if (!editor || !environment || !scene || !nodeId) return;
-        const document = environment.getDocument();
-        const result = setRoadNodeElevation(document, nodeId, y);
-        if (!result.ok) return;
-        editor.markDirty(true);
-        syncRoadsFromDocument(data, scene, document);
-        data.environment()?.objects?.()?.registerExistingContent?.(scene, data);
+        if (!nodeId) return;
+        data?.commands?.()?.execute(setRoadNodeElevationCommand({ nodeId, y }));
         data.simulation()?.render?.();
     };
 
     const setMovementAllowed = (fromEdgeId, toEdgeId, allowed) => {
-        const editor = data?.editor?.();
-        const environment = data?.environment?.();
-        if (!editor || !environment || !record?.id) return;
-        const result = setTurnMovementAllowed(
-            environment.getDocument(),
-            record.id,
-            fromEdgeId,
-            toEdgeId,
-            allowed,
-        );
-        if (!result.ok) return;
-        editor.markDirty(true);
+        if (!record?.id) return;
+        data?.commands?.()?.execute(setTurnRule({ nodeId: record.id, fromEdgeId, toEdgeId, allowed }));
         data.simulation()?.render?.();
     };
 

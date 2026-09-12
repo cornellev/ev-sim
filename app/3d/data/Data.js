@@ -124,6 +124,16 @@ export class Data {
         return this.environmentDocument.editor();
     }
 
+    /** @returns {import("../editor/selection/SelectionStore.js").SelectionStore} */
+    selection() {
+        return this.environmentDocument.selection();
+    }
+
+    /** @returns {import("../editor/commands/CommandBus.js").CommandBus} */
+    commands() {
+        return this.environmentDocument.commands();
+    }
+
     sky() {
         return this.environmentDocument.sky();
     }

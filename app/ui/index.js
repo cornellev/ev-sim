@@ -34,7 +34,7 @@ export {
 } from "./FormControls";
 export { DialogSurface, PopoverSurface, ScrollPane, UiProvider } from "./Overlays";
 export { ShortcutProvider, useShortcut } from "./ShortcutProvider";
-export { getShortcutCandidates, isEditableTarget, isInteractiveTarget, matchesShortcut, normalizeShortcutKey } from "./shortcutUtils";
+export { getShortcutCandidates, isEditableTarget, isInteractiveTarget, matchesShortcut, normalizeShortcutKey, parseShortcut } from "./shortcutUtils";
 export { WorkspaceGuardProvider, useWorkspaceGuard, useWorkspaceNavigation } from "./WorkspaceGuardProvider";
 export { applyWorkspaceDecision, selectDirtyGuard } from "./workspaceGuardUtils";
 export { AsyncState, DesktopRequired, Panel, StatusMessage, WorkspaceFrame } from "./WorkspaceFrame";
