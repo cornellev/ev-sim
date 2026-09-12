@@ -118,11 +118,19 @@ export function hashWaypoints(values) {
             ...(waypoint.anchor.kind === "road" ? {
                 laneMode: waypoint.anchor.laneMode === "auto" ? "auto" : "fixed",
             } : {}),
+            // A stable lane id (ED-05, route v7) is the lane identity; the
+            // positional index is only hashed for anchors that predate it, so
+            // v5 waypoint hashes are unchanged byte for byte.
             ...(waypoint.anchor.kind === "road"
                 && waypoint.anchor.laneMode !== "auto"
-                && Number.isInteger(waypoint.anchor.laneIndex)
-                ? { laneIndex: waypoint.anchor.laneIndex }
-                : {}),
+                && typeof waypoint.anchor.laneId === "string"
+                && waypoint.anchor.laneId
+                ? { laneId: waypoint.anchor.laneId }
+                : waypoint.anchor.kind === "road"
+                    && waypoint.anchor.laneMode !== "auto"
+                    && Number.isInteger(waypoint.anchor.laneIndex)
+                    ? { laneIndex: waypoint.anchor.laneIndex }
+                    : {}),
         } : null,
     })));
 }

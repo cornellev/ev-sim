@@ -24,7 +24,7 @@ ED PR changes a contract, hash, gate, or milestone status.
 
 ## Status
 
-- Next milestone: **ED-05 — Lane authoring**.
+- Next milestone: **ED-06 — Asset catalog**.
 - Implemented: **ED-01 — Contracts** (object registry, options validation,
   schema-v4 adapters, compatibility fixtures), **ED-02 — Commands and
   hierarchy** (`SelectionStore`, `CommandBus` with transactions, gestures, and
@@ -40,8 +40,13 @@ ED PR changes a contract, hash, gate, or milestone status.
   Playwright/axe coverage, and retirement of the v4 opt-out), and **ED-04 —
   Road geometry** (versioned polyline/Bézier authoring, deterministic shared
   surfaces, topology commands, route v6, Scene/Map interaction, and guarded
-  persistence/MCP writes). Existing
-  environments retain their legacy behavior; schema v4 is the only writer.
+  persistence/MCP writes), and **ED-05 — Lane authoring** (explicit ordered
+  lanes with stable ids, per-lane directions and widths, per-boundary
+  markings, the `RoadDisplay` cross-section diagram and `road-lane`
+  sub-selection, asymmetric-aware turn-rule feasibility, route algorithm 7
+  with lane-id anchors and proof invalidation, and MCP lane operations).
+  Existing environments retain their legacy behavior; schema v4 is the only
+  writer.
 - Program goal: one consistent interaction model across hierarchy, scene, map,
   inspector, and asset library, with a modular object system that adds a type
   through one definition, one options validator, and its metric/render
@@ -76,7 +81,8 @@ ED PR changes a contract, hash, gate, or milestone status.
 - Because `createWorldDescription` reads only the legacy domains, the overlay
   is excluded from `worldHash` by construction. Group names, hierarchy order,
   locks, and editor visibility do not affect metric identity. Geometry, lane
-  direction, and enabled proxies do.
+  direction, explicit lane ids and widths (`edge.lanes[]`, ED-05), and enabled
+  proxies do; lane and border markings do not.
 - Standard components are `tags: string[]`, `locked: boolean`, and
   `editorHidden: boolean`; groups additionally persist `transform`, a world
   pivot frame (position, yaw, uniform scale). A group transform bakes the
@@ -574,6 +580,46 @@ validation path as numeric fields, markings, intersection turn validation, and
 route-proof invalidation on lane removal or direction change (a waypoint is
 never silently moved to a different lane).
 
+**Contract (implemented):**
+
+- `edge.lanes?: Array<{ id, direction: 1 | -1 | 0, width, markingLeft? }>`,
+  ordered rightmost first (physical index 0). Absent → lanes derive from
+  `laneCount`/`width`/`bidirectional`/`direction` exactly as before, keeping
+  the literal historical arithmetic. Present → `width` equals the lane-width
+  sum, `laneCount` equals the lane count, and `bidirectional`/`direction`
+  follow the lane directions; same-direction lanes must be adjacent and `0`
+  (shared) is legal only for a single lane. Validation codes are
+  `road.lane.*` (`empty`, `id-invalid`, `direction-invalid`,
+  `shared-requires-single`, `direction-interleaved`, `width-invalid`,
+  `width-mismatch`, `count-mismatch`, `bidirectional-mismatch`,
+  `direction-mismatch`, `marking-invalid`, `marking-outer-forbidden`,
+  `version-required`) scoped to `roads.edges[i].lanes[k]…`.
+- The first lane command materializes lanes on its edge only; a layout equal
+  to the derived default canonicalizes back to implicit. `{ id, direction,
+  width }` is metric (canonical road network, world description) only when
+  explicit, so untouched roads keep their hashes; `markingLeft` and the
+  borders are appearance-only.
+- Commands: `road.set-lanes`, `road.insert-lane`, `road.remove-lane`,
+  `road.set-lane`, `road.set-marking`, `road.set-turn-rule` (structured
+  issues; refuses infeasible movements). `set-edge-options` scales explicit
+  lanes proportionally on a Width change and rejects `laneCount`/direction
+  changes (`road.lane.explicit-field-readonly`); `RoadOptions` hides those
+  fields when lanes are explicit and reports layout problems as
+  `option.lane-layout` field issues.
+- Turn rules stay edge×edge. `app/roads/RoadJunctionValidation.js` assesses
+  every incident pair (lane directions plus a lane-to-lane connector inside the
+  compiled junction) for the matrix, `setTurnMovementAllowed`, pruning, and
+  route v7; a movement without a connector is a validation **warning**.
+- Route algorithm 7 for geometry-v2 roads: anchors, traversal steps, and
+  subnodes carry stable lane ids; `hashWaypoints` binds `laneId` instead of
+  the positional index when present (v5 hashes are byte-identical); a removed
+  lane fails with `route.waypoint.lane-missing`; v6 proofs are stale
+  (`route.verification.algorithm-invalid`).
+- MCP `environment_edit_road` gains `set-options`, `set-lanes`,
+  `insert-lane`, `remove-lane`, `set-lane`, `set-marking`, `set-turn-rule`;
+  `environment_add_road` accepts `lanes`; `environment_validate` runs the road
+  domain and junction checks.
+
 **Merge gate:** asymmetric-lane tests, lane diagram interactions validated
 identically to field edits, proof invalidation tests.
 
@@ -672,12 +718,19 @@ node --experimental-default-type=module --test \
   tests/road-geometry.test.js tests/road-network-geometry.test.js \
   tests/road-commands.test.js tests/road-routing-v6.test.js \
   tests/environment-road-geometry.test.js tests/road-geometry-integration.test.js
+node --experimental-default-type=module --test \
+  tests/road-lanes.test.js tests/road-lane-commands.test.js tests/road-turn-validation.test.js \
+  tests/road-routing-v7.test.js tests/route-proof-invalidation.test.js \
+  tests/road-lane-selection.test.js tests/road-lane-rendering.test.js tests/road-lane-mcp.test.js \
+  tests/lane-aware-routing.test.js tests/scenario-routes.test.js tests/scenario-document.test.js
 npm run lint
 npm test
 npm run test:ui -- tests/ui/environment-editor.spec.js
 npm run test:a11y -- tests/ui/environment-editor.spec.js
 npm run test:ui -- tests/ui/environment-road-geometry.spec.js
 npm run test:a11y -- tests/ui/environment-road-geometry.spec.js
+npm run test:ui -- tests/ui/environment-road-lanes.spec.js
+npm run test:a11y -- tests/ui/environment-road-lanes.spec.js
 npm run test:parity
 npm run dist:headless
 npm run fixtures:headless && git diff --exit-code -- tests/fixtures/headless/characterization.v1.json
@@ -727,13 +780,74 @@ Record in the ledger: focused-suite pass counts, `npm run lint` result,
   SHA-256 `60dc0bd2b02a9ec768f833070ce4d8d2047f5383838f09ea3f130dd31552dd6f`
   and environment-editor compatibility SHA-256
   `fb68611743c6e13490d100dd420d3ff4a972bcc3eb278e04016f9b170405f82b`.
-- [ ] ED-05 — Lane authoring.
+- [x] ED-05 — Lane authoring. Explicit per-edge lanes (`edge.lanes[]` with
+  stable ids, directions, widths, interior markings) that derive from and
+  canonicalize back to the legacy fields; `road.set-lanes` / `insert-lane` /
+  `remove-lane` / `set-lane` / `set-marking` / `set-turn-rule`; the
+  `RoadDisplay` cross-section section and `road-lane` sub-selection in the
+  inspector, Map, and shortcuts; Map dividers/arrows/lane highlight and scene
+  markings from the authored styles; asymmetric-aware junction feasibility
+  (`RoadJunctionValidation`); route algorithm 7 with lane-id anchors and
+  proof invalidation; MCP lane operations and road-domain validation. The
+  ED-05 focused block passed 78/78 (`road-lanes`, `road-lane-commands`,
+  `road-turn-validation`, `road-routing-v7`, `route-proof-invalidation`,
+  `road-lane-selection`, `road-lane-rendering`, `road-lane-mcp`,
+  `lane-aware-routing`, `scenario-routes`, `scenario-document`);
+  `npm run lint` passed with 0 errors (one pre-existing unrelated warning);
+  `npm test` passed 1162/1166 with 4 declared skips and 0 failures;
+  `npm run test:ui` and `npm run test:a11y` passed for
+  `tests/ui/environment-road-lanes.spec.js`. Fixture generators: headless
+  characterization zero drift (SHA-256
+  `60dc0bd2b02a9ec768f833070ce4d8d2047f5383838f09ea3f130dd31552dd6f`,
+  unchanged); environment-editor compatibility zero drift on the four prior
+  cases plus the new `asymmetric-lanes-v2` case (SHA-256
+  `6ca2ece3d5266822a2ceabba72e5f7dd9514789e76757e86f6aedd2730ab9a6a`).
+  Not run in this pass: `npm run test:parity`, `npm run dist:headless`, and
+  the ED-03/ED-04 Playwright specs.
 - [ ] ED-06 — Asset catalog.
 - [ ] ED-07 — Asset studio.
 - [ ] ED-08 — Creation and imports.
 - [ ] ED-09 — Acceptance.
 
 ## Decision log
+
+### 2026-09-12 — Implement ED-05 lane authoring
+
+Four decisions were taken with the human before implementation: lanes carry
+individual widths (the road width is their sum, and a Width edit scales them
+proportionally); intersection turn rules stay edge-to-edge but validation
+becomes lane-direction-aware and geometric; geometry-v2 roads move to route
+algorithm 7 with stable lane ids on anchors and proofs (v6 proofs are stale,
+mirroring v5→v6); and lanes materialize per edge on the first lane edit rather
+than document-wide.
+
+Lanes are implicit or explicit. `RoadLaneModel` keeps the literal historical
+expressions for implicit edges, so `laneCenterRightOffset`, dividers, the
+road strip, `roadNetworkHash`, `worldHash`, and v5 proofs are byte-identical
+for every existing environment (the compatibility baseline regenerated with
+zero drift on the four prior cases and one new `asymmetric-lanes-v2` case).
+An explicit array equal to the derived default canonicalizes back to implicit,
+which is what lets a road return to its prior hash after a temporary edit.
+Lane `{ id, direction, width }` is metric because anchors and proofs reference
+lane ids like edge and node ids; interior markings live on the lane
+(`markingLeft`, forbidden on the leftmost lane) and, like the borders, stay
+outside every hash. Same-direction lanes must be adjacent; the shared lane is
+`direction: 0` and legal only alone.
+
+`RoadOptions.validate` now applies the lane-layout rules, so an illegal
+layout is a field-level issue in the inspector instead of a late bus
+rejection; the derived `laneCount`/`bidirectional`/`direction` fields hide
+once lanes are explicit and the edge mutation refuses to change them. The
+`RoadDisplay` section is a pure descriptor plus a React cross-section with one
+accessible control row per lane; every control is an ordinary road command,
+and `road-lane` is a new selection sub-kind (no transform target). Junction
+feasibility (`RoadJunctionValidation`) is a warning in document validation so
+a lane edit can never lock a document, but `road.set-turn-rule` and route v7
+treat a movement without a lane connector as illegal so the matrix and
+routing agree. Runtime hydration deliberately ignores runtime lane records
+because it only runs for v1 documents. Border markings remain in the Options
+section rather than moving into the diagram, and `createRoad` keeps its
+`null` border defaults, both to avoid churning persisted fixtures.
 
 ### 2026-09-12 — Implement ED-04 road geometry
 

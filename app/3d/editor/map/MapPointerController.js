@@ -150,6 +150,13 @@ export class MapPointerController {
             }
 
             if (pick?.type === MAP_SELECTION_TYPES.ROAD && !isAdditive(event)) {
+                if (pick.sub?.kind === "road-lane") {
+                    // A lane pick only changes selection: lanes have no
+                    // position to drag, and the road itself stays put.
+                    selection?.select(pick.id, { mode: "replace", sub: pick.sub });
+                    this.activeInteraction = { x: event.clientX, y: event.clientY, mode: "pending-pan" };
+                    return true;
+                }
                 if (pick.sub) {
                     selection?.select(pick.id, { mode: "replace", sub: pick.sub });
                     const controller = data.environment?.()?.toolController?.roadAuthoringController;

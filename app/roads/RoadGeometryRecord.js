@@ -1,4 +1,4 @@
-import { validateRoadLaneLayout } from "./RoadLaneModel.js";
+import { cloneRoadLanes, validateRoadLaneLayout } from "./RoadLaneModel.js";
 
 const MODES = new Set(["auto", "aligned", "free"]);
 const KINDS = new Set(["polyline", "cubic-bezier"]);
@@ -180,8 +180,10 @@ export function validateRoadDomain(roads, { maxDegree = 4, requireVersion = null
         if (String(edge?.startNodeId) === String(edge?.endNodeId)) {
             issues.push(issue(["roads", "edges", index], "road.edge.loop-invalid", `Road "${id}" cannot use the same node twice.`, id));
         }
-        const lane = validateRoadLaneLayout(edge);
-        if (!lane.ok) issues.push(issue(["roads", "edges", index], lane.code, lane.error, id));
+        const lane = validateRoadLaneLayout(edge, { geometryVersion: version });
+        for (const laneIssue of lane.issues) {
+            issues.push(issue(["roads", "edges", index, ...laneIssue.path], laneIssue.code, laneIssue.message, id));
+        }
         if (version === 2 || edge?.geometry) {
             const geometry = edge?.geometry;
             if (!geometry || geometry.version !== 1 || !KINDS.has(geometry.kind) || !Array.isArray(geometry.knots) || geometry.knots.length < 2) {
@@ -264,6 +266,16 @@ function metricKnot(knot) {
     };
 }
 
+/** Metric lane record: id, direction, and width only. Markings are appearance. */
+export function metricRoadLanes(lanes) {
+    if (!Array.isArray(lanes)) return null;
+    return lanes.map((lane) => ({
+        id: String(lane?.id ?? ""),
+        direction: Number(lane?.direction) === 0 ? 0 : Number(lane?.direction),
+        width: Number(lane?.width),
+    }));
+}
+
 export function normalizeMetricRoads(roads) {
     const version = roadGeometryVersionOf({ roads });
     if (version === 1) return roads;
@@ -275,6 +287,7 @@ export function normalizeMetricRoads(roads) {
             const resolved = resolveRoadEdge(edge, nodeById);
             return {
                 ...edge,
+                ...(Array.isArray(edge.lanes) ? { lanes: metricRoadLanes(edge.lanes) } : {}),
                 geometry: {
                     version: 1,
                     kind: resolved.geometry.kind,
@@ -294,6 +307,7 @@ export function authorRoadsFromMetric(roads) {
         nodes: (roads?.nodes ?? []).map((node) => ({ ...node })),
         edges: (roads?.edges ?? []).map((edge) => ({
             ...edge,
+            ...(Array.isArray(edge.lanes) ? { lanes: cloneRoadLanes(edge.lanes) } : {}),
             geometry: {
                 version: 1,
                 kind: edge.geometry.kind,

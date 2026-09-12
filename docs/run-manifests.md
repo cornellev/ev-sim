@@ -197,9 +197,12 @@ while constructing the world. Explicit rule changes participate in
 the legacy road-network projection. Scenario route proofs for v1 roads use
 algorithm version 5 and hash fixed/automatic lane anchor intent plus traversal
 lane assignments. Each traversal also freezes its lane-entry and lane-exit
-subnodes and the canonical junction connector. V2 roads require algorithm 6,
-whose proof additionally freezes road-geometry policy identity and
-`distanceMetric: "xz"`; edge fractions, distances, projection, sampling, and
+subnodes and the canonical junction connector. V2 roads require algorithm 7
+(algorithm 6 proofs are stale since ED-05), whose proof additionally freezes
+road-geometry policy identity, `distanceMetric: "xz"`, and the stable lane id
+of every anchor, traversal step, and subnode; explicit `lanes[]` records
+(`id`, `direction`, `width`; markings excluded) are part of the canonical road
+network. Edge fractions, distances, projection, sampling, and
 route progress all use XZ arc distance while persisted points retain
 elevation. Broken explicit anchors fail with a structured issue and are never
 replaced by nearest-road projection. Version 3 and 4 proofs must be re-verified

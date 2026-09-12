@@ -88,8 +88,16 @@ use the world hash for simulation semantics.
 
 The canonical road domain also owns lane layout and sparse edge-to-edge turn
 rules. `app/roads/RoadLaneModel.js` is the DOM/Three-free source shared by
-route verification and SVG map rendering. Turn rules and route lane anchors
-are semantic: they change road/world or waypoint hashes respectively. Raw
+route verification and SVG map rendering; since ED-05 it reads lanes as
+implicit (derived from lane count and direction) or explicit (`edge.lanes[]`
+with stable ids, per-lane directions and widths, and optional interior
+markings), keeping every historical expression for implicit edges so their
+hashes never move. `app/roads/RoadJunctionValidation.js` decides movement
+feasibility (lane directions plus a lane-to-lane connector inside the compiled
+junction) for the editor matrix, turn-rule writes, pruning, and route v7.
+Turn rules and route lane anchors are semantic: they change road/world or
+waypoint hashes respectively; explicit lane `{ id, direction, width }` is
+metric while markings are appearance-only. Raw
 waypoint pointer coordinates remain editor state and are excluded from saved
 scenario identity. Route algorithm version 5 treats fixed physical lanes as
 A* state rather than post-processing preferences, carries incoming edge,
@@ -254,14 +262,23 @@ ED-04 dispatches roads by `document.roads.geometryVersion`. Missing means
 legacy v1 and retains the existing world-description v1 and route-algorithm v5
 identities. Version 2 stores stable knots and relative Bézier handles, then the
 kernel-safe `app/roads/` compiler resolves one deterministic indexed plan for
-Scene, Map, world-description v2, route algorithm 6, paved-union checks,
+Scene, Map, world-description v2, route algorithm 7, paved-union checks,
 browser truth, portable LiDAR, and analytic render primitives. V2 metric roads
 contain resolved controls without editor ids/modes; resource validation
-recompiles indexed surfaces from those controls. Route v6 measures XZ arc
-distance while preserving vertex elevation and rejects broken explicit
+recompiles indexed surfaces from those controls. Route v7 (ED-05; v6 before
+explicit lanes) measures XZ arc distance while preserving vertex elevation,
+binds stable lane ids on anchors and proof steps, and rejects broken explicit
 anchors. The first geometry command performs the v1→v2 migration atomically;
 ordinary legacy edits do not. Version-aware environment writes declare `[1,
 2]`, and storage retains one pre-road-geometry migration copy.
+
+ED-05 lane authoring keeps the road strip and every implicit-lane hash
+untouched: explicit `lanes[]` appear on an edge only after its first lane
+command, canonicalize back to implicit when they equal the derived default,
+and enter the metric record (and therefore `roadNetworkHash`/`worldHash`) only
+when present. The inspector's `RoadDisplay` cross-section, the Map lane
+dividers/arrows/highlight, scene markings, MCP `environment_edit_road` lane
+operations, and route v7 all read the same `roadLanes(edge)` model.
 
 - [Environment Editor](environment-editor.md) — document model, editor modes, baking, and chrome UI.
 - [Earth Import](earth-import.md) — Google 3D Tiles preview, OSM road import, and geospatial configuration.

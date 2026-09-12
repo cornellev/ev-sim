@@ -1,12 +1,43 @@
 import * as THREE from "three";
 import { buildingIdFromFootprint } from "../../city/buildingIds.js";
 import {
+    cloneRoadLanes,
     edgeAllowsArrivalAtNode,
     edgeAllowsDepartureFromNode,
+    hasExplicitRoadLanes,
     movementDefaultAllowed,
     movementRuleKey,
+    normalizeRoadLanes,
+    roadIsBidirectional,
+    roadIsReversed,
+    scaleRoadLanesToWidth,
 } from "../../../roads/RoadLaneModel.js";
+import {
+    TURN_RULE_ISSUE_CODES,
+    assessMovement,
+    describeInfeasibleMovement,
+} from "../../../roads/RoadJunctionValidation.js";
+import { roadGeometryVersionOf } from "../../../roads/RoadGeometryRecord.js";
+import { planRoadNetworkGeometry } from "../../../roads/RoadNetworkGeometry.js";
 import { createId, DEFAULT_ROAD_EDGE } from "./EnvironmentDocument.js";
+
+export const ROAD_EDGE_ISSUE_CODES = Object.freeze({
+    EXPLICIT_FIELD_READONLY: "road.lane.explicit-field-readonly",
+});
+
+function mutationIssue(path, code, message, objectId = null) {
+    return { path, code, message, severity: "error", ...(objectId ? { objectId } : {}) };
+}
+
+/** Compile the road plan for feasibility checks; `null` for v1 roads or when the document does not compile. */
+export function compileRoadPlan(document) {
+    if (roadGeometryVersionOf(document) !== 2) return null;
+    try {
+        return planRoadNetworkGeometry(document.roads);
+    } catch {
+        return null;
+    }
+}
 
 export const MAX_INTERSECTION_DEGREE = 4;
 export const MIN_BUILDING_DIMENSION = 2;
@@ -24,17 +55,23 @@ function sortTurnRules(turnRules) {
     });
 }
 
-function pruneInfeasibleTurnRules(document) {
+/**
+ * Drop sparse turn-rule overrides whose movement no longer exists: a missing
+ * node or road, lane directions that cannot arrive/depart, or (when a compiled
+ * `plan` is supplied) no lane connector inside the junction.
+ */
+export function pruneInfeasibleTurnRules(document, { plan = null } = {}) {
     const edgeById = new Map(document.roads.edges.map((edge) => [edge.id, edge]));
     document.roads.turnRules ??= [];
     document.roads.turnRules = document.roads.turnRules.filter((rule) => {
-        const fromEdge = edgeById.get(rule.fromEdgeId);
-        const toEdge = edgeById.get(rule.toEdgeId);
-        return Boolean(
-            getDocumentNode(document, rule.nodeId)
-            && edgeAllowsArrivalAtNode(fromEdge, rule.nodeId)
-            && edgeAllowsDepartureFromNode(toEdge, rule.nodeId)
-        );
+        if (!getDocumentNode(document, rule.nodeId)) return false;
+        const assessment = assessMovement({
+            nodeId: rule.nodeId,
+            fromEdge: edgeById.get(rule.fromEdgeId) ?? null,
+            toEdge: edgeById.get(rule.toEdgeId) ?? null,
+            plan,
+        });
+        return assessment.feasible;
     });
     sortTurnRules(document.roads.turnRules);
 }
@@ -570,7 +607,12 @@ export function addRoadEdge(document, startNodeId, endNodeId, options = {}, runt
         endArm: options.endArm
             ? { x: options.endArm.x, y: nodeElevation(options.endArm), z: options.endArm.z }
             : null,
+        ...(Array.isArray(options.lanes) ? { lanes: cloneRoadLanes(options.lanes) } : {}),
     };
+    if (options.direction !== undefined && options.direction !== null && edge.bidirectional === false) {
+        edge.direction = options.direction;
+    }
+    normalizeRoadLanes(edge);
 
     document.roads.edges.push(edge);
     edgeKeySet?.add(edgeKey);
@@ -601,6 +643,36 @@ export function updateRoadEdge(document, edgeId, patch = {}, runtime = {}) {
     const edge = document.roads.edges.find((entry) => entry.id === edgeId);
     if (!edge) {
         return { ok: false, error: `Road edge "${edgeId}" does not exist.` };
+    }
+
+    if (hasExplicitRoadLanes(edge)) {
+        // Lane count and travel directions are derived from the explicit lane
+        // records. Equal values are no-ops; different values must be authored
+        // through the lane commands so a waypoint is never silently re-laned.
+        const issues = [];
+        if (patch.laneCount !== undefined && Math.round(Number(patch.laneCount)) !== edge.lanes.length) {
+            issues.push(mutationIssue(["laneCount"], ROAD_EDGE_ISSUE_CODES.EXPLICIT_FIELD_READONLY, `Road "${edgeId}" derives its lane count from ${edge.lanes.length} explicit lanes; add or remove lanes instead.`, edgeId));
+        }
+        if (patch.bidirectional !== undefined && (patch.bidirectional !== false) !== roadIsBidirectional(edge)) {
+            issues.push(mutationIssue(["bidirectional"], ROAD_EDGE_ISSUE_CODES.EXPLICIT_FIELD_READONLY, `Road "${edgeId}" derives its travel directions from its explicit lanes; change lane directions instead.`, edgeId));
+        }
+        if (patch.direction !== undefined && patch.direction !== null && !roadIsBidirectional(edge)
+            && (Number(patch.direction) === -1 || patch.direction === "reverse") !== roadIsReversed(edge)) {
+            issues.push(mutationIssue(["direction"], ROAD_EDGE_ISSUE_CODES.EXPLICIT_FIELD_READONLY, `Road "${edgeId}" derives its one-way direction from its explicit lanes; change lane directions instead.`, edgeId));
+        }
+        if (issues.length > 0) return { ok: false, error: issues[0].message, issues };
+        if (patch.width !== undefined && Number(patch.width) !== Number(edge.width)) {
+            edge.lanes = scaleRoadLanesToWidth(edge.lanes, Number(patch.width));
+        }
+        if (patch.shoulderWidth !== undefined) edge.shoulderWidth = patch.shoulderWidth;
+        if (patch.tension !== undefined) edge.tension = patch.tension;
+        if (patch.borderLeft !== undefined) edge.borderLeft = patch.borderLeft;
+        if (patch.borderRight !== undefined) edge.borderRight = patch.borderRight;
+        normalizeRoadLanes(edge);
+        pruneInfeasibleTurnRules(document);
+        if (runtime.markAuthored !== false) markRoadsAuthored(document);
+        if (runtime.notify !== false) document.notify();
+        return { ok: true, edge };
     }
 
     if (patch.bidirectional !== undefined) {
@@ -646,7 +718,7 @@ export function updateRoadEdge(document, edgeId, patch = {}, runtime = {}) {
  * Return deterministic incoming/outgoing movement cells for an intersection.
  * One-way-impossible movements are omitted from the feasible matrix.
  */
-export function getIntersectionMovements(document, nodeId) {
+export function getIntersectionMovements(document, nodeId, { plan = undefined } = {}) {
     const degree = getNodeDegree(document, nodeId);
     const incident = document.roads.edges
         .filter((edge) => edge.startNodeId === nodeId || edge.endNodeId === nodeId)
@@ -657,21 +729,36 @@ export function getIntersectionMovements(document, nodeId) {
         movementRuleKey(rule.nodeId, rule.fromEdgeId, rule.toEdgeId),
         rule,
     ]));
+    const compiledPlan = plan === undefined ? compileRoadPlan(document) : plan;
 
+    // Every incident×incident pair is a cell so the matrix can show infeasible
+    // movements disabled with their reason; `incoming`/`outgoing` keep the
+    // direction-feasible subsets for callers that only need those.
     return {
         incident,
         incoming,
         outgoing,
-        cells: incoming.flatMap((fromEdge) => outgoing.map((toEdge) => {
+        cells: incident.flatMap((fromEdge) => incident.map((toEdge) => {
             const defaultAllowed = movementDefaultAllowed(degree, fromEdge.id, toEdge.id);
             const rule = ruleByKey.get(movementRuleKey(nodeId, fromEdge.id, toEdge.id));
+            const assessment = assessMovement({ nodeId, fromEdge, toEdge, plan: compiledPlan });
             return {
                 nodeId,
                 fromEdgeId: fromEdge.id,
                 toEdgeId: toEdge.id,
                 defaultAllowed,
-                allowed: rule ? rule.allowed === true : defaultAllowed,
+                allowed: assessment.feasible ? (rule ? rule.allowed === true : defaultAllowed) : false,
                 overridden: Boolean(rule),
+                feasible: assessment.feasible,
+                reason: assessment.reason,
+                connector: assessment.connector
+                    ? {
+                        fromLaneId: assessment.connector.fromLaneId,
+                        toLaneId: assessment.connector.toLaneId,
+                        fromLaneIndex: assessment.connector.fromLaneIndex,
+                        toLaneIndex: assessment.connector.toLaneIndex,
+                    }
+                    : null,
             };
         })),
     };
@@ -683,10 +770,17 @@ export function setTurnMovementAllowed(document, nodeId, fromEdgeId, toEdgeId, a
     const fromEdge = document.roads.edges.find((edge) => edge.id === fromEdgeId);
     const toEdge = document.roads.edges.find((edge) => edge.id === toEdgeId);
     if (!node || !fromEdge || !toEdge) {
-        return { ok: false, error: "Intersection movement references a missing node or road." };
+        const message = "Intersection movement references a missing node or road.";
+        return { ok: false, error: message, issues: [mutationIssue(["roads", "turnRules"], TURN_RULE_ISSUE_CODES.REFERENCE_MISSING, message, nodeId)] };
     }
-    if (!edgeAllowsArrivalAtNode(fromEdge, nodeId) || !edgeAllowsDepartureFromNode(toEdge, nodeId)) {
-        return { ok: false, error: "The movement is impossible under the road one-way directions." };
+    const plan = runtime.plan === undefined ? compileRoadPlan(document) : runtime.plan;
+    const assessment = assessMovement({ nodeId, fromEdge, toEdge, plan });
+    if (!assessment.feasible) {
+        const message = describeInfeasibleMovement(assessment.reason);
+        const code = assessment.reason === "turn.infeasible.connector-outside-junction"
+            ? TURN_RULE_ISSUE_CODES.CONNECTOR_INFEASIBLE
+            : TURN_RULE_ISSUE_CODES.INFEASIBLE;
+        return { ok: false, error: message, issues: [mutationIssue(["roads", "turnRules"], code, message, nodeId)] };
     }
 
     const defaultAllowed = movementDefaultAllowed(getNodeDegree(document, nodeId), fromEdgeId, toEdgeId);

@@ -1,7 +1,8 @@
 /**
  * @typedef {{ id: string, x: number, y?: number, z: number, kind?: 'intersection' | 'endpoint' }} RoadNode
  * @typedef {{ x: number, y?: number, z: number }} RoadPoint
- * @typedef {{ id: string, startNodeId: string, endNodeId: string, bidirectional?: boolean, direction?: number | string, oneWay?: boolean, oneWayDirection?: number | string, width?: number, laneCount?: number, shoulderWidth?: number, tension?: number, borderLeft?: string, borderRight?: string, startArm?: RoadPoint, endArm?: RoadPoint }} RoadEdge
+ * @typedef {{ id: string, direction: 1 | -1 | 0, width: number, markingLeft?: string }} RoadLane
+ * @typedef {{ id: string, startNodeId: string, endNodeId: string, bidirectional?: boolean, direction?: number | string, oneWay?: boolean, oneWayDirection?: number | string, width?: number, laneCount?: number, lanes?: RoadLane[], shoulderWidth?: number, tension?: number, borderLeft?: string, borderRight?: string, startArm?: RoadPoint, endArm?: RoadPoint }} RoadEdge
  * @typedef {{ nodeId: string, fromEdgeId: string, toEdgeId: string, allowed: boolean }} RoadTurnRule
  * @typedef {{ id: string, type: string, x: number, z: number, dir?: number, rotationY?: number, tags?: string[] }} FeatureRecord
  * @typedef {{ lat: number, lng: number }} EarthAnchor
@@ -14,6 +15,7 @@ import { OBJECT_GRAPH_VERSION, cloneObjectRecord, sortObjectRecords } from "../o
 import { skyConfigToManifest } from "../../skybox/EnvironmentSkyConfig.js";
 import { legacyIndex } from "../objects/objectGraph.js";
 import { cloneRoadGeometry } from "../../../roads/RoadGeometryRecord.js";
+import { cloneRoadLanes } from "../../../roads/RoadLaneModel.js";
 import {
     CHANGE_DOMAINS,
     CHANGE_SCALARS,
@@ -416,6 +418,7 @@ function cloneEdge(edge) {
         startArm: cloneRoadPoint(edge.startArm),
         endArm: cloneRoadPoint(edge.endArm),
         ...(edge.geometry ? { geometry: cloneRoadGeometry(edge.geometry) } : {}),
+        ...(Array.isArray(edge.lanes) ? { lanes: cloneRoadLanes(edge.lanes) } : {}),
     };
 }
 

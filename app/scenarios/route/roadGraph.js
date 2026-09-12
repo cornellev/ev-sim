@@ -20,12 +20,12 @@ import {
     nearestLegalLaneIndex,
     offsetRoadPoint,
     rightmostLegalLaneIndex,
-    roadIsBidirectional,
-    roadIsReversed,
     roadLaneCount,
+    roadLaneId,
     signedRightOffset,
     validateRoadLaneLayout,
 } from "../../roads/RoadLaneModel.js";
+import { movementConnector } from "../../roads/RoadJunctionValidation.js";
 import { authorRoadsFromMetric, normalizeMetricRoads, roadGeometryVersionOf } from "../../roads/RoadGeometryRecord.js";
 import { projectPointToRoad as projectPointToCompiledRoad } from "../../roads/RoadGeometry.js";
 import { buildJunctionConnector, planRoadNetworkGeometry } from "../../roads/RoadNetworkGeometry.js";
@@ -137,6 +137,16 @@ export function canonicalRoadNetworkV2(value) {
             direction: edge.direction ?? edge.oneWayDirection ?? 1,
             width: finiteNumber(edge.width, DEFAULT_ROAD_WIDTH),
             laneCount: finiteNumber(edge.laneCount, 2),
+            // Explicit lanes are route-semantic identity (anchors and proofs
+            // reference lane ids); implicit edges omit the key so their
+            // historical hashes never move.
+            ...(Array.isArray(edge.lanes) ? {
+                lanes: edge.lanes.map((lane) => ({
+                    id: String(lane.id),
+                    direction: finiteNumber(lane.direction, 1),
+                    width: finiteNumber(lane.width, 0),
+                })),
+            } : {}),
             shoulderWidth: finiteNumber(edge.shoulderWidth, 0),
             geometry: edge.geometry,
         })).sort((left, right) => compareText(left.id, right.id)),
@@ -202,14 +212,12 @@ export function buildDirectedRoadGraph(value) {
         degree.set(start.id, (degree.get(start.id) ?? 0) + 1);
         degree.set(end.id, (degree.get(end.id) ?? 0) + 1);
 
-        if (roadIsBidirectional(edge)) {
-            addTransition(edge, start.id, end.id, 1);
-            addTransition(edge, end.id, start.id, -1);
-        } else if (roadIsReversed(edge)) {
-            addTransition(edge, end.id, start.id, -1);
-        } else {
-            addTransition(edge, start.id, end.id, 1);
-        }
+        // Transitions follow the lanes that legally travel each way. For
+        // implicit edges this is exactly the historical bidirectional/one-way
+        // branch; explicit asymmetric lanes (e.g. two forward, one back) reach
+        // the same result without a dedicated case.
+        if (legalLaneIndices(edge, 1).length > 0) addTransition(edge, start.id, end.id, 1);
+        if (legalLaneIndices(edge, -1).length > 0) addTransition(edge, end.id, start.id, -1);
     }
 
     for (const transitions of adjacency.values()) {
@@ -245,6 +253,26 @@ export function buildDirectedRoadGraph(value) {
         movementRuleKey(left.nodeId, left.fromEdgeId, left.toEdgeId),
         movementRuleKey(right.nodeId, right.fromEdgeId, right.toEdgeId),
     ));
+    // Route v7: a movement whose lane connector cannot fit inside its compiled
+    // junction is unusable even when no turn rule forbids it, so routing and
+    // the editor's movement matrix agree.
+    const infeasibleMovements = new Set();
+    if (compiledPlan) {
+        for (const junction of compiledPlan.junctions) {
+            const nodeId = String(junction.node.id);
+            for (const from of junction.incidents) {
+                for (const to of junction.incidents) {
+                    const fromEdge = edges.get(from.edgeId);
+                    const toEdge = edges.get(to.edgeId);
+                    if (!fromEdge || !toEdge) continue;
+                    if (!edgeAllowsArrivalAtNode(fromEdge, nodeId) || !edgeAllowsDepartureFromNode(toEdge, nodeId)) continue;
+                    if (movementConnector(compiledPlan, nodeId, fromEdge.id, toEdge.id) === null) {
+                        infeasibleMovements.add(movementRuleKey(nodeId, fromEdge.id, toEdge.id));
+                    }
+                }
+            }
+        }
+    }
     return {
         document,
         nodes,
@@ -256,7 +284,21 @@ export function buildDirectedRoadGraph(value) {
         turnRuleIssues,
         geometryVersion,
         compiledPlan,
+        infeasibleMovements,
     };
+}
+
+/** Turn legality for the search: sparse turn rules plus v7 connector feasibility. */
+function graphMovementAllowed(graph, { nodeId, fromEdgeId, toEdgeId, ignoreTurnRules = false }) {
+    if (graph.infeasibleMovements?.has(movementRuleKey(nodeId, fromEdgeId, toEdgeId))) return false;
+    if (ignoreTurnRules) return true;
+    return movementAllowed({
+        nodeId,
+        fromEdgeId,
+        toEdgeId,
+        nodeDegree: graph.degree.get(nodeId) ?? 0,
+        turnRules: graph.turnRules,
+    });
 }
 
 function pointInTriangleXZ(point, a, b, c) {
@@ -354,6 +396,7 @@ function projectPointToRoadNetworkV2(point, graph, tolerance) {
             edgeId: edge.id,
             t: projection.fraction,
             laneIndex,
+            ...(laneMode === "fixed" ? { laneId: roadLaneId(edge, laneIndex) } : {}),
             laneMode,
             rightOffset,
             centerlinePoint: projection.point,
@@ -557,12 +600,11 @@ export function deterministicDirectedAStar(environmentOrGraph, startNodeId, goal
         })[0];
         const currentState = parseState(current);
 
-        const exitAllowed = options.ignoreTurnRules === true || movementAllowed({
+        const exitAllowed = graphMovementAllowed(graph, {
             nodeId: currentState.nodeId,
             fromEdgeId: currentState.incomingEdgeId,
             toEdgeId: goalOutgoingEdgeId,
-            nodeDegree: graph.degree.get(currentState.nodeId) ?? 0,
-            turnRules: graph.turnRules,
+            ignoreTurnRules: options.ignoreTurnRules === true,
         });
         const arrivalAllowed = !constrainGoalIncoming
             || currentState.incomingEdgeId === goalIncomingEdgeId;
@@ -589,12 +631,11 @@ export function deterministicDirectedAStar(environmentOrGraph, startNodeId, goal
         closed.add(current);
 
         for (const transition of graph.adjacency.get(currentState.nodeId) ?? []) {
-            const turnAllowed = options.ignoreTurnRules === true || movementAllowed({
+            const turnAllowed = graphMovementAllowed(graph, {
                 nodeId: currentState.nodeId,
                 fromEdgeId: currentState.incomingEdgeId,
                 toEdgeId: transition.edgeId,
-                nodeDegree: graph.degree.get(currentState.nodeId) ?? 0,
-                turnRules: graph.turnRules,
+                ignoreTurnRules: options.ignoreTurnRules === true,
             });
             if (!turnAllowed) continue;
             const next = stateKey(transition.toNodeId, transition.edgeId);
@@ -908,6 +949,8 @@ function traversalSubnode(edge, fraction, laneIndex, graph) {
         edgeId: edge.id,
         fraction,
         laneIndex,
+        // Route v7 (geometry v2) binds the stable lane id; v5 proofs stay byte-identical.
+        ...(graph.geometryVersion === 2 ? { laneId: roadLaneId(edge, laneIndex) } : {}),
         position,
     } : null;
 }
@@ -1108,6 +1151,10 @@ export function assignTraversalLanes(start, goal, traversal, graph, options = {}
         const toT = Number.isFinite(step.toT) ? step.toT : defaultToT;
         const geometryFromT = geometryFraction(edge, fromT, graph);
         const geometryToT = geometryFraction(edge, toT, graph);
+        if (graph.geometryVersion === 2) {
+            step.fromLaneId = roadLaneId(edge, step.fromLaneIndex);
+            step.toLaneId = roadLaneId(edge, step.toLaneIndex);
+        }
         step.fromSubnode = traversalSubnode(edge, geometryFromT, step.fromLaneIndex, graph);
         step.toSubnode = traversalSubnode(edge, geometryToT, step.toLaneIndex, graph);
     }

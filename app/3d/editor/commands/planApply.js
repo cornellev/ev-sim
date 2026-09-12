@@ -95,7 +95,14 @@ export function applyPlanSteps(document, steps, runtime = { notify: false }) {
                 result = { ok: true };
             }
         }
-        if (!result?.ok) return { ok: false, error: result?.error ?? `Plan step "${step.op}" failed.`, applied };
+        if (!result?.ok) {
+            return {
+                ok: false,
+                error: result?.error ?? `Plan step "${step.op}" failed.`,
+                ...(Array.isArray(result?.issues) && result.issues.length > 0 ? { issues: result.issues } : {}),
+                applied,
+            };
+        }
         applied += 1;
     }
     if (applied > 0 && runtime?.notify !== false) document.notify();

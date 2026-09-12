@@ -1,6 +1,15 @@
 import { createId, DEFAULT_ROAD_EDGE } from "../document/EnvironmentDocument.js";
-import { getNodeDegree } from "../document/documentMutations.js";
+import { compileRoadPlan, getNodeDegree, pruneInfeasibleTurnRules, setTurnMovementAllowed } from "../document/documentMutations.js";
 import { cloneRoadGeometry, resolveRoadEdge } from "../../../roads/RoadGeometryRecord.js";
+import {
+    LANE_DIRECTIONS,
+    ROAD_MARKINGS,
+    cloneRoadLanes,
+    explicitRoadLanes,
+    hasExplicitRoadLanes,
+    nextLaneId,
+    normalizeRoadLanes,
+} from "../../../roads/RoadLaneModel.js";
 import { sampleCenterline, splitEdge as splitGeometry } from "../../../roads/RoadGeometry.js";
 import { ROAD_GEOMETRY_POLICY_V1 } from "../../../roads/RoadGeometryPolicy.js";
 import { commandFailure, commandIssue, commandSuccess, COMMAND_ISSUE_CODES } from "./commandIssues.js";
@@ -158,6 +167,13 @@ export function createRoad({ points = [], kind = "cubic-bezier", startNodeId = n
             endArm: null,
             geometry: geometryFromPoints(values, geometryKind),
         };
+        if (Array.isArray(options.lanes)) {
+            if (options.lanes.length === 0) throw new TypeError("A road needs at least one lane.");
+            const lanes = [];
+            for (const input of options.lanes) lanes.push(laneRecord(input, lanes, nextLaneId(lanes)));
+            edge.lanes = lanes;
+        }
+        normalizeRoadLanes(edge);
         ctx.document.roads.edges.push(edge);
         ensureObjectRecord(ctx.document, { id: edge.id, typeId: "road", name: options.name ?? "Road", parentId }, { notify: false });
         return { edge, startNode: start, endNode: end };
@@ -403,5 +419,203 @@ export function connectRoadEndpoint({ edgeId, end, target } = {}) {
         edge[field] = targetNode.id;
         removeOrphanEndpoint(ctx.document, previousNodeId);
         return { edge, node: targetNode, split };
+    });
+}
+
+// ------------------------------------------------------------------- lanes
+//
+// ED-05 lane authoring. Every lane command materializes the target edge's
+// lanes (and only that edge's), mutates them, then canonicalizes: width, lane
+// count, and direction fields follow the lane records, and a layout equal to
+// the derived default returns to implicit. Infeasible turn-rule overrides are
+// pruned with the compiled plan. The bus validates the domain afterwards, so
+// illegal layouts roll the whole command back with structured issues.
+
+function requireEdge(ctx, edgeId) {
+    const edge = ctx.document.getEdge(String(edgeId));
+    if (!edge) throw new TypeError(`Road "${edgeId}" does not exist.`);
+    return edge;
+}
+
+function materializeLanes(edge) {
+    if (!hasExplicitRoadLanes(edge)) edge.lanes = explicitRoadLanes(edge);
+    return edge.lanes;
+}
+
+function finishLaneEdit(ctx, edge) {
+    normalizeRoadLanes(edge);
+    pruneInfeasibleTurnRules(ctx.document, { plan: compileRoadPlan(ctx.document) });
+    ctx.document.setScalar("roadsAuthored", true, { notify: false });
+    return edge;
+}
+
+function laneDirectionValue(value, label = "Lane direction") {
+    const direction = Number(value);
+    if (!LANE_DIRECTIONS.includes(direction)) throw new TypeError(`${label} must be 1, -1, or 0.`);
+    return direction === 0 ? 0 : direction;
+}
+
+function laneWidthValue(value, label = "Lane width") {
+    const width = Number(value);
+    if (!Number.isFinite(width) || width <= EPSILON) throw new TypeError(`${label} must be greater than zero.`);
+    return width;
+}
+
+function markingValue(value, label = "Marking") {
+    if (value === null || value === undefined) return null;
+    const marking = String(value);
+    if (!ROAD_MARKINGS.includes(marking)) throw new TypeError(`${label} "${marking}" is not a known road marking.`);
+    return marking;
+}
+
+function laneRecord(input, existing, fallbackId) {
+    const source = input && typeof input === "object" ? input : {};
+    const id = source.id === undefined || source.id === null || source.id === "" ? fallbackId : String(source.id);
+    if (existing.some((lane) => lane.id === id)) throw new TypeError(`Lane id "${id}" is already used on this road.`);
+    const marking = markingValue(source.markingLeft, `Lane "${id}" marking`);
+    return {
+        id,
+        direction: laneDirectionValue(source.direction, `Lane "${id}" direction`),
+        width: laneWidthValue(source.width, `Lane "${id}" width`),
+        ...(marking ? { markingLeft: marking } : {}),
+    };
+}
+
+function laneIndexOf(edge, laneId) {
+    const index = edge.lanes.findIndex((lane) => lane.id === String(laneId));
+    if (index < 0) throw new TypeError(`Lane "${laneId}" does not exist on road "${edge.id}".`);
+    return index;
+}
+
+/** Replace a road's lanes wholesale. Omitted ids are assigned `lane-<n>`. */
+export function setRoadLanes({ edgeId, lanes } = {}) {
+    return command("road.set-lanes", "Set road lanes", (ctx) => {
+        requireUnlocked(ctx, edgeId);
+        ensureRoadGeometryV2(ctx);
+        const edge = requireEdge(ctx, edgeId);
+        if (!Array.isArray(lanes) || lanes.length === 0) throw new TypeError("A road needs at least one lane.");
+        const next = [];
+        for (const input of lanes) next.push(laneRecord(input, next, nextLaneId(next)));
+        edge.lanes = next;
+        finishLaneEdit(ctx, edge);
+        return { edge, lanes: cloneRoadLanes(edge.lanes ?? explicitRoadLanes(edge)) };
+    });
+}
+
+/** Where a new lane goes and which existing lane it copies its defaults from. */
+function resolveInsertion(edge, at) {
+    const clampIndex = (value) => Math.max(0, Math.min(edge.lanes.length, value));
+    if (Number.isInteger(at) || (at && Number.isInteger(at.index))) {
+        const index = clampIndex(Number.isInteger(at) ? at : at.index);
+        return { index, reference: edge.lanes[Math.min(edge.lanes.length - 1, index)] };
+    }
+    if (at?.laneId !== undefined) {
+        const referenceIndex = laneIndexOf(edge, at.laneId);
+        const side = at.side ?? "left";
+        if (!["left", "right"].includes(side)) throw new TypeError("Lane insertion side must be left or right.");
+        return { index: side === "left" ? referenceIndex + 1 : referenceIndex, reference: edge.lanes[referenceIndex] };
+    }
+    return { index: edge.lanes.length, reference: edge.lanes[edge.lanes.length - 1] };
+}
+
+/**
+ * Insert a lane beside an existing one (`at: { laneId, side }`) or at an
+ * index. The new lane copies its neighbour's direction and width unless
+ * `lane` overrides them; the road widens by the new lane.
+ */
+export function insertRoadLane({ edgeId, at = null, lane = {} } = {}) {
+    return command("road.insert-lane", "Insert lane", (ctx) => {
+        requireUnlocked(ctx, edgeId);
+        ensureRoadGeometryV2(ctx);
+        const edge = requireEdge(ctx, edgeId);
+        materializeLanes(edge);
+        const { index, reference } = resolveInsertion(edge, at);
+        const defaults = { direction: reference.direction, width: reference.width };
+        if (reference.direction === 0) {
+            // Splitting the shared single lane: the rightmost lane travels
+            // forward and the leftmost backward, matching right-hand traffic.
+            const newIsRight = index <= laneIndexOf(edge, reference.id);
+            reference.direction = newIsRight ? -1 : 1;
+            defaults.direction = newIsRight ? 1 : -1;
+        }
+        const record = laneRecord({ ...defaults, ...(lane ?? {}) }, edge.lanes, nextLaneId(edge.lanes));
+        edge.lanes.splice(index, 0, record);
+        finishLaneEdit(ctx, edge);
+        return { edge, laneId: record.id, index };
+    });
+}
+
+export function removeRoadLane({ edgeId, laneId } = {}) {
+    return command("road.remove-lane", "Remove lane", (ctx) => {
+        requireUnlocked(ctx, edgeId);
+        ensureRoadGeometryV2(ctx);
+        const edge = requireEdge(ctx, edgeId);
+        materializeLanes(edge);
+        if (edge.lanes.length <= 1) throw new TypeError("A road needs at least one lane.");
+        const index = laneIndexOf(edge, laneId);
+        const [removed] = edge.lanes.splice(index, 1);
+        const leftmost = edge.lanes[edge.lanes.length - 1];
+        if (leftmost.markingLeft !== undefined) delete leftmost.markingLeft;
+        finishLaneEdit(ctx, edge);
+        return { edge, laneId: removed.id, index };
+    });
+}
+
+/** Patch one lane's direction, width, or interior marking (`markingLeft: null` clears it). */
+export function setRoadLane({ edgeId, laneId, patch = {} } = {}) {
+    return command("road.set-lane", "Edit lane", (ctx) => {
+        requireUnlocked(ctx, edgeId);
+        ensureRoadGeometryV2(ctx);
+        const edge = requireEdge(ctx, edgeId);
+        materializeLanes(edge);
+        const lane = edge.lanes[laneIndexOf(edge, laneId)];
+        if (patch.direction !== undefined) lane.direction = laneDirectionValue(patch.direction);
+        if (patch.width !== undefined) lane.width = laneWidthValue(patch.width);
+        if (patch.markingLeft !== undefined) {
+            const marking = markingValue(patch.markingLeft);
+            if (marking) lane.markingLeft = marking;
+            else delete lane.markingLeft;
+        }
+        finishLaneEdit(ctx, edge);
+        return { edge, laneId: lane.id };
+    });
+}
+
+/**
+ * Author a marking: `boundary` is `"left"`/`"right"` for the road borders or
+ * `{ laneId }` for the interior boundary on that lane's left.
+ */
+export function setRoadMarking({ edgeId, boundary, marking } = {}) {
+    return command("road.set-marking", "Set road marking", (ctx) => {
+        requireUnlocked(ctx, edgeId);
+        ensureRoadGeometryV2(ctx);
+        const edge = requireEdge(ctx, edgeId);
+        const value = markingValue(marking);
+        if (boundary === "left" || boundary === "right") {
+            edge[boundary === "left" ? "borderLeft" : "borderRight"] = value;
+            ctx.document.setScalar("roadsAuthored", true, { notify: false });
+            return { edge, boundary };
+        }
+        if (boundary?.laneId === undefined) throw new TypeError("A marking boundary must be left, right, or a lane id.");
+        materializeLanes(edge);
+        const lane = edge.lanes[laneIndexOf(edge, boundary.laneId)];
+        if (value) lane.markingLeft = value;
+        else delete lane.markingLeft;
+        finishLaneEdit(ctx, edge);
+        return { edge, boundary: { laneId: lane.id } };
+    });
+}
+
+/** Sparse turn-rule override with structured issues; infeasible movements are refused. */
+export function setRoadTurnRule({ nodeId, fromEdgeId, toEdgeId, allowed } = {}) {
+    return command("road.set-turn-rule", "Set turn rule", (ctx) => {
+        requireUnlocked(ctx, nodeId, fromEdgeId, toEdgeId);
+        const result = setTurnMovementAllowed(ctx.document, String(nodeId), String(fromEdgeId), String(toEdgeId), allowed, { notify: false });
+        if (!result.ok) {
+            const error = new Error(result.error);
+            error.issues = result.issues ?? [commandIssue(COMMAND_ISSUE_CODES.MUTATION_FAILED, result.error, { objectId: String(nodeId) })];
+            throw error;
+        }
+        return { nodeId: String(nodeId), fromEdgeId: String(fromEdgeId), toEdgeId: String(toEdgeId), defaultAllowed: result.defaultAllowed, overridden: result.overridden };
     });
 }

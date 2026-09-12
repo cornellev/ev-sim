@@ -3,16 +3,22 @@
  * are projected from the edge record. The transform binding reads the edge
  * midpoint and plans node moves for both endpoints; a planner dedupes nodes
  * shared with other edges so each moves exactly once. Curve handles arrive
- * with ED-04.
+ * with ED-04; explicit lanes with ED-05 (`edge.lanes`), which make the lane
+ * count and travel-direction fields derived.
  */
 
 import { ObjectOptions, boolean, enumOf, field, finite, integer, isPlainObject, issue, validateFieldConstraints } from "../ObjectOptions.js";
 import { defineObjectType } from "../ObjectTypeRegistry.js";
 import { applyDeltaToPoint, applyDeltaToVector, decomposeDelta } from "../transformDelta.js";
 import { TRANSFORM_ISSUE_CODES } from "../transformDelta.js";
+import { ROAD_MARKINGS, cloneRoadLanes, scaleRoadLanesToWidth, validateRoadLaneLayout } from "../../../../roads/RoadLaneModel.js";
 
 export const ROAD_TYPE_ID = "road";
-export const ROAD_BORDER_MARKINGS = Object.freeze(["none", "solid_white", "solid_yellow", "dashed_white", "dashed_yellow"]);
+export const ROAD_BORDER_MARKINGS = ROAD_MARKINGS;
+export const ROAD_OPTION_ISSUE_CODES = Object.freeze({ LANE_LAYOUT: "option.lane-layout" });
+
+/** Fields derived from explicit lane records; hidden and read-only once lanes are authored. */
+const LANE_DERIVED_FIELDS = new Set(["laneCount", "bidirectional", "direction"]);
 
 const ROAD_FIELDS = Object.freeze([
     field({ path: ["width"], label: "Width", control: "number", units: "m", min: 0.5, step: 0.1, group: "Cross-section" }),
@@ -24,13 +30,23 @@ const ROAD_FIELDS = Object.freeze([
     field({ path: ["borderRight"], label: "Right border", control: "enum", options: ROAD_BORDER_MARKINGS, group: "Markings" }),
 ]);
 
+export function hasExplicitLaneValue(value) {
+    return Array.isArray(value?.lanes);
+}
+
 export class RoadOptions extends ObjectOptions {
     getDefaults() {
         return { width: 7, laneCount: 2, shoulderWidth: 0, bidirectional: true, direction: 1, borderLeft: "solid_white", borderRight: "solid_white" };
     }
 
-    getFields() {
-        return ROAD_FIELDS;
+    /**
+     * All fields without a value; with an explicit-lane value the derived
+     * lane-count and direction fields are hidden so the lane diagram is the
+     * single place that edits them.
+     */
+    getFields(context = {}) {
+        if (!hasExplicitLaneValue(context?.value)) return ROAD_FIELDS;
+        return ROAD_FIELDS.filter((descriptor) => !LANE_DERIVED_FIELDS.has(descriptor.path[0]));
     }
 
     normalize(value = {}) {
@@ -43,13 +59,28 @@ export class RoadOptions extends ObjectOptions {
             direction: Number(source.direction ?? source.oneWayDirection ?? 1) === -1 ? -1 : 1,
             borderLeft: enumOf(ROAD_BORDER_MARKINGS)(source.borderLeft, "solid_white"),
             borderRight: enumOf(ROAD_BORDER_MARKINGS)(source.borderRight, "solid_white"),
+            ...(Array.isArray(source.lanes) ? { lanes: cloneRoadLanes(source.lanes) } : {}),
         };
     }
 
+    /**
+     * Field constraints plus the lane-layout rules, so an illegal layout is a
+     * field-level issue in the inspector rather than a late bus rejection.
+     */
     validate(value = {}) {
         const issues = validateFieldConstraints(ROAD_FIELDS, value);
         if (value?.direction !== undefined && value.direction !== 1 && value.direction !== -1) {
             issues.push(issue(["direction"], "option.enum", "One-way direction must be 1 or -1."));
+        }
+        // A Width edit on an explicit-lane road scales the lanes to the new
+        // total when applied, so validate the scaled layout rather than the
+        // stale sum.
+        const candidate = hasExplicitLaneValue(value)
+            ? { ...value, lanes: scaleRoadLanesToWidth(value.lanes, value.width) }
+            : value ?? {};
+        const layout = validateRoadLaneLayout(candidate);
+        for (const entry of layout.issues) {
+            issues.push(issue(entry.path.length > 0 ? entry.path : ["laneCount"], ROAD_OPTION_ISSUE_CODES.LANE_LAYOUT, entry.message));
         }
         return issues;
     }
@@ -123,20 +154,27 @@ export function createRoadType() {
         getTransformBinding(record) {
             return edgeTransformBinding(record);
         },
-        /** Cross-section and direction edits patch the canonical edge record. */
+        /**
+         * Cross-section and direction edits patch the canonical edge record.
+         * With explicit lanes only width, shoulder, and borders are written;
+         * the edge mutation scales lane widths to the new total.
+         */
         planOptions(record, value) {
+            const explicit = hasExplicitLaneValue(value);
             return {
                 steps: [{
                     op: "set-edge-options",
                     edgeId: String(record.id),
                     patch: {
                         width: value.width,
-                        laneCount: value.laneCount,
                         shoulderWidth: value.shoulderWidth,
-                        bidirectional: value.bidirectional,
-                        direction: value.bidirectional ? null : value.direction,
                         borderLeft: value.borderLeft,
                         borderRight: value.borderRight,
+                        ...(explicit ? {} : {
+                            laneCount: value.laneCount,
+                            bidirectional: value.bidirectional,
+                            direction: value.bidirectional ? null : value.direction,
+                        }),
                     },
                 }],
                 issues: [],

@@ -2,6 +2,20 @@ import { getEdgeRenderEndpoints, findNearestIntersection } from "../document/doc
 import { screenRadiusToWorld } from "./mapCoords.js";
 import { projectPointToRoad } from "../../../roads/RoadGeometry.js";
 import { planRoadNetworkGeometry } from "../../../roads/RoadNetworkGeometry.js";
+import { nearestLaneIndexForOffset, roadLaneId, roadWidth } from "../../../roads/RoadLaneModel.js";
+
+/** Lane under a pointer projected onto a compiled edge, or null on the shoulder. */
+function laneSubAtProjection(worldPoint, entry, projection) {
+    const tangents = entry.samples?.tangents ?? [];
+    const tangent = tangents[Math.min(Number(projection.segment ?? 0), tangents.length - 1)];
+    if (!tangent) return null;
+    const length = Math.hypot(tangent.x, tangent.z) || 1;
+    const normal = { x: -tangent.z / length, z: tangent.x / length };
+    const rightOffset = (worldPoint.x - projection.point.x) * normal.x + (worldPoint.z - projection.point.z) * normal.z;
+    if (Math.abs(rightOffset) > roadWidth(entry.edge) * 0.5) return null;
+    const laneId = roadLaneId(entry.edge, nearestLaneIndexForOffset(entry.edge, rightOffset));
+    return laneId ? { kind: "road-lane", edgeId: String(entry.edge.id), laneId } : null;
+}
 
 /**
  * @param {{ x: number, z: number }} point
@@ -117,10 +131,17 @@ export function pickMapTarget(worldPoint, documentSnapshot, viewport, layers, sc
                     const projection = projectPointToRoad(worldPoint, { samples: entry.samples });
                     const threshold = Math.max(radiusWorld, (Number(entry.edge.width ?? 7) + 2 * Number(entry.edge.shoulderWidth ?? 0)) * 0.5);
                     if (projection && projection.distance <= threshold && (!nearestRoad || projection.distance < nearestRoad.distance)) {
-                        nearestRoad = { type: "road", id: entry.edge.id, distance: projection.distance };
+                        nearestRoad = { type: "road", id: entry.edge.id, distance: projection.distance, entry, projection };
                     }
                 }
-                return nearestRoad ? { type: nearestRoad.type, id: nearestRoad.id } : null;
+                if (!nearestRoad) return null;
+                // ED-05: a second click on the selected road picks the lane
+                // under the pointer (within the carriageway, not the shoulder).
+                if (selectedRoadId && String(nearestRoad.id) === selectedRoadId) {
+                    const sub = laneSubAtProjection(worldPoint, nearestRoad.entry, nearestRoad.projection);
+                    if (sub) return { type: "road", id: nearestRoad.id, sub };
+                }
+                return { type: nearestRoad.type, id: nearestRoad.id };
             } catch {
                 return null;
             }

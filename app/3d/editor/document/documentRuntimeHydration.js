@@ -25,6 +25,8 @@ function getRoadDocumentOptions(road, overrides = {}) {
         ...(Number.isFinite(tension) ? { tension } : {}),
         ...(road?.borderLeft ? { borderLeft: road.borderLeft } : {}),
         ...(road?.borderRight ? { borderRight: road.borderRight } : {}),
+        // Explicit lanes (`road.options.lanes`) are deliberately not hydrated:
+        // hydration only runs for legacy v1 documents, where lanes are invalid.
         ...overrides,
     };
 }

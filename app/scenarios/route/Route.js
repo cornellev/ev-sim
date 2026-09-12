@@ -23,6 +23,8 @@ import {
     laneCenterPoint,
     nearestLaneIndexForOffset,
     roadLaneCount,
+    roadLaneId,
+    roadLaneIndexOf,
     signedRightOffset,
 } from "../../roads/RoadLaneModel.js";
 import { roadGeometryVersionOf } from "../../roads/RoadGeometryRecord.js";
@@ -34,6 +36,10 @@ export const ROUTE_VERSION = 1;
 export const ROUTE_ALGORITHM = "directed-a-star";
 export const ROUTE_ALGORITHM_VERSION = 5;
 export const ROUTE_ALGORITHM_VERSION_V6 = 6;
+/** ED-05: explicit lanes with stable ids; anchors and proof steps bind lane ids. */
+export const ROUTE_ALGORITHM_VERSION_V7 = 7;
+/** Proof versions the current code can author or accept as current for some environment. */
+export const ROUTE_CURRENT_ALGORITHM_VERSIONS = Object.freeze([ROUTE_ALGORITHM_VERSION, ROUTE_ALGORITHM_VERSION_V6, ROUTE_ALGORITHM_VERSION_V7]);
 const CENTERLINE_EPSILON = 1e-6;
 
 export function normalizeRoute(value = {}) {
@@ -47,7 +53,7 @@ export function normalizeRoute(value = {}) {
         version: source.version ?? ROUTE_VERSION,
         waypoints: normalizeWaypoints(source.waypoints ?? []),
         verified: verification?.algorithm === ROUTE_ALGORITHM
-            && [ROUTE_ALGORITHM_VERSION, ROUTE_ALGORITHM_VERSION_V6].includes(verification?.algorithmVersion)
+            && ROUTE_CURRENT_ALGORITHM_VERSIONS.includes(verification?.algorithmVersion)
             && verification?.waypointHash === hashWaypoints(source.waypoints ?? []),
         sections: source.sections ?? verification?.sections ?? [],
         edgeTraversal: source.edgeTraversal ?? verification?.edgeTraversal ?? [],
@@ -62,9 +68,28 @@ export function normalizeRoute(value = {}) {
 
 export function routeAlgorithmVersionFor(environment) {
     const version = roadGeometryVersionOf(environmentDocumentFrom(environment));
-    if (version === 2) return ROUTE_ALGORITHM_VERSION_V6;
+    if (version === 2) return ROUTE_ALGORITHM_VERSION_V7;
     if (version === 1) return ROUTE_ALGORITHM_VERSION;
     throw new TypeError(`Unsupported road geometry version: ${String(version)}.`);
+}
+
+/** Algorithms 6 and 7 measure XZ arc distance over the frozen road geometry policy. */
+function usesCompiledGeometry(algorithmVersion) {
+    return algorithmVersion >= ROUTE_ALGORITHM_VERSION_V6;
+}
+
+/**
+ * Resolve a fixed road anchor's physical lane. A stable `laneId` wins over the
+ * positional `laneIndex`; a lane id that no longer exists is reported so the
+ * waypoint is never silently moved to a neighbouring lane.
+ */
+function anchorLaneIndex(anchor, edge) {
+    const laneId = typeof anchor?.laneId === "string" && anchor.laneId ? anchor.laneId : null;
+    if (laneId !== null && edge) {
+        const index = roadLaneIndexOf(edge, laneId);
+        return index < 0 ? { laneIndex: null, laneId, missing: true } : { laneIndex: index, laneId, missing: false };
+    }
+    return { laneIndex: Number.isInteger(anchor?.laneIndex) ? anchor.laneIndex : null, laneId, missing: false };
 }
 
 export const createCanonicalRoute = normalizeRoute;
@@ -120,16 +145,17 @@ export function validateRouteVerification(route, environment = null, options = {
     const legacyVersion = verification?.algorithm === ROUTE_ALGORITHM
         && [3, 4].includes(verification.algorithmVersion)
         && (options.allowLegacyVersions === true || options.allowLegacyV3 === true);
-    const currentVersion = [ROUTE_ALGORITHM_VERSION, ROUTE_ALGORITHM_VERSION_V6].includes(verification?.algorithmVersion);
+    const currentVersion = ROUTE_CURRENT_ALGORITHM_VERSIONS.includes(verification?.algorithmVersion);
     const expectedVersion = environment ? routeAlgorithmVersionFor(environment) : verification?.algorithmVersion;
     if (!legacyVersion && (verification.algorithm !== ROUTE_ALGORITHM || !currentVersion || verification.algorithmVersion !== expectedVersion)) {
         issues.push({ code: "route.verification.algorithm-invalid", path: "verification.algorithm", message: `Route verification must use ${ROUTE_ALGORITHM} version ${expectedVersion}.` });
     }
-    if (verification.algorithmVersion === ROUTE_ALGORITHM_VERSION_V6
+    const laneIdProof = verification.algorithmVersion === ROUTE_ALGORITHM_VERSION_V7;
+    if (currentVersion && usesCompiledGeometry(verification.algorithmVersion)
         && (verification.distanceMetric !== "xz"
             || verification.geometryPolicy?.id !== ROAD_GEOMETRY_POLICY_V1.id
             || verification.geometryPolicy?.version !== ROAD_GEOMETRY_POLICY_V1.version)) {
-        issues.push({ code: "route.verification.geometry-policy-invalid", path: "verification.geometryPolicy", message: "Route verification v6 requires the frozen XZ road geometry policy." });
+        issues.push({ code: "route.verification.geometry-policy-invalid", path: "verification.geometryPolicy", message: `Route verification v${verification.algorithmVersion} requires the frozen XZ road geometry policy.` });
     }
     if (typeof verification.environmentHash !== "string" || !verification.environmentHash) {
         issues.push({ code: "route.verification.environment-hash-required", path: "verification.environmentHash", message: "Route verification requires an environment hash." });
@@ -166,11 +192,14 @@ export function validateRouteVerification(route, environment = null, options = {
                 || !Number.isInteger(step?.toLaneIndex)
                 || !isFinitePoint(step?.fromSubnode?.position)
                 || !isFinitePoint(step?.toSubnode?.position)
+                || (laneIdProof && (typeof step?.fromLaneId !== "string" || typeof step?.toLaneId !== "string"))
             ))) {
                 issues.push({
                     code: "route.verification.lane-traversal-invalid",
                     path: `${sectionPath}.edgeTraversal`,
-                    message: `Verified route section ${index} requires physical lane assignments and lane-boundary subnodes.`,
+                    message: laneIdProof
+                        ? `Verified route section ${index} requires physical lane assignments with stable lane ids and lane-boundary subnodes.`
+                        : `Verified route section ${index} requires physical lane assignments and lane-boundary subnodes.`,
                 });
             }
             validateArcGeometry(
@@ -252,7 +281,10 @@ function projectedWaypoint(waypoint, projection) {
             fraction: projection.t ?? 0,
             ...(projection.kind === "road" ? {
                 laneMode: projection.laneMode === "fixed" ? "fixed" : "auto",
-                ...(projection.laneMode === "fixed" ? { laneIndex: projection.laneIndex } : {}),
+                ...(projection.laneMode === "fixed" ? {
+                    laneIndex: projection.laneIndex,
+                    ...(typeof projection.laneId === "string" && projection.laneId ? { laneId: projection.laneId } : {}),
+                } : {}),
             } : {}),
         },
         projection: {
@@ -261,6 +293,8 @@ function projectedWaypoint(waypoint, projection) {
             edgeId: projection.edgeId,
             t: projection.t,
             laneIndex: projection.laneIndex ?? null,
+            // Only v7 projections carry a lane id; older routes keep their exact bytes.
+            ...(typeof projection.laneId === "string" && projection.laneId ? { laneId: projection.laneId } : {}),
             laneMode: projection.laneMode ?? null,
             rightOffset: projection.rightOffset ?? null,
             centerlinePoint: projection.centerlinePoint ? { ...projection.centerlinePoint } : null,
@@ -298,7 +332,9 @@ function projectionFromStableAnchor(waypoint, graph) {
     const centerlinePoint = pointOnEdgeCenterline(edge, t, graph);
     const pointerPoint = pointFrom(waypoint?.authoredPosition ?? waypoint, centerlinePoint);
     const rightOffset = signedRightOffset(pointerPoint, start, end);
-    const explicitLaneIndex = Number.isInteger(anchor.laneIndex) ? anchor.laneIndex : null;
+    const resolvedLane = anchorLaneIndex(anchor, edge);
+    if (resolvedLane.missing) return null;
+    const explicitLaneIndex = resolvedLane.laneIndex;
     const laneMode = anchor.laneMode === "auto"
         ? "auto"
         : anchor.laneMode === "fixed" || explicitLaneIndex !== null
@@ -320,6 +356,7 @@ function projectionFromStableAnchor(waypoint, graph) {
         edgeId: edge.id,
         t,
         laneIndex,
+        ...(graph.geometryVersion === 2 && laneMode === "fixed" ? { laneId: roadLaneId(edge, laneIndex) } : {}),
         laneMode,
         rightOffset,
         centerlinePoint,
@@ -394,7 +431,7 @@ export function verifyRoute(first, second, third) {
     let waypointHash = hashWaypoints(waypoints);
     const issues = [];
     const algorithmVersion = routeAlgorithmVersionFor(environment);
-    const distanceMetric = algorithmVersion === ROUTE_ALGORITHM_VERSION_V6 ? "xz" : "3d";
+    const distanceMetric = usesCompiledGeometry(algorithmVersion) ? "xz" : "3d";
 
     if (waypoints.length < 2) {
         issues.push({
@@ -444,7 +481,7 @@ export function verifyRoute(first, second, third) {
         const anchorEdge = waypoint.anchor?.kind === "road"
             ? graph.edges.get(String(waypoint.anchor.id))
             : null;
-        if (algorithmVersion === ROUTE_ALGORITHM_VERSION_V6 && waypoint.anchor) {
+        if (usesCompiledGeometry(algorithmVersion) && waypoint.anchor) {
             const anchor = waypoint.anchor;
             const validShape = anchor.kind === "intersection"
                 ? Boolean(anchor.id)
@@ -465,9 +502,19 @@ export function verifyRoute(first, second, third) {
         }
         const hasExplicitLaneIndex = waypoint.anchor?.kind === "road"
             && Object.prototype.hasOwnProperty.call(waypoint.anchor, "laneIndex");
-        const explicitLaneIndex = Number.isInteger(waypoint.anchor?.laneIndex)
-            ? waypoint.anchor.laneIndex
-            : null;
+        const resolvedLane = anchorEdge ? anchorLaneIndex(waypoint.anchor, anchorEdge) : { laneIndex: null, laneId: null, missing: false };
+        if (resolvedLane.missing) {
+            // The authored lane was removed (or re-identified): never re-lane
+            // the waypoint onto whichever lane now occupies its index.
+            issues.push({
+                code: "route.waypoint.lane-missing",
+                message: `${waypoint.label || `Waypoint ${index}`} references lane "${resolvedLane.laneId}", which no longer exists on road "${anchorEdge.id}".`,
+                waypointId: waypoint.id,
+                index,
+            });
+            return waypoint;
+        }
+        const explicitLaneIndex = resolvedLane.laneIndex;
         if (anchorEdge && (waypoint.anchor?.laneMode === "fixed" || hasExplicitLaneIndex)
             && (explicitLaneIndex === null || explicitLaneIndex < 0 || explicitLaneIndex >= roadLaneCount(anchorEdge))) {
             issues.push({
@@ -480,7 +527,7 @@ export function verifyRoute(first, second, third) {
         }
         const anchoredProjection = projectionFromStableAnchor(waypoint, graph);
         const projection = anchoredProjection
-            ?? (algorithmVersion === ROUTE_ALGORITHM_VERSION_V6 && waypoint.anchor ? null : projectPointToRoadNetwork(
+            ?? (usesCompiledGeometry(algorithmVersion) && waypoint.anchor ? null : projectPointToRoadNetwork(
                 waypoint.authoredPosition ?? waypoint,
                 environment,
                 options.projection ?? {},
@@ -494,12 +541,16 @@ export function verifyRoute(first, second, third) {
             });
             return waypoint;
         }
+        if (algorithmVersion === ROUTE_ALGORITHM_VERSION_V7 && projection.kind === "road" && projection.laneMode === "fixed") {
+            const edge = graph.edges.get(String(projection.edgeId));
+            projection.laneId = projection.laneId ?? roadLaneId(edge, projection.laneIndex);
+        }
         return projectedWaypoint(waypoint, projection);
     });
 
     // The persisted, snapped positions are the canonical route identity. The
     // unsnapped click remains available as authoredPosition for editor UX.
-    if (!issues.some((issue) => ["route.waypoint.off-road", "route.waypoint.lane-invalid"].includes(issue.code))) {
+    if (!issues.some((issue) => ["route.waypoint.off-road", "route.waypoint.lane-invalid", "route.waypoint.lane-missing"].includes(issue.code))) {
         waypointHash = hashWaypoints(projected);
     }
 
@@ -599,7 +650,7 @@ export function verifyRoute(first, second, third) {
     const verification = canonicalNumericTree({
         algorithm: ROUTE_ALGORITHM,
         algorithmVersion,
-        ...(algorithmVersion === ROUTE_ALGORITHM_VERSION_V6 ? {
+        ...(usesCompiledGeometry(algorithmVersion) ? {
             geometryPolicy: { id: ROAD_GEOMETRY_POLICY_V1.id, version: ROAD_GEOMETRY_POLICY_V1.version },
             distanceMetric: "xz",
         } : {}),
@@ -654,7 +705,7 @@ export function invalidateRouteVerification(route) {
 export function isRouteVerificationCurrent(route, environment) {
     const verification = route?.verification;
     if (verification?.algorithm !== ROUTE_ALGORITHM
-        || ![ROUTE_ALGORITHM_VERSION, ROUTE_ALGORITHM_VERSION_V6].includes(verification?.algorithmVersion)
+        || !ROUTE_CURRENT_ALGORITHM_VERSIONS.includes(verification?.algorithmVersion)
         || (environment && verification.algorithmVersion !== routeAlgorithmVersionFor(environment))
         || verification?.waypointHash !== hashWaypoints(route?.waypoints ?? [])) {
         return false;

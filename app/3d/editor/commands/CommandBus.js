@@ -23,6 +23,7 @@ import { applyPlanSteps } from "./planApply.js";
 import { collectTransformClosure, planTransform } from "./transformPlanning.js";
 import { roadGeometryVersionOf, validateRoadDomain } from "../../../roads/RoadGeometryRecord.js";
 import { planRoadNetworkGeometry } from "../../../roads/RoadNetworkGeometry.js";
+import { validateJunctionMovements } from "../../../roads/RoadJunctionValidation.js";
 
 export const DEFAULT_HISTORY_LIMIT = 200;
 
@@ -223,7 +224,10 @@ export class CommandBus {
         const issues = [...objectValidation.issues, ...roadValidation.issues];
         if (roadValidation.ok && roadGeometryVersionOf(this.document) === 2) {
             try {
-                planRoadNetworkGeometry(this.document.roads);
+                const plan = planRoadNetworkGeometry(this.document.roads);
+                // Allowed movements without a lane connector are warnings:
+                // they never lock the document after a lane edit.
+                issues.push(...validateJunctionMovements(this.document.roads, plan));
             } catch (error) {
                 issues.push(...(error.issues ?? [{
                     path: ["roads"],

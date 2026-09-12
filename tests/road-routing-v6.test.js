@@ -11,16 +11,16 @@ async function environment() {
     return { environmentId: fixture.environmentId, roads: fixture.roads };
 }
 
-test("ED-04 v2 roads dispatch to route v6 with XZ arc distance and elevated persisted geometry", async () => {
+test("ED-04/ED-05 v2 roads dispatch to route v7 with XZ arc distance and elevated persisted geometry", async () => {
     const env = await environment();
-    assert.equal(routeAlgorithmVersionFor(env), 6);
+    assert.equal(routeAlgorithmVersionFor(env), 7);
     const route = { waypoints: [
         { id: "start", x: 0, y: 0, z: 0, anchor: { kind: "road", id: "curve", fraction: 0, laneMode: "auto" } },
         { id: "finish", x: 40, y: 8, z: 0, anchor: { kind: "road", id: "curve", fraction: 1, laneMode: "auto" } },
     ] };
     const verified = verifyRoute(env, route);
     assert.equal(verified.ok, true);
-    assert.equal(verified.verification.algorithmVersion, 6);
+    assert.equal(verified.verification.algorithmVersion, 7);
     assert.equal(verified.verification.distanceMetric, "xz");
     assert.equal(verified.verification.geometryPolicy.id, "road-geometry-policy-v1");
     assert.ok(verified.route.polyline.some((point) => point.y > 0));

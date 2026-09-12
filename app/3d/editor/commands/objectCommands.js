@@ -636,7 +636,10 @@ function runOptionsEdit(ctx, objectId, patch) {
     if (hasErrorIssue(plan.issues)) return commandFailure(errorIssues(plan.issues));
     if (plan.steps.length > 0) {
         const applied = applyPlanSteps(ctx.document, plan.steps, { notify: false });
-        if (!applied.ok) return commandFailure(commandIssue(COMMAND_ISSUE_CODES.MUTATION_FAILED, applied.error, { objectId: id }));
+        if (!applied.ok) {
+            return commandFailure(applied.issues?.map((entry) => ({ ...entry, objectId: entry.objectId ?? id }))
+                ?? commandIssue(COMMAND_ISSUE_CODES.MUTATION_FAILED, applied.error, { objectId: id }));
+        }
     }
     if (plan.delta) {
         const transform = planTransform(ctx.document, ctx.registry, [id], plan.delta, {});

@@ -106,6 +106,7 @@ function normalizeWaypoint(value = {}, index = 0, count = 1) {
     const kind = index === 0 ? "start" : index === count - 1 ? "finish" : "intermediate";
     const anchor = object(source.anchor ?? source.roadRef);
     const hasLaneIndex = Object.prototype.hasOwnProperty.call(anchor, "laneIndex");
+    const laneId = typeof anchor.laneId === "string" && anchor.laneId ? anchor.laneId : null;
     return {
         id: text(source.id, makeId("waypoint", index)),
         order: index,
@@ -117,13 +118,18 @@ function normalizeWaypoint(value = {}, index = 0, count = 1) {
             id: text(anchor.id),
             fraction: Math.max(0, Math.min(1, finite(anchor.fraction, 0))),
             ...(anchor.kind !== "intersection"
-                && (anchor.laneMode === "auto" || anchor.laneMode === "fixed" || hasLaneIndex)
+                && (anchor.laneMode === "auto" || anchor.laneMode === "fixed" || hasLaneIndex || laneId)
                 ? { laneMode: anchor.laneMode === "auto" ? "auto" : "fixed" }
                 : {}),
             ...(anchor.kind !== "intersection"
                 && anchor.laneMode !== "auto"
                 && hasLaneIndex
                 ? { laneIndex: anchor.laneIndex }
+                : {}),
+            ...(anchor.kind !== "intersection"
+                && anchor.laneMode !== "auto"
+                && laneId
+                ? { laneId }
                 : {}),
         },
     };
@@ -547,8 +553,9 @@ export function validateScenario(value, { requireVerifiedRoutes = true } = {}) {
             }
             if (waypoint.anchor.kind === "road"
                 && waypoint.anchor.laneMode === "fixed"
+                && !(typeof waypoint.anchor.laneId === "string" && waypoint.anchor.laneId)
                 && (!Number.isInteger(waypoint.anchor.laneIndex) || waypoint.anchor.laneIndex < 0)) {
-                issues.push({ path: `routes.${index}.waypoints.${waypointIndex}.anchor.laneIndex`, message: "A fixed-lane waypoint requires a physical lane index." });
+                issues.push({ path: `routes.${index}.waypoints.${waypointIndex}.anchor.laneIndex`, message: "A fixed-lane waypoint requires a physical lane index or lane id." });
             }
         });
         if (requireVerifiedRoutes && !route.verification) {

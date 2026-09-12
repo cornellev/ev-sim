@@ -55,11 +55,12 @@ Live sessions stay in sync: MCP writes and workspace commands publish Server-Sen
 | `environment_create` / `environment_rename` / `environment_delete` | Catalog CRUD |
 | `environment_get` | Summary or full document; summaries include `placementCatalog` and registered `objectTypes` |
 | `environment_set_active` | Change the app's active environment |
-| `environment_add_road` | Polyline of xz points (optional `y`) → snapped nodes + edges |
+| `environment_add_road` | Polyline of xz points (optional `y`) → snapped nodes + edges; with `geometryKind` it creates one ED-04 v2 road and accepts ED-05 explicit `lanes` |
+| `environment_edit_road` | One atomic road command: ED-04 `convert` / `insert-knot` / `remove-knot` / `set-knot` / `split` / `detach` / `connect`; `set-options` (type-validated edge options); ED-05 `set-lanes` / `insert-lane` / `remove-lane` / `set-lane` / `set-marking` (lane `{ id?, direction: 1 \| -1 \| 0, width, markingLeft? }`, rightmost first); `set-turn-rule` (`nodeId`/`fromEdgeId`/`toEdgeId`/`allowed`, refuses infeasible movements). Failures return structured `issues` and persist nothing |
 | `environment_remove_road` / `environment_move_road_node` | Road edits; move accepts optional `y`, intersections are y-only |
 | `environment_add_building` / `environment_remove_building` | Rectangle buildings |
 | `environment_add_object` / `environment_move_object` / `environment_remove_object` | Props (`stop-sign`, `one-way-sign`, `barrel`, `tire`, `cone`) |
-| `environment_validate` | Full geometric conflict report plus schema-v4 object-graph `issues` (`{ path, code, message, severity }`) |
+| `environment_validate` | Geometric conflict report, road-domain validation (geometry, lanes, turn rules, junction connector warnings; `roadsOk`), and schema-v4 object-graph `issues` (`{ path, code, message, severity }`) |
 
 Mutating placement tools return a `conflicts` array (road crossings, corridor overlaps, building overlaps, object proximity). Pass `strict: true` to reject instead of keeping the edit.
 
@@ -107,7 +108,7 @@ The resources `fusion://run-manifests` and `fusion://run-manifests/{manifestId}`
 | `scenario_create` / `scenario_update` / `scenario_duplicate` / `scenario_delete` | Scenario CRUD with optimistic revisions |
 | `scenario_validate` | Validate actors, routes, zones, triggers, completion, outcomes, sensors, scripts, and parameters |
 | `scenario_resolve` | Freeze environment, routes, scripts, vehicles, parameter values, and dependency hashes |
-| `scenario_verify_route` | Run deterministic lane-constrained directed A* (algorithm version 5) for an authored route without implicitly saving it. Proofs include fixed/automatic lane anchors, physical lane assignments and road-arm subnodes; preserve incoming edge, direction and lane across waypoints; honor sparse intersection turn rules; and classify unreachable lanes, wrong-way, restricted-turn, disconnected and invalid-layout failures separately. |
+| `scenario_verify_route` | Run deterministic lane-constrained directed A* (algorithm version 5 for legacy roads, 7 for geometry-v2 roads) for an authored route without implicitly saving it. Proofs include fixed/automatic lane anchors (with stable lane ids on v2 roads), physical lane assignments and road-arm subnodes; preserve incoming edge, direction and lane across waypoints; honor sparse intersection turn rules and junction lane connectors; and classify unreachable lanes, wrong-way, restricted-turn, disconnected, missing-lane, and invalid-layout failures separately. |
 | `scenario_catalog_get` / `scenario_catalog_update` | Read or replace the ordered folder catalog |
 
 Resources expose the catalogs and complete documents at `fusion://scenarios`, `fusion://scenario-folders`, and `fusion://scenarios/{scenarioId}`. Route verification accepts an optional unsaved scenario draft; apply the returned canonical verification to the route and save it with `scenario_update` using the current revision.

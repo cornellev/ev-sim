@@ -32,6 +32,7 @@ import { focusCameraOnSelection } from "../editor/tools/cameraFocus.js";
 import { PropertySection, commitObjectOptions, renderField } from "./fields";
 import { TextField } from "./fields/SimpleFields";
 import { Vector3Field } from "./fields/Vector3Field";
+import { RoadDisplaySection } from "./inspector/RoadDisplaySection";
 import { RoadEndpointsSection } from "./inspector/RoadEndpointsSection";
 import { RoadGeometrySection } from "./inspector/RoadGeometrySection";
 import { SkyLocalPreview } from "./inspector/SkyLocalPreview";
@@ -267,6 +268,12 @@ export function ObjectInspector({ data }) {
                 return (
                     <PropertySection key={section.id} id={section.id} title={section.title}>
                         <RoadGeometrySection data={data} section={section} onResult={report} />
+                    </PropertySection>
+                );
+            case SECTION_KINDS.ROAD_DISPLAY:
+                return (
+                    <PropertySection key={section.id} id={section.id} title={section.title}>
+                        <RoadDisplaySection data={data} section={section} onResult={report} />
                     </PropertySection>
                 );
             case SECTION_KINDS.SKY_PREVIEW:

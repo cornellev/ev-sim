@@ -3,7 +3,7 @@ import Unit from "../../util/Unit.js";
 import { Road } from "./Road.js";
 import { Intersection } from "./Intersection.js";
 import { Triangle } from "../data/objects/Triangle.js";
-import { laneDividerDescriptors } from "../../roads/RoadLaneModel.js";
+import { laneDividerDescriptors, roadLaneWidth, roadLanes } from "../../roads/RoadLaneModel.js";
 
 const DEFAULT_ROAD_OPTIONS = {
     laneWidth: 3.5,
@@ -474,7 +474,9 @@ function addCompiledRoadMarkings(root, entry, roadOptions) {
             y: (left[index].y + right[index].y) * 0.5,
             z: (left[index].z + right[index].z) * 0.5,
         }));
-        markings.push([points, divider.opposing ? roadOptions.centerLineType : roadOptions.oneWayDividerType]);
+        // ED-05: an authored per-boundary marking wins; otherwise the style
+        // preset decides by whether the adjacent lanes oppose each other.
+        markings.push([points, divider.marking ?? (divider.opposing ? roadOptions.centerLineType : roadOptions.oneWayDividerType)]);
     }
     for (const [points, type] of markings) {
         const mesh = markingMesh(points, type, roadOptions);
@@ -522,8 +524,9 @@ function compiledRoadObject(entry, roadOptions) {
     roadMesh.userData.bakeRoadSurface = true;
     root.add(roadMesh);
     const lanes = entry.surface.laneCenterlines.map((points) => points.map((point) => new THREE.Vector3(point.x, point.y, point.z)));
-    const laneWidth = Number(entry.edge.width ?? 7) / Math.max(1, Number(entry.edge.laneCount ?? lanes.length));
-    const laneMeshes = lanes.map((points) => {
+    const laneRecords = roadLanes(entry.edge);
+    const laneMeshes = lanes.map((points, laneIndex) => {
+        const laneWidth = roadLaneWidth(entry.edge, laneIndex);
         const vectors = points.map((point) => ({ x: point.x, y: point.y, z: point.z }));
         const left = [];
         const right = [];
@@ -549,7 +552,14 @@ function compiledRoadObject(entry, roadOptions) {
         width: new Unit(Number(entry.edge.width ?? 7), Unit.Type.METER),
         borderLeft: entry.edge.borderLeft ?? roadOptions.borderLeft,
         borderRight: entry.edge.borderRight ?? roadOptions.borderRight,
-        options: { ...roadOptions, laneCount: Number(entry.edge.laneCount ?? 2), shoulderWidth: Number(entry.edge.shoulderWidth ?? 0) },
+        options: {
+            ...roadOptions,
+            laneCount: laneRecords.length,
+            shoulderWidth: Number(entry.edge.shoulderWidth ?? 0),
+            // Explicit lane records ride along so runtime hydration can
+            // rebuild the authored layout; implicit roads carry none.
+            ...(Array.isArray(entry.edge.lanes) ? { lanes: laneRecords } : {}),
+        },
         lanes,
         laneMeshes,
         root,

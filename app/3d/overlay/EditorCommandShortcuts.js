@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useShortcut } from "../../ui";
 import { EDITOR_MODES, EDITOR_TOOLS } from "../editor/EditorState";
 import { objectCommands } from "../editor/commands/index.js";
-import { removeRoadKnot } from "../editor/commands/roadCommands.js";
+import { insertRoadLane, removeRoadKnot, removeRoadLane } from "../editor/commands/roadCommands.js";
 import { finalizeRoadPen } from "../editor/map/MapToolLogic.js";
 import { focusCameraOnSelection } from "../editor/tools/cameraFocus.js";
 
@@ -96,6 +96,13 @@ export function EditorCommandShortcuts({ data }) {
                 render();
                 return consume(result);
             }
+            if (sub?.kind === "road-lane") {
+                // Duplicate the selected lane beside itself (a copy on its left).
+                const result = bus()?.execute(insertRoadLane({ edgeId: sub.edgeId, at: { laneId: sub.laneId, side: "left" } }));
+                if (result?.ok && result.result?.laneId) selection()?.setSub?.({ kind: "road-lane", edgeId: sub.edgeId, laneId: result.result.laneId });
+                render();
+                return consume(result);
+            }
             const ids = selectedIds();
             if (ids.length === 0) return false;
             const result = bus()?.execute(objectCommands.duplicateObjects({ objectIds: ids }));
@@ -110,6 +117,14 @@ export function EditorCommandShortcuts({ data }) {
         priority: 15,
         enabled: inEditor,
         handler: () => {
+            const sub = selection()?.sub;
+            if (sub?.kind === "road-lane") {
+                // Delete removes the selected lane, not the road.
+                const result = bus()?.execute(removeRoadLane({ edgeId: sub.edgeId, laneId: sub.laneId }));
+                if (result?.ok) selection()?.setSub?.(null);
+                render();
+                return consume(result);
+            }
             const ids = selectedIds();
             if (ids.length === 0) return false;
             const result = bus()?.execute(objectCommands.deleteObjects({ objectIds: ids }));

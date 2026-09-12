@@ -32,6 +32,9 @@ import { COMMAND_ISSUE_CODES, commandFailure, commandIssue, commandSuccess } fro
 import { ensureObjectRecord, removeObjectRecords } from "./objectMutations.js";
 
 function mutationFailure(result, objectId = null) {
+    if (Array.isArray(result?.issues) && result.issues.length > 0) {
+        return commandFailure(result.issues.map((entry) => ({ ...entry, objectId: entry.objectId ?? objectId })));
+    }
     return commandFailure(commandIssue(COMMAND_ISSUE_CODES.MUTATION_FAILED, result?.error ?? "Mutation failed.", { objectId }));
 }
 

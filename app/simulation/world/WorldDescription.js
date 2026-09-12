@@ -108,7 +108,22 @@ function pointOrNull(value, label) {
     };
 }
 
-function normalizeEdge(edge, index, nodeIds) {
+function normalizeLanes(lanes, index) {
+    if (!Array.isArray(lanes)) return null;
+    return lanes.map((lane, laneIndex) => {
+        const direction = Number(lane?.direction);
+        if (![1, -1, 0].includes(direction)) throw new TypeError(`Road edge ${index} lane ${laneIndex} direction must be 1, -1, or 0.`);
+        return {
+            id: identifier(lane?.id, `Road edge ${index} lane ${laneIndex} ID`),
+            direction,
+            width: positive(lane?.width, `Road edge ${index} lane ${laneIndex} width`),
+        };
+    });
+}
+
+function normalizeEdge(edge, index, nodeIds, geometryVersion = 1) {
+    const lanes = normalizeLanes(edge?.lanes, index);
+    if (lanes && geometryVersion !== 2) throw new TypeError(`Road edge ${index} explicit lanes require road geometry version 2.`);
     const result = {
         id: identifier(edge?.id, `Road edge ${index} ID`),
         startNodeId: identifier(edge?.startNodeId, `Road edge ${index} startNodeId`),
@@ -117,6 +132,7 @@ function normalizeEdge(edge, index, nodeIds) {
         direction: edge?.direction ?? edge?.oneWayDirection ?? 1,
         width: positive(edge?.width, `Road edge ${index} width`, DEFAULT_ROAD_WIDTH),
         laneCount: positive(edge?.laneCount, `Road edge ${index} laneCount`, 2),
+        ...(lanes ? { lanes } : {}),
         shoulderWidth: Math.max(0, finite(edge?.shoulderWidth ?? 0, `Road edge ${index} shoulderWidth`)),
         tension: edge?.tension === undefined || edge?.tension === null
             ? null
@@ -135,7 +151,7 @@ function normalizeEdge(edge, index, nodeIds) {
     if (result.startNodeId === result.endNodeId) {
         throw new TypeError(`Road edge "${result.id}" cannot reference the same node twice.`);
     }
-    const laneLayout = validateRoadLaneLayout(result);
+    const laneLayout = validateRoadLaneLayout(result, { geometryVersion });
     if (!laneLayout.ok) {
         throw new TypeError(`Road edge "${result.id}" has an invalid lane layout: ${laneLayout.error}`);
     }
@@ -180,14 +196,14 @@ function normalizeTurnRules(source, nodes, edges) {
     ));
 }
 
-function normalizeRoads(source) {
+function normalizeRoads(source, geometryVersion = 1) {
     const nodes = (Array.isArray(source?.nodes) ? source.nodes : [])
         .map(normalizeNode)
         .sort((left, right) => compareUtf8(left.id, right.id));
     assertUnique(nodes, "id", "road node");
     const nodeIds = new Set(nodes.map((node) => node.id));
     const edges = (Array.isArray(source?.edges) ? source.edges : [])
-        .map((edge, index) => normalizeEdge(edge, index, nodeIds))
+        .map((edge, index) => normalizeEdge(edge, index, nodeIds, geometryVersion))
         .sort((left, right) => compareUtf8(left.id, right.id));
     assertUnique(edges, "id", "road edge");
     const turnRules = normalizeTurnRules(source?.turnRules, nodes, edges);
@@ -199,7 +215,7 @@ function normalizeRoads(source) {
 }
 
 function normalizeRoadsV2(source) {
-    const normalized = normalizeRoads(source);
+    const normalized = normalizeRoads(source, 2);
     const geometryById = new Map((source?.edges ?? []).map((edge) => [String(edge.id), cloneRoadGeometry(edge.geometry)]));
     const roads = {
         geometryVersion: 2,

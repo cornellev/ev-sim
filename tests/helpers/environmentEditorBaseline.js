@@ -16,8 +16,10 @@ export async function readEnvironmentEditorFixture(name) {
 
 /**
  * Manifests whose metric identity ED-* PRs must never change: the built-in
- * template, a committed v3 environment, and one synthetic environment that
- * exercises every built-in prop type plus roads, a building, and earth data.
+ * template, a committed v3 environment, one synthetic environment that
+ * exercises every built-in prop type plus roads, a building, and earth data,
+ * and (ED-05) a geometry-v2 network with explicit asymmetric lanes, an
+ * authored marking, and a turn rule.
  */
 export async function environmentEditorBaselineCases() {
     return [
@@ -25,6 +27,7 @@ export async function environmentEditorBaselineCases() {
         { id: "yard-v2", source: "legacy-v2.yard.json", manifest: await readEnvironmentEditorFixture("legacy-v2.yard.json") },
         { id: "city-grid-v3", source: "legacy-v3.city-grid.json", manifest: await readEnvironmentEditorFixture("legacy-v3.city-grid.json") },
         { id: "all-props-v3", source: "all-props.v3.json", manifest: await readEnvironmentEditorFixture("all-props.v3.json") },
+        { id: "asymmetric-lanes-v2", source: "asymmetric-lanes.v2.json", manifest: await readEnvironmentEditorFixture("asymmetric-lanes.v2.json") },
     ];
 }
 

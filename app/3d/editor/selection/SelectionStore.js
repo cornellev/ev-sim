@@ -27,6 +27,11 @@ export function normalizeSub(sub) {
     if (sub.kind === "road-handle" && sub.edgeId !== undefined && sub.knotId !== undefined && ["in", "out"].includes(sub.side)) {
         return { kind: "road-handle", edgeId: String(sub.edgeId), knotId: String(sub.knotId), side: sub.side };
     }
+    // ED-05: a lane of the selected road. Lanes have no position, so this sub
+    // is never a transform target; it scopes lane commands and highlights.
+    if (sub.kind === "road-lane" && sub.edgeId !== undefined && sub.laneId !== undefined && sub.laneId !== null) {
+        return { kind: "road-lane", edgeId: String(sub.edgeId), laneId: String(sub.laneId) };
+    }
     return null;
 }
 
@@ -36,7 +41,7 @@ export class SelectionStore {
         this.ids = [];
         /** @type {string|null} */
         this.primary = null;
-        /** @type {{ kind: "road-node", id: string } | null} */
+        /** @type {{ kind: "road-node", id: string } | { kind: "road-knot"|"road-handle", edgeId: string, knotId: string, side?: string } | { kind: "road-lane", edgeId: string, laneId: string } | null} */
         this.sub = null;
         this.version = 0;
         this.subscribers = new Set();
@@ -154,6 +159,7 @@ export class SelectionStore {
             && sub.id === this.sub.id
             && sub.edgeId === this.sub.edgeId
             && sub.knotId === this.sub.knotId
+            && sub.laneId === this.sub.laneId
             && sub.side === this.sub.side);
         if (sameIds && primary === this.primary && sameSub) return;
         this.ids = [...ids];

@@ -45,7 +45,10 @@ function snapWaypointToRoad(authoredPosition, environment) {
             fraction: projection.t ?? 0,
             ...(projection.kind === "road" ? {
                 laneMode: projection.laneMode === "auto" ? "auto" : "fixed",
-                ...(projection.laneMode === "auto" ? {} : { laneIndex: projection.laneIndex }),
+                ...(projection.laneMode === "auto" ? {} : {
+                    laneIndex: projection.laneIndex,
+                    ...(projection.laneId ? { laneId: projection.laneId } : {}),
+                }),
             } : {}),
         },
     };

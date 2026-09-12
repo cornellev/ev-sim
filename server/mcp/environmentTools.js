@@ -17,7 +17,9 @@ import { environmentObjectTypeUnsupportedError } from "../storage/StorageErrors.
 import { storageEvents } from "./events.js";
 import { fail, maybeFailStrict, ok } from "./toolResult.js";
 import { planRoadNetworkGeometry } from "../../app/roads/RoadNetworkGeometry.js";
-import { roadGeometryVersionOf } from "../../app/roads/RoadGeometryRecord.js";
+import { roadGeometryVersionOf, validateRoadDomain } from "../../app/roads/RoadGeometryRecord.js";
+import { ROAD_MARKINGS } from "../../app/roads/RoadLaneModel.js";
+import { validateJunctionMovements } from "../../app/roads/RoadJunctionValidation.js";
 
 const ACTIVE_ENVIRONMENT_SETTING = "activeEnvironmentId";
 
@@ -26,6 +28,21 @@ const PointSchema = z.object({
     y: z.number().optional(),
     z: z.number(),
 });
+
+const MarkingSchema = z.enum(ROAD_MARKINGS);
+
+/** ED-05 explicit lane record: physical index 0 is the rightmost lane for start → end travel. */
+const LaneSchema = z.object({
+    id: z.string().min(1).optional().describe("Stable lane id; omitted ids are assigned lane-<n>"),
+    direction: z.union([z.literal(1), z.literal(-1), z.literal(0)]).describe("1 = start→end, -1 = end→start, 0 = shared (single lane only)"),
+    width: z.number().positive(),
+    markingLeft: MarkingSchema.nullable().optional().describe("Marking on this lane's left boundary; not allowed on the leftmost lane"),
+});
+
+const ROAD_EDIT_OPERATIONS = [
+    "convert", "insert-knot", "remove-knot", "set-knot", "split", "detach", "connect",
+    "set-options", "set-lanes", "insert-lane", "remove-lane", "set-lane", "set-marking", "set-turn-rule",
+];
 
 /**
  * @param {import("../storage/StorageService.js").StorageService} storage
@@ -202,13 +219,15 @@ export function registerEnvironmentTools(server, storage) {
                 snapRadius: z.number().positive().optional(),
                 strict: z.boolean().optional().describe("If true, reject when conflicts exist"),
                 geometryKind: z.enum(["polyline", "cubic-bezier"]).optional().describe("Use the ED-04 geometry command; omitted preserves legacy add-road behavior"),
+                lanes: z.array(LaneSchema).min(1).optional().describe("ED-05 explicit lanes (requires geometryKind); width/laneCount/bidirectional derive from them"),
             },
         },
-        async ({ environmentId, points, width, laneCount, bidirectional, snapRadius, strict, geometryKind }) => {
+        async ({ environmentId, points, width, laneCount, bidirectional, snapRadius, strict, geometryKind, lanes }) => {
             try {
                 const { manifest, document, service } = await loadDocument(storage, environmentId);
+                if (lanes && !geometryKind) return fail("Explicit lanes require geometryKind (road geometry v2).");
                 const result = geometryKind
-                    ? service.run("createRoad", { points, kind: geometryKind, options: { width, laneCount, bidirectional } })
+                    ? service.run("createRoad", { points, kind: geometryKind, options: { width, laneCount, bidirectional, ...(lanes ? { lanes } : {}) } })
                     : service.run("addRoad", { points, width, laneCount, bidirectional, snapRadius: snapRadius ?? 2 });
                 if (!result.ok) {
                     return fail(result.error, { errors: result.issues.map((issue) => issue.message), issues: result.issues });
@@ -247,26 +266,37 @@ export function registerEnvironmentTools(server, storage) {
     server.registerTool(
         "environment_edit_road",
         {
-            title: "Edit road geometry",
-            description: "Apply one atomic ED-04 road geometry or topology command.",
+            title: "Edit road",
+            description: "Apply one atomic road command: ED-04 geometry/topology (convert, insert-knot, remove-knot, set-knot, split, detach, connect), road options (set-options), ED-05 lanes (set-lanes, insert-lane, remove-lane, set-lane, set-marking), or an intersection turn rule (set-turn-rule, which uses nodeId/fromEdgeId/toEdgeId instead of edgeId).",
             inputSchema: {
                 environmentId: z.string().min(1),
-                operation: z.enum(["convert", "insert-knot", "remove-knot", "set-knot", "split", "detach", "connect"]),
-                edgeId: z.string().min(1),
+                operation: z.enum(ROAD_EDIT_OPERATIONS),
+                edgeId: z.string().min(1).optional().describe("Required for every operation except set-turn-rule"),
                 kind: z.enum(["polyline", "cubic-bezier"]).optional(),
                 at: z.object({ span: z.number().int().nonnegative(), u: z.number().gt(0).lt(1) }).optional(),
                 knotId: z.string().optional(),
-                patch: z.record(z.string(), z.unknown()).optional(),
+                patch: z.record(z.string(), z.unknown()).optional().describe("set-knot / set-lane / set-options patch"),
                 end: z.enum(["start", "end"]).optional(),
                 targetNodeId: z.string().optional(),
                 targetEdgeId: z.string().optional(),
                 targetAt: z.object({ span: z.number().int().nonnegative(), u: z.number().gt(0).lt(1) }).optional(),
+                lanes: z.array(LaneSchema).min(1).optional().describe("set-lanes: the complete replacement lane list"),
+                laneId: z.string().optional().describe("remove-lane / set-lane target; insert-lane reference lane; set-marking interior boundary"),
+                side: z.enum(["left", "right"]).optional().describe("insert-lane side of the reference lane (default left)"),
+                lane: LaneSchema.partial().optional().describe("insert-lane overrides for the new lane"),
+                boundary: z.enum(["left", "right"]).optional().describe("set-marking road border when no laneId is given"),
+                marking: MarkingSchema.nullable().optional().describe("set-marking value; null clears an interior marking"),
+                nodeId: z.string().optional().describe("set-turn-rule junction node"),
+                fromEdgeId: z.string().optional(),
+                toEdgeId: z.string().optional(),
+                allowed: z.boolean().optional(),
                 strict: z.boolean().optional(),
             },
         },
-        async ({ environmentId, operation, edgeId, kind, at, knotId, patch, end, targetNodeId, targetEdgeId, targetAt, strict }) => {
+        async ({ environmentId, operation, edgeId, kind, at, knotId, patch, end, targetNodeId, targetEdgeId, targetAt, lanes, laneId, side, lane, boundary, marking, nodeId, fromEdgeId, toEdgeId, allowed, strict }) => {
             try {
                 const { manifest, document, service } = await loadDocument(storage, environmentId);
+                if (operation !== "set-turn-rule" && !edgeId) return fail(`Operation "${operation}" requires edgeId.`);
                 const commands = {
                     convert: ["convertRoadGeometry", { edgeId, kind }],
                     "insert-knot": ["insertRoadKnot", { edgeId, at }],
@@ -275,6 +305,15 @@ export function registerEnvironmentTools(server, storage) {
                     split: ["splitRoad", { edgeId, at }],
                     detach: ["detachRoadEndpoint", { edgeId, end }],
                     connect: ["connectRoadEndpoint", { edgeId, end, target: targetNodeId ? { nodeId: targetNodeId } : { edgeId: targetEdgeId, at: targetAt } }],
+                    // ED-03 option writes ride the same type-validated path as the inspector.
+                    "set-options": ["setObjectOptions", { objectId: edgeId, patch: patch ?? {} }],
+                    // ED-05 lane authoring and turn rules.
+                    "set-lanes": ["setRoadLanes", { edgeId, lanes }],
+                    "insert-lane": ["insertRoadLane", { edgeId, at: laneId !== undefined ? { laneId, side: side ?? "left" } : (at ?? null), lane: lane ?? {} }],
+                    "remove-lane": ["removeRoadLane", { edgeId, laneId }],
+                    "set-lane": ["setRoadLane", { edgeId, laneId, patch: patch ?? {} }],
+                    "set-marking": ["setRoadMarking", { edgeId, boundary: laneId !== undefined ? { laneId } : boundary, marking: marking ?? null }],
+                    "set-turn-rule": ["setRoadTurnRule", { nodeId, fromEdgeId, toEdgeId, allowed: allowed === true }],
                 };
                 const [name, args] = commands[operation];
                 const result = service.run(name, args);
@@ -520,7 +559,7 @@ export function registerEnvironmentTools(server, storage) {
         "environment_validate",
         {
             title: "Validate environment",
-            description: "Run geometric conflict checks and object-graph validation over an environment document.",
+            description: "Run geometric conflict checks, road-domain validation (geometry, lanes, turn rules, junction connectors), and object-graph validation over an environment document.",
             inputSchema: {
                 environmentId: z.string().min(1),
             },
@@ -528,15 +567,33 @@ export function registerEnvironmentTools(server, storage) {
         async ({ environmentId }) => {
             try {
                 const { manifest, document } = await loadDocument(storage, environmentId);
-                const conflicts = findDocumentConflicts(document);
                 const graph = validateObjectGraph(document.snapshot(), objectTypeRegistry, { sky: manifest.sky ?? null });
+                // The same road-domain checks the CommandBus applies to every edit.
+                const roadValidation = validateRoadDomain(document.roads);
+                const roadIssues = [...roadValidation.issues];
+                let conflicts;
+                if (roadValidation.ok && roadGeometryVersionOf(document) === 2) {
+                    try {
+                        const plan = planRoadNetworkGeometry(document.roads);
+                        conflicts = plan.conflicts;
+                        roadIssues.push(...validateJunctionMovements(document.roads, plan));
+                    } catch (error) {
+                        conflicts = [];
+                        roadIssues.push(...(error.issues ?? [{ path: ["roads"], code: "road.geometry.compile-failed", message: error.message, severity: "error" }]));
+                    }
+                } else {
+                    conflicts = findDocumentConflicts(document);
+                }
+                const issues = [...graph.issues, ...roadIssues];
+                const roadsOk = !roadIssues.some((issue) => issue.severity === "error");
                 return ok({
                     ok: true,
                     conflictCount: conflicts.length,
                     conflicts,
                     objectGraphOk: graph.ok,
-                    issueCount: graph.issues.length,
-                    issues: graph.issues,
+                    roadsOk,
+                    issueCount: issues.length,
+                    issues,
                 });
             } catch (error) {
                 return fail(error);

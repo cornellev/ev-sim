@@ -1,0 +1,101 @@
+{
+  "environmentId": "asymmetric-lanes",
+  "name": "Asymmetric lanes",
+  "schemaVersion": 3,
+  "revision": 1,
+  "templateId": "blank",
+  "roadStylePreset": "default",
+  "roadsAuthored": true,
+  "buildingsAuthored": true,
+  "featuresAuthored": true,
+  "chunkSize": 20,
+  "visualLayer": null,
+  "evidence": null,
+  "document": {
+    "environmentId": "asymmetric-lanes",
+    "chunkSize": 20,
+    "roadsAuthored": true,
+    "buildingsAuthored": true,
+    "featuresAuthored": true,
+    "roads": {
+      "geometryVersion": 2,
+      "nodes": [
+        { "id": "a", "x": -40, "y": 0, "z": 0, "kind": "endpoint" },
+        { "id": "b", "x": 0, "y": 0, "z": 0, "kind": "intersection" },
+        { "id": "c", "x": 40, "y": 0, "z": 0, "kind": "endpoint" },
+        { "id": "d", "x": 0, "y": 0, "z": 36, "kind": "endpoint" }
+      ],
+      "edges": [
+        {
+          "id": "ab",
+          "startNodeId": "a",
+          "endNodeId": "b",
+          "bidirectional": true,
+          "width": 11,
+          "laneCount": 3,
+          "shoulderWidth": 0.5,
+          "tension": null,
+          "borderLeft": "solid_yellow",
+          "borderRight": null,
+          "startArm": null,
+          "endArm": null,
+          "geometry": { "version": 1, "kind": "polyline", "knots": [{ "id": "start" }, { "id": "end" }] },
+          "lanes": [
+            { "id": "lane-0", "direction": 1, "width": 3.5 },
+            { "id": "lane-1", "direction": 1, "width": 3.5, "markingLeft": "dashed_white" },
+            { "id": "lane-2", "direction": -1, "width": 4 }
+          ]
+        },
+        {
+          "id": "bc",
+          "startNodeId": "b",
+          "endNodeId": "c",
+          "bidirectional": true,
+          "width": 7,
+          "laneCount": 2,
+          "shoulderWidth": 0.5,
+          "tension": null,
+          "borderLeft": null,
+          "borderRight": null,
+          "startArm": null,
+          "endArm": null,
+          "geometry": {
+            "version": 1,
+            "kind": "cubic-bezier",
+            "knots": [
+              { "id": "start", "mode": "auto" },
+              { "id": "k1", "position": { "x": 20, "y": 1, "z": 6 }, "mode": "auto" },
+              { "id": "end", "mode": "auto" }
+            ]
+          }
+        },
+        {
+          "id": "bd",
+          "startNodeId": "b",
+          "endNodeId": "d",
+          "bidirectional": false,
+          "direction": -1,
+          "width": 6,
+          "laneCount": 2,
+          "shoulderWidth": 0,
+          "tension": null,
+          "borderLeft": null,
+          "borderRight": null,
+          "startArm": null,
+          "endArm": null,
+          "geometry": { "version": 1, "kind": "polyline", "knots": [{ "id": "start" }, { "id": "end" }] },
+          "lanes": [
+            { "id": "in-right", "direction": -1, "width": 2.5 },
+            { "id": "in-left", "direction": -1, "width": 3.5 }
+          ]
+        }
+      ],
+      "turnRules": [
+        { "nodeId": "b", "fromEdgeId": "ab", "toEdgeId": "bc", "allowed": false }
+      ]
+    },
+    "buildings": [],
+    "features": [],
+    "earth": null
+  }
+}

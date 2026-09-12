@@ -322,6 +322,28 @@
           }
         }
       ]
+    },
+    {
+      "id": "asymmetric-lanes-v2",
+      "source": "asymmetric-lanes.v2.json",
+      "schemaVersion": 3,
+      "worldHash": "ceff96d39cd5c2cac380e9f3501b01b68b32c32d4e454ed6ee60a653619d9625",
+      "roadNetworkHash": "hash-v1-83c83698947570d4",
+      "lidarGeometryHash": "be9d357655651109eca04ca68e3974f1f765fc57a234a8e0546ac4c4eb4f6cdd",
+      "domainSources": {
+        "buildings": "authored",
+        "features": "authored",
+        "roads": "authored"
+      },
+      "counts": {
+        "nodes": 4,
+        "edges": 3,
+        "buildings": 0,
+        "features": 0,
+        "obstacles": 0,
+        "drivableSurfaces": 4
+      },
+      "features": []
     }
   ]
 }

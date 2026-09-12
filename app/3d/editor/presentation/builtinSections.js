@@ -10,13 +10,40 @@ import { getIntersectionMovements, getNodeDegree } from "../document/documentMut
 import { INTERSECTION_TYPE_ID } from "../objects/types/intersection.js";
 import { ROAD_TYPE_ID } from "../objects/types/road.js";
 import { SKYBOX_TYPE_ID } from "../objects/types/skybox.js";
+import {
+    hasExplicitRoadLanes,
+    laneCenterRightOffset,
+    laneDividerDescriptors,
+    roadLanes,
+    roadWidth,
+} from "../../../roads/RoadLaneModel.js";
 
 export const SECTION_KINDS = Object.freeze({
     TURN_RULES: "turn-rules",
     ROAD_ENDPOINTS: "road-endpoints",
     ROAD_GEOMETRY: "road-geometry",
+    ROAD_DISPLAY: "road-display",
     SKY_PREVIEW: "sky-local-preview",
 });
+
+/**
+ * Pure cross-section model for the ED-05 `RoadDisplay` lane diagram: lanes
+ * right to left (physical index 0 first) with their centre offsets, interior
+ * dividers with resolved markings, and the road borders.
+ */
+export function roadDisplayModel(edge) {
+    const lanes = roadLanes(edge).map((lane, index) => ({ ...lane, index, offset: laneCenterRightOffset(edge, index) }));
+    return {
+        edgeId: String(edge.id),
+        explicit: hasExplicitRoadLanes(edge),
+        geometryVersion: null,
+        width: roadWidth(edge),
+        shoulderWidth: Math.max(0, Number(edge.shoulderWidth ?? 0) || 0),
+        lanes,
+        dividers: laneDividerDescriptors(edge),
+        borders: { left: edge.borderLeft ?? null, right: edge.borderRight ?? null },
+    };
+}
 
 function nodeOf(document, nodeId) {
     return document?.getNode?.(nodeId) ?? document?.roads?.nodes?.find?.((node) => node.id === nodeId) ?? null;
@@ -49,6 +76,13 @@ export function roadSections(ctx, defaults) {
     const end = nodeOf(document, edge.endNodeId);
     return [
         ...defaults,
+        {
+            id: "road-display",
+            title: "Lanes",
+            kind: SECTION_KINDS.ROAD_DISPLAY,
+            ...roadDisplayModel(edge),
+            geometryVersion: Number(document.roads?.geometryVersion ?? 1),
+        },
         {
             id: "road-endpoints",
             title: "Endpoints",

@@ -18,6 +18,7 @@ const TYPE_BY_ENTITY_KIND = Object.freeze({
     "road-node": null,
     "road-knot": "road",
     "road-handle": "road",
+    "road-lane": "road",
 });
 
 /**
@@ -40,6 +41,7 @@ export function entityIdForSub(sub) {
     if (sub?.kind === "road-node" && sub.id !== undefined && sub.id !== null) return `road-node:${sub.id}`;
     if (sub?.kind === "road-knot" && sub.edgeId !== undefined && sub.knotId !== undefined) return `road-knot:${sub.edgeId}:${sub.knotId}`;
     if (sub?.kind === "road-handle" && sub.edgeId !== undefined && sub.knotId !== undefined) return `road-handle:${sub.edgeId}:${sub.knotId}:${sub.side}`;
+    if (sub?.kind === "road-lane" && sub.edgeId !== undefined && sub.laneId !== undefined) return `road-lane:${sub.edgeId}:${sub.laneId}`;
     return null;
 }
 
@@ -62,6 +64,9 @@ export function subForEntity(entity) {
     }
     if (entity?.kind === "road-handle" && entity.edgeId !== undefined && entity.knotId !== undefined) {
         return { kind: "road-handle", edgeId: String(entity.edgeId), knotId: String(entity.knotId), side: entity.side };
+    }
+    if (entity?.kind === "road-lane" && entity.edgeId !== undefined && entity.laneId !== undefined) {
+        return { kind: "road-lane", edgeId: String(entity.edgeId), laneId: String(entity.laneId) };
     }
     return null;
 }
@@ -103,7 +108,7 @@ export function mapSelectionForRecord(record) {
 
 /** Resolve the map-selection shape from a selection snapshot and a document (or snapshot). */
 export function mapSelectionFromSelection(selectionSnapshot, document) {
-    if (selectionSnapshot?.sub?.kind === "road-knot" || selectionSnapshot?.sub?.kind === "road-handle") {
+    if (["road-knot", "road-handle", "road-lane"].includes(selectionSnapshot?.sub?.kind)) {
         return { type: "road", id: String(selectionSnapshot.sub.edgeId), sub: { ...selectionSnapshot.sub } };
     }
     const primary = selectionSnapshot?.primary ?? selectionSnapshot?.ids?.at?.(-1) ?? null;
