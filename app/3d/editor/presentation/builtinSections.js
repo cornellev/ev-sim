@@ -14,6 +14,7 @@ import { SKYBOX_TYPE_ID } from "../objects/types/skybox.js";
 export const SECTION_KINDS = Object.freeze({
     TURN_RULES: "turn-rules",
     ROAD_ENDPOINTS: "road-endpoints",
+    ROAD_GEOMETRY: "road-geometry",
     SKY_PREVIEW: "sky-local-preview",
 });
 
@@ -55,6 +56,12 @@ export function roadSections(ctx, defaults) {
             edgeId: String(record.id),
             start: start ? { id: String(start.id), y: Number(start.y) || 0, junction: start.kind === "intersection" || getNodeDegree(document, start.id) > 1 } : null,
             end: end ? { id: String(end.id), y: Number(end.y) || 0, junction: end.kind === "intersection" || getNodeDegree(document, end.id) > 1 } : null,
+        },
+        {
+            id: "road-geometry",
+            title: "Geometry",
+            kind: SECTION_KINDS.ROAD_GEOMETRY,
+            edgeId: String(record.id),
         },
     ];
 }

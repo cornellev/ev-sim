@@ -382,7 +382,7 @@ test("ED-03 readObjectOptionValue and planObjectOptions are pure over the legacy
     const index = document.index();
     const record = document.getObject("e2");
     const value = readObjectOptionValue(record, index, objectTypeRegistry);
-    assert.deepEqual(value, { width: 4, laneCount: 1, shoulderWidth: 0, bidirectional: false, direction: 1 });
+    assert.deepEqual(value, { width: 4, laneCount: 1, shoulderWidth: 0, bidirectional: false, direction: 1, borderLeft: "solid_white", borderRight: "solid_white" });
     const plan = planObjectOptions(record, index, objectTypeRegistry, { ...value, width: 5 });
     assert.deepEqual(plan.issues, []);
     assert.equal(plan.steps[0].op, "set-edge-options");

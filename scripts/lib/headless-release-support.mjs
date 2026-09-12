@@ -117,6 +117,7 @@ export async function createStateBundle(options = {}) {
         sensors: [createHeadlessImu()],
         triggers: options.triggers ?? [],
         completion: options.completion ?? { conditions: [] },
+        environment: options.environment ?? null,
     });
 }
 
@@ -144,6 +145,7 @@ export async function createLidarBundle(options = {}) {
         sensors: [createHeadlessImu(), lidar],
         triggers: options.triggers ?? [],
         completion: options.completion ?? { conditions: [] },
+        environment: options.environment ?? null,
     });
 }
 

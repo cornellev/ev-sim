@@ -429,8 +429,10 @@ export function translateRoadNodes(document, positions, runtime = {}) {
         const startNode = getDocumentNode(document, edge.startNodeId);
         const endNode = getDocumentNode(document, edge.endNodeId);
         if (!startNode || !endNode) continue;
-        if (edge.startArm) edge.startArm = computeArmPoint(startNode, endNode);
-        if (edge.endArm) edge.endArm = computeArmPoint(endNode, startNode);
+        if (Number(document.roads?.geometryVersion ?? 1) === 1) {
+            if (edge.startArm) edge.startArm = computeArmPoint(startNode, endNode);
+            if (edge.endArm) edge.endArm = computeArmPoint(endNode, startNode);
+        }
     }
 
     if (runtime.markAuthored !== false) markRoadsAuthored(document);

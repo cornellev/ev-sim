@@ -9,6 +9,7 @@ import { computeSimulationSemanticHash } from "../../app/simulation/kernel/Simul
 import { createLidarGeometryResource } from "../../app/simulation/lidar/LidarGeometry.js";
 import { createRenderSceneResource } from "../../app/simulation/render/RenderScene.js";
 import { resolveEnabledCameraRenderSelection } from "../../app/simulation/render/RenderSceneProviderRegistry.js";
+import { createWorldResource } from "../../app/simulation/world/WorldDescription.js";
 import { StorageService } from "../../server/storage/StorageService.js";
 
 export function createHeadlessImu(overrides = {}) {
@@ -89,8 +90,30 @@ export async function createPortableHeadlessBundle({
         actions: [{ kind: "finish" }],
     }],
     completion = { conditions: [] },
+    environment = null,
 } = {}) {
     const resolved = await new StorageService().resolveRunManifest("igvc-default");
+    if (environment) {
+        const source = environment.document ? structuredClone(environment) : {
+            environmentId: String(environment.environmentId),
+            templateId: "blank",
+            roadsAuthored: true,
+            buildingsAuthored: true,
+            featuresAuthored: true,
+            document: {
+                ...structuredClone(environment),
+                roadsAuthored: true,
+                buildings: structuredClone(environment.buildings ?? []),
+                features: structuredClone(environment.features ?? []),
+            },
+        };
+        const environmentHash = computeResolvedRunHash(source);
+        resolved.manifest.environment = { id: source.environmentId, expectedHash: environmentHash };
+        resolved.environment = { hash: environmentHash, manifest: source };
+        resolved.world = createWorldResource(source);
+        resolved.dependencyHashes.environment = environmentHash;
+        resolved.dependencyHashes.world = resolved.world.hash;
+    }
     resolved.manifest.sensorRig.sensors = sensors;
     resolved.manifest.sensorRig.syncGroups = [];
     resolved.manifest.clock.modules.physics = true;
@@ -105,6 +128,7 @@ export async function createPortableHeadlessBundle({
     const nodes = new Map(roads.nodes.map((node) => [node.id, node]));
     const start = nodes.get(edge.startNodeId);
     const finish = nodes.get(edge.endNodeId);
+    if (environment) initial.pose.position = { x: start.x, y: start.y ?? 0, z: start.z };
     const verified = verifyRoute(resolved.environment.manifest, {
         id: "ego-route",
         actorId: initial.id,

@@ -19,6 +19,7 @@ import * as legacyCommands from "../commands/legacyCommands.js";
 import { deleteObjects } from "../commands/objectCommands.js";
 import { commandFailure, commandIssue, commandSuccess, COMMAND_ISSUE_CODES } from "../commands/commandIssues.js";
 import { MAP_WORLD_SCALE, screenRadiusToWorld } from "./mapCoords.js";
+import { roadGeometryVersionOf } from "../../../roads/RoadGeometryRecord.js";
 
 const SNAP_RADIUS_SCREEN = 12;
 
@@ -30,6 +31,10 @@ function busOf(data) {
 
 function selectionOf(data) {
     return data?.selection?.() ?? data?.environment?.()?.selection?.() ?? null;
+}
+
+function roadControllerOf(data) {
+    return data?.environment?.()?.toolController?.roadAuthoringController ?? null;
 }
 
 /**
@@ -72,44 +77,16 @@ export function resolveRoadPenNode({ point, snapRadius, label = "Start road" }) 
  * from the previous node to the clicked node as one transaction.
  */
 export function handleRoadPenClick({ worldPoint, document, editor, data }) {
-    const bus = busOf(data);
+    const controller = roadControllerOf(data);
+    if (!controller) return { error: "Road authoring is unavailable." };
     const snapRadius = screenRadiusToWorld(SNAP_RADIUS_SCREEN, editor.snapshot().map);
     const snapped = applySnap(worldPoint, editor);
-    const draft = editor.snapshot().map.draft;
-
-    if (!draft?.type || draft.type !== "road-pen") {
-        const started = bus.execute(resolveRoadPenNode({ point: snapped, snapRadius }));
-        if (!started.ok) return { error: started.error };
-        const node = started.result.node;
-        editor.setMapDraft({ type: "road-pen", activeNodeId: node.id, cursor: { x: snapped.x, z: snapped.z } });
-        return { node };
-    }
-
-    let outcome = null;
-    const result = bus.transaction("Draw road", (run) => {
-        const resolved = run(resolveRoadPenNode({ point: snapped, snapRadius }));
-        const node = resolved.result.node;
-        if (draft.activeNodeId === node.id) {
-            outcome = { node };
-            return;
-        }
-        const startNode = getDocumentNode(document, draft.activeNodeId);
-        if (!startNode) {
-            throw new Error("The road pen lost its start node.");
-        }
-        const edge = run(legacyCommands.addRoadEdge({
-            startNodeId: draft.activeNodeId,
-            endNodeId: node.id,
-            options: buildEdgeArms(document, startNode, node),
-        }));
-        outcome = { node, edge: edge.result.edge };
-    });
-    if (!result.ok) return { error: result.error, issues: result.issues };
-    if (outcome?.node) {
-        editor.setMapDraft({ type: "road-pen", activeNodeId: outcome.node.id, cursor: { x: snapped.x, z: snapped.z } });
-    }
-    data.simulation()?.render?.();
-    return outcome ?? {};
+    const node = findNearestNode(snapped, document.roads.nodes, snapRadius);
+    const snapTarget = node ? { nodeId: node.id, position: node } : null;
+    const draft = editor.snapshot().roadDraft;
+    return draft?.type === "road-stroke"
+        ? controller.appendStrokePoint({ ...snapped, y: worldPoint.y ?? 0 }, snapTarget)
+        : controller.beginStroke({ ...snapped, y: worldPoint.y ?? 0 }, snapTarget);
 }
 
 export function handleIntersectionPlace({ worldPoint, document, editor, data }) {
@@ -164,7 +141,7 @@ export function finishNodeDrag({ interaction, document, editor, data, worldPoint
     const committed = bus.commitGesture(interaction.gestureId);
     const snapRadius = screenRadiusToWorld(SNAP_RADIUS_SCREEN, editor.snapshot().map);
     const node = getDocumentNode(document, interaction.nodeId);
-    if (committed.ok && node && !isIntersectionNode(document, node)) {
+    if (committed.ok && roadGeometryVersionOf(document) === 1 && node && !isIntersectionNode(document, node)) {
         const connected = bus.execute(legacyCommands.connectEndpoint({
             endpointId: interaction.nodeId,
             point: { x: node.x, z: node.z },
@@ -214,12 +191,33 @@ export function handleMapDelete({ data, objectIds }) {
     return result.ok ? { ok: true, deleted: result.result.deleted } : { ok: false, error: result.error, issues: result.issues };
 }
 
-export function cancelRoadPen(editor) {
-    editor.clearMapDraft();
+export function cancelRoadPen(editor, data = null) {
+    if (!roadControllerOf(data)?.cancelStroke?.()) editor.clearRoadDraft?.();
 }
 
-export function finalizeRoadPen(editor) {
-    editor.clearMapDraft();
+export function finalizeRoadPen(editor, data = null) {
+    const controller = roadControllerOf(data);
+    return controller ? controller.finishStroke() : (editor.clearRoadDraft?.(), { ok: false });
+}
+
+export function beginRoadDrag({ data, edgeId, worldPoint }) {
+    selectionOf(data)?.select(edgeId);
+    const begun = busOf(data).beginGesture({ objectIds: [edgeId], label: "Move road" });
+    if (!begun.ok) return null;
+    return { type: "move-road", edgeId, gestureId: begun.gestureId, start: { x: worldPoint.x, z: worldPoint.z } };
+}
+
+export function updateRoadDrag({ interaction, data, worldPoint }) {
+    const result = busOf(data).updateGesture(interaction.gestureId, deltaFromTranslation({ x: worldPoint.x - interaction.start.x, z: worldPoint.z - interaction.start.z }));
+    data.simulation()?.render?.();
+    return result;
+}
+
+export function finishRoadDrag({ interaction, data, worldPoint }) {
+    if (worldPoint) updateRoadDrag({ interaction, data, worldPoint });
+    const result = busOf(data).commitGesture(interaction.gestureId);
+    data.simulation()?.render?.();
+    return result;
 }
 
 export function handleBuildingRectDown({ worldPoint, editor }) {

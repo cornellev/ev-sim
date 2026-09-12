@@ -23,6 +23,43 @@ import {
     roadIsReversed,
     roadLaneCount,
 } from "../../../roads/RoadLaneModel.js";
+import { planRoadNetworkGeometry } from "../../../roads/RoadNetworkGeometry.js";
+
+function screenPoints(points, viewport, size) {
+    return points.map((point) => {
+        const screen = worldToScreen(point, viewport, size);
+        return `${screen.x},${screen.y}`;
+    }).join(" ");
+}
+
+function CompiledRoadEdges({ plan, viewport, size, mapSelection }) {
+    return plan.edges.map((entry) => {
+        const selected = mapSelection?.type === MAP_SELECTION_TYPES.ROAD && mapSelection.id === entry.edge.id;
+        const surface = entry.surface;
+        const polygon = [...surface.leftBoundary, ...[...surface.rightBoundary].reverse()];
+        const geometryHandles = selected ? entry.edge.geometry.knots.flatMap((knot, index, knots) => {
+            const elements = [];
+            const anchor = worldToScreen(knot.position, viewport, size);
+            for (const [side, handle] of [["in", knot.handleIn], ["out", knot.handleOut]]) {
+                if (!handle || side === "in" && index === 0 || side === "out" && index === knots.length - 1) continue;
+                const target = worldToScreen({ x: knot.position.x + handle.x, y: knot.position.y + handle.y, z: knot.position.z + handle.z }, viewport, size);
+                elements.push(<line key={`${knot.id}-${side}-line`} x1={anchor.x} y1={anchor.y} x2={target.x} y2={target.y} stroke="#a78bfa" strokeWidth={1} />);
+                elements.push(<circle key={`${knot.id}-${side}`} cx={target.x} cy={target.y} r={4} fill="#8b5cf6" stroke="#ede9fe" data-road-handle={`${knot.id}:${side}`} />);
+            }
+            elements.push(<circle key={`${knot.id}-knot`} cx={anchor.x} cy={anchor.y} r={index === 0 || index === knots.length - 1 ? 4 : 5} fill="#38bdf8" stroke="#e0f2fe" data-road-knot={knot.id} />);
+            return elements;
+        }) : null;
+        return (
+            <g key={entry.edge.id} data-road-id={entry.edge.id} data-road-geometry-version="2">
+                <polygon points={screenPoints(polygon, viewport, size)} fill={selected ? "#075985" : "#52525b"} stroke="none" />
+                <polyline data-road-boundary points={screenPoints(surface.leftBoundary, viewport, size)} fill="none" stroke="#d4d4d8" strokeWidth={1} />
+                <polyline data-road-boundary points={screenPoints(surface.rightBoundary, viewport, size)} fill="none" stroke="#d4d4d8" strokeWidth={1} />
+                <polyline points={screenPoints(entry.trimmedSamples.points, viewport, size)} fill="none" stroke={selected ? "#38bdf8" : "transparent"} strokeWidth={2} />
+                {geometryHandles}
+            </g>
+        );
+    });
+}
 
 function GridLines({ viewport, size, visible }) {
     if (!visible) return null;
@@ -70,8 +107,9 @@ function GridLines({ viewport, size, visible }) {
     return <g className="pointer-events-none">{lines}</g>;
 }
 
-function RoadEdges({ documentSnapshot, viewport, size, layers, mapSelection, showDetail }) {
+function RoadEdges({ documentSnapshot, viewport, size, layers, mapSelection, showDetail, compiledPlan }) {
     if (!layers.roads) return null;
+    if (compiledPlan) return <CompiledRoadEdges plan={compiledPlan} viewport={viewport} size={size} mapSelection={mapSelection} />;
 
     return documentSnapshot.roads.edges.map((edge) => {
         const endpoints = getEdgeRenderEndpoints(documentSnapshot, edge);
@@ -176,6 +214,7 @@ function RoadEdges({ documentSnapshot, viewport, size, layers, mapSelection, sho
 
 function RoadConnectors({ documentSnapshot, viewport, size, layers }) {
     if (!layers.roads) return null;
+    if (Number(documentSnapshot.roads?.geometryVersion ?? 1) === 2) return null;
 
     return documentSnapshot.roads.edges.flatMap((edge) => (
         getEdgeIntersectionConnectors(documentSnapshot, edge).map((connector, index) => {
@@ -316,20 +355,13 @@ function Features({ documentSnapshot, viewport, size, layers, showDetail, mapSel
     });
 }
 
-function RoadPenDraft({ documentSnapshot, draft, viewport, size }) {
-    if (draft?.type !== "road-pen" || !draft.activeNodeId || !draft.cursor) return null;
-
-    const start = documentSnapshot.roads.nodes.find((node) => node.id === draft.activeNodeId);
-    if (!start) return null;
-
-    const a = worldToScreen(start, viewport, size);
-    const b = worldToScreen(draft.cursor, viewport, size);
+function RoadPenDraft({ draft, viewport, size }) {
+    if (draft?.type !== "road-stroke" || !draft.points?.length || !draft.cursor) return null;
+    const points = [...draft.points, draft.cursor];
     return (
-        <line
-            x1={a.x}
-            y1={a.y}
-            x2={b.x}
-            y2={b.y}
+        <polyline
+            points={screenPoints(points, viewport, size)}
+            fill="none"
             stroke="#38bdf8"
             strokeWidth={2}
             strokeDasharray="6 4"
@@ -376,6 +408,14 @@ export function MapSurfaceLayers({
     showDetail,
     draft,
 }) {
+    const compiledPlan = useMemo(() => {
+        if (Number(documentSnapshot.roads?.geometryVersion ?? 1) !== 2) return null;
+        try {
+            return planRoadNetworkGeometry(documentSnapshot.roads);
+        } catch {
+            return null;
+        }
+    }, [documentSnapshot]);
     const intersectionNodes = useMemo(
         () => getIntersectionNodes(documentSnapshot),
         [documentSnapshot],
@@ -398,6 +438,7 @@ export function MapSurfaceLayers({
                     layers={layers}
                     mapSelection={mapSelection}
                     showDetail={showDetail}
+                    compiledPlan={compiledPlan}
                 />
             </g>
             <RoadConnectors

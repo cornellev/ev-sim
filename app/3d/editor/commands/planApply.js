@@ -14,6 +14,7 @@ import {
     updateRoadEdge,
 } from "../document/documentMutations.js";
 import { setObjectComponent } from "./objectMutations.js";
+import { cloneRoadGeometry } from "../../../roads/RoadGeometryRecord.js";
 
 export const PLAN_STEP_OPS = Object.freeze([
     "move-node",
@@ -26,6 +27,7 @@ export const PLAN_STEP_OPS = Object.freeze([
     "set-feature-record",
     "set-earth-source",
     "set-sky",
+    "set-road-geometry",
 ]);
 
 function applyEarthSource(document, patch) {
@@ -82,6 +84,16 @@ export function applyPlanSteps(document, steps, runtime = { notify: false }) {
         } else if (step.op === "set-sky") {
             document.setScalar("sky", step.value ?? null, { notify: false });
             result = { ok: true };
+        } else if (step.op === "set-road-geometry") {
+            const edge = document.getEdge(String(step.edgeId));
+            if (!edge) result = { ok: false, error: `Road edge "${step.edgeId}" does not exist.` };
+            else {
+                edge.geometry = cloneRoadGeometry(step.geometry);
+                if (step.width !== undefined) edge.width = Number(step.width);
+                if (step.shoulderWidth !== undefined) edge.shoulderWidth = Number(step.shoulderWidth);
+                document.roadsAuthored = true;
+                result = { ok: true };
+            }
         }
         if (!result?.ok) return { ok: false, error: result?.error ?? `Plan step "${step.op}" failed.`, applied };
         applied += 1;

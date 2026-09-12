@@ -1,5 +1,7 @@
 import { documentToRoadNetworkInputs } from "../documentMutations.js";
-import buildRoadNetwork from "../../../city/RoadNetwork.js";
+import buildRoadNetwork, { disposeRoadRuntimeObject, materializeCompiledRoadNetwork } from "../../../city/RoadNetwork.js";
+import { planRoadNetworkGeometry } from "../../../../roads/RoadNetworkGeometry.js";
+import { roadGeometryVersionOf } from "../../../../roads/RoadGeometryRecord.js";
 import {
     getRoadRegistry,
     registerRoadEntities,
@@ -28,9 +30,11 @@ export function syncRoadsFromDocument(data, scene, document) {
 
         for (const road of [...city.getRoads()]) {
             road.root?.parent?.remove?.(road.root);
+            disposeRoadRuntimeObject(road);
         }
         for (const intersection of [...city.getIntersections()]) {
             intersection.root?.parent?.remove?.(intersection.root);
+            disposeRoadRuntimeObject(intersection);
         }
 
         city.roads = [];
@@ -46,7 +50,10 @@ export function syncRoadsFromDocument(data, scene, document) {
             return { roads: [], intersections: [] };
         }
 
-        const result = buildRoadNetwork(scene, threeVectorMap, connections, roadNetworkOptions(data));
+        const options = roadNetworkOptions(data);
+        const result = roadGeometryVersionOf(document) === 2
+            ? materializeCompiledRoadNetwork(scene, planRoadNetworkGeometry(document.roads), { roadOptions: options.roadOptions })
+            : buildRoadNetwork(scene, threeVectorMap, connections, options);
         result.roads.forEach((road, index) => {
             if (!road.network) road.network = {};
             // Connections now carry the edge id; keep the positional fallback for callers that omit it.

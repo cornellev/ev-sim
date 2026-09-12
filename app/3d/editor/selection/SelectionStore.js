@@ -18,9 +18,16 @@ function normalizeIds(input) {
     return ids;
 }
 
-function normalizeSub(sub) {
-    if (!sub || sub.kind !== "road-node" || sub.id === undefined || sub.id === null) return null;
-    return { kind: "road-node", id: String(sub.id) };
+export function normalizeSub(sub) {
+    if (!sub) return null;
+    if (sub.kind === "road-node" && sub.id !== undefined && sub.id !== null) return { kind: "road-node", id: String(sub.id) };
+    if (sub.kind === "road-knot" && sub.edgeId !== undefined && sub.knotId !== undefined) {
+        return { kind: "road-knot", edgeId: String(sub.edgeId), knotId: String(sub.knotId) };
+    }
+    if (sub.kind === "road-handle" && sub.edgeId !== undefined && sub.knotId !== undefined && ["in", "out"].includes(sub.side)) {
+        return { kind: "road-handle", edgeId: String(sub.edgeId), knotId: String(sub.knotId), side: sub.side };
+    }
+    return null;
 }
 
 export class SelectionStore {
@@ -125,7 +132,8 @@ export class SelectionStore {
         const existing = existingIds instanceof Set ? existingIds : new Set([...(existingIds ?? [])].map(String));
         const next = this.ids.filter((id) => existing.has(id));
         const primary = next.includes(this.primary) ? this.primary : (next.at(-1) ?? null);
-        const sub = this.sub && next.length === 0 ? null : this.sub;
+        const subEdgeMissing = this.sub?.edgeId !== undefined && !next.includes(String(this.sub.edgeId));
+        const sub = this.sub && (next.length === 0 || subEdgeMissing) ? null : this.sub;
         this._commit(next, primary, sub);
         return this.snapshot();
     }
@@ -141,7 +149,12 @@ export class SelectionStore {
 
     _commit(ids, primary, sub) {
         const sameIds = ids.length === this.ids.length && ids.every((id, index) => id === this.ids[index]);
-        const sameSub = (sub === null && this.sub === null) || (sub && this.sub && sub.kind === this.sub.kind && sub.id === this.sub.id);
+        const sameSub = (sub === null && this.sub === null) || (sub && this.sub
+            && sub.kind === this.sub.kind
+            && sub.id === this.sub.id
+            && sub.edgeId === this.sub.edgeId
+            && sub.knotId === this.sub.knotId
+            && sub.side === this.sub.side);
         if (sameIds && primary === this.primary && sameSub) return;
         this.ids = [...ids];
         this.primary = primary;

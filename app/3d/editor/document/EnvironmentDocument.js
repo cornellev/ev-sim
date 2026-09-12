@@ -13,6 +13,7 @@
 import { OBJECT_GRAPH_VERSION, cloneObjectRecord, sortObjectRecords } from "../objects/objectRecord.js";
 import { skyConfigToManifest } from "../../skybox/EnvironmentSkyConfig.js";
 import { legacyIndex } from "../objects/objectGraph.js";
+import { cloneRoadGeometry } from "../../../roads/RoadGeometryRecord.js";
 import {
     CHANGE_DOMAINS,
     CHANGE_SCALARS,
@@ -56,6 +57,9 @@ export class EnvironmentDocument {
         this.featuresAuthored = options.featuresAuthored === true;
         /** @type {RoadNode[]} */
         this.roads = {
+            ...(options.roads?.geometryVersion !== undefined && Number(options.roads.geometryVersion) !== 1
+                ? { geometryVersion: Number(options.roads.geometryVersion) }
+                : {}),
             nodes: Array.isArray(options.roads?.nodes) ? options.roads.nodes.map(cloneNode) : [],
             edges: Array.isArray(options.roads?.edges) ? options.roads.edges.map(cloneEdge) : [],
             turnRules: Array.isArray(options.roads?.turnRules)
@@ -100,6 +104,7 @@ export class EnvironmentDocument {
             buildingsAuthored: this.buildingsAuthored,
             featuresAuthored: this.featuresAuthored,
             roads: {
+                ...(this.roads.geometryVersion !== undefined ? { geometryVersion: this.roads.geometryVersion } : {}),
                 nodes: this.roads.nodes.map(cloneNode),
                 edges: this.roads.edges.map(cloneEdge),
                 ...((this.roads.turnRules ?? []).length > 0
@@ -128,6 +133,9 @@ export class EnvironmentDocument {
         this.buildingsAuthored = manifest.buildingsAuthored === true;
         this.featuresAuthored = manifest.featuresAuthored === true;
         this.roads = {
+            ...(manifest.roads?.geometryVersion !== undefined && Number(manifest.roads.geometryVersion) !== 1
+                ? { geometryVersion: Number(manifest.roads.geometryVersion) }
+                : {}),
             nodes: Array.isArray(manifest.roads?.nodes) ? manifest.roads.nodes.map(cloneNode) : [],
             edges: Array.isArray(manifest.roads?.edges) ? manifest.roads.edges.map(cloneEdge) : [],
             turnRules: Array.isArray(manifest.roads?.turnRules)
@@ -184,12 +192,17 @@ export class EnvironmentDocument {
         return changed;
     }
 
-    /** Set one tracked scalar (`earth`, `sky`, authored flags, `chunkSize`). */
+    /** Set one tracked scalar (`earth`, `sky`, authored flags, `chunkSize`, road geometry version). */
     setScalar(name, value, { notify = true } = {}) {
         if (!CHANGE_SCALARS.includes(name)) throw new TypeError(`Unknown change scalar "${name}".`);
         if (name === "earth") this.earth = value ? cloneEarthSource(value) : null;
         else if (name === "sky") this.sky = value ? skyConfigToManifest(value) : null;
         else if (name === "chunkSize") this.chunkSize = Number.isFinite(Number(value)) ? Number(value) : this.chunkSize;
+        else if (name === "roadGeometryVersion") {
+            const version = Number(value);
+            if (value === null || value === undefined || version === 1) delete this.roads.geometryVersion;
+            else this.roads.geometryVersion = version;
+        }
         else this[name] = value === true;
         if (notify) this.notify();
     }
@@ -197,6 +210,10 @@ export class EnvironmentDocument {
     /** The environment sky configuration (manifest shape) or `null` when unseeded. */
     setSky(config, { notify = true } = {}) {
         this.setScalar("sky", config, { notify });
+    }
+
+    setRoadGeometryVersion(version, { notify = true } = {}) {
+        this.setScalar("roadGeometryVersion", version, { notify });
     }
 
     /**
@@ -398,6 +415,7 @@ function cloneEdge(edge) {
         borderRight: edge.borderRight ?? null,
         startArm: cloneRoadPoint(edge.startArm),
         endArm: cloneRoadPoint(edge.endArm),
+        ...(edge.geometry ? { geometry: cloneRoadGeometry(edge.geometry) } : {}),
     };
 }
 

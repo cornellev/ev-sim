@@ -2,6 +2,8 @@ import { EDITOR_MODES, EDITOR_TOOLS, MAP_TOOLS } from "../EditorState.js";
 import { PlaceTool } from "./PlaceTool.js";
 import { SelectTool } from "./SelectTool.js";
 import { TransformTool } from "./TransformTool.js";
+import { RoadAuthoringController } from "./RoadAuthoringController.js";
+import { RoadSceneTool } from "./RoadSceneTool.js";
 
 export class EditorToolController {
     constructor({ data, scene, camera, renderer }) {
@@ -24,7 +26,9 @@ export class EditorToolController {
         this.selectTool = new SelectTool({ data, scene, camera, renderer });
         this.placeTool = new PlaceTool({ data, scene, camera, renderer });
         this.transformTool = new TransformTool({ data, scene, camera, renderer });
-        this.tools = [this.selectTool, this.placeTool, this.transformTool];
+        this.roadAuthoringController = new RoadAuthoringController({ data });
+        this.roadSceneTool = new RoadSceneTool({ data, scene, camera, renderer, controller: this.roadAuthoringController });
+        this.tools = [this.selectTool, this.placeTool, this.transformTool, this.roadSceneTool];
         // ED-03: Q/W/E/R and Escape register through ShortcutProvider
         // (`EditorCommandShortcuts`) so they never fire while typing in a
         // field; this controller only owns the Escape policy.
@@ -38,6 +42,7 @@ export class EditorToolController {
             snapshot.editorMode === EDITOR_MODES.EARTH_IMPORT
             || this.bus?.activeGesture
             || snapshot.map?.draft
+            || snapshot.roadDraft
             || (this.selectionSnapshot?.ids?.length ?? 0) > 0
             || this.selectionSnapshot?.sub
             || (snapshot.editorMode === EDITOR_MODES.MAP
@@ -63,8 +68,17 @@ export class EditorToolController {
         const render = () => this.data.simulation()?.render?.();
 
         if (this.bus?.activeGesture) {
+            if (this.roadAuthoringController.cancelSubDrag()) {
+                render();
+                return true;
+            }
             if (!this.transformTool.cancelActiveGesture()) this.bus.cancelGesture(this.bus.activeGesture.id);
             render();
+            return true;
+        }
+
+        if (snapshot.roadDraft) {
+            this.roadAuthoringController.cancelStroke();
             return true;
         }
 
@@ -92,6 +106,7 @@ export class EditorToolController {
     }
 
     dispose() {
+        this.roadAuthoringController.cancelSubDrag();
         this.disposeEditorState?.();
         this.disposeSelection?.();
         this.disposeBus?.();

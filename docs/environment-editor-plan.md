@@ -24,7 +24,7 @@ ED PR changes a contract, hash, gate, or milestone status.
 
 ## Status
 
-- Next milestone: **ED-04 — Road geometry**.
+- Next milestone: **ED-05 — Lane authoring**.
 - Implemented: **ED-01 — Contracts** (object registry, options validation,
   schema-v4 adapters, compatibility fixtures), **ED-02 — Commands and
   hierarchy** (`SelectionStore`, `CommandBus` with transactions, gestures, and
@@ -37,7 +37,10 @@ ED PR changes a contract, hash, gate, or milestone status.
   driving the renderer viewport, unified scene/map views, the icon toolbar,
   generic fields with mixed multi-selection values, the Skybox inspector,
   workspace-scoped shortcuts, the windowed hierarchy, the asset pane shell,
-  Playwright/axe coverage, and retirement of the v4 opt-out). Existing
+  Playwright/axe coverage, and retirement of the v4 opt-out), and **ED-04 —
+  Road geometry** (versioned polyline/Bézier authoring, deterministic shared
+  surfaces, topology commands, route v6, Scene/Map interaction, and guarded
+  persistence/MCP writes). Existing
   environments retain their legacy behavior; schema v4 is the only writer.
 - Program goal: one consistent interaction model across hierarchy, scene, map,
   inspector, and asset library, with a modular object system that adds a type
@@ -52,7 +55,7 @@ ED PR changes a contract, hash, gate, or milestone status.
   proxies are set up; LiDAR authoring supports generated meshes and editable
   primitives.
 - Default implementation/review reasoning level: **Extra High**.
-- Last updated: **2026-09-11 — ED-03 implemented**.
+- Last updated: **2026-09-12 — ED-04 implemented**.
 
 ## Normative contracts
 
@@ -314,6 +317,63 @@ ED PR changes a contract, hash, gate, or milestone status.
   `createWorldDescription`; `worldHash` is unchanged.
 - `featuresProjector` re-places a prop when its `type` or `dir` changes and
   moves it in place otherwise.
+
+### Road geometry v2 (ED-04)
+
+- `roads.geometryVersion: 2` selects the new authoring contract. Its absence
+  means legacy v1 and is never injected into an untouched legacy snapshot.
+  Every v2 edge owns `geometry: { version: 1, kind, knots }`; endpoint knots
+  have reserved ids `start` and `end` and resolve their positions only from
+  topology nodes. Interior positions, edge-local stable ids, and array order
+  are canonical authoring state. Polyline knots store no mode or handle.
+  Cubic knots use `auto`, `aligned`, or `free`; automatic knots omit handles
+  and manual handles are relative vectors. Metric roads contain resolved
+  polyline/cubic controls without ids or modes, so a mode-only edit that
+  preserves the curve preserves metric identity.
+- `RoadGeometryPolicy` v1 fixes 1 cm chord deviation, 1 m maximum sample
+  spacing, deterministic left-first de Casteljau subdivision, depth 20,
+  16,384 samples per edge, XZ lateral normals, a four-offset polyline miter
+  limit, and six-decimal metric canonicalization. Exhaustion, folds, unusable
+  tangents, invalid junctions, and malformed topology are errors. The pure
+  `app/roads/` compiler returns points, span parameters, tangents, cumulative
+  XZ distance, boundaries, lane centerlines, indexed surfaces, bounds, and
+  mouth fractions. Scene, Map, routes, off-road checks, world resources, and
+  LiDAR consume that compiled result instead of resampling it.
+- Degree-zero/one nodes have no patch; equal-width tangent-continuous
+  degree-two roads join directly. Other degree-two/three/four nodes use a
+  deterministic upward-wound convex hull of trimmed mouths at junction
+  elevation. Insets are `clamp(0.75 × widest paved width, 2.5, 10)` capped at
+  35% of each incident XZ length. Lane connectors are cubics constrained to
+  the junction polygon. Cross-road same-elevation overlaps are structured
+  conflicts and `strict` callers reject them.
+- `roadCommands.js` owns create, convert, insert, remove, set-knot, split,
+  detach, and connect. The first of these commands upgrades every legacy edge
+  to an explicit polyline, retains ids and arm points, clears legacy arms, and
+  sets geometry version 2 in the same transaction. Existing legacy move,
+  width, elevation, delete, and MCP-add paths do not upgrade. Split replaces
+  one edge with two and a shared derived topology node; detach clones one
+  endpoint; connect rewires only the chosen endpoint and can split its target
+  atomically. Road-subgraph duplicate clones selected endpoints once and does
+  not clone external connections. All previews and commits run the same
+  `CommandBus` document/compiler validation and rejected frames restore their
+  starting capture.
+- `cev-sim.world-description` v1 remains byte-compatible for v1 roads. World
+  description v2 contains canonical metric roads plus indexed `road-mesh` and
+  junction surfaces and revalidates those surfaces from the road inputs.
+  Routing dispatches v1 to algorithm 5 and v2 to algorithm 6. V6 uses XZ arc
+  distance, binds the geometry-policy identity, tests the compiled paved union
+  including shoulders, and rejects missing or invalid explicit anchors with
+  `route.waypoint.anchor-missing` / `route.waypoint.anchor-invalid`; it never
+  substitutes a nearest road. V3/v4 proofs remain immutable compatibility
+  inputs, v5 remains fully validated for v1, and no old proof is current for a
+  v2 environment.
+- Environment writes declare request-only `supportedRoadGeometryVersions`.
+  Full replacement of v2 without `[1, 2]`, malformed/unsupported geometry, or
+  a v2 payload marked v1 fails before the write. The first v2 transition stores
+  one `pre-road-geometry-v2` migration copy in the existing revision lane.
+  Browser persistence and geometry-aware MCP calls declare `[1, 2]`;
+  `environment_edit_road` maps its operation enum to the same command
+  factories used by the editor.
 
 ### Workspace (ED-03)
 
@@ -608,10 +668,18 @@ node --experimental-default-type=module --test \
   tests/ui-interactions.test.js tests/ui-conventions.test.js \
   tests/command-options.test.js tests/pane-layout.test.js tests/editor-workspace.test.js \
   tests/field-model.test.js tests/virtual-window.test.js
+node --experimental-default-type=module --test \
+  tests/road-geometry.test.js tests/road-network-geometry.test.js \
+  tests/road-commands.test.js tests/road-routing-v6.test.js \
+  tests/environment-road-geometry.test.js tests/road-geometry-integration.test.js
 npm run lint
 npm test
 npm run test:ui -- tests/ui/environment-editor.spec.js
 npm run test:a11y -- tests/ui/environment-editor.spec.js
+npm run test:ui -- tests/ui/environment-road-geometry.spec.js
+npm run test:a11y -- tests/ui/environment-road-geometry.spec.js
+npm run test:parity
+npm run dist:headless
 npm run fixtures:headless && git diff --exit-code -- tests/fixtures/headless/characterization.v1.json
 npm run fixtures:environment-editor && git diff --exit-code -- tests/fixtures/environment-editor/compatibility-baseline.v1.json
 ```
@@ -645,7 +713,20 @@ Record in the ledger: focused-suite pass counts, `npm run lint` result,
   `tests/editor-presentation.test.js`. Playwright/accessibility checks arrive
   with ED-03's workspace.
 - [ ] ED-03 — Workspace and inspector.
-- [ ] ED-04 — Road geometry.
+- [x] ED-04 — Road geometry. Local acceptance on 2026-09-12: the six focused
+  suites passed 21/21; `npm run lint` completed with zero errors and the one
+  pre-existing unused-disable warning in `app/client/Client.js`; `npm test`
+  passed 1122/1126 with zero failures and four declared hardware skips
+  (WebGL2 LiDAR, VIS-15a hardware PBR, protocol 1.2 GPU shared memory, and
+  VIS-15b managed hardware PBR). The ED-04 Playwright workflow and its
+  1280 × 720 axe run each passed. `npm run test:parity` passed state-only,
+  CPU-LiDAR, and curved/elevated road-v2 cases across the browser adapter,
+  direct runner, CLI, gRPC UDS, and Python client. `npm run dist:headless`
+  produced the npm package and both Python distributions. Both fixture
+  generators completed with zero legacy drift: headless characterization
+  SHA-256 `60dc0bd2b02a9ec768f833070ce4d8d2047f5383838f09ea3f130dd31552dd6f`
+  and environment-editor compatibility SHA-256
+  `fb68611743c6e13490d100dd420d3ff4a972bcc3eb278e04016f9b170405f82b`.
 - [ ] ED-05 — Lane authoring.
 - [ ] ED-06 — Asset catalog.
 - [ ] ED-07 — Asset studio.
@@ -653,6 +734,34 @@ Record in the ledger: focused-suite pass counts, `npm run lint` result,
 - [ ] ED-09 — Acceptance.
 
 ## Decision log
+
+### 2026-09-12 — Implement ED-04 road geometry
+
+ED-04 versions the road domain rather than altering legacy interpretation.
+`roads.geometryVersion` is the only authoring dispatcher: absence is v1 and
+explicit `2` requires geometry on every edge. The first geometry command owns
+migration so loading, moving, resizing, deleting, and legacy MCP road creation
+cannot change old documents or hashes. The migration is one undoable
+transaction and storage retains one pre-migration document through the normal
+revision-guarded write lane. Old writers must declare road-version support
+before replacing v2 content.
+
+Sampling policy and topology live in Three/DOM/Node-free `app/roads` modules.
+The compiled plan is the only road metric used by indexed browser meshes,
+portable LiDAR, analytic render primitives, Map boundaries, route v6, paved
+union checks, and bounds. The world v2 resource stores resolved curve controls,
+not editor ids or modes, and validation recompiles the surfaces. This keeps
+appearance-only markings and editor handles outside measured geometry while
+making the indexed source/triangle identities portable. The incremental road
+projector keeps ED-02's E1/J1/E2 closure; a version transition performs one
+full rebuild and replacement disposes its GPU resources.
+
+Route algorithm 6 uses normalized XZ arc distance because the vehicle plant
+remains planar while road vertices retain elevation. It binds the road-policy
+identity and refuses broken explicit anchors. Algorithms 3/4 remain immutable
+compatibility inputs and algorithm 5 remains the complete v1 proof contract.
+The existing lane-count and direction model is unchanged; asymmetric lane
+authoring remains ED-05.
 
 ### 2026-09-11 — Implement ED-03 workspace and inspector
 

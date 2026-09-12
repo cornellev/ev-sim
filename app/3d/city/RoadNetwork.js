@@ -2,6 +2,8 @@ import * as THREE from "three";
 import Unit from "../../util/Unit.js";
 import { Road } from "./Road.js";
 import { Intersection } from "./Intersection.js";
+import { Triangle } from "../data/objects/Triangle.js";
+import { laneDividerDescriptors } from "../../roads/RoadLaneModel.js";
 
 const DEFAULT_ROAD_OPTIONS = {
     laneWidth: 3.5,
@@ -364,6 +366,262 @@ export function materializeRoadNetwork(scene, plan, { edgeIds = null, nodeIds = 
         }
     }
 
+    return { roads, intersections, roadByEdge };
+}
+
+function indexedGeometry(vertices, indices) {
+    const positions = new Float32Array(vertices.length * 3);
+    const metric = (value) => Math.round(Number(value) * 1e6) / 1e6;
+    vertices.forEach((point, index) => {
+        positions[index * 3] = metric(point.x);
+        positions[index * 3 + 1] = metric(point.y);
+        positions[index * 3 + 2] = metric(point.z);
+    });
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    geometry.setIndex(indices);
+    geometry.computeVertexNormals();
+    geometry.computeBoundingSphere();
+    return geometry;
+}
+
+function stripVertices(left, right) {
+    const vertices = [];
+    const indices = [];
+    for (let index = 0; index < Math.min(left.length, right.length); index += 1) vertices.push(left[index], right[index]);
+    for (let index = 0; index < Math.min(left.length, right.length) - 1; index += 1) {
+        const offset = index * 2;
+        indices.push(offset, offset + 1, offset + 2, offset + 1, offset + 3, offset + 2);
+    }
+    return { vertices, indices };
+}
+
+function truthTriangles(geometry, sourceIndices) {
+    const attribute = geometry.getAttribute("position");
+    const triangles = [];
+    for (let index = 0; index < sourceIndices.length; index += 3) {
+        const points = sourceIndices.slice(index, index + 3).map((vertexIndex) => new THREE.Vector3(
+            attribute.getX(vertexIndex),
+            attribute.getY(vertexIndex),
+            attribute.getZ(vertexIndex),
+        ));
+        const triangle = new Triangle(points[0], points[1], points[2]);
+        triangle.setTags(["road"]);
+        triangle.visible = false;
+        triangles.push(triangle);
+    }
+    return triangles;
+}
+
+function markingMesh(points, type, roadOptions) {
+    if (!type || type === Road.BorderType.NONE || points.length < 2) return null;
+    const dashed = type === Road.BorderType.DASHED_WHITE || type === Road.BorderType.DASHED_YELLOW;
+    const yellow = type === Road.BorderType.SOLID_YELLOW || type === Road.BorderType.DASHED_YELLOW;
+    const dashLength = Math.max(0.01, Number(roadOptions.dashLength ?? DEFAULT_ROAD_OPTIONS.dashLength));
+    const dashGap = Math.max(0, Number(roadOptions.dashGap ?? DEFAULT_ROAD_OPTIONS.dashGap));
+    const cycle = dashLength + dashGap;
+    const halfWidth = Math.max(0.005, Number(roadOptions.laneMarkingWidth ?? DEFAULT_ROAD_OPTIONS.laneMarkingWidth) * 0.5);
+    const vertices = [];
+    const indices = [];
+    let distance = 0;
+    for (let index = 0; index < points.length - 1; index += 1) {
+        const start = points[index];
+        const end = points[index + 1];
+        const dx = end.x - start.x;
+        const dz = end.z - start.z;
+        const length = Math.hypot(dx, dz);
+        if (length <= 1e-9) continue;
+        const include = !dashed || cycle <= 0 || ((distance + length * 0.5) % cycle) < dashLength;
+        distance += length;
+        if (!include) continue;
+        const nx = -dz / length * halfWidth;
+        const nz = dx / length * halfWidth;
+        const offset = vertices.length;
+        vertices.push(
+            { x: start.x + nx, y: start.y, z: start.z + nz },
+            { x: start.x - nx, y: start.y, z: start.z - nz },
+            { x: end.x + nx, y: end.y, z: end.z + nz },
+            { x: end.x - nx, y: end.y, z: end.z - nz },
+        );
+        indices.push(offset, offset + 2, offset + 1, offset + 1, offset + 2, offset + 3);
+    }
+    if (!indices.length) return null;
+    const mesh = new THREE.Mesh(indexedGeometry(vertices, indices), new THREE.MeshBasicMaterial({
+        color: yellow ? (roadOptions.yellowLineColor ?? 0xf0d25c) : (roadOptions.whiteLineColor ?? 0xf3f3ef),
+        side: THREE.DoubleSide,
+        polygonOffset: true,
+        polygonOffsetFactor: -2,
+        polygonOffsetUnits: -2,
+    }));
+    mesh.name = "RoadMarking";
+    mesh.renderOrder = 10;
+    mesh.userData.bakeIgnore = true;
+    return mesh;
+}
+
+function addCompiledRoadMarkings(root, entry, roadOptions) {
+    const markings = [
+        [entry.surface.carriagewayLeft, entry.edge.borderLeft ?? roadOptions.borderLeft],
+        [entry.surface.carriagewayRight, entry.edge.borderRight ?? roadOptions.borderRight],
+    ];
+    for (const divider of laneDividerDescriptors(entry.edge)) {
+        const left = entry.surface.laneCenterlines[divider.dividerIndex - 1];
+        const right = entry.surface.laneCenterlines[divider.dividerIndex];
+        if (!left || !right) continue;
+        const count = Math.min(left.length, right.length);
+        const points = Array.from({ length: count }, (_, index) => ({
+            x: (left[index].x + right[index].x) * 0.5,
+            y: (left[index].y + right[index].y) * 0.5,
+            z: (left[index].z + right[index].z) * 0.5,
+        }));
+        markings.push([points, divider.opposing ? roadOptions.centerLineType : roadOptions.oneWayDividerType]);
+    }
+    for (const [points, type] of markings) {
+        const mesh = markingMesh(points, type, roadOptions);
+        if (mesh) root.add(mesh);
+    }
+}
+
+/** Dispose GPU resources owned by one runtime road or intersection. */
+export function disposeRoadRuntimeObject(value) {
+    value?.root?.traverse?.((object) => {
+        object.geometry?.dispose?.();
+        if (Array.isArray(object.material)) object.material.forEach((material) => material?.dispose?.());
+        else object.material?.dispose?.();
+    });
+}
+
+function compiledRoadObject(entry, roadOptions) {
+    const root = new THREE.Group();
+    root.name = "Road";
+    root.userData.bakeRoadSurface = true;
+    const shoulderGeometry = indexedGeometry(entry.surface.vertices, entry.surface.indices);
+    const carriageway = stripVertices(entry.surface.carriagewayLeft, entry.surface.carriagewayRight);
+    const roadGeometry = indexedGeometry(carriageway.vertices, carriageway.indices);
+    const shoulderMesh = new THREE.Mesh(shoulderGeometry, new THREE.MeshStandardMaterial({
+        color: roadOptions.shoulderColor ?? DEFAULT_ROAD_OPTIONS.shoulderColor,
+        roughness: roadOptions.shoulderRoughness ?? 1,
+        metalness: roadOptions.metalness ?? 0.02,
+        side: THREE.DoubleSide,
+    }));
+    shoulderMesh.name = "RoadShoulder";
+    shoulderMesh.receiveShadow = true;
+    shoulderMesh.userData.bakeRoadSurface = true;
+    root.add(shoulderMesh);
+    const roadMesh = new THREE.Mesh(roadGeometry, new THREE.MeshStandardMaterial({
+        color: roadOptions.surfaceColor ?? DEFAULT_ROAD_OPTIONS.surfaceColor,
+        roughness: roadOptions.surfaceRoughness ?? 0.95,
+        metalness: roadOptions.metalness ?? 0.02,
+        side: THREE.DoubleSide,
+        polygonOffset: true,
+        polygonOffsetFactor: -1,
+        polygonOffsetUnits: -1,
+    }));
+    roadMesh.name = "RoadSurface";
+    roadMesh.receiveShadow = true;
+    roadMesh.userData.bakeRoadSurface = true;
+    root.add(roadMesh);
+    const lanes = entry.surface.laneCenterlines.map((points) => points.map((point) => new THREE.Vector3(point.x, point.y, point.z)));
+    const laneWidth = Number(entry.edge.width ?? 7) / Math.max(1, Number(entry.edge.laneCount ?? lanes.length));
+    const laneMeshes = lanes.map((points) => {
+        const vectors = points.map((point) => ({ x: point.x, y: point.y, z: point.z }));
+        const left = [];
+        const right = [];
+        for (let index = 0; index < vectors.length; index += 1) {
+            const previous = vectors[Math.max(0, index - 1)];
+            const next = vectors[Math.min(vectors.length - 1, index + 1)];
+            const dx = next.x - previous.x;
+            const dz = next.z - previous.z;
+            const length = Math.hypot(dx, dz) || 1;
+            const amount = Math.max(0.01, laneWidth * 0.45);
+            left.push({ x: vectors[index].x + dz / length * amount, y: vectors[index].y, z: vectors[index].z - dx / length * amount });
+            right.push({ x: vectors[index].x - dz / length * amount, y: vectors[index].y, z: vectors[index].z + dx / length * amount });
+        }
+        const strip = stripVertices(left, right);
+        const mesh = new THREE.Mesh(indexedGeometry(strip.vertices, strip.indices), new THREE.MeshStandardMaterial({ color: 0x00ff00, opacity: 0.5, transparent: true, side: THREE.DoubleSide }));
+        mesh.visible = false;
+        root.add(mesh);
+        return mesh;
+    });
+    addCompiledRoadMarkings(root, entry, roadOptions);
+    return {
+        points: entry.trimmedSamples.points.map((point) => new THREE.Vector3(point.x, point.y, point.z)),
+        width: new Unit(Number(entry.edge.width ?? 7), Unit.Type.METER),
+        borderLeft: entry.edge.borderLeft ?? roadOptions.borderLeft,
+        borderRight: entry.edge.borderRight ?? roadOptions.borderRight,
+        options: { ...roadOptions, laneCount: Number(entry.edge.laneCount ?? 2), shoulderWidth: Number(entry.edge.shoulderWidth ?? 0) },
+        lanes,
+        laneMeshes,
+        root,
+        roadEdges: {
+            left: entry.surface.carriagewayLeft.map((point) => new THREE.Vector3(point.x, point.y, point.z)),
+            right: entry.surface.carriagewayRight.map((point) => new THREE.Vector3(point.x, point.y, point.z)),
+        },
+        oneWay: entry.edge.bidirectional === false,
+        direction: entry.edge.bidirectional === false ? Number(entry.edge.direction ?? 1) : 0,
+        parent: null,
+        triangles: truthTriangles(shoulderGeometry, entry.surface.indices),
+        network: { geometryVersion: 2, edgeId: entry.edge.id, startName: entry.edge.startNodeId, endName: entry.edge.endNodeId, bidirectional: entry.edge.bidirectional !== false },
+    };
+}
+
+function compiledIntersectionObject(junction, roads, roadOptions) {
+    const geometry = indexedGeometry(junction.surface.vertices, junction.surface.indices);
+    const root = new THREE.Group();
+    root.name = "Intersection";
+    root.userData.bakeRoadSurface = true;
+    const mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({
+        color: roadOptions.surfaceColor ?? DEFAULT_ROAD_OPTIONS.surfaceColor,
+        roughness: roadOptions.surfaceRoughness ?? 0.95,
+        metalness: roadOptions.metalness ?? 0.02,
+        side: THREE.DoubleSide,
+        polygonOffset: true,
+        polygonOffsetFactor: -1,
+        polygonOffsetUnits: -1,
+    }));
+    mesh.receiveShadow = true;
+    mesh.userData.bakeRoadSurface = true;
+    root.add(mesh);
+    return {
+        roads,
+        width: roads[0]?.width ?? new Unit(4, Unit.Type.METER),
+        options: { ...roadOptions, laneCount: 0 },
+        lanes: [],
+        laneMeshes: [],
+        root,
+        roadEdges: junction.surface.vertices.map((point) => ({ center: new THREE.Vector3(point.x, point.y, point.z) })),
+        triangles: truthTriangles(geometry, junction.surface.indices),
+        networkNodeId: junction.node.id,
+        networkGeometryVersion: 2,
+    };
+}
+
+/** Materialize ED-04 geometry without resampling the compiler output. */
+export function materializeCompiledRoadNetwork(scene, plan, { edgeIds = null, nodeIds = null, existingRoads = new Map(), roadOptions = {} } = {}) {
+    const edgeFilter = edgeIds ? new Set([...edgeIds].map(String)) : null;
+    const nodeFilter = nodeIds ? new Set([...nodeIds].map(String)) : null;
+    const roads = [];
+    const roadByEdge = new Map();
+    for (const entry of plan.edges) {
+        if (edgeFilter && !edgeFilter.has(String(entry.edge.id))) {
+            const existing = existingRoads.get(String(entry.edge.id));
+            if (existing) roadByEdge.set(String(entry.edge.id), existing);
+            continue;
+        }
+        const road = compiledRoadObject(entry, { ...DEFAULT_ROAD_OPTIONS, ...roadOptions });
+        roads.push(road);
+        roadByEdge.set(String(entry.edge.id), road);
+        if (scene) scene.add(road.root);
+    }
+    const intersections = [];
+    for (const junction of plan.junctions) {
+        if (nodeFilter && !nodeFilter.has(String(junction.node.id))) continue;
+        const incidentRoads = junction.incidents.map((incident) => roadByEdge.get(String(incident.edgeId))).filter(Boolean);
+        if (incidentRoads.length < 2) continue;
+        const intersection = compiledIntersectionObject(junction, incidentRoads, { ...DEFAULT_ROAD_OPTIONS, ...roadOptions });
+        intersections.push(intersection);
+        if (scene) scene.add(intersection.root);
+    }
     return { roads, intersections, roadByEdge };
 }
 

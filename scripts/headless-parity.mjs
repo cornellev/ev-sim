@@ -414,7 +414,10 @@ async function runPython(bundle, root, socket, perception) {
 
 async function runCase(id, bundle, running, client, options) {
     const root = await temporaryRoot(`cev-parity-${id}-`);
-    const spec = episodeSpec(0, bundle.resolvedHash, bundle, { resetSeed: 0, perception: id === "cpu-lidar" });
+    const requestsLidar = bundle.resolved.manifest.sensorRig.sensors.some(
+        (sensor) => sensor.enabled !== false && sensor.type === "lidar3d",
+    );
+    const spec = episodeSpec(0, bundle.resolvedHash, bundle, { resetSeed: 0, perception: requestsLidar });
     try {
         const rawSources = [
             await runBrowserAdapter(bundle, spec),
@@ -422,12 +425,12 @@ async function runCase(id, bundle, running, client, options) {
             await runCli(bundle, spec, root),
             await runGrpc(bundle, spec, client, root),
         ];
-        if (!options.skipPython) rawSources.push(await runPython(bundle, root, running.address, id === "cpu-lidar"));
+        if (!options.skipPython) rawSources.push(await runPython(bundle, root, running.address, requestsLidar));
         const sources = rawSources.map(normalizeSource);
         const comparisons = exactComparisons(sources);
         return {
             id,
-            backend: id === "cpu-lidar" ? "deterministic-cpu-bvh-lidar@1" : "deterministic-state-sensors@1",
+            backend: requestsLidar ? "deterministic-cpu-bvh-lidar@1" : "deterministic-state-sensors@1",
             identity: {
                 resetSeed: spec.resetSeed,
                 actionRepeat: spec.actionRepeat,
@@ -457,11 +460,17 @@ async function main() {
     const running = await startHeadlessSupervisor({ socket });
     const client = createGrpcClient(socket, running.config.maxRpcMessageBytes);
     try {
+        const roadGeometryFixture = JSON.parse(await fs.readFile(
+            path.join(REPOSITORY_ROOT, "tests/fixtures/environment-editor/curved-elevated-network.v2.json"),
+            "utf8",
+        ));
         const stateBundle = await createStateBundle({ triggers: FINISH_TRIGGER });
         const lidarBundle = await createLidarBundle({ triggers: FINISH_TRIGGER });
+        const roadGeometryBundle = await createLidarBundle({ triggers: FINISH_TRIGGER, environment: roadGeometryFixture });
         const cases = [
             await runCase("state-only", stateBundle, running, client, options),
             await runCase("cpu-lidar", lidarBundle, running, client, options),
+            await runCase("road-geometry-v2", roadGeometryBundle, running, client, options),
         ];
         const report = createReport(PARITY_REPORT_KIND, {
             provenance: processProvenance(),

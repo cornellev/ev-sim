@@ -33,7 +33,7 @@ export function resolveTransformTargets({ selectionSnapshot, document, registry 
             objectIds: [],
             sub: { ...selectionSnapshot.sub },
             object3Ds: entity?.object3D ? [entity.object3D] : [],
-            typeIds: new Set(["road-node"]),
+            typeIds: new Set([selectionSnapshot.sub.kind]),
             hasGroup: false,
         };
     }
@@ -68,15 +68,18 @@ export function resolveGizmoPolicy(targets, mode) {
     const types = targets.typeIds;
     const hasProps = types.has("builtin-prop");
     const hasBuildings = types.has("building");
-    const hasRoads = [...types].some((typeId) => ROAD_TYPES.has(typeId) || typeId === "road-node");
+    const hasRoads = [...types].some((typeId) => ROAD_TYPES.has(typeId) || ["road-node", "road-knot", "road-handle"].includes(typeId));
+    const hasRoadSub = types.has("road-knot") || types.has("road-handle");
     const onlyRoads = hasRoads && !hasProps && !hasBuildings;
     const multi = targets.hasGroup || (targets.objectIds?.length ?? 0) > 1;
     if (mode === "scale") {
+        if (hasRoadSub) return { supported: false, reason: "Road knots and handles translate only." };
         if (hasProps) return { supported: false, reason: "Props cannot be scaled." };
         const uniformOnly = multi || hasRoads;
         return { supported: true, showX: !uniformOnly, showY: !uniformOnly, showZ: !uniformOnly, uniformOnly };
     }
     if (mode === "rotate") {
+        if (hasRoadSub) return { supported: false, reason: "Road knots and handles translate only." };
         return { supported: true, showX: false, showY: true, showZ: false, uniformOnly: false };
     }
     // translate

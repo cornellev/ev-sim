@@ -243,7 +243,8 @@ test("ED-02 duplicate copies props, buildings, and groups with new ids next to t
     bus.redo();
     assert.equal(document.features.length, 7);
     const unsupported = service.run("duplicateObjects", { objectIds: ["e0", "skybox"] });
-    assert.deepEqual(unsupported.issues.map((issue) => issue.code), [COMMAND_ISSUE_CODES.DUPLICATE_UNSUPPORTED, COMMAND_ISSUE_CODES.DUPLICATE_UNSUPPORTED]);
+    // ED-04 adds topology-aware road duplication; only skybox remains unsupported.
+    assert.deepEqual(unsupported.issues.map((issue) => issue.code), [COMMAND_ISSUE_CODES.DUPLICATE_UNSUPPORTED]);
 });
 
 test("ED-02 delete cascades through groups and the live overlay drops demoted junction records", async () => {

@@ -1,0 +1,30 @@
+{
+  "environmentId": "curved-elevated",
+  "roads": {
+    "geometryVersion": 2,
+    "nodes": [
+      { "id": "a", "kind": "endpoint", "x": 0, "y": 0, "z": 0 },
+      { "id": "b", "kind": "endpoint", "x": 40, "y": 8, "z": 0 }
+    ],
+    "edges": [
+      {
+        "id": "curve",
+        "startNodeId": "a",
+        "endNodeId": "b",
+        "width": 8,
+        "shoulderWidth": 1,
+        "laneCount": 2,
+        "bidirectional": true,
+        "geometry": {
+          "version": 1,
+          "kind": "cubic-bezier",
+          "knots": [
+            { "id": "start", "mode": "auto" },
+            { "id": "k1", "position": { "x": 20, "y": 4, "z": 12 }, "mode": "auto" },
+            { "id": "end", "mode": "auto" }
+          ]
+        }
+      }
+    ]
+  }
+}

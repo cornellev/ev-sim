@@ -12,7 +12,7 @@ test("ED-03 the toolbar model shows scene tools in scene view and map tools in m
     const editor = new EditorState();
     const scene = buildToolbarModel({ editorSnapshot: editor.snapshot(), busSnapshot: { canUndo: false, canRedo: true }, selectionSnapshot: { ids: [] } });
     assert.deepEqual(scene.map((group) => group.id), ["tools", "transform", "view", "overlays", "history"]);
-    assert.deepEqual(ids(scene, "tools"), ["tool-select", "tool-translate", "tool-rotate", "tool-scale"]);
+    assert.deepEqual(ids(scene, "tools"), ["tool-select", "tool-translate", "tool-rotate", "tool-scale", "tool-road-pen"]);
     assert.deepEqual(ids(scene, "overlays"), ["overlay-grid", "overlay-chunks", "overlay-bounds"]);
     const select = scene[0].items[0];
     assert.equal(select.active, true);

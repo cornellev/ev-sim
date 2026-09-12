@@ -6,12 +6,13 @@
  * with ED-04.
  */
 
-import { ObjectOptions, boolean, field, finite, integer, isPlainObject, issue, validateFieldConstraints } from "../ObjectOptions.js";
+import { ObjectOptions, boolean, enumOf, field, finite, integer, isPlainObject, issue, validateFieldConstraints } from "../ObjectOptions.js";
 import { defineObjectType } from "../ObjectTypeRegistry.js";
-import { applyDeltaToPoint } from "../transformDelta.js";
+import { applyDeltaToPoint, applyDeltaToVector, decomposeDelta } from "../transformDelta.js";
 import { TRANSFORM_ISSUE_CODES } from "../transformDelta.js";
 
 export const ROAD_TYPE_ID = "road";
+export const ROAD_BORDER_MARKINGS = Object.freeze(["none", "solid_white", "solid_yellow", "dashed_white", "dashed_yellow"]);
 
 const ROAD_FIELDS = Object.freeze([
     field({ path: ["width"], label: "Width", control: "number", units: "m", min: 0.5, step: 0.1, group: "Cross-section" }),
@@ -19,11 +20,13 @@ const ROAD_FIELDS = Object.freeze([
     field({ path: ["shoulderWidth"], label: "Shoulder", control: "number", units: "m", min: 0, step: 0.1, group: "Cross-section" }),
     field({ path: ["bidirectional"], label: "Two-way", control: "toggle", group: "Direction" }),
     field({ path: ["direction"], label: "One-way direction", control: "number", min: -1, max: 1, step: 2, group: "Direction", advanced: true }),
+    field({ path: ["borderLeft"], label: "Left border", control: "enum", options: ROAD_BORDER_MARKINGS, group: "Markings" }),
+    field({ path: ["borderRight"], label: "Right border", control: "enum", options: ROAD_BORDER_MARKINGS, group: "Markings" }),
 ]);
 
 export class RoadOptions extends ObjectOptions {
     getDefaults() {
-        return { width: 7, laneCount: 2, shoulderWidth: 0, bidirectional: true, direction: 1 };
+        return { width: 7, laneCount: 2, shoulderWidth: 0, bidirectional: true, direction: 1, borderLeft: "solid_white", borderRight: "solid_white" };
     }
 
     getFields() {
@@ -38,6 +41,8 @@ export class RoadOptions extends ObjectOptions {
             shoulderWidth: finite(source.shoulderWidth ?? 0, 0),
             bidirectional: boolean(source.bidirectional, source.oneWay === true ? false : true),
             direction: Number(source.direction ?? source.oneWayDirection ?? 1) === -1 ? -1 : 1,
+            borderLeft: enumOf(ROAD_BORDER_MARKINGS)(source.borderLeft, "solid_white"),
+            borderRight: enumOf(ROAD_BORDER_MARKINGS)(source.borderRight, "solid_white"),
         };
     }
 
@@ -78,13 +83,29 @@ export function edgeTransformBinding(record) {
                     issues: [issue(["transform"], TRANSFORM_ISSUE_CODES.MISSING, `Road "${record.id}" is missing its nodes.`, { objectId: record.id })],
                 };
             }
-            return {
-                steps: [
+            const steps = [
                     { op: "move-node", nodeId: String(edge.startNodeId), position: applyDeltaToPoint(delta, start) },
                     { op: "move-node", nodeId: String(edge.endNodeId), position: applyDeltaToPoint(delta, end) },
-                ],
-                issues: [],
-            };
+                ];
+            if (edge.geometry) {
+                const geometry = structuredClone(edge.geometry);
+                for (const knot of geometry.knots ?? []) {
+                    if (knot.position) knot.position = applyDeltaToPoint(delta, knot.position);
+                    if (knot.handleIn) knot.handleIn = applyDeltaToVector(delta, knot.handleIn);
+                    if (knot.handleOut) knot.handleOut = applyDeltaToVector(delta, knot.handleOut);
+                }
+                const parts = decomposeDelta(delta);
+                steps.push({
+                    op: "set-road-geometry",
+                    edgeId: String(edge.id),
+                    geometry,
+                    ...(parts.hasScale && parts.uniformScale ? {
+                        width: edge.width * parts.scale.x,
+                        shoulderWidth: Number(edge.shoulderWidth ?? 0) * parts.scale.x,
+                    } : {}),
+                });
+            }
+            return { steps, issues: [] };
         },
     });
 }
@@ -114,6 +135,8 @@ export function createRoadType() {
                         shoulderWidth: value.shoulderWidth,
                         bidirectional: value.bidirectional,
                         direction: value.bidirectional ? null : value.direction,
+                        borderLeft: value.borderLeft,
+                        borderRight: value.borderRight,
                     },
                 }],
                 issues: [],

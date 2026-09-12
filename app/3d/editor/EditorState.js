@@ -14,6 +14,7 @@ export const EDITOR_TOOLS = Object.freeze({
     ROTATE: "rotate",
     SCALE: "scale",
     PLACE: "place",
+    ROAD_PEN: "road-pen",
 });
 
 export const MAP_TOOLS = Object.freeze({
@@ -102,6 +103,10 @@ function cloneMapState(map) {
     };
 }
 
+function cloneRoadDraft(draft) {
+    return draft ? structuredClone(draft) : null;
+}
+
 function cloneEarthImportState(earthImport) {
     return normalizeEarthImportEditorState(earthImport);
 }
@@ -130,6 +135,7 @@ export class EditorState {
         this.sceneGridVisible = options.sceneGridVisible !== false;
         this.selectionBoundsVisible = options.selectionBoundsVisible !== false;
         this.map = cloneMapState(options.map);
+        this.roadDraft = cloneRoadDraft(options.roadDraft);
         this.earthImport = cloneEarthImportState(options.earthImport);
         this.dirty = false;
         this.subscribers = new Set();
@@ -148,6 +154,7 @@ export class EditorState {
             sceneGridVisible: this.sceneGridVisible,
             selectionBoundsVisible: this.selectionBoundsVisible,
             map: cloneMapState(this.map),
+            roadDraft: cloneRoadDraft(this.roadDraft),
             earthImport: cloneEarthImportState(this.earthImport),
             dirty: this.dirty,
         };
@@ -312,6 +319,7 @@ export class EditorState {
         if (!MAP_TOOL_VALUES.has(tool) || this.map.activeMapTool === tool) return;
         this.map.activeMapTool = tool;
         this.map.draft = null;
+        if (tool !== MAP_TOOLS.ROAD_PEN) this.roadDraft = null;
         if (tool !== MAP_TOOLS.FEATURE_PLACE) {
             this.map.activeFeatureType = null;
         }
@@ -372,6 +380,17 @@ export class EditorState {
     clearMapDraft() {
         if (!this.map.draft) return;
         this.map.draft = null;
+        this.notify();
+    }
+
+    setRoadDraft(draft) {
+        this.roadDraft = cloneRoadDraft(draft);
+        this.notify();
+    }
+
+    clearRoadDraft() {
+        if (!this.roadDraft) return;
+        this.roadDraft = null;
         this.notify();
     }
 

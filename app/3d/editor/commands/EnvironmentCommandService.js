@@ -5,14 +5,16 @@
  * and SceneProjector attached.
  */
 
-import { objectTypeRegistry } from "../objects/ObjectTypeRegistry.js";
+import { objectTypeRegistry } from "../objects/index.js";
 import { CommandBus } from "./CommandBus.js";
 import * as objectCommands from "./objectCommands.js";
 import * as legacyCommands from "./legacyCommands.js";
+import * as roadCommands from "./roadCommands.js";
 
 export const commandFactories = Object.freeze({
     ...legacyCommands,
     ...objectCommands,
+    ...roadCommands,
 });
 
 /**

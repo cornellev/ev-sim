@@ -14,6 +14,7 @@ import {
     assertWorldResource,
     createWorldResource,
 } from "../../simulation/world/WorldDescription.js";
+import { roadGeometryVersionOf, validateRoadDomain } from "../../roads/RoadGeometryRecord.js";
 
 /**
  * The single environment load/apply path used by both Simulation and Editor.
@@ -71,10 +72,16 @@ export class EnvironmentLoader {
         const buildingsAuthored = description.domainSources.buildings === "authored";
         const featuresAuthored = description.domainSources.features === "authored";
 
+        const roadGeometryVersion = roadGeometryVersionOf(manifest.document?.roads ?? description.roads);
+        const authoredRoads = roadGeometryVersion === 2 ? structuredClone(manifest.document?.roads) : null;
+        if (authoredRoads) {
+            const validation = validateRoadDomain(authoredRoads, { requireVersion: 2 });
+            if (!validation.ok) throw new TypeError(`Stored road authoring geometry is invalid: ${validation.issues[0].message}`);
+        }
         const restored = {
             environmentId: description.environmentId,
             chunkSize: manifest.chunkSize ?? 20,
-            roads: structuredClone(description.roads),
+            roads: authoredRoads ?? structuredClone(description.roads),
             buildings: description.buildings.map((building) => ({
                 buildingId: building.id,
                 footprint: structuredClone(building.footprint),

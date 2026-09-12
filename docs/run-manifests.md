@@ -146,8 +146,13 @@ The storage service exposes these endpoints under `/api/storage`:
 `PUT` accepts `{ manifest, expectedRevision }`. A stale expected revision returns a conflict error rather than overwriting newer content.
 
 Environment documents use the same revision token. `PUT /environments/:id`
-accepts `{ manifest, expectedRevision }` and returns the stored v3 manifest
-with the incremented revision. Rename, duplicate, ID change, and delete also
+accepts `{ manifest, expectedRevision, supportedRoadGeometryVersions? }` and
+returns the stored manifest with the incremented revision. Browser and
+geometry-aware MCP writers send `[1, 2]`. A metadata-only update may omit
+`document`; a full replacement over road geometry v2 requires declared v2
+support. Unsupported/malformed road versions and v2 geometry presented as v1
+fail before mutation, and the first v2 transition retains one write-once
+`pre-road-geometry-v2` migration record. Rename, duplicate, ID change, and delete also
 require `expectedRevision`. Missing or stale environment revisions return HTTP
 `409` with `code: "ENVIRONMENT_REVISION_CONFLICT"` and `currentRevision`.
 Unguarded environment bodies return `400` `ENVIRONMENT_UNGUARDED_WRITE`.
@@ -172,7 +177,14 @@ arrays), then persisted hydrated template data, then deterministic template
 defaults. `cev-sim.world-description` v1 sorts IDs by UTF-8 bytes, validates
 all references and finite geometry, preserves the route-network hash, and
 contains roads/drivable surfaces, buildings, features, obstacle prisms, and
-aggregate bounds. The physics backend selection is pinned to
+aggregate bounds. It remains the exact contract for road geometry v1.
+Road geometry v2 dispatches to world-description v2: canonical metric roads
+contain resolved polyline/cubic controls, and drivable roads/junctions are
+indexed meshes compiled under `road-geometry-policy-v1`. Validation
+recompiles the surfaces from their road inputs, so a hash-valid internally
+inconsistent resource is rejected. The same indices and source identities feed
+browser truth, portable LiDAR, and analytic render-scene generation. The
+physics backend selection is pinned to
 `rapier3d-swept-prism-v1` / `0.19.3` with a config hash covering gravity,
 vehicle AABB semantics, and contact-model version. Preparation rejects a
 mismatched selection.
@@ -182,12 +194,18 @@ Canonical roads may include sparse `turnRules` entries shaped as
 one-way movement feasibility, uniqueness, and lane layouts are validated
 while constructing the world. Explicit rule changes participate in
 `roadNetworkHash` and therefore `worldHash`; an absent/empty rule list retains
-the legacy road-network projection. Scenario route proofs use algorithm
-version 5 and hash fixed/automatic lane anchor intent plus traversal lane
-assignments. Each traversal also freezes its lane-entry and lane-exit subnodes
-and the canonical junction connector. Version 3 and 4 proofs must be
-re-verified before new scenario resolution; immutable received bundles retain
-version-scoped compatibility validation.
+the legacy road-network projection. Scenario route proofs for v1 roads use
+algorithm version 5 and hash fixed/automatic lane anchor intent plus traversal
+lane assignments. Each traversal also freezes its lane-entry and lane-exit
+subnodes and the canonical junction connector. V2 roads require algorithm 6,
+whose proof additionally freezes road-geometry policy identity and
+`distanceMetric: "xz"`; edge fractions, distances, projection, sampling, and
+route progress all use XZ arc distance while persisted points retain
+elevation. Broken explicit anchors fail with a structured issue and are never
+replaced by nearest-road projection. Version 3 and 4 proofs must be re-verified
+before new scenario resolution; immutable received bundles retain
+version-scoped compatibility validation. V5 proofs are not current for v2
+roads.
 
 Simulation time is `stepIndex * stepNs`, using integer nanoseconds. Realtime speed changes pacing only. Managed `timer` and `simulation-timer` bindings both advance from this integer clock; wall timers remain available only to library/editor execution. Each fixed step applies inputs, scripts, scenario pre-motion, **controls** (actuator selection/delay/limits), vehicle motion, physics, contacts, clock, transforms (`/tf`, `/tf_static`, and oracle odometry), sensor capture, delayed delivery, assertions, and telemetry in that order. Stable IDs order topics, bindings, vehicles, sensors, colliders, and contact events. Managed runs never write `vehicle.velocity` / `steeringAngle` from raw topic handlers; only `ControlRuntime` applied setpoints reach the plant.
 

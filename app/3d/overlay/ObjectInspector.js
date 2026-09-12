@@ -33,6 +33,7 @@ import { PropertySection, commitObjectOptions, renderField } from "./fields";
 import { TextField } from "./fields/SimpleFields";
 import { Vector3Field } from "./fields/Vector3Field";
 import { RoadEndpointsSection } from "./inspector/RoadEndpointsSection";
+import { RoadGeometrySection } from "./inspector/RoadGeometrySection";
 import { SkyLocalPreview } from "./inspector/SkyLocalPreview";
 import { TurnRuleMatrix } from "./inspector/TurnRuleMatrix";
 import { PresentationIcon, registerBuiltinPresentations } from "./presentation/builtinPresentations.js";
@@ -260,6 +261,12 @@ export function ObjectInspector({ data }) {
                 return (
                     <PropertySection key={section.id} id={section.id} title={section.title}>
                         <RoadEndpointsSection data={data} section={section} onResult={report} />
+                    </PropertySection>
+                );
+            case SECTION_KINDS.ROAD_GEOMETRY:
+                return (
+                    <PropertySection key={section.id} id={section.id} title={section.title}>
+                        <RoadGeometrySection data={data} section={section} onResult={report} />
                     </PropertySection>
                 );
             case SECTION_KINDS.SKY_PREVIEW:

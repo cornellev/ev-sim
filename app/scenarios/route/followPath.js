@@ -174,6 +174,10 @@ export function followPolylineFromRoute(route, kinematics = FOLLOW_PATH_DEFAULT_
     const source = getRoutePolyline(route);
     if (source.length < 2) return source.map((point) => ({ ...point }));
     if (route?.verification?.algorithm === "directed-a-star"
+        && route.verification.algorithmVersion === 6) {
+        return source.map((point) => ({ ...point, y: 0 }));
+    }
+    if (route?.verification?.algorithm === "directed-a-star"
         && route.verification.algorithmVersion >= 5) {
         return source.map((point) => ({ ...point }));
     }

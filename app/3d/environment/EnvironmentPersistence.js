@@ -327,7 +327,7 @@ export class EnvironmentPersistence {
         try {
             const stored = await this._put(
                 this.resourcePath,
-                { manifest, expectedRevision, detachStaleVisual: true },
+                { manifest, expectedRevision, detachStaleVisual: true, supportedRoadGeometryVersions: [1, 2] },
                 { keepalive },
             );
             if (this._discarded) return stored;

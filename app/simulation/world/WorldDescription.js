@@ -8,9 +8,14 @@ import {
 } from "../../roads/RoadLaneModel.js";
 import { hashEnvironmentRoadNetwork } from "../../scenarios/route/roadGraph.js";
 import { canonicalFiniteNumber, canonicalizeSimulationValue, simulationSha256 } from "../kernel/SimulationHashes.js";
+import { authorRoadsFromMetric, cloneRoadGeometry, normalizeMetricRoads, roadGeometryVersionOf, validateRoadDomain } from "../../roads/RoadGeometryRecord.js";
+import { compileRoadNetworkGeometry, planRoadNetworkGeometry } from "../../roads/RoadNetworkGeometry.js";
+import { ROAD_GEOMETRY_POLICY_V1 } from "../../roads/RoadGeometryPolicy.js";
 
 export const WORLD_DESCRIPTION_KIND = "cev-sim.world-description";
 export const WORLD_DESCRIPTION_VERSION = 1;
+export const WORLD_DESCRIPTION_V2 = 2;
+export const SUPPORTED_WORLD_DESCRIPTION_VERSIONS = Object.freeze([WORLD_DESCRIPTION_VERSION, WORLD_DESCRIPTION_V2]);
 
 const textEncoder = new TextEncoder();
 const DEFAULT_ROAD_WIDTH = 7;
@@ -191,6 +196,20 @@ function normalizeRoads(source) {
         edges,
         ...(turnRules.length > 0 ? { turnRules } : {}),
     };
+}
+
+function normalizeRoadsV2(source) {
+    const normalized = normalizeRoads(source);
+    const geometryById = new Map((source?.edges ?? []).map((edge) => [String(edge.id), cloneRoadGeometry(edge.geometry)]));
+    const roads = {
+        geometryVersion: 2,
+        nodes: normalized.nodes,
+        edges: normalized.edges.map((edge) => ({ ...edge, geometry: geometryById.get(edge.id) })),
+        ...(normalized.turnRules ? { turnRules: normalized.turnRules } : {}),
+    };
+    const validation = validateRoadDomain(roads);
+    if (!validation.ok) throw new TypeError(validation.issues[0].message);
+    return roads;
 }
 
 function normalizeFootprint(source, label) {
@@ -452,7 +471,7 @@ function sourceManifest(value) {
     return value?.manifest?.document ? value.manifest : value;
 }
 
-export function createWorldDescription(value = {}) {
+export function createWorldDescriptionV1(value = {}) {
     const manifest = sourceManifest(value) ?? {};
     const document = manifest.document ?? {};
     const environmentId = identifier(
@@ -504,9 +523,92 @@ export function createWorldDescription(value = {}) {
     return canonicalizeSimulationValue(description);
 }
 
+function compiledRoadSurfaces(compiled) {
+    const edges = compiled.edges.map((edge) => ({
+        id: `road-surface:${edge.id}`,
+        sourceId: edge.id,
+        kind: "road-mesh",
+        vertices: edge.vertices.map((point) => ({ ...point })),
+        indices: [...edge.indices],
+        bounds: edge.bounds,
+    }));
+    const junctions = compiled.junctions.map((junction) => ({
+        id: `intersection-surface:${junction.id}`,
+        sourceId: junction.id,
+        kind: "junction-mesh",
+        vertices: junction.vertices.map((point) => ({ ...point })),
+        indices: [...junction.indices],
+        bounds: junction.bounds,
+    }));
+    return [...edges, ...junctions].sort((left, right) => compareUtf8(left.id, right.id));
+}
+
+export function createWorldDescriptionV2(value = {}) {
+    const manifest = sourceManifest(value) ?? {};
+    const document = manifest.document ?? {};
+    const environmentId = identifier(manifest.environmentId ?? document.environmentId ?? value?.environmentId, "Environment ID");
+    const templateId = String(manifest.templateId ?? (environmentId === "igvc" ? "igvc" : "blank"));
+    const fallbackDocument = templateId === "igvc" ? createBuiltInIGVCEnvironmentDocument() : null;
+    const roadDomain = selectRoadDomain(manifest, document, fallbackDocument);
+    const buildingDomain = selectArrayDomain(manifest, document, fallbackDocument, "buildings");
+    const featureDomain = selectArrayDomain(manifest, document, fallbackDocument, "features");
+    const authorRoads = normalizeRoadsV2(roadDomain.value);
+    // Freeze the six-decimal metric record first, then compile from exactly
+    // those controls. Resource validation can therefore reproduce surfaces
+    // without access to editor-only knot modes or higher precision inputs.
+    const roads = canonicalizeSimulationValue(normalizeMetricRoads(authorRoads));
+    const compiled = compileRoadNetworkGeometry(planRoadNetworkGeometry(authorRoadsFromMetric(roads)));
+    const buildings = buildingDomain.value.map(normalizeBuilding).sort((left, right) => compareUtf8(left.id, right.id));
+    const features = featureDomain.value.map(normalizeFeature).sort((left, right) => compareUtf8(left.id, right.id));
+    assertUnique(buildings, "id", "building");
+    assertUnique(features, "id", "feature");
+    const obstacles = createObstacles(buildings, features);
+    const drivableSurfaces = compiledRoadSurfaces(compiled);
+    return canonicalizeSimulationValue({
+        kind: WORLD_DESCRIPTION_KIND,
+        version: WORLD_DESCRIPTION_V2,
+        environmentId,
+        templateId,
+        roadStylePreset: String(manifest.roadStylePreset ?? (templateId === "igvc" ? "igvc" : "default")),
+        coordinateFrame: {
+            handedness: "right",
+            units: "meters",
+            upAxis: "+Y",
+            forwardAxis: "+X",
+            heading: "(cos(yaw),0,-sin(yaw))",
+        },
+        domainSources: {
+            roads: roadDomain.source,
+            buildings: buildingDomain.source,
+            features: featureDomain.source,
+        },
+        roads,
+        roadNetworkHash: hashEnvironmentRoadNetwork({ environmentId, roads }),
+        roadGeometryPolicy: { id: compiled.policy.id, version: compiled.policy.version },
+        drivableSurfaces,
+        buildings,
+        features,
+        obstacles,
+        bounds: aggregateBounds(roads, drivableSurfaces, obstacles),
+    });
+}
+
+export function createWorldDescription(value = {}) {
+    const manifest = sourceManifest(value) ?? {};
+    const document = manifest.document ?? {};
+    const fallbackDocument = String(manifest.templateId ?? "") === "igvc" || String(manifest.environmentId ?? document.environmentId ?? value?.environmentId) === "igvc"
+        ? createBuiltInIGVCEnvironmentDocument()
+        : null;
+    const roadDomain = selectRoadDomain(manifest, document, fallbackDocument);
+    const geometryVersion = roadGeometryVersionOf({ roads: roadDomain.value });
+    if (geometryVersion === 2) return createWorldDescriptionV2(value);
+    if (geometryVersion === 1) return createWorldDescriptionV1(value);
+    throw new TypeError(`Unsupported road geometry version: ${String(geometryVersion)}.`);
+}
+
 export function hashWorldDescription(description) {
-    if (description?.kind !== WORLD_DESCRIPTION_KIND || description?.version !== WORLD_DESCRIPTION_VERSION) {
-        throw new TypeError(`Expected ${WORLD_DESCRIPTION_KIND} v${WORLD_DESCRIPTION_VERSION}.`);
+    if (description?.kind !== WORLD_DESCRIPTION_KIND || !SUPPORTED_WORLD_DESCRIPTION_VERSIONS.includes(description?.version)) {
+        throw new TypeError(`Expected a supported ${WORLD_DESCRIPTION_KIND}.`);
     }
     return simulationSha256(description);
 }
@@ -520,5 +622,16 @@ export function assertWorldResource(resource) {
     if (!resource?.description || !resource?.hash) throw new TypeError("Resolved world resource is required.");
     const hash = hashWorldDescription(resource.description);
     if (hash !== resource.hash) throw new Error(`Resolved world hash mismatch: expected ${resource.hash}, computed ${hash}.`);
+    if (resource.description.version === WORLD_DESCRIPTION_V2) {
+        if (resource.description.roadGeometryPolicy?.id !== ROAD_GEOMETRY_POLICY_V1.id
+            || resource.description.roadGeometryPolicy?.version !== ROAD_GEOMETRY_POLICY_V1.version) {
+            throw new Error("Resolved world uses an unsupported road geometry policy.");
+        }
+        const authorRoads = authorRoadsFromMetric(resource.description.roads);
+        const expected = compiledRoadSurfaces(compileRoadNetworkGeometry(planRoadNetworkGeometry(authorRoads)));
+        if (JSON.stringify(canonicalizeSimulationValue(expected)) !== JSON.stringify(resource.description.drivableSurfaces)) {
+            throw new Error("Resolved world road surfaces do not match their canonical road inputs.");
+        }
+    }
     return resource.description;
 }

@@ -150,6 +150,19 @@ export function applyDeltaToPoint(delta, point) {
     };
 }
 
+/** Apply only the linear portion of a delta; translation never enters vectors. */
+export function applyDeltaToVector(delta, vector) {
+    const m = normalizeDelta(delta).matrix;
+    const x = finite(vector?.x, 0);
+    const y = finite(vector?.y, 0);
+    const z = finite(vector?.z, 0);
+    return {
+        x: m[0] * x + m[4] * y + m[8] * z,
+        y: m[1] * x + m[5] * y + m[9] * z,
+        z: m[2] * x + m[6] * y + m[10] * z,
+    };
+}
+
 /**
  * Decompose a delta into translation, yaw, and per-axis scale. `yawOnly`
  * means the rotation leaves the Y axis fixed (no pitch or roll);

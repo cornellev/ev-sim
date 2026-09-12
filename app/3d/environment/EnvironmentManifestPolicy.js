@@ -23,6 +23,7 @@ import {
     sortObjectRecords,
     validateObjectGraph,
 } from "../editor/objects/index.js";
+import { roadGeometryVersionOf, validateRoadDomain } from "../../roads/RoadGeometryRecord.js";
 
 export const ENVIRONMENT_SCHEMA_VERSION = 3;
 export const ENVIRONMENT_LEGACY_SCHEMA_VERSION = 2;
@@ -36,6 +37,8 @@ export const ENVIRONMENT_REVISION_CONFLICT = "ENVIRONMENT_REVISION_CONFLICT";
 export const ENVIRONMENT_UNGUARDED_WRITE = "ENVIRONMENT_UNGUARDED_WRITE";
 export const ENVIRONMENT_SCHEMA_DOWNGRADE = "ENVIRONMENT_SCHEMA_DOWNGRADE";
 export const ENVIRONMENT_OBJECT_GRAPH_INVALID = "ENVIRONMENT_OBJECT_GRAPH_INVALID";
+export const ENVIRONMENT_ROAD_GEOMETRY_INVALID = "ENVIRONMENT_ROAD_GEOMETRY_INVALID";
+export const ENVIRONMENT_ROAD_GEOMETRY_DOWNGRADE = "ENVIRONMENT_ROAD_GEOMETRY_DOWNGRADE";
 
 const SHA256_DIGEST = /^[a-f0-9]{64}$/;
 
@@ -312,7 +315,38 @@ export function parseEnvironmentWriteEnvelope(body) {
         manifest: body.manifest,
         expectedRevision: body.expectedRevision,
         detachStaleVisual: body.detachStaleVisual === true,
+        supportedRoadGeometryVersions: Array.isArray(body.supportedRoadGeometryVersions)
+            ? [...new Set(body.supportedRoadGeometryVersions.map(Number).filter(Number.isInteger))]
+            : [],
     };
+}
+
+/** Reject old clients and malformed replacements before a v2 road document can be lost. */
+export function assertNoRoadGeometryDowngrade(incoming, current, capabilities = []) {
+    const document = incoming?.document;
+    if (document === undefined || document === null) return;
+    const supported = new Set((capabilities ?? []).map(Number));
+    const currentVersion = roadGeometryVersionOf(current?.document?.roads ?? current?.document ?? current);
+    const incomingVersion = roadGeometryVersionOf(document.roads ?? document);
+    const fail = (code, message, issues = []) => {
+        const error = new Error(message);
+        error.code = code;
+        error.statusCode = 409;
+        error.issues = issues;
+        throw error;
+    };
+    if (![1, 2].includes(incomingVersion)) fail(ENVIRONMENT_ROAD_GEOMETRY_INVALID, `Road geometry version ${incomingVersion} is unsupported.`);
+    if (currentVersion === 2 && !supported.has(2)) {
+        fail(ENVIRONMENT_ROAD_GEOMETRY_DOWNGRADE, "This environment contains road geometry v2; the writer must declare v2 support.");
+    }
+    if (incomingVersion === 2) {
+        if (!supported.has(2)) fail(ENVIRONMENT_ROAD_GEOMETRY_DOWNGRADE, "Writing road geometry v2 requires supportedRoadGeometryVersions to include 2.");
+        const validation = validateRoadDomain(document.roads, { requireVersion: 2 });
+        if (!validation.ok) fail(ENVIRONMENT_ROAD_GEOMETRY_INVALID, `Road geometry v2 is invalid: ${validation.issues[0].message}`, validation.issues);
+        return;
+    }
+    const carriesV2 = (document.roads?.edges ?? []).some((edge) => edge?.geometry !== undefined && edge?.geometry !== null);
+    if (carriesV2) fail(ENVIRONMENT_ROAD_GEOMETRY_INVALID, "A version 1 road document cannot contain v2 edge geometry.");
 }
 
 export function assertExpectedRevision(expectedRevision, currentRevision, label = "Environment") {

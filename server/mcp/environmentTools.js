@@ -16,6 +16,8 @@ import {
 import { environmentObjectTypeUnsupportedError } from "../storage/StorageErrors.js";
 import { storageEvents } from "./events.js";
 import { fail, maybeFailStrict, ok } from "./toolResult.js";
+import { planRoadNetworkGeometry } from "../../app/roads/RoadNetworkGeometry.js";
+import { roadGeometryVersionOf } from "../../app/roads/RoadGeometryRecord.js";
 
 const ACTIVE_ENVIRONMENT_SETTING = "activeEnvironmentId";
 
@@ -199,17 +201,24 @@ export function registerEnvironmentTools(server, storage) {
                 bidirectional: z.boolean().optional(),
                 snapRadius: z.number().positive().optional(),
                 strict: z.boolean().optional().describe("If true, reject when conflicts exist"),
+                geometryKind: z.enum(["polyline", "cubic-bezier"]).optional().describe("Use the ED-04 geometry command; omitted preserves legacy add-road behavior"),
             },
         },
-        async ({ environmentId, points, width, laneCount, bidirectional, snapRadius, strict }) => {
+        async ({ environmentId, points, width, laneCount, bidirectional, snapRadius, strict, geometryKind }) => {
             try {
                 const { manifest, document, service } = await loadDocument(storage, environmentId);
-                const result = service.run("addRoad", { points, width, laneCount, bidirectional, snapRadius: snapRadius ?? 2 });
+                const result = geometryKind
+                    ? service.run("createRoad", { points, kind: geometryKind, options: { width, laneCount, bidirectional } })
+                    : service.run("addRoad", { points, width, laneCount, bidirectional, snapRadius: snapRadius ?? 2 });
                 if (!result.ok) {
                     return fail(result.error, { errors: result.issues.map((issue) => issue.message), issues: result.issues });
                 }
-                const { createdNodes, createdEdges, errors } = result.result;
-                const conflicts = conflictsForNewEntities(document, {
+                const createdNodes = geometryKind ? [result.result.startNode, result.result.endNode] : result.result.createdNodes;
+                const createdEdges = geometryKind ? [result.result.edge] : result.result.createdEdges;
+                const errors = geometryKind ? [] : result.result.errors;
+                const conflicts = geometryKind
+                    ? planRoadNetworkGeometry(document.roads).conflicts
+                    : conflictsForNewEntities(document, {
                     edgeIds: createdEdges.map((edge) => edge.id),
                 });
                 if (strict && conflicts.length > 0) {
@@ -229,6 +238,53 @@ export function registerEnvironmentTools(server, storage) {
                     errors,
                     conflicts,
                 });
+            } catch (error) {
+                return fail(error);
+            }
+        },
+    );
+
+    server.registerTool(
+        "environment_edit_road",
+        {
+            title: "Edit road geometry",
+            description: "Apply one atomic ED-04 road geometry or topology command.",
+            inputSchema: {
+                environmentId: z.string().min(1),
+                operation: z.enum(["convert", "insert-knot", "remove-knot", "set-knot", "split", "detach", "connect"]),
+                edgeId: z.string().min(1),
+                kind: z.enum(["polyline", "cubic-bezier"]).optional(),
+                at: z.object({ span: z.number().int().nonnegative(), u: z.number().gt(0).lt(1) }).optional(),
+                knotId: z.string().optional(),
+                patch: z.record(z.string(), z.unknown()).optional(),
+                end: z.enum(["start", "end"]).optional(),
+                targetNodeId: z.string().optional(),
+                targetEdgeId: z.string().optional(),
+                targetAt: z.object({ span: z.number().int().nonnegative(), u: z.number().gt(0).lt(1) }).optional(),
+                strict: z.boolean().optional(),
+            },
+        },
+        async ({ environmentId, operation, edgeId, kind, at, knotId, patch, end, targetNodeId, targetEdgeId, targetAt, strict }) => {
+            try {
+                const { manifest, document, service } = await loadDocument(storage, environmentId);
+                const commands = {
+                    convert: ["convertRoadGeometry", { edgeId, kind }],
+                    "insert-knot": ["insertRoadKnot", { edgeId, at }],
+                    "remove-knot": ["removeRoadKnot", { edgeId, knotId }],
+                    "set-knot": ["setRoadKnot", { edgeId, knotId, patch }],
+                    split: ["splitRoad", { edgeId, at }],
+                    detach: ["detachRoadEndpoint", { edgeId, end }],
+                    connect: ["connectRoadEndpoint", { edgeId, end, target: targetNodeId ? { nodeId: targetNodeId } : { edgeId: targetEdgeId, at: targetAt } }],
+                };
+                const [name, args] = commands[operation];
+                const result = service.run(name, args);
+                if (!result.ok) return fail(result.error, { issues: result.issues });
+                const conflicts = Number(document.roads?.geometryVersion ?? 1) === 2
+                    ? planRoadNetworkGeometry(document.roads).conflicts
+                    : findDocumentConflicts(document);
+                if (strict && conflicts.length > 0) return fail("Rejected due to geometric conflicts (strict=true).", { conflicts, issues: result.issues });
+                await saveDocument(storage, environmentId, manifest, document);
+                return ok({ ok: true, operation, result: result.result, conflicts, issues: result.issues });
             } catch (error) {
                 return fail(error);
             }
@@ -280,7 +336,9 @@ export function registerEnvironmentTools(server, storage) {
                 const dx = Math.abs(Number(point.x) - Number(node.x));
                 const dz = Math.abs(Number(point.z) - Number(node.z));
                 let result;
-                if (dx <= 1e-6 && dz <= 1e-6 && point.y !== undefined) {
+                if (roadGeometryVersionOf(document) === 2) {
+                    result = service.run("translateRoadNodes", { positions: { [nodeId]: point } });
+                } else if (dx <= 1e-6 && dz <= 1e-6 && point.y !== undefined) {
                     result = service.run("setRoadNodeElevation", { nodeId, y: point.y });
                 } else if (isIntersectionNode(document, node)) {
                     result = service.run("translateRoadNodes", { positions: { [nodeId]: point } });
@@ -291,7 +349,9 @@ export function registerEnvironmentTools(server, storage) {
                 const edgeIds = document.roads.edges
                     .filter((edge) => edge.startNodeId === nodeId || edge.endNodeId === nodeId)
                     .map((edge) => edge.id);
-                const conflicts = conflictsForNewEntities(document, { edgeIds });
+                const conflicts = roadGeometryVersionOf(document) === 2
+                    ? planRoadNetworkGeometry(document.roads).conflicts
+                    : conflictsForNewEntities(document, { edgeIds });
                 if (strict && conflicts.length > 0) {
                     return fail("Rejected due to geometric conflicts (strict=true).", { conflicts });
                 }
@@ -544,6 +604,7 @@ async function saveDocument(storage, environmentId, manifest, document) {
         },
         expectedRevision: Number.isInteger(manifest.revision) ? manifest.revision : 0,
         detachStaleVisual: true,
+        supportedRoadGeometryVersions: [1, 2],
     });
     storageEvents.publish({
         domain: "environment",

@@ -72,7 +72,7 @@ export function MapSurface({ data, editorSnapshot, documentSnapshot, mapSelectio
                     documentSnapshot={documentSnapshot}
                     mapSelection={mapSelection}
                     showDetail={showDetail}
-                    draft={viewport.draft}
+                    draft={editorSnapshot?.roadDraft ?? viewport.draft}
                 />
             </svg>
 

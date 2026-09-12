@@ -27,6 +27,7 @@ const SCENE_TOOLS = Object.freeze([
     { id: "tool-translate", tool: EDITOR_TOOLS.TRANSLATE, label: "Move", shortcut: "W", icon: "move" },
     { id: "tool-rotate", tool: EDITOR_TOOLS.ROTATE, label: "Rotate", shortcut: "E", icon: "rotate" },
     { id: "tool-scale", tool: EDITOR_TOOLS.SCALE, label: "Scale", shortcut: "R", icon: "scale" },
+    { id: "tool-road-pen", tool: EDITOR_TOOLS.ROAD_PEN, label: "Road pen", icon: "road" },
 ]);
 
 const MAP_TOOL_ITEMS = Object.freeze([

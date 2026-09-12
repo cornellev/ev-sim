@@ -10,6 +10,7 @@ import * as THREE from "three";
 import { EDITOR_LAYERS } from "../EditorState.js";
 import { canMoveNode } from "../document/documentMutations.js";
 import { getRoadStylePreset } from "../../environment/road/RoadStylePresets.js";
+import { resolveRoadEdge, roadGeometryVersionOf } from "../../../roads/RoadGeometryRecord.js";
 
 export function getRoadRegistry(data) {
     return data?.environment?.()?.objects?.() ?? null;
@@ -27,6 +28,14 @@ export function intersectionEntityId(nodeId) {
 
 export function roadNodeEntityId(nodeId) {
     return `road-node:${nodeId}`;
+}
+
+export function roadKnotEntityId(edgeId, knotId) {
+    return `road-knot:${edgeId}:${knotId}`;
+}
+
+export function roadHandleEntityId(edgeId, knotId, side) {
+    return `road-handle:${edgeId}:${knotId}:${side}`;
 }
 
 export function roadNetworkOptions(data) {
@@ -71,7 +80,9 @@ export function tagRoadTriangles(roads, intersections) {
             const sourceId = road.network?.edgeId ?? "road";
             triangle.environmentGeometryType = "road";
             triangle.environmentSourceId = sourceId;
-            triangle.lidarTwinId = `road:${sourceId}:${triangleIndex}`;
+            triangle.lidarTwinId = road.network?.geometryVersion === 2
+                ? `road-surface:${sourceId}:${triangleIndex}`
+                : `road:${sourceId}:${triangleIndex}`;
             triangle.lidarTriangleIndex = triangleIndex;
             return triangle;
         })),
@@ -79,7 +90,9 @@ export function tagRoadTriangles(roads, intersections) {
             const sourceId = intersection.networkNodeId ?? "intersection";
             triangle.environmentGeometryType = "road";
             triangle.environmentSourceId = sourceId;
-            triangle.lidarTwinId = `intersection:${sourceId}:${triangleIndex}`;
+            triangle.lidarTwinId = intersection.networkGeometryVersion === 2
+                ? `intersection-surface:${sourceId}:${triangleIndex}`
+                : `intersection:${sourceId}:${triangleIndex}`;
             triangle.lidarTriangleIndex = triangleIndex;
             return triangle;
         })),
@@ -94,6 +107,31 @@ export function removeRoadNodeHandle(registry, nodeId) {
     entity.object3D?.material?.dispose?.();
     registry.unregisterEntity(entity.id);
     return true;
+}
+
+export function removeRoadGeometryHandles(registry, edgeId) {
+    const prefix = `${edgeId}:`;
+    const entities = registry?.listEntities?.()?.filter((entity) => (
+        ["road-knot", "road-handle"].includes(entity.kind)
+        && `${entity.edgeId ?? entity.sourceId ?? ""}:`.startsWith(prefix)
+    )) ?? [];
+    for (const entity of entities) {
+        const full = registry.getEntity(entity.id);
+        full?.object3D?.parent?.remove?.(full.object3D);
+        full?.object3D?.geometry?.dispose?.();
+        full?.object3D?.material?.dispose?.();
+        registry.unregisterEntity(entity.id);
+    }
+}
+
+function createSubHandle(position, color, radius) {
+    const mesh = new THREE.Mesh(
+        new THREE.SphereGeometry(radius, 10, 10),
+        new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.25, roughness: 0.5 }),
+    );
+    mesh.position.set(position.x, position.y, position.z);
+    mesh.userData.bakeIgnore = true;
+    return mesh;
 }
 
 /**
@@ -151,6 +189,46 @@ export function registerRoadEntities(registry, result, document, scene, { nodeId
             node,
         });
     }
+
+    if (roadGeometryVersionOf(document) === 2) {
+        const nodeById = document.index().nodes;
+        for (const edge of document.roads.edges) {
+            if (!result.roadByEdge?.has?.(String(edge.id))) continue;
+            removeRoadGeometryHandles(registry, edge.id);
+            const resolved = resolveRoadEdge(edge, nodeById);
+            for (const knot of resolved.geometry.knots) {
+                const knotHandle = createSubHandle(knot.position, 0xf59e0b, 0.32);
+                scene.add(knotHandle);
+                registry.registerEntity({
+                    id: roadKnotEntityId(edge.id, knot.id),
+                    sourceId: edge.id,
+                    edgeId: edge.id,
+                    knotId: knot.id,
+                    kind: "road-knot",
+                    label: `Road knot ${knot.id}`,
+                    layer: EDITOR_LAYERS.ROADS,
+                    object3D: knotHandle,
+                });
+                for (const [side, vector] of [["in", knot.handleIn], ["out", knot.handleOut]]) {
+                    if (!vector) continue;
+                    const position = { x: knot.position.x + vector.x, y: knot.position.y + vector.y, z: knot.position.z + vector.z };
+                    const handle = createSubHandle(position, 0xa78bfa, 0.24);
+                    scene.add(handle);
+                    registry.registerEntity({
+                        id: roadHandleEntityId(edge.id, knot.id, side),
+                        sourceId: edge.id,
+                        edgeId: edge.id,
+                        knotId: knot.id,
+                        side,
+                        kind: "road-handle",
+                        label: `Road handle ${knot.id} ${side}`,
+                        layer: EDITOR_LAYERS.ROADS,
+                        object3D: handle,
+                    });
+                }
+            }
+        }
+    }
 }
 
 export function unregisterRoadEntities(registry) {
@@ -159,9 +237,11 @@ export function unregisterRoadEntities(registry) {
             entity.kind === "road"
             || entity.kind === "intersection"
             || entity.kind === "road-node"
+            || entity.kind === "road-knot"
+            || entity.kind === "road-handle"
         ))
         ?.forEach((entity) => {
-            if (entity.kind === "road-node") {
+            if (["road-node", "road-knot", "road-handle"].includes(entity.kind)) {
                 const full = registry.getEntity(entity.id);
                 full?.object3D?.parent?.remove?.(full.object3D);
             }

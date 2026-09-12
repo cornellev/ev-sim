@@ -120,6 +120,28 @@ function extrudedTriangles(obstacle, tags, instanceId) {
 
 function surfaceTriangles(surface, instanceId, roads = null) {
     const tags = ["road"];
+    if (["road-mesh", "junction-mesh"].includes(surface.kind)) {
+        if (!Array.isArray(surface.vertices) || !Array.isArray(surface.indices) || surface.indices.length % 3 !== 0) {
+            throw new TypeError(`Indexed road surface "${surface.id}" is malformed.`);
+        }
+        const result = [];
+        for (let index = 0; index < surface.indices.length; index += 3) {
+            const face = surface.indices.slice(index, index + 3);
+            if (face.some((vertexIndex) => !Number.isInteger(vertexIndex) || !surface.vertices[vertexIndex])) {
+                throw new TypeError(`Indexed road surface "${surface.id}" contains an invalid index.`);
+            }
+            result.push(createTriangleLidarTwin({
+                id: `${surface.id}:${index / 3}`,
+                sourceId: surface.sourceId,
+                vertices: face.map((vertexIndex) => surface.vertices[vertexIndex]),
+                tags,
+                semanticId: perceptionClassId("road"),
+                instanceId,
+                triangleIndex: index / 3,
+            }));
+        }
+        return result;
+    }
     if (surface.kind === "road-corridor") {
         // Footprint winding: 0 start-left, 1 end-left, 2 end-right, 3 start-right.
         let startY = (surface.minY + surface.maxY) * 0.5;
@@ -148,6 +170,7 @@ function surfaceTriangles(surface, instanceId, roads = null) {
             triangleIndex: index,
         }));
     }
+    if (surface.kind !== "intersection-disc") throw new TypeError(`Unsupported drivable surface kind "${surface.kind}".`);
     const result = [];
     for (let index = 0; index < INTERSECTION_SEGMENTS; index += 1) {
         const start = index * Math.PI * 2 / INTERSECTION_SEGMENTS;

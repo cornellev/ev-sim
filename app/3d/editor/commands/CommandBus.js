@@ -21,6 +21,8 @@ import { captureRecords, capturesEqual, changeSetBetween, restoreRecords } from 
 import { reconcileLiveOverlay } from "./liveOverlay.js";
 import { applyPlanSteps } from "./planApply.js";
 import { collectTransformClosure, planTransform } from "./transformPlanning.js";
+import { roadGeometryVersionOf, validateRoadDomain } from "../../../roads/RoadGeometryRecord.js";
+import { planRoadNetworkGeometry } from "../../../roads/RoadNetworkGeometry.js";
 
 export const DEFAULT_HISTORY_LIMIT = 200;
 
@@ -207,12 +209,31 @@ export class CommandBus {
                 : commandFailure(commandIssue(COMMAND_ISSUE_CODES.MUTATION_FAILED, "Command returned no result."));
         }
         reconcileLiveOverlay(document, this.registry, this.sky);
-        const validation = validateObjectRecords(document.objects, document.index(), this.registry, { sky: this.sky });
+        const validation = this._validateDocument();
         if (!validation.ok) {
             document.restoreSnapshot(before, { notify: false });
             return commandFailure(errorIssues(validation.issues));
         }
         return outcome;
+    }
+
+    _validateDocument() {
+        const objectValidation = validateObjectRecords(this.document.objects, this.document.index(), this.registry, { sky: this.sky });
+        const roadValidation = validateRoadDomain(this.document.roads);
+        const issues = [...objectValidation.issues, ...roadValidation.issues];
+        if (roadValidation.ok && roadGeometryVersionOf(this.document) === 2) {
+            try {
+                planRoadNetworkGeometry(this.document.roads);
+            } catch (error) {
+                issues.push(...(error.issues ?? [{
+                    path: ["roads"],
+                    code: "road.geometry.compile-failed",
+                    message: error.message,
+                    severity: "error",
+                }]));
+            }
+        }
+        return { ok: !issues.some((entry) => entry.severity === "error"), issues };
     }
 
     _commit(changeSet) {
@@ -246,7 +267,7 @@ export class CommandBus {
         if (closure.issues.length > 0) {
             return { ok: false, gestureId: null, issues: closure.issues, closure };
         }
-        if (closure.leaves.size === 0 && closure.groups.size === 0 && closure.nodeIds.size === 0) {
+        if (closure.leaves.size === 0 && closure.groups.size === 0 && closure.nodeIds.size === 0 && closure.edgeIds.size === 0) {
             return {
                 ok: false,
                 gestureId: null,
@@ -287,6 +308,12 @@ export class CommandBus {
             if (!applied.ok) {
                 restoreRecords(this.document, gesture.before);
                 issues = [commandIssue(COMMAND_ISSUE_CODES.MUTATION_FAILED, applied.error)];
+            } else {
+                const validation = this._validateDocument();
+                if (!validation.ok) {
+                    restoreRecords(this.document, gesture.before);
+                    issues = errorIssues(validation.issues);
+                }
             }
         } else {
             issues = plan.issues;
@@ -323,14 +350,12 @@ export class CommandBus {
             this._notify();
             return { ok: true, issues: [], changeSet: null };
         }
-        if (gesture.closure.groups.size > 0) {
-            const validation = validateObjectRecords(this.document.objects, this.document.index(), this.registry, { sky: this.sky });
-            if (!validation.ok) {
-                restoreRecords(this.document, gesture.before);
-                this.document.notify({ transient: false, source: "cancel", changeSet: changeSetBetween(after, gesture.before, { source: "cancel", transient: false, gestureId }) });
-                this._notify();
-                return { ok: false, issues: errorIssues(validation.issues), changeSet: null };
-            }
+        const validation = this._validateDocument();
+        if (!validation.ok) {
+            restoreRecords(this.document, gesture.before);
+            this.document.notify({ transient: false, source: "cancel", changeSet: changeSetBetween(after, gesture.before, { source: "cancel", transient: false, gestureId }) });
+            this._notify();
+            return { ok: false, issues: errorIssues(validation.issues), changeSet: null };
         }
         reconcileLiveOverlay(this.document, this.registry, this.sky);
         const changeSet = changeSetBetween(gesture.before, after, {

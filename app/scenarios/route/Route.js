@@ -10,6 +10,8 @@ import {
     buildDirectedRoadGraph,
     environmentDocumentFrom,
     hashEnvironmentRoadNetwork,
+    offsetEdgeSample,
+    pointOnEdgeCenterline,
     projectPointToRoadNetwork,
     routeOrderedProjections,
     stitchTravelSectionPolylines,
@@ -23,12 +25,15 @@ import {
     roadLaneCount,
     signedRightOffset,
 } from "../../roads/RoadLaneModel.js";
+import { roadGeometryVersionOf } from "../../roads/RoadGeometryRecord.js";
+import { ROAD_GEOMETRY_POLICY_V1 } from "../../roads/RoadGeometryPolicy.js";
 
 const EPSILON = 1e-9;
 export const ROUTE_SCHEMA = "cev-sim.route";
 export const ROUTE_VERSION = 1;
 export const ROUTE_ALGORITHM = "directed-a-star";
 export const ROUTE_ALGORITHM_VERSION = 5;
+export const ROUTE_ALGORITHM_VERSION_V6 = 6;
 const CENTERLINE_EPSILON = 1e-6;
 
 export function normalizeRoute(value = {}) {
@@ -42,7 +47,7 @@ export function normalizeRoute(value = {}) {
         version: source.version ?? ROUTE_VERSION,
         waypoints: normalizeWaypoints(source.waypoints ?? []),
         verified: verification?.algorithm === ROUTE_ALGORITHM
-            && verification?.algorithmVersion === ROUTE_ALGORITHM_VERSION
+            && [ROUTE_ALGORITHM_VERSION, ROUTE_ALGORITHM_VERSION_V6].includes(verification?.algorithmVersion)
             && verification?.waypointHash === hashWaypoints(source.waypoints ?? []),
         sections: source.sections ?? verification?.sections ?? [],
         edgeTraversal: source.edgeTraversal ?? verification?.edgeTraversal ?? [],
@@ -53,6 +58,13 @@ export function normalizeRoute(value = {}) {
         waypointHash: source.waypointHash ?? verification?.waypointHash ?? null,
         verification,
     };
+}
+
+export function routeAlgorithmVersionFor(environment) {
+    const version = roadGeometryVersionOf(environmentDocumentFrom(environment));
+    if (version === 2) return ROUTE_ALGORITHM_VERSION_V6;
+    if (version === 1) return ROUTE_ALGORITHM_VERSION;
+    throw new TypeError(`Unsupported road geometry version: ${String(version)}.`);
 }
 
 export const createCanonicalRoute = normalizeRoute;
@@ -108,8 +120,16 @@ export function validateRouteVerification(route, environment = null, options = {
     const legacyVersion = verification?.algorithm === ROUTE_ALGORITHM
         && [3, 4].includes(verification.algorithmVersion)
         && (options.allowLegacyVersions === true || options.allowLegacyV3 === true);
-    if (!legacyVersion && (verification.algorithm !== ROUTE_ALGORITHM || verification.algorithmVersion !== ROUTE_ALGORITHM_VERSION)) {
-        issues.push({ code: "route.verification.algorithm-invalid", path: "verification.algorithm", message: `Route verification must use ${ROUTE_ALGORITHM} version ${ROUTE_ALGORITHM_VERSION}.` });
+    const currentVersion = [ROUTE_ALGORITHM_VERSION, ROUTE_ALGORITHM_VERSION_V6].includes(verification?.algorithmVersion);
+    const expectedVersion = environment ? routeAlgorithmVersionFor(environment) : verification?.algorithmVersion;
+    if (!legacyVersion && (verification.algorithm !== ROUTE_ALGORITHM || !currentVersion || verification.algorithmVersion !== expectedVersion)) {
+        issues.push({ code: "route.verification.algorithm-invalid", path: "verification.algorithm", message: `Route verification must use ${ROUTE_ALGORITHM} version ${expectedVersion}.` });
+    }
+    if (verification.algorithmVersion === ROUTE_ALGORITHM_VERSION_V6
+        && (verification.distanceMetric !== "xz"
+            || verification.geometryPolicy?.id !== ROAD_GEOMETRY_POLICY_V1.id
+            || verification.geometryPolicy?.version !== ROAD_GEOMETRY_POLICY_V1.version)) {
+        issues.push({ code: "route.verification.geometry-policy-invalid", path: "verification.geometryPolicy", message: "Route verification v6 requires the frozen XZ road geometry policy." });
     }
     if (typeof verification.environmentHash !== "string" || !verification.environmentHash) {
         issues.push({ code: "route.verification.environment-hash-required", path: "verification.environmentHash", message: "Route verification requires an environment hash." });
@@ -275,11 +295,7 @@ function projectionFromStableAnchor(waypoint, graph) {
     const end = edge && graph.nodes.get(edge.endNodeId);
     if (!edge || !start || !end) return null;
     const t = Math.max(0, Math.min(1, Number(anchor.fraction)));
-    const centerlinePoint = {
-        x: start.x + ((end.x - start.x) * t),
-        y: start.y + ((end.y - start.y) * t),
-        z: start.z + ((end.z - start.z) * t),
-    };
+    const centerlinePoint = pointOnEdgeCenterline(edge, t, graph);
     const pointerPoint = pointFrom(waypoint?.authoredPosition ?? waypoint, centerlinePoint);
     const rightOffset = signedRightOffset(pointerPoint, start, end);
     const explicitLaneIndex = Number.isInteger(anchor.laneIndex) ? anchor.laneIndex : null;
@@ -292,7 +308,9 @@ function projectionFromStableAnchor(waypoint, graph) {
                 : "auto";
     const laneIndex = explicitLaneIndex ?? nearestLaneIndexForOffset(edge, rightOffset);
     const point = laneMode === "fixed"
-        ? laneCenterPoint(centerlinePoint, start, end, edge, laneIndex)
+        ? graph.geometryVersion === 2
+            ? offsetEdgeSample(edge, t, laneIndex, graph)
+            : laneCenterPoint(centerlinePoint, start, end, edge, laneIndex)
         : centerlinePoint;
     // Anchor + fraction are authoritative; displayed position may sit on the
     // right-hand travel offset rather than the centerline.
@@ -312,8 +330,8 @@ function projectionFromStableAnchor(waypoint, graph) {
     };
 }
 
-function sectionFromPath(index, from, to, path) {
-    const arc = buildArcLengthPolyline(path.polyline);
+function sectionFromPath(index, from, to, path, distanceMetric = "3d") {
+    const arc = buildArcLengthPolyline(path.polyline, distanceMetric);
     return {
         index,
         fromWaypointId: from.id,
@@ -327,9 +345,9 @@ function sectionFromPath(index, from, to, path) {
     };
 }
 
-function flattenSections(sections) {
+function flattenSections(sections, distanceMetric = "3d") {
     const polyline = dedupePolyline(sections.flatMap((section) => section.polyline));
-    const arc = buildArcLengthPolyline(polyline);
+    const arc = buildArcLengthPolyline(polyline, distanceMetric);
     return {
         polyline: arc.polyline,
         cumulativeDistances: arc.cumulativeDistances,
@@ -375,6 +393,8 @@ export function verifyRoute(first, second, third) {
     const environmentHash = options.environmentHash ?? hashEnvironmentRoadNetwork(environment);
     let waypointHash = hashWaypoints(waypoints);
     const issues = [];
+    const algorithmVersion = routeAlgorithmVersionFor(environment);
+    const distanceMetric = algorithmVersion === ROUTE_ALGORITHM_VERSION_V6 ? "xz" : "3d";
 
     if (waypoints.length < 2) {
         issues.push({
@@ -424,6 +444,25 @@ export function verifyRoute(first, second, third) {
         const anchorEdge = waypoint.anchor?.kind === "road"
             ? graph.edges.get(String(waypoint.anchor.id))
             : null;
+        if (algorithmVersion === ROUTE_ALGORITHM_VERSION_V6 && waypoint.anchor) {
+            const anchor = waypoint.anchor;
+            const validShape = anchor.kind === "intersection"
+                ? Boolean(anchor.id)
+                : anchor.kind === "road"
+                    && Boolean(anchor.id)
+                    && Number.isFinite(Number(anchor.fraction))
+                    && Number(anchor.fraction) >= 0
+                    && Number(anchor.fraction) <= 1;
+            if (!validShape) {
+                issues.push({ code: "route.waypoint.anchor-invalid", message: `${waypoint.label || `Waypoint ${index}`} has an invalid explicit anchor.`, waypointId: waypoint.id, index });
+                return waypoint;
+            }
+            const exists = anchor.kind === "road" ? graph.edges.has(String(anchor.id)) : graph.nodes.has(String(anchor.id));
+            if (!exists) {
+                issues.push({ code: "route.waypoint.anchor-missing", message: `${waypoint.label || `Waypoint ${index}`} references a missing ${anchor.kind}.`, waypointId: waypoint.id, index });
+                return waypoint;
+            }
+        }
         const hasExplicitLaneIndex = waypoint.anchor?.kind === "road"
             && Object.prototype.hasOwnProperty.call(waypoint.anchor, "laneIndex");
         const explicitLaneIndex = Number.isInteger(waypoint.anchor?.laneIndex)
@@ -439,12 +478,13 @@ export function verifyRoute(first, second, third) {
             });
             return waypoint;
         }
-        const projection = projectionFromStableAnchor(waypoint, graph)
-            ?? projectPointToRoadNetwork(
+        const anchoredProjection = projectionFromStableAnchor(waypoint, graph);
+        const projection = anchoredProjection
+            ?? (algorithmVersion === ROUTE_ALGORITHM_VERSION_V6 && waypoint.anchor ? null : projectPointToRoadNetwork(
                 waypoint.authoredPosition ?? waypoint,
                 environment,
                 options.projection ?? {},
-            );
+            ));
         if (!projection) {
             issues.push({
                 code: "route.waypoint.off-road",
@@ -508,7 +548,7 @@ export function verifyRoute(first, second, third) {
         });
     } else {
         itinerary.paths.forEach((path, index) => {
-            sections.push(sectionFromPath(index, projected[index], projected[index + 1], path));
+            sections.push(sectionFromPath(index, projected[index], projected[index + 1], path, distanceMetric));
         });
     }
 
@@ -555,10 +595,14 @@ export function verifyRoute(first, second, third) {
     });
     waypointHash = hashWaypoints(aligned);
 
-    const flattened = flattenSections(stitchedSections);
+    const flattened = flattenSections(stitchedSections, distanceMetric);
     const verification = canonicalNumericTree({
         algorithm: ROUTE_ALGORITHM,
-        algorithmVersion: ROUTE_ALGORITHM_VERSION,
+        algorithmVersion,
+        ...(algorithmVersion === ROUTE_ALGORITHM_VERSION_V6 ? {
+            geometryPolicy: { id: ROAD_GEOMETRY_POLICY_V1.id, version: ROAD_GEOMETRY_POLICY_V1.version },
+            distanceMetric: "xz",
+        } : {}),
         environmentId: document.environmentId ?? null,
         environmentHash,
         waypointHash,
@@ -610,7 +654,8 @@ export function invalidateRouteVerification(route) {
 export function isRouteVerificationCurrent(route, environment) {
     const verification = route?.verification;
     if (verification?.algorithm !== ROUTE_ALGORITHM
-        || verification?.algorithmVersion !== ROUTE_ALGORITHM_VERSION
+        || ![ROUTE_ALGORITHM_VERSION, ROUTE_ALGORITHM_VERSION_V6].includes(verification?.algorithmVersion)
+        || (environment && verification.algorithmVersion !== routeAlgorithmVersionFor(environment))
         || verification?.waypointHash !== hashWaypoints(route?.waypoints ?? [])) {
         return false;
     }
@@ -634,7 +679,7 @@ export function routeSectionCount(route) {
 }
 
 export function sampleRoute(route, percent) {
-    const sampled = sampleArcLengthPolyline(getRoutePolyline(route), percent);
+    const sampled = sampleArcLengthPolyline(getRoutePolyline(route), percent, route?.verification?.distanceMetric ?? "3d");
     if (!sampled) return null;
     return { ...sampled, section: sectionAtDistance(route, sampled.distance) };
 }
@@ -653,7 +698,7 @@ export function sampleRouteSection(route, section, percent) {
     const definition = Array.isArray(route?.sections) ? route.sections[sectionIndex] : null;
     const polyline = definition?.polyline ?? legacySectionPolyline(route, sectionIndex);
     if (!polyline) return null;
-    const sampled = sampleArcLengthPolyline(polyline, percent);
+    const sampled = sampleArcLengthPolyline(polyline, percent, route?.verification?.distanceMetric ?? "3d");
     return sampled ? { ...sampled, section: sectionIndex } : null;
 }
 
@@ -677,7 +722,7 @@ function sectionAtDistance(route, distance) {
     for (const section of route.sections) {
         const length = Number.isFinite(section.length)
             ? section.length
-            : buildArcLengthPolyline(section.polyline ?? []).totalLength;
+            : buildArcLengthPolyline(section.polyline ?? [], route?.verification?.distanceMetric ?? "3d").totalLength;
         if (distance <= cursor + length + EPSILON) return section.index ?? 0;
         cursor += length;
     }
@@ -689,11 +734,11 @@ export function projectPoseToRoute(route, pose) {
         let prefix = 0;
         let best = null;
         const totalLength = route.totalLength ?? route.sections.reduce((sum, section) => (
-            sum + (section.length ?? buildArcLengthPolyline(section.polyline ?? []).totalLength)
+            sum + (section.length ?? buildArcLengthPolyline(section.polyline ?? [], route?.verification?.distanceMetric ?? "3d").totalLength)
         ), 0);
         for (const section of route.sections) {
-            const projection = projectPointToPolyline(pose, section.polyline ?? []);
-            const length = section.length ?? buildArcLengthPolyline(section.polyline ?? []).totalLength;
+            const projection = projectPointToPolyline(pose, section.polyline ?? [], { distanceMetric: route?.verification?.distanceMetric ?? "3d" });
+            const length = section.length ?? buildArcLengthPolyline(section.polyline ?? [], route?.verification?.distanceMetric ?? "3d").totalLength;
             if (projection) {
                 const distanceAlong = prefix + projection.distanceAlong;
                 const candidate = {
@@ -713,7 +758,7 @@ export function projectPoseToRoute(route, pose) {
         return best;
     }
 
-    const projection = projectPointToPolyline(pose, getRoutePolyline(route));
+    const projection = projectPointToPolyline(pose, getRoutePolyline(route), { distanceMetric: route?.verification?.distanceMetric ?? "3d" });
     if (!projection) return null;
     return { ...projection, section: projection.segment };
 }
@@ -742,7 +787,7 @@ export function routeProgress(route, pose) {
 /** Return exact current length even for legacy routes. */
 export function routeLength(route) {
     if (Number.isFinite(route?.totalLength)) return route.totalLength;
-    return buildArcLengthPolyline(getRoutePolyline(route)).totalLength;
+    return buildArcLengthPolyline(getRoutePolyline(route), route?.verification?.distanceMetric ?? "3d").totalLength;
 }
 
 export function distanceToRouteEnd(route, pose) {

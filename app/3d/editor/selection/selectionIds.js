@@ -16,6 +16,8 @@ const TYPE_BY_ENTITY_KIND = Object.freeze({
     intersection: "intersection",
     building: "building",
     "road-node": null,
+    "road-knot": "road",
+    "road-handle": "road",
 });
 
 /**
@@ -36,6 +38,8 @@ export function entityIdForObject(record, registry = null) {
 
 export function entityIdForSub(sub) {
     if (sub?.kind === "road-node" && sub.id !== undefined && sub.id !== null) return `road-node:${sub.id}`;
+    if (sub?.kind === "road-knot" && sub.edgeId !== undefined && sub.knotId !== undefined) return `road-knot:${sub.edgeId}:${sub.knotId}`;
+    if (sub?.kind === "road-handle" && sub.edgeId !== undefined && sub.knotId !== undefined) return `road-handle:${sub.edgeId}:${sub.knotId}:${sub.side}`;
     return null;
 }
 
@@ -52,6 +56,12 @@ export function objectIdForEntity(entity) {
 export function subForEntity(entity) {
     if (entity?.kind === "road-node" && entity.sourceId !== undefined && entity.sourceId !== null) {
         return { kind: "road-node", id: String(entity.sourceId) };
+    }
+    if (entity?.kind === "road-knot" && entity.edgeId !== undefined && entity.knotId !== undefined) {
+        return { kind: "road-knot", edgeId: String(entity.edgeId), knotId: String(entity.knotId) };
+    }
+    if (entity?.kind === "road-handle" && entity.edgeId !== undefined && entity.knotId !== undefined) {
+        return { kind: "road-handle", edgeId: String(entity.edgeId), knotId: String(entity.knotId), side: entity.side };
     }
     return null;
 }
@@ -93,6 +103,9 @@ export function mapSelectionForRecord(record) {
 
 /** Resolve the map-selection shape from a selection snapshot and a document (or snapshot). */
 export function mapSelectionFromSelection(selectionSnapshot, document) {
+    if (selectionSnapshot?.sub?.kind === "road-knot" || selectionSnapshot?.sub?.kind === "road-handle") {
+        return { type: "road", id: String(selectionSnapshot.sub.edgeId), sub: { ...selectionSnapshot.sub } };
+    }
     const primary = selectionSnapshot?.primary ?? selectionSnapshot?.ids?.at?.(-1) ?? null;
     if (!primary) return null;
     const record = typeof document?.getObject === "function"

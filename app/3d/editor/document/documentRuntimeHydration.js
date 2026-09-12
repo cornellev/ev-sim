@@ -314,13 +314,14 @@ export function hydrateDocumentFromRuntime(data, document) {
         }
     }
 
-    if (hydrateRoadGraph(data?.city?.(), document)) {
+    const v2Roads = Number(document.roads?.geometryVersion ?? 1) === 2;
+    if (!v2Roads && hydrateRoadGraph(data?.city?.(), document)) {
         changed = true;
     }
 
     const cityHasIntersections = (data?.city?.()?.getIntersections?.() ?? []).length > 0;
     const hasIntersectionNodes = document.roads.nodes.some((node) => node.kind === "intersection");
-    if (cityHasIntersections && !hasIntersectionNodes && document.roads.edges.length) {
+    if (!v2Roads && cityHasIntersections && !hasIntersectionNodes && document.roads.edges.length) {
         document.roads.nodes = [];
         document.roads.edges = [];
         if (hydrateRoadGraph(data?.city?.(), document)) {
@@ -328,8 +329,10 @@ export function hydrateDocumentFromRuntime(data, document) {
         }
     }
 
-    dedupeRoadNodes(document);
-    refreshNodeKinds(document);
+    if (!v2Roads) {
+        dedupeRoadNodes(document);
+        refreshNodeKinds(document);
+    }
 
     if (changed) {
         document.notify();
@@ -348,6 +351,16 @@ export function fitMapViewportToContent(editor, document) {
 
     for (const node of document.roads.nodes) {
         points.push({ x: node.x, z: node.z });
+    }
+    if (Number(document.roads?.geometryVersion ?? 1) === 2) {
+        for (const edge of document.roads.edges) {
+            for (const knot of edge.geometry?.knots ?? []) {
+                if (knot.position) points.push({ x: knot.position.x, z: knot.position.z });
+                for (const handle of [knot.handleIn, knot.handleOut]) {
+                    if (handle && knot.position) points.push({ x: knot.position.x + handle.x, z: knot.position.z + handle.z });
+                }
+            }
+        }
     }
     for (const building of document.buildings) {
         for (const corner of building.footprint ?? []) {

@@ -13,11 +13,15 @@
  * triangles are replaced only for the affected source ids.
  */
 
-import { planRoadNetwork, materializeRoadNetwork } from "../../../city/RoadNetwork.js";
+import { disposeRoadRuntimeObject, planRoadNetwork, materializeCompiledRoadNetwork, materializeRoadNetwork } from "../../../city/RoadNetwork.js";
+import { planRoadNetworkGeometry } from "../../../../roads/RoadNetworkGeometry.js";
+import { roadGeometryVersionOf } from "../../../../roads/RoadGeometryRecord.js";
+import { syncRoadsFromDocument } from "../../document/adapters/RoadRuntimeAdapter.js";
 import { documentToRoadNetworkInputs } from "../../document/documentMutations.js";
 import {
     intersectionEntityId,
     registerRoadEntities,
+    removeRoadGeometryHandles,
     removeRoadNodeHandle,
     roadEntityId,
     roadNetworkOptions,
@@ -77,11 +81,20 @@ export function createRoadsProjector() {
     return {
         id: "roads",
         apply({ changeSet, data, scene, registry, document }) {
-            if (!changeSet.domains?.["roads.nodes"] && !changeSet.domains?.["roads.edges"]) return;
+            const versionChanged = Boolean(changeSet.scalars?.roadGeometryVersion);
+            if (!changeSet.domains?.["roads.nodes"] && !changeSet.domains?.["roads.edges"] && !versionChanged) return;
+            if (versionChanged) {
+                syncRoadsFromDocument(data, scene, document);
+                return;
+            }
             const city = data.city();
             const index = document.index();
             const { vectorMap, connections } = documentToRoadNetworkInputs(document);
-            const plan = planRoadNetwork(toVector3Map(vectorMap), connections, roadNetworkOptions(data));
+            const options = roadNetworkOptions(data);
+            const v2 = roadGeometryVersionOf(document) === 2;
+            const plan = v2
+                ? planRoadNetworkGeometry(document.roads)
+                : planRoadNetwork(toVector3Map(vectorMap), connections, options);
             const { J1, E2, touchedNodeIds, beforeEdges } = computeRoadClosure({ changeSet, document, registry, plan });
 
             // Tear down by id.
@@ -91,7 +104,9 @@ export function createRoadsProjector() {
             });
             for (const road of removedRoads) {
                 road.root?.parent?.remove?.(road.root);
+                disposeRoadRuntimeObject(road);
                 registry?.unregisterEntity(roadEntityId(road.network?.edgeId ?? ""));
+                removeRoadGeometryHandles(registry, String(road.network?.edgeId ?? ""));
             }
             city.roads = city.roads.filter((road) => !removedRoads.includes(road));
             const removedIntersections = city.intersections.filter((intersection) => {
@@ -100,6 +115,7 @@ export function createRoadsProjector() {
             });
             for (const intersection of removedIntersections) {
                 intersection.root?.parent?.remove?.(intersection.root);
+                disposeRoadRuntimeObject(intersection);
                 registry?.unregisterEntity(intersectionEntityId(intersection.networkNodeId ?? ""));
                 J1.add(String(intersection.networkNodeId ?? ""));
             }
@@ -108,10 +124,11 @@ export function createRoadsProjector() {
 
             // Rebuild the closure with whole-graph insets.
             const existingRoads = new Map(city.roads.map((road) => [String(road.network?.edgeId ?? ""), road]));
-            const built = materializeRoadNetwork(scene, plan, {
+            const built = (v2 ? materializeCompiledRoadNetwork : materializeRoadNetwork)(scene, plan, {
                 edgeIds: E2,
                 nodeIds: [...J1].filter((nodeId) => plan.intersectionNodes.has(nodeId)),
                 existingRoads,
+                ...(v2 ? { roadOptions: options.roadOptions } : {}),
             });
             city.addRoads(built.roads);
             for (const intersection of built.intersections) city.addIntersection(intersection);

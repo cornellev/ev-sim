@@ -26,6 +26,10 @@ import {
     signedRightOffset,
     validateRoadLaneLayout,
 } from "../../roads/RoadLaneModel.js";
+import { authorRoadsFromMetric, normalizeMetricRoads, roadGeometryVersionOf } from "../../roads/RoadGeometryRecord.js";
+import { projectPointToRoad as projectPointToCompiledRoad } from "../../roads/RoadGeometry.js";
+import { buildJunctionConnector, planRoadNetworkGeometry } from "../../roads/RoadNetworkGeometry.js";
+import { ROAD_GEOMETRY_POLICY_V1 } from "../../roads/RoadGeometryPolicy.js";
 
 const EPSILON = 1e-9;
 const DEFAULT_ROAD_WIDTH = 7;
@@ -52,6 +56,7 @@ export function environmentDocumentFrom(value) {
         ...source,
         environmentId: source.environmentId ?? value.environmentId ?? value.id ?? null,
         roads: {
+            ...(source.roads?.geometryVersion !== undefined ? { geometryVersion: source.roads.geometryVersion } : {}),
             nodes: Array.isArray(nodes) ? nodes : [],
             edges: Array.isArray(source.roads?.edges) ? source.roads.edges : [],
             turnRules: Array.isArray(source.roads?.turnRules) ? source.roads.turnRules : [],
@@ -101,12 +106,58 @@ function canonicalRoadNetwork(value) {
     };
 }
 
+export function canonicalRoadNetworkV2(value) {
+    const document = environmentDocumentFrom(value);
+    const roads = normalizeMetricRoads(authorRoadsFromMetric(document.roads));
+    const turnRules = (roads.turnRules ?? []).map((rule) => ({
+        nodeId: String(rule.nodeId),
+        fromEdgeId: String(rule.fromEdgeId),
+        toEdgeId: String(rule.toEdgeId),
+        allowed: rule.allowed === true,
+    })).sort((left, right) => compareText(
+        movementRuleKey(left.nodeId, left.fromEdgeId, left.toEdgeId),
+        movementRuleKey(right.nodeId, right.fromEdgeId, right.toEdgeId),
+    ));
+    return {
+        environmentId: document.environmentId ?? null,
+        geometryVersion: 2,
+        geometryPolicy: { id: ROAD_GEOMETRY_POLICY_V1.id, version: ROAD_GEOMETRY_POLICY_V1.version },
+        nodes: roads.nodes.map((node) => ({
+            id: String(node.id),
+            x: finiteNumber(node.x),
+            y: finiteNumber(node.y),
+            z: finiteNumber(node.z),
+            kind: node.kind ?? null,
+        })).sort((left, right) => compareText(left.id, right.id)),
+        edges: roads.edges.map((edge) => ({
+            id: String(edge.id),
+            startNodeId: String(edge.startNodeId),
+            endNodeId: String(edge.endNodeId),
+            bidirectional: edge.bidirectional !== false && edge.oneWay !== true,
+            direction: edge.direction ?? edge.oneWayDirection ?? 1,
+            width: finiteNumber(edge.width, DEFAULT_ROAD_WIDTH),
+            laneCount: finiteNumber(edge.laneCount, 2),
+            shoulderWidth: finiteNumber(edge.shoulderWidth, 0),
+            geometry: edge.geometry,
+        })).sort((left, right) => compareText(left.id, right.id)),
+        ...(turnRules.length > 0 ? { turnRules } : {}),
+    };
+}
+
 export function hashEnvironmentRoadNetwork(value) {
-    return deterministicHash(canonicalRoadNetwork(value));
+    const version = roadGeometryVersionOf(environmentDocumentFrom(value));
+    if (version === 2) return deterministicHash(canonicalRoadNetworkV2(value));
+    if (version === 1) return deterministicHash(canonicalRoadNetwork(value));
+    throw new TypeError(`Unsupported road geometry version: ${String(version)}.`);
 }
 
 export function buildDirectedRoadGraph(value) {
     const document = environmentDocumentFrom(value);
+    const geometryVersion = roadGeometryVersionOf(document);
+    if (![1, 2].includes(geometryVersion)) throw new TypeError(`Unsupported road geometry version: ${String(geometryVersion)}.`);
+    const compiledPlan = geometryVersion === 2
+        ? planRoadNetworkGeometry(authorRoadsFromMetric(document.roads))
+        : null;
     const nodes = new Map();
     for (const node of document.roads.nodes) {
         const point = pointFrom(node);
@@ -128,7 +179,7 @@ export function buildDirectedRoadGraph(value) {
             fromNodeId,
             toNodeId,
             direction,
-            cost: distanceXZ(from, to),
+            cost: edge.length ?? distanceXZ(from, to),
         });
     };
 
@@ -143,7 +194,8 @@ export function buildDirectedRoadGraph(value) {
         const start = nodes.get(edge.startNodeId);
         const end = nodes.get(edge.endNodeId);
         if (!start || !end || start.id === end.id) continue;
-        edge.length = distanceXZ(start, end);
+        edge.length = compiledPlan?.edgeById.get(edge.id)?.samples.totalLengthXZ ?? distanceXZ(start, end);
+        if (compiledPlan) edge.compiled = compiledPlan.edgeById.get(edge.id);
         edges.set(edge.id, edge);
         const laneLayout = validateRoadLaneLayout(edge);
         if (!laneLayout.ok) laneIssues.push({ edgeId: edge.id, ...laneLayout });
@@ -202,7 +254,118 @@ export function buildDirectedRoadGraph(value) {
         turnRules,
         laneIssues,
         turnRuleIssues,
+        geometryVersion,
+        compiledPlan,
     };
+}
+
+function pointInTriangleXZ(point, a, b, c) {
+    const cross = (left, right, target) => (right.x - left.x) * (target.z - left.z) - (right.z - left.z) * (target.x - left.x);
+    const ab = cross(a, b, point);
+    const bc = cross(b, c, point);
+    const ca = cross(c, a, point);
+    return ab >= -EPSILON && bc >= -EPSILON && ca >= -EPSILON
+        || ab <= EPSILON && bc <= EPSILON && ca <= EPSILON;
+}
+
+function pointInIndexedSurface(point, surface, tolerance = 0) {
+    if (point.x < surface.bounds.min.x - tolerance || point.x > surface.bounds.max.x + tolerance
+        || point.z < surface.bounds.min.z - tolerance || point.z > surface.bounds.max.z + tolerance) return false;
+    for (let index = 0; index < surface.indices.length; index += 3) {
+        if (pointInTriangleXZ(point, surface.vertices[surface.indices[index]], surface.vertices[surface.indices[index + 1]], surface.vertices[surface.indices[index + 2]])) return true;
+    }
+    return false;
+}
+
+function samplePolylineAtFraction(points, cumulative, total, fraction) {
+    if (!points?.length) return null;
+    const target = Math.max(0, Math.min(1, fraction)) * total;
+    let index = points.length - 2;
+    for (let cursor = 0; cursor < cumulative.length - 1; cursor += 1) {
+        if (target <= cumulative[cursor + 1] + EPSILON) {
+            index = cursor;
+            break;
+        }
+    }
+    const length = cumulative[index + 1] - cumulative[index];
+    const t = length <= EPSILON ? 0 : (target - cumulative[index]) / length;
+    return {
+        point: {
+            x: points[index].x + (points[index + 1].x - points[index].x) * t,
+            y: points[index].y + (points[index + 1].y - points[index].y) * t,
+            z: points[index].z + (points[index + 1].z - points[index].z) * t,
+        },
+        index,
+        t,
+    };
+}
+
+function polylineArcXZ(points) {
+    const cumulative = [0];
+    for (let index = 1; index < points.length; index += 1) cumulative.push(cumulative[index - 1] + distanceXZ(points[index - 1], points[index]));
+    return { cumulative, total: cumulative.at(-1) ?? 0 };
+}
+
+function lanePointAtFraction(edge, laneIndex, fraction) {
+    const points = edge.compiled.fullSurface.laneCenterlines[laneIndex];
+    const sampleIndex = samplePolylineAtFraction(edge.compiled.samples.points, edge.compiled.samples.cumulativeXZ, edge.compiled.samples.totalLengthXZ, fraction);
+    if (!sampleIndex) return null;
+    const { index, t } = sampleIndex;
+    return {
+        x: points[index].x + (points[index + 1].x - points[index].x) * t,
+        y: points[index].y + (points[index + 1].y - points[index].y) * t,
+        z: points[index].z + (points[index + 1].z - points[index].z) * t,
+    };
+}
+
+function projectPointToRoadNetworkV2(point, graph, tolerance) {
+    const intersections = [];
+    for (const junction of graph.compiledPlan.junctions) {
+        if (!pointInIndexedSurface(point, junction.surface, tolerance)) continue;
+        const node = junction.node;
+        intersections.push({
+            kind: "intersection",
+            nodeId: node.id,
+            edgeId: null,
+            t: null,
+            point: { x: node.x, y: node.y, z: node.z },
+            position: { x: node.x, y: node.y, z: node.z },
+            x: node.x,
+            y: node.y,
+            z: node.z,
+            distance: distanceXZ(point, node),
+        });
+    }
+    const roads = [];
+    for (const edge of graph.edges.values()) {
+        if (!edge.compiled) continue;
+        const projection = projectPointToCompiledRoad(point, edge.compiled);
+        const halfWidth = finiteNumber(edge.width, DEFAULT_ROAD_WIDTH) * 0.5 + finiteNumber(edge.shoulderWidth, 0);
+        if (!projection || projection.distance > halfWidth + tolerance + EPSILON) continue;
+        const tangent = edge.compiled.samples.tangents[Math.min(projection.segment, edge.compiled.samples.tangents.length - 1)];
+        const normal = { x: -tangent.z / Math.hypot(tangent.x, tangent.z), z: tangent.x / Math.hypot(tangent.x, tangent.z) };
+        const rightOffset = (point.x - projection.point.x) * normal.x + (point.z - projection.point.z) * normal.z;
+        const laneIndex = nearestLaneIndexForOffset(edge, rightOffset);
+        const laneMode = roadLaneCount(edge) === 1 || Math.abs(rightOffset) > CENTERLINE_EPSILON ? "fixed" : "auto";
+        const snappedPoint = laneMode === "fixed" ? lanePointAtFraction(edge, laneIndex, projection.fraction) : projection.point;
+        roads.push({
+            kind: "road",
+            nodeId: null,
+            edgeId: edge.id,
+            t: projection.fraction,
+            laneIndex,
+            laneMode,
+            rightOffset,
+            centerlinePoint: projection.point,
+            point: snappedPoint,
+            position: snappedPoint,
+            ...snappedPoint,
+            distance: projection.distance,
+            halfWidth,
+        });
+    }
+    if (intersections.length) return intersections.sort(projectionSort)[0];
+    return roads.length ? roads.sort(projectionSort)[0] : null;
 }
 
 function intersectionRadius(nodeId, graph, options) {
@@ -249,6 +412,7 @@ export function projectPointToRoadNetwork(value, environment, options = {}) {
         ? options.graph
         : buildDirectedRoadGraph(environmentValue);
     const tolerance = Math.max(0, finiteNumber(options.tolerance, 0));
+    if (graph.geometryVersion === 2) return projectPointToRoadNetworkV2(point, graph, tolerance);
     const intersections = [];
     const roads = [];
 
@@ -687,7 +851,15 @@ export function rightTravelOffsetMeters(edge, direction = 1) {
     return laneIndex === null ? 0 : laneCenterRightOffset(edge, laneIndex);
 }
 
-function pointOnEdgeCenterline(edge, t, graph) {
+export function pointOnEdgeCenterline(edge, t, graph) {
+    if (graph.geometryVersion === 2 && edge.compiled) {
+        return samplePolylineAtFraction(
+            edge.compiled.samples.points,
+            edge.compiled.samples.cumulativeXZ,
+            edge.compiled.samples.totalLengthXZ,
+            Math.max(0, Math.min(1, finiteNumber(t, 0))),
+        )?.point ?? null;
+    }
     const start = graph.nodes.get(edge.startNodeId);
     const end = graph.nodes.get(edge.endNodeId);
     if (!start || !end) return null;
@@ -699,7 +871,10 @@ function pointOnEdgeCenterline(edge, t, graph) {
     };
 }
 
-function edgeBoundaryFractions(edge, graph) {
+export function edgeBoundaryFractions(edge, graph) {
+    if (graph.geometryVersion === 2 && edge.compiled) {
+        return { startT: edge.compiled.startMouthFraction, endT: edge.compiled.endMouthFraction };
+    }
     const start = graph.nodes.get(edge.startNodeId);
     const end = graph.nodes.get(edge.endNodeId);
     if (!start || !end || !(edge.length > EPSILON)) return { startT: 0, endT: 1 };
@@ -747,7 +922,8 @@ function travelEndpoints(edge, direction, graph) {
         : { from: { x: end.x, y: end.y, z: end.z }, to: { x: start.x, y: start.y, z: start.z } };
 }
 
-function offsetEdgeSample(edge, t, laneIndex, graph) {
+export function offsetEdgeSample(edge, t, laneIndex, graph) {
+    if (graph.geometryVersion === 2 && edge.compiled) return lanePointAtFraction(edge, laneIndex, t);
     const center = pointOnEdgeCenterline(edge, t, graph);
     const start = graph.nodes.get(edge.startNodeId);
     const end = graph.nodes.get(edge.endNodeId);
@@ -847,7 +1023,20 @@ function segmentFromTraversalStep(step, graph) {
     };
 }
 
-function connectorSamples(prev, next, graph) {
+export function connectorSamples(prev, next, graph) {
+    if (graph.geometryVersion === 2 && graph.compiledPlan) {
+        const nodeId = prev.step.toNodeId === next.step.fromNodeId ? prev.step.toNodeId : null;
+        if (nodeId) {
+            const connector = buildJunctionConnector(graph.compiledPlan, {
+                nodeId,
+                fromEdgeId: prev.edge.id,
+                toEdgeId: next.edge.id,
+                fromLaneIndex: prev.toLaneIndex,
+                toLaneIndex: next.fromLaneIndex,
+            });
+            if (connector) return connector.points;
+        }
+    }
     const from = prev.step.toSubnode?.position
         ?? offsetEdgeSample(prev.edge, prev.toT, prev.toLaneIndex, graph);
     const to = next.step.fromSubnode?.position
@@ -930,7 +1119,34 @@ function smoothstep(value) {
     return t * t * (3 - 2 * t);
 }
 
-function samplesForSegment(segment, graph) {
+export function samplesForSegment(segment, graph) {
+    if (graph.geometryVersion === 2 && segment.edge.compiled) {
+        const samples = segment.edge.compiled.samples;
+        const minimum = Math.min(segment.fromT, segment.toT);
+        const maximum = Math.max(segment.fromT, segment.toT);
+        const fractions = [segment.fromT];
+        for (const distance of samples.cumulativeXZ.slice(1, -1)) {
+            const fraction = distance / samples.totalLengthXZ;
+            if (fraction > minimum + EPSILON && fraction < maximum - EPSILON) fractions.push(fraction);
+        }
+        fractions.push(segment.toT);
+        if (segment.toT < segment.fromT) fractions.sort((left, right) => right - left);
+        else fractions.sort((left, right) => left - right);
+        return fractions.map((fraction, index) => {
+            const progress = fractions.length <= 1 ? 0 : index / (fractions.length - 1);
+            const fromOffset = laneCenterRightOffset(segment.edge, segment.fromLaneIndex);
+            const toOffset = laneCenterRightOffset(segment.edge, segment.toLaneIndex);
+            const offset = fromOffset + (toOffset - fromOffset) * smoothstep(progress);
+            const sampled = samplePolylineAtFraction(samples.points, samples.cumulativeXZ, samples.totalLengthXZ, fraction);
+            const tangent = samples.tangents[Math.min(sampled.index, samples.tangents.length - 1)];
+            const normalLength = Math.hypot(tangent.x, tangent.z);
+            return {
+                x: sampled.point.x - tangent.z / normalLength * offset,
+                y: sampled.point.y,
+                z: sampled.point.z + tangent.x / normalLength * offset,
+            };
+        });
+    }
     const sampleCount = segment.fromLaneIndex === segment.toLaneIndex ? 2 : 8;
     const fromOffset = laneCenterRightOffset(segment.edge, segment.fromLaneIndex);
     const toOffset = laneCenterRightOffset(segment.edge, segment.toLaneIndex);

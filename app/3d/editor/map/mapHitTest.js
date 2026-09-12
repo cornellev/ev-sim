@@ -1,5 +1,7 @@
 import { getEdgeRenderEndpoints, findNearestIntersection } from "../document/documentMutations.js";
 import { screenRadiusToWorld } from "./mapCoords.js";
+import { projectPointToRoad } from "../../../roads/RoadGeometry.js";
+import { planRoadNetworkGeometry } from "../../../roads/RoadNetworkGeometry.js";
 
 /**
  * @param {{ x: number, z: number }} point
@@ -86,6 +88,43 @@ export function pickMapTarget(worldPoint, documentSnapshot, viewport, layers, sc
     }
 
     if (layers.roads) {
+        if (Number(documentSnapshot.roads?.geometryVersion ?? 1) === 2) {
+            try {
+                const plan = planRoadNetworkGeometry(documentSnapshot.roads);
+                const selectedRoadId = layers.selectedRoadId === undefined ? null : String(layers.selectedRoadId);
+                if (showDetail || selectedRoadId) {
+                    for (const entry of plan.edges) {
+                        if (!showDetail && String(entry.edge.id) !== selectedRoadId) continue;
+                        for (const [index, knot] of entry.edge.geometry.knots.entries()) {
+                            const endpoint = index === 0 || index === entry.edge.geometry.knots.length - 1;
+                            if (!endpoint && Math.hypot(worldPoint.x - knot.position.x, worldPoint.z - knot.position.z) <= radiusWorld) {
+                                return { type: "road", id: entry.edge.id, sub: { kind: "road-knot", edgeId: entry.edge.id, knotId: knot.id } };
+                            }
+                            for (const [side, handle] of [["in", knot.handleIn], ["out", knot.handleOut]]) {
+                                if (!handle) continue;
+                                const handlePoint = { x: knot.position.x + handle.x, z: knot.position.z + handle.z };
+                                if (Math.hypot(worldPoint.x - handlePoint.x, worldPoint.z - handlePoint.z) <= radiusWorld) {
+                                    return { type: "road", id: entry.edge.id, sub: { kind: "road-handle", edgeId: entry.edge.id, knotId: knot.id, side } };
+                                }
+                            }
+                        }
+                    }
+                }
+                for (const junction of plan.junctions) {
+                    if (pointInPolygonXZ(worldPoint, junction.surface.vertices)) return { type: "intersection", id: junction.node.id };
+                }
+                for (const entry of plan.edges) {
+                    const projection = projectPointToRoad(worldPoint, { samples: entry.samples });
+                    const threshold = Math.max(radiusWorld, (Number(entry.edge.width ?? 7) + 2 * Number(entry.edge.shoulderWidth ?? 0)) * 0.5);
+                    if (projection && projection.distance <= threshold && (!nearestRoad || projection.distance < nearestRoad.distance)) {
+                        nearestRoad = { type: "road", id: entry.edge.id, distance: projection.distance };
+                    }
+                }
+                return nearestRoad ? { type: nearestRoad.type, id: nearestRoad.id } : null;
+            } catch {
+                return null;
+            }
+        }
         for (const edge of documentSnapshot.roads.edges) {
             const endpoints = getEdgeRenderEndpoints(documentSnapshot, edge);
             if (!endpoints) continue;

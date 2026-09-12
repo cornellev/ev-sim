@@ -208,9 +208,9 @@ test("ED-02 duplicate, reparent, and reload keep selection, history, and runtime
     assert.equal(environment.projector().applied > 0, true);
 });
 
-test("ED-02 map gestures drag nodes and props through the bus, draw roads as one entry, and delete through commands", async () => {
+test("ED-04 map gestures drag nodes and props through the bus, commit a road stroke once, and delete through commands", async () => {
     const harness = await createEditorHarness();
-    const { data, document, selection, bus, registry, city } = harness;
+    const { data, environment, document, selection, bus, registry, city } = harness;
     const editor = data.editor();
     editor.setEditorMode(EDITOR_MODES.MAP);
     editor.setMapSnapEnabled(false);
@@ -276,23 +276,30 @@ test("ED-02 map gestures drag nodes and props through the bus, draw roads as one
     controller.handlePointerUp(ctx, pointer(-100, -100));
     assert.deepEqual(selection.ids, []);
 
-    // Road pen: start, then draw one edge per click as one history entry each.
+    // Road pen: keep every clicked knot in a draft and commit the full stroke once.
+    const { controller: toolController } = makeController(harness);
+    environment.setToolController(toolController);
     editor.setActiveMapTool(MAP_TOOLS.ROAD_PEN);
     const first = handleRoadPenClick({ worldPoint: { x: 100, z: 100 }, document, editor, data });
-    assert.ok(first.node);
-    assert.equal(editor.snapshot().map.draft.activeNodeId, first.node.id);
+    assert.equal(first.type, "road-stroke");
+    assert.deepEqual(first.points, [{ x: 100, y: 0, z: 100 }]);
     const historyBefore = bus.history.length;
     const second = handleRoadPenClick({ worldPoint: { x: 140, z: 100 }, document, editor, data });
-    assert.ok(second.edge, JSON.stringify(second));
+    assert.equal(second.points.length, 2);
+    assert.equal(bus.history.length, historyBefore, "draft clicks do not mutate the document");
+    handleRoadPenClick({ worldPoint: { x: 160, z: 120 }, document, editor, data });
+    const committed = toolController.roadAuthoringController.finishStroke();
+    assert.equal(committed.ok, true, JSON.stringify(committed));
+    const edge = committed.result.edge;
     assert.equal(bus.history.length, historyBefore + 1);
-    assert.equal(bus.snapshot().history.at(-1), "Draw road");
-    assert.ok(registry.getEntity(`road:${second.edge.id}`)?.road, "the new road is projected");
-    assert.ok(document.getObject(second.edge.id));
+    assert.equal(bus.snapshot().history.at(-1), "Create road");
+    assert.ok(registry.getEntity(`road:${edge.id}`)?.road, "the new road is projected");
+    assert.ok(document.getObject(edge.id));
     bus.undo();
-    assert.equal(document.getEdge(second.edge.id), null);
-    assert.equal(registry.getEntity(`road:${second.edge.id}`), null);
+    assert.equal(document.getEdge(edge.id), null);
+    assert.equal(registry.getEntity(`road:${edge.id}`), null);
     bus.redo();
-    assert.ok(registry.getEntity(`road:${second.edge.id}`));
+    assert.ok(registry.getEntity(`road:${edge.id}`));
 
     // Building rectangle and feature placement.
     editor.setActiveMapTool(MAP_TOOLS.BUILDING_RECT);

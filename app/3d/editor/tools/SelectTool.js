@@ -74,7 +74,9 @@ export function applyPickToSelection({ selection, document, entity, additive = f
     }
     const sub = subForEntity(entity);
     if (sub) {
-        const edge = document?.roads?.edges?.find((candidate) => candidate.startNodeId === sub.id || candidate.endNodeId === sub.id) ?? null;
+        const edge = sub.edgeId
+            ? document?.roads?.edges?.find((candidate) => String(candidate.id) === String(sub.edgeId)) ?? null
+            : document?.roads?.edges?.find((candidate) => candidate.startNodeId === sub.id || candidate.endNodeId === sub.id) ?? null;
         selection.select(edge ? [edge.id] : [], { mode: "replace", sub });
         return;
     }

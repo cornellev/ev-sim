@@ -5,7 +5,7 @@
  * how many pointer events arrive.
  */
 
-import { diffCaptures } from "../document/ChangeSet.js";
+import { diffCaptures, scalarValueOf } from "../document/ChangeSet.js";
 
 function cloneInto(map, key, record) {
     if (record) map.set(String(key), structuredClone(record));
@@ -22,18 +22,28 @@ export function captureRecords(document, closure) {
         features: new Map(),
         buildings: new Map(),
         objects: new Map(),
+        scalars: new Map(),
     };
     for (const nodeId of closure.nodeIds ?? []) cloneInto(capture["roads.nodes"], nodeId, index.nodes.get(String(nodeId)));
     for (const edgeId of closure.edgeIds ?? []) cloneInto(capture["roads.edges"], edgeId, index.edges.get(String(edgeId)));
     for (const featureId of closure.featureIds ?? []) cloneInto(capture.features, featureId, index.features.get(String(featureId)));
     for (const buildingId of closure.buildingIds ?? []) cloneInto(capture.buildings, buildingId, index.buildings.get(String(buildingId)));
     for (const groupId of closure.groups ?? []) cloneInto(capture.objects, groupId, index.objects.get(String(groupId)));
+    if ((closure.edgeIds?.size ?? 0) > 0 || (closure.nodeIds?.size ?? 0) > 0) {
+        const snapshot = document.snapshot();
+        capture.scalars.set("roadGeometryVersion", scalarValueOf(snapshot, "roadGeometryVersion"));
+        capture.scalars.set("roadsAuthored", scalarValueOf(snapshot, "roadsAuthored"));
+    }
     return capture;
 }
 
 /** Put every captured record back verbatim (no notification). */
 export function restoreRecords(document, capture) {
     for (const [domain, records] of Object.entries(capture ?? {})) {
+        if (domain === "scalars") {
+            for (const [name, value] of records instanceof Map ? records : []) document.setScalar(name, value, { notify: false });
+            continue;
+        }
         if (records instanceof Map && records.size > 0) {
             document.replaceDomainRecords(domain, records, { notify: false });
         }

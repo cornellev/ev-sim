@@ -54,6 +54,7 @@ import {
 } from "./objectMutations.js";
 import { applyPlanSteps } from "./planApply.js";
 import { planTransform } from "./transformPlanning.js";
+import { ensureRoadGeometryV2 } from "./roadCommands.js";
 
 function definitionFor(ctx, record) {
     return ctx.registry.get(record?.typeId, record?.typeVersion) ?? ctx.registry.get(record?.typeId) ?? null;
@@ -353,6 +354,57 @@ export function deleteObjects({ objectIds = [], label = "Delete" } = {}) {
 
 // ---------------------------------------------------------------- duplicate
 
+/**
+ * Plan a road-topology duplicate without mutating the document. Edges request
+ * private copies of both endpoint nodes; a shared endpoint requested by more
+ * than one selected edge is cloned once. Calling `nodeIdFor()` for a selected
+ * standalone intersection plans only that isolated node. External incident
+ * edges are never traversed.
+ */
+export function planRoadSubgraphDuplicate(document) {
+    const nodeIds = new Map();
+    const edgeIds = new Map();
+    const nodes = [];
+    const edges = [];
+    const nodeIdFor = (nodeId) => {
+        const sourceId = String(nodeId);
+        if (nodeIds.has(sourceId)) return nodeIds.get(sourceId);
+        const source = document.getNode(sourceId);
+        if (!source) throw new Error(`Road node "${sourceId}" is missing.`);
+        const id = createId(source.kind === "intersection" ? "intersection" : "endpoint");
+        nodes.push({ ...structuredClone(source), id });
+        nodeIds.set(sourceId, id);
+        return id;
+    };
+    const edgeIdFor = (edgeId) => {
+        const sourceId = String(edgeId);
+        if (edgeIds.has(sourceId)) return edgeIds.get(sourceId);
+        const source = document.getEdge(sourceId);
+        if (!source) throw new Error(`Road "${sourceId}" is missing.`);
+        const id = createId("road");
+        edges.push({
+            ...structuredClone(source),
+            id,
+            startNodeId: nodeIdFor(source.startNodeId),
+            endNodeId: nodeIdFor(source.endNodeId),
+        });
+        edgeIds.set(sourceId, id);
+        return id;
+    };
+    return {
+        nodeIds,
+        edgeIds,
+        nodes,
+        edges,
+        nodeIdFor,
+        edgeIdFor,
+        apply() {
+            document.roads.nodes.push(...nodes);
+            document.roads.edges.push(...edges);
+        },
+    };
+}
+
 export function duplicateObjects({ objectIds = [], label = "Duplicate" } = {}) {
     return {
         id: "duplicate-objects",
@@ -362,7 +414,7 @@ export function duplicateObjects({ objectIds = [], label = "Duplicate" } = {}) {
             const byId = indexObjectsById(document.objects);
             const roots = pruneToRoots(byId, objectIds);
             if (roots.length === 0) return commandFailure(commandIssue(COMMAND_ISSUE_CODES.SELECTION_EMPTY, "Nothing to duplicate."));
-            const supported = new Set([GROUP_TYPE_ID, BUILTIN_PROP_TYPE_ID, BUILDING_TYPE_ID]);
+            const supported = new Set([GROUP_TYPE_ID, BUILTIN_PROP_TYPE_ID, BUILDING_TYPE_ID, ROAD_TYPE_ID, INTERSECTION_TYPE_ID]);
             const check = (id) => {
                 const record = byId.get(id);
                 const issues = [];
@@ -375,6 +427,16 @@ export function duplicateObjects({ objectIds = [], label = "Duplicate" } = {}) {
             };
             const issues = roots.flatMap(check);
             if (issues.length > 0) return commandFailure(issues);
+
+            const selectedClosure = new Set();
+            const collect = (id) => {
+                selectedClosure.add(String(id));
+                for (const child of childrenOf(byId, id)) collect(child.id);
+            };
+            roots.forEach(collect);
+            const hasRoadTopology = [...selectedClosure].some((id) => [ROAD_TYPE_ID, INTERSECTION_TYPE_ID].includes(byId.get(id)?.typeId));
+            if (hasRoadTopology) ensureRoadGeometryV2(ctx);
+            const roadDuplicate = planRoadSubgraphDuplicate(document);
 
             const createdIds = [];
             const rootIds = [];
@@ -391,13 +453,17 @@ export function duplicateObjects({ objectIds = [], label = "Duplicate" } = {}) {
                     newId = createId("feature");
                     const added = addFeature(document, { ...structuredClone(feature), id: newId }, { notify: false });
                     if (!added.ok) throw new Error(added.error);
-                } else {
+                } else if (record.typeId === BUILDING_TYPE_ID) {
                     const building = document.getBuilding(id);
                     if (!building) throw new Error(`Building "${id}" is missing.`);
                     newId = buildingIdFromFootprint(building.footprint, document.buildings.length + createdIds.length + 1);
                     while (document.getBuilding(newId)) newId = `${newId}-copy`;
                     const added = addBuildingRecord(document, { ...structuredClone(building), buildingId: newId, meshName: newId }, { notify: false });
                     if (!added.ok) throw new Error(added.error);
+                } else if (record.typeId === ROAD_TYPE_ID) {
+                    newId = roadDuplicate.edgeIdFor(id);
+                } else {
+                    newId = roadDuplicate.nodeIdFor(id);
                 }
                 upsertObjectRecord(document, {
                     id: newId,
@@ -423,6 +489,7 @@ export function duplicateObjects({ objectIds = [], label = "Duplicate" } = {}) {
                 const slot = stableIndexOf(indexObjectsById(document.objects), parentId, record, [newId]) + 1;
                 renumberSiblings(document.objects, parentId, { moved: [newId], index: slot });
             }
+            roadDuplicate.apply();
             return commandSuccess({ createdIds, rootIds });
         },
     };

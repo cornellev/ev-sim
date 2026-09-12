@@ -72,21 +72,21 @@ export function dedupePolyline(points, epsilon = 1e-7) {
     return result;
 }
 
-export function buildArcLengthPolyline(points) {
+export function buildArcLengthPolyline(points, distanceMetric = "3d") {
     const polyline = dedupePolyline(points);
     const cumulativeDistances = [];
     let totalLength = 0;
 
     polyline.forEach((point, index) => {
-        if (index > 0) totalLength += distance3d(polyline[index - 1], point);
+        if (index > 0) totalLength += distanceMetric === "xz" ? distanceXZ(polyline[index - 1], point) : distance3d(polyline[index - 1], point);
         cumulativeDistances.push(totalLength);
     });
 
     return { polyline, cumulativeDistances, totalLength };
 }
 
-export function sampleArcLengthPolyline(points, percent) {
-    const arc = buildArcLengthPolyline(points);
+export function sampleArcLengthPolyline(points, percent, distanceMetric = "3d") {
+    const arc = buildArcLengthPolyline(points, distanceMetric);
     const progress = clamp01(percent);
     if (arc.polyline.length === 0) return null;
     if (arc.polyline.length === 1 || arc.totalLength <= EPSILON) {
@@ -127,7 +127,7 @@ export function sampleArcLengthPolyline(points, percent) {
 
 export function projectPointToPolyline(value, points, options = {}) {
     const point = pointFrom(value);
-    const arc = buildArcLengthPolyline(points);
+    const arc = buildArcLengthPolyline(points, options.distanceMetric ?? "3d");
     if (!point || arc.polyline.length === 0) return null;
     if (arc.polyline.length === 1) {
         return {
@@ -342,4 +342,3 @@ export function vehicleGroundFootprint(pose = {}, size = {}, center = {}) {
         z: position.z - corner.x * sin + corner.z * cos,
     }));
 }
-

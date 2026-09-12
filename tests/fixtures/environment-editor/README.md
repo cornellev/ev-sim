@@ -9,6 +9,9 @@ Contract fixtures for the `ED-*` environment-editor program.
   `city-grid` v3 environments, and the synthetic `all-props` environment.
   Any change to these values is a metric-identity contract change and must be
   reviewed as such.
+- `curved-elevated-network.v2.json` — deterministic ED-04 authoring fixture
+  used by geometry, route, browser/world/LiDAR agreement, and headless parity
+  coverage.
 - `legacy-v2.yard.json` — a schema-v2 manifest with the legacy
   `clientRevision` field, every built-in prop type, an intersection, a one-way
   edge, and a building. Never rewritten on read.

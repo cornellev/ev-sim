@@ -4,9 +4,12 @@ import { pickMapTarget } from "./mapHitTest.js";
 import {
     beginFeatureDrag,
     beginNodeDrag,
+    beginRoadDrag,
     cancelDrag,
     finishFeatureDrag,
     finishNodeDrag,
+    finishRoadDrag,
+    finalizeRoadPen,
     handleBuildingRectDown,
     handleBuildingRectMove,
     handleBuildingRectUp,
@@ -18,6 +21,7 @@ import {
     SNAP_RADIUS_SCREEN,
     updateFeatureDrag,
     updateNodeDrag,
+    updateRoadDrag,
     zoomViewport,
 } from "./MapToolLogic.js";
 import { advancePanDrag } from "./mapPointerInteractions.js";
@@ -54,6 +58,7 @@ export class MapPointerController {
         const interaction = this.activeInteraction;
         this.activeInteraction = null;
         if (interaction?.gestureId) cancelDrag({ interaction, data: ctx?.data });
+        if (interaction?.type === "move-road-sub") interaction.controller?.cancelSubDrag?.();
         if (interaction?.type === "building-rect") ctx?.data?.editor?.()?.clearMapDraft?.();
     }
 
@@ -100,6 +105,7 @@ export class MapPointerController {
 
         if (tool === MAP_TOOLS.ROAD_PEN) {
             handleRoadPenClick({ worldPoint: world, document, editor, data, size: ctx.size });
+            if (event.detail >= 2 && editor.snapshot().roadDraft) finalizeRoadPen(editor, data);
             return true;
         }
 
@@ -131,12 +137,29 @@ export class MapPointerController {
                 world,
                 document,
                 editor.snapshot().map,
-                { ...layers, detail: showDetail },
+                { ...layers, detail: showDetail, selectedRoadId: selection?.snapshot?.().primary ?? null },
                 SNAP_RADIUS_SCREEN,
             );
 
             if (pick?.type === MAP_SELECTION_TYPES.FEATURE && !isAdditive(event)) {
                 const interaction = beginFeatureDrag({ document, data, featureId: pick.id });
+                if (interaction) {
+                    this.activeInteraction = interaction;
+                    return true;
+                }
+            }
+
+            if (pick?.type === MAP_SELECTION_TYPES.ROAD && !isAdditive(event)) {
+                if (pick.sub) {
+                    selection?.select(pick.id, { mode: "replace", sub: pick.sub });
+                    const controller = data.environment?.()?.toolController?.roadAuthoringController;
+                    const begun = controller?.beginSubDrag?.(pick.sub);
+                    if (begun?.ok) {
+                        this.activeInteraction = { type: "move-road-sub", start: { x: world.x, z: world.z }, controller };
+                        return true;
+                    }
+                }
+                const interaction = beginRoadDrag({ data, edgeId: pick.id, worldPoint: world });
                 if (interaction) {
                     this.activeInteraction = interaction;
                     return true;
@@ -178,6 +201,17 @@ export class MapPointerController {
             return;
         }
 
+        if (this.activeInteraction?.type === "move-road") {
+            const world = getWorldFromEvent(event);
+            if (world) updateRoadDrag({ interaction: this.activeInteraction, data, worldPoint: world });
+            return;
+        }
+        if (this.activeInteraction?.type === "move-road-sub") {
+            const world = getWorldFromEvent(event);
+            if (world) this.activeInteraction.controller.updateSubDrag({ x: world.x - this.activeInteraction.start.x, z: world.z - this.activeInteraction.start.z });
+            return;
+        }
+
         if (this.activeInteraction?.mode === "pan" || this.activeInteraction?.mode === "pending-pan") {
             this.activeInteraction = advancePanDrag(
                 this.activeInteraction,
@@ -193,16 +227,7 @@ export class MapPointerController {
 
         const tool = editor.snapshot().map.activeMapTool;
         if (tool === MAP_TOOLS.ROAD_PEN) {
-            const draft = editor.snapshot().map.draft;
-            if (draft?.type === "road-pen" && draft.activeNodeId) {
-                const startNode = documentSnapshot.roads.nodes.find((node) => node.id === draft.activeNodeId);
-                if (startNode) {
-                    editor.setMapDraft({
-                        ...draft,
-                        cursor: { x: world.x, z: world.z },
-                    });
-                }
-            }
+            data.environment?.()?.toolController?.roadAuthoringController?.updateStrokeCursor?.(world);
             return;
         }
 
@@ -233,6 +258,15 @@ export class MapPointerController {
 
         if (interaction.type === "move-feature") {
             finishFeatureDrag({ interaction, editor, data, worldPoint: world });
+            return;
+        }
+        if (interaction.type === "move-road") {
+            finishRoadDrag({ interaction, data, worldPoint: world });
+            return;
+        }
+        if (interaction.type === "move-road-sub") {
+            interaction.controller.finishSubDrag();
+            data.simulation()?.render?.();
         }
     }
 }

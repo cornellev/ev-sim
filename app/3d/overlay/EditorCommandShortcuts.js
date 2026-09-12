@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useShortcut } from "../../ui";
 import { EDITOR_MODES, EDITOR_TOOLS } from "../editor/EditorState";
 import { objectCommands } from "../editor/commands/index.js";
+import { removeRoadKnot } from "../editor/commands/roadCommands.js";
 import { finalizeRoadPen } from "../editor/map/MapToolLogic.js";
 import { focusCameraOnSelection } from "../editor/tools/cameraFocus.js";
 
@@ -50,12 +51,12 @@ export function EditorCommandShortcuts({ data }) {
         },
     });
     useShortcut({
-        id: "environment-map-finish-road",
+        id: "environment-finish-road",
         keys: "Enter",
         priority: 15,
-        enabled: inMap && editorSnapshot?.map?.draft?.type === "road-pen",
+        enabled: inEditor && editorSnapshot?.roadDraft?.type === "road-stroke",
         handler: () => {
-            finalizeRoadPen(editor());
+            finalizeRoadPen(editor(), data);
             render();
             return true;
         },
@@ -88,6 +89,13 @@ export function EditorCommandShortcuts({ data }) {
         priority: 15,
         enabled: inEditor,
         handler: () => {
+            const sub = selection()?.sub;
+            if (sub?.kind === "road-knot" && !["start", "end"].includes(sub.knotId)) {
+                const result = bus()?.execute(removeRoadKnot({ edgeId: sub.edgeId, knotId: sub.knotId }));
+                if (result?.ok) selection()?.setSub?.(null);
+                render();
+                return consume(result);
+            }
             const ids = selectedIds();
             if (ids.length === 0) return false;
             const result = bus()?.execute(objectCommands.duplicateObjects({ objectIds: ids }));

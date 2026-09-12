@@ -24,6 +24,7 @@ import {
     ENVIRONMENT_SCHEMA_VERSION,
     ENVIRONMENT_UNGUARDED_WRITE,
     assertNoObjectGraphDowngrade,
+    assertNoRoadGeometryDowngrade,
     environmentRevisionOf,
     environmentSummaryFields,
     parseEnvironmentWriteEnvelope,
@@ -670,12 +671,13 @@ export class StorageService {
             }
             const create = options.create === true;
             const parsed = create
-                ? { manifest: input, expectedRevision: undefined, detachStaleVisual: false }
+                ? { manifest: input, expectedRevision: undefined, detachStaleVisual: false, supportedRoadGeometryVersions: [1, 2] }
                 : parseEnvironmentWriteInput(input);
             return this._commitEnvironment(environmentId, parsed.manifest, {
                 expectedRevision: parsed.expectedRevision,
                 create,
                 detachStaleVisual: parsed.detachStaleVisual === true,
+                supportedRoadGeometryVersions: parsed.supportedRoadGeometryVersions,
             });
         });
     }
@@ -2839,7 +2841,7 @@ export class StorageService {
         return null;
     }
 
-    async _commitEnvironment(environmentId, manifest, { expectedRevision, create = false, detachStaleVisual = false } = {}) {
+    async _commitEnvironment(environmentId, manifest, { expectedRevision, create = false, detachStaleVisual = false, supportedRoadGeometryVersions = [1, 2] } = {}) {
         const current = await this._readEnvironment(environmentId);
         const stored = await this._fileStore(this._environmentPath(environmentId), null).read();
         if (create && stored) {
@@ -2849,6 +2851,7 @@ export class StorageService {
             requireEnvironmentRevision(expectedRevision, current?.revision ?? 0);
             try {
                 assertNoObjectGraphDowngrade(manifest, current, environmentId);
+                assertNoRoadGeometryDowngrade(manifest, current, supportedRoadGeometryVersions);
             } catch (error) {
                 throw environmentPolicyError(error);
             }
@@ -2861,6 +2864,11 @@ export class StorageService {
         });
         if (stored && prepared.schemaVersion >= 4 && readSchemaVersion(stored) < 4) {
             await this._retainPreMigrationCopy(environmentId, stored, prepared.schemaVersion);
+        }
+        if (stored
+            && Number(stored?.document?.roads?.geometryVersion ?? 1) !== 2
+            && Number(prepared?.document?.roads?.geometryVersion ?? 1) === 2) {
+            await this._retainPreRoadGeometryCopy(environmentId, stored);
         }
         try {
             await this._assertVisualReference(prepared);
@@ -2911,6 +2919,24 @@ export class StorageService {
             environmentId,
             fromSchemaVersion: readSchemaVersion(stored),
             toSchemaVersion,
+            revision: environmentRevisionOf(stored),
+            migratedAt: new Date().toISOString(),
+            manifest: stored,
+        };
+        await store.write(envelope);
+        return envelope;
+    }
+
+    async _retainPreRoadGeometryCopy(environmentId, stored) {
+        const filePath = path.join(this.environmentMigrationsDir, `${safeSegment(environmentId)}.pre-road-geometry-v2.json`);
+        const store = this._fileStore(filePath, null);
+        if (await store.read()) return null;
+        const envelope = {
+            kind: "cev-sim.environment-pre-road-geometry",
+            version: 1,
+            environmentId,
+            fromRoadGeometryVersion: Number(stored?.document?.roads?.geometryVersion ?? 1),
+            toRoadGeometryVersion: 2,
             revision: environmentRevisionOf(stored),
             migratedAt: new Date().toISOString(),
             manifest: stored,

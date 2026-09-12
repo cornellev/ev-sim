@@ -250,6 +250,19 @@ backends is specified in the
 
 The environment editor authors static world content through an `EnvironmentDocument` (road nodes, edges, turn rules, buildings, features, earth metadata, and the schema-v4 `objects` overlay). Every edit is a `CommandBus` command or gesture that commits one `ChangeSet`; the `SceneProjector` applies change sets incrementally to runtime meshes, registry entities, chunks, and LiDAR truth (roads rebuild only their local closure), so a drag never rebuilds the world. Selection is a shared `SelectionStore` of object ids; runtime road/intersection entities are keyed `road:<edgeId>` / `intersection:<nodeId>` (index aliases exist only after a full load). `EditorState` tracks three sub-modes within the editor: scene editing, 2D map authoring, and earth import.
 
+ED-04 dispatches roads by `document.roads.geometryVersion`. Missing means
+legacy v1 and retains the existing world-description v1 and route-algorithm v5
+identities. Version 2 stores stable knots and relative Bézier handles, then the
+kernel-safe `app/roads/` compiler resolves one deterministic indexed plan for
+Scene, Map, world-description v2, route algorithm 6, paved-union checks,
+browser truth, portable LiDAR, and analytic render primitives. V2 metric roads
+contain resolved controls without editor ids/modes; resource validation
+recompiles indexed surfaces from those controls. Route v6 measures XZ arc
+distance while preserving vertex elevation and rejects broken explicit
+anchors. The first geometry command performs the v1→v2 migration atomically;
+ordinary legacy edits do not. Version-aware environment writes declare `[1,
+2]`, and storage retains one pre-road-geometry migration copy.
+
 - [Environment Editor](environment-editor.md) — document model, editor modes, baking, and chrome UI.
 - [Earth Import](earth-import.md) — Google 3D Tiles preview, OSM road import, and geospatial configuration.
 - [Visual Layer Contracts](visual-layer.md) — frozen visual descriptors, exact-byte integrity, source policy, camera products, and future package admission.
