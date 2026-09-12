@@ -11,7 +11,7 @@
  */
 
 import { objectTypeRegistry } from "../objects/ObjectTypeRegistry.js";
-import { readObjectTransform } from "../objects/objectGraph.js";
+import { legacyIndex, readObjectOptionValue, readObjectTransform } from "../objects/objectGraph.js";
 import { GROUP_TYPE_ID } from "../objects/types/group.js";
 import { text } from "../objects/ObjectOptions.js";
 
@@ -92,23 +92,22 @@ export function defaultMenuOptions(ctx, { objectRegistry = objectTypeRegistry } 
     return options;
 }
 
-/** Field values for a record projected through its options (`fromLegacy`). */
+/**
+ * Field values for a record projected through its options (`fromLegacy`).
+ * `fields` are the descriptors that apply to the current value (types may
+ * hide groups by mode); `allFields` is the complete descriptor list.
+ */
 export function readObjectFieldValues(record, document, { objectRegistry = objectTypeRegistry, sky = null } = {}) {
     const definition = definitionFor(objectRegistry, record);
-    if (!definition?.options) return { fields: [], values: null };
-    let legacy = null;
-    if (definition.legacy) {
-        const domain = definition.legacy.domain;
-        const id = String(record.id);
-        if (domain === "features") legacy = document?.getFeature?.(id) ?? null;
-        else if (domain === "buildings") legacy = document?.getBuilding?.(id) ?? null;
-        else if (domain === "roads.edges") legacy = document?.getEdge?.(id) ?? null;
-        else if (domain === "roads.nodes") legacy = document?.getNode?.(id) ?? null;
-        else if (domain === "earth") legacy = document?.earth ?? null;
-        else if (domain === "sky") legacy = sky ?? {};
-    }
-    const values = definition.options.fromLegacy(legacy, { record, sky });
-    return { fields: [...definition.options.getFields({ record })], values };
+    if (!definition?.options) return { fields: [], allFields: [], values: null };
+    const index = document?.index?.() ?? legacyIndex(document?.snapshot?.() ?? document ?? {});
+    const resolvedSky = sky ?? document?.sky ?? null;
+    const values = readObjectOptionValue(record, index, objectRegistry, { sky: resolvedSky });
+    return {
+        fields: [...definition.options.getFields({ record, value: values })],
+        allFields: [...definition.options.getFields({ record })],
+        values,
+    };
 }
 
 /** Standard inspector sections: object record, transform, options, unsupported notice. */

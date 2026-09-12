@@ -234,6 +234,8 @@ export class EnvironmentLoader {
     _restoreSky(sky) {
         if (!sky) return;
         try {
+            // The document scalar is the authored value; the state mirrors it.
+            this.data.environment().getDocument()?.setSky?.(sky, { notify: false });
             this.data.environment().sky().update(sky);
         } catch (error) {
             console.warn("[environment] failed to restore sky:", error);

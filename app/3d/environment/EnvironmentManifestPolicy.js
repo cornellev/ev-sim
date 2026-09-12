@@ -7,7 +7,8 @@
  * keyed by the legacy record ids whose geometry stays canonical in
  * `roads`/`buildings`/`features`/`earth`, so the graph never enters
  * `worldHash`. v4 is read everywhere but written only when the server opts in
- * (the ED-02 default; `CEV_SIM_ENVIRONMENT_SCHEMA_V4=0` opts out); once a file is v4 it stays v4.
+ * (the default since ED-02; the env-var opt-out was retired in ED-03 and only the test-only
+ * `StorageService` option `environmentSchemaVersion: 3` still writes v3); once a file is v4 it stays v4.
  * `accessHash` is provenance for preview materialization and stays out of
  * `worldHash`. Preview meshes are isolated from measured cameras, registries,
  * and oracle scans.

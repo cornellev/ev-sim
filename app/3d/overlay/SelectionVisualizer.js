@@ -145,15 +145,17 @@ export function SelectionVisualizer({ data }) {
 
         function rebuild() {
             clear();
+            const boundsVisible = data?.editor?.()?.snapshot?.().selectionBoundsVisible !== false;
             const visuals = resolveSelectionVisuals({ selectionSnapshot: selection.snapshot(), document, registry });
             for (const { id, entity } of visuals.leaves) {
                 applyMaterialHighlight(entity.object3D);
                 highlightedRef.current.push(entity.object3D);
+                if (!boundsVisible) continue;
                 const helper = createBoxHelper(entity.object3D, HIGHLIGHT_COLOR, `EnvironmentSelection:${id}`);
                 scene.add(helper);
                 helpersRef.current.push(helper);
             }
-            for (const group of visuals.groups) {
+            for (const group of boundsVisible ? visuals.groups : []) {
                 const helper = createUnionHelper(group.members.map((entity) => entity.object3D), GROUP_COLOR, `EnvironmentSelectionGroup:${group.id}`);
                 if (helper) {
                     scene.add(helper);
@@ -169,6 +171,14 @@ export function SelectionVisualizer({ data }) {
         }
 
         const disposeSelection = selection.subscribe(rebuild);
+        let lastBounds = null;
+        const disposeEditor = data?.editor?.()?.subscribe?.((snapshot) => {
+            const next = snapshot.selectionBoundsVisible !== false;
+            if (lastBounds === next) return;
+            const first = lastBounds === null;
+            lastBounds = next;
+            if (!first) rebuild();
+        }) ?? null;
         const disposeDocument = document.subscribe((snapshot, event) => {
             if (event?.source === "subscribe") return;
             if (event?.transient) {
@@ -180,6 +190,7 @@ export function SelectionVisualizer({ data }) {
         });
         return () => {
             disposeSelection?.();
+            disposeEditor?.();
             disposeDocument?.();
             clear();
         };

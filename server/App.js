@@ -23,9 +23,9 @@ app.prepare().then(async () => {
             registryPath: process.env.CEV_SIM_VISUAL_SOURCE_REGISTRY || undefined,
         },
         bakeOutputSourceIds: process.env.CEV_SIM_BAKE_OUTPUT_SOURCE_IDS,
-        // ED-02: schema v4 (document.objects authoring overlay) is the default writer.
-        // CEV_SIM_ENVIRONMENT_SCHEMA_V4=0 is a temporary opt-out retired in ED-03.
-        environmentSchemaVersion: process.env.CEV_SIM_ENVIRONMENT_SCHEMA_V4 === '0' ? 3 : 4,
+        // Environment writes are schema v4 (document.objects authoring overlay).
+        // The ED-02 env-var opt-out was retired in ED-03; `environmentSchemaVersion: 3`
+        // remains a test-only StorageService option.
     });
     const logService = new LogService(process.env.CEV_SIM_LOGS_DIR);
     const supervisorConfig = process.env.CEV_SIM_HEADLESS_SUPERVISOR_CONFIG

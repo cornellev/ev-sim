@@ -155,12 +155,14 @@ export function EnvironmentSwitcher({ data, activeEnvironmentId, onEnvironmentCh
     };
 
     return (
-        <div className="fixed left-1/2 top-3 z-40 w-[320px] max-w-[calc(100vw-24px)] -translate-x-1/2 pointer-events-auto text-zinc-100">
+        <div className="relative z-40 pointer-events-auto text-zinc-100" data-environment-switcher>
             <button
                 type="button"
-                className="mx-auto flex min-w-[190px] items-center justify-between gap-3 rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-950/90 px-3 py-2.5 text-left shadow-[0_14px_44px_rgba(0,0,0,0.4)] transition-colors hover:border-zinc-600 hover:bg-zinc-900 focus:outline-none focus:ring-2 focus:ring-sky-400/60"
+                className="flex h-8 min-w-[190px] max-w-[320px] items-center justify-between gap-3 rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-950/90 px-3 text-left transition-colors hover:border-zinc-600 hover:bg-zinc-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/60"
                 onClick={() => setOpen((value) => !value)}
                 aria-expanded={open}
+                aria-haspopup="dialog"
+                aria-label="Environment"
             >
                 <span className="min-w-0">
                     <span className="block truncate text-[13px] font-semibold text-zinc-100">
@@ -171,7 +173,7 @@ export function EnvironmentSwitcher({ data, activeEnvironmentId, onEnvironmentCh
             </button>
 
             {open && (
-                <div className="mt-2 w-full overflow-hidden rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-950/95 shadow-[0_20px_70px_rgba(0,0,0,0.55)]">
+                <div role="dialog" aria-label="Environments" className="absolute left-0 top-full mt-2 w-[320px] overflow-hidden rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-950/95 shadow-[0_20px_70px_rgba(0,0,0,0.55)]">
                     <div className="max-h-52 overflow-y-auto p-2">
                         {environments.map((environment) => (
                             <button

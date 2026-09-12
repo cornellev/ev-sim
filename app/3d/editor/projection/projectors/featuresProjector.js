@@ -61,7 +61,8 @@ export function createFeaturesProjector() {
                     continue;
                 }
                 const entity = registry.getEntity(featureEntityId(id));
-                if (!entity || !before || before.type !== after.type) {
+                // Placement geometry depends on the asset type and facing; both re-place.
+                if (!entity || !before || before.type !== after.type || (before.dir ?? 0) !== (after.dir ?? 0)) {
                     if (entity) removeFeature(data, scene, id);
                     placeFeatureRuntime({ data, scene, registry, feature: after, runtime });
                     continue;

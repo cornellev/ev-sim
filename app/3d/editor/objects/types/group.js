@@ -8,7 +8,7 @@
 
 import { ObjectOptions, field, finite, isPlainObject, issue, validateFieldConstraints } from "../ObjectOptions.js";
 import { defineObjectType } from "../ObjectTypeRegistry.js";
-import { TRANSFORM_ISSUE_CODES, applyDeltaToFrame, decomposeDelta } from "../transformDelta.js";
+import { TRANSFORM_ISSUE_CODES, applyDeltaToFrame, decomposeDelta, deltaBetweenFrames } from "../transformDelta.js";
 
 export const GROUP_TYPE_ID = "group";
 
@@ -110,6 +110,15 @@ export function createGroupType() {
         },
         getTransformBinding(record) {
             return groupFrameBinding(record, options);
+        },
+        /**
+         * Frame edits are world transforms: the command routes the delta
+         * between the current and requested frames through the transform
+         * planner so descendants bake exactly once.
+         */
+        planOptions(record, value, context = {}) {
+            const current = options.normalize((context.record ?? record)?.components?.transform ?? {});
+            return { steps: [], issues: [], delta: deltaBetweenFrames(current, options.normalize(value)) };
         },
     });
 }

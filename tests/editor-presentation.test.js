@@ -242,3 +242,32 @@ test("ED-02 a test-only object type appears in the hierarchy and inspector by re
     assert.equal(vendor[0].supported, false);
     assert.equal(vendor[0].icon, null);
 });
+
+test("ED-03 built-in section providers add turn rules, road endpoints, and the sky runtime block without inspector changes", async () => {
+    const { BUILTIN_SECTION_PROVIDERS, SECTION_KINDS } = await import("../app/3d/editor/presentation/builtinSections.js");
+    const { document } = await yardService();
+    const registry = createEditorPresentationRegistry();
+    for (const [typeId, getInspectorSections] of Object.entries(BUILTIN_SECTION_PROVIDERS)) registry.register(typeId, { getInspectorSections });
+
+    const junction = registry.forRecord(document.getObject("n2")).getInspectorSections({ record: document.getObject("n2"), document });
+    const turnRules = junction.find((section) => section.kind === SECTION_KINDS.TURN_RULES);
+    assert.ok(turnRules, "junctions get the allowed-movements matrix");
+    assert.equal(turnRules.connectedRoads, 3);
+    assert.deepEqual(turnRules.movements.incident.map((edge) => edge.id), ["e1", "e2", "e3"]);
+    assert.ok(turnRules.movements.cells.length > 0);
+
+    const road = registry.forRecord(document.getObject("e1")).getInspectorSections({ record: document.getObject("e1"), document });
+    const endpoints = road.find((section) => section.kind === SECTION_KINDS.ROAD_ENDPOINTS);
+    assert.deepEqual(endpoints.start, { id: "n1", y: 0, junction: true });
+    assert.deepEqual(endpoints.end, { id: "n2", y: 0, junction: true });
+    assert.equal(road[0].id, SECTION_IDS.OBJECT, "defaults come first");
+
+    const sky = registry.forRecord(document.getObject("skybox")).getInspectorSections({ record: document.getObject("skybox"), document, sky: { mode: "image" } });
+    assert.equal(sky.at(-1).kind, SECTION_KINDS.SKY_PREVIEW);
+    const options = sky.find((section) => section.kind === "options");
+    assert.ok(options.fields.every((descriptor) => descriptor.path[0] !== "takram"), "image mode hides atmosphere fields");
+    const takram = registry.forRecord(document.getObject("skybox")).getInspectorSections({ record: document.getObject("skybox"), document, sky: { mode: "takram" } });
+    assert.ok(takram.find((section) => section.kind === "options").fields.every((descriptor) => descriptor.path[0] !== "image"));
+    const values = readObjectFieldValues(document.getObject("skybox"), document, { sky: { mode: "takram" } });
+    assert.ok(values.allFields.length > values.fields.length, "allFields keeps the full descriptor list");
+});

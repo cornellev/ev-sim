@@ -1,7 +1,7 @@
 'use client';
 
 import * as THREE from "three";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { Data } from "./data/Data";
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { KeyManager } from "./managers/KeyManager";
@@ -59,6 +59,7 @@ import {
 } from "./runtimeVisibility";
 import { getRunSessionController } from "../simulation/RunSessionController.js";
 import { isInteractiveTarget } from "../ui/shortcutUtils";
+import { resolveRenderViewport, viewportRectsEqual } from "./viewportRect.js";
 
 /** `?mini=q1` | `q2` | `q3` | `q4` | `fi1` | `fi2` | `fii1` | `fiii1` | `fiii2` | `fiii3` (default: q4) */
 const MINI_SCENARIOS = {
@@ -215,8 +216,9 @@ function test(scene, camera, data) {
         const raycaster = new THREE.Raycaster();
         const mouse = new THREE.Vector2();
         
-        mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
-        mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+        const rect = renderer.domElement.getBoundingClientRect();
+        mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+        mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
 
         raycaster.setFromCamera(mouse, camera);
         const intersects = raycaster.intersectObjects(scene.children, true);
@@ -703,6 +705,16 @@ function registerBakeKey(data, harness) {
     return disposeKey;
 }
 
+/** Size the renderer, camera, and (optionally) sky manager from one viewport rect. */
+function applyRenderViewport({ camera, renderer, data }, rect, { resizeSky = true } = {}) {
+    if (!camera || !renderer || !rect) return;
+    camera.aspect = rect.width / rect.height;
+    camera.updateProjectionMatrix();
+    renderer.setSize(rect.width, rect.height);
+    if (resizeSky) data?.skyManager?.()?.resize?.(rect.width, rect.height);
+    data?.simulation?.()?.render?.();
+}
+
 export default function TotalScene({
     mode = THREE_D_MODES.SIMULATION,
     visible = true,
@@ -719,6 +731,15 @@ export default function TotalScene({
     const modeRef = useRef(mode);
     const embeddedViewportRef = useRef(embeddedViewport);
     embeddedViewportRef.current = embeddedViewport;
+    // ED-03: the environment workspace publishes its scene pane rectangle;
+    // the renderer and camera follow it while keys and the overlay stay live.
+    const [workspaceViewport, setWorkspaceViewport] = useState(null);
+    const workspaceViewportRef = useRef(null);
+    workspaceViewportRef.current = workspaceViewport;
+    const handleWorkspaceViewport = useCallback((rect) => {
+        setWorkspaceViewport((current) => (viewportRectsEqual(current, rect) ? current : rect));
+    }, []);
+    const skyResizeTimerRef = useRef(null);
 
     const [sceneData, setSceneData] = useState(null);
     const [sceneReady, setSceneReady] = useState(false);
@@ -728,9 +749,9 @@ export default function TotalScene({
 
     useEffect(() => {
         const scene = new THREE.Scene();
-        const initialViewport = embeddedViewportRef.current;
-        const initialWidth = Math.max(1, Math.round(initialViewport?.width || window.innerWidth));
-        const initialHeight = Math.max(1, Math.round(initialViewport?.height || window.innerHeight));
+        const { rect: initialRect } = resolveRenderViewport({ embedded: embeddedViewportRef.current, workspace: workspaceViewportRef.current, window });
+        const initialWidth = initialRect.width;
+        const initialHeight = initialRect.height;
         const camera = new THREE.PerspectiveCamera(75, initialWidth / initialHeight, 0.1, 1000);
         const renderer = new THREE.WebGLRenderer({
             antialias: false,
@@ -850,14 +871,8 @@ export default function TotalScene({
 
         // --- 4. Handle Window Resize (Optional but Recommended) ---
         const handleResize = () => {
-            const viewport = embeddedViewportRef.current;
-            const width = Math.max(1, Math.round(viewport?.width || window.innerWidth));
-            const height = Math.max(1, Math.round(viewport?.height || window.innerHeight));
-            camera.aspect = width / height;
-            camera.updateProjectionMatrix();
-            renderer.setSize(width, height);
-            data.skyManager()?.resize?.(width, height);
-            data.simulation()?.render?.();
+            const { rect } = resolveRenderViewport({ embedded: embeddedViewportRef.current, workspace: workspaceViewportRef.current, window });
+            applyRenderViewport({ camera, renderer, data }, rect);
         };
         window.addEventListener('resize', handleResize);
 
@@ -908,15 +923,20 @@ export default function TotalScene({
 
     useEffect(() => {
         const runtime = runtimeRef.current;
-        if (!runtime) return;
-        const width = Math.max(1, Math.round(embeddedViewport?.width || window.innerWidth));
-        const height = Math.max(1, Math.round(embeddedViewport?.height || window.innerHeight));
-        runtime.camera.aspect = width / height;
-        runtime.camera.updateProjectionMatrix();
-        runtime.renderer.setSize(width, height);
-        runtime.data.skyManager()?.resize?.(width, height);
-        runtime.data.simulation()?.render?.();
-    }, [embeddedViewport, sceneReady]);
+        if (!runtime) return undefined;
+        const { rect, source } = resolveRenderViewport({ embedded: embeddedViewport, workspace: workspaceViewport, window });
+        // Pane drags publish many rects per second; the sky manager reallocates
+        // render targets on resize, so it follows once the drag settles.
+        applyRenderViewport({ camera: runtime.camera, renderer: runtime.renderer, data: runtime.data }, rect, { resizeSky: source !== "workspace" });
+        if (source !== "workspace") return undefined;
+        if (skyResizeTimerRef.current) clearTimeout(skyResizeTimerRef.current);
+        skyResizeTimerRef.current = setTimeout(() => {
+            skyResizeTimerRef.current = null;
+            runtime.data.skyManager()?.resize?.(rect.width, rect.height);
+            runtime.data.simulation()?.render?.();
+        }, 120);
+        return undefined;
+    }, [embeddedViewport, workspaceViewport, sceneReady]);
 
     // Live-sync: when an MCP agent writes the active environment, re-apply it.
     useEffect(() => {
@@ -1055,12 +1075,14 @@ export default function TotalScene({
     }, [visible])
 
     const embedded = Boolean(embeddedViewport);
-    const viewportStyle = embedded
+    const workspaceRect = !embedded && mode === THREE_D_MODES.ENVIRONMENT ? workspaceViewport : null;
+    const activeRect = embedded ? embeddedViewport : workspaceRect;
+    const viewportStyle = activeRect
         ? {
-            top: `${Math.round(embeddedViewport.top)}px`,
-            left: `${Math.round(embeddedViewport.left)}px`,
-            width: `${Math.max(1, Math.round(embeddedViewport.width))}px`,
-            height: `${Math.max(1, Math.round(embeddedViewport.height))}px`,
+            top: `${Math.round(activeRect.top)}px`,
+            left: `${Math.round(activeRect.left)}px`,
+            width: `${Math.max(1, Math.round(activeRect.width))}px`,
+            height: `${Math.max(1, Math.round(activeRect.height))}px`,
         }
         : undefined;
 
@@ -1090,12 +1112,14 @@ export default function TotalScene({
                         data={sceneData}
                         activeEnvironmentId={environmentId}
                         onEnvironmentChange={onEnvironmentChange}
+                        onViewportChange={handleWorkspaceViewport}
                     />
                 )}
             </div>}
         <div
             id="canvas-container"
-            className={`fixed ${embedded ? "z-[2] overflow-hidden rounded-[var(--radius)] border border-white/10" : "inset-0 z-0 h-[100dvh] w-[100vw]"} transition-opacity duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] ${sceneReady && visible ? "block visible opacity-100" : "hidden pointer-events-none opacity-0"}`}
+            className={`fixed ${embedded ? "z-[2] overflow-hidden rounded-[var(--radius)] border border-white/10" : workspaceRect ? "z-0" : "inset-0 z-0 h-[100dvh] w-[100vw]"} transition-opacity duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] ${sceneReady && visible ? "block visible opacity-100" : "hidden pointer-events-none opacity-0"}`}
+            data-render-viewport={embedded ? "embedded" : workspaceRect ? "workspace" : "window"}
             style={viewportStyle}
             ref={mountRef}
             role={embedded ? "region" : undefined}

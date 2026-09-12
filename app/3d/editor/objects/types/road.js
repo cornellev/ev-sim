@@ -102,6 +102,23 @@ export function createRoadType() {
         getTransformBinding(record) {
             return edgeTransformBinding(record);
         },
+        /** Cross-section and direction edits patch the canonical edge record. */
+        planOptions(record, value) {
+            return {
+                steps: [{
+                    op: "set-edge-options",
+                    edgeId: String(record.id),
+                    patch: {
+                        width: value.width,
+                        laneCount: value.laneCount,
+                        shoulderWidth: value.shoulderWidth,
+                        bidirectional: value.bidirectional,
+                        direction: value.bidirectional ? null : value.direction,
+                    },
+                }],
+                issues: [],
+            };
+        },
         getDependencies(record, context = {}) {
             const edge = context.legacy ?? null;
             const dependencies = [{ kind: "road-edge", id: record.id }];

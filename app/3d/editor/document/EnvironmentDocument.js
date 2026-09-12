@@ -11,6 +11,7 @@
  */
 
 import { OBJECT_GRAPH_VERSION, cloneObjectRecord, sortObjectRecords } from "../objects/objectRecord.js";
+import { skyConfigToManifest } from "../../skybox/EnvironmentSkyConfig.js";
 import { legacyIndex } from "../objects/objectGraph.js";
 import {
     CHANGE_DOMAINS,
@@ -76,6 +77,12 @@ export class EnvironmentDocument {
         // until a loader or writer reconciles the graph.
         /** @type {ObjectRecord[]} */
         this.objects = Array.isArray(options.objects) ? options.objects.map(cloneObjectRecord) : [];
+        // ED-03: the environment sky as a tracked scalar so skybox edits are
+        // ordinary undoable commands. `null` until an Environment seeds it;
+        // the persisted location stays `manifest.sky` (see `toManifest()`), so
+        // documents built from `manifest.document` never carry it.
+        /** @type {object|null} */
+        this.sky = options.sky ? skyConfigToManifest(options.sky) : null;
         this.subscribers = new Set();
         // ED-02: monotonic change counter and transaction state. Every
         // delivered notification bumps `version`; nested transactions collapse
@@ -105,11 +112,13 @@ export class EnvironmentDocument {
             ...(this.objects.length > 0
                 ? { objectGraphVersion: OBJECT_GRAPH_VERSION, objects: this.objects.map(cloneObjectRecord) }
                 : {}),
+            ...(this.sky ? { sky: skyConfigToManifest(this.sky) } : {}),
         };
     }
 
     /**
-     * Restore a prior snapshot produced by {@link snapshot}.
+     * Restore a prior snapshot produced by {@link snapshot}. A snapshot
+     * without a `sky` key leaves the current sky untouched.
      * @param {ReturnType<EnvironmentDocument["snapshot"]>} manifest
      */
     restoreSnapshot(manifest, { notify = true } = {}) {
@@ -133,6 +142,7 @@ export class EnvironmentDocument {
             : [];
         this.earth = manifest.earth ? cloneEarthSource(manifest.earth) : null;
         this.objects = Array.isArray(manifest.objects) ? manifest.objects.map(cloneObjectRecord) : [];
+        if (manifest.sky !== undefined) this.sky = manifest.sky ? skyConfigToManifest(manifest.sky) : null;
         if (notify) this.notify({ source: "restore" });
     }
 
@@ -174,13 +184,19 @@ export class EnvironmentDocument {
         return changed;
     }
 
-    /** Set one tracked scalar (`earth`, authored flags, `chunkSize`). */
+    /** Set one tracked scalar (`earth`, `sky`, authored flags, `chunkSize`). */
     setScalar(name, value, { notify = true } = {}) {
         if (!CHANGE_SCALARS.includes(name)) throw new TypeError(`Unknown change scalar "${name}".`);
         if (name === "earth") this.earth = value ? cloneEarthSource(value) : null;
+        else if (name === "sky") this.sky = value ? skyConfigToManifest(value) : null;
         else if (name === "chunkSize") this.chunkSize = Number.isFinite(Number(value)) ? Number(value) : this.chunkSize;
         else this[name] = value === true;
         if (notify) this.notify();
+    }
+
+    /** The environment sky configuration (manifest shape) or `null` when unseeded. */
+    setSky(config, { notify = true } = {}) {
+        this.setScalar("sky", config, { notify });
     }
 
     /**
@@ -322,8 +338,13 @@ export class EnvironmentDocument {
         return this.objects.find((record) => record.id === objectId) ?? null;
     }
 
+    /**
+     * Persisted document shape. The sky is stored at `manifest.sky` by the
+     * environment, not inside the document, so it is stripped here.
+     */
     toManifest() {
-        return this.snapshot();
+        const { sky: _sky, ...manifest } = this.snapshot();
+        return manifest;
     }
 
     /**

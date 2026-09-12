@@ -508,7 +508,7 @@ export function BakeProgressOverlay({ data }) {
                     setDrawerOpen(true);
                 }}
                 onPointerDown={stopEvent}
-                className="bake-progress-overlay fixed right-0 top-24 z-30 flex h-24 w-11 flex-col items-center justify-center gap-1 rounded-l-[var(--radius)] border border-r-0 border-zinc-700/80 bg-zinc-950/90 text-zinc-100 shadow-[0_20px_60px_rgba(0,0,0,0.4)] pointer-events-auto transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-zinc-900/95 focus:outline-none focus:ring-2 focus:ring-sky-400/60 active:scale-[0.98]"
+                className="bake-progress-overlay absolute right-0 top-12 z-30 flex h-24 w-11 flex-col items-center justify-center gap-1 rounded-l-[var(--radius)] border border-r-0 border-zinc-700/80 bg-zinc-950/90 text-zinc-100 shadow-[0_20px_60px_rgba(0,0,0,0.4)] pointer-events-auto transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-zinc-900/95 focus:outline-none focus:ring-2 focus:ring-sky-400/60 active:scale-[0.98]"
             >
                 <FaLayerGroup className="h-3.5 w-3.5 text-sky-300" />
                 <span className="[writing-mode:vertical-rl] text-[11px] font-semibold tracking-wide text-zinc-200">
@@ -522,7 +522,7 @@ export function BakeProgressOverlay({ data }) {
     return (
         <aside
             className={cn(
-                "bake-progress-overlay fixed bottom-20 right-3 top-3 z-30 flex w-[380px] max-w-[calc(100vw-1.5rem)] flex-col overflow-hidden rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-950/85 p-2.5 text-zinc-100 shadow-[0_30px_90px_rgba(0,0,0,0.48)] pointer-events-auto md:right-3 max-md:left-3 max-md:w-auto",
+                "bake-progress-overlay absolute bottom-3 right-3 top-3 z-30 flex w-[380px] max-w-[calc(100%-1.5rem)] flex-col overflow-hidden rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-950/85 p-2.5 text-zinc-100 shadow-[0_30px_90px_rgba(0,0,0,0.48)] pointer-events-auto md:right-3 max-md:left-3 max-md:w-auto",
             )}
             onPointerDown={disablePanelControls}
             onPointerUp={enablePanelControls}

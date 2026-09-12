@@ -1,78 +1,34 @@
 'use client';
 
-import { BakeProgressOverlay } from "./BakeProgressOverlay";
 import { ChunkOutlines } from "./ChunkOutlines";
-import { EnvironmentEditorMenu } from "./EnvironmentEditorMenu";
 import { EarthImportBoundsOutline } from "./earth/EarthImportBoundsOutline";
-import { EarthImportModeChrome } from "./earth/EarthImportModeChrome";
-import { MapModeChrome } from "./map/MapModeChrome";
-import { ObjectInspector } from "./ObjectInspector";
-import { SceneHierarchy } from "./SceneHierarchy";
 import { SelectionVisualizer } from "./SelectionVisualizer";
 import { EditorCommandShortcuts } from "./EditorCommandShortcuts";
-import { EDITOR_MODES } from "../editor/EditorState";
-import { useEffect, useState } from "react";
-import { EnvironmentSwitcher } from "./EnvironmentSwitcher";
-import { VisualPreviewDiagnostic } from "./VisualPreviewDiagnostic";
-import { useShortcut } from "../../ui";
+import { EditorGridOverlay } from "./workspace/EditorGridOverlay";
+import { EditorWorkspace } from "./workspace/EditorWorkspace";
 
-export function EnvironmentEditorChrome({ data, activeEnvironmentId, onEnvironmentChange }) {
-    const [editorSnapshot, setEditorSnapshot] = useState(null);
-    const [hierarchyOpen, setHierarchyOpen] = useState(false);
-    const [inspectorOpen, setInspectorOpen] = useState(false);
-
-    useEffect(() => data?.editor?.()?.subscribe?.(setEditorSnapshot), [data]);
-
-    useShortcut({
-        id: "environment-compact-panel",
-        keys: "Escape",
-        priority: 20,
-        enabled: hierarchyOpen || inspectorOpen,
-        handler: () => {
-            setHierarchyOpen(false);
-            setInspectorOpen(false);
-            return true;
-        },
-    });
-
+/**
+ * Environment editor chrome: the pane workspace (top bar, hierarchy, scene
+ * toolbar and view, inspector, asset pane) plus the Three-side overlays
+ * (selection, chunk outlines, working grid, Earth bounds) and the
+ * workspace-scoped shortcuts. `onViewportChange` publishes the scene pane's
+ * rectangle so the renderer and camera resize with it.
+ */
+export function EnvironmentEditorChrome({ data, activeEnvironmentId, onEnvironmentChange, onViewportChange }) {
     if (!data) return null;
-
-    const editorMode = editorSnapshot?.editorMode;
-    const inOverlayMode = editorMode === EDITOR_MODES.MAP
-        || editorMode === EDITOR_MODES.EARTH_IMPORT;
-
     return (
         <>
-            <EnvironmentSwitcher
+            <EditorCommandShortcuts data={data} />
+            <ChunkOutlines data={data} />
+            <SelectionVisualizer data={data} />
+            <EditorGridOverlay data={data} />
+            <EarthImportBoundsOutline data={data} />
+            <EditorWorkspace
                 data={data}
                 activeEnvironmentId={activeEnvironmentId}
                 onEnvironmentChange={onEnvironmentChange}
+                onViewportChange={onViewportChange}
             />
-            <EditorCommandShortcuts data={data} />
-            {!inOverlayMode && <ChunkOutlines data={data} />}
-            {!inOverlayMode && <SelectionVisualizer data={data} />}
-            {!inOverlayMode && <SceneHierarchy data={data} compactOpen={hierarchyOpen} />}
-            {!inOverlayMode && <ObjectInspector data={data} compactOpen={inspectorOpen} />}
-            <BakeProgressOverlay data={data} />
-            <VisualPreviewDiagnostic data={data} />
-            {!inOverlayMode && (
-                <EnvironmentEditorMenu
-                    data={data}
-                    hierarchyOpen={hierarchyOpen}
-                    inspectorOpen={inspectorOpen}
-                    onToggleHierarchy={() => {
-                        setHierarchyOpen((open) => !open);
-                        setInspectorOpen(false);
-                    }}
-                    onToggleInspector={() => {
-                        setInspectorOpen((open) => !open);
-                        setHierarchyOpen(false);
-                    }}
-                />
-            )}
-            <MapModeChrome data={data} />
-            <EarthImportBoundsOutline data={data} />
-            <EarthImportModeChrome data={data} />
         </>
     );
 }

@@ -264,6 +264,17 @@ export function createBuiltinPropType() {
         getTransformBinding(record) {
             return record ? featureTransformBinding(record) : NO_TRANSFORM_BINDING;
         },
+        /** Asset, placement, and facing edits patch the feature record (`type` is the asset id). */
+        planOptions(record, value) {
+            return {
+                steps: [{
+                    op: "set-feature-record",
+                    featureId: String(record.id),
+                    patch: { type: value.assetId, x: value.x, z: value.z, rotationY: value.rotationY, dir: value.dir },
+                }],
+                issues: [],
+            };
+        },
         getDependencies(record) {
             return [{ kind: "feature", id: record.id }];
         },

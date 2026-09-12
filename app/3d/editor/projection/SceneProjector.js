@@ -11,6 +11,7 @@ import { createBuildingsProjector } from "./projectors/buildingsProjector.js";
 import { createFeaturesProjector } from "./projectors/featuresProjector.js";
 import { createObjectsProjector } from "./projectors/objectsProjector.js";
 import { createRoadsProjector } from "./projectors/roadsProjector.js";
+import { createSkyProjector } from "./projectors/skyProjector.js";
 
 export function createDefaultProjectors() {
     return [
@@ -18,6 +19,7 @@ export function createDefaultProjectors() {
         createBuildingsProjector(),
         createFeaturesProjector(),
         createObjectsProjector(),
+        createSkyProjector(),
     ];
 }
 

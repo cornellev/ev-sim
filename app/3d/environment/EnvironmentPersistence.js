@@ -53,6 +53,8 @@ export class EnvironmentPersistence {
         this._sending = false;
         this._saveThrowOnError = false;
         this._chain = Promise.resolve();
+        this._statusSubscribers = new Set();
+        this._lastStatusKey = null;
 
         this._flushForUnload = () => this.flush({ keepalive: true });
         this._flushOnHide = () => {
@@ -72,6 +74,33 @@ export class EnvironmentPersistence {
 
     get isDirty() {
         return this._dirty;
+    }
+
+    /** Save status for chrome: `{ dirty, sending, conflict, revision }`. */
+    statusSnapshot() {
+        return {
+            dirty: this._dirty,
+            sending: this._sending,
+            conflict: this._conflict ? { ...this._conflict } : null,
+            revision: this._acknowledgedRevision,
+        };
+    }
+
+    /** Subscribe to status changes (fires immediately, then on every change). */
+    subscribe(callback) {
+        if (typeof callback !== "function") return () => {};
+        this._statusSubscribers.add(callback);
+        callback(this.statusSnapshot());
+        return () => this._statusSubscribers.delete(callback);
+    }
+
+    _notifyStatus() {
+        if (this._statusSubscribers.size === 0) return;
+        const snapshot = this.statusSnapshot();
+        const key = JSON.stringify(snapshot);
+        if (key === this._lastStatusKey) return;
+        this._lastStatusKey = key;
+        this._statusSubscribers.forEach((callback) => callback(snapshot));
     }
 
     attach() {
@@ -232,6 +261,7 @@ export class EnvironmentPersistence {
 
         this._editGeneration += 1;
         this._dirty = true;
+        this._notifyStatus();
         const now = Date.now();
         if (!this._firstPendingAt) this._firstPendingAt = now;
 
@@ -266,6 +296,7 @@ export class EnvironmentPersistence {
         const generation = this._generation;
         this._sending = true;
         this._saveThrowOnError = throwOnError;
+        this._notifyStatus();
         this._chain = (async () => {
             let last = null;
             try {
@@ -283,6 +314,7 @@ export class EnvironmentPersistence {
             } finally {
                 this._sending = false;
                 this._saveThrowOnError = false;
+                this._notifyStatus();
             }
         })();
         return this._chain;

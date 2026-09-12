@@ -1,4 +1,6 @@
 import * as THREE from "three";
+import { readObjectTransform } from "../objects/objectGraph.js";
+import { objectTypeRegistry } from "../objects/ObjectTypeRegistry.js";
 import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 import { EDITOR_TOOLS } from "../EditorState.js";
 import { descendantIds, indexObjectsById } from "../commands/objectMutations.js";
@@ -221,7 +223,21 @@ export class TransformTool {
         this.controls.showX = policy.showX;
         this.controls.showY = policy.showY;
         this.controls.showZ = policy.showZ;
+        // ED-03 view options: local axes follow the primary object's yaw for a
+        // single selection (multi-selections stay in world space); snapping
+        // applies per mode.
+        const local = snapshot.transformSpace === "local" && this.targets.objectIds.length === 1 && !this.targets.sub;
+        this.controls.setSpace(local ? "local" : "world");
+        const snap = snapshot.transformSnap ?? {};
+        this.controls.setTranslationSnap(snap.enabled ? snap.translation : null);
+        this.controls.setRotationSnap(snap.enabled ? THREE.MathUtils.degToRad(snap.rotationDeg) : null);
+        this.controls.setScaleSnap(snap.enabled ? snap.scale : null);
         positionPivotAtCenter(this.pivot, this.targets.object3Ds);
+        if (local) {
+            const record = this.document.getObject(this.targets.objectIds[0]);
+            const transform = record ? readObjectTransform(record, this.document, objectTypeRegistry) : null;
+            if (Number.isFinite(transform?.rotationY)) this.pivot.rotation.set(0, transform.rotationY, 0);
+        }
         this.pivot.visible = true;
         this.pivot.updateMatrixWorld(true);
         this.controls.attach(this.pivot);

@@ -296,9 +296,9 @@ export class StorageService {
         this.bakePromotions = new BakePromotionController(this);
         this.environmentTransactionsDir = path.join(dataDir, "environment-transactions");
         this.environmentMigrationsDir = path.join(dataDir, "environment-migrations");
-        // Guarded writes emit schema v3 unless the server opts into v4. Tests
-        // construct services directly, so the env flag is read in App.js only.
-        // ED-02: v4 by default; `environmentSchemaVersion: 3` opts a service out (tests, legacy hosts).
+        // Guarded writes emit schema v4. `environmentSchemaVersion: 3` is a
+        // test-only option that exercises the legacy writer; the server never
+        // sets it (the env-var opt-out was retired in ED-03).
         this.environmentWriteSchemaVersion = options.environmentSchemaVersion === 3 ? 3 : 4;
         this._environmentRecovery = null;
         this._runManifestWriteChains = new Map();

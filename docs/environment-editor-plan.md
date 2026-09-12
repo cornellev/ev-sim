@@ -24,15 +24,21 @@ ED PR changes a contract, hash, gate, or milestone status.
 
 ## Status
 
-- Next milestone: **ED-03 — Workspace and inspector**.
+- Next milestone: **ED-04 — Road geometry**.
 - Implemented: **ED-01 — Contracts** (object registry, options validation,
-  schema-v4 adapters, compatibility fixtures) and **ED-02 — Commands and
+  schema-v4 adapters, compatibility fixtures), **ED-02 — Commands and
   hierarchy** (`SelectionStore`, `CommandBus` with transactions, gestures, and
   undo/redo, nested groups with baked transforms, transform bindings that plan
   document changes, the incremental `SceneProjector`,
   `EditorPresentationRegistry`, MCP routed through the same commands, and the
-  schema-v4 default writer). Existing environments retain their legacy
-  behavior; `CEV_SIM_ENVIRONMENT_SCHEMA_V4=0` is a temporary v3 opt-out.
+  schema-v4 default writer), and **ED-03 — Workspace and inspector** (the
+  option write path `planOptions` / `setObjectOptions`, the sky as an
+  undoable document scalar, the resizable pane workspace with the scene pane
+  driving the renderer viewport, unified scene/map views, the icon toolbar,
+  generic fields with mixed multi-selection values, the Skybox inspector,
+  workspace-scoped shortcuts, the windowed hierarchy, the asset pane shell,
+  Playwright/axe coverage, and retirement of the v4 opt-out). Existing
+  environments retain their legacy behavior; schema v4 is the only writer.
 - Program goal: one consistent interaction model across hierarchy, scene, map,
   inspector, and asset library, with a modular object system that adds a type
   through one definition, one options validator, and its metric/render
@@ -46,7 +52,7 @@ ED PR changes a contract, hash, gate, or milestone status.
   proxies are set up; LiDAR authoring supports generated meshes and editable
   primitives.
 - Default implementation/review reasoning level: **Extra High**.
-- Last updated: **2026-09-11 — ED-02 implemented**.
+- Last updated: **2026-09-11 — ED-03 implemented**.
 
 ## Normative contracts
 
@@ -247,16 +253,98 @@ ED PR changes a contract, hash, gate, or milestone status.
   sections). Hierarchy and inspector consume it exclusively; the hierarchy tree
   model (`hierarchyModel.js`) is pure. A new type appears in both by
   registration alone (`tests/editor-presentation.test.js`).
-- Editor shortcuts (`Mod+Z`, `Shift+Mod+Z` / `Ctrl+Y`, `Mod+D`, `Delete` /
+- Editor shortcuts (`Q`/`W`/`E`/`R` in the scene view, `Escape`, `Enter` for
+  a road-pen draft, `Mod+Z`, `Shift+Mod+Z` / `Ctrl+Y`, `Mod+D`, `Delete` /
   `Backspace`, `Mod+G`, `Shift+Mod+G`, `F`) register through
-  `ShortcutProvider`, never fire in editable fields, and consume the event only
-  when the command succeeds. `matchesShortcut` understands `Mod`, `Ctrl`,
-  `Alt`, and `Shift` prefixes; bare letters never fire with Cmd/Ctrl/Alt held.
-  Escape cancels an active gesture, then exits the tool, then clears the
-  selection (`EditorToolController`).
-- The only development flag is the localStorage preference
-  `cev-sim.ui.environmentEditor.groupFrameFields` (default off) gating the
-  bespoke editable group-frame inputs that ED-03's generic fields replace.
+  `ShortcutProvider` (`EditorCommandShortcuts`), never fire in editable
+  fields, and consume the event only when something happened. Nothing editor-
+  related registers on the raw `KeyManager`. `matchesShortcut` understands
+  `Mod`, `Ctrl`, `Alt`, and `Shift` prefixes; bare letters never fire with
+  Cmd/Ctrl/Alt held. `EditorToolController.handleEscape()` is the single
+  Escape policy: cancel an active gesture, then a map draft, then leave the
+  active tool, then clear the selection; it returns `false` when nothing was
+  consumed so the global workspace switcher opens (the
+  `__fusionEnvironmentEditorConsumesEscape` flag mirrors that state).
+- Built-in inspector sections beyond the generic fields are pure descriptors
+  in `presentation/builtinSections.js` (`turn-rules` for junctions,
+  `road-endpoints` for edges, `sky-local-preview` for the Skybox) registered
+  with the icons; the inspector maps `kind` to a component. Types may hide
+  fields by mode: `getFields(context)` receives `{ record, value }` and
+  `readObjectFieldValues` returns both `fields` (applicable) and `allFields`.
+- There is no development flag. The editor preferences (all localStorage,
+  never in the manifest) are `cev-sim.ui.environmentEditor.paneLayout`,
+  `.viewOptions`, `.hierarchyExpanded`, and `.inspectorSections`.
+
+### Option write path and the sky scalar (ED-03)
+
+- `planOptions(record, value, context)` is a required type method
+  (`REQUIRED_TYPE_METHODS`; `defineObjectType` supplies a default that
+  rejects with `options.unsupported`). It returns `{ steps, issues, delta? }`:
+  plain `PlanStep`s applied by `commands/planApply.js`, or a world
+  `TransformDelta` that the command routes through `planTransform` so group
+  descendants bake exactly once. Plan ops added in ED-03: `set-edge-options`
+  (`updateRoadEdge`), `set-building-record` (`updateBuildingRecord`),
+  `set-feature-record` (`updateFeatureRecord`; a type change re-tags
+  `[oldType]` → `[newType]`), `set-earth-source` (merged into the `earth`
+  scalar), `set-sky`. Per type: road → edge patch (direction cleared when
+  two-way), intersection → `move-node` with the new `y`, building → height and
+  texture, prop → asset id (`type`), placement, yaw, facing, tile → bounds
+  (provider and anchor are `readOnly`), skybox → `set-sky`, group → frame
+  delta, asset-instance → unsupported.
+- `objectCommands.setObjectOptions({ objectId, patch })` accepts
+  `[{ path, value }]` entries or a plain object (nested keys that name no
+  descriptor still surface as `options.unknown-path`). Order: missing/locked
+  record → descriptor lookup (`options.unknown-path`, `options.read-only`) →
+  `validateFieldConstraints` on the raw candidate → `options.normalize` →
+  `options.validate` → `planOptions` → apply. Issues keep their field `path`
+  and `objectId`; a failure leaves the document byte-identical.
+  `setObjectsOptions({ objectIds, patch })` applies one patch to several
+  records in one `run()` and aborts on the first failure (one history entry,
+  atomic). Both are in `EnvironmentCommandService.commandFactories`.
+- The sky is a document scalar: `CHANGE_SCALARS` includes `sky`,
+  `EnvironmentDocument.sky` / `setSky()` hold the manifest-shaped config,
+  `snapshot()` emits `sky` only once seeded (v2/v3 snapshots stay
+  byte-identical), and `toManifest()` strips it so the persisted location stays
+  `manifest.sky` and `manifest.document` is unchanged. `Environment` seeds the
+  scalar from the sky state and keeps it current when legacy callers write the
+  state directly (no history entry); the `sky` projector mirrors committed,
+  undone, and redone scalar changes into `EnvironmentSkyState`, whose
+  session-only fields (local preview, runtime status) never enter the
+  document. `CommandBus.sky` resolves `document.sky` first. Sky is not read by
+  `createWorldDescription`; `worldHash` is unchanged.
+- `featuresProjector` re-places a prop when its `type` or `dir` changes and
+  moves it in place otherwise.
+
+### Workspace (ED-03)
+
+- `editor/workspace/paneLayout.js` is the pure pane model: hierarchy 232 px
+  (180–480), inspector 304 px (240–560), asset pane 208 px (120–480), 6 px
+  splitters, 28 px collapsed rails, top bar 40 px, toolbar 36 px. `clampPaneLayout`
+  keeps the scene pane at or above 480 × 240 px by shrinking the inspector,
+  then the hierarchy, then the asset pane, and collapsing in that order when
+  minimums are not enough. Layouts serialize as `{ version: 1, panes }`.
+- The scene pane publishes its viewport-relative rectangle; `TotalScene`
+  resolves the render viewport as embedded (Experiments) > workspace > window
+  (`app/3d/viewportRect.js`) and sizes the renderer, camera, and sky manager
+  from it (sky resizes are debounced during pane drags). Keys and the overlay
+  stay live for the workspace viewport; only `embeddedViewport` disables
+  them. The center cell is `pointer-events: none`, so picking and
+  `TransformControls` keep receiving canvas-relative events;
+  `isOverlayEvent` also treats portaled Radix surfaces as chrome. Enum and
+  asset fields use native selects so no option list portals over the scene.
+- Scene and Map are views: `EditorState.editorMode` (`scene` | `map`) selects
+  the center content; hierarchy and inspector stay mounted. Earth Import
+  remains a mode whose chrome overlays the scene pane while the other panes
+  hide (ED-08 replaces it).
+- View options (`transformSpace`, `transformSnap`, `sceneGridVisible`,
+  `selectionBoundsVisible`, `chunkOutlinesVisible`) live on `EditorState`,
+  are excluded from `persistedSnapshot()`, and are remembered as a preference.
+  `TransformTool.sync()` applies axis space (local follows the primary's yaw
+  for a single selection) and snapping; `SelectionVisualizer` honors the
+  bounds toggle. Overlay toggles shipped: grid (scene working grid / map
+  grid), chunks, selection bounds; LiDAR and collision arrive with ED-07.
+- `EnvironmentPersistence.subscribe()` publishes `{ dirty, sending, conflict,
+  revision }` for the save status.
 
 ### Schema v4 and write policy
 
@@ -372,7 +460,13 @@ the schema-v4 default and documentation.
 
 ### ED-03 — Workspace and inspector
 
-**Depends on:** ED-02.
+**Depends on:** ED-02. Delivered as five slices: ED-03a option write path
+(`planOptions`, `setObjectOptions`, sky scalar, projector touch-ups), ED-03b
+workspace shell (pane model, splitters, viewport publication, unified views,
+toolbar, top bar, shortcut scoping), ED-03c generic fields and the inspector
+rewrite (field model, controls, built-in sections, retirement of the map
+inspector and sky flyout), ED-03d windowed hierarchy and asset pane shell,
+ED-03e opt-out retirement, Playwright/axe coverage, and documentation.
 
 Resizable, collapsible panes in the fixed arrangement (232 px hierarchy,
 304 px inspector, 208 px asset panel; sizes and collapsed states remembered as
@@ -511,9 +605,13 @@ node --experimental-default-type=module --test \
   tests/document-changeset.test.js tests/command-bus.test.js tests/command-groups.test.js \
   tests/scene-projector.test.js tests/editor-interactions.test.js \
   tests/editor-presentation.test.js tests/road-elevation.test.js \
-  tests/ui-interactions.test.js tests/ui-conventions.test.js
+  tests/ui-interactions.test.js tests/ui-conventions.test.js \
+  tests/command-options.test.js tests/pane-layout.test.js tests/editor-workspace.test.js \
+  tests/field-model.test.js tests/virtual-window.test.js
 npm run lint
 npm test
+npm run test:ui -- tests/ui/environment-editor.spec.js
+npm run test:a11y -- tests/ui/environment-editor.spec.js
 npm run fixtures:headless && git diff --exit-code -- tests/fixtures/headless/characterization.v1.json
 npm run fixtures:environment-editor && git diff --exit-code -- tests/fixtures/environment-editor/compatibility-baseline.v1.json
 ```
@@ -555,6 +653,50 @@ Record in the ledger: focused-suite pass counts, `npm run lint` result,
 - [ ] ED-09 — Acceptance.
 
 ## Decision log
+
+### 2026-09-11 — Implement ED-03 workspace and inspector
+
+Two decisions were taken with the human before implementation. Skybox edits
+go through the CommandBus: the sky became a document scalar mirrored into
+`EnvironmentSkyState` rather than a direct write to the runtime state, so sky
+edits are validated, undoable, and visible to persistence like every other
+field; the persisted location stays `manifest.sky`, `snapshot()` carries the
+scalar only once seeded and `toManifest()` strips it, so `manifest.document`
+and every v2/v3 snapshot comparison are unchanged (a failed command restores
+through `snapshot()`, which is why the scalar lives in the public snapshot
+rather than a private diff view). Overlay toggles ship only for content that
+renders today (grid, chunks, selection bounds); LiDAR and collision toggles
+arrive with ED-07's proxies instead of as disabled placeholders.
+
+The option write path is a type contract, not inspector logic: `planOptions`
+joined the required type methods with a rejecting default, so a new type
+gains editable fields by returning plan steps (or a world delta) and the
+inspector, MCP, and tests never branch on `typeId`. Patches accept either
+`[{ path, value }]` entries or nested objects, and validation runs on the raw
+candidate before `normalize()` so out-of-range input is reported instead of
+silently clamped.
+
+Layout facts that shaped the shell: `TotalScene`'s existing `embeddedViewport`
+disables keyboard handling and hides the overlay, so the workspace publishes a
+separate scene-pane rectangle resolved with embedded > workspace > window
+precedence; the center grid cell is `pointer-events: none` so the canvas
+beneath keeps receiving canvas-relative pointer events; `isOverlayEvent`
+treats portaled Radix surfaces as chrome and enum fields use native selects
+because the pick tool listens on `window`. No dependency was added: the pane
+splitter, the windowed hierarchy, and the field controls are hand-rolled on
+the existing kit. The React Compiler memoizes render-time derivations by
+reference, and commands mutate records in place, so the inspector reads the
+document/registry/presentation version counters inside its derivation to
+force recomputation. Q/W/E/R and Escape moved from the raw `KeyManager` to
+`ShortcutProvider` so they never fire while typing; `handleEscape()` returns
+`false` when nothing was consumed so the global workspace switcher still
+opens. The `ShortcutProvider` treats any mounted `role="listbox"` as an open
+overlay, so persistent panes must not use that role (the asset grid is a
+button group). Scene/Map became two views of one document with hierarchy and
+inspector always mounted; Earth Import stays a mode until ED-08. The
+`CEV_SIM_ENVIRONMENT_SCHEMA_V4=0` opt-out and the `groupFrameFields`
+preference were retired; `environmentSchemaVersion: 3` remains a test-only
+`StorageService` option and a test greps `app/` and `server/` for the env var.
 
 ### 2026-09-11 — Record the ED program
 

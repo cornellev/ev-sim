@@ -8,6 +8,7 @@ import { CommandBus } from "../editor/commands/CommandBus.js";
 import { SceneProjector } from "../editor/projection/SceneProjector.js";
 import { SelectionStore } from "../editor/selection/SelectionStore.js";
 import { EnvironmentSkyState } from "../skybox/EnvironmentSkyState.js";
+import { skyConfigToManifest } from "../skybox/EnvironmentSkyConfig.js";
 import { ENVIRONMENT_SCHEMA_VERSION } from "./EnvironmentManifestPolicy.js";
 
 /**
@@ -43,6 +44,19 @@ export class Environment {
         this.document = options.document instanceof EnvironmentDocument
             ? options.document
             : EnvironmentDocument.fromManifest(options.document ?? {});
+        // ED-03: the document owns the authored sky (undoable commands); the
+        // runtime sky state mirrors it. Seed from the manifest sky, and keep
+        // the scalar current when legacy callers still write the state
+        // directly (no history entry; committed commands go the other way
+        // through the sky projector).
+        if (!this.document.sky) this.document.setSky(this.skyState.toManifest(), { notify: false });
+        this.disposeSkyMirror = this.skyState.subscribe((snapshot) => {
+            const manifest = skyConfigToManifest(snapshot);
+            if (this.document.inTransaction) return;
+            if (JSON.stringify(manifest) !== JSON.stringify(this.document.sky)) {
+                this.document.setSky(manifest, { notify: false });
+            }
+        });
         this.chunkManager = new ChunkManager({
             scene: data.three?.()?.scene ?? null,
             chunkSize: this.chunkSize,
@@ -56,7 +70,7 @@ export class Environment {
         this.commandBus = new CommandBus({
             document: this.document,
             selection: this.selectionStore,
-            sky: () => this.skyState?.toManifest?.() ?? null,
+            sky: () => this.document?.sky ?? this.skyState?.toManifest?.() ?? null,
         });
         this.sceneProjector = null;
 
@@ -154,6 +168,8 @@ export class Environment {
     }
 
     dispose() {
+        this.disposeSkyMirror?.();
+        this.disposeSkyMirror = null;
         this.toolController?.dispose?.();
         this.toolController = null;
         this.sceneProjector?.dispose?.();

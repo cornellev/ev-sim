@@ -9,7 +9,7 @@
  * issues and never mutates its input. Kernel-safe.
  */
 
-import { hasErrorIssue, isPlainObject, issue, text } from "./ObjectOptions.js";
+import { hasErrorIssue, isPlainObject, issue, text, OPTIONS_ISSUE_CODES } from "./ObjectOptions.js";
 import { objectTypeRegistry } from "./ObjectTypeRegistry.js";
 import { TRANSFORM_ISSUE_CODES } from "./transformDelta.js";
 import {
@@ -481,5 +481,47 @@ export function planObjectTransform(record, index, registry = objectTypeRegistry
     return {
         steps: Array.isArray(result?.steps) ? result.steps : [],
         issues: Array.isArray(result?.issues) ? result.issues : [],
+    };
+}
+
+/**
+ * Project a record's option value from its canonical legacy record (or its
+ * components for legacy-free types). Returns `null` when the type is not
+ * registered or has no options.
+ */
+export function readObjectOptionValue(record, index, registry = objectTypeRegistry, context = {}) {
+    const definition = registry.get(record?.typeId, record?.typeVersion) ?? registry.get(record?.typeId);
+    if (!definition?.options) return null;
+    const legacy = definition.legacy ? legacyRecordFor(index, definition, record.id, context) : null;
+    return definition.options.fromLegacy(legacy, { ...context, record });
+}
+
+/**
+ * Plan the document changes that write a complete, normalized option value
+ * back to a record. Pure: returns `{ steps, issues, delta? }` and never
+ * mutates. `value` must already be normalized and validated by the type's
+ * options; `previous` is the current projected value.
+ */
+export function planObjectOptions(record, index, registry = objectTypeRegistry, value, context = {}) {
+    const objectId = record?.id ?? null;
+    const definition = registry.get(record?.typeId, record?.typeVersion) ?? registry.get(record?.typeId);
+    if (!definition) {
+        return {
+            steps: [],
+            issues: [issue(["options"], OPTIONS_ISSUE_CODES.UNSUPPORTED, `Object type "${record?.typeId}" is not registered.`, { objectId })],
+        };
+    }
+    const legacy = definition.legacy ? legacyRecordFor(index, definition, record.id, context) : null;
+    if (definition.legacy && legacy === null) {
+        return {
+            steps: [],
+            issues: [issue(["options"], OPTIONS_ISSUE_CODES.UNSUPPORTED, `Object "${record.id}" has no document record.`, { objectId })],
+        };
+    }
+    const result = definition.planOptions(record, value, { ...context, legacy, nodes: index.nodes, index, record });
+    return {
+        steps: Array.isArray(result?.steps) ? result.steps : [],
+        issues: Array.isArray(result?.issues) ? result.issues : [],
+        ...(result?.delta ? { delta: result.delta } : {}),
     };
 }

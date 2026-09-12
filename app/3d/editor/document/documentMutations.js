@@ -851,6 +851,82 @@ export function setBuildingFootprint(document, buildingId, shape = {}, runtime =
 }
 
 /**
+ * Update non-geometric building fields (height, texture, tags). Footprints
+ * change through `setBuildingFootprint` / transform plans.
+ * @param {import("./EnvironmentDocument.js").EnvironmentDocument} document
+ * @param {string} buildingId
+ * @param {{ height?: number, textureId?: number, tags?: string[] }} patch
+ * @param {{ notify?: boolean }} [runtime]
+ */
+export function updateBuildingRecord(document, buildingId, patch = {}, runtime = {}) {
+    const building = document.getBuilding(buildingId);
+    if (!building) return { ok: false, error: "Building not found." };
+    if (patch.height !== undefined) {
+        const height = Number(patch.height);
+        if (!Number.isFinite(height) || height <= 0) {
+            return { ok: false, error: "Building height must be a positive number." };
+        }
+        building.height = height;
+    }
+    if (patch.textureId !== undefined) {
+        const textureId = Number(patch.textureId);
+        if (!Number.isInteger(textureId) || textureId < 0) {
+            return { ok: false, error: "Building texture must be a non-negative integer." };
+        }
+        building.textureId = textureId;
+    }
+    if (patch.tags !== undefined) {
+        if (!Array.isArray(patch.tags)) return { ok: false, error: "Building tags must be a list." };
+        building.tags = patch.tags.map((tag) => String(tag));
+    }
+    document.buildingsAuthored = true;
+    if (runtime.notify !== false) document.notify();
+    return { ok: true, building };
+}
+
+/**
+ * Update a placed prop's asset type, placement, facing, or tags. When the
+ * type changes and the tags were exactly the old type, they follow the new
+ * type (matching what placement writes).
+ * @param {import("./EnvironmentDocument.js").EnvironmentDocument} document
+ * @param {string} featureId
+ * @param {{ type?: string, x?: number, z?: number, dir?: number, rotationY?: number, tags?: string[] }} patch
+ * @param {{ notify?: boolean }} [runtime]
+ */
+export function updateFeatureRecord(document, featureId, patch = {}, runtime = {}) {
+    const feature = document.getFeature(featureId);
+    if (!feature) return { ok: false, error: "Feature not found." };
+    if (patch.type !== undefined) {
+        const type = String(patch.type ?? "").trim();
+        if (!type) return { ok: false, error: "Feature type must be a non-empty string." };
+        const previousType = feature.type;
+        if (type !== previousType) {
+            const tags = Array.isArray(feature.tags) ? feature.tags : [];
+            if (tags.length === 1 && tags[0] === previousType) feature.tags = [type];
+            feature.type = type;
+        }
+    }
+    for (const key of ["x", "z", "rotationY"]) {
+        if (patch[key] === undefined) continue;
+        const value = Number(patch[key]);
+        if (!Number.isFinite(value)) return { ok: false, error: `Feature ${key} must be a finite number.` };
+        feature[key] = value;
+    }
+    if (patch.dir !== undefined) {
+        const dir = Number(patch.dir);
+        if (!Number.isInteger(dir)) return { ok: false, error: "Feature facing must be an integer." };
+        feature.dir = dir;
+    }
+    if (patch.tags !== undefined) {
+        if (!Array.isArray(patch.tags)) return { ok: false, error: "Feature tags must be a list." };
+        feature.tags = patch.tags.map((tag) => String(tag));
+    }
+    document.featuresAuthored = true;
+    if (runtime.notify !== false) document.notify();
+    return { ok: true, feature };
+}
+
+/**
  * @param {import("./EnvironmentDocument.js").EnvironmentDocument} document
  * @param {Object} feature
  * @param {{ notify?: boolean }} [runtime]

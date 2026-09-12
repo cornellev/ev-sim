@@ -213,7 +213,7 @@ export function EarthImportModeChrome({ data }) {
                 />
             )}
 
-            <div className="fixed right-3 top-3 z-[20] flex w-[340px] flex-col gap-2 pointer-events-auto">
+            <div className="absolute right-3 top-3 z-[20] flex w-[340px] flex-col gap-2 pointer-events-auto">
                 <div
                     className="earth-import-map-shell rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-950/95 p-2.5 text-zinc-100 shadow-[0_30px_80px_rgba(0,0,0,0.45)]"
                     onMouseDown={controls.disableMap}
@@ -427,7 +427,7 @@ export function EarthImportModeChrome({ data }) {
             </div>
 
             {attributionEntries.length > 0 && (
-                <div className="fixed bottom-3 left-3 right-[360px] z-[20] pointer-events-none">
+                <div className="absolute bottom-3 left-3 right-[360px] z-[20] pointer-events-none">
                     <div className="mx-auto flex max-w-4xl items-center justify-center gap-2 rounded-[var(--radius)] border border-zinc-700/70 bg-zinc-950/80 px-3 py-1.5 text-[11px] text-zinc-300">
                         {attributionImages.map((entry) => (
                             <Image
@@ -445,7 +445,7 @@ export function EarthImportModeChrome({ data }) {
                 </div>
             )}
 
-            <div className="fixed bottom-0 left-0 right-0 z-[20] px-3 pb-3 pointer-events-auto">
+            <div className="absolute bottom-0 left-0 right-0 z-[20] px-3 pb-3 pointer-events-auto">
                 <div
                     className="relative mx-auto w-fit"
                     onMouseDown={controls.disable}

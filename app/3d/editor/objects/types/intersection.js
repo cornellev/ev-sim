@@ -80,6 +80,20 @@ export function createIntersectionType() {
         getTransformBinding(record) {
             return nodeTransformBinding(record);
         },
+        /** Elevation edits move the junction node vertically; XZ is read-only. */
+        planOptions(record, value, context = {}) {
+            const node = context.legacy ?? context.nodes?.get?.(record.id) ?? null;
+            if (!node) {
+                return {
+                    steps: [],
+                    issues: [issue(["options"], TRANSFORM_ISSUE_CODES.MISSING, `Intersection "${record.id}" has no node.`, { objectId: record.id })],
+                };
+            }
+            return {
+                steps: [{ op: "move-node", nodeId: String(record.id), position: { x: finite(node.x, 0), y: finite(value.y, 0), z: finite(node.z, 0) } }],
+                issues: [],
+            };
+        },
         getDependencies(record) {
             return [{ kind: "road-node", id: record.id }];
         },

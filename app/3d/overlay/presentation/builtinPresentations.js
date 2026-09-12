@@ -13,6 +13,7 @@ import {
     IconQuestionMark,
 } from "@tabler/icons-react";
 import { editorPresentationRegistry } from "../../editor/presentation/EditorPresentationRegistry.js";
+import { BUILTIN_SECTION_PROVIDERS } from "../../editor/presentation/builtinSections.js";
 
 const ICONS = Object.freeze({
     group: IconFolder,
@@ -30,14 +31,17 @@ export const UNSUPPORTED_ICON = IconQuestionMark;
 let registered = false;
 
 /**
- * Register Tabler icons for the built-in object types. Menu options and
- * inspector sections come from the default presentation (capabilities and
- * fields), so registering an icon is all a built-in needs.
+ * Register Tabler icons for the built-in object types, plus the extra
+ * inspector sections some of them carry (turn rules, road endpoints, sky
+ * runtime). Menu options and generic fields come from the default
+ * presentation (capabilities and fields).
  */
 export function registerBuiltinPresentations(registry = editorPresentationRegistry) {
     if (registry === editorPresentationRegistry && registered) return registry;
     for (const [typeId, icon] of Object.entries(ICONS)) {
-        if (!registry.has(typeId)) registry.register(typeId, { icon });
+        if (registry.has(typeId)) continue;
+        const getInspectorSections = BUILTIN_SECTION_PROVIDERS[typeId];
+        registry.register(typeId, getInspectorSections ? { icon, getInspectorSections } : { icon });
     }
     if (registry === editorPresentationRegistry) registered = true;
     return registry;

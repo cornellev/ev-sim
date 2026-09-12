@@ -8,7 +8,7 @@
  * `RenderSceneProviderRegistry`. Kernel-safe.
  */
 
-import { isObjectOptions, isPlainObject, issue, text } from "./ObjectOptions.js";
+import { OPTIONS_ISSUE_CODES, isObjectOptions, isPlainObject, issue, text } from "./ObjectOptions.js";
 import { TRANSFORM_ISSUE_CODES } from "./transformDelta.js";
 
 export const OBJECT_TYPE_ERROR_CODES = Object.freeze({
@@ -35,6 +35,7 @@ export const REQUIRED_TYPE_METHODS = Object.freeze([
     "getDependencies",
     "compileMetric",
     "migrate",
+    "planOptions",
 ]);
 
 export const LEGACY_DOMAINS = Object.freeze([
@@ -93,8 +94,27 @@ export function objectTypeKey(typeId, version) {
  *     plan(delta: { matrix: number[] }, context: object): { steps: object[], issues: object[] } },
  *   getDependencies(record: object, context?: object): Array<{ kind: string, id: string }>,
  *   compileMetric(record: object, context: object): object|null,
- *   migrate(record: object, fromVersion: number): object }} ObjectTypeDefinition
+ *   migrate(record: object, fromVersion: number): object,
+ *   planOptions(record: object, value: object, context: object): { steps: object[], issues: object[], delta?: object } }} ObjectTypeDefinition
  */
+
+/**
+ * Default option plan: the type exposes fields but no write path, so every
+ * edit is rejected before anything mutates. Types override `planOptions` to
+ * return plain `PlanStep`s (applied by `commands/planApply.js`) or a world
+ * `delta` (routed through the transform planner).
+ */
+export function readOnlyOptionsPlan(record, message = null) {
+    return {
+        steps: [],
+        issues: [issue(
+            ["options"],
+            OPTIONS_ISSUE_CODES.UNSUPPORTED,
+            message ?? `Options of "${record?.typeId ?? "unknown"}" objects cannot be edited here.`,
+            { objectId: record?.id ?? null },
+        )],
+    };
+}
 
 /**
  * Fill standard implementations so a complete definition needs only the
@@ -130,6 +150,7 @@ export function defineObjectType(spec = {}) {
         getDependencies: spec.getDependencies ?? (() => []),
         compileMetric: spec.compileMetric ?? (() => null),
         migrate: spec.migrate ?? ((record) => record),
+        planOptions: spec.planOptions ?? ((record) => readOnlyOptionsPlan(record)),
     };
 }
 

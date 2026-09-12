@@ -1,11 +1,18 @@
 /**
- * Apply `PlanStep`s produced by transform bindings to a document. Steps are
- * plain data; this is the only place that turns them into mutations. Node
- * moves are grouped into a single `translateRoadNodes` call so incident arms
- * are rewritten once.
+ * Apply `PlanStep`s produced by transform bindings and option plans to a
+ * document. Steps are plain data; this is the only place that turns them into
+ * mutations. Node moves are grouped into a single `translateRoadNodes` call so
+ * incident arms are rewritten once.
  */
 
-import { setBuildingFootprint, setFeatureTransform, translateRoadNodes } from "../document/documentMutations.js";
+import {
+    setBuildingFootprint,
+    setFeatureTransform,
+    translateRoadNodes,
+    updateBuildingRecord,
+    updateFeatureRecord,
+    updateRoadEdge,
+} from "../document/documentMutations.js";
 import { setObjectComponent } from "./objectMutations.js";
 
 export const PLAN_STEP_OPS = Object.freeze([
@@ -13,7 +20,25 @@ export const PLAN_STEP_OPS = Object.freeze([
     "set-feature-transform",
     "set-building-footprint",
     "set-object-component",
+    // ED-03 option writes
+    "set-edge-options",
+    "set-building-record",
+    "set-feature-record",
+    "set-earth-source",
+    "set-sky",
 ]);
+
+function applyEarthSource(document, patch) {
+    if (!document.earth) return { ok: false, error: "The environment has no Earth source." };
+    const merged = {
+        ...document.earth,
+        ...(patch ?? {}),
+        anchor: { ...document.earth.anchor, ...(patch?.anchor ?? {}) },
+        bounds: { ...document.earth.bounds, ...(patch?.bounds ?? {}) },
+    };
+    document.setScalar("earth", merged, { notify: false });
+    return { ok: true };
+}
 
 /**
  * @returns {{ ok: boolean, error?: string, applied: number }}
@@ -46,6 +71,17 @@ export function applyPlanSteps(document, steps, runtime = { notify: false }) {
             result = setBuildingFootprint(document, step.buildingId, { footprint: step.footprint, height: step.height }, quiet);
         } else if (step.op === "set-object-component") {
             result = setObjectComponent(document, step.objectId, step.key, step.value, quiet);
+        } else if (step.op === "set-edge-options") {
+            result = updateRoadEdge(document, step.edgeId, step.patch ?? {}, quiet);
+        } else if (step.op === "set-building-record") {
+            result = updateBuildingRecord(document, step.buildingId, step.patch ?? {}, quiet);
+        } else if (step.op === "set-feature-record") {
+            result = updateFeatureRecord(document, step.featureId, step.patch ?? {}, quiet);
+        } else if (step.op === "set-earth-source") {
+            result = applyEarthSource(document, step.patch ?? {});
+        } else if (step.op === "set-sky") {
+            document.setScalar("sky", step.value ?? null, { notify: false });
+            result = { ok: true };
         }
         if (!result?.ok) return { ok: false, error: result?.error ?? `Plan step "${step.op}" failed.`, applied };
         applied += 1;

@@ -34,7 +34,7 @@ export function VisualPreviewDiagnostic({ data }) {
 
     return (
         <div
-            className="pointer-events-auto fixed bottom-3 left-1/2 z-30 w-[min(36rem,calc(100vw-1.5rem))] -translate-x-1/2 rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-950/90 px-3 py-2 text-xs text-zinc-100 shadow-[0_16px_45px_rgba(0,0,0,0.38)]"
+            className="pointer-events-auto absolute bottom-3 left-1/2 z-30 w-[min(36rem,calc(100%-1.5rem))] -translate-x-1/2 rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-950/90 px-3 py-2 text-xs text-zinc-100 shadow-[0_16px_45px_rgba(0,0,0,0.38)]"
             role="status"
             aria-live="polite"
         >

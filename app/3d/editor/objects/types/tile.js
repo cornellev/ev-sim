@@ -86,6 +86,13 @@ export function createTileType() {
         create(input = {}) {
             return { id: TILE_OBJECT_ID, name: input.name ?? "Tile" };
         },
+        /** Bounds edits patch the Earth source; provider and anchor are read-only. */
+        planOptions(_record, value) {
+            return {
+                steps: [{ op: "set-earth-source", patch: { bounds: { ...value.bounds } } }],
+                issues: [],
+            };
+        },
         getDependencies() {
             return [{ kind: "earth", id: TILE_OBJECT_ID }];
         },

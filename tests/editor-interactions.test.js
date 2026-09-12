@@ -120,7 +120,7 @@ test("ED-02 gizmo drags are one undoable gesture; Escape restores; undo and redo
     transform.beginDrag();
     dragPivot(transform, { x: 100 });
     assert.equal(document.getFeature("feature-cone").x, 165);
-    keys.press("Escape");
+    assert.equal(controller.handleEscape(), true);
     assert.equal(bus.activeGesture, null);
     assert.equal(document.getFeature("feature-cone").x, 65);
     assert.deepEqual(mesh.position.toArray(), [65, 0, 47]);
@@ -136,11 +136,13 @@ test("ED-02 gizmo drags are one undoable gesture; Escape restores; undo and redo
     bus.redo();
     assert.deepEqual(mesh.position.toArray(), [65, 0, 47]);
 
-    // Escape without a gesture: tool back to select, then clear selection.
-    keys.press("Escape");
+    // Escape without a gesture: tool back to select, then clear selection, then nothing.
+    assert.equal(keys.handlers.has("q"), false, "Q/W/E/R live on ShortcutProvider, not the KeyManager");
+    assert.equal(controller.handleEscape(), true);
     assert.equal(editor.snapshot().activeTool, EDITOR_TOOLS.SELECT);
-    keys.press("Escape");
+    assert.equal(controller.handleEscape(), true);
     assert.deepEqual(selection.ids, []);
+    assert.equal(controller.handleEscape(), false, "nothing left to consume: the workspace switcher may open");
     assert.equal(transform.controls.object, undefined);
     controller.dispose();
 });

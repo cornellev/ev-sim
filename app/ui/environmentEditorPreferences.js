@@ -1,13 +1,16 @@
 /**
  * Environment-editor preferences persisted in localStorage. Follows the
  * authoring-mode storage pattern: injectable storage for tests, silent on
- * failures. `groupFrameFields` gates the bespoke editable group-frame inputs
- * that ED-03's generic fields replace.
+ * failures. Preferences are session/UI state (pane layout, view options,
+ * collapsed hierarchy groups, inspector sections); nothing here persists with
+ * the environment.
  */
 
 export const ENVIRONMENT_EDITOR_PREFERENCE_KEYS = Object.freeze({
-    GROUP_FRAME_FIELDS: "cev-sim.ui.environmentEditor.groupFrameFields",
     HIERARCHY_EXPANDED: "cev-sim.ui.environmentEditor.hierarchyExpanded",
+    PANE_LAYOUT: "cev-sim.ui.environmentEditor.paneLayout",
+    VIEW_OPTIONS: "cev-sim.ui.environmentEditor.viewOptions",
+    INSPECTOR_SECTIONS: "cev-sim.ui.environmentEditor.inspectorSections",
 });
 
 export function readEnvironmentEditorPreference(key, fallback = false, storage = null) {
@@ -35,12 +38,4 @@ export function writeEnvironmentEditorPreference(key, value, storage = null) {
     } catch {
         // Ignore storage failures (private mode, SSR).
     }
-}
-
-export function readGroupFrameFieldsPreference(storage = null) {
-    return readEnvironmentEditorPreference(ENVIRONMENT_EDITOR_PREFERENCE_KEYS.GROUP_FRAME_FIELDS, false, storage) === true;
-}
-
-export function writeGroupFrameFieldsPreference(enabled, storage = null) {
-    writeEnvironmentEditorPreference(ENVIRONMENT_EDITOR_PREFERENCE_KEYS.GROUP_FRAME_FIELDS, enabled === true, storage);
 }

@@ -1,320 +1,370 @@
 'use client';
 
-import { useEffect, useMemo, useState } from "react";
-import * as THREE from "three";
+import { useEffect, useState } from "react";
 import {
-    IconArrowsMove as FaArrowsAlt,
-    IconCrosshair as FaCrosshairs,
-    IconEye as FaEye,
-    IconEyeOff as FaEyeSlash,
-    IconPointer as FaMousePointer,
-    IconRotateClockwise as FaRedo,
-    IconAdjustmentsHorizontal as FaSlidersH,
+    IconCrosshair,
+    IconCopy,
+    IconEye,
+    IconEyeOff,
+    IconLock,
+    IconLockOpen,
     IconTrash,
-    IconX as FaTimes,
+    IconX,
 } from "@tabler/icons-react";
-import { EDITOR_TOOLS } from "../editor/EditorState";
+import { AdvancedSwitch, Button, IconButton, useAuthoringMode } from "../../ui";
 import { objectCommands } from "../editor/commands/index.js";
-import { editorPresentationRegistry } from "../editor/presentation/EditorPresentationRegistry.js";
+import { objectTypeRegistry } from "../editor/objects/ObjectTypeRegistry.js";
 import { deltaBetweenFrames } from "../editor/objects/transformDelta.js";
-import { resolveTransformTargets } from "../editor/tools/TransformTool.js";
+import { GROUP_TYPE_ID } from "../editor/objects/types/group.js";
+import { EditorPresentationRegistry, editorPresentationRegistry, readObjectFieldValues } from "../editor/presentation/EditorPresentationRegistry.js";
+import { SECTION_KINDS } from "../editor/presentation/builtinSections.js";
+import {
+    fieldKey,
+    groupFields,
+    hasAdvancedFields,
+    isDefaultValue,
+    issuesByPath,
+    issuesForField,
+    defaultValueFor,
+    selectionFieldState,
+} from "../editor/presentation/fieldModel.js";
 import { focusCameraOnSelection } from "../editor/tools/cameraFocus.js";
-import { readGroupFrameFieldsPreference } from "../../ui/environmentEditorPreferences.js";
-import { MenuButton } from "./ui/MenuButton";
+import { PropertySection, commitObjectOptions, renderField } from "./fields";
+import { TextField } from "./fields/SimpleFields";
+import { Vector3Field } from "./fields/Vector3Field";
+import { RoadEndpointsSection } from "./inspector/RoadEndpointsSection";
+import { SkyLocalPreview } from "./inspector/SkyLocalPreview";
+import { TurnRuleMatrix } from "./inspector/TurnRuleMatrix";
 import { PresentationIcon, registerBuiltinPresentations } from "./presentation/builtinPresentations.js";
+import { cn } from "./ui/cn";
 
-const INSPECTOR_CONTROL_LOCK = "environment-object-inspector";
+const POSITIONAL_FIELDS = new Set(["x", "z", "position", "rotationY"]);
+const POSITION_DESCRIPTOR = Object.freeze({ path: ["position"], label: "Position", control: "vector3", units: "m", step: 0.1 });
+const TAGS_DESCRIPTOR = Object.freeze({ path: ["tags"], label: "Tags", control: "text", description: "Comma-separated" });
+const EMPTY_ISSUES = Object.freeze({ index: new Map(), general: [] });
 
-function formatNumber(value, digits = 2) {
-    if (!Number.isFinite(value)) return "0";
-    return value.toFixed(digits);
+function formatNumber(value, digits = 3) {
+    return Number.isFinite(value) ? value.toFixed(digits) : "0";
 }
 
-function formatVector(vector) {
-    if (!vector) return "0, 0, 0";
-    return [formatNumber(vector.x), formatNumber(vector.y), formatNumber(vector.z)].join(", ");
-}
-
-function formatFieldValue(field, value) {
-    if (value === null || value === undefined) return "—";
-    if (field.control === "vector3" && typeof value === "object") return formatVector(value);
-    if (field.control === "toggle") return value ? "Yes" : "No";
-    if (typeof value === "number") return `${formatNumber(value, field.step && field.step < 0.1 ? 3 : 2)}${field.units ? ` ${field.units}` : ""}`;
-    if (Array.isArray(value)) return value.join(", ") || "—";
-    if (typeof value === "object") return JSON.stringify(value);
-    return String(value);
-}
-
-function unionSize(object3Ds) {
-    if (!object3Ds?.length) return null;
-    const box = new THREE.Box3();
-    for (const object3D of object3Ds) box.union(new THREE.Box3().setFromObject(object3D));
-    if (box.isEmpty()) return null;
-    return box.getSize(new THREE.Vector3());
-}
-
-function Field({ label, value, mono = false }) {
+function ReadOnlyRow({ label, value, mono = false }) {
     return (
-        <div className="rounded-[var(--radius)] border border-zinc-800/90 bg-zinc-950/45 px-2 py-1.5">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-zinc-500">{label}</p>
-            <p className={`${mono ? "font-mono" : ""} mt-0.5 truncate text-[11px] text-zinc-200`} title={String(value ?? "")}>
-                {value ?? "None"}
-            </p>
+        <div className="grid grid-cols-[minmax(0,88px)_minmax(0,1fr)] items-center gap-x-2 py-1">
+            <span className="truncate text-[12px] text-[var(--slate-fg-2)]">{label}</span>
+            <span className={cn("truncate text-[12px] text-[var(--slate-fg)]", mono && "font-mono text-[11px]")} title={String(value ?? "")}>{value ?? "—"}</span>
         </div>
     );
 }
 
-function NumberInput({ label, value, step = 0.1, onCommit }) {
-    // Adjust the draft during render when the committed value changes (no effect needed).
-    const [state, setState] = useState(() => ({ value, draft: String(formatNumber(value, 3)) }));
-    if (state.value !== value) setState({ value, draft: String(formatNumber(value, 3)) });
-    const draft = state.value === value ? state.draft : String(formatNumber(value, 3));
-    const setDraft = (next) => setState({ value, draft: next });
-    const commit = () => {
-        const next = Number(draft);
-        if (Number.isFinite(next) && Math.abs(next - value) > 1e-9) onCommit(next);
-        else setDraft(String(formatNumber(value, 3)));
+function NameEditor({ record, onRename }) {
+    const [draft, setDraft] = useState(null);
+    const committed = record?.name ?? "";
+    const commit = (text) => {
+        setDraft(null);
+        const next = String(text ?? "").trim();
+        if (next && next !== committed) onRename(next);
     };
     return (
-        <label className="flex items-center justify-between gap-2 rounded-[var(--radius)] border border-zinc-800/90 bg-zinc-950/45 px-2 py-1">
-            <span className="text-[11px] uppercase tracking-[0.1em] text-zinc-500">{label}</span>
-            <input
-                type="number"
-                step={step}
-                value={draft}
-                onChange={(event) => setDraft(event.target.value)}
-                onBlur={commit}
-                onKeyDown={(event) => { if (event.key === "Enter") commit(); event.stopPropagation(); }}
-                className="w-24 rounded-[var(--radius)] border border-zinc-700 bg-zinc-950 px-1 text-right font-mono text-[11px] text-zinc-100 outline-none"
-            />
-        </label>
+        <input
+            value={draft ?? committed}
+            aria-label="Object name"
+            onChange={(event) => setDraft(event.target.value)}
+            onBlur={(event) => { if (draft !== null) commit(event.target.value); }}
+            onKeyDown={(event) => {
+                event.stopPropagation();
+                if (event.key === "Enter") { event.preventDefault(); commit(event.currentTarget.value); }
+                if (event.key === "Escape") { event.preventDefault(); setDraft(null); event.currentTarget.blur(); }
+            }}
+            className="h-7 min-w-0 flex-1 rounded-[var(--radius)] border border-transparent bg-transparent px-1 text-[13px] font-medium text-[var(--slate-fg)] outline-none hover:border-[var(--slate-border-70)] focus-visible:border-[var(--slate-border-70)] focus-visible:bg-[var(--slate-surface-2)] focus-visible:ring-2 focus-visible:ring-[var(--slate-ring)]"
+        />
     );
 }
 
-function GroupFrameFields({ record, transform, onCommit }) {
-    const frame = record.components?.transform ?? { position: { x: 0, y: 0, z: 0 }, rotationY: 0, scale: 1 };
-    const commit = (patch) => onCommit({ ...frame, ...patch, position: { ...frame.position, ...(patch.position ?? {}) } });
-    return (
-        <div className="grid gap-1">
-            <NumberInput label="X" value={frame.position.x} onCommit={(x) => commit({ position: { x } })} />
-            <NumberInput label="Y" value={frame.position.y} onCommit={(y) => commit({ position: { y } })} />
-            <NumberInput label="Z" value={frame.position.z} onCommit={(z) => commit({ position: { z } })} />
-            <NumberInput label="Yaw (rad)" value={frame.rotationY} step={0.01} onCommit={(rotationY) => commit({ rotationY })} />
-            <NumberInput label="Scale" value={frame.scale} step={0.01} onCommit={(scale) => commit({ scale: Math.max(0.01, scale) })} />
-            <p className="text-[11px] text-zinc-500">World pivot: {formatVector(transform?.position)}</p>
-        </div>
-    );
-}
-
-export function ObjectInspector({ data, compactOpen = false }) {
-    const [editorSnapshot, setEditorSnapshot] = useState(null);
+/**
+ * Inspector: sections come from the presentation registry, option fields
+ * render from `ObjectOptions.getFields()` through the generic field
+ * controls, and every edit is a command. Multi-selections of one type share
+ * fields with mixed-value detection; rejected edits stay in the field with
+ * their issue and never touch the document.
+ */
+export function ObjectInspector({ data }) {
     const [selectionSnapshot, setSelectionSnapshot] = useState(null);
-    const [documentSnapshot, setDocumentSnapshot] = useState(null);
-    const [registrySnapshot, setRegistrySnapshot] = useState({ entities: [] });
-    const [groupFieldsEnabled] = useState(() => readGroupFrameFieldsPreference());
-    const [lastIssue, setLastIssue] = useState(null);
-
-    const controls = useMemo(() => {
-        const settings = data?.settings?.();
-        return {
-            disable: () => settings?.disableControls?.(INSPECTOR_CONTROL_LOCK),
-            enable: () => settings?.enableControls?.(INSPECTOR_CONTROL_LOCK),
-        };
-    }, [data]);
+    const [documentVersion, setDocumentVersion] = useState(0);
+    const [registryVersion, setRegistryVersion] = useState(0);
+    const [presentationVersion, setPresentationVersion] = useState(0);
+    const [issues, setIssues] = useState(EMPTY_ISSUES);
+    const { advanced } = useAuthoringMode();
 
     useEffect(() => {
         registerBuiltinPresentations();
+        return editorPresentationRegistry.subscribe(() => setPresentationVersion((version) => version + 1));
     }, []);
-    useEffect(() => data?.editor?.()?.subscribe?.(setEditorSnapshot), [data]);
-    useEffect(() => data?.selection?.()?.subscribe?.(setSelectionSnapshot), [data]);
-    useEffect(() => data?.environment?.()?.objects?.()?.subscribe?.(setRegistrySnapshot), [data]);
+    useEffect(() => data?.selection?.()?.subscribe?.((snapshot) => {
+        setSelectionSnapshot(snapshot);
+        setIssues(EMPTY_ISSUES);
+    }), [data]);
+    useEffect(() => data?.environment?.()?.objects?.()?.subscribe?.((snapshot) => setRegistryVersion(snapshot?.entities?.length ?? 0)), [data]);
     useEffect(() => {
         const document = data?.environment?.()?.getDocument?.();
         return document?.subscribe?.((snapshot, event) => {
             if (event?.transient) return;
-            setDocumentSnapshot(snapshot);
+            setDocumentVersion(event?.version ?? 0);
         });
     }, [data]);
 
-    if (!data) return null;
+    const document = data?.environment?.()?.getDocument?.();
+    const bus = data?.commands?.();
+    const selection = data?.selection?.();
+    const skyManifest = document?.sky ?? data?.sky?.()?.toManifest?.() ?? null;
 
-    const registry = data.environment()?.objects?.();
-    const document = data.environment()?.getDocument?.();
-    const bus = data.commands?.();
-    const selection = data.selection?.();
-    const primaryId = selectionSnapshot?.primary ?? null;
-    const primaryRecord = primaryId ? document?.getObject?.(primaryId) ?? null : null;
-    const selectionCount = selectionSnapshot?.ids?.length ?? 0;
-    const activeTool = editorSnapshot?.activeTool ?? EDITOR_TOOLS.SELECT;
-    const presentation = primaryRecord ? editorPresentationRegistry.forRecord(primaryRecord) : null;
-    const targets = resolveTransformTargets({ selectionSnapshot, document, registry });
-    const size = unionSize(targets.object3Ds);
-    const sections = primaryRecord
-        ? presentation.getInspectorSections({ data, record: primaryRecord, document, bus, selection, commands: objectCommands, sky: data.sky?.()?.toManifest?.() ?? null })
-        : [];
-    const hidden = primaryRecord?.components?.editorHidden === true;
-    const locked = primaryRecord?.components?.locked === true;
-    const registryVersion = registrySnapshot.entities.length;
+    // Recomputed whenever the document, registry, or presentation versions
+    // change. Records are mutated in place by commands, so the version
+    // counters are read here on purpose: they are what makes this derivation
+    // (auto-memoized by the React Compiler) recompute.
+    const model = (() => {
+        if (!document) return null;
+        const version = `${documentVersion}:${registryVersion}:${presentationVersion}`;
+        const ids = (selectionSnapshot?.ids ?? []).map(String);
+        const records = ids.map((id) => document.getObject(id)).filter(Boolean);
+        const primary = document.getObject(selectionSnapshot?.primary ?? "") ?? records[0] ?? null;
+        const read = (record) => readObjectFieldValues(record, document, { sky: skyManifest });
+        const state = selectionFieldState(records, read);
+        const presentation = primary ? editorPresentationRegistry.forRecord(primary) : null;
+        const definition = primary ? objectTypeRegistry.get(primary.typeId, primary.typeVersion) ?? objectTypeRegistry.get(primary.typeId) : null;
+        const sections = records.length === 1 && primary && presentation
+            ? presentation.getInspectorSections({ data, record: primary, document, bus, selection, commands: objectCommands, sky: skyManifest })
+            : [];
+        return { version, ids, records, primary, presentation, definition, state, sections, defaults: definition?.options?.getDefaults?.() ?? null };
+    })();
+
+    if (!data || !model) return null;
+    const { ids, records, primary, presentation, definition, state, sections, defaults } = model;
+    const locked = records.length > 0 && records.every((record) => record.components?.locked === true);
+    const anyLocked = records.some((record) => record.components?.locked === true);
+    const hidden = records.length > 0 && records.every((record) => record.components?.editorHidden === true);
+    const multi = records.length > 1;
 
     const report = (result) => {
-        setLastIssue(result?.ok ? null : (result?.issues?.[0]?.message ?? result?.error ?? "Command rejected."));
+        if (!result) return false;
+        if (result.ok) {
+            setIssues(EMPTY_ISSUES);
+            return true;
+        }
+        const index = issuesByPath(result.issues ?? []);
+        const general = index.get("") ?? [];
+        if (index.size === 0 && result.error) general.push({ message: result.error, severity: "error" });
+        setIssues({ index, general: [...general, ...[...index.entries()].filter(([key]) => key && key.startsWith("command")).flatMap(([, list]) => list)] });
+        return false;
+    };
+    const run = (command) => {
+        const result = bus?.execute(command);
         data.simulation?.()?.render?.();
-        return result?.ok === true;
+        return report(result);
+    };
+    const commitPatch = (entries) => report(commitObjectOptions({ data, objectIds: ids, patch: entries }));
+
+    const fieldControl = (descriptor, { value, mixed = false }) => {
+        const key = fieldKey(descriptor);
+        const canReset = !mixed && !descriptor.readOnly && defaults !== null && !isDefaultValue(descriptor, value, defaults);
+        return renderField(descriptor, {
+            id: `inspector-field-${key.replace(/\W+/g, "-")}`,
+            value,
+            mixed,
+            disabled: anyLocked,
+            issues: issuesForField(issues.index, descriptor),
+            onCommit: (next) => commitPatch([{ path: [...descriptor.path], value: next }]),
+            canReset,
+            onReset: () => commitPatch([{ path: [...descriptor.path], value: defaultValueFor(descriptor, defaults) }]),
+        });
     };
 
-    const clearSelection = () => {
-        selection?.clear();
-        data.simulation?.()?.render?.();
+    const renderOptionGroups = (fields, states = null) => groupFields(fields, { advanced }).map((group) => (
+        <PropertySection key={group.id} id={`${state.typeId ?? primary?.typeId}:${group.id}`} title={group.title}>
+            {group.fields.map((descriptor) => {
+                const entry = states?.get(fieldKey(descriptor));
+                return fieldControl(descriptor, entry ?? { value: undefined, mixed: false });
+            })}
+        </PropertySection>
+    ));
+
+    const renderSection = (section) => {
+        switch (section.kind) {
+            case "object":
+                return (
+                    <PropertySection key={section.id} id="object" title="Object">
+                        <ReadOnlyRow label="Type" value={presentation.label} />
+                        <ReadOnlyRow label="Parent" value={section.record.parentId ? document.getObject(section.record.parentId)?.name ?? section.record.parentId : "Root"} />
+                        <ReadOnlyRow label="ID" value={section.record.id} mono />
+                        <TextField
+                            id="inspector-tags"
+                            descriptor={TAGS_DESCRIPTOR}
+                            value={(section.record.components?.tags ?? []).join(", ")}
+                            disabled={anyLocked}
+                            issues={issuesForField(issues.index, TAGS_DESCRIPTOR)}
+                            onCommit={(text) => run(objectCommands.setObjectComponent({
+                                objectId: section.record.id,
+                                key: "tags",
+                                value: String(text).split(",").map((tag) => tag.trim()).filter(Boolean),
+                                label: "Edit tags",
+                            }))}
+                        />
+                    </PropertySection>
+                );
+            case "transform": {
+                if (primary.typeId === GROUP_TYPE_ID) return null;
+                const positional = (state.fields ?? []).some((descriptor) => POSITIONAL_FIELDS.has(descriptor.path[0]));
+                if (positional) return null;
+                const transform = section.transform;
+                const transformable = definition?.getCapabilities?.(primary)?.transformable === true;
+                const current = { position: { ...transform.position }, rotationY: transform.rotationY ?? 0, scale: 1 };
+                return (
+                    <PropertySection key={section.id} id="transform" title="Transform">
+                        {transformable
+                            ? (
+                                <Vector3Field
+                                    id="inspector-transform-position"
+                                    descriptor={POSITION_DESCRIPTOR}
+                                    value={transform.position}
+                                    disabled={anyLocked}
+                                    issues={issuesForField(issues.index, { path: ["transform"] })}
+                                    onCommit={(position) => run(objectCommands.transformObjects({
+                                        objectIds: [primary.id],
+                                        delta: deltaBetweenFrames(current, { ...current, position }),
+                                        label: "Move",
+                                    }))}
+                                />
+                            )
+                            : <ReadOnlyRow label="Position" value={[transform.position.x, transform.position.y, transform.position.z].map((axis) => formatNumber(axis, 2)).join(", ")} mono />}
+                        <ReadOnlyRow label="Yaw" value={`${formatNumber(transform.rotationY, 3)} rad`} mono />
+                        {typeof transform.scale === "number" && <ReadOnlyRow label="Scale" value={formatNumber(transform.scale, 3)} mono />}
+                    </PropertySection>
+                );
+            }
+            case "options":
+                return renderOptionGroups(state.fields.length > 0 ? state.fields : section.fields, state.states);
+            case "unsupported":
+                return (
+                    <PropertySection key={section.id} id="unsupported" title={section.title}>
+                        <p role="status" className="py-1 text-[12px] text-[var(--slate-warning)]">
+                            Type &quot;{section.typeId}&quot; (v{section.typeVersion}) is not registered. The record is preserved and cannot be edited or simulated here.
+                        </p>
+                    </PropertySection>
+                );
+            case SECTION_KINDS.TURN_RULES:
+                return (
+                    <PropertySection key={section.id} id={section.id} title={section.title}>
+                        <TurnRuleMatrix data={data} section={section} onResult={report} />
+                    </PropertySection>
+                );
+            case SECTION_KINDS.ROAD_ENDPOINTS:
+                return (
+                    <PropertySection key={section.id} id={section.id} title={section.title}>
+                        <RoadEndpointsSection data={data} section={section} onResult={report} />
+                    </PropertySection>
+                );
+            case SECTION_KINDS.SKY_PREVIEW:
+                return (
+                    <PropertySection key={section.id} id={section.id} title={section.title} defaultOpen={false}>
+                        <SkyLocalPreview data={data} />
+                    </PropertySection>
+                );
+            default:
+                if (typeof section.render === "function") {
+                    return (
+                        <PropertySection key={section.id} id={section.id} title={section.title ?? section.id}>
+                            {section.render({ data, record: primary, document, bus, selection })}
+                        </PropertySection>
+                    );
+                }
+                return null;
+        }
     };
 
-    const setTool = (tool) => {
-        data.editor()?.setActiveTool?.(tool);
-        data.simulation?.()?.render?.();
-    };
+    if (records.length === 0) {
+        return (
+            <div className="p-3 text-[12px] text-[var(--slate-muted)]" data-object-inspector data-registry-version={registryVersion}>
+                Select an object in the hierarchy or the scene to edit its properties.
+            </div>
+        );
+    }
 
-    const setVisible = (visible) => {
-        const ids = selectionSnapshot?.ids?.length ? selectionSnapshot.ids : [primaryRecord.id];
-        report(bus?.execute(objectCommands.setObjectsHidden({ objectIds: ids, hidden: !visible })));
-    };
-
-    const deleteSelection = () => {
-        const ids = selectionSnapshot?.ids?.length ? selectionSnapshot.ids : [primaryRecord.id];
-        report(bus?.execute(objectCommands.deleteObjects({ objectIds: ids })));
-    };
-
-    const commitGroupFrame = (nextFrame) => {
-        const current = primaryRecord.components?.transform ?? { position: { x: 0, y: 0, z: 0 }, rotationY: 0, scale: 1 };
-        report(bus?.execute(objectCommands.transformObjects({
-            objectIds: [primaryRecord.id],
-            delta: deltaBetweenFrames(current, nextFrame),
-            label: "Edit group frame",
-        })));
-    };
+    const showAdvancedSwitch = hasAdvancedFields(multi ? state.fields : sections.flatMap((section) => section.fields ?? []));
 
     return (
-        <div
-            className={`absolute right-3 top-3 z-30 w-[336px] max-w-[calc(100vw-24px)] rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-950/85 p-2.5 text-zinc-100 shadow-[0_30px_80px_rgba(0,0,0,0.45)] pointer-events-auto max-[1023px]:top-[58px] ${compactOpen ? "" : "max-[1023px]:hidden"}`}
-            onMouseDown={controls.disable}
-            onMouseUp={controls.enable}
-            onMouseLeave={controls.enable}
-            data-registry-version={registryVersion}
-        >
-            <div className="mb-2 flex items-start justify-between rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-900/70 p-2">
-                <div className="flex min-w-0 items-start gap-2">
-                    {presentation && <PresentationIcon presentation={presentation} className="mt-1 h-4 w-4 shrink-0 text-zinc-400" />}
-                    <div className="min-w-0">
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-400">Inspector</p>
-                        <p className="mt-0.5 truncate text-[13px] font-semibold text-zinc-100">
-                            {selectionCount > 1 ? `${selectionCount} objects` : (primaryRecord?.name ?? "No object selected")}
-                        </p>
-                        {primaryRecord && (
-                            <p className="truncate font-mono text-[11px] text-zinc-500" title={primaryRecord.id}>
-                                {presentation.label} · {primaryRecord.id}
-                            </p>
-                        )}
-                    </div>
+        <div className="flex min-h-full flex-col text-[var(--slate-fg)]" data-object-inspector data-registry-version={registryVersion}>
+            <span id="inspector-mixed-hint" hidden>Mixed values across the selection</span>
+            <header className="flex items-start gap-2 border-b border-[var(--slate-border-60)] p-2">
+                {presentation && <PresentationIcon presentation={presentation} className="mt-1.5 h-4 w-4 shrink-0 text-[var(--slate-muted)]" />}
+                <div className="min-w-0 flex-1">
+                    {multi
+                        ? <p className="h-7 truncate px-1 text-[13px] font-medium leading-7">{records.length} objects</p>
+                        : <NameEditor record={primary} onRename={(name) => run(objectCommands.renameObject({ objectId: primary.id, name }))} />}
+                    <p className="truncate px-1 text-[11px] text-[var(--slate-muted)]">
+                        {multi
+                            ? (state.mixedTypes ? "Mixed types" : `${presentation?.label ?? state.typeId}s`)
+                            : <>{presentation?.label} · <span className="font-mono">{primary.id}</span></>}
+                    </p>
                 </div>
-                {primaryRecord && (
-                    <MenuButton iconOnly variant="ghost" className="h-7 w-7 rounded-[var(--radius)]" onClick={clearSelection} title="Clear selection" ariaLabel="Clear selection">
-                        <FaTimes className="h-3 w-3" />
-                    </MenuButton>
-                )}
+                <div className="flex shrink-0 items-center gap-0.5">
+                    <IconButton label={locked ? "Unlock" : "Lock"} size="compact" variant="ghost" aria-pressed={locked} onClick={() => run(objectCommands.setObjectsLocked({ objectIds: ids, locked: !locked }))}>
+                        {locked ? <IconLock size={15} stroke={1.75} /> : <IconLockOpen size={15} stroke={1.75} />}
+                    </IconButton>
+                    <IconButton label={hidden ? "Show" : "Hide"} size="compact" variant="ghost" aria-pressed={hidden} onClick={() => run(objectCommands.setObjectsHidden({ objectIds: ids, hidden: !hidden }))}>
+                        {hidden ? <IconEyeOff size={15} stroke={1.75} /> : <IconEye size={15} stroke={1.75} />}
+                    </IconButton>
+                    <IconButton label="Clear selection" size="compact" variant="ghost" onClick={() => { selection?.clear(); data.simulation?.()?.render?.(); }}>
+                        <IconX size={15} stroke={1.75} />
+                    </IconButton>
+                </div>
+            </header>
+
+            {issues.general.length > 0 && (
+                <p role="alert" className="mx-2 mt-2 rounded-[var(--radius)] border border-[var(--slate-danger-border)] px-2 py-1 text-[11px] text-[var(--slate-danger)]">
+                    {issues.general[0].message}
+                </p>
+            )}
+            {showAdvancedSwitch && (
+                <div className="border-b border-[var(--slate-border-60)] px-2 py-1 [&_.sf-switch-row]:min-h-0 [&_.sf-switch-copy__label]:text-[12px]">
+                    <AdvancedSwitch />
+                </div>
+            )}
+
+            <div className="min-h-0 flex-1 px-1">
+                {multi
+                    ? (state.mixedTypes
+                        ? <p className="px-2 py-3 text-[12px] text-[var(--slate-muted)]">Objects of different types share no editable properties. Lock, hide, and delete still apply to all of them.</p>
+                        : renderOptionGroups(state.fields, state.states))
+                    : sections.map(renderSection)}
             </div>
 
-            {lastIssue && (
-                <p role="status" className="mb-2 rounded-[var(--radius)] border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[11px] text-amber-200">{lastIssue}</p>
-            )}
-
-            {!primaryRecord ? (
-                <div className="rounded-[var(--radius)] border border-zinc-800/90 bg-zinc-900/45 p-3 text-[11px] text-zinc-400">
-                    No object is currently selected.
+            <footer className="flex items-center justify-between gap-2 border-t border-[var(--slate-border-60)] p-2">
+                <Button size="compact" variant="ghost" onClick={() => focusCameraOnSelection({ data })} title="Frame selection (F)">
+                    <IconCrosshair size={14} stroke={1.75} aria-hidden="true" />
+                    Frame
+                </Button>
+                <div className="flex items-center gap-1">
+                    <Button
+                        size="compact"
+                        variant="ghost"
+                        title="Duplicate (Mod+D)"
+                        disabled={anyLocked}
+                        onClick={() => {
+                            const result = bus?.execute(objectCommands.duplicateObjects({ objectIds: ids }));
+                            if (result?.ok && result.result?.rootIds?.length) selection?.select(result.result.rootIds);
+                            report(result);
+                        }}
+                    >
+                        <IconCopy size={14} stroke={1.75} aria-hidden="true" />
+                        Duplicate
+                    </Button>
+                    <Button size="compact" variant="danger" title="Delete (Delete)" disabled={anyLocked} onClick={() => run(objectCommands.deleteObjects({ objectIds: ids }))}>
+                        <IconTrash size={14} stroke={1.75} aria-hidden="true" />
+                        Delete
+                    </Button>
                 </div>
-            ) : (
-                <div className="space-y-2">
-                    <div className="rounded-[var(--radius)] border border-zinc-800/90 bg-zinc-900/45 p-2">
-                        <div className="mb-1.5 flex items-center justify-between gap-2">
-                            <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-500">Tools</p>
-                            <div className="flex items-center gap-1">
-                                <MenuButton iconOnly active={activeTool === EDITOR_TOOLS.SELECT} className="h-7 w-7 rounded-[var(--radius)]" onClick={() => setTool(EDITOR_TOOLS.SELECT)} title="Select (Q)">
-                                    <FaMousePointer className="h-3 w-3" />
-                                </MenuButton>
-                                <MenuButton iconOnly active={activeTool === EDITOR_TOOLS.TRANSLATE} className="h-7 w-7 rounded-[var(--radius)]" onClick={() => setTool(EDITOR_TOOLS.TRANSLATE)} title="Move (W)">
-                                    <FaArrowsAlt className="h-3 w-3" />
-                                </MenuButton>
-                                <MenuButton iconOnly active={activeTool === EDITOR_TOOLS.ROTATE} className="h-7 w-7 rounded-[var(--radius)]" onClick={() => setTool(EDITOR_TOOLS.ROTATE)} title="Rotate (E)">
-                                    <FaRedo className="h-3 w-3" />
-                                </MenuButton>
-                                <MenuButton iconOnly active={activeTool === EDITOR_TOOLS.SCALE} className="h-7 w-7 rounded-[var(--radius)]" onClick={() => setTool(EDITOR_TOOLS.SCALE)} title="Scale (R)">
-                                    <FaSlidersH className="h-3 w-3" />
-                                </MenuButton>
-                            </div>
-                        </div>
-                        {size && <Field label="Selection size" value={formatVector(size)} mono />}
-                    </div>
-
-                    {sections.map((section) => (
-                        <div key={section.id} className="rounded-[var(--radius)] border border-zinc-800/90 bg-zinc-900/45 p-2">
-                            <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-500">{section.title}</p>
-                            {section.kind === "object" && (
-                                <div className="grid grid-cols-2 gap-1.5">
-                                    <Field label="Type" value={presentation.label} />
-                                    <Field label="Parent" value={section.record.parentId ?? "Root"} mono />
-                                    <Field label="Tags" value={(section.record.components?.tags ?? []).join(", ") || "None"} />
-                                    <Field label="State" value={[locked ? "Locked" : null, hidden ? "Hidden" : null].filter(Boolean).join(", ") || "Editable"} />
-                                </div>
-                            )}
-                            {section.kind === "transform" && (
-                                section.editable && groupFieldsEnabled
-                                    ? <GroupFrameFields record={section.record ?? primaryRecord} transform={section.transform} onCommit={commitGroupFrame} />
-                                    : (
-                                        <div className="grid gap-1.5">
-                                            <Field label="Position" value={formatVector(section.transform.position)} mono />
-                                            <Field label="Yaw (rad)" value={formatNumber(section.transform.rotationY, 3)} mono />
-                                            {typeof section.transform.scale === "number" && <Field label="Scale" value={formatNumber(section.transform.scale, 3)} mono />}
-                                        </div>
-                                    )
-                            )}
-                            {section.kind === "options" && (
-                                <div className="grid grid-cols-2 gap-1.5">
-                                    {section.fields.filter((field) => !field.advanced).map((field) => (
-                                        <Field key={field.path.join(".")} label={field.label} value={formatFieldValue(field, field.path.reduce((value, key) => value?.[key], section.values))} mono={field.control === "number" || field.control === "vector3"} />
-                                    ))}
-                                </div>
-                            )}
-                            {section.kind === "unsupported" && (
-                                <p className="text-[11px] text-amber-200">
-                                    Type &quot;{section.typeId}&quot; (v{section.typeVersion}) is not registered. The record is preserved and cannot be edited or simulated here.
-                                </p>
-                            )}
-                            {typeof section.render === "function" && section.render({ data, record: primaryRecord, document, bus, selection })}
-                        </div>
-                    ))}
-
-                    <div className="flex items-center justify-between gap-2 rounded-[var(--radius)] border border-zinc-800/90 bg-zinc-900/45 p-2">
-                        <MenuButton compact variant="default" onClick={() => focusCameraOnSelection({ data })} title="Focus camera on selection (F)">
-                            <FaCrosshairs className="h-3 w-3" />
-                            Focus
-                        </MenuButton>
-                        <div className="flex items-center gap-1">
-                            {hidden ? (
-                                <MenuButton compact variant="primary" onClick={() => setVisible(true)} title="Show selected objects">
-                                    <FaEye className="h-3 w-3" />
-                                    Show
-                                </MenuButton>
-                            ) : (
-                                <MenuButton compact variant="default" onClick={() => setVisible(false)} title="Hide selected objects">
-                                    <FaEyeSlash className="h-3 w-3" />
-                                    Hide
-                                </MenuButton>
-                            )}
-                            <MenuButton compact variant="danger" onClick={deleteSelection} title="Delete selected objects (Delete)" disabled={locked}>
-                                <IconTrash className="h-3 w-3" />
-                                Delete
-                            </MenuButton>
-                        </div>
-                    </div>
-                </div>
-            )}
+            </footer>
         </div>
     );
 }
+
+export { EditorPresentationRegistry };

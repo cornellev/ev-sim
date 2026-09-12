@@ -52,7 +52,9 @@ Shared primitives live in `app/ui`. Use them before creating local controls:
 - `DialogSurface`, `PopoverSurface`, `Tooltip`, and `ScrollPane`
 - `WorkspaceFrame`, `Panel`, `StatusMessage`, and `AsyncState`
 
-Icon-only controls require an accessible label and tooltip. Use `@tabler/icons-react` at 1.75 stroke. Do not mix icon families or use text glyphs as control icons.
+Icon-only controls require an accessible label and tooltip; `IconButton` provides both (its `label` is the accessible name and doubles as the tooltip unless `tooltip` overrides it). Use `@tabler/icons-react` at 1.75 stroke. Do not mix icon families or use text glyphs as control icons.
+
+Environment-editor panes and fields follow the same rules: pane splitters are `role="separator"` controls with keyboard resizing, toolbar buttons expose `aria-pressed`, generic inspector fields report validation with `aria-invalid` and an inline `role="alert"`, mixed multi-selection values are described through `aria-describedby`, and persistent panes never use overlay roles (`listbox`, `menu`, `dialog`) because the shortcut provider treats those as an open overlay.
 
 ## Motion
 

@@ -53,8 +53,8 @@ road authoring, asset catalog, or environment persistence code, read:
 This is a separate `ED-*` program. Do not treat it as a headless PR 13 or a
 VIS milestone. Legacy geometry domains stay canonical and `worldHash` stays
 unchanged until a milestone explicitly versions the world description.
-Schema v4 is the default environment writer since ED-02;
-`CEV_SIM_ENVIRONMENT_SCHEMA_V4=0` is a temporary opt-out retired in ED-03.
+Schema v4 is the only environment writer (default since ED-02; the env-var
+opt-out was retired in ED-03).
 Editor mutations go through `CommandBus` commands
 (`app/3d/editor/commands/`); tools and chrome never call `documentMutations`
 or `syncRoadsFromDocument` directly, and the `SceneProjector` is the only

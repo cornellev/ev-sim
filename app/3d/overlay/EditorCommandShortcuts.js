@@ -2,26 +2,64 @@
 
 import { useEffect, useState } from "react";
 import { useShortcut } from "../../ui";
-import { EDITOR_MODES } from "../editor/EditorState";
+import { EDITOR_MODES, EDITOR_TOOLS } from "../editor/EditorState";
 import { objectCommands } from "../editor/commands/index.js";
+import { finalizeRoadPen } from "../editor/map/MapToolLogic.js";
 import { focusCameraOnSelection } from "../editor/tools/cameraFocus.js";
 
 /**
- * Editor command shortcuts registered through ShortcutProvider so they never
- * fire inside editable fields and consume the event only when the command
- * succeeds. Escape stays with EditorToolController (gesture → tool →
- * selection); Delete in map mode stays with MapModeChrome.
+ * Editor shortcuts registered through ShortcutProvider so they never fire
+ * inside editable fields and consume the event only when something happened.
+ * Escape runs `EditorToolController.handleEscape()` (gesture → map draft →
+ * tool → selection) and yields to the global workspace switcher when nothing
+ * was consumed. Earth Import owns its own keys.
  */
 export function EditorCommandShortcuts({ data }) {
-    const [editorMode, setEditorMode] = useState(EDITOR_MODES.SCENE);
-    useEffect(() => data?.editor?.()?.subscribe?.((snapshot) => setEditorMode(snapshot.editorMode)), [data]);
+    const [editorSnapshot, setEditorSnapshot] = useState(null);
+    useEffect(() => data?.editor?.()?.subscribe?.(setEditorSnapshot), [data]);
 
-    const inEditor = editorMode === EDITOR_MODES.SCENE || editorMode === EDITOR_MODES.MAP;
+    const editorMode = editorSnapshot?.editorMode ?? EDITOR_MODES.SCENE;
+    const inScene = editorMode === EDITOR_MODES.SCENE;
+    const inMap = editorMode === EDITOR_MODES.MAP;
+    const inEditor = inScene || inMap;
     const bus = () => data?.commands?.();
+    const editor = () => data?.editor?.();
     const selection = () => data?.selection?.();
     const selectedIds = () => selection()?.ids ?? [];
+    const render = () => data?.simulation?.()?.render?.();
     const consume = (result) => (result?.ok ? true : false);
+    const setTool = (tool) => () => {
+        editor()?.setActiveTool?.(tool);
+        render();
+        return true;
+    };
 
+    useShortcut({ id: "environment-tool-select", keys: "q", priority: 10, enabled: inScene, handler: setTool(EDITOR_TOOLS.SELECT) });
+    useShortcut({ id: "environment-tool-translate", keys: "w", priority: 10, enabled: inScene, handler: setTool(EDITOR_TOOLS.TRANSLATE) });
+    useShortcut({ id: "environment-tool-rotate", keys: "e", priority: 10, enabled: inScene, handler: setTool(EDITOR_TOOLS.ROTATE) });
+    useShortcut({ id: "environment-tool-scale", keys: "r", priority: 10, enabled: inScene, handler: setTool(EDITOR_TOOLS.SCALE) });
+    useShortcut({
+        id: "environment-escape",
+        keys: "Escape",
+        priority: 15,
+        enabled: inEditor,
+        handler: () => {
+            const controller = data?.environment?.()?.toolController;
+            if (typeof controller?.handleEscape === "function") return controller.handleEscape() === true;
+            return false;
+        },
+    });
+    useShortcut({
+        id: "environment-map-finish-road",
+        keys: "Enter",
+        priority: 15,
+        enabled: inMap && editorSnapshot?.map?.draft?.type === "road-pen",
+        handler: () => {
+            finalizeRoadPen(editor());
+            render();
+            return true;
+        },
+    });
     useShortcut({
         id: "environment-undo",
         keys: "Mod+z",
@@ -29,7 +67,7 @@ export function EditorCommandShortcuts({ data }) {
         enabled: inEditor,
         handler: () => {
             const result = bus()?.undo();
-            data?.simulation?.()?.render?.();
+            render();
             return consume(result);
         },
     });
@@ -40,7 +78,7 @@ export function EditorCommandShortcuts({ data }) {
         enabled: inEditor,
         handler: () => {
             const result = bus()?.redo();
-            data?.simulation?.()?.render?.();
+            render();
             return consume(result);
         },
     });
@@ -54,6 +92,7 @@ export function EditorCommandShortcuts({ data }) {
             if (ids.length === 0) return false;
             const result = bus()?.execute(objectCommands.duplicateObjects({ objectIds: ids }));
             if (result?.ok && result.result?.rootIds?.length) selection()?.select(result.result.rootIds);
+            render();
             return consume(result);
         },
     });
@@ -61,11 +100,13 @@ export function EditorCommandShortcuts({ data }) {
         id: "environment-delete",
         keys: ["Delete", "Backspace"],
         priority: 15,
-        enabled: editorMode === EDITOR_MODES.SCENE,
+        enabled: inEditor,
         handler: () => {
             const ids = selectedIds();
             if (ids.length === 0) return false;
-            return consume(bus()?.execute(objectCommands.deleteObjects({ objectIds: ids })));
+            const result = bus()?.execute(objectCommands.deleteObjects({ objectIds: ids }));
+            render();
+            return consume(result);
         },
     });
     useShortcut({
@@ -98,7 +139,7 @@ export function EditorCommandShortcuts({ data }) {
         id: "environment-frame",
         keys: "f",
         priority: 10,
-        enabled: editorMode === EDITOR_MODES.SCENE,
+        enabled: inScene,
         handler: () => focusCameraOnSelection({ data }),
     });
 

@@ -1,7 +1,21 @@
 import * as THREE from "three";
 
+/**
+ * Chrome selectors: the editor overlay plus portaled Radix surfaces
+ * (popovers, selects, menus, dialogs, tooltips) that render in `body`.
+ */
+export const OVERLAY_TARGET_SELECTOR = [
+    "#overlay",
+    "[data-radix-popper-content-wrapper]",
+    "[role=\"listbox\"]",
+    "[role=\"menu\"]",
+    "[role=\"dialog\"]",
+    "[role=\"alertdialog\"]",
+    "[data-editor-chrome]",
+].join(", ");
+
 export function isOverlayEvent(event) {
-    return event.target instanceof Element && Boolean(event.target.closest("#overlay"));
+    return event.target instanceof Element && Boolean(event.target.closest(OVERLAY_TARGET_SELECTOR));
 }
 
 export function getCanvasPointer(clientX, clientY, renderer) {

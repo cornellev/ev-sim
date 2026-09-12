@@ -20,6 +20,17 @@ export const FIELD_CONTROLS = Object.freeze([
 
 export const ISSUE_SEVERITIES = Object.freeze(["error", "warning"]);
 
+/** Issue codes raised when writing option values back to a record (ED-03). */
+export const OPTIONS_ISSUE_CODES = Object.freeze({
+    READ_ONLY: "options.read-only",
+    UNKNOWN_PATH: "options.unknown-path",
+    UNSUPPORTED: "options.unsupported",
+});
+
+export function fieldPathKey(path) {
+    return Array.isArray(path) ? path.join(".") : String(path ?? "");
+}
+
 export function text(value, fallback = "") {
     const normalized = String(value ?? "").trim();
     return normalized || fallback;

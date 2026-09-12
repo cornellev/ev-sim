@@ -50,6 +50,30 @@ const DEFAULT_LAYERS = Object.freeze({
     [EDITOR_LAYERS.PROPS]: true,
 });
 
+export const TRANSFORM_SPACES = Object.freeze({ WORLD: "world", LOCAL: "local" });
+
+export const DEFAULT_TRANSFORM_SNAP = Object.freeze({
+    enabled: false,
+    translation: 0.5,
+    rotationDeg: 15,
+    scale: 0.1,
+});
+
+/** Session view options mirrored to a localStorage preference (never persisted with the environment). */
+export const VIEW_OPTION_KEYS = Object.freeze(["transformSpace", "transformSnap", "sceneGridVisible", "selectionBoundsVisible", "chunkOutlinesVisible"]);
+
+/** Normalize a snap patch over `base`; invalid or non-positive steps keep the base value. */
+function normalizeTransformSnap(snap, base = DEFAULT_TRANSFORM_SNAP) {
+    const source = snap && typeof snap === "object" ? snap : {};
+    const positive = (value, fallback) => (Number.isFinite(Number(value)) && Number(value) > 0 ? Number(value) : fallback);
+    return {
+        enabled: source.enabled === undefined ? base.enabled === true : source.enabled === true,
+        translation: positive(source.translation, base.translation),
+        rotationDeg: positive(source.rotationDeg, base.rotationDeg),
+        scale: positive(source.scale, base.scale),
+    };
+}
+
 const TOOL_VALUES = new Set(Object.values(EDITOR_TOOLS));
 const MAP_TOOL_VALUES = new Set(Object.values(MAP_TOOLS));
 const EDITOR_MODE_VALUES = new Set(Object.values(EDITOR_MODES));
@@ -99,6 +123,12 @@ export class EditorState {
         this.hiddenEntityIds = cloneSet(options.hiddenEntityIds);
         this.activePlacement = options.activePlacement ?? null;
         this.chunkOutlinesVisible = options.chunkOutlinesVisible ?? true;
+        // ED-03 view options: gizmo axis space, scene snapping, working grid,
+        // and selection bounds. Session state, remembered as a preference.
+        this.transformSpace = options.transformSpace === TRANSFORM_SPACES.LOCAL ? TRANSFORM_SPACES.LOCAL : TRANSFORM_SPACES.WORLD;
+        this.transformSnap = normalizeTransformSnap(options.transformSnap);
+        this.sceneGridVisible = options.sceneGridVisible !== false;
+        this.selectionBoundsVisible = options.selectionBoundsVisible !== false;
         this.map = cloneMapState(options.map);
         this.earthImport = cloneEarthImportState(options.earthImport);
         this.dirty = false;
@@ -113,10 +143,45 @@ export class EditorState {
             hiddenEntityIds: cloneSet(this.hiddenEntityIds),
             activePlacement: this.activePlacement ? { ...this.activePlacement } : null,
             chunkOutlinesVisible: this.chunkOutlinesVisible,
+            transformSpace: this.transformSpace,
+            transformSnap: { ...this.transformSnap },
+            sceneGridVisible: this.sceneGridVisible,
+            selectionBoundsVisible: this.selectionBoundsVisible,
             map: cloneMapState(this.map),
             earthImport: cloneEarthImportState(this.earthImport),
             dirty: this.dirty,
         };
+    }
+
+    /** The view options remembered as an editor preference (not in the manifest). */
+    viewOptionsSnapshot() {
+        return {
+            transformSpace: this.transformSpace,
+            transformSnap: { ...this.transformSnap },
+            sceneGridVisible: this.sceneGridVisible,
+            selectionBoundsVisible: this.selectionBoundsVisible,
+            chunkOutlinesVisible: this.chunkOutlinesVisible,
+        };
+    }
+
+    /** Apply stored view options in one notification. */
+    applyViewOptions(options = {}) {
+        if (!options || typeof options !== "object") return;
+        let changed = false;
+        if (options.transformSpace !== undefined) {
+            const next = options.transformSpace === TRANSFORM_SPACES.LOCAL ? TRANSFORM_SPACES.LOCAL : TRANSFORM_SPACES.WORLD;
+            if (next !== this.transformSpace) { this.transformSpace = next; changed = true; }
+        }
+        if (options.transformSnap !== undefined) {
+            const next = normalizeTransformSnap(options.transformSnap, this.transformSnap);
+            if (JSON.stringify(next) !== JSON.stringify(this.transformSnap)) { this.transformSnap = next; changed = true; }
+        }
+        for (const key of ["sceneGridVisible", "selectionBoundsVisible", "chunkOutlinesVisible"]) {
+            if (options[key] === undefined) continue;
+            const next = options[key] !== false;
+            if (next !== this[key]) { this[key] = next; changed = true; }
+        }
+        if (changed) this.notify();
     }
 
     /**
@@ -330,6 +395,38 @@ export class EditorState {
         const next = Boolean(visible);
         if (this.chunkOutlinesVisible === next) return;
         this.chunkOutlinesVisible = next;
+        this.notify();
+    }
+
+    setTransformSpace(space) {
+        const next = space === TRANSFORM_SPACES.LOCAL ? TRANSFORM_SPACES.LOCAL : TRANSFORM_SPACES.WORLD;
+        if (this.transformSpace === next) return;
+        this.transformSpace = next;
+        this.notify();
+    }
+
+    setTransformSnapEnabled(enabled) {
+        this.setTransformSnap({ enabled: Boolean(enabled) });
+    }
+
+    setTransformSnap(patch = {}) {
+        const next = normalizeTransformSnap(patch, this.transformSnap);
+        if (JSON.stringify(next) === JSON.stringify(this.transformSnap)) return;
+        this.transformSnap = next;
+        this.notify();
+    }
+
+    setSceneGridVisible(visible) {
+        const next = Boolean(visible);
+        if (this.sceneGridVisible === next) return;
+        this.sceneGridVisible = next;
+        this.notify();
+    }
+
+    setSelectionBoundsVisible(visible) {
+        const next = Boolean(visible);
+        if (this.selectionBoundsVisible === next) return;
+        this.selectionBoundsVisible = next;
         this.notify();
     }
 

@@ -4,6 +4,8 @@ The environment editor is where you author the static world that simulations run
 
 Open it from the app menu (`Escape` → **Environment Editor**). The simulation workspace is the other 3D option in that same menu.
 
+Since ED-03 the editor is one workspace: a top bar, a resizable hierarchy pane on the left, the scene (or map) view with its toolbar in the middle, a resizable inspector on the right, and an asset pane along the bottom. Pane sizes and collapsed states are editor preferences; the canvas and camera projection follow the scene pane, and pointer picking uses the canvas bounds.
+
 ## What you can do here
 
 - Place and transform buildings, props, and other static objects in the 3D scene.
@@ -13,19 +15,17 @@ Open it from the app menu (`Escape` → **Environment Editor**). The simulation 
 
 Changes live in an `EnvironmentDocument`. Every edit is a `CommandBus` command or gesture (one undoable step each); the `SceneProjector` applies the resulting change set to the 3D runtime immediately, and autosave persists committed changes.
 
-## Editor modes
+## Views and modes
 
-Within the environment editor, `EditorState` tracks three modes. Only one is active at a time.
+`EditorState.editorMode` still has three values, but Scene and Map are now two views of the same document, selection, and toolset in the center pane; the hierarchy and inspector stay visible in both.
 
 | Mode | ID | Purpose |
 |------|----|---------|
-| Scene | `scene` | Default 3D editing: select, move, rotate, scale, and place objects. |
-| Map | `map` | Top-down 2D authoring for roads, intersections, buildings, and features. |
-| Earth Import | `earth-import` | Preview Google Photorealistic 3D Tiles and import OSM roads for a geographic area. |
+| Scene view | `scene` | 3D editing: select, move, rotate, scale, and place objects. |
+| Map view | `map` | Top-down 2D authoring for roads, intersections, buildings, and features, in the same center pane. |
+| Earth Import | `earth-import` | Preview Google Photorealistic 3D Tiles and import OSM roads for a geographic area. Still a mode: the side and bottom panes hide and its own chrome covers the scene pane until ED-08 replaces it. |
 
-Enter **Map** or **Earth Import** from the environment editor menu. Both swap in dedicated chrome and hide the standard scene-editing panels (hierarchy, inspector, chunk outlines).
-
-Press `Escape` to leave overlay modes. Earth Import also uses `Escape` to cancel an active preview.
+Switch between Scene and Map with the toolbar's view toggle; open Earth Import from the top bar. `Escape` cancels a gesture, then a map draft, then leaves the active tool, then clears the selection; when nothing is left to cancel it falls through to the global workspace switcher.
 
 ## Document model
 
@@ -55,6 +55,10 @@ Hierarchy, scene, map, and inspector share one `SelectionStore` (`app/3d/editor/
 
 `app/3d/editor/projection/SceneProjector.js` is the only path from a document change to runtime meshes, registry entities, chunk membership, and LiDAR truth triangles; `EnvironmentLoader.apply` and Earth Import apply remain the load-time full rebuilds (`syncRoadsFromDocument`). Props move in place. Buildings follow the cumulative delta on their existing mesh during a gesture and regenerate once on commit, undo, redo, or cancel with LiDAR triangles replaced only for that building. Roads rebuild the local closure only: the changed edges, the intersections at their endpoints, and those intersections' other incident edges (`computeRoadClosure`), keyed by id with untouched intersections relinked to replaced `Road` objects and `replaceTriangles` scoped by source id. Browser-only helpers (placement catalog, building generator) are injected by the loader (`browserProjectorRuntime.js`) so the projector and `Environment` load under node tests.
 
+### Option edits and the sky scalar (ED-03)
+
+Editing a field writes back through one command. `setObjectOptions({ objectId, patch })` (or `setObjectsOptions` for several records, atomic) reads the record's projected option value, applies the patch (`[{ path, value }]` entries or a plain object; unknown paths and `readOnly` fields are rejected with `options.unknown-path` / `options.read-only`), validates it against the descriptors and the type's `validate()`, and asks the type's `planOptions(record, value, context)` for plain plan steps (`set-edge-options`, `set-building-record`, `set-feature-record`, `set-earth-source`, `set-sky`, or `move-node`) or a world `delta` that routes through the transform planner (groups). Nothing mutates on a rejected edit and issues keep their field `path`. The environment sky is a document scalar (`document.sky`, mirrored into `EnvironmentSkyState` by the sky projector and kept current when legacy callers write the state directly), so Skybox edits are ordinary undoable commands; `snapshot()` carries `sky` only once seeded and `toManifest()` strips it, so the persisted location stays `manifest.sky` and `manifest.document` is unchanged. Sky is not part of `createWorldDescription`, so `worldHash` is untouched.
+
 `EditorPresentationRegistry` (`app/3d/editor/presentation/`) maps a `typeId` to an icon, menu options, inspector sections, and an optional preview; hierarchy and inspector consume it exclusively, and unregistered types fall back to a capability-derived default that shows the record and an unsupported notice. Registering a presentation is all a new type needs to appear in both panels (`tests/editor-presentation.test.js` proves it with a test-only type). The hierarchy tree model (`hierarchyModel.js`: sibling order, inherited hidden state, search, drag-and-drop planning) is pure and tested without React.
 
 ## Persistence (server-side)
@@ -65,9 +69,9 @@ Environment edits are saved to the backend, not the browser. Loading and saving 
 - **`EnvironmentPersistence`** watches committed document changes (never transient gesture frames or cancels), the registry, the persisted subset of editor state, and sky; selection never marks the environment dirty. It tracks edit generations separately from requests, retains the last acknowledged server revision, allows one `PUT` in flight, and builds queued saves from the latest `Environment.toManifest()` at send time. An edit made during a request stays dirty until its own captured draft is acknowledged. Explicit server `null` visual/evidence references are applied. Older revisions, other-environment responses, and stale promotion receipts are ignored. External MCP updates over a dirty or in-flight draft expose a conflict and keep the local edits.
 - **On page unload / tab hide** it flushes through the same queue with `keepalive`. Autosave suspension blocks every save entry point, cancels timers and queued work, drains the current request, preserves unsaved edits, and explicitly saves them after resume. A strict promotion flush joining an autosave observes the shared failure.
 
-The storage contract is environment schema v4 by default since ED-02 (schema v2, v3, and v4 all read; `CEV_SIM_ENVIRONMENT_SCHEMA_V4=0` writes v3 for hosts that must stay on the old schema until the opt-out is retired in ED-03). v2 files load as revision `0` with implied null visual/evidence references; the first guarded save writes v3 revision `1`. Full replacement is `PUT /api/storage/environments/<id>` with `{ manifest, expectedRevision }`. Rename, duplicate, ID change, and delete require the same revision. Missing or stale revisions return HTTP `409` with `ENVIRONMENT_REVISION_CONFLICT` and `currentRevision`. Unguarded legacy bodies are rejected with `ENVIRONMENT_UNGUARDED_WRITE`. Catalog entries include `revision`. `clientRevision` is not a concurrency authority and is not written into v3 documents.
+The storage contract is environment schema v4 (schema v2, v3, and v4 all read; the ED-02 env-var opt-out was retired in ED-03, and only the test-only `StorageService` option `environmentSchemaVersion: 3` still exercises the v3 writer). v2 files load as revision `0` with implied null visual/evidence references; the first guarded save writes v3 revision `1`. Full replacement is `PUT /api/storage/environments/<id>` with `{ manifest, expectedRevision }`. Rename, duplicate, ID change, and delete require the same revision. Missing or stale revisions return HTTP `409` with `ENVIRONMENT_REVISION_CONFLICT` and `currentRevision`. Unguarded legacy bodies are rejected with `ENVIRONMENT_UNGUARDED_WRITE`. Catalog entries include `revision`. `clientRevision` is not a concurrency authority and is not written into v3 documents.
 
-Schema v4 (ED-01) adds `document.objects` and `document.objectGraphVersion: 1`. Reads accept v2, v3, and v4; v2/v3 read views never inject a graph (`presentEnvironmentObjectGraph` derives one in memory). The default writer emits v4 (`StorageService` option `environmentSchemaVersion` defaults to `4`; `3` or `CEV_SIM_ENVIRONMENT_SCHEMA_V4=0` opts out and strips `objects`). Stripping is lossy once names, groups, locks, or hidden flags have been authored, which is why ED-02 flipped the default. A v4 write reconciles the incoming graph against the legacy domains, validates it, and rejects error-severity issues atomically with HTTP `400` `ENVIRONMENT_OBJECT_GRAPH_INVALID` and an `issues` array. The first v4 save over a v2/v3 file stores a write-once copy at `server/data/environment-migrations/<id>.pre-v4.json` (`cev-sim.environment-pre-migration` v1); recovery is a manual restore of `manifest`. Once a file is v4 it stays v4 even under the opt-out. A write whose `document` lacks an `objects` array over a stored v4 graph is an old client: when the stored graph carries authored data (groups, renames, parents, tags, locks, hidden flags, unknown types) it is rejected with HTTP `409` `ENVIRONMENT_SCHEMA_DOWNGRADE` instead of dropping the graph; when the graph is purely derived it is re-derived from the new geometry and the write passes (ED-02). Writes that omit `document` (rename) and graph-aware clients that still declare `schemaVersion: 3` pass. MCP `environment_add_object` rejects unregistered types with `ENVIRONMENT_OBJECT_TYPE_UNSUPPORTED`.
+Schema v4 (ED-01) adds `document.objects` and `document.objectGraphVersion: 1`. Reads accept v2, v3, and v4; v2/v3 read views never inject a graph (`presentEnvironmentObjectGraph` derives one in memory). The writer emits v4 (`StorageService` option `environmentSchemaVersion` defaults to `4`; the test-only value `3` strips `objects`). Stripping is lossy once names, groups, locks, or hidden flags have been authored, which is why ED-02 flipped the default. A v4 write reconciles the incoming graph against the legacy domains, validates it, and rejects error-severity issues atomically with HTTP `400` `ENVIRONMENT_OBJECT_GRAPH_INVALID` and an `issues` array. The first v4 save over a v2/v3 file stores a write-once copy at `server/data/environment-migrations/<id>.pre-v4.json` (`cev-sim.environment-pre-migration` v1); recovery is a manual restore of `manifest`. Once a file is v4 it stays v4 even under the opt-out. A write whose `document` lacks an `objects` array over a stored v4 graph is an old client: when the stored graph carries authored data (groups, renames, parents, tags, locks, hidden flags, unknown types) it is rejected with HTTP `409` `ENVIRONMENT_SCHEMA_DOWNGRADE` instead of dropping the graph; when the graph is purely derived it is re-derived from the new geometry and the write passes (ED-02). Writes that omit `document` (rename) and graph-aware clients that still declare `schemaVersion: 3` pass. MCP `environment_add_object` rejects unregistered types with `ENVIRONMENT_OBJECT_TYPE_UNSUPPORTED`.
 
 Display-name rename keeps visual and evidence references when `worldHash` is unchanged, including both descriptor and access hashes. Duplicating an environment, changing its ID, or importing onto a conflicting ID rebinds the descriptor to the destination world, creates a corresponding access sidecar with the same use selections, reuses compatible asset digests, and clears correspondence evidence. Missing or incompatible descriptors fail before the environment mutation. An older client that writes the same descriptor without `accessHash` preserves the existing sidecar; replacing the descriptor without a matching access hash is rejected.
 
@@ -91,17 +95,19 @@ managed execution remain unavailable until their later renderer milestones.
 
 Gizmo drags are gestures: the document holds the draft during the drag and one change set is committed on release, so building footprints, heights, prop positions, and headings persist exactly what the mesh shows. Reload therefore reconstructs the edited location rather than the original runtime mesh.
 
-## UI chrome
+## UI chrome (ED-03 workspace)
 
-`EnvironmentEditorChrome` mounts the editor overlay stack:
+`EnvironmentEditorChrome` mounts `EditorWorkspace` (`app/3d/overlay/workspace/`) plus the Three-side overlays (selection handles and group union boxes, chunk outlines, the editor working grid, Earth bounds) and the workspace shortcuts.
 
-- **Scene mode** — `EnvironmentEditorMenu`, the hierarchy tree (nested groups, search, multi-selection, inline rename, hide/lock toggles, drag-and-drop reparenting with an insertion indicator, right-click menu from the presentation registry, undo/redo), the inspector (presentation sections for the primary record, multi-selection count, tools, focus, hide, delete; editable group frame fields behind the `cev-sim.ui.environmentEditor.groupFrameFields` preference until ED-03's generic fields), selection handles for every selected leaf plus a union box per group, chunk outlines, bake progress, and a non-blocking visual-preview diagnostic for missing descriptor/access/assets, denied rights, material mismatch, and decoder failures.
-- **Map mode** — `MapModeChrome` with `MapSurface`, road pen, building rect, and feature placement tools.
-- **Earth Import mode** — `EarthImportModeChrome` with anchor/bounds fields, preview/apply controls, and layer toggles.
+- **Layout** — a CSS grid inside `#overlay`: top bar (40 px), hierarchy pane (232 px), scene pane, inspector pane (304 px), asset pane (208 px). `paneLayout.js` (pure) clamps sizes so the scene pane never drops below 480 × 240 px (the inspector shrinks first, then the hierarchy, then the asset pane; each collapses to a 28 px rail when minimums are not enough), and the layout persists under `cev-sim.ui.environmentEditor.paneLayout`. Splitters are `role="separator"` controls (drag, Arrow ±8 px, Shift ±32 px, Home/End, Enter toggles, double-click resets). The scene pane publishes its rectangle to `TotalScene`, which sizes the renderer, camera, and sky manager from it (`viewportRect.js`); the canvas sits beneath the `pointer-events: none` center cell so picking and gizmos keep receiving pointer events with canvas-relative coordinates.
+- **Top bar** — environment switcher, View menu (pane visibility), Earth import, Atmosphere (selects the Skybox), bake start/stop, and the save status (`EnvironmentPersistence.subscribe()` → saved / unsaved / saving / conflict).
+- **Toolbar** — `toolbarModel.js` (pure) builds the groups for the current view; the React toolbar renders `IconButton`s (tooltip, `aria-label`, `aria-pressed`) with roving Arrow-key focus. Scene view: Select/Move/Rotate/Scale, world/local axes, snap, Scene/Map view, grid/chunks/bounds overlays, layers, undo/redo/frame. Map view: select/pan/intersection/road pen/building rectangle, map snap, grid. View options (`transformSpace`, `transformSnap`, `sceneGridVisible`, `selectionBoundsVisible`, `chunkOutlinesVisible`) are session state remembered under `cev-sim.ui.environmentEditor.viewOptions`, never in the manifest. LiDAR and collision overlays arrive with ED-07's proxies.
+- **Hierarchy** — a windowed tree (`virtualWindow.js`: only the visible rows plus overscan render, so thousands of objects stay responsive) with `aria-level`/`aria-posinset`/`aria-setsize`, roving focus (`aria-activedescendant`), Arrow/Home/End navigation, Left/Right collapse and expand, Enter renames, Space toggles selection, Shift-range and Cmd/Ctrl-toggle selection, search, inline rename, hide/lock, drag-and-drop reparenting, and the presentation registry's context menu. Collapsed groups persist under `cev-sim.ui.environmentEditor.hierarchyExpanded`.
+- **Inspector** — sections from `EditorPresentationRegistry.getInspectorSections`; option fields render from `ObjectOptions.getFields()` through the generic controls in `app/3d/overlay/fields/` (`NumberField` with typed drafts, Arrow stepping, and label scrubbing; `Vector3Field`; `EnumField`, `ToggleField`, `TextField`, `ColorField`, `AssetReferenceField`; collapsible `PropertySection`s remembered per section). Every edit is `setObjectOptions` (or `setObjectsOptions` for a multi-selection of one type, which shows mixed values and applies one patch atomically); rejected edits keep the draft and show the issue inline at its field path without touching the document. Built-in extra sections come from `builtinSections.js`: the intersection turn-rule matrix, road endpoint elevations, and the Skybox runtime/local-preview block. Advanced descriptors show behind the shared Advanced switch. The Skybox is edited here; its authored values are the document's `sky` scalar and undo/redo like any other edit.
+- **Asset pane** — the built-in prop catalog in a folder/grid shell (click arms placement in the active view). ED-06 replaces the contents with the server-backed catalog.
+- **Earth Import mode** — `EarthImportModeChrome` with anchor/bounds fields, preview/apply controls, and layer toggles, overlaying the scene pane while the other panes hide.
 
-`EditorToolController` disables standard scene tools while map or earth-import modes are active.
-
-Keyboard: `Q`/`W`/`E`/`R` select tools; `Escape` cancels an active gesture, then leaves the tool, then clears the selection; `Mod+Z` / `Shift+Mod+Z` (or `Ctrl+Y`) undo and redo; `Mod+D` duplicates; `Delete`/`Backspace` deletes; `Mod+G` / `Shift+Mod+G` group and ungroup; `F` frames the selection. Editor shortcuts register through `ShortcutProvider` (`EditorCommandShortcuts`), never fire inside editable fields, and consume the event only when the command succeeds. `Mod` is Cmd on macOS and Ctrl elsewhere; bare letters never fire while Cmd/Ctrl/Alt is held.
+Keyboard: `Q`/`W`/`E`/`R` select tools (scene view); `Escape` cancels an active gesture, then a map draft, then leaves the tool, then clears the selection, then falls through to the workspace switcher; `Enter` finishes a road-pen draft; `Mod+Z` / `Shift+Mod+Z` (or `Ctrl+Y`) undo and redo; `Mod+D` duplicates; `Delete`/`Backspace` deletes; `Mod+G` / `Shift+Mod+G` group and ungroup; `F` frames the selection. All editor shortcuts register through `ShortcutProvider` (`EditorCommandShortcuts`), never fire inside editable fields, and consume the event only when something happened. `Mod` is Cmd on macOS and Ctrl elsewhere; bare letters never fire while Cmd/Ctrl/Alt is held.
 
 ## Chunks
 
@@ -198,7 +204,13 @@ flowchart TB
 | `tests/command-groups.test.js` | ED-02 group transforms (shared nodes moved once, nested frames), reparent, ungroup, duplicate, delete cascade, atomic rejection of unsupported transforms |
 | `tests/scene-projector.test.js` | ED-02 incremental projection: props in place, building gestures, road local closure, removals, hidden/locked, error isolation |
 | `tests/editor-interactions.test.js` | ED-02 select, gizmo drag, Escape cancel, undo/redo, sub-object and group drags, duplicate/reparent/reload, map gestures and road pen |
-| `tests/editor-presentation.test.js` | ED-02 presentation registry, hierarchy tree model, drop planning, and the test-only-type extension demonstration |
+| `tests/editor-presentation.test.js` | ED-02 presentation registry, hierarchy tree model, drop planning, the test-only-type extension demonstration, and the ED-03 built-in section providers |
+| `tests/command-options.test.js` | ED-03 `setObjectOptions` / `setObjectsOptions` for every built-in type, `planOptions`, atomic rejection with field paths, the `sky` scalar and its runtime mirror, feature re-placement on asset/facing changes |
+| `tests/pane-layout.test.js` | ED-03 pane layout model (defaults, clamping, resize/step/toggle, persistence) and the render viewport resolver |
+| `tests/editor-workspace.test.js` | ED-03 toolbar model per view, toolbar actions, editor view options |
+| `tests/field-model.test.js` | ED-03 field formatting/parsing/stepping/scrubbing, grouping, mixed values, issue mapping |
+| `tests/virtual-window.test.js` | ED-03 hierarchy windowing and tree keyboard navigation |
+| `tests/ui/environment-editor.spec.js` | ED-03 Playwright: panes, canvas tracking the scene pane, splitters, shortcut scoping, map view, inspector edits with undo and inline validation, autosave persistence, mixed values, large hierarchy windowing, asset pane, axe scan |
 | `tests/object-registry.test.js` | ED-01 object-type registry, `ObjectOptions` contracts, field descriptors, built-in prop table consolidation, kernel-safety of `app/3d/editor/objects/` |
 | `tests/object-graph.test.js` | ED-01 overlay derivation, reconciliation, transform bindings, the `object-graph-cases.v1.json` validation matrix, `worldHash` invariance |
 | `tests/environment-v4.test.js` | ED-01 compatibility baseline, v2/v3/v4 read and write policy, flagged v4 upgrade and pre-migration copy, downgrade rejection, MCP round-trip |
@@ -223,9 +235,13 @@ app/3d/editor/objects/      Kernel-safe object-type registry, options, object gr
 app/3d/editor/commands/     CommandBus, gestures, transform planning, object and legacy commands, headless service (MCP)
 app/3d/editor/selection/    SelectionStore and object-id ↔ registry-id mapping
 app/3d/editor/projection/   SceneProjector and domain projectors (roads local closure, buildings, features, objects)
-app/3d/editor/presentation/ EditorPresentationRegistry and the pure hierarchy tree model
+app/3d/editor/presentation/ EditorPresentationRegistry, hierarchy tree model, field model, windowing, built-in sections
+app/3d/editor/workspace/    Pane layout and toolbar models (pure)
 app/3d/environment/         Environment container and visualization
-app/3d/overlay/             React chrome (menus, inspectors, map/earth modes)
+app/3d/overlay/             React chrome (workspace panes, toolbar, inspector, fields, map/earth modes)
+app/3d/overlay/workspace/   EditorWorkspace, panes, splitter, toolbar, top bar, asset pane, working grid
+app/3d/overlay/fields/      Generic field controls rendered from ObjectOptions.getFields()
+app/3d/overlay/inspector/   Built-in inspector sections (turn rules, road endpoints, sky preview)
 app/3d/earth/               Earth Import implementation
 app/3d/skybox/              Procedural sky (preserved during earth import)
 ```

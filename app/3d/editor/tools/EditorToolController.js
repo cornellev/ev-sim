@@ -1,4 +1,4 @@
-import { EDITOR_MODES, EDITOR_TOOLS } from "../EditorState.js";
+import { EDITOR_MODES, EDITOR_TOOLS, MAP_TOOLS } from "../EditorState.js";
 import { PlaceTool } from "./PlaceTool.js";
 import { SelectTool } from "./SelectTool.js";
 import { TransformTool } from "./TransformTool.js";
@@ -25,50 +25,70 @@ export class EditorToolController {
         this.placeTool = new PlaceTool({ data, scene, camera, renderer });
         this.transformTool = new TransformTool({ data, scene, camera, renderer });
         this.tools = [this.selectTool, this.placeTool, this.transformTool];
+        // ED-03: Q/W/E/R and Escape register through ShortcutProvider
+        // (`EditorCommandShortcuts`) so they never fire while typing in a
+        // field; this controller only owns the Escape policy.
+        this.publishEscapeFlag();
+    }
 
-        const keys = data.keys?.();
-        this.keyDisposers = [
-            keys?.registerKeyDown?.("q", () => this.editor.setActiveTool(EDITOR_TOOLS.SELECT)),
-            keys?.registerKeyDown?.("w", () => this.editor.setActiveTool(EDITOR_TOOLS.TRANSLATE)),
-            keys?.registerKeyDown?.("e", () => this.editor.setActiveTool(EDITOR_TOOLS.ROTATE)),
-            keys?.registerKeyDown?.("r", () => this.editor.setActiveTool(EDITOR_TOOLS.SCALE)),
-            keys?.registerKeyDown?.("Escape", () => this.handleEscape()),
-        ].filter(Boolean);
+    /** Whether the next Escape would be consumed by the editor (so the global switcher defers). */
+    consumesEscape() {
+        const snapshot = this.editorSnapshot ?? {};
+        return Boolean(
+            snapshot.editorMode === EDITOR_MODES.EARTH_IMPORT
+            || this.bus?.activeGesture
+            || snapshot.map?.draft
+            || (this.selectionSnapshot?.ids?.length ?? 0) > 0
+            || this.selectionSnapshot?.sub
+            || (snapshot.editorMode === EDITOR_MODES.MAP
+                ? (snapshot.map?.activeMapTool ?? MAP_TOOLS.SELECT) !== MAP_TOOLS.SELECT
+                : snapshot.activeTool !== EDITOR_TOOLS.SELECT),
+        );
     }
 
     publishEscapeFlag() {
         if (typeof window === "undefined") return;
-        const snapshot = this.editorSnapshot ?? {};
-        window.__fusionEnvironmentEditorConsumesEscape = Boolean(
-            snapshot.editorMode === EDITOR_MODES.MAP
-            || snapshot.editorMode === EDITOR_MODES.EARTH_IMPORT
-            || this.bus?.activeGesture
-            || (this.selectionSnapshot?.ids?.length ?? 0) > 0
-            || this.selectionSnapshot?.sub
-            || snapshot.activeTool !== EDITOR_TOOLS.SELECT,
-        );
+        window.__fusionEnvironmentEditorConsumesEscape = this.consumesEscape();
     }
 
-    /** Escape order: cancel an active gesture, then leave the tool, then clear the selection. */
+    /**
+     * Escape order: cancel an active gesture, then a map draft (road pen or
+     * building rectangle), then leave the tool, then clear the selection.
+     * Returns `false` when nothing was consumed so the global workspace
+     * switcher can open. Earth Import owns its own Escape.
+     */
     handleEscape() {
         const snapshot = this.editor.snapshot();
-        if (snapshot.editorMode === EDITOR_MODES.MAP
-            || snapshot.editorMode === EDITOR_MODES.EARTH_IMPORT) return;
+        if (snapshot.editorMode === EDITOR_MODES.EARTH_IMPORT) return false;
+        const render = () => this.data.simulation()?.render?.();
 
         if (this.bus?.activeGesture) {
             if (!this.transformTool.cancelActiveGesture()) this.bus.cancelGesture(this.bus.activeGesture.id);
-            this.data.simulation()?.render?.();
-            return;
+            render();
+            return true;
         }
 
-        if (snapshot.activeTool !== EDITOR_TOOLS.SELECT) {
+        if (snapshot.editorMode === EDITOR_MODES.MAP) {
+            if (snapshot.map?.draft) {
+                this.editor.clearMapDraft();
+                render();
+                return true;
+            }
+            if ((snapshot.map?.activeMapTool ?? MAP_TOOLS.SELECT) !== MAP_TOOLS.SELECT) {
+                this.editor.setActiveMapTool(MAP_TOOLS.SELECT);
+                render();
+                return true;
+            }
+        } else if (snapshot.activeTool !== EDITOR_TOOLS.SELECT) {
             this.editor.setActiveTool(EDITOR_TOOLS.SELECT);
-            this.data.simulation()?.render?.();
-            return;
+            render();
+            return true;
         }
 
-        this.selection?.clear?.();
-        this.data.simulation()?.render?.();
+        if (!this.selection || this.selection.isEmpty?.()) return false;
+        this.selection.clear?.();
+        render();
+        return true;
     }
 
     dispose() {
@@ -78,8 +98,6 @@ export class EditorToolController {
         if (typeof window !== "undefined") {
             window.__fusionEnvironmentEditorConsumesEscape = false;
         }
-        this.keyDisposers.forEach((dispose) => dispose?.());
-        this.keyDisposers = [];
         this.tools.forEach((tool) => tool.dispose?.());
         this.tools = [];
     }

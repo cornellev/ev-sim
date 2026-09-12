@@ -467,3 +467,25 @@ test("ED-02 MCP mutations run through the command service: junction moves stay c
         await fs.rm(dir, { recursive: true, force: true });
     }
 });
+
+test("ED-03 the CEV_SIM_ENVIRONMENT_SCHEMA_V4 opt-out is retired from application and server code", async () => {
+    const { promises: fs } = await import("node:fs");
+    const path = await import("node:path");
+    const root = path.resolve(new URL("..", import.meta.url).pathname);
+    const walk = async (directory) => {
+        const entries = await fs.readdir(directory, { withFileTypes: true });
+        const files = await Promise.all(entries.map(async (entry) => {
+            const target = path.join(directory, entry.name);
+            if (entry.isDirectory()) return entry.name === "node_modules" ? [] : walk(target);
+            return /\.(js|mjs)$/.test(entry.name) ? [target] : [];
+        }));
+        return files.flat();
+    };
+    const files = [...await walk(path.join(root, "app")), ...await walk(path.join(root, "server"))];
+    const offenders = [];
+    for (const file of files) {
+        const source = await fs.readFile(file, "utf8");
+        if (/CEV_SIM_ENVIRONMENT_SCHEMA_V4/.test(source) && !/retired in ED-03/.test(source)) offenders.push(path.relative(root, file));
+    }
+    assert.deepEqual(offenders, []);
+});

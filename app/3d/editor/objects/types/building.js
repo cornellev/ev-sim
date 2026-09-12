@@ -107,6 +107,13 @@ export function createBuildingType() {
         getTransformBinding(record) {
             return buildingTransformBinding(record);
         },
+        /** Height and texture edits patch the building record; footprints go through transforms. */
+        planOptions(record, value) {
+            return {
+                steps: [{ op: "set-building-record", buildingId: String(record.id), patch: { height: value.height, textureId: value.textureId } }],
+                issues: [],
+            };
+        },
         getDependencies(record) {
             return [{ kind: "building", id: record.id }];
         },

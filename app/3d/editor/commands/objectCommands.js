@@ -16,14 +16,28 @@ import {
     removeRoadEdge,
 } from "../document/documentMutations.js";
 import { buildingIdFromFootprint } from "../../city/buildingIds.js";
-import { OBJECT_ISSUE_CODES, readObjectTransform, validateObjectRecords } from "../objects/objectGraph.js";
+import {
+    OBJECT_ISSUE_CODES,
+    planObjectOptions,
+    readObjectOptionValue,
+    readObjectTransform,
+    validateObjectRecords,
+} from "../objects/objectGraph.js";
 import { STANDARD_COMPONENT_KEYS, compareObjectRecords, createObjectRecord, normalizeObjectRecord } from "../objects/objectRecord.js";
 import { GROUP_TYPE_ID } from "../objects/types/group.js";
 import { BUILDING_TYPE_ID } from "../objects/types/building.js";
 import { BUILTIN_PROP_TYPE_ID } from "../objects/types/builtinProp.js";
 import { INTERSECTION_TYPE_ID } from "../objects/types/intersection.js";
 import { ROAD_TYPE_ID } from "../objects/types/road.js";
-import { issue } from "../objects/ObjectOptions.js";
+import {
+    OPTIONS_ISSUE_CODES,
+    fieldPathKey,
+    hasErrorIssue,
+    isPlainObject,
+    issue,
+    setFieldValue,
+    validateFieldConstraints,
+} from "../objects/ObjectOptions.js";
 import { COMMAND_ISSUE_CODES, commandFailure, commandIssue, commandSuccess, errorIssues } from "./commandIssues.js";
 import {
     childrenOf,
@@ -471,6 +485,132 @@ export function setObjectsLocked({ objectIds = [], locked = true, label = locked
                 if (!result.ok) return result;
             }
             return commandSuccess({ objectIds: [...objectIds].map(String), locked: locked === true });
+        },
+    };
+}
+
+// ------------------------------------------------------------------ options
+
+/**
+ * Normalize a patch into `[{ path, value }]` entries. Accepts the entry array
+ * directly or a (possibly nested) plain object whose leaves are matched
+ * against the type's field descriptors.
+ */
+export function normalizeOptionPatch(patch, fields = []) {
+    if (Array.isArray(patch)) {
+        return patch
+            .filter((entry) => entry && Array.isArray(entry.path) && entry.path.length > 0)
+            .map((entry) => ({ path: entry.path.map(String), value: entry.value }));
+    }
+    if (!isPlainObject(patch)) return [];
+    const known = new Set(fields.map((descriptor) => fieldPathKey(descriptor.path)));
+    const entries = [];
+    // Walk the object: a prefix that names a descriptor is one entry (so
+    // vector values stay whole); other plain objects recurse; leaves that
+    // match no descriptor still become entries so the command can report
+    // them as unknown paths instead of silently ignoring them.
+    const walk = (value, prefix) => {
+        for (const [key, entry] of Object.entries(value)) {
+            const path = [...prefix, key];
+            if (entry === undefined) continue;
+            if (known.has(fieldPathKey(path)) || !isPlainObject(entry)) entries.push({ path, value: entry });
+            else walk(entry, path);
+        }
+    };
+    walk(patch, []);
+    return entries;
+}
+
+function runOptionsEdit(ctx, objectId, patch) {
+    const id = String(objectId);
+    const record = ctx.document.getObject(id);
+    if (!record) return commandFailure(commandIssue(COMMAND_ISSUE_CODES.OBJECT_MISSING, `Object "${id}" does not exist.`, { objectId: id }));
+    if (record.components?.locked === true) {
+        return commandFailure(commandIssue(COMMAND_ISSUE_CODES.OBJECT_LOCKED, `"${record.name ?? id}" is locked.`, { objectId: id }));
+    }
+    const definition = definitionFor(ctx, record);
+    if (!definition?.options) {
+        return commandFailure(issue(["options"], OPTIONS_ISSUE_CODES.UNSUPPORTED, `Object type "${record.typeId}" has no editable options.`, { objectId: id }));
+    }
+    const index = ctx.document.index();
+    const context = { sky: ctx.sky };
+    const previous = readObjectOptionValue(record, index, ctx.registry, context);
+    const fields = [...definition.options.getFields({ record })];
+    const byPath = new Map(fields.map((descriptor) => [fieldPathKey(descriptor.path), descriptor]));
+    const entries = normalizeOptionPatch(patch, fields);
+    if (entries.length === 0) {
+        return commandFailure(commandIssue(COMMAND_ISSUE_CODES.ARGUMENT_INVALID, "No option values were supplied.", { objectId: id }));
+    }
+    const issues = [];
+    let candidate = previous ?? definition.options.getDefaults();
+    for (const entry of entries) {
+        const descriptor = byPath.get(fieldPathKey(entry.path));
+        if (!descriptor) {
+            issues.push(issue(entry.path, OPTIONS_ISSUE_CODES.UNKNOWN_PATH, `"${fieldPathKey(entry.path)}" is not an option of ${definition.label}.`, { objectId: id }));
+            continue;
+        }
+        if (descriptor.readOnly) {
+            issues.push(issue(entry.path, OPTIONS_ISSUE_CODES.READ_ONLY, `${descriptor.label} is read-only.`, { objectId: id }));
+            continue;
+        }
+        candidate = setFieldValue(candidate, entry.path, entry.value);
+    }
+    if (issues.length > 0) return commandFailure(issues);
+
+    // Validate the raw candidate against descriptors first so out-of-range
+    // input is reported instead of silently clamped by `normalize()`.
+    const constraintIssues = validateFieldConstraints(fields, candidate).map((entry) => ({ ...entry, objectId: id }));
+    if (hasErrorIssue(constraintIssues)) return commandFailure(errorIssues(constraintIssues));
+    const next = definition.options.normalize(candidate);
+    const validation = (definition.options.validate(next, { record }) ?? []).map((entry) => ({ ...entry, objectId: id }));
+    if (hasErrorIssue(validation)) return commandFailure(errorIssues(validation));
+
+    const plan = planObjectOptions(record, index, ctx.registry, next, { ...context, previous });
+    if (hasErrorIssue(plan.issues)) return commandFailure(errorIssues(plan.issues));
+    if (plan.steps.length > 0) {
+        const applied = applyPlanSteps(ctx.document, plan.steps, { notify: false });
+        if (!applied.ok) return commandFailure(commandIssue(COMMAND_ISSUE_CODES.MUTATION_FAILED, applied.error, { objectId: id }));
+    }
+    if (plan.delta) {
+        const transform = planTransform(ctx.document, ctx.registry, [id], plan.delta, {});
+        if (!transform.ok) return commandFailure(transform.issues);
+        const applied = applyPlanSteps(ctx.document, transform.steps, { notify: false });
+        if (!applied.ok) return commandFailure(commandIssue(COMMAND_ISSUE_CODES.MUTATION_FAILED, applied.error, { objectId: id }));
+    }
+    return commandSuccess({ objectId: id, paths: entries.map((entry) => fieldPathKey(entry.path)), value: next });
+}
+
+/**
+ * Write option field values back to one record through its type's
+ * `planOptions`. `patch` is `[{ path: string[], value }]` or a plain object.
+ * Validation issues keep their field `path` and nothing mutates on failure.
+ */
+export function setObjectOptions({ objectId, patch = [], label = "Edit options" } = {}) {
+    return {
+        id: "set-object-options",
+        label,
+        run(ctx) {
+            return runOptionsEdit(ctx, objectId, patch);
+        },
+    };
+}
+
+/** Apply the same option patch to several records atomically (multi-selection edits). */
+export function setObjectsOptions({ objectIds = [], patch = [], label = "Edit options" } = {}) {
+    return {
+        id: "set-objects-options",
+        label,
+        run(ctx) {
+            if (!Array.isArray(objectIds) || objectIds.length === 0) {
+                return commandFailure(commandIssue(COMMAND_ISSUE_CODES.SELECTION_EMPTY, "No objects to edit."));
+            }
+            const results = [];
+            for (const id of objectIds) {
+                const result = runOptionsEdit(ctx, id, patch);
+                if (!result.ok) return result;
+                results.push(result.result);
+            }
+            return commandSuccess({ objectIds: results.map((entry) => entry.objectId), paths: results[0]?.paths ?? [] });
         },
     };
 }

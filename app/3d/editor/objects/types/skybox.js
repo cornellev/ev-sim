@@ -9,6 +9,7 @@ import {
     SKY_MODES,
     SKY_QUALITY_PRESETS,
     normalizeSkyConfig,
+    skyConfigToManifest,
 } from "../../../skybox/EnvironmentSkyConfig.js";
 import { ObjectOptions, field, validateFieldConstraints } from "../ObjectOptions.js";
 import { SKYBOX_OBJECT_ID } from "../objectRecord.js";
@@ -35,8 +36,16 @@ export class SkyboxOptions extends ObjectOptions {
         return normalizeSkyConfig(DEFAULT_ENVIRONMENT_SKY_CONFIG);
     }
 
-    getFields() {
-        return SKYBOX_FIELDS;
+    /**
+     * All fields when no value is supplied; with `context.value`, only the
+     * groups that apply to the current sky mode (atmosphere/clouds for
+     * Takram, image for image skies) so the inspector shows what renders.
+     */
+    getFields(context = {}) {
+        const mode = context?.value?.mode;
+        if (mode !== SKY_MODES.TAKRAM && mode !== SKY_MODES.IMAGE) return SKYBOX_FIELDS;
+        const hidden = mode === SKY_MODES.TAKRAM ? "image" : "takram";
+        return SKYBOX_FIELDS.filter((descriptor) => descriptor.path[0] !== hidden);
     }
 
     normalize(value = {}) {
@@ -66,6 +75,10 @@ export function createSkyboxType() {
         capabilities: { selectable: true, transformable: false, deletable: false, groupable: false, hasOptions: true },
         create(input = {}) {
             return { id: SKYBOX_OBJECT_ID, name: input.name ?? "Skybox" };
+        },
+        /** Sky edits replace the document's `sky` scalar (persisted at `manifest.sky`). */
+        planOptions(_record, value) {
+            return { steps: [{ op: "set-sky", value: skyConfigToManifest(value) }], issues: [] };
         },
     });
 }
