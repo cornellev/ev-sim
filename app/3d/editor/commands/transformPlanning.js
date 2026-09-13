@@ -69,6 +69,7 @@ export function collectTransformClosure(document, registry = objectTypeRegistry,
     const edgeIds = new Set();
     const featureIds = new Set();
     const buildingIds = new Set();
+    const objectDependencyIds = new Set();
     for (const id of leaves) {
         const record = byId.get(id);
         const definition = definitionFor(registry, record);
@@ -78,6 +79,7 @@ export function collectTransformClosure(document, registry = objectTypeRegistry,
             else if (dependency.kind === "road-edge") edgeIds.add(String(dependency.id));
             else if (dependency.kind === "feature") featureIds.add(String(dependency.id));
             else if (dependency.kind === "building") buildingIds.add(String(dependency.id));
+            else if (dependency.kind === "object") objectDependencyIds.add(String(dependency.id));
         }
     }
     if (sub?.kind === "road-node" && sub.id !== undefined && sub.id !== null) {
@@ -99,7 +101,7 @@ export function collectTransformClosure(document, registry = objectTypeRegistry,
             issues.push(issue(["transform"], TRANSFORM_ISSUE_CODES.LOCKED, `"${record.name ?? edgeId}" is a locked road dependency.`, { objectId: edgeId }));
         }
     }
-    return { roots, groups, leaves, nodeIds, edgeIds, featureIds, buildingIds, issues, sub: sub ?? null };
+    return { roots, groups, leaves, nodeIds, edgeIds, featureIds, buildingIds, objectIds: objectDependencyIds, issues, sub: sub ?? null };
 }
 
 /**

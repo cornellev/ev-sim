@@ -24,7 +24,7 @@ ED PR changes a contract, hash, gate, or milestone status.
 
 ## Status
 
-- Next milestone: **ED-06 — Asset catalog**.
+- Next milestone: **ED-07 — Asset studio**.
 - Implemented: **ED-01 — Contracts** (object registry, options validation,
   schema-v4 adapters, compatibility fixtures), **ED-02 — Commands and
   hierarchy** (`SelectionStore`, `CommandBus` with transactions, gestures, and
@@ -44,7 +44,11 @@ ED PR changes a contract, hash, gate, or milestone status.
   lanes with stable ids, per-lane directions and widths, per-boundary
   markings, the `RoadDisplay` cross-section diagram and `road-lane`
   sub-selection, asymmetric-aware turn-rule feasibility, route algorithm 7
-  with lane-id anchors and proof invalidation, and MCP lane operations).
+  with lane-id anchors and proof invalidation, and MCP lane operations), and
+  **ED-06 — Asset catalog** (the journaled server catalog and immutable model
+  revisions, dependency-complete GLTF/GLB import, editor-only projected model
+  instances, shared Scene/Map placement, read-only session preview tabs, and
+  explicit atomic instance revision updates).
   Existing environments retain their legacy behavior; schema v4 is the only
   writer.
 - Program goal: one consistent interaction model across hierarchy, scene, map,
@@ -60,7 +64,7 @@ ED PR changes a contract, hash, gate, or milestone status.
   proxies are set up; LiDAR authoring supports generated meshes and editable
   primitives.
 - Default implementation/review reasoning level: **Extra High**.
-- Last updated: **2026-09-12 — ED-04 implemented**.
+- Last updated: **2026-09-13 — ED-06 implemented**.
 
 ## Normative contracts
 
@@ -124,9 +128,9 @@ ED PR changes a contract, hash, gate, or milestone status.
   `rotation.unsupported`, `object.missing`) and never mutates. Props accept yaw
   and planar translation; buildings accept yaw, translation, and scale (height
   follows the Y scale); road edges and intersections translate their nodes;
-  groups compose the delta into their frame; `asset-instance` is not
-  transformable until ED-06. `road`/`intersection` are transformable and
-  intersections are deletable.
+  groups compose the delta into their frame; `asset-instance` composes exact
+  `T × Ry × S` records with positive local per-axis scale when selected alone.
+  `road`/`intersection` are transformable and intersections are deletable.
 - `ObjectOptions` subclasses must implement `getDefaults`, `getFields`,
   `normalize`, and `validate`; the base constructor rejects partial subclasses.
   Field descriptors are frozen `{ path: string[], label, control, units?, min?,
@@ -136,7 +140,7 @@ ED PR changes a contract, hash, gate, or milestone status.
   throws on bad input. In ED-01 option values are projected from the canonical
   legacy record (`options.fromLegacy`), never persisted in the overlay.
 - Built-in types: `group`, `skybox`, `tile`, `road`, `intersection`,
-  `building`, `builtin-prop`, and the contract-only `asset-instance`. The five
+  `building`, `builtin-prop`, and `asset-instance`. The five
   props are one `builtin-prop` type with an `assetId` option; the prop table in
   `types/builtinProp.js` is the single source for the placement catalog, the
   world compiler's feature geometry, editor collision radii, and LiDAR semantic
@@ -627,19 +631,86 @@ identically to field edits, proof invalidation tests.
 
 **Depends on:** ED-02.
 
-Server-backed catalog over the validated asset storage separating catalog
-metadata, immutable asset revisions, and scene instances (pinned revision,
-transform, explicit overrides). Catalog APIs under
-`/api/storage/editor-assets` with revision guards; file bytes continue through
-the visual-asset upload and validation APIs. `AssetRepository.list / import /
-publishRevision / getReferences / archive` and `AssetInstantiation.create /
-planRevisionUpdate`. Library with folders, breadcrumbs, search, sorting, type
-filters, grid/list views, drag-and-drop placement previews, GLB/GLTF import
-with required local dependencies and actionable errors, and explicit instance
-updates for selected instances or all instances in the current environment.
+Implemented by the pure `app/editor-assets/EditorAssetContract.js` contract.
+`editor-assets/catalog.json` is
+`cev-sim.editor-asset-catalog@1` with one non-negative `revision` concurrency
+token, folders `{ id, name, parentId }`, and asset metadata `{ id, name,
+folderId, tags, archived, latestRevision, thumbnails, createdAt, updatedAt }`.
+`editor-assets/revisions/<assetId>/<revision>.json` is immutable
+`cev-sim.editor-asset-revision@1` `{ assetId, revision, publicationId,
+modelUseHash, createdAt }`. Source ids, media type, byte digest, and dependency
+mapping remain authoritative in the VIS-04 use closure named by
+`modelUseHash`; the catalog does not copy that graph.
 
-**Merge gate:** tests for dependent GLTF files, revision pinning, update
-conflicts, folder moves, archived references, and placement.
+`EditorAssetStore` serializes every mutation through one catalog lane. Every
+write requires the catalog token and increments it once. Publication journals
+the exact target records under `editor-assets/transactions/`, acquires
+`editor-asset:<assetId>:revision:<revision>`, writes the immutable revision,
+atomically replaces the catalog, then removes the journal. Recovery removes
+unpublished state, adopts an exactly committed target, and retains roots while
+failing ambiguous state. Thumbnail roots have separate owners. Archive never
+releases model roots, and `publicationId` makes a committed retry idempotent.
+Folder moves reject missing parents and cycles; nonempty folders cannot be
+deleted.
+
+The router mounted at `/api/storage/editor-assets` exposes catalog list,
+capabilities, asset metadata, immutable revisions, thumbnails, reference
+lookup, and folder CRUD. Static routes are registered before `/:assetId`.
+Binary upload and validation stay under `/api/storage/visual-assets`.
+Reference lookup scans saved schema-v4 environment documents and returns
+environment revision plus matching object ids; no second index exists.
+`StorageService` validates only newly introduced or changed pins before the
+final environment write, so unrelated edits preserve old unavailable pins and
+archived revisions remain readable.
+
+`GltfImportPlan` accepts selected local records and one explicit entry path,
+rejects network/absolute/traversing/ambiguous dependency paths, rewrites local
+URIs to `sha256:<digest>`, and reconstructs GLB JSON without changing its BIN
+chunk. `AssetRepository.import()` uploads dependencies first, binds their use
+hashes on the rewritten model, validates the complete closure, supports
+`AbortSignal`, and cancels unfinished staging. `AssetModelLoader` revalidates
+and verifies exact bytes before GLTF/KTX2 decode, caches one immutable resource
+entry per model use, strips imported `userData`, and disposes after its final
+lease. One `AssetPreviewRenderer` supplies read-only active-tab previews and
+serialized 256 px thumbnails; derivative upload uses the model source lineage
+and permission checks.
+
+An `asset-instance@1` remains an object-graph-v1 record. Its `asset` component
+is `{ assetId, revision, position:{x,y,z}, rotationY, scale:{x,y,z},
+overrides:{} }`; revision is a positive integer, transforms are finite, local
+scales are positive, and ED-06 rejects nonempty overrides. The type has an
+object-backed transform binding for exact `T × Ry × S` changes. It supports
+positive per-axis scale only when transformed alone; group and multi-selection
+scale is uniform. Gesture capture includes object-backed leaves, duplicate
+copies the component under a new `asset-*` id, and explicit update commands
+check document version, before-values, locks, and same-asset revisions before
+changing all selected targets atomically.
+
+`assetInstancesProjector` is the only document-to-model path. It generation-
+guards asynchronous loads, reuses a lease for transform-only changes, replaces
+the lease on a revision change, and releases on delete, full load, mode switch,
+or disposal. Registry ids are `asset:<objectId>` and entries are `editorOnly`.
+They remain pickable in the editor but skip perception annotation, chunk
+assignment/dirtiness, runtime manifest serialization, bake, measured sensors,
+collision, LiDAR, and Simulation mode. Registry runtime notifications carry
+`affectsPersistence:false`, so load status and bounds never cause autosave.
+
+Scene clicks, HTML drops, and Map clicks share `AssetPlacementController` and
+one pinned `{ kind:"catalog", assetId, revision }` payload. Map draws transient
+runtime bounds (or a position marker), uses the existing screen-to-world path,
+and commits a move gesture while preserving Y. The server-backed asset pane
+provides folder CRUD, breadcrumbs, search, sorting, built-in/model and archive
+filters, grid/list view, import/reimport, metadata, archive, and thumbnail
+retry. Session-only `workspace.assetTabs` implement replacement and pinning;
+only the active tab owns a preview lease and environment shortcuts are gated
+to the Scene tab. The asset inspector shows pinned/latest/load state and runs
+explicit selected-or-all revision updates. ED-07 part, material, proxy, and
+asset-edit history remain out of scope.
+
+**Merge gate:** the ten focused ED-06 suites cover contracts, store/API crash
+recovery, import/loading, commands, projection/persistence, placement, and
+workspace state; `tests/ui/environment-assets.spec.js` covers the complete
+import/place/pin/update/archive/mode-switch workflow and accessibility.
 
 ### ED-07 — Asset studio
 
@@ -804,12 +875,56 @@ Record in the ledger: focused-suite pass counts, `npm run lint` result,
   `6ca2ece3d5266822a2ceabba72e5f7dd9514789e76757e86f6aedd2730ab9a6a`).
   Not run in this pass: `npm run test:parity`, `npm run dist:headless`, and
   the ED-03/ED-04 Playwright specs.
-- [ ] ED-06 — Asset catalog.
+- [x] ED-06 — Asset catalog. Immutable catalog revisions over VIS-04 model-use
+  closures; recoverable publication, folder/metadata APIs, reference scans,
+  dependency-complete GLTF/GLB import, shared exact-byte loading and thumbnail
+  rendering; command-backed pinned instances and atomic explicit updates;
+  editor-only projection with nonpersistent runtime events; shared Scene/Map
+  placement; server-backed library and read-only session preview tabs. The ten
+  focused ED-06 suites passed 25/25; `npm run lint` passed with 0 errors and
+  one pre-existing unrelated warning; `npm run build` passed; `npm test`
+  passed 1191/1195 with four
+  declared hardware skips and zero failures. The ED-06 Playwright workflow and
+  its 1280 × 720 axe run each passed. Both fixture generators completed with
+  zero drift: headless characterization SHA-256
+  `60dc0bd2b02a9ec768f833070ce4d8d2047f5383838f09ea3f130dd31552dd6f`
+  and environment-editor compatibility SHA-256
+  `6ca2ece3d5266822a2ceabba72e5f7dd9514789e76757e86f6aedd2730ab9a6a`.
 - [ ] ED-07 — Asset studio.
 - [ ] ED-08 — Creation and imports.
 - [ ] ED-09 — Acceptance.
 
 ## Decision log
+
+### 2026-09-13 — Implement ED-06 asset catalog
+
+The editor catalog is an authoring index over existing source-bound VIS-04 use
+records. An immutable model revision stores only its asset id, revision,
+publication id, model-use hash, and creation time. It never copies source
+grants, media identity, byte digests, or dependency mappings. All catalog and
+folder writes use one catalog revision token. Model and thumbnail roots are
+owned per asset revision, publication is journaled, and archive changes only
+catalog visibility. This keeps retries recoverable and old pinned references
+readable.
+
+Instances stay in schema v4's object graph as `asset-instance@1` records. Their
+revision is explicit and never follows `latestRevision`; catalog refresh only
+reports that an update is available. Placement pins a revision at its start,
+and the inspector updates selected or all matching current-environment
+instances through one guarded command. ED-06 overrides remain empty, and the
+asset preview tab is a read-only session surface with no separate undo state.
+Parts, materials, proxies, and asset editing remain ED-07.
+
+Loaded model trees are editor appearance. They register under
+`asset:<objectId>` so editor picking works, but `editorOnly` skips truth,
+chunks, serialized runtime manifests, bake, LiDAR, collision, measured camera
+resources, and Simulation mode. Registry load/bounds changes are explicitly
+nonpersistent; document commands are the only asset-instance autosave source.
+Consequently asset-only changes can alter the authored environment and resolved
+bundle integrity hashes while leaving `worldHash`, `roadNetworkHash`,
+`lidarGeometryHash`, measured render resources, simulation semantic hash, and
+episode hash unchanged. Schema v4, object-graph v1, world-description versions,
+and all headless/VIS acceptance gates are unchanged.
 
 ### 2026-09-12 — Implement ED-05 lane authoring
 

@@ -20,8 +20,9 @@ export function EditorCommandShortcuts({ data }) {
     useEffect(() => data?.editor?.()?.subscribe?.(setEditorSnapshot), [data]);
 
     const editorMode = editorSnapshot?.editorMode ?? EDITOR_MODES.SCENE;
-    const inScene = editorMode === EDITOR_MODES.SCENE;
-    const inMap = editorMode === EDITOR_MODES.MAP;
+    const sceneTabActive = (editorSnapshot?.workspace?.activeTabId ?? "scene") === "scene";
+    const inScene = editorMode === EDITOR_MODES.SCENE && sceneTabActive;
+    const inMap = editorMode === EDITOR_MODES.MAP && sceneTabActive;
     const inEditor = inScene || inMap;
     const bus = () => data?.commands?.();
     const editor = () => data?.editor?.();

@@ -56,6 +56,15 @@ export const VISUAL_ASSET_ERROR_CODES = Object.freeze({
     VALIDATION_TIMEOUT: "VISUAL_ASSET_VALIDATION_TIMEOUT",
 });
 
+export const EDITOR_ASSET_ERROR_CODES = Object.freeze({
+    REVISION_CONFLICT: "EDITOR_ASSET_REVISION_CONFLICT",
+    INVALID: "EDITOR_ASSET_INVALID",
+    NOT_FOUND: "EDITOR_ASSET_NOT_FOUND",
+    FOLDER_NOT_EMPTY: "EDITOR_ASSET_FOLDER_NOT_EMPTY",
+    IMMUTABLE_CONFLICT: "EDITOR_ASSET_IMMUTABLE_CONFLICT",
+    RECOVERY_CONFLICT: "EDITOR_ASSET_RECOVERY_CONFLICT",
+});
+
 export const RUN_PACKAGE_ERROR_CODES = Object.freeze({
     HOSTILE: "RUN_PACKAGE_HOSTILE",
     INVALID: "RUN_PACKAGE_INVALID",
@@ -114,6 +123,12 @@ const VISUAL_ASSET_STATUS = Object.freeze({
     BAKE_PROMOTION_REUSE_UNAUTHORIZED: 409,
     BAKE_PROMOTION_NOOP_INVALID: 409,
     BAKE_PROMOTION_RECOVERY_CONFLICT: 409,
+    EDITOR_ASSET_REVISION_CONFLICT: 409,
+    EDITOR_ASSET_INVALID: 400,
+    EDITOR_ASSET_NOT_FOUND: 404,
+    EDITOR_ASSET_FOLDER_NOT_EMPTY: 409,
+    EDITOR_ASSET_IMMUTABLE_CONFLICT: 409,
+    EDITOR_ASSET_RECOVERY_CONFLICT: 409,
 });
 
 export class StorageHttpError extends Error {
@@ -231,5 +246,17 @@ export function visualAssetError(code, message, { statusCode, headers, denials }
         if (denials) payload.denials = denials;
         return payload;
     };
+    return error;
+}
+
+export function editorAssetError(code, message, { currentRevision, issues } = {}) {
+    const error = new StorageHttpError(message, {
+        statusCode: VISUAL_ASSET_STATUS[code] ?? 400,
+        code,
+        currentRevision,
+    });
+    if (issues) error.issues = issues;
+    const original = error.toJSON.bind(error);
+    error.toJSON = () => ({ ...original(), ...(issues ? { issues } : {}) });
     return error;
 }

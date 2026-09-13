@@ -24,6 +24,7 @@ export const MAP_TOOLS = Object.freeze({
     INTERSECTION: "intersection",
     BUILDING_RECT: "building-rect",
     FEATURE_PLACE: "feature-place",
+    ASSET_PLACE: "asset-place",
 });
 
 export const MAP_SELECTION_TYPES = Object.freeze({
@@ -31,6 +32,7 @@ export const MAP_SELECTION_TYPES = Object.freeze({
     FEATURE: "feature",
     ROAD: "road",
     INTERSECTION: "intersection",
+    ASSET: "asset",
 });
 
 export const EDITOR_MODES = Object.freeze({
@@ -115,6 +117,22 @@ function normalizeEditorMode(mode) {
     return EDITOR_MODE_VALUES.has(mode) ? mode : EDITOR_MODES.SCENE;
 }
 
+function cloneWorkspace(workspace) {
+    const tabs = Array.isArray(workspace?.assetTabs)
+        ? workspace.assetTabs.filter((tab) => tab?.id && tab?.assetId && Number.isInteger(tab?.revision) && tab.revision > 0).map((tab) => ({
+            id: String(tab.id),
+            assetId: String(tab.assetId),
+            revision: tab.revision,
+            pinned: tab.pinned === true,
+            name: tab.name ? String(tab.name) : String(tab.assetId),
+        }))
+        : [];
+    const activeTabId = workspace?.activeTabId === "scene" || tabs.some((tab) => tab.id === workspace?.activeTabId)
+        ? String(workspace?.activeTabId ?? "scene")
+        : "scene";
+    return { activeTabId, assetTabs: tabs };
+}
+
 export class EditorState {
     constructor(options = {}) {
         this.activeTool = TOOL_VALUES.has(options.activeTool)
@@ -138,6 +156,7 @@ export class EditorState {
         this.map = cloneMapState(options.map);
         this.roadDraft = cloneRoadDraft(options.roadDraft);
         this.earthImport = cloneEarthImportState(options.earthImport);
+        this.workspace = cloneWorkspace(options.workspace);
         this.dirty = false;
         this.subscribers = new Set();
     }
@@ -158,6 +177,7 @@ export class EditorState {
             map: cloneMapState(this.map),
             roadDraft: cloneRoadDraft(this.roadDraft),
             earthImport: cloneEarthImportState(this.earthImport),
+            workspace: cloneWorkspace(this.workspace),
             dirty: this.dirty,
         };
     }
@@ -245,6 +265,7 @@ export class EditorState {
         if (this.editorMode === next) return;
         const previous = this.editorMode;
         this.editorMode = next;
+        this.activePlacement = null;
 
         if (next !== EDITOR_MODES.MAP) {
             this.map.draft = null;
@@ -330,6 +351,7 @@ export class EditorState {
         if (tool !== MAP_TOOLS.FEATURE_PLACE) {
             this.map.activeFeatureType = null;
         }
+        if (tool !== MAP_TOOLS.ASSET_PLACE && this.activePlacement?.kind === "catalog") this.activePlacement = null;
         this.notify();
     }
 
@@ -403,10 +425,63 @@ export class EditorState {
 
 
     setPlacementAsset(asset) {
-        this.activePlacement = asset ? { ...asset } : null;
-        if (asset) {
+        const placement = !asset ? null : asset.kind === "catalog"
+            ? { kind: "catalog", assetId: String(asset.assetId), revision: Number(asset.revision), label: asset.label ?? asset.name }
+            : { kind: "builtin", id: String(asset.id), label: asset.label };
+        this.activePlacement = placement;
+        if (placement) {
             this.activeTool = EDITOR_TOOLS.PLACE;
+            if (this.editorMode === EDITOR_MODES.MAP) {
+                if (placement.kind === "catalog") this.map.activeMapTool = MAP_TOOLS.ASSET_PLACE;
+                else {
+                    this.map.activeMapTool = MAP_TOOLS.FEATURE_PLACE;
+                    this.map.activeFeatureType = placement.id;
+                }
+            }
         }
+        this.notify();
+    }
+
+    openAssetTab(asset, { pinned = false } = {}) {
+        if (!asset?.id || !Number.isInteger(asset?.revision) || asset.revision <= 0) return null;
+        const assetId = String(asset.id);
+        const matching = this.workspace.assetTabs.find((tab) => tab.assetId === assetId && tab.revision === asset.revision);
+        if (matching) {
+            if (pinned) matching.pinned = true;
+            matching.name = String(asset.name ?? matching.name ?? assetId);
+            this.workspace.activeTabId = matching.id;
+            this.notify();
+            return matching.id;
+        }
+        if (!pinned) this.workspace.assetTabs = this.workspace.assetTabs.filter((tab) => tab.pinned);
+        const id = `asset:${assetId}:${asset.revision}`;
+        this.workspace.assetTabs.push({ id, assetId, revision: asset.revision, pinned, name: String(asset.name ?? assetId) });
+        this.workspace.activeTabId = id;
+        this.notify();
+        return id;
+    }
+
+    pinAssetTab(tabId) {
+        const tab = this.workspace.assetTabs.find((entry) => entry.id === String(tabId));
+        if (!tab || tab.pinned) return;
+        tab.pinned = true;
+        this.notify();
+    }
+
+    setWorkspaceTab(tabId) {
+        const id = String(tabId ?? "scene");
+        if (id !== "scene" && !this.workspace.assetTabs.some((tab) => tab.id === id)) return;
+        if (this.workspace.activeTabId === id) return;
+        this.workspace.activeTabId = id;
+        this.notify();
+    }
+
+    closeAssetTab(tabId) {
+        const id = String(tabId);
+        const index = this.workspace.assetTabs.findIndex((tab) => tab.id === id);
+        if (index < 0) return;
+        this.workspace.assetTabs.splice(index, 1);
+        if (this.workspace.activeTabId === id) this.workspace.activeTabId = "scene";
         this.notify();
     }
 

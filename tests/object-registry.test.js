@@ -234,11 +234,16 @@ test("ED-01 skybox and tile options reuse config defaults and report range viola
     assert.deepEqual(tile.options.validate(tile.options.normalize({ bounds: { north: 2, south: 1, east: 3, west: 1 } })), []);
 });
 
-test("ED-01 asset-instance is contract only until the asset catalog lands", () => {
+test("ED-06 asset-instance is active and keeps immutable asset pins read-only", () => {
     const type = objectTypeRegistry.get(ASSET_INSTANCE_TYPE_ID);
-    assert.throws(() => type.create({}), (error) => error.code === OBJECT_TYPE_ERROR_CODES.NOT_IMPLEMENTED);
+    assert.deepEqual(type.create({ assetId: "crate", revision: 2 }), {
+        name: "crate",
+        components: { asset: { assetId: "crate", revision: 2, position: { x: 0, y: 0, z: 0 }, rotationY: 0, scale: { x: 1, y: 1, z: 1 }, overrides: {} } },
+    });
     assert.deepEqual(type.options.validate(type.options.normalize({ assetId: "" })).map((entry) => entry.code), ["option.required"]);
     assert.deepEqual(type.options.validate(type.options.normalize({ assetId: "crate", revision: 2 })), []);
+    assert.equal(type.getCapabilities().transformable, true);
+    assert.equal(type.options.getFields().find((field) => field.path[0] === "assetId").readOnly, true);
 });
 
 test("ED-01 a test-only object type registers and validates without touching persistence or MCP", () => {

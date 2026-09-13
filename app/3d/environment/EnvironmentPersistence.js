@@ -118,7 +118,10 @@ export class EnvironmentPersistence {
                 if (event?.transient === true || event?.source === "cancel") return;
                 onChange();
             }),
-            environment.objects().subscribe(onChange),
+            environment.objects().subscribe((_snapshot, event) => {
+                if (event?.affectsPersistence === false) return;
+                onChange();
+            }),
             environment.editor().subscribe((snapshot) => {
                 const editor = environment.editor();
                 const persisted = typeof editor?.persistedSnapshot === "function"

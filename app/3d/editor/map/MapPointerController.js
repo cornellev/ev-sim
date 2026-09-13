@@ -3,10 +3,12 @@ import { MAP_SELECTION_TYPES, MAP_TOOLS } from "../EditorState.js";
 import { pickMapTarget } from "./mapHitTest.js";
 import {
     beginFeatureDrag,
+    beginAssetDrag,
     beginNodeDrag,
     beginRoadDrag,
     cancelDrag,
     finishFeatureDrag,
+    finishAssetDrag,
     finishNodeDrag,
     finishRoadDrag,
     finalizeRoadPen,
@@ -20,6 +22,7 @@ import {
     shouldPanImmediately,
     SNAP_RADIUS_SCREEN,
     updateFeatureDrag,
+    updateAssetDrag,
     updateNodeDrag,
     updateRoadDrag,
     zoomViewport,
@@ -120,6 +123,13 @@ export class MapPointerController {
             return true;
         }
 
+        if (tool === MAP_TOOLS.ASSET_PLACE) {
+            const controller = environment.toolController?.assetPlacementController;
+            controller?.updatePoint?.(world, { map: true });
+            void controller?.commit?.(world, { map: true });
+            return true;
+        }
+
         if (tool === MAP_TOOLS.SELECT) {
             const snapRadius = screenRadiusToWorld(SNAP_RADIUS_SCREEN, editor.snapshot().map);
             if (showDetail) {
@@ -139,7 +149,16 @@ export class MapPointerController {
                 editor.snapshot().map,
                 { ...layers, detail: showDetail, selectedRoadId: selection?.snapshot?.().primary ?? null },
                 SNAP_RADIUS_SCREEN,
+                ctx.runtimeAssetBounds,
             );
+
+            if (pick?.type === MAP_SELECTION_TYPES.ASSET && !isAdditive(event)) {
+                const interaction = beginAssetDrag({ document, data, objectId: pick.id });
+                if (interaction) {
+                    this.activeInteraction = interaction;
+                    return true;
+                }
+            }
 
             if (pick?.type === MAP_SELECTION_TYPES.FEATURE && !isAdditive(event)) {
                 const interaction = beginFeatureDrag({ document, data, featureId: pick.id });
@@ -208,6 +227,12 @@ export class MapPointerController {
             return;
         }
 
+        if (this.activeInteraction?.type === "move-asset") {
+            const world = getWorldFromEvent(event);
+            if (world) updateAssetDrag({ interaction: this.activeInteraction, editor, data, worldPoint: world });
+            return;
+        }
+
         if (this.activeInteraction?.type === "move-road") {
             const world = getWorldFromEvent(event);
             if (world) updateRoadDrag({ interaction: this.activeInteraction, data, worldPoint: world });
@@ -238,6 +263,11 @@ export class MapPointerController {
             return;
         }
 
+        if (tool === MAP_TOOLS.ASSET_PLACE) {
+            data.environment?.()?.toolController?.assetPlacementController?.updatePoint?.(world, { map: true });
+            return;
+        }
+
         if (tool === MAP_TOOLS.BUILDING_RECT && this.activeInteraction?.type === "building-rect") {
             handleBuildingRectMove({ worldPoint: world, editor });
         }
@@ -265,6 +295,10 @@ export class MapPointerController {
 
         if (interaction.type === "move-feature") {
             finishFeatureDrag({ interaction, editor, data, worldPoint: world });
+            return;
+        }
+        if (interaction.type === "move-asset") {
+            finishAssetDrag({ interaction, editor, data, worldPoint: world });
             return;
         }
         if (interaction.type === "move-road") {

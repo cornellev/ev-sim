@@ -24,7 +24,7 @@ export function defaultFacingForAsset(assetId) {
 }
 
 export class PlaceTool {
-    constructor({ data, scene, camera, renderer }) {
+    constructor({ data, scene, camera, renderer, assetPlacementController = null }) {
         this.data = data;
         this.scene = scene;
         this.camera = camera;
@@ -33,6 +33,7 @@ export class PlaceTool {
         this.registry = data.environment().objects();
         this.selection = data.selection?.() ?? data.environment().selection?.();
         this.bus = data.commands?.() ?? data.environment().commands?.();
+        this.assetPlacementController = assetPlacementController;
         this.ghost = null;
         this.disposeMove = data.mouse()?.registerMove?.((event) => this.handleMove(event));
         this.disposeClick = data.mouse()?.registerClick?.((event) => this.handleClick(event));
@@ -40,7 +41,9 @@ export class PlaceTool {
     }
 
     getActiveAsset(snapshot = this.editor.snapshot()) {
-        if (snapshot.activeTool !== EDITOR_TOOLS.PLACE || !snapshot.activePlacement?.id) return null;
+        if (snapshot.activeTool !== EDITOR_TOOLS.PLACE || !snapshot.activePlacement) return null;
+        if (snapshot.activePlacement.kind === "catalog" && !snapshot.activePlacement.assetId) return null;
+        if (snapshot.activePlacement.kind !== "catalog" && !snapshot.activePlacement.id) return null;
         return snapshot.activePlacement;
     }
 
@@ -68,6 +71,11 @@ export class PlaceTool {
         const point = getGroundPointFromEvent(event, this.camera, this.renderer);
         if (!point) return;
 
+        if (this.getActiveAsset()?.kind === "catalog") {
+            this.assetPlacementController?.updatePoint(point);
+            return;
+        }
+
         const ghost = this.ensureGhost();
         ghost.position.set(point.x, 0.06, point.z);
         this.data.simulation()?.render?.();
@@ -79,6 +87,11 @@ export class PlaceTool {
 
         const point = getGroundPointFromEvent(event, this.camera, this.renderer);
         if (!point) return;
+
+        if (asset.kind === "catalog") {
+            void this.assetPlacementController?.commit(point);
+            return;
+        }
 
         // The command creates the record; the SceneProjector places the mesh.
         const result = this.bus.execute(addFeature({

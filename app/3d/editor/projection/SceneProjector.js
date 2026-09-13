@@ -12,12 +12,14 @@ import { createFeaturesProjector } from "./projectors/featuresProjector.js";
 import { createObjectsProjector } from "./projectors/objectsProjector.js";
 import { createRoadsProjector } from "./projectors/roadsProjector.js";
 import { createSkyProjector } from "./projectors/skyProjector.js";
+import { createAssetInstancesProjector } from "./projectors/assetInstancesProjector.js";
 
 export function createDefaultProjectors() {
     return [
         createRoadsProjector(),
         createBuildingsProjector(),
         createFeaturesProjector(),
+        createAssetInstancesProjector(),
         createObjectsProjector(),
         createSkyProjector(),
     ];
@@ -86,6 +88,30 @@ export class SceneProjector {
         this.applied += 1;
         this.lastEvent = event;
         this.data?.simulation?.()?.render?.();
+    }
+
+    _context(changeSet = null, event = null) {
+        return {
+            data: this.data, scene: this.scene, document: this.document,
+            registry: this.registry, changeSet, event, transient: false,
+            runtime: this.runtime, source: event?.source ?? "asset-sync",
+        };
+    }
+
+    setEditorAssetsEnabled(enabled) {
+        this.projectors.find((projector) => projector.id === "asset-instances")?.setEnabled?.(enabled, this._context());
+    }
+
+    syncAssetInstances() {
+        this.projectors.find((projector) => projector.id === "asset-instances")?.sync?.(this._context());
+    }
+
+    resetAssetInstances() {
+        this.projectors.find((projector) => projector.id === "asset-instances")?.reset?.(this._context());
+    }
+
+    assetInstanceEntries() {
+        return this.projectors.find((projector) => projector.id === "asset-instances")?.entries ?? new Map();
     }
 
     dispose() {

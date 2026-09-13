@@ -14,11 +14,11 @@ export class VisualAssetClient {
         this.fetch = fetchImpl;
     }
 
-    async createUpload(body) {
-        return this.json("POST", "/uploads", body);
+    async createUpload(body, signal) {
+        return this.json("POST", "/uploads", body, { signal });
     }
 
-    async putUploadContent(id, bytes, { mediaType = "application/octet-stream" } = {}) {
+    async putUploadContent(id, bytes, { mediaType = "application/octet-stream", signal } = {}) {
         const buffer = toUint8Array(bytes);
         const response = await this.fetch(`${this.baseUrl}/uploads/${encodeURIComponent(id)}/content`, {
             method: "PUT",
@@ -27,20 +27,21 @@ export class VisualAssetClient {
                 "Content-Length": String(buffer.byteLength),
             },
             body: buffer,
+            signal,
         });
         await this.assertOk(response, "upload");
         return response.json();
     }
 
-    async cancelUpload(id) {
-        return this.json("DELETE", `/uploads/${encodeURIComponent(id)}`);
+    async cancelUpload(id, signal) {
+        return this.json("DELETE", `/uploads/${encodeURIComponent(id)}`, undefined, { signal });
     }
 
-    async getUse(useHash) {
-        return this.json("GET", `/uses/sha256/${encodeURIComponent(useHash)}`);
+    async getUse(useHash, { signal } = {}) {
+        return this.json("GET", `/uses/sha256/${encodeURIComponent(useHash)}`, undefined, { signal });
     }
 
-    async getUseContent(useHash, { range } = {}) {
+    async getUseContent(useHash, { range, signal } = {}) {
         const headers = { Accept: "*/*" };
         if (range) {
             const end = range.end === undefined ? "" : String(range.end);
@@ -48,7 +49,7 @@ export class VisualAssetClient {
         }
         const response = await this.fetch(
             `${this.baseUrl}/uses/sha256/${encodeURIComponent(useHash)}/content`,
-            { headers },
+            { headers, signal },
         );
         await this.assertOk(response, "load");
         return {
@@ -61,10 +62,10 @@ export class VisualAssetClient {
         };
     }
 
-    async headUseContent(useHash) {
+    async headUseContent(useHash, { signal } = {}) {
         const response = await this.fetch(
             `${this.baseUrl}/uses/sha256/${encodeURIComponent(useHash)}/content`,
-            { method: "HEAD" },
+            { method: "HEAD", signal },
         );
         await this.assertOk(response, "load");
         return {
@@ -76,11 +77,11 @@ export class VisualAssetClient {
         };
     }
 
-    async validateClosure(body) {
-        return this.json("POST", "/closures/validate", body);
+    async validateClosure(body, signal) {
+        return this.json("POST", "/closures/validate", body, { signal });
     }
 
-    async json(method, pathname, body) {
+    async json(method, pathname, body, { signal } = {}) {
         const response = await this.fetch(`${this.baseUrl}${pathname}`, {
             method,
             headers: body === undefined ? { Accept: "application/json" } : {
@@ -88,6 +89,7 @@ export class VisualAssetClient {
                 "Content-Type": "application/json",
             },
             body: body === undefined ? undefined : JSON.stringify(body),
+            signal,
         });
         await this.assertOk(response, method === "GET" ? "load" : "save");
         return response.json();

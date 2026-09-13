@@ -73,6 +73,7 @@ export class Environment {
             sky: () => this.document?.sky ?? this.skyState?.toManifest?.() ?? null,
         });
         this.sceneProjector = null;
+        this.assetRuntime = null;
 
         // A list of all the static objects (as in, that don't move) in the environment.
         // These are particularly objects can still interact with LiDAR and other sensors, but they don't move.
@@ -109,6 +110,9 @@ export class Environment {
         this.registry.registerExistingContent(scene, this.data);
         hydrateDocumentFromRuntime(this.data, this.document);
         this.sceneProjector?.dispose?.();
+        this.assetRuntime?.previews?.dispose?.();
+        this.assetRuntime?.models?.dispose?.();
+        this.assetRuntime = projectorRuntime?.editorAssets ?? null;
         this.sceneProjector = new SceneProjector({
             data: this.data,
             scene,
@@ -134,6 +138,10 @@ export class Environment {
 
     projector() {
         return this.sceneProjector;
+    }
+
+    assets() {
+        return this.assetRuntime;
     }
 
     sky() {
@@ -177,6 +185,9 @@ export class Environment {
         this.toolController = null;
         this.sceneProjector?.dispose?.();
         this.sceneProjector = null;
+        this.assetRuntime?.previews?.dispose?.();
+        this.assetRuntime?.models?.dispose?.();
+        this.assetRuntime = null;
     }
 
     toManifest() {

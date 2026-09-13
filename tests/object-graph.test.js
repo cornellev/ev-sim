@@ -168,18 +168,18 @@ test("ED-02 transform bindings plan document steps per type and reject unsupport
     assert.ok(Math.abs(grouped.steps[0].value.position.x - 1) < 1e-9 && Math.abs(grouped.steps[0].value.position.z + 1) < 1e-9);
     assert.deepEqual(codes(plan(group, deltaFromScale({ x: 1, y: 1, z: 2 }))), [TRANSFORM_ISSUE_CODES.NON_UNIFORM_SCALE]);
 
-    // Not transformable: skybox, unknown types, asset instances, missing legacy.
+    // Not transformable: skybox, unknown types, missing legacy.
     assert.deepEqual(codes(plan(records.get("skybox"), translate)), [TRANSFORM_ISSUE_CODES.NOT_TRANSFORMABLE]);
     assert.deepEqual(codes(plan({ id: "x", typeId: "vendor.thing" }, translate)), [TRANSFORM_ISSUE_CODES.NOT_TRANSFORMABLE]);
-    assert.deepEqual(codes(plan({ id: "ai", typeId: "asset-instance", components: { asset: { assetId: "a" } } }, translate)), [TRANSFORM_ISSUE_CODES.NOT_TRANSFORMABLE]);
+    assert.deepEqual(plan({ id: "ai", typeId: "asset-instance", components: { asset: { assetId: "a", revision: 1, position: { x: 0, y: 0, z: 0 }, rotationY: 0, scale: { x: 1, y: 1, z: 1 }, overrides: {} } } }, translate).issues, []);
     assert.deepEqual(codes(plan({ id: "ghost", typeId: "builtin-prop" }, translate)), [TRANSFORM_ISSUE_CODES.MISSING]);
     // Planning never mutates.
     assert.deepEqual(snapshot, manifest.document);
     // Capabilities agree with bindings.
-    for (const typeId of ["road", "intersection", "building", "builtin-prop", "group"]) {
+    for (const typeId of ["road", "intersection", "building", "builtin-prop", "group", "asset-instance"]) {
         assert.equal(objectTypeRegistry.get(typeId).capabilities.transformable, true, typeId);
     }
-    for (const typeId of ["skybox", "tile", "asset-instance"]) {
+    for (const typeId of ["skybox", "tile"]) {
         assert.equal(objectTypeRegistry.get(typeId).capabilities.transformable, false, typeId);
     }
 });

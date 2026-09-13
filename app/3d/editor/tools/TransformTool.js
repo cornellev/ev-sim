@@ -68,9 +68,10 @@ export function resolveGizmoPolicy(targets, mode) {
     const types = targets.typeIds;
     const hasProps = types.has("builtin-prop");
     const hasBuildings = types.has("building");
+    const hasAssets = types.has("asset-instance");
     const hasRoads = [...types].some((typeId) => ROAD_TYPES.has(typeId) || ["road-node", "road-knot", "road-handle"].includes(typeId));
     const hasRoadSub = types.has("road-knot") || types.has("road-handle");
-    const onlyRoads = hasRoads && !hasProps && !hasBuildings;
+    const onlyRoads = hasRoads && !hasProps && !hasBuildings && !hasAssets;
     const multi = targets.hasGroup || (targets.objectIds?.length ?? 0) > 1;
     if (mode === "scale") {
         if (hasRoadSub) return { supported: false, reason: "Road knots and handles translate only." };

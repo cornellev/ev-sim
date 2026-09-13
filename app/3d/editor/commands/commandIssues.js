@@ -21,6 +21,8 @@ export const COMMAND_ISSUE_CODES = Object.freeze({
     GESTURE_INACTIVE: "command.gesture.inactive",
     GESTURE_UNSUPPORTED: "command.gesture.unsupported",
     NOTHING_TO_UNDO: "command.history.empty",
+    DOCUMENT_STALE: "command.document.stale",
+    ASSET_MISMATCH: "command.asset.mismatch",
 });
 
 export function commandIssue(code, message, { objectId = null, path = ["command"], severity = "error" } = {}) {

@@ -93,26 +93,28 @@ export class EnvironmentRegistry {
         this.subscribers = new Set();
         this.batchDepth = 0;
         this.pendingNotify = false;
+        this.pendingAffectsPersistence = false;
         this.aliases = new Map();
     }
 
     subscribe(callback) {
         if (typeof callback !== "function") return () => {};
         this.subscribers.add(callback);
-        callback(this.snapshot());
+        callback(this.snapshot(), { affectsPersistence: true });
         return () => {
             this.subscribers.delete(callback);
         };
     }
 
-    notify() {
+    notify({ affectsPersistence = true } = {}) {
         if (this.batchDepth > 0) {
             this.pendingNotify = true;
+            this.pendingAffectsPersistence ||= affectsPersistence !== false;
             return;
         }
 
         const snapshot = this.snapshot();
-        this.subscribers.forEach((callback) => callback(snapshot));
+        this.subscribers.forEach((callback) => callback(snapshot, { affectsPersistence: affectsPersistence !== false }));
     }
 
     batch(callback) {
@@ -122,8 +124,10 @@ export class EnvironmentRegistry {
         } finally {
             this.batchDepth -= 1;
             if (this.batchDepth === 0 && this.pendingNotify) {
+                const affectsPersistence = this.pendingAffectsPersistence;
                 this.pendingNotify = false;
-                this.notify();
+                this.pendingAffectsPersistence = false;
+                this.notify({ affectsPersistence });
             }
         }
     }
@@ -135,7 +139,7 @@ export class EnvironmentRegistry {
         };
     }
 
-    registerEntity(entity) {
+    registerEntity(entity, { affectsPersistence = entity?.editorOnly !== true } = {}) {
         if (!entity?.id) return null;
 
         const previous = this.entities.get(entity.id) ?? {};
@@ -157,7 +161,7 @@ export class EnvironmentRegistry {
         if (next.object3D) {
             tagObjectTree(next.object3D, next.id);
             next.object3D.userData.environmentLayer = next.layer;
-            if (!isRoadAuthoringHandleKind(next.kind)) {
+            if (!next.editorOnly && !isRoadAuthoringHandleKind(next.kind)) {
                 annotatePerceptionObject(next.object3D, {
                     sourceId: next.sourceId ?? next.id,
                     semanticClass: next.kind,
@@ -166,7 +170,7 @@ export class EnvironmentRegistry {
             }
         }
 
-        if (!isRoadAuthoringHandleKind(next.kind)) {
+        if (!next.editorOnly && !isRoadAuthoringHandleKind(next.kind)) {
             const membership = this.chunkManager?.assignEntity?.(next);
             if (membership) {
                 next.primaryChunk = membership.primaryChunk;
@@ -181,7 +185,7 @@ export class EnvironmentRegistry {
             this.aliases.set(alias, next.id);
             this.chunkManager?.aliasEntity?.(alias, next.id);
         }
-        this.notify();
+        this.notify({ affectsPersistence });
         return next;
     }
 
@@ -300,6 +304,8 @@ export class EnvironmentRegistry {
                 coveredChunks: [...(entity.coveredChunks ?? [])],
                 transform: entity.transform,
                 record: entity.record ? { ...entity.record } : null,
+                editorOnly: entity.editorOnly === true,
+                bounds: entity.bounds ?? null,
             }))
             .sort((a, b) => a.layer.localeCompare(b.layer) || a.label.localeCompare(b.label));
     }
@@ -308,7 +314,11 @@ export class EnvironmentRegistry {
         let current = object3D;
 
         while (current) {
-            if (isVisualPreviewObject(current)) return null;
+            if (isVisualPreviewObject(current)) {
+                const previewId = current.userData?.envObjectId;
+                const previewEntity = previewId ? this.entities.get(previewId) : null;
+                return previewEntity?.editorOnly === true ? previewEntity : null;
+            }
             if (current.userData?.skipEnvironmentSelection) {
                 current = current.parent;
                 continue;
@@ -335,7 +345,7 @@ export class EnvironmentRegistry {
         return null;
     }
 
-    setEntityVisible(entityId, visible) {
+    setEntityVisible(entityId, visible, { affectsPersistence } = {}) {
         const canonicalId = this.aliases.get(entityId) ?? entityId;
         const entity = this.entities.get(canonicalId);
         if (!entity) return;
@@ -345,19 +355,20 @@ export class EnvironmentRegistry {
         if (entity.object3D) {
             entity.object3D.visible = Boolean(visible);
         }
-        this.chunkManager?.markEntityDirty?.(canonicalId);
-        this.notify();
+        if (!entity.editorOnly) this.chunkManager?.markEntityDirty?.(canonicalId);
+        this.notify({ affectsPersistence: affectsPersistence ?? !entity.editorOnly });
     }
 
-    unregisterEntity(entityId) {
+    unregisterEntity(entityId, { affectsPersistence } = {}) {
         const canonicalId = this.aliases.get(entityId) ?? entityId;
-        if (!this.entities.has(canonicalId)) return false;
+        const entity = this.entities.get(canonicalId);
+        if (!entity) return false;
         this.entities.delete(canonicalId);
         for (const [alias, target] of this.aliases) {
             if (alias === entityId || target === canonicalId) this.aliases.delete(alias);
         }
-        this.chunkManager?.removeEntity?.(canonicalId);
-        this.notify();
+        if (!entity.editorOnly) this.chunkManager?.removeEntity?.(canonicalId);
+        this.notify({ affectsPersistence: affectsPersistence ?? !entity.editorOnly });
         return true;
     }
 
@@ -370,7 +381,7 @@ export class EnvironmentRegistry {
         this.notify();
     }
 
-    updateEntityTransform(entityId, object3D = null) {
+    updateEntityTransform(entityId, object3D = null, { affectsPersistence } = {}) {
         const entity = this.entities.get(this.aliases.get(entityId) ?? entityId);
         if (!entity) return null;
 
@@ -385,21 +396,21 @@ export class EnvironmentRegistry {
             entity.fusionObject.setPosition?.(worldPosition);
         }
 
-        const membership = this.chunkManager?.assignEntity?.(entity);
+        const membership = entity.editorOnly ? null : this.chunkManager?.assignEntity?.(entity);
         if (membership) {
             entity.primaryChunk = membership.primaryChunk;
             entity.coveredChunks = membership.coveredChunks;
             entity.bounds = membership.bounds;
         }
 
-        this.notify();
+        this.notify({ affectsPersistence: affectsPersistence ?? !entity.editorOnly });
         return entity;
     }
 
     toManifest() {
         return {
             objects: Object.fromEntries(
-                [...this.entities.entries()].map(([id, entity]) => [
+                [...this.entities.entries()].filter(([, entity]) => !entity.editorOnly).map(([id, entity]) => [
                     id,
                     {
                         id,

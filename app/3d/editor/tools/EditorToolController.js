@@ -4,10 +4,15 @@ import { SelectTool } from "./SelectTool.js";
 import { TransformTool } from "./TransformTool.js";
 import { RoadAuthoringController } from "./RoadAuthoringController.js";
 import { RoadSceneTool } from "./RoadSceneTool.js";
+import { AssetPlacementController } from "../assets/AssetPlacementController.js";
+import { screenToWorld } from "../map/mapCoords.js";
+import { getGroundPointFromEvent } from "../editorPointerUtils.js";
 
 export class EditorToolController {
     constructor({ data, scene, camera, renderer }) {
         this.data = data;
+        this.camera = camera;
+        this.renderer = renderer;
         this.editor = data.editor();
         this.selection = data.selection?.() ?? data.environment().selection?.() ?? null;
         this.bus = data.commands?.() ?? data.environment().commands?.() ?? null;
@@ -24,11 +29,12 @@ export class EditorToolController {
         }) ?? null;
         this.disposeBus = this.bus?.subscribe?.(() => this.publishEscapeFlag()) ?? null;
         this.selectTool = new SelectTool({ data, scene, camera, renderer });
-        this.placeTool = new PlaceTool({ data, scene, camera, renderer });
+        this.assetPlacementController = new AssetPlacementController({ data, scene });
+        this.placeTool = new PlaceTool({ data, scene, camera, renderer, assetPlacementController: this.assetPlacementController });
         this.transformTool = new TransformTool({ data, scene, camera, renderer });
         this.roadAuthoringController = new RoadAuthoringController({ data });
         this.roadSceneTool = new RoadSceneTool({ data, scene, camera, renderer, controller: this.roadAuthoringController });
-        this.tools = [this.selectTool, this.placeTool, this.transformTool, this.roadSceneTool];
+        this.tools = [this.selectTool, this.placeTool, this.transformTool, this.roadSceneTool, this.assetPlacementController];
         // ED-03: Q/W/E/R and Escape register through ShortcutProvider
         // (`EditorCommandShortcuts`) so they never fire while typing in a
         // field; this controller only owns the Escape policy.
@@ -54,6 +60,24 @@ export class EditorToolController {
     publishEscapeFlag() {
         if (typeof window === "undefined") return;
         window.__fusionEnvironmentEditorConsumesEscape = this.consumesEscape();
+    }
+
+    async dropAsset(payload, event, rect) {
+        if (payload?.kind !== "catalog") return { ok: false };
+        this.editor.setPlacementAsset(payload);
+        await this.assetPlacementController.begin(payload);
+        const snapshot = this.editor.snapshot();
+        const map = snapshot.editorMode === EDITOR_MODES.MAP;
+        const point = map
+            ? screenToWorld({ x: event.clientX - rect.left, y: event.clientY - rect.top }, snapshot.map, { width: rect.width, height: rect.height })
+            : getGroundPointFromEvent(event, this.camera, this.renderer);
+        if (!point) { this.assetPlacementController.cancel(); return { ok: false }; }
+        const result = await this.assetPlacementController.commit(point, { map });
+        if (result.ok) {
+            if (map) this.editor.setActiveMapTool(MAP_TOOLS.SELECT);
+            else this.editor.setActiveTool(EDITOR_TOOLS.SELECT);
+        }
+        return result;
     }
 
     /**

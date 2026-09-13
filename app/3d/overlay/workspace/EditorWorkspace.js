@@ -30,6 +30,7 @@ import { ObjectInspector } from "../ObjectInspector";
 import { SceneHierarchy } from "../SceneHierarchy";
 import { VisualPreviewDiagnostic } from "../VisualPreviewDiagnostic";
 import { AssetPane } from "./AssetPane";
+import { AssetCatalogInspector, AssetPreviewTab } from "./AssetPreviewTab";
 import { EditorToolbar } from "./EditorToolbar";
 import { EditorTopBar } from "./EditorTopBar";
 import { PaneSplitter } from "./PaneSplitter";
@@ -133,7 +134,10 @@ export function EditorWorkspace({ data, activeEnvironmentId, onEnvironmentChange
     const togglePane = (paneId, collapsed) => update((current) => togglePaneCollapsed(current, paneId, collapsed));
 
     const editorMode = editorSnapshot?.editorMode ?? EDITOR_MODES.SCENE;
-    const inMap = editorMode === EDITOR_MODES.MAP;
+    const workspace = editorSnapshot?.workspace ?? { activeTabId: "scene", assetTabs: [] };
+    const activeAssetTab = workspace.assetTabs.find((tab) => tab.id === workspace.activeTabId) ?? null;
+    const sceneTabActive = !activeAssetTab;
+    const inMap = editorMode === EDITOR_MODES.MAP && sceneTabActive;
     const panesHidden = editorMode === EDITOR_MODES.EARTH_IMPORT;
     const template = paneGridTemplate(layout, WORKSPACE_CHROME, { panesHidden });
     const emptyDocument = { roads: { nodes: [], edges: [] }, buildings: [], features: [] };
@@ -188,12 +192,28 @@ export function EditorWorkspace({ data, activeEnvironmentId, onEnvironmentChange
             {!panesHidden && splitter("hierarchy", "row-start-2 col-start-2")}
 
             <section
-                aria-label={inMap ? "Map view" : "Scene view"}
+                aria-label={activeAssetTab ? "Asset preview" : (inMap ? "Map view" : "Scene view")}
                 data-editor-center
                 className="relative flex min-h-0 min-w-0 flex-col"
                 style={{ gridColumn: panesHidden ? 1 : 3, gridRow: 2 }}
+                onDragOver={(event) => { if (event.dataTransfer.types.includes("application/x-cev-editor-asset")) event.preventDefault(); }}
+                onDrop={(event) => {
+                    const raw = event.dataTransfer.getData("application/x-cev-editor-asset");
+                    if (!raw) return;
+                    event.preventDefault();
+                    try { void data.environment?.()?.toolController?.dropAsset?.(JSON.parse(raw), event, event.currentTarget.getBoundingClientRect()); } catch { /* malformed external drag */ }
+                }}
             >
                 {!panesHidden && <EditorToolbar data={data} />}
+                {!panesHidden && (
+                    <nav aria-label="Workspace tabs" className="pointer-events-auto flex h-8 shrink-0 items-end gap-0.5 border-b border-[var(--slate-border-60)] bg-[var(--slate-surface-1)] px-1">
+                        <button type="button" aria-current={sceneTabActive ? "page" : undefined} onClick={() => data.editor?.()?.setWorkspaceTab?.("scene")} className="h-7 rounded-t px-3 text-xs hover:bg-[var(--slate-surface-hover)]">Scene</button>
+                        {workspace.assetTabs.map((tab) => <span key={tab.id} className="flex h-7 items-center rounded-t bg-[var(--slate-surface-2)]">
+                            <button type="button" aria-current={workspace.activeTabId === tab.id ? "page" : undefined} onClick={() => data.editor?.()?.setWorkspaceTab?.(tab.id)} onDoubleClick={() => data.editor?.()?.pinAssetTab?.(tab.id)} className="h-full max-w-40 truncate px-2 text-xs">{tab.name} · r{tab.revision}{tab.pinned ? " •" : ""}</button>
+                            <button type="button" aria-label={`Close ${tab.name} preview`} onClick={() => data.editor?.()?.closeAssetTab?.(tab.id)} className="h-full px-1.5 text-zinc-400 hover:text-zinc-100">×</button>
+                        </span>)}
+                    </nav>
+                )}
                 <div ref={canvasHostRef} data-editor-canvas-host className="relative min-h-0 min-w-0 flex-1">
                     {inMap && (
                         <MapSurface
@@ -203,6 +223,7 @@ export function EditorWorkspace({ data, activeEnvironmentId, onEnvironmentChange
                             mapSelection={mapSelection}
                         />
                     )}
+                    {activeAssetTab && <AssetPreviewTab key={activeAssetTab.id} data={data} tab={activeAssetTab} />}
                     {panesHidden && <EarthImportModeChrome data={data} />}
                     <BakeProgressOverlay data={data} />
                     <VisualPreviewDiagnostic data={data} />
@@ -222,7 +243,7 @@ export function EditorWorkspace({ data, activeEnvironmentId, onEnvironmentChange
                     bodyClassName="overflow-auto"
                 >
                     <AuthoringModeProvider>
-                        <ObjectInspector data={data} />
+                        {activeAssetTab ? <AssetCatalogInspector data={data} tab={activeAssetTab} /> : <ObjectInspector data={data} />}
                     </AuthoringModeProvider>
                 </WorkspacePane>
             )}

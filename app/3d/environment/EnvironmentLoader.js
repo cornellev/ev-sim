@@ -54,7 +54,7 @@ export class EnvironmentLoader {
         environment.getDocument().environmentId = definition.environmentId;
 
         this.data.objects().scene(this.scene);
-        environment.setup(this.scene, { projectorRuntime: createBrowserProjectorRuntime() });
+        environment.setup(this.scene, { projectorRuntime: createBrowserProjectorRuntime({ data: this.data, renderer: this.data?.renderer }) });
         await this.apply(this.manifest ?? {
             environmentId: definition.environmentId,
             templateId: definition.templateId,
@@ -65,6 +65,7 @@ export class EnvironmentLoader {
 
     async apply(manifest, resolvedWorld = null) {
         const environment = this.data.environment();
+        environment.projector?.()?.resetAssetInstances?.();
         const document = environment.getDocument();
         const worldResource = resolvedWorld ?? createWorldResource(manifest);
         const description = assertWorldResource(worldResource);
@@ -127,6 +128,7 @@ export class EnvironmentLoader {
         environment.setWorldDescription?.(description, worldResource.hash);
 
         environment.objects().registerExistingContent(this.scene, this.data);
+        environment.projector?.()?.syncAssetInstances?.();
         // A full load replaces the world; prior history and gestures no longer apply.
         environment.commands?.()?.reset?.();
         environment.selection?.()?.prune?.(new Set(document.objects.map((record) => String(record.id))));

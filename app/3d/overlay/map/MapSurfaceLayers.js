@@ -27,6 +27,7 @@ import {
     roadLanes,
 } from "../../../roads/RoadLaneModel.js";
 import { planRoadNetworkGeometry } from "../../../roads/RoadNetworkGeometry.js";
+import { assetMapFootprint } from "../../editor/map/mapHitTest.js";
 
 function screenPoints(points, viewport, size) {
     return points.map((point) => {
@@ -443,6 +444,24 @@ function Features({ documentSnapshot, viewport, size, layers, showDetail, mapSel
     });
 }
 
+function Assets({ documentSnapshot, runtimeAssetBounds, viewport, size, layers, showDetail, mapSelection }) {
+    if (!showDetail || !layers.props) return null;
+    return (documentSnapshot.objects ?? []).filter((record) => record.typeId === "asset-instance").map((record) => {
+        const footprint = assetMapFootprint(record, runtimeAssetBounds?.get?.(String(record.id)) ?? null);
+        const points = footprint.map((point) => worldToScreen(point, viewport, size)).map((point) => `${point.x},${point.y}`).join(" ");
+        const selected = mapSelection?.type === MAP_SELECTION_TYPES.ASSET && mapSelection.id === String(record.id);
+        return (
+            <g key={record.id} data-map-asset-id={record.id}>
+                <polygon points={points} fill={selected ? "rgba(56,189,248,0.22)" : "rgba(167,139,250,0.2)"} stroke={selected ? "#38bdf8" : "#a78bfa"} strokeWidth={selected ? 2 : 1} />
+                {!runtimeAssetBounds?.has?.(String(record.id)) && (() => {
+                    const point = worldToScreen(record.components.asset.position, viewport, size);
+                    return <circle cx={point.x} cy={point.y} r={3} fill="#a78bfa" />;
+                })()}
+            </g>
+        );
+    });
+}
+
 function RoadPenDraft({ draft, viewport, size }) {
     if (draft?.type !== "road-stroke" || !draft.points?.length || !draft.cursor) return null;
     const points = [...draft.points, draft.cursor];
@@ -495,6 +514,7 @@ export function MapSurfaceLayers({
     mapSelection,
     showDetail,
     draft,
+    runtimeAssetBounds,
 }) {
     const compiledPlan = useMemo(() => {
         if (Number(documentSnapshot.roads?.geometryVersion ?? 1) !== 2) return null;
@@ -563,6 +583,17 @@ export function MapSurfaceLayers({
             <g data-map-layer="features">
                 <Features
                     documentSnapshot={documentSnapshot}
+                    viewport={viewport}
+                    size={size}
+                    layers={layers}
+                    showDetail={showDetail}
+                    mapSelection={mapSelection}
+                />
+            </g>
+            <g data-map-layer="assets">
+                <Assets
+                    documentSnapshot={documentSnapshot}
+                    runtimeAssetBounds={runtimeAssetBounds}
                     viewport={viewport}
                     size={size}
                     layers={layers}

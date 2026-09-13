@@ -280,6 +280,27 @@ when present. The inspector's `RoadDisplay` cross-section, the Map lane
 dividers/arrows/highlight, scene markings, MCP `environment_edit_road` lane
 operations, and route v7 all read the same `roadLanes(edge)` model.
 
+ED-06 layers a mutable editor catalog over immutable source-bound visual-asset
+use records. `EditorAssetStore` owns one revision-guarded
+`editor-assets/catalog.json`, immutable revision pointers, recoverable
+publication journals, and per-revision model/thumbnail roots. It never copies
+the VIS-04 source, digest, media, or dependency graph. Binary import uses the
+existing upload and closure-validation APIs; the pure `GltfImportPlan` rewrites
+selected local dependencies to digest URIs without network access. Saved
+environment references are discovered by scanning schema-v4 documents rather
+than maintaining a second index.
+
+Asset instances are object-graph-v1 records whose catalog revision and model
+revision are independent: commands pin `{ assetId, revision }`, and only an
+explicit guarded update changes existing instances. `SceneProjector` owns the
+asynchronous model lease and registers `asset:<objectId>` as `editorOnly`.
+This makes the model selectable in the Environment Editor while excluding it
+from chunks, registry manifests, perception, collision, LiDAR, bake, measured
+cameras, and Simulation. Runtime bounds/status notifications do not dirty
+autosave. The same session-only placement controller drives Scene, Map, and
+HTML drops; read-only preview tabs acquire a model only while active. Asset
+parts, material changes, and proxy authoring remain ED-07.
+
 - [Environment Editor](environment-editor.md) — document model, editor modes, baking, and chrome UI.
 - [Earth Import](earth-import.md) — Google 3D Tiles preview, OSM road import, and geospatial configuration.
 - [Visual Layer Contracts](visual-layer.md) — frozen visual descriptors, exact-byte integrity, source policy, camera products, and future package admission.
@@ -391,6 +412,9 @@ Validated visual assets are stored under `CEV_SIM_DATA_DIR` (default
 - `visual-assets/uses/sha256/<useHash>.json` — source-bound use records
 - `visual-assets/validation/sha256/<useHash>.json` — validation evidence
 - `visual-assets/staging/`, `visual-assets/roots.json` (visual and `environment:<id>:bake-reuse`), `visual-assets/pins.json`
+- `editor-assets/catalog.json` — revision-guarded ED-06 folders, metadata, latest revisions, and thumbnail pointers
+- `editor-assets/revisions/<assetId>/<revision>.json` — immutable model-use revision pointers
+- `editor-assets/transactions/` — recoverable catalog publication journals
 - `visual-source-registry.json` or `CEV_SIM_VISUAL_SOURCE_REGISTRY`
 - generated bake output source IDs from `CEV_SIM_BAKE_OUTPUT_SOURCE_IDS`
 

@@ -183,6 +183,24 @@ export function finishFeatureDrag({ interaction, editor, data, worldPoint }) {
     return committed;
 }
 
+export function beginAssetDrag({ document, data, objectId }) {
+    const record = document.getObject(String(objectId));
+    if (record?.typeId !== "asset-instance") return null;
+    selectionOf(data)?.select(record.id);
+    const begun = busOf(data).beginGesture({ objectIds: [record.id], label: "Move asset" });
+    if (!begun.ok) return null;
+    const position = record.components.asset.position;
+    return { type: "move-asset", objectId: record.id, gestureId: begun.gestureId, start: { x: position.x, z: position.z } };
+}
+
+export function updateAssetDrag({ interaction, editor, data, worldPoint }) {
+    return updateNodeDrag({ interaction, editor, data, worldPoint });
+}
+
+export function finishAssetDrag({ interaction, editor, data, worldPoint }) {
+    return finishFeatureDrag({ interaction, editor, data, worldPoint });
+}
+
 export function handleMapDelete({ data, objectIds }) {
     const ids = [...(objectIds ?? [])];
     if (ids.length === 0) return { ok: false, error: "Nothing selected." };

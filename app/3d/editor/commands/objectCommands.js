@@ -29,6 +29,7 @@ import { BUILDING_TYPE_ID } from "../objects/types/building.js";
 import { BUILTIN_PROP_TYPE_ID } from "../objects/types/builtinProp.js";
 import { INTERSECTION_TYPE_ID } from "../objects/types/intersection.js";
 import { ROAD_TYPE_ID } from "../objects/types/road.js";
+import { ASSET_INSTANCE_TYPE_ID } from "../objects/types/assetInstance.js";
 import {
     OPTIONS_ISSUE_CODES,
     fieldPathKey,
@@ -414,7 +415,7 @@ export function duplicateObjects({ objectIds = [], label = "Duplicate" } = {}) {
             const byId = indexObjectsById(document.objects);
             const roots = pruneToRoots(byId, objectIds);
             if (roots.length === 0) return commandFailure(commandIssue(COMMAND_ISSUE_CODES.SELECTION_EMPTY, "Nothing to duplicate."));
-            const supported = new Set([GROUP_TYPE_ID, BUILTIN_PROP_TYPE_ID, BUILDING_TYPE_ID, ROAD_TYPE_ID, INTERSECTION_TYPE_ID]);
+            const supported = new Set([GROUP_TYPE_ID, BUILTIN_PROP_TYPE_ID, BUILDING_TYPE_ID, ROAD_TYPE_ID, INTERSECTION_TYPE_ID, ASSET_INSTANCE_TYPE_ID]);
             const check = (id) => {
                 const record = byId.get(id);
                 const issues = [];
@@ -462,6 +463,8 @@ export function duplicateObjects({ objectIds = [], label = "Duplicate" } = {}) {
                     if (!added.ok) throw new Error(added.error);
                 } else if (record.typeId === ROAD_TYPE_ID) {
                     newId = roadDuplicate.edgeIdFor(id);
+                } else if (record.typeId === ASSET_INSTANCE_TYPE_ID) {
+                    newId = createId("asset");
                 } else {
                     newId = roadDuplicate.nodeIdFor(id);
                 }

@@ -16,4 +16,5 @@ export * as objectCommands from "./objectCommands.js";
 export * as legacyCommands from "./legacyCommands.js";
 export * as roadCommands from "./roadCommands.js";
 export * from "./roadCommands.js";
+export * from "./assetCommands.js";
 export { commandFactories } from "./EnvironmentCommandService.js";

@@ -37,6 +37,7 @@ import { RoadEndpointsSection } from "./inspector/RoadEndpointsSection";
 import { RoadGeometrySection } from "./inspector/RoadGeometrySection";
 import { SkyLocalPreview } from "./inspector/SkyLocalPreview";
 import { TurnRuleMatrix } from "./inspector/TurnRuleMatrix";
+import { AssetInstanceSection } from "./inspector/AssetInstanceSection";
 import { PresentationIcon, registerBuiltinPresentations } from "./presentation/builtinPresentations.js";
 import { cn } from "./ui/cn";
 
@@ -282,6 +283,12 @@ export function ObjectInspector({ data }) {
                         <SkyLocalPreview data={data} />
                     </PropertySection>
                 );
+            case SECTION_KINDS.ASSET_REVISION:
+                return (
+                    <PropertySection key={section.id} id={section.id} title={section.title}>
+                        <AssetInstanceSection data={data} section={section} />
+                    </PropertySection>
+                );
             default:
                 if (typeof section.render === "function") {
                     return (
@@ -347,7 +354,7 @@ export function ObjectInspector({ data }) {
                 {multi
                     ? (state.mixedTypes
                         ? <p className="px-2 py-3 text-[12px] text-[var(--slate-muted)]">Objects of different types share no editable properties. Lock, hide, and delete still apply to all of them.</p>
-                        : renderOptionGroups(state.fields, state.states))
+                        : <>{renderOptionGroups(state.fields, state.states)}{state.typeId === "asset-instance" && <PropertySection id="asset-revision" title="Asset revision"><AssetInstanceSection data={data} section={{ assetId: primary.components.asset.assetId, revision: primary.components.asset.revision, objectId: primary.id }} /></PropertySection>}</>)
                     : sections.map(renderSection)}
             </div>
 

@@ -8,9 +8,25 @@
 import { generateBuildings } from "../../city/BuildingGenerator.js";
 import { removeBuildingMeshesFromScene, removeFeatureFromRuntime } from "../map/mapRuntimeSync.js";
 import { placeFusionObjectInScene } from "../placement/placeFusionObject.js";
+import { AssetRepository } from "../assets/AssetRepository.js";
+import { AssetModelLoader } from "../assets/AssetModelLoader.js";
+import { AssetInstantiation } from "../assets/AssetInstantiation.js";
+import { AssetPreviewRenderer } from "../assets/AssetPreviewRenderer.js";
 
-export function createBrowserProjectorRuntime() {
+export function createBrowserProjectorRuntime({ data = null, renderer = null } = {}) {
+    const repository = new AssetRepository();
+    const models = new AssetModelLoader({ renderer: renderer ?? data?.renderer ?? data?.three?.()?.renderer ?? null });
+    const previews = new AssetPreviewRenderer();
+    previews.models = models;
     return {
+        editorAssets: {
+            repository,
+            models,
+            previews,
+            instantiation: data?.environment?.()?.getDocument
+                ? new AssetInstantiation({ repository, document: data.environment().getDocument() })
+                : null,
+        },
         placeFeature({ data, scene, registry, feature }) {
             return placeFusionObjectInScene({
                 data,
@@ -25,5 +41,9 @@ export function createBrowserProjectorRuntime() {
         removeFeature: removeFeatureFromRuntime,
         generateBuildings,
         removeBuildingMeshes: removeBuildingMeshesFromScene,
+        dispose() {
+            previews.dispose();
+            models.dispose();
+        },
     };
 }

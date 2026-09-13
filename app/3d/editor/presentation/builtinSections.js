@@ -24,6 +24,7 @@ export const SECTION_KINDS = Object.freeze({
     ROAD_GEOMETRY: "road-geometry",
     ROAD_DISPLAY: "road-display",
     SKY_PREVIEW: "sky-local-preview",
+    ASSET_REVISION: "asset-revision",
 });
 
 /**
@@ -104,9 +105,21 @@ export function skyboxSections(ctx, defaults) {
     return [...defaults, { id: "sky-local-preview", title: "Runtime", kind: SECTION_KINDS.SKY_PREVIEW }];
 }
 
+export function assetInstanceSections(ctx, defaults) {
+    return [...defaults, {
+        id: "asset-revision",
+        title: "Asset revision",
+        kind: SECTION_KINDS.ASSET_REVISION,
+        assetId: ctx.record.components?.asset?.assetId,
+        revision: ctx.record.components?.asset?.revision,
+        objectId: String(ctx.record.id),
+    }];
+}
+
 /** `typeId → getInspectorSections(ctx, defaults)` for the built-in types with extra sections. */
 export const BUILTIN_SECTION_PROVIDERS = Object.freeze({
     [INTERSECTION_TYPE_ID]: intersectionSections,
     [ROAD_TYPE_ID]: roadSections,
     [SKYBOX_TYPE_ID]: skyboxSections,
+    "asset-instance": assetInstanceSections,
 });

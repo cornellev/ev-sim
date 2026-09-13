@@ -64,10 +64,36 @@ export function distanceToSegmentXZ(point, start, end) {
  * @param {{ buildings?: boolean, roads?: boolean, props?: boolean, detail?: boolean }} layers
  * @param {number} [screenRadius]
  */
-export function pickMapTarget(worldPoint, documentSnapshot, viewport, layers, screenRadius = 12) {
+export function assetMapFootprint(record, bounds = null) {
+    const asset = record?.components?.asset;
+    if (!asset) return [];
+    const minX = Number(bounds?.min?.x ?? -0.5);
+    const maxX = Number(bounds?.max?.x ?? 0.5);
+    const minZ = Number(bounds?.min?.z ?? -0.5);
+    const maxZ = Number(bounds?.max?.z ?? 0.5);
+    const c = Math.cos(asset.rotationY);
+    const s = Math.sin(asset.rotationY);
+    return [[minX, minZ], [maxX, minZ], [maxX, maxZ], [minX, maxZ]].map(([x, z]) => {
+        const sx = x * asset.scale.x;
+        const sz = z * asset.scale.z;
+        return { x: asset.position.x + c * sx + s * sz, z: asset.position.z - s * sx + c * sz };
+    });
+}
+
+export function pickMapTarget(worldPoint, documentSnapshot, viewport, layers, screenRadius = 12, runtimeAssetBounds = null) {
     const radiusWorld = screenRadiusToWorld(screenRadius, viewport);
     const showDetail = layers.detail !== false;
     let nearestRoad = null;
+
+    if (showDetail && layers.props) {
+        for (const record of documentSnapshot.objects ?? []) {
+            if (record.typeId !== "asset-instance") continue;
+            const footprint = assetMapFootprint(record, runtimeAssetBounds?.get?.(String(record.id)) ?? null);
+            if (pointInPolygonXZ(worldPoint, footprint)) return { type: "asset", id: String(record.id) };
+            const position = record.components?.asset?.position;
+            if (position && Math.hypot(position.x - worldPoint.x, position.z - worldPoint.z) <= radiusWorld) return { type: "asset", id: String(record.id) };
+        }
+    }
 
     if (showDetail && layers.props) {
         let nearestFeature = null;

@@ -10,11 +10,13 @@ import { CommandBus } from "./CommandBus.js";
 import * as objectCommands from "./objectCommands.js";
 import * as legacyCommands from "./legacyCommands.js";
 import * as roadCommands from "./roadCommands.js";
+import * as assetCommands from "./assetCommands.js";
 
 export const commandFactories = Object.freeze({
     ...legacyCommands,
     ...objectCommands,
     ...roadCommands,
+    ...assetCommands,
 });
 
 /**

@@ -10,6 +10,7 @@ import { VisualLayerAccessStore } from "./VisualLayerAccessStore.js";
 import { BakeReuseManifestStore } from "./BakeReuseManifestStore.js";
 import { BakeMaterialProposalStore } from "./BakeMaterialProposalStore.js";
 import { VisualAssetStore } from "./VisualAssetStore.js";
+import { EditorAssetStore } from "./EditorAssetStore.js";
 import { BakePromotionController, parseBakeOutputSourceIds } from "./BakePromotionController.js";
 import {
     RUN_PACKAGE_ERROR_CODES,
@@ -105,6 +106,7 @@ import {
 } from "../../app/vehicles/VehicleManifest.js";
 import { getBuiltInVehicleManifest } from "../../app/vehicles/BuiltInVehicleManifests.js";
 import { createBuiltInIGVCEnvironmentManifest } from "../../app/3d/igvc/IGVCEnvironmentDocument.js";
+import { collectAssetInstanceReferences } from "../../app/editor-assets/EditorAssetContract.js";
 import {
     BINDING_SCOPES,
     createBindingManifest,
@@ -283,6 +285,11 @@ export class StorageService {
         this._bakeReuseManifests = new BakeReuseManifestStore(dataDir);
         this._bakeMaterialProposals = new BakeMaterialProposalStore(dataDir);
         this.visualAssets = new VisualAssetStore(dataDir, options.visualAssets ?? {});
+        this.editorAssets = new EditorAssetStore(dataDir, {
+            visualAssets: this.visualAssets,
+            now: options.editorAssets?.now ?? options.visualAssets?.now ?? (() => new Date()),
+            faults: options.editorAssets?.faults ?? options.faults ?? {},
+        });
         this.packageStagingDir = path.join(dataDir, "visual-packages", "staging");
         this.packageImportJournalDir = path.join(dataDir, "visual-packages", "import-journals");
         this._packageLimits = resolveRunPackageLimits(options.visualPackages?.limits ?? {});
@@ -348,6 +355,37 @@ export class StorageService {
             await this.bakePromotions.recover(environmentId);
             return this._readEnvironment(environmentId);
         });
+    }
+
+    async getEditorAssetCapabilities() {
+        await this.visualAssets.initialize();
+        const registry = await this.visualAssets.registry.load();
+        return {
+            limits: { ...this.visualAssets.limits },
+            sources: registry.sources.map((source) => ({
+                id: source.id,
+                label: source.label ?? source.name ?? source.id,
+            })),
+        };
+    }
+
+    async findEditorAssetReferences(assetId, revision = undefined) {
+        const id = String(assetId);
+        const targetRevision = revision === undefined || revision === null || revision === "" ? null : Number(revision);
+        const environmentIds = await this._listJsonIds(this.environmentsDir);
+        const references = [];
+        for (const environmentId of environmentIds) {
+            const environment = await this._readEnvironment(environmentId);
+            const matches = collectAssetInstanceReferences(environment?.document).filter((entry) => (
+                entry.assetId === id && (targetRevision === null || entry.revision === targetRevision)
+            ));
+            if (matches.length > 0) references.push({
+                environmentId,
+                environmentRevision: environment.revision ?? 0,
+                objectIds: matches.map((entry) => entry.objectId),
+            });
+        }
+        return references;
     }
 
     beginBakePromotion(environmentId, body = {}) {
@@ -2862,6 +2900,7 @@ export class StorageService {
             revision,
             current,
         });
+        await this._assertEditorAssetPins(prepared, current);
         if (stored && prepared.schemaVersion >= 4 && readSchemaVersion(stored) < 4) {
             await this._retainPreMigrationCopy(environmentId, stored, prepared.schemaVersion);
         }
@@ -2883,6 +2922,15 @@ export class StorageService {
         }
         await this._assertVisualReference(prepared);
         return this._fileStore(this._environmentPath(environmentId), null).write(prepared);
+    }
+
+    async _assertEditorAssetPins(prepared, current) {
+        const previous = new Map(collectAssetInstanceReferences(current?.document).map((entry) => [entry.objectId, entry]));
+        for (const reference of collectAssetInstanceReferences(prepared?.document)) {
+            const before = previous.get(reference.objectId);
+            if (before?.assetId === reference.assetId && before.revision === reference.revision) continue;
+            await this.editorAssets.getRevision(reference.assetId, reference.revision);
+        }
     }
 
     /**

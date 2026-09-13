@@ -535,6 +535,7 @@ async function enterRuntimeMode(runtime, mode) {
     const simulation = data.simulation();
 
     if (mode === THREE_D_MODES.SIMULATION) {
+        data.environment().projector?.()?.setEditorAssetsEnabled?.(false);
         data.environment().setToolController(null);
         runtime.disposeEditorInfrastructure?.();
         runtime.disposeEditorInfrastructure = null;
@@ -577,6 +578,7 @@ async function enterRuntimeMode(runtime, mode) {
     simulation.setModule("baking", false);
     await simulation.setPhysicsEnabled(false);
     if (runtime.disposed) return;
+    data.environment().projector?.()?.setEditorAssetsEnabled?.(true);
     setVehiclesVisible(data, false);
     setDeviceVisualsVisible(data, false);
     setRoadAuthoringHandlesVisible(data, true);

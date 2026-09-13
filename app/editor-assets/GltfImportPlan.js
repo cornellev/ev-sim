@@ -1,0 +1,130 @@
+import { sha256ExactBytes } from "../simulation/visual/VisualLayer.js";
+
+const GLB_MAGIC = 0x46546c67;
+const JSON_CHUNK = 0x4e4f534a;
+
+function bytesOf(value) {
+    if (value instanceof Uint8Array) return new Uint8Array(value);
+    if (value instanceof ArrayBuffer) return new Uint8Array(value.slice(0));
+    if (typeof Buffer !== "undefined" && Buffer.isBuffer(value)) return new Uint8Array(value);
+    throw new TypeError("Import files require Uint8Array or ArrayBuffer bytes.");
+}
+
+function normalizedSelectedPath(value) {
+    let text = String(value ?? "").replaceAll("\\", "/");
+    try { text = decodeURIComponent(text); } catch { throw new Error(`Import path ${JSON.stringify(value)} has invalid URI escapes.`); }
+    if (!text || text.startsWith("/") || /^[A-Za-z]:\//.test(text) || /^[a-z][a-z0-9+.-]*:/i.test(text)) throw new Error(`Import path ${JSON.stringify(value)} must be package-relative.`);
+    const parts = [];
+    for (const part of text.split("/")) {
+        if (!part || part === ".") continue;
+        if (part === "..") {
+            if (parts.length === 0) throw new Error(`Import path ${JSON.stringify(value)} traverses outside the package.`);
+            parts.pop();
+        } else parts.push(part);
+    }
+    if (parts.length === 0) throw new Error("Import path cannot resolve to the package root.");
+    return parts.join("/");
+}
+
+function resolveDependency(entryPath, uri) {
+    const raw = String(uri ?? "");
+    if (raw.startsWith("data:")) return null;
+    if (!raw || raw.startsWith("/") || raw.startsWith("\\") || raw.startsWith("//") || /^[A-Za-z]:[\\/]/.test(raw) || /^[a-z][a-z0-9+.-]*:/i.test(raw)) {
+        throw new Error(`External GLTF URI ${JSON.stringify(raw)} is not a selected package path.`);
+    }
+    const base = entryPath.includes("/") ? entryPath.slice(0, entryPath.lastIndexOf("/") + 1) : "";
+    return normalizedSelectedPath(`${base}${raw}`);
+}
+
+function mediaTypeFor(path) {
+    const extension = path.toLowerCase().split(".").at(-1);
+    return ({
+        bin: "application/octet-stream", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg",
+        webp: "image/webp", ktx2: "image/ktx2", gltf: "model/gltf+json", glb: "model/gltf-binary",
+    })[extension] ?? "application/octet-stream";
+}
+
+function parseGlb(bytes) {
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    if (bytes.byteLength < 20 || view.getUint32(0, true) !== GLB_MAGIC || view.getUint32(4, true) !== 2 || view.getUint32(8, true) !== bytes.byteLength) throw new Error("Entry GLB has an invalid version-2 header.");
+    const chunks = [];
+    let offset = 12;
+    while (offset + 8 <= bytes.byteLength) {
+        const length = view.getUint32(offset, true);
+        const type = view.getUint32(offset + 4, true);
+        const end = offset + 8 + length;
+        if (end > bytes.byteLength || length % 4 !== 0) throw new Error("Entry GLB has an invalid chunk table.");
+        chunks.push({ type, bytes: bytes.slice(offset + 8, end) });
+        offset = end;
+    }
+    if (offset !== bytes.byteLength || chunks[0]?.type !== JSON_CHUNK) throw new Error("Entry GLB must begin with a JSON chunk.");
+    let end = chunks[0].bytes.length;
+    while (end > 0 && [0, 9, 10, 13, 32].includes(chunks[0].bytes[end - 1])) end -= 1;
+    return { json: JSON.parse(new TextDecoder().decode(chunks[0].bytes.slice(0, end))), chunks: chunks.slice(1) };
+}
+
+function encodeGlb(json, chunks) {
+    const encoded = new TextEncoder().encode(JSON.stringify(json));
+    const jsonLength = Math.ceil(encoded.length / 4) * 4;
+    const total = 12 + 8 + jsonLength + chunks.reduce((sum, chunk) => sum + 8 + chunk.bytes.length, 0);
+    const output = new Uint8Array(total);
+    const view = new DataView(output.buffer);
+    view.setUint32(0, GLB_MAGIC, true);
+    view.setUint32(4, 2, true);
+    view.setUint32(8, total, true);
+    view.setUint32(12, jsonLength, true);
+    view.setUint32(16, JSON_CHUNK, true);
+    output.fill(0x20, 20, 20 + jsonLength);
+    output.set(encoded, 20);
+    let offset = 20 + jsonLength;
+    for (const chunk of chunks) {
+        view.setUint32(offset, chunk.bytes.length, true);
+        view.setUint32(offset + 4, chunk.type, true);
+        output.set(chunk.bytes, offset + 8);
+        offset += 8 + chunk.bytes.length;
+    }
+    return output;
+}
+
+export function createGltfImportPlan(files, { entryPath } = {}) {
+    const selected = new Map();
+    for (const file of files ?? []) {
+        const normalized = normalizedSelectedPath(file?.path);
+        if (selected.has(normalized)) throw new Error(`Selected package contains ambiguous path "${normalized}".`);
+        selected.set(normalized, bytesOf(file.bytes));
+    }
+    const entry = normalizedSelectedPath(entryPath);
+    const sourceBytes = selected.get(entry);
+    if (!sourceBytes) throw new Error(`Entry model "${entry}" is not among the selected files.`);
+    const mediaType = mediaTypeFor(entry);
+    if (!new Set(["model/gltf+json", "model/gltf-binary"]).has(mediaType)) throw new Error("Entry model must be .gltf or .glb.");
+    const parsed = mediaType === "model/gltf-binary"
+        ? parseGlb(sourceBytes)
+        : { json: JSON.parse(new TextDecoder().decode(sourceBytes)), chunks: [] };
+    if (parsed.json?.asset?.version !== "2.0") throw new Error("Only GLTF 2.0 models can be imported.");
+    const dependencies = new Map();
+    const rewrite = (records) => {
+        for (const record of records ?? []) {
+            if (typeof record?.uri !== "string") continue;
+            const dependencyPath = resolveDependency(entry, record.uri);
+            if (!dependencyPath) continue;
+            const bytes = selected.get(dependencyPath);
+            if (!bytes) throw new Error(`GLTF dependency "${dependencyPath}" was not selected.`);
+            const sha256 = sha256ExactBytes(bytes);
+            record.uri = `sha256:${sha256}`;
+            dependencies.set(dependencyPath, { path: dependencyPath, mediaType: mediaTypeFor(dependencyPath), sha256, bytes });
+        }
+    };
+    rewrite(parsed.json.buffers);
+    rewrite(parsed.json.images);
+    const modelBytes = mediaType === "model/gltf-binary"
+        ? encodeGlb(parsed.json, parsed.chunks)
+        : new TextEncoder().encode(JSON.stringify(parsed.json));
+    return {
+        entryPath: entry,
+        mediaType,
+        dependencies: [...dependencies.values()].sort((left, right) => left.path.localeCompare(right.path)),
+        modelBytes,
+        modelSha256: sha256ExactBytes(modelBytes),
+    };
+}

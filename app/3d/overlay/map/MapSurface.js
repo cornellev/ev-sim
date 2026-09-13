@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { fitMapViewportToContent } from "../../editor/document/documentRuntimeHydration.js";
 import { isMapDetailZoom } from "../../editor/map/mapCoords.js";
 import { MapSurfaceHud } from "./MapSurfaceHud.js";
@@ -11,6 +11,14 @@ import { useMapSize } from "./useMapSize.js";
 export function MapSurface({ data, editorSnapshot, documentSnapshot, mapSelection = null }) {
     const containerRef = useRef(null);
     const size = useMapSize(containerRef);
+    const [assetEpoch, setAssetEpoch] = useState(0);
+    useEffect(() => data?.environment?.()?.objects?.()?.subscribe?.(() => setAssetEpoch((value) => value + 1)), [data]);
+    const runtimeAssetBounds = new Map(
+        [...(data?.environment?.()?.projector?.()?.assetInstanceEntries?.() ?? new Map())]
+            .filter(([, entry]) => entry.bounds)
+            .map(([id, entry]) => [String(id), entry.bounds]),
+    );
+    void assetEpoch;
 
     const viewport = editorSnapshot?.map ?? {
         centerX: 0,
@@ -40,6 +48,7 @@ export function MapSurface({ data, editorSnapshot, documentSnapshot, mapSelectio
         layers,
         showDetail,
         documentSnapshot,
+        runtimeAssetBounds,
     });
 
     const handleRecenter = () => {
@@ -73,6 +82,7 @@ export function MapSurface({ data, editorSnapshot, documentSnapshot, mapSelectio
                     mapSelection={mapSelection}
                     showDetail={showDetail}
                     draft={editorSnapshot?.roadDraft ?? viewport.draft}
+                    runtimeAssetBounds={runtimeAssetBounds}
                 />
             </svg>
 

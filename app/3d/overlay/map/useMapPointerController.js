@@ -13,6 +13,7 @@ export function useMapPointerController({
     layers,
     showDetail,
     documentSnapshot,
+    runtimeAssetBounds,
 }) {
     const controllerRef = useRef(null);
     if (controllerRef.current == null) {
@@ -37,7 +38,8 @@ export function useMapPointerController({
         showDetail,
         documentSnapshot,
         getWorldFromEvent,
-    }), [data, size, viewport, layers, showDetail, documentSnapshot, getWorldFromEvent]);
+        runtimeAssetBounds,
+    }), [data, size, viewport, layers, showDetail, documentSnapshot, runtimeAssetBounds, getWorldFromEvent]);
 
     // React's onWheel is passive; non-passive listener required for preventDefault (map zoom).
     useEffect(() => {
