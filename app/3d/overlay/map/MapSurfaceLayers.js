@@ -28,6 +28,7 @@ import {
 } from "../../../roads/RoadLaneModel.js";
 import { planRoadNetworkGeometry } from "../../../roads/RoadNetworkGeometry.js";
 import { assetMapFootprint } from "../../editor/map/mapHitTest.js";
+import { isAssetBackedObject } from "../../../editor-assets/AssetBackedObject.js";
 
 function screenPoints(points, viewport, size) {
     return points.map((point) => {
@@ -446,7 +447,7 @@ function Features({ documentSnapshot, viewport, size, layers, showDetail, mapSel
 
 function Assets({ documentSnapshot, runtimeAssetBounds, viewport, size, layers, showDetail, mapSelection }) {
     if (!showDetail || !layers.props) return null;
-    return (documentSnapshot.objects ?? []).filter((record) => record.typeId === "asset-instance").map((record) => {
+    return (documentSnapshot.objects ?? []).filter(isAssetBackedObject).map((record) => {
         const footprint = assetMapFootprint(record, runtimeAssetBounds?.get?.(String(record.id)) ?? null);
         const points = footprint.map((point) => worldToScreen(point, viewport, size)).map((point) => `${point.x},${point.y}`).join(" ");
         const selected = mapSelection?.type === MAP_SELECTION_TYPES.ASSET && mapSelection.id === String(record.id);

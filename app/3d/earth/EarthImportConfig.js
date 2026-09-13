@@ -117,6 +117,9 @@ export function validateBounds(bounds) {
     if (bounds.north <= bounds.south) {
         return { ok: false, error: "North must be greater than south." };
     }
+    if (bounds.north > 90 || bounds.south < -90 || bounds.east > 180 || bounds.west < -180) {
+        return { ok: false, error: "Bounds must remain within valid latitude and longitude ranges." };
+    }
     if (bounds.east <= bounds.west) {
         return { ok: false, error: "East must be greater than west." };
     }
@@ -161,5 +164,8 @@ export function normalizeEarthImportEditorState(state = {}) {
         previewActive: Boolean(state.previewActive),
         tilesVisible: state.tilesVisible !== false,
         roadsVisible: state.roadsVisible !== false,
+        includeRoads: state.includeRoads !== false,
+        importMode: state.importMode === "replace" ? "replace" : "add",
+        highwayClasses: Array.isArray(state.highwayClasses) ? [...new Set(state.highwayClasses.map(String))] : [],
     };
 }

@@ -336,6 +336,7 @@ export class EnvironmentPersistence {
                     detachStaleVisual: true,
                     supportedRoadGeometryVersions: [1, 2],
                     supportedAssetMetricVersions: [1],
+                    supportedEditorSourceVersions: [1],
                 },
                 { keepalive },
             );

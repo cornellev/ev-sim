@@ -354,7 +354,7 @@ export function ObjectInspector({ data }) {
                 {multi
                     ? (state.mixedTypes
                         ? <p className="px-2 py-3 text-[12px] text-[var(--slate-muted)]">Objects of different types share no editable properties. Lock, hide, and delete still apply to all of them.</p>
-                        : <>{renderOptionGroups(state.fields, state.states)}{state.typeId === "asset-instance" && <PropertySection id="asset-revision" title="Asset revision"><AssetInstanceSection data={data} section={{ assetId: primary.components.asset.assetId, revision: primary.components.asset.revision, objectId: primary.id }} /></PropertySection>}</>)
+                        : <>{renderOptionGroups(state.fields, state.states)}{primary.components?.asset && <PropertySection id="asset-revision" title="Asset revision"><AssetInstanceSection data={data} section={{ assetId: primary.components.asset.assetId, revision: primary.components.asset.revision, objectId: primary.id }} /></PropertySection>}</>)
                     : sections.map(renderSection)}
             </div>
 

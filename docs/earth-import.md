@@ -1,210 +1,201 @@
-# Earth Import
+# Earth creation and road import
 
-Earth Import pulls real-world geography into an environment: Google Photorealistic 3D Tiles for visual preview, and OpenStreetMap roads (via Overpass) as editable road graph data in `EnvironmentDocument`.
+ED-08 supports three environment creation sources: Blank, Google Earth, and
+GLTF Tile. Google Earth sources stream Google Photorealistic 3D Tiles as a live
+environment backdrop and can import editable OpenStreetMap roads through
+Overpass. GLTF Tiles pin an immutable editor-asset revision and use the same
+placement, projection, metric snapshot, and revision-update machinery as asset
+instances.
 
-Tiles are temporary. Roads and earth metadata persist after you Apply.
-Persistent photoreal ingestion, if ever licensed, is specified in the
-[Visual Layer Implementation Plan](visual-layer-plan.md) Google track.
+The ED-08 UI is enabled with `NEXT_PUBLIC_CEV_SIM_ED08=1`. Source readers,
+validation, and writer downgrade protection are active regardless of that
+flag.
 
-## Before you start
+## Configuration
 
-You need a Google Maps API key with access to the Map Tiles API (Photorealistic 3D Tiles). Add it to your local environment file:
+Google tiles require a Maps API key with Map Tiles API access:
 
 ```bash
 # .env.local
 NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=your_key_here
+NEXT_PUBLIC_CEV_SIM_ED08=1
 ```
 
-Restart the dev server after changing this value. Next.js only inlines `NEXT_PUBLIC_*` variables when they are read as static property access in code — do not rename the variable.
+Restart the development server after changing either value. OSM road fetching
+uses `https://overpass-api.de/api/interpreter`; the public service requires no
+key and can be retried independently of the tile session.
 
-Road fetching uses the public Overpass API at `overpass-api.de`. No key is required, but the service is rate-limited and best-effort.
+## Create an environment
 
-## Using Earth Import
+Open the environment switcher and choose **New environment**.
 
-1. Open the **Environment Editor** (`Escape` → Environment Editor).
-2. Open the editor menu and choose **Earth Import**.
-3. Use the **OpenStreetMap** picker to pan/zoom and draw an import rectangle (toggle draw mode with the map icon, then click-drag on the map). You can expand the map for a larger view.
-4. Review the selection summary (max edge length must stay within roughly 5 km). Use **Advanced Coordinates** if you need to type bounds manually.
-5. Adjust tile quality if needed (screen-space error — lower is sharper, heavier).
-6. Click **Preview** to load tiles and fetch roads without committing.
-7. Review the 3D tile preview and toggle road visibility. A red vertical boundary marks the exact import bounds while tiles (which may extend beyond the box) are visible.
-8. Click **Apply** to write roads into the runtime scene and save earth metadata, or press `Escape` to discard a preview.
+- **Blank** creates empty road, building, feature, and object domains plus the
+  Skybox.
+- **Google Earth** accepts a rectangle no larger than 5 km per edge, selected
+  highway classes, a roads toggle, and tile quality. Preview loads tiles and
+  builds a detached road draft. A failed road request offers **Retry roads** or
+  **Continue with tiles only**.
+- **GLTF Tile** selects an immutable catalog revision or uploads a GLTF/GLB
+  package, then records position, yaw, and positive scale in a `tile@2` object.
 
-The 2D map uses OpenStreetMap tiles for area selection only. **Preview** and **Apply** still load Google Photorealistic 3D Tiles and fetch roads from the public Overpass API inside the selected bounds.
+Creation prepares the complete schema-v4 manifest before sending one
+`POST /api/storage/environments` request with `initialManifest`. Storage
+validates the document, source contract, object graph, asset pins, and metric
+snapshots under the environment write lock and commits revision 1 atomically.
+The active environment changes only after that request succeeds. The proposed
+ID remains stable across retries, and a lost response is reconciled with GET
+before another POST.
 
-### Map picker notes
+## Import into an existing environment
 
-- The import **anchor** is computed from the center of the drawn bounds when you preview or apply.
-- Draw mode must be active before click-dragging a new rectangle on the map.
-- OSM attribution appears on the map control; Google attribution appears after tiles load.
-- `Escape` closes the expanded map before canceling preview or exiting the mode.
+Choose **Earth import** in the editor top bar. The hierarchy, inspector, and
+asset panes remain mounted during the draft.
 
-### Preview vs Apply
+1. Draw or enter a valid rectangle and select highway classes.
+2. Choose **Add roads** or **Replace roads**.
+3. Preview the Google session and detached OSM road draft.
+4. Resolve any issues or continue with tiles only.
+5. Apply once. The source change and optional road change enter history as one
+   `CommandBus` command.
 
-| Action | Tiles | Roads in document | Roads in 3D scene | Earth metadata |
-|--------|-------|-------------------|---------------------|----------------|
-| Preview | Loaded and visible | Staged (replaces existing) | Not synced yet | Written to document |
-| Apply | Disposed after import | Committed | Synced via `RoadRuntimeAdapter` | Committed |
-| Cancel (`Escape` during preview) | Disposed | Restored from backup | Unchanged | Restored from backup |
+**Add roads** namespaces incoming IDs by the import ID, retains existing road
+nodes, edges, and turn rules, and does not connect new roads by coordinate
+proximity. Adding geometry-v2 roads upgrades legacy road geometry inside the
+same history entry. **Replace roads** replaces nodes, edges, and turn rules
+together while retaining buildings, features, groups, and assets. Replacing
+existing roads with an empty draft requires explicit confirmation. A
+tiles-only Apply leaves the road domain untouched.
 
-Preview takes a document snapshot before importing. If tile loading fails, the snapshot is restored automatically. If the public Overpass road fetch fails, the Google Earth tile side continues and roads are staged as empty.
+Changing source options, cancelling, or switching environments aborts pending
+work. Async results are accepted only when both the session generation and
+environment ID still match. Cancellation does not change the document version,
+undo history, or autosave state.
 
-## What happens under the hood
+## Georegistration correction
 
-When you preview or apply, `EarthImportController` runs the same import pipeline. The only difference is what happens afterward.
+Legacy Earth records retain their historical Web Mercator coordinates until
+the user chooses **Correct georegistration**. The preview offers:
 
-```mermaid
-sequenceDiagram
-    participant UI as EarthImportModeChrome
-    participant Ctrl as EarthImportController
-    participant Iso as SceneIsolation
-    participant Tiles as EarthTilesManager
-    participant Roads as RoadGraphImporter
-    participant Doc as EnvironmentDocument
+- **Roads only**: reprojects the complete road domain. Curves are compiled with
+  the committed road policy and stored as explicit polylines.
+- **Whole environment**: also reprojects building footprints, features,
+  asset-backed objects, and group pivots. Locked or unsupported transform
+  records block the whole operation with object-specific issues.
 
-    UI->>Ctrl: preview() or apply()
-    Ctrl->>Iso: hide existing scene roots
-    Ctrl->>Tiles: load(anchor)
-    Ctrl->>Roads: fetch OSM ways in bounds
-    Roads->>Doc: write road nodes/edges
-    Ctrl->>Doc: setEarthSource(metadata)
-    alt Preview
-        Ctrl-->>UI: status = preview
-    else Apply
-        Ctrl->>Doc: syncRoadsFromDocument()
-        Ctrl->>Tiles: disposeTiles()
-        Ctrl-->>UI: return to scene mode
-    end
-```
+Both scopes use one undoable command. Authored elevation, widths, building
+heights, positive asset scales, IDs, and route-proof invalidation semantics are
+preserved. The migration writes `document.geoFrame`, upgrades the Earth source
+to v2, and retains a write-once pre-georegistration manifest on the server.
 
-### Scene isolation
+## Persisted contracts
 
-While Earth Import is active, `EarthImportSceneIsolation` hides top-level scene children so you see only:
-
-- The procedural sky (`TakramEnvironmentSky`, tagged `preserveInEarthImportMode`).
-- The streamed Google Earth tile group (`GoogleEarthTiles`).
-- The red import bounds outline (`EarthImportBoundsOutline`) during preview and tile loading.
-
-Everything else — existing roads, buildings, props — is hidden until you leave the mode. Isolation stays active for the whole session, not just during tile loading.
-
-During preview, `EarthImportBoundsOutline` draws a vertical red grid around the selected bounds in scene-local coordinates. The grid extends 100 m above the highest sampled tile geometry inside the bounds so it stays visible above photorealistic meshes. Google tiles often extend past the selected rectangle; the outline shows the exact area used for road import and metadata.
-
-### Tile streaming
-
-`EarthTilesManager` wraps `3d-tiles-renderer` with Google's `GoogleCloudAuthPlugin`. It:
-
-- Validates the API key through `GoogleEarthTilesService` before loading.
-- Positions tiles with `ReorientationPlugin` at the import anchor.
-- Tags tile objects with `earthImportLayer`, `skipEnvironmentSelection`, and `bakeIgnore`.
-- Collects Google attribution strings for display in the UI.
-
-`SimulationEngine` calls `earthTilesManager.update()` on every render frame while tiles are loaded.
-
-### Road import
-
-1. **OverpassRoadProvider** posts an Overpass QL query for `highway` ways inside the bounds.
-2. Ways are normalized to `{ id, tags, points[] }` in WGS84.
-3. **RoadGraphImporter** simplifies each polyline (Douglas–Peucker), converts lat/lng to local scene coordinates relative to the anchor, and writes nodes/edges into the document.
-4. Lane count and width are inferred from OSM tags where available.
-
-Other road providers (`google`, `mesh`) appear in the UI as placeholders. Only `overpass` is implemented today.
-
-### Coordinate systems
-
-`GeospatialTransform.js` handles the math:
-
-- **Local ground plane** — Web Mercator coordinates relative to the anchor (`latLngToLocal` / `localToLatLng`). This matches the legacy GeoJSON import path.
-- **ECEF** — WGS84 earth-centered coordinates for sky and geospatial alignment (`latLngHeightToECEF`, `makeLocalToECEFMatrix`).
-
-## Persisted earth metadata
-
-After a successful import, `EnvironmentDocument.earth` stores:
+New geographic documents use one authoritative frame:
 
 ```js
-{
-  anchor: { lat, lng },
-  bounds: { north, south, east, west },
-  tileProvider: "google-photorealistic",
-  roadProvider: "overpass",
-  importedLayerIds: ["google-earth-tiles", "roads:overpass"],
-  importedAt: "2026-06-30T12:00:00.000Z"
+document.geoFrame = {
+  version: 1,
+  projection: "wgs84-local-tangent",
+  axes: "east-up-south",
+  origin: { lat, lng, height }
 }
 ```
 
-Re-entering Earth Import hydrates the editor form from this record if it exists.
+The local axes are `x = east`, `y = ellipsoid up`, and `z = south`. Missing
+`geoFrame` means legacy coordinate behavior; loading an old environment never
+adds one.
 
-## Configuration
+New Google sources use:
 
-Defaults and limits live in `EarthImportConfig.js`:
-
-| Setting | Default | Notes |
-|---------|---------|-------|
-| `maxBoundsEdgeMeters` | 5000 | Rejects oversized import areas |
-| `boundsOutlineClearanceMeters` | 100 | Preview bounds outline height above tile geometry |
-| `maxScreenSpaceError` | 1 | Tile LOD; lower is sharper and heavier |
-| `maxTileDepth` | `Infinity` | No artificial tile traversal cap |
-| `roadSimplifyToleranceMeters` | 2 | Douglas–Peucker tolerance for road centerlines |
-| `defaultAnchor` | 42.443, -76.502 | Ithaca, NY — near existing IGVC content |
-| `defaultBoundsDeltaDegrees` | 0.005 | ~1 km square around the anchor |
-| `overpassEndpoint` | `https://overpass-api.de/api/interpreter` | Public OSM query endpoint |
-| `googleTilesRootUrl` | `https://tile.googleapis.com/v1/3dtiles/root.json` | 3D Tiles root |
-
-Status values progress through `idle` → `loading-tiles` → `loading-roads` → `preview` or `applied` (or `error` on failure).
-
-## Troubleshooting
-
-**"Google Maps API key is required"** — Set `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` in `.env.local` and restart the dev server. Placeholder values like `YOUR_API_KEY` are treated as missing.
-
-**Tiles never appear** — Check the browser console for Map Tiles API errors. Confirm the key has the Map Tiles API enabled in Google Cloud Console.
-
-**Overpass timeout or empty roads** — The public Overpass instance can be slow or overloaded. Import continues without roads when Overpass times out, so the tile render can still be inspected. Try a smaller bounds box or retry later if you need editable roads.
-
-**Preview looks right but roads are missing in scene mode** — You previewed without applying. Preview stages roads in the document but does not call `syncRoadsFromDocument`. Click Apply to commit.
-
-**Existing environment disappeared** — Expected during Earth Import. Scene isolation hides non-preserved objects. Leave the mode or cancel preview to restore visibility.
-
-## Tests
-
-`tests/earth-import-mode.test.js` covers:
-
-- Editor mode transitions and earth-import state patching
-- Document snapshot rollback for roads and earth metadata
-- Bounds validation and config normalization
-- Geospatial round-trips and polyline simplification
-- Overpass response normalization (mocked fetch)
-- Road graph import into the document
-- Google tile service error handling
-- Scene isolation preserve/hide behavior
-
-`tests/geo-bounds-selection.test.js` covers map-picker bounds helpers (corner normalization, Leaflet bounds conversion, anchor patching, and validation summaries).
-
-`tests/geo-bounds-outline.test.js` covers preview bounds outline geometry (local corner placement, height estimation, and preserved metadata tags).
-
-`app/util/Fetch.js` provides `defaultFetch` so network code works in both browser and Node tests without `fetch` binding issues.
-
-End-to-end controller flows, live tile streaming, and UI interactions are not yet covered by automated tests. Verify those manually in the environment editor.
-
-## Source layout
-
+```js
+document.earth = {
+  version: 2,
+  tileProvider: "google-photorealistic",
+  bounds: { north, south, east, west },
+  quality: {
+    maxScreenSpaceError: 1,
+    maxCachedTiles: 2000,
+    maxCacheBytes: 1073741824
+  },
+  roadProvider: "overpass", // null when roads were not requested
+  roadFilters: { highwayClasses: [] },
+  importedLayerIds: [],
+  importedAt
+}
 ```
-app/3d/earth/
-  EarthImportConfig.js          Defaults, validation, API key helper
-  EarthImportController.js      Preview/apply/cancel orchestration
-  EarthImportSceneIsolation.js  Hide/show scene roots
-  EarthTilesManager.js          3D Tiles streaming
-  GoogleEarthTilesService.js    API key and session validation
-  GeospatialTransform.js        Coordinate math
-  map/
-    GeoBoundsSelection.js       Bounds normalization and editor patches
-    GeoBoundsOutlineGeometry.js Preview bounds grid geometry
-  roads/
-    RoadNetworkProvider.js      Shared types and bounds helpers
-    OverpassRoadProvider.js     OSM Overpass queries
-    RoadGraphImporter.js        Ways → document roads
 
-app/3d/overlay/earth/
-  EarthImportModeChrome.js      UI panel and toolbar
-  EarthImportMapPicker.js       OSM map picker UI
-  EarthImportBoundsOutline.js   Red preview bounds outline in 3D
-  useLeafletBoundsPicker.js     Leaflet lifecycle and drag-to-draw
-```
+Unversioned Earth records remain readable without normalization. V2 obtains its
+origin only from `geoFrame`; API keys, renderer objects, connection state,
+attribution responses, abort controllers, and loaded tiles are runtime state.
+Road nodes and edges may carry a `source` record with provider/import IDs, OSM
+way/node identity, layer/bridge/tunnel tags, and boundary-intersection identity.
+Provenance survives split, save/load, and undo/redo but stays outside metric
+road, world, and route identities.
+
+Full-document writers that introduce or overwrite `geoFrame`, Earth v2, road
+provenance, or `tile@2` must send
+`supportedEditorSourceVersions: [1]`. Storage returns structured HTTP 409
+`ENVIRONMENT_SOURCE_DOWNGRADE` when an older writer would drop those fields.
+
+## Road import rules
+
+`RoadImportService` is a pure fetch/clip/draft service; it never receives the
+active `EnvironmentDocument`.
+
+- Overpass filters come from the supported highway allowlist and requests carry
+  an `AbortSignal`.
+- Every segment is clipped in longitude/latitude before simplification,
+  including outside-to-outside crossings and exit/re-entry paths.
+- Boundary identities bind source way, source segment, and intersection
+  fraction. Exact clipped endpoints and genuine shared OSM references are
+  protected during simplification.
+- Coordinate proximity never connects roads. Bridge, tunnel, and layer
+  crossings stay separate unless the source has a genuine shared node.
+- Interior bends are geometry-v2 polyline knots. Closed loops split
+  deterministically into legal edges.
+- `oneway=yes`, `oneway=-1`, total lanes, and directional lane counts compile
+  through the existing lane model. Ambiguous tags and junctions above the
+  four-edge editor limit remain visible preview issues.
+- Missing provider IDs, incomplete way geometry, invalid rectangles,
+  antimeridian crossings, and unsupported providers fail before document
+  mutation.
+
+## Tile session lifetime and isolation
+
+`EnvironmentTileHost` owns the live provider session beside the environment's
+asset runtime. `SceneProjector` reconciles Earth-source, frame, visibility, and
+quality changes; `EnvironmentLoader` performs full-load synchronization.
+Applying a preview transfers the prepared session to the host without disposing
+it. Scene/Map switches, asset tabs, and editor/simulation workspace changes
+retain the session; hidden views suspend traversal. Sessions dispose on source
+replacement/removal, environment replacement, or runtime teardown.
+
+Each display update uses the current camera and actual drawing-buffer size in
+this order: controls, camera matrices, tile-root matrix, resolution, tile
+traversal, render. `TileAoiPlugin` prunes provably disjoint region, box, and
+sphere subtrees before they can load. Runtime cache pressure evicts unused
+detail before fallback coverage and raises effective screen-space error without
+changing the saved setting. Diagnostics expose effective quality, resident
+count/bytes, and degraded/error state.
+
+Google roots remain outside registry geometry, placement raycasts, collisions,
+LiDAR, bake snapshots, measured cameras, asset assemblies, and package roots.
+The bounds outline uses its configured height and owned geometry. The scene
+viewport displays current tile credits and Google Maps attribution after Apply;
+tile responses use ordinary browser HTTP caching and no persistent Google
+content store.
+
+## Main implementation and tests
+
+- `app/geography/GeoFrame.js` and `app/3d/earth/GeoFrame.js`: shared pure frame
+  implementation and browser Earth export.
+- `app/3d/earth/roads/RoadImportService.js`: clipped deterministic drafts.
+- `app/3d/editor/commands/importCommands.js` and
+  `georegistrationCommands.js`: atomic import and migration commands.
+- `app/3d/earth/EnvironmentTileHost.js`, `EarthTilesManager.js`, and
+  `TileAoiPlugin.js`: environment-owned streaming.
+- `app/3d/overlay/workspace/EnvironmentCreationDialog.js`: creation workflow.
+- `tests/geo-frame.test.js`, `georegistration-commands.test.js`,
+  `road-import-service.test.js`, `environment-import-commands.test.js`,
+  `environment-tile-host.test.js`, `earth-tiles-streaming.test.js`,
+  `environment-creation.test.js`, `gltf-tile.test.js`, and
+  `tests/ui/environment-creation.spec.js`: focused and browser coverage.

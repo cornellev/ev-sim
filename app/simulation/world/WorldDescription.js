@@ -12,6 +12,7 @@ import { authorRoadsFromMetric, cloneRoadGeometry, normalizeMetricRoads, roadGeo
 import { compileRoadNetworkGeometry, planRoadNetworkGeometry } from "../../roads/RoadNetworkGeometry.js";
 import { ROAD_GEOMETRY_POLICY_V1 } from "../../roads/RoadGeometryPolicy.js";
 import { validateAssetMetricsDomain } from "../../editor-assets/AssetMetricSnapshot.js";
+import { assetBindingRevisionVersion, readAssetBinding } from "../../editor-assets/AssetBackedObject.js";
 
 export const WORLD_DESCRIPTION_KIND = "cev-sim.world-description";
 export const WORLD_DESCRIPTION_VERSION = 1;
@@ -534,9 +535,9 @@ function compileAssetProxies(document) {
     if (issues.length > 0) throw Object.assign(new TypeError(issues[0].message), { issues });
     const metrics = new Map((document.assetMetrics?.definitions ?? []).map((entry) => [`${entry.assetId}@${entry.revision}`, entry]));
     return (document.objects ?? [])
-        .filter((record) => record.typeId === "asset-instance" && record.typeVersion === 2)
+        .filter((record) => assetBindingRevisionVersion(record) === 2)
         .map((record) => {
-            const instance = record.components.asset;
+            const instance = readAssetBinding(record);
             const metric = metrics.get(`${instance.assetId}@${instance.revision}`);
             return {
                 id: String(record.id),

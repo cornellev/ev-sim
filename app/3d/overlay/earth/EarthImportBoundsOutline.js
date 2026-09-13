@@ -2,11 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { boundsCenter } from "../../earth/EarthImportConfig.js";
 import {
     computeOutlineVerticalRange,
-    cornersToSamplePoints,
     createGeoBoundsOutlineGroup,
-    geoBoundsToLocalCorners,
 } from "../../earth/map/GeoBoundsOutlineGeometry.js";
-import { sampleEarthTileElevation } from "../../earth/map/sampleEarthTileElevation.js";
 import {
     editorStateToGeoBounds,
     summarizeBounds,
@@ -51,7 +48,6 @@ function shouldShowBoundsOutline(editorSnapshot) {
 export function EarthImportBoundsOutline({ data }) {
     const groupRef = useRef(null);
     const [outlineState, setOutlineState] = useState(null);
-    const [tileRevision, setTileRevision] = useState(0);
 
     useEffect(() => {
         const editor = data?.editor?.();
@@ -64,32 +60,10 @@ export function EarthImportBoundsOutline({ data }) {
             const bounds = editorStateToGeoBounds(snapshot.earthImport);
             setOutlineState({
                 bounds,
-                anchor: boundsCenter(bounds),
+                frame: data?.earthImportController?.()?.session?.geoFrame ?? boundsCenter(bounds),
             });
         });
     }, [data]);
-
-    useEffect(() => {
-        if (!outlineState) return undefined;
-
-        let lastTopY = null;
-        const interval = setInterval(() => {
-            const manager = data?.earthTilesManager?.();
-            if (!manager?.group) return;
-
-            const corners = geoBoundsToLocalCorners(outlineState.bounds, outlineState.anchor);
-            const tileElevation = sampleEarthTileElevation(
-                manager.group,
-                cornersToSamplePoints(corners),
-            );
-            const { topY } = computeOutlineVerticalRange(tileElevation);
-            if (lastTopY === topY) return;
-            lastTopY = topY;
-            setTileRevision((value) => value + 1);
-        }, 750);
-
-        return () => clearInterval(interval);
-    }, [outlineState, data]);
 
     useEffect(() => {
         const scene = data?.three?.()?.scene;
@@ -106,13 +80,10 @@ export function EarthImportBoundsOutline({ data }) {
             return undefined;
         }
 
-        const corners = geoBoundsToLocalCorners(outlineState.bounds, outlineState.anchor);
-        const tileRoot = data?.earthTilesManager?.()?.group ?? null;
-        const tileElevation = sampleEarthTileElevation(tileRoot, cornersToSamplePoints(corners));
-        const verticalRange = computeOutlineVerticalRange(tileElevation);
+        const verticalRange = computeOutlineVerticalRange();
         const group = createGeoBoundsOutlineGroup(
             outlineState.bounds,
-            outlineState.anchor,
+            outlineState.frame,
             verticalRange,
         );
 
@@ -127,7 +98,7 @@ export function EarthImportBoundsOutline({ data }) {
                 groupRef.current = null;
             }
         };
-    }, [outlineState, tileRevision, data]);
+    }, [outlineState, data]);
 
     return null;
 }

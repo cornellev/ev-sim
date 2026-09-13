@@ -14,6 +14,7 @@ import { createRoadsProjector } from "./projectors/roadsProjector.js";
 import { createSkyProjector } from "./projectors/skyProjector.js";
 import { createAssetInstancesProjector } from "./projectors/assetInstancesProjector.js";
 import { createAssetMetricsProjector } from "./projectors/assetMetricsProjector.js";
+import { createTileSourceProjector } from "./projectors/tileSourceProjector.js";
 
 export function createDefaultProjectors() {
     return [
@@ -23,6 +24,7 @@ export function createDefaultProjectors() {
         createAssetInstancesProjector(),
         createAssetMetricsProjector(),
         createObjectsProjector(),
+        createTileSourceProjector(),
         createSkyProjector(),
     ];
 }

@@ -10,6 +10,7 @@ import {
     IconPlayerStop,
     IconSun,
     IconWorld,
+    IconMapPin,
 } from "@tabler/icons-react";
 import { Button, IconButton, PopoverSurface } from "../../../ui";
 import { EDITOR_MODES } from "../../editor/EditorState";
@@ -18,6 +19,7 @@ import { SKYBOX_OBJECT_ID } from "../../editor/objects/objectRecord.js";
 import { EnvironmentSwitcher } from "../EnvironmentSwitcher";
 import { MenuToggle } from "../ui/MenuToggle";
 import { cn } from "../ui/cn";
+import { GeoregistrationDialog } from "./GeoregistrationDialog";
 
 const PANE_LABELS = { hierarchy: "Hierarchy", inspector: "Inspector", assets: "Assets" };
 
@@ -54,8 +56,20 @@ function SaveStatus({ data }) {
  * Workspace top bar: environment switcher, view menu (pane visibility),
  * Earth import, atmosphere, bake, and the save status.
  */
-export function EditorTopBar({ data, activeEnvironmentId, onEnvironmentChange, layout, onTogglePane, editorMode }) {
+export function EditorTopBar({
+    data,
+    activeEnvironmentId,
+    onEnvironmentChange,
+    layout,
+    onTogglePane,
+    editorMode,
+    earthImportOpen,
+    onEarthImportToggle,
+}) {
     const [bakeRunning, setBakeRunning] = useState(false);
+    const [georegistrationOpen, setGeoregistrationOpen] = useState(false);
+    const ed08Enabled = process.env.NEXT_PUBLIC_CEV_SIM_ED08 === "1";
+    const inEarthImport = ed08Enabled ? earthImportOpen : editorMode === EDITOR_MODES.EARTH_IMPORT;
     useEffect(() => {
         const harness = data?.baking?.();
         if (!harness?.subscribe) return undefined;
@@ -78,13 +92,12 @@ export function EditorTopBar({ data, activeEnvironmentId, onEnvironmentChange, l
         sim.play();
         setBakeRunning(true);
     };
-    const inEarthImport = editorMode === EDITOR_MODES.EARTH_IMPORT;
-
     return (
         <header
             data-editor-topbar
             className="pointer-events-auto flex h-10 items-center justify-between gap-3 border-b border-[var(--slate-border-60)] bg-[var(--slate-surface-1)] px-2 text-[var(--slate-fg)]"
         >
+            {georegistrationOpen && <GeoregistrationDialog data={data} onClose={() => setGeoregistrationOpen(false)} />}
             <div className="flex min-w-0 items-center gap-2">
                 <EnvironmentSwitcher data={data} activeEnvironmentId={activeEnvironmentId} onEnvironmentChange={onEnvironmentChange} />
             </div>
@@ -106,7 +119,6 @@ export function EditorTopBar({ data, activeEnvironmentId, onEnvironmentChange, l
                                 label={PANE_LABELS[paneId]}
                                 checked={!layout.panes[paneId].collapsed}
                                 onChange={(visible) => onTogglePane(paneId, !visible)}
-                                disabled={inEarthImport}
                             />
                         ))}
                     </div>
@@ -118,10 +130,22 @@ export function EditorTopBar({ data, activeEnvironmentId, onEnvironmentChange, l
                     variant={inEarthImport ? "default" : "ghost"}
                     active={inEarthImport || undefined}
                     aria-pressed={inEarthImport}
-                    onClick={() => data?.editor?.()?.setEditorMode?.(inEarthImport ? EDITOR_MODES.SCENE : EDITOR_MODES.EARTH_IMPORT)}
+                    onClick={() => {
+                        if (ed08Enabled) onEarthImportToggle?.();
+                        else data?.editor?.()?.setEditorMode?.(inEarthImport ? EDITOR_MODES.SCENE : EDITOR_MODES.EARTH_IMPORT);
+                    }}
                 >
                     <IconWorld size={16} stroke={1.75} />
                 </IconButton>
+                {process.env.NEXT_PUBLIC_CEV_SIM_ED08 === "1" && !data?.environment?.()?.getDocument?.()?.geoFrame && data?.environment?.()?.getDocument?.()?.earth?.anchor && <IconButton
+                    label="Correct georegistration"
+                    tooltip="Migrate legacy geographic coordinates"
+                    size="compact"
+                    variant="ghost"
+                    onClick={() => setGeoregistrationOpen(true)}
+                >
+                    <IconMapPin size={16} stroke={1.75} />
+                </IconButton>}
                 <IconButton
                     label="Atmosphere"
                     tooltip="Select the Skybox to edit sky and atmosphere"

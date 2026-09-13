@@ -74,6 +74,7 @@ export class Environment {
         });
         this.sceneProjector = null;
         this.assetRuntime = null;
+        this.tileHost = null;
 
         // A list of all the static objects (as in, that don't move) in the environment.
         // These are particularly objects can still interact with LiDAR and other sensors, but they don't move.
@@ -144,6 +145,15 @@ export class Environment {
         return this.assetRuntime;
     }
 
+    setTileHost(host) {
+        if (this.tileHost && this.tileHost !== host) this.tileHost.dispose?.();
+        this.tileHost = host ?? null;
+    }
+
+    tiles() {
+        return this.tileHost;
+    }
+
     sky() {
         return this.skyState;
     }
@@ -188,6 +198,8 @@ export class Environment {
         this.assetRuntime?.previews?.dispose?.();
         this.assetRuntime?.models?.dispose?.();
         this.assetRuntime = null;
+        this.tileHost?.dispose?.();
+        this.tileHost = null;
     }
 
     toManifest() {

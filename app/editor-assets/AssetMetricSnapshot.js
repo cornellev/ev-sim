@@ -1,6 +1,7 @@
 /** Pure ED-07 environment snapshot helpers for immutable asset metrics. */
 
 import { hashAssetMetric, normalizeAssetMetric, validateAssetMetric } from "./AssetDefinition.js";
+import { assetBindingRevisionVersion, readAssetBinding } from "./AssetBackedObject.js";
 
 export const ASSET_METRICS_DOMAIN_VERSION = 1;
 
@@ -53,8 +54,8 @@ export function validateAssetMetricDefinition(value = {}, path = []) {
 export function referencedV2AssetPins(document) {
     const pins = new Map();
     for (const record of document?.objects ?? []) {
-        if (record?.typeId !== "asset-instance" || Number(record.typeVersion) !== 2) continue;
-        const asset = record.components?.asset;
+        if (assetBindingRevisionVersion(record) !== 2) continue;
+        const asset = readAssetBinding(record);
         if (!asset?.assetId || !Number.isInteger(asset.revision)) continue;
         pins.set(assetMetricKey(asset.assetId, asset.revision), {
             assetId: asset.assetId,

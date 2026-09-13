@@ -19,6 +19,9 @@ import {
 import { GoogleEarthTilesService } from "../app/3d/earth/GoogleEarthTilesService.js";
 import { EarthTilesManager } from "../app/3d/earth/EarthTilesManager.js";
 import { EarthImportController } from "../app/3d/earth/EarthImportController.js";
+import { createDetachedRoadImportPreview } from "../app/3d/earth/DetachedRoadImportPreview.js";
+import { createEnvironmentCommandService } from "../app/3d/editor/commands/EnvironmentCommandService.js";
+import { applyRoadImport } from "../app/3d/editor/commands/importCommands.js";
 import { EarthImportSceneIsolation, isEarthImportPreservedObject } from "../app/3d/earth/EarthImportSceneIsolation.js";
 import {
     latLngHeightToECEF,
@@ -123,7 +126,7 @@ test("EditorState supports earth import mode transitions", () => {
     assert.equal(editor.snapshot().earthImport.previewActive, false);
 });
 
-test("EditorState restores earth import sub-state in snapshots", () => {
+test("EditorState normalizes persisted legacy earth-import mode to Scene", () => {
     const editor = new EditorState({
         editorMode: EDITOR_MODES.EARTH_IMPORT,
         earthImport: {
@@ -135,7 +138,7 @@ test("EditorState restores earth import sub-state in snapshots", () => {
     });
 
     const snapshot = editor.snapshot();
-    assert.equal(snapshot.editorMode, EDITOR_MODES.EARTH_IMPORT);
+    assert.equal(snapshot.editorMode, EDITOR_MODES.SCENE);
     assert.equal(snapshot.earthImport.anchorLat, 41);
     assert.equal(snapshot.earthImport.status, EARTH_IMPORT_STATUS.PREVIEW);
     assert.equal(snapshot.earthImport.previewActive, true);
@@ -613,7 +616,7 @@ test("EarthTilesManager rejects pending root load when disposed", async () => {
     assert.equal(manager.status, "idle");
 });
 
-test("EarthImportController rolls back preview on exit even after editor clears preview flag", () => {
+test("EarthImportController cancellation never rolls the active document back", () => {
     const document = new EnvironmentDocument({
         roads: {
             nodes: [{ id: "n1", x: 0, z: 0 }],
@@ -637,8 +640,11 @@ test("EarthImportController rolls back preview on exit even after editor clears 
         disposeTiles: () => { disposedTiles += 1; },
     });
 
-    controller.previewDocumentBackup = document.snapshot();
-    controller.previewEarthBackup = null;
+    controller.session = {
+        abortController: new AbortController(),
+        tileSession: controller.earthTilesManager,
+        draft: { roads: { nodes: [], edges: [] } },
+    };
 
     document.roads.nodes.push({ id: "n2", x: 10, z: 10 });
     document.setEarthSource({
@@ -653,8 +659,8 @@ test("EarthImportController rolls back preview on exit even after editor clears 
 
     controller.onExitMode();
 
-    assert.equal(document.roads.nodes.length, 1);
-    assert.equal(document.earth, null);
+    assert.equal(document.roads.nodes.length, 2);
+    assert.ok(document.earth);
     assert.equal(disposedTiles, 1);
     assert.equal(renderCalls >= 1, true);
     assert.equal(controller.hasPreviewBackup(), false);
@@ -693,9 +699,9 @@ test("EarthImportController keeps tile preview when road preview fetch fails", a
         load: async () => { tileLoads += 1; },
         disposeTiles: () => {},
     }, {
-        fetchRoads: async () => {
+        roadImportService: { fetch: async () => {
             throw new Error("Overpass request failed (504).");
-        },
+        } },
     });
 
     const originalWarn = console.warn;
@@ -711,10 +717,10 @@ test("EarthImportController keeps tile preview when road preview fetch fails", a
     assert.equal(tileLoads, 1);
     assert.equal(result.stats.edgeCount, 0);
     assert.equal(result.warning, "Overpass request failed (504).");
-    assert.equal(document.roads.nodes.length, 0);
-    assert.deepEqual(document.earth.importedLayerIds, ["google-earth-tiles"]);
+    assert.equal(document.roads.nodes.length, 1);
+    assert.equal(document.earth, null);
     assert.equal(earthImport.status, EARTH_IMPORT_STATUS.PREVIEW);
-    assert.match(earthImport.statusMessage, /roads unavailable/i);
+    assert.match(earthImport.statusMessage, /roads failed/i);
     assert.equal(controller.hasPreviewBackup(), true);
     assert.equal(renderCalls >= 1, true);
 });
@@ -754,24 +760,28 @@ test("EarthImportController apply can continue when road fetch fails", async () 
         scene,
         city: () => city,
         editor: () => editor,
-        environment: () => ({ getDocument: () => document }),
+        environment: () => environment,
         three: () => ({ scene }),
         simulation: () => ({ render: () => {} }),
     };
+    const commands = createEnvironmentCommandService({ document });
+    const environment = { getDocument: () => document, commands: () => commands.bus };
     const controller = new EarthImportController(data, {
         group: new THREE.Group(),
         load: async () => { tileLoads += 1; },
         disposeTiles: () => { disposedTiles += 1; },
     }, {
-        fetchRoads: async () => {
+        roadImportService: { fetch: async () => {
             throw new Error("Overpass request failed (504).");
-        },
+        } },
     });
 
     const originalWarn = console.warn;
     let result = null;
     try {
         console.warn = () => {};
+        await controller.preview();
+        controller.continueWithTilesOnly();
         result = await controller.apply();
     } finally {
         console.warn = originalWarn;
@@ -779,16 +789,16 @@ test("EarthImportController apply can continue when road fetch fails", async () 
 
     const earthImport = editor.snapshot().earthImport;
     assert.equal(tileLoads, 1);
-    assert.equal(disposedTiles, 1);
-    assert.equal(result.stats.edgeCount, 0);
-    assert.equal(document.roads.nodes.length, 0);
+    assert.equal(disposedTiles, 0);
+    assert.equal(result.ok, true);
+    assert.equal(document.roads.nodes.length, 1);
     assert.deepEqual(document.earth.importedLayerIds, ["google-earth-tiles"]);
     assert.equal(editor.snapshot().editorMode, EDITOR_MODES.SCENE);
     assert.equal(earthImport.status, EARTH_IMPORT_STATUS.APPLIED);
-    assert.match(earthImport.statusMessage, /without roads/i);
+    assert.match(earthImport.statusMessage, /roads were retained/i);
 });
 
-test("EarthImportController apply registers imported roads into chunks", async () => {
+test("EarthImportController Apply commits staged roads as one undoable command", async () => {
     const document = new EnvironmentDocument();
     const editor = new EditorState();
     const scene = new THREE.Scene();
@@ -822,6 +832,7 @@ test("EarthImportController apply registers imported roads into chunks", async (
         boundsWest: bounds.west,
     });
 
+    const commands = createEnvironmentCommandService({ document });
     const data = {
         scene,
         city: () => city,
@@ -829,6 +840,7 @@ test("EarthImportController apply registers imported roads into chunks", async (
         environment: () => ({
             getDocument: () => document,
             objects: () => registry,
+            commands: () => commands.bus,
         }),
         three: () => ({ scene }),
         simulation: () => ({ render: () => {} }),
@@ -838,11 +850,17 @@ test("EarthImportController apply registers imported roads into chunks", async (
         load: async () => {},
         disposeTiles: () => {},
     }, {
-        fetchRoads: async () => {
-            document.roads = {
+        roadImportService: {
+            fetch: async () => ({ providerId: "overpass", ways: [] }),
+            clipToArea: (network) => network,
+            buildDraft: () => ({
+                importId: "controller-test",
+                providerId: "overpass",
+                roads: {
+                    geometryVersion: 2,
                 nodes: [
-                    { id: "node-a", x: 0, z: 0 },
-                    { id: "node-b", x: 60, z: 0 },
+                        { id: "node-a", x: 0, y: 0, z: 0 },
+                        { id: "node-b", x: 60, y: 0, z: 0 },
                 ],
                 edges: [{
                     id: "edge-a",
@@ -851,30 +869,66 @@ test("EarthImportController apply registers imported roads into chunks", async (
                     bidirectional: true,
                     width: 7,
                     laneCount: 2,
+                        geometry: { version: 1, kind: "polyline", knots: [{ id: "start" }, { id: "end" }] },
                 }],
-            };
-            document.notify?.();
-            return {
-                network: { providerId: "overpass", ways: [] },
-                providerId: "overpass",
-                stats: {
-                    importedEdges: 1,
-                    skippedEdges: 0,
-                    nodeCount: 2,
-                    edgeCount: 1,
+                    turnRules: [],
                 },
-            };
+                statistics: { nodeCount: 2, edgeCount: 1 },
+                issues: [],
+            }),
         },
     });
 
     await controller.apply();
 
-    const roadEntity = registry.getEntity("road:0");
-    assert.ok(roadEntity, "road entity should be registered after apply");
-    assert.equal(roadEntity.layer, "roads");
-    assert.ok(roadEntity.primaryChunk, "road entity should have a primary chunk");
-    assert.ok(chunkManager.getMembership("road:0"), "road entity should be indexed in chunks");
-    assert.match(roadEntity.object3D.parent?.name ?? "", /^EnvironmentChunk:/);
+    assert.equal(document.roads.edges.length, 1);
+    assert.equal(commands.bus.history.length, 1);
+    assert.equal(commands.bus.undo().ok, true);
+    assert.equal(document.roads.edges.length, 0);
+});
+
+test("ED-08 staged roads project through a detached document, registry, and projector", () => {
+    const activeDocument = new EnvironmentDocument();
+    const previewDocument = new EnvironmentDocument(activeDocument.snapshot());
+    const commands = createEnvironmentCommandService({ document: previewDocument });
+    const scene = new THREE.Scene();
+    const data = {
+        environment: () => ({ roadStylePreset: "default" }),
+        simulation: () => ({ render() {} }),
+    };
+    const runtime = createDetachedRoadImportPreview({ data, scene, document: previewDocument });
+    const result = commands.bus.execute(applyRoadImport({
+        expectedDocumentVersion: previewDocument.version,
+        mode: "replace",
+        draft: {
+            importId: "detached-preview",
+            issues: [],
+            roads: {
+                geometryVersion: 2,
+                nodes: [{ id: "a", x: 0, y: 0, z: 0 }, { id: "b", x: 30, y: 0, z: 0 }],
+                edges: [{
+                    id: "ab",
+                    startNodeId: "a",
+                    endNodeId: "b",
+                    bidirectional: true,
+                    width: 7,
+                    laneCount: 2,
+                    geometry: { version: 1, kind: "polyline", knots: [{ id: "start" }, { id: "end" }] },
+                }],
+                turnRules: [],
+            },
+        },
+    }), { source: "earth-import-preview" });
+
+    assert.equal(result.ok, true);
+    assert.equal(activeDocument.roads.edges.length, 0);
+    assert.equal(previewDocument.roads.edges.length, 1);
+    assert.equal(runtime.projector.applied, 1);
+    assert.equal(runtime.projector.errors.length, 0);
+    assert.equal(runtime.registry.listEntities().filter((entity) => entity.kind === "road").length, 1);
+    assert.equal(runtime.group.parent, scene);
+    runtime.dispose();
+    assert.equal(runtime.group.parent, null);
 });
 
 test("normalizeEarthImportEditorState fills default bounds", () => {

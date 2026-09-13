@@ -106,6 +106,7 @@ export function skyboxSections(ctx, defaults) {
 }
 
 export function assetInstanceSections(ctx, defaults) {
+    if (!ctx.record.components?.asset) return defaults;
     return [...defaults, {
         id: "asset-revision",
         title: "Asset revision",
@@ -122,4 +123,5 @@ export const BUILTIN_SECTION_PROVIDERS = Object.freeze({
     [ROAD_TYPE_ID]: roadSections,
     [SKYBOX_TYPE_ID]: skyboxSections,
     "asset-instance": assetInstanceSections,
+    tile: assetInstanceSections,
 });

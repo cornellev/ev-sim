@@ -176,12 +176,13 @@ test("ED-02 transform bindings plan document steps per type and reject unsupport
     // Planning never mutates.
     assert.deepEqual(snapshot, manifest.document);
     // Capabilities agree with bindings.
-    for (const typeId of ["road", "intersection", "building", "builtin-prop", "group", "asset-instance"]) {
+    for (const typeId of ["road", "intersection", "building", "builtin-prop", "group", "asset-instance", "tile"]) {
         assert.equal(objectTypeRegistry.get(typeId).capabilities.transformable, true, typeId);
     }
-    for (const typeId of ["skybox", "tile"]) {
+    for (const typeId of ["skybox"]) {
         assert.equal(objectTypeRegistry.get(typeId).capabilities.transformable, false, typeId);
     }
+    assert.equal(objectTypeRegistry.get("tile", 1).capabilities.transformable, false, "tile@1");
 });
 
 test("ED-01 reconcileObjectGraph adds overlays for uncovered legacy records and drops orphans", async () => {

@@ -284,7 +284,7 @@ function HomeContent() {
         priority: 0,
         enabled: !menuVisible && !desktopRequired,
         handler: () => {
-            if (window.__fusionEnvironmentEditorConsumesEscape) return false;
+            if (window.__fusionEnvironmentEditorConsumesEscape || window.__fusionEnvironmentDialogConsumesEscape) return false;
             openWorkspaceSwitcher("keyboard");
             return true;
         },

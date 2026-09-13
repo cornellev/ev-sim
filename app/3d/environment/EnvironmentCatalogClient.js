@@ -21,7 +21,7 @@ export function saveEnvironmentManifest(environmentId, manifest, expectedRevisio
 }
 
 export function createEnvironment(input) {
-    return storagePost("environments", input);
+    return storagePost("environments", { ...input, supportedEditorSourceVersions: [1] });
 }
 
 export function duplicateEnvironment(sourceId, input) {
@@ -62,4 +62,3 @@ export function environmentIdFromName(name) {
         .replace(/^-+|-+$/g, "");
     return slug || `environment-${Date.now().toString(36)}`;
 }
-

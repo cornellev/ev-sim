@@ -138,7 +138,11 @@ export class EditorState {
         this.activeTool = TOOL_VALUES.has(options.activeTool)
             ? options.activeTool
             : EDITOR_TOOLS.SELECT;
-        this.editorMode = normalizeEditorMode(options.editorMode);
+        // ED-08 import drafts are transient dialogs. Older manifests that
+        // persisted the former full-screen mode reopen in Scene.
+        this.editorMode = options.editorMode === EDITOR_MODES.EARTH_IMPORT
+            ? EDITOR_MODES.SCENE
+            : normalizeEditorMode(options.editorMode);
         this.layers = {
             ...DEFAULT_LAYERS,
             ...(options.layers ?? {}),
@@ -227,7 +231,7 @@ export class EditorState {
         return {
             layers: { ...this.layers },
             hiddenEntityIds: [...this.hiddenEntityIds].sort(),
-            editorMode: this.editorMode,
+            editorMode: this.editorMode === EDITOR_MODES.EARTH_IMPORT ? EDITOR_MODES.SCENE : this.editorMode,
             map: {
                 centerX: map.centerX,
                 centerZ: map.centerZ,

@@ -1,5 +1,5 @@
 /**
- * @typedef {{ lat: number, lng: number }} LatLngPoint
+ * @typedef {{ id?: string, lat: number, lng: number }} LatLngPoint
  * @typedef {{ id: string, tags?: Record<string, string>, points: LatLngPoint[] }} NormalizedRoadWay
  * @typedef {{ ways: NormalizedRoadWay[], providerId: string, fetchedAt?: string }} NormalizedRoadNetwork
  * @typedef {{ north: number, south: number, east: number, west: number }} GeoBounds
@@ -35,7 +35,11 @@ export function normalizeRoadWay(id, points, tags = {}) {
     if (cleaned.length < 2) return null;
     return {
         id: String(id),
-        tags,
-        points: cleaned,
+        tags: { ...tags },
+        points: cleaned.map((point) => ({
+            ...(point.id !== undefined ? { id: String(point.id) } : {}),
+            lat: Number(point.lat),
+            lng: Number(point.lng),
+        })),
     };
 }

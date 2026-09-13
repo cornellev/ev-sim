@@ -6,6 +6,7 @@ import {
     VISUAL_LAYER_VERSION,
     normalizeVisualLayer,
 } from "../simulation/visual/VisualLayer.js";
+import { readAssetBinding } from "./AssetBackedObject.js";
 
 function instanceMatrix(asset) {
     const c = Math.cos(asset.rotationY);
@@ -57,7 +58,7 @@ export function compileAssetVisualLayer({ world, inputs = [], closureUses = [] }
         const roots = rootUseHashes(input);
         const reached = reachableUses(roots, usesByHash);
         for (const [useHash, use] of reached) allUses.set(useHash, use);
-        const asset = input.record.components.asset;
+        const asset = readAssetBinding(input.record);
         const modelUse = usesByHash.get(input.revision.modelUseHash);
         if (!modelUse) throw new TypeError(`Compiled appearance use ${input.revision.modelUseHash} is missing.`);
         for (const material of input.revision.appearance) {

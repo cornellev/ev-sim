@@ -3283,3 +3283,21 @@ network isolation, and cleanup. Preparation/cold/warm measurements were
 99.0/831.3/35.4 ms. This is local ED-07 evidence; it does not substitute for
 the target-specific NVIDIA/Jetson, fidelity, or release evidence required by
 open VIS milestones.
+
+### 2026-09-13 — ED-08 live sources remain outside visual-layer identity
+
+ED-08 makes Google Photorealistic 3D Tiles an environment-owned live browser
+session with bounded AOI traversal, cache diagnostics, and viewport attribution.
+Those tiles remain a backdrop: their roots and responses never enter the
+environment registry, bake snapshots, visual descriptors, measured cameras,
+correspondence inputs, asset assemblies, CAS, or run packages. Browser HTTP
+caching remains the only tile cache. This implements editor isolation and
+session lifetime without activating or completing a GOOG milestone.
+
+GLTF `tile@2` reuses existing source-bound editor asset revisions. A Tile with
+enabled published appearance or metric proxies resolves exactly as the same pin
+on an asset instance; raw imports stay preview-only until the asset definition
+publishes those products. The environment compatibility fixture remains
+`6ca2ece3d5266822a2ceabba72e5f7dd9514789e76757e86f6aedd2730ab9a6a`,
+and the existing visual descriptor, render-provider, package, and acceptance
+gates are unchanged.

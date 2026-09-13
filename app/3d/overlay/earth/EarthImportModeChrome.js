@@ -10,7 +10,6 @@ import {
 } from "@tabler/icons-react";
 import {
     EARTH_IMPORT_STATUS,
-    EDITOR_MODES,
 } from "../../editor/EditorState";
 import {
     editorStateToGeoBounds,
@@ -21,6 +20,7 @@ import {
     getGoogleMapsApiKey,
     ROAD_PROVIDER_IDS,
 } from "../../earth/EarthImportConfig";
+import { OVERPASS_HIGHWAY_CLASSES } from "../../earth/roads/OverpassRoadProvider";
 import {
     EarthImportMapPicker,
     EarthImportMapPickerOverlay,
@@ -86,7 +86,7 @@ function StatusBadge({ status, message, busy = false }) {
     );
 }
 
-export function EarthImportModeChrome({ data }) {
+export function EarthImportModeChrome({ data, open = false, onClose = () => {} }) {
     const [editorSnapshot, setEditorSnapshot] = useState(null);
     const [documentSnapshot, setDocumentSnapshot] = useState(null);
     const [busy, setBusy] = useState(false);
@@ -105,6 +105,17 @@ export function EarthImportModeChrome({ data }) {
     }, [data]);
 
     useEffect(() => data?.editor?.()?.subscribe?.(setEditorSnapshot), [data]);
+
+    useEffect(() => {
+        if (!open) return undefined;
+        const controller = data?.earthImportController?.();
+        controller?.onEnterMode?.();
+        window.__fusionEnvironmentDialogConsumesEscape = true;
+        return () => {
+            window.__fusionEnvironmentDialogConsumesEscape = false;
+            controller?.onExitMode?.();
+        };
+    }, [data, open]);
 
     useEffect(() => {
         const document = data?.environment?.()?.getDocument?.();
@@ -126,8 +137,7 @@ export function EarthImportModeChrome({ data }) {
         if (!keys) return undefined;
 
         const dispose = keys.registerKeyDown?.("Escape", () => {
-            const editor = data.editor();
-            if (editor.snapshot().editorMode !== EDITOR_MODES.EARTH_IMPORT) return;
+            if (!open) return;
 
             if (mapExpanded) {
                 setMapExpanded(false);
@@ -135,18 +145,18 @@ export function EarthImportModeChrome({ data }) {
             }
 
             const controller = data.earthImportController?.();
-            if (editor.snapshot().earthImport.previewActive) {
+            if (data.editor().snapshot().earthImport.previewActive) {
                 controller?.cancelPreview?.();
                 return;
             }
 
-            editor.setEditorMode(EDITOR_MODES.SCENE);
+            onClose();
         });
 
         return () => dispose?.();
-    }, [data, mapExpanded]);
+    }, [data, mapExpanded, onClose, open]);
 
-    if (!editorSnapshot || editorSnapshot.editorMode !== EDITOR_MODES.EARTH_IMPORT) {
+    if (!editorSnapshot || !open) {
         return null;
     }
 
@@ -192,6 +202,7 @@ export function EarthImportModeChrome({ data }) {
         setBusy(true);
         try {
             await controller.apply();
+            onClose();
         } catch (error) {
             console.error("Earth import apply failed:", error);
         } finally {
@@ -199,7 +210,7 @@ export function EarthImportModeChrome({ data }) {
         }
     };
 
-    const exitMode = () => data.editor().setEditorMode(EDITOR_MODES.SCENE);
+    const exitMode = () => onClose();
 
     return (
         <>
@@ -347,6 +358,36 @@ export function EarthImportModeChrome({ data }) {
 
                         <PanelSection title="Road Network">
                             <label className="grid gap-1">
+                                <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-400">Existing roads</span>
+                                <select
+                                    value={earthImport.importMode}
+                                    onChange={(event) => patch({ importMode: event.target.value })}
+                                    className="rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-900/90 px-2 py-1.5 text-[11px] text-zinc-100"
+                                >
+                                    <option value="add">Add roads</option>
+                                    <option value="replace">Replace roads</option>
+                                </select>
+                            </label>
+                            {earthImport.includeRoads && (
+                                <fieldset className="grid grid-cols-2 gap-1">
+                                    <legend className="col-span-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-400">Highway classes</legend>
+                                    {OVERPASS_HIGHWAY_CLASSES.map((highwayClass) => {
+                                        const selected = earthImport.highwayClasses.length === 0 || earthImport.highwayClasses.includes(highwayClass);
+                                        return <label key={highwayClass} className="truncate text-[11px] text-zinc-300"><input type="checkbox" checked={selected} onChange={(event) => {
+                                            const current = earthImport.highwayClasses.length === 0 ? [...OVERPASS_HIGHWAY_CLASSES] : earthImport.highwayClasses;
+                                            patch({ highwayClasses: event.target.checked ? [...new Set([...current, highwayClass])] : current.filter((entry) => entry !== highwayClass) });
+                                        }} /> <span className="ml-1">{highwayClass}</span></label>;
+                                    })}
+                                </fieldset>
+                            )}
+                            <MenuToggle
+                                label="Import roads"
+                                icon={<FaRoad className="h-3 w-3" />}
+                                checked={earthImport.includeRoads}
+                                onChange={(value) => patch({ includeRoads: value })}
+                                hint="Clear to create or update the live tile source only"
+                            />
+                            <label className="grid gap-1">
                                 <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-400">
                                     Provider
                                 </span>
@@ -396,6 +437,17 @@ export function EarthImportModeChrome({ data }) {
                         )}
 
                         <PanelSection title="Actions">
+                            {controller?.session?.roadStatus === "error" && (
+                                <div className="grid grid-cols-2 gap-1.5">
+                                    <MenuButton compact disabled={busy} onClick={async () => {
+                                        setBusy(true);
+                                        try { await controller.retryRoads(); } finally { setBusy(false); }
+                                    }}>Retry roads</MenuButton>
+                                    <MenuButton compact disabled={busy} onClick={() => controller.continueWithTilesOnly()}>
+                                        Continue with tiles only
+                                    </MenuButton>
+                                </div>
+                            )}
                             {(earthImport.previewActive
                                 || earthImport.status === EARTH_IMPORT_STATUS.PREVIEW) && (
                                 <p className="text-[11px] leading-snug text-zinc-500">
@@ -477,8 +529,8 @@ export function EarthImportModeChrome({ data }) {
                         <MenuButton
                             iconOnly
                             onClick={exitMode}
-                            title="Exit Earth import mode (Esc)"
-                            ariaLabel="Exit Earth import mode"
+                            title="Close Earth import (Esc)"
+                            ariaLabel="Close Earth import"
                         >
                             <FaTimes className="h-3 w-3" />
                         </MenuButton>

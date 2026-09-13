@@ -1,6 +1,5 @@
 /** ED-06 commands for persisted asset-instance object records. */
 
-import { ASSET_INSTANCE_TYPE_ID } from "../objects/types/assetInstance.js";
 import { validateAssetInstanceComponent } from "../../../editor-assets/EditorAssetContract.js";
 import {
     assetMetricDefinitionFromRevision,
@@ -10,6 +9,7 @@ import {
 } from "../../../editor-assets/AssetMetricSnapshot.js";
 import { commandFailure, commandIssue, commandSuccess, COMMAND_ISSUE_CODES } from "./commandIssues.js";
 import { nextSiblingOrder, setObjectComponent, upsertObjectRecord } from "./objectMutations.js";
+import { isAssetBackedObject, readAssetBinding } from "../../../editor-assets/AssetBackedObject.js";
 
 function equal(left, right) {
     return JSON.stringify(left) === JSON.stringify(right);
@@ -20,21 +20,22 @@ export function placeAssetInstance({ record, publishedRevision = null, label = "
         id: "place-asset-instance",
         label,
         run(ctx) {
-            if (!record || record.typeId !== ASSET_INSTANCE_TYPE_ID) {
-                return commandFailure(commandIssue(COMMAND_ISSUE_CODES.ARGUMENT_INVALID, "Placement requires an asset-instance record."));
+            if (!record || !isAssetBackedObject(record)) {
+                return commandFailure(commandIssue(COMMAND_ISSUE_CODES.ARGUMENT_INVALID, "Placement requires an asset-backed object record."));
             }
             if (ctx.document.getObject(String(record.id))) {
                 return commandFailure(commandIssue(COMMAND_ISSUE_CODES.ARGUMENT_INVALID, `Object "${record.id}" already exists.`, { objectId: String(record.id) }));
             }
-            const asset = record.components?.asset;
+            const asset = readAssetBinding(record);
             const issues = validateAssetInstanceComponent(asset);
             if (issues.length > 0) return commandFailure(issues);
             const metricDefinition = assetMetricDefinitionFromRevision(asset.assetId, publishedRevision);
-            const typeVersion = metricDefinition ? 2 : 1;
+            const assetTypeVersion = metricDefinition ? 2 : 1;
+            const typeVersion = record.typeId === "tile" ? 2 : assetTypeVersion;
             if (publishedRevision && Number(publishedRevision.revision) !== Number(asset.revision)) {
                 return commandFailure(commandIssue(COMMAND_ISSUE_CODES.ASSET_MISMATCH, "Published revision does not match the placed asset pin."));
             }
-            if (typeVersion === 2) {
+            if (assetTypeVersion === 2) {
                 const metricIssues = validateAssetMetricDefinition(metricDefinition);
                 if (metricIssues.length > 0) return commandFailure(metricIssues);
             }
@@ -48,6 +49,7 @@ export function placeAssetInstance({ record, publishedRevision = null, label = "
                     tags: [], locked: false, editorHidden: false,
                     ...(structuredClone(record.components) ?? {}),
                     asset: structuredClone(asset),
+                    ...(record.typeId === "tile" ? { tile: { provider: "gltf", assetTypeVersion } } : {}),
                 },
             }, { notify: false });
             if (!result.ok) return commandFailure(commandIssue(COMMAND_ISSUE_CODES.MUTATION_FAILED, result.error));
@@ -93,15 +95,15 @@ export function updateAssetInstances({
             for (const change of changes) {
                 const objectId = String(change?.objectId ?? "");
                 const record = ctx.document.getObject(objectId);
-                if (!record || record.typeId !== ASSET_INSTANCE_TYPE_ID) {
-                    return commandFailure(commandIssue(COMMAND_ISSUE_CODES.OBJECT_MISSING, `Asset instance "${objectId}" does not exist.`, { objectId }));
+                if (!record || !isAssetBackedObject(record)) {
+                    return commandFailure(commandIssue(COMMAND_ISSUE_CODES.OBJECT_MISSING, `Asset-backed object "${objectId}" does not exist.`, { objectId }));
                 }
                 if (seen.has(objectId)) return commandFailure(commandIssue(COMMAND_ISSUE_CODES.ARGUMENT_INVALID, `Asset instance "${objectId}" occurs more than once.`, { objectId }));
                 seen.add(objectId);
                 if (record.components?.locked === true) {
                     return commandFailure(commandIssue(COMMAND_ISSUE_CODES.OBJECT_LOCKED, `"${record.name ?? objectId}" is locked.`, { objectId }));
                 }
-                const current = record.components?.asset;
+                const current = readAssetBinding(record);
                 if (!equal(current, change.beforeAsset)) {
                     return commandFailure(commandIssue(COMMAND_ISSUE_CODES.DOCUMENT_STALE, `Asset instance "${objectId}" changed after the update was prepared.`, { objectId }));
                 }
@@ -115,11 +117,15 @@ export function updateAssetInstances({
                 }
                 const issues = validateAssetInstanceComponent(next);
                 if (issues.length > 0) return commandFailure(issues);
-                prepared.push({ objectId, value: next, typeVersion: metricDefinition ? 2 : 1 });
+                prepared.push({ objectId, value: next, typeVersion: metricDefinition ? 2 : 1, objectTypeId: record.typeId });
             }
             for (const change of prepared) {
                 setObjectComponent(ctx.document, change.objectId, "asset", change.value, { notify: false });
-                ctx.document.getObject(change.objectId).typeVersion = change.typeVersion;
+                const record = ctx.document.getObject(change.objectId);
+                if (change.objectTypeId === "tile") {
+                    record.typeVersion = 2;
+                    record.components.tile = { ...record.components.tile, provider: "gltf", assetTypeVersion: change.typeVersion };
+                } else record.typeVersion = change.typeVersion;
             }
             reconcileAssetMetricDefinitions(ctx.document, metricDefinition ? [metricDefinition] : []);
             const domainIssues = validateAssetMetricsDomain(ctx.document);

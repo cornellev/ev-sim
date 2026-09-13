@@ -693,7 +693,10 @@ export class SimulationEngine {
     render() {
         if (!this.scene || !this.camera || !this.renderer) return;
         this._applyDisplayPerformance();
-        this.data.earthTilesManager?.()?.update?.();
+        this.data.earthTilesManager?.()?.update?.(this.camera, {
+            width: this.renderer.domElement?.width,
+            height: this.renderer.domElement?.height,
+        });
         if (this.data.skyManager?.()?.render?.()) {
             this.frames += 1;
             return;

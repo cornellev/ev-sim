@@ -7,7 +7,7 @@
  * @typedef {{ id: string, type: string, x: number, z: number, dir?: number, rotationY?: number, tags?: string[] }} FeatureRecord
  * @typedef {{ lat: number, lng: number }} EarthAnchor
  * @typedef {{ north: number, south: number, east: number, west: number }} EarthBounds
- * @typedef {{ anchor: EarthAnchor, bounds: EarthBounds, tileProvider: string, roadProvider: string, importedLayerIds: string[], importedAt: string|null }} EarthSourceRecord
+ * @typedef {{ version?: number, anchor?: EarthAnchor, bounds: EarthBounds, tileProvider: string, roadProvider: string|null, quality?: object, roadFilters?: object, importedLayerIds: string[], importedAt: string|null }} EarthSourceRecord
  * @typedef {import("../objects/objectRecord.js").ObjectRecord} ObjectRecord
  */
 
@@ -23,6 +23,7 @@ import {
     domainKeyOf,
     isEmptyChangeSet,
 } from "./ChangeSet.js";
+import { createGeoFrame } from "../../earth/GeoFrame.js";
 
 const DEFAULT_ROAD_EDGE = Object.freeze({
     bidirectional: true,
@@ -78,6 +79,8 @@ export class EnvironmentDocument {
             : [];
         /** @type {EarthSourceRecord|null} */
         this.earth = options.earth ? cloneEarthSource(options.earth) : null;
+        /** ED-08: optional, versioned geospatial frame. Absence is the legacy Mercator frame. */
+        this.geoFrame = options.geoFrame ? createGeoFrame(options.geoFrame) : null;
         // Schema-v4 authoring overlay. Records share ids with the legacy
         // domains above; geometry never lives here. Empty for v2/v3 documents
         // until a loader or writer reconciles the graph.
@@ -122,6 +125,7 @@ export class EnvironmentDocument {
             buildings: this.buildings.map(cloneBuilding),
             features: this.features.map(cloneFeature),
             earth: this.earth ? cloneEarthSource(this.earth) : null,
+            ...(this.geoFrame ? { geoFrame: createGeoFrame(this.geoFrame) } : {}),
             ...(this.objects.length > 0
                 ? { objectGraphVersion: OBJECT_GRAPH_VERSION, objects: this.objects.map(cloneObjectRecord) }
                 : {}),
@@ -158,6 +162,7 @@ export class EnvironmentDocument {
             ? manifest.features.map(cloneFeature)
             : [];
         this.earth = manifest.earth ? cloneEarthSource(manifest.earth) : null;
+        this.geoFrame = manifest.geoFrame ? createGeoFrame(manifest.geoFrame) : null;
         this.objects = Array.isArray(manifest.objects) ? manifest.objects.map(cloneObjectRecord) : [];
         this.assetMetrics = manifest.assetMetrics ? cloneAssetMetrics(manifest.assetMetrics) : null;
         if (manifest.sky !== undefined) this.sky = manifest.sky ? skyConfigToManifest(manifest.sky) : null;
@@ -205,10 +210,11 @@ export class EnvironmentDocument {
         return changed;
     }
 
-    /** Set one tracked scalar (`earth`, `sky`, authored flags, `chunkSize`, road geometry version). */
+    /** Set one tracked scalar (`earth`, `geoFrame`, `sky`, authored flags, `chunkSize`, road geometry version). */
     setScalar(name, value, { notify = true } = {}) {
         if (!CHANGE_SCALARS.includes(name)) throw new TypeError(`Unknown change scalar "${name}".`);
         if (name === "earth") this.earth = value ? cloneEarthSource(value) : null;
+        else if (name === "geoFrame") this.geoFrame = value ? createGeoFrame(value) : null;
         else if (name === "sky") this.sky = value ? skyConfigToManifest(value) : null;
         else if (name === "chunkSize") this.chunkSize = Number.isFinite(Number(value)) ? Number(value) : this.chunkSize;
         else if (name === "roadGeometryVersion") {
@@ -300,14 +306,7 @@ export class EnvironmentDocument {
      * @param {Partial<EarthSourceRecord>} source
      */
     setEarthSource(source) {
-        this.earth = cloneEarthSource({
-            anchor: source.anchor ?? { lat: 0, lng: 0 },
-            bounds: source.bounds ?? { north: 0, south: 0, east: 0, west: 0 },
-            tileProvider: source.tileProvider ?? "google-photorealistic",
-            roadProvider: source.roadProvider ?? "overpass",
-            importedLayerIds: source.importedLayerIds ?? [],
-            importedAt: source.importedAt ?? null,
-        });
+        this.earth = cloneEarthSource(source);
         this.notify();
     }
 
@@ -415,6 +414,7 @@ function cloneNode(node) {
         y: nodeY(node.y),
         z: node.z,
         kind: node.kind ?? null,
+        ...(node.source ? { source: structuredClone(node.source) } : {}),
     };
 }
 
@@ -439,6 +439,7 @@ function cloneEdge(edge) {
         endArm: cloneRoadPoint(edge.endArm),
         ...(edge.geometry ? { geometry: cloneRoadGeometry(edge.geometry) } : {}),
         ...(Array.isArray(edge.lanes) ? { lanes: cloneRoadLanes(edge.lanes) } : {}),
+        ...(edge.source ? { source: structuredClone(edge.source) } : {}),
     };
 }
 
@@ -485,11 +486,8 @@ function cloneFeature(feature) {
  * @returns {EarthSourceRecord}
  */
 function cloneEarthSource(earth) {
-    return {
-        anchor: {
-            lat: Number(earth?.anchor?.lat) || 0,
-            lng: Number(earth?.anchor?.lng) || 0,
-        },
+    const version = earth?.version === undefined ? null : Number(earth.version);
+    const result = {
         bounds: {
             north: Number(earth?.bounds?.north) || 0,
             south: Number(earth?.bounds?.south) || 0,
@@ -497,10 +495,27 @@ function cloneEarthSource(earth) {
             west: Number(earth?.bounds?.west) || 0,
         },
         tileProvider: earth?.tileProvider ?? "google-photorealistic",
-        roadProvider: earth?.roadProvider ?? "overpass",
+        roadProvider: earth?.roadProvider === null ? null : earth?.roadProvider ?? "overpass",
         importedLayerIds: [...(earth?.importedLayerIds ?? [])],
         importedAt: earth?.importedAt ?? null,
     };
+    if (version === null) {
+        result.anchor = {
+            lat: Number(earth?.anchor?.lat) || 0,
+            lng: Number(earth?.anchor?.lng) || 0,
+        };
+        return result;
+    }
+    result.version = version;
+    result.quality = {
+        maxScreenSpaceError: Math.max(1, Number(earth?.quality?.maxScreenSpaceError) || 1),
+        maxCachedTiles: Math.max(1, Math.trunc(Number(earth?.quality?.maxCachedTiles) || 2000)),
+        maxCacheBytes: Math.max(1, Math.trunc(Number(earth?.quality?.maxCacheBytes) || 1024 * 1024 * 1024)),
+    };
+    result.roadFilters = {
+        highwayClasses: [...new Set((earth?.roadFilters?.highwayClasses ?? []).map(String))].sort(),
+    };
+    return result;
 }
 
 function domainArray(document, domain) {

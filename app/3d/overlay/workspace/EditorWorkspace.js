@@ -24,6 +24,7 @@ import {
 } from "../../../ui/environmentEditorPreferences.js";
 import { BakeProgressOverlay } from "../BakeProgressOverlay";
 import { EarthImportModeChrome } from "../earth/EarthImportModeChrome";
+import { EnvironmentTileAttribution } from "../earth/EnvironmentTileAttribution";
 import { MapSurface } from "../map/MapSurface";
 import { mapSelectionFromSelection } from "../../editor/selection/selectionIds.js";
 import { ObjectInspector } from "../ObjectInspector";
@@ -63,6 +64,7 @@ export function EditorWorkspace({ data, activeEnvironmentId, onEnvironmentChange
     const [selectionSnapshot, setSelectionSnapshot] = useState(null);
     const [documentSnapshot, setDocumentSnapshot] = useState(null);
     const [closingAssetTab, setClosingAssetTab] = useState(null);
+    const [earthImportOpen, setEarthImportOpen] = useState(false);
     const canvasHostRef = useRef(null);
 
     useEffect(() => {
@@ -87,6 +89,7 @@ export function EditorWorkspace({ data, activeEnvironmentId, onEnvironmentChange
         });
     }, [data]);
     useEffect(() => data?.selection?.()?.subscribe?.(setSelectionSnapshot), [data]);
+    useEffect(() => setEarthImportOpen(false), [activeEnvironmentId]);
     useEffect(() => {
         const document = data?.environment?.()?.getDocument?.();
         return document?.subscribe?.((snapshot, event) => {
@@ -137,11 +140,22 @@ export function EditorWorkspace({ data, activeEnvironmentId, onEnvironmentChange
     const togglePane = (paneId, collapsed) => update((current) => togglePaneCollapsed(current, paneId, collapsed));
 
     const editorMode = editorSnapshot?.editorMode ?? EDITOR_MODES.SCENE;
+    const ed08Enabled = process.env.NEXT_PUBLIC_CEV_SIM_ED08 === "1";
+    const earthImportActive = ed08Enabled ? earthImportOpen : editorMode === EDITOR_MODES.EARTH_IMPORT;
     const workspace = editorSnapshot?.workspace ?? { activeTabId: "scene", assetTabs: [] };
     const activeAssetTab = workspace.assetTabs.find((tab) => tab.id === workspace.activeTabId) ?? null;
     const sceneTabActive = !activeAssetTab;
     const inMap = editorMode === EDITOR_MODES.MAP && sceneTabActive;
-    const panesHidden = editorMode === EDITOR_MODES.EARTH_IMPORT;
+    useEffect(() => {
+        const environment = data?.environment?.();
+        const host = environment?.tiles?.();
+        if (!host) return undefined;
+        const authoredVisible = environment.getDocument?.().getObject?.("tile")?.components?.editorHidden !== true;
+        const importVisible = !earthImportActive || editorSnapshot?.earthImport?.tilesVisible !== false;
+        host.setVisible(authoredVisible && importVisible && sceneTabActive && !inMap);
+        return () => host.setVisible(authoredVisible);
+    }, [data, earthImportActive, editorSnapshot?.earthImport?.tilesVisible, inMap, sceneTabActive]);
+    const panesHidden = !ed08Enabled && earthImportActive;
     const template = paneGridTemplate(layout, WORKSPACE_CHROME, { panesHidden });
     const emptyDocument = { roads: { nodes: [], edges: [] }, buildings: [], features: [] };
     const mapSelection = inMap ? mapSelectionFromSelection(selectionSnapshot, documentSnapshot) : null;
@@ -176,6 +190,11 @@ export function EditorWorkspace({ data, activeEnvironmentId, onEnvironmentChange
                     layout={layout}
                     onTogglePane={togglePane}
                     editorMode={editorMode}
+                    earthImportOpen={earthImportOpen}
+                    onEarthImportToggle={() => {
+                        if (!earthImportOpen) data.editor?.()?.setWorkspaceTab?.("scene");
+                        setEarthImportOpen((value) => !value);
+                    }}
                 />
             </div>
 
@@ -260,7 +279,11 @@ export function EditorWorkspace({ data, activeEnvironmentId, onEnvironmentChange
                         />
                     )}
                     {activeAssetTab && <AssetPreviewTab key={activeAssetTab.id} data={data} tab={activeAssetTab} />}
-                    {panesHidden && <EarthImportModeChrome data={data} />}
+                    {earthImportActive && <EarthImportModeChrome data={data} open onClose={() => {
+                        if (ed08Enabled) setEarthImportOpen(false);
+                        else data.editor?.()?.setEditorMode?.(EDITOR_MODES.SCENE);
+                    }} />}
+                    {sceneTabActive && !earthImportActive && <EnvironmentTileAttribution data={data} />}
                     <BakeProgressOverlay data={data} />
                     <VisualPreviewDiagnostic data={data} />
                 </div>

@@ -4,6 +4,8 @@ import { GoogleCloudAuthPlugin } from "3d-tiles-renderer/core/plugins";
 import { ReorientationPlugin } from "3d-tiles-renderer/three/plugins";
 import { GoogleEarthTilesService } from "./GoogleEarthTilesService.js";
 import { DEFAULT_EARTH_IMPORT_CONFIG } from "./EarthImportConfig.js";
+import { ecefToLocalMatrix } from "./GeoFrame.js";
+import { TileAoiPlugin } from "./TileAoiPlugin.js";
 
 const EARTH_TILE_OBJECT_FLAGS = Object.freeze({
     skipEnvironmentSelection: true,
@@ -32,8 +34,8 @@ function normalizeAttributionEntry(entry) {
     return value ? { type: "string", value } : null;
 }
 
-function configureTilesCache(tilesRenderer) {
-    const maxSize = Math.max(1, DEFAULT_EARTH_IMPORT_CONFIG.cacheSize);
+function configureTilesCache(tilesRenderer, quality = {}) {
+    const maxSize = Math.max(1, Math.trunc(Number(quality.maxCachedTiles) || DEFAULT_EARTH_IMPORT_CONFIG.cacheSize));
     const minSize = Math.min(
         maxSize,
         Math.max(0, DEFAULT_EARTH_IMPORT_CONFIG.cacheMinSize),
@@ -41,8 +43,10 @@ function configureTilesCache(tilesRenderer) {
 
     tilesRenderer.lruCache.minSize = minSize;
     tilesRenderer.lruCache.maxSize = maxSize;
-    tilesRenderer.lruCache.minBytesSize = DEFAULT_EARTH_IMPORT_CONFIG.minCacheBytes;
-    tilesRenderer.lruCache.maxBytesSize = DEFAULT_EARTH_IMPORT_CONFIG.maxCacheBytes;
+    const maxBytes = Math.max(1, Math.trunc(Number(quality.maxCacheBytes) || DEFAULT_EARTH_IMPORT_CONFIG.maxCacheBytes));
+    tilesRenderer.lruCache.minBytesSize = Math.min(maxBytes, DEFAULT_EARTH_IMPORT_CONFIG.minCacheBytes);
+    tilesRenderer.lruCache.maxBytesSize = maxBytes;
+    return { maxSize, maxBytes };
 }
 
 function createDefaultTilesRenderer(rootUrl) {
@@ -88,6 +92,9 @@ export class EarthTilesManager {
         this.invalidateHandle = null;
         this.pendingRootLoadCleanup = null;
         this.pendingRootLoadReject = null;
+        this.currentSource = null;
+        this.cacheLimits = { maxSize: DEFAULT_EARTH_IMPORT_CONFIG.cacheSize, maxBytes: DEFAULT_EARTH_IMPORT_CONFIG.maxCacheBytes };
+        this.diagnostics = { effectiveScreenSpaceError: this.maxScreenSpaceError, residentCount: 0, residentBytes: 0, degraded: false };
     }
 
     /**
@@ -96,11 +103,13 @@ export class EarthTilesManager {
     async load(config) {
         this.disposeTiles();
         this.anchor = { lat: config.lat, lng: config.lng };
+        this.currentSource = config.source ? structuredClone(config.source) : null;
         this.maxScreenSpaceError = config.maxScreenSpaceError ?? this.maxScreenSpaceError;
         this.status = "loading";
         this.error = null;
 
-        const validation = await this.tileService.validateAccess();
+        if (config.signal?.aborted) throw Object.assign(new Error("Google Earth tile loading was cancelled."), { name: "AbortError" });
+        const validation = await this.tileService.validateAccess({ signal: config.signal });
         if (!validation.ok) {
             this.status = "error";
             this.error = validation.error;
@@ -116,18 +125,19 @@ export class EarthTilesManager {
             useRecommendedSettings: false,
         }));
 
-        const latRad = THREE.MathUtils.degToRad(config.lat);
-        const lonRad = THREE.MathUtils.degToRad(config.lng);
-        tilesRenderer.registerPlugin(new ReorientationPlugin({
-            lat: latRad,
-            lon: lonRad,
-            height: 0,
-            recenter: true,
-        }));
+        if (config.geoFrame) {
+            if (config.bounds) tilesRenderer.registerPlugin(new TileAoiPlugin(config.bounds));
+        } else {
+            const latRad = THREE.MathUtils.degToRad(config.lat);
+            const lonRad = THREE.MathUtils.degToRad(config.lng);
+            tilesRenderer.registerPlugin(new ReorientationPlugin({ lat: latRad, lon: lonRad, height: 0, recenter: true }));
+        }
 
         tilesRenderer.errorTarget = this.maxScreenSpaceError;
         tilesRenderer.maxDepth = DEFAULT_EARTH_IMPORT_CONFIG.maxTileDepth;
-        configureTilesCache(tilesRenderer);
+        this.cacheLimits = configureTilesCache(tilesRenderer, config.source?.quality);
+        tilesRenderer.loadAncestors = true;
+        tilesRenderer.loadSiblings = false;
 
         tilesRenderer.group.name = "GoogleEarthTiles";
         tagEarthTileObject(tilesRenderer.group);
@@ -151,9 +161,11 @@ export class EarthTilesManager {
                     ? event.error
                     : new Error("Google Earth root tileset failed to load."));
             };
+            const handleAbort = () => rejectRootReady(Object.assign(new Error("Google Earth tile loading was cancelled."), { name: "AbortError" }));
             cleanup = () => {
                 tilesRenderer.removeEventListener("load-root-tileset", handleRootReady);
                 tilesRenderer.removeEventListener("load-error", handleLoadError);
+                config.signal?.removeEventListener?.("abort", handleAbort);
                 if (this.pendingRootLoadCleanup === cleanup) {
                     this.pendingRootLoadCleanup = null;
                     this.pendingRootLoadReject = null;
@@ -164,6 +176,7 @@ export class EarthTilesManager {
             this.pendingRootLoadReject = rejectRootReady;
             tilesRenderer.addEventListener("load-root-tileset", handleRootReady);
             tilesRenderer.addEventListener("load-error", handleLoadError);
+            config.signal?.addEventListener?.("abort", handleAbort, { once: true });
         });
 
         tilesRenderer.addEventListener("load-root-tileset", () => {
@@ -199,10 +212,14 @@ export class EarthTilesManager {
         this.scene.add(tilesRenderer.group);
         this.tilesRenderer = tilesRenderer;
         this.group = tilesRenderer.group;
+        if (config.geoFrame) {
+            this.group.matrixAutoUpdate = false;
+            this.group.matrix.fromArray(ecefToLocalMatrix(config.geoFrame));
+            this.group.matrixWorldNeedsUpdate = true;
+        }
         this.group.visible = this.visible;
 
-        this.positionCameraForAnchor(config.lat, config.lng);
-        this.update();
+        this.update(this.camera);
         await rootReady;
         return this;
     }
@@ -217,21 +234,6 @@ export class EarthTilesManager {
         this.attributions = Array.isArray(credits)
             ? credits.map(normalizeAttributionEntry).filter(Boolean)
             : [];
-    }
-
-  /**
-   * Position orbit camera above anchor in local tile space.
-   * @param {number} lat
-   * @param {number} lng
-   */
-    positionCameraForAnchor(lat, lng) {
-        if (!this.camera) return;
-
-        const altitude = 250;
-        this.camera.position.set(0, altitude, altitude * 0.6);
-        this.camera.lookAt(0, 0, 0);
-        this.camera.updateProjectionMatrix();
-        this.requestRender();
     }
 
     setVisible(visible) {
@@ -251,6 +253,14 @@ export class EarthTilesManager {
         this.requestRender();
     }
 
+    setCacheLimits(quality = {}) {
+        if (this.tilesRenderer) this.cacheLimits = configureTilesCache(this.tilesRenderer, quality);
+    }
+
+    getAttributions() {
+        return this.attributions.map((entry) => ({ ...entry }));
+    }
+
     requestRender() {
         if (this.invalidateHandle != null) return;
 
@@ -264,15 +274,50 @@ export class EarthTilesManager {
         });
     }
 
-    update() {
+    update(camera = this.camera, viewport = null) {
         if (!this.tilesRenderer || !this.camera || !this.renderer) return;
         if (this.isUpdating) return;
 
         this.isUpdating = true;
         try {
+            if (camera && camera !== this.camera) {
+                this.tilesRenderer.deleteCamera?.(this.camera);
+                this.camera = camera;
+            }
+            this.camera.updateProjectionMatrix?.();
+            this.camera.updateMatrixWorld?.(true);
+            this.group?.updateMatrixWorld?.(true);
             this.tilesRenderer.setCamera(this.camera);
-            this.tilesRenderer.setResolutionFromRenderer(this.camera, this.renderer);
+            const width = Number(viewport?.width);
+            const height = Number(viewport?.height);
+            if (Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0 && this.tilesRenderer.setResolution) {
+                this.tilesRenderer.setResolution(this.camera, width, height);
+            } else {
+                this.tilesRenderer.setResolutionFromRenderer(this.camera, this.renderer);
+            }
             this.tilesRenderer.update();
+            const cache = this.tilesRenderer.lruCache;
+            const residentCount = Number(cache?.itemList?.length ?? cache?.itemSet?.size ?? 0);
+            const residentBytes = Number(cache?.bytesSize ?? cache?.cachedBytes ?? 0);
+            const pressured = residentCount > this.cacheLimits.maxSize || residentBytes > this.cacheLimits.maxBytes;
+            const currentErrorTarget = Number.isFinite(this.tilesRenderer.errorTarget)
+                ? this.tilesRenderer.errorTarget
+                : this.maxScreenSpaceError;
+            if (pressured) {
+                this.tilesRenderer.errorTarget = Math.min(this.maxScreenSpaceError * 4, Math.max(this.maxScreenSpaceError + 1, currentErrorTarget * 1.25));
+            } else if (currentErrorTarget > this.maxScreenSpaceError) {
+                this.tilesRenderer.errorTarget = Math.max(this.maxScreenSpaceError, currentErrorTarget * 0.9);
+            } else {
+                this.tilesRenderer.errorTarget = currentErrorTarget;
+            }
+            this.diagnostics = {
+                effectiveScreenSpaceError: this.tilesRenderer.errorTarget,
+                residentCount,
+                residentBytes,
+                degraded: this.tilesRenderer.errorTarget > this.maxScreenSpaceError || Boolean(this.error),
+                status: this.status,
+                error: this.error,
+            };
         } finally {
             this.isUpdating = false;
         }

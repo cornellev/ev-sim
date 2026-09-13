@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from "react";
+import { readAssetBinding } from "../../../editor-assets/AssetBackedObject.js";
 
 export function AssetInstanceSection({ data, section }) {
     const [asset, setAsset] = useState(null);
@@ -15,9 +16,9 @@ export function AssetInstanceSection({ data, section }) {
     const document = data?.environment?.()?.getDocument?.();
     const matchingSelected = (data?.selection?.()?.ids ?? []).filter((id) => {
         const record = document?.getObject?.(id);
-        return record?.typeId === "asset-instance" && record.components?.asset?.assetId === section.assetId;
+        return readAssetBinding(record)?.assetId === section.assetId;
     });
-    const allCount = document?.objects?.filter((record) => record.typeId === "asset-instance" && record.components?.asset?.assetId === section.assetId).length ?? 0;
+    const allCount = document?.objects?.filter((record) => readAssetBinding(record)?.assetId === section.assetId).length ?? 0;
 
     useEffect(() => {
         const controller = new AbortController();

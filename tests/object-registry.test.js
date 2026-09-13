@@ -160,8 +160,10 @@ test("ED-01 built-in registration is idempotent and lists every initial type", (
         }
         const defaults = definition.options.getDefaults();
         const issues = definition.options.validate(definition.options.normalize(defaults));
-        // Asset instances have no meaningful default asset until ED-06; every other default validates clean.
-        const expectedCodes = definition.typeId === ASSET_INSTANCE_TYPE_ID ? ["option.required"] : [];
+        // Asset-backed types have no meaningful default pin until a catalog revision is selected.
+        const expectedCodes = definition.typeId === ASSET_INSTANCE_TYPE_ID || (definition.typeId === "tile" && definition.version === 2)
+            ? ["option.required"]
+            : [];
         assert.deepEqual(issues.map((entry) => entry.code), expectedCodes, `${definition.typeId} defaults validate`);
     }
     assert.equal(objectTypeRegistry.get(BUILTIN_PROP_TYPE_ID).legacy.domain, "features");
@@ -228,7 +230,7 @@ test("ED-01 skybox and tile options reuse config defaults and report range viola
         skybox.options.validate({ ...defaults, takram: { ...defaults.takram, timeOfDay: 99 } }).map((entry) => entry.code),
         ["option.range"],
     );
-    const tile = objectTypeRegistry.get("tile");
+    const tile = objectTypeRegistry.get("tile", 1);
     const bad = tile.options.validate({ ...tile.options.getDefaults(), bounds: { north: 1, south: 2, east: 3, west: 1 } });
     assert.deepEqual(bad.map((entry) => entry.code), ["option.range"]);
     assert.deepEqual(tile.options.validate(tile.options.normalize({ bounds: { north: 2, south: 1, east: 3, west: 1 } })), []);

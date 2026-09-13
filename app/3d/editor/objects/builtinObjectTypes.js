@@ -28,6 +28,7 @@ const FACTORIES = Object.freeze([
     createGroupType,
     createSkyboxType,
     createTileType,
+    () => createTileType(2),
     createRoadType,
     createIntersectionType,
     createBuildingType,

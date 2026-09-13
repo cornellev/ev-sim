@@ -12,6 +12,7 @@ import {
     validateAssetMetric,
 } from "./AssetDefinition.js";
 import { normalizeVisualLayer } from "../simulation/visual/VisualLayer.js";
+import { readAssetBinding } from "./AssetBackedObject.js";
 
 export const EDITOR_ASSET_CATALOG_KIND = "cev-sim.editor-asset-catalog";
 export const EDITOR_ASSET_CATALOG_VERSION = 1;
@@ -285,11 +286,12 @@ export function validateAssetInstanceComponent(value = {}) {
 
 export function collectAssetInstanceReferences(document = {}) {
     return (Array.isArray(document?.objects) ? document.objects : [])
-        .filter((record) => record?.typeId === ASSET_INSTANCE_TYPE_ID)
-        .map((record) => ({
+        .map((record) => ({ record, asset: readAssetBinding(record) }))
+        .filter(({ asset }) => Boolean(asset))
+        .map(({ record, asset }) => ({
             objectId: String(record.id ?? ""),
-            assetId: String(record.components?.asset?.assetId ?? ""),
-            revision: record.components?.asset?.revision,
+            assetId: String(asset.assetId ?? ""),
+            revision: asset.revision,
         }))
         .sort((left, right) => left.objectId.localeCompare(right.objectId));
 }

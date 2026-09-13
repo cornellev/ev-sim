@@ -53,7 +53,9 @@ snapshots live in `app/simulation/kernel/SimulationKernel.js`. A narrow runtime
 context connects the kernel to the current vehicle, device, physics, script,
 scenario, control, telemetry, and topic-routing services without exposing the
 scene, renderer, DOM, or `Data` object. In environment mode the browser adapter
-also drives `EarthTilesManager.update()` while Google 3D Tiles are loaded.
+also drives the environment-owned tile session through
+`EnvironmentTileHost.update(camera, viewport)` while Google 3D Tiles are
+loaded.
 
 The kernel owns the run-scoped `prepare/reset/step/finalize/dispose`
 lifecycle. Resets reconstruct component state and seeded streams, while
@@ -262,7 +264,7 @@ backends is specified in the
 
 ## Environment Editor
 
-The environment editor authors static world content through an `EnvironmentDocument` (road nodes, edges, turn rules, buildings, features, earth metadata, and the schema-v4 `objects` overlay). Every edit is a `CommandBus` command or gesture that commits one `ChangeSet`; the `SceneProjector` applies change sets incrementally to runtime meshes, registry entities, chunks, and LiDAR truth (roads rebuild only their local closure), so a drag never rebuilds the world. Selection is a shared `SelectionStore` of object ids; runtime road/intersection entities are keyed `road:<edgeId>` / `intersection:<nodeId>` (index aliases exist only after a full load). `EditorState` tracks three sub-modes within the editor: scene editing, 2D map authoring, and earth import.
+The environment editor authors static world content through an `EnvironmentDocument` (road nodes, edges, turn rules, buildings, features, optional geographic frame/source records, and the schema-v4 `objects` overlay). Every edit is a `CommandBus` command or gesture that commits one `ChangeSet`; the `SceneProjector` applies change sets incrementally to runtime meshes, registry entities, chunks, LiDAR truth, and browser tile-source ownership (roads rebuild only their local closure), so a drag never rebuilds the world. Selection is a shared `SelectionStore` of object ids; runtime road/intersection entities are keyed `road:<edgeId>` / `intersection:<nodeId>` (index aliases exist only after a full load). Scene and Map are persistent editor views. Earth import and georegistration are transient drafts, and persisted legacy `earth-import` state normalizes to Scene.
 
 ED-04 dispatches roads by `document.roads.geometryVersion`. Missing means
 legacy v1 and retains the existing world-description v1 and route-algorithm v5
@@ -285,6 +287,36 @@ and enter the metric record (and therefore `roadNetworkHash`/`worldHash`) only
 when present. The inspector's `RoadDisplay` cross-section, the Map lane
 dividers/arrows/highlight, scene markings, MCP `environment_edit_road` lane
 operations, and route v7 all read the same `roadLanes(edge)` model.
+
+ED-08 adds optional `geoFrame@1` (`wgs84-local-tangent`, east/up/south) and an
+independently versioned Earth source v2. `app/geography/GeoFrame.js` is the
+graphics-free implementation shared by OSM drafts, bounds, migration, and the
+Google tile-root matrix; legacy Mercator remains unchanged until an explicit
+Roads-only or Whole-environment migration command commits. Road source records
+retain OSM provenance through authoring but metric normalization removes them,
+so existing road/world/route identities do not change. Source-aware writers
+declare `supportedEditorSourceVersions: [1]`; storage rejects lossy full
+replacement and retains the first pre-georegistration manifest.
+
+`RoadImportService` fetches, clips, simplifies, and compiles plain road drafts
+without document access. It clips every WGS84 segment before simplification,
+connects only genuine shared OSM references, protects grade separation and
+boundary identities, and reports unsupported lanes/junctions. `applyRoadImport`
+commits Add, Replace, or tiles-only results through one expected-version
+command. Creation similarly sends one complete `initialManifest` for Blank,
+Google, or GLTF and storage commits revision 1 atomically.
+
+`EnvironmentTileHost` is a browser runtime owned by the loaded environment.
+Its provider session transfers from preview on Apply, reconciles only through
+the tile-source projector/full loader, uses the current camera and drawing
+buffer, and survives ordinary view or workspace changes. `TileAoiPlugin`
+prunes disjoint hierarchy branches before loading and cache pressure adjusts
+effective screen-space error without changing saved quality. Google trees are
+excluded from the environment registry, placement, collision, LiDAR, bake,
+measured-camera, asset-assembly, and packaging paths. GLTF Tiles are instead
+`tile@2` asset-backed objects and use the centralized asset binding, immutable
+revision pins, transforms, metric snapshots, and projectors used by asset
+instances.
 
 ED-06 layers a mutable editor catalog over immutable source-bound visual-asset
 use records. `EditorAssetStore` owns one revision-guarded
@@ -320,7 +352,7 @@ pass. Prepared browser/headless runs own this immutable scene and never read a
 studio preview.
 
 - [Environment Editor](environment-editor.md) — document model, editor modes, baking, and chrome UI.
-- [Earth Import](earth-import.md) — Google 3D Tiles preview, OSM road import, and geospatial configuration.
+- [Earth creation and road import](earth-import.md) — atomic source creation, clipped OSM drafts, georegistration, live Google sessions, and GLTF Tiles.
 - [Visual Layer Contracts](visual-layer.md) — frozen visual descriptors, exact-byte integrity, source policy, camera products, and future package admission.
 - [Visual Layer Implementation Plan](visual-layer-plan.md) — `VIS-*` photoreal fidelity layer, hashed assets, and optional Google/3DGS tracks.
 

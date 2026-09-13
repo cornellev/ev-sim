@@ -27,6 +27,8 @@ import {
     assertNoAssetMetricsDowngrade,
     assertNoObjectGraphDowngrade,
     assertNoRoadGeometryDowngrade,
+    assertNoEditorSourceDowngrade,
+    hasEditorSourceContract,
     environmentRevisionOf,
     environmentSummaryFields,
     parseEnvironmentWriteEnvelope,
@@ -108,6 +110,7 @@ import {
 import { getBuiltInVehicleManifest } from "../../app/vehicles/BuiltInVehicleManifests.js";
 import { createBuiltInIGVCEnvironmentManifest } from "../../app/3d/igvc/IGVCEnvironmentDocument.js";
 import { collectAssetInstanceReferences } from "../../app/editor-assets/EditorAssetContract.js";
+import { assetBindingRevisionVersion, readAssetBinding } from "../../app/editor-assets/AssetBackedObject.js";
 import {
     assetMetricDefinitionFromRevision,
     assetMetricKey,
@@ -544,8 +547,8 @@ export class StorageService {
 
         const assetInputs = [];
         for (const record of environment?.document?.objects ?? []) {
-            if (record.typeId !== "asset-instance" || record.typeVersion !== 2) continue;
-            const asset = record.components?.asset;
+            if (assetBindingRevisionVersion(record) !== 2) continue;
+            const asset = readAssetBinding(record);
             const revision = await this.editorAssets.getRevision(asset.assetId, asset.revision);
             if (revision.version !== 2) throw visualAssetError(VISUAL_LAYER_ERROR_CODES.INVALID_ACCESS, `Asset ${asset.assetId}@${asset.revision} is not a v2 appearance revision.`);
             assetInputs.push({ record, revision });
@@ -747,6 +750,7 @@ export class StorageService {
                     detachStaleVisual: false,
                     supportedRoadGeometryVersions: [1, 2],
                     supportedAssetMetricVersions: [1],
+                    supportedEditorSourceVersions: options.supportedEditorSourceVersions ?? [1],
                 }
                 : parseEnvironmentWriteInput(input);
             return this._commitEnvironment(environmentId, parsed.manifest, {
@@ -755,12 +759,13 @@ export class StorageService {
                 detachStaleVisual: parsed.detachStaleVisual === true,
                 supportedRoadGeometryVersions: parsed.supportedRoadGeometryVersions,
                 supportedAssetMetricVersions: parsed.supportedAssetMetricVersions,
+                supportedEditorSourceVersions: parsed.supportedEditorSourceVersions,
             });
         });
     }
 
     /** Create a blank or template-backed environment. */
-    async createEnvironment({ id, name, templateId = "blank" }) {
+    async createEnvironment({ id, name, templateId = "blank", initialManifest = null, supportedEditorSourceVersions = [] }) {
         safeSegment(id);
         await this._recoverEnvironmentTransactions();
         if (BUILT_IN_ENVIRONMENTS.some((entry) => entry.id === id) || await this.getEnvironment(id)) {
@@ -768,17 +773,21 @@ export class StorageService {
         }
 
         this._deletedEnvironmentIds.delete(id);
-        return this.putEnvironment(id, {
-            environmentId: id,
-            name: cleanName(name, id),
-            schemaVersion: ENVIRONMENT_SCHEMA_VERSION,
-            templateId: templateId === "igvc" ? "igvc" : "blank",
-            roadStylePreset: templateId === "igvc" ? "igvc" : "default",
+        const selectedTemplate = templateId === "igvc" ? "igvc" : "blank";
+        const prepared = initialManifest ? structuredClone(initialManifest) : {
             roadsAuthored: false,
             visualLayer: null,
             evidence: null,
             document: emptyEnvironmentDocument(id),
-        }, { create: true });
+        };
+        prepared.environmentId = id;
+        prepared.name = cleanName(name ?? prepared.name, id);
+        prepared.schemaVersion = ENVIRONMENT_SCHEMA_VERSION;
+        prepared.templateId = selectedTemplate;
+        prepared.roadStylePreset ??= selectedTemplate === "igvc" ? "igvc" : "default";
+        prepared.document ??= emptyEnvironmentDocument(id);
+        prepared.document.environmentId = id;
+        return this.putEnvironment(id, prepared, { create: true, supportedEditorSourceVersions });
     }
 
     /** Duplicate a saved environment or a built-in template descriptor. */
@@ -2924,6 +2933,7 @@ export class StorageService {
         detachStaleVisual = false,
         supportedRoadGeometryVersions = [1, 2],
         supportedAssetMetricVersions = [1],
+        supportedEditorSourceVersions = [1],
     } = {}) {
         const current = await this._readEnvironment(environmentId);
         const stored = await this._fileStore(this._environmentPath(environmentId), null).read();
@@ -2939,6 +2949,11 @@ export class StorageService {
             } catch (error) {
                 throw environmentPolicyError(error);
             }
+        }
+        try {
+            assertNoEditorSourceDowngrade(manifest, current, supportedEditorSourceVersions);
+        } catch (error) {
+            throw environmentPolicyError(error);
         }
         const revision = create ? 1 : (current?.revision ?? 0) + 1;
         const prepared = this._serializeEnvironment(manifest, {
@@ -2957,6 +2972,9 @@ export class StorageService {
         }
         if (stored && !stored?.document?.assetMetrics && prepared?.document?.assetMetrics) {
             await this._retainPreAssetMetricsCopy(environmentId, stored);
+        }
+        if (stored && !hasEditorSourceContract(stored?.document) && hasEditorSourceContract(prepared?.document)) {
+            await this._retainPreEditorSourceCopy(environmentId, stored);
         }
         try {
             await this._assertVisualReference(prepared);
@@ -2990,7 +3008,7 @@ export class StorageService {
         ]));
         for (const reference of references) {
             const instance = prepared?.document?.objects?.find((record) => String(record?.id) === reference.objectId);
-            const typeVersion = Number(instance?.typeVersion ?? 1);
+            const typeVersion = assetBindingRevisionVersion(instance);
             const previous = currentReferences.get(reference.objectId);
             if (typeVersion === 1 && previous?.assetId === reference.assetId && previous?.revision === reference.revision) continue;
             const revision = await this.editorAssets.getRevision(reference.assetId, reference.revision);
@@ -3002,7 +3020,7 @@ export class StorageService {
                     throw new Error(`Asset metric snapshot for ${reference.assetId}@${reference.revision} does not match the published revision.`);
                 }
             } else if (revision?.version === 2) {
-                throw new Error(`Asset instance "${reference.objectId}" must use asset-instance@2 for published revision ${reference.assetId}@${reference.revision}.`);
+                throw new Error(`Asset-backed object "${reference.objectId}" must bind published revision ${reference.assetId}@${reference.revision} as asset type v2.`);
             }
         }
     }
@@ -3041,6 +3059,22 @@ export class StorageService {
             environmentId,
             fromSchemaVersion: readSchemaVersion(stored),
             toSchemaVersion,
+            revision: environmentRevisionOf(stored),
+            migratedAt: new Date().toISOString(),
+            manifest: stored,
+        };
+        await store.write(envelope);
+        return envelope;
+    }
+
+    async _retainPreEditorSourceCopy(environmentId, stored) {
+        const filePath = path.join(this.environmentMigrationsDir, `${safeSegment(environmentId)}.pre-editor-source-v1.json`);
+        const store = this._fileStore(filePath, null);
+        if (await store.read()) return null;
+        const envelope = {
+            kind: "cev-sim.environment-pre-editor-source",
+            version: 1,
+            environmentId,
             revision: environmentRevisionOf(stored),
             migratedAt: new Date().toISOString(),
             manifest: stored,

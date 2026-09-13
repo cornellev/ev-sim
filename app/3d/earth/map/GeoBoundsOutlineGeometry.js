@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { DEFAULT_EARTH_IMPORT_CONFIG } from "../EarthImportConfig.js";
 import { latLngToLocal } from "../GeospatialTransform.js";
+import { geodeticToLocal } from "../GeoFrame.js";
 
 /** @typedef {{ north: number, south: number, east: number, west: number }} GeoBounds */
 /** @typedef {{ lat: number, lng: number }} LatLng */
@@ -18,11 +19,14 @@ const FALLBACK_TOP_METERS = 300;
  * @returns {{ sw: LocalCorner, se: LocalCorner, ne: LocalCorner, nw: LocalCorner }}
  */
 export function geoBoundsToLocalCorners(bounds, anchor) {
+    const convert = anchor?.version === 1
+        ? (lat, lng) => geodeticToLocal({ lat, lng, height: anchor.origin.height }, anchor)
+        : (lat, lng) => latLngToLocal(lat, lng, anchor);
     return {
-        sw: latLngToLocal(bounds.south, bounds.west, anchor),
-        se: latLngToLocal(bounds.south, bounds.east, anchor),
-        ne: latLngToLocal(bounds.north, bounds.east, anchor),
-        nw: latLngToLocal(bounds.north, bounds.west, anchor),
+        sw: convert(bounds.south, bounds.west),
+        se: convert(bounds.south, bounds.east),
+        ne: convert(bounds.north, bounds.east),
+        nw: convert(bounds.north, bounds.west),
     };
 }
 

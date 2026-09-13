@@ -8,6 +8,7 @@
 import { ObjectOptions, field, finite, isPlainObject, issue, stringList, text, validateFieldConstraints } from "../ObjectOptions.js";
 import { TILE_OBJECT_ID } from "../objectRecord.js";
 import { defineObjectType } from "../ObjectTypeRegistry.js";
+import { AssetInstanceOptions, assetInstanceTransformBinding } from "./assetInstance.js";
 
 export const TILE_TYPE_ID = "tile";
 export const TILE_PROVIDERS = Object.freeze(["google-photorealistic", "gltf"]);
@@ -72,7 +73,47 @@ export class TileOptions extends ObjectOptions {
     }
 }
 
-export function createTileType() {
+export function createTileType(version = 1) {
+    if (version === 2) {
+        const assetOptions = new AssetInstanceOptions();
+        return defineObjectType({
+            typeId: TILE_TYPE_ID,
+            version: 2,
+            label: "GLTF Tile",
+            catalog: { label: "GLTF Tile", kind: "tile", layer: "environment" },
+            legacy: null,
+            options: assetOptions,
+            components: Object.freeze(["asset", "tile"]),
+            singleton: TILE_OBJECT_ID,
+            capabilities: { selectable: true, transformable: true, deletable: true, groupable: false, hasOptions: true },
+            create(input = {}) {
+                const asset = assetOptions.normalize(input.asset ?? input);
+                return {
+                    id: TILE_OBJECT_ID,
+                    name: input.name ?? "GLTF Tile",
+                    components: {
+                        asset,
+                        tile: { provider: "gltf", assetTypeVersion: input.assetTypeVersion === 2 ? 2 : 1 },
+                    },
+                };
+            },
+            getTransformBinding(record) {
+                return assetInstanceTransformBinding(record, assetOptions);
+            },
+            getDependencies(record) {
+                return [{ kind: "object", id: record.id }];
+            },
+            planOptions(record, value) {
+                return { steps: [{ op: "set-object-component", objectId: String(record.id), key: "asset", value }], issues: [] };
+            },
+            compileMetric(record, context = {}) {
+                if (record.components?.tile?.assetTypeVersion !== 2) return null;
+                const asset = record.components?.asset;
+                return context.assetMetrics?.definitions?.find((entry) => entry.assetId === asset?.assetId && entry.revision === asset?.revision) ?? null;
+            },
+        });
+    }
+    if (version !== 1) throw new TypeError(`Unsupported tile version ${version}.`);
     const options = new TileOptions();
     return defineObjectType({
         typeId: TILE_TYPE_ID,

@@ -17,4 +17,6 @@ export * as legacyCommands from "./legacyCommands.js";
 export * as roadCommands from "./roadCommands.js";
 export * from "./roadCommands.js";
 export * from "./assetCommands.js";
+export * from "./importCommands.js";
+export * from "./georegistrationCommands.js";
 export { commandFactories } from "./EnvironmentCommandService.js";

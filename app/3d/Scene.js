@@ -43,7 +43,9 @@ import {
 import { isSplatBakePath } from "./environment/visualization/optionalSplatRuntime";
 import { EnvironmentSkyManager } from "./skybox/EnvironmentSkyManager";
 import { EarthTilesManager } from "./earth/EarthTilesManager";
+import { EnvironmentTileHost } from "./earth/EnvironmentTileHost";
 import { EarthImportController } from "./earth/EarthImportController";
+import { createDetachedRoadImportPreview } from "./earth/DetachedRoadImportPreview";
 import { SceneLoadingScreen } from "./overlay/SceneLoadingScreen";
 import { EditorToolController } from "./editor/tools/EditorToolController";
 import { EnvironmentPersistence } from "./environment/EnvironmentPersistence";
@@ -508,15 +510,23 @@ async function setupEnvironmentRuntime(data, scene, camera, renderer) {
         renderer,
     }));
 
-    const earthTilesManager = new EarthTilesManager({
-        scene,
-        camera,
-        renderer,
+    const createTileSession = () => new EarthTilesManager({
+        scene, camera, renderer, invalidate: () => data.simulation()?.render?.(),
+    });
+    const tileHost = new EnvironmentTileHost({
+        createSession: createTileSession,
         invalidate: () => data.simulation()?.render?.(),
     });
-    data.setEarthTilesManager(earthTilesManager);
-    const earthImportController = new EarthImportController(data, earthTilesManager);
+    data.environment().setTileHost(tileHost);
+    data.setEarthTilesManager(tileHost);
+    tileHost.setVisible(data.environment().getDocument().getObject("tile")?.components?.editorHidden !== true);
+    const earthImportController = new EarthImportController(data, tileHost, {
+        tileHost,
+        createPreviewRuntime: ({ document }) => createDetachedRoadImportPreview({ data, scene, document }),
+    });
     data.setEarthImportController(earthImportController);
+    void tileHost.reconcile(data.environment().getDocument().earth, data.environment().getDocument().geoFrame)
+        .catch((error) => console.warn("[environment] saved tile source failed to reopen:", error));
 
     const editor = data.editor();
     editor.setEarthImportModeEnterHandler(() => earthImportController.onEnterMode());

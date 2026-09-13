@@ -3,6 +3,7 @@ import { screenRadiusToWorld } from "./mapCoords.js";
 import { projectPointToRoad } from "../../../roads/RoadGeometry.js";
 import { planRoadNetworkGeometry } from "../../../roads/RoadNetworkGeometry.js";
 import { nearestLaneIndexForOffset, roadLaneId, roadWidth } from "../../../roads/RoadLaneModel.js";
+import { isAssetBackedObject } from "../../../editor-assets/AssetBackedObject.js";
 
 /** Lane under a pointer projected onto a compiled edge, or null on the shoulder. */
 function laneSubAtProjection(worldPoint, entry, projection) {
@@ -87,7 +88,7 @@ export function pickMapTarget(worldPoint, documentSnapshot, viewport, layers, sc
 
     if (showDetail && layers.props) {
         for (const record of documentSnapshot.objects ?? []) {
-            if (record.typeId !== "asset-instance") continue;
+            if (!isAssetBackedObject(record)) continue;
             const footprint = assetMapFootprint(record, runtimeAssetBounds?.get?.(String(record.id)) ?? null);
             if (pointInPolygonXZ(worldPoint, footprint)) return { type: "asset", id: String(record.id) };
             const position = record.components?.asset?.position;

@@ -19,6 +19,7 @@ import {
     listEnvironments,
     renameEnvironment,
 } from "../environment/EnvironmentCatalogClient";
+import { EnvironmentCreationDialog } from "./workspace/EnvironmentCreationDialog";
 
 export function EnvironmentSwitcher({ data, activeEnvironmentId, onEnvironmentChange }) {
     const [open, setOpen] = useState(false);
@@ -27,6 +28,8 @@ export function EnvironmentSwitcher({ data, activeEnvironmentId, onEnvironmentCh
     const [environmentId, setEnvironmentId] = useState("");
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState(null);
+    const [creationId, setCreationId] = useState(null);
+    const ed08Enabled = process.env.NEXT_PUBLIC_CEV_SIM_ED08 === "1";
 
     const active = useMemo(
         () => environments.find((environment) => environment.id === activeEnvironmentId) ?? null,
@@ -156,6 +159,17 @@ export function EnvironmentSwitcher({ data, activeEnvironmentId, onEnvironmentCh
 
     return (
         <div className="relative z-40 pointer-events-auto text-zinc-100" data-environment-switcher>
+            {creationId && <EnvironmentCreationDialog
+                data={data}
+                initialId={creationId}
+                onCancel={() => setCreationId(null)}
+                onCreated={(id) => {
+                    setCreationId(null);
+                    setOpen(false);
+                    void refresh();
+                    onEnvironmentChange?.(id);
+                }}
+            />}
             <button
                 type="button"
                 className="flex h-8 min-w-[190px] max-w-[320px] items-center justify-between gap-3 rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-950/90 px-3 text-left transition-colors hover:border-zinc-600 hover:bg-zinc-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/60"
@@ -236,7 +250,12 @@ export function EnvironmentSwitcher({ data, activeEnvironmentId, onEnvironmentCh
                         {error && <p className="mt-2 text-[11px] leading-relaxed text-red-300">{error}</p>}
 
                         <div className="mt-3 grid grid-cols-2 gap-1.5">
-                            <ActionButton icon={FaPlus} label="New blank" onClick={createBlank} disabled={busy} />
+                            <ActionButton
+                                icon={FaPlus}
+                                label={ed08Enabled ? "New environment" : "New blank"}
+                                onClick={ed08Enabled ? () => setCreationId(uniqueId("Untitled Environment")) : createBlank}
+                                disabled={busy}
+                            />
                             <ActionButton icon={FaCopy} label="Duplicate" onClick={duplicateActive} disabled={busy || !active} />
                             <ActionButton icon={FaPen} label="Rename" onClick={renameActive} disabled={busy || !active || !name.trim()} />
                             <ActionButton

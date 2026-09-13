@@ -102,6 +102,7 @@ export class EnvironmentLoader {
                 tags: [...feature.tags],
             })),
             earth: manifest.document?.earth ?? null,
+            geoFrame: manifest.document?.geoFrame ?? null,
             assetMetrics: manifest.document?.assetMetrics ?? null,
             roadsAuthored,
             buildingsAuthored,
@@ -135,6 +136,7 @@ export class EnvironmentLoader {
         // A full load replaces the world; prior history and gestures no longer apply.
         environment.commands?.()?.reset?.();
         environment.selection?.()?.prune?.(new Set(document.objects.map((record) => String(record.id))));
+        await environment.tiles?.()?.reconcile?.(document.earth, document.geoFrame);
         this._restoreSky(manifest.sky);
         this._restoreEditorState(manifest.editor);
         this._restoreVisualReferences(manifest);

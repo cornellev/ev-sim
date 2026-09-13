@@ -38,6 +38,32 @@ function issue(path, code, message, objectId = null) {
     return { path, code, message, severity: "error", ...(objectId ? { objectId } : {}) };
 }
 
+function validateSourceRecord(source, path, issues, objectId) {
+    if (source === undefined) return;
+    if (!source || typeof source !== "object" || Array.isArray(source)) {
+        issues.push(issue(path, "road.source.invalid", "Road source provenance must be an object.", objectId));
+        return;
+    }
+    for (const field of ["providerId", "importId"]) {
+        if (typeof source[field] !== "string" || source[field].trim().length === 0) {
+            issues.push(issue([...path, field], "road.source.identity-invalid", `Road source ${field} must be a non-empty string.`, objectId));
+        }
+    }
+    for (const field of ["osmNodeId", "osmWayId", "boundaryId", "fragmentId"]) {
+        if (source[field] !== undefined && (typeof source[field] !== "string" || source[field].length === 0)) {
+            issues.push(issue([...path, field], "road.source.reference-invalid", `Road source ${field} must be a non-empty string when present.`, objectId));
+        }
+    }
+    if (source.layer !== undefined && !Number.isInteger(source.layer)) {
+        issues.push(issue([...path, "layer"], "road.source.layer-invalid", "Road source layer must be an integer.", objectId));
+    }
+    for (const field of ["bridge", "tunnel"]) {
+        if (source[field] !== undefined && typeof source[field] !== "boolean") {
+            issues.push(issue([...path, field], "road.source.grade-invalid", `Road source ${field} must be boolean.`, objectId));
+        }
+    }
+}
+
 export function roadGeometryVersionOf(value) {
     const candidate = value?.roads?.geometryVersion
         ?? value?.document?.roads?.geometryVersion
@@ -164,6 +190,7 @@ export function validateRoadDomain(roads, { maxDegree = 4, requireVersion = null
         else if (nodeById.has(id)) issues.push(issue(["roads", "nodes", index, "id"], "road.node.id-duplicate", `Duplicate road node "${id}".`, id));
         else nodeById.set(id, node);
         if (!point(node)) issues.push(issue(["roads", "nodes", index], "road.node.position-invalid", `Road node "${id}" must have finite coordinates.`, id));
+        validateSourceRecord(node?.source, ["roads", "nodes", index, "source"], issues, id);
     }
     const edgeIds = new Set();
     const degree = new Map();
@@ -172,6 +199,7 @@ export function validateRoadDomain(roads, { maxDegree = 4, requireVersion = null
         if (!id) issues.push(issue(["roads", "edges", index, "id"], "road.edge.id-missing", "Road edge ID is required."));
         else if (edgeIds.has(id)) issues.push(issue(["roads", "edges", index, "id"], "road.edge.id-duplicate", `Duplicate road edge "${id}".`, id));
         edgeIds.add(id);
+        validateSourceRecord(edge?.source, ["roads", "edges", index, "source"], issues, id);
         for (const field of ["startNodeId", "endNodeId"]) {
             const nodeId = String(edge?.[field] ?? "");
             if (!nodeById.has(nodeId)) issues.push(issue(["roads", "edges", index, field], "road.edge.node-missing", `Road "${id}" references missing node "${nodeId}".`, id));
@@ -278,15 +306,25 @@ export function metricRoadLanes(lanes) {
 
 export function normalizeMetricRoads(roads) {
     const version = roadGeometryVersionOf({ roads });
-    if (version === 1) return roads;
+    if (version === 1) {
+        const carriesProvenance = (roads?.nodes ?? []).some((node) => node?.source !== undefined)
+            || (roads?.edges ?? []).some((edge) => edge?.source !== undefined);
+        if (!carriesProvenance) return roads;
+        return {
+            ...roads,
+            nodes: (roads?.nodes ?? []).map(({ source: _source, ...node }) => node),
+            edges: (roads?.edges ?? []).map(({ source: _source, ...edge }) => edge),
+        };
+    }
     const nodeById = new Map((roads?.nodes ?? []).map((node) => [String(node.id), node]));
     return {
         geometryVersion: 2,
-        nodes: (roads?.nodes ?? []).map((node) => ({ ...node })),
+        nodes: (roads?.nodes ?? []).map(({ source: _source, ...node }) => ({ ...node })),
         edges: (roads?.edges ?? []).map((edge) => {
             const resolved = resolveRoadEdge(edge, nodeById);
+            const { source: _source, ...metricEdge } = edge;
             return {
-                ...edge,
+                ...metricEdge,
                 ...(Array.isArray(edge.lanes) ? { lanes: metricRoadLanes(edge.lanes) } : {}),
                 geometry: {
                     version: 1,

@@ -24,7 +24,7 @@ ED PR changes a contract, hash, gate, or milestone status.
 
 ## Status
 
-- Next milestone: **ED-08 — Creation and imports**.
+- Next milestone: **ED-09 — Acceptance**.
 - Implemented: **ED-01 — Contracts** (object registry, options validation,
   schema-v4 adapters, compatibility fixtures), **ED-02 — Commands and
   hierarchy** (`SelectionStore`, `CommandBus` with transactions, gestures, and
@@ -52,7 +52,12 @@ ED PR changes a contract, hash, gate, or milestone status.
   (versioned asset definitions and assemblies, PBR materials and textures,
   deterministic collision/LiDAR proxies, isolated document history,
   journaled publication, immutable environment metric snapshots, world v3,
-  route proof v8, swept-compound physics v2, and measured PBR composition).
+  route proof v8, swept-compound physics v2, and measured PBR composition),
+  and **ED-08 — Creation and imports** (atomic Blank/Google/GLTF creation,
+  `geoFrame@1` and Earth source v2, clipped provenance-preserving OSM drafts,
+  Add/Replace import commands, explicit Roads-only/Whole-environment
+  georegistration, environment-owned bounded Google tile sessions, and
+  asset-backed GLTF `tile@2`).
   Existing environments retain their legacy behavior; schema v4 is the only
   writer.
 - Program goal: one consistent interaction model across hierarchy, scene, map,
@@ -68,7 +73,7 @@ ED PR changes a contract, hash, gate, or milestone status.
   proxies are set up; LiDAR authoring supports generated meshes and editable
   primitives.
 - Default implementation/review reasoning level: **Extra High**.
-- Last updated: **2026-09-13 — ED-07 implemented**.
+- Last updated: **2026-09-13 — ED-08 implemented**.
 
 ## Normative contracts
 
@@ -932,10 +937,68 @@ Record in the ledger: focused-suite pass counts, `npm run lint` result,
   `1ba8c8c40e1560ac044f4ca5384065ab83c93529d65b5672fee8dc5ed42a5ced`,
   `60dc0bd2b02a9ec768f833070ce4d8d2047f5383838f09ea3f130dd31552dd6f`,
   and `6ca2ece3d5266822a2ceabba72e5f7dd9514789e76757e86f6aedd2730ab9a6a`.
-- [ ] ED-08 — Creation and imports.
+- [x] ED-08 — Creation and imports. Optional `geoFrame@1`, independently
+  versioned Earth v2, guarded source writers, and road provenance; pure shared
+  WGS84 east/up/south transforms with explicit undoable migration; clipped OSM
+  import topology and deterministic lane drafts; staged Add/Replace/tiles-only
+  commands; environment-owned Google sessions with AOI/cache/attribution and
+  exclusion boundaries; GLTF `tile@2` through immutable asset bindings; and
+  atomic three-source creation. Focused ED-08 coverage passed 61/61 and the
+  affected registry/command compatibility coverage passed 65/65; the shared
+  asset metric/PBR gate passed 29/29. `npm run lint` passed with zero errors and
+  one pre-existing warning. `npm test` passed 1233/1237 with four declared
+  hardware skips and zero failures; the production and headless distribution
+  builds passed, and browser/direct/CLI/Unix/Python parity passed. The 1280 ×
+  720 Playwright creation/import workflow and axe run passed. Both fixture
+  generators produced zero drift; action-tape, characterization, and
+  environment-editor compatibility SHA-256 values remain
+  `1ba8c8c40e1560ac044f4ca5384065ab83c93529d65b5672fee8dc5ed42a5ced`,
+  `60dc0bd2b02a9ec768f833070ce4d8d2047f5383838f09ea3f130dd31552dd6f`,
+  and `6ca2ece3d5266822a2ceabba72e5f7dd9514789e76757e86f6aedd2730ab9a6a`.
 - [ ] ED-09 — Acceptance.
 
 ## Decision log
+
+### 2026-09-13 — Implement ED-08 creation and imports
+
+New geographic authoring uses one optional `geoFrame@1` with
+`wgs84-local-tangent` projection and east/up/south axes. Earth source v2 stores
+bounds, quality, road provider/filter, layers, and timestamp but obtains its
+sole origin from that frame. Unversioned Earth records remain byte-compatible
+and unchanged on load. Legacy Mercator content moves only through the explicit
+Roads-only or Whole-environment planner and one expected-version command; the
+complete result is validated before commit and the first adoption retains a
+write-once pre-georegistration manifest.
+
+OSM ingestion is a pure detached pipeline. It clips every WGS84 segment before
+simplification, preserves exact boundary/source identity and grade tags,
+connects only genuine shared OSM references, compiles geometry-v2 knots and
+legal lane records, and reports ambiguous or unsupported topology instead of
+dismissing it. Preview never mutates the active document. Add namespaces the
+draft without connecting it to existing roads; Replace swaps nodes, edges, and
+turn rules together; tiles-only leaves roads untouched. The selected source
+and road result commit through one CommandBus entry and stale or empty replace
+attempts fail before mutation.
+
+Google sessions are browser-owned by `EnvironmentTileHost`, reconciled through
+`SceneProjector`, and transferred from preview on Apply. They retain identity
+across ordinary view/workspace changes, use the current display camera and
+drawing buffer, prune disjoint hierarchy subtrees, preserve ancestor coverage
+under persisted cache limits, and surface viewport attribution and diagnostics.
+Google geometry remains outside selection, placement, collision, LiDAR, bake,
+measured cameras, asset assemblies, and packages. GLTF Tiles are `tile@2`
+records over the centralized immutable asset binding; asset revision and object
+type versions remain distinct.
+
+Creation sends one complete `initialManifest` for Blank, Google, or GLTF and
+storage commits revision 1 under the existing environment lock. The active
+environment switches only after success and the proposed ID stays fixed across
+reconciliation/retry. Full-document writers must declare
+`supportedEditorSourceVersions: [1]`; HTTP 409 prevents lossy source downgrades.
+The UI remains behind `NEXT_PUBLIC_CEV_SIM_ED08=1` until ED-09 while readers and
+downgrade protection are always active. Schema v4, world-description dispatch,
+route-proof dispatch, headless protocol, and historical fixture hashes remain
+unchanged.
 
 ### 2026-09-13 — Implement ED-07 asset studio
 

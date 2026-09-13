@@ -1096,3 +1096,23 @@ hardware skips and zero failures; the Python suite passed 68/68. Headless and
 environment compatibility fixtures retained their existing hashes. The
 separately invoked packaged PBR case executed 1/1 on Apple M1 Max ANGLE Metal;
 that local result is not the outstanding x64 NVIDIA or Jetson ARM64 evidence.
+
+### 2026-09-13 — ED-08 source authoring preserves headless contracts
+
+The separate environment-editor program adds optional `geoFrame@1`, Earth
+source v2, nonmetric OSM provenance, and GLTF `tile@2` authoring. Geographic
+frames and Google live-tile sessions are editor/runtime presentation records:
+Google roots are excluded from world compilation, collision, LiDAR, measured
+cameras, bake snapshots, run packages, and asset assemblies. Road provenance
+is removed by metric normalization. GLTF Tiles use the existing immutable asset
+binding and therefore compile the same enabled asset metrics as an equivalent
+asset instance.
+
+ED-08 does not change the environment schema-v4 writer, world-description
+dispatch, route-proof dispatch, run-bundle or Protobuf versions, fixed-step
+ordering, sensor contracts, or hash algorithms. Browser/direct/CLI/Unix/Python
+parity passed after the change. The action-tape and characterization SHA-256
+values remain `1ba8c8c40e1560ac044f4ca5384065ab83c93529d65b5672fee8dc5ed42a5ced`
+and `60dc0bd2b02a9ec768f833070ce4d8d2047f5383838f09ea3f130dd31552dd6f`.
+This is not headless PR 13 and does not satisfy or change the outstanding PR 12
+hosted, soak, x64 NVIDIA, or Jetson ARM64 evidence gates.

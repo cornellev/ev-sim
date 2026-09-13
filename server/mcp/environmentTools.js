@@ -84,6 +84,7 @@ export function registerEnvironmentTools(server, storage) {
                     id,
                     name: name ?? id,
                     templateId: templateId ?? "blank",
+                    supportedEditorSourceVersions: [1],
                 });
                 storageEvents.publish({ domain: "environment", id, action: "created", revision: manifest.revision });
                 return ok({ ok: true, environment: summarizeManifest(manifest) });
@@ -663,6 +664,7 @@ async function saveDocument(storage, environmentId, manifest, document) {
         detachStaleVisual: true,
         supportedRoadGeometryVersions: [1, 2],
         supportedAssetMetricVersions: [1],
+        supportedEditorSourceVersions: [1],
     });
     storageEvents.publish({
         domain: "environment",

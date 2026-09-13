@@ -20,6 +20,7 @@ export const CHANGE_DOMAINS = Object.freeze([
 
 export const CHANGE_SCALARS = Object.freeze([
     "earth",
+    "geoFrame",
     "roadsAuthored",
     "buildingsAuthored",
     "featuresAuthored",

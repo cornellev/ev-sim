@@ -20,6 +20,7 @@ import { deleteObjects } from "../commands/objectCommands.js";
 import { commandFailure, commandIssue, commandSuccess, COMMAND_ISSUE_CODES } from "../commands/commandIssues.js";
 import { MAP_WORLD_SCALE, screenRadiusToWorld } from "./mapCoords.js";
 import { roadGeometryVersionOf } from "../../../roads/RoadGeometryRecord.js";
+import { isAssetBackedObject } from "../../../editor-assets/AssetBackedObject.js";
 
 const SNAP_RADIUS_SCREEN = 12;
 
@@ -185,7 +186,7 @@ export function finishFeatureDrag({ interaction, editor, data, worldPoint }) {
 
 export function beginAssetDrag({ document, data, objectId }) {
     const record = document.getObject(String(objectId));
-    if (record?.typeId !== "asset-instance") return null;
+    if (!isAssetBackedObject(record)) return null;
     selectionOf(data)?.select(record.id);
     const begun = busOf(data).beginGesture({ objectIds: [record.id], label: "Move asset" });
     if (!begun.ok) return null;

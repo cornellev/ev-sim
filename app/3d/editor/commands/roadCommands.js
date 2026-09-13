@@ -349,7 +349,17 @@ function splitRoadMutation(ctx, edgeId, at) {
     const split = splitGeometry(resolveRoadEdge(source, ctx.document.index().nodes), at);
     // A split introduces a topological anchor, not an explicitly authored
     // junction. The compiler derives any required junction surface from degree.
-    const node = { id: uniqueNodeId(ctx.document, "road-node"), ...split.point, kind: "endpoint" };
+    const splitSource = source.source ? {
+        ...structuredClone(source.source),
+        boundaryId: `split:${source.id}:${JSON.stringify(at)}`,
+    } : null;
+    if (splitSource) delete splitSource.osmNodeId;
+    const node = {
+        id: uniqueNodeId(ctx.document, "road-node"),
+        ...split.point,
+        kind: "endpoint",
+        ...(splitSource ? { source: splitSource } : {}),
+    };
     const leftId = uniqueEdgeId(ctx.document);
     const rightId = uniqueEdgeId(ctx.document);
     const shared = { ...structuredClone(source), startArm: null, endArm: null };

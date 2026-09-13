@@ -88,7 +88,7 @@ function matricesMatch(left, right, epsilon = 1e-6) {
     return a.every((value, index) => Math.abs(value - b[index]) <= epsilon);
 }
 
-function transformBinding(record, options) {
+export function assetInstanceTransformBinding(record, options = new AssetInstanceOptions()) {
     return Object.freeze({
         kind: "asset-instance",
         read(_legacy, context = {}) {
@@ -144,7 +144,7 @@ export function createAssetInstanceType(version = 1) {
             return { name: input.name ?? asset.assetId, components: { asset } };
         },
         getTransformBinding(record) {
-            return transformBinding(record, options);
+            return assetInstanceTransformBinding(record, options);
         },
         getDependencies(record) {
             return [{ kind: "object", id: record.id }];

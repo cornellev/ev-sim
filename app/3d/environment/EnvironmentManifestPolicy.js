@@ -24,6 +24,7 @@ import {
     validateObjectGraph,
 } from "../editor/objects/index.js";
 import { roadGeometryVersionOf, validateRoadDomain } from "../../roads/RoadGeometryRecord.js";
+import { createGeoFrame, GEO_FRAME_VERSION } from "../earth/GeoFrame.js";
 
 export const ENVIRONMENT_SCHEMA_VERSION = 3;
 export const ENVIRONMENT_LEGACY_SCHEMA_VERSION = 2;
@@ -41,6 +42,9 @@ export const ENVIRONMENT_ROAD_GEOMETRY_INVALID = "ENVIRONMENT_ROAD_GEOMETRY_INVA
 export const ENVIRONMENT_ROAD_GEOMETRY_DOWNGRADE = "ENVIRONMENT_ROAD_GEOMETRY_DOWNGRADE";
 export const ENVIRONMENT_ASSET_METRICS_INVALID = "ENVIRONMENT_ASSET_METRICS_INVALID";
 export const ENVIRONMENT_ASSET_METRICS_DOWNGRADE = "ENVIRONMENT_ASSET_METRICS_DOWNGRADE";
+export const ENVIRONMENT_EDITOR_SOURCE_INVALID = "ENVIRONMENT_EDITOR_SOURCE_INVALID";
+export const ENVIRONMENT_EDITOR_SOURCE_DOWNGRADE = "ENVIRONMENT_EDITOR_SOURCE_DOWNGRADE";
+export const EDITOR_SOURCE_VERSION = 1;
 
 const SHA256_DIGEST = /^[a-f0-9]{64}$/;
 
@@ -323,7 +327,122 @@ export function parseEnvironmentWriteEnvelope(body) {
         supportedAssetMetricVersions: Array.isArray(body.supportedAssetMetricVersions)
             ? [...new Set(body.supportedAssetMetricVersions.map(Number).filter(Number.isInteger))]
             : [],
+        supportedEditorSourceVersions: Array.isArray(body.supportedEditorSourceVersions)
+            ? [...new Set(body.supportedEditorSourceVersions.map(Number).filter(Number.isInteger))]
+            : [],
     };
+}
+
+function sourceRecordPresent(document = {}) {
+    return (document.roads?.nodes ?? []).some((record) => record?.source !== undefined)
+        || (document.roads?.edges ?? []).some((record) => record?.source !== undefined);
+}
+
+/** Whether a document uses any ED-08 source contract. */
+export function hasEditorSourceContract(document = {}) {
+    return Boolean(document.geoFrame)
+        || Number(document.earth?.version ?? 0) > 0
+        || sourceRecordPresent(document)
+        || (document.objects ?? []).some((record) => record?.typeId === "tile" && Number(record.typeVersion) === 2);
+}
+
+function validateSourceRecord(source, path) {
+    if (!source || typeof source !== "object" || Array.isArray(source)) {
+        return [{ path, code: "editor-source.provenance.invalid", message: "Road source provenance must be an object.", severity: "error" }];
+    }
+    const issues = [];
+    for (const key of ["providerId", "importId"]) {
+        if (typeof source[key] !== "string" || !source[key].trim()) {
+            issues.push({ path: [...path, key], code: "editor-source.provenance.required", message: `${key} must be a non-empty string.`, severity: "error" });
+        }
+    }
+    if (source.layer !== undefined && !Number.isInteger(Number(source.layer))) {
+        issues.push({ path: [...path, "layer"], code: "editor-source.provenance.layer", message: "OSM layer must be an integer.", severity: "error" });
+    }
+    for (const key of ["osmNodeId", "osmWayId", "boundaryId", "fragmentId"]) {
+        if (source[key] !== undefined && (typeof source[key] !== "string" || source[key].length === 0)) {
+            issues.push({ path: [...path, key], code: "editor-source.provenance.reference", message: `${key} must be a non-empty string when present.`, severity: "error" });
+        }
+    }
+    for (const key of ["bridge", "tunnel"]) {
+        if (source[key] !== undefined && typeof source[key] !== "boolean") {
+            issues.push({ path: [...path, key], code: "editor-source.provenance.grade", message: `${key} must be boolean when present.`, severity: "error" });
+        }
+    }
+    return issues;
+}
+
+/** Reject malformed ED-08 source records and clients that cannot round-trip them. */
+export function assertNoEditorSourceDowngrade(incoming, current, capabilities = []) {
+    const document = incoming?.document;
+    if (document === undefined || document === null) return;
+    const currentUses = hasEditorSourceContract(current?.document);
+    const incomingUses = hasEditorSourceContract(document);
+    const supported = new Set((capabilities ?? []).map(Number));
+    const fail = (code, message, issues = []) => {
+        const error = new Error(message);
+        error.code = code;
+        error.statusCode = 409;
+        error.issues = issues;
+        throw error;
+    };
+    if ((currentUses || incomingUses) && !supported.has(EDITOR_SOURCE_VERSION)) {
+        fail(ENVIRONMENT_EDITOR_SOURCE_DOWNGRADE, `Writing editor source data requires supportedEditorSourceVersions to include ${EDITOR_SOURCE_VERSION}.`);
+    }
+    if (!incomingUses) return;
+    const issues = [];
+    if (document.geoFrame) {
+        try { createGeoFrame(document.geoFrame); }
+        catch (error) { issues.push({ path: ["geoFrame"], code: "editor-source.geo-frame.invalid", message: error.message, severity: "error" }); }
+    }
+    if (document.earth?.version !== undefined) {
+        if (Number(document.earth.version) !== EDITOR_SOURCE_VERSION + 1) {
+            issues.push({ path: ["earth", "version"], code: "editor-source.earth.version", message: "ED-08 Earth sources must use version 2.", severity: "error" });
+        }
+        if (!document.geoFrame || Number(document.geoFrame.version) !== GEO_FRAME_VERSION) {
+            issues.push({ path: ["geoFrame"], code: "editor-source.geo-frame.required", message: "Earth source v2 requires geoFrame v1.", severity: "error" });
+        }
+        const source = document.earth;
+        if (source.tileProvider !== "google-photorealistic") {
+            issues.push({ path: ["earth", "tileProvider"], code: "editor-source.earth.provider", message: "Earth source v2 requires the google-photorealistic tile provider.", severity: "error" });
+        }
+        const bounds = source.bounds;
+        if (![bounds?.north, bounds?.south, bounds?.east, bounds?.west].every(Number.isFinite)
+            || bounds.north <= bounds.south || bounds.east <= bounds.west
+            || bounds.north > 90 || bounds.south < -90 || bounds.east > 180 || bounds.west < -180) {
+            issues.push({ path: ["earth", "bounds"], code: "editor-source.earth.bounds", message: "Earth source v2 requires a valid non-antimeridian bounds rectangle.", severity: "error" });
+        }
+        const quality = source.quality;
+        if (!Number.isFinite(quality?.maxScreenSpaceError) || quality.maxScreenSpaceError < 1
+            || !Number.isInteger(quality?.maxCachedTiles) || quality.maxCachedTiles < 1
+            || !Number.isInteger(quality?.maxCacheBytes) || quality.maxCacheBytes < 1) {
+            issues.push({ path: ["earth", "quality"], code: "editor-source.earth.quality", message: "Earth source v2 requires positive screen-space, tile-count, and byte cache limits.", severity: "error" });
+        }
+        if (source.roadProvider !== null && source.roadProvider !== "overpass") {
+            issues.push({ path: ["earth", "roadProvider"], code: "editor-source.earth.road-provider", message: "Earth source v2 roadProvider must be overpass or null.", severity: "error" });
+        }
+        if (!Array.isArray(source.roadFilters?.highwayClasses) || !source.roadFilters.highwayClasses.every((entry) => typeof entry === "string" && entry.length > 0)) {
+            issues.push({ path: ["earth", "roadFilters", "highwayClasses"], code: "editor-source.earth.road-filters", message: "Earth source v2 requires a highwayClasses string array.", severity: "error" });
+        }
+        if (!Array.isArray(source.importedLayerIds) || !source.importedLayerIds.every((entry) => typeof entry === "string" && entry.length > 0)) {
+            issues.push({ path: ["earth", "importedLayerIds"], code: "editor-source.earth.layers", message: "Earth source v2 importedLayerIds must contain strings.", severity: "error" });
+        }
+    }
+    for (const [domain, records] of [["nodes", document.roads?.nodes], ["edges", document.roads?.edges]]) {
+        (records ?? []).forEach((record, index) => {
+            if (record?.source !== undefined) issues.push(...validateSourceRecord(record.source, ["roads", domain, index, "source"]));
+        });
+    }
+    for (const [index, record] of (document.objects ?? []).entries()) {
+        if (record?.typeId !== "tile" || Number(record.typeVersion) !== 2) continue;
+        const tile = record.components?.tile;
+        const asset = record.components?.asset;
+        if (record.id !== "tile" || tile?.provider !== "gltf" || ![1, 2].includes(Number(tile?.assetTypeVersion))
+            || typeof asset?.assetId !== "string" || !asset.assetId || !Number.isInteger(asset?.revision) || asset.revision < 1) {
+            issues.push({ path: ["objects", index], code: "editor-source.gltf-tile.invalid", message: "GLTF tile@2 requires id tile, a GLTF tile binding, and an immutable asset revision.", severity: "error" });
+        }
+    }
+    if (issues.length > 0) fail(ENVIRONMENT_EDITOR_SOURCE_INVALID, issues[0].message, issues);
 }
 
 /** Reject writers that do not round-trip the optional ED-07 metric domain. */
