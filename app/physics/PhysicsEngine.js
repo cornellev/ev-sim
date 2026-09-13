@@ -1,5 +1,6 @@
 import { assertPhysicsBackendSelection, PHYSICS_BACKEND_CONFIG } from "./PhysicsBackend.js";
 import { compareUtf8 } from "../simulation/world/WorldDescription.js";
+import { sweepAabbConvex } from "./SweptConvex.js";
 
 function vector(value = {}) {
     return { x: Number(value.x || 0), y: Number(value.y || 0), z: Number(value.z || 0) };
@@ -213,7 +214,7 @@ export class PhysicsEngine {
         const manifest = legacy ? configuration : configuration?.manifest ?? null;
         const worldDescription = legacy ? null : configuration?.worldDescription ?? null;
         const backendSelection = legacy ? null : configuration?.backendSelection ?? null;
-        if (worldDescription) assertPhysicsBackendSelection(backendSelection);
+        if (worldDescription) assertPhysicsBackendSelection(backendSelection, worldDescription);
         this.preparedManifest = manifest;
         this.preparedEnvironmentManifest = legacyEnvironmentManifest;
         this.preparedWorldDescription = worldDescription;
@@ -225,15 +226,26 @@ export class PhysicsEngine {
         this._createWorld();
         const worldObstacles = this.preparedWorldDescription?.obstacles;
         const entries = Array.isArray(worldObstacles)
-            ? worldObstacles.map((obstacle) => ({
+            ? [
+                ...worldObstacles.map((obstacle) => ({
                 id: String(obstacle.id),
+                contactId: String(obstacle.id),
                 bounds: obstacle.bounds,
                 footprint: obstacle.footprint,
                 triangles: obstacle.triangles,
                 minY: obstacle.minY,
                 maxY: obstacle.maxY,
                 obstacle,
-            }))
+                })),
+                ...(this.preparedWorldDescription?.assetProxies ?? []).flatMap((instance) => (
+                    (instance.collision ?? []).map((convex) => ({
+                        id: String(convex.id),
+                        contactId: String(instance.sourceId),
+                        bounds: convex.bounds,
+                        convex,
+                    }))
+                )),
+            ]
             : [...(this.data.objects?.()?.boxes?.() || [])]
                 .map((box, index) => {
                     const center = vector(box.position);
@@ -291,12 +303,17 @@ export class PhysicsEngine {
             const candidate = vector(state.vehicle.position);
             const hits = [];
             for (const obstacle of this.staticColliders) {
-                const time = obstacle.obstacle
-                    ? sweepWorldObstacle(state.previous, candidate, state.half, obstacle)
-                    : sweepAabb(state.previous, candidate, state.half, obstacle.bounds);
+                const time = obstacle.convex
+                    ? sweepAabbConvex(state.previous, candidate, state.half, obstacle.convex)
+                    : obstacle.obstacle
+                        ? sweepWorldObstacle(state.previous, candidate, state.half, obstacle)
+                        : sweepAabb(state.previous, candidate, state.half, obstacle.bounds);
                 if (time === null) continue;
-                hits.push({ id: obstacle.id, time });
+                hits.push({ id: obstacle.contactId ?? obstacle.id, time });
             }
+            const collapsed = new Map();
+            for (const hit of hits) collapsed.set(hit.id, Math.min(collapsed.get(hit.id) ?? Infinity, hit.time));
+            hits.splice(0, hits.length, ...[...collapsed].map(([id, time]) => ({ id, time })).sort((left, right) => compareUtf8(left.id, right.id)));
             const impact = hits.reduce((minimum, hit) => Math.min(minimum, hit.time), 1);
             for (const hit of hits.filter((entry) => entry.time <= impact + 1e-12)) {
                 this.pendingContacts.add(`${state.id}|${hit.id}`);

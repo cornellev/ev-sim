@@ -24,6 +24,7 @@ import {
 import {
     ENVIRONMENT_SCHEMA_VERSION,
     ENVIRONMENT_UNGUARDED_WRITE,
+    assertNoAssetMetricsDowngrade,
     assertNoObjectGraphDowngrade,
     assertNoRoadGeometryDowngrade,
     environmentRevisionOf,
@@ -107,6 +108,16 @@ import {
 import { getBuiltInVehicleManifest } from "../../app/vehicles/BuiltInVehicleManifests.js";
 import { createBuiltInIGVCEnvironmentManifest } from "../../app/3d/igvc/IGVCEnvironmentDocument.js";
 import { collectAssetInstanceReferences } from "../../app/editor-assets/EditorAssetContract.js";
+import {
+    assetMetricDefinitionFromRevision,
+    assetMetricKey,
+    normalizeAssetMetricDefinition,
+    validateAssetMetricsDomain,
+} from "../../app/editor-assets/AssetMetricSnapshot.js";
+import {
+    compileAssetVisualLayer,
+    composeVisualLayers,
+} from "../../app/editor-assets/AssetVisualLayerCompiler.js";
 import {
     BINDING_SCOPES,
     createBindingManifest,
@@ -289,6 +300,9 @@ export class StorageService {
             visualAssets: this.visualAssets,
             now: options.editorAssets?.now ?? options.visualAssets?.now ?? (() => new Date()),
             faults: options.editorAssets?.faults ?? options.faults ?? {},
+            assetStudioEnabled: options.editorAssets?.assetStudioEnabled
+                ?? options.assetStudioEnabled
+                ?? process.env.CEV_SIM_ASSET_STUDIO !== "0",
         });
         this.packageStagingDir = path.join(dataDir, "visual-packages", "staging");
         this.packageImportJournalDir = path.join(dataDir, "visual-packages", "import-journals");
@@ -361,6 +375,7 @@ export class StorageService {
         await this.visualAssets.initialize();
         const registry = await this.visualAssets.registry.load();
         return {
+            assetStudio: this.editorAssets.assetStudioEnabled,
             limits: { ...this.visualAssets.limits },
             sources: registry.sources.map((source) => ({
                 id: source.id,
@@ -504,51 +519,40 @@ export class StorageService {
 
     async _resolvePbrVisualRun({ environment, world, vehicles, selection, renderRecipe }) {
         await this.visualAssets.initialize();
-        const descriptorHash = environment?.visualLayer?.descriptorHash;
-        const accessHash = environment?.visualLayer?.accessHash;
-        if (!descriptorHash) {
-            throw visualAssetError(
-                VISUAL_LAYER_ERROR_CODES.DESCRIPTOR_NOT_FOUND,
-                "pbr-mesh@1 requires the selected environment to reference an immutable visual-layer descriptor.",
-            );
+        const baseDescriptorHash = environment?.visualLayer?.descriptorHash ?? null;
+        const baseAccessHash = environment?.visualLayer?.accessHash ?? null;
+        if (Boolean(baseDescriptorHash) !== Boolean(baseAccessHash)) {
+            throw visualAssetError(VISUAL_LAYER_ERROR_CODES.ACCESS_REQUIRED, "A selected base visual layer requires both descriptorHash and accessHash.");
         }
-        if (!accessHash) {
-            throw visualAssetError(
-                VISUAL_LAYER_ERROR_CODES.ACCESS_REQUIRED,
-                "pbr-mesh@1 requires an accessHash covering the selected visual layer.",
-            );
+        const baseDescriptor = baseDescriptorHash ? await this._visualLayerDescriptors.get(baseDescriptorHash) : null;
+        const baseAccess = baseAccessHash ? await this._visualLayerAccess.get(baseAccessHash) : null;
+        if (baseDescriptorHash && !baseDescriptor) throw visualAssetError(VISUAL_LAYER_ERROR_CODES.DESCRIPTOR_NOT_FOUND, `Visual layer descriptor ${baseDescriptorHash} was not found.`);
+        if (baseAccessHash && !baseAccess) throw visualAssetError(VISUAL_LAYER_ERROR_CODES.ACCESS_NOT_FOUND, `Visual layer access ${baseAccessHash} was not found.`);
+        if (baseDescriptor) {
+            assertVisualLayer(baseDescriptor);
+            assertVisualLayerAccess(baseAccess);
+            if (hashVisualLayer(baseDescriptor) !== baseDescriptorHash
+                || hashVisualLayerAccess(baseAccess) !== baseAccessHash
+                || baseAccess.descriptorHash !== baseDescriptorHash) {
+                throw visualAssetError(VISUAL_LAYER_ERROR_CODES.ACCESS_MISMATCH, "The selected visual descriptor or access sidecar has an invalid identity.");
+            }
+            if (baseDescriptor.sourceWorldHash !== world.hash) {
+                throw visualAssetError(VISUAL_LAYER_ERROR_CODES.WORLD_MISMATCH, `Visual layer ${baseDescriptorHash} is bound to world ${baseDescriptor.sourceWorldHash}, not ${world.hash}.`);
+            }
+            assertVisualLayerTruthBindings(baseDescriptor, world.description);
         }
-        const descriptor = await this._visualLayerDescriptors.get(descriptorHash);
-        if (!descriptor) {
-            throw visualAssetError(
-                VISUAL_LAYER_ERROR_CODES.DESCRIPTOR_NOT_FOUND,
-                `Visual layer descriptor ${descriptorHash} was not found.`,
-            );
+
+        const assetInputs = [];
+        for (const record of environment?.document?.objects ?? []) {
+            if (record.typeId !== "asset-instance" || record.typeVersion !== 2) continue;
+            const asset = record.components?.asset;
+            const revision = await this.editorAssets.getRevision(asset.assetId, asset.revision);
+            if (revision.version !== 2) throw visualAssetError(VISUAL_LAYER_ERROR_CODES.INVALID_ACCESS, `Asset ${asset.assetId}@${asset.revision} is not a v2 appearance revision.`);
+            assetInputs.push({ record, revision });
         }
-        const access = await this._visualLayerAccess.get(accessHash);
-        if (!access) {
-            throw visualAssetError(
-                VISUAL_LAYER_ERROR_CODES.ACCESS_NOT_FOUND,
-                `Visual layer access ${accessHash} was not found.`,
-            );
+        if (!baseDescriptor && assetInputs.length === 0) {
+            throw visualAssetError(VISUAL_LAYER_ERROR_CODES.DESCRIPTOR_NOT_FOUND, "pbr-mesh@1 requires the selected environment's visual-layer descriptor or published v2 asset appearance.");
         }
-        assertVisualLayer(descriptor);
-        assertVisualLayerAccess(access);
-        if (hashVisualLayer(descriptor) !== descriptorHash
-            || hashVisualLayerAccess(access) !== accessHash
-            || access.descriptorHash !== descriptorHash) {
-            throw visualAssetError(
-                VISUAL_LAYER_ERROR_CODES.ACCESS_MISMATCH,
-                "The selected visual descriptor or access sidecar has an invalid identity.",
-            );
-        }
-        if (descriptor.sourceWorldHash !== world.hash) {
-            throw visualAssetError(
-                VISUAL_LAYER_ERROR_CODES.WORLD_MISMATCH,
-                `Visual layer ${descriptorHash} is bound to world ${descriptor.sourceWorldHash}, not ${world.hash}.`,
-            );
-        }
-        assertVisualLayerTruthBindings(descriptor, world.description);
 
         const recipe = normalizePbrRenderRecipe(renderRecipe ?? {});
         const actorIds = new Set(vehicles.map((entry) => entry.actorId));
@@ -560,18 +564,23 @@ export class StorageService {
             );
         }
         const recipeRoots = pbrRenderRecipeAssetRoots(recipe);
-        const layerRoots = access.assets.map((entry) => ({
+        const baseLayerRoots = (baseAccess?.assets ?? []).map((entry) => ({
             scope: "visual-layer",
             sha256: entry.sha256,
             useHash: entry.useHash,
         }));
+        const assetRootUseHashes = [...new Set(assetInputs.flatMap((input) => [
+            input.revision.modelUseHash,
+            ...input.revision.definition.materials.flatMap((material) => material.textures.map((texture) => texture.useHash)),
+        ]))].sort();
         const evidenceRecipeRoots = recipeRoots.map((entry) => ({
             scope: entry.scope,
             sha256: entry.asset.sha256,
             useHash: entry.useHash,
         }));
         const rootUseHashes = [...new Set([
-            ...layerRoots.map((entry) => entry.useHash),
+            ...baseLayerRoots.map((entry) => entry.useHash),
+            ...assetRootUseHashes,
             ...recipeRoots.map((entry) => entry.useHash),
         ])].sort();
         let verification;
@@ -593,7 +602,7 @@ export class StorageService {
             throw error;
         }
         const closureUseMap = new Map(verification.closureUses.map((entry) => [entry.useHash, entry.use]));
-        assertVisualLayerAccessMatches(access, descriptor, closureUseMap);
+        if (baseDescriptor) assertVisualLayerAccessMatches(baseAccess, baseDescriptor, closureUseMap);
         for (const root of recipeRoots) {
             const use = closureUseMap.get(root.useHash);
             if (!use || canonicalExactStringify(use.asset) !== canonicalExactStringify(root.asset)) {
@@ -615,6 +624,29 @@ export class StorageService {
             assetsByDigest.set(use.asset.sha256, use.asset);
         }
         const assetClosure = normalizePbrAssetClosure({ assets: [...assetsByDigest.values()] });
+        const assetLayer = compileAssetVisualLayer({ world, inputs: assetInputs, closureUses: verification.closureUses });
+        const descriptor = composeVisualLayers(baseDescriptor, assetLayer.description);
+        const descriptorHash = hashVisualLayer(descriptor);
+        const accessByDigest = new Map();
+        for (const entry of [...(baseAccess?.assets ?? []), ...assetLayer.assetUses]) {
+            const previous = accessByDigest.get(entry.sha256);
+            if (previous && previous.useHash !== entry.useHash) {
+                throw visualAssetError(VISUAL_LAYER_ERROR_CODES.ACCESS_MISMATCH, `Visual composition selected conflicting source uses for ${entry.sha256}.`);
+            }
+            accessByDigest.set(entry.sha256, entry);
+        }
+        const access = normalizeVisualLayerAccess({
+            kind: "cev-sim.visual-layer-access",
+            version: 1,
+            descriptorHash,
+            assets: [...accessByDigest.values()],
+        });
+        assertVisualLayerAccessMatches(access, descriptor, closureUseMap);
+        assertVisualLayerTruthBindings(descriptor, world.description);
+        const accessHash = hashVisualLayerAccess(access);
+        await this._visualLayerDescriptors.put(descriptor);
+        await this._visualLayerAccess.put(access);
+        const layerRoots = access.assets.map((entry) => ({ scope: "visual-layer", sha256: entry.sha256, useHash: entry.useHash }));
         const visualLayer = { description: descriptor, hash: descriptorHash };
         const renderScene = createRenderSceneResource(world, vehicles, selection, {
             visualLayerResource: visualLayer,
@@ -709,13 +741,20 @@ export class StorageService {
             }
             const create = options.create === true;
             const parsed = create
-                ? { manifest: input, expectedRevision: undefined, detachStaleVisual: false, supportedRoadGeometryVersions: [1, 2] }
+                ? {
+                    manifest: input,
+                    expectedRevision: undefined,
+                    detachStaleVisual: false,
+                    supportedRoadGeometryVersions: [1, 2],
+                    supportedAssetMetricVersions: [1],
+                }
                 : parseEnvironmentWriteInput(input);
             return this._commitEnvironment(environmentId, parsed.manifest, {
                 expectedRevision: parsed.expectedRevision,
                 create,
                 detachStaleVisual: parsed.detachStaleVisual === true,
                 supportedRoadGeometryVersions: parsed.supportedRoadGeometryVersions,
+                supportedAssetMetricVersions: parsed.supportedAssetMetricVersions,
             });
         });
     }
@@ -1165,7 +1204,7 @@ export class StorageService {
             definitionHash,
             environment: { hash: environmentHash, manifest: environment },
             world,
-            backendSelections: sortBackendSelections([createPhysicsBackendSelection()]),
+            backendSelections: sortBackendSelections([createPhysicsBackendSelection(world)]),
             scripts,
             vehicles,
             parameters: parameterResolution,
@@ -1800,7 +1839,7 @@ export class StorageService {
             ...(visualLayer ? { visualLayer } : {}),
             ...(renderScene ? { renderScene } : {}),
             ...(evidence ? { evidence } : {}),
-            backendSelections: sortBackendSelections([createPhysicsBackendSelection()]),
+            backendSelections: sortBackendSelections([createPhysicsBackendSelection(world)]),
             scripts,
             bindings: { hash: bindingsHash, entries: selectedBindings },
             scenario: resolvedScenario,
@@ -2879,7 +2918,13 @@ export class StorageService {
         return null;
     }
 
-    async _commitEnvironment(environmentId, manifest, { expectedRevision, create = false, detachStaleVisual = false, supportedRoadGeometryVersions = [1, 2] } = {}) {
+    async _commitEnvironment(environmentId, manifest, {
+        expectedRevision,
+        create = false,
+        detachStaleVisual = false,
+        supportedRoadGeometryVersions = [1, 2],
+        supportedAssetMetricVersions = [1],
+    } = {}) {
         const current = await this._readEnvironment(environmentId);
         const stored = await this._fileStore(this._environmentPath(environmentId), null).read();
         if (create && stored) {
@@ -2890,6 +2935,7 @@ export class StorageService {
             try {
                 assertNoObjectGraphDowngrade(manifest, current, environmentId);
                 assertNoRoadGeometryDowngrade(manifest, current, supportedRoadGeometryVersions);
+                assertNoAssetMetricsDowngrade(manifest, current, supportedAssetMetricVersions);
             } catch (error) {
                 throw environmentPolicyError(error);
             }
@@ -2909,6 +2955,9 @@ export class StorageService {
             && Number(prepared?.document?.roads?.geometryVersion ?? 1) === 2) {
             await this._retainPreRoadGeometryCopy(environmentId, stored);
         }
+        if (stored && !stored?.document?.assetMetrics && prepared?.document?.assetMetrics) {
+            await this._retainPreAssetMetricsCopy(environmentId, stored);
+        }
         try {
             await this._assertVisualReference(prepared);
         } catch (error) {
@@ -2925,11 +2974,36 @@ export class StorageService {
     }
 
     async _assertEditorAssetPins(prepared, current) {
-        const previous = new Map(collectAssetInstanceReferences(current?.document).map((entry) => [entry.objectId, entry]));
-        for (const reference of collectAssetInstanceReferences(prepared?.document)) {
-            const before = previous.get(reference.objectId);
-            if (before?.assetId === reference.assetId && before.revision === reference.revision) continue;
-            await this.editorAssets.getRevision(reference.assetId, reference.revision);
+        const references = collectAssetInstanceReferences(prepared?.document);
+        const currentReferences = new Map(collectAssetInstanceReferences(current?.document).map((entry) => [entry.objectId, entry]));
+        const metricIssues = validateAssetMetricsDomain(prepared?.document);
+        if (metricIssues.length > 0) {
+            const error = new Error(`Environment asset metrics are invalid: ${metricIssues[0].message}`);
+            error.code = "ENVIRONMENT_ASSET_METRICS_INVALID";
+            error.statusCode = 400;
+            error.issues = metricIssues;
+            throw error;
+        }
+        const definitions = new Map((prepared?.document?.assetMetrics?.definitions ?? []).map((entry) => [
+            assetMetricKey(entry.assetId, entry.revision),
+            normalizeAssetMetricDefinition(entry),
+        ]));
+        for (const reference of references) {
+            const instance = prepared?.document?.objects?.find((record) => String(record?.id) === reference.objectId);
+            const typeVersion = Number(instance?.typeVersion ?? 1);
+            const previous = currentReferences.get(reference.objectId);
+            if (typeVersion === 1 && previous?.assetId === reference.assetId && previous?.revision === reference.revision) continue;
+            const revision = await this.editorAssets.getRevision(reference.assetId, reference.revision);
+            if (typeVersion === 2) {
+                if (revision.version !== 2) throw new Error(`Asset instance "${reference.objectId}" uses type v2 but pins a v1 asset revision.`);
+                const expected = assetMetricDefinitionFromRevision(reference.assetId, revision);
+                const actual = definitions.get(assetMetricKey(reference.assetId, reference.revision));
+                if (!actual || JSON.stringify(actual) !== JSON.stringify(expected)) {
+                    throw new Error(`Asset metric snapshot for ${reference.assetId}@${reference.revision} does not match the published revision.`);
+                }
+            } else if (revision?.version === 2) {
+                throw new Error(`Asset instance "${reference.objectId}" must use asset-instance@2 for published revision ${reference.assetId}@${reference.revision}.`);
+            }
         }
     }
 
@@ -2985,6 +3059,22 @@ export class StorageService {
             environmentId,
             fromRoadGeometryVersion: Number(stored?.document?.roads?.geometryVersion ?? 1),
             toRoadGeometryVersion: 2,
+            revision: environmentRevisionOf(stored),
+            migratedAt: new Date().toISOString(),
+            manifest: stored,
+        };
+        await store.write(envelope);
+        return envelope;
+    }
+
+    async _retainPreAssetMetricsCopy(environmentId, stored) {
+        const filePath = path.join(this.environmentMigrationsDir, `${safeSegment(environmentId)}.pre-asset-metrics-v1.json`);
+        const store = this._fileStore(filePath, null);
+        if (await store.read()) return null;
+        const envelope = {
+            kind: "cev-sim.environment-pre-asset-metrics",
+            version: 1,
+            environmentId,
             revision: environmentRevisionOf(stored),
             migratedAt: new Date().toISOString(),
             manifest: stored,

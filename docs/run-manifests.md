@@ -66,6 +66,15 @@ shadows, tone mapping, antialiasing, or dithering, and the static-asset
 versioned canonical primitives and may use explicit CAS mesh/material and
 visual-to-actor transform overrides keyed by a resolved actor ID.
 
+ED-07 published asset revision v2 appearances join this same resolution only
+when a pinned `asset-instance@2` is present and an enabled camera selects
+`pbr-mesh@1`. The resolver converts each compiled GLB/material set into
+visual-layer v1 records namespaced by environment instance and composes them
+with the selected base descriptor, or creates an asset-only descriptor. It
+keeps the base descriptor's exact world binding and verifies every compiled
+model and texture use. State-only, LiDAR-only, and analytic-camera resolution
+does not load these bytes.
+
 An enabled PBR selection requires every enabled camera to agree on exact
 provider and product profile. After all document locks pass, the resolver
 requires the effective environment's descriptor/access sidecar and verifies
@@ -182,12 +191,22 @@ Road geometry v2 dispatches to world-description v2: canonical metric roads
 contain resolved polyline/cubic controls, and drivable roads/junctions are
 indexed meshes compiled under `road-geometry-policy-v1`. Validation
 recompiles the surfaces from their road inputs, so a hash-valid internally
-inconsistent resource is rejected. The same indices and source identities feed
-browser truth, portable LiDAR, and analytic render-scene generation. The
-physics backend selection is pinned to
-`rapier3d-swept-prism-v1` / `0.19.3` with a config hash covering gravity,
-vehicle AABB semantics, and contact-model version. Preparation rejects a
-mismatched selection.
+inconsistent resource is rejected. ED-07 dispatches to world-description v3
+only when a pinned v2 asset has enabled collision or LiDAR records in its
+validated `document.assetMetrics@1` snapshot. V3 compiles instance transforms
+into canonical world-space `assetProxies`, recomputes their bounds, and binds
+them through `metricWorldHash`; revision numbers, names, materials, locks,
+visibility, and generator provenance are excluded. Missing/tampered snapshots
+fail before dispatch. The same indices and source identities feed browser
+truth, portable LiDAR, and analytic render-scene generation.
+
+Legacy worlds pin `rapier3d-swept-prism-v1` / Rapier `0.19.3`. Worlds with
+collision asset proxies pin `rapier3d-swept-compound-v2`, whose config hash
+covers continuous 3D swept AABB/convex SAT, compound contact collapse, and
+UTF-8 earliest-contact order. Browser, direct headless, managed admission, CLI,
+and Python validate the world-derived selection. Supervisor capabilities
+advertise both identities; a prepared run accepts exactly the one its world
+requires.
 
 Canonical roads may include sparse `turnRules` entries shaped as
 `{ nodeId, fromEdgeId, toEdgeId, allowed }`. Rule references, incidence,
@@ -208,7 +227,11 @@ elevation. Broken explicit anchors fail with a structured issue and are never
 replaced by nearest-road projection. Version 3 and 4 proofs must be re-verified
 before new scenario resolution; immutable received bundles retain
 version-scoped compatibility validation. V5 proofs are not current for v2
-roads.
+roads. A world containing asset proxies requires route proof version 8. Its
+`baseAlgorithmVersion` is explicitly 5 or 7, so road distance, lane, and
+geometry behavior remains unchanged, while `metricWorldHash` makes any enabled
+proxy edit require re-verification. Immutable older bundles retain their
+version-scoped validators.
 
 Simulation time is `stepIndex * stepNs`, using integer nanoseconds. Realtime speed changes pacing only. Managed `timer` and `simulation-timer` bindings both advance from this integer clock; wall timers remain available only to library/editor execution. Each fixed step applies inputs, scripts, scenario pre-motion, **controls** (actuator selection/delay/limits), vehicle motion, physics, contacts, clock, transforms (`/tf`, `/tf_static`, and oracle odometry), sensor capture, delayed delivery, assertions, and telemetry in that order. Stable IDs order topics, bindings, vehicles, sensors, colliders, and contact events. Managed runs never write `vehicle.velocity` / `steeringAngle` from raw topic handlers; only `ControlRuntime` applied setpoints reach the plant.
 

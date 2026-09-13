@@ -30,13 +30,15 @@ import { ObjectInspector } from "../ObjectInspector";
 import { SceneHierarchy } from "../SceneHierarchy";
 import { VisualPreviewDiagnostic } from "../VisualPreviewDiagnostic";
 import { AssetPane } from "./AssetPane";
-import { AssetCatalogInspector, AssetPreviewTab } from "./AssetPreviewTab";
+import { AssetCatalogInspector, AssetPreviewTab, AssetStudioHierarchy } from "./AssetPreviewTab";
 import { EditorToolbar } from "./EditorToolbar";
 import { EditorTopBar } from "./EditorTopBar";
 import { PaneSplitter } from "./PaneSplitter";
 import { WorkspacePane } from "./WorkspacePane";
 import { useElementRect } from "./useElementRect";
 import { AuthoringModeProvider } from "../../../ui";
+import { assetStudioCommands } from "../../editor/commands/assetStudioCommands.js";
+import { extractAssetSourceGeometries } from "../../editor/assets/AssetModelLoader.js";
 
 const PANE_TITLES = { hierarchy: "Hierarchy", inspector: "Inspector", assets: "Assets" };
 
@@ -60,6 +62,7 @@ export function EditorWorkspace({ data, activeEnvironmentId, onEnvironmentChange
     const [editorSnapshot, setEditorSnapshot] = useState(null);
     const [selectionSnapshot, setSelectionSnapshot] = useState(null);
     const [documentSnapshot, setDocumentSnapshot] = useState(null);
+    const [closingAssetTab, setClosingAssetTab] = useState(null);
     const canvasHostRef = useRef(null);
 
     useEffect(() => {
@@ -186,7 +189,7 @@ export function EditorWorkspace({ data, activeEnvironmentId, onEnvironmentChange
                     style={{ gridColumn: 1, gridRow: 2 }}
                     className="border-r border-[var(--slate-border-60)]"
                 >
-                    <SceneHierarchy data={data} />
+                    {activeAssetTab ? <AssetStudioHierarchy data={data} tab={activeAssetTab} /> : <SceneHierarchy data={data} />}
                 </WorkspacePane>
             )}
             {!panesHidden && splitter("hierarchy", "row-start-2 col-start-2")}
@@ -201,16 +204,49 @@ export function EditorWorkspace({ data, activeEnvironmentId, onEnvironmentChange
                     const raw = event.dataTransfer.getData("application/x-cev-editor-asset");
                     if (!raw) return;
                     event.preventDefault();
-                    try { void data.environment?.()?.toolController?.dropAsset?.(JSON.parse(raw), event, event.currentTarget.getBoundingClientRect()); } catch { /* malformed external drag */ }
+                    try {
+                        const dropped = JSON.parse(raw);
+                        if (activeAssetTab) {
+                            const session = data.environment?.()?.assets?.()?.sessions?.get?.(activeAssetTab.id);
+                            if (!session || dropped.kind !== "catalog") return;
+                            const base = `ref-${String(dropped.assetId).replace(/[^A-Za-z0-9._-]/g, "-")}`;
+                            let suffix = 1; let id = base;
+                            while (session.document.getPart(id)) { suffix += 1; id = `${base}-${suffix}`; }
+                            const runtime = data.environment?.()?.assets?.();
+                            void (async () => {
+                                const child = await runtime.repository.getRevision(dropped.assetId, dropped.revision);
+                                const lease = await runtime.models.acquire(child.modelUseHash);
+                                try {
+                                    session.resolvedChildren[`${dropped.assetId}@${dropped.revision}`] = {
+                                        ...child, geometry: Object.fromEntries(extractAssetSourceGeometries(lease)),
+                                    };
+                                    session.bus.execute(assetStudioCommands.addPart({
+                                        id, parentId: null, order: session.document.parts.length,
+                                        name: String(dropped.label ?? dropped.assetId),
+                                        transform: { position: [0, 0, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1] },
+                                        content: { kind: "asset-reference", assetId: String(dropped.assetId), revision: Number(dropped.revision) },
+                                        appearanceVisible: true, materialBindings: {},
+                                    }));
+                                } finally { lease.release(); }
+                            })().catch((error) => {
+                                session.error = error;
+                                session.notify();
+                            });
+                        } else void data.environment?.()?.toolController?.dropAsset?.(dropped, event, event.currentTarget.getBoundingClientRect());
+                    } catch { /* malformed external drag */ }
                 }}
             >
-                {!panesHidden && <EditorToolbar data={data} />}
+                {!panesHidden && sceneTabActive && <EditorToolbar data={data} />}
                 {!panesHidden && (
                     <nav aria-label="Workspace tabs" className="pointer-events-auto flex h-8 shrink-0 items-end gap-0.5 border-b border-[var(--slate-border-60)] bg-[var(--slate-surface-1)] px-1">
                         <button type="button" aria-current={sceneTabActive ? "page" : undefined} onClick={() => data.editor?.()?.setWorkspaceTab?.("scene")} className="h-7 rounded-t px-3 text-xs hover:bg-[var(--slate-surface-hover)]">Scene</button>
                         {workspace.assetTabs.map((tab) => <span key={tab.id} className="flex h-7 items-center rounded-t bg-[var(--slate-surface-2)]">
-                            <button type="button" aria-current={workspace.activeTabId === tab.id ? "page" : undefined} onClick={() => data.editor?.()?.setWorkspaceTab?.(tab.id)} onDoubleClick={() => data.editor?.()?.pinAssetTab?.(tab.id)} className="h-full max-w-40 truncate px-2 text-xs">{tab.name} · r{tab.revision}{tab.pinned ? " •" : ""}</button>
-                            <button type="button" aria-label={`Close ${tab.name} preview`} onClick={() => data.editor?.()?.closeAssetTab?.(tab.id)} className="h-full px-1.5 text-zinc-400 hover:text-zinc-100">×</button>
+                            <button type="button" aria-current={workspace.activeTabId === tab.id ? "page" : undefined} onClick={() => data.editor?.()?.setWorkspaceTab?.(tab.id)} onDoubleClick={() => data.editor?.()?.pinAssetTab?.(tab.id)} className="h-full max-w-40 truncate px-2 text-xs">{tab.name} · r{tab.revision}{tab.dirty ? " *" : tab.pinned ? " •" : ""}</button>
+                            <button type="button" aria-label={`Close ${tab.name} studio`} onClick={() => {
+                                const session = data.environment?.()?.assets?.()?.sessions?.get?.(tab.id);
+                                if (tab.dirty || session?.dirty) { setClosingAssetTab({ ...tab, dirty: true }); return; }
+                                if (data.editor?.()?.closeAssetTab?.(tab.id)) data.environment?.()?.assets?.()?.sessions?.close?.(tab.id, { discard: true });
+                            }} className="h-full px-1.5 text-zinc-400 hover:text-zinc-100">×</button>
                         </span>)}
                     </nav>
                 )}
@@ -266,6 +302,28 @@ export function EditorWorkspace({ data, activeEnvironmentId, onEnvironmentChange
                     <AssetPane data={data} />
                 </WorkspacePane>
             )}
+            {closingAssetTab && <div className="pointer-events-auto fixed inset-0 z-50 flex items-center justify-center bg-black/60" role="presentation">
+                <div role="dialog" aria-modal="true" aria-labelledby="asset-close-title" className="w-96 rounded-lg border border-zinc-700 bg-zinc-900 p-4 shadow-xl">
+                    <h2 id="asset-close-title" className="text-sm font-medium text-zinc-100">Save changes to {closingAssetTab.name}?</h2>
+                    <p className="mt-2 text-xs text-zinc-400">This asset studio has unpublished changes.</p>
+                    <div className="mt-4 flex justify-end gap-2">
+                        <button type="button" onClick={() => setClosingAssetTab(null)} className="rounded border border-zinc-700 px-3 py-1.5 text-xs">Cancel</button>
+                        <button type="button" onClick={() => {
+                            data.environment?.()?.assets?.()?.sessions?.close?.(closingAssetTab.id, { discard: true });
+                            data.editor?.()?.closeAssetTab?.(closingAssetTab.id, { discard: true });
+                            setClosingAssetTab(null);
+                        }} className="rounded border border-zinc-700 px-3 py-1.5 text-xs">Discard</button>
+                        <button type="button" onClick={() => {
+                            const session = data.environment?.()?.assets?.()?.sessions?.get?.(closingAssetTab.id);
+                            void session?.save({ publicationId: globalThis.crypto?.randomUUID?.() ?? `publication-${Date.now()}` }).then(() => {
+                                data.environment?.()?.assets?.()?.sessions?.close?.(closingAssetTab.id, { discard: true });
+                                data.editor?.()?.closeAssetTab?.(closingAssetTab.id, { discard: true });
+                                setClosingAssetTab(null);
+                            }).catch(() => {});
+                        }} className="rounded bg-blue-600 px-3 py-1.5 text-xs text-white">Save</button>
+                    </div>
+                </div>
+            </div>}
         </div>
     );
 }

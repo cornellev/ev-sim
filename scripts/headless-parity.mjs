@@ -10,6 +10,8 @@ import { HeadlessEpisode } from "../app/simulation/headless/HeadlessEpisode.js";
 import { createHeadlessRuntimeContext } from "../app/simulation/headless/HeadlessRuntimeContext.js";
 import { SimulationKernel } from "../app/simulation/kernel/SimulationKernel.js";
 import { SimulationEngine } from "../app/simulation/SimulationEngine.js";
+import { compileAssetDefinition } from "../app/editor-assets/AssetCompiler.js";
+import { normalizeAssetDefinition } from "../app/editor-assets/AssetDefinition.js";
 import { canonicalStringify } from "../app/simulation/RunManifest.js";
 import { HeadlessRunner } from "../server/headless/HeadlessRunner.js";
 import {
@@ -79,6 +81,56 @@ const FINISH_TRIGGER = Object.freeze([{
     condition: { kind: "step", step: ACTIONS.length },
     actions: [{ kind: "finish" }],
 }]);
+
+function proxyTransform(position, scale = [1, 1, 1]) {
+    return { position, quaternion: [0, 0, 0, 1], scale };
+}
+
+function assetMetricParityEnvironment(roadFixture) {
+    const childDefinition = normalizeAssetDefinition({
+        kind: "cev-sim.asset-definition", version: 1,
+        normalization: { metersPerUnit: 1, orientation: [0, 0, 0, 1], pivot: [0, 0, 0] },
+        sources: [], parts: [], materials: [],
+        lidarProxies: [
+            { id: "vehicle-zone", kind: "box", enabled: true, semantic: "vehicle", transform: proxyTransform([0, 1, 0]), size: [2, 2, 2] },
+            { id: "pedestrian-zone", kind: "cylinder", enabled: true, semantic: "pedestrian", transform: proxyTransform([0, 1, 2]), radius: 0.6, height: 2 },
+        ],
+        collisionProxies: [
+            { id: "compound-a", kind: "box", enabled: true, transform: proxyTransform([0, 1, 0]), size: [2, 2, 2] },
+            { id: "compound-b", kind: "box", enabled: true, transform: proxyTransform([0, 1, 2]), size: [1, 2, 1] },
+        ],
+    });
+    const child = compileAssetDefinition(childDefinition);
+    const parentDefinition = normalizeAssetDefinition({
+        kind: "cev-sim.asset-definition", version: 1,
+        normalization: { metersPerUnit: 1, orientation: [0, 0, 0, 1], pivot: [0, 0, 0] },
+        sources: [], materials: [], lidarProxies: [], collisionProxies: [],
+        parts: [
+            { id: "scaled-frame", parentId: null, order: 0, name: "Scaled frame", transform: proxyTransform([0, 0, 0], [1.5, 0.75, 1.25]), content: { kind: "group" }, appearanceVisible: true, materialBindings: {} },
+            { id: "child", parentId: "scaled-frame", order: 0, name: "Pinned child", transform: { position: [0, 0, 0], quaternion: [0, Math.sin(Math.PI / 12), 0, Math.cos(Math.PI / 12)], scale: [0.8, 1.2, 1.1] }, content: { kind: "asset-reference", assetId: "parity-child", revision: 4 }, appearanceVisible: true, materialBindings: {} },
+        ],
+    });
+    const parent = compileAssetDefinition(parentDefinition, { resolvedChildren: {
+        "parity-child@4": { modelUseHash: "a".repeat(64), geometryHash: "b".repeat(64), appearance: [], metric: child.metric },
+    } });
+    return {
+        ...structuredClone(roadFixture),
+        environmentId: "asset-metric-parity",
+        objectGraphVersion: 1,
+        objects: [{
+            id: "parity-assembly-instance", typeId: "asset-instance", typeVersion: 2,
+            name: "Parity assembly", parentId: null, order: 0,
+            components: {
+                tags: [], locked: false, editorHidden: false,
+                asset: { assetId: "parity-assembly", revision: 7, position: { x: 8, y: 0, z: 0 }, rotationY: 0, scale: { x: 1, y: 1, z: 1 }, overrides: {} },
+            },
+        }],
+        assetMetrics: { version: 1, definitions: [{
+            assetId: "parity-assembly", revision: 7, metricHash: parent.metricHash,
+            collision: parent.metric.collision, lidar: parent.metric.lidar,
+        }] },
+    };
+}
 
 function packedBytes(value) {
     if (Buffer.isBuffer(value)) return value;
@@ -467,10 +519,12 @@ async function main() {
         const stateBundle = await createStateBundle({ triggers: FINISH_TRIGGER });
         const lidarBundle = await createLidarBundle({ triggers: FINISH_TRIGGER });
         const roadGeometryBundle = await createLidarBundle({ triggers: FINISH_TRIGGER, environment: roadGeometryFixture });
+        const assetMetricBundle = await createLidarBundle({ triggers: FINISH_TRIGGER, environment: assetMetricParityEnvironment(roadGeometryFixture) });
         const cases = [
             await runCase("state-only", stateBundle, running, client, options),
             await runCase("cpu-lidar", lidarBundle, running, client, options),
             await runCase("road-geometry-v2", roadGeometryBundle, running, client, options),
+            await runCase("asset-assembly-metric-v1", assetMetricBundle, running, client, options),
         ];
         const report = createReport(PARITY_REPORT_KIND, {
             provenance: processProvenance(),

@@ -2,6 +2,12 @@
 
 import { ASSET_INSTANCE_TYPE_ID } from "../objects/types/assetInstance.js";
 import { validateAssetInstanceComponent } from "../../../editor-assets/EditorAssetContract.js";
+import {
+    assetMetricDefinitionFromRevision,
+    reconcileAssetMetricDefinitions,
+    validateAssetMetricDefinition,
+    validateAssetMetricsDomain,
+} from "../../../editor-assets/AssetMetricSnapshot.js";
 import { commandFailure, commandIssue, commandSuccess, COMMAND_ISSUE_CODES } from "./commandIssues.js";
 import { nextSiblingOrder, setObjectComponent, upsertObjectRecord } from "./objectMutations.js";
 
@@ -9,7 +15,7 @@ function equal(left, right) {
     return JSON.stringify(left) === JSON.stringify(right);
 }
 
-export function placeAssetInstance({ record, label = "Place asset" } = {}) {
+export function placeAssetInstance({ record, publishedRevision = null, label = "Place asset" } = {}) {
     return {
         id: "place-asset-instance",
         label,
@@ -23,10 +29,19 @@ export function placeAssetInstance({ record, label = "Place asset" } = {}) {
             const asset = record.components?.asset;
             const issues = validateAssetInstanceComponent(asset);
             if (issues.length > 0) return commandFailure(issues);
+            const metricDefinition = assetMetricDefinitionFromRevision(asset.assetId, publishedRevision);
+            const typeVersion = metricDefinition ? 2 : 1;
+            if (publishedRevision && Number(publishedRevision.revision) !== Number(asset.revision)) {
+                return commandFailure(commandIssue(COMMAND_ISSUE_CODES.ASSET_MISMATCH, "Published revision does not match the placed asset pin."));
+            }
+            if (typeVersion === 2) {
+                const metricIssues = validateAssetMetricDefinition(metricDefinition);
+                if (metricIssues.length > 0) return commandFailure(metricIssues);
+            }
             const parentId = record.parentId === undefined || record.parentId === "" ? null : record.parentId;
             const result = upsertObjectRecord(ctx.document, {
                 ...structuredClone(record),
-                typeVersion: 1,
+                typeVersion,
                 parentId,
                 order: Number.isInteger(record.order) ? record.order : nextSiblingOrder(ctx.document.objects, parentId),
                 components: {
@@ -36,6 +51,9 @@ export function placeAssetInstance({ record, label = "Place asset" } = {}) {
                 },
             }, { notify: false });
             if (!result.ok) return commandFailure(commandIssue(COMMAND_ISSUE_CODES.MUTATION_FAILED, result.error));
+            if (metricDefinition) reconcileAssetMetricDefinitions(ctx.document, [metricDefinition]);
+            const domainIssues = validateAssetMetricsDomain(ctx.document);
+            if (domainIssues.length > 0) return commandFailure(domainIssues);
             return commandSuccess({ objectId: result.record.id, assetId: asset.assetId, revision: asset.revision });
         },
     };
@@ -45,6 +63,7 @@ export function updateAssetInstances({
     expectedDocumentVersion,
     targetRevision,
     changes = [],
+    publishedRevision = null,
     label = "Update asset instances",
 } = {}) {
     return {
@@ -61,6 +80,14 @@ export function updateAssetInstances({
                 return commandFailure(commandIssue(COMMAND_ISSUE_CODES.ARGUMENT_INVALID, "A positive target revision and at least one instance change are required."));
             }
             const prepared = [];
+            const metricDefinition = assetMetricDefinitionFromRevision(changes[0]?.afterAsset?.assetId, publishedRevision);
+            if (publishedRevision && Number(publishedRevision.revision) !== Number(targetRevision)) {
+                return commandFailure(commandIssue(COMMAND_ISSUE_CODES.ASSET_MISMATCH, "Published revision does not match the prepared target revision."));
+            }
+            if (metricDefinition) {
+                const metricIssues = validateAssetMetricDefinition(metricDefinition);
+                if (metricIssues.length > 0) return commandFailure(metricIssues);
+            }
             let assetId = null;
             const seen = new Set();
             for (const change of changes) {
@@ -88,9 +115,15 @@ export function updateAssetInstances({
                 }
                 const issues = validateAssetInstanceComponent(next);
                 if (issues.length > 0) return commandFailure(issues);
-                prepared.push({ objectId, value: next });
+                prepared.push({ objectId, value: next, typeVersion: metricDefinition ? 2 : 1 });
             }
-            for (const change of prepared) setObjectComponent(ctx.document, change.objectId, "asset", change.value, { notify: false });
+            for (const change of prepared) {
+                setObjectComponent(ctx.document, change.objectId, "asset", change.value, { notify: false });
+                ctx.document.getObject(change.objectId).typeVersion = change.typeVersion;
+            }
+            reconcileAssetMetricDefinitions(ctx.document, metricDefinition ? [metricDefinition] : []);
+            const domainIssues = validateAssetMetricsDomain(ctx.document);
+            if (domainIssues.length > 0) return commandFailure(domainIssues);
             return commandSuccess({ objectIds: prepared.map((entry) => entry.objectId), assetId, targetRevision });
         },
     };

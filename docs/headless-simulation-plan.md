@@ -1069,3 +1069,30 @@ characterization SHA-256 values remain
 `1ba8c8c40e1560ac044f4ca5384065ab83c93529d65b5672fee8dc5ed42a5ced`
 and `60dc0bd2b02a9ec768f833070ce4d8d2047f5383838f09ea3f130dd31552dd6f`.
 There is no simulator characterization delta.
+
+### 2026-09-13 — ED-07 adds metric asset worlds and published PBR appearance
+
+The separate environment-editor program adds world-description v3 only when a
+validated `document.assetMetrics@1` snapshot contains an enabled collision or
+LiDAR product. V3 freezes canonical world-space `assetProxies` and
+`metricWorldHash`; route proof version 8 binds that identity while explicitly
+retaining road algorithm 5 or 7. Collision-proxy worlds select the additive
+`rapier3d-swept-compound-v2` backend, and CPU LiDAR consumes only enabled LiDAR
+records. Legacy worlds retain their previous world, route, physics, sensor,
+and episode identities.
+
+Published asset revision v2 appearance is composed into the existing
+visual-layer v1 closure only when an enabled camera selects `pbr-mesh@1`.
+Browser, direct headless, supervisor, CLI, Python, and packaged execution
+validate the same immutable world-derived physics selection and source-bound
+appearance bytes. This is ED-07 integration work, not a headless PR 13. It
+does not close the outstanding PR 12 hosted, soak, x64 NVIDIA, or Jetson ARM64
+candidate evidence gates.
+
+The ED-07 parity gate passed its state-only, CPU-LiDAR, road-geometry-v2, and
+`asset-assembly-metric-v1` cases across browser, direct, CLI, Unix supervisor,
+and Python execution. The full suite passed 1200/1204 with four declared
+hardware skips and zero failures; the Python suite passed 68/68. Headless and
+environment compatibility fixtures retained their existing hashes. The
+separately invoked packaged PBR case executed 1/1 on Apple M1 Max ANGLE Metal;
+that local result is not the outstanding x64 NVIDIA or Jetson ARM64 evidence.

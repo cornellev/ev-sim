@@ -11,11 +11,13 @@ import { canonicalFiniteNumber, canonicalizeSimulationValue, simulationSha256 } 
 import { authorRoadsFromMetric, cloneRoadGeometry, normalizeMetricRoads, roadGeometryVersionOf, validateRoadDomain } from "../../roads/RoadGeometryRecord.js";
 import { compileRoadNetworkGeometry, planRoadNetworkGeometry } from "../../roads/RoadNetworkGeometry.js";
 import { ROAD_GEOMETRY_POLICY_V1 } from "../../roads/RoadGeometryPolicy.js";
+import { validateAssetMetricsDomain } from "../../editor-assets/AssetMetricSnapshot.js";
 
 export const WORLD_DESCRIPTION_KIND = "cev-sim.world-description";
 export const WORLD_DESCRIPTION_VERSION = 1;
 export const WORLD_DESCRIPTION_V2 = 2;
-export const SUPPORTED_WORLD_DESCRIPTION_VERSIONS = Object.freeze([WORLD_DESCRIPTION_VERSION, WORLD_DESCRIPTION_V2]);
+export const WORLD_DESCRIPTION_V3 = 3;
+export const SUPPORTED_WORLD_DESCRIPTION_VERSIONS = Object.freeze([WORLD_DESCRIPTION_VERSION, WORLD_DESCRIPTION_V2, WORLD_DESCRIPTION_V3]);
 
 const textEncoder = new TextEncoder();
 const DEFAULT_ROAD_WIDTH = 7;
@@ -487,6 +489,77 @@ function sourceManifest(value) {
     return value?.manifest?.document ? value.manifest : value;
 }
 
+function transformAssetMetricPoint(point, instance, label) {
+    if (!Array.isArray(point) || point.length !== 3) throw new TypeError(`${label} must be an xyz array.`);
+    const c = Math.cos(finite(instance.rotationY, `${label} instance yaw`));
+    const s = Math.sin(instance.rotationY);
+    const sx = positive(instance.scale?.x, `${label} instance scale.x`);
+    const sy = positive(instance.scale?.y, `${label} instance scale.y`);
+    const sz = positive(instance.scale?.z, `${label} instance scale.z`);
+    const x = finite(point[0], `${label} x`) * sx;
+    const y = finite(point[1], `${label} y`) * sy;
+    const z = finite(point[2], `${label} z`) * sz;
+    return [
+        finite(instance.position?.x, `${label} instance position.x`) + c * x + s * z,
+        finite(instance.position?.y, `${label} instance position.y`) + y,
+        finite(instance.position?.z, `${label} instance position.z`) - s * x + c * z,
+    ];
+}
+
+function meshBounds(vertices) {
+    return {
+        min: { x: Math.min(...vertices.map((point) => point[0])), y: Math.min(...vertices.map((point) => point[1])), z: Math.min(...vertices.map((point) => point[2])) },
+        max: { x: Math.max(...vertices.map((point) => point[0])), y: Math.max(...vertices.map((point) => point[1])), z: Math.max(...vertices.map((point) => point[2])) },
+    };
+}
+
+function compileAssetProxyChannel(records, instance, instanceId, channel) {
+    return records.map((record, index) => {
+        const id = `${instanceId}/${identifier(record.id, `${channel} proxy ${index} ID`)}`;
+        const vertices = record.vertices.map((point, vertexIndex) => transformAssetMetricPoint(point, instance, `${id} vertex ${vertexIndex}`));
+        return {
+            id,
+            sourceId: instanceId,
+            kind: channel === "collision" ? "convex" : "mesh",
+            ...(channel === "lidar" ? { semantic: identifier(record.semantic, `${id} semantic class`) } : {}),
+            vertices,
+            triangles: record.triangles.map((triangle) => [...triangle]),
+            bounds: meshBounds(vertices),
+        };
+    }).sort((left, right) => compareUtf8(left.id, right.id));
+}
+
+function compileAssetProxies(document) {
+    const issues = validateAssetMetricsDomain(document);
+    if (issues.length > 0) throw Object.assign(new TypeError(issues[0].message), { issues });
+    const metrics = new Map((document.assetMetrics?.definitions ?? []).map((entry) => [`${entry.assetId}@${entry.revision}`, entry]));
+    return (document.objects ?? [])
+        .filter((record) => record.typeId === "asset-instance" && record.typeVersion === 2)
+        .map((record) => {
+            const instance = record.components.asset;
+            const metric = metrics.get(`${instance.assetId}@${instance.revision}`);
+            return {
+                id: String(record.id),
+                sourceId: String(record.id),
+                collision: compileAssetProxyChannel(metric.collision, instance, String(record.id), "collision"),
+                lidar: compileAssetProxyChannel(metric.lidar, instance, String(record.id), "lidar"),
+            };
+        })
+        .filter((entry) => entry.collision.length > 0 || entry.lidar.length > 0)
+        .sort((left, right) => compareUtf8(left.id, right.id));
+}
+
+function boundsWithAssetProxies(base, assetProxies) {
+    const points = [base.min, base.max];
+    for (const instance of assetProxies) for (const proxy of [...instance.collision, ...instance.lidar]) {
+        points.push(proxy.bounds.min, proxy.bounds.max);
+    }
+    return {
+        min: { x: Math.min(...points.map((point) => point.x)), y: Math.min(...points.map((point) => point.y)), z: Math.min(...points.map((point) => point.z)) },
+        max: { x: Math.max(...points.map((point) => point.x)), y: Math.max(...points.map((point) => point.y)), z: Math.max(...points.map((point) => point.z)) },
+    };
+}
+
 export function createWorldDescriptionV1(value = {}) {
     const manifest = sourceManifest(value) ?? {};
     const document = manifest.document ?? {};
@@ -609,6 +682,22 @@ export function createWorldDescriptionV2(value = {}) {
     });
 }
 
+export function createWorldDescriptionV3(value = {}) {
+    const manifest = sourceManifest(value) ?? {};
+    const document = manifest.document ?? {};
+    const geometryVersion = roadGeometryVersionOf({ roads: selectRoadDomain(manifest, document, null).value });
+    const base = geometryVersion === 2 ? createWorldDescriptionV2(value) : createWorldDescriptionV1(value);
+    const assetProxies = compileAssetProxies(document);
+    if (assetProxies.length === 0) throw new TypeError("World description v3 requires at least one enabled asset metric product.");
+    return canonicalizeSimulationValue({
+        ...base,
+        version: WORLD_DESCRIPTION_V3,
+        assetProxies,
+        metricWorldHash: simulationSha256(assetProxies),
+        bounds: boundsWithAssetProxies(base.bounds, assetProxies),
+    });
+}
+
 export function createWorldDescription(value = {}) {
     const manifest = sourceManifest(value) ?? {};
     const document = manifest.document ?? {};
@@ -617,6 +706,12 @@ export function createWorldDescription(value = {}) {
         : null;
     const roadDomain = selectRoadDomain(manifest, document, fallbackDocument);
     const geometryVersion = roadGeometryVersionOf({ roads: roadDomain.value });
+    const metricIssues = validateAssetMetricsDomain(document);
+    if (metricIssues.length > 0) throw Object.assign(new TypeError(metricIssues[0].message), { issues: metricIssues });
+    const hasAssetMetrics = (document.assetMetrics?.definitions ?? []).some((entry) => (
+        (entry.collision?.length ?? 0) > 0 || (entry.lidar?.length ?? 0) > 0
+    ));
+    if (hasAssetMetrics) return createWorldDescriptionV3(value);
     if (geometryVersion === 2) return createWorldDescriptionV2(value);
     if (geometryVersion === 1) return createWorldDescriptionV1(value);
     throw new TypeError(`Unsupported road geometry version: ${String(geometryVersion)}.`);
@@ -638,7 +733,7 @@ export function assertWorldResource(resource) {
     if (!resource?.description || !resource?.hash) throw new TypeError("Resolved world resource is required.");
     const hash = hashWorldDescription(resource.description);
     if (hash !== resource.hash) throw new Error(`Resolved world hash mismatch: expected ${resource.hash}, computed ${hash}.`);
-    if (resource.description.version === WORLD_DESCRIPTION_V2) {
+    if (resource.description.version === WORLD_DESCRIPTION_V2 || (resource.description.version === WORLD_DESCRIPTION_V3 && resource.description.roadGeometryPolicy)) {
         if (resource.description.roadGeometryPolicy?.id !== ROAD_GEOMETRY_POLICY_V1.id
             || resource.description.roadGeometryPolicy?.version !== ROAD_GEOMETRY_POLICY_V1.version) {
             throw new Error("Resolved world uses an unsupported road geometry policy.");
@@ -649,5 +744,52 @@ export function assertWorldResource(resource) {
             throw new Error("Resolved world road surfaces do not match their canonical road inputs.");
         }
     }
+    if (resource.description.version === WORLD_DESCRIPTION_V3) assertAssetProxies(resource.description);
     return resource.description;
+}
+
+function vector3Difference(left, right) {
+    return [left[0] - right[0], left[1] - right[1], left[2] - right[2]];
+}
+
+function cross3(left, right) {
+    return [left[1] * right[2] - left[2] * right[1], left[2] * right[0] - left[0] * right[2], left[0] * right[1] - left[1] * right[0]];
+}
+
+function dot3(left, right) {
+    return left[0] * right[0] + left[1] * right[1] + left[2] * right[2];
+}
+
+function assertProxyMesh(proxy, { convex = false } = {}) {
+    if (!Array.isArray(proxy.vertices) || proxy.vertices.length < (convex ? 4 : 3)) throw new TypeError(`Asset proxy "${proxy.id}" has insufficient vertices.`);
+    if (!Array.isArray(proxy.triangles) || proxy.triangles.length === 0) throw new TypeError(`Asset proxy "${proxy.id}" has no triangles.`);
+    proxy.vertices.forEach((point) => {
+        if (!Array.isArray(point) || point.length !== 3 || point.some((value) => !Number.isFinite(value))) throw new TypeError(`Asset proxy "${proxy.id}" contains an invalid vertex.`);
+    });
+    const center = proxy.vertices.reduce((sum, point) => sum.map((value, axis) => value + point[axis]), [0, 0, 0]).map((value) => value / proxy.vertices.length);
+    for (const triangle of proxy.triangles) {
+        if (!Array.isArray(triangle) || triangle.length !== 3 || new Set(triangle).size !== 3 || triangle.some((index) => !Number.isInteger(index) || index < 0 || index >= proxy.vertices.length)) throw new TypeError(`Asset proxy "${proxy.id}" contains invalid indices.`);
+        const [a, b, c] = triangle.map((index) => proxy.vertices[index]);
+        const normal = cross3(vector3Difference(b, a), vector3Difference(c, a));
+        if (Math.hypot(...normal) <= 1e-12) throw new TypeError(`Asset proxy "${proxy.id}" contains a degenerate face.`);
+        if (convex) {
+            const faceCenter = a.map((value, axis) => (value + b[axis] + c[axis]) / 3);
+            if (dot3(normal, vector3Difference(faceCenter, center)) <= 1e-12) throw new TypeError(`Asset proxy "${proxy.id}" has inconsistent winding.`);
+            if (proxy.vertices.some((point) => dot3(normal, vector3Difference(point, a)) > 1e-9)) throw new TypeError(`Asset proxy "${proxy.id}" is not convex.`);
+        }
+    }
+    if (JSON.stringify(canonicalizeSimulationValue(meshBounds(proxy.vertices))) !== JSON.stringify(proxy.bounds)) throw new TypeError(`Asset proxy "${proxy.id}" bounds do not match its vertices.`);
+}
+
+function assertAssetProxies(description) {
+    if (!Array.isArray(description.assetProxies) || description.assetProxies.length === 0) throw new TypeError("World v3 requires assetProxies.");
+    const instanceIds = new Set();
+    for (const instance of description.assetProxies) {
+        if (instanceIds.has(instance.id) || instance.sourceId !== instance.id) throw new TypeError(`Asset proxy source ID "${instance.id}" is invalid or duplicated.`);
+        instanceIds.add(instance.id);
+        for (const proxy of instance.collision ?? []) assertProxyMesh(proxy, { convex: true });
+        for (const proxy of instance.lidar ?? []) assertProxyMesh(proxy);
+    }
+    if (description.metricWorldHash !== simulationSha256(description.assetProxies)) throw new TypeError("World v3 metricWorldHash does not match asset proxies.");
+    if (JSON.stringify(canonicalizeSimulationValue(boundsWithAssetProxies(aggregateBounds(description.roads, description.drivableSurfaces, description.obstacles), description.assetProxies))) !== JSON.stringify(description.bounds)) throw new TypeError("World v3 bounds do not include its asset proxies.");
 }

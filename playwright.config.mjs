@@ -32,7 +32,7 @@ export default defineConfig({
             NODE_ENV: "production",
             PORT: "3100",
             CEV_SIM_NEXT_DIR: ".next-playwright",
-            CEV_SIM_DATA_DIR: ".playwright-data/storage",
+            CEV_SIM_DATA_DIR: process.env.CEV_SIM_DATA_DIR ?? ".playwright-data/storage",
             CEV_SIM_LOGS_DIR: ".playwright-data/logs",
         },
     },

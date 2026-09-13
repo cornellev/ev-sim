@@ -127,11 +127,12 @@ function transformBinding(record, options) {
     });
 }
 
-export function createAssetInstanceType() {
+export function createAssetInstanceType(version = 1) {
+    if (version !== 1 && version !== 2) throw new TypeError(`Unsupported asset-instance version ${version}.`);
     const options = new AssetInstanceOptions();
     return defineObjectType({
         typeId: ASSET_INSTANCE_TYPE_ID,
-        version: 1,
+        version,
         label: "Asset instance",
         catalog: { label: "Asset instance", kind: "asset-instance", layer: "props" },
         legacy: null,
@@ -151,8 +152,12 @@ export function createAssetInstanceType() {
         planOptions(record, value) {
             return { steps: [{ op: "set-object-component", objectId: String(record.id), key: "asset", value }], issues: [] };
         },
-        compileMetric() {
-            return null;
+        compileMetric(record, context = {}) {
+            if (version === 1) return null;
+            const asset = record.components?.asset;
+            return context.assetMetrics?.definitions?.find((entry) => (
+                entry.assetId === asset?.assetId && entry.revision === asset?.revision
+            )) ?? null;
         },
     });
 }

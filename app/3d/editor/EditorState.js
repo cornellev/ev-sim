@@ -468,6 +468,23 @@ export class EditorState {
         this.notify();
     }
 
+    setAssetTabDirty(tabId, dirty) {
+        const tab = this.workspace.assetTabs.find((entry) => entry.id === String(tabId));
+        const next = dirty === true;
+        if (!tab || tab.dirty === next) return;
+        tab.dirty = next;
+        if (next) tab.pinned = true;
+        this.notify();
+    }
+
+    updateAssetTabRevision(tabId, revision) {
+        const tab = this.workspace.assetTabs.find((entry) => entry.id === String(tabId));
+        const next = Number(revision);
+        if (!tab || !Number.isInteger(next) || next <= 0 || tab.revision === next) return;
+        tab.revision = next;
+        this.notify();
+    }
+
     setWorkspaceTab(tabId) {
         const id = String(tabId ?? "scene");
         if (id !== "scene" && !this.workspace.assetTabs.some((tab) => tab.id === id)) return;
@@ -476,13 +493,15 @@ export class EditorState {
         this.notify();
     }
 
-    closeAssetTab(tabId) {
+    closeAssetTab(tabId, { discard = false } = {}) {
         const id = String(tabId);
         const index = this.workspace.assetTabs.findIndex((tab) => tab.id === id);
         if (index < 0) return;
+        if (this.workspace.assetTabs[index].dirty && !discard) return false;
         this.workspace.assetTabs.splice(index, 1);
         if (this.workspace.activeTabId === id) this.workspace.activeTabId = "scene";
         this.notify();
+        return true;
     }
 
 

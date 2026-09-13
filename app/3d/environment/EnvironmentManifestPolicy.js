@@ -39,6 +39,8 @@ export const ENVIRONMENT_SCHEMA_DOWNGRADE = "ENVIRONMENT_SCHEMA_DOWNGRADE";
 export const ENVIRONMENT_OBJECT_GRAPH_INVALID = "ENVIRONMENT_OBJECT_GRAPH_INVALID";
 export const ENVIRONMENT_ROAD_GEOMETRY_INVALID = "ENVIRONMENT_ROAD_GEOMETRY_INVALID";
 export const ENVIRONMENT_ROAD_GEOMETRY_DOWNGRADE = "ENVIRONMENT_ROAD_GEOMETRY_DOWNGRADE";
+export const ENVIRONMENT_ASSET_METRICS_INVALID = "ENVIRONMENT_ASSET_METRICS_INVALID";
+export const ENVIRONMENT_ASSET_METRICS_DOWNGRADE = "ENVIRONMENT_ASSET_METRICS_DOWNGRADE";
 
 const SHA256_DIGEST = /^[a-f0-9]{64}$/;
 
@@ -318,7 +320,35 @@ export function parseEnvironmentWriteEnvelope(body) {
         supportedRoadGeometryVersions: Array.isArray(body.supportedRoadGeometryVersions)
             ? [...new Set(body.supportedRoadGeometryVersions.map(Number).filter(Number.isInteger))]
             : [],
+        supportedAssetMetricVersions: Array.isArray(body.supportedAssetMetricVersions)
+            ? [...new Set(body.supportedAssetMetricVersions.map(Number).filter(Number.isInteger))]
+            : [],
     };
+}
+
+/** Reject writers that do not round-trip the optional ED-07 metric domain. */
+export function assertNoAssetMetricsDowngrade(incoming, current, capabilities = []) {
+    const incomingDocument = incoming?.document;
+    if (incomingDocument === undefined || incomingDocument === null) return;
+    const currentDomain = current?.document?.assetMetrics;
+    const incomingDomain = incomingDocument.assetMetrics;
+    const supported = new Set((capabilities ?? []).map(Number));
+    const fail = (code, message) => {
+        const error = new Error(message);
+        error.code = code;
+        error.statusCode = 409;
+        throw error;
+    };
+    if (currentDomain && !incomingDomain) {
+        fail(ENVIRONMENT_ASSET_METRICS_DOWNGRADE, "This environment contains asset metrics; full-document writes must preserve document.assetMetrics.");
+    }
+    if (!incomingDomain) return;
+    if (!supported.has(1)) {
+        fail(ENVIRONMENT_ASSET_METRICS_DOWNGRADE, "Writing asset metrics requires supportedAssetMetricVersions to include 1.");
+    }
+    if (incomingDomain.version !== 1 || !Array.isArray(incomingDomain.definitions)) {
+        fail(ENVIRONMENT_ASSET_METRICS_INVALID, "document.assetMetrics must contain version 1 and a definitions array.");
+    }
 }
 
 /** Reject old clients and malformed replacements before a v2 road document can be lost. */

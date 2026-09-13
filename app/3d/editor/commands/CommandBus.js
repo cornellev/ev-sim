@@ -24,8 +24,47 @@ import { collectTransformClosure, planTransform } from "./transformPlanning.js";
 import { roadGeometryVersionOf, validateRoadDomain } from "../../../roads/RoadGeometryRecord.js";
 import { planRoadNetworkGeometry } from "../../../roads/RoadNetworkGeometry.js";
 import { validateJunctionMovements } from "../../../roads/RoadJunctionValidation.js";
+import {
+    reconcileAssetMetricDefinitions,
+    validateAssetMetricsDomain,
+} from "../../../editor-assets/AssetMetricSnapshot.js";
 
 export const DEFAULT_HISTORY_LIMIT = 200;
+
+function validateEnvironmentDocument(document, registry, sky) {
+    const objectValidation = validateObjectRecords(document.objects, document.index(), registry, { sky });
+    const roadValidation = validateRoadDomain(document.roads);
+    const issues = [...objectValidation.issues, ...roadValidation.issues, ...validateAssetMetricsDomain(document)];
+    if (roadValidation.ok && roadGeometryVersionOf(document) === 2) {
+        try {
+            const plan = planRoadNetworkGeometry(document.roads);
+            issues.push(...validateJunctionMovements(document.roads, plan));
+        } catch (error) {
+            issues.push(...(error.issues ?? [{ path: ["roads"], code: "road.geometry.compile-failed", message: error.message, severity: "error" }]));
+        }
+    }
+    return { ok: !issues.some((entry) => entry.severity === "error"), issues };
+}
+
+/** Existing environment behavior expressed through the ED-07 document adapter seam. */
+export function createEnvironmentDocumentAdapter() {
+    return {
+        kind: "environment",
+        reconcile(document, registry, sky) { reconcileLiveOverlay(document, registry, sky); reconcileAssetMetricDefinitions(document); },
+        validate: validateEnvironmentDocument,
+        pruneSelection(document, selection) { if (selection?.prune && document.objects.length > 0) selection.prune(new Set(document.objects.map((record) => String(record.id)))); },
+        collectGestureClosure: collectTransformClosure,
+        gestureClosureEmpty(closure) { return closure.leaves.size === 0 && closure.groups.size === 0 && closure.nodeIds.size === 0 && closure.edgeIds.size === 0; },
+        captureGesture: captureRecords,
+        restoreGesture: restoreRecords,
+        planGesture(document, registry, objectIds, delta, options) { return planTransform(document, registry, objectIds, delta, options); },
+        applyGesturePlan(document, plan) { return applyPlanSteps(document, plan.steps, { notify: false }); },
+        capturesEqual,
+        changeSetBetween,
+        applyChangeSet,
+        isEmptyChangeSet,
+    };
+}
 
 class CommandAbort extends Error {
     constructor(outcome) {
@@ -48,9 +87,10 @@ export class CommandBus {
      *   registry?: import("../objects/ObjectTypeRegistry.js").ObjectTypeRegistry,
      *   sky?: object|null|(() => object|null),
      *   selection?: { prune(ids: Set<string>): void }|null,
-     *   historyLimit?: number }} options
+     *   historyLimit?: number,
+     *   documentAdapter?: object|null }} options
      */
-    constructor({ document, registry = objectTypeRegistry, sky = null, selection = null, historyLimit = DEFAULT_HISTORY_LIMIT } = {}) {
+    constructor({ document, registry = objectTypeRegistry, sky = null, selection = null, historyLimit = DEFAULT_HISTORY_LIMIT, documentAdapter = null } = {}) {
         if (!document || typeof document.transaction !== "function") {
             throw new TypeError("CommandBus requires an EnvironmentDocument.");
         }
@@ -59,6 +99,9 @@ export class CommandBus {
         this.skySource = sky;
         this.selection = selection;
         this.historyLimit = Math.max(1, Math.trunc(historyLimit) || DEFAULT_HISTORY_LIMIT);
+        // ED-07 asset tabs share command/history semantics without importing
+        // environment graph or road validation into their document model.
+        this.documentAdapter = documentAdapter ?? createEnvironmentDocumentAdapter();
         /** @type {object[]} */
         this.history = [];
         /** @type {object[]} */
@@ -209,7 +252,7 @@ export class CommandBus {
                 ? outcome
                 : commandFailure(commandIssue(COMMAND_ISSUE_CODES.MUTATION_FAILED, "Command returned no result."));
         }
-        reconcileLiveOverlay(document, this.registry, this.sky);
+        this.documentAdapter.reconcile?.(document, this.registry, this.sky);
         const validation = this._validateDocument();
         if (!validation.ok) {
             document.restoreSnapshot(before, { notify: false });
@@ -219,29 +262,11 @@ export class CommandBus {
     }
 
     _validateDocument() {
-        const objectValidation = validateObjectRecords(this.document.objects, this.document.index(), this.registry, { sky: this.sky });
-        const roadValidation = validateRoadDomain(this.document.roads);
-        const issues = [...objectValidation.issues, ...roadValidation.issues];
-        if (roadValidation.ok && roadGeometryVersionOf(this.document) === 2) {
-            try {
-                const plan = planRoadNetworkGeometry(this.document.roads);
-                // Allowed movements without a lane connector are warnings:
-                // they never lock the document after a lane edit.
-                issues.push(...validateJunctionMovements(this.document.roads, plan));
-            } catch (error) {
-                issues.push(...(error.issues ?? [{
-                    path: ["roads"],
-                    code: "road.geometry.compile-failed",
-                    message: error.message,
-                    severity: "error",
-                }]));
-            }
-        }
-        return { ok: !issues.some((entry) => entry.severity === "error"), issues };
+        return this.documentAdapter.validate(this.document, this.registry, this.sky);
     }
 
     _commit(changeSet) {
-        if (changeSet && !isEmptyChangeSet(changeSet)) {
+        if (changeSet && !this.documentAdapter.isEmptyChangeSet(changeSet)) {
             this.history.push(changeSet);
             if (this.history.length > this.historyLimit) this.history.splice(0, this.history.length - this.historyLimit);
             this.redoStack = [];
@@ -256,8 +281,7 @@ export class CommandBus {
     }
 
     _pruneSelection() {
-        if (!this.selection?.prune || this.document.objects.length === 0) return;
-        this.selection.prune(new Set(this.document.objects.map((record) => String(record.id))));
+        this.documentAdapter.pruneSelection?.(this.document, this.selection);
     }
 
     // ------------------------------------------------------------------ gestures
@@ -267,11 +291,11 @@ export class CommandBus {
      */
     beginGesture({ objectIds = [], sub = null, label = "Transform" } = {}) {
         if (this.gesture) this.cancelGesture(this.gesture.id);
-        const closure = collectTransformClosure(this.document, this.registry, objectIds, sub);
+        const closure = this.documentAdapter.collectGestureClosure(this.document, this.registry, objectIds, sub);
         if (closure.issues.length > 0) {
             return { ok: false, gestureId: null, issues: closure.issues, closure };
         }
-        if (closure.leaves.size === 0 && closure.groups.size === 0 && closure.nodeIds.size === 0 && closure.edgeIds.size === 0) {
+        if (this.documentAdapter.gestureClosureEmpty(closure)) {
             return {
                 ok: false,
                 gestureId: null,
@@ -281,7 +305,7 @@ export class CommandBus {
         }
         this.gestureCounter += 1;
         const id = `gesture-${this.gestureCounter}`;
-        const before = captureRecords(this.document, closure);
+        const before = this.documentAdapter.captureGesture(this.document, closure);
         this.gesture = {
             id,
             label,
@@ -304,18 +328,18 @@ export class CommandBus {
             return { ok: false, issues: [commandIssue(COMMAND_ISSUE_CODES.GESTURE_INACTIVE, "No active gesture.")], changeSet: null };
         }
         const normalized = normalizeDelta(delta);
-        restoreRecords(this.document, gesture.before);
-        const plan = planTransform(this.document, this.registry, gesture.objectIds, normalized, { sub: gesture.sub, closure: gesture.closure });
+        this.documentAdapter.restoreGesture(this.document, gesture.before);
+        const plan = this.documentAdapter.planGesture(this.document, this.registry, gesture.objectIds, normalized, { sub: gesture.sub, closure: gesture.closure });
         let issues = [];
         if (plan.ok) {
-            const applied = applyPlanSteps(this.document, plan.steps, { notify: false });
+            const applied = this.documentAdapter.applyGesturePlan(this.document, plan);
             if (!applied.ok) {
-                restoreRecords(this.document, gesture.before);
+                this.documentAdapter.restoreGesture(this.document, gesture.before);
                 issues = [commandIssue(COMMAND_ISSUE_CODES.MUTATION_FAILED, applied.error)];
             } else {
                 const validation = this._validateDocument();
                 if (!validation.ok) {
-                    restoreRecords(this.document, gesture.before);
+                    this.documentAdapter.restoreGesture(this.document, gesture.before);
                     issues = errorIssues(validation.issues);
                 }
             }
@@ -324,8 +348,8 @@ export class CommandBus {
         }
         gesture.lastDelta = normalized;
         gesture.lastOk = issues.length === 0;
-        const now = captureRecords(this.document, gesture.closure);
-        const changeSet = changeSetBetween(gesture.lastCapture, now, {
+        const now = this.documentAdapter.captureGesture(this.document, gesture.closure);
+        const changeSet = this.documentAdapter.changeSetBetween(gesture.lastCapture, now, {
             source: "gesture",
             transient: true,
             gestureId,
@@ -333,8 +357,8 @@ export class CommandBus {
             delta: normalized,
         });
         gesture.lastCapture = now;
-        this.document.notify({ transient: true, source: "gesture", changeSet: isEmptyChangeSet(changeSet) ? null : changeSet });
-        return { ok: issues.length === 0, issues, changeSet: isEmptyChangeSet(changeSet) ? null : changeSet };
+        this.document.notify({ transient: true, source: "gesture", changeSet: this.documentAdapter.isEmptyChangeSet(changeSet) ? null : changeSet });
+        return { ok: issues.length === 0, issues, changeSet: this.documentAdapter.isEmptyChangeSet(changeSet) ? null : changeSet };
     }
 
     commitGesture(gestureId) {
@@ -345,24 +369,24 @@ export class CommandBus {
         this.gesture = null;
         if (!gesture.lastOk) {
             // The last frame was rejected and the document already sits at the capture.
-            restoreRecords(this.document, gesture.before);
+            this.documentAdapter.restoreGesture(this.document, gesture.before);
             this._notify();
             return { ok: false, issues: [commandIssue(COMMAND_ISSUE_CODES.GESTURE_UNSUPPORTED, "The gesture was rejected; nothing was committed.")], changeSet: null };
         }
-        const after = captureRecords(this.document, gesture.closure);
-        if (capturesEqual(gesture.before, after)) {
+        const after = this.documentAdapter.captureGesture(this.document, gesture.closure);
+        if (this.documentAdapter.capturesEqual(gesture.before, after)) {
             this._notify();
             return { ok: true, issues: [], changeSet: null };
         }
         const validation = this._validateDocument();
         if (!validation.ok) {
-            restoreRecords(this.document, gesture.before);
-            this.document.notify({ transient: false, source: "cancel", changeSet: changeSetBetween(after, gesture.before, { source: "cancel", transient: false, gestureId }) });
+            this.documentAdapter.restoreGesture(this.document, gesture.before);
+            this.document.notify({ transient: false, source: "cancel", changeSet: this.documentAdapter.changeSetBetween(after, gesture.before, { source: "cancel", transient: false, gestureId }) });
             this._notify();
             return { ok: false, issues: errorIssues(validation.issues), changeSet: null };
         }
-        reconcileLiveOverlay(this.document, this.registry, this.sky);
-        const changeSet = changeSetBetween(gesture.before, after, {
+        this.documentAdapter.reconcile?.(this.document, this.registry, this.sky);
+        const changeSet = this.documentAdapter.changeSetBetween(gesture.before, after, {
             source: "gesture",
             transient: false,
             gestureId,
@@ -382,12 +406,12 @@ export class CommandBus {
         const gesture = this.gesture;
         if (!gesture || (gestureId !== null && gesture.id !== gestureId)) return { ok: false, changeSet: null };
         this.gesture = null;
-        const current = captureRecords(this.document, gesture.closure);
-        restoreRecords(this.document, gesture.before);
-        const changeSet = changeSetBetween(current, gesture.before, { source: "cancel", transient: false, gestureId: gesture.id, label: gesture.label });
-        this.document.notify({ transient: false, source: "cancel", changeSet: isEmptyChangeSet(changeSet) ? null : changeSet });
+        const current = this.documentAdapter.captureGesture(this.document, gesture.closure);
+        this.documentAdapter.restoreGesture(this.document, gesture.before);
+        const changeSet = this.documentAdapter.changeSetBetween(current, gesture.before, { source: "cancel", transient: false, gestureId: gesture.id, label: gesture.label });
+        this.document.notify({ transient: false, source: "cancel", changeSet: this.documentAdapter.isEmptyChangeSet(changeSet) ? null : changeSet });
         this._notify();
-        return { ok: true, changeSet: isEmptyChangeSet(changeSet) ? null : changeSet };
+        return { ok: true, changeSet: this.documentAdapter.isEmptyChangeSet(changeSet) ? null : changeSet };
     }
 
     // ------------------------------------------------------------------- history
@@ -398,7 +422,7 @@ export class CommandBus {
         if (!changeSet) {
             return { ok: false, issues: [commandIssue(COMMAND_ISSUE_CODES.NOTHING_TO_UNDO, "Nothing to undo.")], changeSet: null };
         }
-        applyChangeSet(this.document, changeSet, "before", { label: changeSet.meta?.label ?? "Undo" });
+        this.documentAdapter.applyChangeSet(this.document, changeSet, "before", { label: changeSet.meta?.label ?? "Undo" });
         this.redoStack.push(changeSet);
         this.lastCommit = { label: changeSet.meta?.label ?? null, source: "undo", version: this.document.version };
         this._pruneSelection();
@@ -412,7 +436,7 @@ export class CommandBus {
         if (!changeSet) {
             return { ok: false, issues: [commandIssue(COMMAND_ISSUE_CODES.NOTHING_TO_UNDO, "Nothing to redo.")], changeSet: null };
         }
-        applyChangeSet(this.document, changeSet, "after", { label: changeSet.meta?.label ?? "Redo" });
+        this.documentAdapter.applyChangeSet(this.document, changeSet, "after", { label: changeSet.meta?.label ?? "Redo" });
         this.history.push(changeSet);
         this.lastCommit = { label: changeSet.meta?.label ?? null, source: "redo", version: this.document.version };
         this._pruneSelection();

@@ -279,7 +279,7 @@ export class HeadlessEpisode {
             }
         }
         try {
-            assertPhysicsBackendSelection(physics);
+            assertPhysicsBackendSelection(physics, resolvedRun.world);
             assertStateSensorBackendSelection(stateSensors);
             if (cpuLidar) assertCpuLidarBackendSelection(cpuLidar);
             if (gpuSensors) assertGpuSensorBackendSelection(gpuSensors);

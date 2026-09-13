@@ -662,6 +662,7 @@ async function saveDocument(storage, environmentId, manifest, document) {
         expectedRevision: Number.isInteger(manifest.revision) ? manifest.revision : 0,
         detachStaleVisual: true,
         supportedRoadGeometryVersions: [1, 2],
+        supportedAssetMetricVersions: [1],
     });
     storageEvents.publish({
         domain: "environment",

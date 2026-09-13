@@ -3257,3 +3257,29 @@ version-5 proof. Its world hash remains
 the bundle byte hash is
 `6d3b4c5a2c9040377312de01795047ade35d0866c14f903bf8c713394a813c1d`.
 Legacy v10 bytes and identities remain frozen.
+
+### 2026-09-13 — ED-07 composes published asset appearance into measured PBR
+
+Published environment asset revision v2 appearance is compiled into ordinary
+visual-layer v1 materials, chunks, instances, and source-bound access records,
+namespaced by the pinned environment instance. Resolution performs this
+composition only after the existing authoring locks pass and only for enabled
+`pbr-mesh@1` cameras; state-only, LiDAR-only, and analytic-camera runs do not
+load appearance bytes. The resulting package owns the complete GLB and texture
+closure, so browser and headless PBR render the same immutable publication
+without an editor catalog or preview fallback.
+
+Asset metric snapshots remain separate truth resources. Appearance-only edits
+change selected PBR render and episode identity without changing
+`metricWorldHash`; collision or LiDAR edits change metric identity and route
+proof freshness. This work belongs to ED-07 and does not create or complete a
+VIS milestone. Existing VIS renderer, hardware, fidelity, and release evidence
+gates remain open unless their own required runs execute.
+
+ED-07 acceptance executed the packaged asset-appearance PBR case 1/1 on
+Chromium 151, WebGL2, and Apple M1 Max ANGLE Metal. It verified asset GLB plus
+texture closure loading, RGBA and analytic products, warm reuse, private-origin
+network isolation, and cleanup. Preparation/cold/warm measurements were
+99.0/831.3/35.4 ms. This is local ED-07 evidence; it does not substitute for
+the target-specific NVIDIA/Jetson, fidelity, or release evidence required by
+open VIS milestones.

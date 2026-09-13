@@ -83,6 +83,12 @@ export class EnvironmentDocument {
         // until a loader or writer reconciles the graph.
         /** @type {ObjectRecord[]} */
         this.objects = Array.isArray(options.objects) ? options.objects.map(cloneObjectRecord) : [];
+        // ED-07: immutable metric products copied from pinned v2 asset
+        // revisions. Null means the optional domain has not been adopted by
+        // this document; an empty definitions array means it has.
+        this.assetMetrics = options.assetMetrics
+            ? cloneAssetMetrics(options.assetMetrics)
+            : null;
         // ED-03: the environment sky as a tracked scalar so skybox edits are
         // ordinary undoable commands. `null` until an Environment seeds it;
         // the persisted location stays `manifest.sky` (see `toManifest()`), so
@@ -119,6 +125,7 @@ export class EnvironmentDocument {
             ...(this.objects.length > 0
                 ? { objectGraphVersion: OBJECT_GRAPH_VERSION, objects: this.objects.map(cloneObjectRecord) }
                 : {}),
+            ...(this.assetMetrics ? { assetMetrics: cloneAssetMetrics(this.assetMetrics) } : {}),
             ...(this.sky ? { sky: skyConfigToManifest(this.sky) } : {}),
         };
     }
@@ -152,6 +159,7 @@ export class EnvironmentDocument {
             : [];
         this.earth = manifest.earth ? cloneEarthSource(manifest.earth) : null;
         this.objects = Array.isArray(manifest.objects) ? manifest.objects.map(cloneObjectRecord) : [];
+        this.assetMetrics = manifest.assetMetrics ? cloneAssetMetrics(manifest.assetMetrics) : null;
         if (manifest.sky !== undefined) this.sky = manifest.sky ? skyConfigToManifest(manifest.sky) : null;
         if (notify) this.notify({ source: "restore" });
     }
@@ -190,6 +198,9 @@ export class EnvironmentDocument {
         }
         if (domain === "roads.turnRules") list.sort(compareTurnRules);
         if (domain === "objects") this.objects = sortObjectRecords(list);
+        if (domain === "assetMetrics.definitions") {
+            this.assetMetrics.definitions.sort(compareAssetMetricDefinitions);
+        }
         if (changed && notify) this.notify();
         return changed;
     }
@@ -204,6 +215,15 @@ export class EnvironmentDocument {
             const version = Number(value);
             if (value === null || value === undefined || version === 1) delete this.roads.geometryVersion;
             else this.roads.geometryVersion = version;
+        }
+        else if (name === "assetMetricsVersion") {
+            if (value === null || value === undefined) this.assetMetrics = null;
+            else {
+                const version = Number(value);
+                if (!Number.isInteger(version) || version < 1) throw new TypeError("Asset metric version must be a positive integer.");
+                this.assetMetrics ??= { version, definitions: [] };
+                this.assetMetrics.version = version;
+            }
         }
         else this[name] = value === true;
         if (notify) this.notify();
@@ -498,6 +518,9 @@ function domainArray(document, domain) {
             return document.features;
         case "objects":
             return document.objects;
+        case "assetMetrics.definitions":
+            document.assetMetrics ??= { version: 1, definitions: [] };
+            return document.assetMetrics.definitions;
         default:
             throw new TypeError(`Unknown change domain "${domain}".`);
     }
@@ -510,6 +533,32 @@ const DOMAIN_CLONERS = Object.freeze({
     buildings: cloneBuilding,
     features: cloneFeature,
     objects: cloneObjectRecord,
+    "assetMetrics.definitions": cloneAssetMetricDefinition,
 });
+
+function cloneAssetMetrics(assetMetrics) {
+    const version = Number(assetMetrics?.version ?? 1);
+    return {
+        version,
+        definitions: (Array.isArray(assetMetrics?.definitions) ? assetMetrics.definitions : [])
+            .map(cloneAssetMetricDefinition)
+            .sort(compareAssetMetricDefinitions),
+    };
+}
+
+function cloneAssetMetricDefinition(definition) {
+    return {
+        assetId: String(definition.assetId),
+        revision: Number(definition.revision),
+        metricHash: String(definition.metricHash),
+        collision: structuredClone(Array.isArray(definition.collision) ? definition.collision : []),
+        lidar: structuredClone(Array.isArray(definition.lidar) ? definition.lidar : []),
+    };
+}
+
+function compareAssetMetricDefinitions(left, right) {
+    const asset = String(left.assetId).localeCompare(String(right.assetId));
+    return asset || Number(left.revision) - Number(right.revision);
+}
 
 export { DEFAULT_ROAD_EDGE };

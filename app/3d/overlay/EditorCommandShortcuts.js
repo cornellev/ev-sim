@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useShortcut } from "../../ui";
 import { EDITOR_MODES, EDITOR_TOOLS } from "../editor/EditorState";
 import { objectCommands } from "../editor/commands/index.js";
+import { assetStudioCommands } from "../editor/commands/assetStudioCommands.js";
 import { insertRoadLane, removeRoadKnot, removeRoadLane } from "../editor/commands/roadCommands.js";
 import { finalizeRoadPen } from "../editor/map/MapToolLogic.js";
 import { focusCameraOnSelection } from "../editor/tools/cameraFocus.js";
@@ -21,6 +22,8 @@ export function EditorCommandShortcuts({ data }) {
 
     const editorMode = editorSnapshot?.editorMode ?? EDITOR_MODES.SCENE;
     const sceneTabActive = (editorSnapshot?.workspace?.activeTabId ?? "scene") === "scene";
+    const activeAssetTabId = sceneTabActive ? null : editorSnapshot?.workspace?.activeTabId;
+    const assetSession = () => data?.environment?.()?.assets?.()?.sessions?.get?.(activeAssetTabId);
     const inScene = editorMode === EDITOR_MODES.SCENE && sceneTabActive;
     const inMap = editorMode === EDITOR_MODES.MAP && sceneTabActive;
     const inEditor = inScene || inMap;
@@ -44,8 +47,9 @@ export function EditorCommandShortcuts({ data }) {
         id: "environment-escape",
         keys: "Escape",
         priority: 15,
-        enabled: inEditor,
+        enabled: inEditor || Boolean(activeAssetTabId),
         handler: () => {
+            if (activeAssetTabId) { assetSession()?.selection?.clear?.(); return true; }
             const controller = data?.environment?.()?.toolController;
             if (typeof controller?.handleEscape === "function") return controller.handleEscape() === true;
             return false;
@@ -66,9 +70,9 @@ export function EditorCommandShortcuts({ data }) {
         id: "environment-undo",
         keys: "Mod+z",
         priority: 15,
-        enabled: inEditor,
+        enabled: inEditor || Boolean(activeAssetTabId),
         handler: () => {
-            const result = bus()?.undo();
+            const result = activeAssetTabId ? assetSession()?.bus?.undo() : bus()?.undo();
             render();
             return consume(result);
         },
@@ -77,9 +81,9 @@ export function EditorCommandShortcuts({ data }) {
         id: "environment-redo",
         keys: ["Shift+Mod+z", "Ctrl+y"],
         priority: 16,
-        enabled: inEditor,
+        enabled: inEditor || Boolean(activeAssetTabId),
         handler: () => {
-            const result = bus()?.redo();
+            const result = activeAssetTabId ? assetSession()?.bus?.redo() : bus()?.redo();
             render();
             return consume(result);
         },
@@ -88,8 +92,14 @@ export function EditorCommandShortcuts({ data }) {
         id: "environment-duplicate",
         keys: "Mod+d",
         priority: 15,
-        enabled: inEditor,
+        enabled: inEditor || Boolean(activeAssetTabId),
         handler: () => {
+            if (activeAssetTabId) {
+                const session = assetSession();
+                const ids = session?.selection?.ids ?? [];
+                if (ids.length === 0) return false;
+                return consume(session.bus.execute(assetStudioCommands.duplicateParts({ partIds: ids })));
+            }
             const sub = selection()?.sub;
             if (sub?.kind === "road-knot" && !["start", "end"].includes(sub.knotId)) {
                 const result = bus()?.execute(removeRoadKnot({ edgeId: sub.edgeId, knotId: sub.knotId }));
@@ -116,8 +126,14 @@ export function EditorCommandShortcuts({ data }) {
         id: "environment-delete",
         keys: ["Delete", "Backspace"],
         priority: 15,
-        enabled: inEditor,
+        enabled: inEditor || Boolean(activeAssetTabId),
         handler: () => {
+            if (activeAssetTabId) {
+                const session = assetSession();
+                const ids = session?.selection?.ids ?? [];
+                if (ids.length === 0) return false;
+                return consume(session.bus.execute(assetStudioCommands.deleteParts({ partIds: ids })));
+            }
             const sub = selection()?.sub;
             if (sub?.kind === "road-lane") {
                 // Delete removes the selected lane, not the road.

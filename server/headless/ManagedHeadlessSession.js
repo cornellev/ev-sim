@@ -95,7 +95,7 @@ export function validateManagedRun(resolved) {
     let renderSelection = null;
     try {
         if (physics.length !== 1) throw new Error("Exactly one physics backend selection is required.");
-        assertPhysicsBackendSelection(physics[0]);
+        assertPhysicsBackendSelection(physics[0], resolved.world);
         if (state.length > 1) throw new Error("At most one state-sensor backend selection is supported.");
         if (state.length === 1) assertStateSensorBackendSelection(state[0]);
         if (lidar.length > 1) throw new Error("At most one CPU LiDAR backend selection is supported.");

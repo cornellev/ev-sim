@@ -67,14 +67,18 @@ pacing, and presentation settings before episode identity is computed.
 
 `app/simulation/world/WorldDescription.js` is the UI-independent world seam.
 It normalizes schema-v2, v3, and v4 environment documents into canonical
-`cev-sim.world-description` v1 JSON with stable road/building/feature IDs,
-drivable surfaces, exact obstacle prisms, aggregate bounds, route-network
-identity, and a world SHA-256. Schema v3 adds a server-owned `revision` and
-optional `visualLayer` / `evidence` hash references; those fields are excluded
-from `worldHash`. Schema v4 adds `document.objects`, the editor's authoring
-overlay (names, hierarchy, locks, editor visibility) keyed by the legacy
-record ids; it is also excluded from `worldHash`. Built-in prop metric
-geometry comes from the frozen table in
+`cev-sim.world-description` v1, v2, or v3 JSON with stable source IDs,
+drivable surfaces, exact obstacle/proxy geometry, aggregate bounds,
+route-network identity, and a world SHA-256. V1 remains the legacy road world;
+v2 adds compiled road geometry; v3 is selected only when a v2 asset pin has an
+enabled metric product and adds world-space `assetProxies` plus
+`metricWorldHash`. Schema v3 adds a server-owned `revision` and optional
+`visualLayer` / `evidence` hash references; those fields are excluded from
+`worldHash`. Schema v4 adds `document.objects`, the editor's authoring overlay
+(names, hierarchy, locks, editor visibility) and optional
+`document.assetMetrics@1`. Object presentation stays excluded, while the
+metric snapshot is canonical world input. Built-in prop metric geometry comes
+from the frozen table in
 `app/3d/editor/objects/types/builtinProp.js`, the same table that feeds the
 placement catalog, editor collision radii, and LiDAR semantic labels, so the
 kernel never depends on runtime object-type registration. `accessHash` is provenance for preview materialization and
@@ -242,12 +246,14 @@ capability-gated x64 NVIDIA/Jetson hardware checks. A staging builder produces
 an installable headless npm tarball and pure-Python wheel/sdist while the
 browser application root remains private. See [Headless release and CI gates](headless-release.md).
 
-Physics pins Rapier `0.19.3` under capability
-`rapier3d-swept-prism-v1`. Rapier owns fixed and kinematic bodies, while
-authoritative first impact/contact transitions use shared continuous XZ SAT
-with a Y-slab test. Feature boxes are oriented prisms, building footprints are
-deterministically triangulated extrusions, and roads are drivable surfaces
-rather than obstacle colliders.
+Physics pins Rapier `0.19.3` under one of two world-derived capabilities.
+Legacy worlds retain `rapier3d-swept-prism-v1`: authoritative first impact uses
+continuous XZ prism SAT with a Y-slab test. A world with collision asset proxies
+selects `rapier3d-swept-compound-v2`, whose shared `SweptConvex` path performs
+continuous 3D SAT for a translating vehicle AABB against static convex faces,
+edges, and box axes after swept-AABB broad phase. Compound-part hits collapse
+to the environment instance id with deterministic earliest-contact ordering.
+Rapier still owns fixed and kinematic bodies; roads remain drivable surfaces.
 
 The dependency-ordered extraction of a UI-independent kernel, CLI and worker
 APIs, Python Gymnasium adapter, resource controls, and offscreen sensor
@@ -292,14 +298,26 @@ than maintaining a second index.
 
 Asset instances are object-graph-v1 records whose catalog revision and model
 revision are independent: commands pin `{ assetId, revision }`, and only an
-explicit guarded update changes existing instances. `SceneProjector` owns the
-asynchronous model lease and registers `asset:<objectId>` as `editorOnly`.
-This makes the model selectable in the Environment Editor while excluding it
-from chunks, registry manifests, perception, collision, LiDAR, bake, measured
-cameras, and Simulation. Runtime bounds/status notifications do not dirty
-autosave. The same session-only placement controller drives Scene, Map, and
-HTML drops; read-only preview tabs acquire a model only while active. Asset
-parts, material changes, and proxy authoring remain ED-07.
+explicit guarded update changes existing instances. V1 revisions retain
+`asset-instance@1` behavior. ED-07 v2 revisions use `asset-instance@2`; the
+same command writes an immutable metric snapshot to `document.assetMetrics@1`.
+`SceneProjector` keeps appearance leases under editor-only registry ids and a
+separate metric projector registers compiled collision/LiDAR records by
+instance id for Simulation. Runtime bounds/status notifications do not dirty
+autosave.
+
+Each asset tab owns an isolated definition document, command adapter, history,
+selection, asynchronous-generation version, save baseline, and view state.
+`AssetCompiler` resolves exact child pins, namespaces flattened descendants,
+compiles deterministic indexed metric products, and detects stale generated
+output from geometry inputs. Server publication independently recompiles a
+VIS-compatible GLB and metric snapshot after validating source/child rights,
+then atomically journals all protective roots. It never updates environment
+instances. During selected PBR resolution, `AssetVisualLayerCompiler` converts
+published v2 appearance pins into ordinary visual-layer v1 records and composes
+them with any already selected descriptor after world binding and source locks
+pass. Prepared browser/headless runs own this immutable scene and never read a
+studio preview.
 
 - [Environment Editor](environment-editor.md) — document model, editor modes, baking, and chrome UI.
 - [Earth Import](earth-import.md) — Google 3D Tiles preview, OSM road import, and geospatial configuration.
@@ -374,9 +392,11 @@ authoring lock is verified. It rehashes the complete source-bound CAS use graph
 under both display and machine-interpretation policy, then binds exact
 `visualLayer` and `renderScene` pixel resources while retaining access,
 obligations, and unverified correspondence references under separate resolved
-evidence. PBR meshes never enter metric world, collision, LiDAR, registry, or
-oracle truth. Browser and PBR-enabled normal headless execution revalidate and
-materialize the exact closure. CLI and Python can execute it only through a
+evidence. PBR appearance meshes never enter metric world, collision, LiDAR, registry,
+or oracle truth. ED-07 asset collision/LiDAR records enter through the separate
+published metric snapshot and bind appearance to truth only when that instance
+has compiled metric identity. Browser and PBR-enabled normal headless execution
+revalidate and materialize the exact closure. CLI and Python can execute it only through a
 same-host admitted package and a supervisor that advertises the declared GPU
 backend v2 after target-specific probes pass. Bundle v1, manifest
 v11, `world-bound@2`, protobuf, and existing analytic identities remain

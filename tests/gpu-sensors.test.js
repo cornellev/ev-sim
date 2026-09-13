@@ -983,13 +983,14 @@ test("hardware WebGL2 LiDAR matches CPU range/incidence on the canonical scene",
     }
 });
 
-test("VIS-15a hardware PBR fixture executes RGBA and analytic products on the selected stack", {
+test("VIS-15a hardware PBR fixture executes packaged asset appearance, RGBA, and analytic products", {
     skip: process.env.CEV_SIM_PBR_HARDWARE !== "1",
     timeout: 60_000,
 }, async () => {
     const glb = makeNamedMaterialGlb("actor-material", {
         extras: { semanticId: 65000, instanceId: 4_000_000_000, forged: true },
     });
+    const staticGlb = makeNamedMaterialGlb("asset-material");
     const ktx2 = await fs.readFile(new URL(
         "./fixtures/visual-layer/sample_uastc_zstd.ktx2",
         import.meta.url,
@@ -997,6 +998,8 @@ test("VIS-15a hardware PBR fixture executes RGBA and analytic products on the se
     const resolved = resolvedPbrRun({
         actorSha256: sha256Hex(glb),
         actorSizeBytes: glb.byteLength,
+        staticSha256: sha256Hex(staticGlb),
+        staticSizeBytes: staticGlb.byteLength,
         environmentMapSha256: sha256Hex(ktx2),
         environmentMapSizeBytes: ktx2.byteLength,
     });
@@ -1016,6 +1019,7 @@ test("VIS-15a hardware PBR fixture executes RGBA and analytic products on the se
     };
     const assets = new Map([
         [resolved.actorUseHash, glb],
+        [resolved.staticUseHash, staticGlb],
         [resolved.environmentMapUseHash, ktx2],
     ]);
     const assetReader = {
@@ -1129,7 +1133,7 @@ test("VIS-15a hardware PBR fixture executes RGBA and analytic products on the se
                 preparationMs,
                 coldCaptureMs,
                 warmCaptureMs,
-                staticTransferBytes: glb.byteLength + ktx2.byteLength + Buffer.byteLength(JSON.stringify(resolved)),
+                staticTransferBytes: glb.byteLength + staticGlb.byteLength + ktx2.byteLength + Buffer.byteLength(JSON.stringify(resolved)),
                 captureTransferBytes: 5 * 4 * (4 + 4 + 2 + 4),
                 rssBefore,
                 rssAfterWarmCapture: process.memoryUsage().rss,

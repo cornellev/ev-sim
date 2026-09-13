@@ -24,7 +24,7 @@ ED PR changes a contract, hash, gate, or milestone status.
 
 ## Status
 
-- Next milestone: **ED-07 — Asset studio**.
+- Next milestone: **ED-08 — Creation and imports**.
 - Implemented: **ED-01 — Contracts** (object registry, options validation,
   schema-v4 adapters, compatibility fixtures), **ED-02 — Commands and
   hierarchy** (`SelectionStore`, `CommandBus` with transactions, gestures, and
@@ -48,7 +48,11 @@ ED PR changes a contract, hash, gate, or milestone status.
   **ED-06 — Asset catalog** (the journaled server catalog and immutable model
   revisions, dependency-complete GLTF/GLB import, editor-only projected model
   instances, shared Scene/Map placement, read-only session preview tabs, and
-  explicit atomic instance revision updates).
+  explicit atomic instance revision updates), and **ED-07 — Asset studio**
+  (versioned asset definitions and assemblies, PBR materials and textures,
+  deterministic collision/LiDAR proxies, isolated document history,
+  journaled publication, immutable environment metric snapshots, world v3,
+  route proof v8, swept-compound physics v2, and measured PBR composition).
   Existing environments retain their legacy behavior; schema v4 is the only
   writer.
 - Program goal: one consistent interaction model across hierarchy, scene, map,
@@ -64,7 +68,7 @@ ED PR changes a contract, hash, gate, or milestone status.
   proxies are set up; LiDAR authoring supports generated meshes and editable
   primitives.
 - Default implementation/review reasoning level: **Extra High**.
-- Last updated: **2026-09-13 — ED-06 implemented**.
+- Last updated: **2026-09-13 — ED-07 implemented**.
 
 ## Normative contracts
 
@@ -716,21 +720,42 @@ import/place/pin/update/archive/mode-switch workflow and accessibility.
 
 **Depends on:** ED-06.
 
-Center asset tab with an isolated preview scene and camera, child-part
-hierarchy and shared inspector, model units, orientation, pivot, material, and
-child-transform editing, assembly creation, collision and LiDAR overlays,
-independent undo history and a dirty-tab indicator. Sensor proxies reuse the
-voxel simplification foundation for generated LiDAR meshes, support included
-part selection and editable box/sphere/cylinder zones, persist generated output
-with parameters, source revision, and stable semantic labels, mark proxies
-stale on part geometry changes, and compile enabled proxies into immutable
-metric world data used by browser and headless execution. Collision uses
-independently configured compound box/convex proxies with deterministic
-swept-AABB/convex checks beside the legacy prism path.
+The implemented authoring contract is `cev-sim.asset-definition@1`: stable
+parts retain parent-local transforms and discriminated `group`, `model-node`,
+or pinned `asset-reference` content. `cev-sim.editor-asset-revision@2` stores
+the definition, flattened PBR appearance, compiled `metric@1`, `metricHash`,
+and `geometryHash` while all v1 readers remain valid. `AssetCompiler` resolves
+exact child revisions, applies root normalization once, uses portable
+ancestry-namespaced proxy ids, and computes generated-proxy freshness from
+geometry, transforms, normalization, generator version, parameters, and
+included parts. The deterministic primitive policy is sphere 24 by 12 and
+cylinder 24 with caps; `VoxelMeshSimplifier` canonicalizes indexed output.
 
-**Merge gate:** stale-proxy, assembly, and independent-history tests;
-browser/headless parity for compiled proxies; workers never load the editor or
-infer geometry from preview meshes.
+`CommandBus` now delegates reconciliation, validation, gesture planning,
+history application, and selection pruning to a document adapter. Each asset
+tab owns one `AssetDocument`, command bus, selection store, history, saved
+baseline, pending generation, and retained view state. The active tab supplies
+the isolated Three.js scene, hierarchy, PBR material inspector, transform and
+orbit controls, picking, metric overlays, dirty state, and Save/Discard/Cancel
+close flow. Publication can be disabled with `CEV_SIM_ASSET_STUDIO=0`,
+recompiled on the server, rejects enabled stale output, atomically roots the
+compiled GLB plus sources/textures/child appearances, and leaves environment
+pins unchanged.
+
+Published v2 pins use `asset-instance@2` and copy their immutable metric record
+into `document.assetMetrics@1`. World-description v3 compiles those records to
+world-space `assetProxies`, route proof v8 binds `metricWorldHash` while
+retaining base algorithm 5 or 7, and collision worlds select
+`rapier3d-swept-compound-v2`. CPU LiDAR consumes only the LiDAR channel and the
+shared swept-convex path consumes only collision compounds. PBR resolution
+composes published appearance into visual-layer v1 after authoring locks, so
+browser and admitted headless packages use the same source-bound bytes.
+
+**Merge gate:** raw-contract, deterministic assembly/staleness, isolated
+history, publication/recovery, metric snapshot, world v3/route v8,
+swept-convex/LiDAR, measured PBR, browser workflow, accessibility, and
+browser/direct/CLI/Unix/Python parity tests; workers never load editor modules
+or infer geometry from preview meshes.
 
 ### ED-08 — Creation and imports
 
@@ -890,11 +915,63 @@ Record in the ledger: focused-suite pass counts, `npm run lint` result,
   `60dc0bd2b02a9ec768f833070ce4d8d2047f5383838f09ea3f130dd31552dd6f`
   and environment-editor compatibility SHA-256
   `6ca2ece3d5266822a2ceabba72e5f7dd9514789e76757e86f6aedd2730ab9a6a`.
-- [ ] ED-07 — Asset studio.
+- [x] ED-07 — Asset studio: asset-definition v1 and revision v2 contracts;
+  deterministic assemblies, primitives, proxy freshness, and flattened GLB
+  publication; isolated tab documents/history and interactive projections;
+  atomic metric snapshots in asset-instance v2 environments; world v3, route
+  proof v8, swept-compound physics v2, CPU LiDAR, and measured PBR composition.
+  The consolidated focused gate passed 62/62; `npm test` passed 1200/1204 with
+  four declared hardware skips and zero failures; lint passed with zero errors
+  and one pre-existing warning; production and headless distribution builds
+  passed. The complete Playwright workflow and its 1280 x 720 axe dialog run
+  each passed. Browser/direct/CLI/Unix/Python parity passed all four cases,
+  including `asset-assembly-metric-v1`, and Python passed 68/68. The packaged
+  PBR hardware fixture then executed 1/1 on Apple M1 Max ANGLE Metal with no
+  skip. Both fixture generators produced zero legacy drift; action-tape,
+  characterization, and environment-editor SHA-256 values remain
+  `1ba8c8c40e1560ac044f4ca5384065ab83c93529d65b5672fee8dc5ed42a5ced`,
+  `60dc0bd2b02a9ec768f833070ce4d8d2047f5383838f09ea3f130dd31552dd6f`,
+  and `6ca2ece3d5266822a2ceabba72e5f7dd9514789e76757e86f6aedd2730ab9a6a`.
 - [ ] ED-08 — Creation and imports.
 - [ ] ED-09 — Acceptance.
 
 ## Decision log
+
+### 2026-09-13 — Implement ED-07 asset studio
+
+Asset authoring and environment use are separate immutable operations. Asset
+revisions advance to v2 only when the server has re-resolved exact source uses
+and child pins, verified derivative rights, recompiled appearance and metric
+products, and acquired every protective root. Browser-generated arrays and
+hashes are comparison inputs, never publication authority. The publication id
+binds the canonical payload, so an exact retry is idempotent and a changed
+retry fails.
+
+Environment schema v4 remains the writer. A v2 pin uses `asset-instance@2` and
+atomically carries one `document.assetMetrics@1` definition keyed by
+`{assetId, revision}`; the snapshot is pruned only after its final pin is gone.
+The first adoption retains a write-once pre-metrics copy. World v3 exists only
+when an enabled product is present, and its `metricWorldHash` excludes revision
+numbers, names, materials, locks, editor visibility, and proxy provenance.
+Route proof v8 binds this metric identity and explicitly records base algorithm
+5 or 7. Collision worlds pin `rapier3d-swept-compound-v2`; legacy worlds retain
+the prior world, route, physics, and LiDAR identities byte-for-byte.
+
+Published appearance is ordinary visual-layer v1 input. Resolution composes it
+only for enabled `pbr-mesh@1` cameras after the existing environment and source
+locks pass, and packages the complete use closure. Analytic cameras, state-only
+runs, and LiDAR-only runs do not acquire appearance. Studio scene objects,
+unsaved edits, selection, camera, and overlay state never enter prepared-run
+resources. The authoring endpoint is active by default after the complete gate;
+`CEV_SIM_ASSET_STUDIO=0` remains the explicit operational disable switch.
+
+The local hardware record used Chromium 151 with WebGL2 on the Apple M1 Max
+ANGLE Metal renderer. PBR preparation took 99.0 ms, the cold capture 831.3 ms,
+and the warm capture 35.4 ms; the packaged static transfer was 59,577 bytes and
+each capture transferred 280 bytes. Cleanup released the prepared environment,
+scene bytes, queued work, and busy context. This executes ED-07's packaged PBR
+case but does not satisfy the separate PR-12 x64 NVIDIA/Jetson evidence or any
+open VIS target-specific acceptance gate.
 
 ### 2026-09-13 — Implement ED-06 asset catalog
 

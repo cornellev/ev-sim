@@ -104,7 +104,8 @@ test("ED-06 imports, previews, places, pins, updates, archives, reloads, and iso
     const model = page.locator("[data-editor-asset-library] [data-asset-id]").filter({ hasText: modelName });
     await model.getByRole("button", { name: `Open asset ${modelName}` }).click();
     await expect(page.locator("[data-asset-preview-tab]")).toBeVisible({ timeout: 60_000 });
-    await expect(page.getByRole("img", { name: new RegExp(`${modelName} revision 1`, "i") })).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByRole("button", { name: new RegExp(`^${modelName} · r1`) })).toHaveAttribute("aria-current", "page");
+    await expect(page.getByLabel(`${modelName} asset studio viewport`)).toBeVisible({ timeout: 60_000 });
     await page.getByRole("button", { name: "Scene", exact: true }).click();
     const sceneToolbar = page.getByRole("toolbar", { name: "Scene tools" });
 

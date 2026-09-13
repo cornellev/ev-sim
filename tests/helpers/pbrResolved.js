@@ -46,6 +46,8 @@ function environment() {
 export function resolvedPbrRun({
     actorSha256 = "a".repeat(64),
     actorSizeBytes = 16,
+    staticSha256 = null,
+    staticSizeBytes = 0,
     environmentMapSha256 = null,
     environmentMapSizeBytes = 0,
 } = {}) {
@@ -62,6 +64,18 @@ export function resolvedPbrRun({
         dependencies: {},
     });
     const actorUseHash = hashVisualAssetUse(actorUse);
+    const staticAsset = staticSha256 ? normalizeVisualAssetReference({
+        sha256: staticSha256,
+        mediaType: "model/gltf-binary",
+        sizeBytes: staticSizeBytes,
+        role: "mesh",
+    }) : null;
+    const staticUse = staticAsset ? normalizeVisualAssetUse({
+        asset: staticAsset,
+        sourceIds: ["owned-test"],
+        dependencies: {},
+    }) : null;
+    const staticUseHash = staticUse ? hashVisualAssetUse(staticUse) : null;
     const environmentMapAsset = environmentMapSha256 ? normalizeVisualAssetReference({
         sha256: environmentMapSha256,
         mediaType: "image/ktx2",
@@ -76,17 +90,17 @@ export function resolvedPbrRun({
     const environmentMapUseHash = environmentMapUse ? hashVisualAssetUse(environmentMapUse) : null;
     const visualDescription = normalizeVisualLayer({
         sourceWorldHash: world.hash,
-        assets: [],
-        materials: [],
-        chunks: [],
-        instances: [],
+        assets: staticAsset ? [staticAsset] : [],
+        materials: staticAsset ? [{ id: "asset-material", mode: "metallic-roughness", parameters: { baseColorFactor: [0.8, 0.2, 0.1, 1], metallicFactor: 0.15, roughnessFactor: 0.6 }, textures: [], extensions: [] }] : [],
+        chunks: staticAsset ? [{ id: "asset-chunk", instanceIds: ["asset-instance"], dependencyUris: [`sha256:${staticAsset.sha256}`] }] : [],
+        instances: staticAsset ? [{ id: "asset-instance", assetUri: `sha256:${staticAsset.sha256}`, lodLevels: [`sha256:${staticAsset.sha256}`], matrix: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, -3, 1], chunkIds: ["asset-chunk"], materialIds: ["asset-material"] }] : [],
         bindings: [],
-        appearanceDependencies: [],
+        appearanceDependencies: staticAsset ? [`sha256:${staticAsset.sha256}`] : [],
     });
     const visualLayer = { description: visualDescription, hash: hashVisualLayer(visualDescription) };
     const access = normalizeVisualLayerAccess({
         descriptorHash: visualLayer.hash,
-        assets: [],
+        assets: staticUse ? [{ sha256: staticAsset.sha256, useHash: staticUseHash }] : [],
     });
     const recipe = normalizePbrRenderRecipe({
         background: environmentMapUse ? {
@@ -109,7 +123,7 @@ export function resolvedPbrRun({
         }],
     });
     const assetClosure = normalizePbrAssetClosure({
-        assets: [actorAsset, environmentMapAsset].filter(Boolean),
+        assets: [actorAsset, staticAsset, environmentMapAsset].filter(Boolean),
     });
     const renderScene = createPbrRenderSceneResource({
         worldResource: world,
@@ -129,6 +143,7 @@ export function resolvedPbrRun({
             access,
             roots: [
                 { scope: "actor:ego", sha256: actorAsset.sha256, useHash: actorUseHash },
+                ...(staticUse ? [{ scope: "visual-layer", sha256: staticAsset.sha256, useHash: staticUseHash }] : []),
                 ...(environmentMapUse ? [{
                     scope: "environment-map",
                     sha256: environmentMapAsset.sha256,
@@ -137,6 +152,7 @@ export function resolvedPbrRun({
             ],
             uses: [
                 { useHash: actorUseHash, use: actorUse },
+                ...(staticUse ? [{ useHash: staticUseHash, use: staticUse }] : []),
                 ...(environmentMapUse ? [{ useHash: environmentMapUseHash, use: environmentMapUse }] : []),
             ],
             assetClosureHash: renderScene.description.assetClosureHash,
@@ -148,5 +164,5 @@ export function resolvedPbrRun({
         },
         correspondence: null,
     });
-    return { world, visualLayer, renderScene, evidence, actorUseHash, environmentMapUseHash };
+    return { world, visualLayer, renderScene, evidence, actorUseHash, staticUseHash, environmentMapUseHash };
 }

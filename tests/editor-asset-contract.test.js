@@ -82,10 +82,11 @@ test("ED-06 reference extraction returns stable pinned references", () => {
     ]);
 });
 
-test("ED-06 contract module imports without browser globals", () => {
+test("ED-06/ED-07 contract modules import without browser globals", () => {
     const source = [
         "for (const key of ['window','document','navigator']) Object.defineProperty(globalThis, key, { get() { throw new Error(key + ' accessed'); }, configurable: true });",
         "await import('./app/editor-assets/EditorAssetContract.js');",
+        "await import('./app/editor-assets/AssetDefinition.js');",
     ].join("\n");
     const result = spawnSync(process.execPath, ["--experimental-default-type=module", "--input-type=module", "--eval", source], {
         cwd: new URL("../", import.meta.url), encoding: "utf8",

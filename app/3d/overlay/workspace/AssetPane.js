@@ -52,6 +52,7 @@ export function AssetPane({ data }) {
         }
     }, [repository, query, sort]);
     useEffect(() => { void refresh(); }, [refresh]);
+    useEffect(() => repository?.subscribe?.(() => { void refresh(); }), [repository, refresh]);
 
     const inMap = editorSnapshot?.editorMode === EDITOR_MODES.MAP;
     const activePlacement = editorSnapshot?.activePlacement;

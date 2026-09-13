@@ -33,6 +33,7 @@ const FACTORIES = Object.freeze([
     createBuildingType,
     createBuiltinPropType,
     createAssetInstanceType,
+    () => createAssetInstanceType(2),
 ]);
 
 /** @param {ObjectTypeRegistry} [registry] */

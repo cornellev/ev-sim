@@ -4,7 +4,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 
-import { createPhysicsBackendSelection } from "../../app/physics/PhysicsBackend.js";
+import { listPhysicsBackendSelections } from "../../app/physics/PhysicsBackend.js";
 import { getHeadlessProfileCapabilities } from "../../app/simulation/headless/ProfileRegistry.js";
 import { createStateSensorBackendSelection, STATE_SENSOR_TYPES } from "../../app/simulation/sensors/StateSensorBackend.js";
 import { createCpuLidarBackendSelection } from "../../app/simulation/sensors/CpuLidarBackend.js";
@@ -290,7 +290,7 @@ export class HeadlessSupervisor {
         const mismatch = protocolError(request.clientProtocol);
         if (mismatch) return { protocol: HEADLESS_PROTOCOL, error: errorStatus(mismatch) };
         const profiles = getHeadlessProfileCapabilities();
-        const physics = createPhysicsBackendSelection();
+        const physics = listPhysicsBackendSelections();
         const sensors = createStateSensorBackendSelection();
         const lidar = createCpuLidarBackendSelection();
         const gpu = createGpuSensorBackendSelection();
@@ -305,7 +305,7 @@ export class HeadlessSupervisor {
             platform: process.platform,
             architecture: process.arch,
             backends: [
-                { id: physics.capabilityId, version: physics.version, kind: physics.kind, description: "Deterministic swept-prism Rapier backend.", sensorTypes: [], features: ["fixed-step", "continuous-collision"], available: true, unavailableReason: "", determinismScope: "same-runtime-version" },
+                ...physics.map((entry) => ({ id: entry.capabilityId, version: entry.version, kind: entry.kind, description: "Deterministic swept prism/convex Rapier backend.", sensorTypes: [], features: ["fixed-step", "continuous-collision"], available: true, unavailableReason: "", determinismScope: "same-runtime-version" })),
                 { id: sensors.capabilityId, version: sensors.version, kind: sensors.kind, description: "Deterministic measured state sensors.", sensorTypes: [...STATE_SENSOR_TYPES], features: ["packed-protobuf"], available: true, unavailableReason: "", determinismScope: "same-runtime-version" },
                 { id: lidar.capabilityId, version: lidar.version, kind: lidar.kind, description: "Deterministic CPU/BVH 3D LiDAR.", sensorTypes: ["lidar3d"], features: ["pointcloud2", "semantic-pointcloud2", "fixed-step"], available: true, unavailableReason: "", determinismScope: "same-build-platform-seed-action-tape" },
                 gpuSensorBackendCapability({ available: gpuProbe.available, unavailableReason: gpuProbe.reason, selection: gpu }),

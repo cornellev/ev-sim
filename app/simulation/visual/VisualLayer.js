@@ -780,6 +780,7 @@ export function visualTruthEntityIds(worldDescription) {
     for (const feature of worldDescription?.features ?? []) ids.add(feature.id);
     for (const node of worldDescription?.roads?.nodes ?? []) ids.add(node.id);
     for (const edge of worldDescription?.roads?.edges ?? []) ids.add(edge.id);
+    for (const asset of worldDescription?.assetProxies ?? []) ids.add(asset.sourceId);
     return ids;
 }
 

@@ -7,6 +7,7 @@ import {
 } from "../../app/simulation/RunManifest.js";
 import { computeSimulationSemanticHash } from "../../app/simulation/kernel/SimulationHashes.js";
 import { createLidarGeometryResource } from "../../app/simulation/lidar/LidarGeometry.js";
+import { createPhysicsBackendSelection, PHYSICS_BACKEND_KIND, sortBackendSelections } from "../../app/physics/PhysicsBackend.js";
 import { createRenderSceneResource } from "../../app/simulation/render/RenderScene.js";
 import { resolveEnabledCameraRenderSelection } from "../../app/simulation/render/RenderSceneProviderRegistry.js";
 import { createWorldResource } from "../../app/simulation/world/WorldDescription.js";
@@ -39,6 +40,10 @@ export function createHeadlessImu(overrides = {}) {
 
 export function rehashRunBundle(bundle) {
     const next = structuredClone(bundle);
+    next.resolved.backendSelections = sortBackendSelections([
+        ...(next.resolved.backendSelections ?? []).filter((entry) => Number(entry.kind) !== PHYSICS_BACKEND_KIND),
+        createPhysicsBackendSelection(next.resolved.world),
+    ]);
     const requestsLidar = next.resolved.manifest.sensorRig.sensors.some(
         (sensor) => sensor.enabled !== false && sensor.type === "lidar3d",
     );

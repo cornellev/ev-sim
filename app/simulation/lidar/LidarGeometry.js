@@ -232,6 +232,7 @@ export function createLidarGeometry(worldResource, vehicleDependencies = []) {
     const sourceIds = [
         ...world.obstacles.map((entry) => entry.sourceId),
         ...world.drivableSurfaces.map((entry) => entry.sourceId),
+        ...(world.assetProxies ?? []).flatMap((entry) => entry.lidar?.length ? [entry.sourceId] : []),
         ...vehicleDependencies.map((entry) => entry.actorId),
     ];
     const instanceIds = allocateLidarInstanceIds(sourceIds, compareUtf8);
@@ -245,6 +246,20 @@ export function createLidarGeometry(worldResource, vehicleDependencies = []) {
         ...world.drivableSurfaces.flatMap((surface) => (
             surfaceTriangles(surface, instanceIds.get(String(surface.sourceId)), world.roads)
         )),
+        ...(world.assetProxies ?? []).flatMap((instance) => instance.lidar.flatMap((proxy) => (
+            proxy.triangles.map((triangle, triangleIndex) => createTriangleLidarTwin({
+                id: `${proxy.id}:${triangleIndex}`,
+                sourceId: instance.sourceId,
+                vertices: triangle.map((vertexIndex) => {
+                    const point = proxy.vertices[vertexIndex];
+                    return { x: point[0], y: point[1], z: point[2] };
+                }),
+                tags: [proxy.semantic],
+                semanticId: perceptionClassId(proxy.semantic),
+                instanceId: instanceIds.get(String(instance.sourceId)),
+                triangleIndex,
+            }))
+        ))),
     ].sort((left, right) => compareUtf8(left.id, right.id));
     const actors = vehicleDependencies
         .map((dependency) => ({

@@ -66,6 +66,7 @@ export class EnvironmentLoader {
     async apply(manifest, resolvedWorld = null) {
         const environment = this.data.environment();
         environment.projector?.()?.resetAssetInstances?.();
+        environment.projector?.()?.resetAssetMetrics?.();
         const document = environment.getDocument();
         const worldResource = resolvedWorld ?? createWorldResource(manifest);
         const description = assertWorldResource(worldResource);
@@ -101,6 +102,7 @@ export class EnvironmentLoader {
                 tags: [...feature.tags],
             })),
             earth: manifest.document?.earth ?? null,
+            assetMetrics: manifest.document?.assetMetrics ?? null,
             roadsAuthored,
             buildingsAuthored,
             featuresAuthored,
@@ -129,6 +131,7 @@ export class EnvironmentLoader {
 
         environment.objects().registerExistingContent(this.scene, this.data);
         environment.projector?.()?.syncAssetInstances?.();
+        environment.projector?.()?.syncAssetMetrics?.();
         // A full load replaces the world; prior history and gestures no longer apply.
         environment.commands?.()?.reset?.();
         environment.selection?.()?.prune?.(new Set(document.objects.map((record) => String(record.id))));

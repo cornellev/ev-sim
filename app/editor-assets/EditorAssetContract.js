@@ -4,10 +4,20 @@
  * media bytes, source grants, or dependency graphs into the editor schema.
  */
 
+import {
+    hashAssetMetric,
+    normalizeAssetDefinition,
+    normalizeAssetMetric,
+    validateAssetDefinition,
+    validateAssetMetric,
+} from "./AssetDefinition.js";
+import { normalizeVisualLayer } from "../simulation/visual/VisualLayer.js";
+
 export const EDITOR_ASSET_CATALOG_KIND = "cev-sim.editor-asset-catalog";
 export const EDITOR_ASSET_CATALOG_VERSION = 1;
 export const EDITOR_ASSET_REVISION_KIND = "cev-sim.editor-asset-revision";
 export const EDITOR_ASSET_REVISION_VERSION = 1;
+export const EDITOR_ASSET_REVISION_VERSION_V2 = 2;
 export const ASSET_INSTANCE_TYPE_ID = "asset-instance";
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -167,27 +177,74 @@ export function validateEditorAssetCatalog(value = {}) {
 
 export function normalizeEditorAssetRevision(value = {}) {
     const source = plain(value) ? value : {};
-    return {
+    const version = source.version === EDITOR_ASSET_REVISION_VERSION_V2 ? EDITOR_ASSET_REVISION_VERSION_V2 : EDITOR_ASSET_REVISION_VERSION;
+    const normalized = {
         kind: EDITOR_ASSET_REVISION_KIND,
-        version: EDITOR_ASSET_REVISION_VERSION,
+        version,
         assetId: string(source.assetId),
         revision: Number.isInteger(source.revision) ? source.revision : 0,
         publicationId: string(source.publicationId),
         modelUseHash: string(source.modelUseHash).toLowerCase(),
         createdAt: string(source.createdAt),
     };
+    if (version === EDITOR_ASSET_REVISION_VERSION_V2) {
+        normalized.definition = normalizeAssetDefinition(source.definition);
+        normalized.metric = normalizeAssetMetric(source.metric);
+        normalized.metricHash = string(source.metricHash).toLowerCase();
+        normalized.geometryHash = string(source.geometryHash).toLowerCase();
+        normalized.publicationPayloadHash = string(source.publicationPayloadHash).toLowerCase();
+        normalized.appearance = Array.isArray(source.appearance) ? clone(source.appearance) : [];
+    }
+    return normalized;
 }
 
 export function validateEditorAssetRevision(value = {}) {
     const issues = [];
     if (!plain(value)) return [issue([], "editor-asset.revision.invalid", "Editor asset revision must be an object.")];
     if (value.kind !== EDITOR_ASSET_REVISION_KIND) issues.push(issue(["kind"], "editor-asset.revision.kind", `Revision kind must be ${EDITOR_ASSET_REVISION_KIND}.`));
-    if (value.version !== EDITOR_ASSET_REVISION_VERSION) issues.push(issue(["version"], "editor-asset.revision.version", `Revision version must be ${EDITOR_ASSET_REVISION_VERSION}.`));
+    if (![EDITOR_ASSET_REVISION_VERSION, EDITOR_ASSET_REVISION_VERSION_V2].includes(value.version)) issues.push(issue(["version"], "editor-asset.revision.version", `Revision version must be ${EDITOR_ASSET_REVISION_VERSION} or ${EDITOR_ASSET_REVISION_VERSION_V2}.`));
     validateId(value.assetId, ["assetId"], "Asset id", issues);
     if (!Number.isInteger(value.revision) || value.revision <= 0) issues.push(issue(["revision"], "editor-asset.revision.number", "Asset revision must be a positive integer."));
     validateId(value.publicationId, ["publicationId"], "Publication id", issues);
     if (!SHA256.test(value.modelUseHash ?? "")) issues.push(issue(["modelUseHash"], "editor-asset.revision.use-hash", "Model use hash must be a SHA-256 digest."));
     if (typeof value.createdAt !== "string" || !Number.isFinite(Date.parse(value.createdAt))) issues.push(issue(["createdAt"], "editor-asset.timestamp.invalid", "createdAt must be an ISO timestamp."));
+    if (value.version === EDITOR_ASSET_REVISION_VERSION_V2) {
+        issues.push(...validateAssetDefinition(value.definition).map((entry) => ({ ...entry, path: ["definition", ...entry.path] })));
+        issues.push(...validateAssetMetric(value.metric).map((entry) => ({ ...entry, path: ["metric", ...entry.path] })));
+        if (!SHA256.test(value.metricHash ?? "")) issues.push(issue(["metricHash"], "editor-asset.revision.metric-hash", "metricHash must be a SHA-256 digest."));
+        else {
+            try { if (hashAssetMetric(value.metric) !== value.metricHash) issues.push(issue(["metricHash"], "editor-asset.revision.metric-mismatch", "metricHash does not match the canonical metric snapshot.")); }
+            catch (error) { issues.push(issue(["metric"], "editor-asset.revision.metric-invalid", error.message)); }
+        }
+        if (!SHA256.test(value.geometryHash ?? "")) issues.push(issue(["geometryHash"], "editor-asset.revision.geometry-hash", "geometryHash must be a SHA-256 digest."));
+        if (!SHA256.test(value.publicationPayloadHash ?? "")) issues.push(issue(["publicationPayloadHash"], "editor-asset.revision.publication-payload-hash", "publicationPayloadHash must bind the canonical publication payload."));
+        if (!Array.isArray(value.appearance)) issues.push(issue(["appearance"], "editor-asset.revision.appearance", "appearance must be an array."));
+        else value.appearance.forEach((material, index) => {
+            try {
+                const descriptor = {
+                    ...material,
+                    textures: Array.isArray(material?.textures)
+                        ? material.textures.map(({ useHash: _useHash, ...texture }) => texture)
+                        : material?.textures,
+                };
+                const assets = [...new Set((descriptor.textures ?? []).map((texture) => texture.assetUri))].map((assetUri) => ({
+                    sha256: String(assetUri).replace(/^sha256:/, ""), mediaType: "image/png", sizeBytes: 1, role: "texture",
+                }));
+                normalizeVisualLayer({
+                    kind: "cev-sim.visual-layer", version: 1,
+                    sourceWorldHash: "0".repeat(64),
+                    assetProfile: { id: "static-gltf-surface", version: 1 },
+                    assets, materials: [descriptor], chunks: [], instances: [], bindings: [],
+                    appearanceDependencies: assets.map((asset) => `sha256:${asset.sha256}`),
+                });
+                material?.textures?.forEach?.((texture, textureIndex) => {
+                    if (!SHA256.test(texture?.useHash ?? "")) issues.push(issue(["appearance", index, "textures", textureIndex, "useHash"], "editor-asset.revision.texture-use", "Published appearance textures require a source-bound use hash."));
+                });
+            } catch (error) {
+                issues.push(issue(["appearance", index], "editor-asset.revision.material", error.message));
+            }
+        });
+    }
     return issues;
 }
 

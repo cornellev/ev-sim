@@ -29,6 +29,7 @@ import {
 } from "../../roads/RoadLaneModel.js";
 import { roadGeometryVersionOf } from "../../roads/RoadGeometryRecord.js";
 import { ROAD_GEOMETRY_POLICY_V1 } from "../../roads/RoadGeometryPolicy.js";
+import { createWorldDescription } from "../../simulation/world/WorldDescription.js";
 
 const EPSILON = 1e-9;
 export const ROUTE_SCHEMA = "cev-sim.route";
@@ -38,8 +39,10 @@ export const ROUTE_ALGORITHM_VERSION = 5;
 export const ROUTE_ALGORITHM_VERSION_V6 = 6;
 /** ED-05: explicit lanes with stable ids; anchors and proof steps bind lane ids. */
 export const ROUTE_ALGORITHM_VERSION_V7 = 7;
+/** ED-07: road proof plus immutable asset metric-world identity. */
+export const ROUTE_ALGORITHM_VERSION_V8 = 8;
 /** Proof versions the current code can author or accept as current for some environment. */
-export const ROUTE_CURRENT_ALGORITHM_VERSIONS = Object.freeze([ROUTE_ALGORITHM_VERSION, ROUTE_ALGORITHM_VERSION_V6, ROUTE_ALGORITHM_VERSION_V7]);
+export const ROUTE_CURRENT_ALGORITHM_VERSIONS = Object.freeze([ROUTE_ALGORITHM_VERSION, ROUTE_ALGORITHM_VERSION_V6, ROUTE_ALGORITHM_VERSION_V7, ROUTE_ALGORITHM_VERSION_V8]);
 const CENTERLINE_EPSILON = 1e-6;
 
 export function normalizeRoute(value = {}) {
@@ -67,15 +70,31 @@ export function normalizeRoute(value = {}) {
 }
 
 export function routeAlgorithmVersionFor(environment) {
+    if (metricWorldHashForEnvironment(environment)) return ROUTE_ALGORITHM_VERSION_V8;
     const version = roadGeometryVersionOf(environmentDocumentFrom(environment));
     if (version === 2) return ROUTE_ALGORITHM_VERSION_V7;
     if (version === 1) return ROUTE_ALGORITHM_VERSION;
     throw new TypeError(`Unsupported road geometry version: ${String(version)}.`);
 }
 
-/** Algorithms 6 and 7 measure XZ arc distance over the frozen road geometry policy. */
-function usesCompiledGeometry(algorithmVersion) {
-    return algorithmVersion >= ROUTE_ALGORITHM_VERSION_V6;
+export function metricWorldHashForEnvironment(environment) {
+    if (typeof environment?.metricWorldHash === "string" && environment.metricWorldHash) return environment.metricWorldHash;
+    const document = environmentDocumentFrom(environment);
+    if (!(document?.assetMetrics?.definitions ?? []).some((entry) => entry.collision?.length || entry.lidar?.length)) return null;
+    return createWorldDescription(environment).metricWorldHash ?? null;
+}
+
+function baseAlgorithmVersionFor(environment) {
+    return roadGeometryVersionOf(environmentDocumentFrom(environment)) === 2
+        ? ROUTE_ALGORITHM_VERSION_V7
+        : ROUTE_ALGORITHM_VERSION;
+}
+
+/** Explicit dispatch prevents v8 over legacy roads from inheriting v6/v7 geometry. */
+function usesCompiledGeometry(algorithmVersion, baseAlgorithmVersion = algorithmVersion) {
+    return algorithmVersion === ROUTE_ALGORITHM_VERSION_V8
+        ? baseAlgorithmVersion === ROUTE_ALGORITHM_VERSION_V7
+        : [ROUTE_ALGORITHM_VERSION_V6, ROUTE_ALGORITHM_VERSION_V7].includes(algorithmVersion);
 }
 
 /**
@@ -150,8 +169,19 @@ export function validateRouteVerification(route, environment = null, options = {
     if (!legacyVersion && (verification.algorithm !== ROUTE_ALGORITHM || !currentVersion || verification.algorithmVersion !== expectedVersion)) {
         issues.push({ code: "route.verification.algorithm-invalid", path: "verification.algorithm", message: `Route verification must use ${ROUTE_ALGORITHM} version ${expectedVersion}.` });
     }
-    const laneIdProof = verification.algorithmVersion === ROUTE_ALGORITHM_VERSION_V7;
-    if (currentVersion && usesCompiledGeometry(verification.algorithmVersion)
+    const baseAlgorithmVersion = verification.algorithmVersion === ROUTE_ALGORITHM_VERSION_V8
+        ? verification.baseAlgorithmVersion
+        : verification.algorithmVersion;
+    const laneIdProof = baseAlgorithmVersion === ROUTE_ALGORITHM_VERSION_V7;
+    if (verification.algorithmVersion === ROUTE_ALGORITHM_VERSION_V8
+        && ![ROUTE_ALGORITHM_VERSION, ROUTE_ALGORITHM_VERSION_V7].includes(baseAlgorithmVersion)) {
+        issues.push({ code: "route.verification.base-algorithm-invalid", path: "verification.baseAlgorithmVersion", message: "Route verification v8 requires base algorithm version 5 or 7." });
+    }
+    if (verification.algorithmVersion === ROUTE_ALGORITHM_VERSION_V8
+        && (typeof verification.metricWorldHash !== "string" || !verification.metricWorldHash)) {
+        issues.push({ code: "route.verification.metric-world-hash-required", path: "verification.metricWorldHash", message: "Route verification v8 requires a metric world hash." });
+    }
+    if (currentVersion && usesCompiledGeometry(verification.algorithmVersion, baseAlgorithmVersion)
         && (verification.distanceMetric !== "xz"
             || verification.geometryPolicy?.id !== ROAD_GEOMETRY_POLICY_V1.id
             || verification.geometryPolicy?.version !== ROAD_GEOMETRY_POLICY_V1.version)) {
@@ -431,7 +461,13 @@ export function verifyRoute(first, second, third) {
     let waypointHash = hashWaypoints(waypoints);
     const issues = [];
     const algorithmVersion = routeAlgorithmVersionFor(environment);
-    const distanceMetric = usesCompiledGeometry(algorithmVersion) ? "xz" : "3d";
+    const baseAlgorithmVersion = algorithmVersion === ROUTE_ALGORITHM_VERSION_V8
+        ? baseAlgorithmVersionFor(environment)
+        : algorithmVersion;
+    const metricWorldHash = algorithmVersion === ROUTE_ALGORITHM_VERSION_V8
+        ? metricWorldHashForEnvironment(environment)
+        : null;
+    const distanceMetric = usesCompiledGeometry(algorithmVersion, baseAlgorithmVersion) ? "xz" : "3d";
 
     if (waypoints.length < 2) {
         issues.push({
@@ -481,7 +517,7 @@ export function verifyRoute(first, second, third) {
         const anchorEdge = waypoint.anchor?.kind === "road"
             ? graph.edges.get(String(waypoint.anchor.id))
             : null;
-        if (usesCompiledGeometry(algorithmVersion) && waypoint.anchor) {
+        if (usesCompiledGeometry(algorithmVersion, baseAlgorithmVersion) && waypoint.anchor) {
             const anchor = waypoint.anchor;
             const validShape = anchor.kind === "intersection"
                 ? Boolean(anchor.id)
@@ -527,7 +563,7 @@ export function verifyRoute(first, second, third) {
         }
         const anchoredProjection = projectionFromStableAnchor(waypoint, graph);
         const projection = anchoredProjection
-            ?? (usesCompiledGeometry(algorithmVersion) && waypoint.anchor ? null : projectPointToRoadNetwork(
+            ?? (usesCompiledGeometry(algorithmVersion, baseAlgorithmVersion) && waypoint.anchor ? null : projectPointToRoadNetwork(
                 waypoint.authoredPosition ?? waypoint,
                 environment,
                 options.projection ?? {},
@@ -541,7 +577,7 @@ export function verifyRoute(first, second, third) {
             });
             return waypoint;
         }
-        if (algorithmVersion === ROUTE_ALGORITHM_VERSION_V7 && projection.kind === "road" && projection.laneMode === "fixed") {
+        if (baseAlgorithmVersion === ROUTE_ALGORITHM_VERSION_V7 && projection.kind === "road" && projection.laneMode === "fixed") {
             const edge = graph.edges.get(String(projection.edgeId));
             projection.laneId = projection.laneId ?? roadLaneId(edge, projection.laneIndex);
         }
@@ -650,7 +686,8 @@ export function verifyRoute(first, second, third) {
     const verification = canonicalNumericTree({
         algorithm: ROUTE_ALGORITHM,
         algorithmVersion,
-        ...(usesCompiledGeometry(algorithmVersion) ? {
+        ...(algorithmVersion === ROUTE_ALGORITHM_VERSION_V8 ? { baseAlgorithmVersion, metricWorldHash } : {}),
+        ...(usesCompiledGeometry(algorithmVersion, baseAlgorithmVersion) ? {
             geometryPolicy: { id: ROAD_GEOMETRY_POLICY_V1.id, version: ROAD_GEOMETRY_POLICY_V1.version },
             distanceMetric: "xz",
         } : {}),
@@ -710,7 +747,9 @@ export function isRouteVerificationCurrent(route, environment) {
         || verification?.waypointHash !== hashWaypoints(route?.waypoints ?? [])) {
         return false;
     }
-    return !environment || verification.environmentHash === hashEnvironmentRoadNetwork(environment);
+    if (!environment || verification.environmentHash !== hashEnvironmentRoadNetwork(environment)) return !environment;
+    return verification.algorithmVersion !== ROUTE_ALGORITHM_VERSION_V8
+        || verification.metricWorldHash === metricWorldHashForEnvironment(environment);
 }
 
 export function getRoutePolyline(route) {
