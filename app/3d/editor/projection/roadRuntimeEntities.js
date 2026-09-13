@@ -12,6 +12,35 @@ import { canMoveNode } from "../document/documentMutations.js";
 import { getRoadStylePreset } from "../../environment/road/RoadStylePresets.js";
 import { resolveRoadEdge, roadGeometryVersionOf } from "../../../roads/RoadGeometryRecord.js";
 
+export const ROAD_AUTHORING_HANDLES_NAME = "RoadAuthoringHandles";
+export const ROAD_AUTHORING_HANDLE_KINDS = Object.freeze(["road-node", "road-knot", "road-handle"]);
+
+export function isRoadAuthoringHandleKind(kind) {
+    return ROAD_AUTHORING_HANDLE_KINDS.includes(kind);
+}
+
+export function getRoadAuthoringHandlesGroup(scene) {
+    return scene?.getObjectByName?.(ROAD_AUTHORING_HANDLES_NAME) ?? null;
+}
+
+function authoringHelpersVisibleFrom(data) {
+    return data?.environment?.()?.authoringHelpersVisible !== false;
+}
+
+export function ensureRoadAuthoringHandlesGroup(scene, { visible } = {}) {
+    if (!scene) return null;
+    let group = getRoadAuthoringHandlesGroup(scene);
+    if (!group) {
+        group = new THREE.Group();
+        group.name = ROAD_AUTHORING_HANDLES_NAME;
+        group.userData.bakeIgnore = true;
+        group.userData.editorHelper = true;
+        scene.add(group);
+    }
+    if (visible !== undefined) group.visible = Boolean(visible);
+    return group;
+}
+
 export function getRoadRegistry(data) {
     return data?.environment?.()?.objects?.() ?? null;
 }
@@ -69,6 +98,7 @@ export function createEndpointHandle(node) {
     mesh.name = "RoadNodeHandle";
     mesh.position.set(node.x, Number.isFinite(Number(node.y)) ? Number(node.y) : 0, node.z);
     mesh.userData.bakeIgnore = true;
+    mesh.userData.editorHelper = true;
     mesh.userData.roadNodeId = node.id;
     return mesh;
 }
@@ -131,6 +161,7 @@ function createSubHandle(position, color, radius) {
     );
     mesh.position.set(position.x, position.y, position.z);
     mesh.userData.bakeIgnore = true;
+    mesh.userData.editorHelper = true;
     return mesh;
 }
 
@@ -139,8 +170,9 @@ function createSubHandle(position, color, radius) {
  * node handles are (re)created; by default every movable node gets one.
  * `withIndexAliases` adds `road:<index>` aliases (full load only).
  */
-export function registerRoadEntities(registry, result, document, scene, { nodeIds = null, withIndexAliases = false } = {}) {
+export function registerRoadEntities(registry, result, document, scene, { nodeIds = null, withIndexAliases = false, data = null } = {}) {
     if (!registry) return;
+    const handles = ensureRoadAuthoringHandlesGroup(scene, { visible: authoringHelpersVisibleFrom(data) });
 
     result.roads.forEach((road, index) => {
         if (!road?.root) return;
@@ -178,7 +210,7 @@ export function registerRoadEntities(registry, result, document, scene, { nodeId
         removeRoadNodeHandle(registry, node.id);
         if (!canMoveNode(document, node.id)) continue;
         const handle = createEndpointHandle(node);
-        scene.add(handle);
+        handles?.add(handle);
         registry.registerEntity({
             id: roadNodeEntityId(node.id),
             sourceId: node.id,
@@ -198,7 +230,7 @@ export function registerRoadEntities(registry, result, document, scene, { nodeId
             const resolved = resolveRoadEdge(edge, nodeById);
             for (const knot of resolved.geometry.knots) {
                 const knotHandle = createSubHandle(knot.position, 0xf59e0b, 0.32);
-                scene.add(knotHandle);
+                handles?.add(knotHandle);
                 registry.registerEntity({
                     id: roadKnotEntityId(edge.id, knot.id),
                     sourceId: edge.id,
@@ -213,7 +245,7 @@ export function registerRoadEntities(registry, result, document, scene, { nodeId
                     if (!vector) continue;
                     const position = { x: knot.position.x + vector.x, y: knot.position.y + vector.y, z: knot.position.z + vector.z };
                     const handle = createSubHandle(position, 0xa78bfa, 0.24);
-                    scene.add(handle);
+                    handles?.add(handle);
                     registry.registerEntity({
                         id: roadHandleEntityId(edge.id, knot.id, side),
                         sourceId: edge.id,

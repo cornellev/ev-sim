@@ -67,7 +67,7 @@ export function syncRoadsFromDocument(data, scene, document) {
             (triangle) => triangle.environmentGeometryType === "road",
             tagRoadTriangles(result.roads, result.intersections),
         );
-        registerRoadEntities(registry, result, document, scene, { withIndexAliases: true });
+        registerRoadEntities(registry, result, document, scene, { withIndexAliases: true, data });
 
         return result;
     };

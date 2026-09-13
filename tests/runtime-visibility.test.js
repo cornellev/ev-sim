@@ -4,8 +4,10 @@ import test from "node:test";
 import {
     clearLaneHighlights,
     setDeviceVisualsVisible,
+    setRoadAuthoringHandlesVisible,
     setVehiclesVisible,
 } from "../app/3d/runtimeVisibility.js";
+import { ROAD_AUTHORING_HANDLES_NAME } from "../app/3d/editor/projection/roadRuntimeEntities.js";
 import { PhysicsEngine } from "../app/physics/PhysicsEngine.js";
 import { Settings } from "../app/3d/data/Settings.js";
 
@@ -82,4 +84,26 @@ test("editor mode visibility hides vehicle and detached device visuals", () => {
     assert.equal(vehicleRoot.visible, false);
     assert.deepEqual(deviceRoots.map((root) => root.visible), [false, false, false, false]);
     assert.deepEqual(laneMeshes.map((mesh) => mesh.visible), [false, false]);
+});
+
+test("simulation mode hides the road authoring handle group", () => {
+    const group = { name: ROAD_AUTHORING_HANDLES_NAME, visible: true };
+    const scene = {
+        getObjectByName(name) {
+            return name === ROAD_AUTHORING_HANDLES_NAME ? group : null;
+        },
+    };
+    const environment = { authoringHelpersVisible: undefined, scene };
+    const data = {
+        environment: () => environment,
+        three: () => ({ scene }),
+    };
+
+    setRoadAuthoringHandlesVisible(data, false);
+    assert.equal(environment.authoringHelpersVisible, false);
+    assert.equal(group.visible, false);
+
+    setRoadAuthoringHandlesVisible(data, true);
+    assert.equal(environment.authoringHelpersVisible, true);
+    assert.equal(group.visible, true);
 });

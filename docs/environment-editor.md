@@ -2,7 +2,7 @@
 
 The environment editor is where you author the static world that simulations run in: roads, buildings, props, sky, and imported geography. It is a separate workspace from the simulation view, though both use the same Three.js scene stack.
 
-Open it from the app menu (`Escape` → **Environment Editor**). The simulation workspace is the other 3D option in that same menu.
+Open it from the app menu (`Escape` → **Environment Editor**). The simulation workspace is the other 3D option in that same menu. 3D road node, knot, and Bézier-handle spheres are editor-only authoring widgets and stay hidden in Simulation.
 
 Since ED-03 the editor is one workspace: a top bar, a resizable hierarchy pane on the left, the scene (or map) view with its toolbar in the middle, a resizable inspector on the right, and an asset pane along the bottom. Pane sizes and collapsed states are editor preferences; the canvas and camera projection follow the scene pane, and pointer picking uses the canvas bounds.
 

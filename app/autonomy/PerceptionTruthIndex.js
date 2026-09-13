@@ -1,6 +1,7 @@
 import * as THREE from "three";
 
 import { isVisualPreviewObject } from "../3d/environment/visual/VisualPreviewIsolation.js";
+import { isRoadAuthoringHandleKind } from "../3d/editor/projection/roadRuntimeEntities.js";
 import {
     normalizePerceptionClassName,
     perceptionClassId,
@@ -159,6 +160,7 @@ export class PerceptionTruthIndex {
             ? [...environmentRegistry.entities.values()]
             : environmentRegistry?.listEntities?.() || [];
         for (const entity of environmentEntities) {
+            if (isRoadAuthoringHandleKind(entity.kind) || entity.object3D?.userData?.editorHelper) continue;
             entities.push({
                 ...entity,
                 sourceId: sourceIdForEntity(entity, entity.id),
@@ -179,6 +181,7 @@ export class PerceptionTruthIndex {
         }
         scene?.traverse?.((object) => {
             if (isVisualPreviewObject(object)) return;
+            if (object.userData?.editorHelper) return;
             const sourceId = object.userData?.perceptionSourceId;
             if (!sourceId || entities.some((entity) => sourceIdForEntity(entity, "") === sourceId)) return;
             entities.push({

@@ -150,7 +150,7 @@ export function createRoadsProjector() {
                 (triangle) => triangle.environmentGeometryType === "road" && affected.has(String(triangle.environmentSourceId)),
                 tagRoadTriangles(built.roads, built.intersections),
             );
-            registerRoadEntities(registry, built, document, scene, { nodeIds: touchedNodeIds });
+            registerRoadEntities(registry, built, document, scene, { nodeIds: touchedNodeIds, data });
         },
     };
 }

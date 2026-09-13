@@ -76,12 +76,12 @@ export function MapSurface({ data, editorSnapshot, documentSnapshot, mapSelectio
                 />
             </svg>
 
-            <MapSurfaceHud
+            {/* <MapSurfaceHud
                 viewport={viewport}
                 layers={layers}
                 showDetail={showDetail}
                 onRecenter={handleRecenter}
-            />
+            /> */}
         </div>
     );
 }

@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { EDITOR_LAYERS } from "./EditorState.js";
 import { annotatePerceptionObject } from "../../autonomy/PerceptionTruthIndex.js";
 import { isVisualPreviewObject } from "../environment/visual/VisualPreviewIsolation.js";
+import { isRoadAuthoringHandleKind } from "./projection/roadRuntimeEntities.js";
 
 function shortId(value) {
     const text = String(value ?? "");
@@ -10,7 +11,7 @@ function shortId(value) {
 
 function getKindLayer(kind) {
     if (kind === "building") return EDITOR_LAYERS.BUILDINGS;
-    if (kind === "road" || kind === "intersection" || kind === "road-node") return EDITOR_LAYERS.ROADS;
+    if (kind === "road" || kind === "intersection" || kind === "road-node" || kind === "road-knot" || kind === "road-handle") return EDITOR_LAYERS.ROADS;
     return EDITOR_LAYERS.PROPS;
 }
 
@@ -156,18 +157,22 @@ export class EnvironmentRegistry {
         if (next.object3D) {
             tagObjectTree(next.object3D, next.id);
             next.object3D.userData.environmentLayer = next.layer;
-            annotatePerceptionObject(next.object3D, {
-                sourceId: next.sourceId ?? next.id,
-                semanticClass: next.kind,
-                kind: next.kind,
-            });
+            if (!isRoadAuthoringHandleKind(next.kind)) {
+                annotatePerceptionObject(next.object3D, {
+                    sourceId: next.sourceId ?? next.id,
+                    semanticClass: next.kind,
+                    kind: next.kind,
+                });
+            }
         }
 
-        const membership = this.chunkManager?.assignEntity?.(next);
-        if (membership) {
-            next.primaryChunk = membership.primaryChunk;
-            next.coveredChunks = membership.coveredChunks;
-            next.bounds = membership.bounds;
+        if (!isRoadAuthoringHandleKind(next.kind)) {
+            const membership = this.chunkManager?.assignEntity?.(next);
+            if (membership) {
+                next.primaryChunk = membership.primaryChunk;
+                next.coveredChunks = membership.coveredChunks;
+                next.bounds = membership.bounds;
+            }
         }
 
         this.entities.set(next.id, next);

@@ -89,6 +89,9 @@ export class Environment {
 
         this.scene = null;
         this.toolController = null;
+        // Session-only: Simulation hides 3D road node/knot/handle spheres.
+        // Undefined means visible so editor unit tests need no workspace switch.
+        this.authoringHelpersVisible = undefined;
         this.worldDescription = null;
         this.worldHash = null;
         this.revision = Math.max(0, Number(options.revision) || 0);

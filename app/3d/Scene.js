@@ -55,6 +55,7 @@ import McpLoggingBridge from "../logging/McpLoggingBridge";
 import {
     clearLaneHighlights,
     setDeviceVisualsVisible,
+    setRoadAuthoringHandlesVisible,
     setVehiclesVisible,
 } from "./runtimeVisibility";
 import { getRunSessionController } from "../simulation/RunSessionController.js";
@@ -539,6 +540,7 @@ async function enterRuntimeMode(runtime, mode) {
         runtime.disposeEditorInfrastructure = null;
         setVehiclesVisible(data, true);
         setDeviceVisualsVisible(data, true);
+        setRoadAuthoringHandlesVisible(data, false);
 
         if (!runtime.simulationInitialized) {
             simulation.setModule("vehicles", true);
@@ -577,6 +579,7 @@ async function enterRuntimeMode(runtime, mode) {
     if (runtime.disposed) return;
     setVehiclesVisible(data, false);
     setDeviceVisualsVisible(data, false);
+    setRoadAuthoringHandlesVisible(data, true);
 
     if (!runtime.editorInfrastructureInitialized) {
         runtime.disposeEditorInfrastructure = await setupEnvironmentRuntime(data, scene, camera, renderer);

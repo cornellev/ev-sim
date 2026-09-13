@@ -1,3 +1,7 @@
+import {
+    getRoadAuthoringHandlesGroup,
+} from "./editor/projection/roadRuntimeEntities.js";
+
 export function setVehiclesVisible(data, visible) {
     for (const vehicle of data.vehicles()?.vehicles ?? []) {
         if (vehicle.sceneObject) vehicle.sceneObject.visible = visible;
@@ -16,6 +20,14 @@ export function setDeviceVisualsVisible(data, visible) {
             if (root) root.visible = visible;
         }
     }
+}
+
+export function setRoadAuthoringHandlesVisible(data, visible) {
+    const environment = data?.environment?.();
+    if (environment) environment.authoringHelpersVisible = Boolean(visible);
+    const scene = data?.three?.()?.scene ?? environment?.scene ?? null;
+    const group = getRoadAuthoringHandlesGroup(scene);
+    if (group) group.visible = Boolean(visible);
 }
 
 export function clearLaneHighlights(data) {
