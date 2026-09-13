@@ -1,4 +1,5 @@
 import {
+    getRoadAuthoringHandleStemsGroup,
     getRoadAuthoringHandlesGroup,
 } from "./editor/projection/roadRuntimeEntities.js";
 
@@ -26,8 +27,11 @@ export function setRoadAuthoringHandlesVisible(data, visible) {
     const environment = data?.environment?.();
     if (environment) environment.authoringHelpersVisible = Boolean(visible);
     const scene = data?.three?.()?.scene ?? environment?.scene ?? null;
+    const shown = Boolean(visible);
     const group = getRoadAuthoringHandlesGroup(scene);
-    if (group) group.visible = Boolean(visible);
+    if (group) group.visible = shown;
+    const stems = getRoadAuthoringHandleStemsGroup(scene);
+    if (stems) stems.visible = shown;
 }
 
 export function clearLaneHighlights(data) {

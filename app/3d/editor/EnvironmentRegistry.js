@@ -230,6 +230,7 @@ export class EnvironmentRegistry {
 
         scene?.traverse?.((object) => {
             if (isVisualPreviewObject(object)) return;
+            if (object.userData?.editorHelper || object.userData?.bakeIgnore) return;
             if (object.userData?.skipEnvironmentSelection || object.userData?.environmentChunkKey) return;
             if (roadRoots.has(object) || hasAncestorInSet(object, roadRoots)) return;
 

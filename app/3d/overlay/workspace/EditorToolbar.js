@@ -21,6 +21,7 @@ import {
     IconRotateClockwise,
     IconStack2,
     IconTrafficLights,
+    IconVectorBezier,
     IconWorld,
 } from "@tabler/icons-react";
 import { IconButton, PopoverSurface } from "../../../ui";
@@ -46,6 +47,7 @@ const ICONS = {
     grid: IconGrid4x4,
     chunks: IconBoxMultiple,
     bounds: IconBorderCorners,
+    bezier: IconVectorBezier,
     undo: IconArrowBackUp,
     redo: IconArrowForwardUp,
     frame: IconFocusCentered,

@@ -13,7 +13,216 @@ import { getRoadStylePreset } from "../../environment/road/RoadStylePresets.js";
 import { resolveRoadEdge, roadGeometryVersionOf } from "../../../roads/RoadGeometryRecord.js";
 
 export const ROAD_AUTHORING_HANDLES_NAME = "RoadAuthoringHandles";
+export const ROAD_AUTHORING_HANDLE_STEMS_NAME = "RoadAuthoringHandleStems";
 export const ROAD_AUTHORING_HANDLE_KINDS = Object.freeze(["road-node", "road-knot", "road-handle"]);
+
+export const HANDLE_PIXEL_SIZES = Object.freeze({
+    "road-node": 12,
+    "road-knot": 10,
+    "road-handle": 8,
+});
+
+export const HANDLE_FILL_COLORS = Object.freeze({
+    "road-node": 0x38bdf8,
+    "road-knot": 0xf59e0b,
+    "road-handle": 0x8b5cf6,
+});
+
+export const HANDLE_HALO_COLORS = Object.freeze({
+    "road-node": 0xe0f2fe,
+    "road-knot": 0xe0f2fe,
+    "road-handle": 0xede9fe,
+});
+
+const HANDLE_SCALE_MIN = 0.08;
+const HANDLE_SCALE_MAX = 1.5;
+const HANDLE_HALO_SCALE = 1.35;
+const UNIT_SPHERE = new THREE.SphereGeometry(1, 12, 12);
+
+function overlayMaterial(color) {
+    return new THREE.MeshBasicMaterial({
+        color,
+        depthTest: false,
+        depthWrite: false,
+        toneMapped: false,
+        fog: false,
+        transparent: true,
+    });
+}
+
+const _handleWorld = new THREE.Vector3();
+
+/** Scale a handle group so its unit-radius fill matches `handlePixelSize` on screen. */
+export function scaleHandleToPixels(object3D, camera, renderer, {
+    min = HANDLE_SCALE_MIN,
+    max = HANDLE_SCALE_MAX,
+} = {}) {
+    if (!object3D || !camera) return 0;
+    const pixels = Number(object3D.userData?.handlePixelSize) || HANDLE_PIXEL_SIZES["road-knot"];
+    object3D.getWorldPosition(_handleWorld);
+    const distance = camera.position.distanceTo(_handleWorld);
+    let worldHeight;
+    if (camera.isOrthographicCamera) {
+        worldHeight = Math.abs((camera.top - camera.bottom) / (camera.zoom || 1));
+    } else {
+        const fov = THREE.MathUtils.degToRad(Number(camera.fov) || 50);
+        worldHeight = 2 * Math.tan(fov / 2) * Math.max(distance, 1e-4);
+    }
+    const canvasHeight = Math.max(1, Number(renderer?.domElement?.clientHeight) || 1);
+    const diameter = pixels * worldHeight / canvasHeight;
+    const scale = Math.min(max, Math.max(min, diameter / 2));
+    object3D.scale.setScalar(scale);
+    return scale;
+}
+
+function disposeHandleObject(object3D) {
+    object3D?.parent?.remove?.(object3D);
+    object3D?.traverse?.((child) => {
+        if (child.geometry && child.geometry !== UNIT_SPHERE) child.geometry.dispose?.();
+        const materials = Array.isArray(child.material) ? child.material : child.material ? [child.material] : [];
+        for (const material of materials) material?.dispose?.();
+    });
+}
+
+function createHaloHandle({ fill, halo, pixelSize, name, position, visible = true }) {
+    const group = new THREE.Group();
+    group.name = name;
+    group.position.set(position.x, position.y, position.z);
+    group.visible = visible;
+    group.userData.bakeIgnore = true;
+    group.userData.editorHelper = true;
+    group.userData.handlePixelSize = pixelSize;
+
+    const haloMesh = new THREE.Mesh(UNIT_SPHERE, overlayMaterial(halo));
+    haloMesh.name = `${name}:halo`;
+    haloMesh.scale.setScalar(HANDLE_HALO_SCALE);
+    haloMesh.renderOrder = 1000;
+    haloMesh.userData.bakeIgnore = true;
+    haloMesh.userData.editorHelper = true;
+
+    const fillMesh = new THREE.Mesh(UNIT_SPHERE, overlayMaterial(fill));
+    fillMesh.name = `${name}:fill`;
+    fillMesh.renderOrder = 1001;
+    fillMesh.userData.bakeIgnore = true;
+    fillMesh.userData.editorHelper = true;
+    fillMesh.onBeforeRender = (renderer, _scene, camera) => {
+        scaleHandleToPixels(group, camera, renderer);
+    };
+
+    group.add(haloMesh);
+    group.add(fillMesh);
+    return group;
+}
+
+export function shouldShowRoadTangentHandle(entity, {
+    sub = null,
+    showAll = false,
+    layerVisible = true,
+    entityVisible = true,
+} = {}) {
+    if (layerVisible === false || entityVisible === false) return false;
+    if (showAll) return true;
+    if (!sub || !["road-knot", "road-handle"].includes(sub.kind)) return false;
+    return String(sub.edgeId) === String(entity.edgeId) && String(sub.knotId) === String(entity.knotId);
+}
+
+export function applyRoadTangentHandleVisibility(registry, {
+    sub = null,
+    showAll = false,
+    layers = null,
+} = {}) {
+    if (!registry?.listEntities) return;
+    for (const summary of registry.listEntities()) {
+        if (summary.kind !== "road-handle") continue;
+        const entity = registry.getEntity(summary.id);
+        if (!entity?.object3D) continue;
+        entity.object3D.visible = shouldShowRoadTangentHandle(entity, {
+            sub,
+            showAll,
+            layerVisible: layers?.[entity.layer] !== false,
+            entityVisible: entity.visible !== false && entity.hidden !== true,
+        });
+    }
+}
+
+export function getRoadAuthoringHandleStemsGroup(scene) {
+    return scene?.getObjectByName?.(ROAD_AUTHORING_HANDLE_STEMS_NAME) ?? null;
+}
+
+export function ensureRoadAuthoringHandleStemsGroup(scene) {
+    if (!scene) return null;
+    let group = getRoadAuthoringHandleStemsGroup(scene);
+    if (!group) {
+        group = new THREE.Group();
+        group.name = ROAD_AUTHORING_HANDLE_STEMS_NAME;
+        group.userData.bakeIgnore = true;
+        group.userData.editorHelper = true;
+        group.userData.skipEnvironmentSelection = true;
+        scene.add(group);
+    }
+    return group;
+}
+
+function clearStemGroup(group) {
+    if (!group) return;
+    for (const child of [...group.children]) {
+        group.remove(child);
+        child.geometry?.dispose?.();
+        child.material?.dispose?.();
+    }
+}
+
+function stemMaterial() {
+    return new THREE.LineBasicMaterial({
+        color: HANDLE_FILL_COLORS["road-handle"],
+        depthTest: false,
+        depthWrite: false,
+        toneMapped: false,
+        fog: false,
+    });
+}
+
+export function syncRoadHandleStems(scene, registry) {
+    const stems = ensureRoadAuthoringHandleStemsGroup(scene);
+    if (!stems || !registry) return stems;
+    clearStemGroup(stems);
+    for (const summary of registry.listEntities()) {
+        if (summary.kind !== "road-handle") continue;
+        const handle = registry.getEntity(summary.id);
+        if (!handle?.object3D || handle.object3D.visible === false) continue;
+        const knot = registry.getEntity(roadKnotEntityId(handle.edgeId, handle.knotId));
+        if (!knot?.object3D) continue;
+        const geometry = new THREE.BufferGeometry().setFromPoints([
+            knot.object3D.position.clone(),
+            handle.object3D.position.clone(),
+        ]);
+        const line = new THREE.Line(geometry, stemMaterial());
+        line.renderOrder = 999;
+        line.userData.bakeIgnore = true;
+        line.userData.editorHelper = true;
+        line.userData.skipEnvironmentSelection = true;
+        stems.add(line);
+    }
+    return stems;
+}
+
+export function disposeRoadHandleStems(scene) {
+    const stems = getRoadAuthoringHandleStemsGroup(scene);
+    if (!stems) return;
+    clearStemGroup(stems);
+    stems.parent?.remove?.(stems);
+}
+
+export function syncRoadAuthoringHandleOverlay({
+    scene,
+    registry,
+    sub = null,
+    showAll = false,
+    layers = null,
+} = {}) {
+    applyRoadTangentHandleVisibility(registry, { sub, showAll, layers });
+    syncRoadHandleStems(scene, registry);
+}
 
 export function isRoadAuthoringHandleKind(kind) {
     return ROAD_AUTHORING_HANDLE_KINDS.includes(kind);
@@ -86,21 +295,15 @@ export function toVector3Map(rawMap) {
 }
 
 export function createEndpointHandle(node) {
-    const geometry = new THREE.SphereGeometry(0.45, 12, 12);
-    const material = new THREE.MeshStandardMaterial({
-        color: 0x38bdf8,
-        emissive: 0x0ea5e9,
-        emissiveIntensity: 0.35,
-        roughness: 0.45,
-        metalness: 0.1,
+    const group = createHaloHandle({
+        fill: HANDLE_FILL_COLORS["road-node"],
+        halo: HANDLE_HALO_COLORS["road-node"],
+        pixelSize: HANDLE_PIXEL_SIZES["road-node"],
+        name: "RoadNodeHandle",
+        position: { x: node.x, y: Number.isFinite(Number(node.y)) ? Number(node.y) : 0, z: node.z },
     });
-    const mesh = new THREE.Mesh(geometry, material);
-    mesh.name = "RoadNodeHandle";
-    mesh.position.set(node.x, Number.isFinite(Number(node.y)) ? Number(node.y) : 0, node.z);
-    mesh.userData.bakeIgnore = true;
-    mesh.userData.editorHelper = true;
-    mesh.userData.roadNodeId = node.id;
-    return mesh;
+    group.userData.roadNodeId = node.id;
+    return group;
 }
 
 /** Tag road/intersection triangles for LiDAR truth and return them. */
@@ -132,9 +335,7 @@ export function tagRoadTriangles(roads, intersections) {
 export function removeRoadNodeHandle(registry, nodeId) {
     const entity = registry?.getEntity?.(roadNodeEntityId(nodeId));
     if (!entity) return false;
-    entity.object3D?.parent?.remove?.(entity.object3D);
-    entity.object3D?.geometry?.dispose?.();
-    entity.object3D?.material?.dispose?.();
+    disposeHandleObject(entity.object3D);
     registry.unregisterEntity(entity.id);
     return true;
 }
@@ -147,22 +348,20 @@ export function removeRoadGeometryHandles(registry, edgeId) {
     )) ?? [];
     for (const entity of entities) {
         const full = registry.getEntity(entity.id);
-        full?.object3D?.parent?.remove?.(full.object3D);
-        full?.object3D?.geometry?.dispose?.();
-        full?.object3D?.material?.dispose?.();
+        disposeHandleObject(full?.object3D);
         registry.unregisterEntity(entity.id);
     }
 }
 
-function createSubHandle(position, color, radius) {
-    const mesh = new THREE.Mesh(
-        new THREE.SphereGeometry(radius, 10, 10),
-        new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.25, roughness: 0.5 }),
-    );
-    mesh.position.set(position.x, position.y, position.z);
-    mesh.userData.bakeIgnore = true;
-    mesh.userData.editorHelper = true;
-    return mesh;
+function createSubHandle(position, kind, { visible = true } = {}) {
+    return createHaloHandle({
+        fill: HANDLE_FILL_COLORS[kind],
+        halo: HANDLE_HALO_COLORS[kind],
+        pixelSize: HANDLE_PIXEL_SIZES[kind],
+        name: kind === "road-handle" ? "RoadTangentHandle" : "RoadKnotHandle",
+        position,
+        visible,
+    });
 }
 
 /**
@@ -229,7 +428,7 @@ export function registerRoadEntities(registry, result, document, scene, { nodeId
             removeRoadGeometryHandles(registry, edge.id);
             const resolved = resolveRoadEdge(edge, nodeById);
             for (const knot of resolved.geometry.knots) {
-                const knotHandle = createSubHandle(knot.position, 0xf59e0b, 0.32);
+                const knotHandle = createSubHandle(knot.position, "road-knot");
                 handles?.add(knotHandle);
                 registry.registerEntity({
                     id: roadKnotEntityId(edge.id, knot.id),
@@ -244,7 +443,7 @@ export function registerRoadEntities(registry, result, document, scene, { nodeId
                 for (const [side, vector] of [["in", knot.handleIn], ["out", knot.handleOut]]) {
                     if (!vector) continue;
                     const position = { x: knot.position.x + vector.x, y: knot.position.y + vector.y, z: knot.position.z + vector.z };
-                    const handle = createSubHandle(position, 0xa78bfa, 0.24);
+                    const handle = createSubHandle(position, "road-handle", { visible: false });
                     handles?.add(handle);
                     registry.registerEntity({
                         id: roadHandleEntityId(edge.id, knot.id, side),
@@ -275,7 +474,7 @@ export function unregisterRoadEntities(registry) {
         ?.forEach((entity) => {
             if (["road-node", "road-knot", "road-handle"].includes(entity.kind)) {
                 const full = registry.getEntity(entity.id);
-                full?.object3D?.parent?.remove?.(full.object3D);
+                disposeHandleObject(full?.object3D);
             }
             registry.unregisterEntity(entity.id);
         });

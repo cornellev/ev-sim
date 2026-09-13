@@ -13,7 +13,7 @@ test("ED-03 the toolbar model shows scene tools in scene view and map tools in m
     const scene = buildToolbarModel({ editorSnapshot: editor.snapshot(), busSnapshot: { canUndo: false, canRedo: true }, selectionSnapshot: { ids: [] } });
     assert.deepEqual(scene.map((group) => group.id), ["tools", "transform", "view", "overlays", "history"]);
     assert.deepEqual(ids(scene, "tools"), ["tool-select", "tool-translate", "tool-rotate", "tool-scale", "tool-road-pen"]);
-    assert.deepEqual(ids(scene, "overlays"), ["overlay-grid", "overlay-chunks", "overlay-bounds"]);
+    assert.deepEqual(ids(scene, "overlays"), ["overlay-grid", "overlay-chunks", "overlay-bounds", "overlay-road-handles"]);
     const select = scene[0].items[0];
     assert.equal(select.active, true);
     assert.equal(select.tooltip, "Select (Q)");
@@ -58,6 +58,8 @@ test("ED-03 toolbar actions drive the editor state per view", () => {
     assert.equal(editor.snapshot().chunkOutlinesVisible, false);
     runToolbarAction(data, { type: TOOLBAR_ACTIONS.TOGGLE_BOUNDS });
     assert.equal(editor.snapshot().selectionBoundsVisible, false);
+    runToolbarAction(data, { type: TOOLBAR_ACTIONS.TOGGLE_ROAD_HANDLES });
+    assert.equal(editor.snapshot().roadHandlesVisible, true);
     runToolbarAction(data, { type: TOOLBAR_ACTIONS.SET_LAYER, layer: "roads", visible: false });
     assert.equal(editor.snapshot().layers.roads, false);
     assert.equal(runToolbarAction(data, { type: TOOLBAR_ACTIONS.UNDO }), true);
@@ -87,20 +89,22 @@ test("ED-03 view options are session state: in snapshots and preferences, never 
     assert.equal(snapshot.sceneGridVisible, false);
     assert.equal(snapshot.selectionBoundsVisible, true);
     const persisted = editor.persistedSnapshot();
-    for (const key of ["transformSpace", "transformSnap", "sceneGridVisible", "selectionBoundsVisible", "chunkOutlinesVisible"]) {
+    for (const key of ["transformSpace", "transformSnap", "sceneGridVisible", "selectionBoundsVisible", "chunkOutlinesVisible", "roadHandlesVisible"]) {
         assert.equal(key in persisted, false, `${key} must not persist with the environment`);
     }
-    assert.deepEqual(Object.keys(editor.viewOptionsSnapshot()).sort(), ["chunkOutlinesVisible", "sceneGridVisible", "selectionBoundsVisible", "transformSnap", "transformSpace"]);
+    assert.deepEqual(Object.keys(editor.viewOptionsSnapshot()).sort(), ["chunkOutlinesVisible", "roadHandlesVisible", "sceneGridVisible", "selectionBoundsVisible", "transformSnap", "transformSpace"]);
+    assert.equal(editor.snapshot().roadHandlesVisible, false);
 
     let notifications = 0;
     editor.subscribe(() => { notifications += 1; });
-    editor.applyViewOptions({ transformSpace: "world", transformSnap: { enabled: false }, selectionBoundsVisible: false, chunkOutlinesVisible: false });
+    editor.applyViewOptions({ transformSpace: "world", transformSnap: { enabled: false }, selectionBoundsVisible: false, chunkOutlinesVisible: false, roadHandlesVisible: true });
     assert.equal(notifications, 2, "one notification for the whole batch");
     assert.equal(editor.snapshot().transformSpace, "world");
     assert.equal(editor.snapshot().transformSnap.enabled, false);
     assert.equal(editor.snapshot().transformSnap.translation, 2, "unpatched snap fields are kept");
     assert.equal(editor.snapshot().selectionBoundsVisible, false);
     assert.equal(editor.snapshot().chunkOutlinesVisible, false);
+    assert.equal(editor.snapshot().roadHandlesVisible, true);
     editor.applyViewOptions({ transformSpace: "world" });
     assert.equal(notifications, 2, "no-op batches do not notify");
     editor.setTransformSnap({ translation: 0 });

@@ -7,7 +7,7 @@ import {
     setRoadAuthoringHandlesVisible,
     setVehiclesVisible,
 } from "../app/3d/runtimeVisibility.js";
-import { ROAD_AUTHORING_HANDLES_NAME } from "../app/3d/editor/projection/roadRuntimeEntities.js";
+import { ROAD_AUTHORING_HANDLE_STEMS_NAME, ROAD_AUTHORING_HANDLES_NAME } from "../app/3d/editor/projection/roadRuntimeEntities.js";
 import { PhysicsEngine } from "../app/physics/PhysicsEngine.js";
 import { Settings } from "../app/3d/data/Settings.js";
 
@@ -88,9 +88,12 @@ test("editor mode visibility hides vehicle and detached device visuals", () => {
 
 test("simulation mode hides the road authoring handle group", () => {
     const group = { name: ROAD_AUTHORING_HANDLES_NAME, visible: true };
+    const stems = { name: ROAD_AUTHORING_HANDLE_STEMS_NAME, visible: true };
     const scene = {
         getObjectByName(name) {
-            return name === ROAD_AUTHORING_HANDLES_NAME ? group : null;
+            if (name === ROAD_AUTHORING_HANDLES_NAME) return group;
+            if (name === ROAD_AUTHORING_HANDLE_STEMS_NAME) return stems;
+            return null;
         },
     };
     const environment = { authoringHelpersVisible: undefined, scene };
@@ -102,8 +105,10 @@ test("simulation mode hides the road authoring handle group", () => {
     setRoadAuthoringHandlesVisible(data, false);
     assert.equal(environment.authoringHelpersVisible, false);
     assert.equal(group.visible, false);
+    assert.equal(stems.visible, false);
 
     setRoadAuthoringHandlesVisible(data, true);
     assert.equal(environment.authoringHelpersVisible, true);
     assert.equal(group.visible, true);
+    assert.equal(stems.visible, true);
 });

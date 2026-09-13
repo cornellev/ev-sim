@@ -16,6 +16,7 @@ export const TOOLBAR_ACTIONS = Object.freeze({
     TOGGLE_GRID: "toggle-grid",
     TOGGLE_CHUNKS: "toggle-chunks",
     TOGGLE_BOUNDS: "toggle-bounds",
+    TOGGLE_ROAD_HANDLES: "toggle-road-handles",
     SET_LAYER: "set-layer",
     UNDO: "undo",
     REDO: "redo",
@@ -140,6 +141,7 @@ export function buildToolbarModel({ editorSnapshot, busSnapshot = null, selectio
         if (view === "scene") {
             overlays.push(item({ id: "overlay-chunks", label: "Chunks", icon: "chunks", kind: "toggle", active: editor.chunkOutlinesVisible !== false, action: { type: TOOLBAR_ACTIONS.TOGGLE_CHUNKS } }));
             overlays.push(item({ id: "overlay-bounds", label: "Selection bounds", icon: "bounds", kind: "toggle", active: editor.selectionBoundsVisible !== false, action: { type: TOOLBAR_ACTIONS.TOGGLE_BOUNDS } }));
+            overlays.push(item({ id: "overlay-road-handles", label: "Road handles", icon: "bezier", kind: "toggle", active: editor.roadHandlesVisible === true, action: { type: TOOLBAR_ACTIONS.TOGGLE_ROAD_HANDLES } }));
         }
         groups.push({ id: "overlays", label: "Overlays", items: overlays });
         groups.push({
@@ -193,6 +195,9 @@ export function runToolbarAction(data, action, { focus = null } = {}) {
             break;
         case TOOLBAR_ACTIONS.TOGGLE_BOUNDS:
             editor?.setSelectionBoundsVisible?.(!(editor.snapshot?.().selectionBoundsVisible !== false));
+            break;
+        case TOOLBAR_ACTIONS.TOGGLE_ROAD_HANDLES:
+            editor?.setRoadHandlesVisible?.(!(editor.snapshot?.().roadHandlesVisible === true));
             break;
         case TOOLBAR_ACTIONS.SET_LAYER:
             editor?.setLayerVisible?.(action.layer, action.visible);

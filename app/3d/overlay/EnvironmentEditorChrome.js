@@ -5,6 +5,7 @@ import { EarthImportBoundsOutline } from "./earth/EarthImportBoundsOutline";
 import { SelectionVisualizer } from "./SelectionVisualizer";
 import { EditorCommandShortcuts } from "./EditorCommandShortcuts";
 import { EditorGridOverlay } from "./workspace/EditorGridOverlay";
+import { RoadAuthoringHandleOverlay } from "./workspace/RoadAuthoringHandleOverlay";
 import { EditorWorkspace } from "./workspace/EditorWorkspace";
 
 /**
@@ -22,6 +23,7 @@ export function EnvironmentEditorChrome({ data, activeEnvironmentId, onEnvironme
             <ChunkOutlines data={data} />
             <SelectionVisualizer data={data} />
             <EditorGridOverlay data={data} />
+            <RoadAuthoringHandleOverlay data={data} />
             <EarthImportBoundsOutline data={data} />
             <EditorWorkspace
                 data={data}

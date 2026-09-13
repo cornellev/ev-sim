@@ -61,7 +61,7 @@ export const DEFAULT_TRANSFORM_SNAP = Object.freeze({
 });
 
 /** Session view options mirrored to a localStorage preference (never persisted with the environment). */
-export const VIEW_OPTION_KEYS = Object.freeze(["transformSpace", "transformSnap", "sceneGridVisible", "selectionBoundsVisible", "chunkOutlinesVisible"]);
+export const VIEW_OPTION_KEYS = Object.freeze(["transformSpace", "transformSnap", "sceneGridVisible", "selectionBoundsVisible", "chunkOutlinesVisible", "roadHandlesVisible"]);
 
 /** Normalize a snap patch over `base`; invalid or non-positive steps keep the base value. */
 function normalizeTransformSnap(snap, base = DEFAULT_TRANSFORM_SNAP) {
@@ -134,6 +134,7 @@ export class EditorState {
         this.transformSnap = normalizeTransformSnap(options.transformSnap);
         this.sceneGridVisible = options.sceneGridVisible !== false;
         this.selectionBoundsVisible = options.selectionBoundsVisible !== false;
+        this.roadHandlesVisible = options.roadHandlesVisible === true;
         this.map = cloneMapState(options.map);
         this.roadDraft = cloneRoadDraft(options.roadDraft);
         this.earthImport = cloneEarthImportState(options.earthImport);
@@ -153,6 +154,7 @@ export class EditorState {
             transformSnap: { ...this.transformSnap },
             sceneGridVisible: this.sceneGridVisible,
             selectionBoundsVisible: this.selectionBoundsVisible,
+            roadHandlesVisible: this.roadHandlesVisible,
             map: cloneMapState(this.map),
             roadDraft: cloneRoadDraft(this.roadDraft),
             earthImport: cloneEarthImportState(this.earthImport),
@@ -168,6 +170,7 @@ export class EditorState {
             sceneGridVisible: this.sceneGridVisible,
             selectionBoundsVisible: this.selectionBoundsVisible,
             chunkOutlinesVisible: this.chunkOutlinesVisible,
+            roadHandlesVisible: this.roadHandlesVisible,
         };
     }
 
@@ -187,6 +190,10 @@ export class EditorState {
             if (options[key] === undefined) continue;
             const next = options[key] !== false;
             if (next !== this[key]) { this[key] = next; changed = true; }
+        }
+        if (options.roadHandlesVisible !== undefined) {
+            const next = options.roadHandlesVisible === true;
+            if (next !== this.roadHandlesVisible) { this.roadHandlesVisible = next; changed = true; }
         }
         if (changed) this.notify();
     }
@@ -446,6 +453,13 @@ export class EditorState {
         const next = Boolean(visible);
         if (this.selectionBoundsVisible === next) return;
         this.selectionBoundsVisible = next;
+        this.notify();
+    }
+
+    setRoadHandlesVisible(visible) {
+        const next = Boolean(visible);
+        if (this.roadHandlesVisible === next) return;
+        this.roadHandlesVisible = next;
         this.notify();
     }
 
