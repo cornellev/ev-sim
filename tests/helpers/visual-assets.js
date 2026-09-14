@@ -252,7 +252,7 @@ export function triangleGltfJson(bufferLength = 42) {
     };
 }
 
-export function makeTriangleGlb() {
+function triangleMeshBin() {
     const positions = Buffer.alloc(36);
     positions.writeFloatLE(0, 0);
     positions.writeFloatLE(0, 4);
@@ -267,7 +267,43 @@ export function makeTriangleGlb() {
     indices.writeUInt16LE(0, 0);
     indices.writeUInt16LE(1, 2);
     indices.writeUInt16LE(2, 4);
-    return buildGlb(triangleGltfJson(42), Buffer.concat([positions, indices]));
+    return Buffer.concat([positions, indices]);
+}
+
+export function makeTriangleGlb() {
+    return buildGlb(triangleGltfJson(42), triangleMeshBin());
+}
+
+export function makeEmbeddedBaseColorGlb(png = makePng()) {
+    const pngBytes = Buffer.isBuffer(png) ? png : Buffer.from(png);
+    const uvs = Buffer.alloc(24);
+    uvs.writeFloatLE(0, 0);
+    uvs.writeFloatLE(0, 4);
+    uvs.writeFloatLE(1, 8);
+    uvs.writeFloatLE(0, 12);
+    uvs.writeFloatLE(0, 16);
+    uvs.writeFloatLE(1, 20);
+    const bin = Buffer.concat([triangleMeshBin(), Buffer.alloc(2), uvs, pngBytes]);
+    const json = triangleGltfJson(bin.length);
+    json.bufferViews.push(
+        { buffer: 0, byteOffset: 44, byteLength: 24 },
+        { buffer: 0, byteOffset: 68, byteLength: pngBytes.length },
+    );
+    json.accessors.push({ bufferView: 2, componentType: 5126, count: 3, type: "VEC2" });
+    json.meshes[0].primitives[0].attributes.TEXCOORD_0 = 2;
+    json.meshes[0].primitives[0].material = 0;
+    json.images = [{ bufferView: 3, mimeType: "image/png" }];
+    json.textures = [{ source: 0 }];
+    json.materials = [{ pbrMetallicRoughness: { baseColorFactor: [1, 1, 1, 1], baseColorTexture: { index: 0 } } }];
+    return buildGlb(json, bin);
+}
+
+export function makeEmbeddedBaseColorGltf(png = makePng()) {
+    const pngBytes = Buffer.isBuffer(png) ? png : Buffer.from(png);
+    return Buffer.from(JSON.stringify({
+        asset: { version: "2.0" },
+        images: [{ uri: `data:image/png;base64,${pngBytes.toString("base64")}` }],
+    }));
 }
 
 export function makeNamedMaterialGlb(materialName = "brick", { extras = null, secondLod = false } = {}) {

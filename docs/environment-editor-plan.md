@@ -677,8 +677,8 @@ archived revisions remain readable.
 
 `GltfImportPlan` accepts selected local records and one explicit entry path,
 rejects network/absolute/traversing/ambiguous dependency paths, rewrites local
-URIs to `sha256:<digest>`, and reconstructs GLB JSON without changing its BIN
-chunk. `AssetRepository.import()` uploads dependencies first, binds their use
+URIs and packed `bufferView` / `data:` images to `sha256:<digest>`, and
+reconstructs GLB JSON without changing its BIN chunk. `AssetRepository.import()` uploads dependencies first, binds their use
 hashes on the rewritten model, validates the complete closure, supports
 `AbortSignal`, and cancels unfinished staging. `AssetModelLoader` revalidates
 and verifies exact bytes before GLTF/KTX2 decode, caches one immutable resource
@@ -998,6 +998,60 @@ Record in the ledger: focused-suite pass counts, `npm run lint` result,
   `6ca2ece3d5266822a2ceabba72e5f7dd9514789e76757e86f6aedd2730ab9a6a`.
 
 ## Decision log
+
+### 2026-09-14 — Unpack packed GLB textures at import
+
+Editor-catalog maintenance so a typical `.glb` can be imported and then saved
+from Asset Studio. `GltfImportPlan` extracts `bufferView` and `data:` images
+onto the existing `sha256:` dependency graph, leaves the BIN chunk unchanged,
+and does not relax `decodeAssetAppearanceGeometry`. Schema v4, `worldHash`,
+and fixture hashes are unchanged
+(`60dc0bd2b02a9ec768f833070ce4d8d2047f5383838f09ea3f130dd31552dd6f` and
+`6ca2ece3d5266822a2ceabba72e5f7dd9514789e76757e86f6aedd2730ab9a6a`). This is
+not an ED milestone. Assets imported before this unpack still need reimport.
+
+### 2026-09-14 — Catalog folder drag-and-drop and asset Move to
+
+Editor-chrome maintenance so model assets and folders can be refiled from the
+asset pane. Schema v4, `worldHash`, catalog JSON, REST routes, `CommandBus`
+history, and fixture hashes are unchanged
+(`60dc0bd2b02a9ec768f833070ce4d8d2047f5383838f09ea3f130dd31552dd6f` and
+`6ca2ece3d5266822a2ceabba72e5f7dd9514789e76757e86f6aedd2730ab9a6a`). This is
+not an ED milestone.
+
+Assets move with the existing `AssetRepository.update` →
+`EditorAssetStore.updateMetadata` `folderId` write. Folders keep using
+`updateFolder` `parentId`; cycle rejection stays in catalog validation. The
+pane adds `application/x-cev-editor-catalog` drag data next to the unchanged
+scene/studio placement MIME. Unfiled models is the unfiled/top-level drop
+target; All assets, Built-ins, New folder, and the catalog grid are not.
+Asset **Move to** replaces the Edit-metadata folder-id prompt.
+
+### 2026-09-13 — Editor interaction and performance maintenance
+
+Editor-only repair of Map gesture rendering, Asset Studio projection, catalog
+folder/asset interaction, and the `G` grid shortcut. Schema v4, storage APIs,
+`worldHash`, asset-definition formats, `AssetChangeSet` v1, and `CommandBus`
+history semantics are unchanged. This is not an ED milestone and does not
+change fixture hashes (`60dc0bd2b02a9ec768f833070ce4d8d2047f5383838f09ea3f130dd31552dd6f`
+and `6ca2ece3d5266822a2ceabba72e5f7dd9514789e76757e86f6aedd2730ab9a6a`).
+
+Map mode now RAF-coalesces transient `EnvironmentDocument` snapshots so knot,
+handle, node, road, asset, and feature gestures recompute `planRoadNetworkGeometry`
+while the pointer is held; commit and cancel still apply immediately, and
+autosave still ignores transient and cancel events.
+
+Asset Studio projection classifies change sets and updates transforms,
+visibility, materials, normalization, and metric overlays in place. Session
+`compile()` and dirty stringify are cached; `setResolvedChild` /
+`removeResolvedChild` invalidate compilation. Numeric fields commit one history
+entry on Enter/blur. The parts tree scrolls itself and highlights the picked
+part.
+
+Catalog model cards select on click and open on double-click/Enter. Folder
+create uses `Untitled folder` names without `prompt()`. Rename, move, and
+delete live on folder context menus and inline rename. `G` toggles
+`EditorGridOverlay` in Scene and Map only.
 
 ### 2026-09-13 — Audit and bounded fixes for ED-09 acceptance
 

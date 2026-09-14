@@ -2,12 +2,51 @@ import { sha256ExactBytes } from "../simulation/visual/VisualLayer.js";
 
 const GLB_MAGIC = 0x46546c67;
 const JSON_CHUNK = 0x4e4f534a;
+const BIN_CHUNK = 0x004e4942;
+const PNG_SIGNATURE = Object.freeze([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const KTX2_IDENTIFIER = Object.freeze([
+    0xab, 0x4b, 0x54, 0x58, 0x20, 0x32, 0x30, 0xbb, 0x0d, 0x0a, 0x1a, 0x0a,
+]);
+const IMAGE_EXTENSIONS = Object.freeze({
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/ktx2": "ktx2",
+});
+const DATA_URI_PATTERN = /^data:([^;,]+);base64,([A-Za-z0-9+/]*={0,2})$/;
 
 function bytesOf(value) {
     if (value instanceof Uint8Array) return new Uint8Array(value);
     if (value instanceof ArrayBuffer) return new Uint8Array(value.slice(0));
     if (typeof Buffer !== "undefined" && Buffer.isBuffer(value)) return new Uint8Array(value);
     throw new TypeError("Import files require Uint8Array or ArrayBuffer bytes.");
+}
+
+function startsWith(bytes, prefix) {
+    return prefix.every((value, index) => bytes[index] === value);
+}
+
+function sniffImageMediaType(bytes) {
+    if (bytes.length >= 8 && startsWith(bytes, PNG_SIGNATURE)) return "image/png";
+    if (bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xd8) return "image/jpeg";
+    if (bytes.length >= 12 && startsWith(bytes, KTX2_IDENTIFIER)) return "image/ktx2";
+    throw new Error("Embedded image must be PNG, JPEG, or KTX2.");
+}
+
+function decodeBase64(text) {
+    if (typeof atob === "function") {
+        const binary = atob(text);
+        const bytes = new Uint8Array(binary.length);
+        for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+        return bytes;
+    }
+    if (typeof Buffer !== "undefined") return Uint8Array.from(Buffer.from(text, "base64"));
+    throw new Error("Base64 decode is unavailable.");
+}
+
+function decodeDataUri(uri) {
+    const match = String(uri).match(DATA_URI_PATTERN);
+    if (!match || match[2].length % 4 !== 0) throw new Error("Embedded data URI must be a canonical base64 data URI.");
+    return { mediaType: match[1], bytes: decodeBase64(match[2]) };
 }
 
 function normalizedSelectedPath(value) {
@@ -86,6 +125,79 @@ function encodeGlb(json, chunks) {
     return output;
 }
 
+function glbBinBytes(chunks) {
+    return chunks.find((chunk) => chunk.type === BIN_CHUNK)?.bytes ?? null;
+}
+
+function bufferPayloads(json, chunks, selected, entry) {
+    const payloads = [];
+    const bin = glbBinBytes(chunks);
+    for (const [index, buffer] of (json.buffers ?? []).entries()) {
+        const uri = buffer?.uri;
+        if (uri === undefined || uri === "") {
+            if (index !== 0 || !bin) throw new Error(`GLTF buffer ${index} has no URI or GLB binary chunk.`);
+            payloads[index] = bin;
+            continue;
+        }
+        if (uri.startsWith("data:")) {
+            payloads[index] = decodeDataUri(uri).bytes;
+            continue;
+        }
+        if (uri.startsWith("sha256:")) {
+            payloads[index] = null;
+            continue;
+        }
+        const dependencyPath = resolveDependency(entry, uri);
+        const bytes = selected.get(dependencyPath);
+        if (!bytes) throw new Error(`GLTF dependency "${dependencyPath}" was not selected.`);
+        payloads[index] = bytes;
+    }
+    return payloads;
+}
+
+function addDependency(dependencies, bytes, mediaType) {
+    const copy = bytes instanceof Uint8Array ? bytes.slice() : Uint8Array.from(bytes);
+    const sha256 = sha256ExactBytes(copy);
+    for (const existing of dependencies.values()) {
+        if (existing.sha256 === sha256) return sha256;
+    }
+    const extension = IMAGE_EXTENSIONS[mediaType];
+    if (!extension) throw new Error("Embedded image must be PNG, JPEG, or KTX2.");
+    const path = `embedded/${sha256}.${extension}`;
+    dependencies.set(path, { path, mediaType, sha256, bytes: copy });
+    return sha256;
+}
+
+function bindImageBytes(image, bytes, declaredMediaType, dependencies) {
+    const mediaType = sniffImageMediaType(bytes);
+    if (declaredMediaType && declaredMediaType !== mediaType) {
+        throw new Error(`Embedded image media type ${declaredMediaType} does not match observed ${mediaType}.`);
+    }
+    image.uri = `sha256:${addDependency(dependencies, bytes, mediaType)}`;
+}
+
+function extractEmbeddedImages(json, payloads, dependencies) {
+    for (const [index, image] of (json.images ?? []).entries()) {
+        const hasUri = typeof image?.uri === "string";
+        const hasBufferView = Number.isInteger(image?.bufferView);
+        if (hasUri && hasBufferView) throw new Error(`GLTF image ${index} cannot declare both uri and bufferView.`);
+        if (hasUri && image.uri.startsWith("data:")) {
+            const decoded = decodeDataUri(image.uri);
+            bindImageBytes(image, decoded.bytes, decoded.mediaType, dependencies);
+            continue;
+        }
+        if (!hasBufferView) continue;
+        const view = json.bufferViews?.[image.bufferView];
+        const payload = payloads[view?.buffer];
+        if (!view || !payload) throw new Error(`GLTF image ${index} has no source-bound buffer bytes.`);
+        const start = Number(view.byteOffset) || 0;
+        const end = start + (Number(view.byteLength) || 0);
+        if (end > payload.length) throw new Error(`GLTF image ${index} bufferView overflows its buffer.`);
+        bindImageBytes(image, payload.subarray(start, end), image.mimeType, dependencies);
+        delete image.bufferView;
+    }
+}
+
 export function createGltfImportPlan(files, { entryPath } = {}) {
     const selected = new Map();
     for (const file of files ?? []) {
@@ -103,9 +215,11 @@ export function createGltfImportPlan(files, { entryPath } = {}) {
         : { json: JSON.parse(new TextDecoder().decode(sourceBytes)), chunks: [] };
     if (parsed.json?.asset?.version !== "2.0") throw new Error("Only GLTF 2.0 models can be imported.");
     const dependencies = new Map();
+    const payloads = bufferPayloads(parsed.json, parsed.chunks, selected, entry);
     const rewrite = (records) => {
         for (const record of records ?? []) {
             if (typeof record?.uri !== "string") continue;
+            if (record.uri.startsWith("sha256:") || record.uri.startsWith("data:")) continue;
             const dependencyPath = resolveDependency(entry, record.uri);
             if (!dependencyPath) continue;
             const bytes = selected.get(dependencyPath);
@@ -117,6 +231,7 @@ export function createGltfImportPlan(files, { entryPath } = {}) {
     };
     rewrite(parsed.json.buffers);
     rewrite(parsed.json.images);
+    extractEmbeddedImages(parsed.json, payloads, dependencies);
     const modelBytes = mediaType === "model/gltf-binary"
         ? encodeGlb(parsed.json, parsed.chunks)
         : new TextEncoder().encode(JSON.stringify(parsed.json));

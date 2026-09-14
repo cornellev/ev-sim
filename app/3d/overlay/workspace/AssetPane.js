@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { IconArchive, IconFolder, IconFolderPlus, IconList, IconPhoto, IconSearch, IconSquares, IconTrafficCone, IconUpload } from "@tabler/icons-react";
+import { IconFolder, IconFolderPlus, IconList, IconPhoto, IconSearch, IconSquares, IconTrafficCone, IconUpload } from "@tabler/icons-react";
 import { EDITOR_MODES, EDITOR_TOOLS, MAP_TOOLS } from "../../editor/EditorState";
 import {
     CATALOG_GRID_GAP,
@@ -11,9 +11,35 @@ import {
 } from "../../editor/presentation/virtualWindow.js";
 import { PLACEMENT_CATALOG } from "../../editor/placement/PlacementCatalog";
 import { cn } from "../ui/cn";
+import { ContextMenuSurface } from "../ui/ContextMenuSurface.js";
+import {
+    CATALOG_DRAG_MIME,
+    PLACEMENT_DRAG_MIME,
+    canAcceptCatalogDrop,
+    catalogDropDestination,
+    folderSubtreeIds,
+    parseCatalogDragPayload,
+} from "./assetCatalogDrop.js";
+
+export { CATALOG_DRAG_MIME, PLACEMENT_DRAG_MIME, canAcceptCatalogDrop, catalogDropDestination, parseCatalogDragPayload };
 
 function portableId(prefix = "asset") {
     return `${prefix}-${globalThis.crypto?.randomUUID?.() ?? Date.now().toString(36)}`;
+}
+
+function isVirtualFolder(id) {
+    return id === "all" || id === "root" || id === "built-ins";
+}
+
+function untitledFolderName(folders, parentId) {
+    const siblings = folders.filter((entry) => (entry.parentId ?? null) === (parentId ?? null));
+    const taken = new Set(siblings.map((entry) => String(entry.name).trim().toLowerCase()));
+    const base = "Untitled folder";
+    if (!taken.has(base.toLowerCase())) return base;
+    for (let n = 2; ; n += 1) {
+        const name = `${base} ${n}`;
+        if (!taken.has(name.toLowerCase())) return name;
+    }
 }
 
 function pathOf(file) {
@@ -39,7 +65,12 @@ export function AssetPane({ data }) {
     const [pendingImport, setPendingImport] = useState(null);
     const [busy, setBusy] = useState(false);
     const [message, setMessage] = useState(null);
+    const [selectedAssetId, setSelectedAssetId] = useState(null);
+    const [folderRename, setFolderRename] = useState(null);
+    const [contextMenu, setContextMenu] = useState(null);
+    const [dropTargetId, setDropTargetId] = useState(null);
     const fileInputRef = useRef(null);
+    const catalogDragRef = useRef(null);
     const listRef = useRef(null);
     const [scrollTop, setScrollTop] = useState(0);
     const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
@@ -101,6 +132,18 @@ export function AssetPane({ data }) {
         overscan: 6,
     });
     const visibleCatalogRows = catalogRows.slice(catalogWindow.start, catalogWindow.end);
+
+    useEffect(() => {
+        if (selectedAssetId && !catalogRows.some((row) => row.kind === "model" && row.asset.id === selectedAssetId)) {
+            setSelectedAssetId(null);
+        }
+        if (contextMenu?.kind === "asset" && !catalogRows.some((row) => row.kind === "model" && row.asset.id === contextMenu.id)) {
+            setContextMenu(null);
+        }
+        if (contextMenu?.kind === "folder" && !catalog.folders.some((entry) => entry.id === contextMenu.id)) {
+            setContextMenu(null);
+        }
+    }, [catalog.folders, catalogRows, contextMenu, selectedAssetId]);
 
     useEffect(() => {
         const element = listRef.current;
@@ -204,41 +247,235 @@ export function AssetPane({ data }) {
     });
 
     const createFolder = () => {
-        const name = globalThis.prompt?.("Folder name")?.trim();
-        if (name) void mutate(() => repository.createFolder({ name, parentId: folder === "all" || folder === "root" || folder === "built-ins" ? null : folder }, catalog.catalogRevision));
-    };
-    const renameFolder = () => {
-        const name = globalThis.prompt?.("Folder name", selectedFolder?.name)?.trim();
-        if (!selectedFolder || !name) return;
-        const parentId = globalThis.prompt?.("Parent folder ID (leave blank for root)", selectedFolder.parentId ?? "");
-        if (parentId !== null && parentId !== undefined) void mutate(() => repository.updateFolder(selectedFolder.id, { name, parentId: parentId.trim() || null }, catalog.catalogRevision));
-    };
-    const deleteFolder = () => {
-        if (selectedFolder && globalThis.confirm?.(`Delete empty folder “${selectedFolder.name}”?`)) void mutate(async () => {
-            await repository.deleteFolder(selectedFolder.id, catalog.catalogRevision);
-            setFolder("all");
+        const parentId = isVirtualFolder(folder) ? null : folder;
+        const id = portableId("folder");
+        const name = untitledFolderName(catalog.folders, parentId);
+        void mutate(async () => {
+            await repository.createFolder({ id, name, parentId }, catalog.catalogRevision);
+            setFolder(id);
+            setFolderRename(null);
         });
+    };
+    const commitFolderRename = async () => {
+        if (!folderRename) return;
+        const name = folderRename.draft.trim();
+        if (!name || name === folderRename.original) {
+            setFolderRename(null);
+            return;
+        }
+        setBusy(true);
+        setMessage(null);
+        try {
+            await repository.updateFolder(folderRename.id, { name }, catalog.catalogRevision);
+            setFolderRename(null);
+            await refresh();
+        } catch (error) {
+            setMessage(error.code === "EDITOR_ASSET_REVISION_CONFLICT" ? "The catalog changed. It has been refreshed; retry your change." : error.message);
+            await refresh();
+        } finally { setBusy(false); }
+    };
+    const deleteFolderById = (target) => {
+        if (!target || !globalThis.confirm?.(`Delete empty folder “${target.name}”?`)) return;
+        void mutate(async () => {
+            await repository.deleteFolder(target.id, catalog.catalogRevision);
+            if (folder === target.id) setFolder(target.parentId ?? "all");
+            setFolderRename(null);
+        });
+    };
+    const moveFolder = (target, parentId) => {
+        if (!target) return;
+        if ((target.parentId ?? null) === (parentId ?? null)) return;
+        void mutate(() => repository.updateFolder(target.id, { parentId }, catalog.catalogRevision));
+    };
+    const moveAsset = (asset, folderId) => {
+        if (!asset) return;
+        const next = folderId ?? null;
+        if ((asset.folderId ?? null) === next) return;
+        void mutate(() => repository.update(asset.id, { folderId: next }, catalog.catalogRevision));
+    };
+    const clearCatalogDrag = () => {
+        catalogDragRef.current = null;
+        setDropTargetId(null);
+    };
+    const beginAssetDrag = (asset, event) => {
+        if (asset.archived) {
+            event.preventDefault();
+            return;
+        }
+        const payload = { kind: "asset", id: asset.id, folderId: asset.folderId ?? null };
+        event.dataTransfer.effectAllowed = "copyMove";
+        event.dataTransfer.setData(CATALOG_DRAG_MIME, JSON.stringify(payload));
+        event.dataTransfer.setData(PLACEMENT_DRAG_MIME, JSON.stringify({ kind: "catalog", assetId: asset.id, revision: asset.latestRevision, label: asset.name }));
+        catalogDragRef.current = payload;
+    };
+    const beginFolderDrag = (entry, event) => {
+        if (isVirtualFolder(entry.id) || folderRename) {
+            event.preventDefault();
+            return;
+        }
+        const payload = { kind: "folder", id: entry.id, parentId: entry.parentId ?? null };
+        event.dataTransfer.effectAllowed = "copyMove";
+        event.dataTransfer.setData(CATALOG_DRAG_MIME, JSON.stringify(payload));
+        catalogDragRef.current = payload;
+    };
+    const acceptCatalogDrop = (entry, event) => {
+        const payload = parseCatalogDragPayload(event.dataTransfer.getData(CATALOG_DRAG_MIME)) ?? catalogDragRef.current;
+        if (!payload) return;
+        event.preventDefault();
+        event.stopPropagation();
+        catalogDragRef.current = null;
+        setDropTargetId(null);
+        if (busy || !canAcceptCatalogDrop(payload, entry, catalog.folders)) return;
+        const destination = catalogDropDestination(entry);
+        if (!destination) return;
+        if (payload.kind === "asset") {
+            const asset = catalog.assets.find((item) => item.id === payload.id);
+            if (asset) moveAsset(asset, destination.folderId);
+            return;
+        }
+        const target = catalog.folders.find((item) => item.id === payload.id);
+        if (target) moveFolder(target, destination.parentId);
+    };
+    const onFolderDragOver = (entry, event) => {
+        const types = [...event.dataTransfer.types];
+        if (!types.includes(CATALOG_DRAG_MIME) && !catalogDragRef.current) return;
+        const payload = catalogDragRef.current ?? parseCatalogDragPayload(event.dataTransfer.getData(CATALOG_DRAG_MIME));
+        if (busy || !canAcceptCatalogDrop(payload, entry, catalog.folders)) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+        if (dropTargetId !== entry.id) setDropTargetId(entry.id);
+    };
+    const onFolderDragLeave = (entry, event) => {
+        const related = event.relatedTarget;
+        if (related && event.currentTarget.contains(related)) return;
+        if (dropTargetId === entry.id) setDropTargetId(null);
+    };
+    const onFolderClick = (entry) => {
+        if (isVirtualFolder(entry.id)) {
+            setFolder(entry.id);
+            setFolderRename(null);
+            return;
+        }
+        if (folder === entry.id) {
+            setFolderRename({ id: entry.id, draft: entry.name, original: entry.name });
+            return;
+        }
+        setFolder(entry.id);
+        setFolderRename(null);
+    };
+    const openFolderMenu = (entry, event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (isVirtualFolder(entry.id)) return;
+        setFolder(entry.id);
+        setContextMenu({ kind: "folder", id: entry.id, x: event.clientX, y: event.clientY, returnFocus: event.currentTarget });
+    };
+    const openAssetMenu = (asset, event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setSelectedAssetId(asset.id);
+        setContextMenu({ kind: "asset", id: asset.id, x: event.clientX, y: event.clientY, returnFocus: event.currentTarget });
     };
     const editAsset = (asset) => {
         const name = globalThis.prompt?.("Asset name", asset.name)?.trim();
         if (!name) return;
         const tagsText = globalThis.prompt?.("Comma-separated tags", asset.tags.join(", "));
         if (tagsText === null || tagsText === undefined) return;
-        const folderId = globalThis.prompt?.("Folder ID (leave blank for unfiled)", asset.folderId ?? "");
-        if (folderId === null || folderId === undefined) return;
-        void mutate(() => repository.update(asset.id, { name, folderId: folderId.trim() || null, tags: tagsText.split(",").map((tag) => tag.trim()).filter(Boolean) }, catalog.catalogRevision));
+        void mutate(() => repository.update(asset.id, { name, tags: tagsText.split(",").map((tag) => tag.trim()).filter(Boolean) }, catalog.catalogRevision));
     };
 
+    const contextFolder = contextMenu?.kind === "folder" ? catalog.folders.find((entry) => entry.id === contextMenu.id) ?? null : null;
+    const contextAsset = contextMenu?.kind === "asset" ? catalog.assets.find((entry) => entry.id === contextMenu.id) ?? null : null;
+    const blockedFolderIds = contextFolder ? folderSubtreeIds(catalog.folders, contextFolder.id) : new Set();
+    const folderMenuOptions = contextFolder ? [
+        { id: "rename", label: "Rename", run: () => setFolderRename({ id: contextFolder.id, draft: contextFolder.name, original: contextFolder.name }) },
+        {
+            id: "move-to",
+            label: "Move to",
+            children: [
+                { id: "move-top", label: "Top level", run: () => moveFolder(contextFolder, null) },
+                ...catalog.folders.filter((entry) => !blockedFolderIds.has(entry.id)).map((entry) => ({
+                    id: `move-${entry.id}`,
+                    label: entry.name,
+                    run: () => moveFolder(contextFolder, entry.id),
+                })),
+            ],
+        },
+        { id: "delete", label: "Delete", danger: true, run: () => deleteFolderById(contextFolder) },
+    ] : [];
+    const assetMenuOptions = contextAsset ? [
+        { id: "place", label: "Place", disabled: contextAsset.archived === true, run: () => armModel(contextAsset) },
+        {
+            id: "move-to",
+            label: "Move to",
+            children: [
+                { id: "move-unfiled", label: "Unfiled", disabled: contextAsset.folderId == null, run: () => moveAsset(contextAsset, null) },
+                ...catalog.folders.filter((entry) => entry.id !== contextAsset.folderId).map((entry) => ({
+                    id: `move-asset-${entry.id}`,
+                    label: entry.name,
+                    run: () => moveAsset(contextAsset, entry.id),
+                })),
+            ],
+        },
+        { id: "reimport", label: "Reimport", disabled: !canImport, run: () => openImportPicker(contextAsset.id) },
+        { id: "edit", label: "Edit metadata", run: () => editAsset(contextAsset) },
+        { id: "archive", label: contextAsset.archived ? "Unarchive" : "Archive", run: () => void mutate(() => repository.setArchived(contextAsset.id, !contextAsset.archived, catalog.catalogRevision)) },
+        ...(!thumbnailUrl(contextAsset) ? [{
+            id: "retry-thumbnail",
+            label: "Retry thumbnail",
+            run: () => void mutate(() => repository.generateThumbnail(contextAsset.id, contextAsset.latestRevision, catalog.catalogRevision, data.environment().assets().previews)),
+        }] : []),
+    ] : [];
+
     return (
-        <div className="flex h-full min-h-0" data-editor-asset-library>
+        <div className="flex h-full min-h-0" data-editor-asset-library onDragEnd={clearCatalogDrag}>
             <nav aria-label="Asset folders" className="flex w-44 shrink-0 flex-col overflow-auto border-r border-[var(--slate-border-60)] p-1.5">
                 {[{ id: "all", name: "All assets" }, { id: "built-ins", name: "Built-ins" }, { id: "root", name: "Unfiled models" }, ...catalog.folders].map((entry) => (
-                    <button key={entry.id} type="button" aria-current={folder === entry.id ? "page" : undefined} onClick={() => setFolder(entry.id)} className={cn("flex h-8 items-center gap-2 rounded-[var(--radius)] px-2 text-left text-[12px] text-[var(--slate-fg-2)] hover:bg-[var(--slate-surface-hover)]", folder === entry.id && "bg-[var(--slate-surface-3)] text-[var(--slate-fg)]")}>
-                        <IconFolder size={14} aria-hidden="true" />{entry.name}
-                    </button>
+                    folderRename?.id === entry.id ? (
+                        <input
+                            key={entry.id}
+                            aria-label="Rename folder"
+                            value={folderRename.draft}
+                            autoFocus
+                            onChange={(event) => setFolderRename((current) => current ? { ...current, draft: event.target.value } : current)}
+                            onBlur={() => void commitFolderRename()}
+                            onKeyDown={(event) => {
+                                event.stopPropagation();
+                                if (event.key === "Enter") {
+                                    event.preventDefault();
+                                    void commitFolderRename();
+                                } else if (event.key === "Escape") {
+                                    event.preventDefault();
+                                    setFolderRename(null);
+                                }
+                            }}
+                            className="h-8 rounded-[var(--radius)] border border-[var(--slate-border)] bg-[var(--slate-surface-2)] px-2 text-[12px] outline-none"
+                        />
+                    ) : (
+                        <button
+                            key={entry.id}
+                            type="button"
+                            data-folder-id={entry.id}
+                            data-drop-target={dropTargetId === entry.id || undefined}
+                            draggable={!isVirtualFolder(entry.id)}
+                            aria-current={folder === entry.id ? "page" : undefined}
+                            onClick={() => onFolderClick(entry)}
+                            onContextMenu={(event) => openFolderMenu(entry, event)}
+                            onDragStart={(event) => beginFolderDrag(entry, event)}
+                            onDragOver={catalogDropDestination(entry) ? (event) => onFolderDragOver(entry, event) : undefined}
+                            onDragLeave={catalogDropDestination(entry) ? (event) => onFolderDragLeave(entry, event) : undefined}
+                            onDrop={catalogDropDestination(entry) ? (event) => acceptCatalogDrop(entry, event) : undefined}
+                            className={cn(
+                                "flex h-8 items-center gap-2 rounded-[var(--radius)] px-2 text-left text-[12px] text-[var(--slate-fg-2)] hover:bg-[var(--slate-surface-hover)]",
+                                folder === entry.id && "bg-[var(--slate-surface-3)] text-[var(--slate-fg)]",
+                                dropTargetId === entry.id && "bg-[var(--slate-surface-3)] text-[var(--slate-fg)] ring-1 ring-inset ring-[var(--slate-ring)]",
+                            )}
+                        >
+                            <IconFolder size={14} aria-hidden="true" />{entry.name}
+                        </button>
+                    )
                 ))}
                 <button type="button" disabled={busy} onClick={createFolder} className="mt-1 flex h-8 items-center gap-2 px-2 text-left text-[12px] text-[var(--slate-muted)] hover:text-[var(--slate-fg)]"><IconFolderPlus size={14} />New folder</button>
-                {selectedFolder && <div className="flex gap-1 px-2"><button type="button" onClick={renameFolder} className="text-[11px] text-zinc-400">Rename</button><button type="button" onClick={deleteFolder} className="text-[11px] text-red-300">Delete</button></div>}
             </nav>
             <div className="flex min-w-0 flex-1 flex-col">
                 <div data-editor-chrome className="pointer-events-auto flex min-h-10 shrink-0 flex-wrap items-center gap-1.5 border-b border-[var(--slate-border-60)] px-2 py-1">
@@ -324,26 +561,63 @@ export function AssetPane({ data }) {
                                 }
                                 const asset = row.asset;
                                 const image = thumbnailUrl(asset);
-                                return <article role="listitem" key={row.key} data-asset-id={asset.id} draggable={!asset.archived} onDragStart={(event) => event.dataTransfer.setData("application/x-cev-editor-asset", JSON.stringify({ kind: "catalog", assetId: asset.id, revision: asset.latestRevision, label: asset.name }))} style={{ height: `${catalogWindow.itemHeight}px` }} className="group flex items-center gap-2 overflow-hidden rounded border border-[var(--slate-border-70)] bg-[var(--slate-surface-2)] p-1.5 text-xs focus-within:ring-2">
-                                    <button type="button" aria-label={`Open asset ${asset.name}`} onClick={() => openModel(asset)} onDoubleClick={() => openModel(asset, true)} className="flex min-w-0 flex-1 items-center gap-2 text-left">
-                                        {/* Use-scoped content URLs are authenticated API resources, not static Next images. */}
-                                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                                        {image ? <img src={image} alt="" className="h-12 w-12 shrink-0 object-cover" /> : <IconPhoto size={24} className="mx-3 text-zinc-500" />}
-                                        <span className="min-w-0 flex-1"><strong className="block truncate font-medium">{asset.name}</strong><span className="text-[11px] text-zinc-400">r{asset.latestRevision}{asset.archived ? " · archived" : ""}</span></span>
-                                    </button>
-                                    <span className="flex flex-col gap-0.5 text-[11px] leading-none opacity-0 group-focus-within:opacity-100 group-hover:opacity-100">
-                                        <button type="button" disabled={asset.archived} aria-pressed={activeId === asset.id} onClick={(event) => { event.stopPropagation(); armModel(asset); }} aria-label={`Place ${asset.name}`} className="rounded px-1 hover:bg-zinc-700">Place</button>
-                                        <button type="button" disabled={!canImport} onClick={(event) => { event.stopPropagation(); openImportPicker(asset.id); }} aria-label={`Reimport ${asset.name}`} className="rounded px-1 hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-45">Reimport</button>
-                                        <button type="button" onClick={(event) => { event.stopPropagation(); editAsset(asset); }} aria-label={`Edit ${asset.name}`} className="rounded px-1 hover:bg-zinc-700">Edit</button>
-                                        <button type="button" onClick={(event) => { event.stopPropagation(); void mutate(() => repository.setArchived(asset.id, !asset.archived, catalog.catalogRevision)); }} aria-label={`${asset.archived ? "Unarchive" : "Archive"} ${asset.name}`}><IconArchive size={14} /></button>
-                                        {!image && <button type="button" onClick={(event) => { event.stopPropagation(); void mutate(() => repository.generateThumbnail(asset.id, asset.latestRevision, catalog.catalogRevision, data.environment().assets().previews)); }} aria-label={`Retry thumbnail for ${asset.name}`}>Retry</button>}
-                                    </span>
+                                const selected = selectedAssetId === asset.id;
+                                return <article
+                                    role="listitem"
+                                    key={row.key}
+                                    tabIndex={0}
+                                    data-asset-id={asset.id}
+                                    data-selected={selected || undefined}
+                                    aria-label={asset.name}
+                                    draggable={!asset.archived}
+                                    onDragStart={(event) => beginAssetDrag(asset, event)}
+                                    onClick={() => setSelectedAssetId(asset.id)}
+                                    onDoubleClick={() => openModel(asset)}
+                                    onContextMenu={(event) => openAssetMenu(asset, event)}
+                                    onKeyDown={(event) => {
+                                        if (event.key === "Enter") {
+                                            event.preventDefault();
+                                            openModel(asset);
+                                        } else if (event.key === "F10" && event.shiftKey) {
+                                            event.preventDefault();
+                                            const rect = event.currentTarget.getBoundingClientRect();
+                                            setSelectedAssetId(asset.id);
+                                            setContextMenu({
+                                                kind: "asset",
+                                                id: asset.id,
+                                                x: rect.left + 8,
+                                                y: rect.top + 8,
+                                                returnFocus: event.currentTarget,
+                                            });
+                                        }
+                                    }}
+                                    style={{ height: `${catalogWindow.itemHeight}px` }}
+                                    className={cn(
+                                        "flex cursor-pointer items-center gap-2 overflow-hidden rounded border p-1.5 text-xs outline-none focus-visible:ring-2 focus-visible:ring-[var(--slate-ring)]",
+                                        selected
+                                            ? "border-[var(--slate-border)] bg-[var(--slate-surface-3)]"
+                                            : "border-[var(--slate-border-70)] bg-[var(--slate-surface-2)] hover:bg-[var(--slate-surface-hover)]",
+                                    )}
+                                >
+                                    {/* Use-scoped content URLs are authenticated API resources, not static Next images. */}
+                                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                                    {image ? <img src={image} alt="" className="h-12 w-12 shrink-0 object-cover" /> : <IconPhoto size={24} className="mx-3 text-zinc-500" />}
+                                    <span className="min-w-0 flex-1"><strong className="block truncate font-medium">{asset.name}</strong><span className="text-[11px] text-zinc-400">r{asset.latestRevision}{asset.archived ? " · archived" : ""}</span></span>
                                 </article>;
                             })}
                         </div>
                     </div>
                 </div>
             </div>
+            <ContextMenuSurface
+                key={contextMenu ? `${contextMenu.kind}:${contextMenu.id}:${contextMenu.x}:${contextMenu.y}` : "closed"}
+                open={Boolean(contextMenu)}
+                x={contextMenu?.x ?? 0}
+                y={contextMenu?.y ?? 0}
+                options={contextMenu?.kind === "folder" ? folderMenuOptions : assetMenuOptions}
+                returnFocus={contextMenu?.returnFocus ?? null}
+                onClose={() => setContextMenu(null)}
+            />
         </div>
     );
 }

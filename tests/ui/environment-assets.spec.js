@@ -84,8 +84,8 @@ async function importModel(page, reimportName = null) {
     let trigger;
     if (reimportName) {
         const item = library.locator("[data-asset-id]").filter({ hasText: reimportName });
-        await item.hover();
-        trigger = item.getByRole("button", { name: `Reimport ${reimportName}` });
+        await item.click({ button: "right" });
+        trigger = page.getByRole("menu").getByRole("menuitem", { name: "Reimport" });
     } else {
         trigger = library.locator("[data-editor-asset-import]");
         await expectImportHittable(page, trigger);
@@ -101,10 +101,28 @@ async function importModel(page, reimportName = null) {
     else await expect(published).toBeVisible({ timeout: 60_000 });
 }
 
+async function editorCatalog(request) {
+    const response = await request.get("/api/storage/editor-assets/?archived=true");
+    expect(response.ok()).toBeTruthy();
+    return response.json();
+}
+
+async function html5Drag(source, target) {
+    const handle = await target.elementHandle();
+    await source.evaluate((from, to) => {
+        const dataTransfer = new DataTransfer();
+        from.dispatchEvent(new DragEvent("dragstart", { bubbles: true, cancelable: true, dataTransfer }));
+        to.dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer }));
+        to.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer }));
+        from.dispatchEvent(new DragEvent("dragend", { bubbles: true, cancelable: true, dataTransfer }));
+    }, handle);
+    await handle.dispose();
+}
+
 async function placeFromLibrary(page, name) {
     const item = page.locator("[data-editor-asset-library] [data-asset-id]").filter({ hasText: name });
-    await item.hover();
-    await item.getByRole("button", { name: `Place ${name}` }).click();
+    await item.click({ button: "right" });
+    await page.getByRole("menu").getByRole("menuitem", { name: "Place" }).click();
     const host = page.locator("[data-editor-canvas-host]");
     const box = await host.boundingBox();
     await page.mouse.click(box.x + box.width * 0.55, box.y + box.height * 0.55);
@@ -121,12 +139,27 @@ test("ED-06 imports, previews, places, pins, updates, archives, reloads, and iso
     await importModel(page);
 
     const model = page.locator("[data-editor-asset-library] [data-asset-id]").filter({ hasText: modelName });
-    await model.getByRole("button", { name: `Open asset ${modelName}` }).click();
+    await model.click();
+    await expect(model).toHaveAttribute("data-selected", "true");
+    await expect(page.locator("[data-asset-preview-tab]")).toHaveCount(0);
+    await expect(model.getByRole("button", { name: `Place ${modelName}` })).toHaveCount(0);
+    await model.click({ button: "right" });
+    const assetMenu = page.getByRole("menu");
+    await expect(assetMenu.getByRole("menuitem", { name: "Place" })).toBeVisible();
+    await expect(assetMenu.getByRole("menuitem", { name: "Move to" })).toBeVisible();
+    await expect(assetMenu.getByRole("menuitem", { name: "Reimport" })).toBeVisible();
+    await expect(assetMenu.getByRole("menuitem", { name: "Edit metadata" })).toBeVisible();
+    await expect(assetMenu.getByRole("menuitem", { name: "Open" })).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await model.dblclick();
     await expect(page.locator("[data-asset-preview-tab]")).toBeVisible({ timeout: 60_000 });
     await expect(page.getByRole("button", { name: new RegExp(`^${modelName} · r1`) })).toHaveAttribute("aria-current", "page");
     await expect(page.getByLabel(`${modelName} asset studio viewport`)).toBeVisible({ timeout: 60_000 });
+    const gridPressed = "true";
+    await page.keyboard.press("g");
     await page.getByRole("button", { name: "Scene", exact: true }).click();
     const sceneToolbar = page.getByRole("toolbar", { name: "Scene tools" });
+    await expect(sceneToolbar.getByRole("button", { name: "Grid" })).toHaveAttribute("aria-pressed", gridPressed);
 
     await placeFromLibrary(page, modelName);
     await expect(page.getByRole("tree", { name: "Environment objects" }).getByRole("button", { name: modelName, exact: true })).toBeVisible();
@@ -136,8 +169,8 @@ test("ED-06 imports, previews, places, pins, updates, archives, reloads, and iso
     await expect(positionX).toHaveValue(/5/);
     await sceneToolbar.getByRole("button", { name: "Undo" }).click();
     await sceneToolbar.getByRole("button", { name: "Redo" }).click();
-    await model.hover();
-    await model.getByRole("button", { name: `Place ${modelName}` }).click();
+    await model.click({ button: "right" });
+    await page.getByRole("menu").getByRole("menuitem", { name: "Place" }).click();
     await page.keyboard.press("Escape");
     await expect(page.getByRole("tree", { name: "Environment objects" }).getByRole("button", { name: modelName, exact: true })).toHaveCount(1);
     await page.getByRole("button", { name: "Duplicate", exact: true }).click();
@@ -187,8 +220,8 @@ test("ED-06 imports, previews, places, pins, updates, archives, reloads, and iso
     const copy = await (await request.get(`/api/storage/environments/${otherId}`)).json();
     expect((copy.manifest ?? copy).document.objects.filter((record) => record.typeId === "asset-instance").every((record) => record.components.asset.revision === 1)).toBeTruthy();
 
-    await model.hover();
-    await model.getByRole("button", { name: `Archive ${modelName}` }).click();
+    await model.click({ button: "right" });
+    await page.getByRole("menu").getByRole("menuitem", { name: "Archive" }).click();
     await page.reload();
     await openEditor(page);
     const reloaded = await (await request.get(`/api/storage/environments/${environmentId}`)).json();
@@ -240,6 +273,107 @@ test("ED-06 Import explains a missing upload source without opening a chooser", 
     await importControl.click({ force: true });
     expect(await opened).toBeFalsy();
     await expect(library.getByRole("status")).toContainText("No upload source is configured");
+});
+
+test("ED-06 catalog folders use untitled names, inline rename, and context menus", async ({ page, request }) => {
+    test.setTimeout(360_000);
+    await activateBlank(request, "ED-06 folders");
+    await openEditor(page);
+    const folders = page.getByRole("navigation", { name: "Asset folders" });
+    await folders.getByRole("button", { name: "New folder" }).click();
+    const untitled = folders.getByRole("button", { name: "Untitled folder", exact: true });
+    await expect(untitled).toHaveAttribute("aria-current", "page");
+    await untitled.click();
+    const rename = page.getByLabel("Rename folder");
+    await expect(rename).toBeVisible();
+    await rename.fill("Props");
+    await rename.press("Enter");
+    await expect(folders.getByRole("button", { name: "Props", exact: true })).toHaveAttribute("aria-current", "page");
+
+    await folders.getByRole("button", { name: "All assets" }).click();
+    await folders.getByRole("button", { name: "New folder" }).click();
+    await expect(folders.getByRole("button", { name: "Untitled folder 2", exact: true })).toHaveAttribute("aria-current", "page");
+    await folders.getByRole("button", { name: "Untitled folder 2", exact: true }).click({ button: "right" });
+    const folderMenu = page.getByRole("menu");
+    await expect(folderMenu.getByRole("menuitem", { name: "Rename" })).toBeVisible();
+    await expect(folderMenu.getByRole("menuitem", { name: "Move to" })).toBeVisible();
+    await expect(folderMenu.getByRole("menuitem", { name: "Delete" })).toBeVisible();
+    await folderMenu.getByRole("menuitem", { name: "Rename" }).click();
+    await page.getByLabel("Rename folder").fill("Bins");
+    await page.getByLabel("Rename folder").press("Enter");
+    await expect(folders.getByRole("button", { name: "Bins", exact: true })).toBeVisible();
+
+    await folders.getByRole("button", { name: "Props", exact: true }).click();
+    await folders.getByRole("button", { name: "New folder" }).click();
+    await expect(folders.getByRole("button", { name: "Untitled folder", exact: true })).toHaveAttribute("aria-current", "page");
+    await folders.getByRole("button", { name: "Untitled folder", exact: true }).click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Move to" }).click();
+    await page.getByRole("menuitem", { name: "Top level" }).click();
+    await folders.getByRole("button", { name: "All assets" }).click();
+    await expect(folders.getByRole("button", { name: "Untitled folder", exact: true })).toBeVisible();
+
+    page.once("dialog", (dialog) => dialog.accept());
+    await folders.getByRole("button", { name: "Bins", exact: true }).click({ button: "right" });
+    await page.getByRole("menu").getByRole("menuitem", { name: "Delete" }).click();
+    await expect(folders.getByRole("button", { name: "Bins", exact: true })).toHaveCount(0);
+    await expect(folders.getByRole("button", { name: "All assets" })).toHaveAttribute("aria-current", "page");
+
+    await importModel(page);
+    const model = page.locator("[data-editor-asset-library] [data-asset-id]").filter({ hasText: modelName });
+    await expect(model).toBeVisible({ timeout: 60_000 });
+    await model.click({ button: "right" });
+    await page.getByRole("menu").getByRole("menuitem", { name: "Move to" }).click();
+    await page.getByRole("menuitem", { name: "Props", exact: true }).click();
+    await folders.getByRole("button", { name: "Props", exact: true }).click();
+    await expect(model).toBeVisible();
+    await folders.getByRole("button", { name: "Unfiled models" }).click();
+    await expect(model).toHaveCount(0);
+    await expect.poll(async () => {
+        const catalog = await editorCatalog(request);
+        const asset = catalog.assets.find((entry) => entry.name === modelName);
+        const props = catalog.folders.find((entry) => entry.name === "Props");
+        return asset?.folderId === props?.id;
+    }).toBeTruthy();
+
+    await folders.getByRole("button", { name: "All assets" }).click();
+    await expect(model).toBeVisible();
+    await model.dragTo(folders.getByRole("button", { name: "Untitled folder", exact: true }));
+    await html5Drag(model, folders.getByRole("button", { name: "Untitled folder", exact: true }));
+    await folders.getByRole("button", { name: "Untitled folder", exact: true }).click();
+    await expect(model).toBeVisible();
+    await folders.getByRole("button", { name: "Props", exact: true }).click();
+    await expect(model).toHaveCount(0);
+    await expect.poll(async () => {
+        const catalog = await editorCatalog(request);
+        const asset = catalog.assets.find((entry) => entry.name === modelName);
+        const untitled = catalog.folders.find((entry) => entry.name === "Untitled folder");
+        return asset?.folderId === untitled?.id;
+    }).toBeTruthy();
+
+    const untitledFolder = folders.getByRole("button", { name: "Untitled folder", exact: true });
+    await untitledFolder.dragTo(folders.getByRole("button", { name: "Props", exact: true }));
+    await html5Drag(untitledFolder, folders.getByRole("button", { name: "Props", exact: true }));
+    await expect.poll(async () => {
+        const catalog = await editorCatalog(request);
+        const untitled = catalog.folders.find((entry) => entry.name === "Untitled folder");
+        const props = catalog.folders.find((entry) => entry.name === "Props");
+        return untitled?.parentId === props?.id;
+    }).toBeTruthy();
+
+    await folders.getByRole("button", { name: "All assets" }).click();
+    await expect(model).toBeVisible();
+    const beforeNoop = await editorCatalog(request);
+    const assetBefore = beforeNoop.assets.find((entry) => entry.name === modelName);
+    await model.dragTo(folders.getByRole("button", { name: "All assets" }));
+    await html5Drag(model, folders.getByRole("button", { name: "All assets" }));
+    await model.dragTo(folders.getByRole("button", { name: "Built-ins" }));
+    await html5Drag(model, folders.getByRole("button", { name: "Built-ins" }));
+    const afterNoop = await editorCatalog(request);
+    expect(afterNoop.assets.find((entry) => entry.name === modelName)?.folderId).toBe(assetBefore.folderId);
+    await folders.getByRole("button", { name: "Unfiled models" }).click();
+    await expect(model).toHaveCount(0);
+    await folders.getByRole("button", { name: "Untitled folder", exact: true }).click();
+    await expect(model).toBeVisible();
 });
 
 test("ED-06 asset library and keyboard preview flow are accessible at 1280 by 720 @a11y", async ({ page, request }) => {

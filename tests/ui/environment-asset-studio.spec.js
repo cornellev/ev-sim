@@ -139,10 +139,7 @@ async function importModel(page, fixture) {
         ]).catch(() => {});
     }
     await expect(item).toBeVisible({ timeout: 60_000 });
-    await Promise.race([
-        item.locator("img").waitFor({ state: "visible", timeout: 15_000 }),
-        item.getByRole("button", { name: `Retry thumbnail for ${fixture.name}` }).waitFor({ state: "visible", timeout: 15_000 }),
-    ]).catch(() => {});
+    await item.locator("img").waitFor({ state: "visible", timeout: 15_000 }).catch(() => {});
     return item;
 }
 
@@ -177,15 +174,21 @@ async function replaceBaseColorTexture(page, useHash, digest) {
 
 async function placeFromLibrary(page, name) {
     const item = page.locator("[data-editor-asset-library] [data-asset-id]").filter({ hasText: name });
-    const openButton = item.getByRole("button", { name: `Open asset ${name}` });
-    await openButton.focus();
-    const placeButton = item.getByRole("button", { name: `Place ${name}` });
-    await expect(placeButton).toBeVisible();
-    await placeButton.click();
+    await item.click({ button: "right" });
+    await page.getByRole("menu").getByRole("menuitem", { name: "Place" }).click();
     const host = page.locator("[data-editor-canvas-host]");
     const bounds = await host.boundingBox();
     expect(bounds).not.toBeNull();
     await page.mouse.click(bounds.x + bounds.width * 0.55, bounds.y + bounds.height * 0.55);
+}
+
+async function commitNumber(locator, value) {
+    await locator.fill(String(value));
+    await locator.press("Enter");
+}
+
+async function formattedNumber(value) {
+    return Number(value).toFixed(2);
 }
 
 async function installModuleRoutes(page) {
@@ -322,49 +325,88 @@ test("ED-07 authors isolated revisions, nested proxies, explicit instance update
     const primaryItem = await importModel(page, primary);
     const childItem = await importModel(page, child);
 
-    await childItem.getByRole("button", { name: `Open asset ${child.name}` }).click();
+    await childItem.dblclick();
     await expect(page.getByLabel(`${child.name} asset studio viewport`)).toBeVisible({ timeout: 60_000 });
     let inspector = page.locator("[data-asset-catalog-inspector]");
-    await inspector.getByLabel("Pivot Y").fill("0.5");
+    await commitNumber(inspector.getByLabel("Pivot Y"), "0.5");
     await page.getByRole("tree", { name: "Asset parts" }).getByRole("treeitem", { name: child.name }).click();
     await inspector.getByRole("button", { name: "Add", exact: true }).click();
     await inspector.getByLabel("Material").selectOption("material-1");
     await inspector.getByRole("button", { name: "Save revision" }).click();
     await expect(page.getByRole("button", { name: new RegExp(`^${child.name} · r2`) })).toBeVisible({ timeout: 60_000 });
 
-    await primaryItem.getByRole("button", { name: `Open asset ${primary.name}` }).click();
-    await expect(page.getByLabel(`${primary.name} asset studio viewport`)).toBeVisible({ timeout: 60_000 });
+    await primaryItem.dblclick();
+    const canvas = page.getByLabel(`${primary.name} asset studio viewport`);
+    await expect(canvas).toBeVisible({ timeout: 60_000 });
+    await expect.poll(async () => canvas.getAttribute("data-appearance-rebuilds")).not.toBeNull();
+    const rebuildsAfterOpen = await canvas.getAttribute("data-appearance-rebuilds");
+    const canvasBox = await canvas.boundingBox();
+    expect(canvasBox).not.toBeNull();
+    await page.mouse.move(canvasBox.x + canvasBox.width * 0.5, canvasBox.y + canvasBox.height * 0.5);
+    await page.mouse.wheel(0, 240);
+    await page.mouse.down();
+    await page.mouse.move(canvasBox.x + canvasBox.width * 0.5 + 48, canvasBox.y + canvasBox.height * 0.5 + 28, { steps: 6 });
+    await page.mouse.up();
+    await expect(canvas).toHaveAttribute("data-appearance-rebuilds", rebuildsAfterOpen);
     inspector = page.locator("[data-asset-catalog-inspector]");
-    await inspector.getByLabel("Meters per unit").fill("1.5");
-    await inspector.getByLabel("Pivot X").fill("0.25");
-    await page.getByRole("tree", { name: "Asset parts" }).getByRole("treeitem", { name: primary.name }).click();
+    const parts = page.getByRole("tree", { name: "Asset parts" });
+    await page.mouse.click(canvasBox.x + canvasBox.width * 0.5, canvasBox.y + canvasBox.height * 0.45);
+    if (await parts.locator("[data-selected]").count() === 0) {
+        await parts.getByRole("treeitem", { name: primary.name }).click();
+    }
+    await expect(parts.getByRole("treeitem", { name: primary.name })).toHaveAttribute("data-selected", "true");
+    await expect(parts.getByRole("treeitem", { name: primary.name })).toHaveAttribute("aria-current", "true");
+    await inspector.getByLabel("Collision overlay").uncheck();
+    await inspector.getByLabel("LiDAR overlay").uncheck();
+    await expect(parts.getByRole("treeitem", { name: primary.name })).toHaveAttribute("data-selected", "true");
+    await expect(canvas).toHaveAttribute("data-appearance-rebuilds", rebuildsAfterOpen);
+    await inspector.getByLabel("Collision overlay").check();
+    await inspector.getByLabel("LiDAR overlay").check();
+    await commitNumber(inspector.getByLabel("Meters per unit"), "1.5");
+    await commitNumber(inspector.getByLabel("Pivot X"), "0.25");
+    await expect(canvas).toHaveAttribute("data-appearance-rebuilds", rebuildsAfterOpen);
+    await expect(inspector.getByLabel("Meters per unit")).toHaveValue(await formattedNumber("1.5"));
+    await parts.getByRole("treeitem", { name: primary.name }).click();
     await inspector.getByRole("button", { name: "Add", exact: true }).click();
     await inspector.getByLabel("Material").selectOption("material-1");
-    await inspector.getByLabel("Metallic").fill("0.2");
-    await inspector.getByLabel("Roughness").fill("0.65");
+    await commitNumber(inspector.getByLabel("Metallic"), "0.2");
+    await commitNumber(inspector.getByLabel("Roughness"), "0.65");
     await replaceBaseColorTexture(page, texture.useHash, texture.digest);
 
     await page.getByRole("button", { name: new RegExp(`^${child.name} · r2`) }).click();
-    await inspector.getByLabel("Pivot Z").fill("1");
+    inspector = page.locator("[data-asset-catalog-inspector]");
+    await commitNumber(inspector.getByLabel("Pivot Z"), "1");
     await expect(inspector.getByRole("button", { name: "Undo" })).toBeEnabled();
     await inspector.getByRole("button", { name: "Undo" }).click();
-    await expect(inspector.getByLabel("Pivot Z")).toHaveValue("0");
+    await expect(inspector.getByLabel("Pivot Z")).toHaveValue(await formattedNumber(0));
     await page.getByRole("button", { name: new RegExp(`^${primary.name} · r1`) }).click();
-    await expect(inspector.getByLabel("Meters per unit")).toHaveValue("1.5");
+    await expect(inspector.getByLabel("Meters per unit")).toHaveValue(await formattedNumber("1.5"));
 
     await expect(page.getByLabel(`${primary.name} asset studio viewport`)).toBeVisible();
     await childItem.dragTo(page.locator("[data-editor-canvas-host]"));
-    const parts = page.getByRole("tree", { name: "Asset parts" });
-    await expect(parts.getByRole("treeitem", { name: child.name })).toBeVisible({ timeout: 30_000 });
-    await parts.getByRole("treeitem", { name: child.name }).click();
-    await inspector.getByLabel("Position X").fill("3");
+    const droppedParts = page.getByRole("tree", { name: "Asset parts" });
+    await expect(droppedParts.getByRole("treeitem", { name: child.name })).toBeVisible({ timeout: 30_000 });
+    const rebuildsAfterDrop = await canvas.getAttribute("data-appearance-rebuilds");
+    await droppedParts.evaluate((el) => { el.style.maxHeight = "40px"; });
+    await droppedParts.getByRole("treeitem", { name: child.name }).click();
+    await expect(droppedParts.getByRole("treeitem", { name: child.name })).toHaveAttribute("data-selected", "true");
+    const childRowVisible = await droppedParts.getByRole("treeitem", { name: child.name }).evaluate((el) => {
+        const root = el.closest('[role="tree"]');
+        const row = el.getBoundingClientRect();
+        const tree = root.getBoundingClientRect();
+        return row.bottom <= tree.bottom + 2 && row.top >= tree.top - 2;
+    });
+    expect(childRowVisible).toBeTruthy();
+    await commitNumber(inspector.getByLabel("Position X"), "3");
+    await expect(inspector.getByLabel("Position X")).toHaveValue(await formattedNumber(3));
+    await expect(canvas).toHaveAttribute("data-appearance-rebuilds", rebuildsAfterDrop);
     await expect(inspector.getByLabel("Pinned revision")).toHaveValue("2");
 
-    await parts.getByRole("treeitem", { name: primary.name }).click();
+    await droppedParts.getByRole("treeitem", { name: primary.name }).click();
     await inspector.getByLabel(`Include ${primary.name}`).check();
     await inspector.getByRole("button", { name: "Generate LiDAR" }).click();
     await expect(inspector.getByText("lidar-generated-1 · lidar", { exact: true })).toBeVisible();
-    await inspector.getByLabel("Position X").fill("1");
+    await commitNumber(inspector.getByLabel("Position X"), "1");
     await expect(inspector.getByText("lidar-generated-1 · lidar · stale", { exact: true })).toBeVisible();
     await inspector.getByRole("button", { name: "Save revision" }).click();
     await expect(inspector.getByRole("alert")).toContainText("Regenerate or disable stale proxies");
@@ -394,6 +436,7 @@ test("ED-07 authors isolated revisions, nested proxies, explicit instance update
     await page.getByRole("button", { name: new RegExp(`^${primary.name} · r2`) }).click();
     inspector = page.locator("[data-asset-catalog-inspector]");
     await inspector.getByLabel("Roughness").fill("0.4");
+    await inspector.getByLabel("Roughness").press("Enter");
     await inspector.getByRole("button", { name: "Save revision" }).click();
     await expect(page.getByRole("button", { name: new RegExp(`^${primary.name} · r3`) })).toBeVisible({ timeout: 60_000 });
     persisted = await (await request.get(`/api/storage/environments/${environmentId}`)).json();
@@ -439,9 +482,9 @@ test("ED-07 dirty-close and publication-conflict actions are accessible at 1280 
         await importModel(page, child);
     }
     const primaryAssetId = await primaryItem.getAttribute("data-asset-id");
-    await primaryItem.getByRole("button", { name: `Open asset ${primary.name}` }).click();
+    await primaryItem.dblclick();
     const inspector = page.locator("[data-asset-catalog-inspector]");
-    await inspector.getByLabel("Pivot Z").fill("0.2");
+    await commitNumber(inspector.getByLabel("Pivot Z"), "0.2");
     await page.getByRole("button", { name: `Close ${primary.name} studio` }).click();
     const closeDialog = page.getByRole("dialog", { name: `Save changes to ${primary.name}?` });
     await expect(closeDialog).toBeVisible();

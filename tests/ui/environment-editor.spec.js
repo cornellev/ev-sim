@@ -137,12 +137,28 @@ test.describe("environment editor workspace", () => {
         await page.keyboard.press("Escape");
         await expect(select).toHaveAttribute("aria-pressed", "true");
 
+        const grid = toolbar.getByRole("button", { name: "Grid", exact: true });
+        await expect(grid).toHaveAttribute("aria-pressed", "true");
+        await grid.hover();
+        await expect(page.getByRole("tooltip", { name: "Grid (G)" })).toBeVisible();
+        await page.evaluate(() => document.activeElement instanceof HTMLElement && document.activeElement.blur());
+        await page.keyboard.press("g");
+        await expect(grid).toHaveAttribute("aria-pressed", "false");
+        await toolbar.getByRole("button", { name: "Map view" }).click();
+        await expect(grid).toHaveAttribute("aria-pressed", "true");
+        await page.keyboard.press("g");
+        await expect(grid).toHaveAttribute("aria-pressed", "false");
+        await toolbar.getByRole("button", { name: "Scene view" }).click();
+        await expect(grid).toHaveAttribute("aria-pressed", "false");
+
         const search = page.getByRole("searchbox", { name: "Search hierarchy" });
+        const gridPressed = await grid.getAttribute("aria-pressed");
         await search.click();
-        await search.type("we");
-        await expect(search).toHaveValue("we");
+        await search.type("weg");
+        await expect(search).toHaveValue("weg");
         await expect(select).toHaveAttribute("aria-pressed", "true");
         await expect(move).toHaveAttribute("aria-pressed", "false");
+        await expect(grid).toHaveAttribute("aria-pressed", gridPressed);
 
         // Toolbar roving focus.
         await select.focus();

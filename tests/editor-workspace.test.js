@@ -20,6 +20,9 @@ test("ED-03 the toolbar model shows scene tools in scene view and map tools in m
     assert.equal(select.active, true);
     assert.equal(select.tooltip, "Select (Q)");
     assert.equal(select.kind, "toggle");
+    const grid = scene.find((group) => group.id === "overlays").items.find((item) => item.id === "overlay-grid");
+    assert.equal(grid.shortcut, "G");
+    assert.equal(grid.tooltip, "Grid (G)");
     const history = scene.find((group) => group.id === "history").items;
     assert.deepEqual(history.map((item) => [item.id, item.disabled]), [["undo", true], ["redo", false], ["frame", true]]);
     assert.equal(ids(scene, "view").length, 2);
@@ -83,6 +86,12 @@ test("ED-03 toolbar actions drive the editor state per view", () => {
     runToolbarAction(data, { type: TOOLBAR_ACTIONS.TOGGLE_GRID });
     assert.equal(editor.snapshot().map.gridVisible, false);
     assert.equal(editor.snapshot().sceneGridVisible, false);
+    editor.setEditorMode(EDITOR_MODES.SCENE);
+    runToolbarAction(data, { type: TOOLBAR_ACTIONS.TOGGLE_GRID });
+    assert.equal(editor.snapshot().sceneGridVisible, true);
+    editor.setEditorMode(EDITOR_MODES.MAP);
+    runToolbarAction(data, { type: TOOLBAR_ACTIONS.TOGGLE_GRID });
+    assert.equal(editor.snapshot().map.gridVisible, true);
 });
 
 test("ED-03 view options are session state: in snapshots and preferences, never in the persisted editor state", () => {

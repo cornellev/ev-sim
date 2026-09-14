@@ -147,6 +147,7 @@ export function buildToolbarModel({ editorSnapshot, busSnapshot = null, selectio
             label: "Grid",
             icon: "grid",
             kind: "toggle",
+            shortcut: "G",
             active: view === "map" ? editor.map?.gridVisible !== false : editor.sceneGridVisible !== false,
             action: { type: TOOLBAR_ACTIONS.TOGGLE_GRID },
         }),

@@ -57,6 +57,33 @@ test("ED-04 Map stroke, reshape selection, undo/redo, view switch, and reload sh
     const roadRow = page.getByRole("tree", { name: "Environment objects" }).getByRole("button", { name: "Road", exact: true });
     await expect(roadRow).toBeVisible({ timeout: 15_000 });
     await roadRow.click();
+    const knot = page.locator('[data-road-knot="k1"]');
+    await expect(knot).toBeVisible();
+    const centerline = v2Roads.locator("polyline:not([data-road-boundary])");
+    const beforePoints = await centerline.getAttribute("points");
+    const knotBox = await knot.boundingBox();
+    expect(knotBox).not.toBeNull();
+    await page.mouse.move(knotBox.x + knotBox.width / 2, knotBox.y + knotBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(knotBox.x + knotBox.width / 2 + 70, knotBox.y + knotBox.height / 2 + 36, { steps: 8 });
+    await expect.poll(async () => centerline.getAttribute("points")).not.toBe(beforePoints);
+    await page.keyboard.press("Escape");
+    await expect.poll(async () => centerline.getAttribute("points")).toBe(beforePoints);
+    await page.mouse.up();
+
+    await page.mouse.move(knotBox.x + knotBox.width / 2, knotBox.y + knotBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(knotBox.x + knotBox.width / 2 + 70, knotBox.y + knotBox.height / 2 + 36, { steps: 8 });
+    await page.mouse.up();
+    const committedPoints = await centerline.getAttribute("points");
+    expect(committedPoints).not.toBe(beforePoints);
+    await page.keyboard.press("ControlOrMeta+z");
+    await expect.poll(async () => centerline.getAttribute("points")).toBe(beforePoints);
+    await page.keyboard.press("Shift+ControlOrMeta+z");
+    await expect.poll(async () => centerline.getAttribute("points")).toBe(committedPoints);
+    await page.keyboard.press("ControlOrMeta+z");
+    await expect.poll(async () => centerline.getAttribute("points")).toBe(beforePoints);
+    await roadRow.click();
 
     // Reshape the interior knot numerically, split the curve, and undo the
     // topology operation. The edited curve is the record that must persist.
@@ -83,8 +110,8 @@ test("ED-04 Map stroke, reshape selection, undo/redo, view switch, and reload sh
     const resizedMapBounds = await surface.boundingBox();
     expect(resizedMapBounds).not.toBeNull();
     const centerlinePoints = await v2Roads.locator("polyline:not([data-road-boundary])").getAttribute("points");
-    const centerline = centerlinePoints.trim().split(/\s+/).map((pair) => pair.split(",").map(Number));
-    const [pickX, pickY] = centerline[Math.floor(centerline.length / 2)];
+    const centerlineCoords = centerlinePoints.trim().split(/\s+/).map((pair) => pair.split(",").map(Number));
+    const [pickX, pickY] = centerlineCoords[Math.floor(centerlineCoords.length / 2)];
     await page.mouse.click(
         resizedMapBounds.x + pickX,
         resizedMapBounds.y + pickY,

@@ -8,6 +8,7 @@ import { assetStudioCommands } from "../editor/commands/assetStudioCommands.js";
 import { insertRoadLane, removeRoadKnot, removeRoadLane } from "../editor/commands/roadCommands.js";
 import { finalizeRoadPen } from "../editor/map/MapToolLogic.js";
 import { focusCameraOnSelection } from "../editor/tools/cameraFocus.js";
+import { TOOLBAR_ACTIONS, runToolbarAction } from "../editor/workspace/toolbarModel.js";
 
 /**
  * Editor shortcuts registered through ShortcutProvider so they never fire
@@ -181,6 +182,15 @@ export function EditorCommandShortcuts({ data }) {
         priority: 10,
         enabled: inScene,
         handler: () => focusCameraOnSelection({ data }),
+    });
+    useShortcut({
+        id: "environment-toggle-grid",
+        keys: "g",
+        priority: 10,
+        enabled: inEditor,
+        handler: () => runToolbarAction(data, {
+            type: TOOLBAR_ACTIONS.TOGGLE_GRID,
+        }),
     });
 
     return null;

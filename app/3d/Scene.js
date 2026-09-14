@@ -139,15 +139,6 @@ function setupControls(scene, camera, renderer, data) {
     camera.far = 10000;
     camera.updateProjectionMatrix();
 
-    // add grid helper
-    const gridHelper = new THREE.GridHelper(400, 400);
-    gridHelper.visible = false;
-    scene.add(gridHelper);
-
-    controls.disposeEnvironmentKeys = data.keys().registerKeyDown("g", () => {
-        gridHelper.visible = !gridHelper.visible;
-    });
-
     return controls;
 }
 
@@ -931,7 +922,6 @@ export default function TotalScene({
             }
 
             window.removeEventListener('resize', handleResize);
-            data.simulation()?.controls?.disposeEnvironmentKeys?.();
             disposeRendererVisualResourceCache(renderer);
             renderer.dispose();
         };

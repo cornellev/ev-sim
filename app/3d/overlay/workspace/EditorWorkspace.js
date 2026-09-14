@@ -92,11 +92,37 @@ export function EditorWorkspace({ data, activeEnvironmentId, onEnvironmentChange
     useEffect(() => setEarthImportOpen(false), [activeEnvironmentId]);
     useEffect(() => {
         const document = data?.environment?.()?.getDocument?.();
-        return document?.subscribe?.((snapshot, event) => {
-            if (event?.transient) return;
+        if (!document?.subscribe) return undefined;
+        let rafId = 0;
+        let pendingTransientSnapshot = null;
+        const cancelPending = () => {
+            if (rafId) {
+                cancelAnimationFrame(rafId);
+                rafId = 0;
+            }
+            pendingTransientSnapshot = null;
+        };
+        const unsubscribe = document.subscribe((snapshot, event) => {
+            if (event?.transient) {
+                pendingTransientSnapshot = snapshot;
+                if (!rafId) {
+                    rafId = requestAnimationFrame(() => {
+                        rafId = 0;
+                        const next = pendingTransientSnapshot;
+                        pendingTransientSnapshot = null;
+                        if (next) setDocumentSnapshot(next);
+                    });
+                }
+                return;
+            }
+            cancelPending();
             setDocumentSnapshot(snapshot);
         });
-    }, [data]);
+        return () => {
+            cancelPending();
+            unsubscribe?.();
+        };
+    }, [data, activeEnvironmentId]);
 
     // Re-clamp when the window shrinks so the scene keeps its minimum size.
     useEffect(() => {
@@ -231,9 +257,9 @@ export function EditorWorkspace({ data, activeEnvironmentId, onEnvironmentChange
                                 const child = await runtime.repository.getRevision(dropped.assetId, dropped.revision);
                                 const lease = await runtime.models.acquire(child.modelUseHash);
                                 try {
-                                    session.resolvedChildren[`${dropped.assetId}@${dropped.revision}`] = {
+                                    session.setResolvedChild(`${dropped.assetId}@${dropped.revision}`, {
                                         ...child, geometry: Object.fromEntries(extractAssetSourceGeometries(lease)),
-                                    };
+                                    });
                                     session.bus.execute(assetStudioCommands.addPart({
                                         id, parentId: null, order: session.document.parts.length,
                                         name: String(dropped.label ?? dropped.assetId),

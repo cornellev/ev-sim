@@ -139,6 +139,39 @@ test("ED-07 asset sessions keep independent history and reject stale generation 
     a.dispose(); b.dispose();
 });
 
+test("ED-07 asset sessions cache compile and dirty, invalidate on commands and runtime deps, and keep numeric edits to one history entry", () => {
+    const session = new AssetStudioSession({ assetId: "cached", revision: 1, definition: sourceDefinition(), sourceGeometries: { source: MODEL_GEOMETRY } });
+    const first = session.compile();
+    assert.equal(session.compile(), first, "compile is cached while the document and runtime deps are unchanged");
+    session.setView({ camera: { position: [4, 3, 2], target: [0, 0, 0] } });
+    session.setView({ showCollision: false, showLidar: false });
+    assert.equal(session.compile(), first, "camera and overlay view changes do not recompile");
+    const dirtyBefore = session.dirty;
+    assert.equal(session.dirty, dirtyBefore);
+    session.setView({ showCollision: false });
+    assert.equal(session.compile(), first, "no-op view patches do not invalidate compile");
+
+    session.bus.execute(assetStudioCommands.setNormalization({ metersPerUnit: 0.25 }));
+    const afterCommand = session.compile();
+    assert.notEqual(afterCommand, first);
+    assert.equal(session.compile(), afterCommand);
+    assert.equal(session.dirty, true);
+    assert.equal(session.dirty, true, "dirty reuses the cached snapshot stringify");
+
+    session.setResolvedChild("child@1", { version: 2, revision: 1, modelUseHash: "c".repeat(64), geometry: MODEL_GEOMETRY });
+    const afterChild = session.compile();
+    assert.notEqual(afterChild, afterCommand);
+    session.removeResolvedChild("child@1");
+    assert.notEqual(session.compile(), afterChild);
+
+    session.discard(sourceDefinition(), 1);
+    assert.equal(session.dirty, false);
+    const historyBefore = session.bus.snapshot().historyLength;
+    assert.equal(session.bus.execute(assetStudioCommands.setNormalization({ pivot: [1.25, 0, 0] })).ok, true);
+    assert.equal(session.bus.snapshot().historyLength, historyBefore + 1);
+    session.dispose();
+});
+
 test("ED-07 placement and undo atomically carry the v2 pin and metric snapshot", () => {
     const compiled = compiledFixture();
     const document = new EnvironmentDocument({ environmentId: "atomic", roads: { nodes: [], edges: [] } });

@@ -81,6 +81,19 @@ test("ED-06 folders reject cycles and nonempty deletion while archive retains im
     assert.equal((await store.getRevision("crate", 1)).modelUseHash, USE_HASH);
 });
 
+test("ED-06 updateMetadata relocates an asset between folders and Unfiled", async (t) => {
+    const { store } = await fixture(t);
+    await store.createFolder({ id: "props", name: "Props" }, 0);
+    await store.createFolder({ id: "bins", name: "Bins" }, 1);
+    await store.publishRevision(draft({ folderId: "props" }), 2);
+    assert.equal((await store.get("crate")).asset.folderId, "props");
+    await store.updateMetadata("crate", { folderId: "bins" }, 3);
+    assert.equal((await store.get("crate")).asset.folderId, "bins");
+    await store.updateMetadata("crate", { folderId: null }, 4);
+    assert.equal((await store.get("crate")).asset.folderId, null);
+    await assert.rejects(() => store.updateMetadata("crate", { folderId: "missing" }, 5), (error) => error.code === EDITOR_ASSET_ERROR_CODES.INVALID);
+});
+
 test("ED-06 recovery rolls back unpublished revision state and completes committed publications", async (t) => {
     const visualAssets = new FakeVisualAssets();
     const rollback = await fixture(t, {

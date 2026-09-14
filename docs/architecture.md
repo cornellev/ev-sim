@@ -324,7 +324,8 @@ use records. `EditorAssetStore` owns one revision-guarded
 publication journals, and per-revision model/thumbnail roots. It never copies
 the VIS-04 source, digest, media, or dependency graph. Binary import uses the
 existing upload and closure-validation APIs; the pure `GltfImportPlan` rewrites
-selected local dependencies to digest URIs without network access. Saved
+selected local files and unpacked embedded images to digest URIs without
+network access. Saved
 environment references are discovered by scanning schema-v4 documents rather
 than maintaining a second index.
 
