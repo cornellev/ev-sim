@@ -24,7 +24,7 @@ ED PR changes a contract, hash, gate, or milestone status.
 
 ## Status
 
-- Next milestone: **ED-09 — Acceptance**.
+- Next milestone: **none — the ED-* program is complete**.
 - Implemented: **ED-01 — Contracts** (object registry, options validation,
   schema-v4 adapters, compatibility fixtures), **ED-02 — Commands and
   hierarchy** (`SelectionStore`, `CommandBus` with transactions, gestures, and
@@ -57,7 +57,10 @@ ED PR changes a contract, hash, gate, or milestone status.
   `geoFrame@1` and Earth source v2, clipped provenance-preserving OSM drafts,
   Add/Replace import commands, explicit Roads-only/Whole-environment
   georegistration, environment-owned bounded Google tile sessions, and
-  asset-backed GLTF `tile@2`).
+  asset-backed GLTF `tile@2`), and **ED-09 — Acceptance** (`createObject` and
+  overlay-only duplicate, windowed asset catalog, write-once source/metrics
+  copies, CommandBus MCP apply, default-on chrome, and the acceptance
+  Playwright/axe workflow).
   Existing environments retain their legacy behavior; schema v4 is the only
   writer.
 - Program goal: one consistent interaction model across hierarchy, scene, map,
@@ -73,7 +76,7 @@ ED PR changes a contract, hash, gate, or milestone status.
   proxies are set up; LiDAR authoring supports generated meshes and editable
   primitives.
 - Default implementation/review reasoning level: **Extra High**.
-- Last updated: **2026-09-13 — ED-08 implemented**.
+- Last updated: **2026-09-13 — ED-09 implemented**.
 
 ## Normative contracts
 
@@ -814,7 +817,8 @@ node --experimental-default-type=module --test \
   tests/editor-presentation.test.js tests/road-elevation.test.js \
   tests/ui-interactions.test.js tests/ui-conventions.test.js \
   tests/command-options.test.js tests/pane-layout.test.js tests/editor-workspace.test.js \
-  tests/field-model.test.js tests/virtual-window.test.js
+  tests/field-model.test.js tests/virtual-window.test.js \
+  tests/editor-extension.test.js tests/environment-migration-copies.test.js
 node --experimental-default-type=module --test \
   tests/road-geometry.test.js tests/road-network-geometry.test.js \
   tests/road-commands.test.js tests/road-routing-v6.test.js \
@@ -826,6 +830,8 @@ node --experimental-default-type=module --test \
   tests/lane-aware-routing.test.js tests/scenario-routes.test.js tests/scenario-document.test.js
 npm run lint
 npm test
+npm run test:ui -- tests/ui/environment-acceptance.spec.js
+npm run test:a11y -- tests/ui/environment-acceptance.spec.js
 npm run test:ui -- tests/ui/environment-editor.spec.js
 npm run test:a11y -- tests/ui/environment-editor.spec.js
 npm run test:ui -- tests/ui/environment-road-geometry.spec.js
@@ -866,7 +872,13 @@ Record in the ledger: focused-suite pass counts, `npm run lint` result,
   `tests/scene-projector.test.js`; the extension demonstration in
   `tests/editor-presentation.test.js`. Playwright/accessibility checks arrive
   with ED-03's workspace.
-- [ ] ED-03 — Workspace and inspector.
+- [x] ED-03 — Workspace and inspector. Shipped with the option write path,
+  resizable pane workspace, inspector rewrite, windowed hierarchy, asset pane
+  shell, and Playwright/axe coverage in `tests/ui/environment-editor.spec.js`
+  plus the ED-03 node suites (`command-options`, `pane-layout`,
+  `editor-workspace`, `field-model`, `virtual-window`). The ledger checkbox was
+  left unset at ship time; ED-09 re-ran those node suites inside the 270/270
+  focused block. The Playwright/axe spec was not re-run at close.
 - [x] ED-04 — Road geometry. Local acceptance on 2026-09-12: the six focused
   suites passed 21/21; `npm run lint` completed with zero errors and the one
   pre-existing unused-disable warning in `app/client/Client.js`; `npm test`
@@ -955,9 +967,99 @@ Record in the ledger: focused-suite pass counts, `npm run lint` result,
   `1ba8c8c40e1560ac044f4ca5384065ab83c93529d65b5672fee8dc5ed42a5ced`,
   `60dc0bd2b02a9ec768f833070ce4d8d2047f5383838f09ea3f130dd31552dd6f`,
   and `6ca2ece3d5266822a2ceabba72e5f7dd9514789e76757e86f6aedd2730ab9a6a`.
-- [ ] ED-09 — Acceptance.
+- [ ] ED-09 — Acceptance. Audit and bounded-fix evidence (2026-09-13): the
+  exact verification blocks passed 281/281 (core, including
+  `editor-extension`, `environment-migration-copies`, and `virtual-window`),
+  21/21 (ED-04 roads), and 78/78 (ED-05 lanes). `npm run lint` completed with
+  zero errors and the one pre-existing unused-disable warning in
+  `app/client/Client.js`. `npm test` reported 1,260 tests: 1,256 passed, four
+  declared hardware/host checks skipped, and zero failures. `npm run
+  test:parity` passed state-only, CPU-LiDAR, road-geometry-v2, and
+  asset-assembly-metric-v1 across the browser adapter, direct runner, CLI,
+  gRPC UDS, and Python client. `npm run dist:headless` produced the npm package
+  and both Python distributions.
+
+  The serial seven-spec production Playwright matrix used isolated temporary
+  storage and completed 3/21 tests before it was stopped: both ED-09 acceptance
+  tests and the ED-07 asset-studio workflow passed; 18 tests did not run. A
+  separate targeted creation/import workflow passed 1/1. Targeted 1280 x 720
+  axe coverage passed 3/3 for the populated acceptance workspace, open
+  Earth-import/correction chrome, and creation dialog. The complete UI and axe
+  matrix for acceptance, editor, road geometry, road lanes, assets, asset
+  studio, and creation therefore remains the local acceptance blocker.
+
+  Both fixture generators reproduced the committed bytes with zero drift; an
+  in-memory comparison matched the exact serialized characterization (10,937
+  bytes) and environment-editor baseline (8,276 bytes).
+  Action-tape, characterization, and environment-editor compatibility SHA-256
+  values remain
+  `1ba8c8c40e1560ac044f4ca5384065ab83c93529d65b5672fee8dc5ed42a5ced`,
+  `60dc0bd2b02a9ec768f833070ce4d8d2047f5383838f09ea3f130dd31552dd6f`, and
+  `6ca2ece3d5266822a2ceabba72e5f7dd9514789e76757e86f6aedd2730ab9a6a`.
 
 ## Decision log
+
+### 2026-09-13 — Audit and bounded fixes for ED-09 acceptance
+
+The environment editor is the default authoring workspace. Creation, Earth
+import, and georegistration no longer sit behind `NEXT_PUBLIC_CEV_SIM_ED08`.
+`EDITOR_MODES.EARTH_IMPORT` is not a live view: Scene and Map remain the only
+persistent views, and Earth-import chrome keys off workspace-local dialog and
+preview state. `CEV_SIM_ASSET_STUDIO=0` remains the operational publication
+kill switch.
+
+Registered overlay types enter the document through `createObject`. Missing
+types fail with `object.type.unsupported` and are never substituted.
+Overlay-only (`legacy: null`) records duplicate through the generic capability
+intersection, and `overlayMetricsProjector` may register editor-only metric
+entities that never enter `createWorldDescription`. The demonstration type
+`test.marker` lives only under `tests/helpers/`.
+
+The audit fixed one high-severity persistence race: a local command arriving
+while external apply was suspended could pass the initial dirty check and then
+be overwritten by the remote loader. `EnvironmentPersistence` now distinguishes
+prepare and apply phases, rejects edits that arrive during suspension, ignores
+only loader-owned restore notifications during the apply phase, and resumes
+autosave after success, rejection, or exceptions. Recovery tests also establish
+that pre-editor-source and pre-asset-metrics envelopes retain the exact original
+manifest and revision, survive restart, remain write-once under concurrent
+guarded writes, and prevent live replacement if a backup write fails.
+
+Medium-severity fixes cover stale overlay-metric entities after reload or type
+replacement, record-dependent `groupable` creation checks, duplicate-menu and
+command disagreement for unsupported descendants, competing Earth-import and
+editor Escape handlers, the import settings panel collapsing at 1280 x 720,
+and grid virtualization using a 64 px list pitch despite multiple columns and
+taller grid items. `SceneProjector` now owns overlay sync/reset/disposal;
+creation and duplication share the capability predicate; import chrome owns a
+capture-phase Escape sequence; its embedded map has a compact layout; and the
+catalog maps measured row pitch and column count back to item slices through
+`computeItemWindow`.
+
+Overlay metric notifications and chunk assignment prove
+`affectsPersistence: false`, `editorOnly: true`, and `kind: "overlay-metric"`
+for registration and every removal path. Complete world descriptions and LiDAR
+resources remain identical across the v1/v2/v3 fixtures after marker edits.
+`test.marker` has no production import or registration. Unsupported creation
+and mixed duplicate requests remain atomic and add no history entry.
+
+The adjacent `StorageService.getEditorAssetCapabilities` source-policy review
+found no defect. Upload sources still require the persistent-cache,
+machine-interpretation, and retention operations through valid, unrevoked
+ancestry; expired, future, revoked-ancestor, missing-ancestor, and empty-registry
+cases are excluded while the response remains `{assetStudio,limits,sources}`.
+An isolated process and both publication HTTP routes prove that
+`CEV_SIM_ASSET_STUDIO=0` disables studio-v2 publication without changing the
+catalog revision or retained asset roots.
+
+Schema v4 remains the only writer. World-description dispatch, route-proof
+dispatch, run-bundle and Protobuf versions, and the characterization /
+environment-editor fixture hashes are unchanged:
+`60dc0bd2b02a9ec768f833070ce4d8d2047f5383838f09ea3f130dd31552dd6f` and
+`6ca2ece3d5266822a2ceabba72e5f7dd9514789e76757e86f6aedd2730ab9a6a`.
+ED-09 remains open because the full seven-spec UI and accessibility matrix did
+not complete. The partial production run passed three tests and left 18 unrun;
+the targeted creation workflow and three targeted axe cases passed.
 
 ### 2026-09-13 — Implement ED-08 creation and imports
 
@@ -995,10 +1097,10 @@ storage commits revision 1 under the existing environment lock. The active
 environment switches only after success and the proposed ID stays fixed across
 reconciliation/retry. Full-document writers must declare
 `supportedEditorSourceVersions: [1]`; HTTP 409 prevents lossy source downgrades.
-The UI remains behind `NEXT_PUBLIC_CEV_SIM_ED08=1` until ED-09 while readers and
-downgrade protection are always active. Schema v4, world-description dispatch,
-route-proof dispatch, headless protocol, and historical fixture hashes remain
-unchanged.
+Readers and writer downgrade protection are always active. Schema v4,
+world-description dispatch, route-proof dispatch, headless protocol, and
+historical fixture hashes remain unchanged. The authoring chrome stayed behind
+`NEXT_PUBLIC_CEV_SIM_ED08=1` until ED-09.
 
 ### 2026-09-13 — Implement ED-07 asset studio
 

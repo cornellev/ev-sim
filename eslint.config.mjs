@@ -8,6 +8,7 @@ const eslintConfig = defineConfig([
     // Default ignores of eslint-config-next:
     ".next/**",
     ".next-playwright/**",
+    ".next-verify/**",
     "out/**",
     "build/**",
     "playwright-report/**",

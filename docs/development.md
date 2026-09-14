@@ -80,7 +80,7 @@ For visual or simulation changes, also run `npm run dev` and manually verify:
 
 For environment editor or earth import changes, also verify:
 
-- Scene, map, and earth-import modes enter and exit cleanly.
+- Scene and Map views persist while Earth-import chrome opens and closes cleanly without changing the active view.
 - Earth Import preview and apply work with a valid `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` in `.env.local`.
 - `npm test` passes for `tests/editor-*.test.js` and `tests/earth-import-mode.test.js`.
 - For object-registry, document, or schema changes: `tests/object-registry.test.js`, `tests/object-graph.test.js`, `tests/environment-v3.test.js`, and `tests/environment-v4.test.js` pass, and `npm run fixtures:environment-editor` produces no diff in `tests/fixtures/environment-editor/compatibility-baseline.v1.json` (a diff is a metric-identity contract change).
@@ -97,5 +97,36 @@ For environment editor or earth import changes, also verify:
 | Variable | Required for | Notes |
 |----------|--------------|-------|
 | `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` | Earth Import tile preview | Map Tiles API (Photorealistic 3D Tiles). Set in `.env.local`, not committed. |
+| `CEV_SIM_VISUAL_SOURCE_REGISTRY` | Editor asset Import | Operator grants file; defaults to `$CEV_SIM_DATA_DIR/visual-source-registry.json`. There is no mutation API. Missing files fail closed (empty sources). |
 
 See [Earth Import](earth-import.md) for setup and troubleshooting.
+
+Editor **Import** (Assets pane) only lists sources that are `active` and grant `persistent-cache`, `machine-interpretation`, and `retention`. Copy an owned-lab grant into the registry path above, then restart the server. Built-in props still place without a grant.
+
+```json
+{
+  "kind": "cev-sim.visual-source-registry",
+  "version": 1,
+  "sources": [
+    {
+      "id": "owned-lab",
+      "kind": "owned",
+      "status": "active",
+      "ancestorIds": [],
+      "permissions": {
+        "attribution": true,
+        "derivatives": true,
+        "display": true,
+        "export": true,
+        "live-preview-display": true,
+        "machine-interpretation": true,
+        "ml": true,
+        "persistent-cache": true,
+        "retention": true,
+        "transient-cache": true,
+        "worker-access": true
+      }
+    }
+  ]
+}
+```

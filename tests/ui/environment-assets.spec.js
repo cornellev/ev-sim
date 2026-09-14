@@ -10,7 +10,7 @@ let bufferPath;
 let modelName;
 
 test.beforeAll(async () => {
-    const storage = path.join(process.cwd(), ".playwright-data", "storage");
+    const storage = path.resolve(process.env.CEV_SIM_DATA_DIR ?? path.join(process.cwd(), ".playwright-data", "storage"));
     await fs.mkdir(storage, { recursive: true });
     const operations = ["display", "transient-cache", "persistent-cache", "derivatives", "machine-interpretation", "ml", "worker-access", "export", "retention", "attribution", "live-preview-display"];
     await fs.writeFile(path.join(storage, "visual-source-registry.json"), `${JSON.stringify({
@@ -67,15 +67,34 @@ async function openEditor(page) {
     await expect(page.locator("[data-editor-asset-library]")).toBeVisible({ timeout: 180_000 });
 }
 
+async function expectImportHittable(page, locator) {
+    await expect(locator).toBeVisible();
+    const box = await locator.boundingBox();
+    expect(box).not.toBeNull();
+    const hit = await page.evaluate(({ x, y }) => {
+        const node = document.elementFromPoint(x, y);
+        return Boolean(node?.closest("[data-editor-asset-import]"));
+    }, { x: box.x + box.width / 2, y: box.y + box.height / 2 });
+    expect(hit).toBeTruthy();
+}
+
 async function importModel(page, reimportName = null) {
     const library = page.locator("[data-editor-asset-library]");
     await expect(library.getByRole("combobox", { name: "Import source" })).toHaveValue("pw-editor-assets");
+    let trigger;
     if (reimportName) {
         const item = library.locator("[data-asset-id]").filter({ hasText: reimportName });
         await item.hover();
-        await item.getByRole("button", { name: `Reimport ${reimportName}` }).click();
+        trigger = item.getByRole("button", { name: `Reimport ${reimportName}` });
+    } else {
+        trigger = library.locator("[data-editor-asset-import]");
+        await expectImportHittable(page, trigger);
     }
-    await library.locator('input[type="file"]').setInputFiles([modelPath, bufferPath]);
+    const [chooser] = await Promise.all([
+        page.waitForEvent("filechooser"),
+        trigger.click(),
+    ]);
+    await chooser.setFiles([modelPath, bufferPath]);
     await library.getByRole("button", { name: "Publish" }).click();
     const published = library.locator("[data-asset-id]").filter({ hasText: reimportName ?? modelName });
     if (reimportName) await expect(published).toContainText("r2", { timeout: 60_000 });
@@ -182,6 +201,45 @@ test("ED-06 imports, previews, places, pins, updates, archives, reloads, and iso
     await expect(workspaces).toBeVisible();
     await workspaces.getByRole("button", { name: /^Simulation/i }).click();
     await expect(page.locator("[data-editor-workspace]")).toHaveCount(0);
+});
+
+test("ED-06 Import is hittable and opens the file chooser", async ({ page, request }) => {
+    test.setTimeout(300_000);
+    await activateBlank(request, "ED-06 import click");
+    await openEditor(page);
+    const library = page.locator("[data-editor-asset-library]");
+    const importControl = library.locator("[data-editor-asset-import]");
+    await expect(library.getByRole("combobox", { name: "Import source" })).toHaveValue("pw-editor-assets");
+    await expectImportHittable(page, importControl);
+    const [chooser] = await Promise.all([
+        page.waitForEvent("filechooser"),
+        importControl.click(),
+    ]);
+    expect(chooser.isMultiple()).toBeTruthy();
+});
+
+test("ED-06 Import explains a missing upload source without opening a chooser", async ({ page, request }) => {
+    test.setTimeout(300_000);
+    await page.route("**/api/storage/editor-assets/capabilities**", async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ assetStudio: true, limits: {}, sources: [] }),
+        });
+    });
+    await activateBlank(request, "ED-06 empty sources");
+    await openEditor(page);
+    const library = page.locator("[data-editor-asset-library]");
+    const importControl = library.locator("[data-editor-asset-import]");
+    await expectImportHittable(page, importControl);
+    await expect(library.getByRole("combobox", { name: "Import source" })).toHaveCount(0);
+    await expect(library.getByRole("status")).toContainText("No upload source is configured");
+    const opened = page.waitForEvent("filechooser", { timeout: 1_000 }).then(() => true).catch(() => false);
+    // aria-disabled keeps the control clickable in the browser; Playwright's
+    // actionability treats it as not enabled and needs force.
+    await importControl.click({ force: true });
+    expect(await opened).toBeFalsy();
+    await expect(library.getByRole("status")).toContainText("No upload source is configured");
 });
 
 test("ED-06 asset library and keyboard preview flow are accessible at 1280 by 720 @a11y", async ({ page, request }) => {

@@ -14,6 +14,7 @@ import { objectTypeRegistry } from "../objects/ObjectTypeRegistry.js";
 import { legacyIndex, readObjectOptionValue, readObjectTransform } from "../objects/objectGraph.js";
 import { GROUP_TYPE_ID } from "../objects/types/group.js";
 import { text } from "../objects/ObjectOptions.js";
+import { canDuplicateObjectRecord } from "../commands/objectCommands.js";
 
 export const MENU_OPTION_IDS = Object.freeze({
     RENAME: "rename",
@@ -68,7 +69,21 @@ export function defaultMenuOptions(ctx, { objectRegistry = objectTypeRegistry } 
         options.push({ id: MENU_OPTION_IDS.FRAME, label: "Frame selection", shortcut: "F", run: () => ctx.focus(ids) });
     }
     if (commands.duplicateObjects) {
-        options.push({ id: MENU_OPTION_IDS.DUPLICATE, label: "Duplicate", shortcut: "Mod+D", disabled: !every("deletable"), run: run(commands.duplicateObjects, { objectIds: ids }) });
+        const closureIds = new Set(ids);
+        const documentRecords = ctx.document?.objects ?? records;
+        let changed = true;
+        while (changed) {
+            changed = false;
+            for (const entry of documentRecords) {
+                if (closureIds.has(String(entry.id)) || !closureIds.has(String(entry.parentId ?? ""))) continue;
+                closureIds.add(String(entry.id));
+                changed = true;
+            }
+        }
+        const closure = documentRecords.filter((entry) => closureIds.has(String(entry.id)));
+        const duplicable = closure.length > 0
+            && closure.every((entry) => canDuplicateObjectRecord(objectRegistry, entry));
+        options.push({ id: MENU_OPTION_IDS.DUPLICATE, label: "Duplicate", shortcut: "Mod+D", disabled: !duplicable, run: run(commands.duplicateObjects, { objectIds: ids }) });
     }
     if (commands.groupObjects) {
         options.push({ id: MENU_OPTION_IDS.GROUP, label: "Group", shortcut: "Mod+G", disabled: !every("groupable"), run: run(commands.groupObjects, { objectIds: ids }) });

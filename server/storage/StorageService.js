@@ -38,7 +38,9 @@ import {
 } from "../../app/3d/environment/EnvironmentManifestPolicy.js";
 import {
     VISUAL_ASSET_ACCESS_OPERATIONS,
+    VISUAL_ASSET_UPLOAD_OPERATIONS,
     VISUAL_RENDER_PROVIDERS,
+    evaluateVisualSourcePolicy,
     assertVisualLayer,
     assertVisualLayerAccess,
     assertVisualLayerAccessMatches,
@@ -377,13 +379,23 @@ export class StorageService {
     async getEditorAssetCapabilities() {
         await this.visualAssets.initialize();
         const registry = await this.visualAssets.registry.load();
+        const policyMap = new Map(registry.sources.map((source) => [source.id, source]));
+        const atTime = new Date();
+        const sources = registry.sources
+            .filter((source) => evaluateVisualSourcePolicy({
+                sourceIds: [source.id],
+                operations: [...VISUAL_ASSET_UPLOAD_OPERATIONS],
+                registry: policyMap,
+                atTime,
+            }).allowed)
+            .map((source) => ({
+                id: source.id,
+                label: source.label ?? source.name ?? source.id,
+            }));
         return {
             assetStudio: this.editorAssets.assetStudioEnabled,
             limits: { ...this.visualAssets.limits },
-            sources: registry.sources.map((source) => ({
-                id: source.id,
-                label: source.label ?? source.name ?? source.id,
-            })),
+            sources,
         };
     }
 

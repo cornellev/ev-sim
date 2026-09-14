@@ -4,6 +4,9 @@
  */
 
 export const HIERARCHY_ROW_HEIGHT = 24;
+export const CATALOG_ROW_HEIGHT = 64;
+export const CATALOG_GRID_ITEM_HEIGHT = 96;
+export const CATALOG_GRID_GAP = 6;
 
 function finite(value, fallback = 0) {
     const number = Number(value);
@@ -25,6 +28,42 @@ export function computeWindow({ rowCount, rowHeight = HIERARCHY_ROW_HEIGHT, scro
     const start = Math.max(0, first - Math.max(0, Math.floor(finite(overscan))));
     const end = Math.min(count, first + visible + Math.max(0, Math.floor(finite(overscan))) + 1);
     return { start, end, offsetTop: start * height, totalHeight };
+}
+
+/**
+ * Window fixed-height items that may be arranged in multiple columns. The
+ * returned start/end address items, while offsetTop/totalHeight address visual
+ * rows. `rowGap` is included in the scroll pitch.
+ */
+export function computeItemWindow({
+    itemCount,
+    columns = 1,
+    itemHeight = CATALOG_ROW_HEIGHT,
+    rowGap = 0,
+    scrollTop = 0,
+    viewportHeight = 0,
+    overscan = 6,
+} = {}) {
+    const count = Math.max(0, Math.floor(finite(itemCount)));
+    const columnCount = Math.max(1, Math.floor(finite(columns, 1)));
+    const height = Math.max(1, finite(itemHeight, CATALOG_ROW_HEIGHT));
+    const gap = Math.max(0, finite(rowGap));
+    const rowCount = Math.ceil(count / columnCount);
+    const window = computeWindow({
+        rowCount,
+        rowHeight: height + gap,
+        scrollTop,
+        viewportHeight,
+        overscan,
+    });
+    return {
+        start: Math.min(count, window.start * columnCount),
+        end: Math.min(count, window.end * columnCount),
+        offsetTop: window.offsetTop,
+        totalHeight: Math.max(0, window.totalHeight - (rowCount > 0 ? gap : 0)),
+        columns: columnCount,
+        itemHeight: height,
+    };
 }
 
 /** Smallest scroll change that brings `index` fully into view. */

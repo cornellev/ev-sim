@@ -11,9 +11,11 @@ function ids(groups, groupId) {
 test("ED-03 the toolbar model shows scene tools in scene view and map tools in map view", () => {
     const editor = new EditorState();
     const scene = buildToolbarModel({ editorSnapshot: editor.snapshot(), busSnapshot: { canUndo: false, canRedo: true }, selectionSnapshot: { ids: [] } });
-    assert.deepEqual(scene.map((group) => group.id), ["tools", "transform", "view", "overlays", "history"]);
-    assert.deepEqual(ids(scene, "tools"), ["tool-select", "tool-translate", "tool-rotate", "tool-scale", "tool-road-pen"]);
+    assert.deepEqual(scene.map((group) => group.id), ["tools", "editing-tools", "transform", "view", "overlays", "history"]);
+    assert.deepEqual(ids(scene, "tools"), ["tool-select", "tool-translate", "tool-rotate", "tool-scale"]);
+    assert.deepEqual(ids(scene, "editing-tools"), ["tool-road-pen"]);
     assert.deepEqual(ids(scene, "overlays"), ["overlay-grid", "overlay-chunks", "overlay-bounds", "overlay-road-handles"]);
+    assert.equal(scene.flatMap((group) => group.items).some((item) => /lidar|collision/i.test(`${item.id} ${item.label}`)), false);
     const select = scene[0].items[0];
     assert.equal(select.active, true);
     assert.equal(select.tooltip, "Select (Q)");
@@ -31,11 +33,13 @@ test("ED-03 the toolbar model shows scene tools in scene view and map tools in m
     assert.deepEqual(ids(map, "map-tools"), ["map-select", "map-pan", "map-intersection", "map-road-pen", "map-building-rect"]);
     assert.equal(map[0].items.find((item) => item.id === "map-road-pen").active, true);
     assert.deepEqual(ids(map, "overlays"), ["overlay-grid"], "chunks and bounds are scene-only");
+    assert.equal(map.flatMap((group) => group.items).some((item) => /lidar|collision/i.test(`${item.id} ${item.label}`)), false);
     assert.equal(map.find((group) => group.id === "transform").items[0].active, true, "map snap is on by default");
     assert.equal(map.find((group) => group.id === "history").items[2].disabled, false);
 
     editor.setEditorMode(EDITOR_MODES.EARTH_IMPORT);
-    assert.deepEqual(buildToolbarModel({ editorSnapshot: editor.snapshot() }), [], "Earth import owns its own chrome");
+    const earthImport = buildToolbarModel({ editorSnapshot: editor.snapshot() });
+    assert.deepEqual(earthImport.map((group) => group.id), ["tools", "editing-tools", "transform", "view", "overlays", "history"], "Earth import is not a live toolbar view");
 });
 
 test("ED-03 toolbar actions drive the editor state per view", () => {

@@ -140,8 +140,7 @@ export function EditorWorkspace({ data, activeEnvironmentId, onEnvironmentChange
     const togglePane = (paneId, collapsed) => update((current) => togglePaneCollapsed(current, paneId, collapsed));
 
     const editorMode = editorSnapshot?.editorMode ?? EDITOR_MODES.SCENE;
-    const ed08Enabled = process.env.NEXT_PUBLIC_CEV_SIM_ED08 === "1";
-    const earthImportActive = ed08Enabled ? earthImportOpen : editorMode === EDITOR_MODES.EARTH_IMPORT;
+    const earthImportActive = earthImportOpen;
     const workspace = editorSnapshot?.workspace ?? { activeTabId: "scene", assetTabs: [] };
     const activeAssetTab = workspace.assetTabs.find((tab) => tab.id === workspace.activeTabId) ?? null;
     const sceneTabActive = !activeAssetTab;
@@ -155,8 +154,7 @@ export function EditorWorkspace({ data, activeEnvironmentId, onEnvironmentChange
         host.setVisible(authoredVisible && importVisible && sceneTabActive && !inMap);
         return () => host.setVisible(authoredVisible);
     }, [data, earthImportActive, editorSnapshot?.earthImport?.tilesVisible, inMap, sceneTabActive]);
-    const panesHidden = !ed08Enabled && earthImportActive;
-    const template = paneGridTemplate(layout, WORKSPACE_CHROME, { panesHidden });
+    const template = paneGridTemplate(layout, WORKSPACE_CHROME);
     const emptyDocument = { roads: { nodes: [], edges: [] }, buildings: [], features: [] };
     const mapSelection = inMap ? mapSelectionFromSelection(selectionSnapshot, documentSnapshot) : null;
 
@@ -189,7 +187,6 @@ export function EditorWorkspace({ data, activeEnvironmentId, onEnvironmentChange
                     onEnvironmentChange={onEnvironmentChange}
                     layout={layout}
                     onTogglePane={togglePane}
-                    editorMode={editorMode}
                     earthImportOpen={earthImportOpen}
                     onEarthImportToggle={() => {
                         if (!earthImportOpen) data.editor?.()?.setWorkspaceTab?.("scene");
@@ -198,26 +195,24 @@ export function EditorWorkspace({ data, activeEnvironmentId, onEnvironmentChange
                 />
             </div>
 
-            {!panesHidden && (
-                <WorkspacePane
-                    paneId="hierarchy"
-                    title={PANE_TITLES.hierarchy}
-                    collapsed={layout.panes.hierarchy.collapsed}
-                    onToggle={() => togglePane("hierarchy")}
-                    data={data}
-                    style={{ gridColumn: 1, gridRow: 2 }}
-                    className="border-r border-[var(--slate-border-60)]"
-                >
-                    {activeAssetTab ? <AssetStudioHierarchy data={data} tab={activeAssetTab} /> : <SceneHierarchy data={data} />}
-                </WorkspacePane>
-            )}
-            {!panesHidden && splitter("hierarchy", "row-start-2 col-start-2")}
+            <WorkspacePane
+                paneId="hierarchy"
+                title={PANE_TITLES.hierarchy}
+                collapsed={layout.panes.hierarchy.collapsed}
+                onToggle={() => togglePane("hierarchy")}
+                data={data}
+                style={{ gridColumn: 1, gridRow: 2 }}
+                className="border-r border-[var(--slate-border-60)]"
+            >
+                {activeAssetTab ? <AssetStudioHierarchy data={data} tab={activeAssetTab} /> : <SceneHierarchy data={data} />}
+            </WorkspacePane>
+            {splitter("hierarchy", "row-start-2 col-start-2")}
 
             <section
                 aria-label={activeAssetTab ? "Asset preview" : (inMap ? "Map view" : "Scene view")}
                 data-editor-center
                 className="relative flex min-h-0 min-w-0 flex-col"
-                style={{ gridColumn: panesHidden ? 1 : 3, gridRow: 2 }}
+                style={{ gridColumn: 3, gridRow: 2 }}
                 onDragOver={(event) => { if (event.dataTransfer.types.includes("application/x-cev-editor-asset")) event.preventDefault(); }}
                 onDrop={(event) => {
                     const raw = event.dataTransfer.getData("application/x-cev-editor-asset");
@@ -255,20 +250,18 @@ export function EditorWorkspace({ data, activeEnvironmentId, onEnvironmentChange
                     } catch { /* malformed external drag */ }
                 }}
             >
-                {!panesHidden && sceneTabActive && <EditorToolbar data={data} />}
-                {!panesHidden && (
-                    <nav aria-label="Workspace tabs" className="pointer-events-auto flex h-8 shrink-0 items-end gap-0.5 border-b border-[var(--slate-border-60)] bg-[var(--slate-surface-1)] px-1">
-                        <button type="button" aria-current={sceneTabActive ? "page" : undefined} onClick={() => data.editor?.()?.setWorkspaceTab?.("scene")} className="h-7 rounded-t px-3 text-xs hover:bg-[var(--slate-surface-hover)]">Scene</button>
-                        {workspace.assetTabs.map((tab) => <span key={tab.id} className="flex h-7 items-center rounded-t bg-[var(--slate-surface-2)]">
-                            <button type="button" aria-current={workspace.activeTabId === tab.id ? "page" : undefined} onClick={() => data.editor?.()?.setWorkspaceTab?.(tab.id)} onDoubleClick={() => data.editor?.()?.pinAssetTab?.(tab.id)} className="h-full max-w-40 truncate px-2 text-xs">{tab.name} · r{tab.revision}{tab.dirty ? " *" : tab.pinned ? " •" : ""}</button>
-                            <button type="button" aria-label={`Close ${tab.name} studio`} onClick={() => {
-                                const session = data.environment?.()?.assets?.()?.sessions?.get?.(tab.id);
-                                if (tab.dirty || session?.dirty) { setClosingAssetTab({ ...tab, dirty: true }); return; }
-                                if (data.editor?.()?.closeAssetTab?.(tab.id)) data.environment?.()?.assets?.()?.sessions?.close?.(tab.id, { discard: true });
-                            }} className="h-full px-1.5 text-zinc-400 hover:text-zinc-100">×</button>
-                        </span>)}
-                    </nav>
-                )}
+                {sceneTabActive && <EditorToolbar data={data} />}
+                <nav aria-label="Workspace tabs" className="pointer-events-auto flex h-8 shrink-0 items-end gap-0.5 border-b border-[var(--slate-border-60)] bg-[var(--slate-surface-1)] px-1">
+                    <button type="button" aria-current={sceneTabActive ? "page" : undefined} onClick={() => data.editor?.()?.setWorkspaceTab?.("scene")} className="h-7 rounded-t px-3 text-xs hover:bg-[var(--slate-surface-hover)]">Scene</button>
+                    {workspace.assetTabs.map((tab) => <span key={tab.id} className="flex h-7 items-center rounded-t bg-[var(--slate-surface-2)]">
+                        <button type="button" aria-current={workspace.activeTabId === tab.id ? "page" : undefined} onClick={() => data.editor?.()?.setWorkspaceTab?.(tab.id)} onDoubleClick={() => data.editor?.()?.pinAssetTab?.(tab.id)} className="h-full max-w-40 truncate px-2 text-xs">{tab.name} · r{tab.revision}{tab.dirty ? " *" : tab.pinned ? " •" : ""}</button>
+                        <button type="button" aria-label={`Close ${tab.name} studio`} onClick={() => {
+                            const session = data.environment?.()?.assets?.()?.sessions?.get?.(tab.id);
+                            if (tab.dirty || session?.dirty) { setClosingAssetTab({ ...tab, dirty: true }); return; }
+                            if (data.editor?.()?.closeAssetTab?.(tab.id)) data.environment?.()?.assets?.()?.sessions?.close?.(tab.id, { discard: true });
+                        }} className="h-full px-1.5 text-zinc-400 hover:text-zinc-100">×</button>
+                    </span>)}
+                </nav>
                 <div ref={canvasHostRef} data-editor-canvas-host className="relative min-h-0 min-w-0 flex-1">
                     {inMap && (
                         <MapSurface
@@ -279,52 +272,43 @@ export function EditorWorkspace({ data, activeEnvironmentId, onEnvironmentChange
                         />
                     )}
                     {activeAssetTab && <AssetPreviewTab key={activeAssetTab.id} data={data} tab={activeAssetTab} />}
-                    {earthImportActive && <EarthImportModeChrome data={data} open onClose={() => {
-                        if (ed08Enabled) setEarthImportOpen(false);
-                        else data.editor?.()?.setEditorMode?.(EDITOR_MODES.SCENE);
-                    }} />}
+                    {earthImportActive && <EarthImportModeChrome data={data} open onClose={() => setEarthImportOpen(false)} />}
                     {sceneTabActive && !earthImportActive && <EnvironmentTileAttribution data={data} />}
                     <BakeProgressOverlay data={data} />
                     <VisualPreviewDiagnostic data={data} />
                 </div>
             </section>
 
-            {!panesHidden && splitter("inspector", "row-start-2 col-start-4")}
-            {!panesHidden && (
-                <WorkspacePane
-                    paneId="inspector"
-                    title={PANE_TITLES.inspector}
-                    collapsed={layout.panes.inspector.collapsed}
-                    onToggle={() => togglePane("inspector")}
-                    data={data}
-                    style={{ gridColumn: 5, gridRow: 2 }}
-                    className="border-l border-[var(--slate-border-60)]"
-                    bodyClassName="overflow-auto"
-                >
-                    <AuthoringModeProvider>
-                        {activeAssetTab ? <AssetCatalogInspector data={data} tab={activeAssetTab} /> : <ObjectInspector data={data} />}
-                    </AuthoringModeProvider>
-                </WorkspacePane>
-            )}
+            {splitter("inspector", "row-start-2 col-start-4")}
+            <WorkspacePane
+                paneId="inspector"
+                title={PANE_TITLES.inspector}
+                collapsed={layout.panes.inspector.collapsed}
+                onToggle={() => togglePane("inspector")}
+                data={data}
+                style={{ gridColumn: 5, gridRow: 2 }}
+                className="border-l border-[var(--slate-border-60)]"
+                bodyClassName="overflow-auto"
+            >
+                <AuthoringModeProvider>
+                    {activeAssetTab ? <AssetCatalogInspector data={data} tab={activeAssetTab} /> : <ObjectInspector data={data} />}
+                </AuthoringModeProvider>
+            </WorkspacePane>
 
-            {!panesHidden && (
-                <div style={{ gridColumn: "1 / -1", gridRow: 3 }} className="flex min-w-0">
-                    {splitter("assets", "flex-1")}
-                </div>
-            )}
-            {!panesHidden && (
-                <WorkspacePane
-                    paneId="assets"
-                    title={PANE_TITLES.assets}
-                    collapsed={layout.panes.assets.collapsed}
-                    onToggle={() => togglePane("assets")}
-                    data={data}
-                    style={{ gridColumn: "1 / -1", gridRow: 4 }}
-                    className="border-t border-[var(--slate-border-60)]"
-                >
-                    <AssetPane data={data} />
-                </WorkspacePane>
-            )}
+            <div style={{ gridColumn: "1 / -1", gridRow: 3 }} className="flex min-w-0">
+                {splitter("assets", "flex-1")}
+            </div>
+            <WorkspacePane
+                paneId="assets"
+                title={PANE_TITLES.assets}
+                collapsed={layout.panes.assets.collapsed}
+                onToggle={() => togglePane("assets")}
+                data={data}
+                style={{ gridColumn: "1 / -1", gridRow: 4 }}
+                className="border-t border-[var(--slate-border-60)]"
+            >
+                <AssetPane data={data} />
+            </WorkspacePane>
             {closingAssetTab && <div className="pointer-events-auto fixed inset-0 z-50 flex items-center justify-center bg-black/60" role="presentation">
                 <div role="dialog" aria-modal="true" aria-labelledby="asset-close-title" className="w-96 rounded-lg border border-zinc-700 bg-zinc-900 p-4 shadow-xl">
                     <h2 id="asset-close-title" className="text-sm font-medium text-zinc-100">Save changes to {closingAssetTab.name}?</h2>

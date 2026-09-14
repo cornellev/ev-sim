@@ -12,7 +12,6 @@ import {
 } from "@tabler/icons-react";
 import {
     changeEnvironmentId,
-    createEnvironment,
     deleteEnvironment,
     duplicateEnvironment,
     environmentIdFromName,
@@ -29,7 +28,6 @@ export function EnvironmentSwitcher({ data, activeEnvironmentId, onEnvironmentCh
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState(null);
     const [creationId, setCreationId] = useState(null);
-    const ed08Enabled = process.env.NEXT_PUBLIC_CEV_SIM_ED08 === "1";
 
     const active = useMemo(
         () => environments.find((environment) => environment.id === activeEnvironmentId) ?? null,
@@ -68,16 +66,6 @@ export function EnvironmentSwitcher({ data, activeEnvironmentId, onEnvironmentCh
         const base = environmentIdFromName(label);
         if (!environments.some((environment) => environment.id === base)) return base;
         return `${base}-${Date.now().toString(36)}`;
-    };
-
-    const createBlank = () => {
-        const displayName = name.trim() || "Untitled Environment";
-        const id = uniqueId(displayName);
-        run(async () => {
-            await createEnvironment({ id, name: displayName, templateId: "blank" });
-            onEnvironmentChange?.(id);
-            setOpen(false);
-        });
     };
 
     const duplicateActive = () => {
@@ -252,8 +240,8 @@ export function EnvironmentSwitcher({ data, activeEnvironmentId, onEnvironmentCh
                         <div className="mt-3 grid grid-cols-2 gap-1.5">
                             <ActionButton
                                 icon={FaPlus}
-                                label={ed08Enabled ? "New environment" : "New blank"}
-                                onClick={ed08Enabled ? () => setCreationId(uniqueId("Untitled Environment")) : createBlank}
+                                label="New"
+                                onClick={() => setCreationId(uniqueId("Untitled Environment"))}
                                 disabled={busy}
                             />
                             <ActionButton icon={FaCopy} label="Duplicate" onClick={duplicateActive} disabled={busy || !active} />

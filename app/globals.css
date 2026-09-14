@@ -1,4 +1,7 @@
 @import "tailwindcss";
+/* Extra Next dist dirs are not ignored like `.next` and poison the class scan. */
+@source not "../.next-verify";
+@source not "../.next-playwright";
 @import "leaflet/dist/leaflet.css";
 @import "uplot/dist/uPlot.min.css";
 

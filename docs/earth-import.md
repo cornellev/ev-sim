@@ -7,9 +7,8 @@ Overpass. GLTF Tiles pin an immutable editor-asset revision and use the same
 placement, projection, metric snapshot, and revision-update machinery as asset
 instances.
 
-The ED-08 UI is enabled with `NEXT_PUBLIC_CEV_SIM_ED08=1`. Source readers,
-validation, and writer downgrade protection are active regardless of that
-flag.
+Source readers, validation, and writer downgrade protection are always active.
+The creation and Earth-import chrome is on by default.
 
 ## Configuration
 
@@ -18,7 +17,6 @@ Google tiles require a Maps API key with Map Tiles API access:
 ```bash
 # .env.local
 NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=your_key_here
-NEXT_PUBLIC_CEV_SIM_ED08=1
 ```
 
 Restart the development server after changing either value. OSM road fetching

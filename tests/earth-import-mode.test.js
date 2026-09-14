@@ -33,6 +33,7 @@ import { OverpassRoadProvider } from "../app/3d/earth/roads/OverpassRoadProvider
 import { importRoadNetworkToDocument } from "../app/3d/earth/roads/RoadGraphImporter.js";
 import { Road, resolveRoadSampleInfo } from "../app/3d/city/Road.js";
 import { defaultFetch } from "../app/util/Fetch.js";
+import { shouldShowEarthImportBounds } from "../app/3d/earth/EarthImportBoundsPolicy.js";
 
 test.beforeEach(() => {
     resetDocumentIdCounter();
@@ -100,29 +101,31 @@ class FakeTilesRenderer {
     }
 }
 
-test("EditorState supports earth import mode transitions", () => {
+test("EarthImportController onEnterMode seeds editor bounds from the document source", () => {
+    const document = new EnvironmentDocument();
+    document.setEarthSource({
+        anchor: { lat: 42.44, lng: -76.5 },
+        bounds: { north: 42.45, south: 42.43, east: -76.49, west: -76.51 },
+        tileProvider: "google-photorealistic",
+        roadProvider: "overpass",
+        importedLayerIds: ["google-earth-tiles"],
+        importedAt: "2026-06-29T00:00:00.000Z",
+    });
     const editor = new EditorState();
-    let entered = false;
-    let exited = false;
+    const data = {
+        editor: () => editor,
+        environment: () => ({ getDocument: () => document }),
+        simulation: () => ({ render: () => {} }),
+    };
+    const controller = new EarthImportController(data, { group: new THREE.Group(), load: async () => {}, disposeTiles: () => {} });
 
-    editor.setEarthImportModeEnterHandler(() => {
-        entered = true;
-    });
-    editor.setEarthImportModeExitHandler(() => {
-        exited = true;
-    });
-
-    editor.setEditorMode(EDITOR_MODES.EARTH_IMPORT);
-    assert.equal(editor.snapshot().editorMode, EDITOR_MODES.EARTH_IMPORT);
-    assert.equal(entered, true);
-    assert.ok(editor.snapshot().earthImport);
-
-    editor.patchEarthImport({ anchorLat: 40, anchorLng: -75 });
-    assert.equal(editor.snapshot().earthImport.anchorLat, 40);
-
-    editor.setEditorMode(EDITOR_MODES.SCENE);
+    controller.onEnterMode();
     assert.equal(editor.snapshot().editorMode, EDITOR_MODES.SCENE);
-    assert.equal(exited, true);
+    assert.equal(editor.snapshot().earthImport.anchorLat, 42.44);
+    assert.equal(editor.snapshot().earthImport.boundsNorth, 42.45);
+
+    editor.patchEarthImport({ previewActive: true, status: EARTH_IMPORT_STATUS.PREVIEW });
+    controller.onExitMode();
     assert.equal(editor.snapshot().earthImport.previewActive, false);
 });
 
@@ -142,6 +145,26 @@ test("EditorState normalizes persisted legacy earth-import mode to Scene", () =>
     assert.equal(snapshot.earthImport.anchorLat, 41);
     assert.equal(snapshot.earthImport.status, EARTH_IMPORT_STATUS.PREVIEW);
     assert.equal(snapshot.earthImport.previewActive, true);
+});
+
+test("ED-09 Earth import bounds follow transient preview state instead of editorMode", () => {
+    const editor = new EditorState({ editorMode: EDITOR_MODES.MAP });
+    editor.patchEarthImport({
+        boundsNorth: 42.45,
+        boundsSouth: 42.43,
+        boundsEast: -76.49,
+        boundsWest: -76.51,
+        previewActive: false,
+        status: EARTH_IMPORT_STATUS.IDLE,
+    });
+    assert.equal(shouldShowEarthImportBounds(editor.snapshot()), false);
+    editor.patchEarthImport({ status: EARTH_IMPORT_STATUS.LOADING_TILES });
+    assert.equal(shouldShowEarthImportBounds(editor.snapshot()), true);
+    assert.equal(editor.snapshot().editorMode, EDITOR_MODES.MAP);
+    editor.patchEarthImport({ status: EARTH_IMPORT_STATUS.IDLE, previewActive: true });
+    assert.equal(shouldShowEarthImportBounds(editor.snapshot()), true);
+    editor.patchEarthImport({ previewActive: false });
+    assert.equal(shouldShowEarthImportBounds(editor.snapshot()), false);
 });
 
 test("EnvironmentDocument persists earth source metadata", () => {
@@ -748,7 +771,6 @@ test("EarthImportController apply can continue when road fetch fails", async () 
     let tileLoads = 0;
     let disposedTiles = 0;
 
-    editor.setEditorMode(EDITOR_MODES.EARTH_IMPORT);
     editor.patchEarthImport({
         boundsNorth: bounds.north,
         boundsSouth: bounds.south,
@@ -775,6 +797,7 @@ test("EarthImportController apply can continue when road fetch fails", async () 
             throw new Error("Overpass request failed (504).");
         } },
     });
+    controller.onEnterMode();
 
     const originalWarn = console.warn;
     let result = null;
@@ -824,7 +847,6 @@ test("EarthImportController Apply commits staged roads as one undoable command",
         },
     };
 
-    editor.setEditorMode(EDITOR_MODES.EARTH_IMPORT);
     editor.patchEarthImport({
         boundsNorth: bounds.north,
         boundsSouth: bounds.south,
@@ -878,6 +900,7 @@ test("EarthImportController Apply commits staged roads as one undoable command",
             }),
         },
     });
+    controller.onEnterMode();
 
     await controller.apply();
 

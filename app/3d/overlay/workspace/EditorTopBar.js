@@ -13,7 +13,6 @@ import {
     IconMapPin,
 } from "@tabler/icons-react";
 import { Button, IconButton, PopoverSurface } from "../../../ui";
-import { EDITOR_MODES } from "../../editor/EditorState";
 import { PANE_IDS } from "../../editor/workspace/paneLayout.js";
 import { SKYBOX_OBJECT_ID } from "../../editor/objects/objectRecord.js";
 import { EnvironmentSwitcher } from "../EnvironmentSwitcher";
@@ -62,14 +61,14 @@ export function EditorTopBar({
     onEnvironmentChange,
     layout,
     onTogglePane,
-    editorMode,
     earthImportOpen,
     onEarthImportToggle,
 }) {
     const [bakeRunning, setBakeRunning] = useState(false);
     const [georegistrationOpen, setGeoregistrationOpen] = useState(false);
-    const ed08Enabled = process.env.NEXT_PUBLIC_CEV_SIM_ED08 === "1";
-    const inEarthImport = ed08Enabled ? earthImportOpen : editorMode === EDITOR_MODES.EARTH_IMPORT;
+    const inEarthImport = Boolean(earthImportOpen);
+    const document = data?.environment?.()?.getDocument?.();
+    const showGeoregistration = Boolean(!document?.geoFrame && document?.earth?.anchor);
     useEffect(() => {
         const harness = data?.baking?.();
         if (!harness?.subscribe) return undefined;
@@ -130,22 +129,21 @@ export function EditorTopBar({
                     variant={inEarthImport ? "default" : "ghost"}
                     active={inEarthImport || undefined}
                     aria-pressed={inEarthImport}
-                    onClick={() => {
-                        if (ed08Enabled) onEarthImportToggle?.();
-                        else data?.editor?.()?.setEditorMode?.(inEarthImport ? EDITOR_MODES.SCENE : EDITOR_MODES.EARTH_IMPORT);
-                    }}
+                    onClick={() => onEarthImportToggle?.()}
                 >
                     <IconWorld size={16} stroke={1.75} />
                 </IconButton>
-                {process.env.NEXT_PUBLIC_CEV_SIM_ED08 === "1" && !data?.environment?.()?.getDocument?.()?.geoFrame && data?.environment?.()?.getDocument?.()?.earth?.anchor && <IconButton
-                    label="Correct georegistration"
-                    tooltip="Migrate legacy geographic coordinates"
-                    size="compact"
-                    variant="ghost"
-                    onClick={() => setGeoregistrationOpen(true)}
-                >
-                    <IconMapPin size={16} stroke={1.75} />
-                </IconButton>}
+                {showGeoregistration && (
+                    <IconButton
+                        label="Correct georegistration"
+                        tooltip="Migrate legacy geographic coordinates"
+                        size="compact"
+                        variant="ghost"
+                        onClick={() => setGeoregistrationOpen(true)}
+                    >
+                        <IconMapPin size={16} stroke={1.75} />
+                    </IconButton>
+                )}
                 <IconButton
                     label="Atmosphere"
                     tooltip="Select the Skybox to edit sky and atmosphere"

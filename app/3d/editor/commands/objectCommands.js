@@ -23,6 +23,7 @@ import {
     readObjectTransform,
     validateObjectRecords,
 } from "../objects/objectGraph.js";
+import { OBJECT_TYPE_ERROR_CODES, ObjectTypeError } from "../objects/ObjectTypeRegistry.js";
 import { STANDARD_COMPONENT_KEYS, compareObjectRecords, createObjectRecord, normalizeObjectRecord } from "../objects/objectRecord.js";
 import { GROUP_TYPE_ID } from "../objects/types/group.js";
 import { BUILDING_TYPE_ID } from "../objects/types/building.js";
@@ -45,6 +46,7 @@ import {
     descendantIds,
     indexObjectsById,
     isDescendant,
+    nextSiblingOrder,
     parentIdOf,
     pruneToRoots,
     removeObjectRecords,
@@ -59,6 +61,34 @@ import { ensureRoadGeometryV2 } from "./roadCommands.js";
 
 function definitionFor(ctx, record) {
     return ctx.registry.get(record?.typeId, record?.typeVersion) ?? ctx.registry.get(record?.typeId) ?? null;
+}
+
+const LEGACY_DUPLICABLE_TYPE_IDS = new Set([
+    GROUP_TYPE_ID,
+    BUILTIN_PROP_TYPE_ID,
+    BUILDING_TYPE_ID,
+    ROAD_TYPE_ID,
+    INTERSECTION_TYPE_ID,
+    ASSET_INSTANCE_TYPE_ID,
+]);
+
+/** Shared command/presentation policy for one record; callers check descendants. */
+export function canDuplicateObjectRecord(objectRegistry, record) {
+    if (!record) return false;
+    if (LEGACY_DUPLICABLE_TYPE_IDS.has(record.typeId)) return true;
+    const definition = objectRegistry.get(record.typeId, record.typeVersion) ?? objectRegistry.get(record.typeId) ?? null;
+    return Boolean(
+        definition
+        && definition.legacy === null
+        && definition.getCapabilities(record)?.deletable
+        && !definition.singleton
+        && record.typeId !== GROUP_TYPE_ID
+    );
+}
+
+function isOverlayOnlyDuplicable(ctx, record) {
+    const definition = definitionFor(ctx, record);
+    return definition?.legacy === null && canDuplicateObjectRecord(ctx.registry, record);
 }
 
 function normalizeParent(parentId) {
@@ -239,6 +269,83 @@ export function groupObjects({ objectIds = [], name = "Group", groupId = null, l
     };
 }
 
+/**
+ * Create an overlay object from its type definition. Missing types fail with
+ * `object.type.unsupported` and are never substituted. Types that have not
+ * implemented `create()` fail with CREATE_UNAVAILABLE.
+ */
+export function createObject({
+    typeId,
+    input = {},
+    id = null,
+    parentId = null,
+    name = null,
+    label = "Create object",
+} = {}) {
+    return {
+        id: "create-object",
+        label,
+        run(ctx) {
+            const type = String(typeId ?? "").trim();
+            if (!type) return commandFailure(commandIssue(COMMAND_ISSUE_CODES.ARGUMENT_INVALID, "typeId is required."));
+            const definition = ctx.registry.get(type);
+            if (!definition) {
+                return commandFailure(commandIssue(
+                    OBJECT_ISSUE_CODES.TYPE_UNSUPPORTED,
+                    `Object type "${type}" is not registered.`,
+                ));
+            }
+            const records = candidateRecords(ctx);
+            const byId = indexObjectsById(records);
+            const target = normalizeParent(parentId);
+            if (target !== null) {
+                const parent = byId.get(target);
+                if (!parent) {
+                    return commandFailure(issue(["objects"], OBJECT_ISSUE_CODES.PARENT_MISSING, `Parent "${target}" does not exist.`, { objectId: target }));
+                }
+                if (parent.typeId !== GROUP_TYPE_ID) {
+                    return commandFailure(issue(["objects"], OBJECT_ISSUE_CODES.PARENT_NOT_GROUP, `"${parent.name ?? target}" is not a group.`, { objectId: target }));
+                }
+            }
+            const objectId = id ? String(id) : createId(type);
+            if (byId.has(objectId)) {
+                return commandFailure(commandIssue(COMMAND_ISSUE_CODES.ARGUMENT_INVALID, `Object "${objectId}" already exists.`, { objectId }));
+            }
+            let created;
+            try {
+                created = definition.create(input ?? {}, {
+                    document: ctx.document,
+                    registry: ctx.registry,
+                    parentId: target,
+                    objectId,
+                });
+            } catch (error) {
+                if (error instanceof ObjectTypeError && error.code === OBJECT_TYPE_ERROR_CODES.CREATE_UNAVAILABLE) {
+                    return commandFailure(commandIssue(COMMAND_ISSUE_CODES.ARGUMENT_INVALID, error.message));
+                }
+                throw error;
+            }
+            const record = createObjectRecord({
+                id: objectId,
+                typeId: type,
+                typeVersion: definition.version,
+                name: name ?? created?.name ?? definition.label ?? type,
+                parentId: target,
+                order: nextSiblingOrder(records, target),
+                components: created?.components ?? {},
+            });
+            if (target !== null && !definition.getCapabilities(record)?.groupable) {
+                return commandFailure(commandIssue(COMMAND_ISSUE_CODES.REPARENT_NOT_GROUPABLE, `"${definition.label}" cannot be placed in a group.`));
+            }
+            const candidate = [...records, record];
+            renumberSiblings(candidate, target, { moved: [objectId] });
+            const committed = commitCandidate(ctx, candidate);
+            if (!committed.ok) return commandFailure(committed.issues);
+            return commandSuccess({ objectId, typeId: type });
+        },
+    };
+}
+
 export function ungroupObjects({ objectIds = [], label = "Ungroup" } = {}) {
     return {
         id: "ungroup-objects",
@@ -415,11 +522,10 @@ export function duplicateObjects({ objectIds = [], label = "Duplicate" } = {}) {
             const byId = indexObjectsById(document.objects);
             const roots = pruneToRoots(byId, objectIds);
             if (roots.length === 0) return commandFailure(commandIssue(COMMAND_ISSUE_CODES.SELECTION_EMPTY, "Nothing to duplicate."));
-            const supported = new Set([GROUP_TYPE_ID, BUILTIN_PROP_TYPE_ID, BUILDING_TYPE_ID, ROAD_TYPE_ID, INTERSECTION_TYPE_ID, ASSET_INSTANCE_TYPE_ID]);
             const check = (id) => {
                 const record = byId.get(id);
                 const issues = [];
-                if (!record || !supported.has(record.typeId)) {
+                if (!canDuplicateObjectRecord(ctx.registry, record)) {
                     issues.push(commandIssue(COMMAND_ISSUE_CODES.DUPLICATE_UNSUPPORTED, `"${record?.name ?? id}" cannot be duplicated yet.`, { objectId: id }));
                 } else {
                     for (const child of childrenOf(byId, id)) issues.push(...check(String(child.id)));
@@ -465,8 +571,12 @@ export function duplicateObjects({ objectIds = [], label = "Duplicate" } = {}) {
                     newId = roadDuplicate.edgeIdFor(id);
                 } else if (record.typeId === ASSET_INSTANCE_TYPE_ID) {
                     newId = createId("asset");
-                } else {
+                } else if (record.typeId === INTERSECTION_TYPE_ID) {
                     newId = roadDuplicate.nodeIdFor(id);
+                } else if (isOverlayOnlyDuplicable(ctx, record)) {
+                    newId = createId(record.typeId);
+                } else {
+                    throw new Error(`Cannot duplicate "${record.typeId}".`);
                 }
                 upsertObjectRecord(document, {
                     id: newId,

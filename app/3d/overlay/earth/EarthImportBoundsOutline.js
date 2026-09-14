@@ -6,12 +6,8 @@ import {
 } from "../../earth/map/GeoBoundsOutlineGeometry.js";
 import {
     editorStateToGeoBounds,
-    summarizeBounds,
 } from "../../earth/map/GeoBoundsSelection.js";
-import {
-    EARTH_IMPORT_STATUS,
-    EDITOR_MODES,
-} from "../../editor/EditorState";
+import { shouldShowEarthImportBounds } from "../../earth/EarthImportBoundsPolicy.js";
 
 function disposeGroup(group) {
     group?.traverse?.((object) => {
@@ -22,23 +18,6 @@ function disposeGroup(group) {
             object.material?.dispose?.();
         }
     });
-}
-
-function shouldShowBoundsOutline(editorSnapshot) {
-    if (!editorSnapshot || editorSnapshot.editorMode !== EDITOR_MODES.EARTH_IMPORT) {
-        return false;
-    }
-
-    const earthImport = editorSnapshot.earthImport;
-    const bounds = editorStateToGeoBounds(earthImport);
-    if (!summarizeBounds(bounds).valid) {
-        return false;
-    }
-
-    return earthImport.previewActive
-        || earthImport.status === EARTH_IMPORT_STATUS.PREVIEW
-        || earthImport.status === EARTH_IMPORT_STATUS.LOADING_TILES
-        || earthImport.status === EARTH_IMPORT_STATUS.LOADING_ROADS;
 }
 
 /**
@@ -52,7 +31,7 @@ export function EarthImportBoundsOutline({ data }) {
     useEffect(() => {
         const editor = data?.editor?.();
         return editor?.subscribe?.((snapshot) => {
-            if (!shouldShowBoundsOutline(snapshot)) {
+            if (!shouldShowEarthImportBounds(snapshot)) {
                 setOutlineState(null);
                 return;
             }

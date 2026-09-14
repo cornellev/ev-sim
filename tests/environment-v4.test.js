@@ -24,7 +24,12 @@ import path from "node:path";
 
 import { EnvironmentDocument } from "../app/3d/editor/document/EnvironmentDocument.js";
 import { addFeature, removeFeature } from "../app/3d/editor/document/documentMutations.js";
-import { deriveObjectGraph, objectTypeRegistry, reconcileObjectGraph } from "../app/3d/editor/objects/index.js";
+import {
+    BUILTIN_OBJECT_TYPE_IDS,
+    deriveObjectGraph,
+    objectTypeRegistry,
+    reconcileObjectGraph,
+} from "../app/3d/editor/objects/index.js";
 import {
     ENVIRONMENT_OBJECT_SCHEMA_VERSION,
     ENVIRONMENT_SCHEMA_VERSION,
@@ -387,10 +392,23 @@ test("ED-01 MCP tools round-trip a v4 document, validate the graph, and list obj
         assert.deepEqual(reloaded.document.objects.map((entry) => entry.typeId), ["skybox", "builtin-prop"]);
         assert.equal(reloaded.document.objects[1].id, added.feature.id);
 
-        const unknown = await call("environment_add_object", { environmentId: "yard", type: "lamp", x: 0, z: 0 });
-        assert.equal(unknown.isError, true);
-        assert.equal(unknown.code, ENVIRONMENT_OBJECT_TYPE_UNSUPPORTED);
-        assert.match(unknown.error, /Valid: stop-sign, one-way-sign, barrel, tire, cone/);
+        assert.deepEqual(BUILTIN_OBJECT_TYPE_IDS, [
+            "group", "skybox", "tile", "road", "intersection", "building", "builtin-prop", "asset-instance",
+        ]);
+        assert.deepEqual(objectTypeRegistry.listAll().map(({ typeId, version }) => `${typeId}@${version}`), [
+            "asset-instance@1", "asset-instance@2", "building@1", "builtin-prop@1", "group@1",
+            "intersection@1", "road@1", "skybox@1", "tile@1", "tile@2",
+        ]);
+        const revisionBeforeRejectedAdds = reloaded.revision;
+        for (const type of ["lamp", "test.marker", "group", "asset-instance"]) {
+            const unsupported = await call("environment_add_object", { environmentId: "yard", type, x: 0, z: 0 });
+            assert.equal(unsupported.isError, true, type);
+            assert.equal(unsupported.code, ENVIRONMENT_OBJECT_TYPE_UNSUPPORTED, type);
+            assert.match(unsupported.error, /Valid: stop-sign, one-way-sign, barrel, tire, cone/, type);
+            const unchanged = await service.getEnvironment("yard");
+            assert.equal(unchanged.revision, revisionBeforeRejectedAdds, `${type} must fail before storage changes`);
+            assert.deepEqual(unchanged.document.objects, reloaded.document.objects, type);
+        }
 
         const summary = await call("environment_get", { environmentId: "yard" });
         assert.deepEqual(summary.objectTypes.map((entry) => entry.typeId), ["asset-instance", "building", "builtin-prop", "group", "intersection", "road", "skybox", "tile"]);

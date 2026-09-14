@@ -1,8 +1,14 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { IconArchive, IconFolder, IconFolderPlus, IconList, IconPhoto, IconSearch, IconSquares, IconTrafficCone, IconUpload } from "@tabler/icons-react";
 import { EDITOR_MODES, EDITOR_TOOLS, MAP_TOOLS } from "../../editor/EditorState";
+import {
+    CATALOG_GRID_GAP,
+    CATALOG_GRID_ITEM_HEIGHT,
+    CATALOG_ROW_HEIGHT,
+    computeItemWindow,
+} from "../../editor/presentation/virtualWindow.js";
 import { PLACEMENT_CATALOG } from "../../editor/placement/PlacementCatalog";
 import { cn } from "../ui/cn";
 
@@ -34,6 +40,11 @@ export function AssetPane({ data }) {
     const [busy, setBusy] = useState(false);
     const [message, setMessage] = useState(null);
     const fileInputRef = useRef(null);
+    const listRef = useRef(null);
+    const [scrollTop, setScrollTop] = useState(0);
+    const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
+    const importInputId = useId();
+    const importHintId = useId();
     const repository = data?.environment?.()?.assets?.()?.repository;
 
     useEffect(() => data?.editor?.()?.subscribe?.(setEditorSnapshot), [data]);
@@ -46,7 +57,11 @@ export function AssetPane({ data }) {
             ]);
             setCatalog(nextCatalog);
             setCapabilities(nextCapabilities);
-            setSourceId((current) => current || nextCapabilities.sources?.[0]?.id || "");
+            setSourceId((current) => {
+                const ids = nextCapabilities.sources?.map((source) => source.id) ?? [];
+                if (current && ids.includes(current)) return current;
+                return ids[0] ?? "";
+            });
         } catch (error) {
             setMessage(error.message);
         }
@@ -64,9 +79,69 @@ export function AssetPane({ data }) {
         return PLACEMENT_CATALOG.filter((asset) => !needle || `${asset.label} ${asset.id}`.toLowerCase().includes(needle));
     }, [query]);
     const models = catalog.assets.filter((asset) => (showArchived || !asset.archived) && (folder === "all" || asset.folderId === (folder === "root" ? null : folder)));
-    const visibleBuiltins = kind !== "models" && (folder === "all" || folder === "built-ins") ? builtins : [];
-    const visibleModels = kind !== "builtins" && folder !== "built-ins" ? models : [];
     const selectedFolder = catalog.folders.find((entry) => entry.id === folder) ?? null;
+    const catalogRows = useMemo(() => {
+        const visibleBuiltins = kind !== "models" && (folder === "all" || folder === "built-ins") ? builtins : [];
+        const visibleModels = kind !== "builtins" && folder !== "built-ins" ? models : [];
+        return [
+            ...visibleBuiltins.map((asset) => ({ kind: "builtin", key: asset.id, asset })),
+            ...visibleModels.map((asset) => ({ kind: "model", key: asset.id, asset })),
+        ];
+    }, [builtins, folder, kind, models]);
+    const gridColumns = view === "grid"
+        ? Math.max(1, Math.floor((viewportSize.width + CATALOG_GRID_GAP) / (130 + CATALOG_GRID_GAP)))
+        : 1;
+    const catalogWindow = computeItemWindow({
+        itemCount: catalogRows.length,
+        columns: gridColumns,
+        itemHeight: view === "grid" ? CATALOG_GRID_ITEM_HEIGHT : CATALOG_ROW_HEIGHT,
+        rowGap: view === "grid" ? CATALOG_GRID_GAP : 0,
+        scrollTop,
+        viewportHeight: viewportSize.height,
+        overscan: 6,
+    });
+    const visibleCatalogRows = catalogRows.slice(catalogWindow.start, catalogWindow.end);
+
+    useEffect(() => {
+        const element = listRef.current;
+        if (!element || typeof ResizeObserver !== "function") return undefined;
+        const observer = new ResizeObserver((entries) => {
+            const { width, height } = entries[0]?.contentRect ?? {};
+            if (Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0) {
+                setViewportSize({ width, height });
+            }
+        });
+        observer.observe(element);
+        return () => observer.disconnect();
+    }, []);
+    useEffect(() => {
+        setScrollTop(0);
+        if (listRef.current) listRef.current.scrollTop = 0;
+    }, [folder, kind, query, showArchived, sort, view]);
+    const uploadSources = capabilities.sources ?? [];
+    const importReason = !repository
+        ? "Asset catalog is not ready."
+        : uploadSources.length === 0
+            ? "No upload source is configured. Add an owned grant to visual-source-registry.json."
+            : !sourceId
+                ? "Choose an upload source."
+                : busy
+                    ? "Import is already in progress."
+                    : null;
+    const canImport = !importReason;
+    const importTitle = importReason ?? "Import a GLTF or GLB model.";
+    const statusText = message ?? (uploadSources.length === 0 || !repository ? importReason : null);
+
+    const openImportPicker = (reimportAssetId = "") => {
+        const input = fileInputRef.current;
+        if (!canImport || !input) {
+            if (importReason) setMessage(importReason);
+            return false;
+        }
+        input.dataset.reimport = reimportAssetId;
+        input.click();
+        return true;
+    };
 
     const armBuiltin = (asset) => {
         const editor = data.editor?.();
@@ -166,7 +241,7 @@ export function AssetPane({ data }) {
                 {selectedFolder && <div className="flex gap-1 px-2"><button type="button" onClick={renameFolder} className="text-[11px] text-zinc-400">Rename</button><button type="button" onClick={deleteFolder} className="text-[11px] text-red-300">Delete</button></div>}
             </nav>
             <div className="flex min-w-0 flex-1 flex-col">
-                <div className="flex min-h-10 shrink-0 flex-wrap items-center gap-1.5 border-b border-[var(--slate-border-60)] px-2 py-1">
+                <div data-editor-chrome className="pointer-events-auto flex min-h-10 shrink-0 flex-wrap items-center gap-1.5 border-b border-[var(--slate-border-60)] px-2 py-1">
                     <span aria-label="Asset breadcrumb" className="max-w-28 truncate text-xs text-zinc-400">Assets / {selectedFolder?.name ?? (folder === "built-ins" ? "Built-ins" : folder === "root" ? "Unfiled" : "All")}</span>
                     <label className="flex h-7 min-w-40 flex-1 items-center gap-1.5 rounded border border-[var(--slate-border-70)] px-2"><IconSearch size={13} /><input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search names or tags" aria-label="Search assets" className="min-w-0 flex-1 bg-transparent text-[12px] outline-none" /></label>
                     <select aria-label="Asset kind" value={kind} onChange={(event) => setKind(event.target.value)} className="h-7 rounded bg-[var(--slate-surface-2)] px-1 text-xs"><option value="all">All kinds</option><option value="builtins">Built-ins</option><option value="models">Models</option></select>
@@ -174,33 +249,99 @@ export function AssetPane({ data }) {
                     <label className="flex items-center gap-1 text-xs"><input type="checkbox" checked={showArchived} onChange={(event) => setShowArchived(event.target.checked)} />Archived</label>
                     <button type="button" aria-label="Grid view" aria-pressed={view === "grid"} onClick={() => setView("grid")}><IconSquares size={16} /></button>
                     <button type="button" aria-label="List view" aria-pressed={view === "list"} onClick={() => setView("list")}><IconList size={16} /></button>
-                    <select aria-label="Import source" value={sourceId} onChange={(event) => setSourceId(event.target.value)} className="h-7 max-w-32 rounded bg-[var(--slate-surface-2)] px-1 text-xs">{capabilities.sources?.map((source) => <option key={source.id} value={source.id}>{source.label}</option>)}</select>
-                    <button type="button" disabled={busy || !sourceId} onClick={() => { fileInputRef.current.dataset.reimport = ""; fileInputRef.current.click(); }} className="flex h-7 items-center gap-1 rounded px-2 text-xs hover:bg-[var(--slate-surface-hover)]"><IconUpload size={14} />Import</button>
-                    <input ref={fileInputRef} hidden type="file" multiple accept=".gltf,.glb,.bin,image/*,.ktx2" onChange={(event) => { const targetId = event.currentTarget.dataset.reimport; const target = catalog.assets.find((asset) => asset.id === targetId) ?? null; void beginFiles(event.currentTarget.files, target); event.currentTarget.value = ""; }} />
+                    {uploadSources.length > 0
+                        ? <select aria-label="Import source" value={sourceId} onChange={(event) => setSourceId(event.target.value)} className="h-7 max-w-32 rounded bg-[var(--slate-surface-2)] px-1 text-xs">{uploadSources.map((source) => <option key={source.id} value={source.id}>{source.label}</option>)}</select>
+                        : <span className="text-xs text-zinc-500">No upload source</span>}
+                    <label
+                        htmlFor={canImport ? importInputId : undefined}
+                        data-editor-asset-import
+                        aria-disabled={!canImport || undefined}
+                        aria-describedby={statusText ? importHintId : undefined}
+                        title={importTitle}
+                        className={cn(
+                            "flex h-7 items-center gap-1 rounded px-2 text-xs",
+                            canImport ? "cursor-pointer hover:bg-[var(--slate-surface-hover)]" : "cursor-not-allowed opacity-45",
+                        )}
+                        onClick={() => {
+                            if (!canImport) {
+                                setMessage(importReason);
+                                return;
+                            }
+                            if (fileInputRef.current) fileInputRef.current.dataset.reimport = "";
+                        }}
+                    >
+                        <IconUpload size={14} aria-hidden="true" />
+                        Import
+                    </label>
+                    <input
+                        id={importInputId}
+                        ref={fileInputRef}
+                        type="file"
+                        multiple
+                        accept=".gltf,.glb,.bin,image/*,.ktx2"
+                        aria-label="Import"
+                        tabIndex={canImport ? undefined : -1}
+                        className="sr-only"
+                        onChange={(event) => {
+                            if (!canImport) {
+                                event.currentTarget.value = "";
+                                return;
+                            }
+                            const targetId = event.currentTarget.dataset.reimport;
+                            const target = catalog.assets.find((asset) => asset.id === targetId) ?? null;
+                            void beginFiles(event.currentTarget.files, target);
+                            event.currentTarget.value = "";
+                        }}
+                    />
                 </div>
                 {pendingImport && <div className="flex items-center gap-2 border-b border-amber-700/40 bg-amber-950/30 px-2 py-1 text-xs"><span>Entry model</span><select aria-label="Entry model" value={pendingImport.entryPath} onChange={(event) => setPendingImport((current) => ({ ...current, entryPath: event.target.value }))}><option value="">Choose…</option>{pendingImport.entries.map((entry) => <option key={entry} value={entry}>{entry}</option>)}</select><button type="button" disabled={busy || !pendingImport.entryPath} onClick={publishImport}>Publish</button><button type="button" onClick={() => setPendingImport(null)}>Cancel</button></div>}
-                {message && <p role="status" className="border-b border-[var(--slate-border-60)] px-2 py-1 text-xs text-amber-300">{message}</p>}
-                <div role="list" aria-label="Assets" className={cn("min-h-0 flex-1 gap-1.5 overflow-auto p-2", view === "grid" ? "grid auto-rows-max grid-cols-[repeat(auto-fill,minmax(130px,1fr))]" : "flex flex-col")}>
-                    {visibleBuiltins.map((asset) => <article role="listitem" key={asset.id}><button type="button" aria-pressed={activeId === asset.id} aria-label={`Place ${asset.label}`} onClick={() => armBuiltin(asset)} className="flex h-16 w-full items-center gap-2 rounded border border-[var(--slate-border-70)] bg-[var(--slate-surface-2)] px-2 text-xs hover:bg-[var(--slate-surface-hover)]"><IconTrafficCone size={20} /><span className="truncate">{asset.label}</span></button></article>)}
-                    {visibleModels.map((asset) => {
-                        const image = thumbnailUrl(asset);
-                        return <article role="listitem" key={asset.id} data-asset-id={asset.id} draggable={!asset.archived} onDragStart={(event) => event.dataTransfer.setData("application/x-cev-editor-asset", JSON.stringify({ kind: "catalog", assetId: asset.id, revision: asset.latestRevision, label: asset.name }))} className="group flex min-h-16 items-center gap-2 rounded border border-[var(--slate-border-70)] bg-[var(--slate-surface-2)] p-1.5 text-xs focus-within:ring-2">
-                            <button type="button" aria-label={`Open asset ${asset.name}`} onClick={() => openModel(asset)} onDoubleClick={() => openModel(asset, true)} className="flex min-w-0 flex-1 items-center gap-2 text-left">
-                                {/* Use-scoped content URLs are authenticated API resources, not static Next images. */}
-                                {/* eslint-disable-next-line @next/next/no-img-element */}
-                                {image ? <img src={image} alt="" className="h-12 w-12 shrink-0 object-cover" /> : <IconPhoto size={24} className="mx-3 text-zinc-500" />}
-                                <span className="min-w-0 flex-1"><strong className="block truncate font-medium">{asset.name}</strong><span className="text-[11px] text-zinc-400">r{asset.latestRevision}{asset.archived ? " · archived" : ""}</span></span>
-                            </button>
-                            <span className="flex flex-col gap-1 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100">
-                                <button type="button" disabled={asset.archived} onClick={(event) => { event.stopPropagation(); armModel(asset); }} aria-label={`Place ${asset.name}`} className="rounded px-1 hover:bg-zinc-700">Place</button>
-                                <button type="button" onClick={(event) => { event.stopPropagation(); fileInputRef.current.dataset.reimport = asset.id; fileInputRef.current.click(); }} aria-label={`Reimport ${asset.name}`} className="rounded px-1 hover:bg-zinc-700">Reimport</button>
-                                <button type="button" onClick={(event) => { event.stopPropagation(); editAsset(asset); }} aria-label={`Edit ${asset.name}`} className="rounded px-1 hover:bg-zinc-700">Edit</button>
-                                <button type="button" onClick={(event) => { event.stopPropagation(); void mutate(() => repository.setArchived(asset.id, !asset.archived, catalog.catalogRevision)); }} aria-label={`${asset.archived ? "Unarchive" : "Archive"} ${asset.name}`}><IconArchive size={14} /></button>
-                                {!image && <button type="button" onClick={(event) => { event.stopPropagation(); void mutate(() => repository.generateThumbnail(asset.id, asset.latestRevision, catalog.catalogRevision, data.environment().assets().previews)); }} aria-label={`Retry thumbnail for ${asset.name}`}>Retry</button>}
-                            </span>
-                        </article>;
-                    })}
-                    {visibleBuiltins.length + visibleModels.length === 0 && <p className="p-2 text-xs text-zinc-400">No assets match.</p>}
+                {statusText && <p id={importHintId} role="status" className="border-b border-[var(--slate-border-60)] px-2 py-1 text-xs text-amber-300">{statusText}</p>}
+                <div
+                    ref={listRef}
+                    role="list"
+                    aria-label="Assets"
+                    data-row-count={catalogRows.length}
+                    data-rendered-rows={visibleCatalogRows.length}
+                    className="relative min-h-0 flex-1 overflow-auto p-2"
+                    onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+                >
+                    {catalogRows.length === 0 && <p className="p-2 text-xs text-zinc-400">No assets match.</p>}
+                    <div data-catalog-spacer="true" style={{ height: `${catalogWindow.totalHeight}px` }} className="relative">
+                        <div
+                            style={{
+                                transform: `translateY(${catalogWindow.offsetTop}px)`,
+                                ...(view === "grid" ? {
+                                    gridTemplateColumns: `repeat(${catalogWindow.columns}, minmax(0, 1fr))`,
+                                    gridAutoRows: `${catalogWindow.itemHeight}px`,
+                                } : {}),
+                            }}
+                            className={cn("absolute inset-x-0 top-0", view === "grid" ? "grid gap-1.5" : "flex flex-col")}
+                        >
+                            {visibleCatalogRows.map((row) => {
+                                if (row.kind === "builtin") {
+                                    const asset = row.asset;
+                                    return <article role="listitem" key={row.key} style={{ height: `${catalogWindow.itemHeight}px` }}><button type="button" aria-pressed={activeId === asset.id} aria-label={`Place ${asset.label}`} onClick={() => armBuiltin(asset)} className="flex h-full w-full items-center gap-2 rounded border border-[var(--slate-border-70)] bg-[var(--slate-surface-2)] px-2 text-xs hover:bg-[var(--slate-surface-hover)]"><IconTrafficCone size={20} /><span className="truncate">{asset.label}</span></button></article>;
+                                }
+                                const asset = row.asset;
+                                const image = thumbnailUrl(asset);
+                                return <article role="listitem" key={row.key} data-asset-id={asset.id} draggable={!asset.archived} onDragStart={(event) => event.dataTransfer.setData("application/x-cev-editor-asset", JSON.stringify({ kind: "catalog", assetId: asset.id, revision: asset.latestRevision, label: asset.name }))} style={{ height: `${catalogWindow.itemHeight}px` }} className="group flex items-center gap-2 overflow-hidden rounded border border-[var(--slate-border-70)] bg-[var(--slate-surface-2)] p-1.5 text-xs focus-within:ring-2">
+                                    <button type="button" aria-label={`Open asset ${asset.name}`} onClick={() => openModel(asset)} onDoubleClick={() => openModel(asset, true)} className="flex min-w-0 flex-1 items-center gap-2 text-left">
+                                        {/* Use-scoped content URLs are authenticated API resources, not static Next images. */}
+                                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                                        {image ? <img src={image} alt="" className="h-12 w-12 shrink-0 object-cover" /> : <IconPhoto size={24} className="mx-3 text-zinc-500" />}
+                                        <span className="min-w-0 flex-1"><strong className="block truncate font-medium">{asset.name}</strong><span className="text-[11px] text-zinc-400">r{asset.latestRevision}{asset.archived ? " · archived" : ""}</span></span>
+                                    </button>
+                                    <span className="flex flex-col gap-0.5 text-[11px] leading-none opacity-0 group-focus-within:opacity-100 group-hover:opacity-100">
+                                        <button type="button" disabled={asset.archived} aria-pressed={activeId === asset.id} onClick={(event) => { event.stopPropagation(); armModel(asset); }} aria-label={`Place ${asset.name}`} className="rounded px-1 hover:bg-zinc-700">Place</button>
+                                        <button type="button" disabled={!canImport} onClick={(event) => { event.stopPropagation(); openImportPicker(asset.id); }} aria-label={`Reimport ${asset.name}`} className="rounded px-1 hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-45">Reimport</button>
+                                        <button type="button" onClick={(event) => { event.stopPropagation(); editAsset(asset); }} aria-label={`Edit ${asset.name}`} className="rounded px-1 hover:bg-zinc-700">Edit</button>
+                                        <button type="button" onClick={(event) => { event.stopPropagation(); void mutate(() => repository.setArchived(asset.id, !asset.archived, catalog.catalogRevision)); }} aria-label={`${asset.archived ? "Unarchive" : "Archive"} ${asset.name}`}><IconArchive size={14} /></button>
+                                        {!image && <button type="button" onClick={(event) => { event.stopPropagation(); void mutate(() => repository.generateThumbnail(asset.id, asset.latestRevision, catalog.catalogRevision, data.environment().assets().previews)); }} aria-label={`Retry thumbnail for ${asset.name}`}>Retry</button>}
+                                    </span>
+                                </article>;
+                            })}
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>

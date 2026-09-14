@@ -10,7 +10,7 @@ language-neutral API authority is
 - Current milestone: **PR 12 — implementation complete; external hardware acceptance pending**
 - Next planned milestone: **None — the numbered headless implementation roadmap is complete**
 - Default implementation/review reasoning level: **Extra High**
-- Last updated: **2026-09-02** (portable hashed-number canonicalization)
+- Last updated: **2026-09-13** (ED-09 did not change headless contracts or hashes)
 
 Progress:
 
@@ -1114,5 +1114,20 @@ ordering, sensor contracts, or hash algorithms. Browser/direct/CLI/Unix/Python
 parity passed after the change. The action-tape and characterization SHA-256
 values remain `1ba8c8c40e1560ac044f4ca5384065ab83c93529d65b5672fee8dc5ed42a5ced`
 and `60dc0bd2b02a9ec768f833070ce4d8d2047f5383838f09ea3f130dd31552dd6f`.
+This is not headless PR 13 and does not satisfy or change the outstanding PR 12
+hosted, soak, x64 NVIDIA, or Jetson ARM64 evidence gates.
+
+### 2026-09-13 — ED-09 acceptance does not change headless contracts
+
+The environment-editor ED-09 candidate default-activates the editor workspace
+and removes `NEXT_PUBLIC_CEV_SIM_ED08`. Overlay `createObject`,
+catalog windowing, and write-once migration copies are editor/storage concerns.
+
+ED-09 does not change the environment schema-v4 writer, world-description
+dispatch, route-proof dispatch, run-bundle or Protobuf versions, fixed-step
+ordering, sensor contracts, or hash algorithms. The action-tape and
+characterization SHA-256 values remain
+`1ba8c8c40e1560ac044f4ca5384065ab83c93529d65b5672fee8dc5ed42a5ced` and
+`60dc0bd2b02a9ec768f833070ce4d8d2047f5383838f09ea3f130dd31552dd6f`.
 This is not headless PR 13 and does not satisfy or change the outstanding PR 12
 hosted, soak, x64 NVIDIA, or Jetson ARM64 evidence gates.

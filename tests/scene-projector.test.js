@@ -9,6 +9,7 @@ import { planRoadNetwork } from "../app/3d/city/RoadNetwork.js";
 import { documentToRoadNetworkInputs } from "../app/3d/editor/document/documentMutations.js";
 import { roadNetworkOptions, toVector3Map } from "../app/3d/editor/projection/roadRuntimeEntities.js";
 import { deltaFromScale, deltaFromTranslation, deltaFromYaw } from "../app/3d/editor/objects/index.js";
+import { readEnvironmentEditorFixture } from "./helpers/environmentEditorBaseline.js";
 import { createEditorHarness } from "./helpers/editorRuntimeHarness.js";
 
 test.beforeEach(() => {
@@ -188,6 +189,60 @@ test("ED-02 road node moves rebuild only the local closure and keep untouched ro
     assert.deepEqual(registry.getEntity("road-node:n0").object3D.position.toArray(), [0, 0, 0]);
     assert.equal(city.roads.length, 4);
     assert.equal(city.intersections.length, 2);
+});
+
+test("ED-09 a road drag in a large document preserves every untouched runtime identity and commits once", async () => {
+    const fixture = await readEnvironmentEditorFixture("legacy-v2.yard.json");
+    const manifestDocument = structuredClone(fixture.document);
+    for (let index = 0; index < 128; index += 1) {
+        const startNodeId = `bulk-n${index}-a`;
+        const endNodeId = `bulk-n${index}-b`;
+        const x = 1_000 + index * 30;
+        manifestDocument.roads.nodes.push(
+            { id: startNodeId, x, z: 1_000 },
+            { id: endNodeId, x: x + 20, z: 1_000 },
+        );
+        manifestDocument.roads.edges.push({
+            id: `bulk-e${index}`,
+            startNodeId,
+            endNodeId,
+            bidirectional: true,
+            width: 7,
+            laneCount: 2,
+        });
+    }
+
+    const harness = await createEditorHarness({ manifestDocument });
+    const { bus, registry, city, objectDatabase } = harness;
+    const farId = "bulk-e127";
+    const farRoad = roadByEdge(city, farId);
+    const farEntity = registry.getEntity(`road:${farId}`);
+    const farTriangles = objectDatabase.triangles().filter((triangle) => triangle.environmentSourceId === farId);
+    const localBefore = { e0: roadByEdge(city, "e0"), e1: roadByEdge(city, "e1") };
+    assert.ok(farRoad && farEntity && farTriangles.length > 0);
+
+    const gesture = bus.beginGesture({ objectIds: [], sub: { kind: "road-node", id: "n0" }, label: "Large-scene drag" });
+    assert.equal(gesture.ok, true);
+    for (const x of [-2, -5, -9]) {
+        const frame = bus.updateGesture(gesture.gestureId, deltaFromTranslation({ x, z: 3 }));
+        assert.equal(frame.ok, true);
+        assert.equal(roadByEdge(city, farId), farRoad, "far road mesh identity survives every drag frame");
+        assert.equal(registry.getEntity(`road:${farId}`), farEntity, "far entity identity survives every drag frame");
+        assert.equal(registry.getEntity(`road:${farId}`).road, farRoad);
+        assert.ok(objectDatabase.triangles().filter((triangle) => triangle.environmentSourceId === farId)
+            .every((triangle, index) => triangle === farTriangles[index]), "far measured-truth triangles survive every drag frame");
+        assert.ok(objectDatabase.replaceCalls.at(-1).removed.every((id) => !String(id).startsWith("bulk-")));
+    }
+    assert.notEqual(roadByEdge(city, "e0"), localBefore.e0, "the directly affected road rebuilds");
+    assert.notEqual(roadByEdge(city, "e1"), localBefore.e1, "the dependent local closure rebuilds");
+
+    const committed = bus.commitGesture(gesture.gestureId);
+    assert.equal(committed.ok, true);
+    assert.equal(bus.history.length, 1, "the complete drag is one history entry");
+    assert.equal(roadByEdge(city, farId), farRoad);
+    assert.equal(registry.getEntity(`road:${farId}`), farEntity);
+    assert.ok(objectDatabase.triangles().filter((triangle) => triangle.environmentSourceId === farId)
+        .every((triangle, index) => triangle === farTriangles[index]));
 });
 
 test("ED-02 removing a road tears down its runtime, demotes the junction, and undo restores everything", async () => {

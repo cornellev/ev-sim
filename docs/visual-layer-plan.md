@@ -42,7 +42,7 @@ a VIS, GOOG, or GS PR changes a contract, hash, gate, or milestone status.
 - Core assumption: **Google approval, Google-derived assets, Gaussian
   splatting, and a model service are unavailable.**
 - Default implementation/review reasoning level: **Extra High**.
-- Last updated: **2026-09-09 — VIS-15b managed software integration and injected gates implemented**.
+- Last updated: **2026-09-13 — ED-09 did not change visual-layer identity; VIS-15b software path remains the last visual implementation**.
 - Implemented evidence: VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, VIS-05a, VIS-05b, VIS-06a,
   VIS-06b, VIS-07, VIS-08, VIS-09, VIS-10a, VIS-10b, VIS-11, VIS-12b,
   VIS-13a, VIS-13b, VIS-14, and VIS-16a acceptance evidence is recorded in the
@@ -3298,6 +3298,17 @@ GLTF `tile@2` reuses existing source-bound editor asset revisions. A Tile with
 enabled published appearance or metric proxies resolves exactly as the same pin
 on an asset instance; raw imports stay preview-only until the asset definition
 publishes those products. The environment compatibility fixture remains
+`6ca2ece3d5266822a2ceabba72e5f7dd9514789e76757e86f6aedd2730ab9a6a`,
+and the existing visual descriptor, render-provider, package, and acceptance
+gates are unchanged.
+
+### 2026-09-13 — ED-09 acceptance does not change visual-layer identity
+
+The ED-09 candidate default-activates the environment editor; its remaining
+local browser matrix does not change the separate `VIS-*` program.
+It does not add Google or Gaussian-splat tracks, does not admit Google tiles
+into visual descriptors or packages, and does not change asset-appearance
+composition. The environment compatibility fixture remains
 `6ca2ece3d5266822a2ceabba72e5f7dd9514789e76757e86f6aedd2730ab9a6a`,
 and the existing visual descriptor, render-provider, package, and acceptance
 gates are unchanged.

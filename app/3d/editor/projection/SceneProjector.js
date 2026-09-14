@@ -14,6 +14,7 @@ import { createRoadsProjector } from "./projectors/roadsProjector.js";
 import { createSkyProjector } from "./projectors/skyProjector.js";
 import { createAssetInstancesProjector } from "./projectors/assetInstancesProjector.js";
 import { createAssetMetricsProjector } from "./projectors/assetMetricsProjector.js";
+import { createOverlayMetricsProjector } from "./projectors/overlayMetricsProjector.js";
 import { createTileSourceProjector } from "./projectors/tileSourceProjector.js";
 
 export function createDefaultProjectors() {
@@ -24,6 +25,7 @@ export function createDefaultProjectors() {
         createAssetInstancesProjector(),
         createAssetMetricsProjector(),
         createObjectsProjector(),
+        createOverlayMetricsProjector(),
         createTileSourceProjector(),
         createSkyProjector(),
     ];
@@ -120,6 +122,18 @@ export class SceneProjector {
 
     resetAssetMetrics() {
         this.projectors.find((projector) => projector.id === "asset-metrics")?.reset?.(this._context());
+    }
+
+    syncOverlayMetrics() {
+        this.projectors.find((projector) => projector.id === "overlay-metrics")?.sync?.(this._context());
+    }
+
+    resetOverlayMetrics() {
+        this.projectors.find((projector) => projector.id === "overlay-metrics")?.reset?.(this._context());
+    }
+
+    overlayMetricEntries() {
+        return this.projectors.find((projector) => projector.id === "overlay-metrics")?.entries ?? new Map();
     }
 
     assetInstanceEntries() {

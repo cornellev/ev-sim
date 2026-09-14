@@ -45,8 +45,7 @@ export class EditorToolController {
     consumesEscape() {
         const snapshot = this.editorSnapshot ?? {};
         return Boolean(
-            snapshot.editorMode === EDITOR_MODES.EARTH_IMPORT
-            || this.bus?.activeGesture
+            this.bus?.activeGesture
             || snapshot.map?.draft
             || snapshot.roadDraft
             || (this.selectionSnapshot?.ids?.length ?? 0) > 0
@@ -88,7 +87,6 @@ export class EditorToolController {
      */
     handleEscape() {
         const snapshot = this.editor.snapshot();
-        if (snapshot.editorMode === EDITOR_MODES.EARTH_IMPORT) return false;
         const render = () => this.data.simulation()?.render?.();
 
         if (this.bus?.activeGesture) {

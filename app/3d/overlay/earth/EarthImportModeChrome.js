@@ -133,12 +133,14 @@ export function EarthImportModeChrome({ data, open = false, onClose = () => {} }
     }, [data]);
 
     useEffect(() => {
-        const keys = data?.keys?.();
-        if (!keys) return undefined;
-
-        const dispose = keys.registerKeyDown?.("Escape", () => {
-            if (!open) return;
-
+        if (!open) return undefined;
+        const handleEscape = (event) => {
+            if (event.key !== "Escape") return;
+            // Import chrome owns Escape while mounted. Capture it before both
+            // ShortcutProvider (document bubble) and Scene's KeyManager
+            // (window bubble) can mutate the editor underneath the dialog.
+            event.preventDefault();
+            event.stopPropagation();
             if (mapExpanded) {
                 setMapExpanded(false);
                 return;
@@ -151,9 +153,10 @@ export function EarthImportModeChrome({ data, open = false, onClose = () => {} }
             }
 
             onClose();
-        });
+        };
 
-        return () => dispose?.();
+        document.addEventListener("keydown", handleEscape, true);
+        return () => document.removeEventListener("keydown", handleEscape, true);
     }, [data, mapExpanded, onClose, open]);
 
     if (!editorSnapshot || !open) {
@@ -224,9 +227,9 @@ export function EarthImportModeChrome({ data, open = false, onClose = () => {} }
                 />
             )}
 
-            <div className="absolute right-3 top-3 z-[20] flex w-[340px] flex-col gap-2 pointer-events-auto">
+            <div className="absolute bottom-14 right-3 top-3 z-[20] flex w-[340px] min-h-0 flex-col gap-2 overflow-hidden pointer-events-auto">
                 <div
-                    className="earth-import-map-shell rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-950/95 p-2.5 text-zinc-100 shadow-[0_30px_80px_rgba(0,0,0,0.45)]"
+                    className="earth-import-map-shell shrink-0 rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-950/95 p-2.5 text-zinc-100 shadow-[0_30px_80px_rgba(0,0,0,0.45)]"
                     onMouseDown={controls.disableMap}
                     onMouseUp={controls.enableMap}
                     onMouseLeave={controls.enableMap}
@@ -252,16 +255,19 @@ export function EarthImportModeChrome({ data, open = false, onClose = () => {} }
                             onPatch={patch}
                             onInteractionStart={controls.disableMap}
                             onInteractionEnd={controls.enableMap}
+                            compact
                         />
                     )}
                 </div>
 
                 <div
+                    className="flex min-h-0 flex-1 flex-col overflow-hidden"
                     onMouseDown={controls.disable}
                     onMouseUp={controls.enable}
                     onMouseLeave={controls.enable}
                 >
                     <FlyoutPanel
+                        fill
                         title="Google Earth Import"
                         subtitle="Select an area on the map, then preview or apply"
                     >

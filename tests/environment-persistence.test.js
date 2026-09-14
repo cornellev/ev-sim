@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { createEnvironmentCommandService } from "../app/3d/editor/commands/EnvironmentCommandService.js";
+import { EnvironmentDocument } from "../app/3d/editor/document/EnvironmentDocument.js";
+import { SKYBOX_OBJECT_ID } from "../app/3d/editor/objects/objectRecord.js";
+import { applyExternalEnvironmentUpdate } from "../app/3d/environment/ExternalEnvironmentApply.js";
 import { EnvironmentPersistence } from "../app/3d/environment/EnvironmentPersistence.js";
 
 function createHarness({ revision = 0, put } = {}) {
@@ -295,5 +299,201 @@ test("ED-02 editor notifications mark dirty only when the persisted editor state
     persisted = { ...persisted, layers: { roads: false } };
     editorNotify({ activeTool: "rotate" });
     assert.equal(persistence._editGeneration, afterFirst + 1, "layer visibility is persisted and marks dirty");
+    persistence._clearTimer();
+});
+
+function createCommandHarness({ revision = 2, put } = {}) {
+    const document = EnvironmentDocument.fromManifest({
+        environmentId: "yard",
+        roads: { nodes: [], edges: [], turnRules: [] },
+        buildings: [],
+        features: [],
+        objectGraphVersion: 1,
+        objects: [{
+            id: SKYBOX_OBJECT_ID,
+            typeId: "skybox",
+            typeVersion: 1,
+            name: "Skybox",
+            parentId: null,
+            order: 0,
+            components: { tags: [], locked: false, editorHidden: false },
+        }],
+    });
+    const service = createEnvironmentCommandService({ document });
+    const environment = {
+        environmentId: "yard",
+        revision,
+        name: "Yard",
+        toManifest() {
+            return {
+                environmentId: "yard",
+                name: this.name,
+                schemaVersion: 4,
+                revision: this.revision,
+                document: document.toManifest(),
+            };
+        },
+        getDocument() {
+            return {
+                subscribe(listener) {
+                    return document.subscribe((snapshot, event) => {
+                        if (event?.source === "subscribe") return;
+                        listener(snapshot, event);
+                    });
+                },
+            };
+        },
+        objects() { return { subscribe() { return () => {}; } }; },
+        editor() { return { subscribe() { return () => {}; } }; },
+        sky() { return { subscribe() { return () => {}; } }; },
+    };
+    const persistence = new EnvironmentPersistence({
+        data: { environment: () => environment },
+        scene: {},
+        revision,
+        put: put ?? (async () => ({ revision: revision + 1 })),
+    });
+    persistence.attach();
+    return { document, service, environment, persistence };
+}
+
+test("ED-09 a dirty CommandBus draft refuses an MCP apply and keeps the local revision", async () => {
+    const { service, persistence } = createCommandHarness({ revision: 2 });
+    assert.equal(persistence.isDirty, false);
+    const renamed = service.run("renameObject", { objectId: SKYBOX_OBJECT_ID, name: "Sky" });
+    assert.equal(renamed.ok, true, JSON.stringify(renamed.issues));
+    assert.equal(persistence.isDirty, true);
+    const decision = await persistence.prepareExternalApply({ revision: 9, name: "From MCP" });
+    persistence.resumeAutosave();
+    assert.equal(decision.apply, false);
+    assert.equal(decision.conflict.code, "ENVIRONMENT_REVISION_CONFLICT");
+    assert.equal(persistence.acknowledgedRevision, 2);
+    assert.equal(persistence.isDirty, true);
+    persistence._clearTimer();
+});
+
+test("ED-09 a clean CommandBus session adopts an MCP receipt", async () => {
+    const { document, persistence } = createCommandHarness({ revision: 4 });
+    assert.equal(persistence.isDirty, false);
+    let applyCount = 0;
+    let publishedRevision = null;
+    const manifest = { environmentId: "yard", revision: 8, name: "From MCP" };
+    const runtime = {
+        environmentPersistence: persistence,
+        environmentLoader: {
+            async apply() {
+                applyCount += 1;
+                const remote = document.snapshot();
+                remote.objects = remote.objects.map((record) => record.id === SKYBOX_OBJECT_ID
+                    ? { ...record, name: "Remote sky" }
+                    : record);
+                document.restoreSnapshot(remote);
+            },
+            manifest: null,
+        },
+    };
+    const result = await applyExternalEnvironmentUpdate({
+        runtime,
+        environmentId: "yard",
+        loadManifest: async () => manifest,
+        onApplied: (stored) => { publishedRevision = stored.revision; },
+    });
+    assert.equal(result.applied, true);
+    assert.equal(applyCount, 1);
+    assert.equal(runtime.environmentLoader.manifest, manifest);
+    assert.equal(publishedRevision, 8);
+    assert.equal(persistence.isDirty, false, "loader restore notifications are not local edits");
+    assert.equal(persistence.acknowledgedRevision, 8);
+    assert.equal(persistence.conflict, null);
+    assert.equal(persistence._suspended, false);
+    persistence._clearTimer();
+});
+
+test("ED-09 an edit while MCP apply waits for an in-flight save refuses the remote document", async () => {
+    let release;
+    const { document, service, persistence } = createCommandHarness({
+        revision: 2,
+        put: async (_path, body) => {
+            await new Promise((resolve) => { release = resolve; });
+            return { ...body.manifest, environmentId: "yard", revision: 3 };
+        },
+    });
+    persistence._dirty = true;
+    const saving = persistence.flush();
+    while (!release) await Promise.resolve();
+    let applyCount = 0;
+    const applying = applyExternalEnvironmentUpdate({
+        runtime: {
+            environmentPersistence: persistence,
+            environmentLoader: { async apply() { applyCount += 1; } },
+        },
+        environmentId: "yard",
+        loadManifest: async () => ({ environmentId: "yard", revision: 9, name: "From MCP" }),
+    });
+    const renamed = service.run("renameObject", { objectId: SKYBOX_OBJECT_ID, name: "Local during suspend" });
+    assert.equal(renamed.ok, true, JSON.stringify(renamed.issues));
+    release();
+    await saving;
+    const result = await applying;
+    assert.equal(result.applied, false);
+    assert.equal(result.conflict.code, "ENVIRONMENT_REVISION_CONFLICT");
+    assert.equal(applyCount, 0, "a local command during suspension prevents loader.apply");
+    assert.equal(document.getObject(SKYBOX_OBJECT_ID).name, "Local during suspend");
+    assert.equal(persistence.acknowledgedRevision, 3);
+    assert.equal(persistence.isDirty, true);
+    assert.equal(persistence._suspended, false);
+    persistence._clearTimer();
+});
+
+test("ED-09 an edit while an MCP fetch is pending prevents loader application", async () => {
+    let releaseFetch;
+    let applyCount = 0;
+    const { document, service, persistence } = createCommandHarness({ revision: 2 });
+    const applying = applyExternalEnvironmentUpdate({
+        runtime: {
+            environmentPersistence: persistence,
+            environmentLoader: { async apply() { applyCount += 1; } },
+        },
+        environmentId: "yard",
+        loadManifest: async () => new Promise((resolve) => { releaseFetch = resolve; }),
+    });
+    while (!releaseFetch) await Promise.resolve();
+    assert.equal(service.run("renameObject", { objectId: SKYBOX_OBJECT_ID, name: "Local during fetch" }).ok, true);
+    releaseFetch({ environmentId: "yard", revision: 7, name: "Remote" });
+    const result = await applying;
+    assert.equal(result.applied, false);
+    assert.equal(result.conflict.code, "ENVIRONMENT_REVISION_CONFLICT");
+    assert.equal(applyCount, 0);
+    assert.equal(document.getObject(SKYBOX_OBJECT_ID).name, "Local during fetch");
+    assert.equal(persistence._suspended, false);
+    persistence._clearTimer();
+});
+
+test("ED-09 a loader exception resumes autosave and preserves later local commands", async () => {
+    const { service, persistence } = createCommandHarness({ revision: 2 });
+    await assert.rejects(() => applyExternalEnvironmentUpdate({
+        runtime: {
+            environmentPersistence: persistence,
+            environmentLoader: { async apply() { throw new Error("remote load failed"); } },
+        },
+        environmentId: "yard",
+        loadManifest: async () => ({ environmentId: "yard", revision: 7, name: "Remote" }),
+    }), /remote load failed/);
+    assert.equal(persistence._suspended, false);
+    assert.equal(service.run("renameObject", { objectId: SKYBOX_OBJECT_ID, name: "After failure" }).ok, true);
+    assert.equal(persistence.isDirty, true);
+    persistence._clearTimer();
+});
+
+test("ED-09 clean MCP apply rejects stale and wrong-environment receipts without adopting them", async () => {
+    const { persistence } = createCommandHarness({ revision: 4 });
+    const stale = await persistence.prepareExternalApply({ environmentId: "yard", revision: 4 });
+    assert.deepEqual(stale, { apply: false, stale: true });
+    persistence.resumeAutosave();
+    const wrong = await persistence.prepareExternalApply({ environmentId: "other-yard", revision: 8 });
+    assert.deepEqual(wrong, { apply: false, wrongEnvironment: true });
+    persistence.resumeAutosave();
+    assert.equal(persistence.acknowledgedRevision, 4);
+    assert.equal(persistence.conflict, null);
     persistence._clearTimer();
 });

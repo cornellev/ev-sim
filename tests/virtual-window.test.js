@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+    CATALOG_GRID_GAP,
+    CATALOG_GRID_ITEM_HEIGHT,
+    CATALOG_ROW_HEIGHT,
     HIERARCHY_ROW_HEIGHT,
+    computeItemWindow,
     computeWindow,
     nextTreeIndex,
     parentRowIndex,
@@ -44,6 +48,56 @@ test("ED-03 the row window covers the viewport plus overscan and never exceeds t
     assert.ok(bottom.start <= 99 - 20);
     assert.equal(computeWindow({ rowCount: 5, rowHeight: 24, scrollTop: 0, viewportHeight: 480 }).end, 5);
     assert.equal(computeWindow({ rowCount: 3, rowHeight: 0, scrollTop: -10, viewportHeight: -5 }).end, 3, "degenerate inputs are clamped");
+});
+
+test("ED-09 a 10k catalog window stays under 40 rows", () => {
+    const middle = computeWindow({
+        rowCount: 10000,
+        rowHeight: CATALOG_ROW_HEIGHT,
+        scrollTop: CATALOG_ROW_HEIGHT * 5000,
+        viewportHeight: 480,
+        overscan: 6,
+    });
+    assert.ok(middle.end - middle.start < 40, "a 10k catalog renders a few dozen rows");
+    assert.equal(CATALOG_ROW_HEIGHT, 64);
+});
+
+test("ED-09 catalog grid windows visual rows and reaches every item at the bottom", () => {
+    const top = computeItemWindow({
+        itemCount: 800,
+        columns: 7,
+        itemHeight: CATALOG_GRID_ITEM_HEIGHT,
+        rowGap: CATALOG_GRID_GAP,
+        viewportHeight: 240,
+        overscan: 2,
+    });
+    assert.equal(top.start, 0);
+    assert.equal(top.columns, 7);
+    assert.equal(top.end % 7, 0, "whole visual rows are mounted");
+    assert.equal(top.itemHeight, 96);
+    assert.ok(top.end < 80, "a small bounded set of grid items is mounted");
+
+    const bottom = computeItemWindow({
+        itemCount: 800,
+        columns: 7,
+        itemHeight: CATALOG_GRID_ITEM_HEIGHT,
+        rowGap: CATALOG_GRID_GAP,
+        scrollTop: Number.MAX_SAFE_INTEGER,
+        viewportHeight: 240,
+        overscan: 2,
+    });
+    assert.equal(bottom.end, 800);
+    assert.ok(bottom.start <= 799);
+    assert.equal(bottom.totalHeight, Math.ceil(800 / 7) * (CATALOG_GRID_ITEM_HEIGHT + CATALOG_GRID_GAP) - CATALOG_GRID_GAP);
+
+    assert.deepEqual(computeItemWindow({ itemCount: 0, columns: 0 }), {
+        start: 0,
+        end: 0,
+        offsetTop: 0,
+        totalHeight: 0,
+        columns: 1,
+        itemHeight: CATALOG_ROW_HEIGHT,
+    });
 });
 
 test("ED-03 revealing a row scrolls the minimum distance and offsets map back to rows", () => {

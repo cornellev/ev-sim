@@ -40,6 +40,7 @@ function BoundsSummary({ bounds }) {
  *   onInteractionStart?: () => void,
  *   onInteractionEnd?: () => void,
  *   expanded?: boolean,
+ *   compact?: boolean,
  * }} props
  */
 export function EarthImportMapPicker({
@@ -48,6 +49,7 @@ export function EarthImportMapPicker({
     onInteractionStart,
     onInteractionEnd,
     expanded = false,
+    compact = false,
 }) {
     const [drawMode, setDrawMode] = useState(false);
     const bounds = useMemo(() => editorStateToGeoBounds(earthImport), [earthImport]);
@@ -70,7 +72,7 @@ export function EarthImportMapPicker({
         : "space-y-2";
     const mapHeightClass = expanded
         ? "min-h-[280px] flex-1"
-        : "h-[200px]";
+        : compact ? "h-[112px]" : "h-[200px]";
 
     return (
         <div className={rootClassName}>
@@ -103,11 +105,13 @@ export function EarthImportMapPicker({
                 <div ref={containerRef} className="earth-import-map h-full w-full" />
             </div>
 
-            <BoundsSummary bounds={bounds} />
+            {!compact && <BoundsSummary bounds={bounds} />}
 
-            <p className="text-[11px] leading-snug text-zinc-500">
-                Map data &copy; OpenStreetMap contributors. Preview loads Google Photorealistic 3D Tiles.
-            </p>
+            {!compact && (
+                <p className="text-[11px] leading-snug text-zinc-500">
+                    Map data &copy; OpenStreetMap contributors. Preview loads Google Photorealistic 3D Tiles.
+                </p>
+            )}
         </div>
     );
 }

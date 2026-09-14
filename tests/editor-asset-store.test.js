@@ -109,3 +109,31 @@ test("ED-06 recovery rolls back unpublished revision state and completes committ
     assert.equal(replay.revision.publicationId, "publication-1");
     assert.equal(committedVisuals.roots.size, 1);
 });
+
+test("ED-09 catalog list returns metadata rows without opening revision files", async (t) => {
+    const { dir, store } = await fixture(t);
+    const now = "2026-09-13T16:00:00.000Z";
+    const assets = Array.from({ length: 800 }, (_, index) => ({
+        id: `model-${String(index).padStart(4, "0")}`,
+        name: `Catalog model ${index}`,
+        folderId: null,
+        tags: [],
+        archived: false,
+        latestRevision: 1,
+        thumbnails: {},
+        createdAt: now,
+        updatedAt: now,
+    }));
+    await fs.mkdir(path.join(dir, "editor-assets"), { recursive: true });
+    await fs.writeFile(path.join(dir, "editor-assets", "catalog.json"), `${JSON.stringify({
+        kind: "cev-sim.editor-asset-catalog",
+        version: 1,
+        revision: 1,
+        folders: [],
+        assets,
+    }, null, 2)}\n`);
+    const listed = await store.list({ archived: true });
+    assert.equal(listed.assets.length, 800);
+    assert.equal(listed.catalogRevision, 1);
+    await assert.rejects(() => fs.access(path.join(dir, "editor-assets", "revisions")));
+});

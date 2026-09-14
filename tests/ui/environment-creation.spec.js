@@ -63,7 +63,7 @@ async function openCreation(page) {
         await page.getByRole("button", { name: "Environment", exact: true }).click();
     }
     await expect(environments).toBeVisible();
-    await environments.getByRole("button", { name: "New environment" }).click();
+    await environments.getByRole("button", { name: "New", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "Create environment" });
     await expect(dialog).toBeVisible();
     return dialog;
@@ -180,18 +180,64 @@ test("ED-08 active import exposes Add/Replace and legacy correction exposes both
     await openWorkspace(page);
     await page.getByRole("button", { name: "Environment", exact: true }).click();
     await page.getByRole("dialog", { name: "Environments" }).getByRole("button", { name, exact: true }).click();
+    const toolbar = page.getByRole("toolbar", { name: "Scene tools" });
+    const moveTool = toolbar.getByRole("button", { name: "Move", exact: true });
+    await moveTool.click();
+    await expect(moveTool).toHaveAttribute("aria-pressed", "true");
     await page.getByRole("button", { name: "Earth import" }).click();
     await expect(page.locator('[data-pane="hierarchy"]')).toBeVisible();
     await expect(page.locator('[data-pane="inspector"]')).toBeVisible();
+    const importTitle = page.getByText("Google Earth Import", { exact: true });
+    await expect(importTitle).toBeVisible();
     const roadMode = page.getByLabel("Existing roads");
     await expect(roadMode).toHaveValue("add");
+    const tilesToggle = page.getByText("Show Earth tiles", { exact: true });
+    await tilesToggle.scrollIntoViewIfNeeded();
+    await expect(tilesToggle).toBeInViewport();
+    const panelPreview = page.getByTitle("Load tiles and roads without committing");
+    await panelPreview.scrollIntoViewIfNeeded();
+    await expect(panelPreview).toBeInViewport();
     const splitter = page.locator('[data-pane-splitter="hierarchy"]');
     const initialSize = Number(await splitter.getAttribute("aria-valuenow"));
     await splitter.focus();
     await page.keyboard.press("ArrowRight");
     await expect(splitter).toHaveAttribute("aria-valuenow", String(initialSize + 8));
+
+    // Import chrome owns Escape in capture phase. Each press performs exactly
+    // one stage and never mutates the editor or opens the workspace switcher.
+    await page.getByRole("button", { name: "Expand map picker" }).click();
+    await expect(page.getByRole("button", { name: "Close expanded map" })).toBeVisible();
     await page.keyboard.press("Escape");
-    await expect(page.getByRole("button", { name: "Earth import" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Close expanded map" })).toBeHidden();
+    await expect(importTitle).toBeVisible();
+    await expect(moveTool).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByRole("dialog", { name: "Workspaces" })).toBeHidden();
+
+    const firstPreview = page.getByTitle("Preview import");
+    await firstPreview.click();
+    await expect(page.getByText(/Preview ready \(1 road segments staged\)/)).toBeVisible({ timeout: 30_000 });
+    await firstPreview.focus();
+    await page.keyboard.press("Escape");
+    await expect(importTitle).toBeVisible();
+    await expect(page.getByText(/Preview ready \(1 road segments staged\)/)).toBeHidden();
+    await expect(moveTool).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByRole("dialog", { name: "Workspaces" })).toBeHidden();
+
+    await roadMode.focus();
+    await page.keyboard.press("Escape");
+    await expect(importTitle).toBeHidden();
+    await expect(moveTool).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByRole("dialog", { name: "Workspaces" })).toBeHidden();
+
+    await toolbar.getByRole("button", { name: "Map view" }).click();
+    await expect(page.getByRole("region", { name: "Map view" })).toBeVisible();
+    await page.getByRole("button", { name: "Earth import" }).click();
+    await expect(page.getByRole("region", { name: "Map view" })).toBeVisible();
+    await page.getByLabel("Existing roads").focus();
+    await page.keyboard.press("Escape");
+    await expect(importTitle).toBeHidden();
+    await expect(page.getByRole("region", { name: "Map view" })).toBeVisible();
+    await toolbar.getByRole("button", { name: "Scene view" }).click();
 
     await page.getByRole("button", { name: "Earth import" }).click();
     await page.getByTitle("Preview import").click();
@@ -230,6 +276,54 @@ test("ED-08 active import exposes Add/Replace and legacy correction exposes both
     await expect(correction.getByLabel("Whole environment")).toBeChecked();
     await correction.getByRole("button", { name: "Apply correction" }).click();
     await expect.poll(async () => (await storedEnvironment(request, id))?.document?.earth?.version, { timeout: 30_000 }).toBe(2);
+});
+
+test("@a11y ED-09 transient import and correction chrome have no serious accessibility violations", async ({ page, request }) => {
+    test.setTimeout(400_000);
+    await page.setViewportSize({ width: 1280, height: 720 });
+    const id = `pw-ed09-a11y-earth-${Date.now().toString(36)}`;
+    const name = `ED-09 A11y Earth ${id}`;
+    const initialManifest = {
+        environmentId: id,
+        templateId: "blank",
+        roadsAuthored: true,
+        document: {
+            environmentId: id,
+            roadsAuthored: true,
+            roads: { nodes: [], edges: [], turnRules: [] },
+            buildings: [],
+            features: [],
+            earth: {
+                anchor: { lat: 42.443, lng: -76.502 },
+                bounds: { north: 42.448, south: 42.438, east: -76.497, west: -76.507 },
+                tileProvider: "google-photorealistic",
+                roadProvider: "overpass",
+                importedLayerIds: [],
+                importedAt: null,
+            },
+        },
+    };
+    expect((await request.post("/api/storage/environments", { data: { id, name, templateId: "blank", initialManifest } })).ok()).toBeTruthy();
+    await openWorkspace(page);
+    await page.getByRole("button", { name: "Environment", exact: true }).click();
+    await page.getByRole("dialog", { name: "Environments" }).getByRole("button", { name, exact: true }).click();
+
+    await page.getByRole("button", { name: "Earth import" }).click();
+    const importResults = await new AxeBuilder({ page })
+        .include("[data-editor-workspace]")
+        .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+        .analyze();
+    expect(importResults.violations.filter((entry) => ["serious", "critical"].includes(entry.impact))).toEqual([]);
+    await page.keyboard.press("Escape");
+
+    await page.getByRole("button", { name: "Correct georegistration" }).click();
+    const correction = page.getByRole("dialog", { name: "Correct georegistration" });
+    await expect(correction).toBeVisible();
+    const correctionResults = await new AxeBuilder({ page })
+        .include('[role="dialog"][aria-label="Correct georegistration"]')
+        .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+        .analyze();
+    expect(correctionResults.violations.filter((entry) => ["serious", "critical"].includes(entry.impact))).toEqual([]);
 });
 
 test("@a11y ED-08 creation dialog has no serious accessibility violations", async ({ page }) => {

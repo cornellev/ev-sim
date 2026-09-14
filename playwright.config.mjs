@@ -34,7 +34,6 @@ export default defineConfig({
             CEV_SIM_NEXT_DIR: ".next-playwright",
             CEV_SIM_DATA_DIR: process.env.CEV_SIM_DATA_DIR ?? ".playwright-data/storage",
             CEV_SIM_LOGS_DIR: ".playwright-data/logs",
-            NEXT_PUBLIC_CEV_SIM_ED08: process.env.NEXT_PUBLIC_CEV_SIM_ED08 ?? "1",
             NEXT_PUBLIC_GOOGLE_MAPS_API_KEY: process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? "playwright-ed08-key",
         },
     },

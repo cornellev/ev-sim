@@ -49,6 +49,7 @@ import { createDetachedRoadImportPreview } from "./earth/DetachedRoadImportPrevi
 import { SceneLoadingScreen } from "./overlay/SceneLoadingScreen";
 import { EditorToolController } from "./editor/tools/EditorToolController";
 import { EnvironmentPersistence } from "./environment/EnvironmentPersistence";
+import { applyExternalEnvironmentUpdate } from "./environment/ExternalEnvironmentApply";
 import { EnvironmentLoader } from "./environment/EnvironmentLoader";
 import { disposeRendererVisualResourceCache } from "./environment/visual/VisualResourceCache";
 import { getEnvironmentManifest } from "./environment/EnvironmentCatalogClient";
@@ -745,12 +746,12 @@ export default function TotalScene({
     const runtimeRef = useRef(null);
     const modeRef = useRef(mode);
     const embeddedViewportRef = useRef(embeddedViewport);
-    embeddedViewportRef.current = embeddedViewport;
     // ED-03: the environment workspace publishes its scene pane rectangle;
     // the renderer and camera follow it while keys and the overlay stay live.
     const [workspaceViewport, setWorkspaceViewport] = useState(null);
     const workspaceViewportRef = useRef(null);
-    workspaceViewportRef.current = workspaceViewport;
+    useEffect(() => { embeddedViewportRef.current = embeddedViewport; }, [embeddedViewport]);
+    useEffect(() => { workspaceViewportRef.current = workspaceViewport; }, [workspaceViewport]);
     const handleWorkspaceViewport = useCallback((rect) => {
         setWorkspaceViewport((current) => (viewportRectsEqual(current, rect) ? current : rect));
     }, []);
@@ -968,26 +969,24 @@ export default function TotalScene({
             // resolved, never in the middle of deterministic execution.
             if (runtime.data.simulation?.()?.resolvedRun) return;
 
-            const persistence = runtime.environmentPersistence;
             const loader = runtime.environmentLoader;
             if (!loader) return;
 
             (async () => {
                 try {
-                    const manifest = await getEnvironmentManifest(environmentId);
-                    if (!manifest || runtime.disposed) return;
-                    const decision = persistence
-                        ? await persistence.prepareExternalApply(manifest)
-                        : { apply: true };
-                    if (!decision.apply) return;
-                    await loader.apply(manifest);
-                    loader.manifest = manifest;
-                    publishEnvironmentTelemetry(runtime.data, environmentId, manifest, runtime.startingState);
-                    persistence?.adoptRevision(manifest.revision);
+                    await applyExternalEnvironmentUpdate({
+                        runtime,
+                        environmentId,
+                        loadManifest: getEnvironmentManifest,
+                        onApplied: (manifest) => publishEnvironmentTelemetry(
+                            runtime.data,
+                            environmentId,
+                            manifest,
+                            runtime.startingState,
+                        ),
+                    });
                 } catch (error) {
                     console.warn("[environment] MCP live-sync apply failed:", error);
-                } finally {
-                    persistence?.resumeAutosave();
                 }
             })();
         });

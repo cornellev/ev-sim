@@ -32,53 +32,13 @@ import {
 } from "../app/3d/editor/objects/index.js";
 import { PLACEMENT_CATALOG, fusionObjectToCatalogType, getMapColorForAsset } from "../app/3d/editor/placement/placementCatalogData.js";
 import { serializeEnvironmentManifest } from "../app/3d/environment/EnvironmentManifestPolicy.js";
+import { createTestMarkerType, TestMarkerOptions } from "./helpers/testMarkerType.js";
 
 const root = new URL("../", import.meta.url);
 const objectsDir = new URL("app/3d/editor/objects/", root);
 
-class MarkerOptions extends ObjectOptions {
-    getDefaults() {
-        return { label: "marker", radius: 1 };
-    }
-
-    getFields() {
-        return MARKER_FIELDS;
-    }
-
-    normalize(value = {}) {
-        return {
-            label: typeof value?.label === "string" ? value.label : "marker",
-            radius: Number.isFinite(value?.radius) ? value.radius : 1,
-        };
-    }
-
-    validate(value) {
-        return validateFieldConstraints(MARKER_FIELDS, value);
-    }
-
-    fromLegacy(_legacy, context = {}) {
-        return this.normalize(context.record?.components?.marker ?? {});
-    }
-}
-
-const MARKER_FIELDS = Object.freeze([
-    field({ path: ["label"], label: "Label", control: "text" }),
-    field({ path: ["radius"], label: "Radius", control: "number", units: "m", min: 0.1, max: 10 }),
-]);
-
 function markerType() {
-    return defineObjectType({
-        typeId: "test.marker",
-        version: 1,
-        label: "Test marker",
-        catalog: { label: "Test marker", kind: "marker", layer: "props" },
-        legacy: null,
-        options: new MarkerOptions(),
-        components: ["marker"],
-        compileMetric(record) {
-            return { shape: "sphere", radius: record.components.marker?.radius ?? 1 };
-        },
-    });
+    return createTestMarkerType({ label: "Test marker" });
 }
 
 const PINNED_PLACEMENT_CATALOG = [
@@ -178,7 +138,7 @@ test("ED-01 ObjectOptions subclasses must implement getDefaults, getFields, norm
     }
     assert.throws(() => new Partial(), /Partial must implement ObjectOptions.getFields\(\)/);
     assert.throws(() => new ObjectOptions(), /must implement/);
-    assert.ok(new MarkerOptions() instanceof ObjectOptions);
+    assert.ok(new TestMarkerOptions() instanceof ObjectOptions);
 });
 
 test("ED-01 field descriptors carry path, label, control, units, constraints, and grouping", () => {

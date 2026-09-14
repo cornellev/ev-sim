@@ -21,14 +21,11 @@ import {
     planHierarchyDrop,
 } from "../app/3d/editor/presentation/hierarchyModel.js";
 import {
-    ObjectOptions,
     createBuiltinObjectTypeRegistry,
-    defineObjectType,
     deriveObjectGraph,
-    field,
-    validateFieldConstraints,
 } from "../app/3d/editor/objects/index.js";
 import { readEnvironmentEditorFixture } from "./helpers/environmentEditorBaseline.js";
+import { createTestMarkerType } from "./helpers/testMarkerType.js";
 
 test.beforeEach(() => {
     resetDocumentIdCounter();
@@ -40,31 +37,6 @@ async function yardService() {
     document.replaceObjectGraph(deriveObjectGraph(document.snapshot()));
     const service = createEnvironmentCommandService({ document });
     return { document, service, bus: service.bus };
-}
-
-class MarkerOptions extends ObjectOptions {
-    getDefaults() { return { label: "marker", radius: 1 }; }
-    getFields() { return MARKER_FIELDS; }
-    normalize(value = {}) { return { label: String(value?.label ?? "marker"), radius: Number.isFinite(value?.radius) ? value.radius : 1 }; }
-    validate(value = {}) { return validateFieldConstraints(MARKER_FIELDS, value); }
-    fromLegacy(_legacy, context = {}) { return this.normalize(context.record?.components?.marker ?? {}); }
-}
-const MARKER_FIELDS = Object.freeze([
-    field({ path: ["label"], label: "Marker label", control: "text", group: "Marker" }),
-    field({ path: ["radius"], label: "Radius", control: "number", units: "m", min: 0.1, group: "Marker" }),
-]);
-
-function createMarkerType() {
-    return defineObjectType({
-        typeId: "test.marker",
-        version: 1,
-        label: "Marker",
-        catalog: { label: "Marker", kind: "marker", layer: "props" },
-        legacy: null,
-        options: new MarkerOptions(),
-        components: Object.freeze(["marker"]),
-        capabilities: { selectable: true, transformable: false, deletable: true, groupable: true, hasOptions: true },
-    });
 }
 
 test("ED-02 the presentation registry falls back to capability-driven defaults and merges registrations", async () => {
@@ -193,7 +165,7 @@ test("ED-02 drop planning maps drag targets to reparent arguments and rejects cy
 
 test("ED-02 a test-only object type appears in the hierarchy and inspector by registration alone", async () => {
     const objectRegistry = createBuiltinObjectTypeRegistry();
-    objectRegistry.register(createMarkerType());
+    objectRegistry.register(createTestMarkerType());
     const presentation = createEditorPresentationRegistry({ objectRegistry });
     const icon = { name: "marker-icon" };
     presentation.register("test.marker", {
@@ -205,13 +177,12 @@ test("ED-02 a test-only object type appears in the hierarchy and inspector by re
     document.replaceObjectGraph(deriveObjectGraph(document.snapshot()));
     const service = createEnvironmentCommandService({ document, registry: objectRegistry });
     const groupId = service.run("groupObjects", { objectIds: ["feature-cone"], name: "Course" }).result.groupId;
-    const added = service.bus.execute({
-        id: "add-marker",
-        label: "Add marker",
-        run(ctx) {
-            ctx.document.objects.push({ id: "marker-1", typeId: "test.marker", typeVersion: 1, name: "Start marker", parentId: groupId, order: 5, components: { marker: { label: "start", radius: 2.5 } } });
-            return { ok: true, issues: [], result: {} };
-        },
+    const added = service.run("createObject", {
+        typeId: "test.marker",
+        id: "marker-1",
+        parentId: groupId,
+        name: "Start marker",
+        input: { label: "start", radius: 2.5 },
     });
     assert.equal(added.ok, true, JSON.stringify(added.issues));
 

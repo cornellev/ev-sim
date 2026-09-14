@@ -44,6 +44,7 @@ export class EnvironmentPersistence {
         this._queuedKeepalive = false;
         this._discarded = false;
         this._suspended = false;
+        this._externalApplyPhase = null;
         this._generation = 0;
         this._editGeneration = 0;
         this._acknowledgedEditGeneration = 0;
@@ -107,7 +108,7 @@ export class EnvironmentPersistence {
         this._discarded = false;
         this._suspended = false;
         const environment = this.data.environment();
-        const onChange = () => this._handleChange();
+        const onChange = (event) => this._handleChange(event);
 
         // ED-02: transient gesture frames and gesture cancels never reach the
         // save queue; only committed document changes do. Editor state marks
@@ -116,11 +117,11 @@ export class EnvironmentPersistence {
         this._unsubscribers = [
             environment.getDocument().subscribe((snapshot, event) => {
                 if (event?.transient === true || event?.source === "cancel") return;
-                onChange();
+                onChange({ domain: "document", source: event?.source });
             }),
             environment.objects().subscribe((_snapshot, event) => {
                 if (event?.affectsPersistence === false) return;
-                onChange();
+                onChange({ domain: "registry" });
             }),
             environment.editor().subscribe((snapshot) => {
                 const editor = environment.editor();
@@ -130,9 +131,9 @@ export class EnvironmentPersistence {
                 const key = JSON.stringify(persisted);
                 if (lastEditorKey !== undefined && key === lastEditorKey) return;
                 lastEditorKey = key;
-                onChange();
+                onChange({ domain: "editor" });
             }),
-            environment.sky().subscribe(onChange),
+            environment.sky().subscribe(() => onChange({ domain: "sky" })),
         ];
 
         if (typeof window !== "undefined") {
@@ -194,6 +195,7 @@ export class EnvironmentPersistence {
     /** Resume watching for local edits after an external apply. */
     resumeAutosave() {
         if (this._discarded) return;
+        this._externalApplyPhase = null;
         this._suspended = false;
         this._attached = true;
         if (this._dirty && !this._conflict) this._saveNow();
@@ -245,6 +247,7 @@ export class EnvironmentPersistence {
      * Dirty or in-flight work is retained and exposed as a conflict.
      */
     async prepareExternalApply(remoteManifest) {
+        this._externalApplyPhase = "preparing";
         await this.suspendAutosave();
         if (this._dirty || this._conflict) {
             this._conflict = {
@@ -252,21 +255,42 @@ export class EnvironmentPersistence {
                 currentRevision: this._acknowledgedRevision,
                 remoteRevision: remoteManifest?.revision ?? null,
             };
+            this._externalApplyPhase = null;
             return { apply: false, conflict: this._conflict };
         }
+        if (remoteManifest?.environmentId && remoteManifest.environmentId !== this.environmentId) {
+            this._externalApplyPhase = null;
+            return { apply: false, wrongEnvironment: true };
+        }
+        const remoteRevision = Number(remoteManifest?.revision);
+        if (!Number.isInteger(remoteRevision) || remoteRevision <= this._acknowledgedRevision) {
+            this._externalApplyPhase = null;
+            return { apply: false, stale: true };
+        }
+        this._externalApplyPhase = "applying";
         return { apply: true };
     }
 
     // --- Saving -------------------------------------------------------------
 
-    _handleChange() {
-        if (!this._attached) return;
+    _handleChange(event = {}) {
+        // Subscriptions remain installed while an MCP apply is preparing. Keep
+        // edits that arrive during the suspended/in-flight window dirty so the
+        // remote document can never replace them.
+        if (!this._attached && !this._suspended) return;
+        if (this._suspended && this._externalApplyPhase === "applying") {
+            const loaderDocumentRestore = event.domain === "document" && event.source === "restore";
+            const loaderRuntimeRestore = ["registry", "editor", "sky"].includes(event.domain);
+            if (loaderDocumentRestore || loaderRuntimeRestore) return;
+        }
 
         this._editGeneration += 1;
         this._dirty = true;
         this._notifyStatus();
         const now = Date.now();
         if (!this._firstPendingAt) this._firstPendingAt = now;
+
+        if (this._suspended) return;
 
         this._clearTimer();
 

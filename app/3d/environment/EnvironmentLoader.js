@@ -67,6 +67,7 @@ export class EnvironmentLoader {
         const environment = this.data.environment();
         environment.projector?.()?.resetAssetInstances?.();
         environment.projector?.()?.resetAssetMetrics?.();
+        environment.projector?.()?.resetOverlayMetrics?.();
         const document = environment.getDocument();
         const worldResource = resolvedWorld ?? createWorldResource(manifest);
         const description = assertWorldResource(worldResource);
@@ -133,6 +134,7 @@ export class EnvironmentLoader {
         environment.objects().registerExistingContent(this.scene, this.data);
         environment.projector?.()?.syncAssetInstances?.();
         environment.projector?.()?.syncAssetMetrics?.();
+        environment.projector?.()?.syncOverlayMetrics?.();
         // A full load replaces the world; prior history and gestures no longer apply.
         environment.commands?.()?.reset?.();
         environment.selection?.()?.prune?.(new Set(document.objects.map((record) => String(record.id))));
@@ -242,7 +244,7 @@ export class EnvironmentLoader {
         }
         document.features = restored;
         document.featuresAuthored = true;
-        document.notify();
+        document.notify({ source: "restore" });
     }
 
     _restoreSky(sky) {

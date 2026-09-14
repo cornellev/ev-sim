@@ -28,6 +28,9 @@ const SCENE_TOOLS = Object.freeze([
     { id: "tool-translate", tool: EDITOR_TOOLS.TRANSLATE, label: "Move", shortcut: "W", icon: "move" },
     { id: "tool-rotate", tool: EDITOR_TOOLS.ROTATE, label: "Rotate", shortcut: "E", icon: "rotate" },
     { id: "tool-scale", tool: EDITOR_TOOLS.SCALE, label: "Scale", shortcut: "R", icon: "scale" },
+]);
+
+const EDITING_TOOLS = Object.freeze([
     { id: "tool-road-pen", tool: EDITOR_TOOLS.ROAD_PEN, label: "Road pen", icon: "road" },
 ]);
 
@@ -55,7 +58,7 @@ function item({ id, label, icon, kind = "button", active = false, disabled = fal
  */
 export function buildToolbarModel({ editorSnapshot, busSnapshot = null, selectionSnapshot = null } = {}) {
     const editor = editorSnapshot ?? {};
-    const view = editor.editorMode === EDITOR_MODES.MAP ? "map" : editor.editorMode === EDITOR_MODES.EARTH_IMPORT ? "earth-import" : "scene";
+    const view = editor.editorMode === EDITOR_MODES.MAP ? "map" : "scene";
     const groups = [];
 
     if (view === "scene") {
@@ -69,6 +72,17 @@ export function buildToolbarModel({ editorSnapshot, busSnapshot = null, selectio
                 action: { type: TOOLBAR_ACTIONS.SET_TOOL, tool: entry.tool },
             })),
         });
+        groups.push({
+            id: "editing-tools",
+            label: "Editing Tools",
+            items: EDITING_TOOLS.map((entry) => item({
+                ...entry,
+                kind: "toggle",
+                active: (editor.activeTool ?? EDITOR_TOOLS.SELECT) === entry.tool,
+                action: { type: TOOLBAR_ACTIONS.SET_TOOL, tool: entry.tool },
+            })),
+        });
+
         const space = editor.transformSpace === "local" ? "local" : "world";
         groups.push({
             id: "transform",
@@ -119,41 +133,39 @@ export function buildToolbarModel({ editorSnapshot, busSnapshot = null, selectio
         });
     }
 
-    if (view !== "earth-import") {
-        groups.push({
-            id: "view",
-            label: "View",
-            items: [
-                item({ id: "view-scene", label: "Scene view", icon: "scene", kind: "toggle", active: view === "scene", action: { type: TOOLBAR_ACTIONS.SET_VIEW, mode: EDITOR_MODES.SCENE } }),
-                item({ id: "view-map", label: "Map view", icon: "map", kind: "toggle", active: view === "map", action: { type: TOOLBAR_ACTIONS.SET_VIEW, mode: EDITOR_MODES.MAP } }),
-            ],
-        });
-        const overlays = [
-            item({
-                id: "overlay-grid",
-                label: "Grid",
-                icon: "grid",
-                kind: "toggle",
-                active: view === "map" ? editor.map?.gridVisible !== false : editor.sceneGridVisible !== false,
-                action: { type: TOOLBAR_ACTIONS.TOGGLE_GRID },
-            }),
-        ];
-        if (view === "scene") {
-            overlays.push(item({ id: "overlay-chunks", label: "Chunks", icon: "chunks", kind: "toggle", active: editor.chunkOutlinesVisible !== false, action: { type: TOOLBAR_ACTIONS.TOGGLE_CHUNKS } }));
-            overlays.push(item({ id: "overlay-bounds", label: "Selection bounds", icon: "bounds", kind: "toggle", active: editor.selectionBoundsVisible !== false, action: { type: TOOLBAR_ACTIONS.TOGGLE_BOUNDS } }));
-            overlays.push(item({ id: "overlay-road-handles", label: "Road handles", icon: "bezier", kind: "toggle", active: editor.roadHandlesVisible === true, action: { type: TOOLBAR_ACTIONS.TOGGLE_ROAD_HANDLES } }));
-        }
-        groups.push({ id: "overlays", label: "Overlays", items: overlays });
-        groups.push({
-            id: "history",
-            label: "History",
-            items: [
-                item({ id: "undo", label: "Undo", shortcut: "Mod+Z", icon: "undo", disabled: !busSnapshot?.canUndo, action: { type: TOOLBAR_ACTIONS.UNDO } }),
-                item({ id: "redo", label: "Redo", shortcut: "Shift+Mod+Z", icon: "redo", disabled: !busSnapshot?.canRedo, action: { type: TOOLBAR_ACTIONS.REDO } }),
-                item({ id: "frame", label: "Frame selection", shortcut: "F", icon: "frame", disabled: !(selectionSnapshot?.ids?.length > 0), action: { type: TOOLBAR_ACTIONS.FRAME } }),
-            ],
-        });
+    groups.push({
+        id: "view",
+        label: "View",
+        items: [
+            item({ id: "view-scene", label: "Scene view", icon: "scene", kind: "toggle", active: view === "scene", action: { type: TOOLBAR_ACTIONS.SET_VIEW, mode: EDITOR_MODES.SCENE } }),
+            item({ id: "view-map", label: "Map view", icon: "map", kind: "toggle", active: view === "map", action: { type: TOOLBAR_ACTIONS.SET_VIEW, mode: EDITOR_MODES.MAP } }),
+        ],
+    });
+    const overlays = [
+        item({
+            id: "overlay-grid",
+            label: "Grid",
+            icon: "grid",
+            kind: "toggle",
+            active: view === "map" ? editor.map?.gridVisible !== false : editor.sceneGridVisible !== false,
+            action: { type: TOOLBAR_ACTIONS.TOGGLE_GRID },
+        }),
+    ];
+    if (view === "scene") {
+        overlays.push(item({ id: "overlay-chunks", label: "Chunks", icon: "chunks", kind: "toggle", active: editor.chunkOutlinesVisible !== false, action: { type: TOOLBAR_ACTIONS.TOGGLE_CHUNKS } }));
+        overlays.push(item({ id: "overlay-bounds", label: "Selection bounds", icon: "bounds", kind: "toggle", active: editor.selectionBoundsVisible !== false, action: { type: TOOLBAR_ACTIONS.TOGGLE_BOUNDS } }));
+        overlays.push(item({ id: "overlay-road-handles", label: "Road handles", icon: "bezier", kind: "toggle", active: editor.roadHandlesVisible === true, action: { type: TOOLBAR_ACTIONS.TOGGLE_ROAD_HANDLES } }));
     }
+    groups.push({ id: "overlays", label: "Overlays", items: overlays });
+    groups.push({
+        id: "history",
+        label: "History",
+        items: [
+            item({ id: "undo", label: "Undo", shortcut: "Mod+Z", icon: "undo", disabled: !busSnapshot?.canUndo, action: { type: TOOLBAR_ACTIONS.UNDO } }),
+            item({ id: "redo", label: "Redo", shortcut: "Shift+Mod+Z", icon: "redo", disabled: !busSnapshot?.canRedo, action: { type: TOOLBAR_ACTIONS.REDO } }),
+            item({ id: "frame", label: "Frame selection", shortcut: "F", icon: "frame", disabled: !(selectionSnapshot?.ids?.length > 0), action: { type: TOOLBAR_ACTIONS.FRAME } }),
+        ],
+    });
     return groups;
 }
 
