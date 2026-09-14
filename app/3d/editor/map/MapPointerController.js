@@ -27,7 +27,7 @@ import {
     updateRoadDrag,
     zoomViewport,
 } from "./MapToolLogic.js";
-import { advancePanDrag } from "./mapPointerInteractions.js";
+import { advancePanDrag, advancePendingObjectDrag } from "./mapPointerInteractions.js";
 import { screenRadiusToWorld } from "./mapCoords.js";
 
 function selectionOf(data) {
@@ -43,9 +43,11 @@ function isAdditive(event) {
  *
  * Interaction shapes:
  * - { mode: "pan" | "pending-pan", x, y }
+ * - { mode: "pending-object", x, y, worldStart, begin }
  * - { type: "building-rect" }
  * - { type: "move-node", nodeId, gestureId, start }
  * - { type: "move-feature", featureId, gestureId, start }
+ * - { type: "move-asset", objectId, gestureId, start }
  */
 export class MapPointerController {
     constructor() {
@@ -131,15 +133,24 @@ export class MapPointerController {
         }
 
         if (tool === MAP_TOOLS.SELECT) {
+            const worldStart = { x: world.x, z: world.z };
+            const pendingObject = (begin) => ({
+                mode: "pending-object",
+                x: event.clientX,
+                y: event.clientY,
+                worldStart,
+                begin,
+            });
             const snapRadius = screenRadiusToWorld(SNAP_RADIUS_SCREEN, editor.snapshot().map);
             if (showDetail) {
                 const node = findNearestNode(world, document.roads.nodes, snapRadius);
                 if (node) {
-                    const interaction = beginNodeDrag({ document, data, nodeId: node.id });
-                    if (interaction) {
-                        this.activeInteraction = interaction;
-                        return true;
-                    }
+                    const record = document.getObject?.(node.id) ?? null;
+                    if (record) selection?.select(node.id);
+                    this.activeInteraction = pendingObject(
+                        () => beginNodeDrag({ document, data, nodeId: node.id, worldPoint: worldStart }),
+                    );
+                    return true;
                 }
             }
 
@@ -153,19 +164,19 @@ export class MapPointerController {
             );
 
             if (pick?.type === MAP_SELECTION_TYPES.ASSET && !isAdditive(event)) {
-                const interaction = beginAssetDrag({ document, data, objectId: pick.id });
-                if (interaction) {
-                    this.activeInteraction = interaction;
-                    return true;
-                }
+                selection?.select(pick.id);
+                this.activeInteraction = pendingObject(
+                    () => beginAssetDrag({ document, data, objectId: pick.id, worldPoint: worldStart }),
+                );
+                return true;
             }
 
             if (pick?.type === MAP_SELECTION_TYPES.FEATURE && !isAdditive(event)) {
-                const interaction = beginFeatureDrag({ document, data, featureId: pick.id });
-                if (interaction) {
-                    this.activeInteraction = interaction;
-                    return true;
-                }
+                selection?.select(pick.id);
+                this.activeInteraction = pendingObject(
+                    () => beginFeatureDrag({ document, data, featureId: pick.id, worldPoint: worldStart }),
+                );
+                return true;
             }
 
             if (pick?.type === MAP_SELECTION_TYPES.ROAD && !isAdditive(event)) {
@@ -178,18 +189,19 @@ export class MapPointerController {
                 }
                 if (pick.sub) {
                     selection?.select(pick.id, { mode: "replace", sub: pick.sub });
-                    const controller = data.environment?.()?.toolController?.roadAuthoringController;
-                    const begun = controller?.beginSubDrag?.(pick.sub);
-                    if (begun?.ok) {
-                        this.activeInteraction = { type: "move-road-sub", start: { x: world.x, z: world.z }, controller };
-                        return true;
-                    }
-                }
-                const interaction = beginRoadDrag({ data, edgeId: pick.id, worldPoint: world });
-                if (interaction) {
-                    this.activeInteraction = interaction;
+                    this.activeInteraction = pendingObject(() => {
+                        const controller = data.environment?.()?.toolController?.roadAuthoringController;
+                        const begun = controller?.beginSubDrag?.(pick.sub);
+                        if (!begun?.ok) return null;
+                        return { type: "move-road-sub", start: { x: worldStart.x, z: worldStart.z }, controller };
+                    });
                     return true;
                 }
+                selection?.select(pick.id);
+                this.activeInteraction = pendingObject(
+                    () => beginRoadDrag({ data, edgeId: pick.id, worldPoint: worldStart }),
+                );
+                return true;
             }
 
             if (pick) {
@@ -211,9 +223,19 @@ export class MapPointerController {
     }
 
     handlePointerMove(ctx, event) {
-        const { data, getWorldFromEvent, documentSnapshot } = ctx;
+        const { data, getWorldFromEvent } = ctx;
         const editor = data?.editor?.();
         if (!editor) return;
+
+        if (this.activeInteraction?.mode === "pending-object") {
+            this.activeInteraction = advancePendingObjectDrag(
+                this.activeInteraction,
+                event.clientX,
+                event.clientY,
+                (pending) => pending.begin?.() ?? pending,
+            );
+            if (this.activeInteraction?.mode === "pending-object") return;
+        }
 
         if (this.activeInteraction?.type === "move-node") {
             const world = getWorldFromEvent(event);
@@ -281,6 +303,10 @@ export class MapPointerController {
         this.activeInteraction = null;
 
         if (!editor || !environment || !interaction) return;
+
+        if (interaction.mode === "pending-object" || interaction.mode === "pending-pan" || interaction.mode === "pan") {
+            return;
+        }
 
         if (interaction.type === "building-rect") {
             handleBuildingRectUp({ editor, data });

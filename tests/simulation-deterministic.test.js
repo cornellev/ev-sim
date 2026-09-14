@@ -207,6 +207,31 @@ test("workspace deactivation pauses without resetting and returning stays paused
     }
 });
 
+test("setSceneRenderEnabled skips WebGL until re-enabled", () => {
+    const { engine } = harness();
+    let draws = 0;
+    const scene = { add() {} };
+    engine.configure({
+        scene,
+        camera: { layers: { enable() {} } },
+        renderer: {
+            render() { draws += 1; },
+            domElement: { width: 1, height: 1, clientWidth: 1, clientHeight: 1 },
+        },
+    });
+    engine.render();
+    assert.equal(draws, 1);
+    engine.setSceneRenderEnabled(false);
+    engine.render();
+    assert.equal(draws, 1);
+    engine.setSceneRenderEnabled(false);
+    assert.equal(draws, 1, "idempotent disable does not draw");
+    engine.setSceneRenderEnabled(true);
+    assert.equal(draws, 2);
+    engine.render();
+    assert.equal(draws, 3);
+});
+
 test("hidden experiment diagnostics preserve authoritative playback", () => {
     const previousRequestAnimationFrame = globalThis.requestAnimationFrame;
     const previousCancelAnimationFrame = globalThis.cancelAnimationFrame;

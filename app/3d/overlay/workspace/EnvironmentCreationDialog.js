@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { createEnvironment, getEnvironmentManifest } from "../../environment/EnvironmentCatalogClient";
+import { createEnvironment, getEnvironmentManifest, isValidEnvironmentId } from "../../environment/EnvironmentCatalogClient";
 import { boundsCenter, normalizeEarthImportEditorState, validateBounds } from "../../earth/EarthImportConfig";
 import { createGeoFrame } from "../../earth/GeoFrame";
 import { createBlankInitialManifest, createGltfInitialManifest, createGoogleInitialManifest } from "../../environment/EnvironmentCreation";
@@ -158,7 +158,7 @@ export function EnvironmentCreationDialog({ data, initialId, onCancel, onCreated
     };
 
     const create = async () => {
-        if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(environmentId)) { setError("Use lowercase letters, numbers, and single hyphens for the ID."); return; }
+        if (!isValidEnvironmentId(environmentId)) { setError("Use lowercase letters, numbers, and single hyphens for the ID."); return; }
         setBusy(true);
         setError(null);
         try {

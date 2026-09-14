@@ -3,6 +3,7 @@ import { expect, test } from "@playwright/test";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { openEnvironmentsDialog, openStoredEnvironment } from "./helpers/environment-picker.js";
 
 const sourceOperations = ["display", "transient-cache", "persistent-cache", "derivatives", "machine-interpretation", "ml", "worker-access", "export", "retention", "attribution", "live-preview-display"];
 let gltfFixtureDir;
@@ -58,11 +59,7 @@ async function openWorkspace(page) {
 }
 
 async function openCreation(page) {
-    const environments = page.getByRole("dialog", { name: "Environments" });
-    if (!await environments.isVisible()) {
-        await page.getByRole("button", { name: "Environment", exact: true }).click();
-    }
-    await expect(environments).toBeVisible();
+    const environments = await openEnvironmentsDialog(page);
     await environments.getByRole("button", { name: "New", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "Create environment" });
     await expect(dialog).toBeVisible();
@@ -178,8 +175,7 @@ test("ED-08 active import exposes Add/Replace and legacy correction exposes both
     const created = await request.post("/api/storage/environments", { data: { id, name, templateId: "blank", initialManifest } });
     expect(created.ok()).toBeTruthy();
     await openWorkspace(page);
-    await page.getByRole("button", { name: "Environment", exact: true }).click();
-    await page.getByRole("dialog", { name: "Environments" }).getByRole("button", { name, exact: true }).click();
+    await openStoredEnvironment(page, name);
     const toolbar = page.getByRole("toolbar", { name: "Scene tools" });
     const moveTool = toolbar.getByRole("button", { name: "Move", exact: true });
     await moveTool.click();
@@ -305,8 +301,7 @@ test("@a11y ED-09 transient import and correction chrome have no serious accessi
     };
     expect((await request.post("/api/storage/environments", { data: { id, name, templateId: "blank", initialManifest } })).ok()).toBeTruthy();
     await openWorkspace(page);
-    await page.getByRole("button", { name: "Environment", exact: true }).click();
-    await page.getByRole("dialog", { name: "Environments" }).getByRole("button", { name, exact: true }).click();
+    await openStoredEnvironment(page, name);
 
     await page.getByRole("button", { name: "Earth import" }).click();
     const importResults = await new AxeBuilder({ page })
@@ -324,6 +319,49 @@ test("@a11y ED-09 transient import and correction chrome have no serious accessi
         .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
         .analyze();
     expect(correctionResults.violations.filter((entry) => ["serious", "critical"].includes(entry.impact))).toEqual([]);
+});
+
+test("environment picker inspects on click and loads only on open or double-click", async ({ page, request }) => {
+    test.setTimeout(300_000);
+    const id = `pw-picker-${Date.now().toString(36)}`;
+    const name = `Picker ${id}`;
+    expect((await request.post("/api/storage/environments", { data: { id, name, templateId: "blank" } })).ok()).toBeTruthy();
+    await openWorkspace(page);
+    const trigger = page.getByRole("button", { name: "Environment", exact: true });
+    await expect(trigger).not.toContainText("Loading");
+    const loadedName = (await trigger.textContent()).trim();
+    const dialog = await openEnvironmentsDialog(page);
+    const tile = dialog.getByRole("option", { name, exact: true });
+    const loadedTile = dialog.getByRole("option", { name: loadedName, exact: true });
+    await tile.click();
+    await expect(dialog.getByLabel("Name")).toHaveValue(name);
+    await expect(dialog.getByLabel("Environment ID")).toHaveValue(id);
+    await expect(tile.getByRole("img", { name: "Blank environment" })).toBeVisible();
+    await expect(tile).toHaveAttribute("aria-selected", "true");
+    await expect(tile).not.toHaveAttribute("data-open");
+    await expect(loadedTile).toHaveAttribute("data-open");
+    await dialog.getByRole("button", { name: "Open environment" }).click();
+    await expect(dialog).toBeHidden();
+    await expect(trigger).toContainText(name);
+
+    await openEnvironmentsDialog(page);
+    await dialog.getByRole("option", { name: loadedName, exact: true }).click();
+    await dialog.getByRole("button", { name: "Open environment" }).click();
+    await expect(dialog).toBeHidden();
+    await expect(trigger).toContainText(loadedName);
+    await openStoredEnvironment(page, name);
+    await expect(trigger).toContainText(name);
+});
+
+test("@a11y environment picker has no serious accessibility violations", async ({ page }) => {
+    test.setTimeout(300_000);
+    await openWorkspace(page);
+    await openEnvironmentsDialog(page);
+    const results = await new AxeBuilder({ page })
+        .include(".sf-environment-picker")
+        .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+        .analyze();
+    expect(results.violations.filter((entry) => ["serious", "critical"].includes(entry.impact))).toEqual([]);
 });
 
 test("@a11y ED-08 creation dialog has no serious accessibility violations", async ({ page }) => {

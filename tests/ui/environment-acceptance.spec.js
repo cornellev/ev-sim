@@ -1,5 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
+import { openEnvironmentsDialog } from "./helpers/environment-picker.js";
 
 const PANE_LAYOUT_KEY = "cev-sim.ui.environmentEditor.paneLayout";
 const CATALOG_COUNT = 800;
@@ -29,11 +30,7 @@ async function openEditor(page) {
 }
 
 async function openCreation(page) {
-    const environments = page.getByRole("dialog", { name: "Environments" });
-    if (!await environments.isVisible()) {
-        await page.getByRole("button", { name: "Environment", exact: true }).click();
-    }
-    await expect(environments).toBeVisible();
+    const environments = await openEnvironmentsDialog(page);
     await environments.getByRole("button", { name: "New", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "Create environment" });
     await expect(dialog).toBeVisible();

@@ -76,7 +76,7 @@ ED PR changes a contract, hash, gate, or milestone status.
   proxies are set up; LiDAR authoring supports generated meshes and editable
   primitives.
 - Default implementation/review reasoning level: **Extra High**.
-- Last updated: **2026-09-13 — ED-09 implemented**.
+- Last updated: **2026-09-14 — map pending-drag, chrome isolation, WebGL suspend**.
 
 ## Normative contracts
 
@@ -998,6 +998,41 @@ Record in the ledger: focused-suite pass counts, `npm run lint` result,
   `6ca2ece3d5266822a2ceabba72e5f7dd9514789e76757e86f6aedd2730ab9a6a`.
 
 ## Decision log
+
+### 2026-09-14 — Map pending-drag, chrome isolation, and WebGL suspend
+
+Editor-chrome maintenance for Map view with a loaded GLB. Select-tool object
+hits stay pending until a 4px pointer move (`PAN_DRAG_THRESHOLD`); the gesture
+`start` is the pointer-down world point so a click does not teleport an asset
+origin to the cursor. Workspace and toolbar React subscribers filter on
+`editorChromeKey` so pan/zoom/draft/cursor updates do not rebuild Radix
+tooltips. Map mode sets `SimulationEngine.sceneRenderEnabled` false so the
+hidden Three.js canvas does not draw the GLB every frame. Schema v4,
+`worldHash`, REST, and fixture hashes are unchanged. This is not an ED
+milestone.
+
+### 2026-09-14 — Scene leases apply published appearance textures
+
+Editor-asset display maintenance so a GLTF Tile or catalog instance shows its
+JPEG/PNG/KTX2 maps in the world scene, placement ghost, and catalog thumbnail.
+`AssetModelLoader.acquireRevision` applies `revision.appearance` per material
+onto the compiled mesh lease; compiled appearance GLB bytes, `compiledAppearanceUse`
+identity, schema v4, `worldHash`, and fixture hashes are unchanged
+(`60dc0bd2b02a9ec768f833070ce4d8d2047f5383838f09ea3f130dd31552dd6f` and
+`6ca2ece3d5266822a2ceabba72e5f7dd9514789e76757e86f6aedd2730ab9a6a`). This is
+not an ED milestone. Asset Studio still authors from source `modelUseHash`.
+
+### 2026-09-14 — Environment picker popup
+
+Editor-chrome maintenance: the top-bar environment control is a two-pane
+`DialogSurface` picker instead of an anchored dropdown. Single-click inspects;
+a native double-click or **Open environment** loads. Catalog summaries add a
+derived `sourceKind` (`blank` | `google` | `gltf`) for picker icons. It is not
+persisted on the manifest, does not enter `worldHash`, and does not change
+schema v4, REST routes, or `CommandBus` history. This is not an ED milestone
+and does not change fixture hashes
+(`60dc0bd2b02a9ec768f833070ce4d8d2047f5383838f09ea3f130dd31552dd6f` and
+`6ca2ece3d5266822a2ceabba72e5f7dd9514789e76757e86f6aedd2730ab9a6a`).
 
 ### 2026-09-14 — Unpack packed GLB textures at import
 

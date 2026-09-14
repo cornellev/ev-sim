@@ -33,7 +33,7 @@ export class AssetPlacementController {
         const assets = this.environment?.assets?.();
         try {
             const revision = await assets.repository.getRevision(payload.assetId, payload.revision);
-            const lease = await assets.models.acquire(revision.modelUseHash);
+            const lease = await assets.models.acquireRevision(revision);
             if (generation !== this.generation || !this.payload) {
                 lease.release();
                 return null;

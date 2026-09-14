@@ -83,7 +83,7 @@ export class AssetRepository {
         }, signal);
         const models = previewRenderer?.models;
         if (!models) throw new TypeError("Thumbnail rendering requires the shared model loader.");
-        const lease = await models.acquire(record.modelUseHash, { signal });
+        const lease = await models.acquireRevision(record, { signal });
         let uploadId = null;
         try {
             const blob = await previewRenderer.render(lease, { signal });

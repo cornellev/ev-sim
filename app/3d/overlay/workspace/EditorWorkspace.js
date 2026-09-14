@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EDITOR_MODES } from "../../editor/EditorState";
+import { editorChromeKey } from "../../editor/workspace/editorChromeKey.js";
 import { fitMapViewportToContent, hydrateDocumentFromRuntime } from "../../editor/document/documentRuntimeHydration";
 import {
     PANE_IDS,
@@ -77,14 +78,19 @@ export function EditorWorkspace({ data, activeEnvironmentId, onEnvironmentChange
     useEffect(() => {
         const editor = data?.editor?.();
         if (!editor) return undefined;
-        let lastKey = null;
+        let lastChromeKey = null;
+        let lastViewOptionsKey = null;
         return editor.subscribe((snapshot) => {
-            setEditorSnapshot(snapshot);
+            const chromeKey = editorChromeKey(snapshot);
+            if (chromeKey !== lastChromeKey) {
+                lastChromeKey = chromeKey;
+                setEditorSnapshot(snapshot);
+            }
             if (typeof editor.viewOptionsSnapshot !== "function") return;
             const options = editor.viewOptionsSnapshot();
             const key = JSON.stringify(options);
-            if (key === lastKey) return;
-            lastKey = key;
+            if (key === lastViewOptionsKey) return;
+            lastViewOptionsKey = key;
             writeEnvironmentEditorPreference(ENVIRONMENT_EDITOR_PREFERENCE_KEYS.VIEW_OPTIONS, options);
         });
     }, [data]);
@@ -180,6 +186,10 @@ export function EditorWorkspace({ data, activeEnvironmentId, onEnvironmentChange
         host.setVisible(authoredVisible && importVisible && sceneTabActive && !inMap);
         return () => host.setVisible(authoredVisible);
     }, [data, earthImportActive, editorSnapshot?.earthImport?.tilesVisible, inMap, sceneTabActive]);
+    useEffect(() => {
+        data?.simulation?.()?.setSceneRenderEnabled?.(!inMap);
+        return () => data?.simulation?.()?.setSceneRenderEnabled?.(true);
+    }, [data, inMap]);
     const template = paneGridTemplate(layout, WORKSPACE_CHROME);
     const emptyDocument = { roads: { nodes: [], edges: [] }, buildings: [], features: [] };
     const mapSelection = inMap ? mapSelectionFromSelection(selectionSnapshot, documentSnapshot) : null;
@@ -292,7 +302,6 @@ export function EditorWorkspace({ data, activeEnvironmentId, onEnvironmentChange
                     {inMap && (
                         <MapSurface
                             data={data}
-                            editorSnapshot={editorSnapshot}
                             documentSnapshot={documentSnapshot ?? emptyDocument}
                             mapSelection={mapSelection}
                         />

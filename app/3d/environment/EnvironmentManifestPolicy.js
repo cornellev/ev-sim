@@ -519,12 +519,37 @@ export function assertExpectedRevision(expectedRevision, currentRevision, label 
     return current;
 }
 
+/**
+ * Catalog-only origin for picker icons. Not persisted; `templateId` stays
+ * `blank` | `igvc` even for Google Earth and GLTF Tile worlds.
+ *
+ * @returns {"blank" | "google" | "gltf"}
+ */
+export function environmentSourceKind(manifest = {}) {
+    const document = manifest?.document && typeof manifest.document === "object" ? manifest.document : {};
+    const objects = Array.isArray(document.objects) ? document.objects : [];
+    const tile = objects.find((record) => record && (record.typeId === "tile" || record.id === "tile")) ?? null;
+    const tileProvider = tile?.components?.tile?.provider ?? document.earth?.tileProvider ?? null;
+    if (
+        tile?.typeVersion === 2
+        || tileProvider === "gltf"
+        || (tile?.components?.asset && typeof tile.components.asset === "object")
+    ) {
+        return "gltf";
+    }
+    if (document.earth || tile?.typeVersion === 1 || tileProvider === "google-photorealistic") {
+        return "google";
+    }
+    return "blank";
+}
+
 export function environmentSummaryFields(manifest, { builtIn = false, fallbackName = null } = {}) {
     const id = manifest.environmentId;
     return {
         id,
         name: String(manifest.name ?? fallbackName ?? id).trim() || String(fallbackName ?? id),
         templateId: manifest.templateId ?? (id === "igvc" ? "igvc" : "blank"),
+        sourceKind: environmentSourceKind(manifest),
         builtIn,
         revision: environmentRevisionOf(manifest),
         updatedAt: manifest.updatedAt ?? null,

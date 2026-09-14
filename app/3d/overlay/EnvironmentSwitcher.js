@@ -1,60 +1,91 @@
 'use client';
 
-import { useEffect, useMemo, useState } from "react";
-import {
-    IconChevronDown as FaChevronDown,
-    IconCopy as FaCopy,
-    IconId as FaId,
-    IconInfoCircle as FaInfoCircle,
-    IconPencil as FaPen,
-    IconPlus as FaPlus,
-    IconTrash as FaTrash,
-} from "@tabler/icons-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { IconChevronDown } from "@tabler/icons-react";
+import { Button, DialogSurface } from "../../ui";
 import {
     changeEnvironmentId,
     deleteEnvironment,
     duplicateEnvironment,
     environmentIdFromName,
+    isValidEnvironmentId,
     listEnvironments,
     renameEnvironment,
 } from "../environment/EnvironmentCatalogClient";
+import {
+    canEditIdentity,
+    inspectEnvironment,
+    shouldLoadOnOpen,
+} from "../environment/environmentPickerModel";
 import { EnvironmentCreationDialog } from "./workspace/EnvironmentCreationDialog";
+import { EnvironmentPickerDialog, environmentKindIcon } from "./EnvironmentPickerDialog";
 
 export function EnvironmentSwitcher({ data, activeEnvironmentId, onEnvironmentChange }) {
     const [open, setOpen] = useState(false);
+    const [instant, setInstant] = useState(false);
     const [environments, setEnvironments] = useState([]);
+    const [listLoaded, setListLoaded] = useState(false);
+    const [inspectedId, setInspectedId] = useState(null);
     const [name, setName] = useState("");
     const [environmentId, setEnvironmentId] = useState("");
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState(null);
     const [creationId, setCreationId] = useState(null);
+    const activeEnvironmentIdRef = useRef(activeEnvironmentId);
+    activeEnvironmentIdRef.current = activeEnvironmentId;
 
     const active = useMemo(
-        () => environments.find((environment) => environment.id === activeEnvironmentId) ?? null,
+        () => inspectEnvironment(environments, activeEnvironmentId),
         [activeEnvironmentId, environments],
     );
+    const inspected = useMemo(
+        () => inspectEnvironment(environments, inspectedId) ?? active,
+        [active, environments, inspectedId],
+    );
+    const ActiveKindIcon = environmentKindIcon(active?.sourceKind);
 
     const refresh = async () => {
         const items = await listEnvironments();
         setEnvironments(Array.isArray(items) ? items : []);
+        setListLoaded(true);
+        return Array.isArray(items) ? items : [];
     };
 
     useEffect(() => {
-        refresh().catch((loadError) => setError(loadError.message));
+        refresh().catch((loadError) => {
+            setListLoaded(true);
+            setError(loadError.message);
+        });
     }, []);
 
     useEffect(() => {
+        if (!open) return undefined;
+        setInspectedId(activeEnvironmentIdRef.current ?? null);
+        void refresh().catch((loadError) => setError(loadError.message));
+        return undefined;
+    }, [open]);
+
+    useEffect(() => {
         if (!open) return;
-        setName(active?.name ?? "");
-        setEnvironmentId(active?.id ?? "");
-    }, [active?.id, active?.name, open]);
+        setName(inspected?.name ?? "");
+        setEnvironmentId(inspected?.id ?? "");
+    }, [inspected?.id, inspected?.name, open]);
+
+    useEffect(() => {
+        if (!open && !creationId) return undefined;
+        window.__fusionEnvironmentDialogConsumesEscape = true;
+        return () => {
+            window.__fusionEnvironmentDialogConsumesEscape = false;
+        };
+    }, [creationId, open]);
 
     const run = async (operation) => {
         setBusy(true);
         setError(null);
         try {
-            await operation();
+            const nextInspectedId = await operation();
             await refresh();
+            if (typeof nextInspectedId === "string") setInspectedId(nextInspectedId);
         } catch (operationError) {
             setError(operationError.message);
         } finally {
@@ -68,89 +99,124 @@ export function EnvironmentSwitcher({ data, activeEnvironmentId, onEnvironmentCh
         return `${base}-${Date.now().toString(36)}`;
     };
 
-    const duplicateActive = () => {
-        if (!active) return;
-        const displayName = name.trim() || `${active.name} Copy`;
+    const inspectingActive = inspected?.id === activeEnvironmentId;
+
+    const expectedRevisionFor = (entry) => {
+        if (entry?.id === activeEnvironmentId) {
+            return data?.environment?.()?.persistence?.acknowledgedRevision ?? entry.revision ?? 0;
+        }
+        return entry?.revision ?? 0;
+    };
+
+    const flushInspectedIfActive = async ({ discard = false } = {}) => {
+        const persistence = data?.environment?.()?.persistence;
+        if (!inspectingActive) return persistence;
+        await persistence?.flush?.({ throwOnError: true });
+        if (discard) await persistence?.discard?.();
+        return persistence;
+    };
+
+    const openInspected = (id) => {
+        const targetId = typeof id === "string" && id ? id : inspected?.id;
+        if (busy || !targetId) return;
+        if (shouldLoadOnOpen(targetId, activeEnvironmentId)) onEnvironmentChange?.(targetId);
+        setOpen(false);
+    };
+
+    const duplicateInspected = () => {
+        if (!inspected) return;
+        const displayName = name.trim() || `${inspected.name} Copy`;
         const id = uniqueId(displayName);
         run(async () => {
-            await data?.environment?.()?.persistence?.flush?.({ throwOnError: true });
-            await duplicateEnvironment(active.id, {
+            await flushInspectedIfActive();
+            await duplicateEnvironment(inspected.id, {
                 id,
                 name: displayName,
-                expectedRevision: data?.environment?.()?.persistence?.acknowledgedRevision ?? active.revision ?? 0,
+                expectedRevision: expectedRevisionFor(inspected),
             });
-            onEnvironmentChange?.(id);
-            setOpen(false);
+            return id;
         });
     };
 
-    const renameActive = () => {
-        if (!active || !name.trim()) return;
+    const renameInspected = () => {
+        if (!inspected || !name.trim()) return;
         run(async () => {
-            await data?.environment?.()?.persistence?.flush?.({ throwOnError: true });
+            await flushInspectedIfActive();
             const renamed = await renameEnvironment(
-                active.id,
+                inspected.id,
                 name.trim(),
-                data?.environment?.()?.persistence?.acknowledgedRevision ?? active.revision ?? 0,
+                expectedRevisionFor(inspected),
             );
-            if (data?.environment?.() && renamed?.name) {
+            if (inspectingActive && data?.environment?.() && renamed?.name) {
                 data.environment().name = renamed.name;
             }
         });
     };
 
-    const changeActiveId = () => {
+    const changeInspectedId = () => {
         const nextId = environmentId.trim();
-        if (!active || nextId === active.id || !isValidEnvironmentId(nextId)) return;
+        if (!canEditIdentity(inspected) || nextId === inspected.id || !isValidEnvironmentId(nextId)) return;
         run(async () => {
-            const persistence = data?.environment?.()?.persistence;
-            await persistence?.flush?.({ throwOnError: true });
-            await persistence?.discard?.();
+            const persistence = await flushInspectedIfActive({ discard: inspectingActive });
             try {
                 const moved = await changeEnvironmentId(
-                    active.id,
+                    inspected.id,
                     nextId,
-                    persistence?.acknowledgedRevision ?? active.revision ?? 0,
+                    expectedRevisionFor(inspected),
                 );
-                onEnvironmentChange?.(moved?.environmentId ?? nextId);
-                setOpen(false);
+                const resolvedId = moved?.environmentId ?? nextId;
+                if (inspectingActive) {
+                    onEnvironmentChange?.(resolvedId);
+                    setOpen(false);
+                }
+                return resolvedId;
             } catch (changeError) {
-                persistence?.attach?.();
-                if (persistence && data?.environment?.()) {
-                    data.environment().persistence = persistence;
+                if (inspectingActive) {
+                    persistence?.attach?.();
+                    if (persistence && data?.environment?.()) {
+                        data.environment().persistence = persistence;
+                    }
                 }
                 throw changeError;
             }
         });
     };
 
-    const removeActive = () => {
-        if (!active || active.builtIn) return;
-        if (!window.confirm(`Delete "${active.name}"? This cannot be undone.`)) return;
+    const removeInspected = () => {
+        if (!canEditIdentity(inspected)) return;
+        if (!window.confirm(`Delete "${inspected.name}"? This cannot be undone.`)) return;
+        const deletingActive = inspectingActive;
         run(async () => {
-            const persistence = data?.environment?.()?.persistence;
-            await persistence?.flush?.({ throwOnError: true });
-            await persistence?.discard?.();
+            const persistence = await flushInspectedIfActive({ discard: deletingActive });
             try {
-                await deleteEnvironment(
-                    active.id,
-                    persistence?.acknowledgedRevision ?? active.revision ?? 0,
-                );
+                await deleteEnvironment(inspected.id, expectedRevisionFor(inspected));
             } catch (deleteError) {
-                persistence?.attach?.();
+                if (deletingActive) persistence?.attach?.();
                 throw deleteError;
             }
-            onEnvironmentChange?.("igvc");
-            setOpen(false);
+            if (deletingActive) {
+                onEnvironmentChange?.("igvc");
+                setOpen(false);
+                return undefined;
+            }
+            return activeEnvironmentId ?? null;
         });
     };
 
+    const beginCreate = () => {
+        setOpen(false);
+        setCreationId(uniqueId("Untitled Environment"));
+    };
+
     return (
-        <div className="relative z-40 pointer-events-auto text-zinc-100" data-environment-switcher>
+        <div className="relative z-40 pointer-events-auto" data-environment-switcher>
             {creationId && <EnvironmentCreationDialog
                 data={data}
                 initialId={creationId}
-                onCancel={() => setCreationId(null)}
+                onCancel={() => {
+                    setCreationId(null);
+                    setOpen(true);
+                }}
                 onCreated={(id) => {
                     setCreationId(null);
                     setOpen(false);
@@ -160,138 +226,59 @@ export function EnvironmentSwitcher({ data, activeEnvironmentId, onEnvironmentCh
             />}
             <button
                 type="button"
-                className="flex h-8 min-w-[190px] max-w-[320px] items-center justify-between gap-3 rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-950/90 px-3 text-left transition-colors hover:border-zinc-600 hover:bg-zinc-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/60"
-                onClick={() => setOpen((value) => !value)}
+                className="sf-button sf-button--compact sf-environment-switcher__trigger"
+                onClick={(event) => {
+                    setInstant(event.detail === 0);
+                    setOpen(true);
+                }}
                 aria-expanded={open}
                 aria-haspopup="dialog"
                 aria-label="Environment"
             >
-                <span className="min-w-0">
-                    <span className="block truncate text-[13px] font-semibold text-zinc-100">
-                        {active?.name ?? activeEnvironmentId ?? "Loading"}
-                    </span>
+                <span className="sf-environment-switcher__trigger-copy">
+                    {active && <ActiveKindIcon size={14} stroke={1.75} aria-hidden="true" />}
+                    <span>{active?.name ?? activeEnvironmentId ?? "Loading"}</span>
                 </span>
-                <FaChevronDown className={`h-3 w-3 text-zinc-400 transition-transform ${open ? "rotate-180" : ""}`} />
+                <IconChevronDown
+                    size={12}
+                    stroke={1.75}
+                    aria-hidden="true"
+                    className="sf-environment-switcher__chevron"
+                    data-open={open || undefined}
+                />
             </button>
-
-            {open && (
-                <div role="dialog" aria-label="Environments" className="absolute left-0 top-full mt-2 w-[320px] overflow-hidden rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-950/95 shadow-[0_20px_70px_rgba(0,0,0,0.55)]">
-                    <div className="max-h-52 overflow-y-auto p-2">
-                        {environments.map((environment) => (
-                            <button
-                                type="button"
-                                key={environment.id}
-                                onClick={() => {
-                                    onEnvironmentChange?.(environment.id);
-                                    setOpen(false);
-                                }}
-                                className={`flex w-full items-center justify-between rounded-[var(--radius)] px-3 py-2 text-left transition-colors ${
-                                    environment.id === activeEnvironmentId
-                                        ? "bg-sky-500/15 text-sky-100"
-                                        : "text-zinc-300 hover:bg-zinc-800/80 hover:text-white"
-                                }`}
-                            >
-                                <span className="truncate text-[12px] font-medium">{environment.name}</span>
-                                <span className="ml-3 text-[11px] uppercase tracking-wider text-zinc-500">
-                                    {environment.templateId != "blank" ? "sourced from " + environment.templateId : ""}
-                                </span>
-                            </button>
-                        ))}
-                    </div>
-
-                    <div className="border-t border-zinc-800 p-3">
-                        <label className="block text-[11px] font-medium uppercase tracking-[0.14em] text-zinc-500">
-                            Name
-                        </label>
-                        <input
-                            value={name}
-                            onChange={(event) => setName(event.target.value)}
-                            className="mt-1.5 w-full rounded-[var(--radius)] border border-zinc-700 bg-zinc-900 px-3 py-2 text-[12px] text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-sky-500/70 focus:ring-2 focus:ring-sky-500/20"
-                            placeholder="Environment name"
-                            disabled={busy}
-                        />
-                        <div className="mt-3 flex gap-2 rounded-[var(--radius)] border border-sky-900/60 bg-sky-950/30 px-2.5 py-2 text-[11px] leading-relaxed text-sky-200/80">
-                            <FaInfoCircle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
-                            <p id="environment-id-help">
-                                The ID is the stable storage key. Changing it moves this environment; existing scenario and run references are not updated.
-                            </p>
-                        </div>
-                        <label className="mt-3 block text-[11px] font-medium uppercase tracking-[0.14em] text-zinc-500">
-                            Environment ID
-                        </label>
-                        <input
-                            value={environmentId}
-                            onChange={(event) => setEnvironmentId(event.target.value.toLowerCase())}
-                            className="mt-1.5 w-full rounded-[var(--radius)] border border-zinc-700 bg-zinc-900 px-3 py-2 font-mono text-[12px] text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-sky-500/70 focus:ring-2 focus:ring-sky-500/20 disabled:cursor-not-allowed disabled:opacity-50"
-                            placeholder="environment-id"
-                            disabled={busy || !active || active.builtIn}
-                            aria-describedby="environment-id-help"
-                            autoCapitalize="none"
-                            autoCorrect="off"
-                            spellCheck={false}
-                        />
-                        {environmentId && !isValidEnvironmentId(environmentId.trim()) && (
-                            <p className="mt-1.5 text-[11px] leading-relaxed text-amber-300">
-                                Use lowercase letters, numbers, and single hyphens.
-                            </p>
-                        )}
-                        {error && <p className="mt-2 text-[11px] leading-relaxed text-red-300">{error}</p>}
-
-                        <div className="mt-3 grid grid-cols-2 gap-1.5">
-                            <ActionButton
-                                icon={FaPlus}
-                                label="New"
-                                onClick={() => setCreationId(uniqueId("Untitled Environment"))}
-                                disabled={busy}
-                            />
-                            <ActionButton icon={FaCopy} label="Duplicate" onClick={duplicateActive} disabled={busy || !active} />
-                            <ActionButton icon={FaPen} label="Rename" onClick={renameActive} disabled={busy || !active || !name.trim()} />
-                            <ActionButton
-                                icon={FaId}
-                                label="Change ID"
-                                onClick={changeActiveId}
-                                disabled={
-                                    busy
-                                    || !active
-                                    || active.builtIn
-                                    || environmentId.trim() === active.id
-                                    || !isValidEnvironmentId(environmentId.trim())
-                                }
-                            />
-                            <ActionButton
-                                icon={FaTrash}
-                                label="Delete"
-                                onClick={removeActive}
-                                disabled={busy || !active || active.builtIn}
-                                destructive
-                                wide
-                            />
-                        </div>
-                    </div>
-                </div>
-            )}
+            <DialogSurface
+                open={open}
+                onOpenChange={setOpen}
+                title="Environments"
+                description=""
+                className="sf-environment-picker"
+                instant={instant}
+                headerActions={(
+                    <Button size="compact" onClick={beginCreate} disabled={busy}>
+                        New
+                    </Button>
+                )}
+            >
+                <EnvironmentPickerDialog
+                    environments={environments}
+                    inspected={inspected}
+                    activeEnvironmentId={activeEnvironmentId}
+                    name={name}
+                    environmentId={environmentId}
+                    busy={busy}
+                    error={error}
+                    listLoaded={listLoaded}
+                    onInspect={setInspectedId}
+                    onOpen={openInspected}
+                    onNameChange={setName}
+                    onEnvironmentIdChange={setEnvironmentId}
+                    onDuplicate={duplicateInspected}
+                    onRename={renameInspected}
+                    onChangeId={changeInspectedId}
+                    onDelete={removeInspected}
+                />
+            </DialogSurface>
         </div>
     );
-}
-
-function ActionButton({ icon: Icon, label, onClick, disabled, destructive = false, wide = false }) {
-    return (
-        <button
-            type="button"
-            onClick={onClick}
-            disabled={disabled}
-            className={`flex items-center justify-center gap-2 rounded-[var(--radius)] border px-2 py-2 text-[11px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-35 ${wide ? "col-span-2" : ""} ${
-                destructive
-                    ? "border-red-900/60 bg-red-950/30 text-red-300 hover:bg-red-950/60"
-                    : "border-zinc-700 bg-zinc-900 text-zinc-300 hover:border-zinc-600 hover:bg-zinc-800 hover:text-white"
-            }`}
-        >
-            <Icon className="h-2.5 w-2.5" />
-            {label}
-        </button>
-    );
-}
-
-function isValidEnvironmentId(value) {
-    return /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value);
 }

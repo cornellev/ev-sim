@@ -191,6 +191,7 @@ const BUILT_IN_ENVIRONMENTS = Object.freeze([
         name: "IGVC",
         templateId: "igvc",
         builtIn: true,
+        sourceKind: "blank",
     },
 ]);
 

@@ -5,6 +5,7 @@ import * as THREE from "three";
 import { EDITOR_MODES, EDITOR_TOOLS, MAP_TOOLS } from "../app/3d/editor/EditorState.js";
 import { resetDocumentIdCounter } from "../app/3d/editor/document/EnvironmentDocument.js";
 import { objectCommands } from "../app/3d/editor/commands/index.js";
+import { placeAssetInstance } from "../app/3d/editor/commands/assetCommands.js";
 import { MapPointerController } from "../app/3d/editor/map/MapPointerController.js";
 import { handleMapDelete, handleRoadPenClick, handleFeaturePlace, handleBuildingRectDown, handleBuildingRectMove, handleBuildingRectUp } from "../app/3d/editor/map/MapToolLogic.js";
 import { EditorToolController } from "../app/3d/editor/tools/EditorToolController.js";
@@ -224,13 +225,24 @@ test("ED-04 map gestures drag nodes and props through the bus, commit a road str
         documentSnapshot: document.snapshot(),
         getWorldFromEvent: (event) => ({ x: event.worldX, z: event.worldZ }),
     };
-    const pointer = (worldX, worldZ, extra = {}) => ({ button: 0, clientX: 0, clientY: 0, worldX, worldZ, ...extra });
+    const pointer = (worldX, worldZ, extra = {}) => ({ button: 0, clientX: worldX, clientY: worldZ, worldX, worldZ, ...extra });
+
+    // Click without movement selects and does not start a gesture.
+    const n0Before = [document.getNode("n0").x, document.getNode("n0").z];
+    assert.equal(controller.handlePointerDown(ctx, pointer(0, 0)), true);
+    assert.equal(controller.activeInteraction.mode, "pending-object");
+    assert.equal(bus.activeGesture, null);
+    controller.handlePointerUp(ctx, pointer(0, 0));
+    assert.deepEqual([document.getNode("n0").x, document.getNode("n0").z], n0Before);
+    assert.equal(bus.history.length, 0);
 
     // Drag the free endpoint n0.
     assert.equal(controller.handlePointerDown(ctx, pointer(0, 0)), true);
+    assert.equal(controller.activeInteraction.mode, "pending-object");
+    assert.equal(bus.activeGesture, null);
+    controller.handlePointerMove(ctx, pointer(-6, 2));
     assert.equal(controller.activeInteraction.type, "move-node");
     assert.ok(bus.activeGesture);
-    controller.handlePointerMove(ctx, pointer(-6, 2));
     assert.deepEqual([document.getNode("n0").x, document.getNode("n0").z], [-6, 2]);
     controller.handlePointerUp(ctx, pointer(-6, 2));
     assert.equal(bus.activeGesture, null);
@@ -257,9 +269,10 @@ test("ED-04 map gestures drag nodes and props through the bus, commit a road str
 
     // Feature drag.
     controller.handlePointerDown(ctx, pointer(60, 44));
-    assert.equal(controller.activeInteraction.type, "move-feature");
+    assert.equal(controller.activeInteraction.mode, "pending-object");
     assert.deepEqual(selection.ids, ["feature-cone"]);
     controller.handlePointerMove(ctx, pointer(62, 40));
+    assert.equal(controller.activeInteraction.type, "move-feature");
     controller.handlePointerUp(ctx, pointer(62, 40));
     assert.deepEqual([document.getFeature("feature-cone").x, document.getFeature("feature-cone").z], [62, 40]);
     assert.deepEqual(registry.getEntity("fusion:feature-cone").object3D.position.toArray(), [62, 0, 40]);
@@ -321,4 +334,66 @@ test("ED-04 map gestures drag nodes and props through the bus, commit a road str
     assert.equal(registry.getEntity(`building:${rect.record.buildingId}`), null);
     assert.deepEqual(selection.ids, []);
     assert.deepEqual(handleMapDelete({ data, objectIds: [] }), { ok: false, error: "Nothing selected." });
+});
+
+test("map asset click selects without moving; drag follows the pointer delta", async () => {
+    const harness = await createEditorHarness();
+    const { data, document, selection, bus } = harness;
+    const editor = data.editor();
+    editor.setEditorMode(EDITOR_MODES.MAP);
+    editor.setMapSnapEnabled(false);
+    editor.setMapViewport({ centerX: 500, centerZ: 500, zoom: 1 });
+    const placed = bus.execute(placeAssetInstance({
+        record: {
+            id: "asset-map-1",
+            typeId: "asset-instance",
+            typeVersion: 1,
+            name: "Crate",
+            parentId: null,
+            order: 0,
+            components: {
+                tags: [],
+                locked: false,
+                editorHidden: false,
+                asset: {
+                    assetId: "crate",
+                    revision: 1,
+                    position: { x: 500, y: 0, z: 500 },
+                    rotationY: 0,
+                    scale: { x: 1, y: 1, z: 1 },
+                    overrides: {},
+                },
+            },
+        },
+    }));
+    assert.equal(placed.ok, true, JSON.stringify(placed.issues));
+    const historyAfterPlace = bus.history.length;
+    const controller = new MapPointerController();
+    const ctx = {
+        data,
+        size: { width: 800, height: 600 },
+        layers: { buildings: true, roads: true, props: true },
+        showDetail: true,
+        documentSnapshot: document.snapshot(),
+        getWorldFromEvent: (event) => ({ x: event.worldX, z: event.worldZ }),
+    };
+    const pointer = (worldX, worldZ, extra = {}) => ({ button: 0, clientX: worldX, clientY: worldZ, worldX, worldZ, ...extra });
+
+    assert.equal(controller.handlePointerDown(ctx, pointer(500.2, 500)), true);
+    assert.equal(controller.activeInteraction.mode, "pending-object");
+    assert.deepEqual(selection.ids, ["asset-map-1"]);
+    assert.equal(bus.activeGesture, null);
+    controller.handlePointerUp(ctx, pointer(500.2, 500));
+    assert.deepEqual(document.getObject("asset-map-1").components.asset.position, { x: 500, y: 0, z: 500 });
+    assert.equal(bus.history.length, historyAfterPlace);
+
+    assert.equal(controller.handlePointerDown(ctx, pointer(500.2, 500)), true);
+    controller.handlePointerMove(ctx, pointer(505.2, 500));
+    assert.equal(controller.activeInteraction.type, "move-asset");
+    assert.ok(bus.activeGesture);
+    assert.deepEqual(document.getObject("asset-map-1").components.asset.position, { x: 505, y: 0, z: 500 });
+    controller.handlePointerUp(ctx, pointer(505.2, 500));
+    assert.equal(bus.activeGesture, null);
+    assert.deepEqual(document.getObject("asset-map-1").components.asset.position, { x: 505, y: 0, z: 500 });
+    assert.equal(bus.history.length, historyAfterPlace + 1);
 });

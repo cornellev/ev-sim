@@ -25,7 +25,7 @@ key and can be retried independently of the tile session.
 
 ## Create an environment
 
-Open the environment switcher and choose **New environment**.
+Open the environment picker and choose **New**.
 
 - **Blank** creates empty road, building, feature, and object domains plus the
   Skybox.

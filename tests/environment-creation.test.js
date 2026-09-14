@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { createBlankInitialManifest, createGltfInitialManifest, createGoogleInitialManifest } from "../app/3d/environment/EnvironmentCreation.js";
-import { ENVIRONMENT_EDITOR_SOURCE_DOWNGRADE, assertNoEditorSourceDowngrade, parseEnvironmentWriteEnvelope } from "../app/3d/environment/EnvironmentManifestPolicy.js";
+import { ENVIRONMENT_EDITOR_SOURCE_DOWNGRADE, assertNoEditorSourceDowngrade, environmentSourceKind, parseEnvironmentWriteEnvelope } from "../app/3d/environment/EnvironmentManifestPolicy.js";
 import { createWorldResource } from "../app/simulation/world/WorldDescription.js";
 import { StorageService } from "../server/storage/StorageService.js";
 
@@ -21,12 +21,15 @@ test("ED-08 creation builders produce complete Blank, Google, and GLTF revision-
     const blank = createBlankInitialManifest("blank-one");
     assert.deepEqual(blank.document.roads, { nodes: [], edges: [], turnRules: [] });
     assert.equal(blank.document.objects[0].typeId, "skybox");
+    assert.equal(environmentSourceKind(blank), "blank");
     const google = createGoogleInitialManifest("google-one", { geoFrame: FRAME, source: SOURCE, includeRoads: false });
     assert.deepEqual(google.document.geoFrame, FRAME);
     assert.equal(google.document.objects.find((entry) => entry.id === "tile").typeVersion, 1);
+    assert.equal(environmentSourceKind(google), "google");
     const gltf = createGltfInitialManifest("gltf-one", { assetId: "base", revision: 1, publishedRevision: { version: 1, revision: 1 }, scale: { x: 2, y: 3, z: 4 } });
     const tile = gltf.document.objects.find((entry) => entry.id === "tile");
     assert.equal(tile.typeVersion, 2);
+    assert.equal(environmentSourceKind(gltf), "gltf");
     assert.equal(tile.components.tile.assetTypeVersion, 1);
     assert.deepEqual(tile.components.asset.scale, { x: 2, y: 3, z: 4 });
 });
@@ -50,7 +53,8 @@ test("ED-08 server creates a prepared Google manifest atomically at revision 1",
     assert.equal(created.schemaVersion, 4);
     assert.deepEqual(created.document.geoFrame, FRAME);
     assert.equal(created.document.earth.version, 2);
-    assert.equal((await service.listEnvironments()).filter((entry) => entry.id === "atomic-google").length, 1);
+    const listed = (await service.listEnvironments()).find((entry) => entry.id === "atomic-google");
+    assert.equal(listed?.sourceKind, "google");
 });
 
 test("ED-08 road provenance survives authoring but remains outside metric world identity", () => {

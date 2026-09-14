@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { fitMapViewportToContent } from "../../editor/document/documentRuntimeHydration.js";
 import { isMapDetailZoom } from "../../editor/map/mapCoords.js";
 import { MapSurfaceHud } from "./MapSurfaceHud.js";
@@ -8,17 +8,44 @@ import { MapSurfaceLayers } from "./MapSurfaceLayers.js";
 import { useMapPointerController } from "./useMapPointerController.js";
 import { useMapSize } from "./useMapSize.js";
 
-export function MapSurface({ data, editorSnapshot, documentSnapshot, mapSelection = null }) {
-    const containerRef = useRef(null);
-    const size = useMapSize(containerRef);
-    const [assetEpoch, setAssetEpoch] = useState(0);
-    useEffect(() => data?.environment?.()?.objects?.()?.subscribe?.(() => setAssetEpoch((value) => value + 1)), [data]);
-    const runtimeAssetBounds = new Map(
+function assetBoundsEpoch(entries) {
+    if (!entries?.size) return "";
+    return [...entries]
+        .filter(([, entry]) => entry?.bounds)
+        .map(([id]) => String(id))
+        .sort()
+        .join(",");
+}
+
+function collectAssetBounds(data) {
+    return new Map(
         [...(data?.environment?.()?.projector?.()?.assetInstanceEntries?.() ?? new Map())]
             .filter(([, entry]) => entry.bounds)
             .map(([id, entry]) => [String(id), entry.bounds]),
     );
-    void assetEpoch;
+}
+
+export function MapSurface({ data, documentSnapshot, mapSelection = null }) {
+    const containerRef = useRef(null);
+    const size = useMapSize(containerRef);
+    const [editorSnapshot, setEditorSnapshot] = useState(() => data?.editor?.()?.snapshot?.() ?? null);
+    const [assetEpoch, setAssetEpoch] = useState(0);
+    useEffect(() => data?.editor?.()?.subscribe?.(setEditorSnapshot), [data]);
+    useEffect(() => {
+        const registry = data?.environment?.()?.objects?.();
+        if (!registry?.subscribe) return undefined;
+        let last = assetBoundsEpoch(data?.environment?.()?.projector?.()?.assetInstanceEntries?.());
+        return registry.subscribe(() => {
+            const next = assetBoundsEpoch(data?.environment?.()?.projector?.()?.assetInstanceEntries?.());
+            if (next === last) return;
+            last = next;
+            setAssetEpoch((value) => value + 1);
+        });
+    }, [data]);
+    const runtimeAssetBounds = useMemo(
+        () => collectAssetBounds(data),
+        [data, assetEpoch],
+    );
 
     const viewport = editorSnapshot?.map ?? {
         centerX: 0,

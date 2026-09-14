@@ -505,7 +505,9 @@ test("catalog and MCP summaries include revision", async () => {
         const created = await service.createEnvironment({ id: "yard", name: "Yard" });
         const catalog = await service.listEnvironments();
         assert.equal(catalog.find((entry) => entry.id === "igvc").revision, 0);
+        assert.equal(catalog.find((entry) => entry.id === "igvc").sourceKind, "blank");
         assert.equal(catalog.find((entry) => entry.id === "yard").revision, created.revision);
+        assert.equal(catalog.find((entry) => entry.id === "yard").sourceKind, "blank");
         // The explicit V3 alias still writes v3 for a v3 manifest; a stored v4 file stays v4 (sticky).
         const { objects: _objects, objectGraphVersion: _graphVersion, ...v3Document } = created.document;
         const serialized = serializeEnvironmentManifestV3({ ...created, schemaVersion: 3, document: v3Document }, { environmentId: "yard", revision: 2, current: null });

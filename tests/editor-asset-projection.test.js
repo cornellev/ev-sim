@@ -31,13 +31,16 @@ test("ED-06 projector loads, transforms, picks, and releases editor-only assets 
     registry.subscribe((_snapshot, event) => notificationFlags.push(event.affectsPersistence));
     let releases = 0;
     const models = {
-        async acquire() {
+        async acquire(modelUseHash, options) {
             const root = new THREE.Group();
             root.userData.cevSimVisualPreviewOnly = true;
             const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial());
             mesh.userData.cevSimVisualPreviewOnly = true;
             root.add(mesh);
             return { root, localBounds: new THREE.Box3().setFromObject(root), release() { releases += 1; } };
+        },
+        async acquireRevision(revision, options) {
+            return models.acquire(revision.modelUseHash, options);
         },
     };
     const runtime = { editorAssets: { repository: { async getRevision() { return { modelUseHash: "a".repeat(64) }; } }, models } };
@@ -75,7 +78,7 @@ test("ED-06 delayed completion cannot resurrect a deleted asset instance", async
     let acquisitions = 0;
     const runtime = { editorAssets: {
         repository: { getRevision() { return revision; } },
-        models: { async acquire() { acquisitions += 1; return { root: new THREE.Group(), localBounds: new THREE.Box3(), release() {} }; } },
+        models: { async acquire() { acquisitions += 1; return { root: new THREE.Group(), localBounds: new THREE.Box3(), release() {} }; }, async acquireRevision(revision, options) { return this.acquire(revision.modelUseHash, options); } },
     } };
     const projector = new SceneProjector({ scene, document, registry, runtime }).attach();
     projector.setEditorAssetsEnabled(true);
@@ -86,5 +89,51 @@ test("ED-06 delayed completion cannot resurrect a deleted asset instance", async
     assert.equal(acquisitions, 0);
     assert.equal(registry.getEntity("asset:asset-1"), null);
     assert.equal(scene.children.length, 0);
+    projector.dispose();
+});
+
+test("ED-06 projector applies v2 appearance maps onto the compiled mesh lease", async () => {
+    const scene = new THREE.Scene();
+    const document = new EnvironmentDocument({ objects: [record(2)] });
+    const registry = new EnvironmentRegistry();
+    const map = {
+        isTexture: true, sourceId: "albedo",
+        clone() {
+            return { isTexture: true, sourceId: "albedo", offset: { set() {} }, repeat: { set() {} }, colorSpace: null, flipY: true, matrixAutoUpdate: false, needsUpdate: false, dispose() {} };
+        },
+    };
+    const models = {
+        async acquire() {
+            const root = new THREE.Group();
+            const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial({ name: "mat-a" }));
+            root.add(mesh);
+            return { root, localBounds: new THREE.Box3().setFromObject(root), release() {} };
+        },
+        async acquireRevision(revision, options) {
+            const lease = await models.acquire(revision.modelUseHash, options);
+            if (revision.version !== 2) return lease;
+            lease.root.children[0].material = new THREE.MeshBasicMaterial({ name: "mat-a", map });
+            return lease;
+        },
+    };
+    const runtime = {
+        editorAssets: {
+            repository: {
+                async getRevision() {
+                    return {
+                        version: 2, modelUseHash: "a".repeat(64),
+                        appearance: [{ id: "mat-a", textures: [{ slot: "baseColor", useHash: "t".repeat(64) }] }],
+                    };
+                },
+            },
+            models,
+        },
+    };
+    const projector = new SceneProjector({ data: { simulation: () => ({ render() {} }) }, scene, document, registry, runtime }).attach();
+    projector.setEditorAssetsEnabled(true);
+    await tick();
+    await tick();
+    const mesh = registry.getEntity("asset:asset-1").object3D.children[0];
+    assert.equal(mesh.material.map.sourceId, "albedo");
     projector.dispose();
 });

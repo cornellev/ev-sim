@@ -13,7 +13,7 @@ test("ED-06 catalog placement pins a revision, snaps consistently, commits once,
     const root = new THREE.Group();
     const assets = {
         repository: { async getRevision(assetId, revision) { events.push(["revision", assetId, revision]); return { modelUseHash: "a".repeat(64) }; } },
-        models: { async acquire() { return { root, release() { events.push(["release"]); } }; } },
+        models: { async acquire() { return { root, release() { events.push(["release"]); } }; }, async acquireRevision(revision) { events.push(["acquireRevision", revision.modelUseHash]); return this.acquire(revision.modelUseHash); } },
         instantiation: { async place(input) { events.push(["prepare", input]); return { type: "place" }; } },
     };
     const bus = { execute(command) { events.push(["execute", command]); return { ok: true, result: { objectId: "asset-1" } }; } };

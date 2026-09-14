@@ -80,6 +80,7 @@ export class SimulationEngine {
         this.looping = false;
         this.listeners = new Set();
         this.viewportActive = true;
+        this.sceneRenderEnabled = true;
         this.environmentRuntime = null;
         this.renderRuntime = null;
         this.renderProviderStatus = null;
@@ -460,6 +461,13 @@ export class SimulationEngine {
         this.setWorkspaceActive(active);
     }
 
+    setSceneRenderEnabled(enabled) {
+        const next = enabled !== false;
+        if (this.sceneRenderEnabled === next) return;
+        this.sceneRenderEnabled = next;
+        if (next) this.render();
+    }
+
     async applyRunManifest(resolved, options = {}) {
         if (!resolved?.manifest) throw new Error("Resolved run manifest is required.");
         this.pause();
@@ -507,8 +515,8 @@ export class SimulationEngine {
         if (this.controls) {
             const cameraControlsEnabled = this.modules.controls
                 && this.data.settings()?.cameraControlsEnabled !== false;
-            this.controls.enabled = this.viewportActive && cameraControlsEnabled;
-            if (this.viewportActive && cameraControlsEnabled) this.controls.update();
+            this.controls.enabled = this.viewportActive && this.sceneRenderEnabled && cameraControlsEnabled;
+            if (this.viewportActive && this.sceneRenderEnabled && cameraControlsEnabled) this.controls.update();
         }
 
         if (this.status === "playing") {
@@ -530,7 +538,7 @@ export class SimulationEngine {
             }
             this._emitFrame();
         }
-        if (this.viewportActive && this.modules.rendering) this.render();
+        if (this.viewportActive && this.sceneRenderEnabled && this.modules.rendering) this.render();
         if (this.looping) this.rafId = requestAnimationFrame(this._frame);
     }
 
@@ -691,7 +699,7 @@ export class SimulationEngine {
     }
 
     render() {
-        if (!this.scene || !this.camera || !this.renderer) return;
+        if (!this.sceneRenderEnabled || !this.scene || !this.camera || !this.renderer) return;
         this._applyDisplayPerformance();
         this.data.earthTilesManager?.()?.update?.(this.camera, {
             width: this.renderer.domElement?.width,

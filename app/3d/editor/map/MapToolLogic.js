@@ -104,7 +104,7 @@ export function handleIntersectionPlace({ worldPoint, document, editor, data }) 
  * Begin a node drag. Junction nodes drag through their intersection record;
  * free endpoints drag as a sub-object. Returns the interaction state.
  */
-export function beginNodeDrag({ document, data, nodeId }) {
+export function beginNodeDrag({ document, data, nodeId, worldPoint = null }) {
     const bus = busOf(data);
     const node = getDocumentNode(document, nodeId);
     if (!node) return null;
@@ -116,7 +116,8 @@ export function beginNodeDrag({ document, data, nodeId }) {
     });
     if (!begun.ok) return null;
     if (record) selectionOf(data)?.select(nodeId);
-    return { type: "move-node", nodeId, gestureId: begun.gestureId, start: { x: node.x, z: node.z } };
+    const start = worldPoint ? { x: worldPoint.x, z: worldPoint.z } : { x: node.x, z: node.z };
+    return { type: "move-node", nodeId, gestureId: begun.gestureId, start };
 }
 
 export function updateNodeDrag({ interaction, editor, data, worldPoint }) {
@@ -161,14 +162,15 @@ export function cancelDrag({ interaction, data }) {
     data.simulation()?.render?.();
 }
 
-export function beginFeatureDrag({ document, data, featureId }) {
+export function beginFeatureDrag({ document, data, featureId, worldPoint = null }) {
     const bus = busOf(data);
     const feature = document.getFeature(featureId);
     if (!feature) return null;
     selectionOf(data)?.select(featureId);
     const begun = bus.beginGesture({ objectIds: [featureId], label: "Move prop" });
     if (!begun.ok) return null;
-    return { type: "move-feature", featureId, gestureId: begun.gestureId, start: { x: feature.x, z: feature.z } };
+    const start = worldPoint ? { x: worldPoint.x, z: worldPoint.z } : { x: feature.x, z: feature.z };
+    return { type: "move-feature", featureId, gestureId: begun.gestureId, start };
 }
 
 export function updateFeatureDrag({ interaction, editor, data, worldPoint }) {
@@ -184,14 +186,13 @@ export function finishFeatureDrag({ interaction, editor, data, worldPoint }) {
     return committed;
 }
 
-export function beginAssetDrag({ document, data, objectId }) {
+export function beginAssetDrag({ document, data, objectId, worldPoint }) {
     const record = document.getObject(String(objectId));
-    if (!isAssetBackedObject(record)) return null;
+    if (!isAssetBackedObject(record) || !worldPoint) return null;
     selectionOf(data)?.select(record.id);
     const begun = busOf(data).beginGesture({ objectIds: [record.id], label: "Move asset" });
     if (!begun.ok) return null;
-    const position = record.components.asset.position;
-    return { type: "move-asset", objectId: record.id, gestureId: begun.gestureId, start: { x: position.x, z: position.z } };
+    return { type: "move-asset", objectId: record.id, gestureId: begun.gestureId, start: { x: worldPoint.x, z: worldPoint.z } };
 }
 
 export function updateAssetDrag({ interaction, editor, data, worldPoint }) {

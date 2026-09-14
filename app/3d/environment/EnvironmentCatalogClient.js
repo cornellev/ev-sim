@@ -62,3 +62,7 @@ export function environmentIdFromName(name) {
         .replace(/^-+|-+$/g, "");
     return slug || `environment-${Date.now().toString(36)}`;
 }
+
+export function isValidEnvironmentId(value) {
+    return /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(String(value ?? "").trim());
+}

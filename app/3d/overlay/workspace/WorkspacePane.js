@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from "react";
+import { memo, useMemo } from "react";
 import {
     IconLayoutBottombarCollapse,
     IconLayoutBottombarExpand,
@@ -19,7 +19,7 @@ const COLLAPSE_ICONS = {
 };
 
 /** Pane frame: header with title, actions, and collapse; body fills the rest. Camera orbit is locked while the pointer is inside. */
-export function WorkspacePane({ paneId, title, collapsed, onToggle, actions = null, children, data, className, bodyClassName, style }) {
+export const WorkspacePane = memo(function WorkspacePane({ paneId, title, collapsed, onToggle, actions = null, children, data, className, bodyClassName, style }) {
     const controls = useMemo(() => {
         const settings = data?.settings?.();
         const lock = `environment-pane-${paneId}`;
@@ -80,4 +80,4 @@ export function WorkspacePane({ paneId, title, collapsed, onToggle, actions = nu
             </div>
         </aside>
     );
-}
+});

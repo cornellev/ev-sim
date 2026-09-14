@@ -30,7 +30,7 @@ import {
     snapPoint,
 } from "../app/3d/editor/document/documentMutations.js";
 import { pickMapTarget } from "../app/3d/editor/map/mapHitTest.js";
-import { advancePanDrag, PAN_DRAG_THRESHOLD } from "../app/3d/editor/map/mapPointerInteractions.js";
+import { advancePanDrag, advancePendingObjectDrag, PAN_DRAG_THRESHOLD } from "../app/3d/editor/map/mapPointerInteractions.js";
 import { screenToWorld, worldSizeToScreen, worldToScreen, isMapDetailZoom } from "../app/3d/editor/map/mapCoords.js";
 import { getPlacementAsset, fusionObjectToCatalogType } from "../app/3d/editor/placement/placementCatalogData.js";
 import { hydrateDocumentFromRuntime } from "../app/3d/editor/document/documentRuntimeHydration.js";
@@ -603,4 +603,35 @@ test("advancePanDrag pans immediately when already in pan mode", () => {
 
     assert.deepEqual(next, { x: 15, y: 25, mode: "pan" });
     assert.deepEqual(pans, [{ dx: 5, dy: 5 }]);
+});
+
+test("advancePendingObjectDrag waits for drag threshold before beginning", () => {
+    const begins = [];
+    const pending = {
+        mode: "pending-object",
+        x: 100,
+        y: 200,
+        begin: () => {
+            begins.push(1);
+            return { type: "move-asset", start: { x: 1, z: 2 } };
+        },
+    };
+
+    const unchanged = advancePendingObjectDrag(
+        pending,
+        100 + PAN_DRAG_THRESHOLD - 1,
+        200,
+        (interaction) => interaction.begin(),
+    );
+    assert.equal(unchanged, pending);
+    assert.equal(begins.length, 0);
+
+    const begun = advancePendingObjectDrag(
+        pending,
+        100 + PAN_DRAG_THRESHOLD + 2,
+        200,
+        (interaction) => interaction.begin(),
+    );
+    assert.deepEqual(begun, { type: "move-asset", start: { x: 1, z: 2 } });
+    assert.equal(begins.length, 1);
 });

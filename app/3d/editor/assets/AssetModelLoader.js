@@ -2,6 +2,7 @@ import { sha256ExactBytes, sha256FromUri } from "../../../simulation/visual/Visu
 import { normalizeAssetDefinition } from "../../../editor-assets/AssetDefinition.js";
 import { VisualAssetClient } from "../../environment/visual/VisualAssetClient.js";
 import { createDigestUrlModifier } from "../../environment/visual/VisualGltfUriGuard.js";
+import { applyPublishedAppearance, decodeAppearanceTexture } from "./applyPublishedAppearance.js";
 
 const GLTF_MEDIA = new Set(["model/gltf+json", "model/gltf-binary"]);
 
@@ -177,6 +178,7 @@ export class AssetModelLoader {
         KTX2Loader = null,
         renderer = null,
         parseGltf = null,
+        decodeTexture = null,
     } = {}) {
         this.assetClient = assetClient;
         this.THREE = THREE;
@@ -184,6 +186,7 @@ export class AssetModelLoader {
         this.KTX2Loader = KTX2Loader;
         this.renderer = renderer;
         this.parseGltf = parseGltf;
+        this.decodeTexture = decodeTexture;
         this.entries = new Map();
         this.disposed = false;
     }
@@ -226,6 +229,60 @@ export class AssetModelLoader {
                 }
             },
         };
+    }
+
+    async acquireRevision(revision, { signal } = {}) {
+        if (!revision?.modelUseHash) throw new TypeError("acquireRevision requires a published model use.");
+        const lease = await this.acquire(revision.modelUseHash, { signal });
+        const appearance = revision.version === 2 && Array.isArray(revision.appearance) ? revision.appearance : [];
+        if (appearance.length === 0) return lease;
+        try {
+            const THREE = await this._three();
+            const texturesByUseHash = await this._loadAppearanceTextures(appearance, signal);
+            const disposeAppearance = applyPublishedAppearance({
+                root: lease.root, THREE, appearance, texturesByUseHash,
+            });
+            const sources = [...texturesByUseHash.values()];
+            const release = lease.release;
+            let released = false;
+            return {
+                ...lease,
+                release: () => {
+                    if (released) return;
+                    released = true;
+                    disposeAppearance();
+                    sources.forEach((texture) => texture.dispose?.());
+                    release();
+                },
+            };
+        } catch (error) {
+            lease.release();
+            throw error;
+        }
+    }
+
+    async _loadAppearanceTextures(appearance, signal) {
+        const unique = [...new Set(appearance.flatMap((material) => (material.textures ?? []).map((texture) => texture.useHash)).filter(Boolean))];
+        const texturesByUseHash = new Map();
+        for (const useHash of unique) {
+            throwIfAborted(signal);
+            await this.assetClient.validateClosure({ useHash, operations: ["display"] }, signal);
+            const use = await this.assetClient.getUse(useHash, { signal });
+            const content = await this.assetClient.getUseContent(useHash, { signal });
+            const bytes = content.bytes instanceof Uint8Array ? content.bytes : new Uint8Array(content.bytes);
+            const mediaType = String(content.mediaType ?? "").split(";")[0];
+            if (bytes.byteLength !== use.asset.sizeBytes || mediaType !== use.asset.mediaType || sha256ExactBytes(bytes) !== use.asset.sha256) {
+                throw new Error(`Visual asset use ${useHash} failed byte identity verification.`);
+            }
+            const texture = this.decodeTexture
+                ? await this.decodeTexture(bytes, mediaType)
+                : await decodeAppearanceTexture({
+                    THREE: await this._three(), bytes, mediaType,
+                    KTX2Loader: this.KTX2Loader, renderer: this.renderer,
+                });
+            texturesByUseHash.set(useHash, texture);
+        }
+        return texturesByUseHash;
     }
 
     async _load(modelUseHash, signal) {
@@ -294,6 +351,12 @@ export class AssetModelLoader {
         try {
             const result = await loader.parseAsync(toArrayBuffer(bytes), "");
             throwIfAborted(signal);
+            if (typeof result.parser?.getDependencies === "function" && result.parser.json?.textures?.length) {
+                const textures = await result.parser.getDependencies("texture");
+                if (textures.some((texture) => !texture)) {
+                    throw new Error("A validated glTF texture failed to decode.");
+                }
+            }
             return result;
         } finally {
             urls.forEach((url) => URL.revokeObjectURL(url));

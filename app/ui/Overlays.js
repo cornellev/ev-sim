@@ -21,6 +21,7 @@ export function DialogSurface({
     description,
     children,
     footer,
+    headerActions,
     className,
     instant = false,
     showClose = true,
@@ -35,13 +36,16 @@ export function DialogSurface({
                             <Dialog.Title className="sf-dialog__title">{title}</Dialog.Title>
                             {description && <Dialog.Description className="sf-dialog__description">{description}</Dialog.Description>}
                         </div>
-                        {showClose && (
-                            <Dialog.Close asChild>
-                                <IconButton label="Close" tooltip="Close">
-                                    <IconX size={16} stroke={1.75} />
-                                </IconButton>
-                            </Dialog.Close>
-                        )}
+                        <div className="sf-dialog__header-actions">
+                            {headerActions}
+                            {showClose && (
+                                <Dialog.Close asChild>
+                                    <IconButton label="Close" tooltip="Close">
+                                        <IconX size={16} stroke={1.75} />
+                                    </IconButton>
+                                </Dialog.Close>
+                            )}
+                        </div>
                     </header>
                     <div className="sf-dialog__body">{children}</div>
                     {footer && <footer className="sf-dialog__footer">{footer}</footer>}

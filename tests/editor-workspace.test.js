@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { EDITOR_MODES, EDITOR_TOOLS, EditorState, MAP_TOOLS, TRANSFORM_SPACES } from "../app/3d/editor/EditorState.js";
 import { TOOLBAR_ACTIONS, buildToolbarModel, runToolbarAction } from "../app/3d/editor/workspace/toolbarModel.js";
+import { editorChromeKey } from "../app/3d/editor/workspace/editorChromeKey.js";
 
 function ids(groups, groupId) {
     return groups.find((group) => group.id === groupId)?.items.map((item) => item.id) ?? null;
@@ -124,4 +125,29 @@ test("ED-03 view options are session state: in snapshots and preferences, never 
     assert.equal(editor.snapshot().transformSnap.translation, 2, "non-positive snap steps are rejected");
     editor.setTransformSpace("sideways");
     assert.equal(editor.snapshot().transformSpace, "world");
+});
+
+test("editorChromeKey ignores map pan, zoom, drafts, and road-pen cursor", () => {
+    const editor = new EditorState();
+    const baseline = editorChromeKey(editor.snapshot());
+    editor.setMapViewport({ centerX: 40, centerZ: -12, zoom: 2 });
+    assert.equal(editorChromeKey(editor.snapshot()), baseline);
+    editor.setMapDraft({ type: "building-rect", cornerA: { x: 0, z: 0 }, cornerB: { x: 4, z: 4 } });
+    assert.equal(editorChromeKey(editor.snapshot()), baseline);
+    editor.setRoadDraft({ type: "road-stroke", points: [{ x: 0, y: 0, z: 0 }], cursor: { x: 1, y: 0, z: 1 } });
+    assert.equal(editorChromeKey(editor.snapshot()), baseline);
+    editor.setRoadDraft({ type: "road-stroke", points: [{ x: 0, y: 0, z: 0 }], cursor: { x: 8, y: 0, z: 3 } });
+    assert.equal(editorChromeKey(editor.snapshot()), baseline);
+
+    editor.setEditorMode(EDITOR_MODES.MAP);
+    const mapKey = editorChromeKey(editor.snapshot());
+    assert.notEqual(mapKey, baseline);
+    editor.setActiveMapTool(MAP_TOOLS.ROAD_PEN);
+    assert.notEqual(editorChromeKey(editor.snapshot()), mapKey);
+    editor.setMapSnapEnabled(false);
+    const snapKey = editorChromeKey(editor.snapshot());
+    editor.setMapViewport({ centerX: 99, zoom: 0.5 });
+    assert.equal(editorChromeKey(editor.snapshot()), snapKey);
+    editor.setLayerVisible("roads", false);
+    assert.notEqual(editorChromeKey(editor.snapshot()), snapKey);
 });

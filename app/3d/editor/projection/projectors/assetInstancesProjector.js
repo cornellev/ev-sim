@@ -45,7 +45,7 @@ export function createAssetInstancesProjector() {
             const revision = await context.runtime.editorAssets.repository.getRevision(pin.assetId, pin.revision, { signal: abortController.signal });
             if ((!enabled && !environmentOwned) || epoch !== currentEpoch || entries.get(objectId) !== entry) return;
             entry.modelUseHash = revision.modelUseHash;
-            const lease = await context.runtime.editorAssets.models.acquire(revision.modelUseHash, { signal: abortController.signal });
+            const lease = await context.runtime.editorAssets.models.acquireRevision(revision, { signal: abortController.signal });
             const current = context.document.getObject(objectId);
             if ((!enabled && !environmentOwned) || epoch !== currentEpoch || entries.get(objectId) !== entry
                 || readAssetBinding(current)?.assetId !== pin.assetId

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import {
     IconArrowBackUp,
     IconArrowForwardUp,
@@ -25,6 +25,7 @@ import {
     IconWorld,
 } from "@tabler/icons-react";
 import { IconButton, PopoverSurface } from "../../../ui";
+import { editorChromeKey } from "../../editor/workspace/editorChromeKey.js";
 import { LAYER_ITEMS, TOOLBAR_ACTIONS, buildToolbarModel, runToolbarAction } from "../../editor/workspace/toolbarModel.js";
 import { focusCameraOnSelection } from "../../editor/tools/cameraFocus.js";
 import { MenuToggle } from "../ui/MenuToggle";
@@ -77,13 +78,23 @@ function ToolbarItem({ item, onRun }) {
  * groups the model produces for the current view. Tooltips, accessible
  * names, and pressed state come from `IconButton`.
  */
-export function EditorToolbar({ data }) {
+export const EditorToolbar = memo(function EditorToolbar({ data }) {
     const [editorSnapshot, setEditorSnapshot] = useState(null);
     const [busSnapshot, setBusSnapshot] = useState(null);
     const [selectionSnapshot, setSelectionSnapshot] = useState(null);
     const rootRef = useRef(null);
 
-    useEffect(() => data?.editor?.()?.subscribe?.(setEditorSnapshot), [data]);
+    useEffect(() => {
+        const editor = data?.editor?.();
+        if (!editor?.subscribe) return undefined;
+        let lastKey = null;
+        return editor.subscribe((snapshot) => {
+            const key = editorChromeKey(snapshot);
+            if (key === lastKey) return;
+            lastKey = key;
+            setEditorSnapshot(snapshot);
+        });
+    }, [data]);
     useEffect(() => data?.commands?.()?.subscribe?.(setBusSnapshot), [data]);
     useEffect(() => data?.selection?.()?.subscribe?.(setSelectionSnapshot), [data]);
 
@@ -147,4 +158,4 @@ export function EditorToolbar({ data }) {
             ))}
         </div>
     );
-}
+});
