@@ -29,7 +29,7 @@ import {
 } from "../../roads/RoadLaneModel.js";
 import { roadGeometryVersionOf } from "../../roads/RoadGeometryRecord.js";
 import { ROAD_GEOMETRY_POLICY_V1 } from "../../roads/RoadGeometryPolicy.js";
-import { createWorldDescription } from "../../simulation/world/WorldDescription.js";
+import { createWorldDescription, WORLD_DESCRIPTION_KIND } from "../../simulation/world/WorldDescription.js";
 
 const EPSILON = 1e-9;
 export const ROUTE_SCHEMA = "cev-sim.route";
@@ -82,6 +82,18 @@ export function metricWorldHashForEnvironment(environment) {
     const document = environmentDocumentFrom(environment);
     if (!(document?.assetMetrics?.definitions ?? []).some((entry) => entry.collision?.length || entry.lidar?.length)) return null;
     return createWorldDescription(environment).metricWorldHash ?? null;
+}
+
+/**
+ * Authoring envelopes keep full-precision Bézier handles; scenario resolution
+ * rebuilds proofs from the frozen world description. Route from that snapshot
+ * so Verify/Validate/freshness share one road-network identity.
+ */
+export function routingEnvironmentFrom(environment) {
+    if (!environment || typeof environment !== "object") return environment;
+    if (environment.kind === WORLD_DESCRIPTION_KIND) return environment;
+    if (!environment.document?.roads && !environment.manifest?.document?.roads) return environment;
+    return createWorldDescription(environment);
 }
 
 function baseAlgorithmVersionFor(environment) {
@@ -453,7 +465,8 @@ function unverifiedRoute(route, waypoints, environmentHash, waypointHash) {
  *   verifyRoute({ environment, route })
  */
 export function verifyRoute(first, second, third) {
-    const { environment, route: routeInput, options } = verificationArguments(first, second, third);
+    const { environment: environmentInput, route: routeInput, options } = verificationArguments(first, second, third);
+    const environment = routingEnvironmentFrom(environmentInput);
     const route = Array.isArray(routeInput) ? { waypoints: routeInput } : { ...(routeInput ?? {}) };
     const rawWaypoints = Array.isArray(route.waypoints) ? route.waypoints : [];
     const waypoints = normalizeWaypoints(rawWaypoints);
@@ -740,16 +753,26 @@ export function invalidateRouteVerification(route) {
 }
 
 export function isRouteVerificationCurrent(route, environment) {
+    let routingEnvironment = environment;
+    if (environment) {
+        try {
+            routingEnvironment = routingEnvironmentFrom(environment);
+        } catch {
+            return false;
+        }
+    }
     const verification = route?.verification;
     if (verification?.algorithm !== ROUTE_ALGORITHM
         || !ROUTE_CURRENT_ALGORITHM_VERSIONS.includes(verification?.algorithmVersion)
-        || (environment && verification.algorithmVersion !== routeAlgorithmVersionFor(environment))
+        || (routingEnvironment && verification.algorithmVersion !== routeAlgorithmVersionFor(routingEnvironment))
         || verification?.waypointHash !== hashWaypoints(route?.waypoints ?? [])) {
         return false;
     }
-    if (!environment || verification.environmentHash !== hashEnvironmentRoadNetwork(environment)) return !environment;
+    if (!routingEnvironment || verification.environmentHash !== hashEnvironmentRoadNetwork(routingEnvironment)) {
+        return !routingEnvironment;
+    }
     return verification.algorithmVersion !== ROUTE_ALGORITHM_VERSION_V8
-        || verification.metricWorldHash === metricWorldHashForEnvironment(environment);
+        || verification.metricWorldHash === metricWorldHashForEnvironment(routingEnvironment);
 }
 
 export function getRoutePolyline(route) {

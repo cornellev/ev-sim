@@ -9,9 +9,11 @@ import {
     validateRouteVerification,
     verifyRoute,
 } from "../app/scenarios/route/Route.js";
-import { buildDirectedRoadGraph, projectPointToRoadNetwork } from "../app/scenarios/route/roadGraph.js";
+import { buildDirectedRoadGraph, hashEnvironmentRoadNetwork, projectPointToRoadNetwork } from "../app/scenarios/route/roadGraph.js";
 import { hashWaypoints } from "../app/scenarios/route/waypoints.js";
 import { followPolylineFromRoute } from "../app/scenarios/route/followPath.js";
+import { routeFollowerCommand } from "../app/scenarios/route/routeFollower.js";
+import { createWorldResource } from "../app/simulation/world/WorldDescription.js";
 import { duffyRoutingFixture } from "./helpers/duffyRouting.js";
 
 const polyline = { version: 1, kind: "polyline", knots: [{ id: "start" }, { id: "end" }] };
@@ -68,7 +70,14 @@ test("ED-05 geometry-v2 roads dispatch to route algorithm 7 with lane ids on anc
         assert.equal(step.toSubnode.laneId, step.toLaneId);
     }
     assert.equal(validateRouteVerification(verified.route, env).ok, true);
-    assert.ok(followPolylineFromRoute(verified.route).every((point) => point.y === 0), "v7 follows the flattened XZ path like v6");
+    const follow = followPolylineFromRoute(verified.route);
+    assert.ok(follow.some((point) => point.y > 0), "v7 follow path keeps elevated vertices");
+    const flattened = follow.map((point) => ({ ...point, y: 0 }));
+    const pose = { x: follow[0].x, y: 0, z: follow[0].z };
+    const command = routeFollowerCommand({ position: pose, yaw: 0, cruiseSpeedMps: 4, followPolyline: follow });
+    const flattenedCommand = routeFollowerCommand({ position: pose, yaw: 0, cruiseSpeedMps: 4, followPolyline: flattened });
+    assert.ok(Math.abs(command.speedMps - flattenedCommand.speedMps) <= 1e-12);
+    assert.ok(Math.abs(command.steeringRad - flattenedCommand.steeringRad) <= 1e-12);
 
     const laneIdOnly = verifyRoute(env, [
         { id: "start", x: 1, z: 0, anchor: { kind: "road", id: "curve", fraction: 0.05, laneMode: "fixed", laneId: "lane-0" } },
@@ -97,6 +106,33 @@ test("ED-05 canonical mouth precision does not reject Duffy's legal straight-thr
         ["junction-west", -1, "lane-1", "lane-1"],
         ["east-junction", -1, "lane-1", "lane-1"],
     ]);
+});
+
+test("persisted v2 envelopes verify against the frozen world description consumed by resolution", () => {
+    const fixture = duffyRoutingFixture();
+    const envelope = {
+        environmentId: fixture.environmentId,
+        templateId: "blank",
+        roadsAuthored: true,
+        document: {
+            environmentId: fixture.environmentId,
+            roadsAuthored: true,
+            roads: fixture.roads,
+            buildings: [],
+            features: [],
+        },
+    };
+    const world = createWorldResource(envelope);
+    assert.notEqual(
+        hashEnvironmentRoadNetwork(envelope),
+        hashEnvironmentRoadNetwork(world.description),
+        "authoring-precision Bézier handles are not the frozen metric identity",
+    );
+    const verified = verifyRoute(envelope, fixture.waypoints);
+    assert.equal(verified.ok, true, JSON.stringify(verified.issues));
+    assert.equal(verified.verification.environmentHash, world.description.roadNetworkHash);
+    assert.equal(validateRouteVerification(verified.route, world.description).ok, true);
+    assert.equal(isRouteVerificationCurrent(verified.route, envelope), true);
 });
 
 test("ED-05 v6 proofs are stale against geometry-v2 environments while v5 proofs on v1 roads are untouched", async () => {

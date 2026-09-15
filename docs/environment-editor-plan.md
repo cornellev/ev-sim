@@ -76,7 +76,7 @@ ED PR changes a contract, hash, gate, or milestone status.
   proxies are set up; LiDAR authoring supports generated meshes and editable
   primitives.
 - Default implementation/review reasoning level: **Extra High**.
-- Last updated: **2026-09-15 — loading screen waits for environment GLTFs**.
+- Last updated: **2026-09-15 — bicycle pose drapes to paved elevation**.
 
 ## Normative contracts
 
@@ -1001,6 +1001,31 @@ Record in the ledger: focused-suite pass counts, `npm run lint` result,
   `6ca2ece3d5266822a2ceabba72e5f7dd9514789e76757e86f6aedd2730ab9a6a`.
 
 ## Decision log
+
+### 2026-09-15 — Bicycle pose drapes to paved elevation
+
+The kinematic bicycle plant still integrates XZ distance and yaw. After each
+step (and on reset) it samples the paved union for surface `y` and pitch so
+the chassis follows draped or authored road elevation. Route proofs keep
+`distanceMetric: "xz"`; the runtime follow polyline preserves vertex `y` but
+measures progress in XZ so Pure Pursuit does not pick up slope length. IMU
+specific force rotates world gravity into the vehicle body using pose
+orientation. `worldHash`, route algorithm, `VEHICLE_PLANT_VERSION`, and the
+flat action-tape characterization are unchanged. This is plant/follow-path
+maintenance, not an ED milestone.
+
+### 2026-09-15 — Scenario route proofs use the frozen world description
+
+Route verification for persisted environment envelopes now compiles and hashes
+the same six-decimal world description that scenario resolution rebuilds. The
+authoring document can retain full-precision Bézier handles; those digits are
+not route-proof identity. `verifyRoute` / `isRouteVerificationCurrent` freeze
+`document.roads` envelopes through `createWorldDescription`, and
+`verifyScenarioRoute` verifies against `createWorldResource(environment).description`.
+Bare `{ environmentId, roads }` test graphs are unchanged. Schema v4,
+`worldHash`, REST, and fixture hashes are unchanged. Geometry-v2 proofs that
+were stored against the authoring envelope need one re-verification. This is
+maintenance, not an ED milestone.
 
 ### 2026-09-15 — Loading screen waits for environment GLTFs
 

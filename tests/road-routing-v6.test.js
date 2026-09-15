@@ -3,6 +3,7 @@ import test from "node:test";
 import { readFile } from "node:fs/promises";
 
 import { followPolylineFromRoute } from "../app/scenarios/route/followPath.js";
+import { routeFollowerCommand } from "../app/scenarios/route/routeFollower.js";
 import { isRouteVerificationCurrent, routeAlgorithmVersionFor, validateRouteVerification, verifyRoute } from "../app/scenarios/route/Route.js";
 import { arePointsOnRoadNetwork, buildDirectedRoadGraph } from "../app/scenarios/route/roadGraph.js";
 
@@ -24,7 +25,14 @@ test("ED-04/ED-05 v2 roads dispatch to route v7 with XZ arc distance and elevate
     assert.equal(verified.verification.distanceMetric, "xz");
     assert.equal(verified.verification.geometryPolicy.id, "road-geometry-policy-v1");
     assert.ok(verified.route.polyline.some((point) => point.y > 0));
-    assert.ok(followPolylineFromRoute(verified.route).every((point) => point.y === 0));
+    const follow = followPolylineFromRoute(verified.route);
+    assert.ok(follow.some((point) => point.y > 0));
+    const flattened = follow.map((point) => ({ ...point, y: 0 }));
+    const pose = { x: follow[0].x, y: 0, z: follow[0].z };
+    const command = routeFollowerCommand({ position: pose, yaw: 0, cruiseSpeedMps: 4, followPolyline: follow });
+    const flattenedCommand = routeFollowerCommand({ position: pose, yaw: 0, cruiseSpeedMps: 4, followPolyline: flattened });
+    assert.ok(Math.abs(command.speedMps - flattenedCommand.speedMps) <= 1e-12);
+    assert.ok(Math.abs(command.steeringRad - flattenedCommand.steeringRad) <= 1e-12);
     assert.equal(validateRouteVerification(verified.route, env).ok, true);
     const stalePolicy = structuredClone(verified.route);
     stalePolicy.verification.geometryPolicy.version = 2;

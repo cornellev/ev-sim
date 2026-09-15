@@ -168,14 +168,17 @@ export function gravityRep103(magnitude = GRAVITY) {
     return { x: 0, y: 0, z: -Number(magnitude) };
 }
 
-export function specificForceRep103(bodyAcceleration, sensorRotation, gravityMagnitude = GRAVITY) {
-    const gravity = gravityRep103(gravityMagnitude);
-    const specificWorld = {
-        x: bodyAcceleration.x - gravity.x,
-        y: bodyAcceleration.y - gravity.y,
-        z: bodyAcceleration.z - gravity.z,
+export function specificForceRep103(bodyAcceleration, sensorRotation, gravityMagnitude = GRAVITY, bodyOrientation = null) {
+    const gravityWorld = gravityRep103(gravityMagnitude);
+    const gravityBody = bodyOrientation
+        ? vectorToSensorFrame(gravityWorld, bodyOrientation)
+        : gravityWorld;
+    const specificBody = {
+        x: bodyAcceleration.x - gravityBody.x,
+        y: bodyAcceleration.y - gravityBody.y,
+        z: bodyAcceleration.z - gravityBody.z,
     };
-    return vectorToSensorFrame(specificWorld, sensorRotation);
+    return vectorToSensorFrame(specificBody, sensorRotation);
 }
 
 export function unavailableOrientationCovariance() {
@@ -187,7 +190,12 @@ export function unavailableOrientationCovariance() {
 export function buildImuMeasurement(snapshot, sensorConfig, rng, state = {}) {
     const sensorRotation = sensorFrameRotation(sensorConfig.pose);
     const angularVelocity = vectorToSensorFrame(snapshot.bodyAngularVelocity, sensorRotation);
-    const specificForce = specificForceRep103(snapshot.bodyAcceleration, sensorRotation, sensorConfig.calibration.gravity);
+    const specificForce = specificForceRep103(
+        snapshot.bodyAcceleration,
+        sensorRotation,
+        sensorConfig.calibration.gravity,
+        snapshot.orientation,
+    );
     const noise = sensorConfig.calibration.noise || {};
     const turnOnBias = state.turnOnBias || sensorConfig.calibration.turnOnBias || { x: 0, y: 0, z: 0 };
     const drift = state.drift || { angular: { x: 0, y: 0, z: 0 }, acceleration: { x: 0, y: 0, z: 0 } };

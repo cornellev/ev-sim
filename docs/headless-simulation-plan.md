@@ -10,7 +10,7 @@ language-neutral API authority is
 - Current milestone: **PR 12 — implementation complete; external hardware acceptance pending**
 - Next planned milestone: **None — the numbered headless implementation roadmap is complete**
 - Default implementation/review reasoning level: **Extra High**
-- Last updated: **2026-09-13** (ED-09 did not change headless contracts or hashes)
+- Last updated: **2026-09-15** (bicycle road drape; characterization tape unchanged)
 
 Progress:
 
@@ -499,6 +499,15 @@ compared with the committed characterization.
 - [Isaac Lab reinforcement-learning architecture](https://docs.nvidia.com/learning/physical-ai/getting-started-with-isaac-lab/latest/train-your-first-robot-with-isaac-lab/02-how-isaac-lab-accelerates-reinforcement-learning.html)
 
 ## Decision log
+
+### 2026-09-15 — Bicycle pose drapes to paved elevation
+
+After planar XZ/yaw integration, `KinematicVehiclePlant` samples the canonical
+world road surface for pose Y and pitch. Follow-path vertices keep elevation
+while follower arc length stays XZ. IMU gravity uses vehicle orientation.
+This is not PR 13: Protobuf, run-bundle, episode-hash, `worldHash`, and plant
+version 1 are unchanged. The flat PR 1 action-tape characterization is
+expected to stay byte-identical.
 
 ### 2026-09-01 — Headless Runs workspace (operational follow-on)
 

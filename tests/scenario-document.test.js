@@ -10,9 +10,11 @@ import {
     normalizeScenario,
     validateScenario,
 } from "../app/scenarios/ScenarioDocument.js";
+import { createBlankInitialManifest } from "../app/3d/environment/EnvironmentCreation.js";
 import { verifyRoute } from "../app/scenarios/route/index.js";
 import { createDefaultRunManifest, validateRunManifest } from "../app/simulation/RunManifest.js";
 import { StorageService } from "../server/storage/StorageService.js";
+import { duffyRoutingFixture } from "./helpers/duffyRouting.js";
 
 async function temporaryService() {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "cev-scenario-"));
@@ -150,6 +152,54 @@ test("route verification endpoint produces the same canonical proof consumed by 
         authored.routes[0].waypoints = verified.waypoints;
         authored.routes[0].verification = verified.verification;
 
+        const validation = await service.validateScenario(authored.id, { scenario: authored });
+        assert.equal(validation.ok, true, validation.issues.map((issue) => issue.message).join(" "));
+        const resolved = await service.resolveScenario(authored.id, { scenario: authored });
+        assert.equal(resolved.dependencyHashes.roadNetwork, verified.verification.environmentHash);
+    } finally {
+        await fs.rm(directory, { recursive: true, force: true });
+    }
+});
+
+test("route verification of a geometry-v2 envelope matches scenario resolution", async () => {
+    const { directory, service } = await temporaryService();
+    try {
+        const fixture = duffyRoutingFixture();
+        const blank = createBlankInitialManifest(fixture.environmentId);
+        await service.createEnvironment({
+            id: fixture.environmentId,
+            name: "Duffy campus",
+            templateId: "blank",
+            initialManifest: {
+                ...blank,
+                roadsAuthored: true,
+                document: { ...blank.document, roadsAuthored: true, roads: fixture.roads },
+            },
+        });
+        const authored = normalizeScenario({
+            ...createDefaultScenario({ id: "duffy-route", name: "Duffy route" }),
+            environment: { id: fixture.environmentId, expectedHash: null },
+            routes: [{
+                id: "ego-route",
+                name: "Ego route",
+                actorId: "ego",
+                initialSpeedMps: 0,
+                controller: { kind: "route-follower", activation: { kind: "start" } },
+                waypoints: fixture.waypoints,
+                verification: null,
+            }],
+            completion: {
+                conditions: [{ id: "duration", name: "Maximum duration", kind: "max-duration", durationNs: 5e9 }],
+            },
+            expectedOutcomes: [{ id: "safe", name: "No collisions", kind: "no-collisions" }],
+        });
+        const verified = await service.verifyScenarioRoute(authored.id, {
+            scenario: authored,
+            routeId: authored.routes[0].id,
+        });
+        assert.equal(verified.ok, true, verified.error);
+        authored.routes[0].waypoints = verified.waypoints;
+        authored.routes[0].verification = verified.verification;
         const validation = await service.validateScenario(authored.id, { scenario: authored });
         assert.equal(validation.ok, true, validation.issues.map((issue) => issue.message).join(" "));
         const resolved = await service.resolveScenario(authored.id, { scenario: authored });

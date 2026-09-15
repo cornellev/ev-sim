@@ -113,7 +113,9 @@ version-3/4 proofs require re-verification; immutable bundles use explicit
 version-scoped compatibility validation.
 
 Vehicle motion is owned by the Three.js-free `KinematicVehiclePlant`.
-BigCar, IGVCCar, ScenarioCar, and manifest-backed browser vehicles are
+Bicycle integration is planar (XZ + yaw); a cached road-ground sampler then
+sets pose Y and pitch from the paved surface. BigCar, IGVCCar, ScenarioCar, and
+manifest-backed browser vehicles are
 presentation adapters over the same numeric state used by
 `HeadlessVehicleManager`; GLTF models, wheels, paths, cameras, lane visuals,
 and devices remain browser services. `createHeadlessRuntimeContext` composes a

@@ -49,6 +49,20 @@ test("stationary IMU reports gravity on Z with unavailable orientation", () => {
     assert.equal(measurement.orientationCovariance[0], -1);
 });
 
+test("pitched chassis tilts IMU specific force off the world-up axis", () => {
+    const config = normalizeRunSensor({ type: "imu", calibration: { gravity: 9.80665 } });
+    const rng = new SeededRNG("imu-pitch");
+    const flat = captureVehicleSnapshot(mockVehicle(), 16_666_667);
+    const pitched = captureVehicleSnapshot(mockVehicle({
+        rotation: { x: 0, y: 0, z: 0.4, order: "XYZ" },
+    }), 16_666_667);
+    const flatImu = buildImuMeasurement(flat, config, rng, createMeasurementSeedState(config, rng)).measurement;
+    const pitchedImu = buildImuMeasurement(pitched, config, rng, createMeasurementSeedState(config, rng)).measurement;
+    assert.ok(Math.abs(flatImu.linearAcceleration.z - 9.80665) < 0.05);
+    assert.ok(Math.abs(pitchedImu.linearAcceleration.x) > 0.5, "pitch couples gravity into body X");
+    assert.ok(Math.abs(pitchedImu.linearAcceleration.z) < Math.abs(flatImu.linearAcceleration.z));
+});
+
 test("turning vehicle produces yaw-rate on IMU Z axis", () => {
     const config = normalizeRunSensor({ type: "imu" });
     const rng = new SeededRNG("imu-turn");

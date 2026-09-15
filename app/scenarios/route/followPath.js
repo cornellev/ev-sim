@@ -20,6 +20,8 @@ const DEFAULT_CHORD_M = 0.25;
 const COLLINEAR_CROSS_EPS = 1e-8;
 /** Cap used only when sizing road fillets — plant maxSteer can be near π/2. */
 const FILLET_SIZING_STEER_RAD = DEFAULT_MAX_STEERING_RAD;
+/** Follower / plant path length stays planar even when vertices keep elevation. */
+export const FOLLOW_DISTANCE_METRIC = "xz";
 
 export const FOLLOW_PATH_DEFAULT_KINEMATICS = Object.freeze({
     wheelbase: DEFAULT_WHEELBASE_M,
@@ -173,12 +175,8 @@ export function filletPolyline(points, radius, options = {}) {
 export function followPolylineFromRoute(route, kinematics = FOLLOW_PATH_DEFAULT_KINEMATICS) {
     const source = getRoutePolyline(route);
     if (source.length < 2) return source.map((point) => ({ ...point }));
-    // Algorithms 6+ measure XZ arc distance over elevated road vertices; the
-    // planar plant follows the flattened path.
-    if (route?.verification?.algorithm === "directed-a-star"
-        && route.verification.algorithmVersion >= 6) {
-        return source.map((point) => ({ ...point, y: 0 }));
-    }
+    // Directed-A* v5+ already stores a travel polyline (v6+ keeps elevated
+    // vertices). Fillets stay a runtime-only fallback for unverified routes.
     if (route?.verification?.algorithm === "directed-a-star"
         && route.verification.algorithmVersion >= 5) {
         return source.map((point) => ({ ...point }));
@@ -188,7 +186,7 @@ export function followPolylineFromRoute(route, kinematics = FOLLOW_PATH_DEFAULT_
 
 /** Arc-length summary of a follow polyline (for tests and diagnostics). */
 export function followPathLength(points) {
-    return buildArcLengthPolyline(points).totalLength;
+    return buildArcLengthPolyline(points, FOLLOW_DISTANCE_METRIC).totalLength;
 }
 
 /** True when two polylines share the same endpoints within epsilon. */
@@ -200,7 +198,7 @@ export function sameEndpoints(left, right, epsilon = 1e-6) {
 }
 
 export function pointAtDistance(points, distanceMeters) {
-    const arc = buildArcLengthPolyline(points);
+    const arc = buildArcLengthPolyline(points, FOLLOW_DISTANCE_METRIC);
     if (arc.polyline.length === 0) return null;
     if (arc.polyline.length === 1 || arc.totalLength <= EPSILON) {
         return { ...arc.polyline[0], distance: 0, progress: 1, segment: 0 };

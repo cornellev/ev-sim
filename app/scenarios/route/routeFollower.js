@@ -12,6 +12,7 @@ import {
     projectPointToPolyline,
 } from "./geometry.js";
 import {
+    FOLLOW_DISTANCE_METRIC,
     FOLLOW_PATH_DEFAULT_KINEMATICS,
     pointAtDistance,
 } from "./followPath.js";
@@ -52,7 +53,7 @@ function clamp(value, min, max) {
  * Peak absolute path curvature |dθ/ds| over [fromDistance, fromDistance + horizon].
  */
 export function previewPathCurvature(points, fromDistance, horizonMeters) {
-    const arc = buildArcLengthPolyline(points);
+    const arc = buildArcLengthPolyline(points, FOLLOW_DISTANCE_METRIC);
     if (arc.polyline.length < 2 || arc.totalLength <= EPSILON) return 0;
     const start = Math.max(0, finiteNumber(fromDistance, 0));
     const end = Math.min(arc.totalLength, start + Math.max(EPSILON, finiteNumber(horizonMeters, CURVATURE_PREVIEW_MIN_M)));
@@ -100,7 +101,7 @@ export function routeFollowerCommand({
     const cruise = finiteNumber(cruiseSpeedMps, 0);
     const limits = resolveFollowerKinematics([kinematics, FOLLOW_PATH_DEFAULT_KINEMATICS]);
     const polyline = Array.isArray(followPolyline) ? followPolyline : [];
-    const arc = buildArcLengthPolyline(polyline);
+    const arc = buildArcLengthPolyline(polyline, FOLLOW_DISTANCE_METRIC);
 
     if (!pose || arc.polyline.length === 0) {
         return { speedMps: 0, steeringRad: 0, lookaheadM: LOOKAHEAD_MIN_M, alpha: 0, kappa: 0, distanceAlong: 0 };
@@ -120,6 +121,7 @@ export function routeFollowerCommand({
     const projection = projectPointToPolyline(pose, arc.polyline, {
         minDistanceAlong: forwardMin,
         maxDistanceAlong: forwardMax,
+        distanceMetric: FOLLOW_DISTANCE_METRIC,
     });
     const along = finiteNumber(projection?.distanceAlong, 0);
     const remainingAlong = arc.totalLength - along;

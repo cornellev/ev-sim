@@ -2,6 +2,8 @@ import { Vehicle } from "../vehicles/Vehicle";
 import { Database } from "./Database";
 import { isBuiltInVehicleType, matchesVehicleType } from "../../vehicles/vehicleTypeResolution.js";
 import { vehicleAssetUrl } from "../../vehicles/VehicleManifest.js";
+import { bindRoadGroundSampler } from "../../simulation/vehicles/roadGroundSampler.js";
+import { syncVehicleFromPlant } from "../vehicles/VehiclePlantAdapter.js";
 
 const ASSET_MIME_TYPES = Object.freeze({
     bin: "application/octet-stream",
@@ -156,7 +158,8 @@ export class VehicleDatabase extends Database {
         return true;
     }
 
-    async configureFromManifest(entries = [], scene = this.parent?.scene, { resolvedVehicles = [] } = {}) {
+    async configureFromManifest(entries = [], scene = this.parent?.scene, options = {}) {
+        const resolvedVehicles = options.resolvedVehicles ?? [];
         const dependencies = new Map(resolvedVehicles.map((entry) => [entry.actorId, entry]));
         const desired = [...entries].sort((left, right) => left.id.localeCompare(right.id));
         const desiredIds = new Set(desired.map((entry) => entry.id));
@@ -213,6 +216,10 @@ export class VehicleDatabase extends Database {
             vehicle.start?.(scene);
         }
         this.vehicles.sort((left, right) => String(left.telemetryId).localeCompare(String(right.telemetryId)));
+        bindRoadGroundSampler(this.vehicles, options);
+        for (const vehicle of this.vehicles) {
+            if (vehicle.plant) syncVehicleFromPlant(vehicle);
+        }
     }
 
     /**

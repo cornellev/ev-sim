@@ -344,6 +344,8 @@ export class SimulationKernel {
 
         await this.context.vehicles.configureFromManifest(manifest.initialState.vehicles, {
             resolvedVehicles: this.resolvedRun.vehicles || [],
+            world: this.resolvedRun.world,
+            environment: this.resolvedRun.environment,
         });
         this._configureControlRuntimeLimits(manifest);
         const renderRuntime = await this.context.rendering?.prepare?.(this.resolvedRun, {

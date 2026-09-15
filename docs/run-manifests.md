@@ -224,7 +224,9 @@ of every anchor, traversal step, and subnode; explicit `lanes[]` records
 network. Edge fractions, distances, projection, sampling, and
 route progress all use XZ arc distance while persisted points retain
 elevation. Broken explicit anchors fail with a structured issue and are never
-replaced by nearest-road projection. Version 3 and 4 proofs must be re-verified
+replaced by nearest-road projection. Authoring Verify and resolution rebuild
+the proof from the canonical world description, not the saved environment
+envelope's full-precision Bézier handles. Version 3 and 4 proofs must be re-verified
 before new scenario resolution; immutable received bundles retain
 version-scoped compatibility validation. V5 proofs are not current for v2
 roads. A world containing asset proxies requires route proof version 8. Its

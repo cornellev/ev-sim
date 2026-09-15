@@ -62,7 +62,7 @@ Conventions: all lengths are meters and angles radians, in the vehicle-local fra
 
 - loads and places the GLTF model (or renders a placeholder body when no asset is set),
 - renders wheels as cylinders, with steerable wheels visually tracking the steering angle,
-- drives planar bicycle kinematics from `kinematics.wheelbase`, like `BigCar`,
+- drives planar bicycle kinematics from `kinematics.wheelbase`, like `BigCar`, then drapes pose Y/pitch onto the paved road surface,
 - exposes `collisionDimensions` from `boundingBox.size` so the physics engine sweeps the correct AABB,
 - instantiates the manifest sensors as devices,
 - registers `lidarZone` triangles in the GPU object database and rewrites their texture slots whenever the vehicle pose changes, so the collidable zone follows the vehicle.

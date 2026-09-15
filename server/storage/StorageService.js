@@ -1253,9 +1253,9 @@ export class StorageService {
         if (!route) throw new Error(`Route "${input.routeId}" does not exist.`);
         const environment = await this._resolveEnvironment(scenario.environment.id);
         const { verifyRoute } = await import("../../app/scenarios/route/index.js");
-        // Keep the environment envelope so the canonical road-network identity
-        // includes the stable environment id, exactly as scenario resolution does.
-        return verifyRoute(route.waypoints, environment);
+        // Resolution rebuilds proofs against the frozen world description, not
+        // the authoring envelope's full-precision Bézier handles.
+        return verifyRoute(route.waypoints, createWorldResource(environment).description);
     }
 
     // --- Experiment suites, results, and baselines ------------------------

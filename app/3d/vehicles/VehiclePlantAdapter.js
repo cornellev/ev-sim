@@ -2,6 +2,7 @@ import {
     createVehiclePlantDefinition,
     KinematicVehiclePlant,
 } from "../../simulation/vehicles/KinematicVehiclePlant.js";
+import { bindRoadGroundSampler } from "../../simulation/vehicles/roadGroundSampler.js";
 
 function copyVector(target, source) {
     target?.set?.(source.x, source.y, source.z);
@@ -16,6 +17,10 @@ export function attachVehiclePlant(vehicle, entry, dependency = null, options = 
     vehicle.plant = plant;
     vehicle.collisionDimensions = { ...plant.collisionDimensions };
     syncPlantFromVehicle(vehicle);
+    if (options.world || options.environment || options.getEnvironment) {
+        bindRoadGroundSampler([plant], options);
+        syncVehicleFromPlant(vehicle);
+    }
     return plant;
 }
 

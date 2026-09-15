@@ -38,6 +38,13 @@ const L_PATH = [
     { x: 20, y: 0, z: 20 },
 ];
 
+test("followPathLength ignores elevation so a 3-4-5 slope is 3 m in XZ", () => {
+    assert.equal(followPathLength([
+        { x: 0, y: 0, z: 0 },
+        { x: 3, y: 4, z: 0 },
+    ]), 3);
+});
+
 test("minTurningRadius and followRadiusM use bicycle kinematics with margin", () => {
     const kinematics = { wheelbase: 1.5, maxSteeringAngle: 0.6 };
     const rMin = minTurningRadius(kinematics);

@@ -97,6 +97,7 @@ export class KinematicVehiclePlant {
         this.dimensions = this.collisionDimensions;
         this.kinematics = { ...definition.kinematics };
         this.keyframes = definition.keyframes.map((frame) => ({ ...frame }));
+        this.groundSampler = null;
         this.position = vector();
         this.rotation = rotation();
         this.velocity = vector();
@@ -113,6 +114,21 @@ export class KinematicVehiclePlant {
             linearAcceleration: definition.initialLinearAcceleration,
             steeringAngle: definition.initialSteeringAngle,
         });
+    }
+
+    setGroundSampler(sampleFn) {
+        this.groundSampler = typeof sampleFn === "function" ? sampleFn : null;
+        this.drapeToGround();
+    }
+
+    drapeToGround() {
+        if (this.motionModel !== "bicycle" || typeof this.groundSampler !== "function") return;
+        const hit = this.groundSampler(this.position.x, this.position.z, this.rotation.y);
+        if (!hit) return;
+        this.position.y = finite(hit.y);
+        this.rotation.x = 0;
+        this.rotation.z = finite(hit.pitch);
+        this.rotation.order = this.rotation.order || "XYZ";
     }
 
     updatePosition(value) {
@@ -137,6 +153,7 @@ export class KinematicVehiclePlant {
         if (this.motionModel === "scenario-keyframes" && this.keyframes.length > 0) {
             this.applyScenarioState(this.keyframes[0]);
         }
+        this.drapeToGround();
         return this.getDeterministicState();
     }
 
@@ -208,6 +225,7 @@ export class KinematicVehiclePlant {
         this.position.z += -Math.sin(yaw) * speed * dt;
         const wheelbase = Math.max(1e-9, finite(this.kinematics.wheelbase, 1.5));
         this.rotation.y += (speed / wheelbase) * Math.tan(steering) * dt;
+        this.drapeToGround();
     }
 
     play({ restart = false } = {}) {

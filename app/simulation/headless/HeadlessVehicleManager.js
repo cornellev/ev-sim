@@ -2,6 +2,7 @@ import {
     createVehiclePlantDefinition,
     KinematicVehiclePlant,
 } from "../vehicles/KinematicVehiclePlant.js";
+import { bindRoadGroundSampler } from "../vehicles/roadGroundSampler.js";
 import { compareUtf8 } from "../world/WorldDescription.js";
 
 export class HeadlessVehicleManager {
@@ -10,13 +11,15 @@ export class HeadlessVehicleManager {
         this.initialState = { vehicles: [] };
     }
 
-    async configureFromManifest(entries = [], _scene = null, { resolvedVehicles = [] } = {}) {
+    async configureFromManifest(entries = [], _scene = null, options = {}) {
+        const resolvedVehicles = options.resolvedVehicles ?? [];
         const dependencies = new Map(resolvedVehicles.map((entry) => [entry.actorId, entry]));
         this.vehicles = [...entries]
             .sort((left, right) => compareUtf8(left.id, right.id))
             .map((entry) => new KinematicVehiclePlant(
                 createVehiclePlantDefinition(entry, dependencies.get(entry.id)),
             ));
+        bindRoadGroundSampler(this.vehicles, options);
         this.initialState = { vehicles: structuredClone(entries) };
         return this.vehicles;
     }

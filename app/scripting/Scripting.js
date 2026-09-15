@@ -504,6 +504,16 @@ function EditorToolbar({
             </div>
 
             <button type="button" onClick={onImport} className="toolbar-btn">Import</button>
+
+            {currentDocument?.id ? (
+                <span
+                    className="ml-auto min-w-0 max-w-[min(100%,20rem)] truncate pl-2 text-right font-mono text-[11px] text-zinc-500 select-all"
+                    title={currentDocument.id}
+                    aria-label={`Script id ${currentDocument.id}`}
+                >
+                    {currentDocument.id}
+                </span>
+            ) : null}
         </div>
     );
 }
