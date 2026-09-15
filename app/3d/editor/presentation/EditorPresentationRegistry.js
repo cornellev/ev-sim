@@ -13,6 +13,8 @@
 import { objectTypeRegistry } from "../objects/ObjectTypeRegistry.js";
 import { legacyIndex, readObjectOptionValue, readObjectTransform } from "../objects/objectGraph.js";
 import { GROUP_TYPE_ID } from "../objects/types/group.js";
+import { INTERSECTION_TYPE_ID } from "../objects/types/intersection.js";
+import { ROAD_TYPE_ID } from "../objects/types/road.js";
 import { text } from "../objects/ObjectOptions.js";
 import { canDuplicateObjectRecord } from "../commands/objectCommands.js";
 
@@ -27,6 +29,7 @@ export const MENU_OPTION_IDS = Object.freeze({
     LOCK: "lock",
     UNLOCK: "unlock",
     FRAME: "frame",
+    DRAPE_TO_GLB: "drape-to-glb",
 });
 
 export const SECTION_IDS = Object.freeze({
@@ -67,6 +70,15 @@ export function defaultMenuOptions(ctx, { objectRegistry = objectTypeRegistry } 
     }
     if (typeof ctx.focus === "function") {
         options.push({ id: MENU_OPTION_IDS.FRAME, label: "Frame selection", shortcut: "F", run: () => ctx.focus(ids) });
+    }
+    const allRoadish = records.every((entry) => entry.typeId === ROAD_TYPE_ID || entry.typeId === INTERSECTION_TYPE_ID);
+    if (allRoadish && records.length > 0) {
+        options.push({
+            id: MENU_OPTION_IDS.DRAPE_TO_GLB,
+            label: "Snap to GLB",
+            disabled: anyLocked,
+            run: () => ctx.drapeToGlb?.({ objectIds: ids }) ?? null,
+        });
     }
     if (commands.duplicateObjects) {
         const closureIds = new Set(ids);

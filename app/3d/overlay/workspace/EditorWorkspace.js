@@ -64,6 +64,7 @@ export function EditorWorkspace({ data, activeEnvironmentId, onEnvironmentChange
     const [editorSnapshot, setEditorSnapshot] = useState(null);
     const [selectionSnapshot, setSelectionSnapshot] = useState(null);
     const [documentSnapshot, setDocumentSnapshot] = useState(null);
+    const [gesturePreview, setGesturePreview] = useState(false);
     const [closingAssetTab, setClosingAssetTab] = useState(null);
     const [earthImportOpen, setEarthImportOpen] = useState(false);
     const canvasHostRef = useRef(null);
@@ -110,6 +111,7 @@ export function EditorWorkspace({ data, activeEnvironmentId, onEnvironmentChange
         };
         const unsubscribe = document.subscribe((snapshot, event) => {
             if (event?.transient) {
+                setGesturePreview(true);
                 pendingTransientSnapshot = snapshot;
                 if (!rafId) {
                     rafId = requestAnimationFrame(() => {
@@ -122,6 +124,7 @@ export function EditorWorkspace({ data, activeEnvironmentId, onEnvironmentChange
                 return;
             }
             cancelPending();
+            setGesturePreview(false);
             setDocumentSnapshot(snapshot);
         });
         return () => {
@@ -148,7 +151,14 @@ export function EditorWorkspace({ data, activeEnvironmentId, onEnvironmentChange
             const document = data?.environment?.()?.getDocument?.();
             if (!document) return;
             hydrateDocumentFromRuntime(data, document);
-            fitMapViewportToContent(editor, document);
+            const rect = canvasHostRef.current?.getBoundingClientRect();
+            fitMapViewportToContent(
+                editor,
+                document,
+                rect && rect.width > 0 && rect.height > 0
+                    ? { width: rect.width, height: rect.height }
+                    : undefined,
+            );
         });
         return () => editor.setMapModeEnterHandler(null);
     }, [data]);
@@ -304,6 +314,7 @@ export function EditorWorkspace({ data, activeEnvironmentId, onEnvironmentChange
                             data={data}
                             documentSnapshot={documentSnapshot ?? emptyDocument}
                             mapSelection={mapSelection}
+                            gesturePreview={gesturePreview}
                         />
                     )}
                     {activeAssetTab && <AssetPreviewTab key={activeAssetTab.id} data={data} tab={activeAssetTab} />}

@@ -184,6 +184,9 @@ test("editor state publishes tool, layers, and hidden objects; selection lives i
     assert.deepEqual(Object.keys(editor.persistedSnapshot()).sort(), ["earthImport", "editorMode", "hiddenEntityIds", "layers", "map"]);
     assert.deepEqual(editor.persistedSnapshot().hiddenEntityIds, ["building:a"]);
     assert.equal("draft" in editor.persistedSnapshot().map, false);
+    assert.equal(editor.persistedSnapshot().map.satelliteVisible, false);
+    editor.setMapSatelliteVisible(true);
+    assert.equal(editor.persistedSnapshot().map.satelliteVisible, true);
 
     const selection = new SelectionStore({ now: () => 0 });
     selection.select(["building-a", "feature-b"]);

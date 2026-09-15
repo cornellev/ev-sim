@@ -76,7 +76,7 @@ ED PR changes a contract, hash, gate, or milestone status.
   proxies are set up; LiDAR authoring supports generated meshes and editable
   primitives.
 - Default implementation/review reasoning level: **Extra High**.
-- Last updated: **2026-09-14 — map pending-drag, chrome isolation, WebGL suspend**.
+- Last updated: **2026-09-14 — map road-to-intersection connect**.
 
 ## Normative contracts
 
@@ -247,18 +247,21 @@ ED PR changes a contract, hash, gate, or milestone status.
   Selection never marks the environment dirty; the persisted editor state is
   `EditorState.persistedSnapshot()` (layers, hidden ids, mode, map viewport,
   earth import).
-- `SceneProjector.applyChanges(changeSet)` is the only path from a document
+-   `SceneProjector.applyChanges(changeSet)` is the only path from a document
   change to runtime meshes, registry entities, chunk membership, and LiDAR
   truth triangles; `EnvironmentLoader.apply` and Earth Import apply remain the
   load-time full rebuilds. Props move in place; buildings follow the cumulative
   delta on their existing mesh during a gesture and regenerate once on any
-  non-transient change with triangles replaced only for that building; roads
-  rebuild the local closure only (E1 = changed edges and edges incident to
-  changed nodes; J1 = junctions at their endpoints that are or were rendered;
-  E2 = E1 plus every edge incident to J1), keyed by id, with intersections
-  outside J1 relinked to replaced `Road` objects and `replaceTriangles` scoped
-  by source id. Insets are planned over the whole graph
-  (`planRoadNetwork`); only the closure is materialized
+  non-transient change with triangles replaced only for that building. Road
+  `updateGesture` frames skip `planRoadNetworkGeometry` and do not rematerialize:
+  a uniform affine moves existing road/intersection roots in place; a
+  node/knot/handle drag hides those roots and shows a straight width-strip.
+  Any non-transient change rebuilds the local closure only (E1 = changed edges
+  and edges incident to changed nodes; J1 = junctions at their endpoints that
+  are or were rendered; E2 = E1 plus every edge incident to J1), keyed by id,
+  with intersections outside J1 relinked to replaced `Road` objects and
+  `replaceTriangles` scoped by source id. Insets are planned over the whole
+  graph (`planRoadNetwork`); only the closure is materialized
   (`materializeRoadNetwork`). Browser-only helpers (placement catalog,
   building generator) are injected by the loader so `Environment` and the
   projector load under node.
@@ -999,6 +1002,84 @@ Record in the ledger: focused-suite pass counts, `npm run lint` result,
 
 ## Decision log
 
+### 2026-09-14 — Map road-to-intersection connect
+
+Editor-chrome maintenance: on geometry-v2 Map, dropping a free road endpoint
+(or finishing a road-pen stroke) on an intersection rewires that end through
+`road.connect-endpoint` / `road.create` with the existing node id. Grid snap
+does not steal a diamond hit. A 250ms hover dwell highlights the intersection
+(`EditorState.connectPreview`, session-only). GLTF Tile footprints paint and
+pick under roads and honor `editorHidden`. Schema v4, `worldHash`, REST, and
+fixture hashes are unchanged. This is not an ED milestone.
+
+### 2026-09-14 — Snap road control points to GLB
+
+Editor maintenance: selected roads/intersections can drape topology nodes and
+interior knots onto the closest GLB surface (GLTF Tile or catalog instance)
+on a vertical ray, plus a session offset. The command is
+`road.drape-to-glb` (`drapeRoadControlPoints`); sampling is injected from
+the scene (`sampleGlbElevation.js`) so CommandBus stays kernel-safe. Google
+tiles, bake preview meshes, and road surfaces are excluded. Include
+connected expands through shared nodes. Schema v4, REST, and untouched
+environment fixture hashes are unchanged; draped `node.y` / knot Y is
+metric and therefore changes `worldHash` of the edited environment. This is
+not an ED milestone.
+
+### 2026-09-14 — Road-drag gesture preview
+
+Editor performance maintenance so moving a road in Scene or Map does not
+recompile the whole graph on every pointer move. `updateGesture` still applies
+the cumulative delta and notifies `transient: true`, but skips
+`planRoadNetworkGeometry` / junction-connector validation. The roads projector
+applies the gesture matrix to existing meshes when every node (and knot) of an
+edge follows that delta; otherwise it hides the compiled surfaces and draws a
+straight width-strip. Map SVG uses the v1-style strips and does not recapture
+the satellite overlay while the gesture is live. Commit, undo, redo, and cancel
+still compile and rematerialize the local closure once. Schema v4, `worldHash`,
+REST, `CommandBus` history, and fixture hashes are unchanged
+(`60dc0bd2b02a9ec768f833070ce4d8d2047f5383838f09ea3f130dd31552dd6f` and
+`6ca2ece3d5266822a2ceabba72e5f7dd9514789e76757e86f6aedd2730ab9a6a`). This is
+not an ED milestone.
+
+### 2026-09-14 — Shared map canvas
+
+Editor-chrome maintenance: Environment Editor Map, Scenario route/zone maps,
+and Replay's spatial map now share one document snapshot helper
+(`mapDocumentFrom`), one pan/zoom/fit kernel (`mapViewport.js`), and one SVG
+host (`MapCanvas` + `MapSurfaceLayers`). Scenario maps keep v2
+`geometryVersion` so compiled roads match the editor. CommandBus tools,
+Satellite capture, and the live unsaved editor session stay editor-only.
+Schema v4, `worldHash`, REST, and fixture hashes are unchanged. This is not
+an ED milestone.
+
+### 2026-09-14 — Map satellite overlay alignment
+
+Editor-chrome maintenance: the Map satellite snapshot no longer calls
+`renderer.setViewport` in CSS pixels (Three.js multiplies that by
+`devicePixelRatio` and cropped the render target), and the bitmap is drawn
+into a full-pane canvas that shares the SVG `viewBox` with `worldToScreen`.
+Schema v4, `worldHash`, REST, and fixture hashes are unchanged. This is not
+an ED milestone.
+
+### 2026-09-14 — Map satellite overlay
+
+Editor-chrome maintenance: Map can show an optional Satellite background, an
+idle shadowless orthographic snapshot of the live Three.js scene composited
+under the SVG tools. `SimulationEngine.sceneRenderEnabled` stays false; the
+capture renders to an offscreen target and never uses measured-camera or bake
+paths. Google Photorealistic 3D Tiles stay hidden in Map. Schema v4,
+`worldHash`, REST, and fixture hashes are unchanged. This is not an ED
+milestone.
+
+### 2026-09-14 — Map asset footprints vs pane size
+
+Editor-chrome maintenance: Map no longer hides GLTF Tile / asset footprints at
+the constant 0.55 detail-zoom cutoff. Overview keeps a footprint while its
+longest screen edge is at least 2% of the shorter map-pane side
+(`MAP_FOOTPRINT_MIN_VIEWPORT_FRACTION`); point-like instances still follow
+detail zoom; a selected footprint always remains. Schema v4, `worldHash`, REST,
+and fixture hashes are unchanged. This is not an ED milestone.
+
 ### 2026-09-14 — Map pending-drag, chrome isolation, and WebGL suspend
 
 Editor-chrome maintenance for Map view with a loaded GLB. Select-tool object
@@ -1071,10 +1152,11 @@ history semantics are unchanged. This is not an ED milestone and does not
 change fixture hashes (`60dc0bd2b02a9ec768f833070ce4d8d2047f5383838f09ea3f130dd31552dd6f`
 and `6ca2ece3d5266822a2ceabba72e5f7dd9514789e76757e86f6aedd2730ab9a6a`).
 
-Map mode now RAF-coalesces transient `EnvironmentDocument` snapshots so knot,
-handle, node, road, asset, and feature gestures recompute `planRoadNetworkGeometry`
-while the pointer is held; commit and cancel still apply immediately, and
-autosave still ignores transient and cancel events.
+Map mode RAF-coalesces transient `EnvironmentDocument` snapshots so the Map
+SVG can follow the pointer without flushing React on every event. Geometry
+compile (`planRoadNetworkGeometry`) does not run while the pointer is held;
+commit and cancel still apply immediately, and autosave still ignores
+transient and cancel events.
 
 Asset Studio projection classifies change sets and updates transforms,
 visibility, materials, normalization, and metric overlays in place. Session

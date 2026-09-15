@@ -13,6 +13,8 @@ import {
 import { sampleCenterline, splitEdge as splitGeometry } from "../../../roads/RoadGeometry.js";
 import { ROAD_GEOMETRY_POLICY_V1 } from "../../../roads/RoadGeometryPolicy.js";
 import { commandFailure, commandIssue, commandSuccess, COMMAND_ISSUE_CODES } from "./commandIssues.js";
+import { collectRoadDrapeTargets, planRoadDrape } from "../document/roadDrapeTargets.js";
+import { applyPlanSteps } from "./planApply.js";
 import { ensureObjectRecord, removeObjectRecords, renumberSiblings, upsertObjectRecord } from "./objectMutations.js";
 
 const EPSILON = 1e-9;
@@ -614,6 +616,81 @@ export function setRoadMarking({ edgeId, boundary, marking } = {}) {
         finishLaneEdit(ctx, edge);
         return { edge, boundary: { laneId: lane.id } };
     });
+}
+
+/**
+ * Move selected road/intersection control points onto the nearest GLB
+ * surface along a vertical ray, plus an optional elevation offset.
+ * `sampleElevation(x, z, y)` is injected so this command stays scene-free.
+ */
+export function drapeRoadControlPoints({
+    objectIds = [],
+    sub = null,
+    offset = 0,
+    includeConnected = false,
+    sampleElevation,
+    label = "Snap roads to GLB",
+} = {}) {
+    return {
+        id: "road.drape-to-glb",
+        label,
+        run(ctx) {
+            if (typeof sampleElevation !== "function") {
+                return commandFailure(commandIssue(COMMAND_ISSUE_CODES.ARGUMENT_INVALID, "GLB elevation sampling is required."));
+            }
+            const lift = Number(offset);
+            if (!Number.isFinite(lift)) {
+                return commandFailure(commandIssue(COMMAND_ISSUE_CODES.ARGUMENT_INVALID, "GLB snap offset must be a finite number."));
+            }
+            const targets = collectRoadDrapeTargets(ctx.document, { objectIds, sub, includeConnected });
+            if (targets.lockedIds.length > 0) {
+                return commandFailure(targets.lockedIds.map((objectId) => {
+                    const record = ctx.document.getObject(objectId);
+                    return commandIssue(COMMAND_ISSUE_CODES.OBJECT_LOCKED, `"${record?.name ?? objectId}" is locked.`, { objectId });
+                }));
+            }
+            if (targets.nodes.length === 0 && targets.knots.length === 0) {
+                return commandFailure(commandIssue(COMMAND_ISSUE_CODES.SELECTION_EMPTY, "Select a road or intersection to snap to a GLB."));
+            }
+            const samples = new Map();
+            let skipped = 0;
+            for (const node of targets.nodes) {
+                const sampled = sampleElevation(node.x, node.z, node.y);
+                if (!Number.isFinite(sampled)) {
+                    skipped += 1;
+                    continue;
+                }
+                samples.set(`node:${node.nodeId}`, sampled);
+            }
+            for (const knot of targets.knots) {
+                const sampled = sampleElevation(knot.x, knot.z, knot.y);
+                if (!Number.isFinite(sampled)) {
+                    skipped += 1;
+                    continue;
+                }
+                samples.set(`knot:${knot.edgeId}:${knot.knotId}`, sampled);
+            }
+            const planned = planRoadDrape(ctx.document, targets, samples, lift);
+            if (planned.steps.length === 0) {
+                return commandFailure(commandIssue(
+                    COMMAND_ISSUE_CODES.DRAPE_EMPTY,
+                    skipped > 0
+                        ? "No GLB surface was found above or below the selected control points."
+                        : "Road control points already match the GLB elevation.",
+                ));
+            }
+            const applied = applyPlanSteps(ctx.document, planned.steps, { notify: false });
+            if (!applied.ok) {
+                return commandFailure(commandIssue(COMMAND_ISSUE_CODES.MUTATION_FAILED, applied.error ?? "Failed to snap roads to the GLB."));
+            }
+            return commandSuccess({
+                movedNodeIds: planned.movedNodeIds,
+                movedKnots: planned.movedKnots,
+                skipped,
+                offset: lift,
+            });
+        },
+    };
 }
 
 /** Sparse turn-rule override with structured issues; infeasible movements are refused. */

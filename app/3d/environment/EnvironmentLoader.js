@@ -273,6 +273,7 @@ export class EnvironmentLoader {
             editor.setMapSnapEnabled(map.snapEnabled);
             editor.setMapSnapSize(map.snapSize);
             editor.setMapGridVisible(map.gridVisible);
+            editor.setMapSatelliteVisible(map.satelliteVisible === true);
         }
         for (const entityId of editorState.hiddenEntityIds ?? []) {
             editor.setEntityHidden(entityId, true);

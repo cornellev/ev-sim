@@ -1,9 +1,11 @@
 import { getEdgeRenderEndpoints, findNearestIntersection } from "../document/documentMutations.js";
-import { screenRadiusToWorld } from "./mapCoords.js";
+import { screenRadiusToWorld, shouldShowMapAssetFootprint } from "./mapCoords.js";
 import { projectPointToRoad } from "../../../roads/RoadGeometry.js";
 import { planRoadNetworkGeometry } from "../../../roads/RoadNetworkGeometry.js";
 import { nearestLaneIndexForOffset, roadLaneId, roadWidth } from "../../../roads/RoadLaneModel.js";
 import { isAssetBackedObject } from "../../../editor-assets/AssetBackedObject.js";
+import { indexObjectsById } from "../commands/objectMutations.js";
+import { isObjectHidden } from "../projection/projectors/objectsProjector.js";
 
 /** Lane under a pointer projected onto a compiled edge, or null on the shoulder. */
 function laneSubAtProjection(worldPoint, entry, projection) {
@@ -59,11 +61,8 @@ export function distanceToSegmentXZ(point, start, end) {
 }
 
 /**
- * @param {{ x: number, z: number }} worldPoint
- * @param {ReturnType<import("../document/EnvironmentDocument.js").EnvironmentDocument["snapshot"]>} documentSnapshot
- * @param {{ zoom: number }} viewport
- * @param {{ buildings?: boolean, roads?: boolean, props?: boolean, detail?: boolean }} layers
- * @param {number} [screenRadius]
+ * @param {{ components?: { asset?: { position: { x: number, z: number }, rotationY: number, scale: { x: number, z: number } } } }} record
+ * @param {{ min?: { x?: number, z?: number }, max?: { x?: number, z?: number } } | null} [bounds]
  */
 export function assetMapFootprint(record, bounds = null) {
     const asset = record?.components?.asset;
@@ -81,20 +80,41 @@ export function assetMapFootprint(record, bounds = null) {
     });
 }
 
-export function pickMapTarget(worldPoint, documentSnapshot, viewport, layers, screenRadius = 12, runtimeAssetBounds = null) {
+/** Asset-backed map records that are not editor-hidden (including inherited hide). */
+export function mapVisibleAssetRecords(documentSnapshot) {
+    const objects = documentSnapshot?.objects ?? [];
+    const byId = indexObjectsById(objects);
+    return objects.filter((record) => isAssetBackedObject(record) && !isObjectHidden(byId, record.id));
+}
+
+function pickAssetTarget(worldPoint, documentSnapshot, viewport, layers, radiusWorld, runtimeAssetBounds, size) {
+    if (!layers.props) return null;
+    const showDetail = layers.detail !== false;
+    for (const record of mapVisibleAssetRecords(documentSnapshot)) {
+        const footprint = assetMapFootprint(record, runtimeAssetBounds?.get?.(String(record.id)) ?? null);
+        if (!shouldShowMapAssetFootprint(footprint, viewport, size, { showDetail })) continue;
+        if (pointInPolygonXZ(worldPoint, footprint)) return { type: "asset", id: String(record.id) };
+        const position = record.components?.asset?.position;
+        if (position && Math.hypot(position.x - worldPoint.x, position.z - worldPoint.z) <= radiusWorld) {
+            return { type: "asset", id: String(record.id) };
+        }
+    }
+    return null;
+}
+
+/**
+ * @param {{ x: number, z: number }} worldPoint
+ * @param {ReturnType<import("../document/EnvironmentDocument.js").EnvironmentDocument["snapshot"]>} documentSnapshot
+ * @param {{ zoom: number }} viewport
+ * @param {{ buildings?: boolean, roads?: boolean, props?: boolean, detail?: boolean, selectedRoadId?: string | null }} layers
+ * @param {number} [screenRadius]
+ * @param {Map<string, { min: { x: number, z: number }, max: { x: number, z: number } }> | null} [runtimeAssetBounds]
+ * @param {{ width: number, height: number } | null} [size]
+ */
+export function pickMapTarget(worldPoint, documentSnapshot, viewport, layers, screenRadius = 12, runtimeAssetBounds = null, size = null) {
     const radiusWorld = screenRadiusToWorld(screenRadius, viewport);
     const showDetail = layers.detail !== false;
     let nearestRoad = null;
-
-    if (showDetail && layers.props) {
-        for (const record of documentSnapshot.objects ?? []) {
-            if (!isAssetBackedObject(record)) continue;
-            const footprint = assetMapFootprint(record, runtimeAssetBounds?.get?.(String(record.id)) ?? null);
-            if (pointInPolygonXZ(worldPoint, footprint)) return { type: "asset", id: String(record.id) };
-            const position = record.components?.asset?.position;
-            if (position && Math.hypot(position.x - worldPoint.x, position.z - worldPoint.z) <= radiusWorld) return { type: "asset", id: String(record.id) };
-        }
-    }
 
     if (showDetail && layers.props) {
         let nearestFeature = null;
@@ -161,35 +181,36 @@ export function pickMapTarget(worldPoint, documentSnapshot, viewport, layers, sc
                         nearestRoad = { type: "road", id: entry.edge.id, distance: projection.distance, entry, projection };
                     }
                 }
-                if (!nearestRoad) return null;
-                // ED-05: a second click on the selected road picks the lane
-                // under the pointer (within the carriageway, not the shoulder).
-                if (selectedRoadId && String(nearestRoad.id) === selectedRoadId) {
-                    const sub = laneSubAtProjection(worldPoint, nearestRoad.entry, nearestRoad.projection);
-                    if (sub) return { type: "road", id: nearestRoad.id, sub };
+                if (nearestRoad) {
+                    if (selectedRoadId && String(nearestRoad.id) === selectedRoadId) {
+                        const sub = laneSubAtProjection(worldPoint, nearestRoad.entry, nearestRoad.projection);
+                        if (sub) return { type: "road", id: nearestRoad.id, sub };
+                    }
+                    return { type: nearestRoad.type, id: nearestRoad.id };
                 }
-                return { type: nearestRoad.type, id: nearestRoad.id };
             } catch {
-                return null;
+                // Fall through to asset footprints when the compiled plan is unavailable.
             }
-        }
-        for (const edge of documentSnapshot.roads.edges) {
-            const endpoints = getEdgeRenderEndpoints(documentSnapshot, edge);
-            if (!endpoints) continue;
+        } else {
+            for (const edge of documentSnapshot.roads.edges) {
+                const endpoints = getEdgeRenderEndpoints(documentSnapshot, edge);
+                if (!endpoints) continue;
 
-            const distance = distanceToSegmentXZ(
-                worldPoint,
-                endpoints.startPoint,
-                endpoints.endPoint,
-            );
-            const halfWidth = (edge.width ?? 7) * 0.5;
-            const threshold = Math.max(radiusWorld, halfWidth);
+                const distance = distanceToSegmentXZ(
+                    worldPoint,
+                    endpoints.startPoint,
+                    endpoints.endPoint,
+                );
+                const halfWidth = (edge.width ?? 7) * 0.5;
+                const threshold = Math.max(radiusWorld, halfWidth);
 
-            if (distance <= threshold && (!nearestRoad || distance < nearestRoad.distance)) {
-                nearestRoad = { type: "road", id: edge.id, distance };
+                if (distance <= threshold && (!nearestRoad || distance < nearestRoad.distance)) {
+                    nearestRoad = { type: "road", id: edge.id, distance };
+                }
             }
+            if (nearestRoad) return { type: nearestRoad.type, id: nearestRoad.id };
         }
     }
 
-    return nearestRoad ? { type: nearestRoad.type, id: nearestRoad.id } : null;
+    return pickAssetTarget(worldPoint, documentSnapshot, viewport, layers, radiusWorld, runtimeAssetBounds, size);
 }

@@ -1,11 +1,11 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { fitMapViewportToContent } from "../../editor/document/documentRuntimeHydration.js";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { isMapDetailZoom } from "../../editor/map/mapCoords.js";
-import { MapSurfaceHud } from "./MapSurfaceHud.js";
-import { MapSurfaceLayers } from "./MapSurfaceLayers.js";
+import { paintMapSatelliteCanvas } from "../../editor/map/mapSatelliteFrustum.js";
+import { MapCanvas } from "./MapCanvas.js";
 import { useMapPointerController } from "./useMapPointerController.js";
+import { useMapSatelliteCapture } from "./useMapSatelliteCapture.js";
 import { useMapSize } from "./useMapSize.js";
 
 function assetBoundsEpoch(entries) {
@@ -25,8 +25,9 @@ function collectAssetBounds(data) {
     );
 }
 
-export function MapSurface({ data, documentSnapshot, mapSelection = null }) {
+export function MapSurface({ data, documentSnapshot, mapSelection = null, gesturePreview = false }) {
     const containerRef = useRef(null);
+    const satelliteCanvasRef = useRef(null);
     const size = useMapSize(containerRef);
     const [editorSnapshot, setEditorSnapshot] = useState(() => data?.editor?.()?.snapshot?.() ?? null);
     const [assetEpoch, setAssetEpoch] = useState(0);
@@ -52,7 +53,32 @@ export function MapSurface({ data, documentSnapshot, mapSelection = null }) {
         centerZ: 0,
         zoom: 1,
         gridVisible: true,
+        satelliteVisible: false,
     };
+    const satelliteVisible = viewport.satelliteVisible === true;
+    const satelliteCapture = useMapSatelliteCapture({
+        data,
+        enabled: satelliteVisible,
+        viewport,
+        size,
+        documentSnapshot,
+        assetEpoch,
+        gesturePreview,
+    });
+    const mapCenterX = Number(viewport.centerX) || 0;
+    const mapCenterZ = Number(viewport.centerZ) || 0;
+    const mapZoom = Number(viewport.zoom) || 1;
+    const paneWidth = Number(size.width) || 0;
+    const paneHeight = Number(size.height) || 0;
+    useLayoutEffect(() => {
+        if (!satelliteVisible) return;
+        paintMapSatelliteCanvas(
+            satelliteCanvasRef.current,
+            satelliteCapture,
+            { centerX: mapCenterX, centerZ: mapCenterZ, zoom: mapZoom },
+            { width: paneWidth, height: paneHeight },
+        );
+    }, [satelliteVisible, satelliteCapture, mapCenterX, mapCenterZ, mapZoom, paneWidth, paneHeight]);
 
     const layers = editorSnapshot?.layers ?? {
         buildings: true,
@@ -61,7 +87,6 @@ export function MapSurface({ data, documentSnapshot, mapSelection = null }) {
     };
 
     const showDetail = isMapDetailZoom(viewport);
-
     const {
         onPointerDown,
         onPointerMove,
@@ -78,47 +103,26 @@ export function MapSurface({ data, documentSnapshot, mapSelection = null }) {
         runtimeAssetBounds,
     });
 
-    const handleRecenter = () => {
-        const editor = data?.editor?.();
-        const document = data?.environment?.()?.getDocument?.();
-        if (!editor || !document) return;
-        fitMapViewportToContent(editor, document);
-    };
-
     return (
-        <div
-            ref={containerRef}
-            className="absolute inset-0 bg-zinc-950/95 pointer-events-auto touch-none"
-            data-map-surface
+        <MapCanvas
+            containerRef={containerRef}
+            size={size}
+            viewport={viewport}
+            layers={layers}
+            documentSnapshot={documentSnapshot}
+            mapSelection={mapSelection}
+            draft={editorSnapshot?.roadDraft ?? viewport.draft}
+            runtimeAssetBounds={runtimeAssetBounds}
+            satelliteVisible={satelliteVisible}
+            gesturePreview={gesturePreview}
+            connectPreviewId={editorSnapshot?.connectPreview?.intersectionId ?? null}
+            satelliteCanvasRef={satelliteCanvasRef}
+            className="absolute inset-0 overflow-hidden bg-zinc-950/95 pointer-events-auto touch-none"
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
             onPointerUp={onPointerUp}
             onPointerLeave={onPointerUp}
             onPointerCancel={onPointerCancel}
-        >
-            <svg
-                width={size.width}
-                height={size.height}
-                className="h-full w-full touch-none select-none"
-            >
-                <MapSurfaceLayers
-                    viewport={viewport}
-                    size={size}
-                    layers={layers}
-                    documentSnapshot={documentSnapshot}
-                    mapSelection={mapSelection}
-                    showDetail={showDetail}
-                    draft={editorSnapshot?.roadDraft ?? viewport.draft}
-                    runtimeAssetBounds={runtimeAssetBounds}
-                />
-            </svg>
-
-            {/* <MapSurfaceHud
-                viewport={viewport}
-                layers={layers}
-                showDetail={showDetail}
-                onRecenter={handleRecenter}
-            /> */}
-        </div>
+        />
     );
 }

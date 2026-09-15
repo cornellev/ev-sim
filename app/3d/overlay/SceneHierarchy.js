@@ -29,6 +29,7 @@ import {
     siblingPositions,
 } from "../editor/presentation/virtualWindow.js";
 import { focusCameraOnSelection } from "../editor/tools/cameraFocus.js";
+import { executeDrapeRoadsToGlb } from "../editor/tools/drapeRoadsToGlb.js";
 import {
     ENVIRONMENT_EDITOR_PREFERENCE_KEYS,
     readEnvironmentEditorPreference,
@@ -216,6 +217,7 @@ export function SceneHierarchy({ data }) {
             commands: objectCommands,
             beginRename,
             focus: (objectIds) => focusCameraOnSelection({ data, objectIds }),
+            drapeToGlb: (args) => executeDrapeRoadsToGlb(data, args),
         };
     };
     const openMenu = (row, event) => {

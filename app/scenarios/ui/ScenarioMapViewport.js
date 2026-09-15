@@ -3,120 +3,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { IconFocus2, IconMinus, IconPlus } from "@tabler/icons-react";
 
-import { isMapDetailZoom, MAP_WORLD_SCALE, screenToWorld, worldToScreen } from "../../3d/editor/map/mapCoords.js";
-import { MapSurfaceLayers } from "../../3d/overlay/map/MapSurfaceLayers.js";
+import { mapDocumentFrom, collectMapFitPoints } from "../../3d/editor/map/mapDocument.js";
+import { screenToWorld } from "../../3d/editor/map/mapCoords.js";
+import { fitMapViewport, mapWheelZoomFactor, panMapViewport, zoomMapViewport } from "../../3d/editor/map/mapViewport.js";
+import { MapCanvas } from "../../3d/overlay/map/MapCanvas.js";
 import { useMapSize } from "../../3d/overlay/map/useMapSize.js";
-import { environmentDocumentFrom } from "../route/index.js";
 import styles from "./ScenarioWorkspace.module.css";
 
-const MIN_ZOOM = 0.25;
-const MAX_ZOOM = 8;
-const FIT_PADDING = 48;
 const PAN_THRESHOLD_PX = 4;
-
-function finite(value, fallback = 0) {
-    const numeric = Number(value);
-    return Number.isFinite(numeric) ? numeric : fallback;
-}
-
-export function normalizeScenarioMapDocument(environment) {
-    const document = environmentDocumentFrom(environment);
-    return {
-        ...document,
-        roads: {
-            nodes: Array.isArray(document.roads?.nodes) ? document.roads.nodes : [],
-            edges: Array.isArray(document.roads?.edges) ? document.roads.edges : [],
-        },
-        buildings: Array.isArray(document.buildings) ? document.buildings : [],
-        features: Array.isArray(document.features) ? document.features : [],
-    };
-}
-
-function documentPoints(document) {
-    return [
-        ...document.roads.nodes.map((node) => ({ x: finite(node.x), z: finite(node.z) })),
-        ...document.buildings.flatMap((building) => (
-            Array.isArray(building.footprint)
-                ? building.footprint.map((point) => ({ x: finite(point.x), z: finite(point.z) }))
-                : []
-        )),
-        ...document.features.map((feature) => ({ x: finite(feature.x), z: finite(feature.z) })),
-    ];
-}
-
-export function fitPointsViewport(points, size) {
-    const normalized = (points || [])
-        .map((point) => ({ x: finite(point.x), z: finite(point.z) }))
-        .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.z));
-    if (normalized.length === 0) return { centerX: 0, centerZ: 0, zoom: 1, gridVisible: true };
-    const xs = normalized.map((point) => point.x);
-    const zs = normalized.map((point) => point.z);
-    const minX = Math.min(...xs);
-    const maxX = Math.max(...xs);
-    const minZ = Math.min(...zs);
-    const maxZ = Math.max(...zs);
-    const spanX = Math.max(1, maxX - minX);
-    const spanZ = Math.max(1, maxZ - minZ);
-    const width = Math.max(1, finite(size?.width, 800) - FIT_PADDING * 2);
-    const height = Math.max(1, finite(size?.height, 600) - FIT_PADDING * 2);
-    const zoom = Math.min(
-        MAX_ZOOM,
-        Math.max(MIN_ZOOM, Math.min(width / (spanX * MAP_WORLD_SCALE), height / (spanZ * MAP_WORLD_SCALE))),
-    );
-    return {
-        centerX: (minX + maxX) / 2,
-        centerZ: (minZ + maxZ) / 2,
-        zoom,
-        gridVisible: true,
-    };
-}
-
-export function fitScenarioMapViewport(document, size) {
-    const points = documentPoints(document);
-    if (points.length === 0) return { centerX: 0, centerZ: 0, zoom: 1, gridVisible: true };
-    const xs = points.map((point) => point.x);
-    const zs = points.map((point) => point.z);
-    const minX = Math.min(...xs);
-    const maxX = Math.max(...xs);
-    const minZ = Math.min(...zs);
-    const maxZ = Math.max(...zs);
-    const spanX = Math.max(1, maxX - minX);
-    const spanZ = Math.max(1, maxZ - minZ);
-    const width = Math.max(1, finite(size?.width, 800) - FIT_PADDING * 2);
-    const height = Math.max(1, finite(size?.height, 600) - FIT_PADDING * 2);
-    const zoom = Math.min(
-        MAX_ZOOM,
-        Math.max(MIN_ZOOM, Math.min(width / (spanX * MAP_WORLD_SCALE), height / (spanZ * MAP_WORLD_SCALE))),
-    );
-    return {
-        centerX: (minX + maxX) / 2,
-        centerZ: (minZ + maxZ) / 2,
-        zoom,
-        gridVisible: true,
-    };
-}
-
-export function panScenarioMapViewport(viewport, deltaX, deltaY) {
-    const scale = Math.max(Number.EPSILON, viewport.zoom * MAP_WORLD_SCALE);
-    return {
-        ...viewport,
-        centerX: viewport.centerX - deltaX / scale,
-        centerZ: viewport.centerZ - deltaY / scale,
-    };
-}
-
-export function zoomScenarioMapViewport(viewport, screen, size, factor) {
-    const nextZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, viewport.zoom * factor));
-    if (nextZoom === viewport.zoom) return viewport;
-    const anchor = screenToWorld(screen, viewport, size);
-    const nextScale = nextZoom * MAP_WORLD_SCALE;
-    return {
-        ...viewport,
-        zoom: nextZoom,
-        centerX: anchor.x - (screen.x - size.width / 2) / nextScale,
-        centerZ: anchor.z - (screen.y - size.height / 2) / nextScale,
-    };
-}
 
 export default function ScenarioMapViewport({
     environment,
@@ -136,9 +30,9 @@ export default function ScenarioMapViewport({
     const containerRef = useRef(null);
     const gestureRef = useRef(null);
     const size = useMapSize(containerRef);
-    const document = useMemo(() => normalizeScenarioMapDocument(environment), [environment]);
+    const document = useMemo(() => mapDocumentFrom(environment), [environment]);
     const fittedViewport = useMemo(
-        () => (fitPoints?.length ? fitPointsViewport(fitPoints, size) : fitScenarioMapViewport(document, size)),
+        () => fitMapViewport(fitPoints?.length ? fitPoints : collectMapFitPoints(document), size),
         [document, fitPoints, size],
     );
     const [viewportOverride, setViewportOverride] = useState(null);
@@ -256,7 +150,7 @@ export default function ScenarioMapViewport({
         const deltaY = event.clientY - gesture.lastY;
         gesture.lastX = event.clientX;
         gesture.lastY = event.clientY;
-        updateViewport((current) => panScenarioMapViewport(current, deltaX, deltaY));
+        updateViewport((current) => panMapViewport(current, deltaX, deltaY));
     };
 
     const end = (event) => {
@@ -287,37 +181,28 @@ export default function ScenarioMapViewport({
             const bounds = element.getBoundingClientRect();
             const screen = { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
             event.preventDefault();
-            const factor = Math.exp(-event.deltaY * 0.0015);
-            updateViewport((current) => zoomScenarioMapViewport(current, screen, size, factor));
+            updateViewport((current) => zoomMapViewport(current, screen, size, mapWheelZoomFactor(event.deltaY)));
         };
         element.addEventListener("wheel", onWheel, { passive: false });
         return () => element.removeEventListener("wheel", onWheel);
     }, [size, updateViewport]);
 
-    const zoomAtCenter = (factor) => updateViewport((current) => zoomScenarioMapViewport(
+    const zoomAtCenter = (factor) => updateViewport((current) => zoomMapViewport(
         current,
         { x: size.width / 2, y: size.height / 2 },
         size,
         factor,
     ));
-    const showDetail = isMapDetailZoom(viewport);
-    const toScreen = (point) => worldToScreen(point, viewport, size);
-    const toWorld = (screen) => screenToWorld(screen, viewport, size);
-    const overlay = typeof children === "function"
-        ? children({
-            document,
-            size,
-            viewport,
-            toScreen,
-            toWorld,
-            draggingId,
-        })
-        : children;
+    const fitted = () => fitMapViewport(fitPoints?.length ? fitPoints : collectMapFitPoints(document), size);
 
     return (
-        <div
-            ref={containerRef}
+        <MapCanvas
+            containerRef={containerRef}
+            size={size}
+            viewport={viewport}
+            documentSnapshot={document}
             className={`${styles.scenarioMapViewport} ${className}`.trim()}
+            ariaLabel={ariaLabel}
             data-interaction={interaction}
             data-map-center={`${viewport.centerX.toFixed(3)},${viewport.centerZ.toFixed(3)}`}
             data-map-zoom={viewport.zoom.toFixed(3)}
@@ -326,27 +211,29 @@ export default function ScenarioMapViewport({
             onPointerMove={move}
             onPointerUp={end}
             onPointerCancel={end}
-        >
-            <svg width={size.width} height={size.height} role="img" aria-label={ariaLabel}>
-                <MapSurfaceLayers
-                    viewport={viewport}
-                    size={size}
-                    layers={{ roads: true, buildings: true, props: true }}
-                    documentSnapshot={document}
-                    mapSelection={null}
-                    showDetail={showDetail}
-                    draft={null}
-                />
-                {overlay}
-            </svg>
-            <div className={styles.scenarioMapHud} data-map-control onPointerDown={(event) => event.stopPropagation()}>
-                <div>
-                    <button type="button" aria-label="Zoom out" onClick={() => zoomAtCenter(0.8)}><IconMinus size={14} /></button>
-                    <button type="button" aria-label="Zoom in" onClick={() => zoomAtCenter(1.25)}><IconPlus size={14} /></button>
-                    <button type="button" aria-label="Fit map to environment" onClick={() => setViewportOverride({ document, viewport: fitPoints?.length ? fitPointsViewport(fitPoints, size) : fitScenarioMapViewport(document, size) })}><IconFocus2 size={14} /></button>
+            hud={(
+                <div className={styles.scenarioMapHud} data-map-control onPointerDown={(event) => event.stopPropagation()}>
+                    <div>
+                        <button type="button" aria-label="Zoom out" onClick={() => zoomAtCenter(0.8)}><IconMinus size={14} /></button>
+                        <button type="button" aria-label="Zoom in" onClick={() => zoomAtCenter(1.25)}><IconPlus size={14} /></button>
+                        <button type="button" aria-label="Fit map to environment" onClick={() => setViewportOverride({ document, viewport: fitted() })}><IconFocus2 size={14} /></button>
+                    </div>
+                    <span>{viewport.zoom.toFixed(2)}× · Drag to pan · Scroll to zoom</span>
                 </div>
-                <span>{viewport.zoom.toFixed(2)}× · Drag to pan · Scroll to zoom</span>
-            </div>
-        </div>
+            )}
+        >
+            {({ toScreen, toWorld, viewport: mapViewport, size: mapSize }) => (
+                typeof children === "function"
+                    ? children({
+                        document,
+                        size: mapSize,
+                        viewport: mapViewport,
+                        toScreen,
+                        toWorld,
+                        draggingId,
+                    })
+                    : children
+            )}
+        </MapCanvas>
     );
 }

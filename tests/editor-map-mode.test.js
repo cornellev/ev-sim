@@ -31,7 +31,7 @@ import {
 } from "../app/3d/editor/document/documentMutations.js";
 import { pickMapTarget } from "../app/3d/editor/map/mapHitTest.js";
 import { advancePanDrag, advancePendingObjectDrag, PAN_DRAG_THRESHOLD } from "../app/3d/editor/map/mapPointerInteractions.js";
-import { screenToWorld, worldSizeToScreen, worldToScreen, isMapDetailZoom } from "../app/3d/editor/map/mapCoords.js";
+import { screenToWorld, worldSizeToScreen, worldToScreen, isMapDetailZoom, isMapFootprintVisible, shouldShowMapAssetFootprint, MAP_FOOTPRINT_MIN_VIEWPORT_FRACTION, MAP_WORLD_SCALE } from "../app/3d/editor/map/mapCoords.js";
 import { getPlacementAsset, fusionObjectToCatalogType } from "../app/3d/editor/placement/placementCatalogData.js";
 import { hydrateDocumentFromRuntime } from "../app/3d/editor/document/documentRuntimeHydration.js";
 
@@ -189,6 +189,7 @@ test("editor state tracks map mode, viewport, and map tools", () => {
     assert.equal(snapshot.editorMode, EDITOR_MODES.MAP);
     assert.equal(snapshot.map.activeMapTool, MAP_TOOLS.ROAD_PEN);
     assert.equal(snapshot.map.centerX, 12);
+    assert.equal(snapshot.map.satelliteVisible, false);
     assert.equal(snapshot.map.draft.activeNodeId, "n1");
 });
 
@@ -212,6 +213,123 @@ test("isMapDetailZoom hides detail layers when zoomed out", () => {
     assert.equal(isMapDetailZoom({ zoom: 0.8 }), true);
     assert.equal(isMapDetailZoom({ zoom: 0.55 }), true);
     assert.equal(isMapDetailZoom({ zoom: 0.54 }), false);
+});
+
+test("map asset footprints stay visible from on-screen size, not the detail-zoom cutoff", () => {
+    const viewport = { centerX: 0, centerZ: 0, zoom: 0.4 };
+    const size = { width: 800, height: 600 };
+    const campus = [
+        { x: -100, z: -80 },
+        { x: 100, z: -80 },
+        { x: 100, z: 80 },
+        { x: -100, z: 80 },
+    ];
+    const crate = [
+        { x: -0.5, z: -0.5 },
+        { x: 0.5, z: -0.5 },
+        { x: 0.5, z: 0.5 },
+        { x: -0.5, z: 0.5 },
+    ];
+
+    assert.equal(isMapDetailZoom(viewport), false);
+    assert.equal(isMapFootprintVisible(campus, viewport, size), true);
+    assert.equal(isMapFootprintVisible(crate, viewport, size), false);
+    assert.equal(shouldShowMapAssetFootprint(campus, viewport, size, { showDetail: false }), true);
+    assert.equal(shouldShowMapAssetFootprint(crate, viewport, size, { showDetail: false }), false);
+    assert.equal(shouldShowMapAssetFootprint(crate, viewport, size, { showDetail: true }), true);
+    assert.equal(shouldShowMapAssetFootprint(crate, viewport, size, { selected: true }), true);
+
+    const tooSmall = MAP_FOOTPRINT_MIN_VIEWPORT_FRACTION * Math.min(size.width, size.height);
+    const tinyCampus = [
+        { x: 0, z: 0 },
+        { x: (tooSmall * 0.25) / (viewport.zoom * MAP_WORLD_SCALE), z: 0 },
+        { x: (tooSmall * 0.25) / (viewport.zoom * MAP_WORLD_SCALE), z: (tooSmall * 0.25) / (viewport.zoom * MAP_WORLD_SCALE) },
+        { x: 0, z: (tooSmall * 0.25) / (viewport.zoom * MAP_WORLD_SCALE) },
+    ];
+    assert.equal(isMapFootprintVisible(tinyCampus, viewport, size), false);
+});
+
+test("pickMapTarget still hits a large asset after the detail-zoom cutoff", () => {
+    const record = {
+        id: "tile",
+        typeId: "tile",
+        typeVersion: 2,
+        components: {
+            tile: { provider: "gltf", assetTypeVersion: 2 },
+            asset: { position: { x: 0, y: 0, z: 0 }, rotationY: 0, scale: { x: 1, y: 1, z: 1 } },
+        },
+    };
+    const bounds = { min: { x: -100, y: 0, z: -80 }, max: { x: 100, y: 10, z: 80 } };
+    const snapshot = {
+        objects: [record],
+        roads: { nodes: [], edges: [] },
+        features: [],
+        buildings: [],
+    };
+    const layers = { props: true, roads: true, buildings: true, detail: false };
+    const size = { width: 800, height: 600 };
+    const runtimeBounds = new Map([["tile", bounds]]);
+
+    assert.deepEqual(
+        pickMapTarget({ x: 40, z: 10 }, snapshot, { zoom: 0.4, centerX: 0, centerZ: 0 }, layers, 12, runtimeBounds, size),
+        { type: "asset", id: "tile" },
+    );
+    const hidden = {
+        ...snapshot,
+        objects: [{ ...record, components: { ...record.components, editorHidden: true } }],
+    };
+    assert.equal(
+        pickMapTarget({ x: 40, z: 10 }, hidden, { zoom: 0.4, centerX: 0, centerZ: 0 }, layers, 12, runtimeBounds, size),
+        null,
+        "hidden tiles are not pickable",
+    );
+    const withRoad = {
+        ...snapshot,
+        roads: {
+            nodes: [
+                { id: "a", x: 0, z: 10 },
+                { id: "b", x: 80, z: 10 },
+            ],
+            edges: [{ id: "edge-1", startNodeId: "a", endNodeId: "b", bidirectional: true, width: 7 }],
+        },
+    };
+    assert.deepEqual(
+        pickMapTarget({ x: 40, z: 10 }, withRoad, { zoom: 0.4, centerX: 0, centerZ: 0 }, layers, 12, runtimeBounds, size),
+        { type: "road", id: "edge-1" },
+        "roads pick above a GLTF tile footprint",
+    );
+    const withIntersection = {
+        ...snapshot,
+        roads: {
+            nodes: [{ id: "int-a", x: 40, z: 10, kind: "intersection" }],
+            edges: [],
+        },
+    };
+    assert.deepEqual(
+        pickMapTarget({ x: 40, z: 10 }, withIntersection, { zoom: 1, centerX: 0, centerZ: 0 }, { ...layers, detail: true }, 12, runtimeBounds, size),
+        { type: "intersection", id: "int-a" },
+        "intersections pick above a GLTF tile footprint",
+    );
+    const crate = {
+        id: "crate",
+        typeId: "asset-instance",
+        components: {
+            asset: { position: { x: 0, y: 0, z: 0 }, rotationY: 0, scale: { x: 1, y: 1, z: 1 } },
+        },
+    };
+    const crateBounds = { min: { x: -0.5, y: 0, z: -0.5 }, max: { x: 0.5, y: 1, z: 0.5 } };
+    assert.equal(
+        pickMapTarget(
+            { x: 0, z: 0 },
+            { ...snapshot, objects: [crate] },
+            { zoom: 0.4, centerX: 0, centerZ: 0 },
+            layers,
+            12,
+            new Map([["crate", crateBounds]]),
+            size,
+        ),
+        null,
+    );
 });
 
 test("snapPoint aligns to grid", () => {

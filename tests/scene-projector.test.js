@@ -4,7 +4,7 @@ import * as THREE from "three";
 
 import { resetDocumentIdCounter } from "../app/3d/editor/document/EnvironmentDocument.js";
 import { legacyCommands, objectCommands } from "../app/3d/editor/commands/index.js";
-import { computeRoadClosure } from "../app/3d/editor/projection/projectors/roadsProjector.js";
+import { computeRoadClosure, ROAD_GESTURE_PREVIEW_NAME } from "../app/3d/editor/projection/projectors/roadsProjector.js";
 import { planRoadNetwork } from "../app/3d/city/RoadNetwork.js";
 import { documentToRoadNetworkInputs } from "../app/3d/editor/document/documentMutations.js";
 import { roadNetworkOptions, toVector3Map } from "../app/3d/editor/projection/roadRuntimeEntities.js";
@@ -213,7 +213,7 @@ test("ED-09 a road drag in a large document preserves every untouched runtime id
     }
 
     const harness = await createEditorHarness({ manifestDocument });
-    const { bus, registry, city, objectDatabase } = harness;
+    const { bus, registry, city, objectDatabase, scene } = harness;
     const farId = "bulk-e127";
     const farRoad = roadByEdge(city, farId);
     const farEntity = registry.getEntity(`road:${farId}`);
@@ -231,18 +231,60 @@ test("ED-09 a road drag in a large document preserves every untouched runtime id
         assert.equal(registry.getEntity(`road:${farId}`).road, farRoad);
         assert.ok(objectDatabase.triangles().filter((triangle) => triangle.environmentSourceId === farId)
             .every((triangle, index) => triangle === farTriangles[index]), "far measured-truth triangles survive every drag frame");
-        assert.ok(objectDatabase.replaceCalls.at(-1).removed.every((id) => !String(id).startsWith("bulk-")));
+        assert.equal(roadByEdge(city, "e0"), localBefore.e0, "affected roads keep mesh identity during the drag");
+        assert.equal(roadByEdge(city, "e1"), localBefore.e1, "dependent closure roads keep mesh identity during the drag");
+        assert.equal(objectDatabase.replaceCalls.length, 0, "LiDAR is not rebuilt during transient frames");
     }
-    assert.notEqual(roadByEdge(city, "e0"), localBefore.e0, "the directly affected road rebuilds");
-    assert.notEqual(roadByEdge(city, "e1"), localBefore.e1, "the dependent local closure rebuilds");
 
     const committed = bus.commitGesture(gesture.gestureId);
     assert.equal(committed.ok, true);
     assert.equal(bus.history.length, 1, "the complete drag is one history entry");
+    assert.notEqual(roadByEdge(city, "e0"), localBefore.e0, "commit rebuilds the directly affected road");
+    assert.notEqual(roadByEdge(city, "e1"), localBefore.e1, "commit rebuilds the dependent local closure");
     assert.equal(roadByEdge(city, farId), farRoad);
     assert.equal(registry.getEntity(`road:${farId}`), farEntity);
     assert.ok(objectDatabase.triangles().filter((triangle) => triangle.environmentSourceId === farId)
         .every((triangle, index) => triangle === farTriangles[index]));
+    assert.equal(scene.getObjectByName(ROAD_GESTURE_PREVIEW_NAME), undefined, "commit removes the gesture preview");
+});
+
+test("v2 road gestures keep meshes during the drag and rematerialize once on commit", async () => {
+    const harness = await createEditorHarness({ fixture: "asymmetric-lanes.v2.json" });
+    const { bus, registry, city, objectDatabase, scene } = harness;
+    const ab = roadByEdge(city, "ab");
+    const bc = roadByEdge(city, "bc");
+    const startX = ab.root.position.x;
+    const replaceCalls = objectDatabase.replaceCalls.length;
+    assert.ok(ab?.root && bc?.root);
+
+    const moveRoad = bus.beginGesture({ objectIds: ["ab"], label: "Move road" });
+    assert.equal(moveRoad.ok, true);
+    const frame = bus.updateGesture(moveRoad.gestureId, deltaFromTranslation({ x: 5, z: 0 }));
+    assert.equal(frame.ok, true);
+    assert.equal(roadByEdge(city, "ab"), ab, "uniform road translate keeps the mesh");
+    assert.ok(Math.abs(ab.root.position.x - (startX + 5)) < 1e-6);
+    assert.equal(roadByEdge(city, "bc"), bc, "incident roads are not rematerialized during the drag");
+    assert.equal(bc.root.visible, false);
+    assert.ok(scene.getObjectByName(ROAD_GESTURE_PREVIEW_NAME)?.children.length > 0);
+    assert.equal(objectDatabase.replaceCalls.length, replaceCalls);
+
+    const committed = bus.commitGesture(moveRoad.gestureId);
+    assert.equal(committed.ok, true);
+    assert.notEqual(roadByEdge(city, "ab"), ab, "commit rematerializes the moved road");
+    assert.equal(scene.getObjectByName(ROAD_GESTURE_PREVIEW_NAME), undefined);
+    assert.ok(objectDatabase.replaceCalls.length > replaceCalls);
+
+    const knot = registry.getEntity("road-knot:bc:k1");
+    const knotStart = knot.object3D.position.clone();
+    const curve = roadByEdge(city, "bc");
+    const dragKnot = bus.beginGesture({ objectIds: [], sub: { kind: "road-knot", edgeId: "bc", knotId: "k1" }, label: "Move knot" });
+    assert.equal(dragKnot.ok, true);
+    assert.equal(bus.updateGesture(dragKnot.gestureId, deltaFromTranslation({ x: 0, z: 4 })).ok, true);
+    assert.equal(roadByEdge(city, "bc"), curve);
+    assert.ok(Math.abs(knot.object3D.position.z - (knotStart.z + 4)) < 1e-6);
+    bus.cancelGesture(dragKnot.gestureId);
+    assert.ok(Math.abs(registry.getEntity("road-knot:bc:k1").object3D.position.z - knotStart.z) < 1e-5);
+    assert.equal(bus.history.length, 1);
 });
 
 test("ED-02 removing a road tears down its runtime, demotes the junction, and undo restores everything", async () => {

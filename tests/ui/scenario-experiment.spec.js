@@ -16,24 +16,47 @@ function slug(value) {
 
 async function roadPoints(map) {
     return map.evaluate((svg) => {
-        const line = svg.querySelector("[data-map-layer='roads'] line");
         const matrix = svg.getScreenCTM();
-        if (!line || !matrix) throw new Error("The route map has no screen-space road geometry.");
-        const x1 = Number(line.getAttribute("x1"));
-        const y1 = Number(line.getAttribute("y1"));
-        const x2 = Number(line.getAttribute("x2"));
-        const y2 = Number(line.getAttribute("y2"));
-        const length = Math.hypot(x2 - x1, y2 - y1) || 1;
-        const normal = { x: -(y2 - y1) / length, y: (x2 - x1) / length };
-        const opposingOffset = -(Number(line.getAttribute("stroke-width")) || 8) * 0.25;
-        const screenPoint = (fraction, offset = 0) => {
+        if (!matrix) throw new Error("The route map has no screen-space road geometry.");
+        const toScreen = (x, y) => {
             const point = svg.createSVGPoint();
-            point.x = x1 + ((x2 - x1) * fraction) + normal.x * offset;
-            point.y = y1 + ((y2 - y1) * fraction) + normal.y * offset;
+            point.x = x;
+            point.y = y;
             const screen = point.matrixTransform(matrix);
             return { x: screen.x, y: screen.y };
         };
-        return [screenPoint(0.25, opposingOffset), screenPoint(0.5), screenPoint(0.75, opposingOffset)];
+        const samples = (x1, y1, x2, y2, strokeWidth) => {
+            const length = Math.hypot(x2 - x1, y2 - y1) || 1;
+            const normal = { x: -(y2 - y1) / length, y: (x2 - x1) / length };
+            const opposingOffset = -(strokeWidth || 8) * 0.25;
+            const at = (fraction, offset = 0) => toScreen(
+                x1 + ((x2 - x1) * fraction) + normal.x * offset,
+                y1 + ((y2 - y1) * fraction) + normal.y * offset,
+            );
+            return [at(0.25, opposingOffset), at(0.5), at(0.75, opposingOffset)];
+        };
+        const compiled = svg.querySelector("[data-road-geometry-version='2']");
+        if (compiled) {
+            const boundary = compiled.querySelector("polyline[data-road-boundary]");
+            const polygon = compiled.querySelector("polygon");
+            const raw = String(boundary?.getAttribute("points") || polygon?.getAttribute("points") || "").trim();
+            const numbers = raw.split(/[\s,]+/).map(Number).filter(Number.isFinite);
+            if (numbers.length < 4) throw new Error("The route map has no screen-space road geometry.");
+            const x1 = numbers[0];
+            const y1 = numbers[1];
+            const x2 = numbers[numbers.length - 2];
+            const y2 = numbers[numbers.length - 1];
+            return samples(x1, y1, x2, y2, Number(boundary?.getAttribute("stroke-width") || 8));
+        }
+        const line = svg.querySelector("[data-map-layer='roads'] line");
+        if (!line) throw new Error("The route map has no screen-space road geometry.");
+        return samples(
+            Number(line.getAttribute("x1")),
+            Number(line.getAttribute("y1")),
+            Number(line.getAttribute("x2")),
+            Number(line.getAttribute("y2")),
+            Number(line.getAttribute("stroke-width") || 8),
+        );
     });
 }
 

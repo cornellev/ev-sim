@@ -8,6 +8,8 @@ import {
     refreshNodeKinds,
 } from "./documentMutations.js";
 import { fusionObjectToCatalogType } from "../placement/placementCatalogData.js";
+import { collectMapFitPoints } from "../map/mapDocument.js";
+import { fitMapViewport } from "../map/mapViewport.js";
 import Unit from "../../../util/Unit.js";
 
 function getRoadDocumentOptions(road, overrides = {}) {
@@ -347,49 +349,10 @@ export function hydrateDocumentFromRuntime(data, document) {
  * Fit map viewport to document content bounds.
  * @param {import("../EditorState.js").EditorState} editor
  * @param {import("./EnvironmentDocument.js").EnvironmentDocument} document
+ * @param {{ width?: number, height?: number } | null} [size]
  */
-export function fitMapViewportToContent(editor, document) {
-    const points = [];
-
-    for (const node of document.roads.nodes) {
-        points.push({ x: node.x, z: node.z });
-    }
-    if (Number(document.roads?.geometryVersion ?? 1) === 2) {
-        for (const edge of document.roads.edges) {
-            for (const knot of edge.geometry?.knots ?? []) {
-                if (knot.position) points.push({ x: knot.position.x, z: knot.position.z });
-                for (const handle of [knot.handleIn, knot.handleOut]) {
-                    if (handle && knot.position) points.push({ x: knot.position.x + handle.x, z: knot.position.z + handle.z });
-                }
-            }
-        }
-    }
-    for (const building of document.buildings) {
-        for (const corner of building.footprint ?? []) {
-            points.push({ x: corner.x, z: corner.z });
-        }
-    }
-    for (const feature of document.features) {
-        points.push({ x: feature.x, z: feature.z });
-    }
-
+export function fitMapViewportToContent(editor, document, size) {
+    const points = collectMapFitPoints(document);
     if (!points.length) return;
-
-    const xs = points.map((point) => point.x);
-    const zs = points.map((point) => point.z);
-    const minX = Math.min(...xs);
-    const maxX = Math.max(...xs);
-    const minZ = Math.min(...zs);
-    const maxZ = Math.max(...zs);
-
-    const spanX = Math.max(maxX - minX, 20);
-    const spanZ = Math.max(maxZ - minZ, 20);
-    const span = Math.max(spanX, spanZ);
-    const zoom = Math.min(4, Math.max(0.35, 120 / span));
-
-    editor.setMapViewport({
-        centerX: (minX + maxX) / 2,
-        centerZ: (minZ + maxZ) / 2,
-        zoom,
-    });
+    editor.setMapViewport(fitMapViewport(points, size));
 }

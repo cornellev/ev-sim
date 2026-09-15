@@ -7,6 +7,7 @@ import {
     beginNodeDrag,
     beginRoadDrag,
     cancelDrag,
+    finishEndpointSubDrag,
     finishFeatureDrag,
     finishAssetDrag,
     finishNodeDrag,
@@ -19,6 +20,7 @@ import {
     handleIntersectionPlace,
     handleRoadPenClick,
     panViewport,
+    resolveRoadPenSnap,
     shouldPanImmediately,
     SNAP_RADIUS_SCREEN,
     updateFeatureDrag,
@@ -29,6 +31,13 @@ import {
 } from "./MapToolLogic.js";
 import { advancePanDrag, advancePendingObjectDrag } from "./mapPointerInteractions.js";
 import { screenRadiusToWorld } from "./mapCoords.js";
+import { mapWheelZoomFactor } from "./mapViewport.js";
+import {
+    advanceConnectPreview,
+    endpointNodeIdForSub,
+    resolveIntersectionConnectTarget,
+} from "./mapRoadConnect.js";
+import { roadGeometryVersionOf } from "../../../roads/RoadGeometryRecord.js";
 
 function selectionOf(data) {
     return data?.selection?.() ?? data?.environment?.()?.selection?.() ?? null;
@@ -52,16 +61,32 @@ function isAdditive(event) {
 export class MapPointerController {
     constructor() {
         this.activeInteraction = null;
+        this.connectPreviewState = null;
     }
 
     reset() {
         this.activeInteraction = null;
+        this.connectPreviewState = null;
+    }
+
+    clearConnectPreview(editor) {
+        this.connectPreviewState = null;
+        editor?.clearConnectPreview?.();
+    }
+
+    /** Arm the hover highlight after dwell; returns the target only once armed. */
+    syncConnectPreview(editor, target, now = Date.now()) {
+        const next = advanceConnectPreview(this.connectPreviewState, target?.intersectionId ?? null, now);
+        this.connectPreviewState = next.state;
+        editor?.setConnectPreview?.(next.armed ? { intersectionId: next.intersectionId } : null);
+        return next.armed ? target : null;
     }
 
     /** Cancel an in-progress drag gesture (pointer cancel, Escape). */
     cancel(ctx) {
         const interaction = this.activeInteraction;
         this.activeInteraction = null;
+        this.clearConnectPreview(ctx?.data?.editor?.());
         if (interaction?.gestureId) cancelDrag({ interaction, data: ctx?.data });
         if (interaction?.type === "move-road-sub") interaction.controller?.cancelSubDrag?.();
         if (interaction?.type === "building-rect") ctx?.data?.editor?.()?.clearMapDraft?.();
@@ -78,7 +103,7 @@ export class MapPointerController {
             editor,
             { x: event.clientX - containerRect.left, y: event.clientY - containerRect.top },
             size,
-            -event.deltaY,
+            mapWheelZoomFactor(event.deltaY),
         );
     }
 
@@ -111,6 +136,7 @@ export class MapPointerController {
         if (tool === MAP_TOOLS.ROAD_PEN) {
             handleRoadPenClick({ worldPoint: world, document, editor, data, size: ctx.size });
             if (event.detail >= 2 && editor.snapshot().roadDraft) finalizeRoadPen(editor, data);
+            if (!editor.snapshot().roadDraft) this.clearConnectPreview(editor);
             return true;
         }
 
@@ -161,6 +187,7 @@ export class MapPointerController {
                 { ...layers, detail: showDetail, selectedRoadId: selection?.snapshot?.().primary ?? null },
                 SNAP_RADIUS_SCREEN,
                 ctx.runtimeAssetBounds,
+                ctx.size,
             );
 
             if (pick?.type === MAP_SELECTION_TYPES.ASSET && !isAdditive(event)) {
@@ -193,7 +220,15 @@ export class MapPointerController {
                         const controller = data.environment?.()?.toolController?.roadAuthoringController;
                         const begun = controller?.beginSubDrag?.(pick.sub);
                         if (!begun?.ok) return null;
-                        return { type: "move-road-sub", start: { x: worldStart.x, z: worldStart.z }, controller };
+                        const nodeId = endpointNodeIdForSub(document, pick.sub);
+                        const node = nodeId ? document.getNode?.(nodeId) : null;
+                        return {
+                            type: "move-road-sub",
+                            start: { x: worldStart.x, z: worldStart.z },
+                            origin: node ? { x: node.x, z: node.z } : null,
+                            nodeId: nodeId ?? null,
+                            controller,
+                        };
                     });
                     return true;
                 }
@@ -239,7 +274,11 @@ export class MapPointerController {
 
         if (this.activeInteraction?.type === "move-node") {
             const world = getWorldFromEvent(event);
-            if (world) updateNodeDrag({ interaction: this.activeInteraction, editor, data, worldPoint: world });
+            if (world) {
+                const document = data.environment?.()?.getDocument?.();
+                const magnet = this.endpointMagnet(editor, document, world, this.activeInteraction.nodeId);
+                updateNodeDrag({ interaction: this.activeInteraction, editor, data, worldPoint: world, magnet });
+            }
             return;
         }
 
@@ -262,7 +301,21 @@ export class MapPointerController {
         }
         if (this.activeInteraction?.type === "move-road-sub") {
             const world = getWorldFromEvent(event);
-            if (world) this.activeInteraction.controller.updateSubDrag({ x: world.x - this.activeInteraction.start.x, z: world.z - this.activeInteraction.start.z });
+            if (world) {
+                const document = data.environment?.()?.getDocument?.();
+                const magnet = this.endpointMagnet(editor, document, world, this.activeInteraction.nodeId);
+                if (magnet && this.activeInteraction.origin) {
+                    this.activeInteraction.controller.updateSubDrag({
+                        x: magnet.x - this.activeInteraction.origin.x,
+                        z: magnet.z - this.activeInteraction.origin.z,
+                    });
+                } else {
+                    this.activeInteraction.controller.updateSubDrag({
+                        x: world.x - this.activeInteraction.start.x,
+                        z: world.z - this.activeInteraction.start.z,
+                    });
+                }
+            }
             return;
         }
 
@@ -281,7 +334,20 @@ export class MapPointerController {
 
         const tool = editor.snapshot().map.activeMapTool;
         if (tool === MAP_TOOLS.ROAD_PEN) {
-            data.environment?.()?.toolController?.roadAuthoringController?.updateStrokeCursor?.(world);
+            const document = data.environment?.()?.getDocument?.();
+            const controller = data.environment?.()?.toolController?.roadAuthoringController;
+            if (document && controller) {
+                const snap = resolveRoadPenSnap({
+                    worldPoint: world,
+                    document,
+                    editor,
+                    draft: editor.snapshot().roadDraft,
+                });
+                const armed = this.syncConnectPreview(editor, snap.connect);
+                controller.updateStrokeCursor(world, armed ? snap.snapTarget : null);
+            } else {
+                controller?.updateStrokeCursor?.(world);
+            }
             return;
         }
 
@@ -316,6 +382,7 @@ export class MapPointerController {
         const world = getWorldFromEvent(event);
         if (interaction.type === "move-node") {
             finishNodeDrag({ interaction, document: environment.getDocument(), editor, data, worldPoint: world });
+            this.clearConnectPreview(editor);
             return;
         }
 
@@ -332,8 +399,25 @@ export class MapPointerController {
             return;
         }
         if (interaction.type === "move-road-sub") {
-            interaction.controller.finishSubDrag();
-            data.simulation()?.render?.();
+            finishEndpointSubDrag({
+                interaction,
+                document: environment.getDocument(),
+                editor,
+                data,
+                worldPoint: world,
+            });
+            this.clearConnectPreview(editor);
         }
+    }
+
+    endpointMagnet(editor, document, worldPoint, nodeId) {
+        if (!document || !nodeId || roadGeometryVersionOf(document) !== 2) {
+            this.clearConnectPreview(editor);
+            return null;
+        }
+        const snapRadius = screenRadiusToWorld(SNAP_RADIUS_SCREEN, editor.snapshot().map);
+        const target = resolveIntersectionConnectTarget(document, worldPoint, snapRadius, { kind: "endpoint", nodeId });
+        const armed = this.syncConnectPreview(editor, target);
+        return armed ? armed.position : null;
     }
 }

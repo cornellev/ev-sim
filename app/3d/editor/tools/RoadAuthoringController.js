@@ -36,10 +36,11 @@ export class RoadAuthoringController {
         return this.editor.snapshot().roadDraft;
     }
 
-    updateStrokeCursor(point) {
+    updateStrokeCursor(point, snapTarget = null) {
         const draft = this.editor.snapshot().roadDraft;
         if (draft?.type !== "road-stroke") return false;
-        this.editor.setRoadDraft({ ...draft, cursor: point3(point) });
+        const value = point3(snapTarget?.position ?? point);
+        this.editor.setRoadDraft({ ...draft, cursor: value });
         return true;
     }
 

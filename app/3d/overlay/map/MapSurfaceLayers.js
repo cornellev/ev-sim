@@ -9,6 +9,7 @@ import {
 } from "../../editor/document/documentMutations.js";
 import {
     MAP_WORLD_SCALE,
+    shouldShowMapAssetFootprint,
     worldSizeToScreen,
     worldToScreen,
 } from "../../editor/map/mapCoords.js";
@@ -26,9 +27,8 @@ import {
     roadLaneCount,
     roadLanes,
 } from "../../../roads/RoadLaneModel.js";
-import { planRoadNetworkGeometry } from "../../../roads/RoadNetworkGeometry.js";
-import { assetMapFootprint } from "../../editor/map/mapHitTest.js";
-import { isAssetBackedObject } from "../../../editor-assets/AssetBackedObject.js";
+import { compiledMapRoadPlan } from "../../editor/map/mapDocument.js";
+import { assetMapFootprint, mapVisibleAssetRecords } from "../../editor/map/mapHitTest.js";
 
 function screenPoints(points, viewport, size) {
     return points.map((point) => {
@@ -327,7 +327,7 @@ function RoadConnectors({ documentSnapshot, viewport, size, layers }) {
     ));
 }
 
-function IntersectionNodes({ intersectionNodes, viewport, size, layers, showDetail, mapSelection }) {
+function IntersectionNodes({ intersectionNodes, viewport, size, layers, showDetail, mapSelection, connectPreviewId = null }) {
     if (!showDetail || !layers.roads) return null;
 
     return intersectionNodes.map((node) => {
@@ -335,15 +335,28 @@ function IntersectionNodes({ intersectionNodes, viewport, size, layers, showDeta
         const sizePx = 10;
         const selected = mapSelection?.type === MAP_SELECTION_TYPES.INTERSECTION
             && mapSelection.id === node.id;
+        const preview = connectPreviewId != null && String(connectPreviewId) === String(node.id);
         return (
             <g key={`intersection-${node.id}`}>
+                {preview && (
+                    <circle
+                        data-connect-preview={node.id}
+                        cx={screen.x}
+                        cy={screen.y}
+                        r={sizePx + 14}
+                        fill="rgba(56,189,248,0.16)"
+                        stroke="#38bdf8"
+                        strokeWidth={2}
+                        strokeDasharray="5 3"
+                    />
+                )}
                 <circle
                     cx={screen.x}
                     cy={screen.y}
-                    r={sizePx + (selected ? 7 : 4)}
-                    fill={selected ? "rgba(56,189,248,0.15)" : "rgba(245,158,11,0.12)"}
-                    stroke={selected ? "rgba(56,189,248,0.5)" : "rgba(245,158,11,0.35)"}
-                    strokeWidth={selected ? 2 : 1}
+                    r={sizePx + (selected || preview ? 7 : 4)}
+                    fill={selected || preview ? "rgba(56,189,248,0.15)" : "rgba(245,158,11,0.12)"}
+                    stroke={selected || preview ? "rgba(56,189,248,0.5)" : "rgba(245,158,11,0.35)"}
+                    strokeWidth={selected || preview ? 2 : 1}
                 />
                 <rect
                     x={screen.x - sizePx}
@@ -351,17 +364,17 @@ function IntersectionNodes({ intersectionNodes, viewport, size, layers, showDeta
                     width={sizePx * 2}
                     height={sizePx * 2}
                     rx={2}
-                    fill={selected ? "rgba(56,189,248,0.25)" : "rgba(245,158,11,0.35)"}
-                    stroke={selected ? "#38bdf8" : "#f59e0b"}
-                    strokeWidth={selected ? 2.5 : 2}
+                    fill={selected || preview ? "rgba(56,189,248,0.25)" : "rgba(245,158,11,0.35)"}
+                    stroke={selected || preview ? "#38bdf8" : "#f59e0b"}
+                    strokeWidth={selected || preview ? 2.5 : 2}
                     transform={`rotate(45 ${screen.x} ${screen.y})`}
                 />
                 <circle
                     cx={screen.x}
                     cy={screen.y}
                     r={2.5}
-                    fill={selected ? "#7dd3fc" : "#fbbf24"}
-                    stroke={selected ? "#0c4a6e" : "#78350f"}
+                    fill={selected || preview ? "#7dd3fc" : "#fbbf24"}
+                    stroke={selected || preview ? "#0c4a6e" : "#78350f"}
                     strokeWidth={0.75}
                 />
             </g>
@@ -446,11 +459,12 @@ function Features({ documentSnapshot, viewport, size, layers, showDetail, mapSel
 }
 
 function Assets({ documentSnapshot, runtimeAssetBounds, viewport, size, layers, showDetail, mapSelection }) {
-    if (!showDetail || !layers.props) return null;
-    return (documentSnapshot.objects ?? []).filter(isAssetBackedObject).map((record) => {
+    if (!layers.props) return null;
+    return mapVisibleAssetRecords(documentSnapshot).map((record) => {
         const footprint = assetMapFootprint(record, runtimeAssetBounds?.get?.(String(record.id)) ?? null);
-        const points = footprint.map((point) => worldToScreen(point, viewport, size)).map((point) => `${point.x},${point.y}`).join(" ");
         const selected = mapSelection?.type === MAP_SELECTION_TYPES.ASSET && mapSelection.id === String(record.id);
+        if (!shouldShowMapAssetFootprint(footprint, viewport, size, { showDetail, selected })) return null;
+        const points = footprint.map((point) => worldToScreen(point, viewport, size)).map((point) => `${point.x},${point.y}`).join(" ");
         return (
             <g key={record.id} data-map-asset-id={record.id}>
                 <polygon points={points} fill={selected ? "rgba(56,189,248,0.22)" : "rgba(167,139,250,0.2)"} stroke={selected ? "#38bdf8" : "#a78bfa"} strokeWidth={selected ? 2 : 1} />
@@ -516,15 +530,14 @@ export function MapSurfaceLayers({
     showDetail,
     draft,
     runtimeAssetBounds,
+    satelliteVisible = false,
+    gesturePreview = false,
+    connectPreviewId = null,
 }) {
-    const compiledPlan = useMemo(() => {
-        if (Number(documentSnapshot.roads?.geometryVersion ?? 1) !== 2) return null;
-        try {
-            return planRoadNetworkGeometry(documentSnapshot.roads);
-        } catch {
-            return null;
-        }
-    }, [documentSnapshot]);
+    const compiledPlan = useMemo(
+        () => compiledMapRoadPlan(documentSnapshot.roads, { preview: gesturePreview }),
+        [documentSnapshot, gesturePreview],
+    );
     const intersectionNodes = useMemo(
         () => getIntersectionNodes(documentSnapshot),
         [documentSnapshot],
@@ -537,8 +550,19 @@ export function MapSurfaceLayers({
 
     return (
         <>
-            <rect width={size.width} height={size.height} fill="#09090b" />
+            <rect width={size.width} height={size.height} fill={satelliteVisible ? "none" : "#09090b"} />
             <GridLines viewport={viewport} size={size} visible={viewport.gridVisible} />
+            <g data-map-layer="assets">
+                <Assets
+                    documentSnapshot={documentSnapshot}
+                    runtimeAssetBounds={runtimeAssetBounds}
+                    viewport={viewport}
+                    size={size}
+                    layers={layers}
+                    showDetail={showDetail}
+                    mapSelection={mapSelection}
+                />
+            </g>
             <g data-map-layer="roads">
                 <RoadEdges
                     documentSnapshot={documentSnapshot}
@@ -563,6 +587,7 @@ export function MapSurfaceLayers({
                 layers={layers}
                 showDetail={showDetail}
                 mapSelection={mapSelection}
+                connectPreviewId={connectPreviewId}
             />
             <EndpointNodes
                 documentSnapshot={documentSnapshot}
@@ -584,17 +609,6 @@ export function MapSurfaceLayers({
             <g data-map-layer="features">
                 <Features
                     documentSnapshot={documentSnapshot}
-                    viewport={viewport}
-                    size={size}
-                    layers={layers}
-                    showDetail={showDetail}
-                    mapSelection={mapSelection}
-                />
-            </g>
-            <g data-map-layer="assets">
-                <Assets
-                    documentSnapshot={documentSnapshot}
-                    runtimeAssetBounds={runtimeAssetBounds}
                     viewport={viewport}
                     size={size}
                     layers={layers}

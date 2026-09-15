@@ -23,6 +23,7 @@ export const SECTION_KINDS = Object.freeze({
     ROAD_ENDPOINTS: "road-endpoints",
     ROAD_GEOMETRY: "road-geometry",
     ROAD_DISPLAY: "road-display",
+    ROAD_DRAPE: "road-drape",
     SKY_PREVIEW: "sky-local-preview",
     ASSET_REVISION: "asset-revision",
 });
@@ -50,6 +51,10 @@ function nodeOf(document, nodeId) {
     return document?.getNode?.(nodeId) ?? document?.roads?.nodes?.find?.((node) => node.id === nodeId) ?? null;
 }
 
+function roadDrapeSection() {
+    return { id: "road-drape", title: "Snap to GLB", kind: SECTION_KINDS.ROAD_DRAPE };
+}
+
 export function intersectionSections(ctx, defaults) {
     const { record, document } = ctx ?? {};
     if (!record || !document) return defaults;
@@ -66,6 +71,7 @@ export function intersectionSections(ctx, defaults) {
             movements,
         });
     }
+    sections.push(roadDrapeSection());
     return sections;
 }
 
@@ -98,6 +104,7 @@ export function roadSections(ctx, defaults) {
             kind: SECTION_KINDS.ROAD_GEOMETRY,
             edgeId: String(record.id),
         },
+        roadDrapeSection(),
     ];
 }
 

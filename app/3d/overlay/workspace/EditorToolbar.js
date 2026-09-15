@@ -3,6 +3,7 @@
 import { memo, useEffect, useRef, useState } from "react";
 import {
     IconArrowBackUp,
+    IconArrowBarToDown,
     IconArrowForwardUp,
     IconArrowsMaximize,
     IconArrowsMove,
@@ -19,6 +20,7 @@ import {
     IconPointer,
     IconRoad,
     IconRotateClockwise,
+    IconSatellite,
     IconStack2,
     IconTrafficLights,
     IconVectorBezier,
@@ -28,6 +30,7 @@ import { IconButton, PopoverSurface } from "../../../ui";
 import { editorChromeKey } from "../../editor/workspace/editorChromeKey.js";
 import { LAYER_ITEMS, TOOLBAR_ACTIONS, buildToolbarModel, runToolbarAction } from "../../editor/workspace/toolbarModel.js";
 import { focusCameraOnSelection } from "../../editor/tools/cameraFocus.js";
+import { executeDrapeRoadsToGlb } from "../../editor/tools/drapeRoadsToGlb.js";
 import { MenuToggle } from "../ui/MenuToggle";
 import { cn } from "../ui/cn";
 
@@ -49,9 +52,11 @@ const ICONS = {
     chunks: IconBoxMultiple,
     bounds: IconBorderCorners,
     bezier: IconVectorBezier,
+    satellite: IconSatellite,
     undo: IconArrowBackUp,
     redo: IconArrowForwardUp,
     frame: IconFocusCentered,
+    drape: IconArrowBarToDown,
 };
 
 function ToolbarItem({ item, onRun }) {
@@ -99,10 +104,14 @@ export const EditorToolbar = memo(function EditorToolbar({ data }) {
     useEffect(() => data?.selection?.()?.subscribe?.(setSelectionSnapshot), [data]);
 
     if (!data || !editorSnapshot) return null;
-    const groups = buildToolbarModel({ editorSnapshot, busSnapshot, selectionSnapshot });
+    const document = data.environment?.()?.getDocument?.() ?? null;
+    const groups = buildToolbarModel({ editorSnapshot, busSnapshot, selectionSnapshot, document });
     const layers = editorSnapshot.layers ?? {};
     const run = (action) => {
-        runToolbarAction(data, action, { focus: () => focusCameraOnSelection({ data }) });
+        runToolbarAction(data, action, {
+            focus: () => focusCameraOnSelection({ data }),
+            drapeRoadsToGlb: () => executeDrapeRoadsToGlb(data),
+        });
     };
     const onKeyDown = (event) => {
         if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;

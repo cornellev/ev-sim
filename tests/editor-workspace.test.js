@@ -4,6 +4,7 @@ import test from "node:test";
 import { EDITOR_MODES, EDITOR_TOOLS, EditorState, MAP_TOOLS, TRANSFORM_SPACES } from "../app/3d/editor/EditorState.js";
 import { TOOLBAR_ACTIONS, buildToolbarModel, runToolbarAction } from "../app/3d/editor/workspace/toolbarModel.js";
 import { editorChromeKey } from "../app/3d/editor/workspace/editorChromeKey.js";
+import { EnvironmentDocument } from "../app/3d/editor/document/EnvironmentDocument.js";
 
 function ids(groups, groupId) {
     return groups.find((group) => group.id === groupId)?.items.map((item) => item.id) ?? null;
@@ -25,7 +26,7 @@ test("ED-03 the toolbar model shows scene tools in scene view and map tools in m
     assert.equal(grid.shortcut, "G");
     assert.equal(grid.tooltip, "Grid (G)");
     const history = scene.find((group) => group.id === "history").items;
-    assert.deepEqual(history.map((item) => [item.id, item.disabled]), [["undo", true], ["redo", false], ["frame", true]]);
+    assert.deepEqual(history.map((item) => [item.id, item.disabled]), [["undo", true], ["redo", false], ["frame", true], ["drape-roads-to-glb", true]]);
     assert.equal(ids(scene, "view").length, 2);
     assert.equal(scene.find((group) => group.id === "view").items[0].active, true);
 
@@ -36,7 +37,7 @@ test("ED-03 the toolbar model shows scene tools in scene view and map tools in m
     assert.equal(ids(map, "tools"), null, "Q/W/E/R tools do not show in map view");
     assert.deepEqual(ids(map, "map-tools"), ["map-select", "map-pan", "map-intersection", "map-road-pen", "map-building-rect"]);
     assert.equal(map[0].items.find((item) => item.id === "map-road-pen").active, true);
-    assert.deepEqual(ids(map, "overlays"), ["overlay-grid"], "chunks and bounds are scene-only");
+    assert.deepEqual(ids(map, "overlays"), ["overlay-grid", "overlay-satellite"], "satellite is map-only; chunks and bounds are scene-only");
     assert.equal(map.flatMap((group) => group.items).some((item) => /lidar|collision/i.test(`${item.id} ${item.label}`)), false);
     assert.equal(map.find((group) => group.id === "transform").items[0].active, true, "map snap is on by default");
     assert.equal(map.find((group) => group.id === "history").items[2].disabled, false);
@@ -93,6 +94,10 @@ test("ED-03 toolbar actions drive the editor state per view", () => {
     editor.setEditorMode(EDITOR_MODES.MAP);
     runToolbarAction(data, { type: TOOLBAR_ACTIONS.TOGGLE_GRID });
     assert.equal(editor.snapshot().map.gridVisible, true);
+    runToolbarAction(data, { type: TOOLBAR_ACTIONS.TOGGLE_SATELLITE });
+    assert.equal(editor.snapshot().map.satelliteVisible, true);
+    runToolbarAction(data, { type: TOOLBAR_ACTIONS.TOGGLE_SATELLITE });
+    assert.equal(editor.snapshot().map.satelliteVisible, false);
 });
 
 test("ED-03 view options are session state: in snapshots and preferences, never in the persisted editor state", () => {
@@ -103,15 +108,24 @@ test("ED-03 view options are session state: in snapshots and preferences, never 
     assert.equal(snapshot.sceneGridVisible, false);
     assert.equal(snapshot.selectionBoundsVisible, true);
     const persisted = editor.persistedSnapshot();
-    for (const key of ["transformSpace", "transformSnap", "sceneGridVisible", "selectionBoundsVisible", "chunkOutlinesVisible", "roadHandlesVisible"]) {
+    for (const key of ["transformSpace", "transformSnap", "sceneGridVisible", "selectionBoundsVisible", "chunkOutlinesVisible", "roadHandlesVisible", "roadGlbSnapOffset", "roadGlbSnapIncludeConnected"]) {
         assert.equal(key in persisted, false, `${key} must not persist with the environment`);
     }
-    assert.deepEqual(Object.keys(editor.viewOptionsSnapshot()).sort(), ["chunkOutlinesVisible", "roadHandlesVisible", "sceneGridVisible", "selectionBoundsVisible", "transformSnap", "transformSpace"]);
+    assert.deepEqual(Object.keys(editor.viewOptionsSnapshot()).sort(), [
+        "chunkOutlinesVisible",
+        "roadGlbSnapIncludeConnected",
+        "roadGlbSnapOffset",
+        "roadHandlesVisible",
+        "sceneGridVisible",
+        "selectionBoundsVisible",
+        "transformSnap",
+        "transformSpace",
+    ]);
     assert.equal(editor.snapshot().roadHandlesVisible, false);
 
     let notifications = 0;
     editor.subscribe(() => { notifications += 1; });
-    editor.applyViewOptions({ transformSpace: "world", transformSnap: { enabled: false }, selectionBoundsVisible: false, chunkOutlinesVisible: false, roadHandlesVisible: true });
+    editor.applyViewOptions({ transformSpace: "world", transformSnap: { enabled: false }, selectionBoundsVisible: false, chunkOutlinesVisible: false, roadHandlesVisible: true, roadGlbSnapOffset: 0.05, roadGlbSnapIncludeConnected: true });
     assert.equal(notifications, 2, "one notification for the whole batch");
     assert.equal(editor.snapshot().transformSpace, "world");
     assert.equal(editor.snapshot().transformSnap.enabled, false);
@@ -119,6 +133,8 @@ test("ED-03 view options are session state: in snapshots and preferences, never 
     assert.equal(editor.snapshot().selectionBoundsVisible, false);
     assert.equal(editor.snapshot().chunkOutlinesVisible, false);
     assert.equal(editor.snapshot().roadHandlesVisible, true);
+    assert.equal(editor.snapshot().roadGlbSnapOffset, 0.05);
+    assert.equal(editor.snapshot().roadGlbSnapIncludeConnected, true);
     editor.applyViewOptions({ transformSpace: "world" });
     assert.equal(notifications, 2, "no-op batches do not notify");
     editor.setTransformSnap({ translation: 0 });
@@ -138,6 +154,9 @@ test("editorChromeKey ignores map pan, zoom, drafts, and road-pen cursor", () =>
     assert.equal(editorChromeKey(editor.snapshot()), baseline);
     editor.setRoadDraft({ type: "road-stroke", points: [{ x: 0, y: 0, z: 0 }], cursor: { x: 8, y: 0, z: 3 } });
     assert.equal(editorChromeKey(editor.snapshot()), baseline);
+    editor.setConnectPreview({ intersectionId: "int-c" });
+    assert.equal(editorChromeKey(editor.snapshot()), baseline);
+    assert.equal(editor.persistedSnapshot().connectPreview, undefined);
 
     editor.setEditorMode(EDITOR_MODES.MAP);
     const mapKey = editorChromeKey(editor.snapshot());
@@ -150,4 +169,32 @@ test("editorChromeKey ignores map pan, zoom, drafts, and road-pen cursor", () =>
     assert.equal(editorChromeKey(editor.snapshot()), snapKey);
     editor.setLayerVisible("roads", false);
     assert.notEqual(editorChromeKey(editor.snapshot()), snapKey);
+    editor.setMapSatelliteVisible(true);
+    const satelliteKey = editorChromeKey(editor.snapshot());
+    assert.notEqual(satelliteKey, editorChromeKey({ ...editor.snapshot(), map: { ...editor.snapshot().map, satelliteVisible: false } }));
+    editor.setMapViewport({ centerX: 12, zoom: 3 });
+    assert.equal(editorChromeKey(editor.snapshot()), satelliteKey);
+});
+
+test("toolbar Snap to GLB enables for a selected road and runs the injected drape callback", () => {
+    const editor = new EditorState();
+    const document = new EnvironmentDocument({
+        environmentId: "drape",
+        roads: {
+            nodes: [{ id: "a", x: 0, z: 0 }, { id: "b", x: 10, z: 0 }],
+            edges: [{ id: "e0", startNodeId: "a", endNodeId: "b", width: 7, laneCount: 2 }],
+        },
+    });
+    const disabled = buildToolbarModel({ editorSnapshot: editor.snapshot(), selectionSnapshot: { ids: [] }, document });
+    assert.equal(disabled.find((group) => group.id === "history").items.find((item) => item.id === "drape-roads-to-glb").disabled, true);
+    const enabled = buildToolbarModel({ editorSnapshot: editor.snapshot(), selectionSnapshot: { ids: ["e0"] }, document });
+    const drape = enabled.find((group) => group.id === "history").items.find((item) => item.id === "drape-roads-to-glb");
+    assert.equal(drape.disabled, false);
+    let ran = 0;
+    assert.equal(runToolbarAction({}, drape.action, { drapeRoadsToGlb: () => { ran += 1; return { ok: true }; } }), true);
+    assert.equal(ran, 1);
+    editor.setRoadGlbSnapOffset("nope");
+    assert.equal(editor.snapshot().roadGlbSnapOffset, 0);
+    editor.setRoadGlbSnapOffset(-0.02);
+    assert.equal(editor.snapshot().roadGlbSnapOffset, -0.02);
 });

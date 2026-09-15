@@ -6,8 +6,9 @@
  * commits exactly one change set to history or restores the document
  * byte-identically. Gestures capture the pristine records of their transform
  * closure; every `updateGesture(delta)` restores that capture and re-applies
- * the cumulative delta (idempotent), notifying with `transient: true`;
- * `commitGesture` publishes one non-transient change set; `cancelGesture`
+ * the cumulative delta (idempotent), notifying with `transient: true`.
+ * Transient frames skip `planRoadNetworkGeometry` (overlap and junction
+ * connectors); `commitGesture` still runs the full compiler. `cancelGesture`
  * restores the capture and never enters history. Undo and redo apply the
  * recorded before/after sides. Headless: no scene, registry, or React.
  */
@@ -31,13 +32,14 @@ import {
 
 export const DEFAULT_HISTORY_LIMIT = 200;
 
-function validateEnvironmentDocument(document, registry, sky) {
+export function validateEnvironmentDocument(document, registry, sky, options = {}) {
     const objectValidation = validateObjectRecords(document.objects, document.index(), registry, { sky });
     const roadValidation = validateRoadDomain(document.roads);
     const issues = [...objectValidation.issues, ...roadValidation.issues, ...validateAssetMetricsDomain(document)];
-    if (roadValidation.ok && roadGeometryVersionOf(document) === 2) {
+    if (!options.transient && roadValidation.ok && roadGeometryVersionOf(document) === 2) {
         try {
-            const plan = planRoadNetworkGeometry(document.roads);
+            const compile = options.planRoadNetworkGeometry ?? planRoadNetworkGeometry;
+            const plan = compile(document.roads);
             issues.push(...validateJunctionMovements(document.roads, plan));
         } catch (error) {
             issues.push(...(error.issues ?? [{ path: ["roads"], code: "road.geometry.compile-failed", message: error.message, severity: "error" }]));
@@ -261,8 +263,8 @@ export class CommandBus {
         return outcome;
     }
 
-    _validateDocument() {
-        return this.documentAdapter.validate(this.document, this.registry, this.sky);
+    _validateDocument(options = {}) {
+        return this.documentAdapter.validate(this.document, this.registry, this.sky, options);
     }
 
     _commit(changeSet) {
@@ -337,7 +339,7 @@ export class CommandBus {
                 this.documentAdapter.restoreGesture(this.document, gesture.before);
                 issues = [commandIssue(COMMAND_ISSUE_CODES.MUTATION_FAILED, applied.error)];
             } else {
-                const validation = this._validateDocument();
+                const validation = this._validateDocument({ transient: true });
                 if (!validation.ok) {
                     this.documentAdapter.restoreGesture(this.document, gesture.before);
                     issues = errorIssues(validation.issues);

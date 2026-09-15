@@ -23,6 +23,7 @@ export const COMMAND_ISSUE_CODES = Object.freeze({
     NOTHING_TO_UNDO: "command.history.empty",
     DOCUMENT_STALE: "command.document.stale",
     ASSET_MISMATCH: "command.asset.mismatch",
+    DRAPE_EMPTY: "command.road.drape.empty",
 });
 
 export function commandIssue(code, message, { objectId = null, path = ["command"], severity = "error" } = {}) {

@@ -16,9 +16,12 @@ import {
 import { MAP_TOOLS } from "../EditorState.js";
 import { deltaFromTranslation } from "../objects/transformDelta.js";
 import * as legacyCommands from "../commands/legacyCommands.js";
+import { connectRoadEndpoint } from "../commands/roadCommands.js";
 import { deleteObjects } from "../commands/objectCommands.js";
 import { commandFailure, commandIssue, commandSuccess, COMMAND_ISSUE_CODES } from "../commands/commandIssues.js";
-import { MAP_WORLD_SCALE, screenRadiusToWorld } from "./mapCoords.js";
+import { screenRadiusToWorld } from "./mapCoords.js";
+import { panMapViewport, zoomMapViewport } from "./mapViewport.js";
+import { endpointNodeIdForSub, resolveIntersectionConnectTarget } from "./mapRoadConnect.js";
 import { roadGeometryVersionOf } from "../../../roads/RoadGeometryRecord.js";
 import { isAssetBackedObject } from "../../../editor-assets/AssetBackedObject.js";
 
@@ -74,20 +77,46 @@ export function resolveRoadPenNode({ point, snapRadius, label = "Start road" }) 
 }
 
 /**
+ * Prefer an intersection (then any node) under the unsnapped pointer so grid
+ * snap cannot steal a diamond hit. Free placement still uses map snap.
+ */
+export function resolveRoadPenSnap({ worldPoint, document, editor, draft = null }) {
+    const snapRadius = screenRadiusToWorld(SNAP_RADIUS_SCREEN, editor.snapshot().map);
+    const connect = resolveIntersectionConnectTarget(document, worldPoint, snapRadius, {
+        kind: "stroke",
+        startNodeId: draft?.type === "road-stroke" ? draft.startNodeId : null,
+    });
+    if (connect) {
+        return {
+            point: { x: connect.position.x, y: worldPoint.y ?? connect.position.y, z: connect.position.z },
+            snapTarget: { nodeId: connect.intersectionId, position: connect.position },
+            connect,
+        };
+    }
+    const node = findNearestNode(worldPoint, document.roads.nodes, snapRadius);
+    if (node) {
+        return {
+            point: { x: node.x, y: worldPoint.y ?? node.y ?? 0, z: node.z },
+            snapTarget: { nodeId: node.id, position: node },
+            connect: null,
+        };
+    }
+    const snapped = applySnap(worldPoint, editor);
+    return { point: { ...snapped, y: worldPoint.y ?? 0 }, snapTarget: null, connect: null };
+}
+
+/**
  * Road pen: first click starts a draft at a node; later clicks draw an edge
  * from the previous node to the clicked node as one transaction.
  */
 export function handleRoadPenClick({ worldPoint, document, editor, data }) {
     const controller = roadControllerOf(data);
     if (!controller) return { error: "Road authoring is unavailable." };
-    const snapRadius = screenRadiusToWorld(SNAP_RADIUS_SCREEN, editor.snapshot().map);
-    const snapped = applySnap(worldPoint, editor);
-    const node = findNearestNode(snapped, document.roads.nodes, snapRadius);
-    const snapTarget = node ? { nodeId: node.id, position: node } : null;
     const draft = editor.snapshot().roadDraft;
+    const { point, snapTarget } = resolveRoadPenSnap({ worldPoint, document, editor, draft });
     return draft?.type === "road-stroke"
-        ? controller.appendStrokePoint({ ...snapped, y: worldPoint.y ?? 0 }, snapTarget)
-        : controller.beginStroke({ ...snapped, y: worldPoint.y ?? 0 }, snapTarget);
+        ? controller.appendStrokePoint(point, snapTarget)
+        : controller.beginStroke(point, snapTarget);
 }
 
 export function handleIntersectionPlace({ worldPoint, document, editor, data }) {
@@ -117,28 +146,49 @@ export function beginNodeDrag({ document, data, nodeId, worldPoint = null }) {
     if (!begun.ok) return null;
     if (record) selectionOf(data)?.select(nodeId);
     const start = worldPoint ? { x: worldPoint.x, z: worldPoint.z } : { x: node.x, z: node.z };
-    return { type: "move-node", nodeId, gestureId: begun.gestureId, start };
+    return { type: "move-node", nodeId, gestureId: begun.gestureId, start, origin: { x: node.x, z: node.z } };
 }
 
-export function updateNodeDrag({ interaction, editor, data, worldPoint }) {
+export function updateNodeDrag({ interaction, editor, data, worldPoint, magnet = null }) {
     const bus = busOf(data);
     if (!interaction?.gestureId) return { ok: false };
-    const snapped = applySnap(worldPoint, editor);
-    const result = bus.updateGesture(interaction.gestureId, deltaFromTranslation({
-        x: snapped.x - interaction.start.x,
-        z: snapped.z - interaction.start.z,
-    }));
+    const delta = magnet && interaction.origin
+        ? { x: magnet.x - interaction.origin.x, z: magnet.z - interaction.origin.z }
+        : (() => {
+            const snapped = applySnap(worldPoint, editor);
+            return { x: snapped.x - interaction.start.x, z: snapped.z - interaction.start.z };
+        })();
+    const result = bus.updateGesture(interaction.gestureId, deltaFromTranslation(delta));
     data.simulation()?.render?.();
     return result;
 }
 
+function endpointConnectTarget({ document, editor, worldPoint, nodeId }) {
+    if (!worldPoint || !nodeId || roadGeometryVersionOf(document) !== 2) return null;
+    const snapRadius = screenRadiusToWorld(SNAP_RADIUS_SCREEN, editor.snapshot().map);
+    return resolveIntersectionConnectTarget(document, worldPoint, snapRadius, { kind: "endpoint", nodeId });
+}
+
 /**
- * Finish a node drag: commit, then let a free endpoint merge into a nearby
- * intersection (the legacy snap/connect rule).
+ * Finish a node drag. Geometry-v2 free endpoints dropped on an intersection
+ * cancel the move and run `road.connect-endpoint` as one undo step. Legacy v1
+ * still commits the move, then merges with `connectEndpoint`.
  */
 export function finishNodeDrag({ interaction, document, editor, data, worldPoint }) {
     const bus = busOf(data);
     if (!interaction?.gestureId) return { ok: false };
+    const connectTarget = endpointConnectTarget({ document, editor, worldPoint, nodeId: interaction.nodeId });
+    if (connectTarget) {
+        bus.cancelGesture(interaction.gestureId);
+        const connected = bus.execute(connectRoadEndpoint({
+            edgeId: connectTarget.edgeId,
+            end: connectTarget.end,
+            target: { nodeId: connectTarget.intersectionId },
+        }));
+        editor.clearConnectPreview?.();
+        data.simulation()?.render?.();
+        return { ok: connected.ok, connected: connected.ok, issues: connected.issues };
+    }
     if (worldPoint) updateNodeDrag({ interaction, editor, data, worldPoint });
     const committed = bus.commitGesture(interaction.gestureId);
     const snapRadius = screenRadiusToWorld(SNAP_RADIUS_SCREEN, editor.snapshot().map);
@@ -149,11 +199,36 @@ export function finishNodeDrag({ interaction, document, editor, data, worldPoint
             point: { x: node.x, z: node.z },
             snapRadius,
         }));
+        editor.clearConnectPreview?.();
         data.simulation()?.render?.();
         return { ok: true, connected: connected.ok && connected.result?.connected === true };
     }
+    editor.clearConnectPreview?.();
     data.simulation()?.render?.();
     return { ok: committed.ok, connected: false, issues: committed.issues };
+}
+
+/** Finish a start/end knot drag; same v2 connect-on-drop as a free endpoint node. */
+export function finishEndpointSubDrag({ interaction, document, editor, data, worldPoint }) {
+    const controller = interaction?.controller;
+    if (!controller) return { ok: false };
+    const nodeId = endpointNodeIdForSub(document, controller.subDrag?.sub);
+    const connectTarget = endpointConnectTarget({ document, editor, worldPoint, nodeId });
+    if (connectTarget) {
+        controller.cancelSubDrag();
+        const connected = busOf(data).execute(connectRoadEndpoint({
+            edgeId: connectTarget.edgeId,
+            end: connectTarget.end,
+            target: { nodeId: connectTarget.intersectionId },
+        }));
+        editor.clearConnectPreview?.();
+        data.simulation()?.render?.();
+        return { ok: connected.ok, connected: connected.ok, issues: connected.issues };
+    }
+    const result = controller.finishSubDrag();
+    editor.clearConnectPreview?.();
+    data.simulation()?.render?.();
+    return { ok: result.ok, connected: false, issues: result.issues };
 }
 
 export function cancelDrag({ interaction, data }) {
@@ -286,30 +361,14 @@ export function handleFeaturePlace({ worldPoint, editor, data }) {
 }
 
 export function panViewport(editor, deltaX, deltaY) {
-    const map = editor.snapshot().map;
-    const scale = map.zoom * MAP_WORLD_SCALE;
-    editor.setMapViewport({
-        centerX: map.centerX - deltaX / scale,
-        centerZ: map.centerZ - deltaY / scale,
-    });
+    editor.setMapViewport(panMapViewport(editor.snapshot().map, deltaX, deltaY));
 }
 
-export function zoomViewport(editor, screen, size, delta) {
+export function zoomViewport(editor, screen, size, factor) {
     const map = editor.snapshot().map;
-    const factor = delta > 0 ? 1.1 : 0.9;
-    const nextZoom = Math.min(8, Math.max(0.25, map.zoom * factor));
-    if (nextZoom === map.zoom) return;
-
-    const scale = map.zoom * MAP_WORLD_SCALE;
-    const worldX = map.centerX + (screen.x - size.width / 2) / scale;
-    const worldZ = map.centerZ + (screen.y - size.height / 2) / scale;
-
-    const nextScale = nextZoom * MAP_WORLD_SCALE;
-    editor.setMapViewport({
-        zoom: nextZoom,
-        centerX: worldX - (screen.x - size.width / 2) / nextScale,
-        centerZ: worldZ - (screen.y - size.height / 2) / nextScale,
-    });
+    const next = zoomMapViewport(map, screen, size, factor);
+    if (next === map) return;
+    editor.setMapViewport(next);
 }
 
 export function shouldPanOnPointer(activeMapTool) {

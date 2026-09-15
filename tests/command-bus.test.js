@@ -11,6 +11,7 @@ import {
     createEnvironmentCommandService,
     legacyCommands,
     objectCommands,
+    validateEnvironmentDocument,
 } from "../app/3d/editor/commands/index.js";
 import { SelectionStore } from "../app/3d/editor/selection/SelectionStore.js";
 import {
@@ -438,4 +439,19 @@ test("ED-02 selectionIds maps object ids to registry entity ids and back", () =>
     assert.equal(typeIdForEntityKind("road"), "road");
     assert.equal(typeIdForEntityKind("cone", "props"), "builtin-prop");
     assert.equal(typeIdForEntityKind("road-node"), null);
+});
+
+test("transient document validation skips the road geometry compiler", async () => {
+    const manifest = await readEnvironmentEditorFixture("asymmetric-lanes.v2.json");
+    const document = EnvironmentDocument.fromManifest(manifest.document);
+    document.replaceObjectGraph(deriveObjectGraph(document.snapshot()));
+    let compileCalls = 0;
+    const spy = () => {
+        compileCalls += 1;
+        return { junctions: [] };
+    };
+    assert.equal(validateEnvironmentDocument(document, objectTypeRegistry, null, { transient: true, planRoadNetworkGeometry: spy }).ok, true);
+    assert.equal(compileCalls, 0, "gesture frames do not compile the road graph");
+    assert.equal(validateEnvironmentDocument(document, objectTypeRegistry, null, { planRoadNetworkGeometry: spy }).ok, true);
+    assert.equal(compileCalls, 1, "commit and execute still compile v2 roads");
 });

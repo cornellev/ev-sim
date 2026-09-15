@@ -173,6 +173,22 @@ test.describe("environment editor workspace", () => {
         await toolbar.getByRole("button", { name: "Map view" }).click();
         await expect(page.locator("[data-map-surface]")).toBeVisible();
         await expect(page.getByRole("region", { name: "Map view" })).toBeVisible();
+        const satellite = toolbar.getByRole("button", { name: "Satellite" });
+        await expect(satellite).toBeVisible();
+        if (await satellite.getAttribute("aria-pressed") === "true") {
+            await satellite.click();
+        }
+        await expect(satellite).toHaveAttribute("aria-pressed", "false");
+        await expect(page.locator("[data-map-satellite]")).toHaveCount(0);
+        await satellite.click();
+        await expect(satellite).toHaveAttribute("aria-pressed", "true");
+        await expect(page.locator("[data-map-satellite]")).toBeVisible();
+        const mapBox = await box(page.locator("[data-map-surface]"));
+        const satelliteBox = await box(page.locator("[data-map-satellite]"));
+        expectClose(satelliteBox.x, mapBox.x);
+        expectClose(satelliteBox.y, mapBox.y);
+        expectClose(satelliteBox.width, mapBox.width);
+        expectClose(satelliteBox.height, mapBox.height);
         await expect(page.locator('[data-pane="hierarchy"]')).toBeVisible();
         await expect(page.locator('[data-pane="inspector"]')).toBeVisible();
         await expect(toolbar.getByRole("button", { name: "Road pen" })).toBeVisible();

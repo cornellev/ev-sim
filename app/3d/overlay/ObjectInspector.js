@@ -35,6 +35,7 @@ import { Vector3Field } from "./fields/Vector3Field";
 import { RoadDisplaySection } from "./inspector/RoadDisplaySection";
 import { RoadEndpointsSection } from "./inspector/RoadEndpointsSection";
 import { RoadGeometrySection } from "./inspector/RoadGeometrySection";
+import { RoadDrapeSection } from "./inspector/RoadDrapeSection";
 import { SkyLocalPreview } from "./inspector/SkyLocalPreview";
 import { TurnRuleMatrix } from "./inspector/TurnRuleMatrix";
 import { AssetInstanceSection } from "./inspector/AssetInstanceSection";
@@ -269,6 +270,12 @@ export function ObjectInspector({ data }) {
                 return (
                     <PropertySection key={section.id} id={section.id} title={section.title}>
                         <RoadGeometrySection data={data} section={section} onResult={report} />
+                    </PropertySection>
+                );
+            case SECTION_KINDS.ROAD_DRAPE:
+                return (
+                    <PropertySection key={section.id} id={section.id} title={section.title}>
+                        <RoadDrapeSection data={data} onResult={report} />
                     </PropertySection>
                 );
             case SECTION_KINDS.ROAD_DISPLAY:

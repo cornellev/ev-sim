@@ -6,6 +6,7 @@
  */
 
 import { EDITOR_LAYERS, EDITOR_MODES, EDITOR_TOOLS, MAP_TOOLS } from "../EditorState.js";
+import { selectionCanDrapeRoads } from "../document/roadDrapeTargets.js";
 
 export const TOOLBAR_ACTIONS = Object.freeze({
     SET_TOOL: "set-tool",
@@ -17,10 +18,12 @@ export const TOOLBAR_ACTIONS = Object.freeze({
     TOGGLE_CHUNKS: "toggle-chunks",
     TOGGLE_BOUNDS: "toggle-bounds",
     TOGGLE_ROAD_HANDLES: "toggle-road-handles",
+    TOGGLE_SATELLITE: "toggle-satellite",
     SET_LAYER: "set-layer",
     UNDO: "undo",
     REDO: "redo",
     FRAME: "frame",
+    DRAPE_ROADS_TO_GLB: "drape-roads-to-glb",
 });
 
 const SCENE_TOOLS = Object.freeze([
@@ -53,10 +56,10 @@ function item({ id, label, icon, kind = "button", active = false, disabled = fal
 }
 
 /**
- * @param {{ editorSnapshot: object|null, busSnapshot?: object|null, selectionSnapshot?: object|null }} input
+ * @param {{ editorSnapshot: object|null, busSnapshot?: object|null, selectionSnapshot?: object|null, document?: object|null }} input
  * @returns {Array<{ id: string, label: string, items: object[] }>}
  */
-export function buildToolbarModel({ editorSnapshot, busSnapshot = null, selectionSnapshot = null } = {}) {
+export function buildToolbarModel({ editorSnapshot, busSnapshot = null, selectionSnapshot = null, document = null } = {}) {
     const editor = editorSnapshot ?? {};
     const view = editor.editorMode === EDITOR_MODES.MAP ? "map" : "scene";
     const groups = [];
@@ -156,6 +159,15 @@ export function buildToolbarModel({ editorSnapshot, busSnapshot = null, selectio
         overlays.push(item({ id: "overlay-chunks", label: "Chunks", icon: "chunks", kind: "toggle", active: editor.chunkOutlinesVisible !== false, action: { type: TOOLBAR_ACTIONS.TOGGLE_CHUNKS } }));
         overlays.push(item({ id: "overlay-bounds", label: "Selection bounds", icon: "bounds", kind: "toggle", active: editor.selectionBoundsVisible !== false, action: { type: TOOLBAR_ACTIONS.TOGGLE_BOUNDS } }));
         overlays.push(item({ id: "overlay-road-handles", label: "Road handles", icon: "bezier", kind: "toggle", active: editor.roadHandlesVisible === true, action: { type: TOOLBAR_ACTIONS.TOGGLE_ROAD_HANDLES } }));
+    } else if (view === "map") {
+        overlays.push(item({
+            id: "overlay-satellite",
+            label: "Satellite",
+            icon: "satellite",
+            kind: "toggle",
+            active: editor.map?.satelliteVisible === true,
+            action: { type: TOOLBAR_ACTIONS.TOGGLE_SATELLITE },
+        }));
     }
     groups.push({ id: "overlays", label: "Overlays", items: overlays });
     groups.push({
@@ -165,6 +177,13 @@ export function buildToolbarModel({ editorSnapshot, busSnapshot = null, selectio
             item({ id: "undo", label: "Undo", shortcut: "Mod+Z", icon: "undo", disabled: !busSnapshot?.canUndo, action: { type: TOOLBAR_ACTIONS.UNDO } }),
             item({ id: "redo", label: "Redo", shortcut: "Shift+Mod+Z", icon: "redo", disabled: !busSnapshot?.canRedo, action: { type: TOOLBAR_ACTIONS.REDO } }),
             item({ id: "frame", label: "Frame selection", shortcut: "F", icon: "frame", disabled: !(selectionSnapshot?.ids?.length > 0), action: { type: TOOLBAR_ACTIONS.FRAME } }),
+            item({
+                id: "drape-roads-to-glb",
+                label: "Snap to GLB",
+                icon: "drape",
+                disabled: !selectionCanDrapeRoads(document, selectionSnapshot),
+                action: { type: TOOLBAR_ACTIONS.DRAPE_ROADS_TO_GLB },
+            }),
         ],
     });
     return groups;
@@ -173,8 +192,10 @@ export function buildToolbarModel({ editorSnapshot, busSnapshot = null, selectio
 /**
  * Apply a toolbar action to the editor services. `data` is the runtime
  * accessor object; `focus` frames the selection (browser-only, injected).
+ * `drapeRoadsToGlb` is the browser GLB sampler + command (optional so this
+ * module stays Three-free in tests).
  */
-export function runToolbarAction(data, action, { focus = null } = {}) {
+export function runToolbarAction(data, action, { focus = null, drapeRoadsToGlb = null } = {}) {
     const editor = data?.editor?.();
     const bus = data?.commands?.();
     if (!action) return false;
@@ -212,6 +233,9 @@ export function runToolbarAction(data, action, { focus = null } = {}) {
         case TOOLBAR_ACTIONS.TOGGLE_ROAD_HANDLES:
             editor?.setRoadHandlesVisible?.(!(editor.snapshot?.().roadHandlesVisible === true));
             break;
+        case TOOLBAR_ACTIONS.TOGGLE_SATELLITE:
+            editor?.setMapSatelliteVisible?.(!(editor.snapshot?.().map?.satelliteVisible === true));
+            break;
         case TOOLBAR_ACTIONS.SET_LAYER:
             editor?.setLayerVisible?.(action.layer, action.visible);
             data?.environment?.()?.objects?.()?.setLayerVisible?.(action.layer, action.visible);
@@ -222,6 +246,12 @@ export function runToolbarAction(data, action, { focus = null } = {}) {
             return bus?.redo?.()?.ok === true;
         case TOOLBAR_ACTIONS.FRAME:
             return focus?.() ?? false;
+        case TOOLBAR_ACTIONS.DRAPE_ROADS_TO_GLB: {
+            const run = drapeRoadsToGlb ?? data?.drapeRoadsToGlb;
+            const result = typeof run === "function" ? run() : null;
+            data?.simulation?.()?.render?.();
+            return result?.ok === true;
+        }
         default:
             return false;
     }

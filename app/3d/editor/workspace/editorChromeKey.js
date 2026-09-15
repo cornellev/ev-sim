@@ -22,6 +22,7 @@ export function editorChromeKey(snapshot) {
         mapSnapEnabled: map.snapEnabled === true,
         mapSnapSize: map.snapSize ?? null,
         mapGridVisible: map.gridVisible !== false,
+        mapSatelliteVisible: map.satelliteVisible === true,
         workspace: snapshot.workspace ?? null,
         earthImport: snapshot.earthImport ?? null,
         dirty: snapshot.dirty === true,

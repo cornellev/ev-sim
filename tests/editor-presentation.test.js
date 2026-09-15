@@ -65,6 +65,10 @@ test("ED-02 the presentation registry falls back to capability-driven defaults a
     const skybox = registry.get("skybox").getMenuOptions({ ...ctx, record: document.getObject("skybox"), records: [document.getObject("skybox")] });
     assert.equal(skybox.find((option) => option.id === MENU_OPTION_IDS.DELETE).disabled, true, "skybox is not deletable");
     assert.equal(skybox.find((option) => option.id === MENU_OPTION_IDS.GROUP).disabled, true);
+    assert.equal(skybox.some((option) => option.id === MENU_OPTION_IDS.DRAPE_TO_GLB), false);
+
+    const roadMenu = registry.get("road").getMenuOptions({ ...ctx, record: document.getObject("e0"), records: [document.getObject("e0")] });
+    assert.ok(roadMenu.some((option) => option.id === MENU_OPTION_IDS.DRAPE_TO_GLB));
 
     const sections = fallback.getInspectorSections({ record, document, sky: null });
     assert.deepEqual(sections.map((section) => section.id), [SECTION_IDS.OBJECT, SECTION_IDS.TRANSFORM, SECTION_IDS.OPTIONS]);
@@ -232,6 +236,8 @@ test("ED-03 built-in section providers add turn rules, road endpoints, and the s
     assert.deepEqual(endpoints.start, { id: "n1", y: 0, junction: true });
     assert.deepEqual(endpoints.end, { id: "n2", y: 0, junction: true });
     assert.equal(road[0].id, SECTION_IDS.OBJECT, "defaults come first");
+    assert.ok(road.some((section) => section.kind === SECTION_KINDS.ROAD_DRAPE), "roads get the GLB snap section");
+    assert.ok(junction.some((section) => section.kind === SECTION_KINDS.ROAD_DRAPE), "intersections get the GLB snap section");
 
     const sky = registry.forRecord(document.getObject("skybox")).getInspectorSections({ record: document.getObject("skybox"), document, sky: { mode: "image" } });
     assert.equal(sky.at(-1).kind, SECTION_KINDS.SKY_PREVIEW);

@@ -434,6 +434,7 @@ function persistedEditorStateFromSnapshot(snapshot) {
             snapEnabled: map.snapEnabled,
             snapSize: map.snapSize,
             gridVisible: map.gridVisible,
+            satelliteVisible: map.satelliteVisible === true,
         },
         earthImport: snapshot.earthImport ?? null,
     };

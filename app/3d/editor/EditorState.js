@@ -63,7 +63,21 @@ export const DEFAULT_TRANSFORM_SNAP = Object.freeze({
 });
 
 /** Session view options mirrored to a localStorage preference (never persisted with the environment). */
-export const VIEW_OPTION_KEYS = Object.freeze(["transformSpace", "transformSnap", "sceneGridVisible", "selectionBoundsVisible", "chunkOutlinesVisible", "roadHandlesVisible"]);
+export const VIEW_OPTION_KEYS = Object.freeze([
+    "transformSpace",
+    "transformSnap",
+    "sceneGridVisible",
+    "selectionBoundsVisible",
+    "chunkOutlinesVisible",
+    "roadHandlesVisible",
+    "roadGlbSnapOffset",
+    "roadGlbSnapIncludeConnected",
+]);
+
+function normalizeRoadGlbSnapOffset(value, fallback = 0) {
+    const next = Number(value);
+    return Number.isFinite(next) ? next : fallback;
+}
 
 /** Normalize a snap patch over `base`; invalid or non-positive steps keep the base value. */
 function normalizeTransformSnap(snap, base = DEFAULT_TRANSFORM_SNAP) {
@@ -88,6 +102,7 @@ const DEFAULT_MAP_STATE = Object.freeze({
     snapEnabled: true,
     snapSize: 1,
     gridVisible: true,
+    satelliteVisible: false,
     activeMapTool: MAP_TOOLS.SELECT,
     activeFeatureType: null,
     draft: null,
@@ -101,12 +116,18 @@ function cloneMapState(map) {
     return {
         ...DEFAULT_MAP_STATE,
         ...(map ?? {}),
+        satelliteVisible: map?.satelliteVisible === true,
         draft: map?.draft ? { ...map.draft } : null,
     };
 }
 
 function cloneRoadDraft(draft) {
     return draft ? structuredClone(draft) : null;
+}
+
+function cloneConnectPreview(preview) {
+    const intersectionId = preview?.intersectionId;
+    return intersectionId ? { intersectionId: String(intersectionId) } : null;
 }
 
 function cloneEarthImportState(earthImport) {
@@ -157,8 +178,11 @@ export class EditorState {
         this.sceneGridVisible = options.sceneGridVisible !== false;
         this.selectionBoundsVisible = options.selectionBoundsVisible !== false;
         this.roadHandlesVisible = options.roadHandlesVisible === true;
+        this.roadGlbSnapOffset = normalizeRoadGlbSnapOffset(options.roadGlbSnapOffset, 0);
+        this.roadGlbSnapIncludeConnected = options.roadGlbSnapIncludeConnected === true;
         this.map = cloneMapState(options.map);
         this.roadDraft = cloneRoadDraft(options.roadDraft);
+        this.connectPreview = cloneConnectPreview(options.connectPreview);
         this.earthImport = cloneEarthImportState(options.earthImport);
         this.workspace = cloneWorkspace(options.workspace);
         this.dirty = false;
@@ -178,8 +202,11 @@ export class EditorState {
             sceneGridVisible: this.sceneGridVisible,
             selectionBoundsVisible: this.selectionBoundsVisible,
             roadHandlesVisible: this.roadHandlesVisible,
+            roadGlbSnapOffset: this.roadGlbSnapOffset,
+            roadGlbSnapIncludeConnected: this.roadGlbSnapIncludeConnected,
             map: cloneMapState(this.map),
             roadDraft: cloneRoadDraft(this.roadDraft),
+            connectPreview: cloneConnectPreview(this.connectPreview),
             earthImport: cloneEarthImportState(this.earthImport),
             workspace: cloneWorkspace(this.workspace),
             dirty: this.dirty,
@@ -195,6 +222,8 @@ export class EditorState {
             selectionBoundsVisible: this.selectionBoundsVisible,
             chunkOutlinesVisible: this.chunkOutlinesVisible,
             roadHandlesVisible: this.roadHandlesVisible,
+            roadGlbSnapOffset: this.roadGlbSnapOffset,
+            roadGlbSnapIncludeConnected: this.roadGlbSnapIncludeConnected,
         };
     }
 
@@ -219,6 +248,14 @@ export class EditorState {
             const next = options.roadHandlesVisible === true;
             if (next !== this.roadHandlesVisible) { this.roadHandlesVisible = next; changed = true; }
         }
+        if (options.roadGlbSnapOffset !== undefined) {
+            const next = normalizeRoadGlbSnapOffset(options.roadGlbSnapOffset, this.roadGlbSnapOffset);
+            if (next !== this.roadGlbSnapOffset) { this.roadGlbSnapOffset = next; changed = true; }
+        }
+        if (options.roadGlbSnapIncludeConnected !== undefined) {
+            const next = options.roadGlbSnapIncludeConnected === true;
+            if (next !== this.roadGlbSnapIncludeConnected) { this.roadGlbSnapIncludeConnected = next; changed = true; }
+        }
         if (changed) this.notify();
     }
 
@@ -239,6 +276,7 @@ export class EditorState {
                 snapEnabled: map.snapEnabled,
                 snapSize: map.snapSize,
                 gridVisible: map.gridVisible,
+                satelliteVisible: map.satelliteVisible === true,
             },
             earthImport: cloneEarthImportState(this.earthImport),
         };
@@ -351,6 +389,7 @@ export class EditorState {
         if (!MAP_TOOL_VALUES.has(tool) || this.map.activeMapTool === tool) return;
         this.map.activeMapTool = tool;
         this.map.draft = null;
+        this.connectPreview = null;
         if (tool !== MAP_TOOLS.ROAD_PEN) this.roadDraft = null;
         if (tool !== MAP_TOOLS.FEATURE_PLACE) {
             this.map.activeFeatureType = null;
@@ -405,6 +444,13 @@ export class EditorState {
         this.notify();
     }
 
+    setMapSatelliteVisible(visible) {
+        const next = Boolean(visible);
+        if (this.map.satelliteVisible === next) return;
+        this.map.satelliteVisible = next;
+        this.notify();
+    }
+
     setMapDraft(draft) {
         this.map.draft = draft ? { ...draft } : null;
         this.notify();
@@ -425,6 +471,17 @@ export class EditorState {
         if (!this.roadDraft) return;
         this.roadDraft = null;
         this.notify();
+    }
+
+    setConnectPreview(preview) {
+        const next = cloneConnectPreview(preview);
+        if ((this.connectPreview?.intersectionId ?? null) === (next?.intersectionId ?? null)) return;
+        this.connectPreview = next;
+        this.notify();
+    }
+
+    clearConnectPreview() {
+        this.setConnectPreview(null);
     }
 
 
@@ -558,6 +615,20 @@ export class EditorState {
         const next = Boolean(visible);
         if (this.roadHandlesVisible === next) return;
         this.roadHandlesVisible = next;
+        this.notify();
+    }
+
+    setRoadGlbSnapOffset(offset) {
+        const next = normalizeRoadGlbSnapOffset(offset, this.roadGlbSnapOffset);
+        if (next === this.roadGlbSnapOffset) return;
+        this.roadGlbSnapOffset = next;
+        this.notify();
+    }
+
+    setRoadGlbSnapIncludeConnected(enabled) {
+        const next = enabled === true;
+        if (this.roadGlbSnapIncludeConnected === next) return;
+        this.roadGlbSnapIncludeConnected = next;
         this.notify();
     }
 
