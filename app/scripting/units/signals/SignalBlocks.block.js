@@ -1,4 +1,4 @@
-import { BlockOutput, UnitBlock } from "../../ScriptManager.js";
+import { BlockOutput, UnitBlock, usesLazySelectors } from "../../ScriptManager.js";
 import { SIGNAL_NAMESPACES, SIGNAL_PATHS } from "../../runtime/SignalPaths.js";
 import { getByPath, setByPath } from "../../runtime/SignalStore.js";
 import { normalizeType, parseValueByType, SUPPORTED_TYPES } from "../program/ProgramTypes.js";
@@ -259,6 +259,10 @@ export class SignalLatchBlock extends ConfiguredBlock {
 
     execute() {
         const valid = Boolean(this.getInput("valid"));
+        if (usesLazySelectors(this.manager) && !valid && this.hasLastValue) {
+            return new BlockOutput().set("value", this.lastValue);
+        }
+
         const incoming = this.getInput("value");
         if (valid || !this.hasLastValue) {
             this.lastValue = incoming;

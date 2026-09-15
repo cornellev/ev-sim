@@ -18,7 +18,7 @@ Use this checklist when adding a new visual scripting block.
 
 ## Add A UI-Only Block
 
-Use `blockClass: null` in `UnitCatalog.js` only when the unit is intentionally visual-only. UI-only blocks can appear in the block library but cannot compile or run as part of a v2 artifact.
+Use `blockClass: null` in `UnitCatalog.js` only when the unit is intentionally visual-only. UI-only blocks can appear in the block library but cannot compile or run as part of a v3 artifact.
 
 The current example is `Scale Matrix (tex1d)`.
 
@@ -72,4 +72,5 @@ For blocks that need state across compiled runs:
 - Editing `AddMenu.js` directly for block inventory instead of updating `UnitCatalog.js`.
 - Changing a port label in the React component but not in the `UnitBlock`.
 - Returning raw values from `execute()` instead of a `BlockOutput`.
+- Calling `other.execute()` from `execute()` instead of `this.getInput(...)`. Fan-out is memoized per evaluation frame only when inputs go through `getInput`.
 - Using duplicate program input/output labels.

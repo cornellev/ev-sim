@@ -71,7 +71,7 @@ See `docs/vehicle-manifests.md`.
 
 ### Scripting and bindings
 
-1. Scripting Canvas: graph → compile to `cev-sim.visual-script.program` v2.
+1. Scripting Canvas: graph → compile to `cev-sim.visual-script.program` v3 (v2 artifacts remain runnable).
 2. Bindings workspace: attach triggers (topic, fixed-update, signal-update,
    timer) and I/O mappings. Manifest: `server/data/bindings.json`.
 3. Compile APIs: `/api/scripting/compile`, `/api/scripting/units`.

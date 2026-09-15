@@ -1,5 +1,7 @@
 # Artifact Schema v2
 
+This page is historical. New compiles emit [artifact schema v3](artifact-schema-v3.md). Frozen v2 artifacts remain executable.
+
 Compiled visual scripts are JSON artifacts produced by `app/scripting/runtime/Compiler.js` and consumed by `app/scripting/runtime/Runner.js`.
 
 Artifacts are data only. They do not include generated JavaScript, `eval`, or serialized functions.
@@ -16,7 +18,7 @@ Required identity fields:
 }
 ```
 
-`app/scripting/runtime/Artifact.js` rejects artifacts with a different kind or version.
+`app/scripting/runtime/Artifact.js` originally required `version: 2`. The current runtime still runs these artifacts through `SUPPORTED_ARTIFACT_VERSIONS`.
 
 ## Top-Level Fields
 

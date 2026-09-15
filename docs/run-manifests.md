@@ -2,7 +2,7 @@
 
 Every professional simulation launch is defined by a saved `cev-sim.run-manifest` version 11 document. The server normalizes and validates the authoring document, resolves its environment, canonical world description, physics backend identity, scripts, bindings, autonomy catalog metadata, deterministic calibration bundle, ROS schema closure, and contract endpoints, then computes SHA-256 definition, full resolved, and simulation-semantic hashes. A running session holds that resolved snapshot and never applies Config edits in place.
 
-Binding resolution includes every global library binding plus the ids listed in `scripts.bindingIds`. The Bindings workspace manages those ids through manifest checkboxes. Scripts referenced by effective bindings are resolved automatically; entries in `scripts.artifacts` remain optional hash locks. Portable manifests with `embeddedBindings` use only their frozen embedded set.
+Binding resolution includes every global library binding plus the ids listed in `scripts.bindingIds`. The Bindings workspace manages those ids through manifest checkboxes. Scripts referenced by effective bindings are resolved automatically; entries in `scripts.artifacts` remain optional hash locks. Those locks hash the compiled artifact bytes, including `version`, so recompiling a script from v2 to v3 changes the script lock, `resolvedHash`, `simulationSemanticHash`, and `episodeHash` without changing `worldHash`. Portable manifests with `embeddedBindings` use only their frozen embedded set.
 
 ## Operator workflow
 

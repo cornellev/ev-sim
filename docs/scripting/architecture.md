@@ -8,8 +8,9 @@ flowchart LR
   lineManager --> scriptManager[ScriptManager]
   scriptManager --> editorExecute[Editor Execute]
   scriptManager --> compiler[Compiler]
-  compiler --> artifact[V2 JSON Artifact]
+  compiler --> artifact[V3 JSON Artifact]
   artifact --> runner[Runner]
+  frozenV2[Frozen V2 Artifact] --> runner
   runner --> compiledOutputs[Outputs]
 ```
 
@@ -19,7 +20,7 @@ flowchart LR
 
 Connections are created visually by `LineManager`. Port metadata is stored in DOM data attributes as `uuid|label|type`. When a valid wire is completed, `Scripting.js` calls `ScriptManager.connectUnits(...)`.
 
-Editor execution pulls data backward through connected blocks by calling `UnitBlock.getInput(...)`, which executes the upstream block and reads its `BlockOutput`.
+Editor execution pulls data backward through connected blocks by calling `UnitBlock.getInput(...)`, which resolves the upstream `BlockOutput` through `manager.evaluateUnit(uuid)`. `ScriptManager.execute()` and each output-role root in `executeProgram()` also use `evaluateUnit()`. One evaluation frame (`outputMemo` / `evaluating`) is created per `execute()` / `executeProgram()` call, so a shared node runs once per call and a later call always starts a new memo. Editor `ScriptManager.evaluationPolicy` is `{ lazySelectors: true, memoizeExecute: true }`, so `IfBlock`, `WeightedSelectBlock`, and `SignalLatchBlock` skip unused inputs. `SignalDefaultBlock` is already lazy.
 
 ## Dual Unit Model
 
@@ -52,14 +53,18 @@ Most new blocks need both.
 
 ## Compiled Runtime
 
-`Compiler.js` walks backward from program output-role blocks, or from the current head if there are no output-role blocks. It validates reachable nodes, emits frozen node definitions, and records success transitions plus a reverse transition table.
+`Compiler.js` walks backward from program output-role blocks, or from the current head if there are no output-role blocks. It validates reachable nodes, emits frozen node definitions with `version: 3`, and records success transitions plus a reverse transition table.
 
-`Runner.js` hydrates registered block classes from the artifact, wires runtime connections, resolves program inputs, evaluates final states, and returns either:
+`Runner.js` hydrates registered block classes from the artifact, overlays frozen `node.ports` onto each unit's `typeMap`, wires runtime connections, resolves program inputs, evaluates final states, and returns either:
 
 - `status: "success"` with `outputs` and optional `result`.
 - `status: "failure"` with a serialized runtime error.
 
+Compiled v2 artifacts stay eager for `If`, `WeightedSelect`, and `SignalLatch`. Compiled v3 artifacts use lazy selectors. Frozen ports are authoritative over the current class registration.
+
 Compiled programs are data-only JSON. They do not contain generated JavaScript or serialized functions.
+
+Recompiling to v3 changes script lock hashes, `resolvedHash`, `simulationSemanticHash`, and `episodeHash`. It does not change `worldHash`.
 
 ## UI Events
 

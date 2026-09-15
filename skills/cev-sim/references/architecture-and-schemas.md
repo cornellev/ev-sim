@@ -26,7 +26,7 @@ MCP server id and plugin name: **`cev-sim`**. Do not configure aliases like
 | Kind | Version constant | Source |
 |------|------------------|--------|
 | `cev-sim.visual-script.editor-document` | 1 | `app/scripting/EditorDocument.js` |
-| `cev-sim.visual-script.program` | 2 | `app/scripting/runtime/Artifact.js` |
+| `cev-sim.visual-script.program` | 2 and 3 | `app/scripting/runtime/Artifact.js` |
 | `cev-sim.script-bindings` | 2 (legacy 1) | `app/scripting/bindings/BindingDocument.js` |
 | `cev-sim.run-manifest` | 2 (legacy 1) | `app/simulation/RunManifest.js` |
 | `cev-sim.run-bundle` | 1 | `app/simulation/RunManifest.js` |

@@ -37,7 +37,7 @@ Current supported program I/O types:
 
 ## Port Matching
 
-A connection is valid only when output type and input type are exactly equal. `Compiler.js` also validates this before emitting an artifact.
+The compiler snapshots `nodes[].ports` into compiled v3 artifacts. Frozen v2 artifacts remain runnable; their ports override later class registration. Port types are still exact-match strings in this milestone.
 
 React units and backend blocks must use the same labels and types:
 

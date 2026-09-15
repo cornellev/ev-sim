@@ -20,8 +20,9 @@ const outputs = script.run({ input: 21 });
 1. [Architecture](architecture.md): editor execution, compiled execution, and data flow.
 2. [Authoring Units](authoring-units.md): how to create React units and `UnitBlock` behavior.
 3. [Extension Guide](extension-guide.md): checklist for adding a block safely.
-4. [Artifact Schema v2](artifact-schema-v2.md): compiled program format.
-5. [Testing](testing.md): runtime test patterns.
+4. [Artifact Schema v3](artifact-schema-v3.md): compiled program format.
+5. [Artifact Schema v2](artifact-schema-v2.md): historical v2 format; still runnable.
+6. [Testing](testing.md): runtime test patterns.
 
 ## Key Files
 
@@ -33,6 +34,6 @@ const outputs = script.run({ input: 21 });
 - `app/scripting/ScriptRuntime.js`: load local or URL scripts and run compiled artifacts from code.
 - `app/scripting/BlockRegistry.js`: block type registry.
 - `app/scripting/registerBuiltInBlocks.js`: built-in block registration.
-- `app/scripting/runtime/Compiler.js`: v2 artifact compiler.
-- `app/scripting/runtime/Runner.js`: v2 artifact runner.
+- `app/scripting/runtime/Compiler.js`: v3 artifact compiler (v2 artifacts remain runnable).
+- `app/scripting/runtime/Runner.js`: v2 and v3 artifact runner.
 - `app/scripting/units/`: built-in unit UI and block classes.

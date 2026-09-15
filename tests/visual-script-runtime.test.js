@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFileSync } from "node:fs";
 
 import {
     BlockOutput,
@@ -24,8 +25,22 @@ import {
 } from "../app/scripting/GraphDocument.js";
 import { createLoadedScript, loadScript } from "../app/scripting/ScriptRuntime.js";
 import { SignalStore } from "../app/scripting/runtime/SignalStore.js";
-import { OutputNodeBlock } from "../app/scripting/units/program/ProgramIO.block.js";
+import { OutputNodeBlock, ProgramInputBlock } from "../app/scripting/units/program/ProgramIO.block.js";
 import { normalizeOutputNodeState } from "../app/scripting/units/program/ProgramTypes.js";
+import { NumberUnitClass } from "../app/scripting/units/math/Number.block.js";
+import { WeightedSelectBlock } from "../app/scripting/units/math/Randomization.block.js";
+import {
+    SignalDefaultBlock,
+    SignalLatchBlock,
+    WriteSignalBlock,
+} from "../app/scripting/units/signals/SignalBlocks.block.js";
+import { IfBlock } from "../app/scripting/units/statements/If.block.js";
+import {
+    assertSupportedArtifact,
+    SUPPORTED_ARTIFACT_VERSIONS,
+    VISUAL_SCRIPT_KIND,
+    VISUAL_SCRIPT_VERSION,
+} from "../app/scripting/runtime/Artifact.js";
 
 class ConstBlock extends UnitBlock {
     constructor(uuid, value = 1) {
@@ -235,6 +250,20 @@ class ThrowBlock extends UnitBlock {
     }
 }
 
+class BareObjectBlock extends UnitBlock {
+    register() {
+        this.registerOutput("out", "float64");
+    }
+
+    valid() {
+        return true;
+    }
+
+    execute() {
+        return {};
+    }
+}
+
 class AccumulatorBlock extends UnitBlock {
     constructor(uuid) {
         super(uuid);
@@ -280,6 +309,26 @@ class SignalWriteTestBlock extends UnitBlock {
             source: "test"
         });
         return new BlockOutput().set("written", true);
+    }
+}
+
+class SignalWritePassthroughBlock extends UnitBlock {
+    register() {
+        this.registerInput("value", "float64");
+        this.registerOutput("out", "float64");
+    }
+
+    valid() {
+        return this.hasInput("value");
+    }
+
+    execute() {
+        const value = this.getInput("value");
+        this.manager.writeSignal("debug.value", value, {
+            type: "float64",
+            source: "test"
+        });
+        return new BlockOutput().set("out", value);
     }
 }
 
@@ -360,6 +409,87 @@ class EntrypointConfigBlock extends UnitBlock {
     }
 }
 
+class BooleanConstBlock extends UnitBlock {
+    constructor(uuid, value = true) {
+        super(uuid);
+        this.value = value;
+        this.state = { value };
+        this.reregister();
+    }
+
+    register() {
+        this.registerOutput("out", "boolean");
+    }
+
+    serializeState() {
+        return { value: this.value };
+    }
+
+    hydrateState(state = {}) {
+        if (Object.prototype.hasOwnProperty.call(state, "value")) {
+            this.value = state.value;
+        }
+        super.hydrateState(state);
+    }
+
+    valid() {
+        return true;
+    }
+
+    execute() {
+        return new BlockOutput().set("out", this.value);
+    }
+}
+
+class ProbeBlock extends UnitBlock {
+    static counts = new Map();
+
+    constructor(uuid, value = 1, type = "float64") {
+        super(uuid);
+        this.value = value;
+        this.state = { value, type };
+        this.reregister();
+        ProbeBlock.counts.set(uuid, 0);
+    }
+
+    static count(uuid) {
+        return ProbeBlock.counts.get(uuid) || 0;
+    }
+
+    register() {
+        this.registerOutput("out", this.state?.type || "float64");
+    }
+
+    serializeState() {
+        return { value: this.value, type: this.state?.type || "float64" };
+    }
+
+    hydrateState(state = {}) {
+        if (Object.prototype.hasOwnProperty.call(state, "value")) {
+            this.value = state.value;
+        }
+        super.hydrateState(state);
+    }
+
+    valid() {
+        return true;
+    }
+
+    execute() {
+        ProbeBlock.counts.set(this.uuid, ProbeBlock.count(this.uuid) + 1);
+        return new BlockOutput().set("out", this.value);
+    }
+}
+
+const V2_EAGER_EFFECTS_FIXTURE = JSON.parse(readFileSync(
+    new URL("./fixtures/scripting/visual-script-v2-eager-effects.json", import.meta.url),
+    "utf8"
+));
+
+function withArtifactVersion(artifact, version) {
+    return JSON.parse(JSON.stringify({ ...artifact, version }));
+}
+
 function resetRegistry() {
     clearBlockTypeRegistryForTests();
     [
@@ -371,15 +501,26 @@ function resetRegistry() {
         MultiOutputBlock,
         CountingBlock,
         ThrowBlock,
+        BareObjectBlock,
         AccumulatorBlock,
         SignalWriteTestBlock,
+        SignalWritePassthroughBlock,
         FailingSignalWriteBlock,
         SignalReadValueBlock,
         BindingConfigBlock,
         EntrypointConfigBlock,
+        BooleanConstBlock,
+        ProbeBlock,
         CompiledProgramUnitBlock,
         LocalScriptProgramBlock,
         OutputNodeBlock,
+        ProgramInputBlock,
+        NumberUnitClass,
+        IfBlock,
+        WeightedSelectBlock,
+        SignalLatchBlock,
+        SignalDefaultBlock,
+        WriteSignalBlock,
     ].forEach((blockClass) => registerBlockType(blockClass.name, blockClass));
     registerBlockType(LocalScriptProgramBlock.blockType, LocalScriptProgramBlock);
 }
@@ -402,6 +543,10 @@ function createBasicProgram() {
 test("compile creates deterministic Q, nodeIndex, and reverseSuccess tables", () => {
     const artifact = createBasicProgram().compile("basic");
 
+    assert.equal(artifact.kind, VISUAL_SCRIPT_KIND);
+    assert.equal(artifact.version, VISUAL_SCRIPT_VERSION);
+    assert.equal(artifact.version, 3);
+    assert.equal(artifact.nodes.every((node) => node.ports && typeof node.ports.inputs === "object" && typeof node.ports.outputs === "object"), true);
     assert.deepEqual(artifact.Q, ["zero", "two", "add", "output"]);
     assert.deepEqual(artifact.nodeIndex, {
         zero: 0,
@@ -447,6 +592,113 @@ test("runtime memoizes shared upstream nodes once per run", () => {
     assert.equal(run.status, "success");
     assert.equal(CountingBlock.count, 1);
     assert.equal(run.outputs.result, 2);
+});
+
+test("evaluateUnit memos only successful BlockOutputs and clears evaluating on throw", () => {
+    resetRegistry();
+
+    const manager = new ScriptManager();
+    manager.addUnit(new ThrowBlock("throw"));
+    manager.addUnit(new BareObjectBlock("bare"));
+    manager._beginEvaluation();
+
+    assert.throws(() => manager.evaluateUnit("throw"), /boom/);
+    assert.equal(manager.outputMemo.has("throw"), false);
+    assert.equal(manager.evaluating.has("throw"), false);
+
+    assert.throws(() => manager.evaluateUnit("bare"), /did not return a BlockOutput/);
+    assert.equal(manager.outputMemo.has("bare"), false);
+    assert.throws(() => manager.evaluateUnit("missing"), /Runtime node "missing" is not available/);
+});
+
+test("editor executeProgram memos a shared diamond once per call", () => {
+    resetRegistry();
+    CountingBlock.count = 0;
+
+    const manager = new ScriptManager();
+    manager.addUnit(new CountingBlock("count"));
+    manager.addUnit(new AddBlock("add"));
+    manager.addUnit(new OutputBlock("output"));
+    manager.connectUnits("count", "out", "add", "a");
+    manager.connectUnits("count", "out", "add", "b");
+    manager.connectUnits("add", "out", "output", "output");
+
+    const first = manager.executeProgram();
+    assert.equal(first.status, "success");
+    assert.equal(CountingBlock.count, 1);
+    assert.equal(first.outputs.result, 2);
+
+    const second = manager.executeProgram();
+    assert.equal(second.status, "success");
+    assert.equal(CountingBlock.count, 2);
+    assert.equal(second.outputs.result, 4);
+});
+
+test("editor executeProgram writes a shared effectful diamond once", () => {
+    resetRegistry();
+
+    const manager = new ScriptManager();
+    manager.addUnit(new ConstBlock("value", 12));
+    manager.addUnit(new SignalWriteTestBlock("write"));
+    manager.addUnit(new OutputBlock("ok-a", "ok-a", "boolean"));
+    manager.addUnit(new OutputBlock("ok-b", "ok-b", "boolean"));
+    manager.connectUnits("value", "out", "write", "value");
+    manager.connectUnits("write", "written", "ok-a", "output");
+    manager.connectUnits("write", "written", "ok-b", "output");
+
+    const signalStore = new SignalStore();
+    const run = manager.executeProgram({}, { signalStore });
+
+    assert.equal(manager.evaluationPolicy.memoizeExecute, true);
+    assert.equal(run.status, "success");
+    assert.deepEqual(run.outputs, { "ok-a": true, "ok-b": true });
+    assert.equal(signalStore.read("debug.value").value, 12);
+});
+
+test("editor executeProgram shares memoization across multiple OutputNodes", () => {
+    resetRegistry();
+    CountingBlock.count = 0;
+
+    const manager = new ScriptManager();
+    manager.addUnit(new CountingBlock("count"));
+    manager.addUnit(new OutputBlock("out-a", "a"));
+    manager.addUnit(new OutputBlock("out-b", "b"));
+    manager.connectUnits("count", "out", "out-a", "output");
+    manager.connectUnits("count", "out", "out-b", "output");
+
+    const run = manager.executeProgram();
+
+    assert.equal(run.status, "success");
+    assert.equal(CountingBlock.count, 1);
+    assert.deepEqual(run.outputs, { a: 1, b: 1 });
+});
+
+test("editor executeProgram reports a runtime cycle without leaking staged signal writes", () => {
+    resetRegistry();
+
+    const manager = new ScriptManager();
+    manager.addUnit(new ConstBlock("one", 1));
+    manager.addUnit(new SignalWritePassthroughBlock("write"));
+    manager.addUnit(new AddBlock("a"));
+    manager.addUnit(new AddBlock("b"));
+    manager.addUnit(new ConstBlock("two", 2));
+    manager.addUnit(new OutputBlock("output"));
+    manager.connectUnits("one", "out", "write", "value");
+    manager.connectUnits("write", "out", "a", "a");
+    manager.connectUnits("b", "out", "a", "b");
+    manager.connectUnits("two", "out", "b", "a");
+    manager.connectUnits("a", "out", "b", "b");
+    manager.connectUnits("a", "out", "output", "output");
+
+    assert.equal(manager.checkValidity(), true);
+
+    const signalStore = new SignalStore();
+    const run = manager.executeProgram({}, { signalStore });
+
+    assert.equal(run.status, "failure");
+    assert.match(run.e.message, /Cycle detected at runtime while evaluating "/);
+    assert.equal(signalStore.read("debug.value").exists, false);
+    assert.equal(Object.keys(signalStore.pendingSnapshot()).length, 0);
 });
 
 test("single output node can expose multiple program outputs", () => {
@@ -933,21 +1185,12 @@ test("import format detection separates editable documents from compiled artifac
 test("legacy v2 compiled artifacts remain executable as artifact-only blocks", () => {
     resetRegistry();
 
-    const child = new ScriptManager();
-    child.addUnit(new InputBlock("input", "x"));
-    child.addUnit(new ConstBlock("two", 2));
-    child.addUnit(new AddBlock("add"));
-    child.addUnit(new OutputBlock("output", "result"));
-    child.connectUnits("input", "input", "add", "a");
-    child.connectUnits("two", "out", "add", "b");
-    child.connectUnits("add", "out", "output", "output");
-
-    const artifactDocument = createArtifactOnlyDocument(child.compile("legacy"), {
+    const artifactDocument = createArtifactOnlyDocument(V2_EAGER_EFFECTS_FIXTURE, {
         name: "Legacy Artifact"
     });
 
     const outer = new ScriptManager();
-    outer.addUnit(new ConstBlock("three", 3));
+    outer.addUnit(new BooleanConstBlock("choose-true", true));
 
     const imported = new CompiledProgramUnitBlock("imported");
     imported.hydrateState({
@@ -956,15 +1199,16 @@ test("legacy v2 compiled artifacts remain executable as artifact-only blocks", (
     });
     outer.addUnit(imported);
 
-    outer.addUnit(new OutputBlock("output", "final"));
-    outer.connectUnits("three", "out", "imported", "x");
-    outer.connectUnits("imported", "result", "output", "output");
+    outer.addUnit(new OutputBlock("output", "final", "boolean"));
+    outer.connectUnits("choose-true", "out", "imported", "condition");
+    outer.connectUnits("imported", "output", "output", "output");
 
     const run = outer.executeProgram();
 
     assert.equal(artifactDocument.editable, false);
+    assert.equal(artifactDocument.latestValidArtifact.version, 2);
     assert.equal(run.status, "success");
-    assert.deepEqual(run.outputs, { final: 5 });
+    assert.deepEqual(run.outputs, { final: true });
 });
 
 test("createLoadedScript runs a compiled artifact with named and positional inputs", () => {
@@ -1067,3 +1311,267 @@ test("loadScript default fetch preserves global binding", async () => {
         globalThis.fetch = originalFetch;
     }
 });
+
+function connect(manager, from, output, to, input) {
+    assert.equal(manager.connectUnits(from, output, to, input), true, `${from}.${output} -> ${to}.${input}`);
+}
+
+function createIfSelectorManager({ condition, trueValue, falseValue, type = "float64" }) {
+    resetRegistry();
+    const manager = new ScriptManager();
+    manager.addUnit(new BooleanConstBlock("cond", condition));
+    manager.addUnit(new ProbeBlock("true-probe", trueValue, type));
+    manager.addUnit(new ProbeBlock("false-probe", falseValue, type));
+    const ifBlock = new IfBlock("if");
+    ifBlock.hydrateState({ type });
+    manager.addUnit(ifBlock);
+    manager.addUnit(new OutputBlock("output", "result", type));
+    connect(manager, "cond", "out", "if", "condition");
+    connect(manager, "true-probe", "out", "if", "true value");
+    connect(manager, "false-probe", "out", "if", "false value");
+    connect(manager, "if", "out", "output", "output");
+    return manager;
+}
+
+function createWeightedSelectManager() {
+    resetRegistry();
+    const manager = new ScriptManager();
+    manager.addUnit(new ProbeBlock("a-probe", 0));
+    manager.addUnit(new ProbeBlock("b-probe", 99));
+    manager.addUnit(new ConstBlock("prob", 0));
+    manager.addUnit(new WeightedSelectBlock("select"));
+    manager.addUnit(new OutputBlock("output", "result"));
+    connect(manager, "a-probe", "out", "select", "a");
+    connect(manager, "b-probe", "out", "select", "b");
+    connect(manager, "prob", "out", "select", "prob b");
+    connect(manager, "select", "out", "output", "output");
+    return manager;
+}
+
+function createLatchManager() {
+    resetRegistry();
+    const manager = new ScriptManager();
+    const validIn = new ProgramInputBlock("valid-in");
+    validIn.hydrateState({ label: "valid", type: "boolean", defaultValue: "true" });
+    manager.addUnit(validIn);
+    manager.addUnit(new ProbeBlock("value-probe", 7));
+    const latch = new SignalLatchBlock("latch");
+    latch.hydrateState({ type: "float64" });
+    manager.addUnit(latch);
+    manager.addUnit(new OutputBlock("output", "result"));
+    connect(manager, "valid-in", "input", "latch", "valid");
+    connect(manager, "value-probe", "out", "latch", "value");
+    connect(manager, "latch", "value", "output", "output");
+    return manager;
+}
+
+function createDefaultManager(useDefault) {
+    resetRegistry();
+    const manager = new ScriptManager();
+    manager.addUnit(new BooleanConstBlock("use-default", useDefault));
+    manager.addUnit(new ProbeBlock("value-probe", 1));
+    manager.addUnit(new ProbeBlock("fallback-probe", 2));
+    const block = new SignalDefaultBlock("default");
+    block.hydrateState({ type: "float64" });
+    manager.addUnit(block);
+    manager.addUnit(new OutputBlock("output", "result"));
+    connect(manager, "use-default", "out", "default", "useDefault");
+    connect(manager, "value-probe", "out", "default", "value");
+    connect(manager, "fallback-probe", "out", "default", "fallback");
+    connect(manager, "default", "value", "output", "output");
+    return manager;
+}
+
+test("supported artifact versions accept v2 and v3 and reject others", () => {
+    resetRegistry();
+
+    const v3 = createBasicProgram().compile("current");
+    const v2 = withArtifactVersion(v3, 2);
+
+    assert.deepEqual([...SUPPORTED_ARTIFACT_VERSIONS], [2, 3]);
+    assert.equal(VISUAL_SCRIPT_VERSION, 3);
+    assert.doesNotThrow(() => assertSupportedArtifact(v2));
+    assert.doesNotThrow(() => assertSupportedArtifact(v3));
+    assert.equal(isCompiledArtifact(v2), true);
+    assert.equal(isCompiledArtifact(v3), true);
+    assert.equal(isCompiledArtifact({ kind: VISUAL_SCRIPT_KIND, version: 1 }), false);
+    assert.equal(isCompiledArtifact({ kind: VISUAL_SCRIPT_KIND, version: 4 }), false);
+
+    assert.throws(
+        () => assertSupportedArtifact({ kind: VISUAL_SCRIPT_KIND, version: 1 }),
+        /version 2 or 3/
+    );
+    assert.throws(
+        () => assertSupportedArtifact({ kind: VISUAL_SCRIPT_KIND, version: 4 }),
+        /version 2 or 3/
+    );
+
+    const retained = createScriptDocument({
+        name: "Saved v2",
+        latestValidArtifact: V2_EAGER_EFFECTS_FIXTURE
+    });
+    assert.equal(retained.latestValidArtifact.version, 2);
+
+    const importedV2 = createArtifactOnlyDocument(v2, { name: "v2" });
+    const importedV3 = createArtifactOnlyDocument(v3, { name: "v3" });
+    assert.equal(importedV2.latestValidArtifact.version, 2);
+    assert.equal(importedV3.latestValidArtifact.version, 3);
+    assert.throws(
+        () => createArtifactOnlyDocument({ kind: VISUAL_SCRIPT_KIND, version: 1 }, { name: "v1" }),
+        /unsupported artifact/
+    );
+});
+
+test("If evaluates both branches on v2 and only the selected branch on v3 and editor", () => {
+    const cases = [
+        { type: "float64", trueValue: 0, falseValue: 99, output: 0 },
+        { type: "boolean", trueValue: false, falseValue: true, output: false },
+        { type: "string", trueValue: "", falseValue: "x", output: "" }
+    ];
+
+    for (const { type, trueValue, falseValue, output } of cases) {
+        const editor = createIfSelectorManager({
+            condition: true,
+            trueValue,
+            falseValue,
+            type
+        });
+        const editorRun = editor.executeProgram();
+        assert.equal(editorRun.status, "success", type);
+        assert.equal(editorRun.outputs.result, output, type);
+        assert.equal(ProbeBlock.count("true-probe"), 1, `${type} editor true`);
+        assert.equal(ProbeBlock.count("false-probe"), 0, `${type} editor false`);
+        assert.equal(editor.evaluationPolicy.lazySelectors, true);
+
+        const artifact = editor.compile("if-select");
+        assert.equal(artifact.version, 3);
+
+        const v3 = ScriptManager.createRunner(artifact);
+        const v3Run = v3.run();
+        assert.equal(v3Run.status, "success", type);
+        assert.equal(v3Run.outputs.result, output, type);
+        assert.equal(ProbeBlock.count("true-probe"), 1, `${type} v3 true`);
+        assert.equal(ProbeBlock.count("false-probe"), 0, `${type} v3 false`);
+        assert.equal(v3.units.get("if").manager.evaluationPolicy.lazySelectors, true);
+
+        const v2 = ScriptManager.createRunner(withArtifactVersion(artifact, 2));
+        const v2Run = v2.run();
+        assert.equal(v2Run.status, "success", type);
+        assert.equal(v2Run.outputs.result, output, type);
+        assert.equal(ProbeBlock.count("true-probe"), 1, `${type} v2 true`);
+        assert.equal(ProbeBlock.count("false-probe"), 1, `${type} v2 false`);
+        assert.equal(v2.units.get("if").manager.evaluationPolicy.lazySelectors, false);
+    }
+});
+
+test("WeightedSelect evaluates both inputs on v2 and only the chosen input on v3 and editor", () => {
+    const alwaysChooseA = { context: { random: () => 1 } };
+    const editor = createWeightedSelectManager();
+    const editorRun = editor.executeProgram({}, alwaysChooseA);
+    assert.equal(editorRun.status, "success");
+    assert.equal(editorRun.outputs.result, 0);
+    assert.equal(ProbeBlock.count("a-probe"), 1);
+    assert.equal(ProbeBlock.count("b-probe"), 0);
+
+    const artifact = editor.compile("weighted-select");
+    const v3 = ScriptManager.createRunner(artifact);
+    const v3Run = v3.run({}, alwaysChooseA);
+    assert.equal(v3Run.status, "success");
+    assert.equal(v3Run.outputs.result, 0);
+    assert.equal(ProbeBlock.count("a-probe"), 1);
+    assert.equal(ProbeBlock.count("b-probe"), 0);
+
+    const v2 = ScriptManager.createRunner(withArtifactVersion(artifact, 2));
+    const v2Run = v2.run({}, alwaysChooseA);
+    assert.equal(v2Run.status, "success");
+    assert.equal(v2Run.outputs.result, 0);
+    assert.equal(ProbeBlock.count("a-probe"), 1);
+    assert.equal(ProbeBlock.count("b-probe"), 1);
+});
+
+test("SignalLatch skips value on v3 and editor when invalid with a cached sample", () => {
+    const editor = createLatchManager();
+    const first = editor.executeProgram({ valid: true });
+    const second = editor.executeProgram({ valid: false });
+    assert.equal(first.status, "success");
+    assert.equal(second.status, "success");
+    assert.equal(first.outputs.result, 7);
+    assert.equal(second.outputs.result, 7);
+    assert.equal(ProbeBlock.count("value-probe"), 1);
+
+    const artifact = createLatchManager().compile("latch");
+    const v3 = ScriptManager.createRunner(artifact);
+    assert.equal(v3.run({ valid: true }).outputs.result, 7);
+    assert.equal(ProbeBlock.count("value-probe"), 1);
+    assert.equal(v3.run({ valid: false }).outputs.result, 7);
+    assert.equal(ProbeBlock.count("value-probe"), 1);
+
+    const v2 = ScriptManager.createRunner(withArtifactVersion(artifact, 2));
+    assert.equal(v2.run({ valid: true }).outputs.result, 7);
+    assert.equal(ProbeBlock.count("value-probe"), 1);
+    assert.equal(v2.run({ valid: false }).outputs.result, 7);
+    assert.equal(ProbeBlock.count("value-probe"), 2);
+});
+
+test("SignalDefault stays lazy on editor and v2 compiled execution", () => {
+    const editor = createDefaultManager(true);
+    const editorRun = editor.executeProgram();
+    assert.equal(editorRun.status, "success");
+    assert.equal(editorRun.outputs.result, 2);
+    assert.equal(ProbeBlock.count("value-probe"), 0);
+    assert.equal(ProbeBlock.count("fallback-probe"), 1);
+
+    const artifact = editor.compile("default");
+    const v2 = ScriptManager.createRunner(withArtifactVersion(artifact, 2));
+    const v2Run = v2.run();
+    assert.equal(v2Run.status, "success");
+    assert.equal(v2Run.outputs.result, 2);
+    assert.equal(ProbeBlock.count("value-probe"), 0);
+    assert.equal(ProbeBlock.count("fallback-probe"), 1);
+    assert.equal(v2.units.get("default").manager.evaluationPolicy.lazySelectors, false);
+});
+
+test("frozen artifact ports override current class registration", () => {
+    const artifact = withArtifactVersion(createBasicProgram().compile("ports"), 3);
+    const node = artifact.nodes.find((entry) => entry.uuid === "two");
+    node.ports = {
+        inputs: {},
+        outputs: {
+            out: "int32",
+            leftover: "boolean"
+        }
+    };
+
+    const runner = ScriptManager.createRunner(artifact);
+    const unit = runner.units.get("two");
+    assert.equal(unit.outputType("out"), "int32");
+    assert.equal(unit.outputType("leftover"), "boolean");
+    assert.notEqual(unit.outputType("out"), "float64");
+});
+
+test("committed v2 eager-effects fixture keeps written ports and eager If side effects", () => {
+    resetRegistry();
+
+    assertSupportedArtifact(V2_EAGER_EFFECTS_FIXTURE);
+    assert.equal(V2_EAGER_EFFECTS_FIXTURE.version, 2);
+    assert.equal(
+        V2_EAGER_EFFECTS_FIXTURE.nodes.find((node) => node.uuid === "write-true").ports.outputs.written,
+        "boolean"
+    );
+    assert.equal(
+        V2_EAGER_EFFECTS_FIXTURE.nodes.find((node) => node.uuid === "write-false").ports.outputs.written,
+        "boolean"
+    );
+
+    const document = createArtifactOnlyDocument(V2_EAGER_EFFECTS_FIXTURE, { name: "v2 eager" });
+    const signalStore = new SignalStore();
+    const run = ScriptManager.runCompiled(document.latestValidArtifact, { condition: true }, { signalStore });
+
+    assert.equal(run.status, "success");
+    assert.equal(run.outputs.output, true);
+    assert.equal(signalStore.read("debug.if.true").exists, true);
+    assert.equal(signalStore.read("debug.if.true").value, 1);
+    assert.equal(signalStore.read("debug.if.false").exists, true);
+    assert.equal(signalStore.read("debug.if.false").value, 2);
+});
+

@@ -52,7 +52,7 @@ export class MyBlock extends UnitBlock {
 }
 ```
 
-`register()` defines the port type map used by the editor and compiler. `valid()` decides whether the block can run. `execute()` returns a `BlockOutput`.
+`register()` defines the port type map used by the editor and compiler. `valid()` decides whether the block can run. `execute()` returns a `BlockOutput`. Pull upstream values with `this.getInput(...)`; never call `other.execute()` directly. Editor and compiled evaluation memoize each node once per `executeProgram()` / `run()` frame, so fan-out reuses the same `BlockOutput`.
 
 ## State
 

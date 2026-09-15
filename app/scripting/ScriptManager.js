@@ -43,6 +43,10 @@ export function reregister(uuid) {
 
 
 
+export function usesLazySelectors(manager) {
+    return manager?.evaluationPolicy?.lazySelectors === true;
+}
+
 export class BlockOutput {
     constructor() {
         this.map = {};
@@ -273,7 +277,12 @@ export class UnitBlock {
         const crossOut = this.inputs[resolvedLabel].getOutput();
         if (!crossOut.unit.valid()) return null;
 
-        return crossOut.unit.execute().get(crossOut.label);
+        const blockOutput = this.manager.evaluateUnit(crossOut.unit.uuid);
+        if (!blockOutput.has(crossOut.label)) {
+            throw new Error(`Block "${crossOut.unit.uuid}" did not produce output "${crossOut.label}".`);
+        }
+
+        return blockOutput.get(crossOut.label);
     }
 
     execute() {
@@ -392,6 +401,44 @@ export class ScriptManager {
         this.externalOutputs = {};
         this.runtimeContext = {};
         this.signalStore = new SignalStore();
+        this.outputMemo = new Map();
+        this.evaluating = new Set();
+        this.evaluationPolicy = { lazySelectors: true, memoizeExecute: true };
+    }
+
+    _beginEvaluation() {
+        this.outputMemo = new Map();
+        this.evaluating = new Set();
+    }
+
+    evaluateUnit(uuid) {
+        if (this.outputMemo.has(uuid)) {
+            return this.outputMemo.get(uuid);
+        }
+
+        if (this.evaluating.has(uuid)) {
+            throw new Error(`Cycle detected at runtime while evaluating "${uuid}".`);
+        }
+
+        const unit = this.units.find((item) => item.uuid === uuid);
+        if (!unit) {
+            throw new Error(`Runtime node "${uuid}" is not available.`);
+        }
+
+        this.evaluating.add(uuid);
+        let output;
+        try {
+            output = unit.execute();
+        } finally {
+            this.evaluating.delete(uuid);
+        }
+
+        if (!output || typeof output.has !== "function" || typeof output.get !== "function") {
+            throw new Error(`Block "${uuid}" did not return a BlockOutput.`);
+        }
+
+        this.outputMemo.set(uuid, output);
+        return output;
     }
 
     getStoredData(uuid) {
@@ -587,7 +634,8 @@ export class ScriptManager {
             return;
         }
 
-        return headUnit.execute();
+        this._beginEvaluation();
+        return this.evaluateUnit(headUnit.uuid);
     }
 
     executeProgram(inputs = {}, options = {}) {
@@ -605,12 +653,13 @@ export class ScriptManager {
         try {
             this.setRuntimeInputs(inputs);
             this.externalOutputs = {};
+            this._beginEvaluation();
 
             const outputUnits = this.units.filter((unit) => unit.constructor.programNodeRole === "output");
             if (outputUnits.length > 0) {
                 outputUnits.forEach((unit) => {
                     if (unit.valid()) {
-                        unit.execute();
+                        this.evaluateUnit(unit.uuid);
                     }
                 });
                 this.signalStore.commitTransaction(signalTransaction);

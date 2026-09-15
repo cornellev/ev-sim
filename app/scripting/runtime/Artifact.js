@@ -1,5 +1,6 @@
 export const VISUAL_SCRIPT_KIND = "cev-sim.visual-script.program";
-export const VISUAL_SCRIPT_VERSION = 2;
+export const VISUAL_SCRIPT_VERSION = 3;
+export const SUPPORTED_ARTIFACT_VERSIONS = Object.freeze([2, 3]);
 export const FAILURE_NODE_ID = "__visual_script_failure__";
 
 export function createFailureNode() {
@@ -30,8 +31,8 @@ export function assertSupportedArtifact(artifact) {
         throw new Error("Compiled program artifact must be an object.");
     }
 
-    if (artifact.kind !== VISUAL_SCRIPT_KIND || artifact.version !== VISUAL_SCRIPT_VERSION) {
-        throw new Error(`Unsupported compiled program artifact. Expected ${VISUAL_SCRIPT_KIND} v${VISUAL_SCRIPT_VERSION}.`);
+    if (artifact.kind !== VISUAL_SCRIPT_KIND || !SUPPORTED_ARTIFACT_VERSIONS.includes(artifact.version)) {
+        throw new Error(`Unsupported compiled program artifact. Expected ${VISUAL_SCRIPT_KIND} version ${SUPPORTED_ARTIFACT_VERSIONS.join(" or ")}.`);
     }
 
     if (!Array.isArray(artifact.Q) || !Array.isArray(artifact.nodes)) {

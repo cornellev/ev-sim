@@ -1,4 +1,4 @@
-import { BlockOutput, UnitBlock } from "../../ScriptManager.js";
+import { BlockOutput, UnitBlock, usesLazySelectors } from "../../ScriptManager.js";
 
 export class IfBlock extends UnitBlock {
     register() {
@@ -22,10 +22,13 @@ export class IfBlock extends UnitBlock {
 
     execute() {
         const condition = this.getInput("condition");
+        if (usesLazySelectors(this.manager)) {
+            const selected = condition ? "true value" : "false value";
+            return new BlockOutput().set("out", this.getInput(selected));
+        }
+
         const trueValue = this.getInput("true value");
         const falseValue = this.getInput("false value");
-
-        const outputValue = condition ? trueValue : falseValue;
-        return new BlockOutput().set("out", outputValue);
+        return new BlockOutput().set("out", condition ? trueValue : falseValue);
     }
 }

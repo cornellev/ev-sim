@@ -20,7 +20,7 @@ flowchart LR
   notifyConnection --> scriptManager[ScriptManager.connectUnits]
 ```
 
-`LineManager` starts wires from input ports and completes them on compatible output ports. When a wire is completed, it passes decoded port metadata back to `Scripting.js`.
+`LineManager` starts wires from input ports and completes them on compatible output ports. When a wire is completed, it passes decoded port metadata back to `Scripting.js`. Compiled programs freeze those port types into artifact `nodes[].ports`.
 
 ## Port Metadata
 

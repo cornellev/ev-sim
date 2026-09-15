@@ -1,4 +1,4 @@
-import { BlockOutput, UnitBlock } from "../../ScriptManager.js";
+import { BlockOutput, UnitBlock, usesLazySelectors } from "../../ScriptManager.js";
 import { runtimeRandom } from "../../runtime/RuntimeRandom.js";
 
 function seededRandom(seed) {
@@ -101,6 +101,12 @@ export class WeightedSelectBlock extends UnitBlock {
     }
 
     execute() {
+        if (usesLazySelectors(this.manager)) {
+            const probB = Math.max(0, Math.min(1, this.getInput("prob b") || 0.5));
+            const selected = runtimeRandom(this) < probB ? "b" : "a";
+            return new BlockOutput().set("out", this.getInput(selected));
+        }
+
         const a = this.getInput("a") || 0;
         const b = this.getInput("b") || 0;
         const probB = Math.max(0, Math.min(1, this.getInput("prob b") || 0.5));

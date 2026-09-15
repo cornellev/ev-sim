@@ -17,7 +17,11 @@ node --experimental-default-type=module --test tests/*.test.js
 Add or update tests when changing:
 
 - Compile validation.
-- Artifact schema fields.
+- Artifact schema fields and supported versions (`2` and `3`).
+- Eager v2 versus lazy editor/v3 selector evaluation.
+- Editor `executeProgram()` memoization: shared diamonds run once per call, memos are shared across multiple OutputNodes, and a later call starts a new memo.
+- Runtime cycles on live graphs (`Cycle detected at runtime while evaluating "<uuid>"`) plus `SignalStore` rollback of staged writes.
+- Frozen `nodes[].ports` overlay during hydrate.
 - Program input/output behavior.
 - Runtime state hydration or serialization.
 - Imported compiled program behavior.
@@ -45,6 +49,6 @@ For UI-facing scripting changes, also run the app and verify:
 - Category filters and search find the expected `UnitCatalog.js` entries.
 - Wires connect only between matching types.
 - The validity badge updates after adding, connecting, deleting, or re-registering units.
-- `Compile` downloads a JSON artifact.
+- `Compile` downloads a JSON artifact (`version: 3`).
 - `Run Compiled` logs a success or meaningful failure.
 - `Import Compiled` creates a reusable compiled program unit.

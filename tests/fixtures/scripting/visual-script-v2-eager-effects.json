@@ -1,0 +1,287 @@
+{
+    "kind": "cev-sim.visual-script.program",
+    "version": 2,
+    "name": "v2-eager-effects",
+    "head": null,
+    "finalStates": [
+        "head-uuid"
+    ],
+    "startStates": [
+        "number-true",
+        "number-false",
+        "condition-in"
+    ],
+    "Q": [
+        "head-uuid",
+        "number-true",
+        "number-false",
+        "write-true",
+        "write-false",
+        "condition-in",
+        "if"
+    ],
+    "nodeIndex": {
+        "head-uuid": 0,
+        "number-true": 1,
+        "number-false": 2,
+        "write-true": 3,
+        "write-false": 4,
+        "condition-in": 5,
+        "if": 6
+    },
+    "nodes": [
+        {
+            "uuid": "head-uuid",
+            "type": "OutputNodeBlock",
+            "state": {
+                "outputs": [
+                    {
+                        "id": "output",
+                        "label": "output",
+                        "type": "boolean"
+                    }
+                ]
+            },
+            "storedData": {
+                "outputs": [
+                    {
+                        "id": "output",
+                        "label": "output",
+                        "type": "boolean"
+                    }
+                ]
+            },
+            "runtimeState": {},
+            "ports": {
+                "inputs": {
+                    "output": "boolean"
+                },
+                "outputs": {}
+            }
+        },
+        {
+            "uuid": "number-true",
+            "type": "NumberUnitClass",
+            "state": {},
+            "storedData": 1,
+            "runtimeState": {},
+            "ports": {
+                "inputs": {},
+                "outputs": {
+                    "number": "float64"
+                }
+            }
+        },
+        {
+            "uuid": "number-false",
+            "type": "NumberUnitClass",
+            "state": {},
+            "storedData": 2,
+            "runtimeState": {},
+            "ports": {
+                "inputs": {},
+                "outputs": {
+                    "number": "float64"
+                }
+            }
+        },
+        {
+            "uuid": "write-true",
+            "type": "WriteSignalBlock",
+            "state": {
+                "path": "debug.if.true",
+                "type": "float64",
+                "source": "script",
+                "staleAfter": ""
+            },
+            "runtimeState": {},
+            "ports": {
+                "inputs": {
+                    "value": "float64"
+                },
+                "outputs": {
+                    "written": "boolean"
+                }
+            }
+        },
+        {
+            "uuid": "write-false",
+            "type": "WriteSignalBlock",
+            "state": {
+                "path": "debug.if.false",
+                "type": "float64",
+                "source": "script",
+                "staleAfter": ""
+            },
+            "runtimeState": {},
+            "ports": {
+                "inputs": {
+                    "value": "float64"
+                },
+                "outputs": {
+                    "written": "boolean"
+                }
+            }
+        },
+        {
+            "uuid": "condition-in",
+            "type": "ProgramInputBlock",
+            "state": {
+                "label": "condition",
+                "type": "boolean",
+                "defaultValue": "true"
+            },
+            "runtimeState": {},
+            "ports": {
+                "inputs": {},
+                "outputs": {
+                    "input": "boolean"
+                }
+            }
+        },
+        {
+            "uuid": "if",
+            "type": "IfBlock",
+            "state": {
+                "type": "boolean"
+            },
+            "runtimeState": {},
+            "ports": {
+                "inputs": {
+                    "condition": "boolean",
+                    "true value": "boolean",
+                    "false value": "boolean"
+                },
+                "outputs": {
+                    "out": "boolean"
+                }
+            }
+        }
+    ],
+    "transitions": {
+        "success": [
+            {
+                "from": "number-true",
+                "fromIndex": 1,
+                "output": "number",
+                "to": "write-true",
+                "toIndex": 3,
+                "input": "value",
+                "type": "float64"
+            },
+            {
+                "from": "number-false",
+                "fromIndex": 2,
+                "output": "number",
+                "to": "write-false",
+                "toIndex": 4,
+                "input": "value",
+                "type": "float64"
+            },
+            {
+                "from": "write-true",
+                "fromIndex": 3,
+                "output": "written",
+                "to": "if",
+                "toIndex": 6,
+                "input": "true value",
+                "type": "boolean"
+            },
+            {
+                "from": "write-false",
+                "fromIndex": 4,
+                "output": "written",
+                "to": "if",
+                "toIndex": 6,
+                "input": "false value",
+                "type": "boolean"
+            },
+            {
+                "from": "condition-in",
+                "fromIndex": 5,
+                "output": "input",
+                "to": "if",
+                "toIndex": 6,
+                "input": "condition",
+                "type": "boolean"
+            },
+            {
+                "from": "if",
+                "fromIndex": 6,
+                "output": "out",
+                "to": "head-uuid",
+                "toIndex": 0,
+                "input": "output",
+                "type": "boolean"
+            }
+        ],
+        "failure": []
+    },
+    "failureNode": {
+        "uuid": "__visual_script_failure__",
+        "type": "FailureNode"
+    },
+    "F": [
+        "__visual_script_failure__"
+    ],
+    "reverseSuccess": {
+        "write-true": {
+            "value": {
+                "from": "number-true",
+                "output": "number",
+                "type": "float64"
+            }
+        },
+        "write-false": {
+            "value": {
+                "from": "number-false",
+                "output": "number",
+                "type": "float64"
+            }
+        },
+        "if": {
+            "true value": {
+                "from": "write-true",
+                "output": "written",
+                "type": "boolean"
+            },
+            "false value": {
+                "from": "write-false",
+                "output": "written",
+                "type": "boolean"
+            },
+            "condition": {
+                "from": "condition-in",
+                "output": "input",
+                "type": "boolean"
+            }
+        },
+        "head-uuid": {
+            "output": {
+                "from": "if",
+                "output": "out",
+                "type": "boolean"
+            }
+        }
+    },
+    "interface": {
+        "inputs": [
+            {
+                "uuid": "condition-in",
+                "label": "condition",
+                "type": "boolean",
+                "portId": "input"
+            }
+        ],
+        "outputs": [
+            {
+                "uuid": "head-uuid",
+                "label": "output",
+                "type": "boolean",
+                "portId": "output"
+            }
+        ]
+    },
+    "bindings": [],
+    "entrypoints": []
+}

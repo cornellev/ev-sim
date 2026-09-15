@@ -58,7 +58,11 @@ export class VisualScriptRunner {
             signalAge: (path) => this.signalStore.age(path),
             signalChanged: (path) => this.signalStore.changed(path),
             recordSignal: (path, value, options = {}) => this.signalStore.record(path, value, options),
-            getSignalHistory: (path) => this.signalStore.history(path)
+            getSignalHistory: (path) => this.signalStore.history(path),
+            evaluationPolicy: {
+                lazySelectors: this.artifact.version >= 3,
+                memoizeExecute: true
+            }
         };
     }
 
@@ -98,6 +102,13 @@ export class VisualScriptRunner {
 
             if (node.runtimeState && typeof unit.hydrateRuntimeState === "function") {
                 unit.hydrateRuntimeState(node.runtimeState);
+            }
+
+            if (node.ports && typeof node.ports === "object") {
+                unit.typeMap = {
+                    inputs: { ...(node.ports.inputs || {}) },
+                    outputs: { ...(node.ports.outputs || {}) }
+                };
             }
 
             this.units.set(node.uuid, unit);

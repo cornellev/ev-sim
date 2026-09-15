@@ -31,7 +31,9 @@ Examples:
 - Last output for a rate limiter.
 - Seed or accumulator state.
 
-Runtime state is saved into the compiled artifact under each node's `runtimeState`. `VisualScriptRunner` syncs runtime state after each run, including failed runs.
+Runtime state is saved into the compiled artifact under each node's `runtimeState`. `VisualScriptRunner` hydrates `state`, then `runtimeState`, then overlays cloned `node.ports` onto `unit.typeMap`. Frozen ports win over the current class `register()`. The runner syncs runtime state after each run, including failed runs.
+
+Editor `ScriptManager.outputMemo` is a per-`executeProgram()` evaluation frame, not runtime state. It is recreated at the start of each call and is not serialized.
 
 ## Guidelines
 

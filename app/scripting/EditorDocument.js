@@ -1,4 +1,4 @@
-import { VISUAL_SCRIPT_KIND, VISUAL_SCRIPT_VERSION } from "./runtime/Artifact.js";
+import { SUPPORTED_ARTIFACT_VERSIONS, VISUAL_SCRIPT_KIND } from "./runtime/Artifact.js";
 
 export const EDITOR_DOCUMENT_KIND = "cev-sim.visual-script.editor-document";
 export const EDITOR_DOCUMENT_VERSION = 1;
@@ -19,7 +19,7 @@ export function isCompiledArtifact(value) {
     return Boolean(value)
         && typeof value === "object"
         && value.kind === VISUAL_SCRIPT_KIND
-        && value.version === VISUAL_SCRIPT_VERSION;
+        && SUPPORTED_ARTIFACT_VERSIONS.includes(value.version);
 }
 
 export function isEditorDocument(value) {

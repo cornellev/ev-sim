@@ -24,7 +24,19 @@ Program input labels must be unique among inputs. Program output labels must be 
 
 ## Cycle Detected
 
-Compiled visual scripts are evaluated backward from final states and currently reject cycles. Break feedback loops into explicit stateful blocks if you need memory.
+The compiler rejects cycles while walking reachable nodes:
+
+```text
+Cycle detected in visual script: a -> b -> a.
+```
+
+Live editor execution also detects recursion while evaluating a node:
+
+```text
+Cycle detected at runtime while evaluating "a".
+```
+
+`checkValidity()` does not reject cycles (it skips already-visited UUIDs), so Run on a cyclic live graph fails at runtime and rolls back staged `writeSignal` values. Break feedback loops into explicit stateful blocks if you need memory.
 
 ## Block Is Visible But Does Not Compile
 
@@ -36,7 +48,7 @@ When changing types or removing ports, disconnect affected wires and dispatch `d
 
 ## Imported Program Fails
 
-Imported compiled programs must be supported v2 artifacts and all block types inside the artifact must be registered in the current runtime.
+Imported compiled programs must be supported v2 or v3 artifacts and all block types inside the artifact must be registered in the current runtime. Frozen `nodes[].ports` override the current class registration.
 
 ## ROS Blocks Do Not Use Live Topics
 

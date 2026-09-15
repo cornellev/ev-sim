@@ -40,9 +40,9 @@ See [Scripting Troubleshooting](scripting/troubleshooting.md).
 
 ## Compiled Program Fails To Import Or Run
 
-Compiled artifacts must have `kind: "cev-sim.visual-script.program"` and `version: 2`. The runtime also requires every block type in the artifact to be registered before import or run.
+Compiled artifacts must have `kind: "cev-sim.visual-script.program"` and `version` `2` or `3`. New compiles emit v3. The runtime also requires every block type in the artifact to be registered before import or run. Frozen node ports in the artifact override the current class registration.
 
-See [Artifact Schema v2](scripting/artifact-schema-v2.md).
+See [Artifact Schema v3](scripting/artifact-schema-v3.md).
 
 ## Deleting Nodes Or Connections Behaves Strangely
 

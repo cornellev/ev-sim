@@ -7,7 +7,9 @@ export const runtime = "nodejs";
 /**
  * POST /api/scripting/compile
  * Body: { graph, name? }
- * Compiles a visual-script graph into a v2 artifact (or returns the error).
+ * Compiles a visual-script graph into a v3 artifact (or returns the error).
+ * Response remains `{ ok, artifact }` with `artifact.version === 3`. The runtime
+ * also accepts frozen v2 artifacts.
  */
 export async function POST(request) {
     try {

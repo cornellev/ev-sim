@@ -25,7 +25,7 @@ Current block library categories:
 
 ## Compileable Vs UI-Only
 
-Most catalog entries have a backend block class and can compile. Entries with `blockClass: null` are UI-only.
+Most catalog entries have a backend block class and can compile into a v3 artifact. Entries with `blockClass: null` are UI-only. Frozen v2 artifacts remain runnable.
 
 Known UI-only entries:
 
