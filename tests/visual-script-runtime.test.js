@@ -1445,6 +1445,13 @@ test("If evaluates both branches on v2 and only the selected branch on v3 and ed
 
         const artifact = editor.compile("if-select");
         assert.equal(artifact.version, 3);
+        const ifNode = artifact.nodes.find((node) => node.uuid === "if");
+        assert.equal(ifNode.ports.inputs["true value"], type);
+        assert.equal(ifNode.ports.inputs["false value"], type);
+        assert.equal(ifNode.ports.outputs.out, type);
+        for (const transition of artifact.transitions.success) {
+            assert.notEqual(transition.type, "generic", transition.input);
+        }
 
         const v3 = ScriptManager.createRunner(artifact);
         const v3Run = v3.run();

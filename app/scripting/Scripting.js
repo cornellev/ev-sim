@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { cloneElement, useEffect, useMemo, useRef, useState } from "react";
 import Grid from "./Grid";
 import { LineManager } from "./LineManager";
 import {
@@ -48,6 +48,7 @@ import {
     summarizeScriptDocument
 } from "./EditorDocument";
 import { serializeManagerGraph, wouldCreateScriptReferenceCycle } from "./GraphDocument";
+import { collectResolvedPortMap } from "./types/TypeScheme";
 import {
     deleteScriptDocument,
     getScriptDocument,
@@ -72,6 +73,10 @@ const AUTOSAVE_DELAY = 450;
 const OUTPUT_NODE_DEFAULT = normalizeOutputNodeState({
     outputs: [createOutputNodePort(0)]
 });
+
+function portTypesForUnit(unit) {
+    return unit ? collectResolvedPortMap(unit) : { inputs: {}, outputs: {} };
+}
 
 function getNextOutputPortId(outputs) {
     const existingIds = new Set(outputs.map((output) => output.id));
@@ -976,7 +981,7 @@ export default function Scripting({ onOpenWorkspace }) {
         return <CompiledUnit key={uuid} _uuid={uuid} />;
     };
 
-    const renderCatalogElement = (entry, node) => {
+    const renderCatalogElement = (entry, node, portTypes) => {
         if (!entry?.Component) return null;
 
         const Component = entry.Component;
@@ -986,11 +991,12 @@ export default function Scripting({ onOpenWorkspace }) {
                 _uuid={node.uuid}
                 initialData={node.storedData}
                 initialState={node.state || {}}
+                portTypes={portTypes || { inputs: {}, outputs: {} }}
             />
         );
     };
 
-    const renderNodeElement = (node) => {
+    const renderNodeElement = (node, portTypes) => {
         if (!node) return null;
 
         if (node.type === "CompiledProgramUnitBlock" || node.type === "LocalScriptProgramBlock") {
@@ -1001,7 +1007,7 @@ export default function Scripting({ onOpenWorkspace }) {
             );
         }
 
-        return renderCatalogElement(getUnitCatalogEntry(node.type), node);
+        return renderCatalogElement(getUnitCatalogEntry(node.type), node, portTypes);
     };
 
     const markGraphChanged = () => {
@@ -1014,6 +1020,22 @@ export default function Scripting({ onOpenWorkspace }) {
             dirty: true
         }));
         setGraphVersion((value) => value + 1);
+    };
+
+    const syncSolvedGraphUi = () => {
+        const graph = serializeManagerGraph(manager.current, {
+            outputNodeConfig: outputNodeConfigRef.current,
+            positions: positionsRef.current,
+            headUUID: headUUID.current
+        });
+        setConnectionSnapshot(graph.connections || []);
+        setUnitChildren((previous) => previous.map((child) => {
+            const uuid = child?.props?._uuid;
+            const unit = manager.current.units.find((item) => item.uuid === uuid);
+            if (!unit) return child;
+            return cloneElement(child, { portTypes: portTypesForUnit(unit) });
+        }));
+        setValid(manager.current.checkValidity());
     };
 
     const refreshLocalBlocksFromLibrary = () => {
@@ -1175,7 +1197,7 @@ export default function Scripting({ onOpenWorkspace }) {
         const restoredOutputConfig = normalizeOutputNodeState(graph.outputNodeConfig || OUTPUT_NODE_DEFAULT);
         const nextManager = new ScriptManager();
         const headUnit = new OutputNodeBlock(headUUID.current);
-        const nextChildren = [];
+        const restoredNodes = [];
         let nextPositions = {};
         let nodeIndex = 0;
 
@@ -1213,11 +1235,10 @@ export default function Scripting({ onOpenWorkspace }) {
                 block.hydrateRuntimeState(node.runtimeState);
             }
 
-            const child = renderNodeElement({
+            restoredNodes.push({
                 ...node,
                 state: restoredState
             });
-            if (child) nextChildren.push(child);
 
             nextPositions[node.uuid] = normalizeRestoredPosition(node.position, nodeIndex);
             nodeIndex += 1;
@@ -1230,6 +1251,19 @@ export default function Scripting({ onOpenWorkspace }) {
 
         (graph.connections || []).forEach((connection) => {
             nextManager.connectUnits(connection.from, connection.output, connection.to, connection.input);
+        });
+
+        const nextChildren = restoredNodes
+            .map((node) => {
+                const unit = nextManager.units.find((item) => item.uuid === node.uuid);
+                return renderNodeElement(node, portTypesForUnit(unit));
+            })
+            .filter(Boolean);
+
+        const serializedGraph = serializeManagerGraph(nextManager, {
+            outputNodeConfig: restoredOutputConfig,
+            positions: nextPositions,
+            headUUID: headUUID.current
         });
 
         manager.current = nextManager;
@@ -1248,7 +1282,7 @@ export default function Scripting({ onOpenWorkspace }) {
         const nextRenderGraphId = renderGraphIdRef.current + 1;
         renderGraphIdRef.current = nextRenderGraphId;
 
-        setConnectionSnapshot([...(graph.connections || [])]);
+        setConnectionSnapshot([...(serializedGraph.connections || [])]);
         setRenderGraphId(nextRenderGraphId);
         setCurrentDocument(normalized);
         setCurrentScriptId(normalized.id);
@@ -1388,6 +1422,8 @@ export default function Scripting({ onOpenWorkspace }) {
             const block = manager.current.units.find((unit) => unit.uuid === uuid);
             if (block) {
                 block.reregister();
+                manager.current.recomputeBindings();
+                syncSolvedGraphUi();
                 markGraphChanged();
             }
         };
@@ -1474,6 +1510,7 @@ export default function Scripting({ onOpenWorkspace }) {
                 notifyBackend: false
             }
         }));
+        syncSolvedGraphUi();
     };
 
     const updateOutputNodeConfig = (patch) => {
@@ -1505,9 +1542,10 @@ export default function Scripting({ onOpenWorkspace }) {
         const Component = catalogEntry.Component;
         let storedData;
         let initialState = {};
+        let block = null;
 
         if (catalogEntry.blockClass) {
-            const block = new catalogEntry.blockClass(uuid);
+            block = new catalogEntry.blockClass(uuid);
 
             if (catalogEntry.blockClass === ProgramInputBlock) {
                 initialState = getNextProgramInputState(manager.current);
@@ -1528,6 +1566,7 @@ export default function Scripting({ onOpenWorkspace }) {
                 _uuid={uuid}
                 initialData={storedData}
                 initialState={initialState}
+                portTypes={portTypesForUnit(block)}
             />
         );
 
@@ -1621,17 +1660,23 @@ export default function Scripting({ onOpenWorkspace }) {
         const outputLabel = to.label;
         const inputUUID = from.uuid;
         const inputLabel = from.label;
-        const connected = manager.current.connectUnits(outputUUID, outputLabel, inputUUID, inputLabel);
+        const result = manager.current.connectUnitsDetailed(outputUUID, outputLabel, inputUUID, inputLabel);
 
-        if (connected) markGraphChanged();
-        setValid(manager.current.checkValidity());
-        return connected;
+        if (!result.ok) {
+            console.error(result.error);
+            return false;
+        }
+
+        syncSolvedGraphUi();
+        markGraphChanged();
+        return true;
     };
 
     const onDeleteConnection = (from, to) => {
         if (!from || !to) return;
 
         manager.current.disconnectUnits(to.uuid, to.label, from.uuid, from.label);
+        syncSolvedGraphUi();
         markGraphChanged();
     };
 

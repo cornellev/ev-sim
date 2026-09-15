@@ -3,6 +3,7 @@ import { SIGNAL_NAMESPACES, SIGNAL_PATHS } from "../../runtime/SignalPaths.js";
 import { getByPath, setByPath } from "../../runtime/SignalStore.js";
 import { normalizeType, parseValueByType, SUPPORTED_TYPES } from "../program/ProgramTypes.js";
 import { routeProgress } from "../../../scenarios/route/Route.js";
+import { GENERIC_TYPE } from "../../types/PortTypes.js";
 
 const JSON_TYPES = new Set(["json", "message", "route", "waypoint", "pose2d", "pose3d", "vec2", "vec3", "sim_event"]);
 
@@ -227,6 +228,14 @@ export class SignalChangedBlock extends ConfiguredBlock {
 
 export class SignalLatchBlock extends ConfiguredBlock {
     static defaults = { type: "json" };
+    static typeScheme = {
+        variables: {
+            T: {
+                inputs: ["value"],
+                outputs: ["value"]
+            }
+        }
+    };
 
     constructor(uuid) {
         super(uuid);
@@ -236,9 +245,9 @@ export class SignalLatchBlock extends ConfiguredBlock {
 
     register() {
         this.state = this.config();
-        this.registerInput("value", typedOutput(this.state.type));
+        this.registerInput("value", GENERIC_TYPE);
         this.registerInput("valid", "boolean");
-        this.registerOutput("value", typedOutput(this.state.type));
+        this.registerOutput("value", GENERIC_TYPE);
     }
 
     valid() {
@@ -274,13 +283,21 @@ export class SignalLatchBlock extends ConfiguredBlock {
 
 export class SignalDefaultBlock extends ConfiguredBlock {
     static defaults = { type: "json" };
+    static typeScheme = {
+        variables: {
+            T: {
+                inputs: ["value", "fallback"],
+                outputs: ["value"]
+            }
+        }
+    };
 
     register() {
         this.state = this.config();
-        this.registerInput("value", typedOutput(this.state.type));
-        this.registerInput("fallback", typedOutput(this.state.type));
+        this.registerInput("value", GENERIC_TYPE);
+        this.registerInput("fallback", GENERIC_TYPE);
         this.registerInput("useDefault", "boolean");
-        this.registerOutput("value", typedOutput(this.state.type));
+        this.registerOutput("value", GENERIC_TYPE);
     }
 
     valid() {
@@ -836,6 +853,14 @@ export class ProbeSignalBlock extends ConfiguredBlock {
 
 export class LogSignalBlock extends ConfiguredBlock {
     static defaults = { label: "signal", sampleEvery: 1, type: "json" };
+    static typeScheme = {
+        variables: {
+            T: {
+                inputs: ["value"],
+                outputs: ["value"]
+            }
+        }
+    };
 
     constructor(uuid) {
         super(uuid);
@@ -844,8 +869,8 @@ export class LogSignalBlock extends ConfiguredBlock {
 
     register() {
         this.state = this.config();
-        this.registerInput("value", typedOutput(this.state.type));
-        this.registerOutput("value", typedOutput(this.state.type));
+        this.registerInput("value", GENERIC_TYPE);
+        this.registerOutput("value", GENERIC_TYPE);
     }
 
     valid() {

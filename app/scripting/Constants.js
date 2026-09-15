@@ -21,6 +21,7 @@ const TYPES = {
     "array": "oklch(62.3% 0.214 259.815)",
     "custom": "oklch(71.4% 0.203 305.504)",
     "tex1d": "oklch(50% 0.25 300)",
+    "generic": "oklch(78% 0.02 250)",
 }
 
 export { TYPES };

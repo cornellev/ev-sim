@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { TYPES } from "./Constants";
+import { baseTypeName, portsCompatible } from "./types/PortTypes";
 
 export function Line({ lineId, start = { x: 0, y: 0 }, end = { x: 0, y: 0 }, color = "white", onDeleted=() => {} }) {
     const [selected, setSelected] = useState(false);
@@ -75,6 +76,10 @@ function isSameConnection(aFrom, aTo, bFrom, bTo) {
     return aFrom?.uuid === bFrom?.uuid && aFrom?.label === bFrom?.label && aTo?.uuid === bTo?.uuid && aTo?.label === bTo?.label;
 }
 
+function wireColor(type) {
+    return TYPES[baseTypeName(type)] || "white";
+}
+
 function getPortCenter(element) {
     const rect = element.getBoundingClientRect();
     return {
@@ -104,7 +109,7 @@ function lineFromConnection(connection) {
         end: getPortCenter(endTarget),
         startSource,
         endTarget,
-        color: TYPES[connection.type || inputInfo?.type] || "white"
+        color: wireColor(connection.type || inputInfo?.type)
     };
 }
 
@@ -271,7 +276,7 @@ export function LineManager({
             if (!pendingInput || !source.classList.contains("output")) return;
             const fromInfo = sourceToInfo(pendingInput);
             const toInfo = sourceToInfo(source);
-            if (!fromInfo || !toInfo || fromInfo.uuid === toInfo.uuid || fromInfo.type !== toInfo.type) return;
+            if (!fromInfo || !toInfo || fromInfo.uuid === toInfo.uuid || !portsCompatible(fromInfo.type, toInfo.type)) return;
             const duplicate = linesRef.current.some((line) => isSameConnection(
                 sourceToInfo(line.startSource),
                 sourceToInfo(line.endTarget),
@@ -285,7 +290,7 @@ export function LineManager({
                     end: getPortCenter(source),
                     startSource: pendingInput,
                     endTarget: source,
-                    color: TYPES[fromInfo.type.replace(/\[.*?\]/, "")] || "white"
+                    color: wireColor(fromInfo.type === "generic" ? toInfo.type : fromInfo.type)
                 }]);
             }
             keyboardSourceRef.current = null;
@@ -317,18 +322,13 @@ export function LineManager({
         function onMouseUp(e) {
             if (lineInProgress) {
                 const outputs = document.querySelectorAll('.output');
-
-                const thisType = lineInProgress.source.className.includes('input-') ? lineInProgress.source.className.split('input-')[1].split(' ')[0] : null;
-                const thisParentID = lineInProgress.source.className.includes('parent-') ? lineInProgress.source.className.split('parent-')[1].split(' ')[0] : null;
+                const fromInfo = sourceToInfo(lineInProgress.source);
 
                 let connected = false;
                 for (let output of outputs) {
-                    const outputType = output.className.includes('output-') ? output.className.split('output-')[1].split(' ')[0] : null;
-                    const outputParentID = output.className.includes('parent-') ? output.className.split('parent-')[1].split(' ')[0] : null;
-
-                    // only connect if not the same parent unit
-                    if (thisParentID === outputParentID) continue;
-                    if (thisType !== outputType) continue;
+                    const toInfo = sourceToInfo(output);
+                    if (!fromInfo || !toInfo || fromInfo.uuid === toInfo.uuid) continue;
+                    if (!portsCompatible(fromInfo.type, toInfo.type)) continue;
 
                     const rect = output.getBoundingClientRect();
                     const outputX = rect.left + rect.width / 2;
@@ -336,10 +336,6 @@ export function LineManager({
                     const distance = Math.hypot(e.clientX - outputX, e.clientY - outputY);
 
                     if (distance < 10) { // within 10 pixels
-                        const fromInfo = sourceToInfo(lineInProgress.source);
-                        const toInfo = sourceToInfo(output);
-                        if (!fromInfo || !toInfo) continue;
-
                         const duplicate = lines.some((line) => isSameConnection(
                             sourceToInfo(line.startSource),
                             sourceToInfo(line.endTarget),
@@ -363,7 +359,7 @@ export function LineManager({
                             end: { x: outputX, y: outputY },
                             startSource: lineInProgress.source,
                             endTarget: output,
-                            color: TYPES[thisType] || 'white'
+                            color: wireColor(fromInfo.type === "generic" ? toInfo.type : fromInfo.type)
                         }]);
                         connected = true;
                         break;

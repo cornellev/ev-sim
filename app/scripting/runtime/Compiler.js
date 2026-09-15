@@ -1,4 +1,12 @@
 import { createFailureNode, FAILURE_NODE_ID, VISUAL_SCRIPT_KIND, VISUAL_SCRIPT_VERSION } from "./Artifact.js";
+import { GENERIC_TYPE, isGeneric } from "../types/PortTypes.js";
+import {
+    collectResolvedPortMap,
+    findRejectedBinding,
+    findUnboundGeneric,
+    rejectedBindingError,
+    unboundGenericError
+} from "../types/TypeScheme.js";
 
 function byUnitOrder(unitOrder) {
     return (a, b) => (unitOrder.get(a) ?? Number.MAX_SAFE_INTEGER) - (unitOrder.get(b) ?? Number.MAX_SAFE_INTEGER);
@@ -85,6 +93,16 @@ function validateReachableUnit(unit, getBlockClass) {
     if (!unit.valid()) {
         throw new Error(`Block "${unit.uuid}" (${type}) is invalid.`);
     }
+
+    const unbound = findUnboundGeneric(unit);
+    if (unbound) {
+        throw new Error(unboundGenericError(unit, unbound.variable));
+    }
+
+    const rejected = findRejectedBinding(unit);
+    if (rejected) {
+        throw new Error(rejectedBindingError(unit, rejected.variable, rejected.type));
+    }
 }
 
 function createTransition(connection, nodeIndex) {
@@ -101,7 +119,7 @@ function createTransition(connection, nodeIndex) {
         throw new Error(`Missing input port "${input.label}" on block "${input.unit.uuid}".`);
     }
 
-    if (outputType !== inputType) {
+    if (isGeneric(outputType) || isGeneric(inputType) || outputType !== inputType) {
         throw new Error(`Type mismatch from ${output.unit.uuid}.${output.label} (${outputType}) to ${input.unit.uuid}.${input.label} (${inputType}).`);
     }
 
@@ -195,16 +213,22 @@ function collectUnitDefinitions(units, methodName) {
 }
 
 function createNodeDefinition(unit, storedData) {
+    const ports = collectResolvedPortMap(unit);
+    const snapshot = [...Object.values(ports.inputs), ...Object.values(ports.outputs)];
+    if (snapshot.some((type) => type === GENERIC_TYPE || isGeneric(type))) {
+        const unbound = findUnboundGeneric(unit);
+        throw new Error(unbound
+            ? unboundGenericError(unit, unbound.variable)
+            : `Compiled ports on ${unit.typeId()} "${unit.uuid}" must not contain generic.`);
+    }
+
     return {
         uuid: unit.uuid,
         type: unit.typeId(),
         state: unit.serializeState(),
         storedData,
         runtimeState: unit.serializeRuntimeState(),
-        ports: {
-            inputs: { ...unit.typeMap.inputs },
-            outputs: { ...unit.typeMap.outputs }
-        }
+        ports
     };
 }
 

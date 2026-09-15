@@ -33,6 +33,9 @@ const outputs = script.run({ input: 21 });
 - `app/scripting/AddMenu.js`: searchable/categorized block library UI and spawn positioning.
 - `app/scripting/ScriptRuntime.js`: load local or URL scripts and run compiled artifacts from code.
 - `app/scripting/BlockRegistry.js`: block type registry.
+- `app/scripting/types/PortTypes.js`: `generic` compatibility and `portsCompatible()`.
+- `app/scripting/types/TypeScheme.js`: per-block type variable schemes.
+- `app/scripting/types/unifyGraph.js`: graph-wide unification (union-find).
 - `app/scripting/registerBuiltInBlocks.js`: built-in block registration.
 - `app/scripting/runtime/Compiler.js`: v3 artifact compiler (v2 artifacts remain runnable).
 - `app/scripting/runtime/Runner.js`: v2 and v3 artifact runner.

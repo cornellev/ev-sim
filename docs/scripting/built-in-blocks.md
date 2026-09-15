@@ -14,7 +14,7 @@ Current block library categories:
 - `randomization`: random ranges, seeded random, noise, jitter, weighted select, remap.
 - `conversions`: numeric conversions.
 - `objects`: string.
-- `statements`: if, comparisons, conjunctions.
+- `statements`: if, comparisons, conjunctions. `If`, `Equality`, `Weighted Select`, `Signal Latch`, `Signal Default`, and `Log Signal` infer a type variable `T` from connections instead of a type selector. Equality `eq`/`neq` accept any concrete type; ordered operators accept only `float64`/`int32`.
 - `program`: program input/output units.
 - `signals`: read/write and inspect signal-store values.
 - `topics`: topic snapshots, fields, staged publish messages, metadata, and stale gates.

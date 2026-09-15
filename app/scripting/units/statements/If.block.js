@@ -1,13 +1,21 @@
 import { BlockOutput, UnitBlock, usesLazySelectors } from "../../ScriptManager.js";
+import { GENERIC_TYPE } from "../../types/PortTypes.js";
 
 export class IfBlock extends UnitBlock {
-    register() {
-        const outputType = this.getStateValue("type", this.uuid + "-type", "float64");
+    static typeScheme = {
+        variables: {
+            T: {
+                inputs: ["true value", "false value"],
+                outputs: ["out"]
+            }
+        }
+    };
 
+    register() {
         this.registerInput("condition", "boolean");
-        this.registerInput("true value", outputType);
-        this.registerInput("false value", outputType);
-        this.registerOutput("out", outputType);
+        this.registerInput("true value", GENERIC_TYPE);
+        this.registerInput("false value", GENERIC_TYPE);
+        this.registerOutput("out", GENERIC_TYPE);
     }
 
     serializeState() {
@@ -15,7 +23,7 @@ export class IfBlock extends UnitBlock {
             type: this.getStateValue("type", this.uuid + "-type", "float64")
         };
     }
-    
+
     valid() {
         return this.hasInput("condition") && this.hasInput("true value") && this.hasInput("false value") && this.hasOutput("out");
     }

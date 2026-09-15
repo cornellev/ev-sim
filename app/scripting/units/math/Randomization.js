@@ -68,19 +68,20 @@ export function JitterUnit({ _uuid }) {
     );
 }
 
-export function WeightedSelectUnit({ _uuid }) {
+export function WeightedSelectUnit({ _uuid, portTypes = {} }) {
+    const valueType = portTypes.inputs?.a || portTypes.inputs?.b || portTypes.outputs?.out || "generic";
     return (
         <Unit
             title="Weighted Select"
             hasOptions={false}
             _uuid={_uuid}
             inputs={[
-                { label: "a", type: "float64" },
-                { label: "b", type: "float64" },
+                { label: "a", type: valueType },
+                { label: "b", type: valueType },
                 { label: "prob b", type: "float64" }
             ]}
             outputs={[
-                { label: "out", type: "float64" }
+                { label: "out", type: valueType }
             ]}
         />
     );

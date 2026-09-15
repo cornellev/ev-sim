@@ -1,5 +1,6 @@
 import { BlockOutput, UnitBlock, usesLazySelectors } from "../../ScriptManager.js";
 import { runtimeRandom } from "../../runtime/RuntimeRandom.js";
+import { GENERIC_TYPE } from "../../types/PortTypes.js";
 
 function seededRandom(seed) {
     const x = Math.sin(seed * 12.9898) * 43758.5453;
@@ -89,11 +90,20 @@ export class JitterBlock extends UnitBlock {
 }
 
 export class WeightedSelectBlock extends UnitBlock {
+    static typeScheme = {
+        variables: {
+            T: {
+                inputs: ["a", "b"],
+                outputs: ["out"]
+            }
+        }
+    };
+
     register() {
-        this.registerInput("a", "float64");
-        this.registerInput("b", "float64");
+        this.registerInput("a", GENERIC_TYPE);
+        this.registerInput("b", GENERIC_TYPE);
         this.registerInput("prob b", "float64");
-        this.registerOutput("out", "float64");
+        this.registerOutput("out", GENERIC_TYPE);
     }
 
     valid() {

@@ -27,7 +27,7 @@ export function MyUnit({ _uuid }) {
 }
 ```
 
-Port labels and types must match the backend block.
+Port labels and types must match the backend block. Polymorphic units also take a `portTypes` prop from the editor after unification.
 
 ## Backend Block
 
@@ -52,7 +52,7 @@ export class MyBlock extends UnitBlock {
 }
 ```
 
-`register()` defines the port type map used by the editor and compiler. `valid()` decides whether the block can run. `execute()` returns a `BlockOutput`. Pull upstream values with `this.getInput(...)`; never call `other.execute()` directly. Editor and compiled evaluation memoize each node once per `executeProgram()` / `run()` frame, so fan-out reuses the same `BlockOutput`.
+`register()` defines the port type map used by the editor and compiler. Polymorphic blocks keep `generic` ports in that map and declare `static typeScheme`; the editor's `typeBindings` cache is not the compile authority. `valid()` decides whether the block can run. `execute()` returns a `BlockOutput`. Pull upstream values with `this.getInput(...)`; never call `other.execute()` directly. Editor and compiled evaluation memoize each node once per `executeProgram()` / `run()` frame, so fan-out reuses the same `BlockOutput`.
 
 ## State
 

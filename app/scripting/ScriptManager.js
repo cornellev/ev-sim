@@ -4,6 +4,14 @@ import { assertSupportedArtifact } from "./runtime/Artifact.js";
 import { compileVisualScript } from "./runtime/Compiler.js";
 import { createVisualScriptRunner } from "./runtime/Runner.js";
 import { SignalStore } from "./runtime/SignalStore.js";
+import { portsCompatible } from "./types/PortTypes.js";
+import {
+    findRejectedBinding,
+    findUnboundGeneric,
+    hasDeclaredPort,
+    resolvedPortType
+} from "./types/TypeScheme.js";
+import { applyBindings, planUnify, recomputeBindings } from "./types/unifyGraph.js";
 
 export { clearBlockTypeRegistryForTests, getRegisteredBlockType, registerBlockType } from "./BlockRegistry.js";
 
@@ -83,6 +91,7 @@ export class UnitBlock {
             outputs: {},
             inputs: {}
         };
+        this.typeBindings = {};
 
         this.register();
 
@@ -189,11 +198,11 @@ export class UnitBlock {
     }
 
     inputType(label) {
-        return this.typeMap.inputs[this.resolveInputLabel(label)];
+        return resolvedPortType(this, "inputs", label);
     }
 
     outputType(label) {
-        return this.typeMap.outputs[this.resolveOutputLabel(label)];
+        return resolvedPortType(this, "outputs", label);
     }
 
     hasInput(label) {
@@ -532,64 +541,72 @@ export class ScriptManager {
         this.units.push(unit);
     }
 
-    connectUnits(outputUUID, outputLabel, inputUUID, inputLabel) {
-        // console.log("Connecting units:", outputUUID, outputLabel, "to", inputUUID, inputLabel);
-        // console.log("Current units in manager:", this.units);
-
-        const outputUnit = this.units.find(u => u.uuid === outputUUID);
-        const inputUnit = this.units.find(u => u.uuid === inputUUID);
-
-        // console.log(this.units, outputUnit, inputUnit);
-        // console.log("Output unit:", outputUnit, "Input unit:", inputUnit);
+    connectUnitsDetailed(outputUUID, outputLabel, inputUUID, inputLabel) {
+        const outputUnit = this.units.find((unit) => unit.uuid === outputUUID);
+        const inputUnit = this.units.find((unit) => unit.uuid === inputUUID);
 
         if (!outputUnit || !inputUnit) {
-            console.error("Invalid UUIDs for connection. Did you forget to pass the UUID to the unit component? Check scripting.md", outputUUID, inputUUID, this.units);
-            return false;
+            return {
+                ok: false,
+                error: `Invalid UUIDs for connection "${outputUUID}" -> "${inputUUID}".`
+            };
         }
 
-        //console.log(outputUnit, outputLabel)
-
-        if (!outputUnit.outputType(outputLabel)) {
-            console.error("Output label not found in output unit. Check scripting.md");
-            return false;
-        }
-
-        if (!inputUnit.inputType(inputLabel)) {
-            console.error("Input label not found in input unit. Check scripting.md");
-            return false;
-        }
-
-        // check type compatibility (for now, just check if they are the same)
         const resolvedOutputLabel = outputUnit.resolveOutputLabel(outputLabel);
         const resolvedInputLabel = inputUnit.resolveInputLabel(inputLabel);
-        const outputType = outputUnit.outputType(resolvedOutputLabel);
-        const inputType = inputUnit.inputType(resolvedInputLabel);
 
-        if (outputType !== inputType) {
-            console.error("Type mismatch between output and input. Check scripting.md");
-            return false;
+        if (!hasDeclaredPort(outputUnit, "outputs", resolvedOutputLabel)) {
+            return {
+                ok: false,
+                error: `Missing output port "${outputLabel}" on block "${outputUUID}".`
+            };
+        }
+
+        if (!hasDeclaredPort(inputUnit, "inputs", resolvedInputLabel)) {
+            return {
+                ok: false,
+                error: `Missing input port "${inputLabel}" on block "${inputUUID}".`
+            };
         }
 
         const existing = (outputUnit.outputs[resolvedOutputLabel] || []).some((connection) =>
             connection.matches(outputUUID, resolvedOutputLabel, inputUUID, resolvedInputLabel)
         );
-
         if (existing) {
-            return true;
+            return { ok: true, error: null };
         }
 
-        // create connection
+        if (inputUnit.inputs[resolvedInputLabel]) {
+            return {
+                ok: false,
+                error: `Input "${resolvedInputLabel}" on block "${inputUUID}" already has a connection.`
+            };
+        }
+
+        const plan = planUnify(this, {
+            outputUUID,
+            outputLabel: resolvedOutputLabel,
+            inputUUID,
+            inputLabel: resolvedInputLabel
+        });
+        if (!plan.ok) {
+            return { ok: false, error: plan.error };
+        }
+
         const connection = new Connection(outputUnit, resolvedOutputLabel, inputUnit, resolvedInputLabel);
         outputUnit.addOutput(resolvedOutputLabel, connection);
         inputUnit.addInput(resolvedInputLabel, connection);
+        applyBindings(this, plan.bindings);
+        return { ok: true, error: null };
+    }
 
-//        console.log(this);
-        return true;
+    connectUnits(outputUUID, outputLabel, inputUUID, inputLabel) {
+        return this.connectUnitsDetailed(outputUUID, outputLabel, inputUUID, inputLabel).ok;
     }
 
     disconnectUnits(outputUUID, outputLabel, inputUUID, inputLabel) {
-        const outputUnit = this.units.find(u => u.uuid === outputUUID);
-        const inputUnit = this.units.find(u => u.uuid === inputUUID);
+        const outputUnit = this.units.find((unit) => unit.uuid === outputUUID);
+        const inputUnit = this.units.find((unit) => unit.uuid === inputUUID);
 
         if (!outputUnit || !inputUnit) {
             return false;
@@ -614,6 +631,7 @@ export class ScriptManager {
             inputUnit.removeInput(resolvedInputLabel);
         }
 
+        recomputeBindings(this);
         return true;
     }
 
@@ -751,6 +769,12 @@ export class ScriptManager {
         if (this.head === uuid) {
             this.head = null;
         }
+
+        recomputeBindings(this);
+    }
+
+    recomputeBindings() {
+        return recomputeBindings(this);
     }
 
     checkValidity() {
@@ -778,13 +802,15 @@ export class ScriptManager {
 
             if (!unit.valid()) return false; // unit is invalid
 
+            if (findUnboundGeneric(unit) || findRejectedBinding(unit)) return false;
+
             // add connected units to stack
             for (const input in unit.inputs) {
                 const connections = unit.inputs[input];
                 const output = connections.getOutput();
                 const outputType = output.unit.outputType(output.label);
                 const inputType = unit.inputType(input);
-                if (!outputType || !inputType || outputType !== inputType) return false;
+                if (!outputType || !inputType || !portsCompatible(outputType, inputType)) return false;
                 stack.push(output.unit.uuid);
             }
         }

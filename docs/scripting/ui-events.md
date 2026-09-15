@@ -17,10 +17,10 @@ flowchart LR
   inputPort[Input Port Mouse Down] --> lineInProgress[Line In Progress]
   lineInProgress --> outputPort[Compatible Output Port]
   outputPort --> notifyConnection[notifyConnection]
-  notifyConnection --> scriptManager[ScriptManager.connectUnits]
+  notifyConnection --> scriptManager[ScriptManager.connectUnitsDetailed]
 ```
 
-`LineManager` starts wires from input ports and completes them on compatible output ports. When a wire is completed, it passes decoded port metadata back to `Scripting.js`. Compiled programs freeze those port types into artifact `nodes[].ports`.
+`LineManager` starts wires from input ports and completes them on compatible output ports using decoded `data-encoded` types and `portsCompatible()`. When a wire is completed, it passes decoded port metadata back to `Scripting.js`, which calls `connectUnitsDetailed` and refreshes solved `portTypes` plus `connectionSnapshot`. Compiled programs freeze those resolved port types into artifact `nodes[].ports`. Generic conflicts are rejected without deleting existing wires.
 
 ## Port Metadata
 

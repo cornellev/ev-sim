@@ -18,7 +18,7 @@ flowchart LR
 
 `Scripting.js` owns a `ScriptManager` instance and renders React unit components. Each visible unit has a matching backend `UnitBlock` instance when it is compileable.
 
-Connections are created visually by `LineManager`. Port metadata is stored in DOM data attributes as `uuid|label|type`. When a valid wire is completed, `Scripting.js` calls `ScriptManager.connectUnits(...)`.
+Connections are created visually by `LineManager`. Port metadata is stored in DOM data attributes as `uuid|label|type`. When a valid wire is completed, `Scripting.js` calls `ScriptManager.connectUnitsDetailed(...)`. `LineManager` uses `portsCompatible()` on the decoded type strings.
 
 Editor execution pulls data backward through connected blocks by calling `UnitBlock.getInput(...)`, which resolves the upstream `BlockOutput` through `manager.evaluateUnit(uuid)`. `ScriptManager.execute()` and each output-role root in `executeProgram()` also use `evaluateUnit()`. One evaluation frame (`outputMemo` / `evaluating`) is created per `execute()` / `executeProgram()` call, so a shared node runs once per call and a later call always starts a new memo. Editor `ScriptManager.evaluationPolicy` is `{ lazySelectors: true, memoizeExecute: true }`, so `IfBlock`, `WeightedSelectBlock`, and `SignalLatchBlock` skip unused inputs. `SignalDefaultBlock` is already lazy.
 
@@ -53,7 +53,7 @@ Most new blocks need both.
 
 ## Compiled Runtime
 
-`Compiler.js` walks backward from program output-role blocks, or from the current head if there are no output-role blocks. It validates reachable nodes, emits frozen node definitions with `version: 3`, and records success transitions plus a reverse transition table.
+`Compiler.js` walks backward from program output-role blocks, or from the current head if there are no output-role blocks. It validates reachable nodes (unbound `generic` is only an error when reachable), snapshots resolved port types, emits frozen node definitions with `version: 3`, and records success transitions plus a reverse transition table. Artifact ports never contain `generic`.
 
 `Runner.js` hydrates registered block classes from the artifact, overlays frozen `node.ports` onto each unit's `typeMap`, wires runtime connections, resolves program inputs, evaluates final states, and returns either:
 

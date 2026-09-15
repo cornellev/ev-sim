@@ -164,7 +164,8 @@ function ConfigUnit({
     inputs = [],
     outputs = [],
     children,
-    initialPosition = null
+    initialPosition = null,
+    portTypes = {}
 }) {
     const [data, setData] = useState(() => normalize(normalizeConfig(defaults, initialData || initialState || {})));
 
@@ -180,21 +181,23 @@ function ConfigUnit({
         }));
     };
 
-    const resolvedInputs = typeof inputs === "function" ? inputs(data) : inputs;
-    const resolvedOutputs = typeof outputs === "function" ? outputs(data) : outputs;
+    const resolvedInputs = typeof inputs === "function" ? inputs(data, portTypes) : inputs;
+    const resolvedOutputs = typeof outputs === "function" ? outputs(data, portTypes) : outputs;
 
     return (
         <Unit
             title={title}
-            hasOptions={true}
+            hasOptions={typeof children === "function"}
             _uuid={_uuid}
             initialPosition={initialPosition}
             inputs={resolvedInputs}
             outputs={resolvedOutputs}
         >
-            <div className="flex flex-col gap-3 text-xs text-zinc-300">
-                {children(data, commit)}
-            </div>
+            {typeof children === "function" ? (
+                <div className="flex flex-col gap-3 text-xs text-zinc-300">
+                    {children(data, commit)}
+                </div>
+            ) : null}
         </Unit>
     );
 }
@@ -307,16 +310,12 @@ export function SignalLatchUnit(props) {
             title="Signal Latch"
             defaults={SignalLatchBlock.defaults}
             normalize={(data) => ({ ...data, type: normalizeType(data.type || "json") })}
-            inputs={(data) => [
-                { label: "value", type: typedOutput(data.type) },
+            inputs={(_data, portTypes) => [
+                { label: "value", type: portTypes?.inputs?.value || "generic" },
                 { label: "valid", type: "boolean" }
             ]}
-            outputs={(data) => [{ label: "value", type: typedOutput(data.type) }]}
-        >
-            {(data, commit) => (
-                <SelectField label="Value type" value={typedOutput(data.type)} onChange={(type) => commit({ type })} options={SUPPORTED_TYPES} />
-            )}
-        </ConfigUnit>
+            outputs={(_data, portTypes) => [{ label: "value", type: portTypes?.outputs?.value || "generic" }]}
+        />
     );
 }
 
@@ -327,17 +326,13 @@ export function SignalDefaultUnit(props) {
             title="Signal Default"
             defaults={SignalDefaultBlock.defaults}
             normalize={(data) => ({ ...data, type: normalizeType(data.type || "json") })}
-            inputs={(data) => [
-                { label: "value", type: typedOutput(data.type) },
-                { label: "fallback", type: typedOutput(data.type) },
+            inputs={(_data, portTypes) => [
+                { label: "value", type: portTypes?.inputs?.value || "generic" },
+                { label: "fallback", type: portTypes?.inputs?.fallback || portTypes?.inputs?.value || "generic" },
                 { label: "useDefault", type: "boolean" }
             ]}
-            outputs={(data) => [{ label: "value", type: typedOutput(data.type) }]}
-        >
-            {(data, commit) => (
-                <SelectField label="Value type" value={typedOutput(data.type)} onChange={(type) => commit({ type })} options={SUPPORTED_TYPES} />
-            )}
-        </ConfigUnit>
+            outputs={(_data, portTypes) => [{ label: "value", type: portTypes?.outputs?.value || "generic" }]}
+        />
     );
 }
 
@@ -804,14 +799,13 @@ export function LogSignalUnit(props) {
             title="Log Signal"
             defaults={LogSignalBlock.defaults}
             normalize={(data) => ({ ...data, type: normalizeType(data.type || "json") })}
-            inputs={(data) => [{ label: "value", type: typedOutput(data.type) }]}
-            outputs={(data) => [{ label: "value", type: typedOutput(data.type) }]}
+            inputs={(_data, portTypes) => [{ label: "value", type: portTypes?.inputs?.value || "generic" }]}
+            outputs={(_data, portTypes) => [{ label: "value", type: portTypes?.outputs?.value || "generic" }]}
         >
             {(data, commit) => (
                 <>
                     <TextField label="Label" value={data.label} onChange={(label) => commit({ label })} />
                     <TextField label="Sample every N runs" value={data.sampleEvery} onChange={(sampleEvery) => commit({ sampleEvery })} type="number" />
-                    <SelectField label="Value type" value={typedOutput(data.type)} onChange={(type) => commit({ type })} options={SUPPORTED_TYPES} />
                 </>
             )}
         </ConfigUnit>

@@ -2,8 +2,9 @@ import { useEffect, useState } from "react";
 import { storeData } from "../../ScriptManager";
 import Unit from "../Unit";
 
-export function Equality({ _uuid, initialData = "eq" }) {
+export function Equality({ _uuid, initialData = "eq", portTypes = {} }) {
     const [type, setType] = useState(() => initialData || "eq");
+    const inputType = portTypes.inputs?.["input a"] || portTypes.inputs?.["input b"] || "generic";
 
     //types: eq, neq, gt, lt, gte, lte
     useEffect(() => {
@@ -13,8 +14,8 @@ export function Equality({ _uuid, initialData = "eq" }) {
     return (
         <Unit title="Equality" hasOptions={true} _uuid={_uuid}
             inputs={[
-                { label: "input a", type: "float64" },
-                { label: "input b", type: "float64" },
+                { label: "input a", type: inputType },
+                { label: "input b", type: inputType },
             ]}
             outputs={
                 [

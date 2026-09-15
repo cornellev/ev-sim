@@ -1,12 +1,12 @@
 # Scripting Tests
 
-Visual script runtime tests live in `tests/visual-script-runtime.test.js` and run with:
+Visual script runtime tests live in `tests/visual-script-runtime.test.js`. Type unification tests live in `tests/visual-script-types.test.js`. Browser port refresh is covered by `tests/ui/scripting-types.spec.js`. They run with:
 
 ```bash
 npm test
 ```
 
-The test command is:
+The Node test command is:
 
 ```bash
 node --experimental-default-type=module --test tests/*.test.js
@@ -16,7 +16,8 @@ node --experimental-default-type=module --test tests/*.test.js
 
 Add or update tests when changing:
 
-- Compile validation.
+- Compile validation, including reachable-only concreteness and rejection of `generic` in artifact ports.
+- Graph-wide generic unification: `connectUnitsDetailed`, atomic conflict rejection, disconnect/unbind, and restore from connections rather than cached `typeBindings`.
 - Artifact schema fields and supported versions (`2` and `3`).
 - Eager v2 versus lazy editor/v3 selector evaluation.
 - Editor `executeProgram()` memoization: shared diamonds run once per call, memos are shared across multiple OutputNodes, and a later call starts a new memo.
@@ -47,7 +48,8 @@ For UI-facing scripting changes, also run the app and verify:
 
 - `Ctrl+A` or `Cmd+A` opens the block library, unless focus is inside an editable field.
 - Category filters and search find the expected `UnitCatalog.js` entries.
-- Wires connect only between matching types.
+- Wires connect between compatible types, including concrete-to-generic, and polymorphic ports refresh after connect/disconnect.
+- Conflicting concrete types through a generic component are rejected without dropping existing wires.
 - The validity badge updates after adding, connecting, deleting, or re-registering units.
 - `Compile` downloads a JSON artifact (`version: 3`).
 - `Run Compiled` logs a success or meaningful failure.

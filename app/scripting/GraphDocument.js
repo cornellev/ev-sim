@@ -1,5 +1,6 @@
 import { ScriptManager } from "./ScriptManager.js";
 import { normalizeOutputNodeState } from "./units/program/ProgramTypes.js";
+import { recomputeBindings } from "./types/unifyGraph.js";
 
 function cloneJson(value) {
     if (value === undefined) return undefined;
@@ -46,14 +47,20 @@ export function serializeManagerGraph(manager, {
 
     const nodes = manager.units
         .filter((unit) => unit.uuid !== headUUID)
-        .map((unit) => ({
-            uuid: unit.uuid,
-            type: unit.typeId(),
-            state: cloneJson(unit.serializeState()),
-            storedData: cloneJson(manager.getStoredData(unit.uuid)),
-            runtimeState: cloneJson(unit.serializeRuntimeState()),
-            position: positions[unit.uuid] || null
-        }));
+        .map((unit) => {
+            const node = {
+                uuid: unit.uuid,
+                type: unit.typeId(),
+                state: cloneJson(unit.serializeState()),
+                storedData: cloneJson(manager.getStoredData(unit.uuid)),
+                runtimeState: cloneJson(unit.serializeRuntimeState()),
+                position: positions[unit.uuid] || null
+            };
+            if (unit.typeBindings && Object.keys(unit.typeBindings).length > 0) {
+                node.typeBindings = cloneJson(unit.typeBindings);
+            }
+            return node;
+        });
 
     return {
         head: manager.head || headUUID,
@@ -118,8 +125,33 @@ export function restoreManagerFromGraph(graph, getBlockClass, {
     connections.forEach((connection) => {
         manager.connectUnits(connection.from, connection.output, connection.to, connection.input);
     });
+    recomputeBindings(manager);
 
     return manager;
+}
+
+export function mutateGraphConnections(graph, getBlockClass, mutate, extras = {}) {
+    const headUUID = graph?.head || extras.headUUID || "head-uuid";
+    const positions = {
+        [headUUID]: graph?.headPosition || null,
+        ...Object.fromEntries((graph?.nodes || []).map((node) => [node.uuid, node.position || null]))
+    };
+    const manager = restoreManagerFromGraph(graph, getBlockClass, {
+        headUUID,
+        ...extras
+    });
+    const result = mutate(manager) || { ok: false, error: "Graph mutation failed." };
+    if (result.ok === false) return result;
+
+    return {
+        ok: true,
+        graph: serializeManagerGraph(manager, {
+            outputNodeConfig: graph?.outputNodeConfig ?? extras.outputNodeConfig ?? null,
+            positions,
+            headUUID
+        }),
+        ...result
+    };
 }
 
 export function getGraphScriptReferences(graph) {

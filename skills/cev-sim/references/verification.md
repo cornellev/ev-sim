@@ -33,7 +33,7 @@ node --experimental-default-type=module --test tests/mcp-tools.test.js
 | Run manifests | `tests/run-manifest.test.js`, `run-session.test.js`, `simulation-deterministic.test.js` |
 | Scenarios | `tests/scenario-document.test.js`, `scenario-routes.test.js`, `scenario-runtime.test.js` |
 | Experiments | `tests/experiment-suite.test.js`, `experiment-runtime.test.js`, `experiment-scenario-hardening.test.js` |
-| Scripting / bindings | `tests/visual-script-runtime.test.js`, `script-library.test.js`, `script-bindings.test.js` |
+| Scripting / bindings | `tests/visual-script-runtime.test.js`, `visual-script-types.test.js`, `script-library.test.js`, `script-bindings.test.js` |
 | Telemetry | `tests/telemetry-logging.test.js`, `analysis-performance.test.js` |
 | Bake / editor | `tests/bake-*.test.js`, `editor-core.test.js`, `earth-import-mode.test.js` |
 | Vehicles / sensors | `tests/vehicle-manifest.test.js`, `sensor-type-registry.test.js`, `sensor-contract.test.js` |

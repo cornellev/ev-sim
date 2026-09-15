@@ -50,6 +50,8 @@ Each entry in `nodes` has:
 - `ports.inputs`: input label to type map.
 - `ports.outputs`: output label to type map.
 
+The compiler snapshots `nodes[].ports` from resolved editor types. Those maps, `transitions[].type`, and program interfaces must never contain `generic`. `generic` is editor-only and is solved (or rejected) before compile.
+
 `VisualScriptRunner._hydrateUnits()` applies cloned `node.ports` to `unit.typeMap` after `hydrateState()` and `hydrateRuntimeState()`. Frozen artifact ports override the current class registration. That keeps v2 and early-v3 artifacts runnable when later block classes add or rename ports.
 
 ## Success Transition

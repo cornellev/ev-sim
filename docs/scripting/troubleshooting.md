@@ -16,7 +16,14 @@ The React unit and `UnitBlock.register()` probably disagree about a port label o
 
 ## Type Mismatch
 
-Connections require exact type equality. For example, `float64` and `int32` do not connect unless a conversion block is used.
+`LineManager` and `connectUnitsDetailed` use `portsCompatible()`: `generic` may connect to any type, then graph-wide unification binds or rejects. Distinct concrete types (`float64` vs `int32`, or `float64` vs `string` through an `If`) do not connect. A rejected candidate does not delete existing wires.
+
+Reachable nodes must be fully concrete to compile. Unreachable unbound generics are allowed on the canvas. Actionable errors name the node UUID, block type, and variable, for example:
+
+```text
+Type conflict on IfBlock "if-uuid" variable T: float64 vs string.
+Unbound generic T on IfBlock "if-uuid".
+```
 
 ## Duplicate Program Labels
 

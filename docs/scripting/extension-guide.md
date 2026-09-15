@@ -46,6 +46,22 @@ Program labels must be unique per role. Duplicate labels fail compilation.
 
 For Program Input, keep the backend port id stable and expose the editable name separately. The built-in Program Input registers the internal output port as `input`, while its user-facing external label defaults to `input`, `input_2`, `input_3`, and so on. `getProgramPortDefinition()` exports that external label for compiled program inputs.
 
+## Add A Polymorphic Type Scheme
+
+Blocks that share one type across several ports declare:
+
+```javascript
+static typeScheme = {
+    variables: {
+        T: { inputs: ["true value", "false value"], outputs: ["out"] }
+    }
+};
+```
+
+Register those ports as `generic` from `app/scripting/types/PortTypes.js`. Optional `accept(type, unit)` rejects bindings the block cannot execute (Equality ordered operators only accept `float64` / `int32`). React units should render solved `portTypes` from the editor rather than a type selector.
+
+Do not add `generic` to `SUPPORTED_TYPES`.
+
 ## Add A New Type
 
 The scripting type system is string-based. To add a new type:

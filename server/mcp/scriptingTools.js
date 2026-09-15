@@ -7,6 +7,9 @@ import {
     normalizeDocumentName,
     summarizeScriptDocument,
 } from "../../app/scripting/EditorDocument.js";
+import { mutateGraphConnections } from "../../app/scripting/GraphDocument.js";
+import { getRegisteredBlockType } from "../../app/scripting/BlockRegistry.js";
+import { registerBuiltInBlocks } from "../../app/scripting/registerBuiltInBlocks.js";
 import { normalizeOutputNodeState } from "../../app/scripting/units/program/ProgramTypes.js";
 import { storageEvents } from "./events.js";
 import { fail, ok, selfFetchJson } from "./toolResult.js";
@@ -395,7 +398,7 @@ export function registerScriptingTools(server, storage) {
         {
             title: "Connect units",
             description:
-                "Wire an output port of one unit to an input port of another. Port types must match. "
+                "Wire an output port of one unit to an input port of another. Generic ports unify graph-wide; conflicting concrete types are rejected without changing existing wires. "
                 + "Connect to the graph head OutputNode with to=head uuid (default head-uuid) and input=output port id.",
             inputSchema: {
                 scriptId: z.string().min(1),
@@ -416,7 +419,6 @@ export function registerScriptingTools(server, storage) {
                 if (!fromNode) return fail(`Source unit "${from}" not found.`);
                 if (!toNode && !targetingHead) return fail(`Target unit "${to}" not found.`);
 
-                let portType = "any";
                 try {
                     const catalog = await selfFetchJson("/api/scripting/units");
                     const fromMeta = (catalog.units ?? []).find((entry) => entry.type === fromNode.type);
@@ -428,7 +430,6 @@ export function registerScriptingTools(server, storage) {
                         );
                     }
 
-                    let inPort = null;
                     if (targetingHead) {
                         const headPorts = getOutputNodePorts(document.graph);
                         const headPort = headPorts.find((port) => port.id === input || port.label === input);
@@ -439,10 +440,9 @@ export function registerScriptingTools(server, storage) {
                                 + "Configure ports with script_update_unit on the head uuid.",
                             );
                         }
-                        inPort = { name: headPort.id, type: headPort.type };
                     } else {
                         const toMeta = (catalog.units ?? []).find((entry) => entry.type === toNode.type);
-                        inPort = toMeta?.inputs?.find((port) => port.name === input) || null;
+                        const inPort = toMeta?.inputs?.find((port) => port.name === input) || null;
                         if (!inPort) {
                             return fail(
                                 `Input port "${input}" not found on type "${toNode.type}". `
@@ -450,16 +450,8 @@ export function registerScriptingTools(server, storage) {
                             );
                         }
                     }
-
-                    if (outPort.type !== inPort.type) {
-                        return fail(
-                            `Port type mismatch: ${fromNode.type}.${output} (${outPort.type}) `
-                            + `→ ${(targetingHead ? "OutputNodeBlock" : toNode.type)}.${input} (${inPort.type}).`,
-                        );
-                    }
-                    portType = outPort.type;
                 } catch {
-                    // Fall through — lint will catch type errors.
+                    // Units API may be unavailable; ScriptManager connection is authoritative.
                 }
 
                 const duplicate = document.graph.connections.some(
@@ -469,8 +461,13 @@ export function registerScriptingTools(server, storage) {
                     return fail(`Input "${input}" on unit "${to}" already has a connection.`);
                 }
 
-                const connection = { from, output, to, input, type: portType };
-                document.graph.connections.push(connection);
+                registerBuiltInBlocks();
+                const mutated = mutateGraphConnections(document.graph, getRegisteredBlockType, (manager) => (
+                    manager.connectUnitsDetailed(from, output, to, input)
+                ));
+                if (!mutated.ok) return fail(mutated.error);
+
+                document.graph = mutated.graph;
                 document.updatedAt = nowIso();
                 document.compileStatus = {
                     ...document.compileStatus,
@@ -479,6 +476,9 @@ export function registerScriptingTools(server, storage) {
                 };
                 await storage.putScript(document);
                 storageEvents.publish({ domain: "script", id: scriptId, action: "updated" });
+                const connection = (document.graph.connections || []).find((item) => (
+                    item.from === from && item.output === output && item.to === to && item.input === input
+                ));
                 return ok({ ok: true, connection });
             } catch (error) {
                 return fail(error);
@@ -503,18 +503,24 @@ export function registerScriptingTools(server, storage) {
             try {
                 const document = await requireEditableScript(storage, scriptId);
                 ensureGraph(document);
-                const before = document.graph.connections.length;
-                document.graph.connections = document.graph.connections.filter(
-                    (connection) => !(
-                        connection.from === from
-                        && connection.output === output
-                        && connection.to === to
-                        && connection.input === input
-                    ),
-                );
-                if (document.graph.connections.length === before) {
-                    return fail("Connection not found.");
-                }
+                const exists = document.graph.connections.some((connection) => (
+                    connection.from === from
+                    && connection.output === output
+                    && connection.to === to
+                    && connection.input === input
+                ));
+                if (!exists) return fail("Connection not found.");
+
+                registerBuiltInBlocks();
+                const mutated = mutateGraphConnections(document.graph, getRegisteredBlockType, (manager) => {
+                    const removed = manager.disconnectUnits(from, output, to, input);
+                    return removed
+                        ? { ok: true }
+                        : { ok: false, error: "Connection not found." };
+                });
+                if (!mutated.ok) return fail(mutated.error);
+
+                document.graph = mutated.graph;
                 document.updatedAt = nowIso();
                 document.compileStatus = {
                     ...document.compileStatus,

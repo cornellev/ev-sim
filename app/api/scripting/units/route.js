@@ -1,5 +1,6 @@
 import { UNIT_CATALOG_META } from "@/app/scripting/UnitCatalog.meta";
 import { registerBuiltInBlocks } from "@/app/scripting/registerBuiltInBlocks";
+import { serializeTypeScheme } from "@/app/scripting/types/TypeScheme";
 
 export const runtime = "nodejs";
 
@@ -102,6 +103,7 @@ function describeBlockClass(entry) {
         programPort,
         placeable: entry.placeable !== false,
         notes: entry.notes || null,
+        typeScheme: serializeTypeScheme(BlockClass.typeScheme),
         defaultState,
         settingsHints: {
             storedData: "Optional constant / UI value stored via ScriptManager.storeData(uuid, value).",

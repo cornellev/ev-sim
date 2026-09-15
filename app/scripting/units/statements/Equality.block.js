@@ -1,9 +1,28 @@
 import { BlockOutput, UnitBlock } from "../../ScriptManager.js";
+import { GENERIC_TYPE } from "../../types/PortTypes.js";
+
+const ORDERED_EQUALITY_OPS = new Set(["gt", "lt", "gte", "lte"]);
 
 export class EqualityBlock extends UnitBlock {
+    static typeScheme = {
+        variables: {
+            T: {
+                inputs: ["input a", "input b"],
+                outputs: [],
+                accept(type, unit) {
+                    const operator = unit.getStoredData();
+                    if (ORDERED_EQUALITY_OPS.has(operator)) {
+                        return type === "float64" || type === "int32";
+                    }
+                    return true;
+                }
+            }
+        }
+    };
+
     register() {
-        this.registerInput("input a", "float64");
-        this.registerInput("input b", "float64");
+        this.registerInput("input a", GENERIC_TYPE);
+        this.registerInput("input b", GENERIC_TYPE);
         this.registerOutput("out", "boolean");
     }
 
@@ -59,7 +78,7 @@ export class ConjugationBlock extends UnitBlock {
     execute() {
         const a = this.getInput("bool a");
         const b = this.getInput("bool b");
-        
+
         let result;
         const typ = this.getStoredData();
         switch (typ) {
