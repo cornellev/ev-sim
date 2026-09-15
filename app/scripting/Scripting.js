@@ -47,7 +47,7 @@ import {
     nowIso,
     summarizeScriptDocument
 } from "./EditorDocument";
-import { serializeManagerGraph, wouldCreateScriptReferenceCycle } from "./GraphDocument";
+import { formatRestoreErrors, mergeUnrestoredConnections, serializeManagerGraph, wouldCreateScriptReferenceCycle } from "./GraphDocument";
 import { collectResolvedPortMap } from "./types/TypeScheme";
 import {
     deleteScriptDocument,
@@ -1023,12 +1023,13 @@ export default function Scripting({ onOpenWorkspace }) {
     };
 
     const syncSolvedGraphUi = () => {
+        manager.current.pruneRestoreErrors();
         const graph = serializeManagerGraph(manager.current, {
             outputNodeConfig: outputNodeConfigRef.current,
             positions: positionsRef.current,
             headUUID: headUUID.current
         });
-        setConnectionSnapshot(graph.connections || []);
+        setConnectionSnapshot(mergeUnrestoredConnections(graph.connections || [], manager.current.restoreErrors));
         setUnitChildren((previous) => previous.map((child) => {
             const uuid = child?.props?._uuid;
             const unit = manager.current.units.find((item) => item.uuid === uuid);
@@ -1092,6 +1093,7 @@ export default function Scripting({ onOpenWorkspace }) {
         if (!document || document.editable === false) return document;
 
         const timestamp = nowIso();
+        manager.current.pruneRestoreErrors();
         const graph = serializeManagerGraph(manager.current, {
             outputNodeConfig: outputNodeConfigRef.current,
             positions: positionsRef.current,
@@ -1105,20 +1107,29 @@ export default function Scripting({ onOpenWorkspace }) {
             artifactUpdatedAt: document.compileStatus?.artifactUpdatedAt || null
         };
 
-        try {
-            const artifact = manager.current.compile(normalizeDocumentName(document.name));
-            latestValidArtifact = artifact;
-            compileStatus = {
-                valid: true,
-                error: null,
-                artifactUpdatedAt: timestamp
-            };
-        } catch (error) {
+        if (manager.current.restoreErrors?.length) {
+            graph.connections = mergeUnrestoredConnections(graph.connections, manager.current.restoreErrors);
             compileStatus = {
                 valid: false,
-                error: error?.message || String(error),
+                error: formatRestoreErrors(manager.current.restoreErrors),
                 artifactUpdatedAt: document.compileStatus?.artifactUpdatedAt || null
             };
+        } else {
+            try {
+                const artifact = manager.current.compile(normalizeDocumentName(document.name));
+                latestValidArtifact = artifact;
+                compileStatus = {
+                    valid: true,
+                    error: null,
+                    artifactUpdatedAt: timestamp
+                };
+            } catch (error) {
+                compileStatus = {
+                    valid: false,
+                    error: error?.message || String(error),
+                    artifactUpdatedAt: document.compileStatus?.artifactUpdatedAt || null
+                };
+            }
         }
 
         const nextDocument = {
@@ -1250,8 +1261,26 @@ export default function Scripting({ onOpenWorkspace }) {
         };
 
         (graph.connections || []).forEach((connection) => {
-            nextManager.connectUnits(connection.from, connection.output, connection.to, connection.input);
+            const result = nextManager.connectUnitsDetailed(
+                connection.from,
+                connection.output,
+                connection.to,
+                connection.input
+            );
+            if (!result.ok) {
+                nextManager.restoreErrors.push({
+                    connection: {
+                        from: connection.from,
+                        output: connection.output,
+                        to: connection.to,
+                        input: connection.input,
+                        type: connection.type
+                    },
+                    error: result.error
+                });
+            }
         });
+        nextManager.recomputeBindings();
 
         const nextChildren = restoredNodes
             .map((node) => {
@@ -1265,6 +1294,10 @@ export default function Scripting({ onOpenWorkspace }) {
             positions: nextPositions,
             headUUID: headUUID.current
         });
+        const snapshotConnections = mergeUnrestoredConnections(
+            serializedGraph.connections || [],
+            nextManager.restoreErrors
+        );
 
         manager.current = nextManager;
         positionsRef.current = nextPositions;
@@ -1282,13 +1315,14 @@ export default function Scripting({ onOpenWorkspace }) {
         const nextRenderGraphId = renderGraphIdRef.current + 1;
         renderGraphIdRef.current = nextRenderGraphId;
 
-        setConnectionSnapshot([...(serializedGraph.connections || [])]);
+        setConnectionSnapshot(snapshotConnections);
         setRenderGraphId(nextRenderGraphId);
         setCurrentDocument(normalized);
         setCurrentScriptId(normalized.id);
+        const restoreError = formatRestoreErrors(nextManager.restoreErrors);
         setCompileState({
-            valid: Boolean(normalized.compileStatus?.valid),
-            error: normalized.compileStatus?.error || null,
+            valid: restoreError ? false : Boolean(normalized.compileStatus?.valid),
+            error: restoreError || normalized.compileStatus?.error || null,
             artifactUpdatedAt: normalized.compileStatus?.artifactUpdatedAt || null,
             dirty: false
         });

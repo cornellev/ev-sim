@@ -3,6 +3,8 @@
  * No React imports — safe for server/MCP compile paths.
  */
 
+import { UNIT } from "../../types/PortTypes.js";
+
 export const SUPPORTED_TYPES = [
     "float64",
     "int32",
@@ -30,6 +32,7 @@ export const SUPPORTED_TYPES = [
     "array[string]",
     "array[json]",
     "custom[string]",
+    "unit",
 ];
 
 export const OUTPUT_NODE_MAX_OUTPUTS = 8;
@@ -70,6 +73,10 @@ function parseArrayValue(value, itemType = "float64") {
 
 export function parseValueByType(value, type) {
     const normalizedType = normalizeType(type);
+
+    if (normalizedType === "unit") {
+        return UNIT;
+    }
 
     if (normalizedType === "tex1d") {
         return parseArrayValue(value, "float64");

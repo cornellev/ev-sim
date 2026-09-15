@@ -8,7 +8,7 @@ Use this checklist when adding a new visual scripting block.
 2. Export a React unit component that renders `Unit`.
 3. Export a `UnitBlock` subclass.
 4. Make React port labels/types match `registerInput` and `registerOutput`.
-5. Implement `valid()` and `execute()`.
+5. Implement `valid()` and `execute()`. For dual current/frozen ports, use `BlockOutput.setDeclared(this, label, value)`.
 6. Add the block class to `app/scripting/registerBuiltInBlocks.js`.
 7. Add a catalog entry to `app/scripting/UnitCatalog.js` with a non-null `blockClass`.
 8. Add or update tests in `tests/visual-script-runtime.test.js` if compile/run behavior changes.
@@ -68,7 +68,7 @@ The scripting type system is string-based. To add a new type:
 
 1. Use the type string consistently in React unit ports and backend `registerInput` / `registerOutput`.
 2. Add a color to `app/scripting/Constants.js` if the type should have a distinct wire color.
-3. Update `SUPPORTED_TYPES` in `ProgramIO.js` if users should be allowed to expose it as a program input/output.
+3. Update `SUPPORTED_TYPES` in `ProgramTypes.js` if users should be allowed to expose it as a program input/output. Do not add `generic`. `unit` is already a supported sequencing type.
 4. Add parsing or runtime handling wherever the new type is created or consumed.
 
 ## Add Runtime State

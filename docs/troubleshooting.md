@@ -33,6 +33,7 @@ Common causes:
 - Required inputs are not connected.
 - Output and input port types do not match, or a generic component is reachable but still unbound.
 - A candidate wire would bind one generic variable to two concrete types (existing wires stay).
+- An older graph still wires `written`, `ok`, or `staged`; rewire `then` and keep the last valid compiled artifact until compile succeeds.
 - Program input or output labels are duplicated.
 - A block was added to `UnitCatalog.js` but not registered in `registerBuiltInBlocks.js`.
 - A dynamic port changed type and existing connections were removed.

@@ -248,7 +248,10 @@ export function WriteSignalUnit(props) {
                 staleAfter: data.staleAfter ?? ""
             })}
             inputs={(data) => [{ label: "value", type: typedOutput(data.type) }]}
-            outputs={[{ label: "written", type: "boolean" }]}
+            outputs={(data) => [
+                { label: "value", type: typedOutput(data.type) },
+                { label: "then", type: "unit" }
+            ]}
         >
             {(data, commit) => (
                 <>
@@ -432,8 +435,8 @@ export function StagePublishUnit(props) {
             defaults={StagePublishBlock.defaults}
             inputs={[{ label: "message", type: "message" }]}
             outputs={[
-                { label: "staged", type: "boolean" },
-                { label: "path", type: "string" }
+                { label: "path", type: "string" },
+                { label: "then", type: "unit" }
             ]}
         >
             {(data, commit) => (
@@ -581,7 +584,10 @@ export function AdvanceWaypointUnit(props) {
                 { label: "advance", type: "boolean" },
                 { label: "route", type: "route" }
             ]}
-            outputs={[{ label: "index", type: "int32" }]}
+            outputs={[
+                { label: "index", type: "int32" },
+                { label: "then", type: "unit" }
+            ]}
         >
             {(data, commit) => (
                 <TextField label="Index path" value={data.indexPath} onChange={(indexPath) => commit({ indexPath })} />
@@ -622,7 +628,10 @@ export function SetMissionStateUnit(props) {
             title="Set Mission State"
             defaults={SetMissionStateBlock.defaults}
             inputs={[{ label: "state", type: "string" }]}
-            outputs={[{ label: "written", type: "boolean" }]}
+            outputs={[
+                { label: "state", type: "string" },
+                { label: "then", type: "unit" }
+            ]}
         >
             {(data, commit) => (
                 <TextField label="State path" value={data.path} onChange={(path) => commit({ path })} />
@@ -682,7 +691,10 @@ export function ScenarioFlagWriteUnit(props) {
             defaults={ScenarioFlagWriteBlock.defaults}
             normalize={(data) => ({ ...data, type: normalizeType(data.type || "boolean") })}
             inputs={(data) => [{ label: "value", type: typedOutput(data.type) }]}
-            outputs={[{ label: "written", type: "boolean" }]}
+            outputs={(data) => [
+                { label: "value", type: typedOutput(data.type) },
+                { label: "then", type: "unit" }
+            ]}
         >
             {(data, commit) => (
                 <>
@@ -800,7 +812,10 @@ export function LogSignalUnit(props) {
             defaults={LogSignalBlock.defaults}
             normalize={(data) => ({ ...data, type: normalizeType(data.type || "json") })}
             inputs={(_data, portTypes) => [{ label: "value", type: portTypes?.inputs?.value || "generic" }]}
-            outputs={(_data, portTypes) => [{ label: "value", type: portTypes?.outputs?.value || "generic" }]}
+            outputs={(_data, portTypes) => [
+                { label: "value", type: portTypes?.outputs?.value || "generic" },
+                { label: "then", type: "unit" }
+            ]}
         >
             {(data, commit) => (
                 <>
@@ -819,7 +834,7 @@ export function AssertSignalUnit(props) {
             title="Assert Signal"
             defaults={AssertSignalBlock.defaults}
             inputs={[{ label: "condition", type: "boolean" }]}
-            outputs={[{ label: "ok", type: "boolean" }]}
+            outputs={[{ label: "then", type: "unit" }]}
         >
             {(data, commit) => (
                 <TextField label="Message" value={data.message} onChange={(message) => commit({ message })} />
@@ -836,7 +851,10 @@ export function RecordSignalUnit(props) {
             defaults={RecordSignalBlock.defaults}
             normalize={(data) => ({ ...data, type: normalizeType(data.type || "json") })}
             inputs={(data) => [{ label: "value", type: typedOutput(data.type) }]}
-            outputs={[{ label: "count", type: "int32" }]}
+            outputs={[
+                { label: "count", type: "int32" },
+                { label: "then", type: "unit" }
+            ]}
         >
             {(data, commit) => (
                 <>

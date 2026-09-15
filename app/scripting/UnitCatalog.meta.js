@@ -12,6 +12,12 @@ import { MultiplyTexBlock } from "./units/math/tex/Scale.block.js";
 import { MaskBlock } from "./units/math/tex/Mask.block.js";
 import { IfBlock } from "./units/statements/If.block.js";
 import { ConjugationBlock, EqualityBlock } from "./units/statements/Equality.block.js";
+import {
+    IgnoreBlock,
+    NopBlock,
+    PassthroughBlock,
+    SequenceBlock,
+} from "./units/statements/Unit.block.js";
 import { StringBlock } from "./units/objects/String.block.js";
 import {
     BlendTextureBlock,
@@ -132,6 +138,10 @@ export const UNIT_CATALOG_META = [
     entry("statements", "If", IfBlock),
     entry("statements", "Equality", EqualityBlock),
     entry("statements", "Conjugation", ConjugationBlock),
+    entry("statements", "Nop", NopBlock),
+    entry("statements", "Ignore", IgnoreBlock),
+    entry("statements", "Sequence", SequenceBlock),
+    entry("statements", "Passthrough", PassthroughBlock),
     entry("program", "Program Input", ProgramInputBlock),
     entry("program", "OutputNode", OutputNodeBlock, {
         placeable: false,

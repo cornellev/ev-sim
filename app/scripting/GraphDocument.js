@@ -16,6 +16,40 @@ function makeConnectionKey(connection) {
     ].join("|");
 }
 
+export function formatRestoreErrors(errors) {
+    if (!Array.isArray(errors) || errors.length === 0) return null;
+
+    return errors.map(({ connection, error }) => {
+        const edge = connection
+            ? `${connection.from}.${connection.output} -> ${connection.to}.${connection.input}`
+            : "connection";
+        const message = error || `Cannot restore ${edge}.`;
+        return `${message} Rewire this connection manually.`;
+    }).join(" ");
+}
+
+export function mergeUnrestoredConnections(liveConnections = [], restoreErrors = []) {
+    const connections = [...liveConnections];
+    const seen = new Set(connections.map((connection) => makeConnectionKey(connection)));
+
+    restoreErrors.forEach(({ connection }) => {
+        if (!connection) return;
+        const key = makeConnectionKey(connection);
+        if (seen.has(key)) return;
+        seen.add(key);
+        connections.push({ ...connection });
+    });
+
+    return connections;
+}
+
+export function pruneRestoreErrors(manager) {
+    if (!manager || typeof manager.pruneRestoreErrors !== "function") {
+        return manager?.restoreErrors || [];
+    }
+    return manager.pruneRestoreErrors();
+}
+
 export function serializeManagerGraph(manager, {
     outputNodeConfig = null,
     positions = {},
@@ -122,8 +156,26 @@ export function restoreManagerFromGraph(graph, getBlockClass, {
     });
 
     const connections = Array.isArray(graph?.connections) ? graph.connections : [];
+    manager.restoreErrors = [];
     connections.forEach((connection) => {
-        manager.connectUnits(connection.from, connection.output, connection.to, connection.input);
+        const result = manager.connectUnitsDetailed(
+            connection.from,
+            connection.output,
+            connection.to,
+            connection.input
+        );
+        if (!result.ok) {
+            manager.restoreErrors.push({
+                connection: {
+                    from: connection.from,
+                    output: connection.output,
+                    to: connection.to,
+                    input: connection.input,
+                    type: connection.type
+                },
+                error: result.error
+            });
+        }
     });
     recomputeBindings(manager);
 
@@ -143,13 +195,17 @@ export function mutateGraphConnections(graph, getBlockClass, mutate, extras = {}
     const result = mutate(manager) || { ok: false, error: "Graph mutation failed." };
     if (result.ok === false) return result;
 
+    pruneRestoreErrors(manager);
+    const nextGraph = serializeManagerGraph(manager, {
+        outputNodeConfig: graph?.outputNodeConfig ?? extras.outputNodeConfig ?? null,
+        positions,
+        headUUID
+    });
+    nextGraph.connections = mergeUnrestoredConnections(nextGraph.connections, manager.restoreErrors);
+
     return {
         ok: true,
-        graph: serializeManagerGraph(manager, {
-            outputNodeConfig: graph?.outputNodeConfig ?? extras.outputNodeConfig ?? null,
-            positions,
-            headUUID
-        }),
+        graph: nextGraph,
         ...result
     };
 }

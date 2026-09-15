@@ -1,10 +1,12 @@
 /**
  * Editor/runtime port type helpers.
  * `generic` is editor-only. Compiled artifacts never contain it.
- * Future value types (`unit`, `actor_command`) belong in this module.
+ * `unit` is a concrete sequencing token. Future value types (`actor_command`) belong here too.
  */
 
 export const GENERIC_TYPE = "generic";
+export const UNIT_TYPE = "unit";
+export const UNIT = Object.freeze({ type: UNIT_TYPE });
 
 export function isGeneric(type) {
     return type === GENERIC_TYPE;

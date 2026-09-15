@@ -36,7 +36,7 @@ The 3D scene has two modes (`app/3d/viewState.js`):
 
 The scripting layer has two execution modes:
 
-- Editor execution uses `ScriptManager.execute()` and live `UnitBlock` instances. Selector blocks (`If`, `WeightedSelect`, `SignalLatch`) are lazy in the editor. Generic unification lives in `app/scripting/types/` and is solved on connect/disconnect; `generic` never appears in compiled artifacts.
+- Editor execution uses `ScriptManager.execute()` and live `UnitBlock` instances. Selector blocks (`If`, `WeightedSelect`, `SignalLatch`) are lazy in the editor. Generic unification lives in `app/scripting/types/` and is solved on connect/disconnect; `generic` never appears in compiled artifacts. Effect order uses explicit `unit` sequencing (`Sequence`, `Passthrough`, `then`).
 - Compiled execution uses `app/scripting/runtime/Compiler.js` to produce a versioned JSON artifact (`cev-sim.visual-script.program` v3) and `app/scripting/runtime/Runner.js` to run it without generated JavaScript or `eval`. Frozen v2 artifacts remain executable and keep their original eager selector evaluation. Recompiling to v3 changes script lock hashes, `resolvedHash`, `simulationSemanticHash`, and `episodeHash`; it does not change `worldHash`.
 
 Built-in block classes are registered by `app/scripting/registerBuiltInBlocks.js`. The block library inventory lives in `app/scripting/UnitCatalog.js`, and `app/scripting/AddMenu.js` renders it as a searchable categorized sidebar.

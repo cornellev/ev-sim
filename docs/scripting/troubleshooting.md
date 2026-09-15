@@ -14,6 +14,14 @@ Add the block class to `app/scripting/registerBuiltInBlocks.js`. If the block ap
 
 The React unit and `UnitBlock.register()` probably disagree about a port label or type. Check both sides.
 
+Loading an older editable graph that still wires `written`, `ok`, or `staged` after those outputs were replaced by `then` produces restore errors such as:
+
+```text
+Missing output port "written" on block "<uuid>". Rewire this connection manually.
+```
+
+Compile fails closed and keeps `latestValidArtifact`. Status shows `Invalid, stale artifact` until you rewire `then` (or an identity output) and the old edge is pruned. The stored graph JSON keeps the unrestored connections; they are not silently dropped.
+
 ## Type Mismatch
 
 `LineManager` and `connectUnitsDetailed` use `portsCompatible()`: `generic` may connect to any type, then graph-wide unification binds or rejects. Distinct concrete types (`float64` vs `int32`, or `float64` vs `string` through an `If`) do not connect. A rejected candidate does not delete existing wires.

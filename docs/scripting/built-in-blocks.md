@@ -14,14 +14,14 @@ Current block library categories:
 - `randomization`: random ranges, seeded random, noise, jitter, weighted select, remap.
 - `conversions`: numeric conversions.
 - `objects`: string.
-- `statements`: if, comparisons, conjunctions. `If`, `Equality`, `Weighted Select`, `Signal Latch`, `Signal Default`, and `Log Signal` infer a type variable `T` from connections instead of a type selector. Equality `eq`/`neq` accept any concrete type; ordered operators accept only `float64`/`int32`.
-- `program`: program input/output units.
-- `signals`: read/write and inspect signal-store values.
-- `topics`: topic snapshots, fields, staged publish messages, metadata, and stale gates.
+- `statements`: if, comparisons, conjunctions, nop, ignore, sequence, passthrough. `If`, `Equality`, `Weighted Select`, `Signal Latch`, `Signal Default`, `Log Signal`, `Ignore`, and `Passthrough` infer a type variable `T` from connections instead of a type selector. Equality `eq`/`neq` accept any concrete type; ordered operators accept only `float64`/`int32`.
+- `program`: program input/output units. Program I/O may expose `unit`.
+- `signals`: read/write and inspect signal-store values. Write Signal exposes identity `value` plus `then`.
+- `topics`: topic snapshots, fields, staged publish messages, metadata, and stale gates. Stage Publish exposes `path` plus `then`.
 - `simulator`: vehicle, device, simulation, scenario, and object snapshots.
-- `mission`: waypoint, mission state, route progress, and scenario flag helpers.
+- `mission`: waypoint, mission state, route progress, and scenario flag helpers. Set Mission State, Scenario Flag Write, and Advance Waypoint expose `then`.
 - `bindings`: signal/tick/timer triggers and input/output/trigger bindings.
-- `diagnostics`: probes, logs, assertions, recording/replay, and binding status.
+- `diagnostics`: probes, logs, assertions, recording/replay, and binding status. Log, Assert, and Record expose `then`.
 
 ## Compileable Vs UI-Only
 

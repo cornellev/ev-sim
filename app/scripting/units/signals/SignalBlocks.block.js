@@ -1,9 +1,9 @@
 import { BlockOutput, UnitBlock, usesLazySelectors } from "../../ScriptManager.js";
-import { SIGNAL_NAMESPACES, SIGNAL_PATHS } from "../../runtime/SignalPaths.js";
+import { SIGNAL_PATHS } from "../../runtime/SignalPaths.js";
 import { getByPath, setByPath } from "../../runtime/SignalStore.js";
 import { normalizeType, parseValueByType, SUPPORTED_TYPES } from "../program/ProgramTypes.js";
 import { routeProgress } from "../../../scenarios/route/Route.js";
-import { GENERIC_TYPE } from "../../types/PortTypes.js";
+import { GENERIC_TYPE, UNIT, UNIT_TYPE } from "../../types/PortTypes.js";
 
 const JSON_TYPES = new Set(["json", "message", "route", "waypoint", "pose2d", "pose3d", "vec2", "vec3", "sim_event"]);
 
@@ -150,8 +150,10 @@ export class WriteSignalBlock extends ConfiguredBlock {
 
     register() {
         this.state = this.config();
-        this.registerInput("value", typedOutput(this.state.type));
-        this.registerOutput("written", "boolean");
+        const valueType = typedOutput(this.state.type);
+        this.registerInput("value", valueType);
+        this.registerOutput("value", valueType);
+        this.registerOutput("then", UNIT_TYPE);
     }
 
     valid() {
@@ -165,7 +167,10 @@ export class WriteSignalBlock extends ConfiguredBlock {
             source: this.state.source || "script",
             staleAfter: this.state.staleAfter
         });
-        return new BlockOutput().set("written", true);
+        return new BlockOutput()
+            .setDeclared(this, "value", value)
+            .setDeclared(this, "then", UNIT)
+            .setDeclared(this, "written", true);
     }
 }
 
@@ -400,8 +405,8 @@ export class StagePublishBlock extends ConfiguredBlock {
     register() {
         this.state = this.config();
         this.registerInput("message", "message");
-        this.registerOutput("staged", "boolean");
         this.registerOutput("path", "string");
+        this.registerOutput("then", UNIT_TYPE);
     }
 
     valid() {
@@ -409,8 +414,9 @@ export class StagePublishBlock extends ConfiguredBlock {
     }
 
     execute() {
+        const message = this.getInput("message");
         const path = pathOrFallback(this.state.path, `publish.${this.state.topic}`);
-        this.manager.writeSignal(path, this.getInput("message"), {
+        this.manager.writeSignal(path, message, {
             type: "message",
             source: "stage-publish",
             metadata: {
@@ -419,8 +425,9 @@ export class StagePublishBlock extends ConfiguredBlock {
             }
         });
         return new BlockOutput()
-            .set("staged", true)
-            .set("path", path);
+            .setDeclared(this, "path", path)
+            .setDeclared(this, "then", UNIT)
+            .setDeclared(this, "staged", true);
     }
 }
 
@@ -613,6 +620,7 @@ export class AdvanceWaypointBlock extends ConfiguredBlock {
         this.registerInput("advance", "boolean");
         this.registerInput("route", "route");
         this.registerOutput("index", "int32");
+        this.registerOutput("then", UNIT_TYPE);
     }
 
     valid() {
@@ -620,12 +628,15 @@ export class AdvanceWaypointBlock extends ConfiguredBlock {
     }
 
     execute() {
+        const advance = Boolean(this.getInput("advance"));
         const route = this.hasInput("route") ? this.getInput("route") : [];
         const list = Array.isArray(route) ? route : route?.waypoints || [];
         const current = toInt(readSignalValue(this.manager, this.state.indexPath, 0), 0);
-        const next = Boolean(this.getInput("advance")) ? Math.min(current + 1, Math.max(0, list.length)) : current;
+        const next = advance ? Math.min(current + 1, Math.max(0, list.length)) : current;
         this.manager.writeSignal(this.state.indexPath, next, { type: "int32", source: "advance-waypoint" });
-        return new BlockOutput().set("index", next);
+        return new BlockOutput()
+            .setDeclared(this, "index", next)
+            .setDeclared(this, "then", UNIT);
     }
 }
 
@@ -665,7 +676,8 @@ export class SetMissionStateBlock extends ConfiguredBlock {
     register() {
         this.state = this.config();
         this.registerInput("state", "string");
-        this.registerOutput("written", "boolean");
+        this.registerOutput("state", "string");
+        this.registerOutput("then", UNIT_TYPE);
     }
 
     valid() {
@@ -673,11 +685,15 @@ export class SetMissionStateBlock extends ConfiguredBlock {
     }
 
     execute() {
-        this.manager.writeSignal(this.state.path, this.getInput("state"), {
+        const state = this.getInput("state");
+        this.manager.writeSignal(this.state.path, state, {
             type: "string",
             source: "set-mission-state"
         });
-        return new BlockOutput().set("written", true);
+        return new BlockOutput()
+            .setDeclared(this, "state", state)
+            .setDeclared(this, "then", UNIT)
+            .setDeclared(this, "written", true);
     }
 }
 
@@ -733,8 +749,10 @@ export class ScenarioFlagWriteBlock extends ConfiguredBlock {
 
     register() {
         this.state = this.config();
-        this.registerInput("value", typedOutput(this.state.type));
-        this.registerOutput("written", "boolean");
+        const valueType = typedOutput(this.state.type);
+        this.registerInput("value", valueType);
+        this.registerOutput("value", valueType);
+        this.registerOutput("then", UNIT_TYPE);
     }
 
     valid() {
@@ -742,11 +760,15 @@ export class ScenarioFlagWriteBlock extends ConfiguredBlock {
     }
 
     execute() {
-        this.manager.writeSignal(`scenario.flags.${this.state.flag}`, this.getInput("value"), {
+        const value = this.getInput("value");
+        this.manager.writeSignal(`scenario.flags.${this.state.flag}`, value, {
             type: typedOutput(this.state.type),
             source: "scenario-flag-write"
         });
-        return new BlockOutput().set("written", true);
+        return new BlockOutput()
+            .setDeclared(this, "value", value)
+            .setDeclared(this, "then", UNIT)
+            .setDeclared(this, "written", true);
     }
 }
 
@@ -871,6 +893,7 @@ export class LogSignalBlock extends ConfiguredBlock {
         this.state = this.config();
         this.registerInput("value", GENERIC_TYPE);
         this.registerOutput("value", GENERIC_TYPE);
+        this.registerOutput("then", UNIT_TYPE);
     }
 
     valid() {
@@ -892,7 +915,9 @@ export class LogSignalBlock extends ConfiguredBlock {
         if (this.count % sampleEvery === 0) {
             console.debug(`[visual-script:${this.state.label}]`, value);
         }
-        return new BlockOutput().set("value", value);
+        return new BlockOutput()
+            .setDeclared(this, "value", value)
+            .setDeclared(this, "then", UNIT);
     }
 }
 
@@ -902,7 +927,7 @@ export class AssertSignalBlock extends ConfiguredBlock {
     register() {
         this.state = this.config();
         this.registerInput("condition", "boolean");
-        this.registerOutput("ok", "boolean");
+        this.registerOutput("then", UNIT_TYPE);
     }
 
     valid() {
@@ -910,10 +935,13 @@ export class AssertSignalBlock extends ConfiguredBlock {
     }
 
     execute() {
-        if (!this.getInput("condition")) {
+        const condition = this.getInput("condition");
+        if (!condition) {
             throw new Error(this.state.message || "Signal assertion failed.");
         }
-        return new BlockOutput().set("ok", true);
+        return new BlockOutput()
+            .setDeclared(this, "then", UNIT)
+            .setDeclared(this, "ok", true);
     }
 }
 
@@ -924,6 +952,7 @@ export class RecordSignalBlock extends ConfiguredBlock {
         this.state = this.config();
         this.registerInput("value", typedOutput(this.state.type));
         this.registerOutput("count", "int32");
+        this.registerOutput("then", UNIT_TYPE);
     }
 
     valid() {
@@ -931,11 +960,14 @@ export class RecordSignalBlock extends ConfiguredBlock {
     }
 
     execute() {
-        const history = this.manager.recordSignal(this.state.path, this.getInput("value"), {
+        const value = this.getInput("value");
+        const history = this.manager.recordSignal(this.state.path, value, {
             type: typedOutput(this.state.type),
             maxSamples: toInt(this.state.maxSamples, 120)
         });
-        return new BlockOutput().set("count", history.length);
+        return new BlockOutput()
+            .setDeclared(this, "count", history.length)
+            .setDeclared(this, "then", UNIT);
     }
 }
 

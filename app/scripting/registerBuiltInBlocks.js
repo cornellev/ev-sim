@@ -84,6 +84,12 @@ import {
 } from "./units/signals/SignalBlocks.block.js";
 import { ConjugationBlock, EqualityBlock } from "./units/statements/Equality.block.js";
 import { IfBlock } from "./units/statements/If.block.js";
+import {
+    IgnoreBlock,
+    NopBlock,
+    PassthroughBlock,
+    SequenceBlock,
+} from "./units/statements/Unit.block.js";
 
 let registered = false;
 
@@ -123,6 +129,10 @@ export function registerBuiltInBlocks() {
         IfBlock,
         EqualityBlock,
         ConjugationBlock,
+        NopBlock,
+        IgnoreBlock,
+        SequenceBlock,
+        PassthroughBlock,
         ROSInputBlock,
         ROSOutputBlock,
         ProgramInputBlock,

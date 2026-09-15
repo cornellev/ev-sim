@@ -22,8 +22,9 @@ Add or update tests when changing:
 - Eager v2 versus lazy editor/v3 selector evaluation.
 - Editor `executeProgram()` memoization: shared diamonds run once per call, memos are shared across multiple OutputNodes, and a later call starts a new memo.
 - Runtime cycles on live graphs (`Cycle detected at runtime while evaluating "<uuid>"`) plus `SignalStore` rollback of staged writes.
-- Frozen `nodes[].ports` overlay during hydrate.
-- Program input/output behavior.
+- Frozen `nodes[].ports` overlay during hydrate, including v2/early-v3 `written` / `ok` / `staged` versus current `then` ports.
+- Effect sequencing: `Sequence` order, `Passthrough` reachability, unused lazy `WriteSignal` branches, and fail-closed restore of missing ports.
+- Program input/output behavior, including `unit`.
 - Runtime state hydration or serialization.
 - Imported compiled program behavior.
 - Block registration behavior.

@@ -1,6 +1,6 @@
 import { registerBuiltInBlocks } from "@/app/scripting/registerBuiltInBlocks";
 import { getRegisteredBlockType } from "@/app/scripting/BlockRegistry";
-import { restoreManagerFromGraph } from "@/app/scripting/GraphDocument";
+import { restoreManagerFromGraph, formatRestoreErrors } from "@/app/scripting/GraphDocument";
 
 export const runtime = "nodejs";
 
@@ -23,6 +23,9 @@ export async function POST(request) {
 
         registerBuiltInBlocks();
         const manager = restoreManagerFromGraph(graph, getRegisteredBlockType);
+        if (manager.restoreErrors?.length) {
+            throw new Error(formatRestoreErrors(manager.restoreErrors));
+        }
         const artifact = manager.compile(name);
         return Response.json({ ok: true, artifact });
     } catch (error) {

@@ -52,7 +52,9 @@ Each entry in `nodes` has:
 
 The compiler snapshots `nodes[].ports` from resolved editor types. Those maps, `transitions[].type`, and program interfaces must never contain `generic`. `generic` is editor-only and is solved (or rejected) before compile.
 
-`VisualScriptRunner._hydrateUnits()` applies cloned `node.ports` to `unit.typeMap` after `hydrateState()` and `hydrateRuntimeState()`. Frozen artifact ports override the current class registration. That keeps v2 and early-v3 artifacts runnable when later block classes add or rename ports.
+`VisualScriptRunner._hydrateUnits()` applies cloned `node.ports` to `unit.typeMap` after `hydrateState()` and `hydrateRuntimeState()`. Frozen artifact ports override the current class registration. That keeps v2 and early-v3 artifacts runnable when later block classes add or rename ports. Current effect blocks register `then` plus identity outputs; frozen artifacts may still contain `written`, `ok`, or `staged`. `BlockOutput.setDeclared()` writes only labels present on the hydrated `typeMap`.
+
+Effect order is not implied by graph layout. A write or assert runs only if it is reachable from a final state through `then`, an identity output, `Sequence`, or `Passthrough`.
 
 ## Success Transition
 

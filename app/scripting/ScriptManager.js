@@ -64,7 +64,12 @@ export class BlockOutput {
         this.map[label] = type;
         return this;
     }
-    
+
+    setDeclared(unit, label, value) {
+        if (unit?.outputType(label) !== undefined) this.map[label] = value;
+        return this;
+    }
+
     get(label) {
         if (!Object.keys(this.map).includes(label)) return null;
 
@@ -413,11 +418,32 @@ export class ScriptManager {
         this.outputMemo = new Map();
         this.evaluating = new Set();
         this.evaluationPolicy = { lazySelectors: true, memoizeExecute: true };
+        this.restoreErrors = [];
     }
 
     _beginEvaluation() {
         this.outputMemo = new Map();
         this.evaluating = new Set();
+    }
+
+    pruneRestoreErrors() {
+        if (!Array.isArray(this.restoreErrors) || this.restoreErrors.length === 0) {
+            this.restoreErrors = [];
+            return this.restoreErrors;
+        }
+
+        const units = new Map(this.units.map((unit) => [unit.uuid, unit]));
+        this.restoreErrors = this.restoreErrors.filter(({ connection }) => {
+            const fromUnit = units.get(connection?.from);
+            const toUnit = units.get(connection?.to);
+            if (!fromUnit || !toUnit) return false;
+
+            const inputLabel = toUnit.resolveInputLabel(connection.input);
+            if (toUnit.inputs?.[inputLabel]) return false;
+
+            return true;
+        });
+        return this.restoreErrors;
     }
 
     evaluateUnit(uuid) {
@@ -597,6 +623,7 @@ export class ScriptManager {
         outputUnit.addOutput(resolvedOutputLabel, connection);
         inputUnit.addInput(resolvedInputLabel, connection);
         applyBindings(this, plan.bindings);
+        this.pruneRestoreErrors();
         return { ok: true, error: null };
     }
 
@@ -632,6 +659,7 @@ export class ScriptManager {
         }
 
         recomputeBindings(this);
+        this.pruneRestoreErrors();
         return true;
     }
 
@@ -771,6 +799,7 @@ export class ScriptManager {
         }
 
         recomputeBindings(this);
+        this.pruneRestoreErrors();
     }
 
     recomputeBindings() {

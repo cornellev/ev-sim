@@ -23,13 +23,21 @@ import {
     LogSignalBlock,
     SignalDefaultBlock,
     SignalLatchBlock,
+    WriteSignalBlock,
 } from "../app/scripting/units/signals/SignalBlocks.block.js";
 import { OutputNodeBlock } from "../app/scripting/units/program/ProgramIO.block.js";
+import {
+    normalizeType,
+    parseValueByType,
+    SUPPORTED_TYPES,
+} from "../app/scripting/units/program/ProgramTypes.js";
 import {
     GENERIC_TYPE,
     isConcreteType,
     isGeneric,
     portsCompatible,
+    UNIT,
+    UNIT_TYPE,
 } from "../app/scripting/types/PortTypes.js";
 import {
     declaredPortType,
@@ -139,6 +147,7 @@ function resetRegistry() {
         SignalLatchBlock,
         SignalDefaultBlock,
         LogSignalBlock,
+        WriteSignalBlock,
         NumberUnitClass,
         StringBlock,
         OutputNodeBlock,
@@ -161,6 +170,43 @@ test("portsCompatible treats generic as a wildcard and requires exact concrete e
     assert.equal(isGeneric(GENERIC_TYPE), true);
     assert.equal(isConcreteType("float64"), true);
     assert.equal(isConcreteType("generic"), false);
+    assert.equal(isConcreteType(UNIT_TYPE), true);
+    assert.equal(portsCompatible(UNIT_TYPE, UNIT_TYPE), true);
+    assert.equal(portsCompatible(UNIT_TYPE, "float64"), false);
+});
+
+test("parseValueByType always returns the UNIT singleton", () => {
+    assert.equal(SUPPORTED_TYPES.includes(UNIT_TYPE), true);
+    assert.equal(SUPPORTED_TYPES.includes(GENERIC_TYPE), false);
+    assert.equal(normalizeType(UNIT_TYPE), UNIT_TYPE);
+    assert.equal(parseValueByType(undefined, UNIT_TYPE), UNIT);
+    assert.equal(parseValueByType("foo", UNIT_TYPE), UNIT);
+    assert.equal(parseValueByType({ type: "nope" }, UNIT_TYPE), UNIT);
+});
+
+test("BlockOutput.setDeclared writes only ports present on the unit", () => {
+    const unit = new WriteSignalBlock("write");
+    unit.hydrateState({ path: "debug.value", type: "float64", source: "script", staleAfter: "" });
+    const current = new BlockOutput()
+        .setDeclared(unit, "value", 1)
+        .setDeclared(unit, "then", UNIT)
+        .setDeclared(unit, "written", true);
+    assert.equal(current.has("value"), true);
+    assert.equal(current.has("then"), true);
+    assert.equal(current.has("written"), false);
+
+    unit.typeMap = {
+        inputs: { value: "float64" },
+        outputs: { written: "boolean" }
+    };
+    const frozen = new BlockOutput()
+        .setDeclared(unit, "value", 1)
+        .setDeclared(unit, "then", UNIT)
+        .setDeclared(unit, "written", true);
+    assert.equal(frozen.has("written"), true);
+    assert.equal(frozen.get("written"), true);
+    assert.equal(frozen.has("then"), false);
+    assert.equal(frozen.has("value"), false);
 });
 
 test("type schemes resolve T across sibling ports and ignore typeBindings on concrete ports", () => {

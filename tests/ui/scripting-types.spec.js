@@ -58,3 +58,28 @@ test("scripting canvas binds If ports from a Number wire and rejects a string co
     await expect(page.getByRole("button", { name: "Connect input false value, float64" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Connect input false value, string" })).toHaveCount(0);
 });
+
+test("scripting canvas exposes unit sequencing ports on Write Signal, Sequence, and Nop", async ({ page }) => {
+    test.setTimeout(180_000);
+    await page.goto("/");
+    await openWorkspace(page, "Scripting canvas");
+
+    await addBlock(page, "Write Signal", "Write Signal Signals");
+    await addBlock(page, "Sequence", "Sequence Logic");
+    await addBlock(page, "Nop", "Nop Logic");
+
+    await expect(page.getByRole("button", { name: "Connect output then, unit" }).first()).toBeVisible();
+    await expect(page.getByRole("button", { name: "Connect output written, boolean" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Connect output value, json" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Connect input first, unit" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Connect input second, unit" })).toBeVisible();
+
+    const nopThen = page.getByRole("button", { name: "Connect output then, unit" }).last();
+    await nopThen.focus();
+    await page.keyboard.press("Enter");
+    const sequenceFirst = page.getByRole("button", { name: "Connect input first, unit" });
+    await sequenceFirst.focus();
+    await page.keyboard.press("Enter");
+
+    await expect(page.getByRole("button", { name: "Connect input first, unit" })).toBeVisible();
+});

@@ -16,8 +16,9 @@ Current base types:
 - `custom`
 - `tex1d`
 - `generic` (editor-only wire color; not a program I/O type)
+- `unit` (concrete sequencing token; allowed as program I/O)
 
-For bracketed types, such as `array[float64]`, the UI can fall back to the base type color. `generic` is listed in `Constants.TYPES` for unbound polymorphic ports. It is **not** in `ProgramTypes.SUPPORTED_TYPES` and must never appear in compiled artifacts.
+For bracketed types, such as `array[float64]`, the UI can fall back to the base type color. `generic` is listed in `Constants.TYPES` for unbound polymorphic ports. It is **not** in `ProgramTypes.SUPPORTED_TYPES` and must never appear in compiled artifacts. `unit` is in `SUPPORTED_TYPES`. `parseValueByType(_, "unit")` always returns the `UNIT` singleton from `PortTypes.js`.
 
 ## Program I/O Types
 
@@ -35,6 +36,15 @@ Current supported program I/O types:
 - `array[boolean]`
 - `array[string]`
 - `custom[string]`
+- `unit`
+
+## Sequencing And Effect Ports
+
+`unit` is a sequencing token, not a payload. `Nop` produces `then: unit`. `Sequence` evaluates `first` then `second`. `Passthrough` evaluates `then` before `value`. `Ignore` evaluates `value` and produces `then`.
+
+Current effect blocks expose `then: unit` plus an identity or status output (`value`, `state`, `path`, `count`, `index`). They are reachable only when a downstream node consumes `then` or that identity output. Explicit `Sequence` / `Passthrough` is required for effect order.
+
+Frozen v2 and early-v3 artifacts may still snapshot `written`, `ok`, or `staged`. `BlockOutput.setDeclared(unit, label, value)` writes a label only when `unit.outputType(label)` exists, so one `execute()` body serves current ports and frozen legacy ports. Editable graphs that still wire `written` / `ok` / `staged` are not migrated; restore records `restoreErrors`, compile fails closed, and `latestValidArtifact` stays runnable until the user rewires.
 
 ## Port Matching
 

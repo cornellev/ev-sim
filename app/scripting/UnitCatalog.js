@@ -8,6 +8,16 @@ import { MultiplyTex, MultiplyTexBlock, Scale } from "./units/math/tex/Scale";
 import { Mask, MaskBlock } from "./units/math/tex/Mask";
 import { IfBlock, IfUnit } from "./units/statements/If";
 import { Conjugation, ConjugationBlock, Equality, EqualityBlock } from "./units/statements/Equality";
+import {
+    IgnoreBlock,
+    IgnoreUnit,
+    NopBlock,
+    NopUnit,
+    PassthroughBlock,
+    PassthroughUnit,
+    SequenceBlock,
+    SequenceUnit,
+} from "./units/statements/Unit";
 import { StringBlock, StringUnit } from "./units/objects/String";
 import {
     BlendTextureBlock,
@@ -197,6 +207,10 @@ export const UNIT_CATALOG = [
     entry("statements", "If Statement", IfUnit, IfBlock),
     entry("statements", "Comparison (==, !=, >, <, >=, <=)", Equality, EqualityBlock),
     entry("statements", "Conjunction (AND, OR)", Conjugation, ConjugationBlock),
+    entry("statements", "Nop", NopUnit, NopBlock),
+    entry("statements", "Ignore", IgnoreUnit, IgnoreBlock),
+    entry("statements", "Sequence", SequenceUnit, SequenceBlock),
+    entry("statements", "Passthrough", PassthroughUnit, PassthroughBlock),
     entry("program", "Program Input", ProgramInputUnit, ProgramInputBlock),
     entry("signals", "Read Signal", ReadSignalUnit, ReadSignalBlock),
     entry("signals", "Write Signal", WriteSignalUnit, WriteSignalBlock),

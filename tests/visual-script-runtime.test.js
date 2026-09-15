@@ -21,20 +21,36 @@ import {
 import {
     restoreManagerFromGraph,
     serializeManagerGraph,
+    formatRestoreErrors,
+    mergeUnrestoredConnections,
     wouldCreateScriptReferenceCycle,
 } from "../app/scripting/GraphDocument.js";
 import { createLoadedScript, loadScript } from "../app/scripting/ScriptRuntime.js";
 import { SignalStore } from "../app/scripting/runtime/SignalStore.js";
 import { OutputNodeBlock, ProgramInputBlock } from "../app/scripting/units/program/ProgramIO.block.js";
-import { normalizeOutputNodeState } from "../app/scripting/units/program/ProgramTypes.js";
+import { normalizeOutputNodeState, parseValueByType } from "../app/scripting/units/program/ProgramTypes.js";
 import { NumberUnitClass } from "../app/scripting/units/math/Number.block.js";
 import { WeightedSelectBlock } from "../app/scripting/units/math/Randomization.block.js";
 import {
+    AdvanceWaypointBlock,
+    AssertSignalBlock,
+    LogSignalBlock,
+    RecordSignalBlock,
+    ScenarioFlagWriteBlock,
+    SetMissionStateBlock,
     SignalDefaultBlock,
     SignalLatchBlock,
+    StagePublishBlock,
     WriteSignalBlock,
 } from "../app/scripting/units/signals/SignalBlocks.block.js";
 import { IfBlock } from "../app/scripting/units/statements/If.block.js";
+import {
+    IgnoreBlock,
+    NopBlock,
+    PassthroughBlock,
+    SequenceBlock,
+} from "../app/scripting/units/statements/Unit.block.js";
+import { UNIT, UNIT_TYPE } from "../app/scripting/types/PortTypes.js";
 import {
     assertSupportedArtifact,
     SUPPORTED_ARTIFACT_VERSIONS,
@@ -481,6 +497,61 @@ class ProbeBlock extends UnitBlock {
     }
 }
 
+class OrderedEffectBlock extends UnitBlock {
+    static order = [];
+
+    constructor(uuid, name) {
+        super(uuid);
+        this.name = name;
+    }
+
+    register() {
+        this.registerOutput("then", UNIT_TYPE);
+    }
+
+    valid() {
+        return true;
+    }
+
+    execute() {
+        OrderedEffectBlock.order.push(this.name);
+        return new BlockOutput().set("then", UNIT);
+    }
+}
+
+class MessageConstBlock extends UnitBlock {
+    register() {
+        this.registerOutput("out", "message");
+    }
+
+    valid() {
+        return true;
+    }
+
+    execute() {
+        return new BlockOutput().set("out", {});
+    }
+}
+
+class StringConstBlock extends UnitBlock {
+    constructor(uuid, value = "idle") {
+        super(uuid);
+        this.value = value;
+    }
+
+    register() {
+        this.registerOutput("out", "string");
+    }
+
+    valid() {
+        return true;
+    }
+
+    execute() {
+        return new BlockOutput().set("out", this.value);
+    }
+}
+
 const V2_EAGER_EFFECTS_FIXTURE = JSON.parse(readFileSync(
     new URL("./fixtures/scripting/visual-script-v2-eager-effects.json", import.meta.url),
     "utf8"
@@ -521,6 +592,20 @@ function resetRegistry() {
         SignalLatchBlock,
         SignalDefaultBlock,
         WriteSignalBlock,
+        AdvanceWaypointBlock,
+        AssertSignalBlock,
+        LogSignalBlock,
+        RecordSignalBlock,
+        ScenarioFlagWriteBlock,
+        SetMissionStateBlock,
+        StagePublishBlock,
+        IgnoreBlock,
+        NopBlock,
+        PassthroughBlock,
+        SequenceBlock,
+        OrderedEffectBlock,
+        MessageConstBlock,
+        StringConstBlock,
     ].forEach((blockClass) => registerBlockType(blockClass.name, blockClass));
     registerBlockType(LocalScriptProgramBlock.blockType, LocalScriptProgramBlock);
 }
@@ -1580,5 +1665,343 @@ test("committed v2 eager-effects fixture keeps written ports and eager If side e
     assert.equal(signalStore.read("debug.if.true").value, 1);
     assert.equal(signalStore.read("debug.if.false").exists, true);
     assert.equal(signalStore.read("debug.if.false").value, 2);
+});
+
+test("early-v3 artifacts keep written ports and skip unused If writes", () => {
+    resetRegistry();
+
+    const artifact = withArtifactVersion(V2_EAGER_EFFECTS_FIXTURE, 3);
+    const signalStore = new SignalStore();
+    const run = ScriptManager.runCompiled(artifact, { condition: true }, { signalStore });
+
+    assert.equal(run.status, "success");
+    assert.equal(run.outputs.output, true);
+    assert.equal(signalStore.read("debug.if.true").exists, true);
+    assert.equal(signalStore.read("debug.if.true").value, 1);
+    assert.equal(signalStore.read("debug.if.false").exists, false);
+    assert.equal(
+        artifact.nodes.find((node) => node.uuid === "write-true").ports.outputs.written,
+        "boolean"
+    );
+});
+
+test("Sequence executes first then second", () => {
+    resetRegistry();
+    OrderedEffectBlock.order = [];
+
+    const manager = new ScriptManager();
+    manager.addUnit(new OrderedEffectBlock("a", "first"));
+    manager.addUnit(new OrderedEffectBlock("b", "second"));
+    manager.addUnit(new SequenceBlock("seq"));
+    manager.addUnit(new OutputBlock("output", "result", UNIT_TYPE));
+    connect(manager, "a", "then", "seq", "first");
+    connect(manager, "b", "then", "seq", "second");
+    connect(manager, "seq", "then", "output", "output");
+
+    const run = manager.executeProgram();
+    assert.equal(run.status, "success");
+    assert.equal(run.outputs.result, UNIT);
+    assert.deepEqual(OrderedEffectBlock.order, ["first", "second"]);
+});
+
+test("Passthrough evaluates then before value and makes effects reachable", () => {
+    resetRegistry();
+
+    const manager = new ScriptManager();
+    const write = new WriteSignalBlock("write");
+    write.hydrateState({ path: "debug.value", type: "float64", source: "script", staleAfter: "" });
+    manager.addUnit(new ConstBlock("value", 9));
+    manager.addUnit(write);
+    manager.addUnit(new PassthroughBlock("pass"));
+    manager.addUnit(new OutputBlock("output", "result", "float64"));
+    connect(manager, "value", "out", "write", "value");
+    connect(manager, "write", "then", "pass", "then");
+    connect(manager, "value", "out", "pass", "value");
+    connect(manager, "pass", "value", "output", "output");
+
+    const signalStore = new SignalStore();
+    const run = manager.executeProgram({}, { signalStore });
+    assert.equal(run.status, "success");
+    assert.equal(run.outputs.result, 9);
+    assert.equal(signalStore.read("debug.value").value, 9);
+
+    const artifact = manager.compile("passthrough-write");
+    assert.equal(artifact.nodes.some((node) => node.uuid === "write"), true);
+    assert.equal(artifact.nodes.find((node) => node.uuid === "write").ports.outputs.then, UNIT_TYPE);
+    assert.equal(artifact.nodes.find((node) => node.uuid === "write").ports.outputs.written, undefined);
+});
+
+test("unconsumed WriteSignal is omitted from compiled Q", () => {
+    resetRegistry();
+
+    const manager = new ScriptManager();
+    const write = new WriteSignalBlock("write");
+    write.hydrateState({ path: "debug.value", type: "float64", source: "script", staleAfter: "" });
+    manager.addUnit(new ConstBlock("value", 3));
+    manager.addUnit(write);
+    manager.addUnit(new OutputBlock("output", "result", "float64"));
+    connect(manager, "value", "out", "write", "value");
+    connect(manager, "value", "out", "output", "output");
+
+    const artifact = manager.compile("unused-write");
+    assert.equal(artifact.Q.includes("write"), false);
+});
+
+test("shared WriteSignal then fan-out executes the effect once per call", () => {
+    resetRegistry();
+
+    const manager = new ScriptManager();
+    const write = new WriteSignalBlock("write");
+    write.hydrateState({ path: "debug.value", type: "float64", source: "script", staleAfter: "" });
+    manager.addUnit(new ConstBlock("value", 12));
+    manager.addUnit(write);
+    manager.addUnit(new OutputBlock("ok-a", "ok-a", UNIT_TYPE));
+    manager.addUnit(new OutputBlock("ok-b", "ok-b", UNIT_TYPE));
+    connect(manager, "value", "out", "write", "value");
+    connect(manager, "write", "then", "ok-a", "output");
+    connect(manager, "write", "then", "ok-b", "output");
+
+    const signalStore = new SignalStore();
+    const first = manager.executeProgram({}, { signalStore });
+    assert.equal(first.status, "success");
+    assert.equal(first.outputs["ok-a"], UNIT);
+    assert.equal(first.outputs["ok-b"], UNIT);
+    assert.equal(signalStore.read("debug.value").value, 12);
+
+    const second = manager.executeProgram({}, { signalStore });
+    assert.equal(second.status, "success");
+    assert.equal(signalStore.read("debug.value").value, 12);
+});
+
+test("If skips unused WriteSignal branches on editor and v3", () => {
+    resetRegistry();
+
+    const manager = new ScriptManager();
+    const writeTrue = new WriteSignalBlock("write-true");
+    const writeFalse = new WriteSignalBlock("write-false");
+    writeTrue.hydrateState({ path: "debug.if.true", type: "float64", source: "script", staleAfter: "" });
+    writeFalse.hydrateState({ path: "debug.if.false", type: "float64", source: "script", staleAfter: "" });
+    manager.addUnit(new BooleanConstBlock("cond", true));
+    manager.addUnit(new ConstBlock("true-value", 1));
+    manager.addUnit(new ConstBlock("false-value", 2));
+    manager.addUnit(writeTrue);
+    manager.addUnit(writeFalse);
+    manager.addUnit(new IfBlock("if"));
+    manager.addUnit(new OutputBlock("output", "result", UNIT_TYPE));
+    connect(manager, "true-value", "out", "write-true", "value");
+    connect(manager, "false-value", "out", "write-false", "value");
+    connect(manager, "cond", "out", "if", "condition");
+    connect(manager, "write-true", "then", "if", "true value");
+    connect(manager, "write-false", "then", "if", "false value");
+    connect(manager, "if", "out", "output", "output");
+
+    const editorStore = new SignalStore();
+    const editorRun = manager.executeProgram({}, { signalStore: editorStore });
+    assert.equal(editorRun.status, "success");
+    assert.equal(editorStore.read("debug.if.true").exists, true);
+    assert.equal(editorStore.read("debug.if.false").exists, false);
+
+    const artifact = manager.compile("lazy-write-if");
+    const v3Store = new SignalStore();
+    const v3Run = ScriptManager.runCompiled(artifact, {}, { signalStore: v3Store });
+    assert.equal(v3Run.status, "success");
+    assert.equal(v3Store.read("debug.if.true").exists, true);
+    assert.equal(v3Store.read("debug.if.false").exists, false);
+});
+
+test("current effect blocks expose then plus identity and omit legacy ports", () => {
+    resetRegistry();
+
+    const write = new WriteSignalBlock("write");
+    write.hydrateState({ path: "debug.value", type: "float64", source: "script", staleAfter: "" });
+    assert.equal(write.outputType("then"), UNIT_TYPE);
+    assert.equal(write.outputType("value"), "float64");
+    assert.equal(write.outputType("written"), undefined);
+
+    const mission = new SetMissionStateBlock("mission");
+    assert.equal(mission.outputType("state"), "string");
+    assert.equal(mission.outputType("then"), UNIT_TYPE);
+    assert.equal(mission.outputType("written"), undefined);
+
+    const flag = new ScenarioFlagWriteBlock("flag");
+    assert.equal(flag.outputType("value"), "boolean");
+    assert.equal(flag.outputType("then"), UNIT_TYPE);
+    assert.equal(flag.outputType("written"), undefined);
+
+    const stage = new StagePublishBlock("stage");
+    assert.equal(stage.outputType("path"), "string");
+    assert.equal(stage.outputType("then"), UNIT_TYPE);
+    assert.equal(stage.outputType("staged"), undefined);
+
+    const assertBlock = new AssertSignalBlock("assert");
+    assert.equal(assertBlock.outputType("then"), UNIT_TYPE);
+    assert.equal(assertBlock.outputType("ok"), undefined);
+
+    const log = new LogSignalBlock("log");
+    assert.equal(log.outputType("value"), "generic");
+    assert.equal(log.outputType("then"), UNIT_TYPE);
+
+    const record = new RecordSignalBlock("record");
+    assert.equal(record.outputType("count"), "int32");
+    assert.equal(record.outputType("then"), UNIT_TYPE);
+
+    const advance = new AdvanceWaypointBlock("advance");
+    assert.equal(advance.outputType("index"), "int32");
+    assert.equal(advance.outputType("then"), UNIT_TYPE);
+
+    const manager = new ScriptManager();
+    manager.addUnit(new ConstBlock("value", 4));
+    manager.addUnit(write);
+    manager.addUnit(new OutputBlock("output", "done", UNIT_TYPE));
+    connect(manager, "value", "out", "write", "value");
+    connect(manager, "write", "then", "output", "output");
+    const artifact = manager.compile("write-then");
+    const node = artifact.nodes.find((entry) => entry.uuid === "write");
+    assert.equal(node.ports.outputs.then, UNIT_TYPE);
+    assert.equal(node.ports.outputs.value, "float64");
+    assert.equal(node.ports.outputs.written, undefined);
+
+    const remaining = [
+        ["mission", new SetMissionStateBlock("mission"), new StringConstBlock("state-in"), "state", "out"],
+        ["flag", new ScenarioFlagWriteBlock("flag"), new BooleanConstBlock("flag-in", true), "value", "out"],
+        ["stage", new StagePublishBlock("stage"), new MessageConstBlock("msg"), "message", "out"],
+        ["assert", new AssertSignalBlock("assert"), new BooleanConstBlock("ok-in", true), "condition", "out"],
+        ["log", new LogSignalBlock("log"), new ConstBlock("log-in", 1), "value", "out"],
+        ["record", new RecordSignalBlock("record"), new ConstBlock("rec-in", 1), "value", "out"],
+        ["advance", new AdvanceWaypointBlock("advance"), new BooleanConstBlock("go", true), "advance", "out"],
+    ];
+
+    for (const [uuid, block, source, input, sourceOut] of remaining) {
+        const graph = new ScriptManager();
+        if (uuid === "record") {
+            block.hydrateState({ path: "debug.recorded", type: "float64", maxSamples: 8 });
+        }
+        graph.addUnit(source);
+        graph.addUnit(block);
+        graph.addUnit(new OutputBlock("output", "done", UNIT_TYPE));
+        connect(graph, source.uuid, sourceOut, uuid, input);
+        connect(graph, uuid, "then", "output", "output");
+        const compiled = graph.compile(`${uuid}-then`);
+        const compiledNode = compiled.nodes.find((entry) => entry.uuid === uuid);
+        assert.equal(compiledNode.ports.outputs.then, UNIT_TYPE, uuid);
+        assert.equal(compiledNode.ports.outputs.written, undefined, uuid);
+        assert.equal(compiledNode.ports.outputs.ok, undefined, uuid);
+        assert.equal(compiledNode.ports.outputs.staged, undefined, uuid);
+    }
+});
+
+test("Ignore evaluates its value subgraph and Nop sources unit", () => {
+    resetRegistry();
+    OrderedEffectBlock.order = [];
+
+    const manager = new ScriptManager();
+    manager.addUnit(new OrderedEffectBlock("effect", "ignored"));
+    manager.addUnit(new IgnoreBlock("ignore"));
+    manager.addUnit(new NopBlock("nop"));
+    manager.addUnit(new SequenceBlock("seq"));
+    manager.addUnit(new OutputBlock("output", "result", UNIT_TYPE));
+
+    class UnitFromEffect extends UnitBlock {
+        register() {
+            this.registerInput("then", UNIT_TYPE);
+            this.registerOutput("value", "float64");
+        }
+
+        valid() {
+            return this.hasInput("then");
+        }
+
+        execute() {
+            this.getInput("then");
+            return new BlockOutput().set("value", 1);
+        }
+    }
+
+    registerBlockType("UnitFromEffect", UnitFromEffect);
+    manager.addUnit(new UnitFromEffect("lift"));
+    connect(manager, "effect", "then", "lift", "then");
+    connect(manager, "lift", "value", "ignore", "value");
+    connect(manager, "ignore", "then", "seq", "first");
+    connect(manager, "nop", "then", "seq", "second");
+    connect(manager, "seq", "then", "output", "output");
+
+    const run = manager.executeProgram();
+    assert.equal(run.status, "success");
+    assert.deepEqual(OrderedEffectBlock.order, ["ignored"]);
+    assert.equal(run.outputs.result, UNIT);
+});
+
+test("Program Input of type unit always yields the UNIT singleton", () => {
+    resetRegistry();
+
+    const manager = new ScriptManager();
+    const input = new ProgramInputBlock("in");
+    input.hydrateState({ label: "go", type: UNIT_TYPE, defaultValue: "ignored" });
+    manager.addUnit(input);
+    manager.storeData("in", { label: "go", type: UNIT_TYPE, defaultValue: "ignored" });
+    input.reregister();
+    manager.addUnit(new OutputBlock("output", "result", UNIT_TYPE));
+    connect(manager, "in", "input", "output", "output");
+
+    const run = manager.executeProgram({ go: { type: "nope" } });
+    assert.equal(run.status, "success");
+    assert.equal(run.outputs.result, UNIT);
+    assert.equal(parseValueByType("foo", UNIT_TYPE), UNIT);
+
+    const artifact = manager.compile("unit-io");
+    assert.equal(artifact.interface.inputs[0].type, UNIT_TYPE);
+    assert.equal(artifact.interface.outputs[0].type, UNIT_TYPE);
+});
+
+test("restoring written connections is fail-closed and does not compile a stripped graph", () => {
+    resetRegistry();
+
+    const graph = {
+        head: "head-uuid",
+        outputNodeConfig: { outputs: [{ id: "output", label: "output", type: UNIT_TYPE }] },
+        nodes: [
+            { uuid: "value", type: "ConstBlock", state: { value: 4 }, storedData: undefined, position: { x: 0, y: 0 } },
+            {
+                uuid: "write",
+                type: "WriteSignalBlock",
+                state: { path: "debug.value", type: "float64", source: "script", staleAfter: "" },
+                storedData: undefined,
+                position: { x: 10, y: 0 }
+            }
+        ],
+        connections: [
+            { from: "value", output: "out", to: "write", input: "value", type: "float64" },
+            { from: "write", output: "written", to: "head-uuid", input: "output", type: "boolean" }
+        ]
+    };
+
+    const restored = restoreManagerFromGraph(graph, getRegisteredBlockType);
+    assert.equal(restored.restoreErrors.length, 1);
+    assert.match(restored.restoreErrors[0].error, /written/);
+    assert.match(formatRestoreErrors(restored.restoreErrors), /Rewire this connection manually/);
+
+    const live = serializeManagerGraph(restored, {
+        outputNodeConfig: graph.outputNodeConfig,
+        headUUID: "head-uuid"
+    });
+    const merged = mergeUnrestoredConnections(live.connections, restored.restoreErrors);
+    assert.equal(merged.some((connection) => connection.output === "written"), true);
+    assert.equal(live.connections.some((connection) => connection.output === "written"), false);
+
+    assert.throws(() => {
+        if (restored.restoreErrors.length) {
+            throw new Error(formatRestoreErrors(restored.restoreErrors));
+        }
+        restored.compile("stripped");
+    }, /Rewire this connection manually/);
+
+    const rewired = restored.connectUnitsDetailed("write", "then", "head-uuid", "output");
+    assert.equal(rewired.ok, true, rewired.error);
+    assert.equal(restored.restoreErrors.length, 0);
+
+    const artifact = restored.compile("rewired");
+    const writeNode = artifact.nodes.find((node) => node.uuid === "write");
+    assert.equal(writeNode.ports.outputs.then, UNIT_TYPE);
+    assert.equal(writeNode.ports.outputs.written, undefined);
 });
 
