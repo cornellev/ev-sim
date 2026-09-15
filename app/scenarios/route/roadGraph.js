@@ -1365,6 +1365,7 @@ function buildBidirectionalShadowGraph(graph) {
     const document = {
         environmentId: graph.document?.environmentId ?? null,
         roads: {
+            ...(graph.geometryVersion === 2 ? { geometryVersion: 2 } : {}),
             nodes: [...graph.nodes.values()],
             edges: [...graph.edges.values()].map((edge) => ({
                 ...edge,

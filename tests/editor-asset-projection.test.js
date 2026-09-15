@@ -46,8 +46,7 @@ test("ED-06 projector loads, transforms, picks, and releases editor-only assets 
     const runtime = { editorAssets: { repository: { async getRevision() { return { modelUseHash: "a".repeat(64) }; } }, models } };
     const projector = new SceneProjector({ data: { simulation: () => ({ render() {} }) }, scene, document, registry, runtime }).attach();
     projector.setEditorAssetsEnabled(true);
-    await tick();
-    await tick();
+    await projector.whenAssetInstancesIdle();
     const entity = registry.getEntity("asset:asset-1");
     assert.equal(entity.editorOnly, true);
     assert.equal(entity.object3D.position.x, 1);
@@ -82,9 +81,11 @@ test("ED-06 delayed completion cannot resurrect a deleted asset instance", async
     } };
     const projector = new SceneProjector({ scene, document, registry, runtime }).attach();
     projector.setEditorAssetsEnabled(true);
+    const idle = projector.whenAssetInstancesIdle();
     const service = createEnvironmentCommandService({ document });
     assert.equal(service.run("deleteObjects", { objectIds: ["asset-1"] }).ok, true);
     resolveRevision({ modelUseHash: "b".repeat(64) });
+    await idle;
     await tick();
     assert.equal(acquisitions, 0);
     assert.equal(registry.getEntity("asset:asset-1"), null);
@@ -131,9 +132,104 @@ test("ED-06 projector applies v2 appearance maps onto the compiled mesh lease", 
     };
     const projector = new SceneProjector({ data: { simulation: () => ({ render() {} }) }, scene, document, registry, runtime }).attach();
     projector.setEditorAssetsEnabled(true);
-    await tick();
-    await tick();
+    await projector.whenAssetInstancesIdle();
     const mesh = registry.getEntity("asset:asset-1").object3D.children[0];
     assert.equal(mesh.material.map.sourceId, "albedo");
+    projector.dispose();
+});
+
+function tileRecord() {
+    return {
+        id: "tile", typeId: "tile", typeVersion: 2, name: "GLTF Tile", parentId: null, order: 0,
+        components: {
+            tags: [], locked: false, editorHidden: false,
+            asset: { assetId: "base", revision: 1, position: { x: 2, y: 3, z: 4 }, rotationY: 0.25, scale: { x: 2, y: 1, z: 0.5 }, overrides: {} },
+            tile: { provider: "gltf", assetTypeVersion: 1 },
+        },
+    };
+}
+
+function stubRuntime({ getRevision, acquireRevision } = {}) {
+    const models = {
+        async acquire() {
+            const root = new THREE.Group();
+            root.add(new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial()));
+            return { root, localBounds: new THREE.Box3().setFromObject(root), release() {} };
+        },
+        async acquireRevision(revision, options) {
+            if (acquireRevision) return acquireRevision(revision, options);
+            return models.acquire(revision.modelUseHash, options);
+        },
+    };
+    return {
+        editorAssets: {
+            repository: {
+                getRevision: getRevision ?? (async () => ({ modelUseHash: "a".repeat(64) })),
+            },
+            models,
+        },
+    };
+}
+
+test("whenIdle resolves after a delayed revision fetch and parents the root", async () => {
+    const scene = new THREE.Scene();
+    const document = new EnvironmentDocument({ objects: [record()] });
+    const registry = new EnvironmentRegistry();
+    let resolveRevision;
+    const revision = new Promise((resolve) => { resolveRevision = resolve; });
+    const projector = new SceneProjector({
+        data: { simulation: () => ({ render() {} }) },
+        scene, document, registry, runtime: stubRuntime({ getRevision: () => revision }),
+    }).attach();
+    projector.setEditorAssetsEnabled(true);
+    const idle = projector.whenAssetInstancesIdle();
+    let settled = false;
+    idle.then(() => { settled = true; });
+    await tick();
+    assert.equal(settled, false);
+    assert.equal(registry.getEntity("asset:asset-1"), null);
+    resolveRevision({ modelUseHash: "a".repeat(64) });
+    await idle;
+    assert.equal(settled, true);
+    const entity = registry.getEntity("asset:asset-1");
+    assert.equal(projector.assetInstanceEntries().get("asset-1").status, "ready");
+    assert.equal(scene.children.includes(entity.object3D), true);
+    projector.dispose();
+});
+
+test("whenIdle waits for GLTF tiles while editor instances stay disabled", async () => {
+    const scene = new THREE.Scene();
+    const document = new EnvironmentDocument({ objects: [record(), tileRecord()] });
+    const registry = new EnvironmentRegistry();
+    const projector = new SceneProjector({
+        data: { simulation: () => ({ render() {} }) },
+        scene, document, registry, runtime: stubRuntime(),
+    }).attach();
+    projector.syncAssetInstances();
+    await projector.whenAssetInstancesIdle();
+    assert.equal(registry.getEntity("asset:asset-1"), null);
+    const tile = registry.getEntity("asset:tile");
+    assert.equal(tile.kind, "tile");
+    assert.equal(tile.editorOnly, false);
+    assert.equal(scene.children.includes(tile.object3D), true);
+    assert.equal(projector.assetInstanceEntries().has("asset-1"), false);
+    projector.dispose();
+});
+
+test("whenIdle fulfills when a revision fetch fails", async () => {
+    const scene = new THREE.Scene();
+    const document = new EnvironmentDocument({ objects: [record()] });
+    const registry = new EnvironmentRegistry();
+    const projector = new SceneProjector({
+        data: { simulation: () => ({ render() {} }) },
+        scene, document, registry,
+        runtime: stubRuntime({ getRevision: async () => { throw new Error("missing revision"); } }),
+    }).attach();
+    projector.setEditorAssetsEnabled(true);
+    await projector.whenAssetInstancesIdle();
+    const entry = projector.assetInstanceEntries().get("asset-1");
+    assert.equal(entry.status, "error");
+    assert.equal(entry.error.message, "missing revision");
+    assert.equal(registry.getEntity("asset:asset-1"), null);
     projector.dispose();
 });

@@ -8,7 +8,7 @@ import { cn } from "./ui/cn";
 
 const STATUS_COPY = {
     atmosphere: { label: "Atmosphere", detail: "Load the sky environment" },
-    scene: { label: "Geometry", detail: "Assemble world geometry" },
+    scene: { label: "Geometry", detail: "Assemble world geometry and models" },
     runtime: { label: "Runtime", detail: "Start simulation modules" },
 };
 

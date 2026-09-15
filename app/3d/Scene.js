@@ -51,6 +51,7 @@ import { EditorToolController } from "./editor/tools/EditorToolController";
 import { EnvironmentPersistence } from "./environment/EnvironmentPersistence";
 import { applyExternalEnvironmentUpdate } from "./environment/ExternalEnvironmentApply";
 import { EnvironmentLoader } from "./environment/EnvironmentLoader";
+import { waitForEnvironmentGltfPresentation } from "./environment/waitForEnvironmentGltfPresentation";
 import { disposeRendererVisualResourceCache } from "./environment/visual/VisualResourceCache";
 import { getEnvironmentManifest } from "./environment/EnvironmentCatalogClient";
 import { subscribeStorageEvents } from "../client/storageEvents";
@@ -816,7 +817,9 @@ export default function TotalScene({
             // await tryIthaca(scene, data);
             // await setupCity(scene, data);
             const environmentLoader = new EnvironmentLoader({ data, scene });
-            await environmentLoader.load(environmentId);
+            await environmentLoader.load(environmentId, {
+                editorAssetsEnabled: modeRef.current === THREE_D_MODES.ENVIRONMENT,
+            });
             // await SensorTest(data, scene);
             // const miniKey =
             //     typeof window !== "undefined"
@@ -860,6 +863,13 @@ export default function TotalScene({
             };
             runtimeRef.current = runtime;
             await queueRuntimeMode(runtime, modeRef.current);
+            await waitForEnvironmentGltfPresentation({
+                projector: data.environment().projector(),
+                renderer,
+                scene,
+                camera,
+                simulation: data.simulation(),
+            });
 
             if (disposed) return;
 

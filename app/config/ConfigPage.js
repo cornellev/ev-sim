@@ -1300,7 +1300,7 @@ function OracleProductToggles({ draft, sensor, index, update }) {
     return (
         <div className="mt-4">
             <p className="mb-1 text-[13px] font-medium text-[var(--slate-fg-2)]">Oracle products</p>
-            <p className="mb-2 text-[11px] text-[var(--slate-muted)]">Ground-truth outputs for this sensor. Save, then Validate &amp; Run to capture them.</p>
+            <p className="mb-2 text-[11px] text-[var(--slate-muted)]">Sensor outputs - validate to verify usage.</p>
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
                 {toggles.map((entry) => (
                     <Toggle

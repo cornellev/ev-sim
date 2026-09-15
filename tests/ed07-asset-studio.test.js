@@ -145,6 +145,9 @@ test("ED-07 asset sessions cache compile and dirty, invalidate on commands and r
     assert.equal(session.compile(), first, "compile is cached while the document and runtime deps are unchanged");
     session.setView({ camera: { position: [4, 3, 2], target: [0, 0, 0] } });
     session.setView({ showCollision: false, showLidar: false });
+    const includedPartIds = session.document.parts.map((entry) => entry.id);
+    session.setView({ includedPartIds });
+    assert.deepEqual(session.snapshot().view.includedPartIds, includedPartIds);
     assert.equal(session.compile(), first, "camera and overlay view changes do not recompile");
     const dirtyBefore = session.dirty;
     assert.equal(session.dirty, dirtyBefore);

@@ -403,7 +403,10 @@ test("ED-07 authors isolated revisions, nested proxies, explicit instance update
     await expect(inspector.getByLabel("Pinned revision")).toHaveValue("2");
 
     await droppedParts.getByRole("treeitem", { name: primary.name }).click();
-    await inspector.getByLabel(`Include ${primary.name}`).check();
+    await inspector.getByRole("button", { name: "Select All" }).click();
+    await expect(inspector.getByLabel(`Include ${primary.name}`)).toBeChecked();
+    await expect(inspector.getByLabel(`Include ${child.name}`)).toBeChecked();
+    await inspector.getByLabel(`Include ${child.name}`).uncheck();
     await inspector.getByRole("button", { name: "Generate LiDAR" }).click();
     await expect(inspector.getByText("lidar-generated-1 · lidar", { exact: true })).toBeVisible();
     await commitNumber(inspector.getByLabel("Position X"), "1");
@@ -484,6 +487,11 @@ test("ED-07 dirty-close and publication-conflict actions are accessible at 1280 
     const primaryAssetId = await primaryItem.getAttribute("data-asset-id");
     await primaryItem.dblclick();
     const inspector = page.locator("[data-asset-catalog-inspector]");
+    const selectAll = inspector.getByRole("button", { name: "Select All" });
+    await expect(selectAll).toBeEnabled();
+    await selectAll.click();
+    await expect(inspector.getByLabel(`Include ${primary.name}`)).toBeChecked();
+    await expect(selectAll).toBeDisabled();
     await commitNumber(inspector.getByLabel("Pivot Z"), "0.2");
     await page.getByRole("button", { name: `Close ${primary.name} studio` }).click();
     const closeDialog = page.getByRole("dialog", { name: `Save changes to ${primary.name}?` });

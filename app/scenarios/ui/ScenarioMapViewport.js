@@ -12,6 +12,18 @@ import styles from "./ScenarioWorkspace.module.css";
 
 const PAN_THRESHOLD_PX = 4;
 
+function clearGesturePreview(gesture) {
+    if (!gesture) return;
+    if (gesture.frame !== undefined) cancelAnimationFrame(gesture.frame);
+    if (gesture.element) {
+        if (gesture.transform === null) gesture.element.removeAttribute("transform");
+        else gesture.element.setAttribute("transform", gesture.transform);
+    }
+    if (gesture.captureTarget?.hasPointerCapture?.(gesture.pointerId)) {
+        gesture.captureTarget.releasePointerCapture(gesture.pointerId);
+    }
+}
+
 export default function ScenarioMapViewport({
     environment,
     ariaLabel,
@@ -20,8 +32,9 @@ export default function ScenarioMapViewport({
     onDrawStart,
     onDrawMove,
     onDrawEnd,
+    onDrawCancel,
     onSelectEntity,
-    onDragEntity,
+    onDragEntityStart,
     onDragEntityEnd,
     children,
     className = "",
@@ -43,6 +56,30 @@ export default function ScenarioMapViewport({
         return { document, viewport: updater(currentViewport) };
     }), [document, fittedViewport]);
 
+    const cancel = useCallback(() => {
+        const gesture = gestureRef.current;
+        gestureRef.current = null;
+        clearGesturePreview(gesture);
+        gesture?.onCancel?.();
+        setDraggingId(null);
+    }, []);
+
+    useEffect(() => {
+        const onKeyDown = (event) => {
+            if (event.key !== "Escape" || !gestureRef.current) return;
+            event.preventDefault();
+            event.stopPropagation();
+            cancel();
+        };
+        window.addEventListener("keydown", onKeyDown, true);
+        window.addEventListener("blur", cancel);
+        return () => {
+            window.removeEventListener("keydown", onKeyDown, true);
+            window.removeEventListener("blur", cancel);
+            cancel();
+        };
+    }, [cancel, document, size]);
+
     const screenFromEvent = (event) => {
         const bounds = containerRef.current?.getBoundingClientRect();
         if (!bounds) return null;
@@ -61,15 +98,18 @@ export default function ScenarioMapViewport({
     };
 
     const begin = (event) => {
+        if (gestureRef.current) return;
         if (event.target.closest?.("[data-map-control]")) return;
         if (event.button !== 0 && event.button !== 1) return;
         const context = eventContext(event);
         if (!context) return;
         event.currentTarget.setPointerCapture?.(event.pointerId);
+        const capture = { pointerId: event.pointerId, captureTarget: event.currentTarget };
         const pan = event.button === 1 || event.altKey || interaction === "pan";
         if (pan) {
             gestureRef.current = {
                 kind: "pan",
+                ...capture,
                 startX: event.clientX,
                 startY: event.clientY,
                 lastX: event.clientX,
@@ -82,10 +122,16 @@ export default function ScenarioMapViewport({
         if (draggable && interaction !== "draw" && interaction !== "pan") {
             const entityId = draggable.getAttribute("data-map-draggable");
             if (entityId) {
+                const markerBounds = draggable.getBoundingClientRect();
                 onSelectEntity?.(entityId, context);
                 gestureRef.current = {
                     kind: "pending-drag",
+                    ...capture,
                     entityId,
+                    element: draggable,
+                    transform: draggable.getAttribute("transform"),
+                    offsetX: event.clientX - (markerBounds.left + markerBounds.width / 2),
+                    offsetY: event.clientY - (markerBounds.top + markerBounds.height / 2),
                     startX: event.clientX,
                     startY: event.clientY,
                     start: context,
@@ -99,6 +145,8 @@ export default function ScenarioMapViewport({
         if (interaction === "draw") {
             gestureRef.current = {
                 kind: "draw",
+                onCancel: onDrawCancel,
+                ...capture,
                 startX: event.clientX,
                 startY: event.clientY,
                 start: context,
@@ -109,6 +157,7 @@ export default function ScenarioMapViewport({
         }
         gestureRef.current = {
             kind: "pending-place",
+            ...capture,
             startX: event.clientX,
             startY: event.clientY,
             lastX: event.clientX,
@@ -120,7 +169,7 @@ export default function ScenarioMapViewport({
 
     const move = (event) => {
         const gesture = gestureRef.current;
-        if (!gesture) return;
+        if (!gesture || event.pointerId !== gesture.pointerId) return;
         if (gesture.kind === "draw") {
             const context = eventContext(event);
             if (!context) return;
@@ -131,15 +180,22 @@ export default function ScenarioMapViewport({
         if (gesture.kind === "pending-drag" || gesture.kind === "drag") {
             const totalDistance = Math.hypot(event.clientX - gesture.startX, event.clientY - gesture.startY);
             if (gesture.kind === "pending-drag" && totalDistance < PAN_THRESHOLD_PX) return;
-            const context = eventContext(event);
-            if (!context) return;
             if (gesture.kind === "pending-drag") {
                 gesture.kind = "drag";
                 gesture.moved = true;
+                onDragEntityStart?.(gesture.entityId);
                 setDraggingId(gesture.entityId);
             }
-            gesture.current = context;
-            onDragEntity?.(gesture.entityId, context.world, context);
+            gesture.deltaX = event.clientX - gesture.startX;
+            gesture.deltaY = event.clientY - gesture.startY;
+            // Only the dragged SVG marker changes. No React state, projection,
+            // road compilation, scenario mutation, or route validation per frame.
+            if (gesture.frame === undefined) {
+                gesture.frame = requestAnimationFrame(() => {
+                    gesture.frame = undefined;
+                    gesture.element.setAttribute("transform", `translate(${gesture.deltaX} ${gesture.deltaY}) ${gesture.transform || ""}`.trim());
+                });
+            }
             return;
         }
         const totalDistance = Math.hypot(event.clientX - gesture.startX, event.clientY - gesture.startY);
@@ -155,8 +211,9 @@ export default function ScenarioMapViewport({
 
     const end = (event) => {
         const gesture = gestureRef.current;
-        if (!gesture) return;
+        if (!gesture || event.pointerId !== gesture.pointerId) return;
         gestureRef.current = null;
+        clearGesturePreview(gesture);
         const context = eventContext(event) || gesture.current || gesture.start;
         if (gesture.kind === "draw") {
             const distancePx = Math.hypot(event.clientX - gesture.startX, event.clientY - gesture.startY);
@@ -166,7 +223,9 @@ export default function ScenarioMapViewport({
         if (gesture.kind === "pending-drag" || gesture.kind === "drag") {
             setDraggingId(null);
             if (gesture.kind === "drag" && context) {
-                onDragEntityEnd?.(gesture.entityId, context.world, context);
+                const screen = { x: context.screen.x - gesture.offsetX, y: context.screen.y - gesture.offsetY };
+                const world = screenToWorld(screen, context.viewport, context.size);
+                onDragEntityEnd?.(gesture.entityId, world, { ...context, screen, world });
             }
             return;
         }
@@ -181,6 +240,7 @@ export default function ScenarioMapViewport({
             const bounds = element.getBoundingClientRect();
             const screen = { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
             event.preventDefault();
+            if (["pending-drag", "drag"].includes(gestureRef.current?.kind)) return;
             updateViewport((current) => zoomMapViewport(current, screen, size, mapWheelZoomFactor(event.deltaY)));
         };
         element.addEventListener("wheel", onWheel, { passive: false });
@@ -210,7 +270,8 @@ export default function ScenarioMapViewport({
             onPointerDown={begin}
             onPointerMove={move}
             onPointerUp={end}
-            onPointerCancel={end}
+            onPointerCancel={cancel}
+            onLostPointerCapture={cancel}
             hud={(
                 <div className={styles.scenarioMapHud} data-map-control onPointerDown={(event) => event.stopPropagation()}>
                     <div>

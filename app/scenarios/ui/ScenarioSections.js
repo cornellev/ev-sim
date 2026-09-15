@@ -371,6 +371,7 @@ export function ZonesSection({ scenario, environment, onUpdate }) {
                         onDrawStart={(start) => setDraftZone({ start, current: start })}
                         onDrawMove={(current) => setDraftZone((draft) => draft ? { ...draft, current } : null)}
                         onDrawEnd={finishZone}
+                        onDrawCancel={() => setDraftZone(null)}
                     >
                         {({ toScreen }) => (
                             <>

@@ -112,6 +112,10 @@ export class SceneProjector {
         this.projectors.find((projector) => projector.id === "asset-instances")?.sync?.(this._context());
     }
 
+    whenAssetInstancesIdle() {
+        return this.projectors.find((projector) => projector.id === "asset-instances")?.whenIdle?.() ?? Promise.resolve();
+    }
+
     resetAssetInstances() {
         this.projectors.find((projector) => projector.id === "asset-instances")?.reset?.(this._context());
     }

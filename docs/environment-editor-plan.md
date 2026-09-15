@@ -76,7 +76,7 @@ ED PR changes a contract, hash, gate, or milestone status.
   proxies are set up; LiDAR authoring supports generated meshes and editable
   primitives.
 - Default implementation/review reasoning level: **Extra High**.
-- Last updated: **2026-09-14 — map road-to-intersection connect**.
+- Last updated: **2026-09-15 — loading screen waits for environment GLTFs**.
 
 ## Normative contracts
 
@@ -1001,6 +1001,58 @@ Record in the ledger: focused-suite pass counts, `npm run lint` result,
   `6ca2ece3d5266822a2ceabba72e5f7dd9514789e76757e86f6aedd2730ab9a6a`.
 
 ## Decision log
+
+### 2026-09-15 — Loading screen waits for environment GLTFs
+
+The 3D splash (`SceneLoadingScreen` / `sceneReady`) now stays up until catalog-backed
+environment GLTFs are idle and one compiled frame has been submitted.
+`assetInstancesProjector.whenIdle` settles every in-flight `load`; `EnvironmentLoader.apply`
+overlaps that wait with visual-layer preview materialization; editor boot passes
+`editorAssetsEnabled` so catalog instances start in the scene phase; Simulation still
+loads only GLTF Tiles. `waitForEnvironmentGltfPresentation` then runs `renderer.compile`
+and one `SimulationEngine.render()` before `setSceneReady(true)`. Incremental edits
+stay fire-and-forget. Failed instance loads stay non-fatal. Schema v4, `worldHash`,
+REST, and fixture hashes are unchanged. This is not an ED milestone.
+
+### 2026-09-15 — Waypoint drag previews and live route verification
+
+Scenario map waypoint drags now preview only an SVG marker transform, coalesced
+to animation frames. The scenario, road graph, route proof, and static map layers
+stay unchanged during movement. Release snaps once to the closest physical lane
+segment (including off-road drops), preserves its elevation and stable anchor,
+and commits one scenario edit; Escape, pointer cancellation, and lost capture
+discard the preview. Click placement still requires a paved footprint. The lane
+index and graph are reused until the environment changes, and proof freshness is
+memoized across selection and drag state. This is editor behavior only, with no
+world, route algorithm, or persisted schema change.
+
+The Duffy follow-up also reproduced a stale Express process: the live verification
+endpoint returned illegal-direction while a fresh process verified the identical
+saved route. After the server reloaded, the live endpoint returned a v7 proof.
+Development guidance now distinguishes browser hot reload from server/shared
+module reloads. This is maintenance, not an ED milestone.
+
+Verification: 45 focused tests and the full suite (1,320 passed, four skips),
+lint with only the two existing warnings, and a passing browser
+regression for Duffy HTTP verification, free drag, release snapping, stale
+in-flight verification, cancellation, and unchanged static map DOM. The broader
+scenario browser test passed its route checks but stopped at the existing zone
+panel overlay; further Playwright runs were skipped at the user's request.
+
+### 2026-09-14 — Route connector containment precision
+
+Road-routing maintenance: geometry-v2 junction connector containment now uses
+one metric canonicalization unit as a scale-aware boundary tolerance. This
+prevents independently calculated mouth and trimmed-lane tangents from
+rejecting a connector whose endpoint differs from the junction boundary only
+below the six-decimal geometry policy's precision. The direction-classification
+shadow graph also retains `roads.geometryVersion`, so removing direction
+constraints no longer removes v2 connector feasibility at the same time and a
+connector failure cannot masquerade as one-way travel. Road/world hashes,
+route algorithm 7, schemas, and persisted environment bytes are unchanged;
+routes that were previously false-negative failures can now produce their
+ordinary canonical proof. A Duffy-shaped three-road regression pins the
+straight-through reverse-lane traversal. This is not an ED milestone.
 
 ### 2026-09-14 — Map road-to-intersection connect
 

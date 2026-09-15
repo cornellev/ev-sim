@@ -14,6 +14,10 @@ npm test
 ```
 
 - `npm run dev` runs the Express server in `server/App.js` with Next in development mode (hot reload). It also hosts the storage API, so saving works in dev.
+  Hot reload covers the Next/browser code. Restart this process after changing
+  Express modules or their shared imports (including `app/scenarios/route/`
+  and `app/roads/`); route verification at `/api/storage/scenarios/:id/verify-route`
+  otherwise continues to execute its cached modules even after a browser refresh.
 - `npm run build` builds the app.
 - `npm run start` runs `server/App.js` on `PORT` or `3000`.
 - `npm run lint` runs ESLint.

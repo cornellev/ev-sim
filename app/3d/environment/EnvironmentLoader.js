@@ -42,7 +42,7 @@ export class EnvironmentLoader {
         }
     }
 
-    async load(environmentId) {
+    async load(environmentId, { editorAssetsEnabled = false } = {}) {
         this.manifest = await getEnvironmentManifest(environmentId);
         const definition = normalizeDefinition(environmentId, this.manifest);
         const environment = this.data.environment();
@@ -55,6 +55,7 @@ export class EnvironmentLoader {
 
         this.data.objects().scene(this.scene);
         environment.setup(this.scene, { projectorRuntime: createBrowserProjectorRuntime({ data: this.data, renderer: this.data?.renderer }) });
+        if (editorAssetsEnabled) environment.projector()?.setEditorAssetsEnabled?.(true);
         await this.apply(this.manifest ?? {
             environmentId: definition.environmentId,
             templateId: definition.templateId,
@@ -133,6 +134,7 @@ export class EnvironmentLoader {
 
         environment.objects().registerExistingContent(this.scene, this.data);
         environment.projector?.()?.syncAssetInstances?.();
+        const assetsIdle = environment.projector?.()?.whenAssetInstancesIdle?.() ?? Promise.resolve();
         environment.projector?.()?.syncAssetMetrics?.();
         environment.projector?.()?.syncOverlayMetrics?.();
         // A full load replaces the world; prior history and gestures no longer apply.
@@ -143,6 +145,7 @@ export class EnvironmentLoader {
         this._restoreEditorState(manifest.editor);
         this._restoreVisualReferences(manifest);
         await this._materializePreview(worldResource);
+        await assetsIdle;
         this.data.simulation()?.render?.();
         return worldResource;
     }

@@ -12,6 +12,7 @@ import {
 import { buildDirectedRoadGraph, projectPointToRoadNetwork } from "../app/scenarios/route/roadGraph.js";
 import { hashWaypoints } from "../app/scenarios/route/waypoints.js";
 import { followPolylineFromRoute } from "../app/scenarios/route/followPath.js";
+import { duffyRoutingFixture } from "./helpers/duffyRouting.js";
 
 const polyline = { version: 1, kind: "polyline", knots: [{ id: "start" }, { id: "end" }] };
 const ASYMMETRIC_LANES = [
@@ -82,6 +83,20 @@ test("ED-05 geometry-v2 roads dispatch to route algorithm 7 with lane ids on anc
     const structural = validateRouteVerification(stripped);
     assert.equal(structural.ok, false);
     assert.ok(structural.issues.some((issue) => issue.code === "route.verification.lane-traversal-invalid"));
+});
+
+test("ED-05 canonical mouth precision does not reject Duffy's legal straight-through connector", () => {
+    const environment = duffyRoutingFixture();
+    const graph = buildDirectedRoadGraph(environment);
+    assert.equal(graph.infeasibleMovements.size, 0);
+
+    const result = verifyRoute(environment, environment.waypoints);
+
+    assert.equal(result.ok, true, JSON.stringify(result.issues));
+    assert.deepEqual(result.verification.edgeTraversal.map((step) => [step.edgeId, step.direction, step.fromLaneId, step.toLaneId]), [
+        ["junction-west", -1, "lane-1", "lane-1"],
+        ["east-junction", -1, "lane-1", "lane-1"],
+    ]);
 });
 
 test("ED-05 v6 proofs are stale against geometry-v2 environments while v5 proofs on v1 roads are untouched", async () => {

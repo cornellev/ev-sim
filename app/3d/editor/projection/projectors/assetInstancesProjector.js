@@ -15,6 +15,7 @@ function applyTransform(root, asset) {
 
 export function createAssetInstancesProjector() {
     const entries = new Map();
+    const inflight = new Map();
     let enabled = false;
     let epoch = 0;
     let lastContext = null;
@@ -30,6 +31,17 @@ export function createAssetInstancesProjector() {
         entries.delete(String(objectId));
     };
 
+    const isCurrentEntry = (objectId, entry, currentEpoch) => (
+        epoch === currentEpoch && entries.get(objectId) === entry
+    );
+
+    const abandonCurrent = (objectId, entry, currentEpoch, context, lease = null) => {
+        lease?.release?.();
+        if (isCurrentEntry(objectId, entry, currentEpoch) && entry.status === "loading") {
+            remove(objectId, context);
+        }
+    };
+
     const load = async (record, context) => {
         const objectId = String(record.id);
         const environmentOwned = record.typeId === "tile";
@@ -43,14 +55,22 @@ export function createAssetInstancesProjector() {
         const pin = { assetId: binding.assetId, revision: binding.revision };
         try {
             const revision = await context.runtime.editorAssets.repository.getRevision(pin.assetId, pin.revision, { signal: abortController.signal });
-            if ((!enabled && !environmentOwned) || epoch !== currentEpoch || entries.get(objectId) !== entry) return;
+            if (!isCurrentEntry(objectId, entry, currentEpoch)) return;
+            if (!enabled && !environmentOwned) {
+                abandonCurrent(objectId, entry, currentEpoch, context);
+                return;
+            }
             entry.modelUseHash = revision.modelUseHash;
             const lease = await context.runtime.editorAssets.models.acquireRevision(revision, { signal: abortController.signal });
             const current = context.document.getObject(objectId);
-            if ((!enabled && !environmentOwned) || epoch !== currentEpoch || entries.get(objectId) !== entry
-                || readAssetBinding(current)?.assetId !== pin.assetId
-                || readAssetBinding(current)?.revision !== pin.revision) {
+            const pinMatches = readAssetBinding(current)?.assetId === pin.assetId
+                && readAssetBinding(current)?.revision === pin.revision;
+            if (!isCurrentEntry(objectId, entry, currentEpoch)) {
                 lease.release();
+                return;
+            }
+            if ((!enabled && !environmentOwned) || !pinMatches) {
+                abandonCurrent(objectId, entry, currentEpoch, context, lease);
                 return;
             }
             entry.root = lease.root;
@@ -68,11 +88,24 @@ export function createAssetInstancesProjector() {
             }, { affectsPersistence: false });
             context.data?.simulation?.()?.render?.();
         } catch (error) {
-            if (abortController.signal.aborted || entries.get(objectId) !== entry || epoch !== currentEpoch) return;
-            entry.status = "error";
-            entry.error = error;
-            context.registry?.notify?.({ affectsPersistence: false });
+            if (!isCurrentEntry(objectId, entry, currentEpoch)) return;
+            if (entry.status === "loading") {
+                entry.status = "error";
+                entry.error = error;
+            }
+            if (!abortController.signal.aborted) {
+                context.registry?.notify?.({ affectsPersistence: false });
+            }
         }
+    };
+
+    const startLoad = (record, context) => {
+        const objectId = String(record.id);
+        const promise = load(record, context).finally(() => {
+            if (inflight.get(objectId) === promise) inflight.delete(objectId);
+        });
+        inflight.set(objectId, promise);
+        return promise;
     };
 
     const syncRecord = (record, before, context) => {
@@ -84,7 +117,7 @@ export function createAssetInstancesProjector() {
         const beforeAsset = readAssetBinding(before);
         const pinChanged = !entry || beforeAsset?.assetId !== asset.assetId || beforeAsset?.revision !== asset.revision;
         if (pinChanged || (entry.modelUseHash === null && entry.status !== "loading")) {
-            void load(record, context);
+            startLoad(record, context);
             return;
         }
         if (entry.root) {
@@ -96,6 +129,9 @@ export function createAssetInstancesProjector() {
     const projector = {
         id: "asset-instances",
         entries,
+        whenIdle() {
+            return Promise.allSettled([...inflight.values()]);
+        },
         apply(context) {
             lastContext = context;
             const domain = context.changeSet?.domains?.objects;

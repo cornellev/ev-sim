@@ -489,6 +489,7 @@ export default function ScenarioWorkspace({ onOpenWorkspace }) {
                                     route={draft.routes[routeEditorIndex] || draft.routes[0]}
                                     environment={environment}
                                     onChange={(route) => update(["routes", routeEditorIndex], route)}
+                                    onEditStart={() => { routeRevisionRef.current += 1; }}
                                     onVerify={verifyRoute}
                                     verifying={verifying}
                                     onClose={() => setTab("routes")}

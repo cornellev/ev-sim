@@ -13,19 +13,15 @@ import {
 
 import { Button, Field, NativeSelect } from "../../ui";
 import {
-    environmentDocumentFrom,
+    buildDirectedRoadGraph,
     isRouteVerificationCurrent,
     moveWaypoint,
     projectPointToRoadNetwork,
 } from "../route/index.js";
 import ScenarioMapViewport from "./ScenarioMapViewport.js";
 import { orderedWaypoints, renumberWaypoints } from "./scenarioUiModel.js";
+import { buildWaypointLaneIndex, snapWaypointToNearestLane } from "./waypointPlacement.js";
 import styles from "./ScenarioWorkspace.module.css";
-
-function hasRoadGraph(manifest) {
-    const document = environmentDocumentFrom(manifest);
-    return Array.isArray(document.roads?.edges) && document.roads.edges.length > 0;
-}
 
 function waypointLabel(point) {
     if (point.kind === "start") return "S";
@@ -33,8 +29,8 @@ function waypointLabel(point) {
     return String(point.order);
 }
 
-function snapWaypointToRoad(authoredPosition, environment) {
-    const projection = projectPointToRoadNetwork({ ...authoredPosition, y: 0 }, environment);
+function snapWaypointToRoad(authoredPosition, graph) {
+    const projection = projectPointToRoadNetwork({ ...authoredPosition, y: 0 }, null, { graph });
     if (!projection) return null;
     return {
         authoredPosition: { ...authoredPosition, y: 0 },
@@ -58,6 +54,7 @@ export default function RouteMapEditor({
     route,
     environment,
     onChange,
+    onEditStart,
     onVerify,
     verifying,
     onContinue,
@@ -66,10 +63,12 @@ export default function RouteMapEditor({
     const [tool, setTool] = useState(() => route?.waypoints?.some((point) => point.kind === "start") ? "intermediate" : "start");
     const [selectedId, setSelectedId] = useState(null);
     const [placementError, setPlacementError] = useState(null);
-    const graphAvailable = useMemo(() => hasRoadGraph(environment), [environment]);
-    const waypoints = orderedWaypoints(route?.waypoints || []);
+    const graph = useMemo(() => buildDirectedRoadGraph(environment), [environment]);
+    const laneIndex = useMemo(() => buildWaypointLaneIndex(graph), [graph]);
+    const graphAvailable = graph.edges.size > 0;
+    const waypoints = useMemo(() => orderedWaypoints(route?.waypoints || []), [route?.waypoints]);
     const selected = waypoints.find((point) => point.id === selectedId) || null;
-    const verified = isRouteVerificationCurrent(route, environment);
+    const verified = useMemo(() => isRouteVerificationCurrent(route, environment), [route, environment]);
 
     const removeSelected = () => {
         if (!selectedId) return;
@@ -91,7 +90,7 @@ export default function RouteMapEditor({
 
     const place = (authoredPosition) => {
         if (!graphAvailable) return;
-        const snapped = snapWaypointToRoad(authoredPosition, environment);
+        const snapped = snapWaypointToRoad(authoredPosition, graph);
         if (!snapped) {
             setPlacementError("Waypoints must sit on a road or intersection.");
             return;
@@ -117,7 +116,7 @@ export default function RouteMapEditor({
 
     const relocate = (waypointId, authoredPosition) => {
         if (!graphAvailable || !waypointId) return;
-        const snapped = snapWaypointToRoad(authoredPosition, environment);
+        const snapped = snapWaypointToNearestLane(authoredPosition, laneIndex);
         if (!snapped) {
             setPlacementError("Waypoints must sit on a road or intersection.");
             return;
@@ -156,7 +155,7 @@ export default function RouteMapEditor({
                         <IconFlag3 size={14} stroke={1.75} /> Finish
                     </button>
                 </div>
-                <span className={styles.mapHint}>Click to place · drag a waypoint to move · drag the map to pan · scroll to zoom.</span>
+                <span className={styles.mapHint}>Click to place · drag freely, release to snap to a lane · drag the map to pan · scroll to zoom.</span>
                 <div className={styles.mapActions}>
                     <Button size="compact" onClick={onVerify} loading={verifying} disabled={waypoints.length < 2}>
                         <IconCheck size={14} stroke={1.75} /> Verify
@@ -174,12 +173,12 @@ export default function RouteMapEditor({
                     interaction="place"
                     onPlace={place}
                     onSelectEntity={(id) => setSelectedId(id)}
-                    onDragEntity={relocate}
+                    onDragEntityStart={onEditStart}
                     onDragEntityEnd={relocate}
                 >
                     {({ toScreen, draggingId }) => (
                         <>
-                            {pathPoints.length > 1 && (
+                            {!draggingId && pathPoints.length > 1 && (
                                 <polyline
                                     className={styles.verifiedPath}
                                     data-route-path="verified"
@@ -189,7 +188,7 @@ export default function RouteMapEditor({
                                     }).join(" ")}
                                 />
                             )}
-                            {pathPoints.length > 1 && (
+                            {!draggingId && pathPoints.length > 1 && (
                                 <polyline
                                     className={styles.followPath}
                                     data-route-path="driving"

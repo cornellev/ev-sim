@@ -370,13 +370,15 @@ export function compileRoadNetworkGeometry(plan) {
     };
 }
 
-function pointInConvex(point, polygon) {
+function pointInConvex(point, polygon, linearTolerance = 0) {
     let sign = 0;
     for (let index = 0; index < polygon.length; index += 1) {
         const left = polygon[index];
         const right = polygon[(index + 1) % polygon.length];
         const cross = (right.x - left.x) * (point.z - left.z) - (right.z - left.z) * (point.x - left.x);
-        if (Math.abs(cross) <= EPSILON) continue;
+        const edgeLength = Math.hypot(right.x - left.x, right.z - left.z);
+        const crossTolerance = Math.max(EPSILON, linearTolerance * edgeLength);
+        if (Math.abs(cross) <= crossTolerance) continue;
         const nextSign = Math.sign(cross);
         if (sign && nextSign !== sign) return false;
         sign = nextSign;
@@ -408,12 +410,16 @@ export function buildJunctionConnector(plan, movement) {
     const travelFrom = from.end === "start" ? negate(from.outwardTangent) : from.outwardTangent;
     const travelTo = to.end === "start" ? to.outwardTangent : negate(to.outwardTangent);
     const handleLength = Math.min(from.inset, to.inset, Math.hypot(p3.x - p0.x, p3.z - p0.z) / 3);
+    const canonicalDecimals = Number(plan.policy?.canonicalDecimals);
+    const containmentTolerance = Number.isInteger(canonicalDecimals) && canonicalDecimals >= 0
+        ? 10 ** -canonicalDecimals
+        : EPSILON;
     const center = junction.node;
     let p1 = addOffset(p0, travelFrom, handleLength);
     let p2 = addOffset(p3, travelTo, -handleLength);
-    if (!pointInConvex(p1, junction.surface.vertices)) p1 = lerp(p0, center, 0.5);
-    if (!pointInConvex(p2, junction.surface.vertices)) p2 = lerp(p3, center, 0.5);
+    if (!pointInConvex(p1, junction.surface.vertices, containmentTolerance)) p1 = lerp(p0, center, 0.5);
+    if (!pointInConvex(p2, junction.surface.vertices, containmentTolerance)) p2 = lerp(p3, center, 0.5);
     const points = Array.from({ length: 9 }, (_, index) => cubic(p0, p1, p2, p3, index / 8));
-    if (points.some((point) => !pointInConvex(point, junction.surface.vertices))) throw new TypeError("Junction connector leaves the paved surface.");
+    if (points.some((point) => !pointInConvex(point, junction.surface.vertices, containmentTolerance))) throw new TypeError("Junction connector leaves the paved surface.");
     return { nodeId: junction.node.id, fromEdgeId: from.edgeId, toEdgeId: to.edgeId, fromLaneIndex: fromLane, toLaneIndex: toLane, points };
 }

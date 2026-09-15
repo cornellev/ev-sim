@@ -1,9 +1,12 @@
 'use client';
 
+import { memo } from "react";
 import { isMapDetailZoom, screenToWorld, worldToScreen } from "../../editor/map/mapCoords.js";
 import { MapSurfaceLayers } from "./MapSurfaceLayers.js";
 
 const DEFAULT_LAYERS = Object.freeze({ roads: true, buildings: true, props: true });
+// Waypoint selection/drag overlays do not change the environment layer inputs.
+const StaticMapSurfaceLayers = memo(MapSurfaceLayers);
 
 /**
  * Shared SVG map host. Editor and scenario attach their own pointer handlers
@@ -59,7 +62,7 @@ export function MapCanvas({
                 role={ariaLabel ? "img" : undefined}
                 aria-label={ariaLabel}
             >
-                <MapSurfaceLayers
+                <StaticMapSurfaceLayers
                     viewport={viewport}
                     size={size}
                     layers={layers}
