@@ -15,6 +15,7 @@ export const TRIGGER_KINDS = {
     SIGNAL_UPDATE: "signal-update",
     TIMER: "timer",
     SIMULATION_TIMER: "simulation-timer",
+    EPISODE_RESET: "episode-reset",
 };
 
 export const TRIGGER_KIND_ORDER = [
@@ -23,6 +24,7 @@ export const TRIGGER_KIND_ORDER = [
     TRIGGER_KINDS.SIGNAL_UPDATE,
     TRIGGER_KINDS.TIMER,
     TRIGGER_KINDS.SIMULATION_TIMER,
+    TRIGGER_KINDS.EPISODE_RESET,
 ];
 
 export const INPUT_SOURCES = {
@@ -93,6 +95,8 @@ export function normalizeTrigger(trigger = {}) {
             return { kind: TRIGGER_KINDS.TIMER, intervalMs: toPositiveNumber(trigger.intervalMs, 100) };
         case TRIGGER_KINDS.SIMULATION_TIMER:
             return { kind, intervalNs: toPositiveInt(trigger.intervalNs, 100_000_000) };
+        case TRIGGER_KINDS.EPISODE_RESET:
+            return { kind };
         default:
             return { kind: TRIGGER_KINDS.TIMER, intervalMs: 100 };
     }
@@ -313,6 +317,8 @@ export function summarizeTrigger(trigger = {}) {
             return `every ${trigger.intervalMs} ms`;
         case TRIGGER_KINDS.SIMULATION_TIMER:
             return `every ${trigger.intervalNs} ns of simulation time`;
+        case TRIGGER_KINDS.EPISODE_RESET:
+            return "on episode reset";
         default:
             return "unknown trigger";
     }

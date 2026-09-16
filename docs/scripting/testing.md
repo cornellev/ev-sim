@@ -25,7 +25,10 @@ Add or update tests when changing:
 - Table-driven geometry Make/Split/arithmetic and route-helper execution, including zero vectors, extra-key drop, cloned vec/waypoint outputs, out-of-range `found`, Euclidean distance-to-end, and Route Tangent XZ→`vec2` packing (`{ x, y: z }`).
 - Table-driven `control` temporal/PID execution, including first-tick zeros/false, multi-tick sequences, `dt` throw-before-mutate, cloned Previous values, BindingRuntime `resetRun` restoring artifact `runtimeState`, and catalog count 14.
 - Table-driven texture arithmetic (zeros, empty arrays, swapped clamp bounds, invert `1-x`, cloned outputs, unequal-length and non-finite throws) plus `SampleTextureBlock` perfect-square rejection. Catalog `texture1d` placeable count 8; `ScaleBlock` remains registered but non-placeable.
-- Simulator adapters against a real `SignalStore`: ego/legacy `vehicle.ego.*` fallback, missing steering, dual-source clock (blob `dt` vs kernel leafs), cloned scenario JSON. Catalog `simulator` placeable count 12.
+- Simulator adapters against a real `SignalStore`: ego/legacy `vehicle.ego.*` fallback, missing steering, dual-source clock (blob `dt` vs kernel leafs), cloned scenario JSON. Catalog `simulator` placeable count 15 (includes Sample Road, Spawn Prop, Scatter Features).
+- Path-frame helpers and episode overlay lifecycle in `tests/path-frame.test.js` and `tests/episode-overlay.test.js`: right-of-travel lateral offset, `worldHash` stability, physics `episode:*` colliders, CPU LiDAR hits, and kernel reset scatter without duplication.
+- Repeat Program looping a compiled Spawn Prop child, and unconsumed Spawn Prop omitted from compiled `Q`, in `tests/visual-script-runtime.test.js`.
+- BindingRuntime `episode-reset` fires once per `resetRun`, not per `update(dt)`.
 - Catalog uniqueness, placeability, and keyword search for `math` / `logic` / `strings` / `collections` / `conversions` / `geometry` / `control` / `mission` route-helper / `texture1d` / `simulator` entries.
 - Editor `executeProgram()` memoization: shared diamonds run once per call, memos are shared across multiple OutputNodes, and a later call starts a new memo.
 - Runtime cycles on live graphs (`Cycle detected at runtime while evaluating "<uuid>"`) plus `SignalStore` rollback of staged writes.

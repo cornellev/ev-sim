@@ -120,8 +120,58 @@ export class SimulationEngine {
         });
         this.kernel = new SimulationKernel(this.runtimeContext, options);
         exposeKernelProperties(this);
+        this._episodeMeshIds = new Set();
+        this._episodeMeshSync = Promise.resolve();
+        this.kernel.onReset(() => this._syncEpisodeOverlayMeshes());
 
         this._frame = this._frame.bind(this);
+    }
+
+    _syncEpisodeOverlayMeshes() {
+        if (!this.scene || !this.kernel?.context?.episodeOverlay) return;
+        if (!this.data?.environment?.()?.objects?.()) return;
+        this._episodeMeshSync = this._episodeMeshSync
+            .catch(() => {})
+            .then(() => this._applyEpisodeOverlayMeshes());
+    }
+
+    async _applyEpisodeOverlayMeshes() {
+        const scene = this.scene;
+        const overlay = this.kernel?.context?.episodeOverlay;
+        const registry = this.data?.environment?.()?.objects?.();
+        if (!scene || !overlay || !registry) return;
+
+        const [{ removeFeatureFromRuntime }, { placeFusionObjectInScene }] = await Promise.all([
+            import("../3d/editor/map/mapRuntimeSync.js"),
+            import("../3d/editor/placement/placeFusionObject.js"),
+        ]);
+        if (this.scene !== scene) return;
+
+        const records = overlay.snapshot();
+        const nextIds = new Set(records.map((record) => record.id).filter((id) => String(id).startsWith("episode:")));
+        for (const id of this._episodeMeshIds) {
+            if (!nextIds.has(id) && String(id).startsWith("episode:")) {
+                removeFeatureFromRuntime(this.data, scene, id);
+            }
+        }
+        for (const record of records) {
+            if (!String(record.id).startsWith("episode:")) continue;
+            if (this._episodeMeshIds.has(record.id)) {
+                removeFeatureFromRuntime(this.data, scene, record.id);
+            }
+            const position = record.pose?.position ?? {};
+            const placed = placeFusionObjectInScene({
+                data: this.data,
+                scene,
+                registry,
+                assetId: record.assetId,
+                point: { x: Number(position.x) || 0, y: Number(position.y) || 0, z: Number(position.z) || 0 },
+                sourceId: record.id,
+            });
+            const yaw = Number(record.pose?.rotation?.y) || 0;
+            if (placed?.object?._mesh) placed.object._mesh.rotation.y = yaw;
+        }
+        this._episodeMeshIds = nextIds;
     }
 
     configure({ scene, camera, renderer, controls = null }) {

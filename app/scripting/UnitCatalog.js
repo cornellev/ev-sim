@@ -50,6 +50,7 @@ import {
     ArrayLiteralUnit,
     ArraySetUnit,
     ArraySliceUnit,
+    LinspaceUnit,
 } from "./units/collections/ArrayBlocks";
 import { E, GoldenRatio, PI, Tau } from "./units/math/Constants";
 import {
@@ -116,6 +117,7 @@ import { Mask } from "./units/math/tex/Mask";
 import { IfUnit } from "./units/statements/If";
 import { Conjugation, Equality } from "./units/statements/Equality";
 import { IgnoreUnit, NopUnit, PassthroughUnit, SequenceUnit } from "./units/statements/Unit";
+import { RepeatProgramUnit } from "./units/statements/RepeatProgram";
 import { StringUnit } from "./units/objects/String";
 import {
     BlendTextureUnit,
@@ -187,6 +189,12 @@ import {
     SimulationClockUnit,
     VehicleStateUnit,
 } from "./units/simulator/SimulatorAdapters";
+import {
+    FrameAlongPathUnit,
+    SampleRoadUnit,
+    ScatterFeaturesUnit,
+    SpawnPropUnit,
+} from "./units/world/WorldBlocks";
 import { MakeActorCommandUnit, SplitActorCommandUnit } from "./units/mission/ActorCommand";
 import {
     DistanceToRouteEndUnit,
@@ -403,6 +411,7 @@ const COMPONENT_BY_TYPE = new Map([
     ["ArrayConcatBlock", ArrayConcatUnit],
     ["ArraySliceBlock", ArraySliceUnit],
     ["ArrayContainsBlock", ArrayContainsUnit],
+    ["LinspaceBlock", LinspaceUnit],
     ["IfBlock", IfUnit],
     ["EqualityBlock", Equality],
     ["ConjugationBlock", Conjugation],
@@ -410,6 +419,7 @@ const COMPONENT_BY_TYPE = new Map([
     ["IgnoreBlock", IgnoreUnit],
     ["SequenceBlock", SequenceUnit],
     ["PassthroughBlock", PassthroughUnit],
+    ["RepeatProgramBlock", RepeatProgramUnit],
     ["ProgramInputBlock", ProgramInputUnit],
     ["OutputNodeBlock", OutputNodeUnit],
     ["ReadSignalBlock", ReadSignalUnit],
@@ -438,6 +448,9 @@ const COMPONENT_BY_TYPE = new Map([
     ["DeviceStateBlock", DeviceStateUnit],
     ["SimulationClockBlock", SimulationClockUnit],
     ["ScenarioStatusBlock", ScenarioStatusUnit],
+    ["SampleRoadBlock", SampleRoadUnit],
+    ["SpawnPropBlock", SpawnPropUnit],
+    ["ScatterFeaturesBlock", ScatterFeaturesUnit],
     ["WaypointListBlock", WaypointListUnit],
     ["CurrentWaypointBlock", CurrentWaypointUnit],
     ["AdvanceWaypointBlock", AdvanceWaypointUnit],
@@ -453,6 +466,7 @@ const COMPONENT_BY_TYPE = new Map([
     ["RouteLengthBlock", RouteLengthUnit],
     ["DistanceToRouteEndBlock", DistanceToRouteEndUnit],
     ["RouteTangentBlock", RouteTangentUnit],
+    ["FrameAlongPathBlock", FrameAlongPathUnit],
     ["MakeActorCommandBlock", MakeActorCommandUnit],
     ["SplitActorCommandBlock", SplitActorCommandUnit],
     ["ScenarioFlagReadBlock", ScenarioFlagReadUnit],

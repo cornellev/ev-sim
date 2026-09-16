@@ -162,6 +162,7 @@ export class PhysicsEngine {
         this.vehicleStates = [];
         this.activeContacts = new Set();
         this.pendingContacts = new Set();
+        this.episodeObstacles = [];
         this._initialization = loadPhysics().then(async (module) => {
             this.RAPIER = await initializeRapier(module);
             return this.RAPIER;
@@ -222,9 +223,23 @@ export class PhysicsEngine {
         this.resetRun();
     }
 
+    setEpisodeObstacles(obstacles = []) {
+        this.episodeObstacles = Array.isArray(obstacles) ? [...obstacles] : [];
+    }
+
     _buildStaticColliders() {
         this._createWorld();
         const worldObstacles = this.preparedWorldDescription?.obstacles;
+        const episodeEntries = (this.episodeObstacles ?? []).map((obstacle) => ({
+            id: String(obstacle.id),
+            contactId: String(obstacle.id),
+            bounds: obstacle.bounds,
+            footprint: obstacle.footprint,
+            triangles: obstacle.triangles,
+            minY: obstacle.minY,
+            maxY: obstacle.maxY,
+            obstacle,
+        }));
         const entries = Array.isArray(worldObstacles)
             ? [
                 ...worldObstacles.map((obstacle) => ({
@@ -237,6 +252,7 @@ export class PhysicsEngine {
                 maxY: obstacle.maxY,
                 obstacle,
                 })),
+                ...episodeEntries,
                 ...(this.preparedWorldDescription?.assetProxies ?? []).flatMap((instance) => (
                     (instance.collision ?? []).map((convex) => ({
                         id: String(convex.id),
@@ -246,17 +262,20 @@ export class PhysicsEngine {
                     }))
                 )),
             ]
-            : [...(this.data.objects?.()?.boxes?.() || [])]
-                .map((box, index) => {
-                    const center = vector(box.position);
-                    const half = { x: box.scale.x / 2, y: box.scale.y / 2, z: box.scale.z / 2 };
-                    return {
-                        id: `environment-${String(index + 1).padStart(5, "0")}`,
-                        bounds: bounds(center, half),
-                        box,
-                    };
-                })
-                .sort((left, right) => JSON.stringify(left.bounds).localeCompare(JSON.stringify(right.bounds)));
+            : [
+                ...[...(this.data.objects?.()?.boxes?.() || [])]
+                    .map((box, index) => {
+                        const center = vector(box.position);
+                        const half = { x: box.scale.x / 2, y: box.scale.y / 2, z: box.scale.z / 2 };
+                        return {
+                            id: `environment-${String(index + 1).padStart(5, "0")}`,
+                            bounds: bounds(center, half),
+                            box,
+                        };
+                    })
+                    .sort((left, right) => JSON.stringify(left.bounds).localeCompare(JSON.stringify(right.bounds))),
+                ...episodeEntries,
+            ];
         this.staticColliders = entries
             .sort((left, right) => compareUtf8(left.id, right.id))
             .map((entry) => {
@@ -427,6 +446,7 @@ export class PhysicsEngine {
         this.preparedEnvironmentManifest = null;
         this.preparedWorldDescription = null;
         this.preparedBackendSelection = null;
+        this.episodeObstacles = [];
     }
 
     async stop() {}

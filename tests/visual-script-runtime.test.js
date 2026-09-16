@@ -58,6 +58,9 @@ import {
     MakeActorCommandBlock,
     SplitActorCommandBlock,
 } from "../app/scripting/units/mission/ActorCommand.block.js";
+import { RepeatProgramBlock } from "../app/scripting/units/statements/RepeatProgram.block.js";
+import { SpawnPropBlock } from "../app/scripting/units/world/WorldBlocks.block.js";
+import { EpisodeOverlay } from "../app/simulation/episode/EpisodeOverlay.js";
 import { ACTOR_COMMAND_TYPE, UNIT, UNIT_TYPE } from "../app/scripting/types/PortTypes.js";
 import {
     assertSupportedArtifact,
@@ -2401,4 +2404,88 @@ test("BindingRuntime.resetRun reinstantiates integrator state from the artifact"
 
     runtime.update(0.1, { timeNs: 100_000_000, step: 1 });
     assert.equal(runtime.getDeterministicState().scripts["int-script"].int.integral, 1);
+});
+
+function addProgramInput(manager, uuid, label, type, defaultValue) {
+    const block = new ProgramInputBlock(uuid);
+    const config = {
+        label,
+        type,
+        defaultValue: typeof defaultValue === "string" ? defaultValue : JSON.stringify(defaultValue),
+    };
+    block.hydrateState(config);
+    manager.addUnit(block);
+    manager.storeData(uuid, config);
+    return uuid;
+}
+
+function compileSpawnChild() {
+    clearBlockTypeRegistryForTests();
+    registerBuiltInBlocks();
+    const manager = new ScriptManager();
+    const head = new OutputNodeBlock("head");
+    const config = { outputs: [{ id: "output", label: "then", type: UNIT_TYPE }] };
+    head.hydrateState(config);
+    manager.addUnit(head);
+    manager.storeData("head", config);
+    manager.setHead("head");
+    addProgramInput(manager, "asset", "assetId", "string", "barrel");
+    addProgramInput(manager, "pose", "pose", "pose3d", {});
+    manager.addUnit(new SpawnPropBlock("spawn"));
+    connect(manager, "asset", "input", "spawn", "assetId");
+    connect(manager, "pose", "input", "spawn", "pose");
+    connect(manager, "spawn", "then", "head", "output");
+    return manager.compile("spawn-child");
+}
+
+test("unconsumed Spawn Prop is omitted from compiled Q", () => {
+    clearBlockTypeRegistryForTests();
+    registerBuiltInBlocks();
+    const manager = new ScriptManager();
+    const head = new OutputNodeBlock("head");
+    const config = { outputs: [{ id: "output", label: "result", type: "float64" }] };
+    head.hydrateState(config);
+    manager.addUnit(head);
+    manager.storeData("head", config);
+    manager.setHead("head");
+    addProgramInput(manager, "asset", "assetId", "string", "barrel");
+    addProgramInput(manager, "pose", "pose", "pose3d", {});
+    manager.addUnit(new SpawnPropBlock("spawn"));
+    manager.addUnit(new NumberUnitClass("value"));
+    manager.storeData("value", 1);
+    connect(manager, "asset", "input", "spawn", "assetId");
+    connect(manager, "pose", "input", "spawn", "pose");
+    connect(manager, "value", "number", "head", "output");
+    const artifact = manager.compile("unused-spawn");
+    assert.equal(artifact.Q.includes("spawn"), false);
+});
+
+test("Repeat Program loops a compiled Spawn Prop child", () => {
+    const compiledProgram = compileSpawnChild();
+    const overlay = new EpisodeOverlay();
+    const block = new RepeatProgramBlock("repeat");
+    block.hydrateState({ compiledProgram });
+    block.inputs = { count: {}, assetId: {}, pose: {} };
+    const values = {
+        count: 3,
+        assetId: "barrel",
+        pose: { position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0, order: "XYZ" } },
+    };
+    block.getInput = (label) => values[label];
+    block.setManager({
+        getSignalStore: () => null,
+        getRuntimeContext: () => ({
+            scriptId: "s",
+            spawnProp: (spec) => overlay.upsert({ ...spec, scriptId: spec.scriptId ?? "s" }),
+        }),
+    });
+    const output = block.execute();
+    assert.equal(output.get("count"), 3);
+    assert.equal(output.get("then"), UNIT);
+    assert.equal(overlay.size, 3);
+    assert.deepEqual(overlay.snapshot().map((record) => record.id), [
+        "episode:s:0",
+        "episode:s:1",
+        "episode:s:2",
+    ]);
 });

@@ -13,6 +13,8 @@ import {
     normalizePose3d,
     normalizeVec3,
     orderedBounds,
+    UNIT,
+    UNIT_TYPE,
     valuesEqual,
 } from "../app/scripting/types/PortTypes.js";
 import { NumberUnitClass } from "../app/scripting/units/math/Number.block.js";
@@ -108,6 +110,14 @@ import {
     SimulationClockBlock,
     VehicleStateBlock,
 } from "../app/scripting/units/simulator/SimulatorAdapters.block.js";
+import {
+    SCATTER_SOURCE_ERROR,
+    SPAWN_PROP_OVERLAY_ERROR,
+    WORLD_BLOCK_PORTS,
+    WORLD_BLOCKS,
+} from "../app/scripting/units/world/WorldBlocks.block.js";
+import { RepeatProgramBlock, repeatProgramPorts } from "../app/scripting/units/statements/RepeatProgram.block.js";
+import { EpisodeOverlay } from "../app/simulation/episode/EpisodeOverlay.js";
 
 function configuredBlock(BlockClass, values, options = {}) {
     const block = new BlockClass(options.uuid || "block");
@@ -116,7 +126,10 @@ function configuredBlock(BlockClass, values, options = {}) {
     block.getInput = (label) => values[label];
     block.setManager({
         evaluationPolicy: options.evaluationPolicy || { lazySelectors: true },
-        getRuntimeContext: () => ({ random: options.random || (() => 0) }),
+        getRuntimeContext: () => ({
+            random: options.random || (() => 0),
+            ...(options.runtimeContext || {}),
+        }),
         getStoredData: () => options.storedData,
     });
     return block;
@@ -281,6 +294,7 @@ test("atomic scalar and logic blocks share catalog port descriptors", () => {
         [CONTROLLER_BLOCK_PORTS, CONTROLLER_BLOCKS],
         [TEXTURE_BLOCK_PORTS, TEXTURE_BLOCKS],
         [SIMULATOR_ADAPTER_PORTS, SIMULATOR_ADAPTER_BLOCKS],
+        [WORLD_BLOCK_PORTS, WORLD_BLOCKS],
     ];
     for (const [portsByType, classes] of portMaps) {
         for (const [type, ports] of Object.entries(portsByType)) {
@@ -602,6 +616,10 @@ const STDLIB_EXECUTE_CASES = [
     { type: "ArraySliceBlock", inputs: { values: [1, 2, 3, 4], start: 1, end: 3 }, outputs: { out: [2, 3] } },
     { type: "ArrayContainsBlock", inputs: { values: [1, 0, 3], value: 0 }, outputs: { out: true } },
     { type: "ArrayAppendBlock", inputs: { values: [1], value: 0 }, outputs: { out: [1, 0] } },
+    { type: "LinspaceBlock", inputs: { start: 0, end: 1, count: 3 }, outputs: { out: [0, 0.5, 1] } },
+    { type: "LinspaceBlock", inputs: { start: 5, end: 9, count: 1 }, outputs: { out: [5] } },
+    { type: "LinspaceBlock", inputs: { start: 0, end: 1, count: 0 }, outputs: { out: [] } },
+    { type: "LinspaceBlock", inputs: { start: Number.NaN, end: 1, count: 4 }, outputs: { out: [] } },
 ];
 
 test("stdlib conversion string json and array blocks execute table", () => {
@@ -1432,6 +1450,174 @@ test("simulation clock and scale texture compile to v3 and match editor executio
     const scaled = compileAndRun(texManager, "scale-texture");
     assert.deepEqual(scaled.editor.outputs.result, [2, 4, 6]);
     assert.deepEqual(scaled.compiled.outputs.result, [2, 4, 6]);
+});
+
+const NORTH_ROUTE = {
+    waypoints: [
+        { x: 0, y: 0, z: 0 },
+        { x: 0, y: 0, z: 10 },
+    ],
+};
+
+const NORTH_ROAD_WORLD = {
+    roads: {
+        nodes: [
+            { id: "n0", x: 0, y: 0, z: 0 },
+            { id: "n1", x: 0, y: 0, z: 10 },
+        ],
+        edges: [{ id: "e0", startNodeId: "n0", endNodeId: "n1" }],
+    },
+};
+
+const ORIGIN_POSE = {
+    position: { x: 0, y: 0, z: 0 },
+    rotation: { x: 0, y: 0, z: 0, order: "XYZ" },
+};
+
+test("repeat program exposes count plus last-iteration ports", () => {
+    const ports = repeatProgramPorts();
+    assert.deepEqual(typeMapFromPorts(ports), {
+        inputs: { count: "int32" },
+        outputs: { then: UNIT_TYPE, count: "int32" },
+    });
+    const block = new RepeatProgramBlock("repeat");
+    assert.deepEqual(block.typeMap, typeMapFromPorts(ports));
+});
+
+test("path frame spawn scatter and sample-road blocks execute", () => {
+    const frame = configuredBlock(WORLD_BLOCKS.FrameAlongPathBlock, {
+        route: NORTH_ROUTE,
+        percent: 0.5,
+        lateral: 1,
+    }).execute();
+    assert.equal(frame.get("found"), true);
+    assert.ok(Math.abs(frame.get("pose").position.x + 1) < 1e-9);
+    assert.ok(Math.abs(frame.get("pose").position.z - 5) < 1e-9);
+    assert.equal(frame.get("pose").rotation.y, 0);
+
+    const missing = configuredBlock(WORLD_BLOCKS.FrameAlongPathBlock, {
+        route: { waypoints: [] },
+        percent: 0.5,
+        lateral: 0,
+    }).execute();
+    assert.equal(missing.get("found"), false);
+    assert.deepEqual(missing.get("pose"), ORIGIN_POSE);
+
+    const road = configuredBlock(WORLD_BLOCKS.SampleRoadBlock, {
+        edgeId: "e0",
+        percent: 0.5,
+        lateral: 1,
+    }, { runtimeContext: { world: NORTH_ROAD_WORLD } }).execute();
+    assert.equal(road.get("found"), true);
+    assert.ok(Math.abs(road.get("pose").position.x + 1) < 1e-9);
+    assert.ok(Math.abs(road.get("pose").position.z - 5) < 1e-9);
+
+    const unknownRoad = configuredBlock(WORLD_BLOCKS.SampleRoadBlock, {
+        edgeId: "missing",
+        percent: 0,
+        lateral: 0,
+    }, { runtimeContext: { world: NORTH_ROAD_WORLD } }).execute();
+    assert.equal(unknownRoad.get("found"), false);
+
+    const noWorld = configuredBlock(WORLD_BLOCKS.SampleRoadBlock, {
+        edgeId: "e0",
+        percent: 0,
+        lateral: 0,
+    }).execute();
+    assert.equal(noWorld.get("found"), false);
+
+    assert.throws(
+        () => configuredBlock(WORLD_BLOCKS.SpawnPropBlock, {
+            assetId: "barrel",
+            pose: ORIGIN_POSE,
+        }).execute(),
+        { message: SPAWN_PROP_OVERLAY_ERROR },
+    );
+
+    const overlay = new EpisodeOverlay();
+    const spawned = configuredBlock(WORLD_BLOCKS.SpawnPropBlock, {
+        assetId: "barrel",
+        pose: { position: { x: 1, y: 0, z: 2 }, rotation: { x: 0, y: 0.25, z: 0, order: "XYZ" } },
+    }, {
+        runtimeContext: {
+            scriptId: "s",
+            spawnProp: (spec) => overlay.upsert({ ...spec, scriptId: spec.scriptId ?? "s" }),
+        },
+    }).execute();
+    assert.equal(spawned.get("ok"), true);
+    assert.equal(spawned.get("then"), UNIT);
+    assert.equal(spawned.get("id"), "episode:s:0");
+    assert.equal(overlay.size, 1);
+
+    const upserted = configuredBlock(WORLD_BLOCKS.SpawnPropBlock, {
+        assetId: "cone",
+        pose: ORIGIN_POSE,
+        id: "named",
+    }, {
+        runtimeContext: {
+            scriptId: "s",
+            spawnProp: (spec) => overlay.upsert({ ...spec, scriptId: spec.scriptId ?? "s" }),
+        },
+    }).execute();
+    assert.equal(upserted.get("id"), "episode:named");
+    assert.equal(overlay.size, 2);
+
+    assert.throws(
+        () => configuredBlock(WORLD_BLOCKS.ScatterFeaturesBlock, {
+            count: 1,
+            sideOffset: 1,
+            centerProbability: 0,
+            alongJitter: 0,
+            lateralJitter: 0,
+            assetId: "barrel",
+        }, {
+            runtimeContext: {
+                spawnProp: () => "episode:s:0",
+            },
+        }).execute(),
+        { message: SCATTER_SOURCE_ERROR },
+    );
+
+    assert.throws(
+        () => configuredBlock(WORLD_BLOCKS.ScatterFeaturesBlock, {
+            route: NORTH_ROUTE,
+            edgeId: "e0",
+            count: 1,
+            sideOffset: 1,
+            centerProbability: 0,
+            alongJitter: 0,
+            lateralJitter: 0,
+            assetId: "barrel",
+        }, {
+            runtimeContext: {
+                world: NORTH_ROAD_WORLD,
+                spawnProp: () => "episode:s:0",
+            },
+        }).execute(),
+        { message: SCATTER_SOURCE_ERROR },
+    );
+
+    const scatterOverlay = new EpisodeOverlay();
+    const scatter = configuredBlock(WORLD_BLOCKS.ScatterFeaturesBlock, {
+        route: NORTH_ROUTE,
+        count: 2,
+        sideOffset: 2,
+        centerProbability: 0,
+        alongJitter: 0,
+        lateralJitter: 0,
+        assetId: "barrel",
+    }, {
+        runtimeContext: {
+            scriptId: "s",
+            spawnProp: (spec) => scatterOverlay.upsert({ ...spec, scriptId: spec.scriptId ?? "s" }),
+        },
+    }).execute();
+    assert.equal(scatter.get("count"), 2);
+    assert.deepEqual(scatter.get("ids"), ["episode:s:0", "episode:s:1"]);
+    const poses = scatterOverlay.snapshot().map((record) => record.pose.position);
+    assert.ok(poses.every((position) => Math.abs(position.x - 2) < 1e-6));
+    assert.ok(Math.abs(poses[0].z) < 1e-6);
+    assert.ok(Math.abs(poses[1].z - 10) < 1e-6);
 });
 
 

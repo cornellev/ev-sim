@@ -42,6 +42,7 @@ const TRIGGER_SHORT_LABELS = {
     [TRIGGER_KINDS.SIGNAL_UPDATE]: "Signal",
     [TRIGGER_KINDS.TIMER]: "Timer",
     [TRIGGER_KINDS.SIMULATION_TIMER]: "Sim time",
+    [TRIGGER_KINDS.EPISODE_RESET]: "Episode",
 };
 
 const INPUT_SOURCE_LABELS = {
@@ -532,6 +533,12 @@ function TriggerEditor({ binding, topics, onPatchTrigger }) {
                             onChange={(event) => onPatchTrigger({ intervalNs: event.target.value })}
                         />
                     </Field>
+                )}
+
+                {trigger.kind === TRIGGER_KINDS.EPISODE_RESET && (
+                    <p className="text-[11px] leading-relaxed text-zinc-500">
+                        Runs once per episode reset after the overlay is cleared. Use this for Scatter Features and Spawn Prop so barrels are not duplicated every tick.
+                    </p>
                 )}
             </div>
         </section>

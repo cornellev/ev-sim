@@ -1,3 +1,4 @@
+import { linspace } from "../../../roads/PathFrame.js";
 import { BlockOutput, UnitBlock } from "../../ScriptManager.js";
 import { asArray, arrayType, normalizeItemType } from "../valueOps.js";
 import * as arrayOps from "./arrayOps.js";
@@ -28,6 +29,15 @@ export function normalizeArrayState(state = {}, extras = {}) {
 export function arrayLiteralPorts(state = {}) {
     return freezePorts([], [{ label: "out", type: arrayType(state.itemType) }]);
 }
+
+export const LINSPACE_PORTS = freezePorts(
+    [
+        { label: "start", type: "float64" },
+        { label: "end", type: "float64" },
+        { label: "count", type: "int32" },
+    ],
+    [{ label: "out", type: arrayType("float64") }],
+);
 
 export function arrayLengthPorts(state = {}) {
     return freezePorts(
@@ -312,6 +322,32 @@ export const ArrayContainsBlock = defineConfiguredBlock({
     },
 });
 
+export const LinspaceBlock = class LinspaceBlock extends UnitBlock {
+    static blockType = "LinspaceBlock";
+
+    register() {
+        applyPorts(this, LINSPACE_PORTS);
+    }
+
+    valid() {
+        return this.hasInput("start") && this.hasInput("end") && this.hasInput("count");
+    }
+
+    execute() {
+        return new BlockOutput().set("out", linspace(
+            this.getInput("start"),
+            this.getInput("end"),
+            this.getInput("count"),
+        ));
+    }
+};
+
+try {
+    Object.defineProperty(LinspaceBlock, "name", { value: "LinspaceBlock" });
+} catch {
+    // Class name is non-configurable in some engines; blockType is the authority.
+}
+
 export const ARRAY_BLOCKS = Object.freeze({
     ArrayLiteralBlock,
     ArrayLengthBlock,
@@ -321,6 +357,7 @@ export const ARRAY_BLOCKS = Object.freeze({
     ArrayConcatBlock,
     ArraySliceBlock,
     ArrayContainsBlock,
+    LinspaceBlock,
 });
 
 const DEFAULT_ARRAY_STATE = Object.freeze({ itemType: "float64" });
@@ -334,4 +371,5 @@ export const ARRAY_BLOCK_PORTS = Object.freeze({
     ArrayConcatBlock: arrayConcatPorts(DEFAULT_ARRAY_STATE),
     ArraySliceBlock: arraySlicePorts(DEFAULT_ARRAY_STATE),
     ArrayContainsBlock: arrayContainsPorts(DEFAULT_ARRAY_STATE),
+    LinspaceBlock: LINSPACE_PORTS,
 });

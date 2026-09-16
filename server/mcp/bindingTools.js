@@ -12,7 +12,7 @@ import { storageEvents } from "./events.js";
 import { fail, ok } from "./toolResult.js";
 
 const TriggerSchema = z.object({
-    kind: z.enum(["topic", "fixed-update", "signal-update", "timer", "simulation-timer"]),
+    kind: z.enum(["topic", "fixed-update", "signal-update", "timer", "simulation-timer", "episode-reset"]),
     topic: z.string().optional(),
     everyN: z.number().int().positive().optional(),
     path: z.string().optional(),

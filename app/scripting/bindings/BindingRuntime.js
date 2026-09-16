@@ -61,6 +61,7 @@ function getConfiguredSignalPaths(manifest) {
  * - fixed-update: called from SimulationEngine._fixedStep via update(dt)
  * - signal-update: watched store path changed (checked after ticks and topic writes)
  * - timer: wall-clock setInterval, independent of the simulation loop
+ * - episode-reset: once per kernel reset after the overlay is cleared
  */
 export class BindingRuntime {
     constructor(options = {}) {
@@ -92,6 +93,8 @@ export class BindingRuntime {
         this._resolvedScripts = [];
         this._resolvedSeed = "42";
         this._resolvedParameterBindings = [];
+        this._worldDescription = null;
+        this._episodeOverlay = null;
         this._manifestGeneration = 0;
 
         this._readyPromise = this._hydrate(options.autoLoad !== false);
@@ -236,10 +239,17 @@ export class BindingRuntime {
             });
     }
 
-    async prepareResolvedScripts(entries = [], { seed = "42", parameterBindings = [] } = {}) {
+    async prepareResolvedScripts(entries = [], {
+        seed = "42",
+        parameterBindings = [],
+        world = this._worldDescription,
+        overlay = this._episodeOverlay,
+    } = {}) {
         this._resolvedScripts = structuredClone(entries);
         this._resolvedSeed = String(seed);
         this._resolvedParameterBindings = structuredClone(parameterBindings);
+        this._worldDescription = world ?? null;
+        this._episodeOverlay = overlay ?? null;
         this._scriptParameterInputs.clear();
         const resolvedIds = new Set(entries.map((entry) => entry.scriptId));
         for (const scriptId of this._scripts.keys()) {
@@ -262,24 +272,35 @@ export class BindingRuntime {
         }
         for (const entry of [...entries].sort((left, right) => left.scriptId.localeCompare(right.scriptId))) {
             const rng = new SeededRNG(`${seed}:visual-script:${entry.scriptId}`);
+            const overlay = this._episodeOverlay;
             this._scripts.set(entry.scriptId, createLoadedScript(entry.artifact, {
                 signalStore: this.signalStore,
                 runtimeContext: {
                     seed,
                     scriptId: entry.scriptId,
                     random: () => rng.next(),
+                    world: this._worldDescription,
+                    spawnProp: overlay
+                        ? (spec) => overlay.upsert({ ...spec, scriptId: spec.scriptId ?? entry.scriptId })
+                        : undefined,
                 },
             }));
             this._scriptLoads.delete(entry.scriptId);
         }
     }
 
-    resetRun({ resetSeed = this._resolvedSeed } = {}) {
+    resetRun({
+        resetSeed = this._resolvedSeed,
+        world = this._worldDescription,
+        overlay = this._episodeOverlay,
+    } = {}) {
         this._tickCounters.clear();
         this._signalWatch.clear();
         this._topicsSeen.clear();
         this.telemetry.clear();
         this._resolvedSeed = String(resetSeed);
+        this._worldDescription = world ?? null;
+        this._episodeOverlay = overlay ?? null;
         if (this._emitTimeout) {
             clearTimeout(this._emitTimeout);
             this._emitTimeout = null;
@@ -291,8 +312,16 @@ export class BindingRuntime {
                 this._resolvedParameterBindings,
             );
         }
+        this._dispatchEpisodeReset();
         this._syncTimers();
         this._emit();
+    }
+
+    _dispatchEpisodeReset() {
+        if (!this.manifest.enabled) return;
+        this._orderedBindings()
+            .filter((binding) => binding.enabled && binding.trigger.kind === TRIGGER_KINDS.EPISODE_RESET)
+            .forEach((binding) => this._dispatch(binding, {}));
     }
 
     finalizeRun() {

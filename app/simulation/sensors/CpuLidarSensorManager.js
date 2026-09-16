@@ -169,9 +169,12 @@ export class HeadlessCpuLidarSensorManager {
         for (const device of this.devices) device.contractPublisher.deliver(clock);
     }
 
-    resetRun({ resetSeed = this.seed } = {}) {
+    resetRun({ resetSeed = this.seed, episodeLidarPrimitives } = {}) {
         this.seed = String(resetSeed);
         this.clock = { step: 0, timeNs: 0 };
+        if (this.scene && episodeLidarPrimitives !== undefined) {
+            this.scene.setEpisodePrimitives(episodeLidarPrimitives);
+        }
         for (const device of this.devices) {
             device.latestObservation = null;
             device.deliveryGeneration = 0;

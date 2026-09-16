@@ -1,3 +1,5 @@
+import { EpisodeOverlay } from "../episode/EpisodeOverlay.js";
+
 function resolve(source) {
     return typeof source === "function" ? source() : source;
 }
@@ -251,6 +253,9 @@ export function createSimulationRuntimeContext(options = {}) {
             configureRun(configuration) {
                 return manager(options.physics)?.configureRun?.(configuration);
             },
+            setEpisodeObstacles(obstacles) {
+                return manager(options.physics)?.setEpisodeObstacles?.(obstacles);
+            },
             resetRun() {
                 return manager(options.physics)?.resetRun?.();
             },
@@ -312,6 +317,7 @@ export function createSimulationRuntimeContext(options = {}) {
                 return resolve(options.topicClient) ?? null;
             },
         },
+        episodeOverlay: options.episodeOverlay ?? new EpisodeOverlay(),
     };
 
     return Object.freeze(context);

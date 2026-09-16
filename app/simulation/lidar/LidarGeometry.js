@@ -88,7 +88,21 @@ export function createBoxLidarTwin({
     });
 }
 
+export function createObstacleLidarPrimitives(obstacle, instanceId = null) {
+    const tags = normalizedTags(
+        obstacle.sourceType === "building" ? ["building"] : [obstacle.sourceType],
+    );
+    return extrudedTriangles(
+        obstacle,
+        tags,
+        instanceId === null ? stableInstanceIdFromSource(obstacle.sourceId) : instanceId,
+    );
+}
+
 function extrudedTriangles(obstacle, tags, instanceId) {
+    if (!Array.isArray(obstacle.triangles) || obstacle.triangles.length === 0) {
+        return [];
+    }
     const points = obstacle.footprint;
     const triangles = [];
     const add = (suffix, indexes, yValues) => {

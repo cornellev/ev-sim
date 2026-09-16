@@ -1,6 +1,6 @@
 # Script Bindings
 
-Bindings connect compiled visual scripts to live triggers: ROS topics, fixed simulation updates, signal changes, wall-clock timers, and deterministic simulation-time timers. They are managed in the **Bindings** workspace (Escape menu, "Bindings") and executed by the `BindingRuntime`.
+Bindings connect compiled visual scripts to live triggers: ROS topics, fixed simulation updates, signal changes, wall-clock timers, deterministic simulation-time timers, and episode resets. They are managed in the **Bindings** workspace (Escape menu, "Bindings") and executed by the `BindingRuntime`.
 
 ## Concepts
 
@@ -63,6 +63,7 @@ Bindings connect compiled visual scripts to live triggers: ROS topics, fixed sim
 | `signal-update` | `path` | When the value at a signal store path changes (checked after each tick and topic write). The first observation is a baseline and does not fire. |
 | `timer` | `intervalMs` | On a wall-clock interval, independent of the simulation loop (runs while paused). |
 | `simulation-timer` | `intervalNs` | At deterministic simulation-time intervals; pauses with the simulation and is valid in resolved runs. |
+| `episode-reset` | none | Once per kernel reset after the episode overlay is cleared. Use this for Scatter Features and Spawn Prop so barrels are not duplicated every tick. Spawn on `fixed-update` is upsert-by-id, not append. |
 
 ### Input sources
 

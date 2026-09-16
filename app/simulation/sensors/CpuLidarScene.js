@@ -139,7 +139,14 @@ export class CpuLidarScene {
             actor.actorId,
             createIndex(actor.primitives),
         ]));
+        this.episodeIndex = null;
         this.disposed = false;
+    }
+
+    setEpisodePrimitives(primitives = []) {
+        if (this.disposed) throw new Error("CPU LiDAR scene is disposed.");
+        this.episodeIndex?.geometry.dispose();
+        this.episodeIndex = createIndex(Array.isArray(primitives) ? primitives : []);
     }
 
     capture(config, vehicles) {
@@ -167,7 +174,10 @@ export class CpuLidarScene {
                     Math.sin(phi),
                     cosPhi * Math.sin(theta),
                 ).applyQuaternion(sensorQuaternion).normalize();
-                const candidates = raycastIndex(this.staticIndex, worldRay, range);
+                const candidates = [
+                    ...raycastIndex(this.staticIndex, worldRay, range),
+                    ...raycastIndex(this.episodeIndex, worldRay, range),
+                ];
                 for (const [actorId, index] of this.actorIndexes) {
                     if (actorId === config.parentId || !index) continue;
                     const actor = vehicles.find((entry) => (entry.telemetryId || entry.id) === actorId);
@@ -191,8 +201,10 @@ export class CpuLidarScene {
 
     dispose() {
         this.staticIndex?.geometry.dispose();
+        this.episodeIndex?.geometry.dispose();
         for (const index of this.actorIndexes.values()) index?.geometry.dispose();
         this.staticIndex = null;
+        this.episodeIndex = null;
         this.actorIndexes.clear();
         this.disposed = true;
     }

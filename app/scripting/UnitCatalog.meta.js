@@ -53,6 +53,7 @@ import {
     ArrayLiteralBlock,
     ArraySetBlock,
     ArraySliceBlock,
+    LinspaceBlock,
 } from "./units/collections/ArrayBlocks.block.js";
 import { EBlock, GoldenRatioBlock, PIBlock, TauBlock } from "./units/math/Constants.block.js";
 import {
@@ -121,6 +122,12 @@ import {
     SimulationClockBlock,
     VehicleStateBlock,
 } from "./units/simulator/SimulatorAdapters.block.js";
+import {
+    FrameAlongPathBlock,
+    SampleRoadBlock,
+    ScatterFeaturesBlock,
+    SpawnPropBlock,
+} from "./units/world/WorldBlocks.block.js";
 import { MaskBlock } from "./units/math/tex/Mask.block.js";
 import { IfBlock } from "./units/statements/If.block.js";
 import { ConjugationBlock, EqualityBlock } from "./units/statements/Equality.block.js";
@@ -130,6 +137,7 @@ import {
     PassthroughBlock,
     SequenceBlock,
 } from "./units/statements/Unit.block.js";
+import { RepeatProgramBlock } from "./units/statements/RepeatProgram.block.js";
 import { StringBlock } from "./units/objects/String.block.js";
 import {
     BlendTextureBlock,
@@ -311,6 +319,9 @@ const ITEM_TYPE_SETTINGS = Object.freeze([
 const ARRAY_LITERAL_SETTINGS = Object.freeze([
     ...ITEM_TYPE_SETTINGS,
     Object.freeze({ target: "storedData", key: null, valueType: "json", default: [] }),
+]);
+const COMPILED_PROGRAM_SETTINGS = Object.freeze([
+    Object.freeze({ target: "state", key: "compiledProgram", valueType: "json", default: null }),
 ]);
 const ARRAY_GET_SETTINGS = Object.freeze([
     ...ITEM_TYPE_SETTINGS,
@@ -533,6 +544,7 @@ export const UNIT_CATALOG_META = [
     entry("ArrayConcatBlock", "Array Concat", "collections", ArrayConcatBlock, ["array", "concat", "join"], { settings: ITEM_TYPE_SETTINGS }),
     entry("ArraySliceBlock", "Array Slice", "collections", ArraySliceBlock, ["array", "slice", "range"], { settings: ITEM_TYPE_SETTINGS }),
     entry("ArrayContainsBlock", "Array Contains", "collections", ArrayContainsBlock, ["array", "contains", "includes"], { settings: ITEM_TYPE_SETTINGS }),
+    entry("LinspaceBlock", "Linspace", "collections", LinspaceBlock, ["linspace", "range", "sample"]),
     entry("IfBlock", "If Statement", "statements", IfBlock, ["if", "condition", "select"]),
     entry("EqualityBlock", "Comparison (==, !=, >, <, >=, <=)", "statements", EqualityBlock, ["compare", "equality", "legacy"], { placeable: false, deprecated: true, settings: EQUALITY_SETTINGS }),
     entry("ConjugationBlock", "Conjunction (AND, OR)", "statements", ConjugationBlock, ["and", "or", "xor", "legacy"], { placeable: false, deprecated: true, settings: CONJUGATION_SETTINGS }),
@@ -540,6 +552,10 @@ export const UNIT_CATALOG_META = [
     entry("IgnoreBlock", "Ignore", "statements", IgnoreBlock, ["ignore", "discard", "unit"]),
     entry("SequenceBlock", "Sequence", "statements", SequenceBlock, ["sequence", "then", "control"]),
     entry("PassthroughBlock", "Passthrough", "statements", PassthroughBlock, ["passthrough", "identity", "unit"]),
+    entry("RepeatProgramBlock", "Repeat Program", "statements", RepeatProgramBlock, ["repeat", "loop", "program"], {
+        settings: COMPILED_PROGRAM_SETTINGS,
+        notes: "Loops a compiled child artifact. Reserved program inputs index and item are supplied per iteration. Count is clamped to 256.",
+    }),
     entry("ProgramInputBlock", "Program Input", "program", ProgramInputBlock, ["program", "input", "parameter"], { settings: PROGRAM_INPUT_SETTINGS }),
     entry("OutputNodeBlock", "OutputNode", "program", OutputNodeBlock, ["program", "output", "head"], {
         placeable: false,
@@ -572,6 +588,13 @@ export const UNIT_CATALOG_META = [
     entry("DeviceStateBlock", "Device State", "simulator", DeviceStateBlock, ["device", "state", "pose", "adapter"], { requiresSignals: true }),
     entry("SimulationClockBlock", "Simulation Clock", "simulator", SimulationClockBlock, ["simulation", "clock", "dt", "adapter"], { requiresSignals: true }),
     entry("ScenarioStatusBlock", "Scenario Status", "simulator", ScenarioStatusBlock, ["scenario", "status", "terminal", "adapter"], { requiresSignals: true }),
+    entry("SampleRoadBlock", "Sample Road", "simulator", SampleRoadBlock, ["road", "sample", "pose", "edge"]),
+    entry("SpawnPropBlock", "Spawn Prop", "simulator", SpawnPropBlock, ["spawn", "prop", "barrel", "episode"], {
+        notes: "Episode overlay upsert. Bind the graph to episode-reset. Ids are episode:{scriptId}:{n} when omitted. Does not mutate the environment document.",
+    }),
+    entry("ScatterFeaturesBlock", "Scatter Features", "simulator", ScatterFeaturesBlock, ["scatter", "barrel", "shoulder", "route"], {
+        notes: "One-node shoulder+lane scatter. Requires exactly one of route or edgeId. Spawn is upsert-by-id onto the episode overlay.",
+    }),
     entry("WaypointListBlock", "Waypoint List", "mission", WaypointListBlock, ["waypoint", "route", "list"]),
     entry("CurrentWaypointBlock", "Current Waypoint", "mission", CurrentWaypointBlock, ["waypoint", "current", "mission"]),
     entry("AdvanceWaypointBlock", "Advance Waypoint", "mission", AdvanceWaypointBlock, ["waypoint", "advance", "mission"]),
@@ -587,6 +610,7 @@ export const UNIT_CATALOG_META = [
     entry("RouteLengthBlock", "Route Length", "mission", RouteLengthBlock, ["route", "length", "distance"]),
     entry("DistanceToRouteEndBlock", "Distance To Route End", "mission", DistanceToRouteEndBlock, ["route", "distance", "end"]),
     entry("RouteTangentBlock", "Route Tangent", "mission", RouteTangentBlock, ["route", "tangent", "heading", "progress"]),
+    entry("FrameAlongPathBlock", "Frame Along Path", "mission", FrameAlongPathBlock, ["frame", "path", "pose", "lateral"]),
     entry("MakeActorCommandBlock", "Make Actor Command", "mission", MakeActorCommandBlock, ["actor", "command", "vehicle"], {
         notes: "actorId is optional; omitted values become empty string.",
     }),

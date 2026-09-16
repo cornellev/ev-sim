@@ -11,6 +11,7 @@ import {
     arrayLiteralPorts,
     arraySetPorts,
     arraySlicePorts,
+    LINSPACE_PORTS,
 } from "./ArrayBlocks.block.js";
 
 const CONTROL_CLASS = "w-full rounded-[var(--radius)] border border-white/10 bg-[var(--slate-bg)] px-2.5 py-1.5 text-white outline-none transition-[border-color,box-shadow] duration-150 hover:border-white/20 focus:border-white/30 focus:shadow-[0_0_0_3px_rgba(255,255,255,0.06)]";
@@ -177,6 +178,18 @@ export function ArrayContainsUnit(props) {
     return <ItemTypeUnit {...props} title="Array Contains" portsFor={arrayContainsPorts} />;
 }
 
+export function LinspaceUnit({ _uuid }) {
+    return (
+        <Unit
+            title="Linspace"
+            hasOptions={false}
+            _uuid={_uuid}
+            inputs={[...LINSPACE_PORTS.inputs]}
+            outputs={[...LINSPACE_PORTS.outputs]}
+        />
+    );
+}
+
 export {
     ArrayAppendBlock,
     ArrayConcatBlock,
@@ -186,4 +199,5 @@ export {
     ArrayLiteralBlock,
     ArraySetBlock,
     ArraySliceBlock,
+    LinspaceBlock,
 } from "./ArrayBlocks.block.js";

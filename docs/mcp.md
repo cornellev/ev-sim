@@ -85,7 +85,7 @@ Compile / unit metadata run through Next API routes (`/api/scripting/compile`, `
 | `binding_set_enabled` | Per-binding or master switch |
 | `binding_suggest` | Propose trigger + I/O from a compiled script |
 
-Triggers (`topic`, `fixed-update`, `signal-update`, `timer`) are the run modes. Input/output labels must match the script artifact's `interface`.
+Triggers (`topic`, `fixed-update`, `signal-update`, `timer`, `simulation-timer`, `episode-reset`) are the run modes. Input/output labels must match the script artifact's `interface`. Spawn Prop / Scatter Features graphs belong on `episode-reset`.
 
 ### Run manifests
 

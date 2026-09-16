@@ -205,11 +205,20 @@ export class SimulationKernel {
             ?? "0";
         this.context.environment.reset?.({ resetSeed });
         this.context.inputs.reset?.({ resetSeed });
-        this.context.scripts.reset?.({ resetSeed });
+        this.context.episodeOverlay?.clear?.();
+        this.context.scripts.reset?.({
+            resetSeed,
+            world: this.resolvedRun?.world?.description ?? null,
+            overlay: this.context.episodeOverlay ?? null,
+        });
         if (this.resolvedRun) {
             this.context.vehicles.reset(this.resolvedRun.manifest.initialState, { resetSeed });
+            this.context.physics.setEpisodeObstacles?.(this.context.episodeOverlay?.toObstacles?.() ?? []);
             this.context.physics.resetRun({ resetSeed });
-            this.context.devices.reset({ resetSeed });
+            this.context.devices.reset({
+                resetSeed,
+                episodeLidarPrimitives: this.context.episodeOverlay?.toLidarPrimitives?.() ?? [],
+            });
         }
         this.scenarioRuntime?.reset?.({ resetSeed });
 
@@ -367,6 +376,8 @@ export class SimulationKernel {
                 ...(this.resolvedRun.parameters?.manifest?.bindings || []),
                 ...(this.resolvedRun.parameters?.scenario?.bindings || []),
             ],
+            world: this.resolvedRun.world?.description ?? null,
+            overlay: this.context.episodeOverlay ?? null,
         });
         this.context.scripts.setTopicScheduler((info) => this.queueTopicInput(info));
         this.context.scripts.setTopicRouter(this.topicRouter, manifest.topics);

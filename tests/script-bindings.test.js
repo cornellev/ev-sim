@@ -196,6 +196,7 @@ test("summarizeTrigger renders human-readable summaries", () => {
     assert.equal(summarizeTrigger({ kind: "signal-update", path: "a.b" }), "when a.b changes");
     assert.equal(summarizeTrigger({ kind: "timer", intervalMs: 250 }), "every 250 ms");
     assert.equal(summarizeTrigger({ kind: "simulation-timer", intervalNs: 250_000_000 }), "every 250000000 ns of simulation time");
+    assert.equal(summarizeTrigger({ kind: "episode-reset" }), "on episode reset");
 });
 
 test("suggestTriggerFromArtifact maps entrypoints and trigger bindings", () => {
@@ -682,4 +683,47 @@ test("runBindingNow executes manually with the last topic message as context", a
     assert.equal(result.status, "success");
     assert.deepEqual(runs, [{ msg: { speed: 7 } }]);
     assert.deepEqual(result.outputs.echoed, { speed: 7 });
+});
+
+test("episode-reset bindings fire once per resetRun, not per update", async () => {
+    const runs = [];
+    const runtime = createRuntime({
+        scripts: { "script-1": createScriptStub(() => { runs.push("reset"); return {}; }) },
+    });
+    await runtime.ready();
+    await runtime.setManifest({
+        bindings: [{
+            id: "episode",
+            scriptId: "script-1",
+            trigger: { kind: "episode-reset" },
+        }],
+    }, { persist: false });
+    await flush();
+
+    assert.equal(runs.length, 0);
+    runtime.resetRun({ resetSeed: "1" });
+    runtime.update(0.02, { timeNs: 20_000_000, step: 1 });
+    runtime.update(0.02, { timeNs: 40_000_000, step: 2 });
+    assert.equal(runs.length, 1);
+    runtime.resetRun({ resetSeed: "1" });
+    assert.equal(runs.length, 2);
+});
+
+test("disabled manifests skip episode-reset dispatch", async () => {
+    const runs = [];
+    const runtime = createRuntime({
+        scripts: { "script-1": createScriptStub(() => { runs.push("reset"); return {}; }) },
+    });
+    await runtime.ready();
+    await runtime.setManifest({
+        enabled: false,
+        bindings: [{
+            id: "episode",
+            scriptId: "script-1",
+            trigger: { kind: "episode-reset" },
+        }],
+    }, { persist: false });
+    await flush();
+    runtime.resetRun({ resetSeed: "1" });
+    assert.equal(runs.length, 0);
 });

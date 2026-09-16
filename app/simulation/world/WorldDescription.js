@@ -425,6 +425,32 @@ function roadSurfaces(roads) {
     return [...corridors, ...intersections].sort((left, right) => compareUtf8(left.id, right.id));
 }
 
+/**
+ * Compile one builtin-prop / feature into the world-description obstacle
+ * shape used by physics and LiDAR. Accepts a normalized feature (with
+ * `transform`) or a raw `{ id, type, x, z, rotationY, dir }` record.
+ */
+export function createFeatureObstacle(feature) {
+    const normalized = feature?.transform?.position
+        ? feature
+        : normalizeFeature(feature, 0);
+    const { x, y, z } = normalized.transform.position;
+    const footprint = rectangleFootprint(x, z, normalized.size, normalized.transform.rotation.y);
+    const minY = y - normalized.size.y * 0.5;
+    const maxY = y + normalized.size.y * 0.5;
+    return {
+        id: `feature:${normalized.id}`,
+        sourceId: normalized.id,
+        sourceType: normalized.type,
+        shape: "oriented-box-prism",
+        footprint,
+        triangles: [[0, 1, 2], [0, 2, 3]],
+        minY,
+        maxY,
+        bounds: footprintBounds(footprint, minY, maxY),
+    };
+}
+
 function createObstacles(buildings, features) {
     const buildingObstacles = buildings.map((building) => {
         const bounds = footprintBounds(building.footprint, 0, building.height);
@@ -440,23 +466,7 @@ function createObstacles(buildings, features) {
             bounds,
         };
     });
-    const featureObstacles = features.map((feature) => {
-        const { x, y, z } = feature.transform.position;
-        const footprint = rectangleFootprint(x, z, feature.size, feature.transform.rotation.y);
-        const minY = y - feature.size.y * 0.5;
-        const maxY = y + feature.size.y * 0.5;
-        return {
-            id: `feature:${feature.id}`,
-            sourceId: feature.id,
-            sourceType: feature.type,
-            shape: "oriented-box-prism",
-            footprint,
-            triangles: [[0, 1, 2], [0, 2, 3]],
-            minY,
-            maxY,
-            bounds: footprintBounds(footprint, minY, maxY),
-        };
-    });
+    const featureObstacles = features.map((feature) => createFeatureObstacle(feature));
     return [...buildingObstacles, ...featureObstacles]
         .sort((left, right) => compareUtf8(left.id, right.id));
 }
