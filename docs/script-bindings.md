@@ -41,10 +41,10 @@ Bindings connect compiled visual scripts to live triggers: ROS topics, fixed sim
         { "input": "speed", "source": "message", "field": "speed" },
         { "input": "gain", "source": "constant", "value": 1.5 },
         { "input": "dt", "source": "sim", "key": "dt" },
-        { "input": "pose", "source": "signal", "path": "vehicle.ego", "field": "pose" }
+        { "input": "pose", "source": "signal", "path": "vehicles.ego.pose" }
       ],
       "outputs": [
-        { "output": "steering", "sink": "signal", "path": "vehicle.ego.steering" },
+        { "output": "steering", "sink": "signal", "path": "vehicles.ego.steering" },
         { "output": "cmd", "sink": "publish", "topic": "/cmd_out", "type": "sensor_fusion_msgs/StampedAckermannDrive" }
       ]
     }

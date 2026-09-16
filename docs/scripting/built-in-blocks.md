@@ -1,6 +1,6 @@
 # Built-In Blocks
 
-Built-in block registration lives in `app/scripting/registerBuiltInBlocks.js`. User-facing block library inventory lives in `app/scripting/UnitCatalog.js`. `app/scripting/AddMenu.js` renders that catalog with category filters and search.
+`app/scripting/UnitCatalog.meta.js` is the authoritative built-in inventory. It owns stable type IDs, display names, categories, keywords, placeability, deprecation, settings, signal requirements, and React-free block classes. `UnitCatalog.js` attaches React components by type, `registerBuiltInBlocks.js` registers the same explicit types, and `AddMenu.js` renders only placeable entries.
 
 ## Menu Categories
 
@@ -15,23 +15,20 @@ Current block library categories:
 - `conversions`: numeric conversions.
 - `objects`: string.
 - `statements`: if, comparisons, conjunctions, nop, ignore, sequence, passthrough. `If`, `Equality`, `Weighted Select`, `Signal Latch`, `Signal Default`, `Log Signal`, `Ignore`, and `Passthrough` infer a type variable `T` from connections instead of a type selector. Equality `eq`/`neq` accept any concrete type; ordered operators accept only `float64`/`int32`.
-- `program`: program input/output units. Program I/O may expose `unit`.
+- `program`: program input/output units. Program I/O may expose `unit` and `actor_command`.
 - `signals`: read/write and inspect signal-store values. Write Signal exposes identity `value` plus `then`.
 - `topics`: topic snapshots, fields, staged publish messages, metadata, and stale gates. Stage Publish exposes `path` plus `then`.
 - `simulator`: vehicle, device, simulation, scenario, and object snapshots.
-- `mission`: waypoint, mission state, route progress, and scenario flag helpers. Set Mission State, Scenario Flag Write, and Advance Waypoint expose `then`.
+- `mission`: waypoint, mission state, route progress, scenario flag helpers, and actor-command Make/Split. Set Mission State, Scenario Flag Write, and Advance Waypoint expose `then`. Make Actor Command builds `{ actorId, speedMps, steeringRad }` from required `speed`/`steering` and optional `actorId`. Split Actor Command unpacks that value. Route-controller speed/steering mappings remain `float64`.
 - `bindings`: signal/tick/timer triggers and input/output/trigger bindings.
 - `diagnostics`: probes, logs, assertions, recording/replay, and binding status. Log, Assert, and Record expose `then`.
+- `math`, `logic`, `strings`, `collections`, `geometry`, and `control`: reserved searchable categories for the atomic standard-library blocks.
 
-## Compileable Vs UI-Only
+## Compileable And Legacy Blocks
 
-Most catalog entries have a backend block class and can compile into a v3 artifact. Entries with `blockClass: null` are UI-only. Frozen v2 artifacts remain runnable.
+Every placeable catalog entry has a backend block class and can compile into a v3 artifact. Frozen v2 artifacts remain runnable.
 
-Known UI-only entries:
-
-- `Scale Matrix (tex1d)`
-
-If a UI-only entry becomes runtime behavior, add a `UnitBlock` subclass and register it in `registerBuiltInBlocks.js`.
+`CalculationBlock`, `EqualityBlock`, and `ConjugationBlock` remain registered and renderable for old graphs and artifacts, but are deprecated and non-placeable. `OutputNodeBlock` is also non-placeable because the graph head owns it. `ScaleBlock` and `MultiplyTexBlock` are React-free runtime blocks; neither performs DOM or canvas work.
 
 ## ROS Blocks
 

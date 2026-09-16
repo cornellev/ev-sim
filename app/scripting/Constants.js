@@ -23,6 +23,7 @@ const TYPES = {
     "tex1d": "oklch(50% 0.25 300)",
     "generic": "oklch(78% 0.02 250)",
     "unit": "oklch(68% 0.09 280)",
+    "actor_command": "oklch(66% 0.16 345)",
 }
 
 export { TYPES };

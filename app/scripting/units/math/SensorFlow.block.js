@@ -1,4 +1,5 @@
 import { BlockOutput, UnitBlock } from "../../ScriptManager.js";
+import { finiteFloat } from "../../types/PortTypes.js";
 
 export class SampleTextureBlock extends UnitBlock {
     register() {
@@ -13,19 +14,19 @@ export class SampleTextureBlock extends UnitBlock {
     }
 
     execute() {
-        const tex = this.getInput("tex") || [];
+        const tex = this.getInput("tex") ?? [];
         if (tex.length === 0) {
             return new BlockOutput().set("out", 0);
         }
 
         const size = Math.max(1, Math.floor(Math.sqrt(tex.length)));
-        const x = Math.max(0, Math.min(1, this.getInput("x") || 0));
-        const y = Math.max(0, Math.min(1, this.getInput("y") || 0));
+        const x = Math.max(0, Math.min(1, finiteFloat(this.getInput("x"))));
+        const y = Math.max(0, Math.min(1, finiteFloat(this.getInput("y"))));
 
         const ix = Math.min(size - 1, Math.floor(x * (size - 1)));
         const iy = Math.min(size - 1, Math.floor(y * (size - 1)));
 
-        return new BlockOutput().set("out", tex[iy * size + ix] || 0);
+        return new BlockOutput().set("out", finiteFloat(tex[iy * size + ix]));
     }
 }
 
@@ -59,8 +60,8 @@ export class LowPassFilterBlock extends UnitBlock {
     }
 
     execute() {
-        const signal = this.getInput("signal") || 0;
-        const alpha = Math.max(0, Math.min(1, this.getInput("alpha") || 0.5));
+        const signal = finiteFloat(this.getInput("signal"));
+        const alpha = Math.max(0, Math.min(1, finiteFloat(this.getInput("alpha"), 0.5)));
 
         if (!this.initialized) {
             this.prev = signal;
@@ -102,8 +103,8 @@ export class RateLimiterBlock extends UnitBlock {
     }
 
     execute() {
-        const signal = this.getInput("signal") || 0;
-        const maxDelta = Math.max(0, this.getInput("max delta") || 0);
+        const signal = finiteFloat(this.getInput("signal"));
+        const maxDelta = Math.max(0, finiteFloat(this.getInput("max delta")));
 
         if (!this.initialized) {
             this.prev = signal;
@@ -141,10 +142,10 @@ export class SensorFusionBlock extends UnitBlock {
     }
 
     execute() {
-        const primary = this.getInput("primary") || 0;
-        const secondary = this.getInput("secondary") || 0;
-        const weight = Math.max(0, Math.min(1, this.getInput("weight") || 0.5));
-        const bias = this.getInput("bias") || 0;
+        const primary = finiteFloat(this.getInput("primary"));
+        const secondary = finiteFloat(this.getInput("secondary"));
+        const weight = Math.max(0, Math.min(1, finiteFloat(this.getInput("weight"), 0.5)));
+        const bias = finiteFloat(this.getInput("bias"));
 
         const fused = primary * weight + secondary * (1 - weight) + bias;
         return new BlockOutput().set("fused", fused);
@@ -164,9 +165,9 @@ export class ThresholdGateBlock extends UnitBlock {
     }
 
     execute() {
-        const signal = this.getInput("signal") || 0;
-        let min = this.getInput("min") || 0;
-        let max = this.getInput("max") || 0;
+        const signal = finiteFloat(this.getInput("signal"));
+        let min = finiteFloat(this.getInput("min"));
+        let max = finiteFloat(this.getInput("max"));
 
         if (min > max) {
             const tmp = min;

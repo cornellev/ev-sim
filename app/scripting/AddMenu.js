@@ -11,6 +11,12 @@ import { createCatalogUnitUUID, groupedUnitCatalog } from "./UnitCatalog";
 const CATEGORY_META = {
     all: { label: "All", icon: IconCategory, accent: "text-zinc-100" },
     expressions: { label: "Expressions", icon: IconMathFunction, accent: "text-rose-300" },
+    math: { label: "Math", icon: IconMathFunction, accent: "text-rose-300" },
+    logic: { label: "Logic", icon: IconBinaryTree2, accent: "text-emerald-300" },
+    strings: { label: "Strings", icon: IconAbc, accent: "text-yellow-200" },
+    collections: { label: "Collections", icon: IconDatabase, accent: "text-indigo-300" },
+    geometry: { label: "Geometry", icon: IconVector, accent: "text-blue-300" },
+    control: { label: "Control", icon: IconArrowsExchange, accent: "text-orange-300" },
     constants: { label: "Constants", icon: IconFunction, accent: "text-amber-300" },
     texture1d: { label: "Texture 1D", icon: IconVector, accent: "text-blue-300" },
     terrain: { label: "Terrain", icon: IconMountain, accent: "text-lime-300" },
@@ -57,16 +63,21 @@ function flattenCatalogGroups(groups) {
     ));
 }
 
-function matchesQuery(unit, query) {
+export function matchesQuery(unit, query) {
     if (!query) return true;
 
     const haystack = [
         unit.name,
         unit.category,
-        unit.type
+        unit.type,
+        ...(unit.keywords || []),
     ].filter(Boolean).join(" ").toLowerCase();
 
-    return haystack.includes(query.toLowerCase());
+    return query
+        .toLowerCase()
+        .trim()
+        .split(/\s+/)
+        .every((term) => haystack.includes(term));
 }
 
 function groupUnits(units) {

@@ -70,11 +70,11 @@ Mutating placement tools return a `conflicts` array (road crossings, corridor ov
 |------|---------|
 | `script_list` / `script_create` / `script_rename` / `script_delete` / `script_get` | Document CRUD |
 | `unit_catalog` / `unit_describe` | Discover unit types, ports, settings |
-| `script_add_unit` / `script_update_unit` / `script_remove_unit` | Graph nodes |
+| `script_add_unit` / `script_update_unit` / `script_remove_unit` | Graph nodes; typed updates are validated atomically against existing wires before persistence |
 | `script_connect` / `script_disconnect` | Typed wires; `script_connect` restores a `ScriptManager`, runs `connectUnitsDetailed`, and reserializes. Generic conflicts are rejected before persist. |
 | `script_lint` | Compile the graph; persists `latestValidArtifact` on success. Fails closed if stored edges cannot restore (legacy `written` / `ok` / `staged`) and keeps the previous artifact. |
 
-Compile / unit metadata run through Next API routes (`/api/scripting/compile`, `/api/scripting/units`) so the Express MCP process does not need to load React for catalog listing. `script_connect` / `script_disconnect` restore a real `ScriptManager` in the Express process (`registerBuiltInBlocks` is React-free) so generic unification happens before persistence. Unrestored missing-port edges stay in the saved graph. `/api/scripting/compile` returns `{ ok, artifact }` with `artifact.version === 3`, or `{ ok: false, error }` when restore/compile fails. Block classes live in React-free `*.block.js` modules (see `registerBuiltInBlocks.js` / `UnitCatalog.meta.js`); UI components stay in the sibling unit files. The catalog includes Nop / Ignore / Sequence / Passthrough and effect ports `then: unit`.
+Compile / unit metadata run through Next API routes (`/api/scripting/compile`, `/api/scripting/units`) so the Express MCP process does not need to load React for catalog listing. `UnitCatalog.meta.js` supplies explicit stable types, keywords, settings, deprecation/placeability, and `requiresSignals`. Connection and `script_update_unit` mutations restore a real `ScriptManager` in the Express process and run graph-wide unification before persistence; a rejected update leaves configuration, positions, timestamps, and wires unchanged. Unrestored missing-port edges stay in the saved graph. `/api/scripting/compile` returns `{ ok, artifact }` with `artifact.version === 3`, or `{ ok: false, error }` when restore/compile fails.
 
 ### Binding
 

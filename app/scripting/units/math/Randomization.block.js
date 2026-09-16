@@ -1,6 +1,6 @@
 import { BlockOutput, UnitBlock, usesLazySelectors } from "../../ScriptManager.js";
 import { runtimeRandom } from "../../runtime/RuntimeRandom.js";
-import { GENERIC_TYPE } from "../../types/PortTypes.js";
+import { finiteFloat, GENERIC_TYPE } from "../../types/PortTypes.js";
 
 function seededRandom(seed) {
     const x = Math.sin(seed * 12.9898) * 43758.5453;
@@ -19,8 +19,8 @@ export class RandomRangeBlock extends UnitBlock {
     }
 
     execute() {
-        let min = this.getInput("min") || 0;
-        let max = this.getInput("max") || 0;
+        let min = finiteFloat(this.getInput("min"));
+        let max = finiteFloat(this.getInput("max"));
         if (min > max) {
             const tmp = min;
             min = max;
@@ -43,7 +43,7 @@ export class SeededRandomBlock extends UnitBlock {
     }
 
     execute() {
-        const seed = this.getInput("seed") || 0;
+        const seed = finiteFloat(this.getInput("seed"));
         return new BlockOutput().set("out", seededRandom(seed));
     }
 }
@@ -60,8 +60,8 @@ export class GaussianNoiseBlock extends UnitBlock {
     }
 
     execute() {
-        const mean = this.getInput("mean") || 0;
-        const stddev = Math.max(0, this.getInput("stddev") || 0);
+        const mean = finiteFloat(this.getInput("mean"));
+        const stddev = Math.max(0, finiteFloat(this.getInput("stddev")));
 
         const u1 = Math.max(Number.EPSILON, runtimeRandom(this));
         const u2 = runtimeRandom(this);
@@ -82,8 +82,8 @@ export class JitterBlock extends UnitBlock {
     }
 
     execute() {
-        const value = this.getInput("value") || 0;
-        const amount = Math.max(0, this.getInput("amount") || 0);
+        const value = finiteFloat(this.getInput("value"));
+        const amount = Math.max(0, finiteFloat(this.getInput("amount")));
         const out = value + (runtimeRandom(this) * 2 - 1) * amount;
         return new BlockOutput().set("out", out);
     }
@@ -112,14 +112,14 @@ export class WeightedSelectBlock extends UnitBlock {
 
     execute() {
         if (usesLazySelectors(this.manager)) {
-            const probB = Math.max(0, Math.min(1, this.getInput("prob b") || 0.5));
+            const probB = Math.max(0, Math.min(1, finiteFloat(this.getInput("prob b"), 0.5)));
             const selected = runtimeRandom(this) < probB ? "b" : "a";
             return new BlockOutput().set("out", this.getInput(selected));
         }
 
-        const a = this.getInput("a") || 0;
-        const b = this.getInput("b") || 0;
-        const probB = Math.max(0, Math.min(1, this.getInput("prob b") || 0.5));
+        const a = this.getInput("a");
+        const b = this.getInput("b");
+        const probB = Math.max(0, Math.min(1, finiteFloat(this.getInput("prob b"), 0.5)));
         return new BlockOutput().set("out", runtimeRandom(this) < probB ? b : a);
     }
 }
@@ -143,11 +143,11 @@ export class RemapRangeBlock extends UnitBlock {
     }
 
     execute() {
-        const value = this.getInput("value") || 0;
-        const inMin = this.getInput("in min") || 0;
-        const inMax = this.getInput("in max") || 1;
-        const outMin = this.getInput("out min") || 0;
-        const outMax = this.getInput("out max") || 1;
+        const value = finiteFloat(this.getInput("value"));
+        const inMin = finiteFloat(this.getInput("in min"));
+        const inMax = finiteFloat(this.getInput("in max"), 1);
+        const outMin = finiteFloat(this.getInput("out min"));
+        const outMax = finiteFloat(this.getInput("out max"), 1);
 
         const denom = inMax - inMin;
         if (Math.abs(denom) < Number.EPSILON) {

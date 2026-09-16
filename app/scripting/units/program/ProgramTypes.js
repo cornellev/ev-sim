@@ -3,7 +3,13 @@
  * No React imports — safe for server/MCP compile paths.
  */
 
-import { UNIT } from "../../types/PortTypes.js";
+import {
+    ACTOR_COMMAND_TYPE,
+    finiteFloat,
+    finiteInt32,
+    normalizeActorCommand,
+    UNIT,
+} from "../../types/PortTypes.js";
 
 export const SUPPORTED_TYPES = [
     "float64",
@@ -33,6 +39,7 @@ export const SUPPORTED_TYPES = [
     "array[json]",
     "custom[string]",
     "unit",
+    "actor_command",
 ];
 
 export const OUTPUT_NODE_MAX_OUTPUTS = 8;
@@ -76,6 +83,10 @@ export function parseValueByType(value, type) {
 
     if (normalizedType === "unit") {
         return UNIT;
+    }
+
+    if (normalizedType === ACTOR_COMMAND_TYPE) {
+        return normalizeActorCommand(value);
     }
 
     if (normalizedType === "tex1d") {
@@ -123,13 +134,11 @@ export function parseValueByType(value, type) {
     }
 
     if (normalizedType === "float64") {
-        const parsed = Number.parseFloat(value);
-        return Number.isNaN(parsed) ? 0 : parsed;
+        return finiteFloat(value);
     }
 
     if (normalizedType === "int32") {
-        const parsed = Number.parseInt(value, 10);
-        return Number.isNaN(parsed) ? 0 : parsed;
+        return finiteInt32(value);
     }
 
     if (normalizedType === "boolean") {

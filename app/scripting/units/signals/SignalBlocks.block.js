@@ -3,23 +3,21 @@ import { SIGNAL_PATHS } from "../../runtime/SignalPaths.js";
 import { getByPath, setByPath } from "../../runtime/SignalStore.js";
 import { normalizeType, parseValueByType, SUPPORTED_TYPES } from "../program/ProgramTypes.js";
 import { routeProgress } from "../../../scenarios/route/Route.js";
-import { GENERIC_TYPE, UNIT, UNIT_TYPE } from "../../types/PortTypes.js";
+import { finiteFloat, finiteInt32, GENERIC_TYPE, UNIT, UNIT_TYPE } from "../../types/PortTypes.js";
 
 const JSON_TYPES = new Set(["json", "message", "route", "waypoint", "pose2d", "pose3d", "vec2", "vec3", "sim_event"]);
 
 export function pathOrFallback(path, fallback) {
-    const normalized = String(path || "").trim();
+    const normalized = String(path ?? "").trim();
     return normalized || fallback;
 }
 
 function toNumber(value, fallback = 0) {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : fallback;
+    return finiteFloat(value, fallback);
 }
 
 function toInt(value, fallback = 0) {
-    const parsed = Number.parseInt(value, 10);
-    return Number.isFinite(parsed) ? parsed : fallback;
+    return finiteInt32(value, fallback);
 }
 
 function parseJson(value, fallback) {
@@ -60,7 +58,7 @@ function distanceBetween(a, b) {
 export function normalizeConfig(defaults, data = {}) {
     return {
         ...defaults,
-        ...(data || {})
+        ...(data ?? {})
     };
 }
 
@@ -68,19 +66,15 @@ function readSignal(manager, path, options = {}) {
     return manager.readSignal(path, options);
 }
 
+function readSignalWithLegacyFallback(manager, configuredPath, legacyPath, canonicalPath, options = {}) {
+    const signal = readSignal(manager, configuredPath, options);
+    if (signal.exists || configuredPath !== legacyPath) return signal;
+    return readSignal(manager, canonicalPath, options);
+}
+
 function readSignalValue(manager, path, fallback = null, options = {}) {
     const signal = readSignal(manager, path, options);
     return signal.exists && !signal.stale ? signal.value : fallback;
-}
-
-function readNestedSignalValue(manager, directPath, parentPath, fieldPath, fallback = null) {
-    const direct = readSignal(manager, directPath);
-    if (direct.exists && !direct.stale) return direct.value;
-
-    const parent = readSignal(manager, parentPath);
-    if (!parent.exists || parent.stale) return fallback;
-
-    return getByPath(parent.value, fieldPath, fallback);
 }
 
 function signalStatusOutput(signal) {
@@ -91,12 +85,12 @@ function signalStatusOutput(signal) {
 }
 
 export function typedOutput(type) {
-    return normalizeType(type || "json");
+    return normalizeType(type ?? "json");
 }
 
 export class ConfiguredBlock extends UnitBlock {
     defaults() {
-        return this.constructor.defaults || {};
+        return this.constructor.defaults ?? {};
     }
 
     normalizeConfig(data = {}) {
@@ -106,7 +100,7 @@ export class ConfiguredBlock extends UnitBlock {
     config() {
         return this.normalizeConfig({
             ...this.state,
-            ...(this.getStoredData() || {})
+            ...(this.getStoredData() ?? {})
         });
     }
 
@@ -164,7 +158,7 @@ export class WriteSignalBlock extends ConfiguredBlock {
         const value = this.getInput("value");
         this.manager.writeSignal(this.state.path, value, {
             type: typedOutput(this.state.type),
-            source: this.state.source || "script",
+            source: this.state.source ?? "script",
             staleAfter: this.state.staleAfter
         });
         return new BlockOutput()
@@ -329,7 +323,7 @@ export class StoreNamespaceBlock extends ConfiguredBlock {
     }
 
     execute() {
-        const path = String(this.getInput("path") || "").replace(/^\.+/, "");
+        const path = String(this.getInput("path") ?? "").replace(/^\.+/, "");
         return new BlockOutput().set("path", `${this.state.namespace}.${path}`);
     }
 }
@@ -395,7 +389,7 @@ export class BuildTopicMessageBlock extends ConfiguredBlock {
     execute() {
         const base = this.hasInput("base") ? this.getInput("base") : {};
         const value = this.getInput("value");
-        return new BlockOutput().set("message", setByPath(base || {}, this.state.fieldPath, value));
+        return new BlockOutput().set("message", setByPath(base ?? {}, this.state.fieldPath, value));
     }
 }
 
@@ -473,8 +467,8 @@ export class TopicMetadataBlock extends ConfiguredBlock {
         const signal = readSignal(this.manager, `topics.${this.state.topic}`);
         return new BlockOutput()
             .set("topic", this.state.topic)
-            .set("type", signal.type || "")
-            .set("source", signal.source || "")
+            .set("type", signal.type ?? "")
+            .set("source", signal.source ?? "")
             .set("age", signal.age ?? -1)
             .set("stale", signal.stale);
     }
@@ -483,7 +477,7 @@ export class TopicMetadataBlock extends ConfiguredBlock {
 export class PathSnapshotBlock extends ConfiguredBlock {
     register() {
         this.state = this.config();
-        this.registerOutput(this.constructor.outputLabel || "value", this.constructor.outputType || "json");
+        this.registerOutput(this.constructor.outputLabel ?? "value", this.constructor.outputType ?? "json");
         this.registerOutput("exists", "boolean");
         this.registerOutput("stale", "boolean");
     }
@@ -493,28 +487,50 @@ export class PathSnapshotBlock extends ConfiguredBlock {
     }
 
     execute() {
-        const signal = readSignal(this.manager, this.state.path);
+        const signal = this.constructor.legacyPath && this.constructor.canonicalPath
+            ? readSignalWithLegacyFallback(
+                this.manager,
+                this.state.path,
+                this.constructor.legacyPath,
+                this.constructor.canonicalPath,
+            )
+            : readSignal(this.manager, this.state.path);
         return new BlockOutput()
-            .set(this.constructor.outputLabel || "value", signal.exists && !signal.stale ? signal.value : null)
+            .set(this.constructor.outputLabel ?? "value", signal.exists && !signal.stale ? signal.value : null)
             .set("exists", signal.exists)
             .set("stale", signal.stale);
     }
 }
 
 export class VehicleSnapshotBlock extends PathSnapshotBlock {
-    static defaults = { path: SIGNAL_PATHS.VEHICLE_EGO };
+    static defaults = { path: SIGNAL_PATHS.VEHICLES_EGO };
+    static legacyPath = SIGNAL_PATHS.VEHICLE_EGO;
+    static canonicalPath = SIGNAL_PATHS.VEHICLES_EGO;
 }
 
 export class VehiclePoseBlock extends PathSnapshotBlock {
-    static defaults = { path: SIGNAL_PATHS.VEHICLE_EGO_POSE };
+    static defaults = { path: SIGNAL_PATHS.VEHICLES_EGO_POSE };
+    static legacyPath = SIGNAL_PATHS.VEHICLE_EGO_POSE;
+    static canonicalPath = SIGNAL_PATHS.VEHICLES_EGO_POSE;
     static outputLabel = "pose";
     static outputType = "pose3d";
 
     execute() {
         const path = this.state.path;
-        const parent = path.replace(/\.pose$/, "");
-        const pose = readNestedSignalValue(this.manager, path, parent, "pose", null);
-        const signal = readSignal(this.manager, path);
+        let signal = readSignal(this.manager, path);
+        let pose = signal.exists && !signal.stale ? signal.value : null;
+
+        if (!signal.exists && path === this.constructor.legacyPath) {
+            const legacyParent = readSignal(this.manager, SIGNAL_PATHS.VEHICLE_EGO);
+            if (legacyParent.exists) {
+                signal = legacyParent;
+                pose = legacyParent.stale ? null : getByPath(legacyParent.value, "pose", null);
+            } else {
+                signal = readSignal(this.manager, this.constructor.canonicalPath);
+                pose = signal.exists && !signal.stale ? signal.value : null;
+            }
+        }
+
         return new BlockOutput()
             .set("pose", pose)
             .set("exists", pose !== null && pose !== undefined)
@@ -523,13 +539,17 @@ export class VehiclePoseBlock extends PathSnapshotBlock {
 }
 
 export class VehicleVelocityBlock extends PathSnapshotBlock {
-    static defaults = { path: SIGNAL_PATHS.VEHICLE_EGO_VELOCITY };
+    static defaults = { path: SIGNAL_PATHS.VEHICLES_EGO_VELOCITY };
+    static legacyPath = SIGNAL_PATHS.VEHICLE_EGO_VELOCITY;
+    static canonicalPath = SIGNAL_PATHS.VEHICLES_EGO_VELOCITY;
     static outputLabel = "velocity";
     static outputType = "vec3";
 }
 
 export class VehicleDimensionsBlock extends PathSnapshotBlock {
-    static defaults = { path: SIGNAL_PATHS.VEHICLE_EGO_DIMENSIONS };
+    static defaults = { path: SIGNAL_PATHS.VEHICLES_EGO_DIMENSIONS };
+    static legacyPath = SIGNAL_PATHS.VEHICLE_EGO_DIMENSIONS;
+    static canonicalPath = SIGNAL_PATHS.VEHICLES_EGO_DIMENSIONS;
     static outputLabel = "dimensions";
 }
 
@@ -579,7 +599,7 @@ export class WaypointListBlock extends ConfiguredBlock {
 
     execute() {
         const route = readSignalValue(this.manager, this.state.path, parseJson(this.state.waypoints, []));
-        const list = Array.isArray(route) ? route : route?.waypoints || [];
+        const list = Array.isArray(route) ? route : route?.waypoints ?? [];
         return new BlockOutput()
             .set("route", route)
             .set("count", list.length);
@@ -603,10 +623,10 @@ export class CurrentWaypointBlock extends ConfiguredBlock {
 
     execute() {
         const route = this.getInput("route");
-        const list = Array.isArray(route) ? route : route?.waypoints || [];
+        const list = Array.isArray(route) ? route : route?.waypoints ?? [];
         const index = toInt(readSignalValue(this.manager, this.state.indexPath, 0), 0);
         return new BlockOutput()
-            .set("waypoint", list[index] || null)
+            .set("waypoint", list[index] ?? null)
             .set("index", index)
             .set("complete", index >= list.length);
     }
@@ -630,7 +650,7 @@ export class AdvanceWaypointBlock extends ConfiguredBlock {
     execute() {
         const advance = Boolean(this.getInput("advance"));
         const route = this.hasInput("route") ? this.getInput("route") : [];
-        const list = Array.isArray(route) ? route : route?.waypoints || [];
+        const list = Array.isArray(route) ? route : route?.waypoints ?? [];
         const current = toInt(readSignalValue(this.manager, this.state.indexPath, 0), 0);
         const next = advance ? Math.min(current + 1, Math.max(0, list.length)) : current;
         this.manager.writeSignal(this.state.indexPath, next, { type: "int32", source: "advance-waypoint" });
@@ -937,7 +957,7 @@ export class AssertSignalBlock extends ConfiguredBlock {
     execute() {
         const condition = this.getInput("condition");
         if (!condition) {
-            throw new Error(this.state.message || "Signal assertion failed.");
+            throw new Error(this.state.message ?? "Signal assertion failed.");
         }
         return new BlockOutput()
             .setDeclared(this, "then", UNIT)
@@ -1009,9 +1029,9 @@ export class BindingStatusBlock extends ConfiguredBlock {
 
     execute() {
         const signal = readSignal(this.manager, this.state.path);
-        const status = signal.value || {};
+        const status = signal.value ?? {};
         return new BlockOutput()
-            .set("status", status.status || (signal.exists ? "connected" : "missing"))
+            .set("status", status.status ?? (signal.exists ? "connected" : "missing"))
             .set("connected", Boolean(status.connected ?? signal.exists))
             .set("stale", signal.stale || status.status === "stale");
     }

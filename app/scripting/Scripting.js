@@ -938,6 +938,7 @@ export default function Scripting({ onOpenWorkspace }) {
     const [graphVersion, setGraphVersion] = useState(0);
     const [renderGraphId, setRenderGraphId] = useState(0);
     const [connectionSnapshot, setConnectionSnapshot] = useState([]);
+    const [configurationError, setConfigurationError] = useState(null);
 
     useEffect(() => {
         scriptsRef.current = scripts;
@@ -1453,13 +1454,33 @@ export default function Scripting({ onOpenWorkspace }) {
 
         const onReregister = (event) => {
             const { uuid } = event.detail;
-            const block = manager.current.units.find((unit) => unit.uuid === uuid);
-            if (block) {
-                block.reregister();
-                manager.current.recomputeBindings();
+            const result = manager.current.reconfigureUnitDetailed(uuid, {});
+            if (result.ok) {
+                setConfigurationError(null);
                 syncSolvedGraphUi();
                 markGraphChanged();
+            } else {
+                setConfigurationError(result.error);
             }
+        };
+
+        const onReconfigure = (event) => {
+            const { uuid, patch } = event.detail || {};
+            const result = manager.current.reconfigureUnitDetailed(uuid, patch || {});
+            event.detail.result = result;
+            if (!result.ok) {
+                setConfigurationError(result.error);
+                return;
+            }
+
+            setConfigurationError(null);
+            if (uuid === headUUID.current) {
+                const next = normalizeOutputNodeState(result.state || result.storedData || {});
+                outputNodeConfigRef.current = next;
+                setOutputNodeConfig(next);
+            }
+            syncSolvedGraphUi();
+            markGraphChanged();
         };
 
         const onDeleteUnit = (event) => {
@@ -1508,6 +1529,7 @@ export default function Scripting({ onOpenWorkspace }) {
 
         document.addEventListener("data-stored", onData);
         document.addEventListener("reregister-unit", onReregister);
+        document.addEventListener("reconfigure-unit", onReconfigure);
         document.addEventListener("delete-unit", onDeleteUnit);
         document.addEventListener("unit-position-changed", onPositionChanged);
         document.addEventListener("unit-double-click", onUnitDoubleClick);
@@ -1515,6 +1537,7 @@ export default function Scripting({ onOpenWorkspace }) {
         return () => {
             document.removeEventListener("data-stored", onData);
             document.removeEventListener("reregister-unit", onReregister);
+            document.removeEventListener("reconfigure-unit", onReconfigure);
             document.removeEventListener("delete-unit", onDeleteUnit);
             document.removeEventListener("unit-position-changed", onPositionChanged);
             document.removeEventListener("unit-double-click", onUnitDoubleClick);
@@ -1523,53 +1546,23 @@ export default function Scripting({ onOpenWorkspace }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    const disconnectOutputNodePorts = (portIds) => {
-        if (portIds.length === 0) return;
-
-        const block = manager.current.units.find((unit) => unit.uuid === headUUID.current);
-        const uniquePortIds = [...new Set(portIds)];
-
-        uniquePortIds.forEach((portId) => {
-            const connection = block?.inputs?.[portId];
-            if (!connection) return;
-
-            const output = connection.getOutput();
-            manager.current.disconnectUnits(output.unit.uuid, output.label, headUUID.current, portId);
-        });
-
-        document.dispatchEvent(new CustomEvent("delete-port-connections", {
-            detail: {
-                uuid: headUUID.current,
-                labels: uniquePortIds,
-                notifyBackend: false
-            }
-        }));
-        syncSolvedGraphUi();
-    };
-
     const updateOutputNodeConfig = (patch) => {
-        const previous = normalizeOutputNodeState(outputNodeConfigRef.current);
         const next = normalizeOutputNodeState(patch);
-        const nextById = new Map(next.outputs.map((output) => [output.id, output]));
-        const disconnectedPortIds = previous.outputs
-            .filter((output) => {
-                const nextOutput = nextById.get(output.id);
-                return !nextOutput || nextOutput.type !== output.type;
-            })
-            .map((output) => output.id);
-
-        disconnectOutputNodePorts(disconnectedPortIds);
-
-        outputNodeConfigRef.current = next;
-        setOutputNodeConfig(next);
-        manager.current.storeData(headUUID.current, next);
-
-        const block = manager.current.units.find((unit) => unit.uuid === headUUID.current);
-        if (block) {
-            block.hydrateState(next);
+        const result = manager.current.reconfigureUnitDetailed(headUUID.current, {
+            state: next,
+            storedData: next
+        });
+        if (!result.ok) {
+            setConfigurationError(result.error);
+            return result;
         }
 
+        setConfigurationError(null);
+        outputNodeConfigRef.current = next;
+        setOutputNodeConfig(next);
+        syncSolvedGraphUi();
         markGraphChanged();
+        return result;
     };
 
     const addUnit = (catalogEntry, uuid, position) => {
@@ -2067,6 +2060,12 @@ export default function Scripting({ onOpenWorkspace }) {
             {saveFeedbackVisible && (
                 <div className="fixed left-1/2 top-4 z-[60] -translate-x-1/2 rounded-[4px] border border-white/10 bg-[var(--slate-floating)] px-3 py-1.5 text-xs font-medium text-zinc-100 shadow-[0_12px_36px_rgba(0,0,0,0.28)] backdrop-blur-sm" role="status" aria-live="polite">
                     Saved
+                </div>
+            )}
+
+            {configurationError && (
+                <div className="fixed left-1/2 top-14 z-[60] max-w-[520px] -translate-x-1/2 rounded-[4px] border border-red-300/20 bg-red-950/90 px-3 py-2 text-xs text-red-100 shadow-[0_12px_36px_rgba(0,0,0,0.28)]" role="alert" aria-live="assertive">
+                    {configurationError}
                 </div>
             )}
 

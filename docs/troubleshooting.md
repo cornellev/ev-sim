@@ -35,8 +35,9 @@ Common causes:
 - A candidate wire would bind one generic variable to two concrete types (existing wires stay).
 - An older graph still wires `written`, `ok`, or `staged`; rewire `then` and keep the last valid compiled artifact until compile succeeds.
 - Program input or output labels are duplicated.
-- A block was added to `UnitCatalog.js` but not registered in `registerBuiltInBlocks.js`.
+- A block type was omitted from `UnitCatalog.meta.js`, or its React component was not mapped by the same explicit type in `UnitCatalog.js`.
 - A dynamic port changed type and existing connections were removed.
+- A route-controller script maps an `actor_command` output to speed or steering; those mappings must be `float64`.
 
 See [Scripting Troubleshooting](scripting/troubleshooting.md).
 

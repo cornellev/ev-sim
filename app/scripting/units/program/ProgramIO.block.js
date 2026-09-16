@@ -11,7 +11,7 @@ export class ProgramInputBlock extends UnitBlock {
     static programNodeRole = "input";
 
     register() {
-        const data = this.getStoredData() || this.state || createProgramInputState();
+        const data = this.getStoredData() ?? this.state ?? createProgramInputState();
         this.state = normalizeProgramInputState(data, 0, this.uuid);
 
         this.registerOutput("input", this.state.type);
@@ -42,7 +42,7 @@ export class OutputNodeBlock extends UnitBlock {
     static programNodeRole = "output";
 
     register() {
-        const data = this.getStoredData() || this.state || normalizeOutputNodeState();
+        const data = this.getStoredData() ?? this.state ?? normalizeOutputNodeState();
         const state = normalizeOutputNodeState(data);
 
         this.state = state;

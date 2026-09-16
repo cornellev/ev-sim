@@ -29,11 +29,12 @@ const outputs = script.run({ input: 21 });
 - `app/scripting/Scripting.js`: canvas shell, output node sidebar, compile/run/import buttons.
 - `app/scripting/ScriptManager.js`: graph manager, `UnitBlock`, connections, compiled program wrapper.
 - `app/scripting/LineManager.js`: visual wire creation and deletion.
-- `app/scripting/UnitCatalog.js`: block library inventory, categories, React components, and backend block classes.
+- `app/scripting/UnitCatalog.meta.js`: authoritative server-safe block types, categories, keywords, settings, placeability, and backend classes.
+- `app/scripting/UnitCatalog.js`: React components attached to catalog entries by stable type.
 - `app/scripting/AddMenu.js`: searchable/categorized block library UI and spawn positioning.
 - `app/scripting/ScriptRuntime.js`: load local or URL scripts and run compiled artifacts from code.
 - `app/scripting/BlockRegistry.js`: block type registry.
-- `app/scripting/types/PortTypes.js`: `generic` compatibility, `unit` singleton, and `portsCompatible()`.
+- `app/scripting/types/PortTypes.js`: `generic` compatibility, `unit` singleton, `actor_command` normalization, and `portsCompatible()`.
 - `app/scripting/types/TypeScheme.js`: per-block type variable schemes.
 - `app/scripting/types/unifyGraph.js`: graph-wide unification (union-find).
 - `app/scripting/registerBuiltInBlocks.js`: built-in block registration.

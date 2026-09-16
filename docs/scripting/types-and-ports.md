@@ -17,8 +17,9 @@ Current base types:
 - `tex1d`
 - `generic` (editor-only wire color; not a program I/O type)
 - `unit` (concrete sequencing token; allowed as program I/O)
+- `actor_command` (concrete `{ actorId, speedMps, steeringRad }` value; allowed as program I/O)
 
-For bracketed types, such as `array[float64]`, the UI can fall back to the base type color. `generic` is listed in `Constants.TYPES` for unbound polymorphic ports. It is **not** in `ProgramTypes.SUPPORTED_TYPES` and must never appear in compiled artifacts. `unit` is in `SUPPORTED_TYPES`. `parseValueByType(_, "unit")` always returns the `UNIT` singleton from `PortTypes.js`.
+For bracketed types, such as `array[float64]`, the UI can fall back to the base type color. `generic` is listed in `Constants.TYPES` for unbound polymorphic ports. It is **not** in `ProgramTypes.SUPPORTED_TYPES` and must never appear in compiled artifacts. `unit` and `actor_command` are in `SUPPORTED_TYPES`. `parseValueByType(_, "unit")` always returns the `UNIT` singleton from `PortTypes.js`. Numeric parsing uses `finiteFloat()` / `finiteInt32()`; nonfinite values become zero and int32 values truncate and clamp to the signed range. `normalizeActorCommand()` applies the same finite rule, defaults `actorId` to `""`, and drops extra keys.
 
 ## Program I/O Types
 
@@ -37,6 +38,7 @@ Current supported program I/O types:
 - `array[string]`
 - `custom[string]`
 - `unit`
+- `actor_command`
 
 ## Sequencing And Effect Ports
 
@@ -45,6 +47,14 @@ Current supported program I/O types:
 Current effect blocks expose `then: unit` plus an identity or status output (`value`, `state`, `path`, `count`, `index`). They are reachable only when a downstream node consumes `then` or that identity output. Explicit `Sequence` / `Passthrough` is required for effect order.
 
 Frozen v2 and early-v3 artifacts may still snapshot `written`, `ok`, or `staged`. `BlockOutput.setDeclared(unit, label, value)` writes a label only when `unit.outputType(label)` exists, so one `execute()` body serves current ports and frozen legacy ports. Editable graphs that still wire `written` / `ok` / `staged` are not migrated; restore records `restoreErrors`, compile fails closed, and `latestValidArtifact` stays runnable until the user rewires.
+
+## Actor Command
+
+`actor_command` is a scripting value type, not a scenario controller contract. The normalized payload is `{ actorId: string, speedMps: number, steeringRad: number }`.
+
+`Make Actor Command` takes required `speed` / `steering` (`float64`) and optional `actorId` (`string`), and outputs `command`. `Split Actor Command` inverts that: `command` in, `speed` / `steering` / `actorId` out. Port labels map to payload fields as `speed` ↔ `speedMps` and `steering` ↔ `steeringRad`. Unwired `actorId` becomes `""`.
+
+Route-controller speed and steering mappings remain `float64`. A compiled program may export `actor_command`, but `StorageService` scenario resolution rejects mapping that output to `speed` or `steering`.
 
 ## Port Matching
 
@@ -86,6 +96,6 @@ Program Input uses this pattern. Its visible external label defaults to `input`,
 
 ## Dynamic Ports
 
-When a block changes its port type map, call `reregister(_uuid)` from the UI. This dispatches `reregister-unit`, and `Scripting.js` calls the matching backend block's `reregister()`.
+When a setting changes a block's port map or generic acceptance, call `requestUnitReconfiguration(_uuid, patch)` from the UI. `Scripting.js` invokes `ScriptManager.reconfigureUnitDetailed()`, runs graph-wide unification, and commits the React setting only on success. `reregister-unit` remains a compatibility event and uses the same atomic manager path.
 
 When changing a port type would invalidate existing wires, remove those wires through the `delete-port-connections` event or another explicit disconnect path.

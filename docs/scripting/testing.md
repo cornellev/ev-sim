@@ -24,7 +24,9 @@ Add or update tests when changing:
 - Runtime cycles on live graphs (`Cycle detected at runtime while evaluating "<uuid>"`) plus `SignalStore` rollback of staged writes.
 - Frozen `nodes[].ports` overlay during hydrate, including v2/early-v3 `written` / `ok` / `staged` versus current `then` ports.
 - Effect sequencing: `Sequence` order, `Passthrough` reachability, unused lazy `WriteSignal` branches, and fail-closed restore of missing ports.
-- Program input/output behavior, including `unit`.
+- Program input/output behavior, including `unit` and `actor_command`.
+- Make/Split actor-command normalization, optional `actorId`, and `If<actor_command>`.
+- Scenario resolution rejecting an `actor_command` program output mapped to route-controller `speed`/`steering`.
 - Runtime state hydration or serialization.
 - Imported compiled program behavior.
 - Block registration behavior.
@@ -48,9 +50,9 @@ The existing tests define small in-file block classes such as constant, add, inp
 For UI-facing scripting changes, also run the app and verify:
 
 - `Ctrl+A` or `Cmd+A` opens the block library, unless focus is inside an editable field.
-- Category filters and search find the expected `UnitCatalog.js` entries.
+- Category filters and keyword search find the expected placeable `UnitCatalog.meta.js` entries; deprecated composites remain absent.
 - Wires connect between compatible types, including concrete-to-generic, and polymorphic ports refresh after connect/disconnect.
-- Conflicting concrete types through a generic component are rejected without dropping existing wires.
+- Conflicting concrete types and typed setting changes are rejected without changing controls, bindings, or dropping existing wires.
 - The validity badge updates after adding, connecting, deleting, or re-registering units.
 - `Compile` downloads a JSON artifact (`version: 3`).
 - `Run Compiled` logs a success or meaningful failure.

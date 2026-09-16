@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { reregister, storeData } from "../../ScriptManager";
+import { useState } from "react";
+import { requestUnitReconfiguration } from "../../ScriptManager";
 import { SIGNAL_NAMESPACES, SIGNAL_PATHS } from "../../runtime/SignalPaths";
 import Unit from "../Unit";
 import { normalizeType, SUPPORTED_TYPES } from "../program/ProgramTypes.js";
@@ -169,16 +169,14 @@ function ConfigUnit({
 }) {
     const [data, setData] = useState(() => normalize(normalizeConfig(defaults, initialData || initialState || {})));
 
-    useEffect(() => {
-        storeData(_uuid, data);
-        reregister(_uuid);
-    }, [data, _uuid]);
-
     const commit = (patch) => {
-        setData((previous) => normalize({
-            ...previous,
-            ...(typeof patch === "function" ? patch(previous) : patch)
-        }));
+        const next = normalize({
+            ...data,
+            ...(typeof patch === "function" ? patch(data) : patch)
+        });
+        const result = requestUnitReconfiguration(_uuid, { storedData: next });
+        if (result.ok) setData(next);
+        return result;
     };
 
     const resolvedInputs = typeof inputs === "function" ? inputs(data, portTypes) : inputs;

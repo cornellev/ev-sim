@@ -1,7 +1,6 @@
 
 
 import Unit from "../../Unit";
-import { useRef } from "react";
 
 export function Scale({ _uuid }) {
     return (
@@ -22,10 +21,8 @@ export function Scale({ _uuid }) {
 }
 
 export function MultiplyTex({ _uuid }) {
-    const canvasRef = useRef();
-
     return (
-        <Unit title="Multiply Textures" hasOptions={true} _uuid={_uuid}
+        <Unit title="Multiply Textures" hasOptions={false} _uuid={_uuid}
         inputs={
             [
                 {label: "tex1d_a", type: "tex1d"},
@@ -36,11 +33,7 @@ export function MultiplyTex({ _uuid }) {
             [
                 {label: "result", type: "tex1d"}
             ]
-        }>
-            <div className="w-full h-full flex items-center justify-center">
-            <canvas id={`canvas-${_uuid}`} className="w-[192px] h-[192px]" ref={canvasRef} />
-            </div>
-        </Unit>
+        } />
     );
 }
 export { ScaleBlock, MultiplyTexBlock } from "./Scale.block.js";

@@ -1,4 +1,5 @@
 import { BlockOutput, UnitBlock } from "../../ScriptManager.js";
+import { finiteFloat } from "../../types/PortTypes.js";
 
 export class NumberUnitClass extends UnitBlock {
     register() {
@@ -10,7 +11,7 @@ export class NumberUnitClass extends UnitBlock {
     }
 
     execute() {
-        const value = this.getStoredData();
+        const value = finiteFloat(this.getStoredData());
         return new BlockOutput().set("number", value);
     }
 }

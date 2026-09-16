@@ -148,6 +148,7 @@ export function restoreManagerFromGraph(graph, getBlockClass, {
 
         if (node.storedData !== undefined) {
             manager.storeData(node.uuid, node.storedData);
+            block.reregister();
         }
 
         if (node.runtimeState && typeof block.hydrateRuntimeState === "function") {
@@ -208,6 +209,53 @@ export function mutateGraphConnections(graph, getBlockClass, mutate, extras = {}
         graph: nextGraph,
         ...result
     };
+}
+
+export function reconfigureGraphUnit(graph, getBlockClass, uuid, patch = {}, extras = {}) {
+    const headUUID = graph?.head || extras.headUUID || "head-uuid";
+    const positions = {
+        [headUUID]: cloneJson(graph?.headPosition || null),
+        ...Object.fromEntries((graph?.nodes || []).map((node) => [node.uuid, cloneJson(node.position || null)]))
+    };
+    const manager = restoreManagerFromGraph(graph, getBlockClass, {
+        headUUID,
+        ...extras
+    });
+    const unit = manager.units.find((candidate) => candidate.uuid === uuid);
+    if (!unit) return { ok: false, error: `Unit "${uuid}" not found.` };
+
+    const configuration = {};
+    if (Object.prototype.hasOwnProperty.call(patch, "state")) configuration.state = patch.state;
+    if (Object.prototype.hasOwnProperty.call(patch, "storedData")) configuration.storedData = patch.storedData;
+
+    const result = manager.reconfigureUnitDetailed(uuid, configuration);
+    if (!result.ok) return result;
+
+    if (patch.position) positions[uuid] = cloneJson(patch.position);
+    pruneRestoreErrors(manager);
+
+    const headUnit = manager.units.find((candidate) => candidate.uuid === headUUID);
+    const outputNodeConfig = headUnit
+        ? normalizeOutputNodeState(headUnit.serializeState())
+        : normalizeOutputNodeState(graph?.outputNodeConfig || {});
+    const nextGraph = serializeManagerGraph(manager, {
+        outputNodeConfig,
+        positions,
+        headUUID
+    });
+    nextGraph.connections = mergeUnrestoredConnections(nextGraph.connections, manager.restoreErrors);
+
+    const node = uuid === headUUID
+        ? {
+            uuid,
+            type: "OutputNodeBlock",
+            state: cloneJson(outputNodeConfig),
+            storedData: cloneJson(outputNodeConfig),
+            position: cloneJson(positions[uuid] || null)
+        }
+        : nextGraph.nodes.find((candidate) => candidate.uuid === uuid) || null;
+
+    return { ok: true, error: null, graph: nextGraph, node };
 }
 
 export function getGraphScriptReferences(graph) {

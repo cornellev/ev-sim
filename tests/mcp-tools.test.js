@@ -43,6 +43,7 @@ import {
 import { registerRunManifestTools } from "../server/mcp/runManifestTools.js";
 import { registerScenarioTools } from "../server/mcp/scenarioTools.js";
 import { registerExperimentTools } from "../server/mcp/experimentTools.js";
+import { registerScriptingTools } from "../server/mcp/scriptingTools.js";
 import { createDefaultRunManifest } from "../app/simulation/RunManifest.js";
 import { createDefaultScenario } from "../app/scenarios/ScenarioDocument.js";
 import { createDefaultExperimentSuite } from "../app/experiments/ExperimentSuite.js";
@@ -153,6 +154,65 @@ test("script graph mutations persist through StorageService", async () => {
         assert.equal(loaded.graph.nodes[0].storedData, 3.5);
         assert.equal(loaded.graph.outputNodeConfig.outputs[0].label, "value");
         assert.equal(loaded.graph.connections[0].to, "head-uuid");
+    });
+});
+
+test("script_update_unit rejects incompatible typed changes without persisting partial state", async () => {
+    await withTempStorage(async (storage) => {
+        const document = createScriptDocument({
+            id: "script-atomic",
+            name: "Atomic",
+            graph: createEmptyGraph(),
+        });
+        document.graph.nodes.push({
+            uuid: "number",
+            type: "NumberUnitClass",
+            state: {},
+            storedData: 3,
+            runtimeState: {},
+            position: { x: 0, y: 0 },
+        });
+        document.graph.outputNodeConfig = {
+            outputs: [{ id: "output", label: "value", type: "float64" }],
+        };
+        document.graph.connections.push({
+            from: "number",
+            output: "number",
+            to: "head-uuid",
+            input: "output",
+            type: "float64",
+        });
+        await storage.putScript(document);
+
+        const tools = new Map();
+        registerScriptingTools({
+            registerTool(name, _definition, handler) {
+                tools.set(name, handler);
+            },
+        }, storage);
+        const update = tools.get("script_update_unit");
+        const before = await storage.getScript("script-atomic");
+        const rejected = await update({
+            scriptId: "script-atomic",
+            uuid: "head-uuid",
+            state: { outputs: [{ id: "output", label: "value", type: "string" }] },
+            x: 99,
+        });
+        assert.equal(rejected.isError, true);
+        assert.match(rejected.content[0].text, /Type mismatch/);
+        assert.deepEqual(await storage.getScript("script-atomic"), before);
+
+        const accepted = await update({
+            scriptId: "script-atomic",
+            uuid: "head-uuid",
+            state: { outputs: [{ id: "output", label: "renamed", type: "float64" }] },
+            x: 99,
+        });
+        assert.equal(accepted.isError, undefined);
+        const saved = await storage.getScript("script-atomic");
+        assert.equal(saved.graph.outputNodeConfig.outputs[0].label, "renamed");
+        assert.equal(saved.graph.headPosition.x, 99);
+        assert.equal(saved.graph.connections.length, 1);
     });
 });
 

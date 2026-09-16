@@ -92,7 +92,7 @@ For environment editor or earth import changes, also verify:
 ## Conventions
 
 - Keep visual scripting block UI and backend `UnitBlock` behavior in sync.
-- Register compileable blocks in both the block registry path and `UnitCatalog.js`.
+- Declare compileable blocks once in `UnitCatalog.meta.js`, then attach their React component by stable type in `UnitCatalog.js`; registration is derived from the server-safe metadata.
 - Keep message definitions in `public/messages/` synchronized with the orchestrator repo when they are used as browser fallbacks - this will be edited soon to be synchronized.
 - Do not commit downloaded CommonRoad scenario folders or other large generated assets.
 

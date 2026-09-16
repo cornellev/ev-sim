@@ -1,4 +1,5 @@
 import { BlockOutput, UnitBlock } from "../../ScriptManager.js";
+import { finiteFloat, finiteInt32 } from "../../types/PortTypes.js";
 
 function hashNoise(x, y, seed) {
     const v = Math.sin((x * 127.1 + y * 311.7 + seed * 74.7) * 0.0174533) * 43758.5453;
@@ -42,10 +43,10 @@ export class TerrainNoiseBlock extends UnitBlock {
     }
 
     execute() {
-        const seed = this.getInput("seed") || 0;
-        const baseFrequency = Math.max(0.0001, this.getInput("frequency") || 1);
-        const amplitude = this.getInput("amplitude") || 1;
-        const octaves = Math.max(1, Math.min(8, Math.floor(this.getInput("octaves") || 1)));
+        const seed = finiteFloat(this.getInput("seed"));
+        const baseFrequency = Math.max(0.0001, finiteFloat(this.getInput("frequency"), 1));
+        const amplitude = finiteFloat(this.getInput("amplitude"), 1);
+        const octaves = Math.max(1, Math.min(8, finiteInt32(this.getInput("octaves"), 1)));
 
         const size = 64;
         const out = new Array(size * size);
@@ -86,7 +87,7 @@ export class NormalizeTextureBlock extends UnitBlock {
     }
 
     execute() {
-        const input = this.getInput("tex") || [];
+        const input = this.getInput("tex") ?? [];
         if (input.length === 0) {
             return new BlockOutput().set("out", []);
         }
@@ -120,9 +121,9 @@ export class BlendTextureBlock extends UnitBlock {
     }
 
     execute() {
-        const a = this.getInput("tex a") || [];
-        const b = this.getInput("tex b") || [];
-        const t = Math.max(0, Math.min(1, this.getInput("blend") || 0));
+        const a = this.getInput("tex a") ?? [];
+        const b = this.getInput("tex b") ?? [];
+        const t = Math.max(0, Math.min(1, finiteFloat(this.getInput("blend"))));
         const len = Math.min(a.length, b.length);
         const out = new Array(len);
 
@@ -146,8 +147,8 @@ export class TerraceTextureBlock extends UnitBlock {
     }
 
     execute() {
-        const input = this.getInput("tex") || [];
-        const steps = Math.max(2, Math.floor(this.getInput("steps") || 8));
+        const input = this.getInput("tex") ?? [];
+        const steps = Math.max(2, finiteInt32(this.getInput("steps"), 8));
 
         const out = input.map(v => {
             const clamped = Math.max(0, Math.min(1, v));
@@ -169,7 +170,7 @@ export class HeightToSlopeBlock extends UnitBlock {
     }
 
     execute() {
-        const input = this.getInput("tex") || [];
+        const input = this.getInput("tex") ?? [];
         if (input.length === 0) {
             return new BlockOutput().set("slope", []);
         }

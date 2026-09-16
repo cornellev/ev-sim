@@ -79,7 +79,7 @@ The compiler rejects missing ports, type mismatches, duplicate input edges, and 
 - `type`: exported type.
 - `portId`: optional stable internal port id, used by multi-output nodes.
 
-Program input/output labels must be unique within each role.
+Program input/output labels must be unique within each role. Exported `type` values are concrete strings from `SUPPORTED_TYPES`, including `unit` and `actor_command`. They must never be `generic`.
 
 ## Evaluation Policy
 

@@ -10,6 +10,7 @@ import {
 } from "../app/scripting/ScriptManager.js";
 import {
     mutateGraphConnections,
+    reconfigureGraphUnit,
     restoreManagerFromGraph,
     serializeManagerGraph,
 } from "../app/scripting/GraphDocument.js";
@@ -25,16 +26,21 @@ import {
     SignalLatchBlock,
     WriteSignalBlock,
 } from "../app/scripting/units/signals/SignalBlocks.block.js";
-import { OutputNodeBlock } from "../app/scripting/units/program/ProgramIO.block.js";
+import { OutputNodeBlock, ProgramInputBlock } from "../app/scripting/units/program/ProgramIO.block.js";
 import {
     normalizeType,
     parseValueByType,
     SUPPORTED_TYPES,
 } from "../app/scripting/units/program/ProgramTypes.js";
 import {
+    MakeActorCommandBlock,
+} from "../app/scripting/units/mission/ActorCommand.block.js";
+import {
+    ACTOR_COMMAND_TYPE,
     GENERIC_TYPE,
     isConcreteType,
     isGeneric,
+    normalizeActorCommand,
     portsCompatible,
     UNIT,
     UNIT_TYPE,
@@ -78,6 +84,20 @@ class OutputBlock extends UnitBlock {
 
     register() {
         this.registerInput("output", this.state?.type || "float64");
+    }
+
+    serializeState() {
+        return { ...this.state };
+    }
+
+    getProgramPortDefinition() {
+        return {
+            role: "output",
+            uuid: this.uuid,
+            portId: "output",
+            label: "result",
+            type: this.state.type,
+        };
     }
 
     valid() {
@@ -150,7 +170,9 @@ function resetRegistry() {
         WriteSignalBlock,
         NumberUnitClass,
         StringBlock,
+        ProgramInputBlock,
         OutputNodeBlock,
+        MakeActorCommandBlock,
     ].forEach((blockClass) => registerBlockType(blockClass.name, blockClass));
 }
 
@@ -173,6 +195,10 @@ test("portsCompatible treats generic as a wildcard and requires exact concrete e
     assert.equal(isConcreteType(UNIT_TYPE), true);
     assert.equal(portsCompatible(UNIT_TYPE, UNIT_TYPE), true);
     assert.equal(portsCompatible(UNIT_TYPE, "float64"), false);
+    assert.equal(isConcreteType(ACTOR_COMMAND_TYPE), true);
+    assert.equal(portsCompatible(ACTOR_COMMAND_TYPE, ACTOR_COMMAND_TYPE), true);
+    assert.equal(portsCompatible(ACTOR_COMMAND_TYPE, "float64"), false);
+    assert.equal(portsCompatible(ACTOR_COMMAND_TYPE, UNIT_TYPE), false);
 });
 
 test("parseValueByType always returns the UNIT singleton", () => {
@@ -182,6 +208,28 @@ test("parseValueByType always returns the UNIT singleton", () => {
     assert.equal(parseValueByType(undefined, UNIT_TYPE), UNIT);
     assert.equal(parseValueByType("foo", UNIT_TYPE), UNIT);
     assert.equal(parseValueByType({ type: "nope" }, UNIT_TYPE), UNIT);
+});
+
+test("parseValueByType normalizes actor_command payloads", () => {
+    const empty = { actorId: "", speedMps: 0, steeringRad: 0 };
+    assert.equal(SUPPORTED_TYPES.includes(ACTOR_COMMAND_TYPE), true);
+    assert.equal(normalizeType(ACTOR_COMMAND_TYPE), ACTOR_COMMAND_TYPE);
+    assert.deepEqual(parseValueByType(undefined, ACTOR_COMMAND_TYPE), empty);
+    assert.deepEqual(parseValueByType({}, ACTOR_COMMAND_TYPE), empty);
+    assert.deepEqual(parseValueByType("", ACTOR_COMMAND_TYPE), empty);
+    assert.deepEqual(
+        parseValueByType('{"actorId":"ego","speedMps":5,"steeringRad":0.1}', ACTOR_COMMAND_TYPE),
+        { actorId: "ego", speedMps: 5, steeringRad: 0.1 },
+    );
+    assert.deepEqual(
+        parseValueByType({ actorId: "npc", speedMps: "3.5", steeringRad: "bad", extra: 9 }, ACTOR_COMMAND_TYPE),
+        { actorId: "npc", speedMps: 3.5, steeringRad: 0 },
+    );
+    assert.deepEqual(parseValueByType({ actorId: null }, ACTOR_COMMAND_TYPE), empty);
+    assert.deepEqual(
+        normalizeActorCommand({ actorId: 7, speedMps: Infinity, steeringRad: undefined }),
+        { actorId: "7", speedMps: 0, steeringRad: 0 },
+    );
 });
 
 test("BlockOutput.setDeclared writes only ports present on the unit", () => {
@@ -441,4 +489,138 @@ test("MCP-style mutateGraphConnections rejects conflicts before rewriting the gr
     assert.equal(disconnected.ok, true);
     const unbound = disconnected.graph.nodes.find((node) => node.uuid === "iff");
     assert.equal(unbound.typeBindings, undefined);
+});
+
+test("actor_command cannot connect to float64 and binds If T", () => {
+    resetRegistry();
+    const conflictManager = new ScriptManager();
+    conflictManager.addUnit(new MakeActorCommandBlock("make"));
+    conflictManager.addUnit(new OutputBlock("output"));
+    const conflict = conflictManager.connectUnitsDetailed("make", "command", "output", "output");
+    assert.equal(conflict.ok, false);
+    assert.equal(conflictManager.units.find((unit) => unit.uuid === "output").inputs.output, undefined);
+
+    const manager = new ScriptManager();
+    manager.addUnit(new BooleanConstBlock("cond", true));
+    manager.addUnit(new MakeActorCommandBlock("true-cmd"));
+    manager.addUnit(new MakeActorCommandBlock("false-cmd"));
+    manager.addUnit(new TypedConstBlock("speed", 1));
+    manager.addUnit(new TypedConstBlock("steering", 0.2));
+    manager.addUnit(new IfBlock("if"));
+    manager.addUnit(new OutputBlock("output", ACTOR_COMMAND_TYPE));
+    connect(manager, "speed", "out", "true-cmd", "speed");
+    connect(manager, "steering", "out", "true-cmd", "steering");
+    connect(manager, "speed", "out", "false-cmd", "speed");
+    connect(manager, "steering", "out", "false-cmd", "steering");
+    connect(manager, "cond", "out", "if", "condition");
+    connect(manager, "true-cmd", "command", "if", "true value");
+    connect(manager, "false-cmd", "command", "if", "false value");
+    connect(manager, "if", "out", "output", "output");
+    assert.equal(manager.units.find((unit) => unit.uuid === "if").typeBindings.T, ACTOR_COMMAND_TYPE);
+    const artifact = manager.compile("if-actor-command");
+    const ifNode = artifact.nodes.find((node) => node.uuid === "if");
+    assert.equal(ifNode.ports.outputs.out, ACTOR_COMMAND_TYPE);
+    assert.equal(artifact.interface.outputs[0].type, ACTOR_COMMAND_TYPE);
+    assert.equal(JSON.stringify(artifact).includes("generic"), false);
+});
+
+test("reconfigureUnitDetailed commits compatible changes and rolls back port conflicts", () => {
+    resetRegistry();
+    const manager = new ScriptManager();
+    const input = new ProgramInputBlock("input");
+    manager.addUnit(input);
+    manager.storeData("input", { label: "value", type: "float64", defaultValue: "0" });
+    input.reregister();
+    manager.addUnit(new OutputBlock("output", "float64"));
+    connect(manager, "input", "input", "output", "output");
+
+    const beforePorts = structuredClone(input.typeMap);
+    const beforeStoredData = structuredClone(manager.getStoredData("input"));
+    const rejected = manager.reconfigureUnitDetailed("input", {
+        storedData: { label: "value", type: "string", defaultValue: "" },
+    });
+    assert.equal(rejected.ok, false);
+    assert.match(rejected.error, /Type mismatch/);
+    assert.deepEqual(input.typeMap, beforePorts);
+    assert.deepEqual(manager.getStoredData("input"), beforeStoredData);
+    assert.equal(input.outputs.input.length, 1);
+    assert.equal(manager.units.find((unit) => unit.uuid === "output").inputs.output.getOutput().unit, input);
+
+    assert.equal(manager.disconnectUnits("input", "input", "output", "output"), true);
+    const accepted = manager.reconfigureUnitDetailed("input", {
+        storedData: { label: "text", type: "string", defaultValue: "" },
+    });
+    assert.equal(accepted.ok, true, accepted.error);
+    assert.equal(accepted.ports.outputs.input, "string");
+    assert.equal(accepted.storedData.label, "text");
+});
+
+test("reconfigureUnitDetailed restores generic bindings and OutputNode ports atomically", () => {
+    resetRegistry();
+    const equalityManager = new ScriptManager();
+    const left = new StringBlock("left");
+    const right = new StringBlock("right");
+    const equality = new EqualityBlock("equality");
+    equalityManager.addUnit(left);
+    equalityManager.addUnit(right);
+    equalityManager.addUnit(equality);
+    equalityManager.storeData("left", "a");
+    equalityManager.storeData("right", "b");
+    equalityManager.storeData("equality", "eq");
+    connect(equalityManager, "left", "out", "equality", "input a");
+    connect(equalityManager, "right", "out", "equality", "input b");
+    assert.equal(equality.typeBindings.T, "string");
+
+    const rejectedOperator = equalityManager.reconfigureUnitDetailed("equality", { storedData: "gt" });
+    assert.equal(rejectedOperator.ok, false);
+    assert.match(rejectedOperator.error, /string is not accepted/);
+    assert.equal(equalityManager.getStoredData("equality"), "eq");
+    assert.deepEqual(equality.typeBindings, { T: "string" });
+
+    const outputManager = new ScriptManager();
+    const number = new NumberUnitClass("number");
+    const head = new OutputNodeBlock("head");
+    const config = { outputs: [{ id: "result", label: "result", type: "float64" }] };
+    head.hydrateState(config);
+    outputManager.addUnit(number);
+    outputManager.addUnit(head);
+    outputManager.storeData("number", 3);
+    outputManager.storeData("head", config);
+    outputManager.setHead("head");
+    connect(outputManager, "number", "number", "head", "result");
+
+    const next = { outputs: [{ id: "result", label: "result", type: "string" }] };
+    const rejectedHead = outputManager.reconfigureUnitDetailed("head", { state: next, storedData: next });
+    assert.equal(rejectedHead.ok, false);
+    assert.equal(head.typeMap.inputs.result, "float64");
+    assert.deepEqual(head.serializeState(), config);
+    assert.deepEqual(outputManager.getStoredData("head"), config);
+    assert.ok(head.inputs.result);
+});
+
+test("reconfigureGraphUnit leaves the source graph unchanged when a typed edit fails", () => {
+    resetRegistry();
+    const graph = {
+        head: "head",
+        headPosition: { x: 20, y: 30 },
+        outputNodeConfig: { outputs: [{ id: "result", label: "result", type: "float64" }] },
+        nodes: [{
+            uuid: "number",
+            type: "NumberUnitClass",
+            state: {},
+            storedData: 2,
+            runtimeState: {},
+            position: { x: 0, y: 0 },
+        }],
+        connections: [{ from: "number", output: "number", to: "head", input: "result", type: "float64" }],
+    };
+    const before = structuredClone(graph);
+    const next = { outputs: [{ id: "result", label: "result", type: "string" }] };
+    const rejected = reconfigureGraphUnit(graph, getRegisteredBlockType, "head", {
+        state: next,
+        storedData: next,
+        position: { x: 90, y: 100 },
+    });
+    assert.equal(rejected.ok, false);
+    assert.deepEqual(graph, before);
 });

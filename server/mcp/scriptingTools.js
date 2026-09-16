@@ -7,7 +7,7 @@ import {
     normalizeDocumentName,
     summarizeScriptDocument,
 } from "../../app/scripting/EditorDocument.js";
-import { mutateGraphConnections } from "../../app/scripting/GraphDocument.js";
+import { mutateGraphConnections, reconfigureGraphUnit } from "../../app/scripting/GraphDocument.js";
 import { getRegisteredBlockType } from "../../app/scripting/BlockRegistry.js";
 import { registerBuiltInBlocks } from "../../app/scripting/registerBuiltInBlocks.js";
 import { normalizeOutputNodeState } from "../../app/scripting/units/program/ProgramTypes.js";
@@ -292,50 +292,67 @@ export function registerScriptingTools(server, storage) {
                 const document = await requireEditableScript(storage, scriptId);
                 ensureGraph(document);
                 const headUuid = resolveHeadUuid(document.graph);
-
-                if (uuid === headUuid) {
-                    const patch = storedData !== undefined
-                        ? storedData
-                        : (state !== undefined ? state : null);
-                    if (patch !== null) {
-                        document.graph.outputNodeConfig = normalizeOutputNodeState(patch);
+                const currentNode = uuid === headUuid
+                    ? {
+                        state: normalizeOutputNodeState(document.graph.outputNodeConfig || {}),
+                        position: document.graph.headPosition || null,
                     }
-                    if (x !== undefined || y !== undefined) {
-                        document.graph.headPosition = {
-                            x: x ?? document.graph.headPosition?.x ?? 0,
-                            y: y ?? document.graph.headPosition?.y ?? 0,
-                        };
+                    : document.graph.nodes.find((entry) => entry.uuid === uuid);
+                if (!currentNode) return fail(`Unit "${uuid}" not found.`);
+
+                const hasConfiguration = storedData !== undefined || state !== undefined;
+                let updatedNode;
+
+                if (hasConfiguration) {
+                    registerBuiltInBlocks();
+                    const position = x !== undefined || y !== undefined
+                        ? {
+                            x: x ?? currentNode.position?.x ?? 0,
+                            y: y ?? currentNode.position?.y ?? 0,
+                        }
+                        : null;
+                    const unitPatch = position ? { position } : {};
+
+                    if (uuid === headUuid) {
+                        const nextConfig = normalizeOutputNodeState(
+                            storedData !== undefined ? storedData : state,
+                        );
+                        unitPatch.state = nextConfig;
+                        unitPatch.storedData = nextConfig;
+                    } else {
+                        if (state !== undefined) {
+                            unitPatch.state = { ...(currentNode.state || {}), ...state };
+                        }
+                        if (storedData !== undefined) unitPatch.storedData = storedData;
                     }
-                    document.updatedAt = nowIso();
-                    document.compileStatus = {
-                        ...document.compileStatus,
-                        valid: false,
-                        error: "Graph changed; run script_lint to recompile.",
-                    };
-                    await storage.putScript(document);
-                    storageEvents.publish({ domain: "script", id: scriptId, action: "updated" });
-                    return ok({
-                        ok: true,
-                        node: {
-                            uuid: headUuid,
-                            type: "OutputNodeBlock",
-                            state: document.graph.outputNodeConfig,
-                            storedData: document.graph.outputNodeConfig,
-                            position: document.graph.headPosition || null,
-                        },
-                    });
-                }
 
-                const node = document.graph.nodes.find((entry) => entry.uuid === uuid);
-                if (!node) return fail(`Unit "${uuid}" not found.`);
-
-                if (storedData !== undefined) node.storedData = storedData;
-                if (state !== undefined) node.state = { ...(node.state || {}), ...state };
-                if (x !== undefined || y !== undefined) {
-                    node.position = {
-                        x: x ?? node.position?.x ?? 0,
-                        y: y ?? node.position?.y ?? 0,
+                    const changed = reconfigureGraphUnit(
+                        document.graph,
+                        getRegisteredBlockType,
+                        uuid,
+                        unitPatch,
+                    );
+                    if (!changed.ok) return fail(changed.error);
+                    document.graph = changed.graph;
+                    updatedNode = changed.node;
+                } else if (uuid === headUuid) {
+                    document.graph.headPosition = {
+                        x: x ?? document.graph.headPosition?.x ?? 0,
+                        y: y ?? document.graph.headPosition?.y ?? 0,
                     };
+                    updatedNode = {
+                        uuid: headUuid,
+                        type: "OutputNodeBlock",
+                        state: document.graph.outputNodeConfig,
+                        storedData: document.graph.outputNodeConfig,
+                        position: document.graph.headPosition,
+                    };
+                } else {
+                    currentNode.position = {
+                        x: x ?? currentNode.position?.x ?? 0,
+                        y: y ?? currentNode.position?.y ?? 0,
+                    };
+                    updatedNode = currentNode;
                 }
                 document.updatedAt = nowIso();
                 document.compileStatus = {
@@ -345,7 +362,7 @@ export function registerScriptingTools(server, storage) {
                 };
                 await storage.putScript(document);
                 storageEvents.publish({ domain: "script", id: scriptId, action: "updated" });
-                return ok({ ok: true, node });
+                return ok({ ok: true, node: updatedNode });
             } catch (error) {
                 return fail(error);
             }

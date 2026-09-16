@@ -50,7 +50,11 @@ import {
     PassthroughBlock,
     SequenceBlock,
 } from "../app/scripting/units/statements/Unit.block.js";
-import { UNIT, UNIT_TYPE } from "../app/scripting/types/PortTypes.js";
+import {
+    MakeActorCommandBlock,
+    SplitActorCommandBlock,
+} from "../app/scripting/units/mission/ActorCommand.block.js";
+import { ACTOR_COMMAND_TYPE, UNIT, UNIT_TYPE } from "../app/scripting/types/PortTypes.js";
 import {
     assertSupportedArtifact,
     SUPPORTED_ARTIFACT_VERSIONS,
@@ -263,6 +267,22 @@ class ThrowBlock extends UnitBlock {
 
     execute() {
         throw new Error("boom");
+    }
+}
+
+class ThrowAfterInputBlock extends UnitBlock {
+    register() {
+        this.registerInput("value", "float64");
+        this.registerOutput("out", "float64");
+    }
+
+    valid() {
+        return this.hasInput("value");
+    }
+
+    execute() {
+        this.getInput("value");
+        throw new Error("downstream failure");
     }
 }
 
@@ -537,10 +557,23 @@ class StringConstBlock extends UnitBlock {
     constructor(uuid, value = "idle") {
         super(uuid);
         this.value = value;
+        this.state = { value };
+        this.reregister();
     }
 
     register() {
         this.registerOutput("out", "string");
+    }
+
+    serializeState() {
+        return { value: this.value };
+    }
+
+    hydrateState(state = {}) {
+        if (Object.prototype.hasOwnProperty.call(state, "value")) {
+            this.value = state.value;
+        }
+        super.hydrateState(state);
     }
 
     valid() {
@@ -572,6 +605,7 @@ function resetRegistry() {
         MultiOutputBlock,
         CountingBlock,
         ThrowBlock,
+        ThrowAfterInputBlock,
         BareObjectBlock,
         AccumulatorBlock,
         SignalWriteTestBlock,
@@ -606,6 +640,8 @@ function resetRegistry() {
         OrderedEffectBlock,
         MessageConstBlock,
         StringConstBlock,
+        MakeActorCommandBlock,
+        SplitActorCommandBlock,
     ].forEach((blockClass) => registerBlockType(blockClass.name, blockClass));
     registerBlockType(LocalScriptProgramBlock.blockType, LocalScriptProgramBlock);
 }
@@ -2005,3 +2041,182 @@ test("restoring written connections is fail-closed and does not compile a stripp
     assert.equal(writeNode.ports.outputs.written, undefined);
 });
 
+test("Make and Split actor_command round-trip, optional actorId, and normalize extras", () => {
+    resetRegistry();
+
+    const manager = new ScriptManager();
+    manager.addUnit(new ConstBlock("speed", 4));
+    manager.addUnit(new ConstBlock("steering", -0.2));
+    manager.addUnit(new StringConstBlock("id", "ego"));
+    manager.addUnit(new MakeActorCommandBlock("make"));
+    manager.addUnit(new SplitActorCommandBlock("split"));
+    manager.addUnit(new OutputBlock("speed-out", "speed", "float64"));
+    manager.addUnit(new OutputBlock("steer-out", "steering", "float64"));
+    manager.addUnit(new OutputBlock("id-out", "actorId", "string"));
+    connect(manager, "speed", "out", "make", "speed");
+    connect(manager, "steering", "out", "make", "steering");
+    connect(manager, "id", "out", "make", "actorId");
+    connect(manager, "make", "command", "split", "command");
+    connect(manager, "split", "speed", "speed-out", "output");
+    connect(manager, "split", "steering", "steer-out", "output");
+    connect(manager, "split", "actorId", "id-out", "output");
+
+    const run = manager.executeProgram();
+    assert.equal(run.status, "success");
+    assert.equal(run.outputs.speed, 4);
+    assert.equal(run.outputs.steering, -0.2);
+    assert.equal(run.outputs.actorId, "ego");
+
+    const optional = new ScriptManager();
+    optional.addUnit(new ConstBlock("speed", 1));
+    optional.addUnit(new ConstBlock("steering", 0));
+    optional.addUnit(new MakeActorCommandBlock("make"));
+    optional.addUnit(new OutputBlock("output", "result", ACTOR_COMMAND_TYPE));
+    connect(optional, "speed", "out", "make", "speed");
+    connect(optional, "steering", "out", "make", "steering");
+    connect(optional, "make", "command", "output", "output");
+    const optionalRun = optional.executeProgram();
+    assert.equal(optionalRun.status, "success");
+    assert.deepEqual(optionalRun.outputs.result, { actorId: "", speedMps: 1, steeringRad: 0 });
+    assert.equal(optional.units.find((unit) => unit.uuid === "make").valid(), true);
+
+    const raw = new ScriptManager();
+    raw.addUnit(new ProbeBlock("raw", { extra: 1, speedMps: "3.5" }, ACTOR_COMMAND_TYPE));
+    raw.addUnit(new SplitActorCommandBlock("split"));
+    raw.addUnit(new OutputBlock("speed-out", "speed", "float64"));
+    raw.addUnit(new OutputBlock("id-out", "actorId", "string"));
+    connect(raw, "raw", "out", "split", "command");
+    connect(raw, "split", "speed", "speed-out", "output");
+    connect(raw, "split", "actorId", "id-out", "output");
+    const rawRun = raw.executeProgram();
+    assert.equal(rawRun.status, "success");
+    assert.equal(rawRun.outputs.speed, 3.5);
+    assert.equal(rawRun.outputs.actorId, "");
+});
+
+test("If selects actor_command branches and compiles concrete interface types", () => {
+    resetRegistry();
+
+    const manager = new ScriptManager();
+    manager.addUnit(new BooleanConstBlock("cond", true));
+    manager.addUnit(new ConstBlock("true-speed", 4));
+    manager.addUnit(new ConstBlock("true-steer", -0.2));
+    manager.addUnit(new ConstBlock("false-speed", 1));
+    manager.addUnit(new ConstBlock("false-steer", 0));
+    manager.addUnit(new StringConstBlock("ego-id", "ego"));
+    manager.addUnit(new MakeActorCommandBlock("true-cmd"));
+    manager.addUnit(new MakeActorCommandBlock("false-cmd"));
+    manager.addUnit(new IfBlock("if"));
+    manager.addUnit(new OutputBlock("output", "result", ACTOR_COMMAND_TYPE));
+    connect(manager, "true-speed", "out", "true-cmd", "speed");
+    connect(manager, "true-steer", "out", "true-cmd", "steering");
+    connect(manager, "ego-id", "out", "true-cmd", "actorId");
+    connect(manager, "false-speed", "out", "false-cmd", "speed");
+    connect(manager, "false-steer", "out", "false-cmd", "steering");
+    connect(manager, "cond", "out", "if", "condition");
+    connect(manager, "true-cmd", "command", "if", "true value");
+    connect(manager, "false-cmd", "command", "if", "false value");
+    connect(manager, "if", "out", "output", "output");
+
+    const run = manager.executeProgram();
+    assert.equal(run.status, "success");
+    assert.deepEqual(run.outputs.result, { actorId: "ego", speedMps: 4, steeringRad: -0.2 });
+    assert.equal(manager.units.find((unit) => unit.uuid === "if").typeBindings.T, ACTOR_COMMAND_TYPE);
+
+    const artifact = manager.compile("if-actor-command");
+    assert.equal(artifact.version, 3);
+    const ifNode = artifact.nodes.find((node) => node.uuid === "if");
+    assert.equal(ifNode.ports.inputs["true value"], ACTOR_COMMAND_TYPE);
+    assert.equal(ifNode.ports.inputs["false value"], ACTOR_COMMAND_TYPE);
+    assert.equal(ifNode.ports.outputs.out, ACTOR_COMMAND_TYPE);
+    assert.equal(artifact.interface.outputs[0].type, ACTOR_COMMAND_TYPE);
+    assert.equal(JSON.stringify(artifact).includes("generic"), false);
+
+    const compiled = ScriptManager.createRunner(artifact).run();
+    assert.equal(compiled.status, "success");
+    assert.deepEqual(compiled.outputs.result, { actorId: "ego", speedMps: 4, steeringRad: -0.2 });
+});
+
+test("Program Input of type actor_command parses JSON defaults and object overrides", () => {
+    resetRegistry();
+
+    const manager = new ScriptManager();
+    const input = new ProgramInputBlock("in");
+    input.hydrateState({
+        label: "cmd",
+        type: ACTOR_COMMAND_TYPE,
+        defaultValue: '{"actorId":"npc","speedMps":1,"steeringRad":0}',
+    });
+    manager.addUnit(input);
+    manager.storeData("in", {
+        label: "cmd",
+        type: ACTOR_COMMAND_TYPE,
+        defaultValue: '{"actorId":"npc","speedMps":1,"steeringRad":0}',
+    });
+    input.reregister();
+    manager.addUnit(new OutputBlock("output", "result", ACTOR_COMMAND_TYPE));
+    connect(manager, "in", "input", "output", "output");
+
+    const fromDefault = manager.executeProgram();
+    assert.equal(fromDefault.status, "success");
+    assert.deepEqual(fromDefault.outputs.result, { actorId: "npc", speedMps: 1, steeringRad: 0 });
+
+    const fromObject = manager.executeProgram({ cmd: { actorId: "ego", speedMps: "2", steeringRad: 0.05 } });
+    assert.equal(fromObject.status, "success");
+    assert.deepEqual(fromObject.outputs.result, { actorId: "ego", speedMps: 2, steeringRad: 0.05 });
+
+    const fromString = manager.executeProgram({ cmd: '{"actorId":"lead","speedMps":3,"steeringRad":-0.1}' });
+    assert.equal(fromString.status, "success");
+    assert.deepEqual(fromString.outputs.result, { actorId: "lead", speedMps: 3, steeringRad: -0.1 });
+
+    const artifact = manager.compile("actor-command-io");
+    assert.equal(artifact.interface.inputs[0].type, ACTOR_COMMAND_TYPE);
+    assert.equal(artifact.interface.outputs[0].type, ACTOR_COMMAND_TYPE);
+});
+
+test("failed editor and compiled runs restore every unit runtime state", () => {
+    resetRegistry();
+    const manager = new ScriptManager();
+    manager.addUnit(new ConstBlock("value", 2));
+    manager.addUnit(new AccumulatorBlock("acc"));
+    manager.addUnit(new ThrowAfterInputBlock("throw"));
+    manager.addUnit(new OutputBlock("output", "result"));
+    connect(manager, "value", "out", "acc", "value");
+    connect(manager, "acc", "out", "throw", "value");
+    connect(manager, "throw", "out", "output", "output");
+
+    assert.deepEqual(manager.units.find((unit) => unit.uuid === "acc").serializeRuntimeState(), { total: 0 });
+    const editorRun = manager.executeProgram();
+    assert.equal(editorRun.status, "failure");
+    assert.deepEqual(manager.units.find((unit) => unit.uuid === "acc").serializeRuntimeState(), { total: 0 });
+
+    const runner = ScriptManager.createRunner(manager.compile("rollback-runtime-state"));
+    const compiledRun = runner.run();
+    assert.equal(compiledRun.status, "failure");
+    assert.deepEqual(runner.serializeRuntimeState().acc, { total: 0 });
+});
+
+test("outer failure restores runtime state committed by a nested compiled program", () => {
+    resetRegistry();
+    const inner = new ScriptManager();
+    inner.addUnit(new InputBlock("input", "value"));
+    inner.addUnit(new AccumulatorBlock("acc"));
+    inner.addUnit(new OutputBlock("output", "result"));
+    connect(inner, "input", "input", "acc", "value");
+    connect(inner, "acc", "out", "output", "output");
+
+    const outer = new ScriptManager();
+    outer.addUnit(new ConstBlock("value", 3));
+    const imported = new CompiledProgramUnitBlock("imported");
+    imported.hydrateState({ compiledProgram: inner.compile("nested-accumulator") });
+    outer.addUnit(imported);
+    outer.addUnit(new ThrowAfterInputBlock("throw"));
+    outer.addUnit(new OutputBlock("output", "result"));
+    connect(outer, "value", "out", "imported", "value");
+    connect(outer, "imported", "result", "throw", "value");
+    connect(outer, "throw", "out", "output", "output");
+
+    const run = outer.executeProgram();
+    assert.equal(run.status, "failure");
+    assert.deepEqual(imported.serializeRuntimeState().acc, { total: 0 });
+});

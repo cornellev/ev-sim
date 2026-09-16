@@ -8,7 +8,7 @@ Error example:
 Unknown block type "MyBlock". Register it before compiling.
 ```
 
-Add the block class to `app/scripting/registerBuiltInBlocks.js`. If the block appears in the block library, also confirm its `UnitCatalog.js` entry references the same backend class.
+Add an explicit stable-type entry and backend class to `app/scripting/UnitCatalog.meta.js`, then confirm `UnitCatalog.js` maps that type to its React component. `registerBuiltInBlocks.js` registers metadata entries automatically.
 
 ## Missing Port
 
@@ -33,6 +33,14 @@ Type conflict on IfBlock "if-uuid" variable T: float64 vs string.
 Unbound generic T on IfBlock "if-uuid".
 ```
 
+Mapping a compiled `actor_command` program output to a route-controller `speed` or `steering` target fails at scenario resolve, not compile:
+
+```text
+Route controller output "command" must be float64 for speed.
+```
+
+Split the value with Split Actor Command, or export `float64` ports instead.
+
 ## Duplicate Program Labels
 
 Program input labels must be unique among inputs. Program output labels must be unique among outputs. The default OutputNode sidebar also validates duplicate output labels.
@@ -55,7 +63,7 @@ Cycle detected at runtime while evaluating "a".
 
 ## Block Is Visible But Does Not Compile
 
-Check `app/scripting/UnitCatalog.js`. If the entry has `blockClass: null`, it is UI-only. Add a backend `UnitBlock` and register it before expecting compile/run support.
+Check `app/scripting/UnitCatalog.meta.js` and the component mapping in `UnitCatalog.js`. Every placeable entry must have a backend `UnitBlock` and React component.
 
 ## Dynamic Port Changes Break Wires
 

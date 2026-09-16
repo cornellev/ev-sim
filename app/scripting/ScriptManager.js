@@ -3,6 +3,7 @@ import { getRegisteredBlockType, registerBlockType } from "./BlockRegistry.js";
 import { assertSupportedArtifact } from "./runtime/Artifact.js";
 import { compileVisualScript } from "./runtime/Compiler.js";
 import { createVisualScriptRunner } from "./runtime/Runner.js";
+import { captureRuntimeState, restoreRuntimeState } from "./runtime/RuntimeState.js";
 import { SignalStore } from "./runtime/SignalStore.js";
 import { portsCompatible } from "./types/PortTypes.js";
 import {
@@ -14,6 +15,11 @@ import {
 import { applyBindings, planUnify, recomputeBindings } from "./types/unifyGraph.js";
 
 export { clearBlockTypeRegistryForTests, getRegisteredBlockType, registerBlockType } from "./BlockRegistry.js";
+
+function cloneJson(value) {
+    if (value === undefined) return undefined;
+    return JSON.parse(JSON.stringify(value));
+}
 
 class Connection {
     constructor(outputUnit, outputLabel, inputUnit, inputLabel) {
@@ -47,6 +53,16 @@ export function storeData(uuid, data) {
 export function reregister(uuid) {
     const event = new CustomEvent('reregister-unit', { detail: { uuid } });
     document.dispatchEvent(event);
+}
+
+export function requestUnitReconfiguration(uuid, patch = {}) {
+    if (typeof document === "undefined") {
+        return { ok: false, error: "Unit reconfiguration requires the scripting editor." };
+    }
+
+    const detail = { uuid, patch, result: null };
+    document.dispatchEvent(new CustomEvent("reconfigure-unit", { detail }));
+    return detail.result || { ok: false, error: `Unit "${uuid}" is not attached to the scripting editor.` };
 }
 
 
@@ -313,6 +329,7 @@ export class CompiledProgramUnitBlock extends UnitBlock {
     constructor(uuid) {
         super(uuid);
         this.runner = null;
+        this.pendingRuntimeState = null;
     }
 
     register() {
@@ -332,6 +349,29 @@ export class CompiledProgramUnitBlock extends UnitBlock {
     hydrateState(state = {}) {
         super.hydrateState(state);
         this.runner = null;
+        this.pendingRuntimeState = null;
+    }
+
+    serializeRuntimeState() {
+        if (this.runner) return this.runner.serializeRuntimeState();
+        if (this.pendingRuntimeState) return cloneJson(this.pendingRuntimeState);
+
+        return (this.state?.compiledProgram?.nodes || []).reduce((snapshot, node) => {
+            snapshot[node.uuid] = cloneJson(node.runtimeState || {});
+            return snapshot;
+        }, {});
+    }
+
+    hydrateRuntimeState(state = {}) {
+        const snapshot = state && typeof state === "object" && Object.keys(state).length > 0
+            ? cloneJson(state)
+            : null;
+        if (this.runner && snapshot) {
+            this.runner.hydrateRuntimeState(snapshot);
+            this.pendingRuntimeState = null;
+            return;
+        }
+        this.pendingRuntimeState = snapshot;
     }
 
     valid() {
@@ -362,6 +402,10 @@ export class CompiledProgramUnitBlock extends UnitBlock {
                 signalStore: this.manager?.getSignalStore?.(),
                 runtimeContext: this.manager?.getRuntimeContext?.()
             });
+            if (this.pendingRuntimeState) {
+                this.runner.hydrateRuntimeState(this.pendingRuntimeState);
+                this.pendingRuntimeState = null;
+            }
         } else {
             this.runner.setSignalStore?.(this.manager?.getSignalStore?.());
             this.runner.setRuntimeContext?.(this.manager?.getRuntimeContext?.() || {});
@@ -484,6 +528,68 @@ export class ScriptManager {
         this.storedData[uuid] = data;
         // update
         this.units.find(u => u.uuid === uuid)?.notifyUpdate(crypto.randomUUID());
+    }
+
+    reconfigureUnitDetailed(uuid, patch = {}) {
+        const unit = this.units.find((candidate) => candidate.uuid === uuid);
+        if (!unit) {
+            return { ok: false, error: `Unit "${uuid}" not found.` };
+        }
+
+        const hasState = Object.prototype.hasOwnProperty.call(patch, "state");
+        const hasStoredData = Object.prototype.hasOwnProperty.call(patch, "storedData");
+        const hadStoredData = Object.prototype.hasOwnProperty.call(this.storedData, uuid);
+        const previousStoredData = cloneJson(this.storedData[uuid]);
+        const previousState = cloneJson(unit.serializeState());
+        const previousRuntimeState = cloneJson(unit.serializeRuntimeState());
+        const previousTypeMap = cloneJson(unit.typeMap);
+        const previousBindings = new Map(this.units.map((candidate) => [
+            candidate.uuid,
+            cloneJson(candidate.typeBindings || {})
+        ]));
+
+        const restore = () => {
+            unit.state = cloneJson(previousState) || {};
+            unit.typeMap = cloneJson(previousTypeMap) || { inputs: {}, outputs: {} };
+            if (hadStoredData) this.storedData[uuid] = cloneJson(previousStoredData);
+            else delete this.storedData[uuid];
+            this.units.forEach((candidate) => {
+                candidate.typeBindings = cloneJson(previousBindings.get(candidate.uuid)) || {};
+            });
+            unit.hydrateRuntimeState(cloneJson(previousRuntimeState));
+        };
+
+        try {
+            if (hasStoredData) {
+                if (patch.storedData === undefined) delete this.storedData[uuid];
+                else this.storedData[uuid] = cloneJson(patch.storedData);
+            }
+
+            if (hasState) unit.hydrateState(cloneJson(patch.state) || {});
+            else unit.reregister();
+
+            const plan = planUnify(this);
+            if (!plan.ok) {
+                restore();
+                return { ok: false, error: plan.error };
+            }
+
+            applyBindings(this, plan.bindings);
+            this.pruneRestoreErrors();
+            unit.notifyUpdate(crypto.randomUUID());
+
+            return {
+                ok: true,
+                error: null,
+                state: cloneJson(unit.serializeState()),
+                storedData: cloneJson(this.storedData[uuid]),
+                ports: cloneJson(unit.typeMap),
+                typeBindings: cloneJson(unit.typeBindings || {})
+            };
+        } catch (error) {
+            restore();
+            return { ok: false, error: error?.message || String(error) };
+        }
     }
 
     setRuntimeInputs(inputs = {}) {
@@ -695,6 +801,7 @@ export class ScriptManager {
 
         this.setRuntimeContext(options.context || options.runtimeContext || this.runtimeContext);
         const signalTransaction = this.signalStore.beginTransaction();
+        const runtimeState = captureRuntimeState(this.units);
 
         try {
             this.setRuntimeInputs(inputs);
@@ -729,6 +836,7 @@ export class ScriptManager {
             };
         } catch (err) {
             this.signalStore.rollbackTransaction(signalTransaction);
+            restoreRuntimeState(this.units, runtimeState);
             return {
                 status: "failure",
                 result: null,

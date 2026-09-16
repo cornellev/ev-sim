@@ -1,4 +1,5 @@
 import { assertSupportedArtifact, createRuntimeError } from "./Artifact.js";
+import { captureRuntimeState, restoreRuntimeState } from "./RuntimeState.js";
 import { SignalStore } from "./SignalStore.js";
 
 function makeBlockOutputMap(blockOutput) {
@@ -195,6 +196,11 @@ export class VisualScriptRunner {
         });
     }
 
+    hydrateRuntimeState(stateByUuid = {}) {
+        restoreRuntimeState(this.units, stateByUuid);
+        this._syncRuntimeState();
+    }
+
     run(inputs = {}, options = {}) {
         if (options.signalStore) {
             this.setSignalStore(options.signalStore);
@@ -213,6 +219,7 @@ export class VisualScriptRunner {
         this.outputMemo = new Map();
         this.evaluating = new Set();
         const signalTransaction = this.signalStore.beginTransaction();
+        const runtimeState = captureRuntimeState(this.units);
 
         try {
             let result = null;
@@ -238,6 +245,7 @@ export class VisualScriptRunner {
             };
         } catch (error) {
             this.signalStore.rollbackTransaction(signalTransaction);
+            restoreRuntimeState(this.units, runtimeState);
             this._syncRuntimeState();
 
             return {

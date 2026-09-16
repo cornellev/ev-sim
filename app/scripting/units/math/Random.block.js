@@ -15,6 +15,14 @@ export class RandomNumberBlock extends UnitBlock {
     valid() {
         return true; // no inputs, so always valid
     }
+
+    serializeRuntimeState() {
+        return { cachedValue: this.cachedValue };
+    }
+
+    hydrateRuntimeState(state = {}) {
+        this.cachedValue = Number.isFinite(state.cachedValue) ? state.cachedValue : null;
+    }
     
     execute() {
         this.cachedValue ??= runtimeRandom(this);

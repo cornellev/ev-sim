@@ -9,18 +9,14 @@ Use this checklist when adding a new visual scripting block.
 3. Export a `UnitBlock` subclass.
 4. Make React port labels/types match `registerInput` and `registerOutput`.
 5. Implement `valid()` and `execute()`. For dual current/frozen ports, use `BlockOutput.setDeclared(this, label, value)`.
-6. Add the block class to `app/scripting/registerBuiltInBlocks.js`.
-7. Add a catalog entry to `app/scripting/UnitCatalog.js` with a non-null `blockClass`.
+6. Add one explicit entry to `app/scripting/UnitCatalog.meta.js`, including stable `type`, keywords, settings, and the React-free `blockClass`.
+7. Attach the React component to that type in `UnitCatalog.js`. Registration is derived from the metadata entry.
 8. Add or update tests in `tests/visual-script-runtime.test.js` if compile/run behavior changes.
 9. Run `npm test` and `npm run lint`.
 
 `AddMenu.js` renders the block library from `UnitCatalog.js`. Only edit `AddMenu.js` when changing the menu UI, search/filter behavior, spawn positioning, or category presentation.
 
-## Add A UI-Only Block
-
-Use `blockClass: null` in `UnitCatalog.js` only when the unit is intentionally visual-only. UI-only blocks can appear in the block library but cannot compile or run as part of a v3 artifact.
-
-The current example is `Scale Matrix (tex1d)`.
+Every placeable block requires both a React component and a backend class. Use `placeable:false` only for compatibility types or graph-owned infrastructure such as `OutputNodeBlock`.
 
 ## Add Or Rename A Category
 
@@ -68,7 +64,7 @@ The scripting type system is string-based. To add a new type:
 
 1. Use the type string consistently in React unit ports and backend `registerInput` / `registerOutput`.
 2. Add a color to `app/scripting/Constants.js` if the type should have a distinct wire color.
-3. Update `SUPPORTED_TYPES` in `ProgramTypes.js` if users should be allowed to expose it as a program input/output. Do not add `generic`. `unit` is already a supported sequencing type.
+3. Update `SUPPORTED_TYPES` in `ProgramTypes.js` if users should be allowed to expose it as a program input/output. Do not add `generic`. `unit` is a supported sequencing type. `actor_command` is the concrete value-type example: export `ACTOR_COMMAND_TYPE` and `normalizeActorCommand()` from `PortTypes.js`, add a `Constants.TYPES` color, append the string to `SUPPORTED_TYPES`, and parse through `parseValueByType`.
 4. Add parsing or runtime handling wherever the new type is created or consumed.
 
 ## Add Runtime State
@@ -83,9 +79,9 @@ For blocks that need state across compiled runs:
 
 ## Common Mistakes
 
-- Adding a block to the menu but not registering it for compile/run.
-- Registering a block but forgetting to expose it in the menu.
-- Editing `AddMenu.js` directly for block inventory instead of updating `UnitCatalog.js`.
+- Adding a component mapping without authoritative `UnitCatalog.meta.js` metadata.
+- Deriving a stable type from a JavaScript class name instead of declaring it explicitly.
+- Editing `AddMenu.js` directly for block inventory instead of updating catalog metadata.
 - Changing a port label in the React component but not in the `UnitBlock`.
 - Returning raw values from `execute()` instead of a `BlockOutput`.
 - Calling `other.execute()` from `execute()` instead of `this.getInput(...)`. Fan-out is memoized per evaluation frame only when inputs go through `getInput`.

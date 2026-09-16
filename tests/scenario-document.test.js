@@ -15,6 +15,7 @@ import { verifyRoute } from "../app/scenarios/route/index.js";
 import { createDefaultRunManifest, validateRunManifest } from "../app/simulation/RunManifest.js";
 import { StorageService } from "../server/storage/StorageService.js";
 import { duffyRoutingFixture } from "./helpers/duffyRouting.js";
+import { VISUAL_SCRIPT_KIND } from "../app/scripting/runtime/Artifact.js";
 
 async function temporaryService() {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "cev-scenario-"));
@@ -383,6 +384,49 @@ test("scalar parameters can only bind compatible approved leaves", async () => {
         await assert.rejects(
             service.resolveRunManifest(invalidSpeed.id, { manifest: invalidSpeed }),
             /rejected or changed by run manifest validation/i,
+        );
+    } finally {
+        await fs.rm(directory, { recursive: true, force: true });
+    }
+});
+
+test("scenario resolution rejects actor_command mapped to route-controller speed", async () => {
+    const { directory, service } = await temporaryService();
+    try {
+        const environment = await service.getEnvironment("igvc");
+        const scenario = validScenario(environment);
+        await service.putScript({
+            id: "cmd-script",
+            name: "Actor command",
+            latestValidArtifact: {
+                kind: VISUAL_SCRIPT_KIND,
+                version: 3,
+                name: "cmd",
+                interface: {
+                    inputs: [],
+                    outputs: [{ label: "command", type: "actor_command" }],
+                },
+            },
+        });
+        const authored = normalizeScenario({
+            ...scenario,
+            routes: [{
+                ...scenario.routes[0],
+                controller: {
+                    kind: "script",
+                    activation: { kind: "start" },
+                    scriptId: "cmd-script",
+                    outputs: [
+                        { output: "command", target: "speed" },
+                        { output: "command", target: "steering" },
+                    ],
+                },
+            }],
+        });
+        assert.equal(validateScenario(authored).ok, true, validateScenario(authored).issues.map((issue) => issue.message).join(" "));
+        await assert.rejects(
+            service.resolveScenario(authored.id, { scenario: authored }),
+            /must be float64 for speed/,
         );
     } finally {
         await fs.rm(directory, { recursive: true, force: true });

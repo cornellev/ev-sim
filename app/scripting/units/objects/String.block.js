@@ -10,7 +10,7 @@ export class StringBlock extends UnitBlock {
     }
 
     execute() {
-        const value = this.getStoredData() || "";
+        const value = String(this.getStoredData() ?? "");
         return new BlockOutput().set("out", value);
     }
 }

@@ -1,15 +1,15 @@
-import { useEffect, useState } from "react";
-import { storeData } from "../../ScriptManager";
+import { useState } from "react";
+import { requestUnitReconfiguration } from "../../ScriptManager";
 import Unit from "../Unit";
 
 export function Equality({ _uuid, initialData = "eq", portTypes = {} }) {
     const [type, setType] = useState(() => initialData || "eq");
     const inputType = portTypes.inputs?.["input a"] || portTypes.inputs?.["input b"] || "generic";
 
-    //types: eq, neq, gt, lt, gte, lte
-    useEffect(() => {
-        storeData(_uuid, type);
-    }, [type, _uuid])
+    const commitType = (nextType) => {
+        const result = requestUnitReconfiguration(_uuid, { storedData: nextType });
+        if (result.ok) setType(nextType);
+    };
 
     return (
         <Unit title="Equality" hasOptions={true} _uuid={_uuid}
@@ -24,7 +24,7 @@ export function Equality({ _uuid, initialData = "eq", portTypes = {} }) {
             }>
 
             <div className="w-full h-full flex items-center justify-center">
-                <select value={type} onChange={e => setType(e.target.value)} className="rounded-[4px] border border-white/10 bg-[var(--slate-bg)] p-2 outline-none focus:border-white/30">
+                <select value={type} onChange={e => commitType(e.target.value)} className="rounded-[4px] border border-white/10 bg-[var(--slate-bg)] p-2 outline-none focus:border-white/30">
                     <option value="eq">==</option>
                     <option value="neq">!=</option>
                     <option value="gt">&gt;</option>
@@ -40,9 +40,10 @@ export function Equality({ _uuid, initialData = "eq", portTypes = {} }) {
 export function Conjugation({ _uuid, initialData = "and" }) {
     const [type, setType] = useState(() => initialData || "and");
 
-    useEffect(() => {
-        storeData(_uuid, type);
-    }, [type, _uuid])
+    const commitType = (nextType) => {
+        const result = requestUnitReconfiguration(_uuid, { storedData: nextType });
+        if (result.ok) setType(nextType);
+    };
 
     return (
         <Unit title="Conjugation" hasOptions={true} _uuid={_uuid}
@@ -57,7 +58,7 @@ export function Conjugation({ _uuid, initialData = "and" }) {
             }>
 
             <div className="w-full h-full flex items-center justify-center">
-                <select value={type} onChange={e => setType(e.target.value)} className="rounded-[4px] border border-white/10 bg-[var(--slate-bg)] p-2 outline-none focus:border-white/30">
+                <select value={type} onChange={e => commitType(e.target.value)} className="rounded-[4px] border border-white/10 bg-[var(--slate-bg)] p-2 outline-none focus:border-white/30">
                     <option value="and">AND</option>
                     <option value="or">OR</option>
                     <option value="xor">XOR</option>

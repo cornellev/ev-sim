@@ -20,7 +20,7 @@ flowchart LR
 
 Connections are created visually by `LineManager`. Port metadata is stored in DOM data attributes as `uuid|label|type`. When a valid wire is completed, `Scripting.js` calls `ScriptManager.connectUnitsDetailed(...)`. `LineManager` uses `portsCompatible()` on the decoded type strings.
 
-Editor execution pulls data backward through connected blocks by calling `UnitBlock.getInput(...)`, which resolves the upstream `BlockOutput` through `manager.evaluateUnit(uuid)`. `ScriptManager.execute()` and each output-role root in `executeProgram()` also use `evaluateUnit()`. One evaluation frame (`outputMemo` / `evaluating`) is created per `execute()` / `executeProgram()` call, so a shared node runs once per call and a later call always starts a new memo. Editor `ScriptManager.evaluationPolicy` is `{ lazySelectors: true, memoizeExecute: true }`, so `IfBlock`, `WeightedSelectBlock`, and `SignalLatchBlock` skip unused inputs. `SignalDefaultBlock` is already lazy. Effect blocks run only when reachable via `then` or an identity output; `Sequence` evaluates `first` then `second`.
+Editor execution pulls data backward through connected blocks by calling `UnitBlock.getInput(...)`, which resolves the upstream `BlockOutput` through `manager.evaluateUnit(uuid)`. `ScriptManager.execute()` and each output-role root in `executeProgram()` also use `evaluateUnit()`. One evaluation frame (`outputMemo` / `evaluating`) is created per `execute()` / `executeProgram()` call, so a shared node runs once per call and a later call always starts a new memo. Editor `ScriptManager.evaluationPolicy` is `{ lazySelectors: true, memoizeExecute: true }`, so `IfBlock`, `WeightedSelectBlock`, and `SignalLatchBlock` skip unused inputs. `SignalDefaultBlock` is already lazy. Effect blocks run only when reachable via `then` or an identity output; `Sequence` evaluates `first` then `second`. `actor_command` is a concrete value type (`MakeActorCommandBlock` / `SplitActorCommandBlock`); route-controller mappings stay `float64`.
 
 `restoreManagerFromGraph` and editor load use `connectUnitsDetailed`. Missing ports (legacy `written` / `ok` / `staged`) become `manager.restoreErrors`. Compile fails closed until those edges are rewired. `latestValidArtifact` is kept. Unrestored connections stay in the saved graph JSON and are not silently dropped.
 
@@ -43,15 +43,14 @@ The built-in path is:
 app/scripting/registerBuiltInBlocks.js
 ```
 
-The user-facing block inventory path is:
+The authoritative server-safe inventory and React attachment paths are:
 
 ```text
+app/scripting/UnitCatalog.meta.js
 app/scripting/UnitCatalog.js
 ```
 
-`AddMenu.js` renders the searchable, categorized block library from that catalog.
-
-Most new blocks need both.
+`registerBuiltInBlocks.js` registers each explicit metadata type. `AddMenu.js` renders placeable entries after React components are attached by type. Every placeable block needs both a backend class and component.
 
 ## Compiled Runtime
 
@@ -61,6 +60,8 @@ Most new blocks need both.
 
 - `status: "success"` with `outputs` and optional `result`.
 - `status: "failure"` with a serialized runtime error.
+
+Before evaluation, editor and compiled execution snapshot every unit's JSON runtime state. Failures restore that snapshot and roll back staged signal writes; successful runs commit both.
 
 Compiled v2 artifacts stay eager for `If`, `WeightedSelect`, and `SignalLatch`. Compiled v3 artifacts use lazy selectors. Frozen ports are authoritative over the current class registration.
 

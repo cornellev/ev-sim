@@ -36,7 +36,7 @@ function buildUnitCatalogMetadata() {
 
 function describeBlockClass(entry) {
     const BlockClass = entry.blockClass;
-    const type = entry.type || BlockClass.name;
+    const type = entry.type;
     let instance;
     try {
         instance = new BlockClass(`meta-${type}`);
@@ -60,6 +60,10 @@ function describeBlockClass(entry) {
             outputs: [],
             programNodeRole: null,
             placeable: entry.placeable !== false,
+            deprecated: entry.deprecated === true,
+            keywords: entry.keywords || [],
+            settings: entry.settings || [],
+            requiresSignals: entry.requiresSignals === true,
             defaultState: null,
             notes: entry.notes || "Could not instantiate block for metadata.",
         };
@@ -102,6 +106,10 @@ function describeBlockClass(entry) {
         programNodeRole,
         programPort,
         placeable: entry.placeable !== false,
+        deprecated: entry.deprecated === true,
+        keywords: entry.keywords || [],
+        settings: entry.settings || [],
+        requiresSignals: entry.requiresSignals === true,
         notes: entry.notes || null,
         typeScheme: serializeTypeScheme(BlockClass.typeScheme),
         defaultState,

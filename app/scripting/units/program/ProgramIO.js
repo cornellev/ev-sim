@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { reregister, storeData } from "../../ScriptManager";
+import { useState } from "react";
+import { requestUnitReconfiguration } from "../../ScriptManager";
 import Unit from "../Unit";
 import {
     SUPPORTED_TYPES,
@@ -31,17 +31,12 @@ export {
 export function ProgramInputUnit({ _uuid, initialData = null }) {
     const [data, setData] = useState(() => normalizeProgramInputState(initialData, 0, _uuid));
 
-    useEffect(() => {
-        storeData(_uuid, data);
-        reregister(_uuid);
-    }, [data, _uuid]);
-
     const outputType = normalizeType(data.type);
 
     const commitData = (next) => {
-        setData(next);
-        storeData(_uuid, next);
-        reregister(_uuid);
+        const result = requestUnitReconfiguration(_uuid, { storedData: next });
+        if (result.ok) setData(next);
+        return result;
     };
 
     return (
