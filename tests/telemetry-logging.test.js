@@ -503,8 +503,9 @@ test("LogDataset capture-time lookback uses binary search after backward seeks",
     assert.equal(noClone.value, dataset.series.get("visualization.perception.candidate")[1].value);
 });
 
-test("TelemetryTabBridge discovers sources, filters full-rate subscriptions, mirrors previews, and expires stale tabs", () => {
+function installFakeBroadcastChannel({ clone = true } = {}) {
     const originalBroadcastChannel = globalThis.BroadcastChannel;
+    const posted = [];
     class FakeBroadcastChannel {
         static rooms = new Map();
         constructor(name) {
@@ -516,15 +517,28 @@ test("TelemetryTabBridge discovers sources, filters full-rate subscriptions, mir
         }
         addEventListener(type, listener) { if (type === "message") this.listeners.add(listener); }
         postMessage(data) {
+            posted.push(clone && typeof structuredClone === "function" ? structuredClone(data) : data);
             for (const channel of FakeBroadcastChannel.rooms.get(this.name) || []) {
                 if (channel === this) continue;
-                for (const listener of channel.listeners) listener({ data: structuredClone(data) });
+                for (const listener of channel.listeners) {
+                    listener({ data: clone && typeof structuredClone === "function" ? structuredClone(data) : data });
+                }
             }
         }
         close() { FakeBroadcastChannel.rooms.get(this.name)?.delete(this); }
     }
     globalThis.BroadcastChannel = FakeBroadcastChannel;
+    return {
+        posted,
+        restore() {
+            FakeBroadcastChannel.rooms.clear();
+            globalThis.BroadcastChannel = originalBroadcastChannel;
+        },
+    };
+}
 
+test("TelemetryTabBridge discovers sources, filters full-rate subscriptions, mirrors previews, and expires stale tabs", () => {
+    const channel = installFakeBroadcastChannel();
     const sourceA = new SignalStore({}, { sourceId: "source-a" });
     const sourceB = new SignalStore({}, { sourceId: "source-b" });
     sourceA.publishSignal("simulation.time", 1, { type: "float64", timeUs: 100, replayRole: "state", logClass: "core" });
@@ -560,7 +574,69 @@ test("TelemetryTabBridge discovers sources, filters full-rate subscriptions, mir
     } finally {
         bridgeA.stop();
         bridgeB.stop();
-        globalThis.BroadcastChannel = originalBroadcastChannel;
+        channel.restore();
+    }
+});
+
+test("TelemetryTabBridge heartbeats stay lite, skip snapshot-request on full announce, and clone sources shallowly", () => {
+    const channel = installFakeBroadcastChannel();
+    const sourceA = new SignalStore({}, { sourceId: "lite-a" });
+    const sourceB = new SignalStore({}, { sourceId: "lite-b" });
+    const blob = new Uint8Array(256 * 1024);
+    blob.fill(7);
+    sourceA.publishSignal("simulation.time", 1, { type: "float64", timeUs: 100, replayRole: "state", logClass: "core" });
+    sourceA.publishSignal("debug.blob", blob, { type: "json", logClass: "standard" });
+    const bridgeA = new TelemetryTabBridge(sourceA, { channelName: "lite-telemetry" }).start();
+    const bridgeB = new TelemetryTabBridge(sourceB, { channelName: "lite-telemetry" }).start();
+    try {
+        assert.equal(channel.posted.some((message) => message.type === "snapshot-request"), false);
+        assert.ok(bridgeB.getSources().some((source) => source.sourceId === "lite-a"));
+        assert.equal(bridgeB.getSources().find((source) => source.sourceId === "lite-a").snapshot["debug.blob"].value.byteLength, blob.byteLength);
+
+        const remote = bridgeB.remoteSources.get("lite-a");
+        const listed = bridgeB.getSources().find((source) => source.sourceId === "lite-a");
+        assert.equal(listed.snapshot, remote.snapshot);
+        assert.equal(listed.descriptors, remote.descriptors);
+        assert.notEqual(listed, remote);
+
+        const beforeHeartbeat = channel.posted.length;
+        bridgeA._post("heartbeat", bridgeA._litePayload());
+        const heartbeats = channel.posted.slice(beforeHeartbeat).filter((message) => message.type === "heartbeat");
+        assert.equal(heartbeats.length, 1);
+        assert.equal(heartbeats[0].descriptors, undefined);
+        assert.equal(heartbeats[0].snapshot, undefined);
+        assert.equal(typeof heartbeats[0].catalogGeneration, "number");
+        assert.equal(heartbeats[0].metadata.workspace, "unknown");
+        assert.equal(JSON.stringify(heartbeats[0]).includes("\"debug.blob\""), false);
+
+        const beforeContext = channel.posted.length;
+        bridgeA.setContext({ workspace: "simulation", environmentId: "igvc" });
+        const announces = channel.posted.slice(beforeContext).filter((message) => message.type === "announce");
+        assert.equal(announces.length, 1);
+        assert.equal(announces[0].descriptors, undefined);
+        assert.equal(announces[0].snapshot, undefined);
+        assert.equal(announces[0].metadata.environmentId, "igvc");
+        assert.equal(announces[0].metadata.workspace, "simulation");
+
+        sourceA.defineSignal({ path: "vehicles.ego.pose", type: "pose3", logClass: "standard" });
+        sourceA.publishSignal("vehicles.ego.pose", { x: 1, y: 2, z: 3 }, { type: "pose3", logClass: "standard" });
+        assert.ok(bridgeB.remoteSources.get("lite-a").descriptors.some((descriptor) => descriptor.path === "vehicles.ego.pose"));
+        assert.equal(bridgeB.remoteSources.get("lite-a").snapshot["vehicles.ego.pose"].value.x, 1);
+
+        const generation = bridgeA._catalogGeneration;
+        assert.ok(generation > 1);
+        bridgeB.remoteSources.get("lite-a").catalogGeneration = 0;
+        const beforeLag = channel.posted.length;
+        bridgeA._post("heartbeat", bridgeA._litePayload());
+        const lagMessages = channel.posted.slice(beforeLag);
+        assert.ok(lagMessages.some((message) => message.type === "snapshot-request" && message.targetSourceId === "lite-a"));
+        assert.ok(lagMessages.some((message) => message.type === "snapshot" && message.targetSourceId === "lite-b"));
+        assert.equal(bridgeB.remoteSources.get("lite-a").catalogGeneration, generation);
+        assert.equal(bridgeB.getSources().find((source) => source.sourceId === "lite-a").snapshot["vehicles.ego.pose"].value.x, 1);
+    } finally {
+        bridgeA.stop();
+        bridgeB.stop();
+        channel.restore();
     }
 });
 
@@ -755,27 +831,7 @@ test("binding value summaries never retain Image buffers", () => {
 });
 
 test("TelemetryTabBridge keeps remote heavy series latest-only and prunes on unsubscribe", async () => {
-    const originalBroadcastChannel = globalThis.BroadcastChannel;
-    class FakeBroadcastChannel {
-        static rooms = new Map();
-        constructor(name) {
-            this.name = name;
-            this.listeners = new Set();
-            const room = FakeBroadcastChannel.rooms.get(name) || new Set();
-            room.add(this);
-            FakeBroadcastChannel.rooms.set(name, room);
-        }
-        addEventListener(type, listener) { if (type === "message") this.listeners.add(listener); }
-        postMessage(data) {
-            for (const channel of FakeBroadcastChannel.rooms.get(this.name) || []) {
-                if (channel === this) continue;
-                for (const listener of channel.listeners) listener({ data });
-            }
-        }
-        close() { FakeBroadcastChannel.rooms.get(this.name)?.delete(this); }
-    }
-    globalThis.BroadcastChannel = FakeBroadcastChannel;
-
+    const channel = installFakeBroadcastChannel({ clone: false });
     const sourceA = new SignalStore({}, { sourceId: "heavy-a" });
     const sourceB = new SignalStore({}, { sourceId: "heavy-b" });
     sourceA.defineSignal({ path: "devices.cam.image", type: "bytes", logClass: "heavy" });
@@ -799,7 +855,7 @@ test("TelemetryTabBridge keeps remote heavy series latest-only and prunes on uns
     } finally {
         bridgeA.stop();
         bridgeB.stop();
-        globalThis.BroadcastChannel = originalBroadcastChannel;
+        channel.restore();
     }
 });
 

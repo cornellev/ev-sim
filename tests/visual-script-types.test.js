@@ -23,6 +23,7 @@ import {
     EqualBlock,
     LessBlock,
 } from "../app/scripting/units/statements/LogicBlocks.block.js";
+import { PreviousBlock, ValueChangedBlock } from "../app/scripting/units/control/TemporalBlocks.block.js";
 import { IntegerBlock, JsonBlock, AddBlock } from "../app/scripting/units/math/ScalarBlocks.block.js";
 import { WeightedSelectBlock } from "../app/scripting/units/math/Randomization.block.js";
 import {
@@ -48,9 +49,17 @@ import {
     isConcreteType,
     isGeneric,
     normalizeActorCommand,
+    normalizePose2d,
+    normalizePose3d,
+    normalizeVec2,
+    normalizeVec3,
+    POSE2D_TYPE,
+    POSE3D_TYPE,
     portsCompatible,
     UNIT,
     UNIT_TYPE,
+    VEC2_TYPE,
+    VEC3_TYPE,
 } from "../app/scripting/types/PortTypes.js";
 import {
     declaredPortType,
@@ -184,6 +193,8 @@ function resetRegistry() {
         LessBlock,
         IntegerBlock,
         JsonBlock,
+        PreviousBlock,
+        ValueChangedBlock,
     ].forEach((blockClass) => registerBlockType(blockClass.blockType || blockClass.name, blockClass));
 }
 
@@ -240,6 +251,68 @@ test("parseValueByType normalizes actor_command payloads", () => {
     assert.deepEqual(
         normalizeActorCommand({ actorId: 7, speedMps: Infinity, steeringRad: undefined }),
         { actorId: "7", speedMps: 0, steeringRad: 0 },
+    );
+});
+
+test("parseValueByType freezes vec and pose shapes", () => {
+    const zeroVec2 = { x: 0, y: 0 };
+    const zeroVec3 = { x: 0, y: 0, z: 0 };
+    const zeroPose2d = { position: zeroVec2, yaw: 0 };
+    const zeroPose3d = {
+        position: zeroVec3,
+        rotation: { x: 0, y: 0, z: 0, order: "XYZ" },
+    };
+
+    assert.equal(SUPPORTED_TYPES.includes(VEC2_TYPE), true);
+    assert.equal(SUPPORTED_TYPES.includes(VEC3_TYPE), true);
+    assert.equal(SUPPORTED_TYPES.includes(POSE2D_TYPE), true);
+    assert.equal(SUPPORTED_TYPES.includes(POSE3D_TYPE), true);
+    assert.equal(normalizeType(VEC2_TYPE), VEC2_TYPE);
+    assert.equal(normalizeType(POSE3D_TYPE), POSE3D_TYPE);
+
+    assert.deepEqual(parseValueByType(undefined, VEC2_TYPE), zeroVec2);
+    assert.deepEqual(parseValueByType({}, VEC2_TYPE), zeroVec2);
+    assert.deepEqual(parseValueByType("", VEC2_TYPE), zeroVec2);
+    assert.deepEqual(parseValueByType([1, 2], VEC2_TYPE), zeroVec2);
+    assert.deepEqual(parseValueByType('{"x":3,"y":4,"extra":9}', VEC2_TYPE), { x: 3, y: 4 });
+    assert.deepEqual(parseValueByType({ x: "3.5", y: Infinity, extra: 9 }, VEC2_TYPE), { x: 3.5, y: 0 });
+    assert.deepEqual(normalizeVec2({ x: 1, y: 2, extra: true }), { x: 1, y: 2 });
+
+    assert.deepEqual(parseValueByType(undefined, VEC3_TYPE), zeroVec3);
+    assert.deepEqual(parseValueByType({ x: 1, y: 2 }, VEC3_TYPE), { x: 1, y: 2, z: 0 });
+    assert.deepEqual(normalizeVec3({ x: Infinity, y: "4", z: "-1" }), { x: 0, y: 4, z: -1 });
+
+    assert.deepEqual(parseValueByType(undefined, POSE2D_TYPE), zeroPose2d);
+    assert.deepEqual(
+        parseValueByType({ x: 1, y: 2, yaw: "0.5", extra: 1 }, POSE2D_TYPE),
+        { position: { x: 1, y: 2 }, yaw: 0.5 },
+    );
+    assert.deepEqual(
+        normalizePose2d({ position: { x: 3, y: 4, z: 9 }, yaw: Infinity }),
+        { position: { x: 3, y: 4 }, yaw: 0 },
+    );
+
+    assert.deepEqual(parseValueByType(undefined, POSE3D_TYPE), zeroPose3d);
+    assert.deepEqual(parseValueByType({ x: 1, y: 2, z: 3 }, POSE3D_TYPE), {
+        position: { x: 1, y: 2, z: 3 },
+        rotation: { x: 0, y: 0, z: 0, order: "XYZ" },
+    });
+    assert.deepEqual(
+        parseValueByType(
+            '{"position":{"x":1,"y":2,"z":3},"rotation":{"x":0.1,"y":0.2,"z":0.3,"order":"YXZ","extra":true},"extra":9}',
+            POSE3D_TYPE,
+        ),
+        {
+            position: { x: 1, y: 2, z: 3 },
+            rotation: { x: 0.1, y: 0.2, z: 0.3, order: "YXZ" },
+        },
+    );
+    assert.deepEqual(
+        normalizePose3d({ position: { x: 1 }, rotation: { order: "abc" } }),
+        {
+            position: { x: 1, y: 0, z: 0 },
+            rotation: { x: 0, y: 0, z: 0, order: "XYZ" },
+        },
     );
 });
 
@@ -518,6 +591,45 @@ test("LessBlock binds int32 from IntegerBlock and EqualBlock binds json", () => 
     connect(equalManager, "eq", "out", "output", "output");
     assert.equal(equalManager.units.find((unit) => unit.uuid === "eq").typeBindings.T, "json");
     assert.equal(equalManager.executeProgram().outputs.result, true);
+});
+
+test("PreviousBlock unifies T across value initial and previous", () => {
+    resetRegistry();
+    const manager = new ScriptManager();
+    manager.addUnit(new TypedConstBlock("value", "now", "string"));
+    manager.addUnit(new TypedConstBlock("initial", "start", "string"));
+    manager.addUnit(new PreviousBlock("prev"));
+    manager.addUnit(new OutputBlock("output", "string"));
+    connect(manager, "value", "out", "prev", "value");
+    connect(manager, "initial", "out", "prev", "initial");
+    connect(manager, "prev", "previous", "output", "output");
+    assert.equal(manager.units.find((unit) => unit.uuid === "prev").typeBindings.T, "string");
+    const artifact = manager.compile("previous-string");
+    assert.equal(artifact.nodes.find((node) => node.uuid === "prev").ports.outputs.previous, "string");
+    assert.equal(JSON.stringify(artifact).includes("generic"), false);
+    assert.equal(manager.executeProgram().outputs.result, "start");
+
+    const conflict = new ScriptManager();
+    conflict.addUnit(new TypedConstBlock("value", 1, "float64"));
+    conflict.addUnit(new TypedConstBlock("initial", "x", "string"));
+    conflict.addUnit(new PreviousBlock("prev"));
+    connect(conflict, "value", "out", "prev", "value");
+    const rejected = conflict.connectUnitsDetailed("initial", "out", "prev", "initial");
+    assert.equal(rejected.ok, false);
+    assert.match(rejected.error, /Type conflict/);
+    assert.equal(conflict.units.find((unit) => unit.uuid === "prev").inputs.initial, undefined);
+    assert.equal(conflict.units.find((unit) => unit.uuid === "prev").typeBindings.T, "float64");
+
+    const changed = new ScriptManager();
+    changed.addUnit(new TypedConstBlock("value", 3));
+    changed.addUnit(new ValueChangedBlock("chg"));
+    changed.addUnit(new OutputBlock("output", "boolean"));
+    connect(changed, "value", "out", "chg", "value");
+    connect(changed, "chg", "changed", "output", "output");
+    assert.equal(changed.units.find((unit) => unit.uuid === "chg").typeBindings.T, "float64");
+    const changedArtifact = changed.compile("value-changed");
+    assert.equal(changedArtifact.nodes.find((node) => node.uuid === "chg").ports.inputs.value, "float64");
+    assert.equal(JSON.stringify(changedArtifact).includes("generic"), false);
 });
 
 

@@ -18,9 +18,14 @@ import {
     verifyRoute,
 } from "../app/scenarios/route/index.js";
 import {
+    DistanceToRouteEndBlock,
     FollowRouteBlock,
     FollowRouteSectionBlock,
+    RouteLengthBlock,
     RouteSectionCountBlock,
+    RouteTangentBlock,
+    SplitWaypointBlock,
+    WaypointAtIndexBlock,
 } from "../app/scripting/units/mission/RouteBlocks.block.js";
 
 function roadEnvironment() {
@@ -628,4 +633,34 @@ test("canonical route visual blocks expose typed pure operations", () => {
         { x: 10, z: 5 },
     );
     assert.equal(executeBlock(RouteSectionCountBlock, { route }).get("count"), 2);
+
+    const indexed = executeBlock(WaypointAtIndexBlock, { route, index: 2 });
+    assert.equal(indexed.get("found"), true);
+    assert.deepEqual(indexed.get("waypoint"), { x: 10, y: 0, z: 20 });
+    assert.equal(executeBlock(WaypointAtIndexBlock, { route, index: 9 }).get("found"), false);
+
+    const split = executeBlock(SplitWaypointBlock, {
+        waypoint: { id: "finish", kind: "finish", x: 10, y: 0, z: 20, order: 2 },
+    });
+    assert.equal(split.get("id"), "finish");
+    assert.equal(split.get("kind"), "finish");
+    assert.deepEqual(split.get("position"), { x: 10, y: 0, z: 20 });
+    assert.equal(split.get("order"), 2);
+
+    assert.equal(executeBlock(RouteLengthBlock, { route }).get("length"), 30);
+    assert.equal(
+        executeBlock(DistanceToRouteEndBlock, {
+            route,
+            pose: { position: { x: 10, y: 0, z: 20 }, rotation: { x: 0, y: 0, z: 0, order: "XYZ" } },
+        }).get("distance"),
+        0,
+    );
+
+    const tangent = executeBlock(RouteTangentBlock, {
+        route,
+        pose: { position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0, order: "XYZ" } },
+    });
+    assert.equal(tangent.get("found"), true);
+    assert.deepEqual(tangent.get("tangent"), { x: 1, y: 0 });
+    assert.equal(tangent.get("progress"), 0);
 });

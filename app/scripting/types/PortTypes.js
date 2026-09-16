@@ -2,12 +2,18 @@
  * Editor/runtime port type helpers.
  * `generic` is editor-only. Compiled artifacts never contain it.
  * `unit` is a concrete sequencing token. `actor_command` is a concrete value type.
+ * `vec2` / `vec3` / `pose2d` / `pose3d` are frozen structured value types.
  */
 
 export const GENERIC_TYPE = "generic";
 export const UNIT_TYPE = "unit";
 export const UNIT = Object.freeze({ type: UNIT_TYPE });
 export const ACTOR_COMMAND_TYPE = "actor_command";
+export const VEC2_TYPE = "vec2";
+export const VEC3_TYPE = "vec3";
+export const POSE2D_TYPE = "pose2d";
+export const POSE3D_TYPE = "pose3d";
+export const EULER_ORDERS = Object.freeze(["XYZ", "YZX", "ZXY", "XZY", "YXZ", "ZYX"]);
 
 export function finiteFloat(value, fallback = 0) {
     const parsed = Number.parseFloat(value);
@@ -70,27 +76,81 @@ export function valuesEqual(a, b) {
     return false;
 }
 
-export function normalizeActorCommand(value) {
+function isPlainObject(value) {
+    return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+export function parseObjectSource(value) {
     let source = value;
 
     if (typeof source === "string") {
         const trimmed = source.trim();
         if (trimmed.length === 0) {
-            source = {};
-        } else {
-            try {
-                const parsed = JSON.parse(trimmed);
-                source = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
-            } catch {
-                source = {};
-            }
+            return {};
+        }
+        try {
+            const parsed = JSON.parse(trimmed);
+            source = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+        } catch {
+            return {};
         }
     }
 
-    if (!source || typeof source !== "object" || Array.isArray(source)) {
-        source = {};
+    if (!isPlainObject(source)) {
+        return {};
     }
 
+    return source;
+}
+
+export function normalizeEulerOrder(value) {
+    const order = String(value ?? "XYZ").trim().toUpperCase();
+    return EULER_ORDERS.includes(order) ? order : "XYZ";
+}
+
+export function normalizeVec2(value) {
+    const source = parseObjectSource(value);
+    return {
+        x: finiteFloat(source.x),
+        y: finiteFloat(source.y),
+    };
+}
+
+export function normalizeVec3(value) {
+    const source = parseObjectSource(value);
+    return {
+        x: finiteFloat(source.x),
+        y: finiteFloat(source.y),
+        z: finiteFloat(source.z),
+    };
+}
+
+export function normalizePose2d(value) {
+    const source = parseObjectSource(value);
+    const positionSource = isPlainObject(source.position) ? source.position : source;
+    return {
+        position: normalizeVec2(positionSource),
+        yaw: finiteFloat(source.yaw),
+    };
+}
+
+export function normalizePose3d(value) {
+    const source = parseObjectSource(value);
+    const positionSource = isPlainObject(source.position) ? source.position : source;
+    const rotationSource = isPlainObject(source.rotation) ? source.rotation : {};
+    return {
+        position: normalizeVec3(positionSource),
+        rotation: {
+            x: finiteFloat(rotationSource.x),
+            y: finiteFloat(rotationSource.y),
+            z: finiteFloat(rotationSource.z),
+            order: normalizeEulerOrder(rotationSource.order),
+        },
+    };
+}
+
+export function normalizeActorCommand(value) {
+    const source = parseObjectSource(value);
     return {
         actorId: source.actorId == null ? "" : String(source.actorId),
         speedMps: finiteFloat(source.speedMps),

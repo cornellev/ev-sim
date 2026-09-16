@@ -3,7 +3,24 @@ import {
     FollowRouteBlock,
     FollowRouteSectionBlock,
     RouteSectionCountBlock,
+    ROUTE_HELPER_BLOCK_PORTS,
 } from "./RouteBlocks.block.js";
+
+function staticPortsUnit(title, ports) {
+    function StaticUnit({ _uuid }) {
+        return (
+            <Unit
+                title={title}
+                hasOptions={false}
+                _uuid={_uuid}
+                inputs={[...ports.inputs]}
+                outputs={[...ports.outputs]}
+            />
+        );
+    }
+    StaticUnit.displayName = `${title.replace(/\s+/g, "")}Unit`;
+    return StaticUnit;
+}
 
 export function FollowRouteUnit({ _uuid }) {
     return (
@@ -48,9 +65,19 @@ export function RouteSectionCountUnit({ _uuid }) {
     );
 }
 
+export const WaypointAtIndexUnit = staticPortsUnit("Waypoint At Index", ROUTE_HELPER_BLOCK_PORTS.WaypointAtIndexBlock);
+export const SplitWaypointUnit = staticPortsUnit("Split Waypoint", ROUTE_HELPER_BLOCK_PORTS.SplitWaypointBlock);
+export const RouteLengthUnit = staticPortsUnit("Route Length", ROUTE_HELPER_BLOCK_PORTS.RouteLengthBlock);
+export const DistanceToRouteEndUnit = staticPortsUnit("Distance To Route End", ROUTE_HELPER_BLOCK_PORTS.DistanceToRouteEndBlock);
+export const RouteTangentUnit = staticPortsUnit("Route Tangent", ROUTE_HELPER_BLOCK_PORTS.RouteTangentBlock);
+
 export {
+    DistanceToRouteEndBlock,
     FollowRouteBlock,
     FollowRouteSectionBlock,
+    RouteLengthBlock,
     RouteSectionCountBlock,
+    RouteTangentBlock,
+    SplitWaypointBlock,
+    WaypointAtIndexBlock,
 } from "./RouteBlocks.block.js";
-

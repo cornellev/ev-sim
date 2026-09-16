@@ -511,7 +511,7 @@ Replay owns a **read-only** Three.js scene, distinct from the live simulation sc
 
 Analysis can bind to live local telemetry, a remote simulator tab, or `log:<id>`. Log sources open the dataset with `eager: false` and fetch snapshots/series over HTTP (`includeHeavy: false` on snapshots). Series scans skip unused records (heavy bytes, JSON, checkpoints, attachments) and reuse inflated chunks from the index scan. The graph fetches each selected series once (capped at 2000 points) and min/max downsamples locally to roughly two points per pixel.
 
-Remote tabs never record. The simulator tab is authoritative; the `BroadcastChannel("cev-sim-telemetry-v1")` bridge only mirrors catalogs, previews, and requested full-rate paths. Heavy signals are excluded from previews.
+Remote tabs never record. The simulator tab is authoritative; the `BroadcastChannel("cev-sim-telemetry-v2")` bridge heartbeats a liveness ping plus `catalogGeneration`, and mirrors catalogs on announce/snapshot-request plus previews and requested full-rate paths. Heavy signals are excluded from previews.
 
 ## MCP
 

@@ -22,13 +22,15 @@ Add or update tests when changing:
 - Eager v2 versus lazy editor/v3 selector evaluation (`If`, `WeightedSelect`, `SignalLatch`). `AndBlock` / `OrBlock` always short-circuit, including on v2-versioned copies of new artifacts.
 - Table-driven atomic scalar/logic execution in `tests/visual-script-blocks.test.js` (zeros, false, empty, invalid domains, cloned JSON, compiled ports).
 - Table-driven conversion/string/JSON/array execution, cloned writes, out-of-range `found`/`changed`, and `deleteByPath`.
-- Catalog uniqueness, placeability, and keyword search for `math` / `logic` / `strings` / `collections` / `conversions` entries.
+- Table-driven geometry Make/Split/arithmetic and route-helper execution, including zero vectors, extra-key drop, cloned vec/waypoint outputs, out-of-range `found`, Euclidean distance-to-end, and Route Tangent XZ→`vec2` packing (`{ x, y: z }`).
+- Table-driven `control` temporal/PID execution, including first-tick zeros/false, multi-tick sequences, `dt` throw-before-mutate, cloned Previous values, BindingRuntime `resetRun` restoring artifact `runtimeState`, and catalog count 14.
+- Catalog uniqueness, placeability, and keyword search for `math` / `logic` / `strings` / `collections` / `conversions` / `geometry` / `control` / `mission` route-helper entries.
 - Editor `executeProgram()` memoization: shared diamonds run once per call, memos are shared across multiple OutputNodes, and a later call starts a new memo.
 - Runtime cycles on live graphs (`Cycle detected at runtime while evaluating "<uuid>"`) plus `SignalStore` rollback of staged writes.
 - Frozen `nodes[].ports` overlay during hydrate, including v2/early-v3 `written` / `ok` / `staged` versus current `then` ports.
 - Effect sequencing: `Sequence` order, `Passthrough` reachability, unused lazy `WriteSignal` branches, and fail-closed restore of missing ports.
-- Program input/output behavior, including `unit` and `actor_command`.
-- Make/Split actor-command normalization, optional `actorId`, and `If<actor_command>`.
+- Program input/output behavior, including `unit`, `actor_command`, `vec2`, `vec3`, `pose2d`, and `pose3d`.
+- Make/Split actor-command and vec/pose normalization, optional `actorId` / pose `order`, and `If<actor_command>`.
 - Scenario resolution rejecting an `actor_command` program output mapped to route-controller `speed`/`steering`.
 - Runtime state hydration or serialization.
 - Imported compiled program behavior.

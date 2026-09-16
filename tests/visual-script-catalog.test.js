@@ -115,3 +115,26 @@ test("conversion string json and array blocks are placeable and searchable", () 
     assert.ok(UNIT_CATALOG_META.find((entry) => entry.type === "ArrayLiteralBlock").keywords.includes("array"));
 });
 
+test("geometry and route helper blocks are placeable and searchable", () => {
+    const geometry = UNIT_CATALOG_META.filter((entry) => entry.category === "geometry" && entry.placeable);
+    assert.ok(geometry.some((entry) => entry.type === "MakeVec2Block"));
+    assert.ok(geometry.some((entry) => entry.type === "CrossVec3Block"));
+    assert.ok(geometry.some((entry) => entry.type === "MakePose3DBlock"));
+    assert.equal(geometry.length, 23);
+    assert.ok(UNIT_CATALOG_META.find((entry) => entry.type === "MakeVec2Block").keywords.includes("vec2"));
+    assert.equal(UNIT_CATALOG_META.find((entry) => entry.type === "WaypointAtIndexBlock")?.category, "mission");
+    assert.ok(UNIT_CATALOG_META.find((entry) => entry.type === "RouteLengthBlock").keywords.includes("length"));
+    assert.ok(UNIT_CATALOG_META.find((entry) => entry.type === "RouteTangentBlock").keywords.includes("tangent"));
+});
+
+test("control temporal and controller blocks are placeable and searchable", () => {
+    const control = UNIT_CATALOG_META.filter((entry) => entry.category === "control" && entry.placeable);
+    assert.equal(control.length, 14);
+    assert.ok(control.some((entry) => entry.type === "PreviousBlock"));
+    assert.ok(control.some((entry) => entry.type === "IntegratorBlock"));
+    assert.ok(control.some((entry) => entry.type === "PidControllerBlock"));
+    assert.ok(UNIT_CATALOG_META.find((entry) => entry.type === "PreviousBlock").keywords.includes("z1"));
+    assert.ok(UNIT_CATALOG_META.find((entry) => entry.type === "IntegratorBlock").keywords.includes("integrator"));
+    assert.ok(UNIT_CATALOG_META.find((entry) => entry.type === "PidControllerBlock").keywords.includes("pid"));
+});
+

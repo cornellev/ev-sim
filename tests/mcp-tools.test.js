@@ -345,10 +345,20 @@ test("script_add_unit and script_update_unit configure stdlib conversion and col
             assert.match(listedText, /ConcatStringBlock/);
             assert.match(listedText, /ArrayLiteralBlock/);
             assert.match(listedText, /JsonGetBlock/);
+            assert.match(listedText, /MakeVec2Block/);
+            assert.match(listedText, /RouteLengthBlock/);
+            assert.match(listedText, /PreviousBlock/);
+            assert.match(listedText, /PidControllerBlock/);
 
             const described = await describe({ type: "FloorToIntBlock" });
             assert.equal(described.isError, undefined, described.content?.[0]?.text);
             assert.match(described.content[0].text, /FloorToIntBlock/);
+            const describedVec = await describe({ type: "MakeVec2Block" });
+            assert.equal(describedVec.isError, undefined, describedVec.content?.[0]?.text);
+            assert.match(describedVec.content[0].text, /MakeVec2Block/);
+            const describedPid = await describe({ type: "PidControllerBlock" });
+            assert.equal(describedPid.isError, undefined, describedPid.content?.[0]?.text);
+            assert.match(describedPid.content[0].text, /PidControllerBlock/);
 
             const literal = await add({
                 scriptId: "script-blk03",
@@ -369,6 +379,30 @@ test("script_add_unit and script_update_unit configure stdlib conversion and col
                 uuid: "json-get",
             });
             assert.equal(getter.isError, undefined, getter.content?.[0]?.text);
+            const makeVec = await add({
+                scriptId: "script-blk03",
+                type: "MakeVec2Block",
+                uuid: "make-vec2",
+            });
+            assert.equal(makeVec.isError, undefined, makeVec.content?.[0]?.text);
+            const routeLength = await add({
+                scriptId: "script-blk03",
+                type: "RouteLengthBlock",
+                uuid: "route-length",
+            });
+            assert.equal(routeLength.isError, undefined, routeLength.content?.[0]?.text);
+            const integrator = await add({
+                scriptId: "script-blk03",
+                type: "IntegratorBlock",
+                uuid: "integrator",
+            });
+            assert.equal(integrator.isError, undefined, integrator.content?.[0]?.text);
+            const previous = await add({
+                scriptId: "script-blk03",
+                type: "PreviousBlock",
+                uuid: "previous",
+            });
+            assert.equal(previous.isError, undefined, previous.content?.[0]?.text);
 
             const typed = await update({
                 scriptId: "script-blk03",
@@ -386,6 +420,10 @@ test("script_add_unit and script_update_unit configure stdlib conversion and col
             assert.deepEqual(saved.graph.nodes.find((node) => node.uuid === "literal").storedData, []);
             assert.equal(saved.graph.nodes.find((node) => node.uuid === "literal").state.itemType, "string");
             assert.equal(saved.graph.nodes.find((node) => node.uuid === "json-get").state.path, "items.0");
+            assert.equal(saved.graph.nodes.find((node) => node.uuid === "make-vec2").type, "MakeVec2Block");
+            assert.equal(saved.graph.nodes.find((node) => node.uuid === "route-length").type, "RouteLengthBlock");
+            assert.equal(saved.graph.nodes.find((node) => node.uuid === "integrator").type, "IntegratorBlock");
+            assert.equal(saved.graph.nodes.find((node) => node.uuid === "previous").type, "PreviousBlock");
         } finally {
             globalThis.fetch = originalFetch;
         }

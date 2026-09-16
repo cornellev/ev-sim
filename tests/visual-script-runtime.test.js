@@ -33,6 +33,8 @@ import { NumberUnitClass } from "../app/scripting/units/math/Number.block.js";
 import { WeightedSelectBlock } from "../app/scripting/units/math/Randomization.block.js";
 import { registerBuiltInBlocks } from "../app/scripting/registerBuiltInBlocks.js";
 import { AndBlock, OrBlock } from "../app/scripting/units/statements/LogicBlocks.block.js";
+import { IntegratorBlock } from "../app/scripting/units/control/TemporalBlocks.block.js";
+import { BindingRuntime } from "../app/scripting/bindings/BindingRuntime.js";
 import {
     AdvanceWaypointBlock,
     AssertSignalBlock,
@@ -2296,4 +2298,107 @@ test("outer failure restores runtime state committed by a nested compiled progra
     const run = outer.executeProgram();
     assert.equal(run.status, "failure");
     assert.deepEqual(imported.serializeRuntimeState().acc, { total: 0 });
+});
+
+function controlHead(type = "float64") {
+    const manager = new ScriptManager();
+    const head = new OutputNodeBlock("head");
+    const config = { outputs: [{ id: "output", label: "result", type }] };
+    head.hydrateState(config);
+    manager.addUnit(head);
+    manager.storeData("head", config);
+    manager.setHead("head");
+    return manager;
+}
+
+function addControlInput(manager, label, type, defaultValue) {
+    const uuid = `in-${label}`;
+    const block = new ProgramInputBlock(uuid);
+    const config = { label, type, defaultValue: String(defaultValue) };
+    block.hydrateState(config);
+    manager.addUnit(block);
+    manager.storeData(uuid, config);
+}
+
+function compileIntegratorProgram() {
+    clearBlockTypeRegistryForTests();
+    registerBuiltInBlocks();
+    const manager = controlHead();
+    addControlInput(manager, "value", "float64", 10);
+    addControlInput(manager, "dt", "float64", 0.1);
+    addControlInput(manager, "reset", "boolean", false);
+    manager.addUnit(new IntegratorBlock("int"));
+    connect(manager, "in-value", "input", "int", "value");
+    connect(manager, "in-dt", "input", "int", "dt");
+    connect(manager, "in-reset", "input", "int", "reset");
+    connect(manager, "int", "out", "head", "output");
+    return { manager, artifact: manager.compile("integrator-control") };
+}
+
+test("integrator blocks persist across compiled runs", () => {
+    const { artifact } = compileIntegratorProgram();
+    const runner = ScriptManager.createRunner(artifact);
+    assert.equal(runner.run({ value: 10, dt: 0.1, reset: false }).outputs.result, 1);
+    assert.equal(runner.run({ value: 10, dt: 0.1, reset: false }).outputs.result, 2);
+    assert.deepEqual(runner.serializeRuntimeState().int, { integral: 2 });
+});
+
+test("failed editor and compiled runs restore integrator runtime state", () => {
+    clearBlockTypeRegistryForTests();
+    registerBuiltInBlocks();
+    registerBlockType("ThrowAfterInputBlock", ThrowAfterInputBlock);
+
+    const manager = controlHead();
+    addControlInput(manager, "value", "float64", 10);
+    addControlInput(manager, "dt", "float64", 0.1);
+    addControlInput(manager, "reset", "boolean", false);
+    manager.addUnit(new IntegratorBlock("int"));
+    manager.addUnit(new ThrowAfterInputBlock("throw"));
+    connect(manager, "in-value", "input", "int", "value");
+    connect(manager, "in-dt", "input", "int", "dt");
+    connect(manager, "in-reset", "input", "int", "reset");
+    connect(manager, "int", "out", "throw", "value");
+    connect(manager, "throw", "out", "head", "output");
+
+    assert.deepEqual(manager.units.find((unit) => unit.uuid === "int").serializeRuntimeState(), { integral: 0 });
+    const editorRun = manager.executeProgram({ value: 10, dt: 0.1, reset: false });
+    assert.equal(editorRun.status, "failure");
+    assert.deepEqual(manager.units.find((unit) => unit.uuid === "int").serializeRuntimeState(), { integral: 0 });
+
+    const runner = ScriptManager.createRunner(manager.compile("rollback-integrator"));
+    const compiledRun = runner.run({ value: 10, dt: 0.1, reset: false });
+    assert.equal(compiledRun.status, "failure");
+    assert.deepEqual(runner.serializeRuntimeState().int, { integral: 0 });
+});
+
+test("BindingRuntime.resetRun reinstantiates integrator state from the artifact", async () => {
+    const { artifact } = compileIntegratorProgram();
+    const runtime = new BindingRuntime({
+        autoLoad: false,
+        loadScript: async () => createLoadedScript(artifact),
+    });
+    await runtime.ready();
+    await runtime.setManifest({
+        bindings: [{
+            id: "tick",
+            scriptId: "int-script",
+            trigger: { kind: "fixed-update", everyN: 1 },
+            inputs: [
+                { input: "value", source: "constant", value: 10 },
+                { input: "dt", source: "sim", key: "dt" },
+                { input: "reset", source: "constant", value: false },
+            ],
+        }],
+    }, { persist: false });
+    await runtime.prepareResolvedScripts([{ scriptId: "int-script", artifact }], { seed: "1" });
+
+    runtime.update(0.1, { timeNs: 100_000_000, step: 1 });
+    runtime.update(0.1, { timeNs: 200_000_000, step: 2 });
+    assert.equal(runtime.getDeterministicState().scripts["int-script"].int.integral, 2);
+
+    runtime.resetRun({ resetSeed: "1" });
+    assert.equal(runtime.getDeterministicState().scripts["int-script"].int.integral, 0);
+
+    runtime.update(0.1, { timeNs: 100_000_000, step: 1 });
+    assert.equal(runtime.getDeterministicState().scripts["int-script"].int.integral, 1);
 });

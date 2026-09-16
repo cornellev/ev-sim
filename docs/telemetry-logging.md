@@ -28,7 +28,7 @@ Every path has a descriptor. `replayRole` is `input`, `state`, or `derived`; `lo
 
 `SignalStore` retains timestamped, bounded live histories. Structured signals are stored once. Analysis creates virtual numeric child fields at read time, so `imu.accel` can expose `imu.accel.x` without writing duplicate samples.
 
-The same-origin tab bridge uses `BroadcastChannel("cev-sim-telemetry-v1")`. The simulator tab remains authoritative. Remote tabs discover catalogs and snapshots, then request full-rate paths. They never record mirrored samples.
+The same-origin tab bridge uses `BroadcastChannel("cev-sim-telemetry-v2")`. The simulator tab remains authoritative. Heartbeats are liveness pings (`sourceId`, `timeUs`, `metadata`, `catalogGeneration`) and do not clone the catalog. Full `descriptors` plus a light snapshot go out on announce and snapshot-request; remote tabs then request full-rate paths. They never record mirrored samples. A `catalogGeneration` lag on a later heartbeat triggers a snapshot-request so a tab that missed catalog messages can resync.
 
 ## Recording profiles
 

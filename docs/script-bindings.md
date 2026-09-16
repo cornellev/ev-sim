@@ -7,7 +7,7 @@ Bindings connect compiled visual scripts to live triggers: ROS topics, fixed sim
 - A **binding** references one script from the local script library and describes when it runs, where its inputs come from, and where its outputs go.
 - All bindings live in a single versioned **library manifest** at `server/data/bindings.json`. Version 2 adds ordered single-level folders and activation scope; version 1 documents are accepted and migrated as global, unfiled bindings.
 - A binding with `scope: "global"` is active outside resolved runs and in every run manifest. A `scope: "selected"` binding is active only in manifests that include its id in `scripts.bindingIds`; new bindings start selected and unassigned.
-- All bound scripts share one **signal store**. Topic updates are bridged into `topics.<name>`, and each fixed step writes a `simulation` snapshot (`{ dt, time, step, frame }`), so signal blocks inside scripts observe live data.
+- All bound scripts share one **signal store**. Topic updates are bridged into `topics.<name>`, and each fixed step writes a `simulation` snapshot (`{ dt, time, step, frame }`), so signal blocks inside scripts observe live data. Integrator and PID `dt` ports are ordinary program inputs; map them with `source: "sim", key: "dt"` as in the example below.
 
 ## Files
 

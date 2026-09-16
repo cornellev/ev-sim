@@ -1,3 +1,5 @@
+import { DEVICE_TELEMETRY_ID_PATTERN } from "../../3d/data/DeviceTelemetryId.js";
+
 export const SIGNAL_NAMESPACES = Object.freeze({
     TOPICS: "topics",
     CANDIDATE: "candidate",
@@ -31,7 +33,14 @@ export const SIGNAL_PATHS = Object.freeze({
     FRONT_CAMERA: "devices.front_camera",
     SIMULATION: "simulation",
     SIMULATION_FRAME: "simulation.frame",
+    SIMULATION_TIME: "simulation.time",
+    SIMULATION_STATUS: "simulation.status",
+    SIMULATION_STEP: "simulation.step",
+    SIMULATION_FIXED_DT: "simulation.fixedDt",
     SCENARIO: "scenario",
+    SCENARIO_STATUS: "scenario.status",
+    SCENARIO_TERMINAL: "scenario.terminal",
+    SCENARIO_LATEST_TRIGGER: "scenario.latestTrigger",
     TARGET_OBJECT: "objects.target",
     MISSION_ROUTE: "mission.route",
     MISSION_CURRENT_WAYPOINT: "mission.currentWaypoint",
@@ -72,6 +81,24 @@ export function activeTopicSignalPath(contractId) {
 
 export function normalizeSignalPath(path) {
     return String(path || "").trim();
+}
+
+export function entityIdSegment(value, fallback = "") {
+    const id = String(value ?? "").trim();
+    if (!id) return fallback;
+    return DEVICE_TELEMETRY_ID_PATTERN.test(id) ? id : "";
+}
+
+export function vehiclesLeafPath(actorId, leaf) {
+    const id = entityIdSegment(actorId, "ego");
+    const suffix = String(leaf || "").trim();
+    return id && suffix ? `${SIGNAL_NAMESPACES.VEHICLES}.${id}.${suffix}` : "";
+}
+
+export function devicesLeafPath(deviceId, leaf) {
+    const id = entityIdSegment(deviceId, "");
+    const suffix = String(leaf || "").trim();
+    return id && suffix ? `${SIGNAL_NAMESPACES.DEVICES}.${id}.${suffix}` : "";
 }
 
 export function topicSignalPath(topic) {

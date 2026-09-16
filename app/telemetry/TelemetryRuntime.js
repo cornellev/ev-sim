@@ -63,6 +63,10 @@ function boundedBacklog(samples, limit = BACKLOG_SAMPLE_LIMIT) {
     return result.slice(-limit);
 }
 
+function hasFullCatalog(message) {
+    return Array.isArray(message?.descriptors) && message?.snapshot != null && typeof message.snapshot === "object";
+}
+
 /** The shared signal store used by simulation, bindings, logging, and analysis. */
 export function getTelemetryStore() {
     return getBindingRuntime().signalStore;
@@ -100,6 +104,9 @@ export class TelemetryTabBridge {
         this.pendingHeavyUpdates = new Map();
         this.previewSentAt = new Map();
         this.context = { workspace: "unknown", environmentId: null };
+        this._localDescriptors = [];
+        this._localSnapshot = {};
+        this._catalogGeneration = 0;
         this._unsubscribe = null;
         this._heartbeat = null;
         this._expiry = null;
@@ -115,8 +122,9 @@ export class TelemetryTabBridge {
             { includeEvents: true, includeCatalog: true, includeHeavy: true },
             (message) => this._onLocalMessage(message),
         );
+        this._rebuildLocalCatalog();
         this._post("announce", this._catalogPayload());
-        this._heartbeat = setInterval(() => this._post("heartbeat", this._catalogPayload()), HEARTBEAT_MS);
+        this._heartbeat = setInterval(() => this._post("heartbeat", this._litePayload()), HEARTBEAT_MS);
         this._expiry = setInterval(() => this._expireSources(), HEARTBEAT_MS);
         return this;
     }
@@ -133,6 +141,8 @@ export class TelemetryTabBridge {
         this._expiry = null;
         this._emitTimer = null;
         this._heavyFlushTimer = null;
+        this._localDescriptors = [];
+        this._localSnapshot = {};
         this.channel?.close();
         this.channel = null;
         this.remoteSources.clear();
@@ -145,7 +155,7 @@ export class TelemetryTabBridge {
 
     setContext(patch = {}) {
         this.context = { ...this.context, ...patch };
-        if (this.channel) this._post("announce", this._catalogPayload());
+        if (this.channel) this._post("announce", this._litePayload());
     }
 
     subscribe(listener) {
@@ -156,7 +166,7 @@ export class TelemetryTabBridge {
 
     getSources() {
         return [...this.remoteSources.values()]
-            .map((source) => clone(source))
+            .map((source) => ({ ...source }))
             .sort((a, b) => a.sourceId.localeCompare(b.sourceId));
     }
 
@@ -189,13 +199,48 @@ export class TelemetryTabBridge {
         };
     }
 
-    _catalogPayload({ paths = null } = {}) {
+    _litePayload() {
         return {
-            descriptors: this.store.descriptors(),
-            snapshot: this.store.snapshot({ paths, includeHeavy: false }),
-            timeUs: this._sourceTimeUs(),
+            catalogGeneration: this._catalogGeneration,
             metadata: this._metadata(),
         };
+    }
+
+    _catalogPayload({ paths = null } = {}) {
+        const snapshot = Array.isArray(paths)
+            ? Object.fromEntries(
+                paths
+                    .filter((path) => Object.hasOwn(this._localSnapshot, path))
+                    .map((path) => [path, this._localSnapshot[path]]),
+            )
+            : this._localSnapshot;
+        return {
+            descriptors: this._localDescriptors,
+            snapshot,
+            catalogGeneration: this._catalogGeneration,
+            metadata: this._metadata(),
+        };
+    }
+
+    _rebuildLocalCatalog() {
+        this._localDescriptors = this.store.descriptors();
+        this._localSnapshot = this.store.snapshot({ includeHeavy: false });
+        this._catalogGeneration += 1;
+    }
+
+    _applyLocalCatalog(message) {
+        const path = message.path || message.descriptor?.path;
+        if (path) {
+            this._localDescriptors = this._localDescriptors.filter((item) => item.path !== path);
+            if (message.action === "removed") {
+                delete this._localSnapshot[path];
+            } else if (message.descriptor) {
+                this._localDescriptors.push(message.descriptor);
+                this._localDescriptors.sort((a, b) => a.path.localeCompare(b.path));
+                if (message.descriptor.logClass === "heavy") delete this._localSnapshot[path];
+            }
+        }
+        this._catalogGeneration += 1;
     }
 
     _sourceTimeUs() {
@@ -237,12 +282,27 @@ export class TelemetryTabBridge {
     _onLocalMessage(message) {
         if (!this.channel) return;
         if (message.kind === "catalog") {
-            this._post("catalog", { action: message.action || "updated", path: message.path, descriptor: message.descriptor });
+            this._applyLocalCatalog(message);
+            this._post("catalog", {
+                action: message.action || "updated",
+                path: message.path || message.descriptor?.path,
+                descriptor: message.descriptor,
+                catalogGeneration: this._catalogGeneration,
+            });
+            return;
+        }
+
+        if (message.kind === "reset") {
+            this._rebuildLocalCatalog();
+            this._post("announce", this._catalogPayload());
             return;
         }
 
         if (message.kind === "update") {
             const heavy = isHeavyDescriptor(message.descriptor);
+            if (message.path && message.entry && message.descriptor?.logClass !== "heavy") {
+                this._localSnapshot[message.path] = message.entry;
+            }
             for (const [consumerId, paths] of this.consumerSubscriptions) {
                 if (!paths.has(message.path)) continue;
                 if (heavy) {
@@ -310,8 +370,18 @@ export class TelemetryTabBridge {
             events: [],
             timeUs: message.timeUs || 0,
             metadata: message.metadata || {},
+            catalogGeneration: Number.isFinite(Number(message.catalogGeneration)) ? Number(message.catalogGeneration) : 0,
             lastSeenAt: now,
         };
+    }
+
+    _applyRemotePresence(source, message, now) {
+        source.timeUs = message.timeUs ?? source.timeUs;
+        if (message.metadata) source.metadata = message.metadata;
+        source.lastSeenAt = now;
+        if (Number.isFinite(Number(message.catalogGeneration))) {
+            source.catalogGeneration = Math.max(source.catalogGeneration || 0, Number(message.catalogGeneration));
+        }
     }
 
     _onMessage(message) {
@@ -321,17 +391,22 @@ export class TelemetryTabBridge {
         if (["announce", "heartbeat"].includes(message.type)) {
             const firstSeen = !this.remoteSources.has(message.sourceId);
             const source = this.remoteSources.get(message.sourceId) || this._createRemoteSource(message, now);
-            source.descriptors = message.descriptors || source.descriptors;
-            source.snapshot = { ...source.snapshot, ...(message.snapshot || {}) };
-            source.timeUs = message.timeUs ?? source.timeUs;
-            source.metadata = message.metadata || source.metadata;
-            source.lastSeenAt = now;
-            this.remoteSources.set(message.sourceId, source);
-            if (message.type === "announce" && firstSeen) {
-                this._post("snapshot-request", { targetSourceId: message.sourceId });
-                this._post("announce", this._catalogPayload());
+            const incomingGeneration = Number(message.catalogGeneration);
+            const hasGeneration = Number.isFinite(incomingGeneration);
+            const fullCatalog = hasFullCatalog(message);
+            const needsSnapshot = hasGeneration
+                && incomingGeneration > (source.catalogGeneration || 0)
+                && !fullCatalog;
+            if (fullCatalog) {
+                source.descriptors = message.descriptors;
+                source.snapshot = { ...message.snapshot };
             }
-            this._emitNow();
+            this._applyRemotePresence(source, message, now);
+            this.remoteSources.set(message.sourceId, source);
+            if (firstSeen && !fullCatalog) this._post("snapshot-request", { targetSourceId: message.sourceId });
+            else if (needsSnapshot) this._post("snapshot-request", { targetSourceId: message.sourceId });
+            if (firstSeen) this._post("announce", this._catalogPayload());
+            this._scheduleEmit();
             return;
         }
 
@@ -367,6 +442,9 @@ export class TelemetryTabBridge {
             source.snapshot = { ...source.snapshot, ...(message.snapshot || {}) };
             source.timeUs = message.timeUs ?? source.timeUs;
             source.metadata = message.metadata || source.metadata;
+            if (Number.isFinite(Number(message.catalogGeneration))) {
+                source.catalogGeneration = Math.max(source.catalogGeneration || 0, Number(message.catalogGeneration));
+            }
             if (message.series) {
                 const byPath = this.remoteSeries.get(message.sourceId) || new Map();
                 const nextPaths = new Set(Object.keys(message.series));
@@ -391,6 +469,9 @@ export class TelemetryTabBridge {
                     delete source.snapshot[path];
                     this.remoteSeries.get(message.sourceId)?.delete(path);
                 } else if (message.descriptor) source.descriptors.push(message.descriptor);
+            }
+            if (Number.isFinite(Number(message.catalogGeneration))) {
+                source.catalogGeneration = Math.max(source.catalogGeneration || 0, Number(message.catalogGeneration));
             }
         } else if (["update", "preview"].includes(message.type) && message.message?.path) {
             source.snapshot[message.message.path] = message.message.entry;
@@ -437,6 +518,7 @@ export class TelemetryTabBridge {
     _emitNow(message = null) {
         clearTimeout(this._emitTimer);
         this._emitTimer = null;
+        if (this.listeners.size === 0) return;
         const sources = this.getSources();
         for (const listener of this.listeners) listener(sources, message);
     }

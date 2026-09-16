@@ -29,9 +29,10 @@ Examples:
 
 - Previous sample for a low-pass filter.
 - Last output for a rate limiter.
+- Previous value, integrator accumulator, and PID integral.
 - Seed or accumulator state.
 
-Runtime state is saved into the compiled artifact under each node's `runtimeState`. `VisualScriptRunner` hydrates `state`, then `runtimeState`, then overlays cloned `node.ports` onto `unit.typeMap`. Frozen ports win over the current class `register()`. A successful run syncs the new state. A failed editor or compiled run restores every unit's pre-run runtime state before returning, alongside signal-transaction rollback. Imported compiled-program blocks expose and restore their nested runner state through the same contract.
+Runtime state is saved into the compiled artifact under each node's `runtimeState`. `VisualScriptRunner` hydrates `state`, then `runtimeState`, then overlays cloned `node.ports` onto `unit.typeMap`. Frozen ports win over the current class `register()`. A successful run syncs the new state. A failed editor or compiled run restores every unit's pre-run runtime state before returning, alongside signal-transaction rollback. Imported compiled-program blocks expose and restore their nested runner state through the same contract. Temporal/controller blocks that take `dt` validate it before mutating fields so a thrown `dt` error rolls back to the pre-run snapshot.
 
 Editor `ScriptManager.outputMemo` is a per-`executeProgram()` evaluation frame, not runtime state. It is recreated at the start of each call and is not serialized.
 

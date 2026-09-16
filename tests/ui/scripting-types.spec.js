@@ -202,12 +202,15 @@ test("scripting canvas wires Add, Equal, Boolean Not, and Integer Less", async (
 
     await addBlock(page, "Boolean", "Boolean Logic");
     await addBlock(page, "Not", "Not Logic");
-    const notIn = page.getByRole("button", { name: "Connect input value, boolean" });
+    const booleanNode = page.getByRole("group", { name: /Boolean node/ });
+    const notNode = page.getByRole("group", { name: /Not node/ });
+    const notIn = notNode.getByRole("button", { name: "Connect input value, boolean" });
+    await expect(notIn).toBeVisible();
     await notIn.focus();
     await page.keyboard.press("Enter");
-    await page.getByRole("button", { name: "Connect output out, boolean" }).first().focus();
+    await booleanNode.getByRole("button", { name: "Connect output out, boolean" }).focus();
     await page.keyboard.press("Enter");
-    await expect(page.getByRole("button", { name: "Connect output out, boolean" })).toHaveCount(2);
+    await expect(notNode.getByRole("button", { name: "Connect output out, boolean" })).toBeVisible();
 
     await addBlock(page, "Integer", "Integer Math");
     await addBlock(page, "Less", "Less Logic");
@@ -265,5 +268,38 @@ test("block library places stdlib blocks and rejects an incompatible Array Get i
     await expect(page.getByRole("alert").filter({ hasText: "Type mismatch" })).toBeVisible();
     await expect(arrayGet.getByRole("button", { name: "Connect output out, float64" })).toBeVisible();
     await expect(arrayGet.getByRole("button", { name: "Connect output out, string" })).toHaveCount(0);
+});
+
+test("block library places geometry and route helper blocks", async ({ page }) => {
+    test.setTimeout(180_000);
+    await page.goto("/");
+    await openWorkspace(page, "Scripting canvas");
+    await page.getByRole("button", { name: "New" }).first().click();
+
+    await addBlock(page, "Make Vec2", "Make Vec2 Geometry");
+    await addBlock(page, "Route Length", "Route Length Mission");
+
+    await expect(page.getByRole("group", { name: /Make Vec2 node/ })).toBeVisible();
+    await expect(page.getByRole("group", { name: /Route Length node/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Connect output out, vec2" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Connect output length, float64" })).toBeVisible();
+});
+
+test("block library places control temporal and pid blocks", async ({ page }) => {
+    test.setTimeout(180_000);
+    await page.goto("/");
+    await openWorkspace(page, "Scripting canvas");
+    await page.getByRole("button", { name: "New" }).first().click();
+
+    await addBlock(page, "Integrator", "Integrator Control");
+    await addBlock(page, "Previous", "Previous Control");
+    await addBlock(page, "PID Controller", "PID Controller Control");
+
+    await expect(page.getByRole("group", { name: /Integrator node/ })).toBeVisible();
+    await expect(page.getByRole("group", { name: /Previous node/ })).toBeVisible();
+    await expect(page.getByRole("group", { name: /PID Controller node/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Connect output out, float64" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Connect output previous, generic" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Connect output command, float64" })).toBeVisible();
 });
 

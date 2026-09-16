@@ -8,7 +8,15 @@ import {
     finiteFloat,
     finiteInt32,
     normalizeActorCommand,
+    normalizePose2d,
+    normalizePose3d,
+    normalizeVec2,
+    normalizeVec3,
+    POSE2D_TYPE,
+    POSE3D_TYPE,
     UNIT,
+    VEC2_TYPE,
+    VEC3_TYPE,
 } from "../../types/PortTypes.js";
 
 export const SUPPORTED_TYPES = [
@@ -89,6 +97,22 @@ export function parseValueByType(value, type) {
         return normalizeActorCommand(value);
     }
 
+    if (normalizedType === VEC2_TYPE) {
+        return normalizeVec2(value);
+    }
+
+    if (normalizedType === VEC3_TYPE) {
+        return normalizeVec3(value);
+    }
+
+    if (normalizedType === POSE2D_TYPE) {
+        return normalizePose2d(value);
+    }
+
+    if (normalizedType === POSE3D_TYPE) {
+        return normalizePose3d(value);
+    }
+
     if (normalizedType === "tex1d") {
         return parseArrayValue(value, "float64");
     }
@@ -112,10 +136,6 @@ export function parseValueByType(value, type) {
         "message",
         "topic",
         "timestamp",
-        "vec2",
-        "vec3",
-        "pose2d",
-        "pose3d",
         "vehicle_ref",
         "device_ref",
         "object_ref",

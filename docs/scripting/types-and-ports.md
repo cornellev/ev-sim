@@ -18,8 +18,9 @@ Current base types:
 - `generic` (editor-only wire color; not a program I/O type)
 - `unit` (concrete sequencing token; allowed as program I/O)
 - `actor_command` (concrete `{ actorId, speedMps, steeringRad }` value; allowed as program I/O)
+- `vec2` / `vec3` / `pose2d` / `pose3d` (frozen structured values; allowed as program I/O)
 
-For bracketed types, such as `array[float64]`, the UI can fall back to the base type color. `generic` is listed in `Constants.TYPES` for unbound polymorphic ports. It is **not** in `ProgramTypes.SUPPORTED_TYPES` and must never appear in compiled artifacts. `unit` and `actor_command` are in `SUPPORTED_TYPES`. `parseValueByType(_, "unit")` always returns the `UNIT` singleton from `PortTypes.js`. Numeric parsing uses `finiteFloat()` / `finiteInt32()`; nonfinite values become zero and int32 values truncate and clamp to the signed range. `finiteResult()` maps non-finite math results to `0`. `orderedBounds(min, max)` finite-normalizes both edges and swaps them when `min > max`. `valuesEqual()` is structural equality for serializable values: numbers treat `+0`/`-0` as equal, arrays compare element-wise, and plain objects compare key sets without depending on insertion order. `normalizeActorCommand()` applies the same finite rule, defaults `actorId` to `""`, and drops extra keys. `IsFiniteBlock` is the exception: it uses raw `Number.isFinite(Number(value))` so `Infinity` stays non-finite instead of collapsing to `0`.
+For bracketed types, such as `array[float64]`, the UI can fall back to the base type color. `generic` is listed in `Constants.TYPES` for unbound polymorphic ports. It is **not** in `ProgramTypes.SUPPORTED_TYPES` and must never appear in compiled artifacts. `unit`, `actor_command`, `vec2`, `vec3`, `pose2d`, and `pose3d` are in `SUPPORTED_TYPES`. `parseValueByType(_, "unit")` always returns the `UNIT` singleton from `PortTypes.js`. Numeric parsing uses `finiteFloat()` / `finiteInt32()`; nonfinite values become zero and int32 values truncate and clamp to the signed range. `finiteResult()` maps non-finite math results to `0`. `orderedBounds(min, max)` finite-normalizes both edges and swaps them when `min > max`. `valuesEqual()` is structural equality for serializable values: numbers treat `+0`/`-0` as equal, arrays compare element-wise, and plain objects compare key sets without depending on insertion order. `normalizeActorCommand()` applies the same finite rule, defaults `actorId` to `""`, and drops extra keys. `normalizeVec2()` / `normalizeVec3()` / `normalizePose2d()` / `normalizePose3d()` freeze the shapes below, map non-finite components to `0`, default pose3d Euler `order` to `"XYZ"`, and drop extra keys. `parseValueByType()` dispatches those four types through the normalizers (after optional JSON parse). `IsFiniteBlock` is the exception: it uses raw `Number.isFinite(Number(value))` so `Infinity` stays non-finite instead of collapsing to `0`.
 
 Array and JSON path blocks do **not** infer `T`. They use a `state.itemType` / `state.valueType` selector restricted to `float64`, `int32`, `boolean`, `string`, and `json`, and register exact ports such as `array[float64]`. `array[float64]` will not connect to `array[json]`. JSON path reads use `getByPath` with a missing-path sentinel so a present `null` is distinct from absence; writes use `setByPath` / `deleteByPath` and always emit cloned documents. `asArray()` returns `[]` for non-arrays instead of wrapping scalars the way `parseValueByType(..., "array[…]")` does.
 
@@ -41,6 +42,10 @@ Current supported program I/O types:
 - `custom[string]`
 - `unit`
 - `actor_command`
+- `vec2`
+- `vec3`
+- `pose2d`
+- `pose3d`
 
 ## Sequencing And Effect Ports
 
@@ -58,11 +63,28 @@ Frozen v2 and early-v3 artifacts may still snapshot `written`, `ok`, or `staged`
 
 Route-controller speed and steering mappings remain `float64`. A compiled program may export `actor_command`, but `StorageService` scenario resolution rejects mapping that output to `speed` or `steering`.
 
+## Vectors And Poses
+
+`vec2`, `vec3`, `pose2d`, and `pose3d` are scripting value types. Extra keys are dropped. Arrays, empty strings, and non-objects become zeros.
+
+Frozen shapes:
+
+- `vec2 = { x, y }`
+- `vec3 = { x, y, z }`
+- `pose2d = { position: vec2, yaw }`
+- `pose3d = { position: vec3, rotation: { x, y, z, order } }`
+
+`pose2d.position.y` is the second generic axis, not world-up. `pose3d.rotation.order` is a THREE Euler string from `XYZ|YZX|ZXY|XZY|YXZ|ZYX`; anything else becomes `"XYZ"`. When `position` is missing, top-level `x` / `y` / `z` on the object are used so a flat point can parse as a pose.
+
+Make/Split geometry blocks compose and unpack these shapes. `Make Pose 3D` takes required `position` / `x` / `y` / `z` (Euler radians) and optional `order`. Vector arithmetic lives in `app/scripting/units/geometry/vectorMath.js`. Zero-length `Normalize Vec2/Vec3` returns a zero vector. Domain-invalid components become `0` via `finiteFloat()` / `finiteResult()`.
+
+`Route Tangent` packs the route helper’s planar XZ tangent `{ x, z }` into `vec2` as `{ x, y: z }`. Heading stays `float64` (`Math.atan2(dx, dz)`). `route` and `waypoint` remain opaque JSON in `parseValueByType()`.
+
 ## Port Matching
 
 `app/scripting/types/PortTypes.js` defines `portsCompatible(a, b)`: either side may be editor-only `generic`, otherwise the strings must match exactly (`float64` ≠ `int32`). `LineManager` uses that check on the full `data-encoded` type, not CSS class names.
 
-Polymorphic blocks declare `static typeScheme = { variables: { T: { inputs: [...], outputs: [...] } } }`. Graph-wide unification in `app/scripting/types/unifyGraph.js` unions connected generic variables, propagates every concrete constraint across the component, and rejects a candidate wire when two distinct concrete types would meet. Existing wires are never deleted to make a new wire fit.
+Polymorphic blocks declare `static typeScheme = { variables: { T: { inputs: [...], outputs: [...] } } }`. Graph-wide unification in `app/scripting/types/unifyGraph.js` unions connected generic variables, propagates every concrete constraint across the component, and rejects a candidate wire when two distinct concrete types would meet. Existing wires are never deleted to make a new wire fit. `Previous` and `Value Changed` infer `T` the same way as Equal/Passthrough (no type selector).
 
 Derived bindings live on `unit.typeBindings` (for example `{ T: "float64" }`) and are cached on editor graph nodes as `typeBindings`. On restore, connections are the authority and bindings are recomputed.
 

@@ -52,11 +52,23 @@ import {
     ArrayLiteralBlock,
     ArraySetBlock,
 } from "../app/scripting/units/collections/ArrayBlocks.block.js";
+import {
+    GEOMETRY_BLOCK_PORTS,
+    GEOMETRY_BLOCKS,
+    LengthVec2Block,
+    MakeVec2Block,
+} from "../app/scripting/units/geometry/GeometryBlocks.block.js";
 import * as scalarMath from "../app/scripting/units/math/scalarMath.js";
 import { TerrainNoiseBlock } from "../app/scripting/units/math/Terrain.block.js";
 import { MultiplyTexBlock, ScaleBlock } from "../app/scripting/units/math/tex/Scale.block.js";
 import { StringBlock } from "../app/scripting/units/objects/String.block.js";
-import { OutputNodeBlock } from "../app/scripting/units/program/ProgramIO.block.js";
+import { OutputNodeBlock, ProgramInputBlock } from "../app/scripting/units/program/ProgramIO.block.js";
+import {
+    RouteLengthBlock,
+    ROUTE_HELPER_BLOCK_PORTS,
+    ROUTE_HELPER_BLOCKS,
+    WaypointAtIndexBlock,
+} from "../app/scripting/units/mission/RouteBlocks.block.js";
 import {
     LOGIC_BLOCK_PORTS,
     LOGIC_BLOCKS,
@@ -66,6 +78,18 @@ import {
     LessBlock,
     OrBlock,
 } from "../app/scripting/units/statements/LogicBlocks.block.js";
+import {
+    CONTROLLER_BLOCK_PORTS,
+    CONTROLLER_BLOCKS,
+    PidControllerBlock,
+} from "../app/scripting/units/control/ControllerBlocks.block.js";
+import {
+    TEMPORAL_BLOCK_PORTS,
+    TEMPORAL_BLOCKS,
+    IntegratorBlock,
+    PreviousBlock,
+} from "../app/scripting/units/control/TemporalBlocks.block.js";
+import * as temporalMath from "../app/scripting/units/control/temporalMath.js";
 import {
     VehiclePoseBlock,
     VehicleVelocityBlock,
@@ -106,6 +130,24 @@ test("finite numeric helpers and declared constant outputs normalize values", ()
     assert.equal(string.execute().get("out"), "false");
     manager.storeData("string", 0);
     assert.equal(string.execute().get("out"), "0");
+
+    assert.equal(temporalMath.clampWindow(0), 1);
+    assert.equal(temporalMath.clampWindow(9000), 4096);
+    assert.equal(temporalMath.median([1, 3, 2, 4]), 2.5);
+    assert.equal(temporalMath.integratorStep(0, 10, 0.1, false), 1);
+    assert.equal(temporalMath.integratorStep(1, 10, 0.1, true), 0);
+    assert.equal(temporalMath.hysteresisStep(false, 3, 5, 1), false);
+    assert.equal(temporalMath.hysteresisStep(false, 6, 5, 1), true);
+    const bounced = temporalMath.debounceStep({ output: false, candidate: false, elapsed: 0 }, true, 0.1, 0.2);
+    assert.equal(bounced.output, false);
+    assert.equal(bounced.elapsed, 0.1);
+    const pidFrozen = temporalMath.pidStep(
+        { integral: 0, previousError: 0, initialized: false },
+        { setpoint: 10, measurement: 0, kp: 1, ki: 10, kd: 0, dt: 0.1, min: -1, max: 1, reset: false },
+    );
+    assert.equal(pidFrozen.outputs.command, 1);
+    assert.equal(pidFrozen.outputs.saturated, true);
+    assert.equal(pidFrozen.state.integral, 0);
 });
 
 test("audited math blocks preserve legitimate zero and generic falsey values", () => {
@@ -225,6 +267,10 @@ test("atomic scalar and logic blocks share catalog port descriptors", () => {
         [STRING_BLOCK_PORTS, STRING_BLOCKS],
         [JSON_BLOCK_PORTS, JSON_BLOCKS],
         [ARRAY_BLOCK_PORTS, ARRAY_BLOCKS],
+        [GEOMETRY_BLOCK_PORTS, GEOMETRY_BLOCKS],
+        [ROUTE_HELPER_BLOCK_PORTS, ROUTE_HELPER_BLOCKS],
+        [TEMPORAL_BLOCK_PORTS, TEMPORAL_BLOCKS],
+        [CONTROLLER_BLOCK_PORTS, CONTROLLER_BLOCKS],
     ];
     for (const [portsByType, classes] of portMaps) {
         for (const [type, ports] of Object.entries(portsByType)) {
@@ -646,6 +692,146 @@ test("json and array writes clone inputs and leave out-of-range arrays unchanged
     assert.deepEqual(cloneValue({ x: 1 }), { x: 1 });
 });
 
+const SAMPLE_ROUTE = {
+    waypoints: [
+        { x: 0, y: 0, z: 0 },
+        { x: 10, y: 0, z: 0 },
+        { x: 10, y: 0, z: 20 },
+    ],
+};
+
+const GEOMETRY_EXECUTE_CASES = [
+    { type: "MakeVec2Block", inputs: { x: 3, y: 4 }, outputs: { out: { x: 3, y: 4 } } },
+    { type: "SplitVec2Block", inputs: { value: { x: 3, y: 4, extra: 1 } }, outputs: { x: 3, y: 4 } },
+    { type: "AddVec2Block", inputs: { a: { x: 0, y: 0 }, b: { x: 0, y: 1 } }, outputs: { out: { x: 0, y: 1 } } },
+    { type: "SubtractVec2Block", inputs: { a: { x: 5, y: 1 }, b: { x: 2, y: 1 } }, outputs: { out: { x: 3, y: 0 } } },
+    { type: "ScaleVec2Block", inputs: { value: { x: 1, y: 2 }, scalar: 0 }, outputs: { out: { x: 0, y: 0 } } },
+    { type: "DotVec2Block", inputs: { a: { x: 1, y: 2 }, b: { x: 3, y: 4 } }, outputs: { out: 11 } },
+    { type: "LengthVec2Block", inputs: { value: { x: 3, y: 4 } }, outputs: { out: 5 } },
+    { type: "LengthVec2Block", inputs: { value: { x: 0, y: 0 } }, outputs: { out: 0 } },
+    { type: "NormalizeVec2Block", inputs: { value: { x: 3, y: 4 } }, outputs: { out: { x: 0.6, y: 0.8 } } },
+    { type: "NormalizeVec2Block", inputs: { value: { x: 0, y: 0 } }, outputs: { out: { x: 0, y: 0 } } },
+    { type: "DistanceVec2Block", inputs: { a: { x: 0, y: 0 }, b: { x: 3, y: 4 } }, outputs: { out: 5 } },
+    { type: "MakeVec3Block", inputs: { x: 1, y: 2, z: 3 }, outputs: { out: { x: 1, y: 2, z: 3 } } },
+    { type: "SplitVec3Block", inputs: { value: { x: 1, y: 2, z: 3 } }, outputs: { x: 1, y: 2, z: 3 } },
+    { type: "AddVec3Block", inputs: { a: { x: 1, y: 0, z: 0 }, b: { x: 0, y: 1, z: 0 } }, outputs: { out: { x: 1, y: 1, z: 0 } } },
+    { type: "ScaleVec3Block", inputs: { value: { x: 2, y: 0, z: -1 }, scalar: 3 }, outputs: { out: { x: 6, y: 0, z: -3 } } },
+    { type: "DotVec3Block", inputs: { a: { x: 1, y: 0, z: 0 }, b: { x: 0, y: 1, z: 0 } }, outputs: { out: 0 } },
+    { type: "LengthVec3Block", inputs: { value: { x: 0, y: 3, z: 4 } }, outputs: { out: 5 } },
+    { type: "NormalizeVec3Block", inputs: { value: { x: 0, y: 0, z: 0 } }, outputs: { out: { x: 0, y: 0, z: 0 } } },
+    { type: "CrossVec3Block", inputs: { a: { x: 1, y: 0, z: 0 }, b: { x: 0, y: 1, z: 0 } }, outputs: { out: { x: 0, y: 0, z: 1 } } },
+    { type: "DistanceVec3Block", inputs: { a: { x: 0, y: 0, z: 0 }, b: { x: 0, y: 3, z: 4 } }, outputs: { out: 5 } },
+    {
+        type: "MakePose2DBlock",
+        inputs: { position: { x: 1, y: 2 }, yaw: 0.5 },
+        outputs: { out: { position: { x: 1, y: 2 }, yaw: 0.5 } },
+    },
+    {
+        type: "SplitPose2DBlock",
+        inputs: { value: { position: { x: 1, y: 2 }, yaw: 0.5, extra: 9 } },
+        outputs: { position: { x: 1, y: 2 }, yaw: 0.5 },
+    },
+    {
+        type: "MakePose3DBlock",
+        inputs: { position: { x: 1, y: 2, z: 3 }, x: 0.1, y: 0.2, z: 0.3 },
+        outputs: {
+            out: {
+                position: { x: 1, y: 2, z: 3 },
+                rotation: { x: 0.1, y: 0.2, z: 0.3, order: "XYZ" },
+            },
+        },
+    },
+    {
+        type: "SplitPose3DBlock",
+        inputs: {
+            value: {
+                position: { x: 1, y: 2, z: 3 },
+                rotation: { x: 0.1, y: 0.2, z: 0.3, order: "YXZ", extra: true },
+            },
+        },
+        outputs: { position: { x: 1, y: 2, z: 3 }, x: 0.1, y: 0.2, z: 0.3, order: "YXZ" },
+    },
+];
+
+const ROUTE_EXECUTE_CASES = [
+    {
+        type: "WaypointAtIndexBlock",
+        inputs: { route: SAMPLE_ROUTE, index: 1 },
+        outputs: { waypoint: { x: 10, y: 0, z: 0 }, found: true },
+    },
+    {
+        type: "WaypointAtIndexBlock",
+        inputs: { route: SAMPLE_ROUTE, index: 4 },
+        outputs: { waypoint: { id: "", kind: "", position: { x: 0, y: 0, z: 0 }, order: 0 }, found: false },
+    },
+    {
+        type: "WaypointAtIndexBlock",
+        inputs: { route: SAMPLE_ROUTE, index: -1 },
+        outputs: { waypoint: { id: "", kind: "", position: { x: 0, y: 0, z: 0 }, order: 0 }, found: false },
+    },
+    {
+        type: "WaypointAtIndexBlock",
+        inputs: { route: {}, index: 0 },
+        outputs: { waypoint: { id: "", kind: "", position: { x: 0, y: 0, z: 0 }, order: 0 }, found: false },
+    },
+    {
+        type: "SplitWaypointBlock",
+        inputs: { waypoint: { id: "a", kind: "start", position: { x: 1, y: 2, z: 3 }, order: 0 } },
+        outputs: { id: "a", kind: "start", position: { x: 1, y: 2, z: 3 }, order: 0 },
+    },
+    {
+        type: "SplitWaypointBlock",
+        inputs: { waypoint: null },
+        outputs: { id: "", kind: "", position: { x: 0, y: 0, z: 0 }, order: 0 },
+    },
+    { type: "RouteLengthBlock", inputs: { route: SAMPLE_ROUTE }, outputs: { length: 30 } },
+    {
+        type: "DistanceToRouteEndBlock",
+        inputs: { route: SAMPLE_ROUTE, pose: { position: { x: 10, y: 0, z: 20 }, rotation: { x: 0, y: 0, z: 0, order: "XYZ" } } },
+        outputs: { distance: 0 },
+    },
+    {
+        type: "DistanceToRouteEndBlock",
+        inputs: { route: { waypoints: [] }, pose: { position: { x: 1, y: 0, z: 1 }, rotation: { x: 0, y: 0, z: 0, order: "XYZ" } } },
+        outputs: { distance: 0 },
+    },
+    {
+        type: "RouteTangentBlock",
+        inputs: { route: SAMPLE_ROUTE, pose: { position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0, order: "XYZ" } } },
+        outputs: { heading: Math.atan2(10, 0), tangent: { x: 1, y: 0 }, progress: 0, found: true },
+    },
+    {
+        type: "RouteTangentBlock",
+        inputs: { route: { waypoints: [] }, pose: { position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0, order: "XYZ" } } },
+        outputs: { heading: 0, tangent: { x: 0, y: 0 }, progress: 0, found: false },
+    },
+];
+
+test("geometry and route helper blocks execute table", () => {
+    const classes = { ...GEOMETRY_BLOCKS, ...ROUTE_HELPER_BLOCKS };
+    for (const row of [...GEOMETRY_EXECUTE_CASES, ...ROUTE_EXECUTE_CASES]) {
+        const block = configuredBlock(classes[row.type], row.inputs || {});
+        const output = block.execute();
+        for (const [label, expected] of Object.entries(row.outputs)) {
+            assert.deepEqual(output.get(label), expected, `${row.type}.${label}`);
+        }
+    }
+
+    const left = { x: 1, y: 2, z: 3 };
+    const right = { x: 4, y: 5, z: 6 };
+    const added = configuredBlock(GEOMETRY_BLOCKS.AddVec3Block, { a: left, b: right });
+    const sum = added.execute().get("out");
+    sum.x = 99;
+    assert.deepEqual(left, { x: 1, y: 2, z: 3 });
+    assert.deepEqual(right, { x: 4, y: 5, z: 6 });
+
+    const source = [{ x: 1, y: 0, z: 0 }];
+    const indexed = configuredBlock(WaypointAtIndexBlock, { route: { waypoints: source }, index: 0 });
+    const waypoint = indexed.execute().get("waypoint");
+    waypoint.x = 9;
+    assert.deepEqual(source[0], { x: 1, y: 0, z: 0 });
+});
+
 test("stdlib blocks compile to v3 ports and match editor execution", () => {
     ensureBuiltIns();
 
@@ -712,5 +898,304 @@ test("stdlib blocks compile to v3 ports and match editor execution", () => {
     const jsoned = compileAndRun(jsonManager, "json-get");
     assert.equal(jsoned.editor.outputs.result, 0);
     assert.equal(jsoned.compiled.outputs.result, 0);
+
+    const vecManager = withHead("float64");
+    vecManager.addUnit(new NumberUnitClass("x"));
+    vecManager.addUnit(new NumberUnitClass("y"));
+    vecManager.addUnit(new MakeVec2Block("make"));
+    vecManager.addUnit(new LengthVec2Block("length"));
+    vecManager.storeData("x", 3);
+    vecManager.storeData("y", 4);
+    connect(vecManager, "x", "number", "make", "x");
+    connect(vecManager, "y", "number", "make", "y");
+    connect(vecManager, "make", "out", "length", "value");
+    connect(vecManager, "length", "out", "head", "output");
+    const vectored = compileAndRun(vecManager, "length-vec2");
+    assert.equal(vectored.editor.outputs.result, 5);
+    assert.equal(vectored.compiled.outputs.result, 5);
+    assert.equal(vectored.artifact.nodes.find((node) => node.uuid === "make").ports.outputs.out, "vec2");
+
+    const routeManager = withHead("float64");
+    const routeInput = new ProgramInputBlock("route");
+    const routeConfig = {
+        label: "route",
+        type: "route",
+        defaultValue: JSON.stringify({
+            waypoints: [
+                { x: 0, y: 0, z: 0 },
+                { x: 10, y: 0, z: 0 },
+                { x: 10, y: 0, z: 20 },
+            ],
+        }),
+    };
+    routeInput.hydrateState(routeConfig);
+    routeManager.addUnit(routeInput);
+    routeManager.storeData("route", routeConfig);
+    routeManager.addUnit(new RouteLengthBlock("length"));
+    connect(routeManager, "route", "input", "length", "route");
+    connect(routeManager, "length", "length", "head", "output");
+    const routed = compileAndRun(routeManager, "route-length");
+    assert.equal(routed.editor.outputs.result, 30);
+    assert.equal(routed.compiled.outputs.result, 30);
+    assert.equal(routed.artifact.nodes.find((node) => node.uuid === "length").ports.inputs.route, "route");
+});
+
+function addProgramInput(manager, label, type, defaultValue) {
+    const uuid = `in-${label}`;
+    const block = new ProgramInputBlock(uuid);
+    const config = {
+        label,
+        type,
+        defaultValue: String(defaultValue),
+    };
+    block.hydrateState(config);
+    manager.addUnit(block);
+    manager.storeData(uuid, config);
+    return uuid;
+}
+
+function outputMap(block) {
+    const result = block.execute();
+    return Object.fromEntries(Object.keys(result.map).map((label) => [label, result.get(label)]));
+}
+
+const TEMPORAL_EXECUTE_CASES = [
+    { type: "PreviousBlock", inputs: { value: {}, initial: { x: 0 } }, outputs: { previous: { x: 0 } } },
+    { type: "ValueChangedBlock", inputs: { value: 0 }, outputs: { changed: false } },
+    { type: "RisingEdgeBlock", inputs: { value: true }, outputs: { pulse: false } },
+    { type: "FallingEdgeBlock", inputs: { value: false }, outputs: { pulse: false } },
+    { type: "DebounceBlock", inputs: { value: false, dt: 0, duration: 0.2 }, outputs: { out: false } },
+    { type: "HysteresisBlock", inputs: { value: 6, low: 5, high: 1 }, outputs: { out: true } },
+    { type: "PulseBlock", inputs: { trigger: true, dt: 0.1, duration: 0.2 }, outputs: { out: false } },
+    { type: "StopwatchBlock", inputs: { enabled: true, reset: false, dt: 0 }, outputs: { elapsed: 0 } },
+    { type: "MovingAverageBlock", inputs: { value: 4, window: 0 }, outputs: { out: 4 } },
+    { type: "MedianFilterBlock", inputs: { value: 0, window: 3 }, outputs: { out: 0 } },
+    { type: "SlewRateBlock", inputs: { value: 8, riseRate: 1, fallRate: 1, dt: 0.1 }, outputs: { out: 8 } },
+    { type: "IntegratorBlock", inputs: { value: 10, dt: 0, reset: false }, outputs: { out: 0 } },
+    { type: "DerivativeBlock", inputs: { value: 5, dt: 0.1, reset: false }, outputs: { out: 0 } },
+    {
+        type: "PidControllerBlock",
+        inputs: {
+            setpoint: 1,
+            measurement: 0,
+            kp: 1,
+            ki: 0,
+            kd: 0,
+            dt: 0.1,
+            min: -10,
+            max: 10,
+            reset: false,
+        },
+        outputs: { command: 1, error: 1, p: 1, i: 0, d: 0, saturated: false },
+    },
+];
+
+const TEMPORAL_SEQUENCE_CASES = [
+    {
+        type: "PreviousBlock",
+        ticks: [
+            { inputs: { value: 1, initial: 0 }, outputs: { previous: 0 } },
+            { inputs: { value: 2, initial: 0 }, outputs: { previous: 1 } },
+        ],
+    },
+    {
+        type: "ValueChangedBlock",
+        ticks: [
+            { inputs: { value: { x: 1 } }, outputs: { changed: false } },
+            { inputs: { value: { x: 1 } }, outputs: { changed: false } },
+            { inputs: { value: { x: 2 } }, outputs: { changed: true } },
+        ],
+    },
+    {
+        type: "RisingEdgeBlock",
+        ticks: [
+            { inputs: { value: false }, outputs: { pulse: false } },
+            { inputs: { value: true }, outputs: { pulse: true } },
+            { inputs: { value: true }, outputs: { pulse: false } },
+        ],
+    },
+    {
+        type: "DebounceBlock",
+        ticks: [
+            { inputs: { value: true, dt: 0.1, duration: 0.2 }, outputs: { out: false } },
+            { inputs: { value: true, dt: 0.1, duration: 0.2 }, outputs: { out: true } },
+        ],
+    },
+    {
+        type: "StopwatchBlock",
+        ticks: [
+            { inputs: { enabled: true, reset: false, dt: 0.1 }, outputs: { elapsed: 0.1 } },
+            { inputs: { enabled: true, reset: false, dt: 0.1 }, outputs: { elapsed: 0.2 } },
+            { inputs: { enabled: true, reset: true, dt: 0.1 }, outputs: { elapsed: 0 } },
+            { inputs: { enabled: true, reset: false, dt: 0.1 }, outputs: { elapsed: 0.1 } },
+        ],
+    },
+    {
+        type: "IntegratorBlock",
+        ticks: [
+            { inputs: { value: 10, dt: 0.1, reset: false }, outputs: { out: 1 } },
+            { inputs: { value: 10, dt: 0.1, reset: false }, outputs: { out: 2 } },
+            { inputs: { value: 10, dt: 0.1, reset: true }, outputs: { out: 0 } },
+        ],
+    },
+    {
+        type: "PulseBlock",
+        ticks: [
+            { inputs: { trigger: false, dt: 0.1, duration: 0.3 }, outputs: { out: false } },
+            { inputs: { trigger: true, dt: 0.1, duration: 0.3 }, outputs: { out: true } },
+            { inputs: { trigger: false, dt: 0.1, duration: 0.3 }, outputs: { out: true } },
+            { inputs: { trigger: true, dt: 0.1, duration: 0.3 }, outputs: { out: true } },
+        ],
+    },
+    {
+        type: "MovingAverageBlock",
+        ticks: [
+            { inputs: { value: 1, window: 3 }, outputs: { out: 1 } },
+            { inputs: { value: 3, window: 3 }, outputs: { out: 2 } },
+            { inputs: { value: 5, window: 3 }, outputs: { out: 3 } },
+            { inputs: { value: 7, window: 2 }, outputs: { out: 6 } },
+        ],
+    },
+];
+
+test("control temporal and pid blocks execute first-tick table", () => {
+    const classes = { ...TEMPORAL_BLOCKS, ...CONTROLLER_BLOCKS };
+    for (const row of TEMPORAL_EXECUTE_CASES) {
+        const block = configuredBlock(classes[row.type], row.inputs);
+        const actual = outputMap(block);
+        assert.deepEqual(actual, row.outputs, row.type);
+    }
+});
+
+test("control temporal blocks execute sequence table", () => {
+    const classes = { ...TEMPORAL_BLOCKS, ...CONTROLLER_BLOCKS };
+    for (const row of TEMPORAL_SEQUENCE_CASES) {
+        const values = { ...row.ticks[0].inputs };
+        const block = configuredBlock(classes[row.type], values);
+        row.ticks.forEach((tick, index) => {
+            Object.assign(values, tick.inputs);
+            const actual = outputMap(block);
+            assert.deepEqual(actual, tick.outputs, `${row.type} tick ${index}`);
+        });
+    }
+});
+
+test("control dt failures do not mutate runtime state", () => {
+    const values = { value: 1, dt: 0.1, reset: false };
+    const integrator = configuredBlock(IntegratorBlock, values);
+    integrator.hydrateRuntimeState({ integral: 4 });
+    const before = integrator.serializeRuntimeState();
+    values.dt = -1;
+    assert.throws(() => integrator.execute(), /IntegratorBlock dt must be finite and non-negative/);
+    assert.deepEqual(integrator.serializeRuntimeState(), before);
+    values.dt = Infinity;
+    assert.throws(() => integrator.execute(), /IntegratorBlock dt must be finite and non-negative/);
+    assert.deepEqual(integrator.serializeRuntimeState(), before);
+
+    const pidValues = {
+        setpoint: 1,
+        measurement: 0,
+        kp: 1,
+        ki: 0,
+        kd: 0,
+        dt: 0.1,
+        min: -1,
+        max: 1,
+        reset: false,
+    };
+    const pid = configuredBlock(PidControllerBlock, pidValues);
+    pid.hydrateRuntimeState({ integral: 2, previousError: 1, initialized: true });
+    const pidBefore = pid.serializeRuntimeState();
+    pidValues.dt = -0.01;
+    assert.throws(() => pid.execute(), /PidControllerBlock dt must be finite and non-negative/);
+    assert.deepEqual(pid.serializeRuntimeState(), pidBefore);
+});
+
+test("control blocks clone stored values and hydrate missing runtime state", () => {
+    const previous = configuredBlock(PreviousBlock, { value: { x: 1 }, initial: { x: 0 } });
+    const first = previous.execute().get("previous");
+    first.x = 9;
+    const second = previous.execute().get("previous");
+    assert.deepEqual(second, { x: 1 });
+    second.x = 8;
+    assert.deepEqual(previous.serializeRuntimeState().value, { x: 1 });
+
+    previous.hydrateRuntimeState({});
+    assert.deepEqual(previous.serializeRuntimeState(), { value: null, initialized: false });
+    previous.hydrateRuntimeState({ initialized: false, value: { x: 4 } });
+    assert.equal(previous.serializeRuntimeState().initialized, false);
+
+    const integrator = configuredBlock(IntegratorBlock, { value: 1, dt: 0.1, reset: false });
+    integrator.hydrateRuntimeState({ integral: Infinity });
+    assert.equal(integrator.serializeRuntimeState().integral, 0);
+
+    const average = configuredBlock(TEMPORAL_BLOCKS.MovingAverageBlock, { value: 1, window: 2 });
+    average.hydrateRuntimeState({ samples: "bad" });
+    assert.deepEqual(average.serializeRuntimeState().samples, []);
+});
+
+test("control blocks compile to v3 ports and persist across compiled runs", () => {
+    ensureBuiltIns();
+
+    const integratorManager = withHead("float64");
+    addProgramInput(integratorManager, "value", "float64", 10);
+    addProgramInput(integratorManager, "dt", "float64", 0.1);
+    addProgramInput(integratorManager, "reset", "boolean", false);
+    integratorManager.addUnit(new IntegratorBlock("int"));
+    connect(integratorManager, "in-value", "input", "int", "value");
+    connect(integratorManager, "in-dt", "input", "int", "dt");
+    connect(integratorManager, "in-reset", "input", "int", "reset");
+    connect(integratorManager, "int", "out", "head", "output");
+    const integratorArtifact = integratorManager.compile("integrator");
+    assert.equal(JSON.stringify(integratorArtifact).includes("generic"), false);
+    assert.equal(integratorArtifact.nodes.find((node) => node.uuid === "int").ports.inputs.dt, "float64");
+    const editor = integratorManager.executeProgram({ value: 10, dt: 0.1, reset: false });
+    assert.equal(editor.status, "success", editor.e?.message);
+    assert.equal(editor.outputs.result, 1);
+    const integratorRunner = ScriptManager.createRunner(integratorArtifact);
+    assert.equal(integratorRunner.run({ value: 10, dt: 0.1, reset: false }).outputs.result, 1);
+    assert.equal(integratorRunner.run({ value: 10, dt: 0.1, reset: false }).outputs.result, 2);
+
+    const previousManager = withHead("float64");
+    previousManager.addUnit(new NumberUnitClass("value"));
+    previousManager.addUnit(new NumberUnitClass("initial"));
+    previousManager.addUnit(new PreviousBlock("prev"));
+    previousManager.storeData("value", 1);
+    previousManager.storeData("initial", 0);
+    connect(previousManager, "value", "number", "prev", "value");
+    connect(previousManager, "initial", "number", "prev", "initial");
+    connect(previousManager, "prev", "previous", "head", "output");
+    const previousArtifact = previousManager.compile("previous");
+    assert.equal(previousArtifact.nodes.find((node) => node.uuid === "prev").ports.outputs.previous, "float64");
+    const previousRunner = ScriptManager.createRunner(previousArtifact);
+    assert.equal(previousRunner.run().outputs.result, 0);
+    assert.equal(previousRunner.run().outputs.result, 1);
+
+    const pidManager = withHead("float64");
+    addProgramInput(pidManager, "setpoint", "float64", 1);
+    addProgramInput(pidManager, "measurement", "float64", 0);
+    addProgramInput(pidManager, "kp", "float64", 1);
+    addProgramInput(pidManager, "ki", "float64", 0);
+    addProgramInput(pidManager, "kd", "float64", 0);
+    addProgramInput(pidManager, "dt", "float64", 0.1);
+    addProgramInput(pidManager, "min", "float64", -10);
+    addProgramInput(pidManager, "max", "float64", 10);
+    addProgramInput(pidManager, "reset", "boolean", false);
+    pidManager.addUnit(new PidControllerBlock("pid"));
+    connect(pidManager, "in-setpoint", "input", "pid", "setpoint");
+    connect(pidManager, "in-measurement", "input", "pid", "measurement");
+    connect(pidManager, "in-kp", "input", "pid", "kp");
+    connect(pidManager, "in-ki", "input", "pid", "ki");
+    connect(pidManager, "in-kd", "input", "pid", "kd");
+    connect(pidManager, "in-dt", "input", "pid", "dt");
+    connect(pidManager, "in-min", "input", "pid", "min");
+    connect(pidManager, "in-max", "input", "pid", "max");
+    connect(pidManager, "in-reset", "input", "pid", "reset");
+    connect(pidManager, "pid", "command", "head", "output");
+    const pidArtifact = pidManager.compile("pid");
+    assert.equal(pidArtifact.nodes.find((node) => node.uuid === "pid").ports.outputs.command, "float64");
+    const pidRun = ScriptManager.createRunner(pidArtifact).run();
+    assert.equal(pidRun.status, "success", pidRun.e?.message);
+    assert.equal(pidRun.outputs.result, 1);
 });
 

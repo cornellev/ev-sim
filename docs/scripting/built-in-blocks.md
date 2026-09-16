@@ -19,12 +19,13 @@ Current block library categories:
 - `statements`: if, nop, ignore, sequence, passthrough, and deprecated comparison/conjunction composites. `If`, `Weighted Select`, `Signal Latch`, `Signal Default`, `Log Signal`, `Ignore`, and `Passthrough` infer a type variable `T` from connections instead of a type selector. Deprecated `EqualityBlock` `eq`/`neq` accept any concrete type; ordered operators accept only `float64`/`int32`.
 - `math`: integer constant plus atomic arithmetic, clamp/lerp/smoothstep/deadband, and trig blocks. Domain errors (divide/modulo by zero, invalid roots/logs, non-finite results, equal inverse-lerp bounds) return `0`. Bounds are reordered so `min`/`max` may arrive swapped.
 - `logic`: boolean constant plus Not/And/Or/Xor, Equal/NotEqual, ordered compares, Nearly Equal, and Is Finite. `And`/`Or` always short-circuit at runtime. `Equal`/`NotEqual` compare structurally and accept any concrete `T`. Ordered compares accept only `float64`/`int32`. `IsFiniteBlock` uses raw `Number.isFinite` and does not run values through `finiteFloat()`.
-- `geometry` and `control`: reserved searchable categories for later standard-library blocks.
+- `geometry`: Make/Split Vec2 and Vec3, add/subtract/scale/dot/length/normalize/distance, Cross Vec3, and Make/Split Pose 2D/3D. Shared helpers live in `vectorMath.js`; React siblings import `GEOMETRY_BLOCK_PORTS`. Zero-length normalize returns a zero vector. `pose3d.rotation.order` defaults to `"XYZ"`.
+- `control`: Previous, Value Changed, rising/falling edge, debounce, hysteresis, pulse, stopwatch, moving average, median filter, slew rate, integrator, derivative, and PID controller. Every `dt` port is explicit; negative or non-finite `dt` fails the script before runtime state mutates. These blocks do not replace `sensorflow` LowPass/RateLimiter.
 - `program`: program input/output units. Program I/O may expose `unit` and `actor_command`.
 - `signals`: read/write and inspect signal-store values. Write Signal exposes identity `value` plus `then`.
 - `topics`: topic snapshots, fields, staged publish messages, metadata, and stale gates. Stage Publish exposes `path` plus `then`.
 - `simulator`: vehicle, device, simulation, scenario, and object snapshots.
-- `mission`: waypoint, mission state, route progress, scenario flag helpers, and actor-command Make/Split. Set Mission State, Scenario Flag Write, and Advance Waypoint expose `then`. Make Actor Command builds `{ actorId, speedMps, steeringRad }` from required `speed`/`steering` and optional `actorId`. Split Actor Command unpacks that value. Route-controller speed/steering mappings remain `float64`.
+- `mission`: waypoint, mission state, route progress, scenario flag helpers, actor-command Make/Split, and read-only route helpers. Set Mission State, Scenario Flag Write, and Advance Waypoint expose `then`. Make Actor Command builds `{ actorId, speedMps, steeringRad }` from required `speed`/`steering` and optional `actorId`. Split Actor Command unpacks that value. Route-controller speed/steering mappings remain `float64`. `Waypoint At Index` reads `route.waypoints` (or a bare array) and emits `found:false` plus an empty waypoint out of range. `Split Waypoint` unpacks `id`, `kind`, `position:vec3`, and `order`. `Route Length` wraps `routeLength()`. `Distance To Route End` wraps `distanceToRouteEnd()` (Euclidean 3D to the last polyline point, not remaining arc length; missing polyline becomes `0`). `Route Tangent` wraps `routeTangentAtPose()` and packs the XZ tangent into `vec2` as `{ x, y: z }`. These wrappers do not mutate routes or manufacture unverified routes.
 - `bindings`: signal/tick/timer triggers and input/output/trigger bindings.
 - `diagnostics`: probes, logs, assertions, recording/replay, and binding status. Log, Assert, and Record expose `then`.
 
@@ -47,6 +48,16 @@ Port labels are atomic (`a`/`b`/`value`/`out`). Legacy composites keep `input A`
 React-free classes live in `Conversions.block.js`, `StringBlocks.block.js`, `JsonBlocks.block.js`, and `ArrayBlocks.block.js`. React siblings import the same `*_BLOCK_PORTS` descriptors (or port helpers that take `itemType`/`valueType`). Shared helpers are `ARRAY_ITEM_TYPES` / `asArray()` in `valueOps.js`, `conversionMath.js`, `stringOps.js`, and `arrayOps.js`. JSON path blocks clone with `cloneValue()` and never mutate `getInput()` documents.
 
 `itemType` and `valueType` are editor state, not inference. Changing them goes through `reconfigureUnitDetailed()` so conflicting wires are rejected without dropping connections.
+
+## Geometry And Route Helper Blocks
+
+React-free classes live in `app/scripting/units/geometry/GeometryBlocks.block.js` and `app/scripting/units/mission/RouteBlocks.block.js`. React siblings import `GEOMETRY_BLOCK_PORTS` / `ROUTE_HELPER_BLOCK_PORTS`. Vector math is `vectorMath.js`. Route helpers call `routeLength()`, `distanceToRouteEnd()`, and `routeTangentAtPose()` from `app/scenarios/route/Route.js` without calling `normalizeRoute()` or `normalizeWaypoint()`.
+
+## Temporal And Controller Blocks
+
+React-free classes live in `app/scripting/units/control/TemporalBlocks.block.js` and `app/scripting/units/control/ControllerBlocks.block.js`. React siblings import `TEMPORAL_BLOCK_PORTS` / `CONTROLLER_BLOCK_PORTS`. Shared helpers are `temporalMath.js`.
+
+`dt` is an ordinary `float64` input, not an `execute()` argument. Wire it from a Program Input mapped with binding `source: "sim", key: "dt"`, or from `SimulationSnapshotBlock`. `requireDt()` throws `${typeId} dt must be finite and non-negative.` before writing instance fields; `dt === 0` is legal. Integrators use forward Euler. PID is derivative-on-error with conditional-integration anti-windup and does not write `actor_command` or the plant. Runtime memory lives in `serializeRuntimeState()` / `hydrateRuntimeState()` and is JSON-cloned. `Previous` / `Value Changed` infer `T` like Equal/Passthrough. These blocks do not replace `LowPassFilterBlock` or `RateLimiterBlock` in `sensorflow`.
 
 ## ROS Blocks
 
