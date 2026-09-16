@@ -85,3 +85,33 @@ test("snapshot signal dependencies and React component mappings cover the catalo
     }
     assert.match(menuSource, /\.\.\.\(unit\.keywords \|\| \[\]\)/);
 });
+
+test("atomic math and logic blocks are placeable and searchable", () => {
+    const math = UNIT_CATALOG_META.filter((entry) => entry.category === "math" && entry.placeable);
+    const logic = UNIT_CATALOG_META.filter((entry) => entry.category === "logic" && entry.placeable);
+    assert.ok(math.some((entry) => entry.type === "AddBlock"));
+    assert.ok(math.some((entry) => entry.type === "IntegerBlock"));
+    assert.equal(math.some((entry) => entry.type === "CalculationBlock"), false);
+    assert.ok(logic.some((entry) => entry.type === "AndBlock"));
+    assert.ok(logic.some((entry) => entry.type === "BooleanBlock"));
+    assert.ok(UNIT_CATALOG_META.find((entry) => entry.type === "AddBlock").keywords.includes("add"));
+    assert.ok(UNIT_CATALOG_META.find((entry) => entry.type === "AndBlock").keywords.includes("and"));
+    assert.equal(UNIT_CATALOG_META.find((entry) => entry.type === "JsonBlock")?.category, "objects");
+});
+
+test("conversion string json and array blocks are placeable and searchable", () => {
+    const conversions = UNIT_CATALOG_META.filter((entry) => entry.category === "conversions" && entry.placeable);
+    const strings = UNIT_CATALOG_META.filter((entry) => entry.category === "strings" && entry.placeable);
+    const collections = UNIT_CATALOG_META.filter((entry) => entry.category === "collections" && entry.placeable);
+    assert.ok(conversions.some((entry) => entry.type === "FloorToIntBlock"));
+    assert.ok(conversions.some((entry) => entry.type === "Float64ToInt32Block"));
+    assert.equal(UNIT_CATALOG_META.find((entry) => entry.type === "Float64ToInt32Block")?.placeable, true);
+    assert.ok(UNIT_CATALOG_META.find((entry) => entry.type === "FloorToIntBlock").keywords.includes("floor"));
+    assert.ok(strings.some((entry) => entry.type === "ConcatStringBlock"));
+    assert.ok(UNIT_CATALOG_META.find((entry) => entry.type === "ConcatStringBlock").keywords.includes("concat"));
+    assert.ok(collections.some((entry) => entry.type === "ArrayGetBlock"));
+    assert.equal(UNIT_CATALOG_META.find((entry) => entry.type === "JsonGetBlock")?.category, "objects");
+    assert.ok(UNIT_CATALOG_META.find((entry) => entry.type === "JsonGetBlock").keywords.includes("get"));
+    assert.ok(UNIT_CATALOG_META.find((entry) => entry.type === "ArrayLiteralBlock").keywords.includes("array"));
+});
+

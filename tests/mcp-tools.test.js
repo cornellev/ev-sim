@@ -44,6 +44,7 @@ import { registerRunManifestTools } from "../server/mcp/runManifestTools.js";
 import { registerScenarioTools } from "../server/mcp/scenarioTools.js";
 import { registerExperimentTools } from "../server/mcp/experimentTools.js";
 import { registerScriptingTools } from "../server/mcp/scriptingTools.js";
+import { UNIT_CATALOG_META } from "../app/scripting/UnitCatalog.meta.js";
 import { createDefaultRunManifest } from "../app/simulation/RunManifest.js";
 import { createDefaultScenario } from "../app/scenarios/ScenarioDocument.js";
 import { createDefaultExperimentSuite } from "../app/experiments/ExperimentSuite.js";
@@ -215,6 +216,182 @@ test("script_update_unit rejects incompatible typed changes without persisting p
         assert.equal(saved.graph.connections.length, 1);
     });
 });
+
+test("script_add_unit persists falsey constants and rejects non-placeable composites", async () => {
+    await withTempStorage(async (storage) => {
+        const document = createScriptDocument({
+            id: "script-blk02",
+            name: "Atomic",
+            graph: createEmptyGraph(),
+        });
+        await storage.putScript(document);
+
+        const originalFetch = globalThis.fetch;
+        globalThis.fetch = async (url) => {
+            if (String(url).includes("/api/scripting/units")) {
+                return {
+                    ok: true,
+                    async text() {
+                        return JSON.stringify({
+                            ok: true,
+                            units: UNIT_CATALOG_META.map((entry) => ({
+                                type: entry.type,
+                                placeable: entry.placeable,
+                                notes: entry.notes,
+                            })),
+                        });
+                    },
+                };
+            }
+            throw new Error(`unexpected fetch ${url}`);
+        };
+
+        try {
+            const tools = new Map();
+            registerScriptingTools({
+                registerTool(name, _definition, handler) {
+                    tools.set(name, handler);
+                },
+            }, storage);
+            const add = tools.get("script_add_unit");
+            const update = tools.get("script_update_unit");
+
+            const integer = await add({
+                scriptId: "script-blk02",
+                type: "IntegerBlock",
+                storedData: 0,
+                uuid: "integer",
+            });
+            assert.equal(integer.isError, undefined, integer.content?.[0]?.text);
+            const boolean = await add({
+                scriptId: "script-blk02",
+                type: "BooleanBlock",
+                storedData: false,
+                uuid: "boolean",
+            });
+            assert.equal(boolean.isError, undefined, boolean.content?.[0]?.text);
+            const saved = await storage.getScript("script-blk02");
+            assert.equal(saved.graph.nodes.find((node) => node.uuid === "integer").storedData, 0);
+            assert.equal(saved.graph.nodes.find((node) => node.uuid === "boolean").storedData, false);
+
+            const rejected = await add({
+                scriptId: "script-blk02",
+                type: "CalculationBlock",
+            });
+            assert.equal(rejected.isError, true);
+            assert.match(rejected.content[0].text, /not placeable/);
+
+            const updated = await update({
+                scriptId: "script-blk02",
+                uuid: "integer",
+                storedData: 4,
+            });
+            assert.equal(updated.isError, undefined, updated.content?.[0]?.text);
+            const after = await storage.getScript("script-blk02");
+            assert.equal(after.graph.nodes.find((node) => node.uuid === "integer").storedData, 4);
+        } finally {
+            globalThis.fetch = originalFetch;
+        }
+    });
+});
+
+test("script_add_unit and script_update_unit configure stdlib conversion and collection blocks", async () => {
+    await withTempStorage(async (storage) => {
+        const document = createScriptDocument({
+            id: "script-blk03",
+            name: "Stdlib",
+            graph: createEmptyGraph(),
+        });
+        await storage.putScript(document);
+
+        const originalFetch = globalThis.fetch;
+        globalThis.fetch = async (url) => {
+            if (String(url).includes("/api/scripting/units")) {
+                return {
+                    ok: true,
+                    async text() {
+                        return JSON.stringify({
+                            ok: true,
+                            units: UNIT_CATALOG_META.map((entry) => ({
+                                type: entry.type,
+                                placeable: entry.placeable,
+                                notes: entry.notes,
+                                settings: entry.settings,
+                                category: entry.category,
+                            })),
+                        });
+                    },
+                };
+            }
+            throw new Error(`unexpected fetch ${url}`);
+        };
+
+        try {
+            const tools = new Map();
+            registerScriptingTools({
+                registerTool(name, _definition, handler) {
+                    tools.set(name, handler);
+                },
+            }, storage);
+            const catalog = tools.get("unit_catalog");
+            const describe = tools.get("unit_describe");
+            const add = tools.get("script_add_unit");
+            const update = tools.get("script_update_unit");
+
+            const listed = await catalog({});
+            assert.equal(listed.isError, undefined, listed.content?.[0]?.text);
+            const listedText = listed.content[0].text;
+            assert.match(listedText, /FloorToIntBlock/);
+            assert.match(listedText, /ConcatStringBlock/);
+            assert.match(listedText, /ArrayLiteralBlock/);
+            assert.match(listedText, /JsonGetBlock/);
+
+            const described = await describe({ type: "FloorToIntBlock" });
+            assert.equal(described.isError, undefined, described.content?.[0]?.text);
+            assert.match(described.content[0].text, /FloorToIntBlock/);
+
+            const literal = await add({
+                scriptId: "script-blk03",
+                type: "ArrayLiteralBlock",
+                storedData: [],
+                uuid: "literal",
+            });
+            assert.equal(literal.isError, undefined, literal.content?.[0]?.text);
+            const concat = await add({
+                scriptId: "script-blk03",
+                type: "ConcatStringBlock",
+                uuid: "concat",
+            });
+            assert.equal(concat.isError, undefined, concat.content?.[0]?.text);
+            const getter = await add({
+                scriptId: "script-blk03",
+                type: "JsonGetBlock",
+                uuid: "json-get",
+            });
+            assert.equal(getter.isError, undefined, getter.content?.[0]?.text);
+
+            const typed = await update({
+                scriptId: "script-blk03",
+                uuid: "literal",
+                state: { itemType: "string" },
+            });
+            assert.equal(typed.isError, undefined, typed.content?.[0]?.text);
+            const path = await update({
+                scriptId: "script-blk03",
+                uuid: "json-get",
+                state: { path: "items.0", valueType: "json", fallback: null },
+            });
+            assert.equal(path.isError, undefined, path.content?.[0]?.text);
+            const saved = await storage.getScript("script-blk03");
+            assert.deepEqual(saved.graph.nodes.find((node) => node.uuid === "literal").storedData, []);
+            assert.equal(saved.graph.nodes.find((node) => node.uuid === "literal").state.itemType, "string");
+            assert.equal(saved.graph.nodes.find((node) => node.uuid === "json-get").state.path, "items.0");
+        } finally {
+            globalThis.fetch = originalFetch;
+        }
+    });
+});
+
 
 test("binding tools path: manifest CRUD and interface check", async () => {
     await withTempStorage(async (storage) => {

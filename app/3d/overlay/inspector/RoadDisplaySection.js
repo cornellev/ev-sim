@@ -82,7 +82,7 @@ function LaneRow({ lane, laneCount, selected, disabled, issues, onSelect, onDire
                 </button>
                 <NativeSelect
                     aria-label={`Lane ${lane.id} direction`}
-                    className="h-7 min-h-0 w-[92px] px-1 text-[12px]"
+                    className="sf-input--compact w-[92px]"
                     value={String(lane.direction)}
                     disabled={disabled}
                     onChange={(event) => onDirection(Number(event.target.value))}
@@ -104,7 +104,7 @@ function LaneRow({ lane, laneCount, selected, disabled, issues, onSelect, onDire
                 {!leftmost && (
                     <NativeSelect
                         aria-label={`Lane ${lane.id} left marking`}
-                        className="h-7 min-h-0 w-[104px] px-1 text-[12px]"
+                        className="sf-input--compact w-[104px]"
                         value={lane.markingLeft ?? AUTO_MARKING}
                         disabled={disabled}
                         onChange={(event) => onMarking(event.target.value === AUTO_MARKING ? null : event.target.value)}
@@ -115,13 +115,13 @@ function LaneRow({ lane, laneCount, selected, disabled, issues, onSelect, onDire
                     </NativeSelect>
                 )}
                 <span className="flex-1" />
-                <IconButton label={`Insert lane right of ${lane.id}`} size="compact" variant="ghost" className="h-7 w-7" disabled={disabled} onClick={() => onInsert("right")}>
+                <IconButton label={`Insert lane right of ${lane.id}`} size="compact" variant="ghost" className="sf-icon-button--tight" disabled={disabled} onClick={() => onInsert("right")}>
                     <IconColumnInsertRight size={14} stroke={1.75} />
                 </IconButton>
-                <IconButton label={`Insert lane left of ${lane.id}`} size="compact" variant="ghost" className="h-7 w-7" disabled={disabled} onClick={() => onInsert("left")}>
+                <IconButton label={`Insert lane left of ${lane.id}`} size="compact" variant="ghost" className="sf-icon-button--tight" disabled={disabled} onClick={() => onInsert("left")}>
                     <IconColumnInsertLeft size={14} stroke={1.75} />
                 </IconButton>
-                <IconButton label={`Remove lane ${lane.id}`} size="compact" variant="ghost" className="h-7 w-7" disabled={disabled || laneCount <= 1} onClick={onRemove}>
+                <IconButton label={`Remove lane ${lane.id}`} size="compact" variant="ghost" className="sf-icon-button--tight" disabled={disabled || laneCount <= 1} onClick={onRemove}>
                     <IconTrash size={14} stroke={1.75} />
                 </IconButton>
             </div>

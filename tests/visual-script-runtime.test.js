@@ -31,6 +31,8 @@ import { OutputNodeBlock, ProgramInputBlock } from "../app/scripting/units/progr
 import { normalizeOutputNodeState, parseValueByType } from "../app/scripting/units/program/ProgramTypes.js";
 import { NumberUnitClass } from "../app/scripting/units/math/Number.block.js";
 import { WeightedSelectBlock } from "../app/scripting/units/math/Randomization.block.js";
+import { registerBuiltInBlocks } from "../app/scripting/registerBuiltInBlocks.js";
+import { AndBlock, OrBlock } from "../app/scripting/units/statements/LogicBlocks.block.js";
 import {
     AdvanceWaypointBlock,
     AssertSignalBlock,
@@ -1590,6 +1592,81 @@ test("If evaluates both branches on v2 and only the selected branch on v3 and ed
         assert.equal(ProbeBlock.count("false-probe"), 1, `${type} v2 false`);
         assert.equal(v2.units.get("if").manager.evaluationPolicy.lazySelectors, false);
     }
+});
+
+function createLogicSelectorManager(BlockClass, left, right) {
+    resetRegistry();
+    registerBlockType(BlockClass.blockType || BlockClass.name, BlockClass);
+    const manager = new ScriptManager();
+    manager.addUnit(new ProbeBlock("a-probe", left, "boolean"));
+    manager.addUnit(new ProbeBlock("b-probe", right, "boolean"));
+    manager.addUnit(new BlockClass("op"));
+    manager.addUnit(new OutputBlock("output", "result", "boolean"));
+    connect(manager, "a-probe", "out", "op", "a");
+    connect(manager, "b-probe", "out", "op", "b");
+    connect(manager, "op", "out", "output", "output");
+    return manager;
+}
+
+test("And and Or short-circuit on editor, v3, and v2 artifacts", () => {
+    const cases = [
+        { BlockClass: AndBlock, left: false, right: true, output: false, skipB: true },
+        { BlockClass: AndBlock, left: true, right: false, output: false, skipB: false },
+        { BlockClass: OrBlock, left: true, right: false, output: true, skipB: true },
+        { BlockClass: OrBlock, left: false, right: true, output: true, skipB: false },
+    ];
+
+    for (const { BlockClass, left, right, output, skipB } of cases) {
+        const editor = createLogicSelectorManager(BlockClass, left, right);
+        const editorRun = editor.executeProgram();
+        assert.equal(editorRun.status, "success", BlockClass.blockType);
+        assert.equal(editorRun.outputs.result, output, BlockClass.blockType);
+        assert.equal(ProbeBlock.count("a-probe"), 1, `${BlockClass.blockType} editor a`);
+        assert.equal(ProbeBlock.count("b-probe"), skipB ? 0 : 1, `${BlockClass.blockType} editor b`);
+
+        const artifact = editor.compile(`logic-${BlockClass.blockType}`);
+        const v3 = ScriptManager.createRunner(artifact);
+        const v3Run = v3.run();
+        assert.equal(v3Run.status, "success", BlockClass.blockType);
+        assert.equal(v3Run.outputs.result, output);
+        assert.equal(ProbeBlock.count("a-probe"), 1, `${BlockClass.blockType} v3 a`);
+        assert.equal(ProbeBlock.count("b-probe"), skipB ? 0 : 1, `${BlockClass.blockType} v3 b`);
+
+        const v2 = ScriptManager.createRunner(withArtifactVersion(artifact, 2));
+        const v2Run = v2.run();
+        assert.equal(v2Run.status, "success", BlockClass.blockType);
+        assert.equal(v2Run.outputs.result, output);
+        assert.equal(ProbeBlock.count("a-probe"), 1, `${BlockClass.blockType} v2 a`);
+        assert.equal(ProbeBlock.count("b-probe"), skipB ? 0 : 1, `${BlockClass.blockType} v2 b`);
+    }
+});
+
+test("legacy CalculationBlock and EqualityBlock restore and execute", () => {
+    clearBlockTypeRegistryForTests();
+    registerBuiltInBlocks();
+    const graph = {
+        head: "head-uuid",
+        outputNodeConfig: { outputs: [{ id: "output", label: "result", type: "boolean" }] },
+        nodes: [
+            { uuid: "a", type: "NumberUnitClass", state: {}, storedData: 1, position: { x: 0, y: 0 } },
+            { uuid: "b", type: "NumberUnitClass", state: {}, storedData: 1, position: { x: 10, y: 0 } },
+            { uuid: "calc", type: "CalculationBlock", state: { operation: "add" }, storedData: null, position: { x: 20, y: 0 } },
+            { uuid: "eq", type: "EqualityBlock", state: {}, storedData: "eq", position: { x: 30, y: 0 } },
+        ],
+        connections: [
+            { from: "a", output: "number", to: "calc", input: "input A", type: "float64" },
+            { from: "b", output: "number", to: "calc", input: "input B", type: "float64" },
+            { from: "calc", output: "result", to: "eq", input: "input a", type: "float64" },
+            { from: "a", output: "number", to: "eq", input: "input b", type: "float64" },
+            { from: "eq", output: "out", to: "head-uuid", input: "output", type: "boolean" },
+        ],
+    };
+    const manager = restoreManagerFromGraph(graph, getRegisteredBlockType);
+    assert.equal(manager.restoreErrors.length, 0, formatRestoreErrors(manager.restoreErrors));
+    assert.equal(manager.checkValidity(), true);
+    const run = manager.executeProgram();
+    assert.equal(run.status, "success", run.e?.message);
+    assert.equal(run.outputs.result, false);
 });
 
 test("WeightedSelect evaluates both inputs on v2 and only the chosen input on v3 and editor", () => {

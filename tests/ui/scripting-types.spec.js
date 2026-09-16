@@ -32,7 +32,7 @@ test("scripting canvas binds If ports from a Number wire and rejects a string co
     await openWorkspace(page, "Scripting canvas");
     await page.getByRole("button", { name: "New" }).first().click();
 
-    await addBlock(page, "If Statement", "If Statement Logic");
+    await addBlock(page, "If Statement", "If Statement Statements");
     await addBlock(page, "Number", "Number Expressions");
     await addBlock(page, "String", "String Objects");
 
@@ -67,8 +67,8 @@ test("scripting canvas exposes unit sequencing ports on Write Signal, Sequence, 
     await page.getByRole("button", { name: "New" }).first().click();
 
     await addBlock(page, "Write Signal", "Write Signal Signals");
-    await addBlock(page, "Sequence", "Sequence Logic");
-    await addBlock(page, "Nop", "Nop Logic");
+    await addBlock(page, "Sequence", "Sequence Statements");
+    await addBlock(page, "Nop", "Nop Statements");
 
     await expect(page.getByRole("button", { name: "Connect output then, unit" }).first()).toBeVisible();
     await expect(page.getByRole("button", { name: "Connect output written, boolean" })).toHaveCount(0);
@@ -94,7 +94,7 @@ test("scripting canvas exposes Make and Split Actor Command ports", async ({ pag
 
     await addBlock(page, "Make Actor Command", "Make Actor Command Mission");
     await addBlock(page, "Split Actor Command", "Split Actor Command Mission");
-    await addBlock(page, "If Statement", "If Statement Logic");
+    await addBlock(page, "If Statement", "If Statement Statements");
 
     const closeLibrary = page.getByRole("button", { name: "Close block library" });
     if (await closeLibrary.isVisible()) await closeLibrary.click();
@@ -133,6 +133,15 @@ test("block library searches keywords and hides deprecated composite blocks", as
 
     await search.fill("Calculation");
     await expect(page.getByRole("button", { name: /Calculation/ })).toHaveCount(0);
+    await search.fill("plus");
+    await expect(page.getByRole("button", { name: "Add Math", exact: true })).toBeVisible();
+    await search.fill("and");
+    await expect(page.getByRole("button", { name: "And Logic", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Conjugation/ })).toHaveCount(0);
+    await search.fill("concat");
+    await expect(page.getByRole("button", { name: "Concat String Strings", exact: true })).toBeVisible();
+    await search.fill("floor");
+    await expect(page.getByRole("button", { name: "Floor to Int Conversions", exact: true })).toBeVisible();
     await search.fill("scale scalar");
     await expect(page.getByRole("button", { name: "Scale Matrix (tex1d) Texture 1D", exact: true })).toBeVisible();
 });
@@ -160,3 +169,101 @@ test("OutputNode rejects an incompatible typed edit without dropping its wire", 
     await expect(page.getByRole("alert").filter({ hasText: "Type mismatch" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Connect input output, float64" })).toBeVisible();
 });
+
+test("scripting canvas wires Add, Equal, Boolean Not, and Integer Less", async ({ page }) => {
+    test.setTimeout(180_000);
+    await page.goto("/");
+    await openWorkspace(page, "Scripting canvas");
+    await page.getByRole("button", { name: "New" }).first().click();
+
+    await addBlock(page, "Add", "Add Math");
+    await addBlock(page, "Number", "Number Expressions");
+    await expect(page.getByRole("button", { name: "Connect input a, float64" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Connect output out, float64" })).toBeVisible();
+
+    const addA = page.getByRole("button", { name: "Connect input a, float64" });
+    await addA.focus();
+    await page.keyboard.press("Enter");
+    const numberOut = page.getByRole("button", { name: "Connect output number, float64" });
+    await numberOut.focus();
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("button", { name: "Connect input a, float64" })).toBeVisible();
+
+    await addBlock(page, "Equal", "Equal Logic");
+    const equalNode = page.getByRole("group", { name: /Equal node/ });
+    const equalA = equalNode.getByRole("button", { name: "Connect input a, generic" });
+    await expect(equalA).toBeVisible();
+    await equalA.focus();
+    await page.keyboard.press("Enter");
+    await page.getByRole("button", { name: "Connect output number, float64" }).focus();
+    await page.keyboard.press("Enter");
+    await expect(equalNode.getByRole("button", { name: "Connect input a, float64" })).toBeVisible();
+    await expect(equalNode.getByRole("button", { name: "Connect input b, float64" })).toBeVisible();
+
+    await addBlock(page, "Boolean", "Boolean Logic");
+    await addBlock(page, "Not", "Not Logic");
+    const notIn = page.getByRole("button", { name: "Connect input value, boolean" });
+    await notIn.focus();
+    await page.keyboard.press("Enter");
+    await page.getByRole("button", { name: "Connect output out, boolean" }).first().focus();
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("button", { name: "Connect output out, boolean" })).toHaveCount(2);
+
+    await addBlock(page, "Integer", "Integer Math");
+    await addBlock(page, "Less", "Less Logic");
+    const lessNode = page.getByRole("group", { name: /Less node/ });
+    const lessA = lessNode.getByRole("button", { name: "Connect input a, generic" });
+    await lessA.focus();
+    await page.keyboard.press("Enter");
+    await page.getByRole("button", { name: "Connect output out, int32" }).focus();
+    await page.keyboard.press("Enter");
+    await expect(lessNode.getByRole("button", { name: "Connect input a, int32" })).toBeVisible();
+    await expect(lessNode.getByRole("button", { name: "Connect input b, int32" })).toBeVisible();
+
+    await addBlock(page, "String", "String Objects");
+    const lessB = lessNode.getByRole("button", { name: "Connect input b, int32" });
+    await lessB.focus();
+    await page.keyboard.press("Enter");
+    await page.getByRole("button", { name: "Connect output out, string" }).focus();
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("button", { name: "Connect input b, int32" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Connect input b, string" })).toHaveCount(0);
+});
+
+test("block library places stdlib blocks and rejects an incompatible Array Get item type", async ({ page }) => {
+    test.setTimeout(180_000);
+    await page.goto("/");
+    await openWorkspace(page, "Scripting canvas");
+    await page.getByRole("button", { name: "New" }).first().click();
+
+    await addBlock(page, "Array Get", "Array Get Collections");
+    await addBlock(page, "Add", "Add Math");
+    await addBlock(page, "JSON Get", "JSON Get Objects");
+    await addBlock(page, "Floor to Int", "Floor to Int Conversions");
+    await addBlock(page, "Concat String", "Concat String Strings");
+
+    const closeLibrary = page.getByRole("button", { name: "Close block library" });
+    if (await closeLibrary.isVisible()) await closeLibrary.click();
+
+    await expect(page.getByRole("group", { name: /Array Get node/ })).toBeVisible();
+    await expect(page.getByRole("group", { name: /JSON Get node/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Connect output out, float64" }).first()).toBeVisible();
+    await expect(page.getByRole("button", { name: "Connect output out, string" }).first()).toBeVisible();
+    await expect(page.getByRole("button", { name: "Connect output out, int32" }).first()).toBeVisible();
+
+    const arrayGet = page.getByRole("group", { name: /Array Get node/ });
+    const addNode = page.getByRole("group", { name: /Add node/ });
+    await addNode.getByRole("button", { name: "Connect input a, float64" }).focus();
+    await page.keyboard.press("Enter");
+    await arrayGet.getByRole("button", { name: "Connect output out, float64" }).focus();
+    await page.keyboard.press("Enter");
+    await expect(addNode.getByRole("button", { name: "Connect input a, float64" })).toBeVisible();
+
+    const itemType = arrayGet.getByLabel("Item type");
+    await itemType.selectOption("string");
+    await expect(itemType).toHaveValue("float64");
+    await expect(page.getByRole("alert").filter({ hasText: "Type mismatch" })).toBeVisible();
+    await expect(arrayGet.getByRole("button", { name: "Connect output out, float64" })).toBeVisible();
+    await expect(arrayGet.getByRole("button", { name: "Connect output out, string" })).toHaveCount(0);
+});
+

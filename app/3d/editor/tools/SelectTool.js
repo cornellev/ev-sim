@@ -13,7 +13,7 @@ export function getPickableObjectRoots(registry, { layers } = {}) {
         .filter((entity) => entity.visible !== false && entity.hidden !== true)
         .filter((entity) => !layers || layers[entity.layer] !== false)
         .map((entity) => registry.getEntity(entity.id)?.object3D)
-        .filter((object3D) => object3D?.visible !== false);
+        .filter((object3D) => Boolean(object3D) && object3D.visible !== false);
 }
 
 export function isPointerDrag(start, end, thresholdSq = POINTER_DRAG_THRESHOLD_SQ) {

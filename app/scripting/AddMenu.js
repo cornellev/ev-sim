@@ -24,7 +24,7 @@ const CATEGORY_META = {
     randomization: { label: "Random", icon: IconDice, accent: "text-fuchsia-300" },
     conversions: { label: "Conversions", icon: IconArrowsExchange, accent: "text-orange-300" },
     objects: { label: "Objects", icon: IconAbc, accent: "text-yellow-200" },
-    statements: { label: "Logic", icon: IconBinaryTree2, accent: "text-emerald-300" },
+    statements: { label: "Statements", icon: IconBinaryTree2, accent: "text-emerald-300" },
     program: { label: "Program", icon: IconCode, accent: "text-sky-300" },
     signals: { label: "Signals", icon: IconDatabase, accent: "text-indigo-300" },
     topics: { label: "Topics", icon: IconMessage, accent: "text-teal-300" },

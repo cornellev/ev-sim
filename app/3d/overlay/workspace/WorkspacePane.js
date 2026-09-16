@@ -66,7 +66,7 @@ export const WorkspacePane = memo(function WorkspacePane({ paneId, title, collap
             onPointerUp={controls.enable}
             onPointerLeave={controls.enable}
         >
-            <header className="flex h-9 shrink-0 items-center justify-between gap-2 border-b border-[var(--slate-border-60)] px-2">
+            <header className="flex h-9 shrink-0 items-center justify-between gap-2 border-b border-[var(--slate-border-60)] px-3">
                 <h2 className="min-w-0 truncate text-[13px] font-medium text-[var(--slate-fg)]">{title}</h2>
                 <div className="flex items-center gap-1">
                     {actions}

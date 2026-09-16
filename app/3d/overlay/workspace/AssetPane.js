@@ -478,7 +478,7 @@ export function AssetPane({ data }) {
                 <button type="button" disabled={busy} onClick={createFolder} className="mt-1 flex h-8 items-center gap-2 px-2 text-left text-[12px] text-[var(--slate-muted)] hover:text-[var(--slate-fg)]"><IconFolderPlus size={14} />New folder</button>
             </nav>
             <div className="flex min-w-0 flex-1 flex-col">
-                <div data-editor-chrome className="pointer-events-auto flex min-h-10 shrink-0 flex-wrap items-center gap-1.5 border-b border-[var(--slate-border-60)] px-2 py-1">
+                <div data-editor-chrome className="pointer-events-auto flex min-h-10 shrink-0 flex-wrap items-center gap-1.5 border-b border-[var(--slate-border-60)] px-3 py-1.5">
                     <span aria-label="Asset breadcrumb" className="max-w-28 truncate text-xs text-zinc-400">Assets / {selectedFolder?.name ?? (folder === "built-ins" ? "Built-ins" : folder === "root" ? "Unfiled" : "All")}</span>
                     <label className="flex h-7 min-w-40 flex-1 items-center gap-1.5 rounded border border-[var(--slate-border-70)] px-2"><IconSearch size={13} /><input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search names or tags" aria-label="Search assets" className="min-w-0 flex-1 bg-transparent text-[12px] outline-none" /></label>
                     <select aria-label="Asset kind" value={kind} onChange={(event) => setKind(event.target.value)} className="h-7 rounded bg-[var(--slate-surface-2)] px-1 text-xs"><option value="all">All kinds</option><option value="builtins">Built-ins</option><option value="models">Models</option></select>

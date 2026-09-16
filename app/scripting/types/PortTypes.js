@@ -23,6 +23,53 @@ export function finiteInt32(value, fallback = 0) {
     return Math.max(-2147483648, Math.min(2147483647, truncated));
 }
 
+export function finiteResult(value) {
+    return Number.isFinite(value) ? value : 0;
+}
+
+export function orderedBounds(min, max) {
+    let lower = finiteFloat(min);
+    let upper = finiteFloat(max);
+    if (lower > upper) {
+        const swap = lower;
+        lower = upper;
+        upper = swap;
+    }
+    return { min: lower, max: upper };
+}
+
+export function valuesEqual(a, b) {
+    if (typeof a === "number" && typeof b === "number") {
+        return Object.is(a, b) || (a === 0 && b === 0);
+    }
+    if (Object.is(a, b)) return true;
+    if (Array.isArray(a) && Array.isArray(b)) {
+        if (a.length !== b.length) return false;
+        for (let index = 0; index < a.length; index += 1) {
+            if (!valuesEqual(a[index], b[index])) return false;
+        }
+        return true;
+    }
+    if (
+        a !== null
+        && b !== null
+        && typeof a === "object"
+        && typeof b === "object"
+        && !Array.isArray(a)
+        && !Array.isArray(b)
+    ) {
+        const aKeys = Object.keys(a);
+        const bKeys = Object.keys(b);
+        if (aKeys.length !== bKeys.length) return false;
+        for (const key of aKeys) {
+            if (!Object.prototype.hasOwnProperty.call(b, key)) return false;
+            if (!valuesEqual(a[key], b[key])) return false;
+        }
+        return true;
+    }
+    return false;
+}
+
 export function normalizeActorCommand(value) {
     let source = value;
 

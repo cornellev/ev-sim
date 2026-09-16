@@ -321,7 +321,7 @@ export function ObjectInspector({ data }) {
     return (
         <div className="flex min-h-full flex-col text-[var(--slate-fg)]" data-object-inspector data-registry-version={registryVersion}>
             <span id="inspector-mixed-hint" hidden>Mixed values across the selection</span>
-            <header className="flex items-start gap-2 border-b border-[var(--slate-border-60)] p-2">
+            <header className="flex items-start gap-2 border-b border-[var(--slate-border-60)] p-3">
                 {presentation && <PresentationIcon presentation={presentation} className="mt-1.5 h-4 w-4 shrink-0 text-[var(--slate-muted)]" />}
                 <div className="min-w-0 flex-1">
                     {multi
@@ -357,7 +357,7 @@ export function ObjectInspector({ data }) {
                 </div>
             )}
 
-            <div className="min-h-0 flex-1 px-1">
+            <div className="min-h-0 flex-1 px-2">
                 {multi
                     ? (state.mixedTypes
                         ? <p className="px-2 py-3 text-[12px] text-[var(--slate-muted)]">Objects of different types share no editable properties. Lock, hide, and delete still apply to all of them.</p>
@@ -365,7 +365,7 @@ export function ObjectInspector({ data }) {
                     : sections.map(renderSection)}
             </div>
 
-            <footer className="flex items-center justify-between gap-2 border-t border-[var(--slate-border-60)] p-2">
+            <footer className="flex items-center justify-between gap-2 border-t border-[var(--slate-border-60)] p-3">
                 <Button size="compact" variant="ghost" onClick={() => focusCameraOnSelection({ data })} title="Frame selection (F)">
                     <IconCrosshair size={14} stroke={1.75} aria-hidden="true" />
                     Frame

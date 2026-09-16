@@ -22,7 +22,7 @@ export function FieldRow({ id, label, units, issues = [], canReset = false, onRe
                 <div className="min-w-0 flex-1" data-field-control>{children}</div>
                 {units && <span className="shrink-0 text-[11px] text-[var(--slate-muted)]" aria-hidden="true">{units}</span>}
                 {canReset && onReset && (
-                    <IconButton label={`Reset ${label.toLowerCase()} to default`} size="compact" variant="ghost" className="h-7 w-7" onClick={onReset}>
+                    <IconButton label={`Reset ${label.toLowerCase()} to default`} size="compact" variant="ghost" className="sf-icon-button--tight" onClick={onReset}>
                         <IconRestore size={13} stroke={1.75} />
                     </IconButton>
                 )}

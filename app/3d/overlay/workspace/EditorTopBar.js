@@ -94,7 +94,7 @@ export function EditorTopBar({
     return (
         <header
             data-editor-topbar
-            className="pointer-events-auto flex h-10 items-center justify-between gap-3 border-b border-[var(--slate-border-60)] bg-[var(--slate-surface-1)] px-2 text-[var(--slate-fg)]"
+            className="pointer-events-auto flex h-10 items-center justify-between gap-3 border-b border-[var(--slate-border-60)] bg-[var(--slate-surface-1)] px-3 text-[var(--slate-fg)]"
         >
             {georegistrationOpen && <GeoregistrationDialog data={data} onClose={() => setGeoregistrationOpen(false)} />}
             <div className="flex min-w-0 items-center gap-2">
@@ -110,8 +110,8 @@ export function EditorTopBar({
                         </Button>
                     )}
                 >
-                    <div className="w-60 p-1" data-editor-chrome>
-                        <p className="px-1 pb-1 text-[12px] font-medium text-[var(--slate-fg-2)]">Panes</p>
+                    <div className="w-60 p-2" data-editor-chrome>
+                        <p className="px-2 pb-2 text-[12px] font-medium text-[var(--slate-fg-2)]">Panes</p>
                         {PANE_IDS.map((paneId) => (
                             <MenuToggle
                                 key={paneId}

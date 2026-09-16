@@ -4,7 +4,7 @@ import { useState } from "react";
 import { NativeSelect, Switch, TextInput } from "../../../ui";
 import { FieldRow, controlDescribedBy } from "./FieldRow";
 
-const COMPACT_INPUT = "h-7 min-h-0 px-2 text-[12px]";
+const COMPACT_INPUT = "sf-input--compact";
 
 function TextLikeField({ id, descriptor, value, mixed, disabled, issues, onCommit, onReset, canReset, type = "text" }) {
     const committed = value === undefined || value === null ? "" : String(value);

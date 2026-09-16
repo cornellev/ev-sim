@@ -303,7 +303,7 @@ export function SceneHierarchy({ data }) {
     const visibleRows = rows.slice(window.start, window.end);
 
     return (
-        <div className="flex h-full min-h-0 flex-col p-2 text-[var(--slate-fg)]" data-scene-hierarchy onClick={() => setMenu(null)}>
+        <div className="flex h-full min-h-0 flex-col p-3 text-[var(--slate-fg)]" data-scene-hierarchy onClick={() => setMenu(null)}>
             <p className="mb-2 px-1 text-[11px] text-[var(--slate-muted)]" data-hierarchy-summary>{objects.length} objects · {selectedIds.size} selected</p>
 
             <label className="mb-2 flex h-7 items-center gap-2 rounded-[var(--radius)] border border-[var(--slate-border-70)] bg-[var(--slate-surface-2)] px-2">

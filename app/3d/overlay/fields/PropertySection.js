@@ -31,7 +31,7 @@ export function PropertySection({ id, title, actions = null, children, className
     const bodyId = `property-section-${id}`;
     return (
         <section className={cn("border-b border-[var(--slate-border-60)] last:border-b-0", className)} data-property-section={id}>
-            <div className="flex h-8 items-center justify-between gap-2 pr-1">
+            <div className="flex h-8 items-center justify-between gap-2 px-1 pr-2">
                 <button
                     type="button"
                     aria-expanded={open}
@@ -44,7 +44,7 @@ export function PropertySection({ id, title, actions = null, children, className
                 </button>
                 {actions}
             </div>
-            <div id={bodyId} hidden={!open} className="px-1 pb-2">
+            <div id={bodyId} hidden={!open} className="px-2 pb-3">
                 {open && children}
             </div>
         </section>

@@ -7,7 +7,7 @@ Use this checklist when adding a new visual scripting block.
 1. Create or update a unit file under `app/scripting/units/`.
 2. Export a React unit component that renders `Unit`.
 3. Export a `UnitBlock` subclass.
-4. Make React port labels/types match `registerInput` and `registerOutput`.
+4. Make React port labels/types match `registerInput` and `registerOutput`. Prefer a shared `*_BLOCK_PORTS` descriptor imported by both the React unit and `register()`, as in `ScalarBlocks.block.js` / `LogicBlocks.block.js`.
 5. Implement `valid()` and `execute()`. For dual current/frozen ports, use `BlockOutput.setDeclared(this, label, value)`.
 6. Add one explicit entry to `app/scripting/UnitCatalog.meta.js`, including stable `type`, keywords, settings, and the React-free `blockClass`.
 7. Attach the React component to that type in `UnitCatalog.js`. Registration is derived from the metadata entry.

@@ -15,7 +15,7 @@ function isPlainObject(value) {
     return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function cloneValue(value) {
+export function cloneValue(value) {
     if (value === undefined) return undefined;
     if (value === null || typeof value !== "object") return value;
     if (typeof structuredClone === "function") {
@@ -236,6 +236,38 @@ export function setByPath(value, path, nextValue) {
     });
 
     return root;
+}
+
+export function deleteByPath(value, path) {
+    const cloned = cloneValue(value);
+    const normalizedPath = String(path || "").trim();
+    if (!normalizedPath) return { value: cloned, deleted: false };
+    if (!isPlainObject(cloned) && !Array.isArray(cloned)) {
+        return { value: cloned, deleted: false };
+    }
+
+    const parts = normalizedPath.split(".").filter(Boolean);
+    if (parts.length === 0) return { value: cloned, deleted: false };
+
+    let current = cloned;
+    for (let index = 0; index < parts.length - 1; index += 1) {
+        const part = parts[index];
+        if (current === null || current === undefined) return { value: cloned, deleted: false };
+        if (!Object.prototype.hasOwnProperty.call(Object(current), part)) {
+            return { value: cloned, deleted: false };
+        }
+        current = current[part];
+        if (!isPlainObject(current) && !Array.isArray(current)) {
+            return { value: cloned, deleted: false };
+        }
+    }
+
+    const last = parts[parts.length - 1];
+    if (!Object.prototype.hasOwnProperty.call(Object(current), last)) {
+        return { value: cloned, deleted: false };
+    }
+    delete current[last];
+    return { value: cloned, deleted: true };
 }
 
 export class SignalStore {

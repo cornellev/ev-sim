@@ -27,7 +27,7 @@ The source of truth is `app/globals.css`.
 | Error | `--slate-danger` | `#d98a8a` |
 | Radius | `--radius` | `4px` |
 
-Spacing follows a 4px scale. Standard controls are 32px or 36px tall and expand to at least 44px for coarse pointers.
+Spacing follows a 4px scale. Standard controls are 32px or 36px tall and expand to at least 44px for coarse pointers. Inspector rows use 28px compact fields (`.sf-input--compact`, `.sf-icon-button--tight`); those classes are unlayered so they override shared `sf-*` sizes. Do not use Tailwind height/padding utilities on `sf-input` / `sf-button` / `sf-icon-button` — unlayered primitive rules win over `@layer utilities`.
 
 ## Typography
 

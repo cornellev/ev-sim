@@ -393,6 +393,74 @@ test("picking ignores scene chrome and respects layer visibility", () => {
     assert.equal(hiddenLayerPick, null);
 });
 
+test("picking skips meshless registry entities instead of crashing", () => {
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
+    camera.position.set(0, 10, 20);
+    camera.lookAt(0, 0, 0);
+    camera.updateMatrixWorld();
+
+    const renderer = {
+        domElement: {
+            getBoundingClientRect: () => ({
+                left: 0,
+                top: 0,
+                width: 800,
+                height: 600,
+                right: 800,
+                bottom: 600,
+            }),
+        },
+    };
+
+    const registry = new EnvironmentRegistry();
+    const building = new THREE.Mesh(
+        new THREE.BoxGeometry(4, 8, 4),
+        new THREE.MeshBasicMaterial(),
+    );
+    building.position.set(0, 4, 0);
+    building.userData.buildingId = "target";
+    scene.add(building);
+
+    registry.registerEntity({
+        id: "building:target",
+        sourceId: "target",
+        kind: "building",
+        layer: "buildings",
+        object3D: building,
+    });
+    registry.registerEntity({
+        id: "overlay-metric:sky",
+        sourceId: "sky",
+        kind: "overlay-metric",
+        layer: "props",
+        editorOnly: true,
+        visible: true,
+    });
+    registry.registerEntity({
+        id: "asset-metric:asset-1",
+        sourceId: "asset-1",
+        kind: "asset-metric",
+        layer: "props",
+        visible: true,
+    });
+
+    const layers = { buildings: true, roads: true, props: true };
+    const roots = getPickableObjectRoots(registry, { layers });
+    assert.deepEqual(roots, [building]);
+
+    const picked = pickEnvironmentEntity({
+        clientX: 400,
+        clientY: 300,
+        camera,
+        renderer,
+        registry,
+        layers,
+    });
+
+    assert.equal(picked?.id, "building:target");
+});
+
 test("pointer drag threshold distinguishes clicks from camera drags", () => {
     assert.equal(isPointerDrag({ clientX: 0, clientY: 0 }, { clientX: 2, clientY: 2 }), false);
     assert.equal(isPointerDrag({ clientX: 0, clientY: 0 }, { clientX: 6, clientY: 0 }), true);

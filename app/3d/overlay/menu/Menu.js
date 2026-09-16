@@ -122,7 +122,7 @@ export default function Menu({
                                                 key={item.key}
                                                 ref={item.active ? selectedRef : undefined}
                                                 type="button"
-                                                className="sf-workspace-menu__item mx-1"
+                                                className="sf-workspace-menu__item"
                                                 data-active={item.active || undefined}
                                                 aria-current={item.active ? "page" : undefined}
                                                 onClick={() => item.active ? onClose?.() : item.onSelect?.()}

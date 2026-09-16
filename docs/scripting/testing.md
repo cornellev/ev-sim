@@ -19,7 +19,10 @@ Add or update tests when changing:
 - Compile validation, including reachable-only concreteness and rejection of `generic` in artifact ports.
 - Graph-wide generic unification: `connectUnitsDetailed`, atomic conflict rejection, disconnect/unbind, and restore from connections rather than cached `typeBindings`.
 - Artifact schema fields and supported versions (`2` and `3`).
-- Eager v2 versus lazy editor/v3 selector evaluation.
+- Eager v2 versus lazy editor/v3 selector evaluation (`If`, `WeightedSelect`, `SignalLatch`). `AndBlock` / `OrBlock` always short-circuit, including on v2-versioned copies of new artifacts.
+- Table-driven atomic scalar/logic execution in `tests/visual-script-blocks.test.js` (zeros, false, empty, invalid domains, cloned JSON, compiled ports).
+- Table-driven conversion/string/JSON/array execution, cloned writes, out-of-range `found`/`changed`, and `deleteByPath`.
+- Catalog uniqueness, placeability, and keyword search for `math` / `logic` / `strings` / `collections` / `conversions` entries.
 - Editor `executeProgram()` memoization: shared diamonds run once per call, memos are shared across multiple OutputNodes, and a later call starts a new memo.
 - Runtime cycles on live graphs (`Cycle detected at runtime while evaluating "<uuid>"`) plus `SignalStore` rollback of staged writes.
 - Frozen `nodes[].ports` overlay during hydrate, including v2/early-v3 `written` / `ok` / `staged` versus current `then` ports.

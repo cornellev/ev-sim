@@ -297,7 +297,7 @@ export function EditorWorkspace({ data, activeEnvironmentId, onEnvironmentChange
                 }}
             >
                 {sceneTabActive && <EditorToolbar data={data} />}
-                <nav aria-label="Workspace tabs" className="pointer-events-auto flex h-8 shrink-0 items-end gap-0.5 border-b border-[var(--slate-border-60)] bg-[var(--slate-surface-1)] px-1">
+                <nav aria-label="Workspace tabs" className="pointer-events-auto flex h-8 shrink-0 items-end gap-0.5 border-b border-[var(--slate-border-60)] bg-[var(--slate-surface-1)] px-2">
                     <button type="button" aria-current={sceneTabActive ? "page" : undefined} onClick={() => data.editor?.()?.setWorkspaceTab?.("scene")} className="h-7 rounded-t px-3 text-xs hover:bg-[var(--slate-surface-hover)]">Scene</button>
                     {workspace.assetTabs.map((tab) => <span key={tab.id} className="flex h-7 items-center rounded-t bg-[var(--slate-surface-2)]">
                         <button type="button" aria-current={workspace.activeTabId === tab.id ? "page" : undefined} onClick={() => data.editor?.()?.setWorkspaceTab?.(tab.id)} onDoubleClick={() => data.editor?.()?.pinAssetTab?.(tab.id)} className="h-full max-w-40 truncate px-2 text-xs">{tab.name} · r{tab.revision}{tab.dirty ? " *" : tab.pinned ? " •" : ""}</button>

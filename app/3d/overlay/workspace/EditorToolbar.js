@@ -135,7 +135,7 @@ export const EditorToolbar = memo(function EditorToolbar({ data }) {
             aria-orientation="horizontal"
             data-editor-toolbar
             onKeyDown={onKeyDown}
-            className="pointer-events-auto flex h-9 shrink-0 items-center gap-1 border-b border-[var(--slate-border-60)] bg-[var(--slate-surface-1)] px-2 text-[var(--slate-fg)]"
+            className="pointer-events-auto flex h-9 shrink-0 items-center gap-1 border-b border-[var(--slate-border-60)] bg-[var(--slate-surface-1)] px-3 text-[var(--slate-fg)]"
         >
             {groups.map((group, index) => (
                 <div key={group.id} role="group" aria-label={group.label} className={cn("flex items-center gap-0.5", index > 0 && "ml-1 border-l border-[var(--slate-border-60)] pl-1.5")}>
@@ -149,8 +149,8 @@ export const EditorToolbar = memo(function EditorToolbar({ data }) {
                                 </IconButton>
                             )}
                         >
-                            <div className="w-64 p-1" data-editor-chrome>
-                                <p className="px-1 pb-1 text-[12px] font-medium text-[var(--slate-fg-2)]">Layers</p>
+                            <div className="w-64 p-2" data-editor-chrome>
+                                <p className="px-2 pb-2 text-[12px] font-medium text-[var(--slate-fg-2)]">Layers</p>
                                 {LAYER_ITEMS.map((layer) => (
                                     <MenuToggle
                                         key={layer.id}

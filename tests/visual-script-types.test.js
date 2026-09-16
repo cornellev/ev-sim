@@ -19,6 +19,11 @@ import { NumberUnitClass } from "../app/scripting/units/math/Number.block.js";
 import { StringBlock } from "../app/scripting/units/objects/String.block.js";
 import { IfBlock } from "../app/scripting/units/statements/If.block.js";
 import { EqualityBlock } from "../app/scripting/units/statements/Equality.block.js";
+import {
+    EqualBlock,
+    LessBlock,
+} from "../app/scripting/units/statements/LogicBlocks.block.js";
+import { IntegerBlock, JsonBlock, AddBlock } from "../app/scripting/units/math/ScalarBlocks.block.js";
 import { WeightedSelectBlock } from "../app/scripting/units/math/Randomization.block.js";
 import {
     LogSignalBlock,
@@ -35,6 +40,8 @@ import {
 import {
     MakeActorCommandBlock,
 } from "../app/scripting/units/mission/ActorCommand.block.js";
+import { ArrayGetBlock } from "../app/scripting/units/collections/ArrayBlocks.block.js";
+import { JsonSetBlock } from "../app/scripting/units/objects/JsonBlocks.block.js";
 import {
     ACTOR_COMMAND_TYPE,
     GENERIC_TYPE,
@@ -173,7 +180,11 @@ function resetRegistry() {
         ProgramInputBlock,
         OutputNodeBlock,
         MakeActorCommandBlock,
-    ].forEach((blockClass) => registerBlockType(blockClass.name, blockClass));
+        EqualBlock,
+        LessBlock,
+        IntegerBlock,
+        JsonBlock,
+    ].forEach((blockClass) => registerBlockType(blockClass.blockType || blockClass.name, blockClass));
 }
 
 function connect(manager, from, output, to, input) {
@@ -454,6 +465,62 @@ test("Equality eq accepts any concrete type and ordered operators reject strings
     assert.equal(gtManager.units.find((unit) => unit.uuid === "eq").inputs["input a"], undefined);
 });
 
+test("EqualBlock accepts strings and LessBlock rejects them", () => {
+    resetRegistry();
+    const eqManager = new ScriptManager();
+    eqManager.addUnit(new TypedConstBlock("a", "one", "string"));
+    eqManager.addUnit(new TypedConstBlock("b", "two", "string"));
+    eqManager.addUnit(new EqualBlock("eq"));
+    eqManager.addUnit(new OutputBlock("output", "boolean"));
+    connect(eqManager, "a", "out", "eq", "a");
+    connect(eqManager, "b", "out", "eq", "b");
+    connect(eqManager, "eq", "out", "output", "output");
+    assert.equal(eqManager.checkValidity(), true);
+    assert.equal(eqManager.executeProgram().outputs.result, false);
+    const artifact = eqManager.compile("equal-strings");
+    assert.equal(artifact.nodes.find((node) => node.uuid === "eq").ports.inputs.a, "string");
+    assert.equal(JSON.stringify(artifact).includes("generic"), false);
+
+    const lessManager = new ScriptManager();
+    lessManager.addUnit(new TypedConstBlock("a", "one", "string"));
+    lessManager.addUnit(new LessBlock("lt"));
+    const rejected = lessManager.connectUnitsDetailed("a", "out", "lt", "a");
+    assert.equal(rejected.ok, false);
+    assert.match(rejected.error, /string is not accepted/);
+    assert.equal(lessManager.units.find((unit) => unit.uuid === "lt").inputs.a, undefined);
+});
+
+test("LessBlock binds int32 from IntegerBlock and EqualBlock binds json", () => {
+    resetRegistry();
+    const lessManager = new ScriptManager();
+    lessManager.addUnit(new IntegerBlock("a"));
+    lessManager.addUnit(new IntegerBlock("b"));
+    lessManager.addUnit(new LessBlock("lt"));
+    lessManager.addUnit(new OutputBlock("output", "boolean"));
+    lessManager.storeData("a", 1);
+    lessManager.storeData("b", 2);
+    connect(lessManager, "a", "out", "lt", "a");
+    connect(lessManager, "b", "out", "lt", "b");
+    connect(lessManager, "lt", "out", "output", "output");
+    assert.equal(lessManager.units.find((unit) => unit.uuid === "lt").typeBindings.T, "int32");
+    const lessArtifact = lessManager.compile("less-int32");
+    assert.equal(lessArtifact.nodes.find((node) => node.uuid === "lt").ports.inputs.a, "int32");
+
+    const equalManager = new ScriptManager();
+    equalManager.addUnit(new JsonBlock("left"));
+    equalManager.addUnit(new JsonBlock("right"));
+    equalManager.addUnit(new EqualBlock("eq"));
+    equalManager.addUnit(new OutputBlock("output", "boolean"));
+    equalManager.storeData("left", { x: 1 });
+    equalManager.storeData("right", { x: 1 });
+    connect(equalManager, "left", "out", "eq", "a");
+    connect(equalManager, "right", "out", "eq", "b");
+    connect(equalManager, "eq", "out", "output", "output");
+    assert.equal(equalManager.units.find((unit) => unit.uuid === "eq").typeBindings.T, "json");
+    assert.equal(equalManager.executeProgram().outputs.result, true);
+});
+
+
 test("MCP-style mutateGraphConnections rejects conflicts before rewriting the graph", () => {
     resetRegistry();
     const graph = {
@@ -623,4 +690,39 @@ test("reconfigureGraphUnit leaves the source graph unchanged when a typed edit f
     });
     assert.equal(rejected.ok, false);
     assert.deepEqual(graph, before);
+});
+
+test("reconfigureUnitDetailed rejects itemType and valueType conflicts", () => {
+    resetRegistry();
+    const arrayManager = new ScriptManager();
+    const getter = new ArrayGetBlock("get");
+    getter.hydrateState({ itemType: "float64", fallback: 0 });
+    const add = new AddBlock("add");
+    arrayManager.addUnit(getter);
+    arrayManager.addUnit(add);
+    connect(arrayManager, "get", "out", "add", "a");
+    const beforeState = structuredClone(getter.serializeState());
+    const rejectedType = arrayManager.reconfigureUnitDetailed("get", {
+        state: { itemType: "string", fallback: 0 },
+    });
+    assert.equal(rejectedType.ok, false);
+    assert.match(rejectedType.error, /Type mismatch/);
+    assert.deepEqual(getter.serializeState(), beforeState);
+    assert.equal(getter.typeMap.outputs.out, "float64");
+    assert.ok(add.inputs.a);
+
+    const jsonManager = new ScriptManager();
+    const setter = new JsonSetBlock("set");
+    setter.hydrateState({ path: "x", valueType: "float64" });
+    const number = new NumberUnitClass("number");
+    jsonManager.addUnit(setter);
+    jsonManager.addUnit(number);
+    connect(jsonManager, "number", "number", "set", "value");
+    const rejectedValue = jsonManager.reconfigureUnitDetailed("set", {
+        state: { path: "x", valueType: "string" },
+    });
+    assert.equal(rejectedValue.ok, false);
+    assert.match(rejectedValue.error, /Type mismatch/);
+    assert.equal(setter.typeMap.inputs.value, "float64");
+    assert.equal(setter.serializeState().valueType, "float64");
 });

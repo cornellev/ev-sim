@@ -58,7 +58,7 @@ export class MyBlock extends UnitBlock {
 
 Use `serializeState()` and `hydrateState()` for editor configuration that must be saved in compiled artifacts.
 
-Use `storeData(_uuid, data)` from a React unit when the UI needs to send larger or structured option data to the backend block.
+Use `storeData(_uuid, data)` from a React unit when the UI needs to send larger or structured option data to the backend block. Constant blocks such as `IntegerBlock`, `BooleanBlock`, and `JsonBlock` keep configuration in `storedData` and emit it through `finiteInt32()`, `parseValueByType(..., "boolean")`, or cloned JSON. They do not need `serializeState()` unless ports change.
 
 Use `serializeRuntimeState()` and `hydrateRuntimeState()` for state that changes across compiled runs, such as filters and accumulators.
 

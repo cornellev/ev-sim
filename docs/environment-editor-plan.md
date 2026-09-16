@@ -76,7 +76,7 @@ ED PR changes a contract, hash, gate, or milestone status.
   proxies are set up; LiDAR authoring supports generated meshes and editable
   primitives.
 - Default implementation/review reasoning level: **Extra High**.
-- Last updated: **2026-09-15 — bicycle pose drapes to paved elevation**.
+- Last updated: **2026-09-15 — editor chrome padding**.
 
 ## Normative contracts
 
@@ -1001,6 +1001,16 @@ Record in the ledger: focused-suite pass counts, `npm run lint` result,
   `6ca2ece3d5266822a2ceabba72e5f7dd9514789e76757e86f6aedd2730ab9a6a`.
 
 ## Decision log
+
+### 2026-09-15 — Editor chrome padding
+
+Editor-chrome maintenance after the environment picker popup: dialog, picker,
+workspace-switcher, and editor pane padding returned to the 4px spacing scale
+(16px rails, 12px chrome inset, 10–12px control padding). Inspector text/enum
+fields and reset/lane icon buttons use unlayered `.sf-input--compact` /
+`.sf-icon-button--tight` (28px) so they match number fields instead of losing
+to `.sf-input` / `.sf-icon-button`. Schema v4, `worldHash`, REST, CommandBus,
+and fixture hashes are unchanged. This is not an ED milestone.
 
 ### 2026-09-15 — Bicycle pose drapes to paved elevation
 
