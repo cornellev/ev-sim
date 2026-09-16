@@ -1,5 +1,6 @@
 import { BlockOutput, UnitBlock } from "../../ScriptManager.js";
 import { finiteFloat } from "../../types/PortTypes.js";
+import { isPerfectSquare, requireFiniteSamples, requireTexture } from "./tex/textureMath.js";
 
 export class SampleTextureBlock extends UnitBlock {
     register() {
@@ -14,12 +15,14 @@ export class SampleTextureBlock extends UnitBlock {
     }
 
     execute() {
-        const tex = this.getInput("tex") ?? [];
-        if (tex.length === 0) {
-            return new BlockOutput().set("out", 0);
+        const tex = this.getInput("tex");
+        requireTexture(tex, "SampleTextureBlock");
+        if (!isPerfectSquare(tex.length)) {
+            throw new Error("SampleTextureBlock texture length must be a perfect square.");
         }
+        requireFiniteSamples(tex, "SampleTextureBlock");
 
-        const size = Math.max(1, Math.floor(Math.sqrt(tex.length)));
+        const size = Math.sqrt(tex.length);
         const x = Math.max(0, Math.min(1, finiteFloat(this.getInput("x"))));
         const y = Math.max(0, Math.min(1, finiteFloat(this.getInput("y"))));
 

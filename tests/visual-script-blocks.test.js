@@ -4,19 +4,21 @@ import test from "node:test";
 import { clearBlockTypeRegistryForTests, ScriptManager } from "../app/scripting/ScriptManager.js";
 import { registerBuiltInBlocks } from "../app/scripting/registerBuiltInBlocks.js";
 import { SignalStore } from "../app/scripting/runtime/SignalStore.js";
-import { SIGNAL_PATHS } from "../app/scripting/runtime/SignalPaths.js";
+import { SIGNAL_PATHS, devicesLeafPath, entityIdSegment, vehiclesLeafPath } from "../app/scripting/runtime/SignalPaths.js";
 import {
     finiteFloat,
     finiteInt32,
     finiteResult,
     normalizeActorCommand,
+    normalizePose3d,
+    normalizeVec3,
     orderedBounds,
     valuesEqual,
 } from "../app/scripting/types/PortTypes.js";
 import { NumberUnitClass } from "../app/scripting/units/math/Number.block.js";
 import { RandomNumberBlock } from "../app/scripting/units/math/Random.block.js";
 import { RemapRangeBlock, WeightedSelectBlock } from "../app/scripting/units/math/Randomization.block.js";
-import { LowPassFilterBlock, SensorFusionBlock } from "../app/scripting/units/math/SensorFlow.block.js";
+import { LowPassFilterBlock, SampleTextureBlock, SensorFusionBlock } from "../app/scripting/units/math/SensorFlow.block.js";
 import {
     SCALAR_BLOCK_PORTS,
     SCALAR_BLOCKS,
@@ -60,7 +62,13 @@ import {
 } from "../app/scripting/units/geometry/GeometryBlocks.block.js";
 import * as scalarMath from "../app/scripting/units/math/scalarMath.js";
 import { TerrainNoiseBlock } from "../app/scripting/units/math/Terrain.block.js";
-import { MultiplyTexBlock, ScaleBlock } from "../app/scripting/units/math/tex/Scale.block.js";
+import {
+    TEXTURE_BLOCK_PORTS,
+    TEXTURE_BLOCKS,
+    MultiplyTexBlock,
+    ScaleBlock,
+    ScaleTextureBlock,
+} from "../app/scripting/units/math/tex/Scale.block.js";
 import { StringBlock } from "../app/scripting/units/objects/String.block.js";
 import { OutputNodeBlock, ProgramInputBlock } from "../app/scripting/units/program/ProgramIO.block.js";
 import {
@@ -94,6 +102,12 @@ import {
     VehiclePoseBlock,
     VehicleVelocityBlock,
 } from "../app/scripting/units/signals/SignalBlocks.block.js";
+import {
+    SIMULATOR_ADAPTER_BLOCKS,
+    SIMULATOR_ADAPTER_PORTS,
+    SimulationClockBlock,
+    VehicleStateBlock,
+} from "../app/scripting/units/simulator/SimulatorAdapters.block.js";
 
 function configuredBlock(BlockClass, values, options = {}) {
     const block = new BlockClass(options.uuid || "block");
@@ -192,12 +206,6 @@ test("random and texture blocks serialize state and return BlockOutput values", 
     const scale = configuredBlock(ScaleBlock, { tex1d: [1, 2, 3], scalar: 0 });
     assert.equal(scale.valid(), true);
     assert.deepEqual(scale.execute().get("result"), [0, 0, 0]);
-
-    const multiply = configuredBlock(MultiplyTexBlock, { tex1d_a: [1, 2], tex1d_b: [3, 4] });
-    assert.equal(multiply.valid(), true);
-    assert.deepEqual(multiply.execute().get("result"), [3, 8]);
-    const mismatch = configuredBlock(MultiplyTexBlock, { tex1d_a: [1], tex1d_b: [2, 3] });
-    assert.throws(() => mismatch.execute(), /equal lengths/);
 });
 
 test("vehicle readers use canonical defaults and narrowly fall back from legacy paths", () => {
@@ -271,6 +279,8 @@ test("atomic scalar and logic blocks share catalog port descriptors", () => {
         [ROUTE_HELPER_BLOCK_PORTS, ROUTE_HELPER_BLOCKS],
         [TEMPORAL_BLOCK_PORTS, TEMPORAL_BLOCKS],
         [CONTROLLER_BLOCK_PORTS, CONTROLLER_BLOCKS],
+        [TEXTURE_BLOCK_PORTS, TEXTURE_BLOCKS],
+        [SIMULATOR_ADAPTER_PORTS, SIMULATOR_ADAPTER_BLOCKS],
     ];
     for (const [portsByType, classes] of portMaps) {
         for (const [type, ports] of Object.entries(portsByType)) {
@@ -1198,4 +1208,230 @@ test("control blocks compile to v3 ports and persist across compiled runs", () =
     assert.equal(pidRun.status, "success", pidRun.e?.message);
     assert.equal(pidRun.outputs.result, 1);
 });
+
+function signalAdapter(BlockClass, store, values = {}) {
+    const manager = new ScriptManager();
+    manager.setSignalStore(store);
+    const block = new BlockClass("adapter");
+    manager.addUnit(block);
+    if (Object.keys(values).length) {
+        block.inputs = Object.fromEntries(Object.keys(values).map((label) => [label, {}]));
+        block.getInput = (label) => values[label];
+    }
+    return block;
+}
+
+const ZERO_POSE = normalizePose3d(null);
+const ZERO_VEC3 = normalizeVec3(null);
+const SAMPLE_POSE = {
+    position: { x: 1, y: 2, z: 3 },
+    rotation: { x: 0, y: 0.5, z: 0, order: "XYZ" },
+};
+const SAMPLE_VELOCITY = { x: 4, y: 0, z: -1 };
+
+test("signal path helpers reject dotted ids and default ego", () => {
+    assert.equal(entityIdSegment("", "ego"), "ego");
+    assert.equal(entityIdSegment("  ego  "), "ego");
+    assert.equal(entityIdSegment("foo.bar"), "");
+    assert.equal(vehiclesLeafPath("", "pose"), "vehicles.ego.pose");
+    assert.equal(vehiclesLeafPath("npc-1", "steeringAngle"), "vehicles.npc-1.steeringAngle");
+    assert.equal(vehiclesLeafPath("bad.id", "pose"), "");
+    assert.equal(devicesLeafPath("", "pose"), "");
+    assert.equal(devicesLeafPath("front_camera", "enabled"), "devices.front_camera.enabled");
+});
+
+const TEXTURE_EXECUTE_CASES = [
+    { type: "ScaleTextureBlock", inputs: { tex: [1, 2, 3], scalar: 0 }, outputs: { out: [0, 0, 0] } },
+    { type: "ScaleTextureBlock", inputs: { tex: [], scalar: 4 }, outputs: { out: [] } },
+    { type: "MultiplyTexBlock", inputs: { a: [1, 2], b: [3, 4] }, outputs: { out: [3, 8] } },
+    { type: "AddTextureBlock", inputs: { a: [1, 0], b: [2, 3] }, outputs: { out: [3, 3] } },
+    { type: "SubtractTextureBlock", inputs: { a: [5, 1], b: [2, 1] }, outputs: { out: [3, 0] } },
+    { type: "ClampTextureBlock", inputs: { tex: [-1, 0.5, 8], min: 5, max: 1 }, outputs: { out: [1, 1, 5] } },
+    { type: "InvertTextureBlock", inputs: { tex: [0, 0.25, 1] }, outputs: { out: [1, 0.75, 0] } },
+];
+
+test("texture blocks execute table and fail closed on malformed inputs", () => {
+    for (const row of TEXTURE_EXECUTE_CASES) {
+        const block = configuredBlock(TEXTURE_BLOCKS[row.type], row.inputs);
+        const output = block.execute();
+        for (const [label, expected] of Object.entries(row.outputs)) {
+            assert.deepEqual(output.get(label), expected, `${row.type}.${label}`);
+        }
+    }
+
+    const source = [1, 2];
+    const scaled = configuredBlock(ScaleTextureBlock, { tex: source, scalar: 2 });
+    const out = scaled.execute().get("out");
+    out[0] = 99;
+    assert.deepEqual(source, [1, 2]);
+
+    const mismatch = configuredBlock(MultiplyTexBlock, { a: [1], b: [2, 3] });
+    assert.throws(() => mismatch.execute(), /equal lengths/);
+    const nanTex = configuredBlock(TEXTURE_BLOCKS.AddTextureBlock, { a: [1, Number.NaN], b: [2, 3] });
+    assert.throws(() => nanTex.execute(), /finite/);
+    const infTex = configuredBlock(TEXTURE_BLOCKS.InvertTextureBlock, { tex: [Infinity] });
+    assert.throws(() => infTex.execute(), /finite/);
+    assert.throws(
+        () => configuredBlock(ScaleTextureBlock, { tex: { length: 2 }, scalar: 1 }).execute(),
+        /array/,
+    );
+
+    const legacy = configuredBlock(MultiplyTexBlock, { tex1d_a: [1, 2], tex1d_b: [3, 4] });
+    legacy.typeMap = {
+        inputs: { tex1d_a: "tex1d", tex1d_b: "tex1d" },
+        outputs: { result: "tex1d" },
+    };
+    assert.equal(legacy.valid(), true);
+    const legacyOut = legacy.execute();
+    assert.deepEqual(legacyOut.get("result"), [3, 8]);
+    assert.equal(legacyOut.has("out"), false);
+
+    const sample = configuredBlock(SampleTextureBlock, { tex: [0, 1, 2, 3], x: 1, y: 1 });
+    assert.equal(sample.execute().get("out"), 3);
+    const origin = configuredBlock(SampleTextureBlock, { tex: [4, 5, 6, 7], x: 0, y: 0 });
+    assert.equal(origin.execute().get("out"), 4);
+    assert.throws(
+        () => configuredBlock(SampleTextureBlock, { tex: [1, 2], x: 0, y: 0 }).execute(),
+        /perfect square/,
+    );
+    assert.throws(
+        () => configuredBlock(SampleTextureBlock, { tex: [], x: 0, y: 0 }).execute(),
+        /perfect square/,
+    );
+});
+
+test("simulator adapters read typed signal-store leafs", () => {
+    const store = new SignalStore();
+    store.set(SIGNAL_PATHS.VEHICLES_EGO_POSE, SAMPLE_POSE);
+    store.set(SIGNAL_PATHS.VEHICLES_EGO_VELOCITY, SAMPLE_VELOCITY);
+    store.set("vehicles.ego.steeringAngle", 0.25);
+
+    const fresh = signalAdapter(VehicleStateBlock, store, { actorId: "ego" });
+    assert.deepEqual(fresh.execute().get("pose"), SAMPLE_POSE);
+    assert.deepEqual(fresh.execute().get("velocity"), SAMPLE_VELOCITY);
+    assert.equal(fresh.execute().get("steering"), 0.25);
+    assert.equal(fresh.execute().get("exists"), true);
+    assert.equal(fresh.execute().get("stale"), false);
+
+    const missing = signalAdapter(VehicleStateBlock, new SignalStore(), { actorId: "ghost" });
+    const missingOut = missing.execute();
+    assert.deepEqual(missingOut.get("pose"), ZERO_POSE);
+    assert.deepEqual(missingOut.get("velocity"), ZERO_VEC3);
+    assert.equal(missingOut.get("steering"), 0);
+    assert.equal(missingOut.get("exists"), false);
+    assert.equal(missingOut.get("stale"), true);
+
+    const noSteerStore = new SignalStore();
+    noSteerStore.set(SIGNAL_PATHS.VEHICLES_EGO_POSE, SAMPLE_POSE);
+    noSteerStore.set(SIGNAL_PATHS.VEHICLES_EGO_VELOCITY, SAMPLE_VELOCITY);
+    const noSteer = signalAdapter(VehicleStateBlock, noSteerStore, { actorId: "" });
+    assert.equal(noSteer.execute().get("exists"), true);
+    assert.equal(noSteer.execute().get("stale"), false);
+    assert.equal(noSteer.execute().get("steering"), 0);
+
+    const legacyStore = new SignalStore();
+    legacyStore.set(SIGNAL_PATHS.VEHICLE_EGO_POSE, SAMPLE_POSE);
+    legacyStore.set(SIGNAL_PATHS.VEHICLE_EGO_VELOCITY, SAMPLE_VELOCITY);
+    legacyStore.set("vehicle.ego.steeringAngle", -0.1);
+    const legacy = signalAdapter(VehicleStateBlock, legacyStore, { actorId: "ego" });
+    assert.deepEqual(legacy.execute().get("pose"), SAMPLE_POSE);
+    assert.equal(legacy.execute().get("steering"), -0.1);
+    assert.equal(legacy.execute().get("exists"), true);
+
+    const invalid = signalAdapter(VehicleStateBlock, store, { actorId: "ego.nested" });
+    assert.equal(invalid.execute().get("exists"), false);
+
+    const deviceStore = new SignalStore();
+    deviceStore.set("devices.front_camera.pose", SAMPLE_POSE);
+    deviceStore.set("devices.front_camera.enabled", true);
+    const device = signalAdapter(SIMULATOR_ADAPTER_BLOCKS.DeviceStateBlock, deviceStore, { deviceId: "front_camera" });
+    assert.deepEqual(device.execute().get("pose"), SAMPLE_POSE);
+    assert.equal(device.execute().get("enabled"), true);
+    assert.equal(device.execute().get("exists"), true);
+    const noEnabledStore = new SignalStore();
+    noEnabledStore.set("devices.front_camera.pose", SAMPLE_POSE);
+    const noEnabled = signalAdapter(SIMULATOR_ADAPTER_BLOCKS.DeviceStateBlock, noEnabledStore, { deviceId: "front_camera" });
+    assert.equal(noEnabled.execute().get("exists"), true);
+    assert.equal(noEnabled.execute().get("enabled"), false);
+    assert.equal(noEnabled.execute().get("stale"), false);
+
+    const blobStore = new SignalStore();
+    blobStore.set(SIGNAL_PATHS.SIMULATION, { dt: 0.02, time: 1.5, step: 7, frame: 7 });
+    const blobClock = signalAdapter(SimulationClockBlock, blobStore);
+    assert.equal(blobClock.execute().get("time"), 1.5);
+    assert.equal(blobClock.execute().get("dt"), 0.02);
+    assert.equal(blobClock.execute().get("step"), 7);
+    assert.equal(blobClock.execute().get("status"), "");
+
+    const leafStore = new SignalStore();
+    leafStore.set(SIGNAL_PATHS.SIMULATION_TIME, 4);
+    leafStore.set(SIGNAL_PATHS.SIMULATION_FIXED_DT, 0.05);
+    leafStore.set(SIGNAL_PATHS.SIMULATION_STEP, 9);
+    leafStore.set(SIGNAL_PATHS.SIMULATION_STATUS, "running");
+    const leafClock = signalAdapter(SimulationClockBlock, leafStore);
+    assert.equal(leafClock.execute().get("time"), 4);
+    assert.equal(leafClock.execute().get("dt"), 0.05);
+    assert.equal(leafClock.execute().get("step"), 9);
+    assert.equal(leafClock.execute().get("status"), "running");
+
+    const bothStore = new SignalStore();
+    bothStore.set(SIGNAL_PATHS.SIMULATION, { dt: 0.01, time: 99, step: 1, frame: 1 });
+    bothStore.set(SIGNAL_PATHS.SIMULATION_TIME, 8);
+    bothStore.set(SIGNAL_PATHS.SIMULATION_FIXED_DT, 0.5);
+    bothStore.set(SIGNAL_PATHS.SIMULATION_STEP, 12);
+    bothStore.set(SIGNAL_PATHS.SIMULATION_STATUS, "paused");
+    const bothClock = signalAdapter(SimulationClockBlock, bothStore);
+    assert.equal(bothClock.execute().get("time"), 8);
+    assert.equal(bothClock.execute().get("dt"), 0.01);
+    assert.equal(bothClock.execute().get("step"), 12);
+    assert.equal(bothClock.execute().get("status"), "paused");
+
+    const scenarioStore = new SignalStore();
+    const terminal = { status: "success", reason: "goal" };
+    const trigger = { id: "t1", kind: "timeout" };
+    scenarioStore.set(SIGNAL_PATHS.SCENARIO_STATUS, "running");
+    scenarioStore.set(SIGNAL_PATHS.SCENARIO_TERMINAL, terminal);
+    scenarioStore.set(SIGNAL_PATHS.SCENARIO_LATEST_TRIGGER, trigger);
+    const scenario = signalAdapter(SIMULATOR_ADAPTER_BLOCKS.ScenarioStatusBlock, scenarioStore);
+    const scenarioOut = scenario.execute();
+    assert.equal(scenarioOut.get("status"), "running");
+    assert.deepEqual(scenarioOut.get("terminal"), terminal);
+    scenarioOut.get("terminal").reason = "mutated";
+    assert.deepEqual(scenarioStore.read(SIGNAL_PATHS.SCENARIO_TERMINAL).value, terminal);
+    const emptyScenario = signalAdapter(SIMULATOR_ADAPTER_BLOCKS.ScenarioStatusBlock, new SignalStore());
+    assert.equal(emptyScenario.execute().get("status"), "");
+    assert.equal(emptyScenario.execute().get("terminal"), null);
+});
+
+test("simulation clock and scale texture compile to v3 and match editor execution", () => {
+    ensureBuiltIns();
+
+    const store = new SignalStore();
+    store.set(SIGNAL_PATHS.SIMULATION, { dt: 0.02, time: 1, step: 5, frame: 5 });
+    const clockManager = withHead("float64");
+    clockManager.setSignalStore(store);
+    clockManager.addUnit(new SimulationClockBlock("clock"));
+    connect(clockManager, "clock", "dt", "head", "output");
+    const editor = clockManager.executeProgram();
+    assert.equal(editor.status, "success", editor.e?.message);
+    assert.equal(editor.outputs.result, 0.02);
+    const clockArtifact = clockManager.compile("clock");
+    assert.equal(clockArtifact.nodes.find((node) => node.uuid === "clock").ports.outputs.dt, "float64");
+    const compiledClock = ScriptManager.createRunner(clockArtifact, { signalStore: store }).run();
+    assert.equal(compiledClock.status, "success", compiledClock.e?.message);
+    assert.equal(compiledClock.outputs.result, 0.02);
+
+    const texManager = withHead("tex1d");
+    const texId = addProgramInput(texManager, "tex", "tex1d", "[1,2,3]");
+    texManager.addUnit(new NumberUnitClass("scalar"));
+    texManager.addUnit(new ScaleTextureBlock("op"));
+    texManager.storeData("scalar", 2);
+    connect(texManager, texId, "input", "op", "tex");
+    connect(texManager, "scalar", "number", "op", "scalar");
+    connect(texManager, "op", "out", "head", "output");
+    const scaled = compileAndRun(texManager, "scale-texture");
+    assert.deepEqual(scaled.editor.outputs.result, [2, 4, 6]);
+    assert.deepEqual(scaled.compiled.outputs.result, [2, 4, 6]);
+});
+
 

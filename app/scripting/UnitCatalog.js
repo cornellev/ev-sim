@@ -103,7 +103,15 @@ import {
 } from "./units/statements/LogicBlocks";
 import { RandomNumber } from "./units/math/Random";
 import { Noise } from "./units/math/tex/Noise";
-import { MultiplyTex, Scale } from "./units/math/tex/Scale";
+import {
+    AddTextureUnit,
+    ClampTextureUnit,
+    InvertTextureUnit,
+    MultiplyTex,
+    Scale,
+    ScaleTextureUnit,
+    SubtractTextureUnit,
+} from "./units/math/tex/Scale";
 import { Mask } from "./units/math/tex/Mask";
 import { IfUnit } from "./units/statements/If";
 import { Conjugation, Equality } from "./units/statements/Equality";
@@ -173,6 +181,12 @@ import {
     ValueChangedUnit,
 } from "./units/control/TemporalBlocks";
 import { PidControllerUnit } from "./units/control/ControllerBlocks";
+import {
+    DeviceStateUnit,
+    ScenarioStatusUnit,
+    SimulationClockUnit,
+    VehicleStateUnit,
+} from "./units/simulator/SimulatorAdapters";
 import { MakeActorCommandUnit, SplitActorCommandUnit } from "./units/mission/ActorCommand";
 import {
     DistanceToRouteEndUnit,
@@ -329,6 +343,11 @@ const COMPONENT_BY_TYPE = new Map([
     ["MaskBlock", Mask],
     ["MultiplyTexBlock", MultiplyTex],
     ["ScaleBlock", Scale],
+    ["ScaleTextureBlock", ScaleTextureUnit],
+    ["AddTextureBlock", AddTextureUnit],
+    ["SubtractTextureBlock", SubtractTextureUnit],
+    ["ClampTextureBlock", ClampTextureUnit],
+    ["InvertTextureBlock", InvertTextureUnit],
     ["TerrainNoiseBlock", TerrainNoiseUnit],
     ["NormalizeTextureBlock", NormalizeTextureUnit],
     ["BlendTextureBlock", BlendTextureUnit],
@@ -415,6 +434,10 @@ const COMPONENT_BY_TYPE = new Map([
     ["SimulationSnapshotBlock", SimulationSnapshotUnit],
     ["ScenarioSnapshotBlock", ScenarioSnapshotUnit],
     ["ObjectSnapshotBlock", ObjectSnapshotUnit],
+    ["VehicleStateBlock", VehicleStateUnit],
+    ["DeviceStateBlock", DeviceStateUnit],
+    ["SimulationClockBlock", SimulationClockUnit],
+    ["ScenarioStatusBlock", ScenarioStatusUnit],
     ["WaypointListBlock", WaypointListUnit],
     ["CurrentWaypointBlock", CurrentWaypointUnit],
     ["AdvanceWaypointBlock", AdvanceWaypointUnit],

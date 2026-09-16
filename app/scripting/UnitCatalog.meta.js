@@ -106,7 +106,21 @@ import {
 } from "./units/statements/LogicBlocks.block.js";
 import { RandomNumberBlock } from "./units/math/Random.block.js";
 import { NoiseBlock } from "./units/math/tex/Noise.block.js";
-import { MultiplyTexBlock, ScaleBlock } from "./units/math/tex/Scale.block.js";
+import {
+    AddTextureBlock,
+    ClampTextureBlock,
+    InvertTextureBlock,
+    MultiplyTexBlock,
+    ScaleBlock,
+    ScaleTextureBlock,
+    SubtractTextureBlock,
+} from "./units/math/tex/Scale.block.js";
+import {
+    DeviceStateBlock,
+    ScenarioStatusBlock,
+    SimulationClockBlock,
+    VehicleStateBlock,
+} from "./units/simulator/SimulatorAdapters.block.js";
 import { MaskBlock } from "./units/math/tex/Mask.block.js";
 import { IfBlock } from "./units/statements/If.block.js";
 import { ConjugationBlock, EqualityBlock } from "./units/statements/Equality.block.js";
@@ -445,8 +459,13 @@ export const UNIT_CATALOG_META = [
     entry("JsonMergeBlock", "JSON Merge", "objects", JsonMergeBlock, ["json", "merge", "assign"]),
     entry("NoiseBlock", "Noise Texture (tex1d)", "texture1d", NoiseBlock, ["noise", "texture", "tex1d"]),
     entry("MaskBlock", "Mask Texture (tex1d)", "texture1d", MaskBlock, ["mask", "texture", "tex1d"]),
-    entry("MultiplyTexBlock", "Multiply Textures (tex1d)", "texture1d", MultiplyTexBlock, ["multiply", "texture", "tex1d"]),
-    entry("ScaleBlock", "Scale Matrix (tex1d)", "texture1d", ScaleBlock, ["scale", "texture", "tex1d", "scalar"]),
+    entry("MultiplyTexBlock", "Multiply Textures", "texture1d", MultiplyTexBlock, ["multiply", "texture", "tex1d"]),
+    entry("ScaleBlock", "Scale Matrix (tex1d)", "texture1d", ScaleBlock, ["scale", "texture", "tex1d", "scalar", "legacy"], { placeable: false, deprecated: true }),
+    entry("ScaleTextureBlock", "Scale Texture", "texture1d", ScaleTextureBlock, ["scale", "texture", "tex1d", "scalar"]),
+    entry("AddTextureBlock", "Add Textures", "texture1d", AddTextureBlock, ["add", "texture", "tex1d"]),
+    entry("SubtractTextureBlock", "Subtract Textures", "texture1d", SubtractTextureBlock, ["subtract", "texture", "tex1d"]),
+    entry("ClampTextureBlock", "Clamp Texture", "texture1d", ClampTextureBlock, ["clamp", "texture", "tex1d"]),
+    entry("InvertTextureBlock", "Invert Texture", "texture1d", InvertTextureBlock, ["invert", "texture", "tex1d"]),
     entry("TerrainNoiseBlock", "Terrain Noise (tex1d)", "terrain", TerrainNoiseBlock, ["terrain", "noise", "heightmap"]),
     entry("NormalizeTextureBlock", "Normalize Texture (tex1d)", "terrain", NormalizeTextureBlock, ["normalize", "texture"]),
     entry("BlendTextureBlock", "Blend Texture (tex1d)", "terrain", BlendTextureBlock, ["blend", "mix", "texture"]),
@@ -549,6 +568,10 @@ export const UNIT_CATALOG_META = [
     entry("SimulationSnapshotBlock", "Simulation Snapshot", "simulator", SimulationSnapshotBlock, ["simulation", "snapshot", "clock"], { requiresSignals: true }),
     entry("ScenarioSnapshotBlock", "Scenario Snapshot", "simulator", ScenarioSnapshotBlock, ["scenario", "snapshot", "status"], { requiresSignals: true }),
     entry("ObjectSnapshotBlock", "Object Snapshot", "simulator", ObjectSnapshotBlock, ["object", "snapshot", "target"], { requiresSignals: true }),
+    entry("VehicleStateBlock", "Vehicle State", "simulator", VehicleStateBlock, ["vehicle", "state", "pose", "adapter"], { requiresSignals: true }),
+    entry("DeviceStateBlock", "Device State", "simulator", DeviceStateBlock, ["device", "state", "pose", "adapter"], { requiresSignals: true }),
+    entry("SimulationClockBlock", "Simulation Clock", "simulator", SimulationClockBlock, ["simulation", "clock", "dt", "adapter"], { requiresSignals: true }),
+    entry("ScenarioStatusBlock", "Scenario Status", "simulator", ScenarioStatusBlock, ["scenario", "status", "terminal", "adapter"], { requiresSignals: true }),
     entry("WaypointListBlock", "Waypoint List", "mission", WaypointListBlock, ["waypoint", "route", "list"]),
     entry("CurrentWaypointBlock", "Current Waypoint", "mission", CurrentWaypointBlock, ["waypoint", "current", "mission"]),
     entry("AdvanceWaypointBlock", "Advance Waypoint", "mission", AdvanceWaypointBlock, ["waypoint", "advance", "mission"]),

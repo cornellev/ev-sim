@@ -24,7 +24,9 @@ Add or update tests when changing:
 - Table-driven conversion/string/JSON/array execution, cloned writes, out-of-range `found`/`changed`, and `deleteByPath`.
 - Table-driven geometry Make/Split/arithmetic and route-helper execution, including zero vectors, extra-key drop, cloned vec/waypoint outputs, out-of-range `found`, Euclidean distance-to-end, and Route Tangent XZ→`vec2` packing (`{ x, y: z }`).
 - Table-driven `control` temporal/PID execution, including first-tick zeros/false, multi-tick sequences, `dt` throw-before-mutate, cloned Previous values, BindingRuntime `resetRun` restoring artifact `runtimeState`, and catalog count 14.
-- Catalog uniqueness, placeability, and keyword search for `math` / `logic` / `strings` / `collections` / `conversions` / `geometry` / `control` / `mission` route-helper entries.
+- Table-driven texture arithmetic (zeros, empty arrays, swapped clamp bounds, invert `1-x`, cloned outputs, unequal-length and non-finite throws) plus `SampleTextureBlock` perfect-square rejection. Catalog `texture1d` placeable count 8; `ScaleBlock` remains registered but non-placeable.
+- Simulator adapters against a real `SignalStore`: ego/legacy `vehicle.ego.*` fallback, missing steering, dual-source clock (blob `dt` vs kernel leafs), cloned scenario JSON. Catalog `simulator` placeable count 12.
+- Catalog uniqueness, placeability, and keyword search for `math` / `logic` / `strings` / `collections` / `conversions` / `geometry` / `control` / `mission` route-helper / `texture1d` / `simulator` entries.
 - Editor `executeProgram()` memoization: shared diamonds run once per call, memos are shared across multiple OutputNodes, and a later call starts a new memo.
 - Runtime cycles on live graphs (`Cycle detected at runtime while evaluating "<uuid>"`) plus `SignalStore` rollback of staged writes.
 - Frozen `nodes[].ports` overlay during hydrate, including v2/early-v3 `written` / `ok` / `staged` versus current `then` ports.

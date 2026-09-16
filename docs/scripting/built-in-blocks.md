@@ -8,7 +8,7 @@ Current block library categories:
 
 - `expressions`: number, calculation, random number.
 - `constants`: pi, e, tau, golden ratio.
-- `vector2`: texture operations.
+- `texture1d`: texture operations (scale, multiply, add, subtract, clamp, invert). Noise and Mask remain in this category. `ScaleBlock` is deprecated and non-placeable.
 - `terrain`: terrain texture generation and processing.
 - `sensorflow`: filters, gates, sensor fusion helpers.
 - `randomization`: random ranges, seeded random, noise, jitter, weighted select, remap.
@@ -24,7 +24,7 @@ Current block library categories:
 - `program`: program input/output units. Program I/O may expose `unit` and `actor_command`.
 - `signals`: read/write and inspect signal-store values. Write Signal exposes identity `value` plus `then`.
 - `topics`: topic snapshots, fields, staged publish messages, metadata, and stale gates. Stage Publish exposes `path` plus `then`.
-- `simulator`: vehicle, device, simulation, scenario, and object snapshots.
+- `simulator`: path-configured vehicle, device, simulation, scenario, and object snapshots, plus typed adapters (`VehicleStateBlock`, `DeviceStateBlock`, `SimulationClockBlock`, `ScenarioStatusBlock`).
 - `mission`: waypoint, mission state, route progress, scenario flag helpers, actor-command Make/Split, and read-only route helpers. Set Mission State, Scenario Flag Write, and Advance Waypoint expose `then`. Make Actor Command builds `{ actorId, speedMps, steeringRad }` from required `speed`/`steering` and optional `actorId`. Split Actor Command unpacks that value. Route-controller speed/steering mappings remain `float64`. `Waypoint At Index` reads `route.waypoints` (or a bare array) and emits `found:false` plus an empty waypoint out of range. `Split Waypoint` unpacks `id`, `kind`, `position:vec3`, and `order`. `Route Length` wraps `routeLength()`. `Distance To Route End` wraps `distanceToRouteEnd()` (Euclidean 3D to the last polyline point, not remaining arc length; missing polyline becomes `0`). `Route Tangent` wraps `routeTangentAtPose()` and packs the XZ tangent into `vec2` as `{ x, y: z }`. These wrappers do not mutate routes or manufacture unverified routes.
 - `bindings`: signal/tick/timer triggers and input/output/trigger bindings.
 - `diagnostics`: probes, logs, assertions, recording/replay, and binding status. Log, Assert, and Record expose `then`.
@@ -33,7 +33,7 @@ Current block library categories:
 
 Every placeable catalog entry has a backend block class and can compile into a v3 artifact. Frozen v2 artifacts remain runnable.
 
-`CalculationBlock`, `EqualityBlock`, and `ConjugationBlock` remain registered and renderable for old graphs and artifacts, but are deprecated and non-placeable. Atomic replacements live in `math` (`AddBlock`, `SubtractBlock`, …) and `logic` (`EqualBlock`, `AndBlock`, …). `OutputNodeBlock` is also non-placeable because the graph head owns it. `ScaleBlock` and `MultiplyTexBlock` are React-free runtime blocks; neither performs DOM or canvas work.
+`CalculationBlock`, `EqualityBlock`, and `ConjugationBlock` remain registered and renderable for old graphs and artifacts, but are deprecated and non-placeable. Atomic replacements live in `math` (`AddBlock`, `SubtractBlock`, …) and `logic` (`EqualBlock`, `AndBlock`, …). `OutputNodeBlock` is also non-placeable because the graph head owns it. `ScaleBlock` stays registered for old graphs (`tex1d`/`scalar` → `result`) but is deprecated and non-placeable; place `ScaleTextureBlock` instead. Texture ops are React-free runtime blocks; none of them perform DOM or canvas work.
 
 ## Atomic Scalar And Logic Blocks
 
@@ -57,7 +57,21 @@ React-free classes live in `app/scripting/units/geometry/GeometryBlocks.block.js
 
 React-free classes live in `app/scripting/units/control/TemporalBlocks.block.js` and `app/scripting/units/control/ControllerBlocks.block.js`. React siblings import `TEMPORAL_BLOCK_PORTS` / `CONTROLLER_BLOCK_PORTS`. Shared helpers are `temporalMath.js`.
 
-`dt` is an ordinary `float64` input, not an `execute()` argument. Wire it from a Program Input mapped with binding `source: "sim", key: "dt"`, or from `SimulationSnapshotBlock`. `requireDt()` throws `${typeId} dt must be finite and non-negative.` before writing instance fields; `dt === 0` is legal. Integrators use forward Euler. PID is derivative-on-error with conditional-integration anti-windup and does not write `actor_command` or the plant. Runtime memory lives in `serializeRuntimeState()` / `hydrateRuntimeState()` and is JSON-cloned. `Previous` / `Value Changed` infer `T` like Equal/Passthrough. These blocks do not replace `LowPassFilterBlock` or `RateLimiterBlock` in `sensorflow`.
+`dt` is an ordinary `float64` input, not an `execute()` argument. Wire it from a Program Input mapped with binding `source: "sim", key: "dt"`, from `SimulationClockBlock.dt`, or from `SimulationSnapshotBlock`. `requireDt()` throws `${typeId} dt must be finite and non-negative.` before writing instance fields; `dt === 0` is legal. Integrators use forward Euler. PID is derivative-on-error with conditional-integration anti-windup and does not write `actor_command` or the plant. Runtime memory lives in `serializeRuntimeState()` / `hydrateRuntimeState()` and is JSON-cloned. `Previous` / `Value Changed` infer `T` like Equal/Passthrough. These blocks do not replace `LowPassFilterBlock` or `RateLimiterBlock` in `sensorflow`.
+
+## Texture Blocks
+
+React-free classes live in `app/scripting/units/math/tex/Scale.block.js`. React siblings import `TEXTURE_BLOCK_PORTS`. Shared helpers are `textureMath.js`.
+
+`ScaleTextureBlock` takes `tex`/`scalar` → `out`. `MultiplyTexBlock`, `AddTextureBlock`, and `SubtractTextureBlock` take `a`/`b` → `out`. `ClampTextureBlock` takes `tex`/`min`/`max` → `out` and reorders bounds. `InvertTextureBlock` maps each sample to `1 - sample`. Empty arrays are legal. Binary ops throw on unequal lengths. All new ops throw when a sample is non-finite. `MultiplyTexBlock.execute()` still accepts frozen `tex1d_a`/`tex1d_b` → `result` ports via `hasInput` and `setDeclared`. `SampleTextureBlock` (category `sensorflow`) requires a perfect-square length ≥ 1 and finite samples; `x`/`y` clamp to `[0, 1]`.
+
+## Simulator Adapters
+
+React-free classes live in `app/scripting/units/simulator/SimulatorAdapters.block.js`. React siblings import `SIMULATOR_ADAPTER_PORTS`. These blocks only call `manager.readSignal()`; they do not write the store or the kernel.
+
+`VehicleStateBlock` takes `actorId:string` (empty becomes `"ego"`) and reads `vehicles.{id}.pose`, `.velocity`, and `.steeringAngle`. The `steering` port is `float64`; missing steering is `0` and does not flip `exists`. Invalid ids (dots, spaces) emit zeros with `exists:false` and `stale:true`. Ego graphs fall back to `vehicle.ego.*` when the canonical leaf is missing. `DeviceStateBlock` reads `devices.{id}.pose` and `.enabled`; missing enabled is `false`. `exists` follows pose. Values are normalized with `normalizePose3d()` / `normalizeVec3()`.
+
+`SimulationClockBlock` has no inputs. It prefers kernel leafs `simulation.time` / `.step` / `.status` when they exist, uses the bindings blob `simulation.dt` when that blob exists, and otherwise falls back to `simulation.fixedDt` and blob `time`/`step`/`frame`. Missing clock values are `0` / `""`. `ScenarioStatusBlock` reads `scenario.status`, `.terminal`, and `.latestTrigger`, cloning JSON outputs.
 
 ## ROS Blocks
 

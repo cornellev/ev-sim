@@ -54,7 +54,10 @@ test("legacy composites remain registered but are not placeable", () => {
     const output = UNIT_CATALOG_META.find((entry) => entry.type === "OutputNodeBlock");
     assert.equal(output?.placeable, false);
     assert.equal(output?.deprecated, false);
-    assert.equal(UNIT_CATALOG_META.find((entry) => entry.type === "ScaleBlock")?.placeable, true);
+    const scale = UNIT_CATALOG_META.find((entry) => entry.type === "ScaleBlock");
+    assert.equal(scale?.placeable, false);
+    assert.equal(scale?.deprecated, true);
+    assert.equal(UNIT_CATALOG_META.some((entry) => entry.type.startsWith("ROS")), false);
 });
 
 test("snapshot signal dependencies and React component mappings cover the catalog", async () => {
@@ -68,6 +71,10 @@ test("snapshot signal dependencies and React component mappings cover the catalo
         "SimulationSnapshotBlock",
         "ScenarioSnapshotBlock",
         "ObjectSnapshotBlock",
+        "VehicleStateBlock",
+        "DeviceStateBlock",
+        "SimulationClockBlock",
+        "ScenarioStatusBlock",
     ]);
     UNIT_CATALOG_META.forEach((entry) => {
         assert.equal(entry.requiresSignals, signalTypes.has(entry.type), entry.type);
@@ -136,5 +143,23 @@ test("control temporal and controller blocks are placeable and searchable", () =
     assert.ok(UNIT_CATALOG_META.find((entry) => entry.type === "PreviousBlock").keywords.includes("z1"));
     assert.ok(UNIT_CATALOG_META.find((entry) => entry.type === "IntegratorBlock").keywords.includes("integrator"));
     assert.ok(UNIT_CATALOG_META.find((entry) => entry.type === "PidControllerBlock").keywords.includes("pid"));
+});
+
+test("simulator adapters and texture ops are placeable and searchable", () => {
+    const simulator = UNIT_CATALOG_META.filter((entry) => entry.category === "simulator" && entry.placeable);
+    assert.equal(simulator.length, 12);
+    assert.ok(simulator.some((entry) => entry.type === "VehicleStateBlock"));
+    assert.ok(simulator.some((entry) => entry.type === "SimulationClockBlock"));
+    assert.ok(UNIT_CATALOG_META.find((entry) => entry.type === "VehicleStateBlock").keywords.includes("adapter"));
+    assert.ok(UNIT_CATALOG_META.find((entry) => entry.type === "SimulationClockBlock").keywords.includes("clock"));
+    assert.equal(UNIT_CATALOG_META.find((entry) => entry.type === "VehicleStateBlock")?.requiresSignals, true);
+
+    const texture = UNIT_CATALOG_META.filter((entry) => entry.category === "texture1d" && entry.placeable);
+    assert.equal(texture.length, 8);
+    assert.ok(texture.some((entry) => entry.type === "ScaleTextureBlock"));
+    assert.ok(texture.some((entry) => entry.type === "InvertTextureBlock"));
+    assert.equal(texture.some((entry) => entry.type === "ScaleBlock"), false);
+    assert.ok(UNIT_CATALOG_META.find((entry) => entry.type === "ScaleTextureBlock").keywords.includes("scale"));
+    assert.ok(UNIT_CATALOG_META.find((entry) => entry.type === "InvertTextureBlock").keywords.includes("invert"));
 });
 

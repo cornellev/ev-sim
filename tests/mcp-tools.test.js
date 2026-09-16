@@ -349,6 +349,9 @@ test("script_add_unit and script_update_unit configure stdlib conversion and col
             assert.match(listedText, /RouteLengthBlock/);
             assert.match(listedText, /PreviousBlock/);
             assert.match(listedText, /PidControllerBlock/);
+            assert.match(listedText, /VehicleStateBlock/);
+            assert.match(listedText, /SimulationClockBlock/);
+            assert.match(listedText, /ScaleTextureBlock/);
 
             const described = await describe({ type: "FloorToIntBlock" });
             assert.equal(described.isError, undefined, described.content?.[0]?.text);
@@ -359,6 +362,12 @@ test("script_add_unit and script_update_unit configure stdlib conversion and col
             const describedPid = await describe({ type: "PidControllerBlock" });
             assert.equal(describedPid.isError, undefined, describedPid.content?.[0]?.text);
             assert.match(describedPid.content[0].text, /PidControllerBlock/);
+            const describedVehicle = await describe({ type: "VehicleStateBlock" });
+            assert.equal(describedVehicle.isError, undefined, describedVehicle.content?.[0]?.text);
+            assert.match(describedVehicle.content[0].text, /VehicleStateBlock/);
+            const describedScale = await describe({ type: "ScaleTextureBlock" });
+            assert.equal(describedScale.isError, undefined, describedScale.content?.[0]?.text);
+            assert.match(describedScale.content[0].text, /ScaleTextureBlock/);
 
             const literal = await add({
                 scriptId: "script-blk03",
@@ -403,6 +412,18 @@ test("script_add_unit and script_update_unit configure stdlib conversion and col
                 uuid: "previous",
             });
             assert.equal(previous.isError, undefined, previous.content?.[0]?.text);
+            const vehicleState = await add({
+                scriptId: "script-blk03",
+                type: "VehicleStateBlock",
+                uuid: "vehicle-state",
+            });
+            assert.equal(vehicleState.isError, undefined, vehicleState.content?.[0]?.text);
+            const scaleTexture = await add({
+                scriptId: "script-blk03",
+                type: "ScaleTextureBlock",
+                uuid: "scale-texture",
+            });
+            assert.equal(scaleTexture.isError, undefined, scaleTexture.content?.[0]?.text);
 
             const typed = await update({
                 scriptId: "script-blk03",
@@ -424,6 +445,8 @@ test("script_add_unit and script_update_unit configure stdlib conversion and col
             assert.equal(saved.graph.nodes.find((node) => node.uuid === "route-length").type, "RouteLengthBlock");
             assert.equal(saved.graph.nodes.find((node) => node.uuid === "integrator").type, "IntegratorBlock");
             assert.equal(saved.graph.nodes.find((node) => node.uuid === "previous").type, "PreviousBlock");
+            assert.equal(saved.graph.nodes.find((node) => node.uuid === "vehicle-state").type, "VehicleStateBlock");
+            assert.equal(saved.graph.nodes.find((node) => node.uuid === "scale-texture").type, "ScaleTextureBlock");
         } finally {
             globalThis.fetch = originalFetch;
         }

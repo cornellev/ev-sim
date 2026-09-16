@@ -143,7 +143,11 @@ test("block library searches keywords and hides deprecated composite blocks", as
     await search.fill("floor");
     await expect(page.getByRole("button", { name: "Floor to Int Conversions", exact: true })).toBeVisible();
     await search.fill("scale scalar");
-    await expect(page.getByRole("button", { name: "Scale Matrix (tex1d) Texture 1D", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Scale Texture Texture 1D", exact: true })).toBeVisible();
+    await search.fill("vehicle state");
+    await expect(page.getByRole("button", { name: "Vehicle State Simulator", exact: true })).toBeVisible();
+    await search.fill("sim clock");
+    await expect(page.getByRole("button", { name: "Simulation Clock Simulator", exact: true })).toBeVisible();
 });
 
 test("OutputNode rejects an incompatible typed edit without dropping its wire", async ({ page }) => {
@@ -301,5 +305,22 @@ test("block library places control temporal and pid blocks", async ({ page }) =>
     await expect(page.getByRole("button", { name: "Connect output out, float64" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Connect output previous, generic" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Connect output command, float64" })).toBeVisible();
+});
+
+test("block library places simulator adapters and texture ops", async ({ page }) => {
+    test.setTimeout(180_000);
+    await page.goto("/");
+    await openWorkspace(page, "Scripting canvas");
+    await page.getByRole("button", { name: "New" }).first().click();
+
+    await addBlock(page, "Simulation Clock", "Simulation Clock Simulator");
+    await addBlock(page, "Scale Texture", "Scale Texture Texture 1D");
+
+    await expect(page.getByRole("group", { name: /Simulation Clock node/ })).toBeVisible();
+    await expect(page.getByRole("group", { name: /Scale Texture node/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Connect output time, float64" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Connect output dt, float64" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Connect input tex, tex1d" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Connect output out, tex1d" })).toBeVisible();
 });
 
