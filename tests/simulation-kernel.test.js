@@ -285,6 +285,36 @@ test("managed kernel lifecycle finalizes idempotently and requires reset before 
     assert.throws(() => kernel.step(), /disposed simulation kernel/);
 });
 
+test("kernel play dispatches start and stop re-prepares with a stop phase", async () => {
+    const { SimulationKernel } = await import("../app/simulation/kernel/SimulationKernel.js");
+    const target = createHarness();
+    const phases = [];
+    target.scripts.resetRun = (options = {}) => {
+        phases.push({ via: "resetRun", phase: options.episodePhase ?? "start" });
+    };
+    target.scripts.dispatchEpisodePhase = (phase) => {
+        phases.push({ via: "dispatch", phase });
+    };
+    const kernel = new SimulationKernel(target.context);
+    const manifest = resolvedRun(createDefaultRunManifest({
+        seed: "42",
+        sensorRig: { sensors: [] },
+        assertions: [],
+    }));
+    await kernel.prepare(manifest, { episodePhase: "start" });
+    kernel.stop();
+    kernel.play();
+    await kernel.prepare(manifest, { episodePhase: "stop" });
+
+    assert.equal(phases[0]?.via, "resetRun");
+    assert.equal(phases[0]?.phase, "start");
+    assert.ok(phases.some((entry) => entry.via === "resetRun" && entry.phase === "stop"));
+    assert.ok(phases.some((entry) => entry.via === "dispatch" && entry.phase === "start"));
+    assert.equal(phases.at(-1)?.via, "resetRun");
+    assert.equal(phases.at(-1)?.phase, "stop");
+    kernel.dispose();
+});
+
 test("same episode reset reconstructs production trajectory hash", async () => {
     const { SimulationKernel } = await import("../app/simulation/kernel/SimulationKernel.js");
     const target = createHarness();

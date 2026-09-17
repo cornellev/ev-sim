@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useContext, useEffect, useMemo, useState } from "react";
 import {
     IconAbc, IconActivity, IconArrowsExchange, IconBinaryTree2, IconBox, IconBug,
     IconCar, IconCategory, IconChevronDown, IconChevronRight, IconCode, IconDatabase,
@@ -7,6 +7,8 @@ import {
     IconSearch, IconVector, IconX,
 } from "@tabler/icons-react";
 import { createCatalogUnitUUID, groupedUnitCatalog } from "./UnitCatalog";
+import { canvasOriginFromElement, isEditableTarget, screenToWorld } from "./canvas/CanvasViewport.js";
+import { CanvasViewportContext } from "./canvas/CanvasViewportContext.js";
 
 const CATEGORY_META = {
     all: { label: "All", icon: IconCategory, accent: "text-zinc-100" },
@@ -36,15 +38,6 @@ const CATEGORY_META = {
 
 function cx(...classes) {
     return classes.filter(Boolean).join(" ");
-}
-
-function isEditableTarget(target) {
-    if (!target || typeof target.closest !== "function") return false;
-    return Boolean(target.closest("input, textarea, select, [contenteditable]")) || target.isContentEditable;
-}
-
-function clamp(value, min, max) {
-    return Math.max(min, Math.min(max, value));
 }
 
 function categoryMeta(category) {
@@ -224,6 +217,7 @@ export function AddMenu({ onAddUnit = () => {} }) {
     const [activeCategory, setActiveCategory] = useState("all");
     const [categoriesCollapsed, setCategoriesCollapsed] = useState(false);
     const [lastCanvasPointer, setLastCanvasPointer] = useState({ x: 420, y: 180 });
+    const { viewportRef, canvasRef } = useContext(CanvasViewportContext);
     const groupedUnits = useMemo(() => groupedUnitCatalog(), []);
     const allUnits = useMemo(() => flattenCatalogGroups(groupedUnits), [groupedUnits]);
     const categoryOrder = useMemo(() => Object.keys(groupedUnits), [groupedUnits]);
@@ -274,13 +268,16 @@ export function AddMenu({ onAddUnit = () => {} }) {
     }, []);
 
     const getSpawnPosition = () => {
-        const viewportHeight = typeof window === "undefined" ? 900 : window.innerHeight;
         const sidebarEdge = open ? 354 : 72;
-
-        return {
+        const screen = {
             x: Math.max(sidebarEdge + 24, lastCanvasPointer.x),
-            y: clamp(lastCanvasPointer.y, 96, Math.max(120, viewportHeight - 140))
+            y: lastCanvasPointer.y
         };
+        return screenToWorld(
+            screen,
+            viewportRef.current,
+            canvasOriginFromElement(canvasRef.current)
+        );
     };
 
     const addUnit = (unit) => {

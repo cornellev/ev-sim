@@ -112,6 +112,7 @@ export class SimulationEngine {
                 return this._applyResolvedEnvironment(environment, resolvedRun, worldResource);
             },
             environmentState: () => this.data.environment?.()?.getDeterministicState?.() ?? null,
+            getWorldDescription: () => this.data.environment?.()?.getWorldDescription?.() ?? null,
             renderTarget: "browser",
             prepareRendering: (resolvedRun, options) => this._prepareRendering(resolvedRun, options),
             currentRendering: () => this.renderRuntime,
@@ -123,6 +124,9 @@ export class SimulationEngine {
         this._episodeMeshIds = new Set();
         this._episodeMeshSync = Promise.resolve();
         this.kernel.onReset(() => this._syncEpisodeOverlayMeshes());
+        this.data.bindings?.()?.setHostContext?.({
+            overlay: this.runtimeContext.episodeOverlay,
+        });
 
         this._frame = this._frame.bind(this);
     }
@@ -388,6 +392,7 @@ export class SimulationEngine {
     play() {
         this.startLoop();
         this.kernel.play();
+        this._syncEpisodeOverlayMeshes();
         this._emit();
     }
 
@@ -396,12 +401,13 @@ export class SimulationEngine {
         this._emit();
     }
 
-    stop({ reset = true } = {}) {
+    stop({ reset = true, dispatchEpisode = true } = {}) {
         this.accumulator = 0;
         this.accumulatorNs = 0;
         if (reset) this.frames = 0;
-        this.kernel.stop({ reset });
+        this.kernel.stop({ reset, dispatchEpisode });
         if (reset) this.autonomyOverlay?.clear?.();
+        this._syncEpisodeOverlayMeshes();
         this.render();
         this._emit();
     }

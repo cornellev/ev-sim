@@ -18,6 +18,11 @@ export const TRIGGER_KINDS = {
     EPISODE_RESET: "episode-reset",
 };
 
+export const EPISODE_PHASES = Object.freeze({
+    START: "start",
+    STOP: "stop",
+});
+
 export const TRIGGER_KIND_ORDER = [
     TRIGGER_KINDS.TOPIC,
     TRIGGER_KINDS.FIXED_UPDATE,
@@ -96,7 +101,10 @@ export function normalizeTrigger(trigger = {}) {
         case TRIGGER_KINDS.SIMULATION_TIMER:
             return { kind, intervalNs: toPositiveInt(trigger.intervalNs, 100_000_000) };
         case TRIGGER_KINDS.EPISODE_RESET:
-            return { kind };
+            return {
+                kind,
+                phase: trigger.phase === EPISODE_PHASES.STOP ? EPISODE_PHASES.STOP : EPISODE_PHASES.START,
+            };
         default:
             return { kind: TRIGGER_KINDS.TIMER, intervalMs: 100 };
     }
@@ -318,7 +326,7 @@ export function summarizeTrigger(trigger = {}) {
         case TRIGGER_KINDS.SIMULATION_TIMER:
             return `every ${trigger.intervalNs} ns of simulation time`;
         case TRIGGER_KINDS.EPISODE_RESET:
-            return "on episode reset";
+            return trigger.phase === EPISODE_PHASES.STOP ? "on episode stop" : "on episode start";
         default:
             return "unknown trigger";
     }

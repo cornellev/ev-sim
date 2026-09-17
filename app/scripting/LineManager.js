@@ -453,12 +453,14 @@ export function LineManager({
         window.addEventListener("resize", scheduleLineMeasurement);
         document.addEventListener("unit-position-preview", scheduleLineMeasurement);
         document.addEventListener("unit-position-changed", scheduleLineMeasurement);
+        document.addEventListener("canvas-viewport-changed", scheduleLineMeasurement);
 
         return () => {
             observer?.disconnect();
             window.removeEventListener("resize", scheduleLineMeasurement);
             document.removeEventListener("unit-position-preview", scheduleLineMeasurement);
             document.removeEventListener("unit-position-changed", scheduleLineMeasurement);
+            document.removeEventListener("canvas-viewport-changed", scheduleLineMeasurement);
             if (measureFrameRef.current !== null) {
                 window.cancelAnimationFrame(measureFrameRef.current);
                 measureFrameRef.current = null;

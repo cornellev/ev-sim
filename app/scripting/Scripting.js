@@ -1,5 +1,4 @@
-import { cloneElement, useEffect, useMemo, useRef, useState } from "react";
-import Grid from "./Grid";
+import { cloneElement, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LineManager } from "./LineManager";
 import {
     createOutputNodePort,
@@ -65,6 +64,22 @@ import {
 } from "./ScriptLibrary";
 import { subscribeStorageEvents } from "../client/storageEvents";
 import { getBindingRuntime } from "./bindings/BindingRuntime";
+import { ScriptCanvas } from "./canvas/ScriptCanvas";
+import { CanvasViewportContext } from "./canvas/CanvasViewportContext";
+import {
+    CANVAS_FIT_PADDING,
+    CANVAS_TOOLBAR_ZOOM_FACTOR,
+    DEFAULT_CANVAS_VIEWPORT,
+    canvasOriginFromElement,
+    fitViewportToWorldPoints,
+    normalizeCanvasViewport,
+    screenToWorld,
+    zoomViewportAt,
+} from "./canvas/CanvasViewport";
+import {
+    normalizeOutputNodePosition,
+    normalizeRestoredPosition,
+} from "./canvas/canvasPositions";
 
 registerBuiltInBlocks();
 
@@ -110,64 +125,22 @@ function getScriptRevision(document) {
     return document?.compileStatus?.artifactUpdatedAt || document?.updatedAt || null;
 }
 
-function getCenterPosition() {
-    if (typeof window === "undefined") return { x: 280, y: 180 };
-
-    return {
-        x: Math.max(24, window.innerWidth / 2 - 120),
-        y: Math.max(72, window.innerHeight / 2 - 80)
-    };
-}
-
-function clamp(value, min, max) {
-    return Math.min(Math.max(value, min), max);
-}
-
-function getFallbackNodePosition(index = 0) {
-    const column = index % 4;
-    const row = Math.floor(index / 4);
-    return {
-        x: 220 + column * 230,
-        y: 140 + row * 170
-    };
-}
-
-function normalizeRestoredPosition(position, index = 0) {
-    const fallback = getFallbackNodePosition(index);
-    if (!position) return fallback;
-
-    const rawX = Number(position.x);
-    const rawY = Number(position.y);
-    if (!Number.isFinite(rawX) || !Number.isFinite(rawY)) return fallback;
-
-    if (typeof window === "undefined") {
-        return { x: rawX, y: rawY };
+function getCenterPosition(canvas, viewport) {
+    if (!canvas || typeof canvas.getBoundingClientRect !== "function") {
+        return { x: 280, y: 180 };
     }
 
-    const maxX = Math.max(24, window.innerWidth - 260);
-    const maxY = Math.max(88, window.innerHeight - 180);
+    const rect = canvas.getBoundingClientRect();
+    const origin = { x: rect.left, y: rect.top };
+    const center = screenToWorld(
+        { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 },
+        viewport,
+        origin
+    );
 
     return {
-        x: clamp(rawX, 24, maxX),
-        y: clamp(rawY, 88, maxY)
-    };
-}
-
-function normalizeOutputNodePosition(position) {
-    const fallback = { x: 100, y: 100 };
-    if (!position) return fallback;
-
-    const rawX = Number(position.x);
-    const rawY = Number(position.y);
-    if (!Number.isFinite(rawX) || !Number.isFinite(rawY)) return fallback;
-
-    if (typeof window === "undefined") {
-        return { x: rawX, y: rawY };
-    }
-
-    return {
-        x: clamp(rawX, 24, Math.max(24, window.innerWidth - 260)),
-        y: clamp(rawY, 88, Math.max(88, window.innerHeight - 180))
+        x: center.x - 120,
+        y: center.y - 80
     };
 }
 
@@ -434,6 +407,59 @@ function StatusBadge({ compileState, valid }) {
             {ok ? <IconCircleCheck size={13} stroke={1.75} aria-hidden="true" /> : <IconCircleX size={13} stroke={1.75} aria-hidden="true" />}
             <span className="max-[899px]:sr-only">{label}</span>
         </span>
+    );
+}
+
+function CanvasCameraPanel({
+    viewport,
+    onZoomIn,
+    onZoomOut,
+    onResetZoom,
+    onFitCanvas
+}) {
+    return (
+        <div
+            data-canvas-camera-controls
+            className="fixed bottom-4 right-4 z-50 flex items-center gap-1 rounded-[4px] border border-white/10 bg-[var(--slate-floating)] px-1.5 py-1.5 text-white shadow-[0_12px_36px_rgba(0,0,0,0.28)] backdrop-blur-sm"
+            onWheel={(event) => event.preventDefault()}
+        >
+            <button
+                type="button"
+                className="mini-btn"
+                aria-label="Zoom out"
+                title="Zoom out"
+                onClick={onZoomOut}
+            >
+                −
+            </button>
+            <button
+                type="button"
+                className="mini-btn min-w-[3.25rem]"
+                aria-label="Reset zoom to 100 percent"
+                title="Reset zoom"
+                onClick={onResetZoom}
+            >
+                {`${Math.round((viewport?.scale || 1) * 100)}%`}
+            </button>
+            <button
+                type="button"
+                className="mini-btn"
+                aria-label="Zoom in"
+                title="Zoom in"
+                onClick={onZoomIn}
+            >
+                +
+            </button>
+            <button
+                type="button"
+                className="mini-btn"
+                aria-label="Fit graph to canvas"
+                title="Fit graph"
+                onClick={onFitCanvas}
+            >
+                Fit
+            </button>
+        </div>
     );
 }
 
@@ -914,6 +940,9 @@ export default function Scripting({ onOpenWorkspace }) {
     const saveFeedbackTimerRef = useRef(null);
     const importInputRef = useRef(null);
     const unitParentRef = useRef();
+    const viewportRef = useRef(DEFAULT_CANVAS_VIEWPORT);
+    const isPanModeRef = useRef(false);
+    const canvasRef = useRef(null);
 
     const [valid, setValid] = useState(false);
     const [outputNodeConfig, setOutputNodeConfig] = useState(OUTPUT_NODE_DEFAULT);
@@ -939,6 +968,63 @@ export default function Scripting({ onOpenWorkspace }) {
     const [renderGraphId, setRenderGraphId] = useState(0);
     const [connectionSnapshot, setConnectionSnapshot] = useState([]);
     const [configurationError, setConfigurationError] = useState(null);
+    const [viewport, setViewportState] = useState(DEFAULT_CANVAS_VIEWPORT);
+
+    const commitViewport = useCallback((next) => {
+        const resolved = typeof next === "function" ? next(viewportRef.current) : next;
+        const normalized = normalizeCanvasViewport(resolved);
+        if (
+            normalized.x === viewportRef.current.x
+            && normalized.y === viewportRef.current.y
+            && normalized.scale === viewportRef.current.scale
+        ) {
+            return;
+        }
+
+        viewportRef.current = normalized;
+        setViewportState(normalized);
+    }, []);
+
+    const canvasViewportContext = useMemo(() => ({
+        viewport,
+        viewportRef,
+        isPanModeRef,
+        canvasRef,
+        setViewport: commitViewport,
+    }), [viewport, commitViewport]);
+
+    const zoomCanvasAtCenter = (factor) => {
+        const canvas = canvasRef.current;
+        const origin = canvasOriginFromElement(canvas);
+        const rect = canvas?.getBoundingClientRect?.();
+        const screen = rect
+            ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+            : { x: 0, y: 0 };
+        commitViewport(zoomViewportAt(viewportRef.current, screen, factor, origin));
+    };
+
+    const fitCanvasToGraph = () => {
+        const canvas = canvasRef.current;
+        if (!canvas || typeof document === "undefined") {
+            commitViewport({ ...DEFAULT_CANVAS_VIEWPORT });
+            return;
+        }
+
+        const rect = canvas.getBoundingClientRect();
+        const origin = { x: rect.left, y: rect.top };
+        const current = viewportRef.current;
+        const points = [];
+        canvas.querySelectorAll("[data-uuid]").forEach((element) => {
+            const box = element.getBoundingClientRect();
+            points.push(screenToWorld({ x: box.left, y: box.top }, current, origin));
+            points.push(screenToWorld({ x: box.right, y: box.bottom }, current, origin));
+        });
+        commitViewport(fitViewportToWorldPoints(
+            points,
+            { width: rect.width, height: rect.height },
+            { padding: CANVAS_FIT_PADDING }
+        ));
+    };
 
     useEffect(() => {
         scriptsRef.current = scripts;
@@ -1028,7 +1114,8 @@ export default function Scripting({ onOpenWorkspace }) {
         const graph = serializeManagerGraph(manager.current, {
             outputNodeConfig: outputNodeConfigRef.current,
             positions: positionsRef.current,
-            headUUID: headUUID.current
+            headUUID: headUUID.current,
+            viewport: viewportRef.current
         });
         setConnectionSnapshot(mergeUnrestoredConnections(graph.connections || [], manager.current.restoreErrors));
         setUnitChildren((previous) => previous.map((child) => {
@@ -1098,7 +1185,8 @@ export default function Scripting({ onOpenWorkspace }) {
         const graph = serializeManagerGraph(manager.current, {
             outputNodeConfig: outputNodeConfigRef.current,
             positions: positionsRef.current,
-            headUUID: headUUID.current
+            headUUID: headUUID.current,
+            viewport: viewportRef.current
         });
 
         let latestValidArtifact = document.latestValidArtifact || null;
@@ -1293,7 +1381,8 @@ export default function Scripting({ onOpenWorkspace }) {
         const serializedGraph = serializeManagerGraph(nextManager, {
             outputNodeConfig: restoredOutputConfig,
             positions: nextPositions,
-            headUUID: headUUID.current
+            headUUID: headUUID.current,
+            viewport: graph.viewport
         });
         const snapshotConnections = mergeUnrestoredConnections(
             serializedGraph.connections || [],
@@ -1305,6 +1394,7 @@ export default function Scripting({ onOpenWorkspace }) {
         outputNodeConfigRef.current = restoredOutputConfig;
         currentDocumentRef.current = normalized;
         currentScriptIdRef.current = normalized.id;
+        commitViewport(graph.viewport);
 
         if (pushCurrent && previousScriptId && previousScriptId !== normalized.id) {
             setBackStack((previous) => [...previous, previousScriptId]);
@@ -1625,7 +1715,7 @@ export default function Scripting({ onOpenWorkspace }) {
         });
         manager.current.addUnit(block);
 
-        const position = getCenterPosition();
+        const position = getCenterPosition(canvasRef.current, viewportRef.current);
         positionsRef.current = {
             ...positionsRef.current,
             [uuid]: position
@@ -1665,7 +1755,7 @@ export default function Scripting({ onOpenWorkspace }) {
         });
         manager.current.addUnit(block);
 
-        const position = getCenterPosition();
+        const position = getCenterPosition(canvasRef.current, viewportRef.current);
         positionsRef.current = {
             ...positionsRef.current,
             [uuid]: position
@@ -2057,6 +2147,14 @@ export default function Scripting({ onOpenWorkspace }) {
                 onOpenWorkspace={onOpenWorkspace}
             />
 
+            <CanvasCameraPanel
+                viewport={viewport}
+                onZoomIn={() => zoomCanvasAtCenter(CANVAS_TOOLBAR_ZOOM_FACTOR)}
+                onZoomOut={() => zoomCanvasAtCenter(1 / CANVAS_TOOLBAR_ZOOM_FACTOR)}
+                onResetZoom={() => commitViewport({ ...DEFAULT_CANVAS_VIEWPORT })}
+                onFitCanvas={fitCanvasToGraph}
+            />
+
             {saveFeedbackVisible && (
                 <div className="fixed left-1/2 top-4 z-[60] -translate-x-1/2 rounded-[4px] border border-white/10 bg-[var(--slate-floating)] px-3 py-1.5 text-xs font-medium text-zinc-100 shadow-[0_12px_36px_rgba(0,0,0,0.28)] backdrop-blur-sm" role="status" aria-live="polite">
                     Saved
@@ -2094,7 +2192,7 @@ export default function Scripting({ onOpenWorkspace }) {
             />
 
             {lastRun && (
-                <div className="fixed bottom-4 right-4 z-40 max-w-[360px] rounded-[var(--radius)] border border-white/10 bg-[var(--slate-floating)] px-3 py-2 text-xs text-zinc-300 shadow-[0_14px_40px_rgba(0,0,0,0.25)]">
+                <div className="fixed bottom-16 right-4 z-40 max-w-[360px] rounded-[var(--radius)] border border-white/10 bg-[var(--slate-floating)] px-3 py-2 text-xs text-zinc-300 shadow-[0_14px_40px_rgba(0,0,0,0.25)]">
                     <div className="mb-1 font-medium text-white">
                         {lastRun.status === "success" ? "Execution output" : "Execution failed"}
                     </div>
@@ -2120,8 +2218,14 @@ export default function Scripting({ onOpenWorkspace }) {
                 valid={valid}
             />
 
-            <div className="fixed inset-0 z-[1] h-[100dvh] w-[100vw] bg-[var(--slate-bg)]">
-                <Grid />
+            <CanvasViewportContext.Provider value={canvasViewportContext}>
+            <ScriptCanvas
+                world={(
+                    <div key={renderGraphId} className="absolute left-0 top-0 text-white" ref={unitParentRef}>
+                        {visibleUnitChildren}
+                    </div>
+                )}
+            >
                 <LineManager
                     units={visibleUnitChildren}
                     notifyConnection={onConnectUnits}
@@ -2130,11 +2234,8 @@ export default function Scripting({ onOpenWorkspace }) {
                     connectionSnapshot={connectionSnapshot}
                 />
                 <AddMenu onAddUnit={addUnit} />
-
-                <div key={renderGraphId} className="absolute left-4 top-4 text-white" ref={unitParentRef}>
-                    {visibleUnitChildren}
-                </div>
-            </div>
+            </ScriptCanvas>
+            </CanvasViewportContext.Provider>
         </>
     );
 }

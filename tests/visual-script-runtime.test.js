@@ -23,6 +23,7 @@ import {
     serializeManagerGraph,
     formatRestoreErrors,
     mergeUnrestoredConnections,
+    mutateGraphConnections,
     wouldCreateScriptReferenceCycle,
 } from "../app/scripting/GraphDocument.js";
 import { createLoadedScript, loadScript } from "../app/scripting/ScriptRuntime.js";
@@ -1161,6 +1162,7 @@ test("editor graph serialization round-trips nodes, state, positions, connection
 
     assert.deepEqual(graph.outputNodeConfig, outputNodeConfig);
     assert.deepEqual(graph.headPosition, { x: 480, y: 120 });
+    assert.deepEqual(graph.viewport, { x: 0, y: 0, scale: 1 });
     assert.equal(graph.nodes.some((node) => node.uuid === "head-uuid"), false);
     assert.deepEqual(graph.nodes.find((node) => node.uuid === "acc").position, { x: 120, y: 240 });
     assert.deepEqual(graph.nodes.find((node) => node.uuid === "acc").runtimeState, { total: 7 });
@@ -1176,6 +1178,47 @@ test("editor graph serialization round-trips nodes, state, positions, connection
     assert.equal(restored.head, "head-uuid");
     assert.equal(restored.units.find((unit) => unit.uuid === "acc").total, 8);
     assert.deepEqual(run.outputs, { total: 8 });
+});
+
+test("serializeManagerGraph stores editor viewport and mutateGraphConnections preserves it", () => {
+    resetRegistry();
+
+    const manager = new ScriptManager();
+    const head = new OutputNodeBlock("head-uuid");
+    const outputNodeConfig = normalizeOutputNodeState({
+        outputs: [{ id: "total", label: "total", type: "float64" }],
+    });
+    head.hydrateState(outputNodeConfig);
+    manager.addUnit(head);
+    manager.setHead("head-uuid");
+    manager.storeData("head-uuid", outputNodeConfig);
+    manager.addUnit(new ConstBlock("one", 1));
+    manager.connectUnits("one", "out", "head-uuid", "total");
+
+    const viewport = { x: -80, y: 40, scale: 1.5 };
+    const graph = serializeManagerGraph(manager, {
+        outputNodeConfig,
+        positions: {
+            "head-uuid": { x: 10, y: 20 },
+            one: { x: 0, y: 0 },
+        },
+        headUUID: "head-uuid",
+        viewport,
+    });
+    assert.deepEqual(graph.viewport, viewport);
+
+    const omitted = serializeManagerGraph(manager, {
+        outputNodeConfig,
+        headUUID: "head-uuid",
+    });
+    assert.deepEqual(omitted.viewport, { x: 0, y: 0, scale: 1 });
+
+    const mutated = mutateGraphConnections(graph, getRegisteredBlockType, (next) => {
+        const removed = next.disconnectUnits("one", "out", "head-uuid", "total");
+        return removed ? { ok: true } : { ok: false, error: "missing" };
+    });
+    assert.equal(mutated.ok, true);
+    assert.deepEqual(mutated.graph.viewport, viewport);
 });
 
 test("autosave-style document updates keep the previous latest valid artifact when a graph becomes invalid", () => {

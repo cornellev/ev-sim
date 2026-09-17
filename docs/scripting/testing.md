@@ -28,7 +28,7 @@ Add or update tests when changing:
 - Simulator adapters against a real `SignalStore`: ego/legacy `vehicle.ego.*` fallback, missing steering, dual-source clock (blob `dt` vs kernel leafs), cloned scenario JSON. Catalog `simulator` placeable count 15 (includes Sample Road, Spawn Prop, Scatter Features).
 - Path-frame helpers and episode overlay lifecycle in `tests/path-frame.test.js` and `tests/episode-overlay.test.js`: right-of-travel lateral offset, `worldHash` stability, physics `episode:*` colliders, CPU LiDAR hits, and kernel reset scatter without duplication.
 - Repeat Program looping a compiled Spawn Prop child, and unconsumed Spawn Prop omitted from compiled `Q`, in `tests/visual-script-runtime.test.js`.
-- BindingRuntime `episode-reset` fires once per `resetRun`, not per `update(dt)`.
+- BindingRuntime `episode-reset` fires start-phase on `resetRun` / Play, stop-phase on Stop. Stop-phase layout seeds increment across `prepareResolvedScripts`. Library-mode scripts receive `spawnProp` from the overlay host. Missing signal mappings leave Program Input defaults in place.
 - Catalog uniqueness, placeability, and keyword search for `math` / `logic` / `strings` / `collections` / `conversions` / `geometry` / `control` / `mission` route-helper / `texture1d` / `simulator` entries.
 - Editor `executeProgram()` memoization: shared diamonds run once per call, memos are shared across multiple OutputNodes, and a later call starts a new memo.
 - Runtime cycles on live graphs (`Cycle detected at runtime while evaluating "<uuid>"`) plus `SignalStore` rollback of staged writes.
@@ -67,3 +67,8 @@ For UI-facing scripting changes, also run the app and verify:
 - `Compile` downloads a JSON artifact (`version: 3`).
 - `Run Compiled` logs a success or meaningful failure.
 - `Import Compiled` creates a reusable compiled program unit.
+- Two-finger trackpad scroll and mouse wheel zoom toward the cursor; they do not pan.
+- Empty-canvas grab-drag, middle-mouse drag, and Space+left-drag pan without moving nodes.
+- Dragging a node title and completing a wire still work at 50% and 200% zoom.
+- `Fit` frames every node; Ctrl/Cmd+0 resets to 100%.
+- Cmd/Ctrl+S still saves. Reloading an editable script restores `graph.viewport`.

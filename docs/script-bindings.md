@@ -63,7 +63,7 @@ Bindings connect compiled visual scripts to live triggers: ROS topics, fixed sim
 | `signal-update` | `path` | When the value at a signal store path changes (checked after each tick and topic write). The first observation is a baseline and does not fire. |
 | `timer` | `intervalMs` | On a wall-clock interval, independent of the simulation loop (runs while paused). |
 | `simulation-timer` | `intervalNs` | At deterministic simulation-time intervals; pauses with the simulation and is valid in resolved runs. |
-| `episode-reset` | none | Once per kernel reset after the episode overlay is cleared. Use this for Scatter Features and Spawn Prop so barrels are not duplicated every tick. Spawn on `fixed-update` is upsert-by-id, not append. |
+| `episode-reset` | `phase`: `start` (pre-run) or `stop` (post-run) | **Start:** once after overlay clear when you press Play (and on the first prepare of an episode). **Stop:** once when you press Stop, including a launched-run Stop that re-prepares. Stop-phase uses a new layout seed each time (`{resetSeed}:stop:{n}`). Spawn on `fixed-update` is upsert-by-id, not append. |
 
 ### Input sources
 
@@ -83,7 +83,7 @@ Bindings connect compiled visual scripts to live triggers: ROS topics, fixed sim
 
 ## Runtime behavior
 
-- The runtime is a module singleton so it survives workspace switches. It keeps the editable library separate from the active binding set: library mode activates only global bindings, while resolved runs install a frozen global-plus-selected set. `Data` attaches its `ClientManager` on scene start; `SimulationEngine` calls `bindings().update(dt)` each fixed step when `modules.scripting` is enabled.
+- The runtime is a module singleton so it survives workspace switches. It keeps the editable library separate from the active binding set: library mode activates only global bindings, while resolved runs install a frozen global-plus-selected set. `Data` attaches its `ClientManager` on scene start; `SimulationEngine` calls `bindings().update(dt)` each fixed step when `modules.scripting` is enabled. Episode-reset Scatter/Spawn needs the kernel overlay host. Pre-run (`phase: start`) fires on Play / first prepare; post-run (`phase: stop`) fires on Stop (including a launched-run Stop that re-prepares) with a new layout seed each time. Bindings **Run now** does not attach that host.
 - Scripts are loaded and cached per `scriptId`, sharing the runtime's signal store. Scripts without a valid compiled artifact report a load failure in telemetry; the loop is never interrupted.
 - Script failures roll back staged signal writes (standard runner transaction semantics) and are recorded per binding: last status, error, inputs, outputs, run count, timing.
 - The master `enabled` flag on the manifest suspends all automatic dispatch. "Run now" in the UI dispatches manually regardless, using the last received topic message as context.

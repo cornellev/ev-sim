@@ -133,6 +133,49 @@ test("prepare waits for a switched environment to mount and apply the resolved r
     assert.equal(controller.getSnapshot().activeResolved.resolvedHash, "resolved-environment-switch");
 });
 
+test("prepare forwards episode stop phase to the simulation", async () => {
+    const controller = new RunSessionController();
+    const applied = [];
+    controller.recording = { attachSimulation() {} };
+    const simulation = {
+        subscribe(listener) { listener({ status: "paused", assertions: [] }); return () => {}; },
+        async applyRunManifest(_value, options) { applied.push(options?.episodePhase ?? "start"); },
+    };
+    controller.attachData({
+        environment: () => ({ environmentId: "igvc" }),
+        simulation: () => simulation,
+        client: () => ({ preflight: async () => ({ ok: true, issues: [] }) }),
+    });
+    const manifest = createDefaultRunManifest({ environment: { id: "igvc" }, logging: { policy: "disabled" } });
+    const resolved = {
+        manifest,
+        resolvedHash: "resolved-stop-phase",
+        environment: { manifest: { environmentId: "igvc" } },
+        scripts: [],
+        bindings: { entries: [] },
+    };
+    await controller.prepare(resolved, { episodePhase: "stop" });
+    assert.deepEqual(applied, ["stop"]);
+});
+
+test("reset-status stop skips post-run dispatch so re-prepare can scatter once", async () => {
+    const controller = controllerFor("disabled", async () => {});
+    const stops = [];
+    controller.data = {
+        ...controller.data,
+        simulation: () => ({
+            steps: 0,
+            timeNs: 0,
+            assertionEngine: { finalize: () => ({ results: [] }) },
+            stop(options) { stops.push(options); },
+        }),
+    };
+    await controller.stop({ status: "reset" });
+    assert.equal(stops.length, 1);
+    assert.equal(stops[0].reset, false);
+    assert.equal(stops[0].dispatchEpisode, false);
+});
+
 test("scenario diagnostics preference is reapplied when a new simulation attaches", () => {
     const controller = new RunSessionController();
     controller.recording = { attachSimulation() {} };

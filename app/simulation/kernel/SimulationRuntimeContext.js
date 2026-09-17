@@ -69,6 +69,9 @@ export function createSimulationRuntimeContext(options = {}) {
             getDeterministicState() {
                 return options.environmentState?.() ?? null;
             },
+            getWorldDescription() {
+                return options.getWorldDescription?.() ?? null;
+            },
         },
         rendering: {
             target() {
@@ -127,6 +130,9 @@ export function createSimulationRuntimeContext(options = {}) {
             },
             reset(runtimeOptions) {
                 return manager(options.scripts)?.resetRun?.(runtimeOptions);
+            },
+            dispatchEpisodePhase(phase, runtimeOptions) {
+                return manager(options.scripts)?.dispatchEpisodePhase?.(phase, runtimeOptions);
             },
             finalize(runtimeOptions) {
                 return manager(options.scripts)?.finalizeRun?.(runtimeOptions) ?? null;

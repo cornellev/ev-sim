@@ -75,6 +75,7 @@ export class SimulationKernel {
         this.pendingAcceptedActions = [];
         this.lastContacts = { started: [], active: [], ended: [] };
         this.finalizedResult = null;
+        this._episodeStartArmed = false;
 
         this._defineTelemetrySignals();
     }
@@ -155,6 +156,24 @@ export class SimulationKernel {
         return () => this.resetHandlers.delete(handler);
     }
 
+    _episodeHostOptions(resetSeed = this.episodeIdentity?.resetSeed ?? this.resolvedRun?.manifest?.seed ?? "0") {
+        return {
+            resetSeed: String(resetSeed),
+            world: this.resolvedRun?.world?.description
+                ?? this.context.environment.getWorldDescription?.()
+                ?? null,
+            overlay: this.context.episodeOverlay ?? null,
+        };
+    }
+
+    _dispatchEpisodePhase(phase, resetSeed) {
+        this.context.scripts.dispatchEpisodePhase?.(phase, this._episodeHostOptions(resetSeed));
+    }
+
+    _applyEpisodeOverlayProducts() {
+        this.context.physics.setEpisodeObstacles?.(this.context.episodeOverlay?.toObstacles?.() ?? []);
+    }
+
     play() {
         if (this.lifecycleState === "disposed") {
             throw new Error("Cannot play a disposed simulation kernel.");
@@ -163,6 +182,12 @@ export class SimulationKernel {
             throw new Error("Cannot play a finalized episode; reset it first.");
         }
         this.status = "playing";
+        if (!this._episodeStartArmed) {
+            this.context.episodeOverlay?.clear?.();
+            this._dispatchEpisodePhase("start");
+            this._applyEpisodeOverlayProducts();
+            this._episodeStartArmed = true;
+        }
         this.emitLifecycle("play");
     }
 
@@ -171,13 +196,19 @@ export class SimulationKernel {
         this.emitLifecycle("pause");
     }
 
-    stop({ reset = true } = {}) {
-        if (reset) this.reset();
+    stop({ reset = true, dispatchEpisode = true } = {}) {
+        if (reset) this.reset(null, { episodePhase: "stop" });
+        else if (dispatchEpisode !== false) {
+            this.context.episodeOverlay?.clear?.();
+            this._dispatchEpisodePhase("stop");
+            this._applyEpisodeOverlayProducts();
+        }
         this.status = "stopped";
+        this._episodeStartArmed = false;
         this.emitLifecycle("stop", { reset });
     }
 
-    reset(episodeSpec = null) {
+    reset(episodeSpec = null, { episodePhase = "start" } = {}) {
         if (this.lifecycleState === "disposed") {
             throw new Error("Cannot reset a disposed simulation kernel before preparing a run.");
         }
@@ -208,12 +239,16 @@ export class SimulationKernel {
         this.context.episodeOverlay?.clear?.();
         this.context.scripts.reset?.({
             resetSeed,
-            world: this.resolvedRun?.world?.description ?? null,
+            episodePhase,
+            world: this.resolvedRun?.world?.description
+                ?? this.context.environment.getWorldDescription?.()
+                ?? null,
             overlay: this.context.episodeOverlay ?? null,
         });
+        this._episodeStartArmed = episodePhase === "start";
+        this._applyEpisodeOverlayProducts(resetSeed);
         if (this.resolvedRun) {
             this.context.vehicles.reset(this.resolvedRun.manifest.initialState, { resetSeed });
-            this.context.physics.setEpisodeObstacles?.(this.context.episodeOverlay?.toObstacles?.() ?? []);
             this.context.physics.resetRun({ resetSeed });
             this.context.devices.reset({
                 resetSeed,
@@ -298,6 +333,7 @@ export class SimulationKernel {
         episode = null,
         requireStateSensors = false,
         perceptionObservations = false,
+        episodePhase = "start",
     } = {}) {
         if (!resolved?.manifest) throw new Error("Resolved run manifest is required.");
         assertEnabledCameraRenderRuntime(resolved.manifest.sensorRig?.sensors, resolved.renderScene, {
@@ -409,7 +445,7 @@ export class SimulationKernel {
 
         this.scenarioRuntime?.configure?.(this.resolvedRun);
         this.scenarioRuntime?.setControlRuntime?.(this.controlRuntime);
-        this.reset(episode);
+        this.reset(episode, { episodePhase: episodePhase === "stop" ? "stop" : "start" });
         this.status = "paused";
         this.lifecycleState = "prepared";
         this.emitLifecycle("manifest-applied", {

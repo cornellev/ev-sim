@@ -15,6 +15,16 @@ const outputs = script.run({ input: 21 });
 
 `loadScript("local:<script-id>")` loads from the browser-local script library. `script.run(...)` accepts either a named input object or positional inputs in the order exposed by the compiled script interface.
 
+## Canvas Camera
+
+The scripting canvas is an infinite world with a pan/zoom camera. Node `position` values stay in world CSS pixels. The editor camera is `{ x, y, scale }` on `.script-canvas-world` (`translate` then `scale`, origin `0 0`).
+
+- Trackpad two-finger scroll and mouse wheel: zoom toward the cursor (pinch as Ctrl/Cmd+wheel does the same).
+- Grab-drag pans: empty-canvas left-drag, middle-mouse drag, or Space+left-drag over nodes. Wheel/trackpad never pans.
+- Bottom-right camera panel `−` / percent / `+` / `Fit`, plus Ctrl/Cmd `+` `-` `0`.
+
+`graph.viewport` is saved with the editable editor document. It is not part of the compiled artifact and does not affect compile, `episodeHash`, or script lock hashes. Existing scripts without `viewport` open at identity (`x: 0, y: 0, scale: 1`).
+
 ## Read First
 
 1. [Architecture](architecture.md): editor execution, compiled execution, and data flow.
@@ -27,6 +37,8 @@ const outputs = script.run({ input: 21 });
 ## Key Files
 
 - `app/scripting/Scripting.js`: canvas shell, output node sidebar, compile/run/import buttons.
+- `app/scripting/canvas/CanvasViewport.js`: world/screen camera math for the scripting canvas.
+- `app/scripting/canvas/ScriptCanvas.js`: pan/zoom host, world transform, and grid.
 - `app/scripting/ScriptManager.js`: graph manager, `UnitBlock`, connections, compiled program wrapper.
 - `app/scripting/LineManager.js`: visual wire creation and deletion.
 - `app/scripting/UnitCatalog.meta.js`: authoritative server-safe block types, categories, keywords, settings, placeability, and backend classes.

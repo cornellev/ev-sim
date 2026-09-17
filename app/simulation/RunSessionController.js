@@ -49,6 +49,7 @@ export class RunSessionController {
         this._unsubscribeSimulation = null;
         this._autoFinalizing = false;
         this._pendingPrepare = null;
+        this._prepareEpisodePhase = "start";
         this._scenarioDiagnosticsEnabled = false;
         this._loggingPolicyOverride = null;
         this._speedOverride = null;
@@ -132,7 +133,7 @@ export class RunSessionController {
         };
     }
 
-    async prepare(resolved, { autoplay = false } = {}) {
+    async prepare(resolved, { autoplay = false, episodePhase = "start" } = {}) {
         if (!resolved?.manifest || !resolved?.resolvedHash) throw new Error("A resolved run manifest is required.");
         // Reject unsupported measured providers before replacing or stopping an
         // active browser run and before loading any environment/sensor state.
@@ -143,6 +144,7 @@ export class RunSessionController {
             await this.stop({ status: "superseded" });
         }
         const launchSequence = ++this._launchSequence;
+        this._prepareEpisodePhase = episodePhase === "stop" ? "stop" : "start";
         this._rejectPendingPrepare(new Error("Run preparation was superseded by a newer request."));
         const readiness = new Promise((resolve, reject) => {
             const timeout = setTimeout(() => {
@@ -189,7 +191,9 @@ export class RunSessionController {
                 const detail = preflight.issues?.map((issue) => issue.message).join(" ") || "Run preflight failed.";
                 throw new Error(detail);
             }
-            await simulation?.applyRunManifest?.(resolved);
+            const episodePhase = this._prepareEpisodePhase === "stop" ? "stop" : "start";
+            this._prepareEpisodePhase = "start";
+            await simulation?.applyRunManifest?.(resolved, { episodePhase });
             if (expectedSequence !== this._launchSequence) return null;
             const runId = `run-${new Date().toISOString().replace(/[-:.]/g, "").replace("Z", "Z")}-${resolved.resolvedHash.slice(0, 8)}`;
             this._set({
@@ -402,7 +406,10 @@ export class RunSessionController {
             }
             this._recordingRunId = null;
         }
-        simulation?.stop?.({ reset: false });
+        simulation?.stop?.({
+            reset: false,
+            dispatchEpisode: status !== "reset",
+        });
         this._set({ status: finalStatus, assertionResults: finalized.results, runResult });
         return runResult;
     }
@@ -412,7 +419,7 @@ export class RunSessionController {
         if (!manifestId) return null;
         await this.stop({ status: "reset" });
         const resolved = await resolveRunManifest(manifestId);
-        return this.prepare(resolved, { autoplay: false });
+        return this.prepare(resolved, { autoplay: false, episodePhase: "stop" });
     }
 
     async _ensureRecording() {

@@ -1,5 +1,7 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useContext, useEffect, useId, useRef, useState } from "react";
 import { TYPES } from "../Constants";
+import { isEditableTarget } from "../canvas/CanvasViewport.js";
+import { CanvasViewportContext } from "../canvas/CanvasViewportContext.js";
 
 function InputRow({ id = null, label="in", type="float64", parentID }) {
     const mainType = TYPES[type.replace(/\[.*?\]/, '')];
@@ -53,11 +55,6 @@ function OutputRow({ id = null, label="out", type="float64", parentID }) {
     )
 }
 
-function isEditableTarget(target) {
-    if (!target || typeof target.closest !== "function") return false;
-    return Boolean(target.closest("input, textarea, select, [contenteditable]")) || target.isContentEditable;
-}
-
 function assertUniquePorts(ports, kind, title) {
     const labels = ports.map((port, index) => port.id || port.label || `${kind}-${index}`);
     const uniqueLabels = new Set(labels);
@@ -71,6 +68,7 @@ export default function Unit({ children, title="default title", hasOptions=false
     const generatedId = useId().replace(/:/g, "");
     const uuid = _uuid || generatedId;
     const [selected, setSelected] = useState(false);
+    const { viewportRef, isPanModeRef } = useContext(CanvasViewportContext);
 
     assertUniquePorts(inputs, "input", title);
     assertUniquePorts(outputs, "output", title);
@@ -141,7 +139,8 @@ export default function Unit({ children, title="default title", hasOptions=false
                 setSelected(false);
             } else if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) {
                 e.preventDefault();
-                const step = e.shiftKey ? 10 : 2;
+                const scale = viewportRef.current?.scale || 1;
+                const step = (e.shiftKey ? 10 : 2) / scale;
                 const delta = {
                     ArrowLeft: { x: -step, y: 0 },
                     ArrowRight: { x: step, y: 0 },
@@ -166,7 +165,7 @@ export default function Unit({ children, title="default title", hasOptions=false
             document.removeEventListener('mousedown', onMouseClickOutside);
             document.removeEventListener('keydown', onKeyPress);
         };
-    }, [selected, uuid])
+    }, [selected, uuid, viewportRef])
 
     // add drag functionality
     useEffect(() => {
@@ -175,23 +174,31 @@ export default function Unit({ children, title="default title", hasOptions=false
         const element = titleRef.current;
         if (!element) return;
 
-        const dragState = { isDragging: false, startX: 0, startY: 0 };
+        const dragState = {
+            isDragging: false,
+            startClientX: 0,
+            startClientY: 0,
+            startPosition: { x: 0, y: 0 }
+        };
         
         function onMouseDown(e) {
+            if (isPanModeRef.current) return;
             e.preventDefault();
             dragState.isDragging = true;
-            const current = positionRef.current;
-            dragState.startX = e.clientX - current.x;
-            dragState.startY = e.clientY - current.y;
+            dragState.startClientX = e.clientX;
+            dragState.startClientY = e.clientY;
+            dragState.startPosition = { ...positionRef.current };
             document.addEventListener('mousemove', onMouseMove);
             document.addEventListener('mouseup', onMouseUp);
         }
 
         function onMouseMove(e) {
             if (!dragState.isDragging) return;
-            const newX = e.clientX - dragState.startX;
-            const newY = e.clientY - dragState.startY;
-            const nextPosition = { x: newX, y: newY };
+            const scale = viewportRef.current?.scale || 1;
+            const nextPosition = {
+                x: dragState.startPosition.x + (e.clientX - dragState.startClientX) / scale,
+                y: dragState.startPosition.y + (e.clientY - dragState.startClientY) / scale
+            };
             positionRef.current = nextPosition;
             setPosition(nextPosition);
             document.dispatchEvent(new CustomEvent('unit-position-preview', {
@@ -217,7 +224,7 @@ export default function Unit({ children, title="default title", hasOptions=false
             document.removeEventListener('mousemove', onMouseMove);
             document.removeEventListener('mouseup', onMouseUp);
         };
-    }, [uuid]);
+    }, [uuid, isPanModeRef, viewportRef]);
 
     useEffect(() => {
         if (!ref.current) return;
@@ -226,7 +233,7 @@ export default function Unit({ children, title="default title", hasOptions=false
 
     return (
         <div
-            className={`absolute min-w-[160px] rounded-[4px] border bg-[var(--slate-surface-2)] text-white shadow-[0_10px_30px_rgba(0,0,0,0.22)] outline-none transition-[border-color,box-shadow] duration-150 ${selected ? "border-white/35 shadow-[0_0_0_2px_rgba(255,255,255,0.08),0_10px_30px_rgba(0,0,0,0.22)]" : "border-white/10"}`}
+            className={`absolute min-w-[160px] cursor-default rounded-[4px] border bg-[var(--slate-surface-2)] text-white shadow-[0_10px_30px_rgba(0,0,0,0.22)] outline-none transition-[border-color,box-shadow] duration-150 ${selected ? "border-white/35 shadow-[0_0_0_2px_rgba(255,255,255,0.08),0_10px_30px_rgba(0,0,0,0.22)]" : "border-white/10"}`}
             ref={ref}
             data-uuid={uuid}
             tabIndex={0}

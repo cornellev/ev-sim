@@ -9,6 +9,7 @@ import { SeededRNG } from "../../util/SeededRNG.js";
 import { getBindingManifest, putBindingManifest } from "./BindingStorage.js";
 import {
     BINDING_SCOPES,
+    EPISODE_PHASES,
     INPUT_SOURCES,
     OUTPUT_SINKS,
     TRIGGER_KINDS,
@@ -61,7 +62,8 @@ function getConfiguredSignalPaths(manifest) {
  * - fixed-update: called from SimulationEngine._fixedStep via update(dt)
  * - signal-update: watched store path changed (checked after ticks and topic writes)
  * - timer: wall-clock setInterval, independent of the simulation loop
- * - episode-reset: once per kernel reset after the overlay is cleared
+ * - episode-reset: once per kernel episode start (Play / prepare) or stop,
+ *   after the overlay is cleared. `trigger.phase` is `start` or `stop`.
  */
 export class BindingRuntime {
     constructor(options = {}) {
@@ -95,6 +97,8 @@ export class BindingRuntime {
         this._resolvedParameterBindings = [];
         this._worldDescription = null;
         this._episodeOverlay = null;
+        this._overlayGeneration = 0;
+        this._hostSeed = "42";
         this._manifestGeneration = 0;
 
         this._readyPromise = this._hydrate(options.autoLoad !== false);
@@ -247,6 +251,7 @@ export class BindingRuntime {
     } = {}) {
         this._resolvedScripts = structuredClone(entries);
         this._resolvedSeed = String(seed);
+        this._hostSeed = this._resolvedSeed;
         this._resolvedParameterBindings = structuredClone(parameterBindings);
         this._worldDescription = world ?? null;
         this._episodeOverlay = overlay ?? null;
@@ -262,7 +267,37 @@ export class BindingRuntime {
         this._instantiateResolvedScripts(entries, seed, parameterBindings);
     }
 
+    setHostContext({ world, overlay, seed } = {}) {
+        if (world !== undefined) this._worldDescription = world ?? null;
+        if (overlay !== undefined) this._episodeOverlay = overlay ?? null;
+        if (seed !== undefined) this._resolvedSeed = String(seed);
+        this._applyHostContextToLoadedScripts();
+    }
+
+    _scriptRuntimeContext(scriptId) {
+        const overlay = this._episodeOverlay;
+        const seed = this._hostSeed || this._resolvedSeed;
+        const rng = new SeededRNG(`${seed}:visual-script:${scriptId}`);
+        return {
+            seed,
+            scriptId,
+            random: () => rng.next(),
+            world: this._worldDescription,
+            spawnProp: overlay
+                ? (spec) => overlay.upsert({ ...spec, scriptId: spec.scriptId ?? scriptId })
+                : undefined,
+        };
+    }
+
+    _applyHostContextToLoadedScripts() {
+        for (const [scriptId, script] of this._scripts) {
+            if (!script || typeof script !== "object") continue;
+            script.runtimeContext = this._scriptRuntimeContext(scriptId);
+        }
+    }
+
     _instantiateResolvedScripts(entries, seed, parameterBindings) {
+        this._resolvedSeed = String(seed);
         this._scriptParameterInputs.clear();
         for (const binding of parameterBindings) {
             if (binding?.target?.kind !== "script-input") continue;
@@ -271,28 +306,48 @@ export class BindingRuntime {
             this._scriptParameterInputs.set(binding.target.scriptId, inputs);
         }
         for (const entry of [...entries].sort((left, right) => left.scriptId.localeCompare(right.scriptId))) {
-            const rng = new SeededRNG(`${seed}:visual-script:${entry.scriptId}`);
-            const overlay = this._episodeOverlay;
             this._scripts.set(entry.scriptId, createLoadedScript(entry.artifact, {
                 signalStore: this.signalStore,
-                runtimeContext: {
-                    seed,
-                    scriptId: entry.scriptId,
-                    random: () => rng.next(),
-                    world: this._worldDescription,
-                    spawnProp: overlay
-                        ? (spec) => overlay.upsert({ ...spec, scriptId: spec.scriptId ?? entry.scriptId })
-                        : undefined,
-                },
+                runtimeContext: this._scriptRuntimeContext(entry.scriptId),
             }));
             this._scriptLoads.delete(entry.scriptId);
         }
+    }
+
+    _armEpisodeHost(phase = EPISODE_PHASES.START) {
+        if (phase === EPISODE_PHASES.STOP) this._overlayGeneration += 1;
+        this._hostSeed = phase === EPISODE_PHASES.STOP
+            ? `${this._resolvedSeed}:stop:${this._overlayGeneration}`
+            : this._resolvedSeed;
+        if (this._resolvedScripts.length > 0) {
+            this._instantiateResolvedScripts(
+                this._resolvedScripts,
+                this._resolvedSeed,
+                this._resolvedParameterBindings,
+            );
+        } else {
+            this._applyHostContextToLoadedScripts();
+        }
+    }
+
+    dispatchEpisodePhase(phase = EPISODE_PHASES.START, {
+        resetSeed = this._resolvedSeed,
+        world = this._worldDescription,
+        overlay = this._episodeOverlay,
+    } = {}) {
+        this._resolvedSeed = String(resetSeed);
+        this._worldDescription = world ?? null;
+        this._episodeOverlay = overlay ?? null;
+        this._armEpisodeHost(phase === EPISODE_PHASES.STOP ? EPISODE_PHASES.STOP : EPISODE_PHASES.START);
+        this._dispatchEpisodeReset(phase);
+        this._emit();
     }
 
     resetRun({
         resetSeed = this._resolvedSeed,
         world = this._worldDescription,
         overlay = this._episodeOverlay,
+        episodePhase = EPISODE_PHASES.START,
     } = {}) {
         this._tickCounters.clear();
         this._signalWatch.clear();
@@ -305,22 +360,21 @@ export class BindingRuntime {
             clearTimeout(this._emitTimeout);
             this._emitTimeout = null;
         }
-        if (this._resolvedScripts.length > 0) {
-            this._instantiateResolvedScripts(
-                this._resolvedScripts,
-                this._resolvedSeed,
-                this._resolvedParameterBindings,
-            );
-        }
-        this._dispatchEpisodeReset();
+        this._armEpisodeHost(episodePhase === EPISODE_PHASES.STOP ? EPISODE_PHASES.STOP : EPISODE_PHASES.START);
+        this._dispatchEpisodeReset(episodePhase);
         this._syncTimers();
         this._emit();
     }
 
-    _dispatchEpisodeReset() {
+    _dispatchEpisodeReset(phase = EPISODE_PHASES.START) {
         if (!this.manifest.enabled) return;
+        const resolvedPhase = phase === EPISODE_PHASES.STOP ? EPISODE_PHASES.STOP : EPISODE_PHASES.START;
         this._orderedBindings()
-            .filter((binding) => binding.enabled && binding.trigger.kind === TRIGGER_KINDS.EPISODE_RESET)
+            .filter((binding) => (
+                binding.enabled
+                && binding.trigger.kind === TRIGGER_KINDS.EPISODE_RESET
+                && (binding.trigger.phase || EPISODE_PHASES.START) === resolvedPhase
+            ))
             .forEach((binding) => this._dispatch(binding, {}));
     }
 
@@ -340,6 +394,8 @@ export class BindingRuntime {
         this._runTopics.clear();
         this._resolvedScripts = [];
         this._resolvedParameterBindings = [];
+        this._overlayGeneration = 0;
+        this._hostSeed = this._resolvedSeed;
         this._scriptParameterInputs.clear();
         this._scripts.clear();
         this._scriptLoads.clear();
@@ -388,6 +444,7 @@ export class BindingRuntime {
             .then((script) => {
                 if (generation !== this._manifestGeneration) return script;
                 this._scripts.set(scriptId, script);
+                script.runtimeContext = this._scriptRuntimeContext(scriptId);
                 if (this._scriptLoads.get(scriptId) === load) this._scriptLoads.delete(scriptId);
                 this.signalStore.publishSignal(`scripts.${scriptId}.versionHash`, stableArtifactHash(script.artifact), {
                     source: "scripting",
@@ -756,6 +813,7 @@ export class BindingRuntime {
             switch (mapping.source) {
                 case INPUT_SOURCES.SIGNAL: {
                     const entry = this.signalStore.read(mapping.path);
+                    if (!entry.exists) break;
                     inputs[mapping.input] = mapping.field
                         ? getByPath(entry.value, mapping.field, null)
                         : entry.value;

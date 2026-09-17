@@ -126,13 +126,13 @@ function Toggle({ checked, onChange, label }) {
     );
 }
 
-function SegmentedControl({ value, options, onChange }) {
+function SegmentedControl({ value, options, onChange, label = "Choose trigger type" }) {
     return (
         <SharedSegmentedControl
             value={value}
             onValueChange={onChange}
             items={options}
-            label="Choose trigger type"
+            label={label}
         />
     );
 }
@@ -536,9 +536,28 @@ function TriggerEditor({ binding, topics, onPatchTrigger }) {
                 )}
 
                 {trigger.kind === TRIGGER_KINDS.EPISODE_RESET && (
-                    <p className="text-[11px] leading-relaxed text-zinc-500">
-                        Runs once per episode reset after the overlay is cleared. Use this for Scatter Features and Spawn Prop so barrels are not duplicated every tick.
-                    </p>
+                    <>
+                        <Field
+                            label="When"
+                            hint={trigger.phase === "stop"
+                                ? "Post-run: scatter when you press Stop. Each stop uses a new layout seed."
+                                : "Pre-run: scatter when you press Play (and when a run is prepared)."}
+                        >
+                            <SegmentedControl
+                                value={trigger.phase === "stop" ? "stop" : "start"}
+                                onChange={(phase) => onPatchTrigger({ phase })}
+                                label="When to run this episode binding"
+                                options={[
+                                    { value: "start", label: "Pre-run" },
+                                    { value: "stop", label: "Post-run" },
+                                ]}
+                            />
+                        </Field>
+                        <p className="text-[11px] leading-relaxed text-zinc-500">
+                            Scatter Features and Spawn Prop need the simulation overlay host.
+                            Open Simulation, then Play (pre-run) or Stop (post-run). Run now stays disabled.
+                        </p>
+                    </>
                 )}
             </div>
         </section>
@@ -804,6 +823,7 @@ function OutputMappingRows({ binding, artifact, onPatchOutput }) {
 
 function RunFooter({ binding, telemetry, issues, onRunNow, onDelete, running }) {
     const lastRanAt = formatTime(telemetry?.lastRanAt);
+    const episodeReset = binding.trigger.kind === TRIGGER_KINDS.EPISODE_RESET;
 
     return (
         <section className="border-t border-white/10 pt-5">
@@ -811,7 +831,8 @@ function RunFooter({ binding, telemetry, issues, onRunNow, onDelete, running }) 
                 <button
                     type="button"
                     onClick={onRunNow}
-                    disabled={running || issues.length > 0}
+                    disabled={running || issues.length > 0 || episodeReset}
+                    title={episodeReset ? "Episode-reset bindings run from Simulation Stop/Reset, not Run now." : undefined}
                     className="bnd-btn bnd-btn--primary"
                 >
                     {running ? "Running..." : "Run now"}
@@ -821,6 +842,12 @@ function RunFooter({ binding, telemetry, issues, onRunNow, onDelete, running }) 
                     Delete binding
                 </button>
             </div>
+
+            {episodeReset && (
+                <p className="mt-3 text-[11px] leading-relaxed text-zinc-500">
+                    Run now is disabled for episode reset. In Simulation, press Play for pre-run or Stop for post-run.
+                </p>
+            )}
 
             {issues.length > 0 && (
                 <ul className="mt-3 flex flex-col gap-1 rounded-[var(--radius)] border border-amber-300/15 bg-amber-400/10 px-3 py-2">

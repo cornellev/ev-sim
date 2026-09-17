@@ -1,6 +1,7 @@
 import { ScriptManager } from "./ScriptManager.js";
 import { normalizeOutputNodeState } from "./units/program/ProgramTypes.js";
 import { recomputeBindings } from "./types/unifyGraph.js";
+import { normalizeCanvasViewport } from "./canvas/CanvasViewport.js";
 
 function cloneJson(value) {
     if (value === undefined) return undefined;
@@ -53,7 +54,8 @@ export function pruneRestoreErrors(manager) {
 export function serializeManagerGraph(manager, {
     outputNodeConfig = null,
     positions = {},
-    headUUID = "head-uuid"
+    headUUID = "head-uuid",
+    viewport = null
 } = {}) {
     const connections = [];
     const seenConnections = new Set();
@@ -101,7 +103,8 @@ export function serializeManagerGraph(manager, {
         headPosition: cloneJson(positions[headUUID] || null),
         outputNodeConfig: cloneJson(outputNodeConfig),
         nodes,
-        connections
+        connections,
+        viewport: normalizeCanvasViewport(viewport)
     };
 }
 
@@ -200,7 +203,8 @@ export function mutateGraphConnections(graph, getBlockClass, mutate, extras = {}
     const nextGraph = serializeManagerGraph(manager, {
         outputNodeConfig: graph?.outputNodeConfig ?? extras.outputNodeConfig ?? null,
         positions,
-        headUUID
+        headUUID,
+        viewport: graph?.viewport
     });
     nextGraph.connections = mergeUnrestoredConnections(nextGraph.connections, manager.restoreErrors);
 
@@ -241,7 +245,8 @@ export function reconfigureGraphUnit(graph, getBlockClass, uuid, patch = {}, ext
     const nextGraph = serializeManagerGraph(manager, {
         outputNodeConfig,
         positions,
-        headUUID
+        headUUID,
+        viewport: graph?.viewport
     });
     nextGraph.connections = mergeUnrestoredConnections(nextGraph.connections, manager.restoreErrors);
 

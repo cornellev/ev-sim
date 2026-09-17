@@ -158,6 +158,11 @@ test("normalizeBinding clamps trigger fields per kind", () => {
 
     const signal = normalizeBinding({ trigger: { kind: "signal-update", path: " vehicle.ego " } });
     assert.equal(signal.trigger.path, "vehicle.ego");
+
+    const episode = normalizeBinding({ trigger: { kind: "episode-reset" } });
+    assert.equal(episode.trigger.phase, "start");
+    const episodeStop = normalizeBinding({ trigger: { kind: "episode-reset", phase: "stop" } });
+    assert.equal(episodeStop.trigger.phase, "stop");
 });
 
 test("validateBinding reports missing script, trigger fields, and mapping issues", () => {
@@ -196,7 +201,8 @@ test("summarizeTrigger renders human-readable summaries", () => {
     assert.equal(summarizeTrigger({ kind: "signal-update", path: "a.b" }), "when a.b changes");
     assert.equal(summarizeTrigger({ kind: "timer", intervalMs: 250 }), "every 250 ms");
     assert.equal(summarizeTrigger({ kind: "simulation-timer", intervalNs: 250_000_000 }), "every 250000000 ns of simulation time");
-    assert.equal(summarizeTrigger({ kind: "episode-reset" }), "on episode reset");
+    assert.equal(summarizeTrigger({ kind: "episode-reset" }), "on episode start");
+    assert.equal(summarizeTrigger({ kind: "episode-reset", phase: "stop" }), "on episode stop");
 });
 
 test("suggestTriggerFromArtifact maps entrypoints and trigger bindings", () => {
@@ -528,7 +534,7 @@ test("input resolution covers signal paths with fields and constants", async () 
     assert.equal(runs.length, 1);
     assert.equal(runs[0].ax, 9.81);
     assert.equal(runs[0].gain, 1.5);
-    assert.equal(runs[0].missing, null);
+    assert.equal("missing" in runs[0], false);
 });
 
 test("publish sinks route outputs through the client", async () => {
@@ -726,4 +732,114 @@ test("disabled manifests skip episode-reset dispatch", async () => {
     await flush();
     runtime.resetRun({ resetSeed: "1" });
     assert.equal(runs.length, 0);
+});
+
+test("episode-reset start bindings do not fire on stop phase", async () => {
+    const runs = [];
+    const runtime = createRuntime({
+        scripts: { "script-1": createScriptStub(() => { runs.push("run"); return {}; }) },
+    });
+    await runtime.ready();
+    await runtime.setManifest({
+        bindings: [{
+            id: "episode",
+            scriptId: "script-1",
+            trigger: { kind: "episode-reset", phase: "start" },
+        }],
+    }, { persist: false });
+    await flush();
+    runtime.resetRun({ resetSeed: "1", episodePhase: "stop" });
+    assert.equal(runs.length, 0);
+    runtime.resetRun({ resetSeed: "1", episodePhase: "start" });
+    assert.equal(runs.length, 1);
+});
+
+test("episode-reset stop bindings fire on stop with a new seed each time", async () => {
+    const seeds = [];
+    const script = {
+        runResult() {
+            seeds.push(this.runtimeContext?.seed);
+            return {};
+        },
+    };
+    const runtime = createRuntime({ scripts: { "script-1": script } });
+    await runtime.ready();
+    await runtime.setManifest({
+        bindings: [{
+            id: "episode",
+            scriptId: "script-1",
+            trigger: { kind: "episode-reset", phase: "stop" },
+        }],
+    }, { persist: false });
+    await flush();
+    runtime.resetRun({ resetSeed: "7", overlay: { upsert() { return "episode:x"; } }, episodePhase: "stop" });
+    runtime.resetRun({ resetSeed: "7", overlay: { upsert() { return "episode:x"; } }, episodePhase: "stop" });
+    assert.equal(seeds.length, 2);
+    assert.equal(seeds[0], "7:stop:1");
+    assert.equal(seeds[1], "7:stop:2");
+    assert.notEqual(seeds[0], seeds[1]);
+});
+
+test("stop-phase layout seed survives prepareResolvedScripts", async () => {
+    const seeds = [];
+    const script = {
+        runResult() {
+            seeds.push(this.runtimeContext?.seed);
+            return {};
+        },
+    };
+    const runtime = createRuntime({ scripts: { "script-1": script } });
+    await runtime.ready();
+    await runtime.setManifest({
+        bindings: [{
+            id: "episode",
+            scriptId: "script-1",
+            trigger: { kind: "episode-reset", phase: "stop" },
+        }],
+    }, { persist: false });
+    await flush();
+    const overlay = { upsert() { return "episode:x"; } };
+    runtime.resetRun({ resetSeed: "7", overlay, episodePhase: "stop" });
+    const loaded = runtime._scripts.get("script-1");
+    await runtime.prepareResolvedScripts([], { seed: "7", overlay });
+    runtime._scripts.set("script-1", loaded);
+    runtime.resetRun({ resetSeed: "7", overlay, episodePhase: "stop" });
+    assert.equal(seeds.length, 2);
+    assert.equal(seeds[0], "7:stop:1");
+    assert.equal(seeds[1], "7:stop:2");
+});
+
+test("library episode-reset scripts receive spawnProp from resetRun overlay", async () => {
+    const spawned = [];
+    const script = {
+        runResult() {
+            const spawnProp = this.runtimeContext?.spawnProp;
+            if (typeof spawnProp !== "function") {
+                throw new Error("Spawn Prop requires an episode overlay (bind the script to episode-reset).");
+            }
+            spawned.push(spawnProp({ assetId: "barrel", pose: { x: 0, y: 0, z: 0 } }));
+            return {};
+        },
+    };
+    const runtime = createRuntime({ scripts: { "script-1": script } });
+    await runtime.ready();
+    await runtime.setManifest({
+        bindings: [{
+            id: "episode",
+            scriptId: "script-1",
+            trigger: { kind: "episode-reset" },
+        }],
+    }, { persist: false });
+    await flush();
+
+    const overlay = {
+        upsert() {
+            return "episode:script-1:0";
+        },
+    };
+    runtime.resetRun({ resetSeed: "7", overlay, world: { roads: { nodes: [], edges: [] } } });
+    assert.equal(spawned.length, 1);
+    assert.equal(spawned[0], "episode:script-1:0");
+    assert.equal(typeof script.runtimeContext.spawnProp, "function");
+    assert.equal(script.runtimeContext.world.roads.edges.length, 0);
 });

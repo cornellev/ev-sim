@@ -18,6 +18,7 @@ const TriggerSchema = z.object({
     path: z.string().optional(),
     intervalMs: z.number().positive().optional(),
     intervalNs: z.number().int().positive().optional(),
+    phase: z.enum(["start", "stop"]).optional(),
 });
 
 const InputMappingSchema = z.object({
