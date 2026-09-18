@@ -324,3 +324,24 @@ test("block library places simulator adapters and texture ops", async ({ page })
     await expect(page.getByRole("button", { name: "Connect output out, tex1d" })).toBeVisible();
 });
 
+test("clicking a connection shows the exact port type", async ({ page }) => {
+    test.setTimeout(180_000);
+    await page.goto("/");
+    await openWorkspace(page, "Scripting canvas");
+    await page.getByRole("button", { name: "New" }).first().click();
+
+    await addBlock(page, "Number", "Number Expressions");
+    const closeLibrary = page.getByRole("button", { name: "Close block library" });
+    if (await closeLibrary.isVisible()) await closeLibrary.click();
+
+    const outputIn = page.getByRole("button", { name: "Connect input output, float64" });
+    await expect(outputIn).toBeVisible();
+    await outputIn.focus();
+    await page.keyboard.press("Enter");
+    await page.getByRole("button", { name: "Connect output number, float64" }).focus();
+    await page.keyboard.press("Enter");
+
+    await page.locator("[data-connection-hit]").click({ force: true });
+    await expect(page.locator("[data-connection-type-chip]")).toHaveText("float64");
+});
+

@@ -602,7 +602,7 @@ export function AssetPane({ data }) {
                                     {/* Use-scoped content URLs are authenticated API resources, not static Next images. */}
                                     {/* eslint-disable-next-line @next/next/no-img-element */}
                                     {image ? <img src={image} alt="" className="h-12 w-12 shrink-0 object-cover" /> : <IconPhoto size={24} className="mx-3 text-zinc-500" />}
-                                    <span className="min-w-0 flex-1"><strong className="block truncate font-medium">{asset.name}</strong><span className="text-[11px] text-zinc-400">r{asset.latestRevision}{asset.archived ? " · archived" : ""}</span></span>
+                                    <span className="min-w-0 flex-1"><strong className="block truncate font-medium">{asset.name}</strong><span className="block truncate text-[11px] text-zinc-400">{asset.id} · r{asset.latestRevision}{asset.archived ? " · archived" : ""}</span></span>
                                 </article>;
                             })}
                         </div>

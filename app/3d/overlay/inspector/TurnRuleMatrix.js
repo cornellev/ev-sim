@@ -29,9 +29,6 @@ export function TurnRuleMatrix({ data, section, onResult }) {
     };
     return (
         <div>
-            <p className="mb-1.5 text-[11px] text-[var(--slate-muted)]">
-                {connectedRoads} connected road{connectedRoads === 1 ? "" : "s"}. Incoming roads are rows; outgoing roads are columns.
-            </p>
             <div className="overflow-x-auto">
                 <table className="w-full border-collapse text-[11px]" data-intersection-movement-matrix>
                     <thead>

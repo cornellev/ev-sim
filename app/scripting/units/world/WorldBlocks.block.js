@@ -1,9 +1,10 @@
-import { linspace, sampleRoadFrame, sampleRouteFrame } from "../../../roads/PathFrame.js";
+import { linspace, nearestRoadEdge, sampleRoadFrame, sampleRouteFrame } from "../../../roads/PathFrame.js";
 import { sampleRoute } from "../../../scenarios/route/Route.js";
 import { cloneValue } from "../../runtime/SignalStore.js";
 import { BlockOutput, UnitBlock } from "../../ScriptManager.js";
 import {
     POSE3D_TYPE,
+    ROAD_ID_TYPE,
     UNIT,
     UNIT_TYPE,
     finiteFloat,
@@ -97,13 +98,24 @@ const FRAME_ALONG_PATH_PORTS = freezePorts(
 
 const SAMPLE_ROAD_PORTS = freezePorts(
     [
-        { label: "edgeId", type: "string" },
+        { label: "edgeId", type: ROAD_ID_TYPE },
         { label: "percent", type: "float64" },
         { label: "lateral", type: "float64" },
     ],
     [
         { label: "pose", type: POSE3D_TYPE },
         { label: "found", type: "boolean" },
+    ],
+);
+
+const GET_NEAREST_ROAD_PORTS = freezePorts(
+    [
+        { label: "pose", type: POSE3D_TYPE },
+    ],
+    [
+        { label: "edgeId", type: ROAD_ID_TYPE },
+        { label: "found", type: "boolean" },
+        { label: "distance", type: "float64" },
     ],
 );
 
@@ -123,7 +135,7 @@ const SPAWN_PROP_PORTS = freezePorts(
 const SCATTER_FEATURES_PORTS = freezePorts(
     [
         { label: "route", type: "route" },
-        { label: "edgeId", type: "string" },
+        { label: "edgeId", type: ROAD_ID_TYPE },
         { label: "count", type: "int32" },
         { label: "sideOffset", type: "float64" },
         { label: "centerProbability", type: "float64" },
@@ -166,6 +178,21 @@ export const SampleRoadBlock = defineBlock({
         return new BlockOutput()
             .set("pose", cloneValue(frame.pose))
             .set("found", frame.found);
+    },
+});
+
+export const GetNearestRoadBlock = defineBlock({
+    type: "GetNearestRoadBlock",
+    ports: GET_NEAREST_ROAD_PORTS,
+    execute() {
+        const nearest = nearestRoadEdge(
+            runtimeContext(this).world,
+            normalizePose3d(this.getInput("pose")),
+        );
+        return new BlockOutput()
+            .set("edgeId", nearest.edgeId)
+            .set("found", nearest.found)
+            .set("distance", nearest.distance);
     },
 });
 
@@ -246,6 +273,7 @@ export const ScatterFeaturesBlock = defineBlock({
 export const WORLD_BLOCKS = Object.freeze({
     FrameAlongPathBlock,
     SampleRoadBlock,
+    GetNearestRoadBlock,
     SpawnPropBlock,
     ScatterFeaturesBlock,
 });
@@ -253,6 +281,7 @@ export const WORLD_BLOCKS = Object.freeze({
 export const WORLD_BLOCK_PORTS = Object.freeze({
     FrameAlongPathBlock: FRAME_ALONG_PATH_PORTS,
     SampleRoadBlock: SAMPLE_ROAD_PORTS,
+    GetNearestRoadBlock: GET_NEAREST_ROAD_PORTS,
     SpawnPropBlock: SPAWN_PROP_PORTS,
     ScatterFeaturesBlock: SCATTER_FEATURES_PORTS,
 });

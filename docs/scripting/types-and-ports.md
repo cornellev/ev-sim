@@ -15,12 +15,14 @@ Current base types:
 - `array`
 - `custom`
 - `tex1d`
+- `texture_id` (opaque visual-asset `useHash`; allowed as program I/O)
 - `generic` (editor-only wire color; not a program I/O type)
 - `unit` (concrete sequencing token; allowed as program I/O)
 - `actor_command` (concrete `{ actorId, speedMps, steeringRad }` value; allowed as program I/O)
 - `vec2` / `vec3` / `pose2d` / `pose3d` (frozen structured values; allowed as program I/O)
+- `road_id` (opaque trimmed road edge id; allowed as program I/O)
 
-For bracketed types, such as `array[float64]`, the UI can fall back to the base type color. `generic` is listed in `Constants.TYPES` for unbound polymorphic ports. It is **not** in `ProgramTypes.SUPPORTED_TYPES` and must never appear in compiled artifacts. `unit`, `actor_command`, `vec2`, `vec3`, `pose2d`, and `pose3d` are in `SUPPORTED_TYPES`. `parseValueByType(_, "unit")` always returns the `UNIT` singleton from `PortTypes.js`. Numeric parsing uses `finiteFloat()` / `finiteInt32()`; nonfinite values become zero and int32 values truncate and clamp to the signed range. `finiteResult()` maps non-finite math results to `0`. `orderedBounds(min, max)` finite-normalizes both edges and swaps them when `min > max`. `valuesEqual()` is structural equality for serializable values: numbers treat `+0`/`-0` as equal, arrays compare element-wise, and plain objects compare key sets without depending on insertion order. `normalizeActorCommand()` applies the same finite rule, defaults `actorId` to `""`, and drops extra keys. `normalizeVec2()` / `normalizeVec3()` / `normalizePose2d()` / `normalizePose3d()` freeze the shapes below, map non-finite components to `0`, default pose3d Euler `order` to `"XYZ"`, and drop extra keys. `parseValueByType()` dispatches those four types through the normalizers (after optional JSON parse). `IsFiniteBlock` is the exception: it uses raw `Number.isFinite(Number(value))` so `Infinity` stays non-finite instead of collapsing to `0`. `tex1d` is a `float64[]`. Texture arithmetic (`ScaleTextureBlock`, `MultiplyTexBlock`, add/subtract/clamp/invert) fail closed on non-arrays, unequal lengths, or non-finite samples. `SampleTextureBlock` additionally requires a perfect-square length ≥ 1.
+For bracketed types, such as `array[float64]`, the UI can fall back to the base type color. `generic` is listed in `Constants.TYPES` for unbound polymorphic ports. It is **not** in `ProgramTypes.SUPPORTED_TYPES` and must never appear in compiled artifacts. `unit`, `actor_command`, `vec2`, `vec3`, `pose2d`, `pose3d`, `road_id`, and `texture_id` are in `SUPPORTED_TYPES`. `parseValueByType(_, "unit")` always returns the `UNIT` singleton from `PortTypes.js`. Numeric parsing uses `finiteFloat()` / `finiteInt32()`; nonfinite values become zero and int32 values truncate and clamp to the signed range. `finiteResult()` maps non-finite math results to `0`. `orderedBounds(min, max)` finite-normalizes both edges and swaps them when `min > max`. `valuesEqual()` is structural equality for serializable values: numbers treat `+0`/`-0` as equal, arrays compare element-wise, and plain objects compare key sets without depending on insertion order. `normalizeActorCommand()` applies the same finite rule, defaults `actorId` to `""`, and drops extra keys. `normalizeVec2()` / `normalizeVec3()` / `normalizePose2d()` / `normalizePose3d()` freeze the shapes below, map non-finite components to `0`, default pose3d Euler `order` to `"XYZ"`, and drop extra keys. `parseValueByType()` dispatches those four types through the normalizers (after optional JSON parse). `road_id` and `texture_id` go through `normalizeOpaqueId()` (`String(value ?? "").trim()`) and are **not** JSON-parsed. `IsFiniteBlock` is the exception: it uses raw `Number.isFinite(Number(value))` so `Infinity` stays non-finite instead of collapsing to `0`. `tex1d` is a `float64[]`. Texture arithmetic (`ScaleTextureBlock`, `MultiplyTexBlock`, add/subtract/clamp/invert) fail closed on non-arrays, unequal lengths, or non-finite samples. `SampleTextureBlock` additionally requires a perfect-square length ≥ 1 and finite samples; `x`/`y` clamp to `[0, 1]`.
 
 Array and JSON path blocks do **not** infer `T`. They use a `state.itemType` / `state.valueType` selector restricted to `float64`, `int32`, `boolean`, `string`, and `json`, and register exact ports such as `array[float64]`. `array[float64]` will not connect to `array[json]`. JSON path reads use `getByPath` with a missing-path sentinel so a present `null` is distinct from absence; writes use `setByPath` / `deleteByPath` and always emit cloned documents. `asArray()` returns `[]` for non-arrays instead of wrapping scalars the way `parseValueByType(..., "array[…]")` does.
 
@@ -46,6 +48,8 @@ Current supported program I/O types:
 - `vec3`
 - `pose2d`
 - `pose3d`
+- `road_id`
+- `texture_id`
 
 ## Sequencing And Effect Ports
 

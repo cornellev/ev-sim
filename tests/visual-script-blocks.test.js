@@ -35,6 +35,7 @@ import {
     CONVERSION_BLOCKS,
     FloorToIntBlock,
     ParseJsonBlock,
+    ToStringBlock,
 } from "../app/scripting/units/conversions/Conversions.block.js";
 import { Float64ToInt32Block } from "../app/scripting/units/conversions/NumberConversions.block.js";
 import {
@@ -72,6 +73,7 @@ import {
     ScaleTextureBlock,
 } from "../app/scripting/units/math/tex/Scale.block.js";
 import { StringBlock } from "../app/scripting/units/objects/String.block.js";
+import { TextureImportBlock } from "../app/scripting/units/objects/TextureImport.block.js";
 import { OutputNodeBlock, ProgramInputBlock } from "../app/scripting/units/program/ProgramIO.block.js";
 import {
     RouteLengthBlock,
@@ -103,6 +105,7 @@ import * as temporalMath from "../app/scripting/units/control/temporalMath.js";
 import {
     VehiclePoseBlock,
     VehicleVelocityBlock,
+    LogMessageBlock,
 } from "../app/scripting/units/signals/SignalBlocks.block.js";
 import {
     SIMULATOR_ADAPTER_BLOCKS,
@@ -583,6 +586,11 @@ const STDLIB_EXECUTE_CASES = [
     { type: "FloatToStringBlock", inputs: { value: 0 }, outputs: { out: "0" } },
     { type: "IntToStringBlock", inputs: { value: 0 }, outputs: { out: "0" } },
     { type: "BooleanToStringBlock", inputs: { value: false }, outputs: { out: "false" } },
+    { type: "ToStringBlock", inputs: { value: 12 }, outputs: { out: "12" } },
+    { type: "ToStringBlock", inputs: { value: 3.5 }, outputs: { out: "3.5" } },
+    { type: "ToStringBlock", inputs: { value: false }, outputs: { out: "false" } },
+    { type: "ToStringBlock", inputs: { value: "x" }, outputs: { out: "x" } },
+    { type: "ToStringBlock", inputs: { value: { x: 1 } }, outputs: { out: "{\"x\":1}" } },
     { type: "StringToFloatBlock", inputs: { value: "3.5" }, outputs: { out: 3.5, valid: true } },
     { type: "StringToFloatBlock", inputs: { value: "" }, outputs: { out: 0, valid: false } },
     { type: "StringToFloatBlock", inputs: { value: "abc" }, outputs: { out: 0, valid: false } },
@@ -596,6 +604,11 @@ const STDLIB_EXECUTE_CASES = [
     { type: "ParseJsonBlock", inputs: { value: "" }, outputs: { out: null, valid: false } },
     { type: "ParseJsonBlock", inputs: { value: "not-json" }, outputs: { out: null, valid: false } },
     { type: "StringifyJsonBlock", inputs: { value: { x: 1 } }, outputs: { out: "{\"x\":1}", valid: true } },
+    { type: "StringToRoadIdBlock", inputs: { value: "  e0  " }, outputs: { out: "e0" } },
+    { type: "StringToRoadIdBlock", inputs: { value: "" }, outputs: { out: "" } },
+    { type: "RoadIdToStringBlock", inputs: { value: "e0" }, outputs: { out: "e0" } },
+    { type: "StringToTextureIdBlock", inputs: { value: "  abc  " }, outputs: { out: "abc" } },
+    { type: "TextureIdToStringBlock", inputs: { value: "abc" }, outputs: { out: "abc" } },
     { type: "ConcatStringBlock", inputs: { a: "", b: "" }, outputs: { out: "" } },
     { type: "ConcatStringBlock", inputs: { a: "a", b: "b" }, outputs: { out: "ab" } },
     { type: "StringLengthBlock", inputs: { value: "" }, outputs: { length: 0 } },
@@ -886,6 +899,18 @@ test("stdlib blocks compile to v3 ports and match editor execution", () => {
     const concated = compileAndRun(concatManager, "concat");
     assert.equal(concated.editor.outputs.result, "x");
     assert.equal(concated.compiled.outputs.result, "x");
+
+    const toStringManager = withHead("string");
+    toStringManager.addUnit(new IntegerBlock("value"));
+    toStringManager.addUnit(new ToStringBlock("op"));
+    toStringManager.storeData("value", 12);
+    connect(toStringManager, "value", "out", "op", "value");
+    connect(toStringManager, "op", "out", "head", "output");
+    const stringed = compileAndRun(toStringManager, "to-string");
+    assert.equal(stringed.editor.outputs.result, "12");
+    assert.equal(stringed.compiled.outputs.result, "12");
+    assert.equal(stringed.artifact.nodes.find((node) => node.uuid === "op").ports.inputs.value, "int32");
+    assert.equal(stringed.artifact.nodes.find((node) => node.uuid === "op").ports.outputs.out, "string");
 
     const parseManager = withHead("json");
     parseManager.addUnit(new StringBlock("text"));
@@ -1526,6 +1551,25 @@ test("path frame spawn scatter and sample-road blocks execute", () => {
     }).execute();
     assert.equal(noWorld.get("found"), false);
 
+    const nearest = configuredBlock(WORLD_BLOCKS.GetNearestRoadBlock, {
+        pose: { position: { x: 0, y: 0, z: 5 }, rotation: { x: 0, y: 0, z: 0, order: "XYZ" } },
+    }, { runtimeContext: { world: NORTH_ROAD_WORLD } }).execute();
+    assert.equal(nearest.get("found"), true);
+    assert.equal(nearest.get("edgeId"), "e0");
+    assert.ok(nearest.get("distance") < 1e-9);
+
+    const far = configuredBlock(WORLD_BLOCKS.GetNearestRoadBlock, {
+        pose: { position: { x: 40, y: 0, z: 5 }, rotation: { x: 0, y: 0, z: 0, order: "XYZ" } },
+    }, { runtimeContext: { world: NORTH_ROAD_WORLD } }).execute();
+    assert.equal(far.get("found"), true);
+    assert.equal(far.get("edgeId"), "e0");
+
+    const missingWorld = configuredBlock(WORLD_BLOCKS.GetNearestRoadBlock, {
+        pose: ORIGIN_POSE,
+    }).execute();
+    assert.equal(missingWorld.get("found"), false);
+    assert.equal(missingWorld.get("edgeId"), "");
+
     assert.throws(
         () => configuredBlock(WORLD_BLOCKS.SpawnPropBlock, {
             assetId: "barrel",
@@ -1618,6 +1662,28 @@ test("path frame spawn scatter and sample-road blocks execute", () => {
     assert.ok(poses.every((position) => Math.abs(position.x - 2) < 1e-6));
     assert.ok(Math.abs(poses[0].z) < 1e-6);
     assert.ok(Math.abs(poses[1].z - 10) < 1e-6);
+});
+
+test("texture import emits stored texture ids", () => {
+    const empty = configuredBlock(TextureImportBlock, {}, { storedData: "" });
+    assert.equal(empty.execute().get("out"), "");
+    const hashed = configuredBlock(TextureImportBlock, {}, { storedData: "  abc123  " });
+    assert.equal(hashed.execute().get("out"), "abc123");
+});
+
+test("log message prints and sequences then", () => {
+    const logged = [];
+    const original = console.log;
+    console.log = (...args) => logged.push(args);
+    try {
+        const output = configuredBlock(LogMessageBlock, { message: "hello" }, {
+            state: { label: "test" },
+        }).execute();
+        assert.equal(output.get("then"), UNIT);
+        assert.deepEqual(logged[0], ["[visual-script:test]", "hello"]);
+    } finally {
+        console.log = original;
+    }
 });
 
 

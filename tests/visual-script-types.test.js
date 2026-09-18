@@ -17,6 +17,7 @@ import {
 import { getRegisteredBlockType } from "../app/scripting/BlockRegistry.js";
 import { NumberUnitClass } from "../app/scripting/units/math/Number.block.js";
 import { StringBlock } from "../app/scripting/units/objects/String.block.js";
+import { SampleRoadBlock } from "../app/scripting/units/world/WorldBlocks.block.js";
 import { IfBlock } from "../app/scripting/units/statements/If.block.js";
 import { EqualityBlock } from "../app/scripting/units/statements/Equality.block.js";
 import {
@@ -49,6 +50,7 @@ import {
     isConcreteType,
     isGeneric,
     normalizeActorCommand,
+    normalizeOpaqueId,
     normalizePose2d,
     normalizePose3d,
     normalizeVec2,
@@ -56,6 +58,8 @@ import {
     POSE2D_TYPE,
     POSE3D_TYPE,
     portsCompatible,
+    ROAD_ID_TYPE,
+    TEXTURE_ID_TYPE,
     UNIT,
     UNIT_TYPE,
     VEC2_TYPE,
@@ -221,6 +225,10 @@ test("portsCompatible treats generic as a wildcard and requires exact concrete e
     assert.equal(portsCompatible(ACTOR_COMMAND_TYPE, ACTOR_COMMAND_TYPE), true);
     assert.equal(portsCompatible(ACTOR_COMMAND_TYPE, "float64"), false);
     assert.equal(portsCompatible(ACTOR_COMMAND_TYPE, UNIT_TYPE), false);
+    assert.equal(isConcreteType(ROAD_ID_TYPE), true);
+    assert.equal(portsCompatible(ROAD_ID_TYPE, ROAD_ID_TYPE), true);
+    assert.equal(portsCompatible("string", ROAD_ID_TYPE), false);
+    assert.equal(portsCompatible(ROAD_ID_TYPE, TEXTURE_ID_TYPE), false);
 });
 
 test("parseValueByType always returns the UNIT singleton", () => {
@@ -252,6 +260,18 @@ test("parseValueByType normalizes actor_command payloads", () => {
         normalizeActorCommand({ actorId: 7, speedMps: Infinity, steeringRad: undefined }),
         { actorId: "7", speedMps: 0, steeringRad: 0 },
     );
+});
+
+test("parseValueByType normalizes opaque road and texture ids", () => {
+    assert.equal(SUPPORTED_TYPES.includes(ROAD_ID_TYPE), true);
+    assert.equal(SUPPORTED_TYPES.includes(TEXTURE_ID_TYPE), true);
+    assert.equal(normalizeType(ROAD_ID_TYPE), ROAD_ID_TYPE);
+    assert.equal(normalizeType(TEXTURE_ID_TYPE), TEXTURE_ID_TYPE);
+    assert.equal(parseValueByType(undefined, ROAD_ID_TYPE), "");
+    assert.equal(parseValueByType("  e0  ", ROAD_ID_TYPE), "e0");
+    assert.equal(parseValueByType(12, TEXTURE_ID_TYPE), "12");
+    assert.equal(normalizeOpaqueId("  abc  "), "abc");
+    assert.equal(parseValueByType('{"id":"e0"}', ROAD_ID_TYPE), '{"id":"e0"}');
 });
 
 test("parseValueByType freezes vec and pose shapes", () => {
@@ -668,6 +688,19 @@ test("MCP-style mutateGraphConnections rejects conflicts before rewriting the gr
     assert.equal(disconnected.ok, true);
     const unbound = disconnected.graph.nodes.find((node) => node.uuid === "iff");
     assert.equal(unbound.typeBindings, undefined);
+});
+
+test("string cannot connect to Sample Road edgeId", () => {
+    resetRegistry();
+    registerBlockType("StringBlock", StringBlock);
+    registerBlockType("SampleRoadBlock", SampleRoadBlock);
+    const manager = new ScriptManager();
+    manager.addUnit(new StringBlock("str"));
+    manager.addUnit(new SampleRoadBlock("road"));
+    const result = manager.connectUnitsDetailed("str", "out", "road", "edgeId");
+    assert.equal(result.ok, false);
+    assert.match(result.error, /Type mismatch|incompatible|string|road_id/i);
+    assert.equal(manager.units.find((unit) => unit.uuid === "road").inputs.edgeId, undefined);
 });
 
 test("actor_command cannot connect to float64 and binds If T", () => {

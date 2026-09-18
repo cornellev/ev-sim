@@ -1,5 +1,5 @@
 import { resolveRoadEdge } from "./RoadGeometryRecord.js";
-import { sampleCenterline } from "./RoadGeometry.js";
+import { projectPointToRoad, sampleCenterline } from "./RoadGeometry.js";
 import { sampleRoute } from "../scenarios/route/Route.js";
 
 const EPSILON = 1e-9;
@@ -169,4 +169,60 @@ export function sampleRoadFrame(world, edgeId, percent, lateral = 0) {
     const interpolated = interpolateCenterline(samples, percent);
     if (!interpolated) return zeroFrame();
     return frameFromPoint(interpolated.point, headingFromTangent(interpolated.tangent), lateral, true);
+}
+
+function missedRoad() {
+    return { edgeId: "", found: false, distance: 0, percent: 0 };
+}
+
+function pointFromPose(pose) {
+    const source = pose?.position && typeof pose.position === "object" ? pose.position : pose;
+    return {
+        x: finiteNumber(source?.x),
+        z: finiteNumber(source?.z),
+    };
+}
+
+/**
+ * Closest world-description road centerline to a pose, with no paved-footprint
+ * gate. Missing world / no usable edges → `found: false`, empty `edgeId`.
+ */
+export function nearestRoadEdge(world, pose) {
+    const roads = world?.roads;
+    if (!Array.isArray(roads?.edges) || roads.edges.length === 0) return missedRoad();
+    const point = pointFromPose(pose);
+    let best = null;
+    for (const edge of roads.edges) {
+        const resolved = lookupRoadEdge(world, edge?.id);
+        if (!resolved) continue;
+        let samples;
+        try {
+            samples = sampleCenterline(resolved);
+        } catch {
+            continue;
+        }
+        const projection = projectPointToRoad(point, { samples });
+        if (!projection) continue;
+        const closer = !best
+            || projection.distance < best.distance - EPSILON
+            || (
+                Math.abs(projection.distance - best.distance) <= EPSILON
+                && projection.distanceAlong < best.distanceAlong
+            );
+        if (!closer) continue;
+        best = {
+            edgeId: String(edge.id),
+            found: true,
+            distance: projection.distance,
+            percent: Number.isFinite(projection.fraction) ? projection.fraction : 0,
+            distanceAlong: projection.distanceAlong,
+        };
+    }
+    if (!best) return missedRoad();
+    return {
+        edgeId: best.edgeId,
+        found: true,
+        distance: best.distance,
+        percent: best.percent,
+    };
 }

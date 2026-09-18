@@ -226,15 +226,11 @@ export default function Unit({ children, title="default title", hasOptions=false
         };
     }, [uuid, isPanModeRef, viewportRef]);
 
-    useEffect(() => {
-        if (!ref.current) return;
-        ref.current.style.transform = `translate(${position.x}px, ${position.y}px)`;
-    }, [position]);
-
     return (
         <div
             className={`absolute min-w-[160px] cursor-default rounded-[4px] border bg-[var(--slate-surface-2)] text-white shadow-[0_10px_30px_rgba(0,0,0,0.22)] outline-none transition-[border-color,box-shadow] duration-150 ${selected ? "border-white/35 shadow-[0_0_0_2px_rgba(255,255,255,0.08),0_10px_30px_rgba(0,0,0,0.22)]" : "border-white/10"}`}
             ref={ref}
+            style={{ left: `${position.x}px`, top: `${position.y}px` }}
             data-uuid={uuid}
             tabIndex={0}
             role="group"

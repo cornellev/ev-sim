@@ -64,7 +64,7 @@ The scripting type system is string-based. To add a new type:
 
 1. Use the type string consistently in React unit ports and backend `registerInput` / `registerOutput`.
 2. Add a color to `app/scripting/Constants.js` if the type should have a distinct wire color.
-3. Update `SUPPORTED_TYPES` in `ProgramTypes.js` if users should be allowed to expose it as a program input/output. Do not add `generic`. `unit` is a supported sequencing type. Structured value types follow the `actor_command` / `vec2` pattern: export a `*_TYPE` constant and `normalizeX()` from `PortTypes.js`, add a `Constants.TYPES` color, append the string to `SUPPORTED_TYPES`, and parse through `parseValueByType`. `vec2` / `vec3` / `pose2d` / `pose3d` are the frozen geometry examples (`{ x, y }`, `{ x, y, z }`, `{ position, yaw }`, `{ position, rotation: { x, y, z, order } }`).
+3. Update `SUPPORTED_TYPES` in `ProgramTypes.js` if users should be allowed to expose it as a program input/output. Do not add `generic`. `unit` is a supported sequencing type. Structured value types follow the `actor_command` / `vec2` pattern: export a `*_TYPE` constant and `normalizeX()` from `PortTypes.js`, add a `Constants.TYPES` color, append the string to `SUPPORTED_TYPES`, and parse through `parseValueByType`. Opaque ids (`road_id`, `texture_id`) use `normalizeOpaqueId()` and must not JSON-parse. `vec2` / `vec3` / `pose2d` / `pose3d` are the frozen geometry examples (`{ x, y }`, `{ x, y, z }`, `{ position, yaw }`, `{ position, rotation: { x, y, z, order } }`).
 4. Add parsing or runtime handling wherever the new type is created or consumed.
 
 ## Add Runtime State

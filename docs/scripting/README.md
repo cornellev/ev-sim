@@ -17,7 +17,7 @@ const outputs = script.run({ input: 21 });
 
 ## Canvas Camera
 
-The scripting canvas is an infinite world with a pan/zoom camera. Node `position` values stay in world CSS pixels. The editor camera is `{ x, y, scale }` on `.script-canvas-world` (`translate` then `scale`, origin `0 0`).
+The scripting canvas is an infinite world with a pan/zoom camera. Node `position` values stay in world CSS pixels. The editor camera is `{ x, y, scale }` on `.script-canvas-world` (`translate` then `scale`, origin `0 0`). That layer does not use `will-change: transform`, and nodes are positioned with `left`/`top` rather than their own `transform`, so Chromium can re-rasterize units at the destination zoom instead of stretching a 1× compositor bitmap.
 
 - Trackpad two-finger scroll and mouse wheel: zoom toward the cursor (pinch as Ctrl/Cmd+wheel does the same).
 - Grab-drag pans: empty-canvas left-drag, middle-mouse drag, or Space+left-drag over nodes. Wheel/trackpad never pans.

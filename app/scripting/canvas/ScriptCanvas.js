@@ -183,7 +183,6 @@ export function ScriptCanvas({ world = null, children = null }) {
                 style={{
                     transform: canvasWorldTransform(viewport),
                     transformOrigin: "0 0",
-                    willChange: "transform",
                     pointerEvents: "none",
                 }}
             >

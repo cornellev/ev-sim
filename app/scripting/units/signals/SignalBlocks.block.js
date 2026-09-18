@@ -941,6 +941,27 @@ export class LogSignalBlock extends ConfiguredBlock {
     }
 }
 
+export class LogMessageBlock extends ConfiguredBlock {
+    static defaults = { label: "log" };
+
+    register() {
+        this.state = this.config();
+        this.registerInput("message", "string");
+        this.registerOutput("then", UNIT_TYPE);
+    }
+
+    valid() {
+        return this.hasInput("message");
+    }
+
+    execute() {
+        const label = String(this.state.label ?? "log");
+        const message = this.getInput("message");
+        console.log(`[visual-script:${label}]`, String(message ?? ""));
+        return new BlockOutput().set("then", UNIT);
+    }
+}
+
 export class AssertSignalBlock extends ConfiguredBlock {
     static defaults = { message: "Signal assertion failed." };
 

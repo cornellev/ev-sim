@@ -13,11 +13,16 @@ import {
     IntToBooleanUnit,
     IntToStringUnit,
     ParseJsonUnit,
+    RoadIdToStringUnit,
     RoundToIntUnit,
     StringifyJsonUnit,
     StringToBooleanUnit,
     StringToFloatUnit,
     StringToIntUnit,
+    StringToRoadIdUnit,
+    StringToTextureIdUnit,
+    TextureIdToStringUnit,
+    ToStringUnit,
     TruncateToIntUnit,
 } from "./units/conversions/Conversions";
 import {
@@ -119,6 +124,7 @@ import { Conjugation, Equality } from "./units/statements/Equality";
 import { IgnoreUnit, NopUnit, PassthroughUnit, SequenceUnit } from "./units/statements/Unit";
 import { RepeatProgramUnit } from "./units/statements/RepeatProgram";
 import { StringUnit } from "./units/objects/String";
+import { TextureImportUnit } from "./units/objects/TextureImport";
 import {
     BlendTextureUnit,
     HeightToSlopeUnit,
@@ -191,6 +197,7 @@ import {
 } from "./units/simulator/SimulatorAdapters";
 import {
     FrameAlongPathUnit,
+    GetNearestRoadUnit,
     SampleRoadUnit,
     ScatterFeaturesUnit,
     SpawnPropUnit,
@@ -216,6 +223,7 @@ import {
     BuildTopicMessageUnit,
     CurrentWaypointUnit,
     DeviceSnapshotUnit,
+    LogMessageUnit,
     LogSignalUnit,
     MissionStateUnit,
     ObjectSnapshotUnit,
@@ -385,12 +393,18 @@ const COMPONENT_BY_TYPE = new Map([
     ["FloatToStringBlock", FloatToStringUnit],
     ["IntToStringBlock", IntToStringUnit],
     ["BooleanToStringBlock", BooleanToStringUnit],
+    ["ToStringBlock", ToStringUnit],
     ["StringToFloatBlock", StringToFloatUnit],
     ["StringToIntBlock", StringToIntUnit],
     ["StringToBooleanBlock", StringToBooleanUnit],
     ["ParseJsonBlock", ParseJsonUnit],
     ["StringifyJsonBlock", StringifyJsonUnit],
+    ["StringToRoadIdBlock", StringToRoadIdUnit],
+    ["RoadIdToStringBlock", RoadIdToStringUnit],
+    ["StringToTextureIdBlock", StringToTextureIdUnit],
+    ["TextureIdToStringBlock", TextureIdToStringUnit],
     ["StringBlock", StringUnit],
+    ["TextureImportBlock", TextureImportUnit],
     ["ConcatStringBlock", ConcatStringUnit],
     ["StringLengthBlock", StringLengthUnit],
     ["StringContainsBlock", StringContainsUnit],
@@ -449,6 +463,7 @@ const COMPONENT_BY_TYPE = new Map([
     ["SimulationClockBlock", SimulationClockUnit],
     ["ScenarioStatusBlock", ScenarioStatusUnit],
     ["SampleRoadBlock", SampleRoadUnit],
+    ["GetNearestRoadBlock", GetNearestRoadUnit],
     ["SpawnPropBlock", SpawnPropUnit],
     ["ScatterFeaturesBlock", ScatterFeaturesUnit],
     ["WaypointListBlock", WaypointListUnit],
@@ -479,6 +494,7 @@ const COMPONENT_BY_TYPE = new Map([
     ["BindTriggerBlock", BindTriggerUnit],
     ["ProbeSignalBlock", ProbeSignalUnit],
     ["LogSignalBlock", LogSignalUnit],
+    ["LogMessageBlock", LogMessageUnit],
     ["AssertSignalBlock", AssertSignalUnit],
     ["RecordSignalBlock", RecordSignalUnit],
     ["ReplaySignalBlock", ReplaySignalUnit],

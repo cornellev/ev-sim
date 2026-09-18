@@ -48,6 +48,7 @@ import {
     OnTimerBlock,
     ProbeSignalBlock,
     LogSignalBlock,
+    LogMessageBlock,
     AssertSignalBlock,
     RecordSignalBlock,
     ReplaySignalBlock,
@@ -94,6 +95,7 @@ export {
     OnTimerBlock,
     ProbeSignalBlock,
     LogSignalBlock,
+    LogMessageBlock,
     AssertSignalBlock,
     RecordSignalBlock,
     ReplaySignalBlock,
@@ -820,6 +822,22 @@ export function LogSignalUnit(props) {
                     <TextField label="Label" value={data.label} onChange={(label) => commit({ label })} />
                     <TextField label="Sample every N runs" value={data.sampleEvery} onChange={(sampleEvery) => commit({ sampleEvery })} type="number" />
                 </>
+            )}
+        </ConfigUnit>
+    );
+}
+
+export function LogMessageUnit(props) {
+    return (
+        <ConfigUnit
+            {...props}
+            title="Log Message"
+            defaults={LogMessageBlock.defaults}
+            inputs={[{ label: "message", type: "string" }]}
+            outputs={[{ label: "then", type: "unit" }]}
+        >
+            {(data, commit) => (
+                <TextField label="Label" value={data.label} onChange={(label) => commit({ label })} />
             )}
         </ConfigUnit>
     );

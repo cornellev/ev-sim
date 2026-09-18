@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { linspace, sampleRoadFrame, sampleRouteFrame } from "../app/roads/PathFrame.js";
+import { linspace, nearestRoadEdge, sampleRoadFrame, sampleRouteFrame } from "../app/roads/PathFrame.js";
 
 const NORTH_ROUTE = {
     waypoints: [
@@ -54,4 +54,39 @@ test("sampleRoadFrame follows the same right-normal as route frames", () => {
 
     assert.equal(sampleRoadFrame(NORTH_ROAD_WORLD, "missing", 0.5, 0).found, false);
     assert.equal(sampleRoadFrame(null, "e0", 0.5, 0).found, false);
+});
+
+test("nearestRoadEdge returns the closest centerline even off the pavement", () => {
+    const onRoad = nearestRoadEdge(NORTH_ROAD_WORLD, { position: { x: 0, y: 0, z: 5 } });
+    assert.equal(onRoad.found, true);
+    assert.equal(onRoad.edgeId, "e0");
+    assert.ok(onRoad.distance < 1e-9);
+    assert.ok(Math.abs(onRoad.percent - 0.5) < 1e-6);
+
+    const far = nearestRoadEdge(NORTH_ROAD_WORLD, { x: 25, y: 0, z: 5 });
+    assert.equal(far.found, true);
+    assert.equal(far.edgeId, "e0");
+    assert.ok(far.distance > 20);
+
+    const twoEdgeWorld = {
+        roads: {
+            nodes: [
+                { id: "n0", x: 0, y: 0, z: 0 },
+                { id: "n1", x: 0, y: 0, z: 10 },
+                { id: "n2", x: 40, y: 0, z: 0 },
+                { id: "n3", x: 40, y: 0, z: 10 },
+            ],
+            edges: [
+                { id: "e0", startNodeId: "n0", endNodeId: "n1" },
+                { id: "e1", startNodeId: "n2", endNodeId: "n3" },
+            ],
+        },
+    };
+    const closerToEast = nearestRoadEdge(twoEdgeWorld, { position: { x: 39, y: 0, z: 5 } });
+    assert.equal(closerToEast.found, true);
+    assert.equal(closerToEast.edgeId, "e1");
+
+    const missing = nearestRoadEdge(null, { position: { x: 0, y: 0, z: 0 } });
+    assert.equal(missing.found, false);
+    assert.equal(missing.edgeId, "");
 });

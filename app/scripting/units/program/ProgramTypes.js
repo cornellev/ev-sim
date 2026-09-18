@@ -8,12 +8,15 @@ import {
     finiteFloat,
     finiteInt32,
     normalizeActorCommand,
+    normalizeOpaqueId,
     normalizePose2d,
     normalizePose3d,
     normalizeVec2,
     normalizeVec3,
     POSE2D_TYPE,
     POSE3D_TYPE,
+    ROAD_ID_TYPE,
+    TEXTURE_ID_TYPE,
     UNIT,
     VEC2_TYPE,
     VEC3_TYPE,
@@ -38,8 +41,10 @@ export const SUPPORTED_TYPES = [
     "route",
     "waypoint",
     "lane_ref",
+    "road_id",
     "sim_event",
     "tex1d",
+    "texture_id",
     "array[float64]",
     "array[int32]",
     "array[boolean]",
@@ -111,6 +116,10 @@ export function parseValueByType(value, type) {
 
     if (normalizedType === POSE3D_TYPE) {
         return normalizePose3d(value);
+    }
+
+    if (normalizedType === ROAD_ID_TYPE || normalizedType === TEXTURE_ID_TYPE) {
+        return normalizeOpaqueId(value);
     }
 
     if (normalizedType === "tex1d") {

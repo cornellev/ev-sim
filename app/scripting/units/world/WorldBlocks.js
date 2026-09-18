@@ -19,11 +19,13 @@ function staticPortsUnit(title, ports) {
 
 export const FrameAlongPathUnit = staticPortsUnit("Frame Along Path", WORLD_BLOCK_PORTS.FrameAlongPathBlock);
 export const SampleRoadUnit = staticPortsUnit("Sample Road", WORLD_BLOCK_PORTS.SampleRoadBlock);
+export const GetNearestRoadUnit = staticPortsUnit("Get Nearest Road", WORLD_BLOCK_PORTS.GetNearestRoadBlock);
 export const SpawnPropUnit = staticPortsUnit("Spawn Prop", WORLD_BLOCK_PORTS.SpawnPropBlock);
 export const ScatterFeaturesUnit = staticPortsUnit("Scatter Features", WORLD_BLOCK_PORTS.ScatterFeaturesBlock);
 
 export {
     FrameAlongPathBlock,
+    GetNearestRoadBlock,
     SampleRoadBlock,
     ScatterFeaturesBlock,
     SpawnPropBlock,

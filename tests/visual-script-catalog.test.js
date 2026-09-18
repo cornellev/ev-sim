@@ -114,6 +114,13 @@ test("conversion string json and array blocks are placeable and searchable", () 
     assert.ok(conversions.some((entry) => entry.type === "Float64ToInt32Block"));
     assert.equal(UNIT_CATALOG_META.find((entry) => entry.type === "Float64ToInt32Block")?.placeable, true);
     assert.ok(UNIT_CATALOG_META.find((entry) => entry.type === "FloorToIntBlock").keywords.includes("floor"));
+    assert.ok(conversions.some((entry) => entry.type === "StringToRoadIdBlock"));
+    assert.ok(conversions.some((entry) => entry.type === "ToStringBlock"));
+    assert.ok(UNIT_CATALOG_META.find((entry) => entry.type === "ToStringBlock").keywords.includes("stringify"));
+    assert.ok(conversions.some((entry) => entry.type === "RoadIdToStringBlock"));
+    assert.ok(conversions.some((entry) => entry.type === "StringToTextureIdBlock"));
+    assert.ok(conversions.some((entry) => entry.type === "TextureIdToStringBlock"));
+    assert.ok(UNIT_CATALOG_META.find((entry) => entry.type === "StringToRoadIdBlock").keywords.includes("road"));
     assert.ok(strings.some((entry) => entry.type === "ConcatStringBlock"));
     assert.ok(UNIT_CATALOG_META.find((entry) => entry.type === "ConcatStringBlock").keywords.includes("concat"));
     assert.ok(collections.some((entry) => entry.type === "ArrayGetBlock"));
@@ -147,11 +154,16 @@ test("control temporal and controller blocks are placeable and searchable", () =
 
 test("simulator adapters and texture ops are placeable and searchable", () => {
     const simulator = UNIT_CATALOG_META.filter((entry) => entry.category === "simulator" && entry.placeable);
-    assert.equal(simulator.length, 15);
+    assert.equal(simulator.length, 16);
     assert.ok(simulator.some((entry) => entry.type === "VehicleStateBlock"));
     assert.ok(simulator.some((entry) => entry.type === "SpawnPropBlock"));
     assert.ok(simulator.some((entry) => entry.type === "ScatterFeaturesBlock"));
     assert.ok(simulator.some((entry) => entry.type === "SampleRoadBlock"));
+    assert.ok(simulator.some((entry) => entry.type === "GetNearestRoadBlock"));
+    assert.ok(UNIT_CATALOG_META.find((entry) => entry.type === "GetNearestRoadBlock").keywords.includes("nearest"));
+    assert.equal(UNIT_CATALOG_META.find((entry) => entry.type === "TextureImportBlock")?.category, "objects");
+    assert.ok(UNIT_CATALOG_META.find((entry) => entry.type === "TextureImportBlock").keywords.includes("texture"));
+    assert.ok(UNIT_CATALOG_META.find((entry) => entry.type === "LogMessageBlock").keywords.includes("print"));
     assert.ok(UNIT_CATALOG_META.find((entry) => entry.type === "LinspaceBlock")?.category === "collections");
     assert.ok(UNIT_CATALOG_META.find((entry) => entry.type === "RepeatProgramBlock")?.category === "statements");
     assert.ok(UNIT_CATALOG_META.find((entry) => entry.type === "FrameAlongPathBlock")?.category === "mission");

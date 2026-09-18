@@ -1,5 +1,15 @@
 import { cloneValue } from "../../runtime/SignalStore.js";
-import { finiteFloat, finiteInt32 } from "../../types/PortTypes.js";
+import {
+    GENERIC_TYPE,
+    ROAD_ID_TYPE,
+    TEXTURE_ID_TYPE,
+    UNIT,
+    UNIT_TYPE,
+    finiteFloat,
+    finiteInt32,
+    normalizeOpaqueId,
+    valuesEqual,
+} from "../../types/PortTypes.js";
 
 export function floorToInt(value) {
     return finiteInt32(Math.floor(finiteFloat(value)));
@@ -89,4 +99,44 @@ export function stringifyJson(value) {
     } catch {
         return { value: "", valid: false };
     }
+}
+
+export function stringToRoadId(value) {
+    return normalizeOpaqueId(value);
+}
+
+export function roadIdToString(value) {
+    return normalizeOpaqueId(value);
+}
+
+export function stringToTextureId(value) {
+    return normalizeOpaqueId(value);
+}
+
+export function textureIdToString(value) {
+    return normalizeOpaqueId(value);
+}
+
+const OPAQUE_ID_TYPES = new Set([ROAD_ID_TYPE, TEXTURE_ID_TYPE]);
+
+export function valueToString(value, type) {
+    const kind = typeof type === "string" && type !== GENERIC_TYPE ? type : "";
+    if (kind === "int32") return intToString(value);
+    if (kind === "float64") return floatToString(value);
+    if (kind === "boolean") return boolToString(value);
+    if (kind === "string") return String(value ?? "");
+    if (OPAQUE_ID_TYPES.has(kind)) return normalizeOpaqueId(value);
+    if (kind === UNIT_TYPE) return UNIT_TYPE;
+    if (kind) {
+        if (typeof value === "string") return value;
+        return stringifyJson(value).value;
+    }
+    if (valuesEqual(value, UNIT)) return UNIT_TYPE;
+    if (typeof value === "boolean") return boolToString(value);
+    if (typeof value === "number") {
+        return Number.isInteger(value) ? intToString(value) : floatToString(value);
+    }
+    if (typeof value === "string") return value;
+    if (value == null) return "";
+    return stringifyJson(value).value;
 }

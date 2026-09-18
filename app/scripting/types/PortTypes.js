@@ -13,6 +13,8 @@ export const VEC2_TYPE = "vec2";
 export const VEC3_TYPE = "vec3";
 export const POSE2D_TYPE = "pose2d";
 export const POSE3D_TYPE = "pose3d";
+export const ROAD_ID_TYPE = "road_id";
+export const TEXTURE_ID_TYPE = "texture_id";
 export const EULER_ORDERS = Object.freeze(["XYZ", "YZX", "ZXY", "XZY", "YXZ", "ZYX"]);
 
 export function finiteFloat(value, fallback = 0) {
@@ -156,6 +158,10 @@ export function normalizeActorCommand(value) {
         speedMps: finiteFloat(source.speedMps),
         steeringRad: finiteFloat(source.steeringRad),
     };
+}
+
+export function normalizeOpaqueId(value) {
+    return String(value ?? "").trim();
 }
 
 export function isGeneric(type) {

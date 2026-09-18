@@ -1,17 +1,37 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { TYPES } from "./Constants";
+import { isEditableTarget } from "./canvas/CanvasViewport";
 import { baseTypeName, portsCompatible } from "./types/PortTypes";
 
-export function Line({ lineId, start = { x: 0, y: 0 }, end = { x: 0, y: 0 }, color = "white", onDeleted=() => {} }) {
-    const [selected, setSelected] = useState(false);
+function bezierMidpoint(start, end) {
+    const dx = end.x - start.x;
+    const c1x = start.x + dx * 0.25;
+    const c1y = start.y;
+    const c2x = end.x - dx * 0.25;
+    const c2y = end.y;
+    return {
+        x: 0.125 * start.x + 0.375 * c1x + 0.375 * c2x + 0.125 * end.x,
+        y: 0.125 * start.y + 0.375 * c1y + 0.375 * c2y + 0.125 * end.y,
+    };
+}
 
+export function Line({
+    lineId,
+    start = { x: 0, y: 0 },
+    end = { x: 0, y: 0 },
+    color = "white",
+    type = "",
+    selected = false,
+    onSelect = () => {},
+    onDeleted = () => {},
+}) {
     useEffect(() => {
         if (!selected) return;
 
         const handleKeyDown = (e) => {
-            // console.log(e.key)
+            if (isEditableTarget(e.target)) return;
             if (e.key === "Delete" || e.key === "Backspace") {
-                // console.log("Deleting line");
+                e.preventDefault();
                 onDeleted(lineId);
             }
         }
@@ -22,44 +42,64 @@ export function Line({ lineId, start = { x: 0, y: 0 }, end = { x: 0, y: 0 }, col
         }
     }, [selected, lineId, onDeleted]);
 
-    // Calculate control points for a smooth cubic Bézier curve
     const dx = end.x - start.x;
-    const dy = end.y - start.y;
-    // Control points: horizontally offset for left-to-right, vertically for top-to-bottom
     const c1 = { x: start.x + dx * 0.25, y: start.y };
     const c2 = { x: end.x - dx * 0.25, y: end.y };
     const path = `M ${start.x},${start.y} C ${c1.x},${c1.y} ${c2.x},${c2.y} ${end.x},${end.y}`;
+    const midpoint = bezierMidpoint(start, end);
+
+    const selectLine = (event) => {
+        event.stopPropagation();
+        onSelect(lineId);
+    };
+
     return (
-        <svg className="absolute top-0 left-0 w-full h-full pointer-events-none">
-            <path
-                d={path}
-                stroke="white"
-                strokeWidth="12"
-                fill="none"
-                strokeOpacity={"0"}
-                pointerEvents="stroke"
-                onClick={() => {
-                    setSelected(!selected);
-                }}
-            />
-            <path
-                d={path}
-                stroke="white"
-                strokeWidth="6"
-                fill="none"
-                strokeOpacity={selected ? "0.2" : "0"}
-                pointerEvents="stroke"
-                onClick={() => {
-                    setSelected(!selected);
-                }}
-            />
-            <path
-                d={path}
-                stroke={color}
-                strokeWidth="2"
-                fill="none"
-            />
-        </svg>
+        <>
+            <svg className="absolute top-0 left-0 w-full h-full pointer-events-none">
+                <path
+                    d={path}
+                    stroke="white"
+                    strokeWidth="12"
+                    fill="none"
+                    strokeOpacity={"0"}
+                    pointerEvents="stroke"
+                    data-connection-hit={lineId}
+                    onMouseDown={(event) => event.stopPropagation()}
+                    onClick={selectLine}
+                />
+                <path
+                    d={path}
+                    stroke="white"
+                    strokeWidth="6"
+                    fill="none"
+                    strokeOpacity={selected ? "0.2" : "0"}
+                    pointerEvents="stroke"
+                    onMouseDown={(event) => event.stopPropagation()}
+                    onClick={selectLine}
+                />
+                <path
+                    d={path}
+                    stroke={color}
+                    strokeWidth="2"
+                    fill="none"
+                />
+            </svg>
+            {selected && type ? (
+                <div
+                    data-connection-type-chip
+                    className="pointer-events-auto fixed z-20 rounded border border-white/20 bg-[var(--slate-surface-2)] px-2 py-0.5 font-mono text-[11px] text-zinc-100 shadow-md"
+                    style={{
+                        left: midpoint.x,
+                        top: midpoint.y,
+                        transform: "translate(-50%, -50%)",
+                    }}
+                    onMouseDown={(event) => event.stopPropagation()}
+                    onClick={(event) => event.stopPropagation()}
+                >
+                    {type}
+                </div>
+            ) : null}
+        </>
     );
 }
 
@@ -109,7 +149,8 @@ function lineFromConnection(connection) {
         end: getPortCenter(endTarget),
         startSource,
         endTarget,
-        color: wireColor(connection.type || inputInfo?.type)
+        color: wireColor(connection.type || inputInfo?.type),
+        type: connection.type || inputInfo?.type || "",
     };
 }
 
@@ -122,6 +163,7 @@ export function LineManager({
 }) {
     const [lines, setLines] = useState([]);
     const [lineInProgress, setLineInProgress] = useState(null);
+    const [selectedLineId, setSelectedLineId] = useState(null);
     const linesRef = useRef(lines);
     const snapshotRef = useRef(connectionSnapshot);
     const measureFrameRef = useRef(null);
@@ -228,8 +270,13 @@ export function LineManager({
             onDeleteConnection(sourceToInfo(line.startSource), sourceToInfo(line.endTarget));
         }
 
+        setSelectedLineId((current) => current === lineId ? null : current);
         setLines((prevLines) => prevLines.filter((item) => item.id !== lineId));
     }
+
+    const selectLine = useCallback((lineId) => {
+        setSelectedLineId((current) => current === lineId ? null : lineId);
+    }, []);
 
     // Add pointer and keyboard connections without changing the graph's DOM hooks.
     useEffect(() => {
@@ -290,7 +337,8 @@ export function LineManager({
                     end: getPortCenter(source),
                     startSource: pendingInput,
                     endTarget: source,
-                    color: wireColor(fromInfo.type === "generic" ? toInfo.type : fromInfo.type)
+                    color: wireColor(fromInfo.type === "generic" ? toInfo.type : fromInfo.type),
+                    type: fromInfo.type === "generic" ? toInfo.type : fromInfo.type,
                 }]);
             }
             keyboardSourceRef.current = null;
@@ -359,7 +407,8 @@ export function LineManager({
                             end: { x: outputX, y: outputY },
                             startSource: lineInProgress.source,
                             endTarget: output,
-                            color: wireColor(fromInfo.type === "generic" ? toInfo.type : fromInfo.type)
+                            color: wireColor(fromInfo.type === "generic" ? toInfo.type : fromInfo.type),
+                            type: fromInfo.type === "generic" ? toInfo.type : fromInfo.type,
                         }]);
                         connected = true;
                         break;
@@ -468,11 +517,40 @@ export function LineManager({
         };
     }, [graphKey, scheduleLineMeasurement, units]);
 
+    useEffect(() => {
+        const onPointerDown = (event) => {
+            if (isEditableTarget(event.target)) return;
+            if (event.target?.closest?.("[data-connection-hit], [data-connection-type-chip]")) return;
+            setSelectedLineId(null);
+        };
+        const onKeyDown = (event) => {
+            if (event.key !== "Escape") return;
+            if (isEditableTarget(event.target)) return;
+            setSelectedLineId(null);
+        };
+        document.addEventListener("pointerdown", onPointerDown);
+        document.addEventListener("keydown", onKeyDown);
+        return () => {
+            document.removeEventListener("pointerdown", onPointerDown);
+            document.removeEventListener("keydown", onKeyDown);
+        };
+    }, []);
+
     return (
         <div className="absolute top-0 left-0 w-full h-full pointer-events-none z-10">
             {lineInProgress && <Line start={lineInProgress.start} end={lineInProgress.end} />}
             {lines.map((line, index) => (
-                <Line key={line.id || index} lineId={line.id} start={line.start} end={line.end} color={line.color} onDeleted={deleteLine} />
+                <Line
+                    key={line.id || index}
+                    lineId={line.id}
+                    start={line.start}
+                    end={line.end}
+                    color={line.color}
+                    type={line.type || ""}
+                    selected={line.id === selectedLineId}
+                    onSelect={selectLine}
+                    onDeleted={deleteLine}
+                />
             ))}
         </div>
     )

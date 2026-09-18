@@ -16,11 +16,16 @@ import {
     IntToBooleanBlock,
     IntToStringBlock,
     ParseJsonBlock,
+    RoadIdToStringBlock,
     RoundToIntBlock,
     StringifyJsonBlock,
     StringToBooleanBlock,
     StringToFloatBlock,
     StringToIntBlock,
+    StringToRoadIdBlock,
+    StringToTextureIdBlock,
+    TextureIdToStringBlock,
+    ToStringBlock,
     TruncateToIntBlock,
 } from "./units/conversions/Conversions.block.js";
 import {
@@ -124,6 +129,7 @@ import {
 } from "./units/simulator/SimulatorAdapters.block.js";
 import {
     FrameAlongPathBlock,
+    GetNearestRoadBlock,
     SampleRoadBlock,
     ScatterFeaturesBlock,
     SpawnPropBlock,
@@ -139,6 +145,7 @@ import {
 } from "./units/statements/Unit.block.js";
 import { RepeatProgramBlock } from "./units/statements/RepeatProgram.block.js";
 import { StringBlock } from "./units/objects/String.block.js";
+import { TextureImportBlock } from "./units/objects/TextureImport.block.js";
 import {
     BlendTextureBlock,
     HeightToSlopeBlock,
@@ -227,6 +234,7 @@ import {
     BuildTopicMessageBlock,
     CurrentWaypointBlock,
     DeviceSnapshotBlock,
+    LogMessageBlock,
     LogSignalBlock,
     MissionStateBlock,
     ObjectSnapshotBlock,
@@ -506,12 +514,18 @@ export const UNIT_CATALOG_META = [
     entry("FloatToStringBlock", "Float to String", "conversions", FloatToStringBlock, ["float", "string", "convert"]),
     entry("IntToStringBlock", "Int to String", "conversions", IntToStringBlock, ["integer", "string", "convert"]),
     entry("BooleanToStringBlock", "Boolean to String", "conversions", BooleanToStringBlock, ["boolean", "string", "convert"]),
+    entry("ToStringBlock", "To String", "conversions", ToStringBlock, ["to", "string", "convert", "stringify", "int32", "float64"]),
     entry("StringToFloatBlock", "String to Float", "conversions", StringToFloatBlock, ["string", "float", "parse"]),
     entry("StringToIntBlock", "String to Int", "conversions", StringToIntBlock, ["string", "integer", "parse"]),
     entry("StringToBooleanBlock", "String to Boolean", "conversions", StringToBooleanBlock, ["string", "boolean", "parse"]),
     entry("ParseJsonBlock", "Parse JSON", "conversions", ParseJsonBlock, ["parse", "json", "string"]),
     entry("StringifyJsonBlock", "Stringify JSON", "conversions", StringifyJsonBlock, ["stringify", "json", "string"]),
+    entry("StringToRoadIdBlock", "String to Road ID", "conversions", StringToRoadIdBlock, ["string", "road", "id", "convert"]),
+    entry("RoadIdToStringBlock", "Road ID to String", "conversions", RoadIdToStringBlock, ["road", "id", "string", "convert"]),
+    entry("StringToTextureIdBlock", "String to Texture ID", "conversions", StringToTextureIdBlock, ["string", "texture", "id", "convert"]),
+    entry("TextureIdToStringBlock", "Texture ID to String", "conversions", TextureIdToStringBlock, ["texture", "id", "string", "convert"]),
     entry("StringBlock", "String", "objects", StringBlock, ["string", "text", "constant"], { settings: STRING_SETTINGS }),
+    entry("TextureImportBlock", "Texture Import", "objects", TextureImportBlock, ["texture", "import", "asset", "id"], { settings: STRING_SETTINGS }),
     entry("ConcatStringBlock", "Concat String", "strings", ConcatStringBlock, ["concat", "join", "string"]),
     entry("StringLengthBlock", "String Length", "strings", StringLengthBlock, ["length", "string", "count"]),
     entry("StringContainsBlock", "String Contains", "strings", StringContainsBlock, ["contains", "includes", "string"]),
@@ -589,6 +603,7 @@ export const UNIT_CATALOG_META = [
     entry("SimulationClockBlock", "Simulation Clock", "simulator", SimulationClockBlock, ["simulation", "clock", "dt", "adapter"], { requiresSignals: true }),
     entry("ScenarioStatusBlock", "Scenario Status", "simulator", ScenarioStatusBlock, ["scenario", "status", "terminal", "adapter"], { requiresSignals: true }),
     entry("SampleRoadBlock", "Sample Road", "simulator", SampleRoadBlock, ["road", "sample", "pose", "edge"]),
+    entry("GetNearestRoadBlock", "Get Nearest Road", "simulator", GetNearestRoadBlock, ["nearest", "road", "pose", "edge"]),
     entry("SpawnPropBlock", "Spawn Prop", "simulator", SpawnPropBlock, ["spawn", "prop", "barrel", "episode"], {
         notes: "Episode overlay upsert. Bind the graph to episode-reset. Ids are episode:{scriptId}:{n} when omitted. Does not mutate the environment document.",
     }),
@@ -625,6 +640,7 @@ export const UNIT_CATALOG_META = [
     entry("BindTriggerBlock", "Bind Trigger", "bindings", BindTriggerBlock, ["bind", "trigger", "signal"]),
     entry("ProbeSignalBlock", "Probe Signal", "diagnostics", ProbeSignalBlock, ["probe", "signal", "debug"]),
     entry("LogSignalBlock", "Log Signal", "diagnostics", LogSignalBlock, ["log", "signal", "debug"]),
+    entry("LogMessageBlock", "Log Message", "diagnostics", LogMessageBlock, ["log", "message", "print", "console"]),
     entry("AssertSignalBlock", "Assert Signal", "diagnostics", AssertSignalBlock, ["assert", "signal", "test"]),
     entry("RecordSignalBlock", "Record Signal", "diagnostics", RecordSignalBlock, ["record", "signal", "history"]),
     entry("ReplaySignalBlock", "Replay Signal", "diagnostics", ReplaySignalBlock, ["replay", "signal", "history"]),

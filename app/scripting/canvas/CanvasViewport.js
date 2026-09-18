@@ -133,7 +133,7 @@ export function isCanvasChromeTarget(target) {
 
 export function canStartEmptyCanvasPan(target) {
     if (!target || typeof target.closest !== "function") return true;
-    return !target.closest(".input, .output, [data-block-library], [data-uuid]");
+    return !target.closest(".input, .output, [data-block-library], [data-uuid], [data-connection-hit], [data-connection-type-chip]");
 }
 
 export function dispatchCanvasViewportChanged(viewport) {

@@ -328,6 +328,8 @@ test("ED-07 authors isolated revisions, nested proxies, explicit instance update
     await childItem.dblclick();
     await expect(page.getByLabel(`${child.name} asset studio viewport`)).toBeVisible({ timeout: 60_000 });
     let inspector = page.locator("[data-asset-catalog-inspector]");
+    const childAssetId = await childItem.getAttribute("data-asset-id");
+    await expect(inspector.locator("[data-asset-id]")).toHaveText(`Asset ID ${childAssetId}`);
     await commitNumber(inspector.getByLabel("Pivot Y"), "0.5");
     await page.getByRole("tree", { name: "Asset parts" }).getByRole("treeitem", { name: child.name }).click();
     await inspector.getByRole("button", { name: "Add", exact: true }).click();
@@ -372,6 +374,7 @@ test("ED-07 authors isolated revisions, nested proxies, explicit instance update
     await commitNumber(inspector.getByLabel("Metallic"), "0.2");
     await commitNumber(inspector.getByLabel("Roughness"), "0.65");
     await replaceBaseColorTexture(page, texture.useHash, texture.digest);
+    await expect(inspector.locator("[data-texture-id]")).toContainText(`Texture ID · baseColor: ${texture.useHash}`);
 
     await page.getByRole("button", { name: new RegExp(`^${child.name} · r2`) }).click();
     inspector = page.locator("[data-asset-catalog-inspector]");

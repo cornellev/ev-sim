@@ -33,6 +33,23 @@ export const StringToIntUnit = staticPortsUnit("String to Int", CONVERSION_BLOCK
 export const StringToBooleanUnit = staticPortsUnit("String to Boolean", CONVERSION_BLOCK_PORTS.StringToBooleanBlock);
 export const ParseJsonUnit = staticPortsUnit("Parse JSON", CONVERSION_BLOCK_PORTS.ParseJsonBlock);
 export const StringifyJsonUnit = staticPortsUnit("Stringify JSON", CONVERSION_BLOCK_PORTS.StringifyJsonBlock);
+export const StringToRoadIdUnit = staticPortsUnit("String to Road ID", CONVERSION_BLOCK_PORTS.StringToRoadIdBlock);
+export const RoadIdToStringUnit = staticPortsUnit("Road ID to String", CONVERSION_BLOCK_PORTS.RoadIdToStringBlock);
+export const StringToTextureIdUnit = staticPortsUnit("String to Texture ID", CONVERSION_BLOCK_PORTS.StringToTextureIdBlock);
+export const TextureIdToStringUnit = staticPortsUnit("Texture ID to String", CONVERSION_BLOCK_PORTS.TextureIdToStringBlock);
+
+export function ToStringUnit({ _uuid, portTypes = {} }) {
+    const valueType = portTypes.inputs?.value || "generic";
+    return (
+        <Unit
+            title="To String"
+            hasOptions={false}
+            _uuid={_uuid}
+            inputs={[{ label: "value", type: valueType }]}
+            outputs={[{ label: "out", type: "string" }]}
+        />
+    );
+}
 
 export {
     BooleanToFloatBlock,
@@ -45,10 +62,15 @@ export {
     IntToBooleanBlock,
     IntToStringBlock,
     ParseJsonBlock,
+    RoadIdToStringBlock,
     RoundToIntBlock,
     StringifyJsonBlock,
     StringToBooleanBlock,
     StringToFloatBlock,
     StringToIntBlock,
+    StringToRoadIdBlock,
+    StringToTextureIdBlock,
+    TextureIdToStringBlock,
+    ToStringBlock,
     TruncateToIntBlock,
 } from "./Conversions.block.js";

@@ -1,4 +1,5 @@
 import { BlockOutput, UnitBlock } from "../../ScriptManager.js";
+import { GENERIC_TYPE, ROAD_ID_TYPE, TEXTURE_ID_TYPE } from "../../types/PortTypes.js";
 import * as conversionMath from "./conversionMath.js";
 
 function freezePort(port) {
@@ -12,7 +13,7 @@ function freezePorts(inputs, outputs = [{ label: "out", type: "float64" }]) {
     });
 }
 
-function defineBlock({ type, ports, execute, valid }) {
+function defineBlock({ type, ports, execute, valid, typeScheme }) {
     class Block extends UnitBlock {
         static blockType = type;
 
@@ -31,6 +32,7 @@ function defineBlock({ type, ports, execute, valid }) {
         }
     }
 
+    if (typeScheme) Block.typeScheme = typeScheme;
     try {
         Object.defineProperty(Block, "name", { value: type });
     } catch {
@@ -115,6 +117,34 @@ const STRINGIFY_JSON = freezePorts(
         { label: "valid", type: "boolean" },
     ],
 );
+const STRING_TO_ROAD_ID = freezePorts(
+    [{ label: "value", type: "string" }],
+    [{ label: "out", type: ROAD_ID_TYPE }],
+);
+const ROAD_ID_TO_STRING = freezePorts(
+    [{ label: "value", type: ROAD_ID_TYPE }],
+    [{ label: "out", type: "string" }],
+);
+const STRING_TO_TEXTURE_ID = freezePorts(
+    [{ label: "value", type: "string" }],
+    [{ label: "out", type: TEXTURE_ID_TYPE }],
+);
+const TEXTURE_ID_TO_STRING = freezePorts(
+    [{ label: "value", type: TEXTURE_ID_TYPE }],
+    [{ label: "out", type: "string" }],
+);
+const TO_STRING = freezePorts(
+    [{ label: "value", type: GENERIC_TYPE }],
+    [{ label: "out", type: "string" }],
+);
+const TO_STRING_SCHEME = Object.freeze({
+    variables: Object.freeze({
+        T: Object.freeze({
+            inputs: Object.freeze(["value"]),
+            outputs: Object.freeze([]),
+        }),
+    }),
+});
 
 export const FloorToIntBlock = defineBlock({
     type: "FloorToIntBlock",
@@ -244,6 +274,47 @@ export const StringifyJsonBlock = defineBlock({
     },
 });
 
+export const StringToRoadIdBlock = defineBlock({
+    type: "StringToRoadIdBlock",
+    ports: STRING_TO_ROAD_ID,
+    execute() {
+        return out(conversionMath.stringToRoadId(this.getInput("value")));
+    },
+});
+
+export const RoadIdToStringBlock = defineBlock({
+    type: "RoadIdToStringBlock",
+    ports: ROAD_ID_TO_STRING,
+    execute() {
+        return out(conversionMath.roadIdToString(this.getInput("value")));
+    },
+});
+
+export const StringToTextureIdBlock = defineBlock({
+    type: "StringToTextureIdBlock",
+    ports: STRING_TO_TEXTURE_ID,
+    execute() {
+        return out(conversionMath.stringToTextureId(this.getInput("value")));
+    },
+});
+
+export const TextureIdToStringBlock = defineBlock({
+    type: "TextureIdToStringBlock",
+    ports: TEXTURE_ID_TO_STRING,
+    execute() {
+        return out(conversionMath.textureIdToString(this.getInput("value")));
+    },
+});
+
+export const ToStringBlock = defineBlock({
+    type: "ToStringBlock",
+    ports: TO_STRING,
+    typeScheme: TO_STRING_SCHEME,
+    execute() {
+        return out(conversionMath.valueToString(this.getInput("value"), this.inputType("value")));
+    },
+});
+
 export const CONVERSION_BLOCKS = Object.freeze({
     FloorToIntBlock,
     CeilToIntBlock,
@@ -261,6 +332,11 @@ export const CONVERSION_BLOCKS = Object.freeze({
     StringToBooleanBlock,
     ParseJsonBlock,
     StringifyJsonBlock,
+    StringToRoadIdBlock,
+    RoadIdToStringBlock,
+    StringToTextureIdBlock,
+    TextureIdToStringBlock,
+    ToStringBlock,
 });
 
 export const CONVERSION_BLOCK_PORTS = Object.freeze({
@@ -280,4 +356,9 @@ export const CONVERSION_BLOCK_PORTS = Object.freeze({
     StringToBooleanBlock: STRING_TO_BOOL,
     ParseJsonBlock: PARSE_JSON,
     StringifyJsonBlock: STRINGIFY_JSON,
+    StringToRoadIdBlock: STRING_TO_ROAD_ID,
+    RoadIdToStringBlock: ROAD_ID_TO_STRING,
+    StringToTextureIdBlock: STRING_TO_TEXTURE_ID,
+    TextureIdToStringBlock: TEXTURE_ID_TO_STRING,
+    ToStringBlock: TO_STRING,
 });
