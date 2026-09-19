@@ -77,6 +77,16 @@ function roadSegmentTangent(point, projection, graph) {
     };
 }
 
+function pitchFromSurfaceNormal(normal, yaw) {
+    const ny = finiteNumber(normal?.y, 0);
+    if (Math.abs(ny) <= EPSILON) return 0;
+    const headingX = Math.cos(finiteNumber(yaw, 0));
+    const headingZ = -Math.sin(finiteNumber(yaw, 0));
+    const dy = -(finiteNumber(normal.x, 0) * headingX + finiteNumber(normal.z, 0) * headingZ) / ny;
+    const pitch = Math.atan2(dy, 1);
+    return pitch === 0 ? 0 : pitch;
+}
+
 /**
  * Project an XZ pose onto the paved union and return surface height plus pitch.
  * Pitch uses the 3D sample-segment delta, never compiled XZ tangents.
@@ -94,7 +104,9 @@ export function sampleRoadGround(position, graph, yaw = 0) {
     if (projection.kind === "intersection") {
         return {
             y: finiteNumber(projection.y, 0),
-            pitch: 0,
+            pitch: projection.surfaceNormal
+                ? pitchFromSurfaceNormal(projection.surfaceNormal, yaw)
+                : 0,
             kind: "intersection",
             edgeId: null,
             nodeId: projection.nodeId ?? null,

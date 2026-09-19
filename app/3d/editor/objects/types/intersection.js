@@ -4,9 +4,10 @@
  * than one edge — the same rule the world compiler uses for intersection discs.
  */
 
-import { ObjectOptions, field, finite, isPlainObject, issue, validateFieldConstraints } from "../ObjectOptions.js";
+import { ObjectOptions, boolean, field, finite, isPlainObject, issue, validateFieldConstraints } from "../ObjectOptions.js";
 import { defineObjectType } from "../ObjectTypeRegistry.js";
 import { TRANSFORM_ISSUE_CODES, applyDeltaToPoint } from "../transformDelta.js";
+import { nodeConformsToRoads } from "../../../../roads/RoadGeometryRecord.js";
 
 export const INTERSECTION_TYPE_ID = "intersection";
 
@@ -14,11 +15,18 @@ const INTERSECTION_FIELDS = Object.freeze([
     field({ path: ["x"], label: "X", control: "number", units: "m", step: 0.1, group: "Position", readOnly: true }),
     field({ path: ["y"], label: "Elevation", control: "number", units: "m", step: 0.05, group: "Position" }),
     field({ path: ["z"], label: "Z", control: "number", units: "m", step: 0.1, group: "Position", readOnly: true }),
+    field({
+        path: ["conformToRoads"],
+        label: "Conform to roads",
+        control: "toggle",
+        group: "Surface",
+        description: "Match the compiled junction surface to attached road elevations. Drags stay flat until release.",
+    }),
 ]);
 
 export class IntersectionOptions extends ObjectOptions {
     getDefaults() {
-        return { x: 0, y: 0, z: 0 };
+        return { x: 0, y: 0, z: 0, conformToRoads: false };
     }
 
     getFields() {
@@ -27,7 +35,12 @@ export class IntersectionOptions extends ObjectOptions {
 
     normalize(value = {}) {
         const source = isPlainObject(value) ? value : {};
-        return { x: finite(source.x, 0), y: finite(source.y, 0), z: finite(source.z, 0) };
+        return {
+            x: finite(source.x, 0),
+            y: finite(source.y, 0),
+            z: finite(source.z, 0),
+            conformToRoads: boolean(source.conformToRoads, false),
+        };
     }
 
     validate(value = {}) {
@@ -89,10 +102,25 @@ export function createIntersectionType() {
                     issues: [issue(["options"], TRANSFORM_ISSUE_CODES.MISSING, `Intersection "${record.id}" has no node.`, { objectId: record.id })],
                 };
             }
-            return {
-                steps: [{ op: "move-node", nodeId: String(record.id), position: { x: finite(node.x, 0), y: finite(value.y, 0), z: finite(node.z, 0) } }],
-                issues: [],
-            };
+            const steps = [];
+            const nextY = finite(value.y, 0);
+            const currentY = finite(node.y, 0);
+            if (nextY !== currentY) {
+                steps.push({
+                    op: "move-node",
+                    nodeId: String(record.id),
+                    position: { x: finite(node.x, 0), y: nextY, z: finite(node.z, 0) },
+                });
+            }
+            const nextConform = value.conformToRoads === true;
+            if (nextConform !== nodeConformsToRoads(node)) {
+                steps.push({
+                    op: "set-node-record",
+                    nodeId: String(record.id),
+                    patch: { conformToRoads: nextConform },
+                });
+            }
+            return { steps, issues: [] };
         },
         getDependencies(record) {
             return [{ kind: "road-node", id: record.id }];

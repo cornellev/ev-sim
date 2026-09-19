@@ -8,7 +8,7 @@ import {
 } from "../../roads/RoadLaneModel.js";
 import { hashEnvironmentRoadNetwork } from "../../scenarios/route/roadGraph.js";
 import { canonicalFiniteNumber, canonicalizeSimulationValue, simulationSha256 } from "../kernel/SimulationHashes.js";
-import { authorRoadsFromMetric, cloneRoadGeometry, normalizeMetricRoads, roadGeometryVersionOf, validateRoadDomain } from "../../roads/RoadGeometryRecord.js";
+import { authorRoadsFromMetric, cloneRoadGeometry, conformToRoadsFields, normalizeMetricRoads, roadGeometryVersionOf, validateRoadDomain } from "../../roads/RoadGeometryRecord.js";
 import { compileRoadNetworkGeometry, planRoadNetworkGeometry } from "../../roads/RoadNetworkGeometry.js";
 import { ROAD_GEOMETRY_POLICY_V1 } from "../../roads/RoadGeometryPolicy.js";
 import { validateAssetMetricsDomain } from "../../editor-assets/AssetMetricSnapshot.js";
@@ -93,12 +93,16 @@ function selectRoadDomain(manifest, document, fallbackDocument) {
 }
 
 function normalizeNode(node, index) {
+    if (node?.conformToRoads !== undefined && node?.conformToRoads !== null && typeof node.conformToRoads !== "boolean") {
+        throw new TypeError(`Road node ${index} conformToRoads must be boolean.`);
+    }
     return {
         id: identifier(node?.id, `Road node ${index} ID`),
         x: finite(node?.x, `Road node ${index} x`),
         y: finite(node?.y ?? 0, `Road node ${index} y`),
         z: finite(node?.z, `Road node ${index} z`),
         kind: node?.kind === undefined || node?.kind === null ? null : String(node.kind),
+        ...conformToRoadsFields(node),
     };
 }
 

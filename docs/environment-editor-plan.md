@@ -76,7 +76,7 @@ ED PR changes a contract, hash, gate, or milestone status.
   proxies are set up; LiDAR authoring supports generated meshes and editable
   primitives.
 - Default implementation/review reasoning level: **Extra High**.
-- Last updated: **2026-09-15 — editor chrome padding**.
+- Last updated: **2026-09-19 — intersection conform-to-roads**.
 
 ## Normative contracts
 
@@ -1001,6 +1001,18 @@ Record in the ledger: focused-suite pass counts, `npm run lint` result,
   `6ca2ece3d5266822a2ceabba72e5f7dd9514789e76757e86f6aedd2730ab9a6a`.
 
 ## Decision log
+
+### 2026-09-19 — Intersection conform-to-roads
+
+Editor/compiler maintenance: geometry-v2 junctions stay a flat hull at `node.y`
+by default. An inspector toggle stores sparse metric `node.conformToRoads:
+true` (omitted when false) and recompiles mouths and hull vertices from
+attached-road sample Y so the patch is flush. `node.y` remains the authored
+pivot. Transient move/knot/handle frames keep the existing flat strip preview
+and re-conform on commit. Ground sampling barycentric-interpolates the
+compiled surface. Enabling the option changes `roadNetworkHash` and
+`worldHash`; untouched environments keep their hashes. Schema v4, REST, and
+characterization fixtures are unchanged. This is not an ED milestone.
 
 ### 2026-09-15 — Editor chrome padding
 

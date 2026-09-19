@@ -1,5 +1,5 @@
 /**
- * @typedef {{ id: string, x: number, y?: number, z: number, kind?: 'intersection' | 'endpoint' }} RoadNode
+ * @typedef {{ id: string, x: number, y?: number, z: number, kind?: 'intersection' | 'endpoint', conformToRoads?: true }} RoadNode
  * @typedef {{ x: number, y?: number, z: number }} RoadPoint
  * @typedef {{ id: string, direction: 1 | -1 | 0, width: number, markingLeft?: string }} RoadLane
  * @typedef {{ id: string, startNodeId: string, endNodeId: string, bidirectional?: boolean, direction?: number | string, oneWay?: boolean, oneWayDirection?: number | string, width?: number, laneCount?: number, lanes?: RoadLane[], shoulderWidth?: number, tension?: number, borderLeft?: string, borderRight?: string, startArm?: RoadPoint, endArm?: RoadPoint }} RoadEdge
@@ -14,7 +14,7 @@
 import { OBJECT_GRAPH_VERSION, cloneObjectRecord, sortObjectRecords } from "../objects/objectRecord.js";
 import { skyConfigToManifest } from "../../skybox/EnvironmentSkyConfig.js";
 import { legacyIndex } from "../objects/objectGraph.js";
-import { cloneRoadGeometry } from "../../../roads/RoadGeometryRecord.js";
+import { cloneRoadGeometry, conformToRoadsFields } from "../../../roads/RoadGeometryRecord.js";
 import { cloneRoadLanes } from "../../../roads/RoadLaneModel.js";
 import {
     CHANGE_DOMAINS,
@@ -414,6 +414,7 @@ function cloneNode(node) {
         y: nodeY(node.y),
         z: node.z,
         kind: node.kind ?? null,
+        ...conformToRoadsFields(node),
         ...(node.source ? { source: structuredClone(node.source) } : {}),
     };
 }

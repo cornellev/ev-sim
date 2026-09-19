@@ -26,9 +26,9 @@ import {
     validateRoadLaneLayout,
 } from "../../roads/RoadLaneModel.js";
 import { movementConnector } from "../../roads/RoadJunctionValidation.js";
-import { authorRoadsFromMetric, normalizeMetricRoads, roadGeometryVersionOf } from "../../roads/RoadGeometryRecord.js";
+import { authorRoadsFromMetric, conformToRoadsFields, normalizeMetricRoads, roadGeometryVersionOf } from "../../roads/RoadGeometryRecord.js";
 import { projectPointToRoad as projectPointToCompiledRoad } from "../../roads/RoadGeometry.js";
-import { buildJunctionConnector, planRoadNetworkGeometry } from "../../roads/RoadNetworkGeometry.js";
+import { buildJunctionConnector, planRoadNetworkGeometry, sampleIndexedSurfacePoint } from "../../roads/RoadNetworkGeometry.js";
 import { ROAD_GEOMETRY_POLICY_V1 } from "../../roads/RoadGeometryPolicy.js";
 
 const EPSILON = 1e-9;
@@ -86,6 +86,7 @@ function canonicalRoadNetwork(value) {
                 y: finiteNumber(node.y),
                 z: finiteNumber(node.z),
                 kind: node.kind ?? null,
+                ...conformToRoadsFields(node),
             }))
             .sort((left, right) => compareText(left.id, right.id)),
         edges: document.roads.edges
@@ -128,6 +129,7 @@ export function canonicalRoadNetworkV2(value) {
             y: finiteNumber(node.y),
             z: finiteNumber(node.z),
             kind: node.kind ?? null,
+            ...conformToRoadsFields(node),
         })).sort((left, right) => compareText(left.id, right.id)),
         edges: roads.edges.map((edge) => ({
             id: String(edge.id),
@@ -365,17 +367,21 @@ function projectPointToRoadNetworkV2(point, graph, tolerance) {
     for (const junction of graph.compiledPlan.junctions) {
         if (!pointInIndexedSurface(point, junction.surface, tolerance)) continue;
         const node = junction.node;
+        const sampled = sampleIndexedSurfacePoint(point, junction.surface);
+        const y = sampled?.point.y ?? node.y;
         intersections.push({
             kind: "intersection",
             nodeId: node.id,
             edgeId: null,
             t: null,
-            point: { x: node.x, y: node.y, z: node.z },
-            position: { x: node.x, y: node.y, z: node.z },
+            point: { x: node.x, y, z: node.z },
+            position: { x: node.x, y, z: node.z },
             x: node.x,
-            y: node.y,
+            y,
             z: node.z,
             distance: distanceXZ(point, node),
+            ...(sampled?.tangent ? { tangent: sampled.tangent } : {}),
+            ...(sampled?.normal ? { surfaceNormal: sampled.normal } : {}),
         });
     }
     const roads = [];

@@ -1,7 +1,7 @@
 import { roadLaneCount } from "./RoadLaneModel.js";
 import { buildRoadSurface, validateGeometry } from "./RoadGeometry.js";
 import { ROAD_GEOMETRY_POLICY_V1 } from "./RoadGeometryPolicy.js";
-import { resolveRoadEdge, validateRoadDomain } from "./RoadGeometryRecord.js";
+import { nodeConformsToRoads, resolveRoadEdge, validateRoadDomain } from "./RoadGeometryRecord.js";
 
 const EPSILON = 1e-9;
 
@@ -214,17 +214,97 @@ function isDirectJoin(incidents) {
 }
 
 function junctionSurface(node, incidents) {
+    const conform = nodeConformsToRoads(node);
     const vertices = convexHullXZ(incidents.flatMap((incident) => {
         const normal = rightNormal(incident.edgeTangent);
+        const y = conform ? incident.mouth.y : node.y;
         return [
             addOffset(incident.mouth, normal, -incident.pavedWidth * 0.5),
             addOffset(incident.mouth, normal, incident.pavedWidth * 0.5),
-        ].map((point) => ({ ...point, y: node.y }));
+        ].map((point) => ({ ...point, y }));
     })).reverse();
     if (vertices.length < 3) throw new TypeError(`Junction "${node.id}" cannot form a paved polygon.`);
     const indices = [];
     for (let index = 1; index < vertices.length - 1; index += 1) indices.push(0, index, index + 1);
     return { id: String(node.id), vertices, indices, bounds: boundsOf(vertices) };
+}
+
+function triangleAreaXZ(a, b, c) {
+    return (b.x - a.x) * (c.z - a.z) - (b.z - a.z) * (c.x - a.x);
+}
+
+function triangleNormal(a, b, c) {
+    const ux = b.x - a.x;
+    const uy = b.y - a.y;
+    const uz = b.z - a.z;
+    const vx = c.x - a.x;
+    const vy = c.y - a.y;
+    const vz = c.z - a.z;
+    const normal = {
+        x: uy * vz - uz * vy,
+        y: uz * vx - ux * vz,
+        z: ux * vy - uy * vx,
+    };
+    if (normal.y < 0) {
+        normal.x = -normal.x;
+        normal.y = -normal.y;
+        normal.z = -normal.z;
+    }
+    const length = Math.hypot(normal.x, normal.y, normal.z);
+    if (length <= EPSILON) return { x: 0, y: 1, z: 0 };
+    return { x: normal.x / length, y: normal.y / length, z: normal.z / length };
+}
+
+/**
+ * Sample barycentric Y on the containing XZ triangle of an indexed junction
+ * surface. Returns null when the query is outside every triangle.
+ */
+export function sampleIndexedSurfacePoint(point, surface) {
+    const vertices = surface?.vertices;
+    const indices = surface?.indices;
+    if (!point || !Array.isArray(vertices) || !Array.isArray(indices) || indices.length < 3) return null;
+    let best = null;
+    for (let index = 0; index < indices.length; index += 3) {
+        const a = vertices[indices[index]];
+        const b = vertices[indices[index + 1]];
+        const c = vertices[indices[index + 2]];
+        if (!a || !b || !c) continue;
+        const area = triangleAreaXZ(a, b, c);
+        if (Math.abs(area) <= EPSILON) continue;
+        const weightA = triangleAreaXZ(point, b, c) / area;
+        const weightB = triangleAreaXZ(a, point, c) / area;
+        const weightC = triangleAreaXZ(a, b, point) / area;
+        const inside = weightA >= -EPSILON && weightB >= -EPSILON && weightC >= -EPSILON;
+        if (!inside) continue;
+        const y = a.y * weightA + b.y * weightB + c.y * weightC;
+        const edgeX = b.x - a.x;
+        const edgeY = b.y - a.y;
+        const edgeZ = b.z - a.z;
+        const edgeLengthXZ = Math.hypot(edgeX, edgeZ);
+        const tangent = edgeLengthXZ > EPSILON
+            ? { x: edgeX / edgeLengthXZ, y: edgeY / edgeLengthXZ, z: edgeZ / edgeLengthXZ }
+            : { x: 1, y: 0, z: 0 };
+        const candidate = {
+            point: { x: point.x, y, z: point.z },
+            tangent,
+            normal: triangleNormal(a, b, c),
+            residual: Math.abs(Math.min(0, weightA, weightB, weightC)),
+        };
+        if (!best || candidate.residual < best.residual) best = candidate;
+    }
+    return best;
+}
+
+function junctionCenter(junction) {
+    const node = junction.node;
+    const sampled = sampleIndexedSurfacePoint(node, junction.surface);
+    if (sampled) return sampled.point;
+    const mouths = junction.incidents ?? [];
+    if (mouths.length > 0) {
+        const y = mouths.reduce((sum, incident) => sum + Number(incident.mouth?.y ?? node.y), 0) / mouths.length;
+        return { x: node.x, y, z: node.z };
+    }
+    return { x: node.x, y: node.y, z: node.z };
 }
 
 /**
@@ -293,7 +373,7 @@ export function planRoadNetworkGeometry(roads, options = {}) {
             const entry = edgeById.get(incident.edgeId);
             const distance = incident.end === "start" ? incident.inset : entry.samples.totalLengthXZ - incident.inset;
             const mouth = sampleAtDistance(entry.samples, distance);
-            incident.mouth = { ...mouth.point, y: node.y };
+            incident.mouth = nodeConformsToRoads(node) ? { ...mouth.point } : { ...mouth.point, y: node.y };
             incident.mouthDistance = distance;
         }
         if (requiresPatch) {
@@ -414,7 +494,7 @@ export function buildJunctionConnector(plan, movement) {
     const containmentTolerance = Number.isInteger(canonicalDecimals) && canonicalDecimals >= 0
         ? 10 ** -canonicalDecimals
         : EPSILON;
-    const center = junction.node;
+    const center = junctionCenter(junction);
     let p1 = addOffset(p0, travelFrom, handleLength);
     let p2 = addOffset(p3, travelTo, -handleLength);
     if (!pointInConvex(p1, junction.surface.vertices, containmentTolerance)) p1 = lerp(p0, center, 0.5);

@@ -12,6 +12,7 @@ import {
     updateBuildingRecord,
     updateFeatureRecord,
     updateRoadEdge,
+    updateRoadNode,
 } from "../document/documentMutations.js";
 import { setObjectComponent } from "./objectMutations.js";
 import { cloneRoadGeometry } from "../../../roads/RoadGeometryRecord.js";
@@ -28,6 +29,7 @@ export const PLAN_STEP_OPS = Object.freeze([
     "set-earth-source",
     "set-sky",
     "set-road-geometry",
+    "set-node-record",
 ]);
 
 function applyEarthSource(document, patch) {
@@ -94,6 +96,8 @@ export function applyPlanSteps(document, steps, runtime = { notify: false }) {
                 document.roadsAuthored = true;
                 result = { ok: true };
             }
+        } else if (step.op === "set-node-record") {
+            result = updateRoadNode(document, step.nodeId, step.patch ?? {}, quiet);
         }
         if (!result?.ok) {
             return {

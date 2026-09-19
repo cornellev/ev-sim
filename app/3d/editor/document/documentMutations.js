@@ -379,6 +379,35 @@ export function setRoadNodeElevation(document, nodeId, y, runtime = {}) {
     return { ok: true, node };
 }
 
+/**
+ * Patch sparse junction-node options. Only `conformToRoads` is writable;
+ * `true` stores the key and `false` omits it.
+ */
+export function updateRoadNode(document, nodeId, patch = {}, runtime = {}) {
+    const node = getDocumentNode(document, nodeId);
+    if (!node) {
+        return { ok: false, error: `Road node "${nodeId}" does not exist.` };
+    }
+    const keys = Object.keys(patch ?? {});
+    if (keys.some((key) => key !== "conformToRoads")) {
+        return { ok: false, error: `Road node "${nodeId}" only accepts the conformToRoads option.` };
+    }
+    if (patch.conformToRoads === true) {
+        node.conformToRoads = true;
+    } else if (patch.conformToRoads === false) {
+        delete node.conformToRoads;
+    } else if (patch.conformToRoads !== undefined) {
+        return { ok: false, error: `Road node "${nodeId}" conformToRoads must be boolean.` };
+    }
+    if (runtime.markAuthored !== false) {
+        markRoadsAuthored(document);
+    }
+    if (runtime.notify !== false) {
+        document.notify();
+    }
+    return { ok: true, node };
+}
+
 export function moveRoadNode(document, nodeId, point, options = {}) {
     if (!canMoveNode(document, nodeId)) {
         return { ok: false, error: "Only free road endpoints can be moved." };

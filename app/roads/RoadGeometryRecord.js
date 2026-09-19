@@ -38,6 +38,15 @@ function issue(path, code, message, objectId = null) {
     return { path, code, message, severity: "error", ...(objectId ? { objectId } : {}) };
 }
 
+/** Sparse metric flag: omitted unless explicitly true. */
+export function nodeConformsToRoads(node) {
+    return node?.conformToRoads === true;
+}
+
+export function conformToRoadsFields(node) {
+    return nodeConformsToRoads(node) ? { conformToRoads: true } : {};
+}
+
 function validateSourceRecord(source, path, issues, objectId) {
     if (source === undefined) return;
     if (!source || typeof source !== "object" || Array.isArray(source)) {
@@ -190,6 +199,9 @@ export function validateRoadDomain(roads, { maxDegree = 4, requireVersion = null
         else if (nodeById.has(id)) issues.push(issue(["roads", "nodes", index, "id"], "road.node.id-duplicate", `Duplicate road node "${id}".`, id));
         else nodeById.set(id, node);
         if (!point(node)) issues.push(issue(["roads", "nodes", index], "road.node.position-invalid", `Road node "${id}" must have finite coordinates.`, id));
+        if (node?.conformToRoads !== undefined && typeof node.conformToRoads !== "boolean") {
+            issues.push(issue(["roads", "nodes", index, "conformToRoads"], "road.node.conform-invalid", `Road node "${id}" conformToRoads must be boolean.`, id));
+        }
         validateSourceRecord(node?.source, ["roads", "nodes", index, "source"], issues, id);
     }
     const edgeIds = new Set();

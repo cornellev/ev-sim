@@ -42,6 +42,24 @@ test("cloneNode round-trips y and defaults missing y to 0", () => {
     assert.equal(withoutY.snapshot().roads.nodes[0].y, 0);
 });
 
+test("cloneNode keeps conformToRoads only when true", () => {
+    const enabled = new EnvironmentDocument({
+        roads: {
+            nodes: [{ id: "a", x: 0, y: 1, z: 0, kind: "intersection", conformToRoads: true }],
+            edges: [],
+        },
+    });
+    assert.equal(enabled.snapshot().roads.nodes[0].conformToRoads, true);
+
+    const disabled = new EnvironmentDocument({
+        roads: {
+            nodes: [{ id: "b", x: 0, y: 1, z: 0, kind: "intersection", conformToRoads: false }],
+            edges: [],
+        },
+    });
+    assert.equal("conformToRoads" in disabled.snapshot().roads.nodes[0], false);
+});
+
 test("omitted y and explicit y:0 share the same roadNetworkHash", () => {
     const omitted = {
         environmentId: "hash-test",

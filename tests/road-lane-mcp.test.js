@@ -104,6 +104,10 @@ test("ED-05 MCP turn rules and validation surface lane feasibility with structur
         assert.equal(denied.ok, true, JSON.stringify(denied));
         assert.deepEqual((await storage.getEnvironment("lanes")).document.roads.turnRules, [{ nodeId: junctionId, fromEdgeId: ab, toEdgeId: bc, allowed: false }]);
 
+        const conform = await call("environment_edit_road", { operation: "set-options", nodeId: junctionId, patch: { conformToRoads: true } });
+        assert.equal(conform.ok, true, JSON.stringify(conform));
+        assert.equal((await storage.getEnvironment("lanes")).document.roads.nodes.find((node) => node.id === junctionId).conformToRoads, true);
+
         const infeasible = await call("environment_edit_road", { operation: "set-turn-rule", nodeId: junctionId, fromEdgeId: ab, toEdgeId: bd, allowed: true });
         assert.equal(infeasible.ok, false);
         assert.ok(infeasible.issues.some((issue) => issue.code === TURN_RULE_ISSUE_CODES.INFEASIBLE), JSON.stringify(infeasible));

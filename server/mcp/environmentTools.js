@@ -268,11 +268,11 @@ export function registerEnvironmentTools(server, storage) {
         "environment_edit_road",
         {
             title: "Edit road",
-            description: "Apply one atomic road command: ED-04 geometry/topology (convert, insert-knot, remove-knot, set-knot, split, detach, connect), road options (set-options), ED-05 lanes (set-lanes, insert-lane, remove-lane, set-lane, set-marking), or an intersection turn rule (set-turn-rule, which uses nodeId/fromEdgeId/toEdgeId instead of edgeId).",
+            description: "Apply one atomic road command: ED-04 geometry/topology (convert, insert-knot, remove-knot, set-knot, split, detach, connect), road or intersection options (set-options; intersections use nodeId), ED-05 lanes (set-lanes, insert-lane, remove-lane, set-lane, set-marking), or an intersection turn rule (set-turn-rule, which uses nodeId/fromEdgeId/toEdgeId instead of edgeId).",
             inputSchema: {
                 environmentId: z.string().min(1),
                 operation: z.enum(ROAD_EDIT_OPERATIONS),
-                edgeId: z.string().min(1).optional().describe("Required for every operation except set-turn-rule"),
+                edgeId: z.string().min(1).optional().describe("Required for every operation except set-turn-rule and intersection set-options"),
                 kind: z.enum(["polyline", "cubic-bezier"]).optional(),
                 at: z.object({ span: z.number().int().nonnegative(), u: z.number().gt(0).lt(1) }).optional(),
                 knotId: z.string().optional(),
@@ -287,7 +287,7 @@ export function registerEnvironmentTools(server, storage) {
                 lane: LaneSchema.partial().optional().describe("insert-lane overrides for the new lane"),
                 boundary: z.enum(["left", "right"]).optional().describe("set-marking road border when no laneId is given"),
                 marking: MarkingSchema.nullable().optional().describe("set-marking value; null clears an interior marking"),
-                nodeId: z.string().optional().describe("set-turn-rule junction node"),
+                nodeId: z.string().optional().describe("set-turn-rule junction node, or set-options intersection id"),
                 fromEdgeId: z.string().optional(),
                 toEdgeId: z.string().optional(),
                 allowed: z.boolean().optional(),
@@ -297,7 +297,11 @@ export function registerEnvironmentTools(server, storage) {
         async ({ environmentId, operation, edgeId, kind, at, knotId, patch, end, targetNodeId, targetEdgeId, targetAt, lanes, laneId, side, lane, boundary, marking, nodeId, fromEdgeId, toEdgeId, allowed, strict }) => {
             try {
                 const { manifest, document, service } = await loadDocument(storage, environmentId);
-                if (operation !== "set-turn-rule" && !edgeId) return fail(`Operation "${operation}" requires edgeId.`);
+                if (operation === "set-options") {
+                    if (!edgeId && !nodeId) return fail('Operation "set-options" requires edgeId or nodeId.');
+                } else if (operation !== "set-turn-rule" && !edgeId) {
+                    return fail(`Operation "${operation}" requires edgeId.`);
+                }
                 const commands = {
                     convert: ["convertRoadGeometry", { edgeId, kind }],
                     "insert-knot": ["insertRoadKnot", { edgeId, at }],
@@ -307,7 +311,7 @@ export function registerEnvironmentTools(server, storage) {
                     detach: ["detachRoadEndpoint", { edgeId, end }],
                     connect: ["connectRoadEndpoint", { edgeId, end, target: targetNodeId ? { nodeId: targetNodeId } : { edgeId: targetEdgeId, at: targetAt } }],
                     // ED-03 option writes ride the same type-validated path as the inspector.
-                    "set-options": ["setObjectOptions", { objectId: edgeId, patch: patch ?? {} }],
+                    "set-options": ["setObjectOptions", { objectId: edgeId ?? nodeId, patch: patch ?? {} }],
                     // ED-05 lane authoring and turn rules.
                     "set-lanes": ["setRoadLanes", { edgeId, lanes }],
                     "insert-lane": ["insertRoadLane", { edgeId, at: laneId !== undefined ? { laneId, side: side ?? "left" } : (at ?? null), lane: lane ?? {} }],

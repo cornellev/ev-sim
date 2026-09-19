@@ -58,7 +58,7 @@ test("ED-03 planOptions is part of the type contract and defaults to a read-only
     assert.deepEqual(plan.steps, []);
     assert.equal(plan.issues[0].code, OPTIONS_ISSUE_CODES.UNSUPPORTED);
     assert.equal(plan.issues[0].objectId, "p");
-    for (const op of ["set-edge-options", "set-building-record", "set-feature-record", "set-earth-source", "set-sky"]) {
+    for (const op of ["set-edge-options", "set-building-record", "set-feature-record", "set-earth-source", "set-sky", "set-node-record"]) {
         assert.ok(PLAN_STEP_OPS.includes(op), op);
     }
     assert.ok(CHANGE_SCALARS.includes("sky"));
@@ -155,8 +155,27 @@ test("ED-03 intersection elevation edits move the junction node vertically and k
     const node = document.getNode("n2");
     assert.deepEqual([node.x, node.y, node.z], [40, 2.5, 40]);
     assert.equal(values(document, "n2").y, 2.5);
+    assert.equal(values(document, "n2").conformToRoads, false);
     assert.equal(bus.undo().ok, true);
     assert.equal(document.getNode("n2").y, 0);
+});
+
+test("intersection conform-to-roads option writes the node key, omits it when off, and undoes", async () => {
+    const { document, service, bus } = await yardService();
+    const before = JSON.stringify(document.getNode("n2"));
+    const enabled = service.run("setObjectOptions", { objectId: "n2", patch: { conformToRoads: true } });
+    assert.equal(enabled.ok, true, JSON.stringify(enabled.issues));
+    assert.equal(document.getNode("n2").conformToRoads, true);
+    assert.equal(values(document, "n2").conformToRoads, true);
+    assert.equal(document.getNode("n2").x, 40);
+    assert.equal(document.getNode("n2").z, 40);
+    assert.equal(bus.undo().ok, true);
+    assert.equal("conformToRoads" in document.getNode("n2"), false);
+    assert.equal(JSON.stringify(document.getNode("n2")), before);
+
+    const disabled = service.run("setObjectOptions", { objectId: "n2", patch: { conformToRoads: false } });
+    assert.equal(disabled.ok, true, JSON.stringify(disabled.issues));
+    assert.equal("conformToRoads" in document.getNode("n2"), false);
 });
 
 test("ED-03 building option edits update height and texture without touching the footprint", async () => {

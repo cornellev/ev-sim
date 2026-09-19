@@ -7,6 +7,8 @@ import {
     createRoadGroundSampler,
     sampleRoadGround,
 } from "../app/simulation/vehicles/roadGroundSampler.js";
+import { EnvironmentDocument } from "../app/3d/editor/document/EnvironmentDocument.js";
+import { createEnvironmentCommandService } from "../app/3d/editor/commands/EnvironmentCommandService.js";
 
 function v1Ramp(endY = 5) {
     return {
@@ -101,4 +103,31 @@ test("createRoadGroundSampler rebuilds only when the road-network hash changes",
     const raised = sampler.sample(5, 0, 0);
     assert.equal(sampler.graphBuilds, 2);
     assert.ok(Math.abs(raised.y - 4) <= 1e-9);
+});
+
+test("conforming junction samples interpolate mouth elevation instead of node y", () => {
+    const document = new EnvironmentDocument({ environmentId: "t-ground", roads: { nodes: [], edges: [] } });
+    const service = createEnvironmentCommandService({ document });
+    const west = service.run("createRoad", { points: [{ x: -20, y: 1, z: 0 }, { x: 0, y: 2, z: 0 }] }).result;
+    service.run("createRoad", { points: [{ x: 0, y: 2, z: 0 }, { x: 20, y: 3, z: 0 }], startNodeId: west.endNode.id });
+    service.run("createRoad", { points: [{ x: 0, y: 2, z: 0 }, { x: 0, y: 2, z: -20 }], startNodeId: west.endNode.id });
+    const junctionId = west.endNode.id;
+
+    const flat = sampleRoadGround({ x: 0, z: 0 }, buildDirectedRoadGraph(document), 0);
+    assert.equal(flat.kind, "intersection");
+    assert.ok(Math.abs(flat.y - 2) <= 1e-6);
+    assert.ok(Math.abs(flat.pitch) <= 1e-9);
+
+    document.getNode(junctionId).conformToRoads = true;
+    const graph = buildDirectedRoadGraph(document);
+    const westIncident = graph.compiledPlan.junctionByNode.get(junctionId).incidents
+        .find((incident) => incident.edgeId === west.edge.id);
+    const probe = {
+        x: westIncident.mouth.x * 0.75,
+        z: westIncident.mouth.z,
+    };
+    const hit = sampleRoadGround(probe, graph, 0);
+    assert.equal(hit.kind, "intersection", JSON.stringify({ probe, hit, mouth: westIncident.mouth }));
+    assert.ok(Math.abs(hit.y - 2) > 0.05, `expected warped y, got ${hit.y}`);
+    assert.ok(Math.abs(hit.y - westIncident.mouth.y) < Math.abs(hit.y - 2));
 });
