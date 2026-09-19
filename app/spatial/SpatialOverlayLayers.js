@@ -1,41 +1,26 @@
 'use client';
 
-import { worldPointFromPose } from "./trajectorySimplify.js";
+import { vehicleGroundFootprint } from "../scenarios/route/geometry.js";
+import { DEFAULT_HEADING_WEDGE_LENGTH, headingWedgeWorldPath, worldPointFromPose } from "./trajectorySimplify.js";
 
-const CURSOR_SIZE = 1.4;
-
-function headingWedge(origin, heading, length = CURSOR_SIZE) {
-    const cos = Math.cos(heading);
-    const sin = Math.sin(heading);
-    const tip = { x: origin.x + cos * length, z: origin.z + sin * length };
-    const left = {
-        x: origin.x + Math.cos(heading + 2.4) * length * 0.55,
-        z: origin.z + Math.sin(heading + 2.4) * length * 0.55,
-    };
-    const right = {
-        x: origin.x + Math.cos(heading - 2.4) * length * 0.55,
-        z: origin.z + Math.sin(heading - 2.4) * length * 0.55,
-    };
-    return `${tip.x},${tip.z} ${left.x},${left.z} ${right.x},${right.z}`;
+function headingWedge(origin, heading, length = DEFAULT_HEADING_WEDGE_LENGTH) {
+    return headingWedgeWorldPath(origin, heading, length);
 }
 
 function boxFootprint(detection, scale = 1) {
-    const center = detection?.center || detection?.position || {};
-    const size = detection?.size || detection?.dimensions || {};
-    const yaw = Number(detection?.yaw ?? detection?.rotation?.y ?? 0);
-    const halfX = Math.max(0.2, Number(size.x || size.length || 1) * scale / 2);
-    const halfZ = Math.max(0.2, Number(size.z || size.width || 1) * scale / 2);
-    const cx = Number(center.x) || 0;
-    const cz = Number(center.z) || 0;
-    const cos = Math.cos(yaw);
-    const sin = Math.sin(yaw);
-    const corners = [
-        [-halfX, -halfZ], [halfX, -halfZ], [halfX, halfZ], [-halfX, halfZ],
-    ].map(([dx, dz]) => ({
-        x: cx + dx * cos - dz * sin,
-        z: cz + dx * sin + dz * cos,
-    }));
-    return corners.map((point) => `${point.x},${point.z}`).join(" ");
+    const center = detection?.box3d?.threeCenter || detection?.center || detection?.position || {};
+    const size = detection?.box3d?.threeSize || detection?.size || detection?.dimensions || {};
+    const yaw = Number(detection?.box3d?.threeRotation?.y ?? detection?.yaw ?? detection?.rotation?.y ?? 0);
+    const length = Math.max(0.4, Number(size.x || size.length || 1) * scale);
+    const width = Math.max(0.4, Number(size.z || size.width || 1) * scale);
+    const corners = vehicleGroundFootprint(
+        {
+            position: { x: Number(center.x) || 0, y: Number(center.y) || 0, z: Number(center.z) || 0 },
+            rotation: { y: yaw },
+        },
+        { x: length, z: width },
+    );
+    return (corners || []).map((point) => `${point.x},${point.z}`).join(" ");
 }
 
 export default function SpatialOverlayLayers({

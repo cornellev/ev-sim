@@ -1,5 +1,4 @@
-import { SensorPublisher } from "../../3d/devices/SensorPublisher.js";
-import { registerMsgDefinition } from "../../client/Client.js";
+import { SensorPublisher } from "./SensorPublisher.js";
 import { compareUtf8 } from "../world/WorldDescription.js";
 import { assertLidarGeometryResource } from "../lidar/LidarGeometry.js";
 import { assertCpuLidarBackendSelection } from "./CpuLidarBackend.js";
@@ -102,6 +101,7 @@ export class HeadlessCpuLidarSensorManager {
     constructor(vehicleSource, options = {}) {
         this.vehicleSource = vehicleSource;
         this.telemetry = options.telemetry ?? null;
+        this.messageCodec = options.messageCodec ?? null;
         this.devices = [];
         this.scene = null;
         this.transformRuntime = null;
@@ -129,8 +129,13 @@ export class HeadlessCpuLidarSensorManager {
         assertLidarGeometryResource(options.lidarGeometry);
         this.seed = String(options.seed ?? "0");
         this.transformRuntime = options.transformRuntime ?? null;
+        const messageCodec = options.messageCodec ?? this.messageCodec;
+        if (typeof messageCodec?.encodeTopicValue !== "function"
+            || typeof messageCodec?.registerMsgDefinition !== "function") {
+            throw new Error("CPU LiDAR requires a headless message-codec adapter.");
+        }
         for (const [type, definition] of Object.entries(options.schemas ?? {})) {
-            registerMsgDefinition(type, definition);
+            messageCodec.registerMsgDefinition(type, definition);
         }
         const { CpuLidarScene } = await import("./CpuLidarScene.js");
         this.scene = new CpuLidarScene(options.lidarGeometry);
@@ -150,6 +155,7 @@ export class HeadlessCpuLidarSensorManager {
                 stepNs: options.stepNs,
                 runtimeData: this.runtimeData,
                 perceptionObservations: options.perceptionObservations,
+                encodeTopicValue: messageCodec.encodeTopicValue,
                 // Capture timing is diagnostic only and must not perturb deterministic state.
                 nowNs: () => 0,
             });

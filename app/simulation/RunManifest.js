@@ -5,7 +5,7 @@ import {
     normalizeRunSensor,
     ORACLE_PRODUCT_TOGGLES,
     validateRunSensorDefinition,
-} from "../3d/devices/SensorTypeRegistry.js";
+} from "./sensors/SensorTypeRegistry.js";
 import {
     catalogMetadata,
     defaultManifestTopics,

@@ -18,6 +18,11 @@ app.prepare().then(async () => {
     const { HeadlessExperimentService } = await import('./headless/HeadlessExperimentService.js');
     const { readSupervisorConfig } = await import('./headless/SupervisorConfig.js');
     const { createHeadlessRouter } = await import('./routes/headlessRouter.js');
+    const {
+        createRequestSecurityMiddleware,
+        resolveHttpSecurityConfig,
+    } = await import('./security/RequestSecurity.js');
+    const httpSecurity = resolveHttpSecurityConfig(process.env);
     const storageService = new StorageService(process.env.CEV_SIM_DATA_DIR, {
         visualAssets: {
             registryPath: process.env.CEV_SIM_VISUAL_SOURCE_REGISTRY || undefined,
@@ -27,7 +32,11 @@ app.prepare().then(async () => {
         // The ED-02 env-var opt-out was retired in ED-03; `environmentSchemaVersion: 3`
         // remains a test-only StorageService option.
     });
-    const logService = new LogService(process.env.CEV_SIM_LOGS_DIR);
+    const logService = new LogService(process.env.CEV_SIM_LOGS_DIR, {
+        maxImportBytes: process.env.CEV_SIM_MAX_LOG_IMPORT_BYTES
+            ? Number(process.env.CEV_SIM_MAX_LOG_IMPORT_BYTES)
+            : undefined,
+    });
     const supervisorConfig = process.env.CEV_SIM_HEADLESS_SUPERVISOR_CONFIG
         ? await readSupervisorConfig(process.env.CEV_SIM_HEADLESS_SUPERVISOR_CONFIG)
         : undefined;
@@ -39,10 +48,12 @@ app.prepare().then(async () => {
     // Parse JSON only for Express-owned routes. A global body parser locks the
     // request stream and breaks Next.js App Router handlers (e.g. POST
     // /api/scripting/compile) that need to read the body themselves.
-    const jsonParser = express.json({ limit: '20mb' });
+    server.use(['/api', '/mcp'], createRequestSecurityMiddleware(httpSecurity));
+    const jsonParser = express.json({ limit: process.env.CEV_SIM_JSON_LIMIT || '8mb' });
+    const headlessJsonParser = express.json({ limit: process.env.CEV_SIM_HEADLESS_JSON_LIMIT || '1mb' });
     server.use('/api/logs', createLogRouter(logService));
     mountStorageApi(server, storageService, { jsonParser });
-    server.use('/api/headless', jsonParser, createHeadlessRouter(headlessExperimentService));
+    server.use('/api/headless', headlessJsonParser, createHeadlessRouter(headlessExperimentService));
     const path = require("node:path");
     // three does not export `./package.json`; resolve the pinned Basis files via
     // the exported `examples/jsm` glob instead.
@@ -62,10 +73,10 @@ app.prepare().then(async () => {
     });
 
     const PORT = process.env.PORT || 3000;
-    const httpServer = server.listen(PORT, (err) => {
+    const httpServer = server.listen(PORT, httpSecurity.bindHost, (err) => {
         if (err) throw err;
-        console.log(`> Ready on http://localhost:${PORT}`);
-        console.log(`> MCP endpoint: http://localhost:${PORT}/mcp`);
+        console.log(`> Ready on http://${httpSecurity.bindHost}:${PORT}`);
+        console.log(`> MCP endpoint: http://${httpSecurity.bindHost}:${PORT}/mcp`);
     });
 
     let shuttingDown = false;

@@ -1,4 +1,4 @@
-import { buildOdometryMessage } from "../3d/devices/SensorMessages.js";
+import { buildOdometryMessage } from "./sensors/SensorMessages.js";
 import {
     buildTruthOdometry,
     captureVehicleSnapshot,

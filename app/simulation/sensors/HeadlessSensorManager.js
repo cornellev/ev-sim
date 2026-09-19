@@ -7,6 +7,8 @@ import {
     STATE_SENSOR_BACKEND_KIND,
     STATE_SENSOR_TYPES,
 } from "./StateSensorBackend.js";
+import { loadHeadlessMessageCodec } from "./HeadlessMessageCodec.js";
+import { loadHeadlessVisualCaptureCodec } from "./HeadlessVisualCaptureCodec.js";
 
 function rigWith(sensors) {
     return { sensors };
@@ -32,6 +34,10 @@ export class HeadlessSensorManager {
             return this.devices;
         }
         const enabled = (sensorRig.sensors ?? []).filter((sensor) => sensor.enabled !== false);
+        const needsMessageCodec = enabled.some((sensor) => ["camera", "lidar3d"].includes(sensor.type));
+        const messageCodec = needsMessageCodec
+            ? (options.messageCodec ?? this.options.messageCodec ?? await loadHeadlessMessageCodec())
+            : (options.messageCodec ?? this.options.messageCodec ?? null);
         const unsupported = enabled.filter((sensor) => (
             !STATE_SENSOR_TYPES.includes(sensor.type) && !["lidar3d", "camera"].includes(sensor.type)
         ));
@@ -75,13 +81,19 @@ export class HeadlessSensorManager {
         const gpuLidar = lidarSelections.length === 0 ? lidarSensors : [];
         await this.lidar.configureFromManifest(rigWith(lidarSelections.length > 0 ? lidarSensors : []), {
             ...options,
+            messageCodec,
             backendSelection: lidarSelections[0],
         });
         if (cameraSensors.length > 0 || gpuLidar.length > 0) {
             const { HeadlessGpuSensorManager } = await import("./HeadlessGpuSensorManager.js");
+            const visualCapture = options.visualCapture
+                ?? this.options.visualCapture
+                ?? await loadHeadlessVisualCaptureCodec();
             this.gpu = new HeadlessGpuSensorManager(this.vehicleSource, this.options);
             await this.gpu.configureFromManifest(rigWith([...cameraSensors, ...gpuLidar]), {
                 ...options,
+                messageCodec,
+                visualCapture,
                 backendSelection: gpuSelections[0],
             });
         }

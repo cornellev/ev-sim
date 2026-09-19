@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { promises as fs } from "node:fs";
+import { constants as fsConstants, promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -234,6 +234,7 @@ export class SharedTensorArena {
 
 export async function validateSharedTensorReference(reference, {
     environmentToken,
+    expectedRegion,
     spec,
     copy = true,
 } = {}) {
@@ -243,16 +244,50 @@ export async function validateSharedTensorReference(reference, {
         || offset < SHARED_TENSOR_HEADER_BYTES || length < 0) {
         throw new Error("Shared tensor reference bounds are invalid.");
     }
-    const file = await fs.open(String(reference.regionName ?? reference.region_name), "r");
+    const referenceRegion = path.resolve(String(reference.regionName ?? reference.region_name ?? ""));
+    const admittedRegion = path.resolve(String(expectedRegion ?? ""));
+    if (!expectedRegion || referenceRegion !== admittedRegion) {
+        throw new Error("Shared tensor region is outside the admitted arena.");
+    }
+    if (path.basename(admittedRegion) !== String(environmentToken)) {
+        throw new Error("Shared tensor environment token does not identify the admitted arena.");
+    }
+    const directory = await fs.lstat(path.dirname(admittedRegion));
+    if (!directory.isDirectory() || directory.isSymbolicLink() || (directory.mode & 0o077) !== 0) {
+        throw new Error("Shared tensor arena directory is not private.");
+    }
+    const beforeOpen = await fs.lstat(admittedRegion);
+    if (!beforeOpen.isFile() || beforeOpen.isSymbolicLink() || (beforeOpen.mode & 0o077) !== 0) {
+        throw new Error("Shared tensor arena region is not a private regular file.");
+    }
+    const owner = typeof process.getuid === "function" ? process.getuid() : null;
+    if (owner !== null && (directory.uid !== owner || beforeOpen.uid !== owner)) {
+        throw new Error("Shared tensor arena ownership is invalid.");
+    }
+    const file = await fs.open(
+        admittedRegion,
+        fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0) | (fsConstants.O_NONBLOCK ?? 0),
+    );
     try {
         const stat = await file.stat();
-        if (!stat.isFile() || offset + length > stat.size) throw new Error("Shared tensor region or bounds are invalid.");
+        if (!stat.isFile() || stat.dev !== beforeOpen.dev || stat.ino !== beforeOpen.ino
+            || offset + length > stat.size) {
+            throw new Error("Shared tensor region or bounds are invalid.");
+        }
         const before = Buffer.alloc(SHARED_TENSOR_HEADER_BYTES);
         const payload = Buffer.alloc(length);
         const after = Buffer.alloc(SHARED_TENSOR_HEADER_BYTES);
-        await file.read(before, 0, before.length, offset - SHARED_TENSOR_HEADER_BYTES);
-        await file.read(payload, 0, payload.length, offset);
-        await file.read(after, 0, after.length, offset - SHARED_TENSOR_HEADER_BYTES);
+        const readExact = async (target, position) => {
+            let cursor = 0;
+            while (cursor < target.length) {
+                const { bytesRead } = await file.read(target, cursor, target.length - cursor, position + cursor);
+                if (bytesRead === 0) throw new Error("Shared tensor region is truncated.");
+                cursor += bytesRead;
+            }
+        };
+        await readExact(before, offset - SHARED_TENSOR_HEADER_BYTES);
+        await readExact(payload, offset);
+        await readExact(after, offset - SHARED_TENSOR_HEADER_BYTES);
         if (!before.equals(after)) throw new Error("Shared tensor header changed while reading.");
         const header = parseSharedTensorHeader(before);
         if (header.environmentTokenHash !== sha256(Buffer.from(String(environmentToken), "utf8")).toString("hex")) {

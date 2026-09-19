@@ -90,6 +90,23 @@ class BakeSampleAccumulatorTest(unittest.TestCase):
         self.assertEqual(len(job.files), 3)
         self.assertTrue(os.path.exists(job.files[0].path))
 
+    def test_rejects_run_and_filename_path_traversal(self):
+        outside = Path(self.tempdir.name).parent / "cev-sim-bake-sentinel.txt"
+        outside.write_text("keep", encoding="utf-8")
+        self.addCleanup(lambda: outside.unlink(missing_ok=True))
+
+        with self.assertRaisesRegex(ValueError, "runId"):
+            self.baking.save_photo(b"bad", "frame.png", {"runId": "..", "frameIndex": 0})
+        with self.assertRaisesRegex(ValueError, "filename"):
+            self.baking.save_photo(b"bad", "../cev-sim-bake-sentinel.txt", {
+                "runId": "safe-run",
+                "frameIndex": 0,
+            })
+        with self.assertRaisesRegex(ValueError, "filename"):
+            self.baking.save_photo(b"bad", str(outside), {"runId": "safe-run", "frameIndex": 0})
+
+        self.assertEqual(outside.read_text(encoding="utf-8"), "keep")
+
     def test_sample_complete_finalizes_partial_accumulator(self):
         metadata = {
             "runId": "run-b",

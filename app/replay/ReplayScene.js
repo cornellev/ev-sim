@@ -136,6 +136,12 @@ export default function ReplayScene({
                     vehiclePose = {
                         position: pose.position,
                         yaw: Number(pose.rotation?.y) || 0,
+                        rotation: {
+                            x: Number(pose.rotation?.x) || 0,
+                            y: Number(pose.rotation?.y) || 0,
+                            z: Number(pose.rotation?.z) || 0,
+                            order: pose.rotation?.order || "XYZ",
+                        },
                     };
                 }
             }

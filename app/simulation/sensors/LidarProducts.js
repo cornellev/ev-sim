@@ -1,4 +1,4 @@
-import { buildPointCloud2, buildSemanticPointCloud2 } from "../../3d/devices/SensorMessages.js";
+import { buildPointCloud2, buildSemanticPointCloud2 } from "./SensorMessages.js";
 
 function gaussian(rng) {
     const left = Math.max(Number.EPSILON, rng.next());

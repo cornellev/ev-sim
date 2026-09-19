@@ -29,6 +29,19 @@ const TYPE_CODES = Object.freeze({
 const CODE_TYPES = Object.fromEntries(Object.entries(TYPE_CODES).map(([type, code]) => [code, type]));
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
+const TYPED_ARRAY_CONSTRUCTORS = new Map([
+    ["Int8Array", Int8Array],
+    ["Uint8Array", Uint8Array],
+    ["Uint8ClampedArray", Uint8ClampedArray],
+    ["Int16Array", Int16Array],
+    ["Uint16Array", Uint16Array],
+    ["Int32Array", Int32Array],
+    ["Uint32Array", Uint32Array],
+    ["Float32Array", Float32Array],
+    ["Float64Array", Float64Array],
+    ...(typeof BigInt64Array === "function" ? [["BigInt64Array", BigInt64Array]] : []),
+    ...(typeof BigUint64Array === "function" ? [["BigUint64Array", BigUint64Array]] : []),
+]);
 
 function normalizeType(type) {
     if (TYPE_CODES[type] !== undefined) return type;
@@ -61,7 +74,7 @@ function jsonParse(value) {
     return JSON.parse(value, (_key, item) => {
         if (item?.__sflogBigInt) return BigInt(item.__sflogBigInt);
         if (item?.__sflogTypedArray && Array.isArray(item.values)) {
-            const ctor = globalThis[item.__sflogTypedArray];
+            const ctor = TYPED_ARRAY_CONSTRUCTORS.get(item.__sflogTypedArray);
             return typeof ctor === "function" ? new ctor(item.values) : item.values;
         }
         if (item?.__sflogTypedArray && Number.isFinite(item.byteLength)) {

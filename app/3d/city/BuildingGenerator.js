@@ -467,11 +467,5 @@ function generateBuildingMeshes(scene, data, footprints, params, rng, presetReco
         data.bakeRunConfig().setBuildings(buildingRecords);
     }
 
-    if (params.debugTileMaterials === true) {
-        // #region agent log
-        fetch('http://127.0.0.1:7888/ingest/39c56e68-cc15-4bd9-8cfa-9d0d2daf2b74',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'8f4404'},body:JSON.stringify({sessionId:'8f4404',runId:data?.bakeRunConfig?.()?.runId ?? 'bake-igvc',hypothesisId:'H14',location:'BuildingGenerator.js:debug-tile-materials',message:'IGVC building debug tile materials assigned at generation time',data:{buildingCount:buildingRecords.length,debugTileMaterialCount,tileSize:params.debugTileSize ?? 2,buildingIds:buildingRecords.slice(0,12).map((record)=>record.buildingId)},timestamp:Date.now()})}).catch(()=>{});
-        // #endregion
-    }
-
     return buildingRecords;
 }

@@ -508,6 +508,7 @@ export class HeadlessSupervisor {
                     bundleBytes: environment.bundle.exactBytes,
                     bundleBytesHash: environment.bundle.verified.bundleBytesHash,
                     episodeSpec: environment.episodeSpec,
+                    sharedRegionName: environment.sharedArena?.regionName ?? null,
                     limits,
                 }, { signal });
                 environment.health = environment.worker.health;
@@ -951,6 +952,7 @@ export class HeadlessSupervisor {
                     bundleBytes: environment.bundle.exactBytes,
                     bundleBytesHash: environment.bundle.verified.bundleBytesHash,
                     episodeSpec: environment.episodeSpec,
+                    sharedRegionName: environment.sharedArena?.regionName ?? null,
                     limits: environment.batch.limits,
                 });
                 environment.health = environment.worker.health;

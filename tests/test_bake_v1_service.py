@@ -247,8 +247,10 @@ def test_atomic_cache_publication_and_corrupted_cache(tmp_path: Path):
         third.close()
 
 
-def test_http_capability_upload_and_result(tmp_path: Path):
+def test_http_capability_upload_and_result(tmp_path: Path, monkeypatch):
     fixture = load_fixture()
+    monkeypatch.setenv("CEV_SIM_BAKE_TOKEN", "test-token")
+    auth = {"Authorization": "Bearer test-token"}
     service = BakeV1Service(root=tmp_path)
     bake_server.set_v1_service(service)
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), bake_server.BakingRequestHandler)
@@ -257,7 +259,7 @@ def test_http_capability_upload_and_result(tmp_path: Path):
     host, port = httpd.server_address[:2]
     try:
         conn = HTTPConnection(host, port, timeout=5)
-        conn.request("GET", "/bake/v1/capability")
+        conn.request("GET", "/bake/v1/capability", headers=auth)
         capability = json.loads(conn.getresponse().read().decode("utf-8"))
         assert capability["provider"]["id"] == "intrinsic-material-model"
         body = json.dumps({"request": fixture["request"]}).encode("utf-8")
@@ -265,7 +267,7 @@ def test_http_capability_upload_and_result(tmp_path: Path):
             "POST",
             "/bake/v1/jobs",
             body=body,
-            headers={"Content-Type": "application/json", "Content-Length": str(len(body))},
+            headers={**auth, "Content-Type": "application/json", "Content-Length": str(len(body))},
         )
         created = json.loads(conn.getresponse().read().decode("utf-8"))
         beauty, validity = beauty_validity(fixture)
@@ -276,6 +278,7 @@ def test_http_capability_upload_and_result(tmp_path: Path):
             f"/bake/v1/jobs/{created['jobId']}/inputs/{key}",
             body=beauty,
             headers={
+                **auth,
                 "Content-Type": "application/octet-stream",
                 "Content-Length": str(len(beauty)),
                 "X-Cev-Digest": f"sha256:{sha256_bytes(beauty)}",
@@ -291,6 +294,7 @@ def test_http_capability_upload_and_result(tmp_path: Path):
             f"/bake/v1/jobs/{created['jobId']}/inputs/{key}",
             body=validity,
             headers={
+                **auth,
                 "Content-Type": "application/octet-stream",
                 "Content-Length": str(len(validity)),
                 "X-Cev-Digest": f"sha256:{sha256_bytes(validity)}",
@@ -305,23 +309,23 @@ def test_http_capability_upload_and_result(tmp_path: Path):
             "POST",
             f"/bake/v1/jobs/{created['jobId']}/submit",
             body=submit,
-            headers={"Content-Type": "application/json", "Content-Length": str(len(submit))},
+            headers={**auth, "Content-Type": "application/json", "Content-Length": str(len(submit))},
         )
         assert conn.getresponse().status == 200
         deadline = time.time() + 2
         payload = {}
         while time.time() < deadline:
-            conn.request("GET", f"/bake/v1/jobs/{created['jobId']}/status")
+            conn.request("GET", f"/bake/v1/jobs/{created['jobId']}/status", headers=auth)
             payload = json.loads(conn.getresponse().read().decode("utf-8"))
             if payload.get("state") == "completed":
                 break
             time.sleep(0.01)
         assert payload.get("state") == "completed", payload
-        conn.request("GET", f"/bake/v1/jobs/{created['jobId']}/result")
+        conn.request("GET", f"/bake/v1/jobs/{created['jobId']}/result", headers=auth)
         result = json.loads(conn.getresponse().read().decode("utf-8"))
         assert result["modelOutputSet"]["requestHash"] == fixture["requestHash"]
         digest = result["modelOutputSet"]["samples"][0]["outputs"][0]["sha256"]
-        conn.request("GET", f"/bake/v1/jobs/{created['jobId']}/buffers/{digest}")
+        conn.request("GET", f"/bake/v1/jobs/{created['jobId']}/buffers/{digest}", headers=auth)
         response = conn.getresponse()
         body = response.read()
         assert sha256_bytes(body) == digest

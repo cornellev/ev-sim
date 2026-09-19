@@ -60,18 +60,18 @@
     "express": "^5.2.1",
     "gltf-validator": "2.0.0-dev.3.10",
     "leaflet": "^1.9.4",
-    "next": "^16.1.6",
+    "next": "^16.3.5",
     "noisejs": "^2.1.0",
     "postprocessing": "^6.39.1",
     "radix-ui": "^1.6.7",
     "react": "19.2.3",
     "react-dom": "19.2.3",
-    "rosnodejs": "^0.1.1",
+    "sharp": "^0.35.4",
     "three": "^0.182.0",
     "three-mesh-bvh": "^0.9.8",
     "uplot": "^1.6.32",
     "vmath": "^1.4.8",
-    "ws": "^8.19.0",
+    "ws": "^8.21.3",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -80,7 +80,7 @@
     "@tailwindcss/postcss": "^4",
     "babel-plugin-react-compiler": "1.0.0",
     "eslint": "^9",
-    "eslint-config-next": "16.1.1",
+    "eslint-config-next": "^16.3.5",
     "tailwindcss": "^4"
   },
   "optionalDependencies": {

@@ -76,7 +76,7 @@ ED PR changes a contract, hash, gate, or milestone status.
   proxies are set up; LiDAR authoring supports generated meshes and editable
   primitives.
 - Default implementation/review reasoning level: **Extra High**.
-- Last updated: **2026-09-19 — intersection conform-to-roads**.
+- Last updated: **2026-09-19 — security boundaries and CommandBus hydration**.
 
 ## Normative contracts
 
@@ -1001,6 +1001,14 @@ Record in the ledger: focused-suite pass counts, `npm run lint` result,
   `6ca2ece3d5266822a2ceabba72e5f7dd9514789e76757e86f6aedd2730ab9a6a`.
 
 ## Decision log
+
+### 2026-09-19 — Runtime hydration enters through CommandBus
+
+Map-mode runtime hydration is now an undoable `CommandBus` command, preserving
+the rule that editor chrome cannot call document mutations directly. HTTP and
+asset-import maintenance also adds bounded parsers, origin and host admission,
+and fail-closed upload staging. Schema v4 remains the sole writer, legacy
+geometry domains remain canonical, and `worldHash` is unchanged.
 
 ### 2026-09-19 — Intersection conform-to-roads
 

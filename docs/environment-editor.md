@@ -98,6 +98,15 @@ The environment picker in the editor top bar inspects, creates, duplicates, rena
 
 Validated visual-asset bytes live in the VIS-04 CAS under `server/data/visual-assets/`. Browser access is `VisualAssetClient` at `/api/storage/visual-assets` and `VisualLayerClient` at `/api/storage/visual-layers`. Public asset identities are source-bound use hashes, not filesystem paths or digest-only content URLs. Every content/closure/materialization path requires current version-2 validation; old or missing evidence is refreshed from immutable bytes without changing asset/use identity. Embedded and digest-backed glTF images, extension use, graph bounds, and decoded memory are checked before loaders. Published assets cannot be deleted; only abandoned staging and expired reservations are cleaned. Uploads fail closed unless an operator configures owned-source grants in `visual-source-registry.json` (or `CEV_SIM_VISUAL_SOURCE_REGISTRY`). Generated bake outputs additionally require `CEV_SIM_BAKE_OUTPUT_SOURCE_IDS`. Spark and splat construction are initialized only when an explicitly started legacy bake selects the splat path. VIS-12b can resolve an enabled `pbr-mesh@1` run from these local immutable records for export and inspection; VIS-13a can transfer those bytes as a verified `cev-sim.run-package@1` archive, and VIS-13b can admit it to a same-host Unix supervisor. VIS-14 browser simulation materializes the exact resolved records into a separate run-owned appearance scene and rechecks measured-capture rights on every lease. It never reuses the live editor scene or preview metadata as truth. Headless PBR rendering and automatic published-asset GC remain later work.
 
+The local bake HTTP service binds to `127.0.0.1` and requires
+`CEV_SIM_BAKE_TOKEN`. Direct browser bake requests use the same value from the
+current tab's session storage; a local development session may bootstrap it
+with `NEXT_PUBLIC_CEV_SIM_BAKE_TOKEN`. Non-loopback binding additionally
+requires `CEV_SIM_BAKE_ALLOW_REMOTE=1`, an explicit
+`CEV_SIM_BAKE_ALLOWED_HOSTS` list, and an allowed browser origin. Bake host,
+sky-image, and vehicle-model URLs are rejected unless they are same-origin,
+loopback bake origins, or explicitly admitted by their public origin lists.
+
 ED-06 adds an authoring catalog under `server/data/editor-assets/` without
 changing the VIS-04 CAS. `catalog.json` is
 `cev-sim.editor-asset-catalog@1`; immutable

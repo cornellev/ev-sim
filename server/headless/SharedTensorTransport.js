@@ -31,6 +31,7 @@ export async function materializeTensorMap(tensorMap, arena) {
         if (!reference) continue;
         const bytes = await validateSharedTensorReference(reference, {
             environmentToken: arena.environmentToken,
+            expectedRegion: arena.regionName,
             spec: entry.tensor.spec,
         });
         entry.tensor.payload = { packedData: bytes };

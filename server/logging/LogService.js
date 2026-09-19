@@ -33,7 +33,8 @@ const INDEX_MAGIC = Buffer.from("INDX");
 const END_MAGIC = Buffer.from("SEND");
 const CHUNK_HEADER_BYTES = 36;
 const MAX_CHUNK_BYTES = 64 * 1024 * 1024;
-const MAX_IMPORT_BYTES = 2 * 1024 * 1024 * 1024;
+const DEFAULT_MAX_IMPORT_BYTES = 256 * 1024 * 1024;
+const DEFAULT_MAX_CONCURRENT_IMPORTS = 2;
 const INFLATED_CHUNK_CACHE_BYTES = 256 * 1024 * 1024;
 
 const INDEX_DECODE_OPTIONS = Object.freeze({
@@ -42,6 +43,19 @@ const INDEX_DECODE_OPTIONS = Object.freeze({
     includeEvents: false,
     includeAttachments: false,
 });
+
+function importError(statusCode, message) {
+    return Object.assign(new Error(message), { statusCode });
+}
+
+function inflateChunk(compressed, expectedLength) {
+    if (!Number.isSafeInteger(expectedLength) || expectedLength < 0 || expectedLength > MAX_CHUNK_BYTES) {
+        throw new Error("SFLog chunk exceeds the 64 MiB safety limit.");
+    }
+    const raw = gunzipSync(compressed, { maxOutputLength: Math.max(1, expectedLength) });
+    if (raw.length !== expectedLength) throw new Error("SFLog chunk length does not match its header.");
+    return raw;
+}
 
 function pathDecodeOptions(signalPath) {
     return {
@@ -205,8 +219,15 @@ async function withFileBytes(logsDir, metadata, files) {
 }
 
 export class LogService {
-    constructor(logsDir = DEFAULT_LOGS_DIR) {
+    constructor(logsDir = DEFAULT_LOGS_DIR, options = {}) {
         this.logsDir = logsDir;
+        this.maxImportBytes = Number.isSafeInteger(Number(options.maxImportBytes))
+            ? Math.max(1, Number(options.maxImportBytes))
+            : DEFAULT_MAX_IMPORT_BYTES;
+        this.maxConcurrentImports = Number.isSafeInteger(Number(options.maxConcurrentImports))
+            ? Math.max(1, Number(options.maxConcurrentImports))
+            : DEFAULT_MAX_CONCURRENT_IMPORTS;
+        this._activeImports = 0;
         this.catalogPath = path.join(logsDir, LOG_CATALOG_FILENAME);
         this.active = new Map();
         this.indexCache = new Map();
@@ -222,6 +243,18 @@ export class LogService {
         const run = previous.catch(() => {}).then(fn);
         this._logOps.set(id, run);
         return run;
+    }
+
+    async _withImportSlot(fn) {
+        if (this._activeImports >= this.maxConcurrentImports) {
+            throw importError(429, "Too many log imports are already running.");
+        }
+        this._activeImports += 1;
+        try {
+            return await fn();
+        } finally {
+            this._activeImports -= 1;
+        }
     }
 
     _cachedInflatedChunk(id, chunkIndex) {
@@ -809,8 +842,7 @@ export class LogService {
 
     async _readChunkFromHandle(handle, chunk, { verifyCrc = true } = {}) {
         const compressed = await readAt(handle, chunk.compressedLength, chunk.offset + CHUNK_HEADER_BYTES);
-        const raw = gunzipSync(compressed);
-        if (raw.length !== chunk.uncompressedLength) throw new Error("SFLog chunk length does not match its header.");
+        const raw = inflateChunk(compressed, chunk.uncompressedLength);
         if (verifyCrc && crc32(raw) !== chunk.crc) throw new Error("SFLog chunk failed CRC validation.");
         return raw;
     }
@@ -825,32 +857,50 @@ export class LogService {
     }
 
     async importLog(bytes, { name } = {}) {
-        await fs.mkdir(this.logsDir, { recursive: true });
-        const payload = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []);
-        if (payload.byteLength > MAX_IMPORT_BYTES) throw new Error("Imported log exceeds the 2 GiB limit.");
-        const tempPath = path.join(this.logsDir, `.import-${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`);
-        await fs.writeFile(tempPath, payload);
-        return this._catalogImportedFile(tempPath, payload.byteLength, name);
+        return this._withImportSlot(async () => {
+            await fs.mkdir(this.logsDir, { recursive: true });
+            const payload = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []);
+            if (payload.byteLength > this.maxImportBytes) {
+                throw importError(413, `Imported log exceeds the ${this.maxImportBytes}-byte limit.`);
+            }
+            const tempPath = path.join(this.logsDir, `.import-${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`);
+            await fs.writeFile(tempPath, payload);
+            return this._catalogImportedFile(tempPath, payload.byteLength, name);
+        });
     }
 
-    async importStream(readable, { name } = {}) {
-        await fs.mkdir(this.logsDir, { recursive: true });
-        const tempPath = path.join(this.logsDir, `.import-${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`);
-        const handle = await fs.open(tempPath, "wx");
-        let size = 0;
-        try {
-            for await (const chunk of readable) {
-                size += chunk.byteLength;
-                if (size > MAX_IMPORT_BYTES) throw new Error("Imported log exceeds the 2 GiB limit.");
-                await handle.write(chunk);
+    async importStream(readable, { name, contentLength } = {}) {
+        return this._withImportSlot(async () => {
+            const declared = contentLength == null ? null : Number(contentLength);
+            if (declared != null && (!Number.isSafeInteger(declared) || declared < 0)) {
+                throw importError(400, "Log import Content-Length is invalid.");
             }
-        } catch (error) {
+            if (declared != null && declared > this.maxImportBytes) {
+                throw importError(413, `Imported log exceeds the ${this.maxImportBytes}-byte limit.`);
+            }
+            await fs.mkdir(this.logsDir, { recursive: true });
+            const tempPath = path.join(this.logsDir, `.import-${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`);
+            const handle = await fs.open(tempPath, "wx");
+            let size = 0;
+            try {
+                for await (const chunk of readable) {
+                    size += chunk.byteLength;
+                    if (size > this.maxImportBytes) {
+                        throw importError(413, `Imported log exceeds the ${this.maxImportBytes}-byte limit.`);
+                    }
+                    await handle.write(chunk);
+                }
+                if (declared != null && size !== declared) {
+                    throw importError(400, `Log import ended after ${size} bytes; expected ${declared}.`);
+                }
+            } catch (error) {
+                await handle.close();
+                await fs.rm(tempPath, { force: true });
+                throw error;
+            }
             await handle.close();
-            await fs.rm(tempPath, { force: true });
-            throw error;
-        }
-        await handle.close();
-        return this._catalogImportedFile(tempPath, size, name);
+            return this._catalogImportedFile(tempPath, size, name);
+        });
     }
 
     async _catalogImportedFile(tempPath, size, name) {
@@ -981,8 +1031,7 @@ export class LogService {
                 let decoded;
                 try {
                     const compressed = await readAt(handle, compressedLength, offset + CHUNK_HEADER_BYTES);
-                    const raw = gunzipSync(compressed);
-                    if (raw.length !== uncompressedLength) throw new Error("SFLog chunk length does not match its header.");
+                    const raw = inflateChunk(compressed, uncompressedLength);
                     if (crc32(raw) !== expectedCrc) throw new Error("SFLog chunk failed CRC validation.");
                     decoded = decodeRecordStream(raw, schemas, INDEX_DECODE_OPTIONS);
                     if (cacheId) this._rememberInflatedChunk(cacheId, chunks.length, raw);

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createEnvironmentCommandService } from "../app/3d/editor/commands/EnvironmentCommandService.js";
-import { applyRoadImport } from "../app/3d/editor/commands/importCommands.js";
+import { applyRoadImport, hydrateRuntimeDocument } from "../app/3d/editor/commands/importCommands.js";
 import { splitRoad } from "../app/3d/editor/commands/roadCommands.js";
 import { EnvironmentDocument } from "../app/3d/editor/document/EnvironmentDocument.js";
 
@@ -49,6 +49,40 @@ test("ED-08 Add upgrades legacy geometry, namespaces IDs, and commits one exact 
     assert.equal(document.roads.edges.length, 2);
     assert.match(document.roads.edges[1].id, /^import:fixture:/);
     assert.equal(document.roads.edges[1].startNodeId === "old-b", false, "Add never auto-connects by proximity");
+    assert.equal(service.bus.history.length, 1);
+    assert.equal(service.bus.undo().ok, true);
+    assert.deepEqual(document.snapshot(), before);
+});
+
+test("map runtime hydration commits one undoable CommandBus change", () => {
+    const document = new EnvironmentDocument();
+    const service = createEnvironmentCommandService({ document });
+    const before = document.snapshot();
+    const data = {
+        bakeRunConfig: () => ({ buildings: [] }),
+        environment: () => ({
+            objects: () => ({
+                entities: new Map([["runtime-cone", {
+                    layer: "props",
+                    sourceId: "runtime-cone",
+                    fusionObject: {
+                        _uuid: "runtime-cone",
+                        constructor: { name: "Barrel" },
+                        position: { x: 2, z: 3 },
+                        dir: 0,
+                        tags: ["barrel"],
+                    },
+                    tags: ["barrel"],
+                }]]),
+            }),
+        }),
+        city: () => ({ getRoads: () => [], getIntersections: () => [] }),
+    };
+
+    const result = service.bus.execute(hydrateRuntimeDocument({ data }));
+    assert.equal(result.ok, true, JSON.stringify(result.issues));
+    assert.equal(result.result.changed, true);
+    assert.equal(document.features.length, 1);
     assert.equal(service.bus.history.length, 1);
     assert.equal(service.bus.undo().ok, true);
     assert.deepEqual(document.snapshot(), before);

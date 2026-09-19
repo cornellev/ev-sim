@@ -1,5 +1,6 @@
 import { ensureRoadGeometryV2 } from "./roadCommands.js";
 import { COMMAND_ISSUE_CODES, commandFailure, commandIssue, commandSuccess } from "./commandIssues.js";
+import { hydrateDocumentFromRuntime } from "../document/documentRuntimeHydration.js";
 
 function clone(value) {
     return value === undefined ? undefined : structuredClone(value);
@@ -49,6 +50,18 @@ function namespaceDraftRoads(draft, existingNodeIds, existingEdgeIds) {
 
 function invalidIssues(draft) {
     return (draft?.issues ?? []).filter((entry) => entry?.severity === "error");
+}
+
+/** Import legacy runtime objects as one undoable editor transaction. */
+export function hydrateRuntimeDocument({ data, label = "Import runtime content" } = {}) {
+    return {
+        id: "environment.hydrate-runtime",
+        label,
+        run(ctx) {
+            const changed = hydrateDocumentFromRuntime(data, ctx.document, { notify: false });
+            return commandSuccess({ changed });
+        },
+    };
 }
 
 /**

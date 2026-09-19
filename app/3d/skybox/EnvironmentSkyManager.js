@@ -42,6 +42,7 @@ import {
     SKY_MODES,
     skyConfigToManifest,
 } from "./EnvironmentSkyConfig.js";
+import { assertAllowedBrowserResourceUrl } from "../../security/BrowserResourcePolicy.js";
 
 const OBSERVER_ECEF = new THREE.Vector3(3954947, 3354895, 3700264);
 const SKY_OBJECT_FLAGS = Object.freeze({
@@ -309,7 +310,10 @@ export class EnvironmentSkyManager {
         }
 
         try {
-            const texture = await this.loadEnvironmentTexture(source);
+            const admittedSource = assertAllowedBrowserResourceUrl(source, {
+                allowBlob: Boolean(config.image?.localPreviewUrl && source === config.image.localPreviewUrl),
+            });
+            const texture = await this.loadEnvironmentTexture(admittedSource);
             if (version !== this.applyVersion || this.activeMode !== SKY_MODES.IMAGE) {
                 texture.dispose();
                 return;

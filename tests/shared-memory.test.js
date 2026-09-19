@@ -22,26 +22,27 @@ test("shared tensor arena round-trips data and rejects stale generations, specs,
         });
         const token = region.split(/[\\/]/).at(-1);
         assert.deepEqual(
-            [...await validateSharedTensorReference(first, { environmentToken: token, spec })],
+            [...await validateSharedTensorReference(first, { environmentToken: token, expectedRegion: region, spec })],
             [1, 2, 3, 4],
         );
         await assert.rejects(
-            () => validateSharedTensorReference(first, { environmentToken: "wrong", spec }),
+            () => validateSharedTensorReference(first, { environmentToken: "wrong", expectedRegion: region, spec }),
             /environment token/,
         );
         await assert.rejects(
             () => validateSharedTensorReference(first, {
                 environmentToken: token,
+                expectedRegion: region,
                 spec: { ...spec, shape: [2, 2] },
             }),
             /specification hash/,
         );
         await assert.rejects(
-            () => validateSharedTensorReference({ ...first, offsetBytes: "1" }, { environmentToken: token, spec }),
+            () => validateSharedTensorReference({ ...first, offsetBytes: "1" }, { environmentToken: token, expectedRegion: region, spec }),
             /bounds/,
         );
         await assert.rejects(
-            () => validateSharedTensorReference({ ...first, sequence: "2" }, { environmentToken: token, spec }),
+            () => validateSharedTensorReference({ ...first, sequence: "2" }, { environmentToken: token, expectedRegion: region, spec }),
             /generation, sequence, or length/,
         );
         const latest = await arena.publishTensor(Uint8Array.of(5, 6, 7, 8), spec, {
@@ -49,7 +50,7 @@ test("shared tensor arena round-trips data and rejects stale generations, specs,
             sequence: 4,
         });
         await assert.rejects(
-            () => validateSharedTensorReference(first, { environmentToken: token, spec }),
+            () => validateSharedTensorReference(first, { environmentToken: token, expectedRegion: region, spec }),
             /generation, sequence, or length/,
         );
         const file = await fs.open(region, "r+");
@@ -59,12 +60,12 @@ test("shared tensor arena round-trips data and rejects stale generations, specs,
             await file.close();
         }
         await assert.rejects(
-            () => validateSharedTensorReference(latest, { environmentToken: token, spec }),
+            () => validateSharedTensorReference(latest, { environmentToken: token, expectedRegion: region, spec }),
             /magic/,
         );
         await fs.truncate(region, 128);
         await assert.rejects(
-            () => validateSharedTensorReference(latest, { environmentToken: token, spec }),
+            () => validateSharedTensorReference(latest, { environmentToken: token, expectedRegion: region, spec }),
             /region or bounds/,
         );
     } finally {
@@ -105,6 +106,36 @@ test("mixed tensor maps externalize only payloads of at least 64 KiB", async () 
     }
 });
 
+test("shared tensor readers accept only the supervisor-admitted private arena file", async () => {
+    const arena = await SharedTensorArena.create({ environmentToken: "path-jail", sizeBytes: 12 * 1024 });
+    const spec = { dtype: 4, shape: [4], byteOrder: 1 };
+    try {
+        const reference = await arena.publishTensor(Uint8Array.of(1, 2, 3, 4), spec, {
+            generation: 1,
+            sequence: 1,
+        });
+        await assert.rejects(
+            () => validateSharedTensorReference(
+                { ...reference, regionName: `${arena.regionName}.other` },
+                { environmentToken: arena.environmentToken, expectedRegion: arena.regionName, spec },
+            ),
+            /outside the admitted arena/,
+        );
+
+        const link = `${arena.regionName}.link`;
+        await fs.symlink(arena.regionName, link);
+        await assert.rejects(
+            () => validateSharedTensorReference(
+                { ...reference, regionName: link },
+                { environmentToken: `${arena.environmentToken}.link`, expectedRegion: link, spec },
+            ),
+            /not a private regular file/,
+        );
+    } finally {
+        await arena.close();
+    }
+});
+
 test("retained queue handles survive response generations and concurrent writes use distinct slots", async () => {
     const arena = await SharedTensorArena.create({ environmentToken: "retained", sizeBytes: 256 * 1024 });
     const spec = { dtype: 4, shape: [8192], byteOrder: 1 };
@@ -127,14 +158,26 @@ test("retained queue handles survive response generations and concurrent writes 
             });
         }
         const token = arena.regionName.split(/[\\/]/).at(-1);
-        const value = await validateSharedTensorReference(retained, { environmentToken: token, spec });
+        const value = await validateSharedTensorReference(retained, {
+            environmentToken: token,
+            expectedRegion: arena.regionName,
+            spec,
+        });
         assert.equal(value[0], 9);
         assert.equal(await arena.retain(retained), true);
         assert.equal(await arena.release(retained), true);
-        assert.equal((await validateSharedTensorReference(retained, { environmentToken: token, spec }))[0], 9);
+        assert.equal((await validateSharedTensorReference(retained, {
+            environmentToken: token,
+            expectedRegion: arena.regionName,
+            spec,
+        }))[0], 9);
         assert.equal(await arena.release(retained), true);
         await assert.rejects(
-            () => validateSharedTensorReference(retained, { environmentToken: token, spec }),
+            () => validateSharedTensorReference(retained, {
+                environmentToken: token,
+                expectedRegion: arena.regionName,
+                spec,
+            }),
             /magic/,
         );
     } finally {

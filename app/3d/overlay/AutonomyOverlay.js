@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { SCENARIO_DIAGNOSTIC_LAYER } from "../../scenarios/ScenarioDiagnostics.js";
 import {
+    applyControlsPathRibbonPose,
     createControlsPathRibbonGeometry,
     updateControlsPathRibbon,
 } from "../../autonomy/ControlsPathArc.js";
@@ -299,6 +300,7 @@ export class AutonomyOverlay {
             segments: CONTROL_RIBBON_SEGMENTS,
             pathWidth: 0.28,
         });
+        applyControlsPathRibbonPose(mesh, pose);
     }
 
     _ensureBadge(index, text, color) {

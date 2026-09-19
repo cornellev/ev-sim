@@ -1,3 +1,5 @@
+import { bakeAuthorizationHeaders, bakeServerUrl } from "./BakeAccess.js";
+
 function linearByteToSrgbByte(value) {
     const linear = Math.max(0, Math.min(1, value / 255));
     const srgb = linear <= 0.0031308
@@ -104,7 +106,7 @@ export function rgbaToPngBlob(rgba, width, height, options = {}) {
  */
 export async function checkBakeServerHealth(server) {
     try {
-        const response = await fetch(`${server.host}/healthz`);
+        const response = await fetch(bakeServerUrl(server, "/healthz"), { redirect: "error" });
         if (!response.ok) return false;
         const payload = await response.json();
         return payload?.success === true;
@@ -129,8 +131,10 @@ export async function uploadBakeFrame(server, blob, metadata = {}) {
         formData.append(key, String(value));
     }
 
-    const response = await fetch(`${server.host}${server.endpoint}`, {
+    const response = await fetch(bakeServerUrl(server, server.endpoint), {
         method: "POST",
+        headers: bakeAuthorizationHeaders(server),
+        redirect: "error",
         body: formData,
     });
 
@@ -157,8 +161,10 @@ export async function uploadBakeBinary(server, buffer, metadata = {}) {
         formData.append(key, String(value));
     }
 
-    const response = await fetch(`${server.host}${server.endpoint}`, {
+    const response = await fetch(bakeServerUrl(server, server.endpoint), {
         method: "POST",
+        headers: bakeAuthorizationHeaders(server),
+        redirect: "error",
         body: formData,
     });
 
@@ -172,11 +178,12 @@ export async function uploadBakeBinary(server, buffer, metadata = {}) {
  */
 export async function uploadRunManifest(server, manifest) {
     try {
-        const response = await fetch(`${server.host}/bake/manifest`, {
+        const response = await fetch(bakeServerUrl(server, "/bake/manifest"), {
             method: "POST",
-            headers: {
+            headers: bakeAuthorizationHeaders(server, {
                 "Content-Type": "application/json",
-            },
+            }),
+            redirect: "error",
             body: JSON.stringify(manifest),
         });
         return response.ok;
@@ -187,7 +194,11 @@ export async function uploadRunManifest(server, manifest) {
 
 export async function clearBakeServer(server) {
     try {
-        const response = await fetch(`${server.host}/clear`);
+        const response = await fetch(bakeServerUrl(server, "/clear"), {
+            method: "POST",
+            headers: bakeAuthorizationHeaders(server),
+            redirect: "error",
+        });
         return response.ok;
     } catch {
         return false;
@@ -202,11 +213,12 @@ export async function clearBakeServer(server) {
  */
 export async function uploadSampleComplete(server, metadata = {}) {
     try {
-        const response = await fetch(`${server.host}/bake/complete`, {
+        const response = await fetch(bakeServerUrl(server, "/bake/complete"), {
             method: "POST",
-            headers: {
+            headers: bakeAuthorizationHeaders(server, {
                 "Content-Type": "application/json",
-            },
+            }),
+            redirect: "error",
             body: JSON.stringify(metadata),
         });
         return response.ok;
@@ -229,7 +241,10 @@ export async function fetchBakeResult(server, params) {
     });
 
     try {
-        const response = await fetch(`${server.host}${endpoint}?${query.toString()}`);
+        const response = await fetch(bakeServerUrl(server, `${endpoint}?${query.toString()}`), {
+            headers: bakeAuthorizationHeaders(server),
+            redirect: "error",
+        });
         if (response.status === 202) {
             return { status: "pending" };
         }

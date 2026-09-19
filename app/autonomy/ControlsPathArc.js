@@ -1,38 +1,39 @@
 /**
  * Bicycle-model path ribbon geometry shared by live controls overlays and replay.
  * Steering uses Three.js plant convention (positive right).
+ * Ribbon vertices are vehicle-local (+X forward, +Y up, +Z left); callers apply
+ * {@link applyControlsPathRibbonPose} so elevation, yaw, and pitch follow the plant.
  */
 
 import * as THREE from "three";
+import { vehicleForwardTangent } from "../scenarios/route/geometry.js";
 
 const UP = new THREE.Vector3(0, 1, 0);
+const DEFAULT_PATH_Y = 0.05;
+
+function finiteOr(value, fallback) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+}
 
 /**
- * Fill a ribbon BufferGeometry (2 verts per segment) along an Ackermann arc.
+ * Fill a ribbon BufferGeometry (2 verts per segment) along an Ackermann arc
+ * in vehicle-local coordinates. Origin is (0, pathY, 0), heading is +X.
  * @param {THREE.BufferGeometry} geometry
- * @param {{ position?: {x,y,z}, yaw?: number, heading?: THREE.Vector3 }} pose
+ * @param {{ position?: {x,y,z}, yaw?: number, rotation?: {x,y,z,order} }} [_pose] Plant pose; mesh placement uses {@link applyControlsPathRibbonPose}.
  * @param {number} steeringAngleRad Three.js plant steering
  * @param {{ wheelbase?: number, lookahead?: number, segments?: number, pathWidth?: number, pathY?: number }} options
  */
-export function updateControlsPathRibbon(geometry, pose, steeringAngleRad, options = {}) {
-    const wheelbase = Math.max(0.1, Number(options.wheelbase) || 1.5);
-    const lookahead = Number(options.lookahead) || 8;
-    const segments = Math.max(2, Math.floor(Number(options.segments) || 24));
-    const pathWidth = Number(options.pathWidth) || 0.35;
-    const pathY = Number(options.pathY) || 0.05;
-    const curvature = Math.tan(Number(steeringAngleRad) || 0) / wheelbase;
+export function updateControlsPathRibbon(geometry, _pose, steeringAngleRad, options = {}) {
+    const wheelbase = Math.max(0.1, finiteOr(options.wheelbase, 1.5));
+    const lookahead = finiteOr(options.lookahead, 8);
+    const segments = Math.max(2, Math.floor(finiteOr(options.segments, 24)));
+    const pathWidth = finiteOr(options.pathWidth, 0.35);
+    const pathY = finiteOr(options.pathY, DEFAULT_PATH_Y);
+    const curvature = Math.tan(finiteOr(steeringAngleRad, 0)) / wheelbase;
 
-    const pos = new THREE.Vector3(
-        Number(pose?.position?.x) || 0,
-        pathY,
-        Number(pose?.position?.z) || 0,
-    );
-    const heading = pose?.heading
-        ? pose.heading.clone()
-        : new THREE.Vector3(Math.cos(Number(pose?.yaw) || 0), 0, -Math.sin(Number(pose?.yaw) || 0));
-    heading.y = 0;
-    if (heading.lengthSq() < 1e-8) heading.set(1, 0, 0);
-    heading.normalize();
+    const pos = new THREE.Vector3(0, pathY, 0);
+    const heading = new THREE.Vector3(1, 0, 0);
 
     const ds = lookahead / segments;
     const positionAttr = geometry.getAttribute("position");
@@ -58,6 +59,25 @@ export function updateControlsPathRibbon(geometry, pose, steeringAngleRad, optio
     geometry.computeBoundingSphere();
 }
 
+/** Place a local-space control ribbon on the plant pose (position + Euler XYZ). */
+export function applyControlsPathRibbonPose(object3d, pose) {
+    if (!object3d) return object3d;
+    const position = pose?.position || {};
+    object3d.position.set(
+        Number(position.x) || 0,
+        Number(position.y) || 0,
+        Number(position.z) || 0,
+    );
+    const rotation = pose?.rotation || {};
+    object3d.rotation.set(
+        Number(rotation.x) || 0,
+        Number(rotation.y ?? pose?.yaw) || 0,
+        Number(rotation.z) || 0,
+        rotation.order || "XYZ",
+    );
+    return object3d;
+}
+
 export function createControlsPathRibbonGeometry(segments = 24) {
     const geometry = new THREE.BufferGeometry();
     const count = (segments + 1) * 2;
@@ -71,13 +91,15 @@ export function createControlsPathRibbonGeometry(segments = 24) {
     return geometry;
 }
 
-/** Compact arc polyline points for Analysis/Replay 2D summaries. */
+/** Compact arc polyline points for Analysis/Replay 2D summaries (world XZ). */
 export function sampleControlsArcPoints(pose, steeringAngleRad, options = {}) {
-    const wheelbase = Math.max(0.1, Number(options.wheelbase) || 1.5);
-    const lookahead = Number(options.lookahead) || 8;
-    const segments = Math.max(2, Math.floor(Number(options.segments) || 16));
-    const curvature = Math.tan(Number(steeringAngleRad) || 0) / wheelbase;
-    const heading = new THREE.Vector3(Math.cos(Number(pose?.yaw) || 0), 0, -Math.sin(Number(pose?.yaw) || 0));
+    const wheelbase = Math.max(0.1, finiteOr(options.wheelbase, 1.5));
+    const lookahead = finiteOr(options.lookahead, 8);
+    const segments = Math.max(2, Math.floor(finiteOr(options.segments, 16)));
+    const curvature = Math.tan(finiteOr(steeringAngleRad, 0)) / wheelbase;
+    const yaw = finiteOr(pose?.yaw ?? pose?.rotation?.y, 0);
+    const tangent = vehicleForwardTangent(yaw);
+    const heading = new THREE.Vector3(tangent.x, 0, tangent.z);
     const p = new THREE.Vector3(Number(pose?.position?.x) || 0, 0, Number(pose?.position?.z) || 0);
     const ds = lookahead / segments;
     const points = [];

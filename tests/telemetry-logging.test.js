@@ -28,6 +28,48 @@ import { AssertionEngine } from "../app/simulation/AssertionEngine.js";
 import { TimelineStore } from "../app/logging/TimelineStore.js";
 import { TelemetryTabBridge } from "../app/telemetry/TelemetryRuntime.js";
 import { LogService } from "../server/logging/LogService.js";
+
+test("SFLog JSON decoding never resolves typed-array names through globalThis", () => {
+    let constructed = 0;
+    const original = globalThis.WebSocket;
+    globalThis.WebSocket = class WebSocketProbe {
+        constructor() { constructed += 1; }
+    };
+    try {
+        const payload = new TextEncoder().encode(JSON.stringify({
+            value: { __sflogTypedArray: "WebSocket", values: ["http://127.0.0.1:9"] },
+            valid: { __sflogTypedArray: "Uint16Array", values: [1, 2] },
+        }));
+        const decoded = decodeSignalValue("json", payload);
+        assert.deepEqual(decoded.value, ["http://127.0.0.1:9"]);
+        assert.deepEqual(decoded.valid, new Uint16Array([1, 2]));
+        assert.equal(constructed, 0);
+    } finally {
+        if (original === undefined) delete globalThis.WebSocket;
+        else globalThis.WebSocket = original;
+    }
+});
+
+test("log imports enforce byte and concurrency ceilings before parsing", async (context) => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "log-import-limits-"));
+    context.after(() => rm(directory, { recursive: true, force: true }));
+    const service = new LogService(directory, { maxImportBytes: 16, maxConcurrentImports: 2 });
+    await assert.rejects(
+        service.importLog(new Uint8Array(17)),
+        (error) => error.statusCode === 413,
+    );
+
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    const first = service._withImportSlot(() => gate);
+    const second = service._withImportSlot(() => gate);
+    await assert.rejects(
+        service._withImportSlot(async () => null),
+        (error) => error.statusCode === 429,
+    );
+    release();
+    await Promise.all([first, second]);
+});
 import { validateDeviceTelemetryId } from "../app/3d/data/DeviceTelemetryId.js";
 import { TopicContractRouter } from "../app/simulation/TopicContractRouter.js";
 import { createDefaultRunManifest } from "../app/simulation/RunManifest.js";

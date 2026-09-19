@@ -129,7 +129,12 @@ export async function writeExclusiveFile(filePath, bytes, { faults, encoding } =
 
 export async function streamToFile(readable, destPath, { expectedBytes, maxBytes, faults } = {}) {
     await fs.mkdir(path.dirname(destPath), { recursive: true });
-    const handle = await fs.open(destPath, "w");
+    const flags = constants.O_WRONLY
+        | constants.O_CREAT
+        | constants.O_TRUNC
+        | (constants.O_NOFOLLOW ?? 0)
+        | (constants.O_NONBLOCK ?? 0);
+    const handle = await fs.open(destPath, flags, 0o600);
     const hasher = createHash("sha256");
     let received = 0;
     try {

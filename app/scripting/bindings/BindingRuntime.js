@@ -72,6 +72,7 @@ export class BindingRuntime {
         this.manifest = createBindingManifest();
         this._activeSource = "library";
         this.loadScriptImpl = options.loadScript || loadScript;
+        this.resolvedOnly = options.resolvedOnly === true;
         this.allowWallTimers = options.allowWallTimers !== false;
 
         this.listeners = new Set();
@@ -236,6 +237,7 @@ export class BindingRuntime {
     // --------------------------------------------------------------- scripts
 
     _preloadScripts(generation = this._manifestGeneration) {
+        if (this.resolvedOnly) return;
         this._orderedBindings()
             .filter((binding) => binding.enabled && binding.scriptId)
             .forEach((binding) => {
@@ -249,6 +251,27 @@ export class BindingRuntime {
         world = this._worldDescription,
         overlay = this._episodeOverlay,
     } = {}) {
+        if (!Array.isArray(entries)) {
+            throw new Error("Resolved scripts must be an array of admitted artifacts.");
+        }
+        const resolvedIds = new Set();
+        for (const entry of entries) {
+            const scriptId = typeof entry?.scriptId === "string" ? entry.scriptId.trim() : "";
+            if (!scriptId || !entry?.artifact || typeof entry.artifact !== "object" || Array.isArray(entry.artifact)) {
+                throw new Error("Each resolved script must include a scriptId and artifact document.");
+            }
+            if (resolvedIds.has(scriptId)) {
+                throw new Error(`Resolved scripts contain duplicate scriptId "${scriptId}".`);
+            }
+            resolvedIds.add(scriptId);
+        }
+        if (this.resolvedOnly && this.manifest.enabled) {
+            for (const binding of this._orderedBindings()) {
+                if (binding.enabled && binding.scriptId && !resolvedIds.has(binding.scriptId)) {
+                    throw new Error(`Enabled binding "${binding.id}" references missing resolved script "${binding.scriptId}".`);
+                }
+            }
+        }
         this._resolvedScripts = structuredClone(entries);
         this._resolvedSeed = String(seed);
         this._hostSeed = this._resolvedSeed;
@@ -256,14 +279,12 @@ export class BindingRuntime {
         this._worldDescription = world ?? null;
         this._episodeOverlay = overlay ?? null;
         this._scriptParameterInputs.clear();
-        const resolvedIds = new Set(entries.map((entry) => entry.scriptId));
         for (const scriptId of this._scripts.keys()) {
             if (!resolvedIds.has(scriptId)) this._scripts.delete(scriptId);
         }
         if (entries.length === 0) return;
         const { registerBuiltInBlocks } = await import("../registerBuiltInBlocks.js");
         registerBuiltInBlocks();
-        await Promise.all(entries.map((entry) => this._ensureScript(entry.scriptId).catch(() => null)));
         this._instantiateResolvedScripts(entries, seed, parameterBindings);
     }
 
@@ -311,6 +332,17 @@ export class BindingRuntime {
                 runtimeContext: this._scriptRuntimeContext(entry.scriptId),
             }));
             this._scriptLoads.delete(entry.scriptId);
+            this.signalStore.publishSignal(`scripts.${entry.scriptId}.versionHash`, stableArtifactHash(entry.artifact), {
+                source: "scripting",
+                type: "string",
+                category: "scripts",
+                replayRole: "input",
+                logClass: "core",
+                descriptorMetadata: {
+                    artifactKind: entry.artifact?.kind || null,
+                    artifactVersion: entry.artifact?.version || null,
+                },
+            });
         }
     }
 
@@ -434,6 +466,10 @@ export class BindingRuntime {
     _ensureScript(scriptId, generation = this._manifestGeneration) {
         if (this._scripts.has(scriptId)) {
             return Promise.resolve(this._scripts.get(scriptId));
+        }
+
+        if (this.resolvedOnly) {
+            return Promise.reject(new Error(`Script "${scriptId}" is not present in the admitted resolved artifacts.`));
         }
 
         if (this._scriptLoads.has(scriptId)) {

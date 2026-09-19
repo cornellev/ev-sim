@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EDITOR_MODES } from "../../editor/EditorState";
 import { editorChromeKey } from "../../editor/workspace/editorChromeKey.js";
-import { fitMapViewportToContent, hydrateDocumentFromRuntime } from "../../editor/document/documentRuntimeHydration";
+import { fitMapViewportToContent } from "../../editor/document/documentRuntimeHydration";
 import {
     PANE_IDS,
     WORKSPACE_CHROME,
@@ -40,6 +40,7 @@ import { WorkspacePane } from "./WorkspacePane";
 import { useElementRect } from "./useElementRect";
 import { AuthoringModeProvider } from "../../../ui";
 import { assetStudioCommands } from "../../editor/commands/assetStudioCommands.js";
+import { hydrateRuntimeDocument } from "../../editor/commands/importCommands.js";
 import { extractAssetSourceGeometries } from "../../editor/assets/AssetModelLoader.js";
 
 const PANE_TITLES = { hierarchy: "Hierarchy", inspector: "Inspector", assets: "Assets" };
@@ -150,7 +151,11 @@ export function EditorWorkspace({ data, activeEnvironmentId, onEnvironmentChange
         editor.setMapModeEnterHandler(() => {
             const document = data?.environment?.()?.getDocument?.();
             if (!document) return;
-            hydrateDocumentFromRuntime(data, document);
+            const bus = data?.commands?.() ?? data?.environment?.()?.commands?.();
+            const hydration = bus?.execute?.(hydrateRuntimeDocument({ data }));
+            if (hydration && !hydration.ok) {
+                console.warn("Could not import runtime content into the environment document.", hydration.issues);
+            }
             const rect = canvasHostRef.current?.getBoundingClientRect();
             fitMapViewportToContent(
                 editor,

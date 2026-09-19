@@ -3,7 +3,8 @@ import {
     listSensorTypes,
     normalizeVehicleSensor,
     validateVehicleSensorDefinition,
-} from "../3d/devices/SensorTypeRegistry.js";
+} from "../simulation/sensors/SensorTypeRegistry.js";
+import { assertAllowedBrowserResourceUrl } from "../security/BrowserResourcePolicy.js";
 
 export const VEHICLE_MANIFEST_KIND = "cev-sim.vehicle";
 export const VEHICLE_MANIFEST_VERSION = 2;
@@ -271,15 +272,17 @@ export function vehicleAssetUrl(vehicleId, fileName) {
 
 /**
  * Resolve a manifest `model.asset` to a fetchable URL.
- * Absolute `/…`, `http(s)://…`, blob, or data paths are kept as-is;
+ * Same-origin paths and explicitly configured HTTP(S) origins are preserved;
  * bare file names resolve against the vehicle's storage assets.
  */
 export function resolveVehicleModelUrl(vehicleId, asset, { cacheBust } = {}) {
     if (!asset) return null;
     const trimmed = String(asset).trim();
     if (!trimmed) return null;
-    const absolute = trimmed.startsWith("/") || /^(?:https?:|blob:|data:)/i.test(trimmed);
-    const url = absolute ? trimmed : vehicleAssetUrl(vehicleId, trimmed);
+    const absolute = trimmed.startsWith("/") || /^[a-z][a-z0-9+.-]*:/i.test(trimmed);
+    const url = absolute
+        ? assertAllowedBrowserResourceUrl(trimmed)
+        : vehicleAssetUrl(vehicleId, trimmed);
     if (!url || cacheBust == null) return url;
     return `${url}${url.includes("?") ? "&" : "?"}v=${cacheBust}`;
 }

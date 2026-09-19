@@ -121,6 +121,35 @@ function verifyBundleStructure(verified, { requireRuntime = false } = {}) {
     if (resolved.dependencyHashes?.world !== resolved.world.hash) {
         invalid("BUNDLE_HASH_MISMATCH", "The resolved world dependency hash does not match the world resource.");
     }
+
+    if (!Array.isArray(resolved.scripts)) {
+        invalid("BUNDLE_INVALID", "The resolved run scripts must be an array of admitted artifacts.");
+    }
+    const resolvedScriptIds = new Set();
+    for (const entry of resolved.scripts) {
+        const scriptId = typeof entry?.scriptId === "string" ? entry.scriptId.trim() : "";
+        if (!scriptId || !entry?.artifact || typeof entry.artifact !== "object" || Array.isArray(entry.artifact)) {
+            invalid("BUNDLE_INVALID", "Each resolved script must include a scriptId and artifact document.");
+        }
+        if (resolvedScriptIds.has(scriptId)) {
+            invalid("BUNDLE_INVALID", `The resolved run contains duplicate script artifact "${scriptId}".`);
+        }
+        resolvedScriptIds.add(scriptId);
+    }
+    const resolvedBindings = resolved.bindings?.entries;
+    if (!Array.isArray(resolvedBindings)) {
+        invalid("BUNDLE_INVALID", "The resolved run bindings must contain an entries array.");
+    }
+    if (resolved.manifest.scripts?.enabled !== false) {
+        for (const binding of resolvedBindings) {
+            if (binding?.enabled !== false && binding?.scriptId && !resolvedScriptIds.has(binding.scriptId)) {
+                invalid(
+                    "BUNDLE_INVALID",
+                    `Enabled binding "${binding.id}" references missing resolved script "${binding.scriptId}".`,
+                );
+            }
+        }
+    }
     const sensors = resolved.manifest.sensorRig?.sensors ?? [];
     const requestsLidar = sensors.some((sensor) => sensor.enabled !== false && sensor.type === "lidar3d");
     if (requestsLidar && !resolved.lidarGeometry) {

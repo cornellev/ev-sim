@@ -1,3 +1,7 @@
+import { vehicleForwardTangent } from "../scenarios/route/geometry.js";
+
+export const DEFAULT_HEADING_WEDGE_LENGTH = 1.4;
+
 function distancePointToSegment(point, start, end) {
     const dx = end.x - start.x;
     const dz = end.z - start.z;
@@ -108,4 +112,30 @@ export function worldPointFromPose(pose) {
         x: Number(pose?.position?.x) || 0,
         z: Number(pose?.position?.z) || 0,
     };
+}
+
+/** Offset a map XZ point along plant-forward yaw (local +X, z = -sin(yaw)). */
+export function offsetByVehicleYaw(origin, yaw, length) {
+    const tangent = vehicleForwardTangent(yaw);
+    return {
+        x: (Number(origin?.x) || 0) + tangent.x * length,
+        z: (Number(origin?.z) || 0) + tangent.z * length,
+    };
+}
+
+/**
+ * Cursor wedge vertices in world XZ, matching bicycle-plant forward.
+ * Tip is along yaw; wings are ±2.4 rad from that heading.
+ */
+export function headingWedgeWorldPoints(origin, heading, length = DEFAULT_HEADING_WEDGE_LENGTH) {
+    return {
+        tip: offsetByVehicleYaw(origin, heading, length),
+        left: offsetByVehicleYaw(origin, heading + 2.4, length * 0.55),
+        right: offsetByVehicleYaw(origin, heading - 2.4, length * 0.55),
+    };
+}
+
+export function headingWedgeWorldPath(origin, heading, length = DEFAULT_HEADING_WEDGE_LENGTH) {
+    const { tip, left, right } = headingWedgeWorldPoints(origin, heading, length);
+    return `${tip.x},${tip.z} ${left.x},${left.z} ${right.x},${right.z}`;
 }

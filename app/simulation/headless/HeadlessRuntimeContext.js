@@ -26,6 +26,7 @@ export function createHeadlessRuntimeContext(options = {}) {
     const bindings = options.bindings ?? new BindingRuntime({
         autoLoad: false,
         allowWallTimers: false,
+        resolvedOnly: true,
         signalStore,
         loadScript: options.loadScript,
     });
@@ -35,6 +36,7 @@ export function createHeadlessRuntimeContext(options = {}) {
     const devices = options.devices ?? new HeadlessSensorManager(() => vehicles, {
         telemetry: signalStore,
         rendererClient: options.rendererClient,
+        messageCodec: options.messageCodec,
     });
     let renderRuntime = null;
     const data = {

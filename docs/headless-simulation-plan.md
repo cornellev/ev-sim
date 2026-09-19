@@ -10,7 +10,7 @@ language-neutral API authority is
 - Current milestone: **PR 12 — implementation complete; external hardware acceptance pending**
 - Next planned milestone: **None — the numbered headless implementation roadmap is complete**
 - Default implementation/review reasoning level: **Extra High**
-- Last updated: **2026-09-15** (bicycle road drape; characterization tape unchanged)
+- Last updated: **2026-09-19** (security capability closure; characterization tape unchanged)
 
 Progress:
 
@@ -1125,6 +1125,23 @@ values remain `1ba8c8c40e1560ac044f4ca5384065ab83c93529d65b5672fee8dc5ed42a5ced`
 and `60dc0bd2b02a9ec768f833070ce4d8d2047f5383838f09ea3f130dd31552dd6f`.
 This is not headless PR 13 and does not satisfy or change the outstanding PR 12
 hosted, soak, x64 NVIDIA, or Jetson ARM64 evidence gates.
+
+### 2026-09-19 — Security maintenance closes runtime capabilities
+
+Headless run-bundle verification now requires a unique admitted script artifact
+for every enabled resolved binding. The headless binding runtime disables its
+authoring loader, so URL-shaped script ids cannot trigger a fetch. Shared-tensor
+readers receive the supervisor-created arena path during worker initialization
+and reject every other path, symlink, non-private file, or ownership mismatch.
+The shared sensor publisher, message contracts, and type registry now live in
+the Node-safe simulation layer; browser encoding enters through its 3D adapter
+and headless encoding through a lazy codec port.
+
+These checks reject malformed inputs without changing valid bundle bytes,
+protobuf v1, run-bundle v1, fixed-step ordering, sensor messages, or hash
+algorithms. This is maintenance within the completed PR 1–12 roadmap, not a PR
+13, and it does not close the outstanding hosted, soak, x64 NVIDIA, or Jetson
+ARM64 evidence gates.
 
 ### 2026-09-13 — ED-09 acceptance does not change headless contracts
 

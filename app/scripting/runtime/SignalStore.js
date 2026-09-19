@@ -15,6 +15,17 @@ function isPlainObject(value) {
     return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+const RESERVED_PATH_SEGMENTS = new Set(["__proto__", "prototype", "constructor"]);
+
+function signalPathParts(path) {
+    const normalizedPath = String(path || "").trim();
+    if (!normalizedPath) return [];
+    const parts = normalizedPath.split(".").filter(Boolean);
+    const reserved = parts.find((part) => RESERVED_PATH_SEGMENTS.has(part));
+    if (reserved) throw new TypeError(`Signal path contains reserved segment ${JSON.stringify(reserved)}.`);
+    return parts;
+}
+
 export function cloneValue(value) {
     if (value === undefined) return undefined;
     if (value === null || typeof value !== "object") return value;
@@ -200,10 +211,8 @@ export function normalizeSignalEntry(value, options = {}) {
 }
 
 export function getByPath(value, path, fallback = undefined) {
-    const normalizedPath = String(path || "").trim();
-    if (!normalizedPath) return value ?? fallback;
-
-    const parts = normalizedPath.split(".").filter(Boolean);
+    const parts = signalPathParts(path);
+    if (parts.length === 0) return value ?? fallback;
     let current = value;
 
     for (const part of parts) {
@@ -216,11 +225,10 @@ export function getByPath(value, path, fallback = undefined) {
 }
 
 export function setByPath(value, path, nextValue) {
-    const normalizedPath = String(path || "").trim();
-    if (!normalizedPath) return cloneValue(nextValue);
+    const parts = signalPathParts(path);
+    if (parts.length === 0) return cloneValue(nextValue);
 
     const root = isPlainObject(value) || Array.isArray(value) ? cloneValue(value) : {};
-    const parts = normalizedPath.split(".").filter(Boolean);
     let current = root;
 
     parts.forEach((part, index) => {
@@ -240,14 +248,11 @@ export function setByPath(value, path, nextValue) {
 
 export function deleteByPath(value, path) {
     const cloned = cloneValue(value);
-    const normalizedPath = String(path || "").trim();
-    if (!normalizedPath) return { value: cloned, deleted: false };
+    const parts = signalPathParts(path);
+    if (parts.length === 0) return { value: cloned, deleted: false };
     if (!isPlainObject(cloned) && !Array.isArray(cloned)) {
         return { value: cloned, deleted: false };
     }
-
-    const parts = normalizedPath.split(".").filter(Boolean);
-    if (parts.length === 0) return { value: cloned, deleted: false };
 
     let current = cloned;
     for (let index = 0; index < parts.length - 1; index += 1) {

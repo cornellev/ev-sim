@@ -7,7 +7,8 @@ import {
     routePolylinePoints,
     trailSegmentForTime,
 } from "../app/spatial/spatialLogModel.js";
-import { simplifyTrajectory } from "../app/spatial/trajectorySimplify.js";
+import { simplifyTrajectory, headingFromPose, headingWedgeWorldPoints, worldPointFromPose } from "../app/spatial/trajectorySimplify.js";
+import { vehicleForwardTangent } from "../app/scenarios/route/geometry.js";
 import { compareWorldCompatibility, buildComparisonTrails } from "../app/spatial/spatialComparison.js";
 
 test("discoverVehiclePosePaths finds pose3 vehicle channels", () => {
@@ -75,6 +76,28 @@ test("buildSpatialLogModel exposes route polyline and cursor pose", () => {
     assert.equal(model.trails[0].segment.length, 2);
     assert.equal(model.events.length, 1);
     assert.ok(model.fitPoints.length >= 3);
+    const lastSample = model.trails[0].segment.at(-1);
+    assert.equal(lastSample.position.x, model.cursor.position.x);
+    assert.equal(lastSample.position.z, model.cursor.position.z);
+});
+
+test("heading wedge uses plant-forward -sin(yaw)", () => {
+    const origin = { x: 10, z: 4 };
+    const alongX = headingWedgeWorldPoints(origin, 0, 2);
+    assert.ok(Math.abs(alongX.tip.x - 12) < 1e-5);
+    assert.ok(Math.abs(alongX.tip.z - 4) < 1e-5);
+
+    const alongMinusZ = headingWedgeWorldPoints(origin, Math.PI / 2, 2);
+    assert.ok(Math.abs(alongMinusZ.tip.x - 10) < 1e-5);
+    assert.ok(Math.abs(alongMinusZ.tip.z - 2) < 1e-5);
+
+    const pose = { position: { x: 3, y: 1, z: -1 }, rotation: { y: 0.4 } };
+    const heading = headingFromPose(pose);
+    const tip = headingWedgeWorldPoints(worldPointFromPose(pose), heading, 1).tip;
+    const tangent = vehicleForwardTangent(heading);
+    assert.ok(Math.abs((tip.x - 3) - tangent.x) < 1e-5);
+    assert.ok(Math.abs((tip.z + 1) - tangent.z) < 1e-5);
+    assert.ok(tangent.z < 0);
 });
 
 test("compareWorldCompatibility rejects mismatched resolved hashes", () => {

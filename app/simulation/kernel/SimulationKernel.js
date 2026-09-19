@@ -836,6 +836,12 @@ export class SimulationKernel {
                 z: Number(vehicle.position?.z) || 0,
             },
             yaw: Number(vehicle.rotation?.y) || 0,
+            rotation: {
+                x: Number(vehicle.rotation?.x) || 0,
+                y: Number(vehicle.rotation?.y) || 0,
+                z: Number(vehicle.rotation?.z) || 0,
+                order: vehicle.rotation?.order || "XYZ",
+            },
         } : null;
     }
 

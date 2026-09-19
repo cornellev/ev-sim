@@ -36,6 +36,7 @@ import {
 } from "./visual-assets/validateVisualAsset.js";
 
 const DIGEST = /^[a-f0-9]{64}$/;
+const UPLOAD_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export class VisualAssetStore {
     constructor(dataDir, options = {}) {
@@ -90,7 +91,17 @@ export class VisualAssetStore {
         const stagingIds = await this._listDir(this.stagingDir);
         const now = this.now().getTime();
         for (const id of stagingIds) {
-            const meta = await this._readStagingMeta(id);
+            // Recovery never follows or removes entries outside the namespace
+            // created by createUpload(). Invalid or symlinked entries require
+            // explicit operator cleanup so a hostile name cannot widen rm().
+            if (!UPLOAD_ID.test(id)) continue;
+            let meta;
+            try {
+                meta = await this._readStagingMeta(id);
+            } catch (error) {
+                if (error?.code === VISUAL_ASSET_ERROR_CODES.SYMLINK) continue;
+                throw error;
+            }
             if (!meta) {
                 await this._removeStaging(id);
                 continue;
@@ -638,11 +649,47 @@ export class VisualAssetStore {
     }
 
     _stagingMetaPath(id) {
-        return path.join(this.stagingDir, id, "meta.json");
+        return this._stagingPath(id, "meta.json");
     }
 
     _stagingContentPath(id) {
-        return path.join(this.stagingDir, id, "content");
+        return this._stagingPath(id, "content");
+    }
+
+    _stagingPath(id, ...parts) {
+        const normalized = String(id ?? "");
+        if (!UPLOAD_ID.test(normalized)) {
+            throw visualAssetError(
+                VISUAL_ASSET_ERROR_CODES.UPLOAD_NOT_FOUND,
+                "Visual asset upload id is invalid.",
+            );
+        }
+        const root = path.resolve(this.stagingDir);
+        const destination = path.resolve(root, normalized, ...parts);
+        if (!destination.startsWith(`${root}${path.sep}`)) {
+            throw visualAssetError(
+                VISUAL_ASSET_ERROR_CODES.UPLOAD_NOT_FOUND,
+                "Visual asset upload id is invalid.",
+            );
+        }
+        return destination;
+    }
+
+    async _assertStagingDirectory(id, { allowMissing = false } = {}) {
+        const directory = this._stagingPath(id);
+        try {
+            const stat = await fs.lstat(directory);
+            if (stat.isSymbolicLink() || !stat.isDirectory()) {
+                throw visualAssetError(
+                    VISUAL_ASSET_ERROR_CODES.SYMLINK,
+                    "Visual asset staging paths must be real directories.",
+                );
+            }
+        } catch (error) {
+            if (allowMissing && error?.code === "ENOENT") return directory;
+            throw error;
+        }
+        return directory;
     }
 
     _rootJournalPath(ownerId) {
@@ -899,18 +946,23 @@ export class VisualAssetStore {
     }
 
     async _readStagingMeta(id) {
+        await this._assertStagingDirectory(id, { allowMissing: true });
+        const filePath = this._stagingMetaPath(id);
+        const opened = await openRegularFile(filePath);
+        if (!opened) return null;
         try {
-            const text = await fs.readFile(this._stagingMetaPath(id), "utf8");
+            const text = await opened.handle.readFile("utf8");
             return JSON.parse(text);
-        } catch (error) {
-            if (error.code === "ENOENT") return null;
-            throw error;
+        } finally {
+            await opened.handle.close();
         }
     }
 
     async _writeStagingMeta(meta) {
+        await this._assertStagingDirectory(meta.id, { allowMissing: true });
         const filePath = this._stagingMetaPath(meta.id);
         await fs.mkdir(path.dirname(filePath), { recursive: true });
+        await this._assertStagingDirectory(meta.id);
         const tempPath = `${filePath}.${process.pid}.tmp`;
         await fs.writeFile(tempPath, `${JSON.stringify(meta, null, 2)}\n`);
         await fs.rename(tempPath, filePath);
@@ -918,7 +970,8 @@ export class VisualAssetStore {
     }
 
     async _removeStaging(id) {
-        await fs.rm(path.join(this.stagingDir, id), { recursive: true, force: true });
+        const directory = await this._assertStagingDirectory(id, { allowMissing: true });
+        await fs.rm(directory, { recursive: true, force: true });
         this._activeUploads.delete(id);
     }
 

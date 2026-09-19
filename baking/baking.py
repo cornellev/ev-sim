@@ -4,8 +4,10 @@ import time
 import shutil
 import threading
 import hashlib
+import re
 from collections import deque
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import bake_server
 import fprocess
@@ -22,6 +24,9 @@ run_manifests = {}
 building_bake_state = {}
 sample_results = {}
 lock = threading.Lock()
+RAW_ROOT = Path(os.environ.get("CEV_SIM_BAKE_RAW_ROOT") or (Path.cwd() / "raw")).resolve()
+BAKED_ROOT = Path(os.environ.get("CEV_SIM_BAKE_OUTPUT_ROOT") or (Path.cwd() / "baked")).resolve()
+SAFE_RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
 
 @dataclass
@@ -54,10 +59,63 @@ def clear_data():
 
 
 def files_check():
-    if not os.path.exists("raw"):
-        os.makedirs("raw")
-    if not os.path.exists("baked"):
-        os.makedirs("baked")
+    RAW_ROOT.mkdir(parents=True, exist_ok=True)
+    BAKED_ROOT.mkdir(parents=True, exist_ok=True)
+
+
+def _safe_run_id(value):
+    run_id = str(value or "default")
+    if run_id in {".", ".."} or not SAFE_RUN_ID.fullmatch(run_id):
+        raise ValueError("runId must be a 1-128 character filesystem-safe slug")
+    return run_id
+
+
+def _safe_filename(value):
+    name = str(value or "")
+    drive, _tail = os.path.splitdrive(name)
+    if (
+        not name
+        or len(name.encode("utf-8")) > 255
+        or name in {".", ".."}
+        or drive
+        or os.path.isabs(name)
+        or "/" in name
+        or "\\" in name
+        or "\x00" in name
+    ):
+        raise ValueError("upload filename must be one safe path component")
+    return name
+
+
+def _jailed(root, *parts):
+    destination = root.joinpath(*map(str, parts)).resolve()
+    try:
+        destination.relative_to(root)
+    except ValueError as error:
+        raise ValueError("bake output path escapes its configured root") from error
+    return destination
+
+
+def _write_bytes_no_follow(destination, payload):
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(destination, flags, 0o600)
+    with os.fdopen(descriptor, "wb") as stream:
+        stream.write(payload)
+
+
+def _write_json_no_follow(destination, value):
+    payload = json.dumps(value, indent=2).encode("utf-8")
+    _write_bytes_no_follow(Path(destination), payload)
+
+
+def _append_text_no_follow(destination, text):
+    path_value = Path(destination)
+    path_value.parent.mkdir(parents=True, exist_ok=True)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path_value, flags, 0o600)
+    with os.fdopen(descriptor, "a", encoding="utf-8") as stream:
+        stream.write(text)
 
 
 def _parse_int(value, default=0):
@@ -93,7 +151,7 @@ def _file_key(metadata):
 
 
 def _run_dir(run_id):
-    return os.path.join("baked", run_id)
+    return str(_jailed(BAKED_ROOT, _safe_run_id(run_id)))
 
 
 def _manifest_path(run_id):
@@ -112,54 +170,30 @@ def save_photo(payload, name, metadata=None):
     files_check()
     metadata = metadata or {}
 
-    run_id = metadata.get("runId", "default")
+    run_id = _safe_run_id(metadata.get("runId", "default"))
+    name = _safe_filename(name)
     frame_index = _parse_int(metadata.get("frameIndex"), 0)
-    target_dir = os.path.join("raw", run_id, "samples", f"{frame_index:05d}")
-    os.makedirs(target_dir, exist_ok=True)
+    if frame_index < 0:
+        raise ValueError("frameIndex must be non-negative")
+    target_dir = _jailed(RAW_ROOT, run_id, "samples", f"{frame_index:05d}")
+    target_dir.mkdir(parents=True, exist_ok=True)
 
-    destination = os.path.join(target_dir, name)
-    with open(destination, "wb") as f:
-        f.write(payload)
+    destination = _jailed(target_dir, name)
+    _write_bytes_no_follow(destination, payload)
 
-    # #region agent log
-    try:
-        with open("~/Coding/js/sensor-fusion/.cursor/debug-8f4404.log", "a", encoding="utf-8") as log_file:
-            log_file.write(json.dumps({
-                "sessionId": "8f4404",
-                "runId": run_id,
-                "hypothesisId": "H11",
-                "location": "baking.py:save_photo",
-                "message": "Raw bake upload saved",
-                "data": {
-                    "frameIndex": frame_index,
-                    "sampleId": metadata.get("sampleId"),
-                    "fileRole": metadata.get("fileRole"),
-                    "passId": metadata.get("passId"),
-                    "debugOnly": _parse_bool(metadata.get("debugOnly"), False),
-                    "path": destination,
-                    "sizeBytes": len(payload),
-                    "sampleFileCount": len(os.listdir(target_dir)),
-                },
-                "timestamp": int(time.time() * 1000),
-            }) + "\n")
-    except OSError:
-        pass
-    # #endregion
-
-    return destination
+    return str(destination)
 
 
 def on_manifest(payload):
     if not payload:
         return
 
-    run_id = payload.get("runId", "default")
+    run_id = _safe_run_id(payload.get("runId", "default"))
     with lock:
         run_manifests[run_id] = payload
 
     os.makedirs(_run_dir(run_id), exist_ok=True)
-    with open(_manifest_path(run_id), "w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=2)
+    _write_json_no_follow(_manifest_path(run_id), payload)
 
     print(f"Run manifest saved for {run_id}")
 
@@ -259,14 +293,13 @@ def on_clear_data():
     print("clearing...")
     clear_data()
 
-    for folder in ["raw", "baked"]:
-        if os.path.exists(folder):
-            for filename in os.listdir(folder):
-                file_path = os.path.join(folder, filename)
-                if os.path.isfile(file_path):
-                    os.remove(file_path)
-                elif os.path.isdir(file_path):
-                    shutil.rmtree(file_path)
+    for folder in [RAW_ROOT, BAKED_ROOT]:
+        if folder.exists():
+            for entry in folder.iterdir():
+                if entry.is_symlink() or entry.is_file():
+                    entry.unlink()
+                elif entry.is_dir():
+                    shutil.rmtree(entry)
 
 
 def get_queue_status():
@@ -317,7 +350,8 @@ def get_sample_result(sample_id, view_id):
 
 def _slug(value):
     text = str(value or "view")
-    return "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in text)
+    normalized = "".join(ch if ch.isascii() and (ch.isalnum() or ch in "-_") else "_" for ch in text)
+    return (normalized.strip("_") or "view")[:80]
 
 
 def _mask_tag(sample_file):
@@ -388,25 +422,22 @@ def _record_building_state(job, mask_file, output_path):
         })
 
     os.makedirs(_run_dir(run_id), exist_ok=True)
-    with open(_building_state_path(run_id), "w", encoding="utf-8") as f:
-        json.dump(building_bake_state[run_id], f, indent=2)
+    _write_json_no_follow(_building_state_path(run_id), building_bake_state[run_id])
 
 
 def _write_frame_record(job, frame_record):
     run_id = job.run_id
-    baked_dir = os.path.join("baked", run_id, f"{job.frame_index:05d}")
+    baked_dir = os.path.join(_run_dir(run_id), f"{job.frame_index:05d}")
     os.makedirs(baked_dir, exist_ok=True)
 
     meta_path = os.path.join(baked_dir, "meta.json")
-    with open(meta_path, "w", encoding="utf-8") as f:
-        json.dump(frame_record, f, indent=2)
+    _write_json_no_follow(meta_path, frame_record)
 
-    with open(_frames_log_path(run_id), "a", encoding="utf-8") as f:
-        f.write(json.dumps(frame_record) + "\n")
+    _append_text_no_follow(_frames_log_path(run_id), json.dumps(frame_record) + "\n")
 
 
 def _process_sample_job(job):
-    baked_dir = os.path.join("baked", job.run_id, f"{job.frame_index:05d}")
+    baked_dir = os.path.join(_run_dir(job.run_id), f"{job.frame_index:05d}")
     os.makedirs(baked_dir, exist_ok=True)
 
     renders_by_view = {}

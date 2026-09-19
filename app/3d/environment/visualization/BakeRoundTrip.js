@@ -2,6 +2,7 @@ import {
     fetchBakeResult,
     flipRgbaRows,
 } from "./bakeUpload.js";
+import { bakeAuthorizationHeaders, bakeServerUrl } from "./BakeAccess.js";
 import { sha256ExactBytes } from "../../../simulation/visual/VisualLayer.js";
 
 export const BAKE_V1_API_BASE = "/bake/v1";
@@ -14,8 +15,7 @@ function adapterError(code, message) {
 }
 
 function resolveUrl(server, path) {
-    const host = String(server?.host ?? "").replace(/\/+$/, "");
-    return `${host}${path}`;
+    return bakeServerUrl(server, path);
 }
 
 function digestHeaderValue(digest) {
@@ -75,7 +75,12 @@ export async function fetchBakeV1Capability(server, {
     if (typeof fetchImpl !== "function") {
         throw adapterError("BAKE_PROVIDER_UNAVAILABLE", "No fetch implementation is available for bake capability probing.");
     }
-    const response = await fetchImpl(resolveUrl(server, `${apiBase}/capability`), { method: "GET", signal });
+    const response = await fetchImpl(resolveUrl(server, `${apiBase}/capability`), {
+        method: "GET",
+        signal,
+        headers: bakeAuthorizationHeaders(server),
+        redirect: "error",
+    });
     const payload = await parseJsonResponse(response);
     if (!response.ok) throw errorFromPayload(payload, "Bake capability probe failed.");
     return payload;
@@ -92,10 +97,11 @@ export async function createBakeV1Job(server, {
     const response = await fetchImpl(resolveUrl(server, `${apiBase}/jobs`), {
         method: "POST",
         signal,
-        headers: {
+        headers: bakeAuthorizationHeaders(server, {
             "Content-Type": "application/json",
             "Content-Length": String(encoded.byteLength),
-        },
+        }),
+        redirect: "error",
         body,
     });
     const payload = await parseJsonResponse(response);
@@ -120,14 +126,15 @@ export async function uploadBakeV1Input(server, {
     const response = await fetchImpl(resolveUrl(server, `${apiBase}/jobs/${encodeURIComponent(jobId)}/inputs/${key}`), {
         method: "PUT",
         signal,
-        headers: {
+        headers: bakeAuthorizationHeaders(server, {
             "Content-Type": "application/octet-stream",
             "Content-Length": String(payload.byteLength),
             "X-Cev-Digest": digestHeaderValue(digest),
             "X-Cev-Sample-Id": sampleId,
             "X-Cev-View-Id": viewId,
             "X-Cev-Role": role,
-        },
+        }),
+        redirect: "error",
         body: payload,
     });
     const json = await parseJsonResponse(response);
@@ -150,10 +157,11 @@ export async function submitBakeV1Job(server, {
     const response = await fetchImpl(resolveUrl(server, `${apiBase}/jobs/${encodeURIComponent(jobId)}/submit`), {
         method: "POST",
         signal,
-        headers: {
+        headers: bakeAuthorizationHeaders(server, {
             "Content-Type": "application/json",
             "Content-Length": String(encoded.byteLength),
-        },
+        }),
+        redirect: "error",
         body,
     });
     const payload = await parseJsonResponse(response);
@@ -170,6 +178,8 @@ export async function fetchBakeV1Status(server, {
     const response = await fetchImpl(resolveUrl(server, `${apiBase}/jobs/${encodeURIComponent(jobId)}/status`), {
         method: "GET",
         signal,
+        headers: bakeAuthorizationHeaders(server),
+        redirect: "error",
     });
     const payload = await parseJsonResponse(response);
     if (!response.ok) throw errorFromPayload(payload, "Bake job status failed.");
@@ -185,6 +195,8 @@ export async function fetchBakeV1Result(server, {
     const response = await fetchImpl(resolveUrl(server, `${apiBase}/jobs/${encodeURIComponent(jobId)}/result`), {
         method: "GET",
         signal,
+        headers: bakeAuthorizationHeaders(server),
+        redirect: "error",
     });
     const payload = await parseJsonResponse(response);
     if (!response.ok) throw errorFromPayload(payload, "Bake job result failed.", "BAKE_MODEL_INCOMPLETE");
@@ -201,7 +213,12 @@ export async function fetchBakeV1Buffer(server, {
 } = {}) {
     const response = await fetchImpl(
         resolveUrl(server, `${apiBase}/jobs/${encodeURIComponent(jobId)}/buffers/${encodeURIComponent(sha256)}`),
-        { method: "GET", signal },
+        {
+            method: "GET",
+            signal,
+            headers: bakeAuthorizationHeaders(server),
+            redirect: "error",
+        },
     );
     if (!response.ok) {
         const payload = await parseJsonResponse(response, { allowEmpty: true });
@@ -219,7 +236,8 @@ export async function cancelBakeV1Job(server, {
     const response = await fetchImpl(resolveUrl(server, `${apiBase}/jobs/${encodeURIComponent(jobId)}/cancel`), {
         method: "POST",
         signal,
-        headers: { "Content-Length": "0" },
+        headers: bakeAuthorizationHeaders(server, { "Content-Length": "0" }),
+        redirect: "error",
     });
     const payload = await parseJsonResponse(response, { allowEmpty: true });
     if (!response.ok) throw errorFromPayload(payload, "Bake job cancel failed.", "BAKE_MODEL_CANCELLED");

@@ -8,6 +8,7 @@ import { verifyRunBundleBytes } from "./RunBundle.js";
 
 let session = null;
 let initialized = null;
+let admittedSharedRegion = null;
 let handling = false;
 let nextRendererRequestId = 1;
 const rendererRequests = new Map();
@@ -41,7 +42,8 @@ const rendererClient = {
     },
     async readSharedTensor(reference, spec) {
         return validateSharedTensorReference(reference, {
-            environmentToken: String(reference.regionName).split(/[\\/]/).at(-1),
+            environmentToken: admittedSharedRegion?.split(/[\\/]/).at(-1),
+            expectedRegion: admittedSharedRegion,
             spec,
         });
     },
@@ -76,6 +78,7 @@ async function command(name, payload = {}) {
     switch (name) {
         case "initialize": {
             await session?.close();
+            admittedSharedRegion = payload.sharedRegionName ? String(payload.sharedRegionName) : null;
             const managed = payload.mode === "managed-experiment";
             session = managed
                 ? new ManagedHeadlessSession({ limits: payload.limits, rendererClient })
@@ -122,6 +125,7 @@ async function command(name, payload = {}) {
             await session?.close();
             session = null;
             initialized = null;
+            admittedSharedRegion = null;
             return { closed: true };
         default:
             throw Object.assign(new Error(`Unknown worker command ${name}.`), { code: "INVALID_REQUEST" });

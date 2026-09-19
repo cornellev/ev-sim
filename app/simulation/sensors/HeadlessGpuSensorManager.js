@@ -1,12 +1,5 @@
-import { SensorPublisher } from "../../3d/devices/SensorPublisher.js";
-import { buildCameraInfo, buildImageMessage } from "../../3d/devices/SensorMessages.js";
-import { flipRows, warpBrownConrady } from "../../3d/perception/CameraRenderProducts.js";
-import {
-    createOwnedCaptureScene,
-    createVisualCameraCalibration,
-    createVisualCaptureInput,
-    snapshotRep103CameraPose,
-} from "../../3d/environment/visual/VisualCapturePipeline.js";
+import { SensorPublisher } from "./SensorPublisher.js";
+import { buildCameraInfo, buildImageMessage } from "./SensorMessages.js";
 import { compareUtf8 } from "../world/WorldDescription.js";
 import { assertGpuSensorBackendSelection } from "./GpuSensorBackend.js";
 import { buildLidarCapture } from "./LidarProducts.js";
@@ -72,12 +65,12 @@ class HeadlessGpuSensorDevice {
             if (!frames?.mapPose) {
                 throw new Error(`PBR camera ${this.id} requires a resolved map-frame pose.`);
             }
-            const pose = snapshotRep103CameraPose({
+            const pose = this.manager.visualCapture.snapshotRep103CameraPose({
                 captureTimeNs: context.captureTimeNs,
                 worldPose: frames.mapPose,
                 mountPose: this.config.pose,
             });
-            const captureInput = createVisualCaptureInput({
+            const captureInput = this.manager.visualCapture.createVisualCaptureInput({
                 calibration: this.manager.cameraCalibrations.get(this.id),
                 pose,
                 sceneHandle: this.manager.pbrSceneHandle,
@@ -164,8 +157,8 @@ class HeadlessGpuSensorDevice {
             return result;
         }
         const calibration = this.config.calibration;
-        const upright = flipRows(raw, calibration.width, calibration.height, 4);
-        const pixels = warpBrownConrady({
+        const upright = this.manager.visualCapture.flipRows(raw, calibration.width, calibration.height, 4);
+        const pixels = this.manager.visualCapture.warpBrownConrady({
             data: upright,
             width: calibration.width,
             height: calibration.height,
@@ -366,6 +359,8 @@ export class HeadlessGpuSensorManager {
     constructor(vehicleSource, options = {}) {
         this.vehicleSource = vehicleSource;
         this.telemetry = options.telemetry ?? null;
+        this.messageCodec = options.messageCodec ?? null;
+        this.visualCapture = options.visualCapture ?? null;
         this.rendererClient = options.rendererClient ?? null;
         this.devices = [];
         this.scene = null;
@@ -398,6 +393,23 @@ export class HeadlessGpuSensorManager {
         if (configs.length === 0 || options.enabled === false) return this.devices;
         assertGpuSensorBackendSelection(options.backendSelection);
         if (!this.rendererClient) throw new Error("GPU sensor backend requires a supervisor renderer client.");
+        const messageCodec = options.messageCodec ?? this.messageCodec;
+        if (typeof messageCodec?.encodeTopicValue !== "function") {
+            throw new Error("GPU sensors require a headless message-codec adapter.");
+        }
+        const visualCapture = options.visualCapture ?? this.visualCapture;
+        const requiredVisualMethods = [
+            "createOwnedCaptureScene",
+            "createVisualCameraCalibration",
+            "createVisualCaptureInput",
+            "snapshotRep103CameraPose",
+            "flipRows",
+            "warpBrownConrady",
+        ];
+        if (!visualCapture || requiredVisualMethods.some((name) => typeof visualCapture[name] !== "function")) {
+            throw new Error("GPU sensors require a headless visual-capture adapter.");
+        }
+        this.visualCapture = visualCapture;
         this.renderScene = options.renderScene ?? null;
         this.lidarGeometry = options.lidarGeometry ?? null;
         this.renderRuntime = options.renderRuntime ?? null;
@@ -414,7 +426,7 @@ export class HeadlessGpuSensorManager {
             if (!this.renderRuntime?.generation || this.renderRuntime.renderSceneHash !== this.renderScene.hash) {
                 throw new Error("PBR cameras require a matching prepared renderer handle.");
             }
-            this.pbrSceneHandle = createOwnedCaptureScene({
+            this.pbrSceneHandle = visualCapture.createOwnedCaptureScene({
                 role: "measured-appearance",
                 scene: {},
                 generation: this.renderRuntime.generation,
@@ -422,7 +434,7 @@ export class HeadlessGpuSensorManager {
             });
             this.cameraCalibrations = new Map(cameras.map((camera) => [
                 camera.id,
-                createVisualCameraCalibration({
+                visualCapture.createVisualCameraCalibration({
                     ...camera.calibration,
                     distortionModel: camera.calibration.distortionModel === "plumb_bob"
                         ? (camera.calibration.distortion?.length ? "brown-conrady" : "none")
@@ -447,6 +459,7 @@ export class HeadlessGpuSensorManager {
                 stepNs: options.stepNs,
                 runtimeData: this.runtimeData,
                 perceptionObservations: options.perceptionObservations,
+                encodeTopicValue: messageCodec.encodeTopicValue,
                 nowNs: () => 0,
             });
         });

@@ -42,7 +42,7 @@ a VIS, GOOG, or GS PR changes a contract, hash, gate, or milestone status.
 - Core assumption: **Google approval, Google-derived assets, Gaussian
   splatting, and a model service are unavailable.**
 - Default implementation/review reasoning level: **Extra High**.
-- Last updated: **2026-09-13 — ED-09 did not change visual-layer identity; VIS-15b software path remains the last visual implementation**.
+- Last updated: **2026-09-19 — local bake/upload security; visual-layer identity unchanged**.
 - Implemented evidence: VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, VIS-05a, VIS-05b, VIS-06a,
   VIS-06b, VIS-07, VIS-08, VIS-09, VIS-10a, VIS-10b, VIS-11, VIS-12b,
   VIS-13a, VIS-13b, VIS-14, and VIS-16a acceptance evidence is recorded in the
@@ -3312,3 +3312,14 @@ composition. The environment compatibility fixture remains
 `6ca2ece3d5266822a2ceabba72e5f7dd9514789e76757e86f6aedd2730ab9a6a`,
 and the existing visual descriptor, render-provider, package, and acceptance
 gates are unchanged.
+
+### 2026-09-19 — Local bake and upload boundaries are fail-closed
+
+Security maintenance constrains the local bake and visual-asset services to
+loopback by default, requires bearer authentication for bake mutations and
+reads, validates Host and Origin at each HTTP boundary, rejects traversal and
+symlink staging paths, caps request bodies, and makes bake cleanup POST-only.
+Browser callers now admit bake, sky, and vehicle resources through explicit
+origin policy before issuing a request or creating a loader. These changes do
+not alter visual descriptors, render-scene identity, CAS hashes, or the VIS
+milestone ledger.

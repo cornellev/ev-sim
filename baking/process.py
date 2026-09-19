@@ -3,15 +3,18 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from email.parser import BytesParser
 from email.policy import default as email_policy
 from io import BytesIO
+import hmac
 import json
 import os
 import traceback
+from urllib.parse import urlparse
 
 
 MODEL_ID = os.environ.get("BAKE_PROCESS_MODEL")
-SERVER_HOST = os.environ.get("BAKE_PROCESS_HOST", "0.0.0.0")
+SERVER_HOST = os.environ.get("BAKE_PROCESS_HOST", "127.0.0.1")
 SERVER_PORT = int(os.environ.get("BAKE_PROCESS_PORT", "8001"))
 LEGACY_IMAGE_FILL = os.environ.get("BAKE_LEGACY_IMAGE_FILL") == "1"
+MAX_PROCESS_BYTES = int(os.environ.get("BAKE_PROCESS_MAX_BYTES", str(64 * 1024 * 1024)))
 
 _pipe = None
 _torch = None
@@ -27,6 +30,8 @@ class MultipartField:
 
 def parse_multipart_form(handler, content_type):
     length = int(handler.headers.get("Content-Length", "0"))
+    if length <= 0 or length > MAX_PROCESS_BYTES:
+        raise ValueError("legacy process request length is invalid or too large")
     body = handler.rfile.read(length)
     header = (
         f"Content-Type: {content_type}\r\n"
@@ -210,14 +215,47 @@ def process_image_bytes(image_bytes, mask_bytes, tag, seed=None):
 
 
 class ProcessRequestHandler(BaseHTTPRequestHandler):
+    def _host_allowed(self):
+        try:
+            host = (urlparse(f"//{self.headers.get('Host', '')}").hostname or "").lower().rstrip(".")
+        except ValueError:
+            return False
+        configured = {
+            value.strip().lower().rstrip(".")
+            for value in os.environ.get("BAKE_PROCESS_ALLOWED_HOSTS", "").split(",")
+            if value.strip()
+        }
+        return host in {"localhost", "127.0.0.1", "::1"} | configured
+
+    def _origin(self):
+        origin = self.headers.get("Origin", "").strip()
+        allowed = {
+            value.strip()
+            for value in os.environ.get(
+                "BAKE_PROCESS_ALLOWED_ORIGINS",
+                "http://localhost:3000,http://127.0.0.1:3000,http://[::1]:3000",
+            ).split(",")
+            if value.strip()
+        }
+        return origin if origin and origin in allowed else None
+
+    def _cors(self):
+        origin = self._origin()
+        if origin:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
+
+    def _authorized(self):
+        token = os.environ.get("BAKE_PROCESS_TOKEN") or os.environ.get("CEV_SIM_BAKE_TOKEN", "")
+        supplied = self.headers.get("Authorization", "")
+        return bool(token) and hmac.compare_digest(supplied, f"Bearer {token}")
+
     def _send_json(self, status_code, payload):
         body = json.dumps(payload).encode("utf-8")
         self.send_response(status_code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self._cors()
         self.end_headers()
         self.wfile.write(body)
 
@@ -225,24 +263,36 @@ class ProcessRequestHandler(BaseHTTPRequestHandler):
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "image/png")
         self.send_header("Content-Length", str(len(payload)))
-        self.send_header("Access-Control-Allow-Origin", "*")
+        self._cors()
         self.end_headers()
         self.wfile.write(payload)
 
     def do_OPTIONS(self):
+        if not self._host_allowed() or (self.headers.get("Origin") and not self._origin()):
+            self._send_json(HTTPStatus.FORBIDDEN, {"error": "origin is not allowed"})
+            return
         self.send_response(HTTPStatus.NO_CONTENT)
-        self.send_header("Access-Control-Allow-Origin", "*")
+        self._cors()
         self.send_header("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
         self.end_headers()
 
     def do_GET(self):
+        if not self._host_allowed():
+            self._send_json(HTTPStatus.FORBIDDEN, {"error": "host is not allowed"})
+            return
         if self.path == "/healthz":
             self._send_json(HTTPStatus.OK, {"success": True})
             return
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "not found"})
 
     def do_POST(self):
+        if not self._host_allowed():
+            self._send_json(HTTPStatus.FORBIDDEN, {"error": "host is not allowed"})
+            return
+        if not self._authorized():
+            self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "valid bake authorization is required"})
+            return
         if self.path != "/process":
             self._send_json(HTTPStatus.NOT_FOUND, {"error": "not found"})
             return
@@ -252,7 +302,11 @@ class ProcessRequestHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "expected multipart/form-data"})
             return
 
-        form = parse_multipart_form(self, content_type)
+        try:
+            form = parse_multipart_form(self, content_type)
+        except (TypeError, ValueError) as error:
+            self._send_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"error": str(error)})
+            return
 
         image = form.get("image")
         mask = form.get("mask")
@@ -303,6 +357,10 @@ def main():
         )
     if not MODEL_ID:
         raise SystemExit("BAKE_LEGACY_IMAGE_FILL requires BAKE_PROCESS_MODEL")
+    if SERVER_HOST not in {"localhost", "127.0.0.1", "::1"} and os.environ.get("BAKE_PROCESS_ALLOW_REMOTE") != "1":
+        raise SystemExit("non-loopback legacy process binding requires BAKE_PROCESS_ALLOW_REMOTE=1")
+    if not (os.environ.get("BAKE_PROCESS_TOKEN") or os.environ.get("CEV_SIM_BAKE_TOKEN")):
+        raise SystemExit("BAKE_PROCESS_TOKEN or CEV_SIM_BAKE_TOKEN is required")
     server = ThreadingHTTPServer((SERVER_HOST, SERVER_PORT), ProcessRequestHandler)
     print(f"Bake processing API listening on http://{SERVER_HOST}:{SERVER_PORT}")
     server.serve_forever()

@@ -32,7 +32,10 @@ export function createLogRouter(service) {
         bytes: req.body,
     })));
     router.post("/sessions/:id/finalize", json, handle(async (req) => service.finalize(req.params.id, req.body || {})));
-    router.post("/import", handle(async (req) => service.importStream(req, { name: req.get("x-sflog-name") })));
+    router.post("/import", handle(async (req) => service.importStream(req, {
+        name: req.get("x-sflog-name"),
+        contentLength: req.get("content-length"),
+    })));
     router.get("/:id/metadata", handle(async (req) => service.getMetadata(req.params.id)));
     router.get("/:id/index", handle(async (req) => service.getIndex(req.params.id)));
     router.get("/:id/chunks/:chunkIndex", async (req, res) => {
@@ -151,5 +154,5 @@ function handle(fn) {
 
 function respondError(req, res, error) {
     console.error(`[logs] ${req.method} ${req.originalUrl} failed:`, error);
-    res.status(400).json({ error: error.message });
+    res.status(Number(error.statusCode) || 400).json({ error: error.message });
 }

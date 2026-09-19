@@ -68,6 +68,39 @@ test("G-SECURITY publishes valid PNG JPEG KTX2 and GLB and rejects hostile graph
     });
 });
 
+test("G-SECURITY upload cancellation cannot escape or follow the staging directory", async () => {
+    await withStore(async (store, dir) => {
+        const rootSentinel = path.join(dir, "visual-assets", "sentinel.txt");
+        const outside = path.join(dir, "outside-upload");
+        await fs.writeFile(rootSentinel, "keep");
+        await fs.mkdir(outside);
+        await fs.writeFile(path.join(outside, "sentinel.txt"), "keep");
+
+        for (const id of ["..", "../outside-upload", "%2e%2e", "/tmp/cev-sim-upload"] ) {
+            await assert.rejects(
+                () => store.abortUpload(id),
+                (error) => error.code === VISUAL_ASSET_ERROR_CODES.UPLOAD_NOT_FOUND,
+            );
+        }
+        assert.equal(await fs.readFile(rootSentinel, "utf8"), "keep");
+        assert.equal(await fs.readFile(path.join(outside, "sentinel.txt"), "utf8"), "keep");
+
+        const upload = await store.createUpload({
+            asset: { sha256: "a".repeat(64), mediaType: "image/png", sizeBytes: 1, role: "texture" },
+            sourceIds: ["owned-lab"],
+            dependencies: {},
+        });
+        const stagingPath = path.join(dir, "visual-assets", "staging", upload.id);
+        await fs.rm(stagingPath, { recursive: true, force: true });
+        await fs.symlink(outside, stagingPath);
+        await assert.rejects(
+            () => store.abortUpload(upload.id),
+            (error) => error.code === VISUAL_ASSET_ERROR_CODES.SYMLINK,
+        );
+        assert.equal(await fs.readFile(path.join(outside, "sentinel.txt"), "utf8"), "keep");
+    });
+});
+
 test("G-SECURITY rejects MIME mismatch, digest mismatch, oversized textures, and malformed accessors", async () => {
     await withStore(async (store) => {
         const png = makePng();

@@ -3,8 +3,45 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from email.parser import BytesParser
 from email.policy import default as email_policy
 from io import BytesIO
+import hmac
 import json
+import os
 from urllib.parse import parse_qs, unquote, urlparse
+
+MAX_JSON_BYTES = 1024 * 1024
+MAX_LEGACY_MULTIPART_BYTES = 64 * 1024 * 1024
+DEFAULT_ALLOWED_ORIGINS = {
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://[::1]:3000",
+}
+LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
+
+
+class RequestRejected(Exception):
+    def __init__(self, status, message):
+        super().__init__(message)
+        self.status = status
+
+
+def _csv_env(name):
+    return {entry.strip() for entry in os.environ.get(name, "").split(",") if entry.strip()}
+
+
+def _request_hostname(value):
+    try:
+        parsed = urlparse(f"//{value}")
+        return (parsed.hostname or "").lower().rstrip(".")
+    except ValueError:
+        return ""
+
+
+def _allowed_hosts():
+    return LOOPBACK_HOSTS | {entry.lower().rstrip(".") for entry in _csv_env("CEV_SIM_BAKE_ALLOWED_HOSTS")}
+
+
+def _allowed_origins():
+    return DEFAULT_ALLOWED_ORIGINS | _csv_env("CEV_SIM_BAKE_ALLOWED_ORIGINS")
 
 on_photo_recieve = []
 
@@ -82,8 +119,10 @@ class MultipartField:
 
 
 def parse_multipart_form(handler, content_type):
-    length = int(handler.headers.get("Content-Length", "0"))
+    length = handler._content_length(MAX_LEGACY_MULTIPART_BYTES, required=True)
     body = handler.rfile.read(length)
+    if len(body) != length:
+        raise RequestRejected(HTTPStatus.BAD_REQUEST, "multipart body ended before Content-Length")
     header = (
         f"Content-Type: {content_type}\r\n"
         "MIME-Version: 1.0\r\n\r\n"
@@ -106,15 +145,18 @@ def parse_multipart_form(handler, content_type):
 
 
 class BakingRequestHandler(BaseHTTPRequestHandler):
+    def _send_cors_headers(self):
+        origin = self.headers.get("Origin", "").strip()
+        if origin and origin in _allowed_origins():
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
+
     def _send_json(self, status_code, payload):
         body = json.dumps(payload).encode("utf-8")
         self.send_response(status_code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        self.send_header("Access-Control-Max-Age", "3600")
+        self._send_cors_headers()
         self.end_headers()
         self.wfile.write(body)
 
@@ -123,9 +165,51 @@ class BakingRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(payload)))
         self.send_header("X-Cev-Digest", f"sha256:{digest}")
-        self.send_header("Access-Control-Allow-Origin", "*")
+        self._send_cors_headers()
         self.end_headers()
         self.wfile.write(payload)
+
+    def _content_length(self, maximum, required=False):
+        raw = self.headers.get("Content-Length")
+        if raw is None:
+            if required:
+                raise RequestRejected(HTTPStatus.LENGTH_REQUIRED, "Content-Length is required")
+            return 0
+        try:
+            length = int(raw)
+        except (TypeError, ValueError) as error:
+            raise RequestRejected(HTTPStatus.BAD_REQUEST, "Content-Length is invalid") from error
+        if length < 0:
+            raise RequestRejected(HTTPStatus.BAD_REQUEST, "Content-Length is invalid")
+        if length > maximum:
+            raise RequestRejected(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "request body exceeds the configured limit")
+        return length
+
+    def _validate_request_target(self):
+        host = _request_hostname(self.headers.get("Host", ""))
+        if not host or host not in _allowed_hosts():
+            raise RequestRejected(HTTPStatus.FORBIDDEN, "Host is not allowed")
+        origin = self.headers.get("Origin", "").strip()
+        if origin == "null" or (origin and origin not in _allowed_origins()):
+            raise RequestRejected(HTTPStatus.FORBIDDEN, "Origin is not allowed")
+
+    def _begin_request(self, require_auth=True):
+        try:
+            self._validate_request_target()
+            if require_auth:
+                token = os.environ.get("CEV_SIM_BAKE_TOKEN", "")
+                supplied = self.headers.get("Authorization", "")
+                expected = f"Bearer {token}"
+                if not token or not hmac.compare_digest(supplied, expected):
+                    self._send_json(HTTPStatus.UNAUTHORIZED, {
+                        "error": "valid bake authorization is required",
+                        "code": "BAKE_UNAUTHORIZED",
+                    })
+                    return False
+            return True
+        except RequestRejected as error:
+            self._send_json(error.status, {"error": str(error), "code": "BAKE_REQUEST_REJECTED"})
+            return False
 
     def _handle_v1_error(self, error):
         from v1_service import BakeV1Error
@@ -135,11 +219,12 @@ class BakingRequestHandler(BaseHTTPRequestHandler):
             return True
         return False
 
-    def _v1_read_body(self):
-        length = int(self.headers.get("Content-Length", "0"))
-        if length < 0:
-            return b""
-        return self.rfile.read(length)
+    def _v1_read_body(self, maximum=MAX_JSON_BYTES):
+        length = self._content_length(maximum, required=True)
+        payload = self.rfile.read(length)
+        if len(payload) != length:
+            raise RequestRejected(HTTPStatus.BAD_REQUEST, "request body ended before Content-Length")
+        return payload
 
     def _handle_v1(self, method):
         from v1_service import BakeV1Error, parse_digest_header
@@ -161,7 +246,7 @@ class BakingRequestHandler(BaseHTTPRequestHandler):
                 self.send_response(HTTPStatus.OK)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(payload)))
-                self.send_header("Access-Control-Allow-Origin", "*")
+                self._send_cors_headers()
                 self.end_headers()
                 self.wfile.write(payload)
                 return True
@@ -176,7 +261,7 @@ class BakingRequestHandler(BaseHTTPRequestHandler):
                 if method == "PUT" and rest[:1] == ["inputs"] and len(rest) == 2:
                     key = unquote(rest[1])
                     sample_id, view_id, role = key.split(":", 2)
-                    payload = self._v1_read_body()
+                    payload = self._v1_read_body(v1_service.max_upload_bytes)
                     declared = int(self.headers.get("Content-Length", "0"))
                     if declared != len(payload):
                         raise BakeV1Error("BAKE_TRANSFER_DIGEST_MISMATCH", "Transfer length does not match Content-Length.")
@@ -213,26 +298,29 @@ class BakingRequestHandler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid json", "code": "BAKE_CONTRACT_INVALID"})
             return True
+        except RequestRejected as error:
+            self._send_json(error.status, {"error": str(error), "code": "BAKE_REQUEST_REJECTED"})
+            return True
         return False
 
     def _send_png(self, payload):
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "image/png")
         self.send_header("Content-Length", str(len(payload)))
-        self.send_header("Access-Control-Allow-Origin", "*")
+        self._send_cors_headers()
         self.end_headers()
         self.wfile.write(payload)
 
     def _send_cors_preflight(self):
         self.send_response(HTTPStatus.NO_CONTENT)
-        self.send_header("Access-Control-Allow-Origin", "*")
+        self._send_cors_headers()
         self.send_header("Access-Control-Allow-Methods", "POST, GET, PUT, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Cev-Digest, X-Cev-Sample-Id, X-Cev-View-Id, X-Cev-Role")
+        self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Cev-Digest, X-Cev-Sample-Id, X-Cev-View-Id, X-Cev-Role")
         self.send_header("Access-Control-Max-Age", "3600")
         self.end_headers()
 
     def _read_json_body(self):
-        length = int(self.headers.get("Content-Length", "0"))
+        length = self._content_length(MAX_JSON_BYTES)
         if length <= 0:
             return {}
         raw = self.rfile.read(length)
@@ -241,20 +329,23 @@ class BakingRequestHandler(BaseHTTPRequestHandler):
         return json.loads(raw.decode("utf-8"))
 
     def do_OPTIONS(self):
+        if not self._begin_request(require_auth=False):
+            return
         self._send_cors_preflight()
 
     def do_GET(self):
+        if self.path == "/healthz":
+            if not self._begin_request(require_auth=False):
+                return
+            self._send_json(HTTPStatus.OK, {"success": True})
+            return
+        if not self._begin_request():
+            return
         if self._handle_v1("GET"):
             return
 
-        if self.path == "/healthz":
-            self._send_json(HTTPStatus.OK, {"success": True})
-            return
-
         if self.path == "/clear":
-            for listener in on_clear_listeners:
-                listener()
-            self._send_json(HTTPStatus.OK, {"success": True})
+            self._send_json(HTTPStatus.METHOD_NOT_ALLOWED, {"error": "use POST /clear"})
             return
 
         if self.path == "/queue":
@@ -297,7 +388,7 @@ class BakingRequestHandler(BaseHTTPRequestHandler):
             if status == "pending":
                 self.send_response(HTTPStatus.ACCEPTED)
                 self.send_header("Content-Type", "application/json")
-                self.send_header("Access-Control-Allow-Origin", "*")
+                self._send_cors_headers()
                 self.end_headers()
                 self.wfile.write(json.dumps({"status": "pending"}).encode("utf-8"))
                 return
@@ -308,12 +399,22 @@ class BakingRequestHandler(BaseHTTPRequestHandler):
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "not found"})
 
     def do_PUT(self):
+        if not self._begin_request():
+            return
         if self._handle_v1("PUT"):
             return
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "not found"})
 
     def do_POST(self):
+        if not self._begin_request():
+            return
         if self._handle_v1("POST"):
+            return
+
+        if self.path == "/clear":
+            for listener in on_clear_listeners:
+                listener()
+            self._send_json(HTTPStatus.OK, {"success": True})
             return
 
         if self.path == "/bake/complete":
@@ -346,7 +447,11 @@ class BakingRequestHandler(BaseHTTPRequestHandler):
 
         content_type = self.headers.get("Content-Type", "")
         if content_type.startswith("multipart/form-data"):
-            form = parse_multipart_form(self, content_type)
+            try:
+                form = parse_multipart_form(self, content_type)
+            except RequestRejected as error:
+                self._send_json(error.status, {"error": str(error), "code": "BAKE_REQUEST_REJECTED"})
+                return
             photo = form.get("photo")
             if photo is None or not getattr(photo, "file", None):
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": "missing photo"})
@@ -364,7 +469,11 @@ class BakingRequestHandler(BaseHTTPRequestHandler):
             for listener in on_photo_recieve:
                 listener(raw_image)
         else:
-            length = int(self.headers.get("Content-Length", "0"))
+            try:
+                length = self._content_length(MAX_LEGACY_MULTIPART_BYTES)
+            except RequestRejected as error:
+                self._send_json(error.status, {"error": str(error), "code": "BAKE_REQUEST_REJECTED"})
+                return
             if length:
                 self.rfile.read(length)
 
@@ -384,6 +493,14 @@ def begin_server_async():
 
 
 def main():
+    host = os.environ.get("CEV_SIM_BAKE_HOST", "127.0.0.1")
+    port = int(os.environ.get("CEV_SIM_BAKE_PORT", "8000"))
+    if host not in LOOPBACK_HOSTS and os.environ.get("CEV_SIM_BAKE_ALLOW_REMOTE") != "1":
+        raise SystemExit("non-loopback bake binding requires CEV_SIM_BAKE_ALLOW_REMOTE=1")
+    if host not in LOOPBACK_HOSTS and not _csv_env("CEV_SIM_BAKE_ALLOWED_HOSTS"):
+        raise SystemExit("non-loopback bake binding requires CEV_SIM_BAKE_ALLOWED_HOSTS")
+    if not os.environ.get("CEV_SIM_BAKE_TOKEN"):
+        raise SystemExit("CEV_SIM_BAKE_TOKEN is required")
     try:
         from backends import load_backend
         from v1_service import BakeV1Service
@@ -392,8 +509,8 @@ def main():
         print("VIS-11 intrinsic-material-model@1 listening at /bake/v1")
     except Exception as exc:
         print(f"VIS-11 v1 service disabled: {exc}")
-    server = ThreadingHTTPServer(("0.0.0.0", 8000), BakingRequestHandler)
-    print("Baking API listening on http://0.0.0.0:8000")
+    server = ThreadingHTTPServer((host, port), BakingRequestHandler)
+    print(f"Baking API listening on http://{host}:{port}")
     server.serve_forever()
 
 

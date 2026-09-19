@@ -28,6 +28,7 @@ import {
     uploadRunManifest,
     uploadSampleComplete,
 } from "./bakeUpload.js";
+import { getBakeAccessToken } from "./BakeAccess.js";
 import {
     applyBakeTelemetryPatch,
     calculateBakeTotalSamples,
@@ -367,6 +368,8 @@ export class BakeHarness {
         this.server = {
             host: options.host ?? "http://localhost:8000",
             endpoint: options.endpoint ?? "/bake",
+            getAccessToken: options.getAccessToken
+                ?? (() => getBakeAccessToken(options.host ?? "http://localhost:8000")),
         };
 
         this.telemetryListeners = new Set();

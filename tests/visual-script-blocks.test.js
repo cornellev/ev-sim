@@ -731,6 +731,16 @@ test("json and array writes clone inputs and leave out-of-range arrays unchanged
     const cloned = cloneValue({ x: 1 });
     cloned.x = 2;
     assert.deepEqual(cloneValue({ x: 1 }), { x: 1 });
+
+    for (const reserved of ["__proto__.polluted", "prototype.polluted", "constructor.prototype.polluted"]) {
+        assert.throws(
+            () => configuredBlock(JsonSetBlock, { document: {}, value: true }, {
+                state: { path: reserved, valueType: "boolean" },
+            }).execute(),
+            /reserved segment/,
+        );
+    }
+    assert.equal(Object.prototype.polluted, undefined);
 });
 
 const SAMPLE_ROUTE = {
@@ -1685,5 +1695,4 @@ test("log message prints and sequences then", () => {
         console.log = original;
     }
 });
-
 

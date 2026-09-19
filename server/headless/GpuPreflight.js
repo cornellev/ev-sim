@@ -25,6 +25,7 @@ export async function runGpuPreflight(rendererConfig = {}, options = {}) {
             });
             const roundTrip = await validateSharedTensorReference(first, {
                 environmentToken: first.regionName.split(/[\\/]/).at(-1),
+                expectedRegion: arena.regionName,
                 spec,
             });
             await arena.publishTensor(Uint8Array.of(5, 6, 7, 8), spec, {
@@ -35,6 +36,7 @@ export async function runGpuPreflight(rendererConfig = {}, options = {}) {
             try {
                 await validateSharedTensorReference(first, {
                     environmentToken: first.regionName.split(/[\\/]/).at(-1),
+                    expectedRegion: arena.regionName,
                     spec,
                 });
             } catch {

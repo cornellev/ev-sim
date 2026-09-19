@@ -22,6 +22,8 @@ import {
 } from "../app/simulation/lidar/LidarGeometry.js";
 import { CpuLidarScene } from "../app/simulation/sensors/CpuLidarScene.js";
 import { HeadlessGpuSensorManager } from "../app/simulation/sensors/HeadlessGpuSensorManager.js";
+import { loadHeadlessMessageCodec } from "../app/simulation/sensors/HeadlessMessageCodec.js";
+import { loadHeadlessVisualCaptureCodec } from "../app/simulation/sensors/HeadlessVisualCaptureCodec.js";
 import { createGpuSensorBackendV2Selection } from "../app/simulation/sensors/GpuSensorBackend.js";
 import { StorageService } from "../server/storage/StorageService.js";
 import { loadHeadlessGrpcSchema } from "../server/headless/GrpcSchema.js";
@@ -816,7 +818,11 @@ test("VIS-15a routes PBR cameras and analytic LiDAR separately, then commits the
         position: { x: 0, y: 0, z: 0 },
         rotation: { x: 0, y: 0, z: 0, order: "XYZ" },
     }] };
-    const manager = new HeadlessGpuSensorManager(vehicles, { rendererClient });
+    const manager = new HeadlessGpuSensorManager(vehicles, {
+        rendererClient,
+        messageCodec: await loadHeadlessMessageCodec(),
+        visualCapture: await loadHeadlessVisualCaptureCodec(),
+    });
     await manager.configureFromManifest({ sensors: [camera, lidar] }, {
         backendSelection: createGpuSensorBackendV2Selection(),
         renderScene,

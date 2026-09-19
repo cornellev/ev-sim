@@ -283,7 +283,7 @@ function hydrateRoadGraph(city, document) {
  * @param {import("../../data/Data").Data} data
  * @param {import("./EnvironmentDocument.js").EnvironmentDocument} document
  */
-export function hydrateDocumentFromRuntime(data, document) {
+export function hydrateDocumentFromRuntime(data, document, { notify = true } = {}) {
     let changed = false;
 
     for (const record of data?.bakeRunConfig?.()?.buildings ?? []) {
@@ -338,7 +338,7 @@ export function hydrateDocumentFromRuntime(data, document) {
         refreshNodeKinds(document);
     }
 
-    if (changed) {
+    if (changed && notify) {
         document.notify();
     }
 

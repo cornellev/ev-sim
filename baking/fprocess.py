@@ -6,6 +6,7 @@ from urllib import error, request
 
 SERVER_HOST = os.environ.get("BAKE_PROCESS_SERVER")
 SERVER_ENDPOINT = os.environ.get("BAKE_PROCESS_ENDPOINT")
+SERVER_TOKEN = os.environ.get("BAKE_PROCESS_TOKEN") or os.environ.get("CEV_SIM_BAKE_TOKEN")
 
 
 def _multipart_body(fields, files):
@@ -51,6 +52,9 @@ def process_image(image_path, mask_path, tag, save_path=None, metadata=None):
     if not endpoint:
         print("Legacy image-fill endpoint is not configured; refusing unpinned remote defaults.")
         return None
+    if not SERVER_TOKEN:
+        print("Legacy image-fill token is not configured; refusing unauthenticated request.")
+        return None
     output_path = save_path or f"baked_{tag}.png"
     fields = {
         "tag": tag,
@@ -69,6 +73,7 @@ def process_image(image_path, mask_path, tag, save_path=None, metadata=None):
         headers={
             "Content-Type": f"multipart/form-data; boundary={boundary}",
             "Content-Length": str(len(body)),
+            "Authorization": f"Bearer {SERVER_TOKEN}",
         },
     )
 
