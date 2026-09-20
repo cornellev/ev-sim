@@ -83,6 +83,52 @@ test("actor-local BVHs move by transform, exclude the parent, and replay without
     scene.dispose();
 });
 
+test("explicit range-image layouts preserve authored channel order and azimuth corrections", () => {
+    const targets = [
+        createBoxLidarTwin({
+            id: "positive-x", sourceId: "positive-x",
+            center: { x: 5, y: 0, z: 0 }, size: { x: 1, y: 1, z: 1 },
+            semanticId: 1, instanceId: 11,
+        }),
+        createBoxLidarTwin({
+            id: "positive-z", sourceId: "positive-z",
+            center: { x: 0, y: 0, z: 7 }, size: { x: 1, y: 1, z: 1 },
+            semanticId: 2, instanceId: 22,
+        }),
+        createBoxLidarTwin({
+            id: "negative-x", sourceId: "negative-x",
+            center: { x: -9, y: 0, z: 0 }, size: { x: 1, y: 1, z: 1 },
+            semanticId: 3, instanceId: 33,
+        }),
+    ];
+    const scene = new CpuLidarScene(resource(targets));
+    const buffer = scene.capture(sensor({
+        calibration: {
+            scanLayout: {
+                kind: "cev-sim.range-image-layout",
+                version: 1,
+                channels: [
+                    { id: 10, elevationDeg: 0, azimuthOffsetDeg: 0 },
+                    { id: 20, elevationDeg: 0, azimuthOffsetDeg: 90 },
+                ],
+                azimuthsDeg: [0, 90],
+                minRangeM: 0.1,
+                maxRangeM: 20,
+            },
+        },
+    }), [ego]);
+    assert.deepEqual(
+        [0, 1, 2, 3].map((ray) => [buffer[ray * 4], buffer[ray * 4 + 2], buffer[ray * 4 + 3]]),
+        [
+            [4.5, 1, 11],
+            [6.5, 2, 22],
+            [6.5, 2, 22],
+            [8.5, 3, 33],
+        ],
+    );
+    scene.dispose();
+});
+
 test("CPU output matches the committed browser GLSL simple-scene reference", async () => {
     const fixture = JSON.parse(await readFile(new URL("./fixtures/headless/lidar-gpu-reference.v1.json", import.meta.url), "utf8"));
     const primitive = createBoxLidarTwin({ ...fixture.box, tags: ["building"] });

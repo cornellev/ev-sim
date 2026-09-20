@@ -5,19 +5,22 @@ import {
 } from "./FixedStepSensorSchedule.js";
 import { buildDiagnosticArray } from "./SensorMessages.js";
 import { simulationSha256 } from "../kernel/SimulationHashes.js";
+import { encodeNativeSensorPacket, packetPayloadDigest } from "./NativeSensorPacket.js";
 
 const DEFAULT_MAX_QUEUE_BYTES = 64 * 1024 * 1024;
 
 export function normalizeCaptureResult(captured, captureTimeNs, sampleIndex) {
     if (captured == null) {
-        return { messages: [], captureTimeNs, sampleIndex };
+        return { messages: [], nativePackets: [], captureTimeNs, sampleIndex };
     }
     if (Array.isArray(captured)) {
-        return { messages: captured, captureTimeNs, sampleIndex };
+        return { messages: captured, nativePackets: [], captureTimeNs, sampleIndex };
     }
     const messages = Array.isArray(captured.messages) ? captured.messages : [];
+    const nativePackets = Array.isArray(captured.nativePackets) ? captured.nativePackets : [];
     return {
         messages,
+        nativePackets,
         captureTimeNs: Number.isFinite(captured.captureTimeNs) ? captured.captureTimeNs : captureTimeNs,
         sampleIndex: Number.isFinite(captured.sampleIndex) ? captured.sampleIndex : sampleIndex,
         rng: captured.rng,
@@ -52,6 +55,9 @@ export class SensorPublisher {
         runtimeData = null,
         encodeTopicValue,
         encodingPool = null,
+        nativePacketSink = null,
+        pluginStrict = false,
+        pluginIdentity = null,
     } = {}) {
         if (typeof encodeTopicValue !== "function") {
             throw new TypeError("SensorPublisher requires an encodeTopicValue port.");
@@ -65,6 +71,9 @@ export class SensorPublisher {
         this.runtimeData = runtimeData;
         this.encodeTopicValue = encodeTopicValue;
         this.encodingPool = encodingPool;
+        this.nativePacketSink = nativePacketSink;
+        this.pluginStrict = pluginStrict === true;
+        this.pluginIdentity = pluginIdentity;
         this.manifestStepNs = stepNs;
         this.nowNs = nowNs
             || monotonicClock?.nowNs?.bind(monotonicClock)
@@ -148,6 +157,14 @@ export class SensorPublisher {
                     digest: message.digest
                         ?? (message.value == null ? null : simulationSha256(message.value)),
                 })),
+                nativePackets: (frame.nativePackets || []).map((packet) => ({
+                    productId: packet.productId,
+                    streamId: packet.streamId,
+                    offsetNs: packet.offsetNs,
+                    packetIndex: packet.packetIndex,
+                    payloadLength: packet.payload.byteLength,
+                    payloadDigest: packetPayloadDigest(packet.payload),
+                })),
                 ...(frame.observation ? {
                     observation: {
                         dtype: frame.observation.dtype,
@@ -215,6 +232,7 @@ export class SensorPublisher {
             frame.encodeCancelled = true;
             this.device.releaseObservation?.(frame.observation);
             frame.messages = null;
+            frame.nativePackets = null;
             frame.observation = null;
             frame.encodedByTopic = null;
         }
@@ -229,11 +247,16 @@ export class SensorPublisher {
         const sampleIndex = this.sampleIndex++;
         const skip = this.device.gpuCapture
             && this.device.getParent?.()?.getParent?.()?.simulation?.()?.gpuCaptureEnabled === false;
+        const scope = `${this.seed}:sensor:${this.config.id}:sample:${sampleIndex}`;
         return {
             captureTimeNs,
             sampleIndex,
+            scanDurationNs: this.periodSteps * this.stepNs,
             skip,
-            rng: new SeededRNG(`${this.seed}:sensor:${this.config.id}:sample:${sampleIndex}`),
+            rng: new SeededRNG(scope),
+            measurementRng: new SeededRNG(`${scope}:measurement`),
+            pluginRng: new SeededRNG(`${scope}:plugin`),
+            deliveryRng: new SeededRNG(`${scope}:delivery`),
             clock,
         };
     }
@@ -243,7 +266,7 @@ export class SensorPublisher {
         const captureDurationNs = Math.max(0, this._time() - captureStartNs);
         this.health.captureTimeNs = captureDurationNs;
         this.health.captureTimeTotalNs += captureDurationNs;
-        if (result.messages.length > 0 || result.observation) {
+        if (result.messages.length > 0 || result.nativePackets.length > 0 || result.observation) {
             this.health.capturedFrames += 1;
             this.enqueue(
                 result.messages,
@@ -251,6 +274,7 @@ export class SensorPublisher {
                 result.sampleIndex,
                 result.rng || context.rng,
                 result.observation,
+                result.nativePackets,
             );
         }
     }
@@ -270,7 +294,7 @@ export class SensorPublisher {
                 if (captured?.then) throw new Error(`Sensor ${this.config.id} requires updateAsync().`);
                 this._acceptCapture(captured, context, captureStartNs);
             } catch (error) {
-                if (error?.infrastructureFailure) throw error;
+                if (error?.infrastructureFailure || this.pluginStrict) throw error;
                 this._event("capture-failed", "error", { sampleIndex: context.sampleIndex, reason: error.message });
             }
             this.nextCaptureStep += this.periodSteps;
@@ -288,7 +312,7 @@ export class SensorPublisher {
                     const captured = await this.device.captureAt?.(context);
                     this._acceptCapture(captured, context, captureStartNs);
                 } catch (error) {
-                    if (error?.infrastructureFailure) throw error;
+                    if (error?.infrastructureFailure || this.pluginStrict) throw error;
                     this._event("capture-failed", "error", {
                         sampleIndex: context.sampleIndex,
                         reason: error.message,
@@ -299,7 +323,7 @@ export class SensorPublisher {
         }
     }
 
-    enqueue(messages, captureTimeNs, sampleIndex, rng, observation = null) {
+    enqueue(messages, captureTimeNs, sampleIndex, rng, observation = null, nativePackets = []) {
         const stepNs = this.stepNs || this.manifestStepNs || 16_666_667;
         const delivery = resolveSensorDelivery(this.config, captureTimeNs, rng, stepNs);
         const {
@@ -329,7 +353,8 @@ export class SensorPublisher {
         const frameBytes = estimateFrameBytes(
             frameMessages,
             this.encodingPool?.estimateEncodeBytes ?? (() => 0),
-        ) + estimateObservationBytes(observation);
+        ) + estimateObservationBytes(observation)
+            + nativePackets.reduce((total, packet) => total + packet.payload.byteLength, 0);
         if (this.queue.length >= this.maxQueueFrames || this.queuedBytes + frameBytes > this.maxQueueBytes) {
             this.device.releaseObservation?.(observation);
             this._incrementFrameDrop();
@@ -339,6 +364,17 @@ export class SensorPublisher {
                 queueBytes: this.queuedBytes,
                 frameBytes,
             });
+            if (this.pluginStrict) {
+                const error = new Error(`Plugin sensor "${this.config.id}" delivery queue exceeded its admitted limit.`);
+                error.code = "PLUGIN_RESOURCE";
+                error.pluginId = this.pluginIdentity?.pluginId ?? null;
+                error.contributionId = this.config.type;
+                error.unitId = this.config.id;
+                error.hook = "enqueue";
+                error.requiresReset = true;
+                error.infrastructureFailure = true;
+                throw error;
+            }
             return;
         }
         this.queue.push({
@@ -351,6 +387,7 @@ export class SensorPublisher {
             sequence: sampleIndex,
             syncGroupKey: this.config.syncGroupId ? `${this.config.syncGroupId}:${captureStep}` : null,
             messages: frameMessages,
+            nativePackets: nativePackets.map((packet) => ({ ...packet, payload: new Uint8Array(packet.payload) })),
             observation,
             encodedByTopic: new Map(),
             encodeReady: false,
@@ -429,6 +466,7 @@ export class SensorPublisher {
             if (frame.encodeFailed) {
                 this.device.releaseObservation?.(frame.observation);
                 frame.messages = null;
+                frame.nativePackets = null;
                 frame.observation = null;
                 frame.encodedByTopic = null;
                 continue;
@@ -445,6 +483,7 @@ export class SensorPublisher {
             }
             const transportStartNs = this._time();
             for (const message of frame.messages || []) this._deliverMessage(message, frame, clock);
+            for (const packet of frame.nativePackets || []) this._deliverNativePacket(packet, frame, clock);
             const transportDurationNs = Math.max(0, this._time() - transportStartNs);
             this.health.transportTimeNs = transportDurationNs;
             this.health.transportTimeTotalNs += transportDurationNs;
@@ -460,6 +499,7 @@ export class SensorPublisher {
             }
             // Drop frame references immediately after delivery so Image/PointCloud buffers can GC.
             frame.messages = null;
+            frame.nativePackets = null;
             frame.observation = null;
             frame.encodedByTopic?.clear?.();
             frame.encodedByTopic = null;
@@ -471,6 +511,7 @@ export class SensorPublisher {
         const topic = this.topics.get(message.topicId);
         if (!topic) {
             this._event("publish-failed", "error", { sampleIndex: frame.sampleIndex, reason: `unknown-topic:${message.topicId}` });
+            if (this.pluginStrict) throw this._strictPublishError(`Unknown topic "${message.topicId}".`, frame, "publish");
             return;
         }
         let encoded;
@@ -483,6 +524,7 @@ export class SensorPublisher {
             this.health.encodeTimeTotalNs += encodeDurationNs;
         } catch (error) {
             this._event("publish-failed", "error", { sampleIndex: frame.sampleIndex, topic: topic.name, reason: error.message });
+            if (this.pluginStrict) throw this._strictPublishError(error.message, frame, "encode", error);
             return;
         }
         const data = this._data();
@@ -582,6 +624,66 @@ export class SensorPublisher {
             calibrationHash: this.calibrationHash,
             canonicalSignalPath: path,
         });
+    }
+
+    _deliverNativePacket(packet, frame, clock) {
+        let encoded;
+        try {
+            encoded = encodeNativeSensorPacket(packet, {
+                sensorId: this.config.id,
+                sampleIndex: frame.sampleIndex,
+                captureTimeNs: frame.captureTimeNs,
+                scheduledDeliveryTimeNs: frame.scheduledDeliveryTimeNs,
+                deliveryTimeNs: frame.deliveryTimeNs,
+                actualDeliveryStep: clock.step,
+            });
+            const data = this._data();
+            const telemetry = data?.bindings?.()?.signalStore;
+            const path = `devices.${this.device.telemetryId}.packets.${packet.productId}.${packet.streamId}`;
+            telemetry?.publishSignal?.(path, encoded.bytes, {
+                timeUs: Math.round(frame.deliveryTimeNs / 1000),
+                cycle: clock.step,
+                source: "sensors",
+                type: "bytes",
+                category: "devices",
+                replayRole: "derived",
+                logClass: "heavy",
+                retention: "none",
+                descriptorMetadata: {
+                    kind: "cev-sim.native-sensor-packet",
+                    version: 1,
+                    sensorId: this.config.id,
+                    productId: packet.productId,
+                    streamId: packet.streamId,
+                },
+            });
+            this.nativePacketSink?.(Object.freeze({
+                ...encoded.description,
+                payload: new Uint8Array(packet.payload),
+                envelope: new Uint8Array(encoded.bytes),
+            }));
+        } catch (error) {
+            this._event("publish-failed", "error", {
+                sampleIndex: frame.sampleIndex,
+                productId: packet.productId,
+                streamId: packet.streamId,
+                reason: error.message,
+            });
+            if (this.pluginStrict) throw this._strictPublishError(error.message, frame, "native-packet", error);
+        }
+    }
+
+    _strictPublishError(message, frame, hook, cause = null) {
+        const error = new Error(`Plugin sensor "${this.config.id}" ${hook} failed: ${message}`, cause ? { cause } : undefined);
+        error.code = "PLUGIN_EXECUTION";
+        error.pluginId = this.pluginIdentity?.pluginId ?? null;
+        error.contributionId = this.config.type;
+        error.unitId = this.config.id;
+        error.hook = hook;
+        error.sampleIndex = frame?.sampleIndex ?? null;
+        error.requiresReset = true;
+        error.infrastructureFailure = true;
+        return error;
     }
 
     _time() {

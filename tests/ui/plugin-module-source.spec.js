@@ -8,12 +8,66 @@ import { PluginStore } from "../../server/storage/PluginStore.js";
 import { pluginFixtureResource } from "../helpers/pluginFixtures.js";
 
 let resource;
+let sensorResource;
 let store;
 
 test.beforeAll(async () => {
     resource = await pluginFixtureResource();
+    sensorResource = await pluginFixtureResource({ fixture: "test.range-image-fixture" });
     store = new PluginStore(path.resolve(".playwright-data/storage"));
-    await store.putPackage(resource);
+    await Promise.all([store.putPackage(resource), store.putPackage(sensorResource)]);
+});
+
+test("verified browser module source registers and executes a range-image sensor factory", async ({ page }) => {
+    const verified = verifyPluginPackage(sensorResource);
+    const moduleSource = new BrowserPluginModuleSource();
+    const runtimeUrl = moduleSource.runtimeUrl(verified);
+    const descriptor = verified.document.sensorTypes[0];
+    await page.goto(`/api/storage/plugins/packages/${sensorResource.packageHash}`);
+    const result = await page.evaluate(async ({ url, sensorDescriptor }) => {
+        const namespace = await import(url);
+        const contributions = [];
+        namespace.default.register({
+            contributeSensorType(definition) { contributions.push(definition); },
+        });
+        const instance = contributions[0].create();
+        const calibration = {
+            scanLayout: sensorDescriptor.defaults.scanLayout,
+            parameters: { measurementScale: 1, statusEvery: 2 },
+            products: { points: true, packets: true },
+        };
+        instance.prepare({ calibration, helpers: Object.freeze({ sensorAbi: 1, family: "range-image" }) });
+        instance.reset({ resetSeed: "0", sensorId: "fixture" });
+        const captured = instance.captureAt({
+            buffer: new Float32Array(3 * 4 * 4),
+            calibration,
+            captureTimeNs: 100,
+            sampleIndex: 0,
+            scanDurationNs: 2_000,
+            rng: Object.freeze({ next: () => 0.5, range: () => 0, int: () => 0, intRange: () => 0 }),
+            sampling: Object.freeze({
+                buildPointCloud2: () => ({ marker: "point-cloud" }),
+                buildObservation: () => ({ marker: "observation" }),
+            }),
+        });
+        const state = instance.getDeterministicState();
+        const finalized = instance.finalize();
+        instance.dispose();
+        return {
+            type: contributions[0].type,
+            messageProducts: captured.messages.map((entry) => entry.productId),
+            observation: captured.observation.marker,
+            state,
+            finalized,
+        };
+    }, { url: runtimeUrl, sensorDescriptor: descriptor });
+    expect(result).toEqual({
+        type: "test.range-image-fixture.synthetic-3x4",
+        messageProducts: ["points", "packets", "packets"],
+        observation: "observation",
+        state: { sequence: 1, prepared: true },
+        finalized: { sequence: 1 },
+    });
 });
 
 test("verified browser module source loads runtime closure without evaluating UI", async ({ page }) => {

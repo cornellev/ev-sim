@@ -13,6 +13,7 @@ import {
     getStateSensorModel,
 } from "../../app/simulation/sensors/StateSensorBackend.js";
 import {
+    CPU_LIDAR_EXPLICIT_LAYOUT_BACKEND_VERSION,
     assertCpuLidarBackendSelection,
     createCpuLidarBackendSelection,
 } from "../../app/simulation/sensors/CpuLidarBackend.js";
@@ -73,8 +74,14 @@ export function validateManagedRun(resolved) {
         invalid("UNSUPPORTED_CAPABILITY", `Managed experiments do not support route controller(s): ${unsupportedControllers.map((route) => `${route.id}:${route.controller?.kind || "unknown"}`).sort().join(", ")}.`);
     }
     const sensors = enabledSensors(resolved);
+    const pluginSensorRecords = new Map((resolved.pluginSensors?.description?.sensors ?? [])
+        .map((entry) => [entry.sensorId, entry]));
+    const pluginSensors = sensors.filter((sensor) => (
+        pluginSensorRecords.get(sensor.id)?.type === sensor.type
+    ));
     const unsupportedSensors = sensors.filter((sensor) => (
         !getStateSensorModel(sensor.type) && !["lidar3d", "camera"].includes(sensor.type)
+        && pluginSensorRecords.get(sensor.id)?.type !== sensor.type
     ));
     if (unsupportedSensors.length > 0) {
         invalid("UNSUPPORTED_CAPABILITY", `Managed experiments do not support sensor(s): ${unsupportedSensors.map((sensor) => `${sensor.id}:${sensor.type}`).sort().join(", ")}.`);
@@ -84,7 +91,7 @@ export function validateManagedRun(resolved) {
     }
     const lidarSensors = sensors.filter((sensor) => sensor.type === "lidar3d");
     const cameraSensors = sensors.filter((sensor) => sensor.type === "camera");
-    if (lidarSensors.length > 0 && !resolved.lidarGeometry) {
+    if ((lidarSensors.length > 0 || pluginSensors.length > 0) && !resolved.lidarGeometry) {
         invalid("BUNDLE_INVALID", "LiDAR geometry twins are missing; re-resolve and export the run manifest.");
     }
     const physics = (resolved.backendSelections || []).filter((entry) => Number(entry.kind) === 1);
@@ -100,6 +107,10 @@ export function validateManagedRun(resolved) {
         if (state.length === 1) assertStateSensorBackendSelection(state[0]);
         if (lidar.length > 1) throw new Error("At most one CPU LiDAR backend selection is supported.");
         if (lidar.length === 1) assertCpuLidarBackendSelection(lidar[0]);
+        if (pluginSensors.length > 0
+            && (lidar.length !== 1 || String(lidar[0].version) !== CPU_LIDAR_EXPLICIT_LAYOUT_BACKEND_VERSION)) {
+            throw new Error("Managed plugin range-image sensors require CPU LiDAR backend version 2.");
+        }
         if (gpu.length > 1) throw new Error("At most one GPU sensor backend selection is supported.");
         if (gpu.length === 1) assertGpuSensorBackendSelection(gpu[0]);
         if (cameraSensors.length > 0) {
@@ -117,7 +128,7 @@ export function validateManagedRun(resolved) {
     if (unknown.length > 0) {
         invalid("UNSUPPORTED_CAPABILITY", `Managed experiments do not support backend kind(s): ${unknown.map((entry) => entry.kind).join(", ")}.`);
     }
-    if (lidarSensors.length === 0 && lidar.length > 0) {
+    if (lidarSensors.length === 0 && pluginSensors.length === 0 && lidar.length > 0) {
         invalid("UNSUPPORTED_CAPABILITY", "A CPU LiDAR backend was selected but the manifest has no enabled lidar3d sensor.");
     }
     if (gpu.length > 0 && cameraSensors.length === 0 && (lidarSensors.length === 0 || lidar.length > 0)) {
@@ -138,6 +149,8 @@ export function validateManagedRun(resolved) {
 
 export function managedEpisodeIdentity(resolved) {
     const sensors = enabledSensors(resolved);
+    const pluginSensorIds = new Set((resolved.pluginSensors?.description?.sensors ?? [])
+        .map((entry) => entry.sensorId));
     const backends = [...(resolved.backendSelections || [])];
     if (sensors.some((sensor) => getStateSensorModel(sensor.type))
         && !backends.some((entry) => Number(entry.kind) === 2)) {
@@ -146,6 +159,10 @@ export function managedEpisodeIdentity(resolved) {
     if (sensors.some((sensor) => sensor.type === "lidar3d")
         && !backends.some((entry) => [3, GPU_SENSOR_BACKEND_KIND].includes(Number(entry.kind)))) {
         backends.push(createCpuLidarBackendSelection());
+    }
+    if (sensors.some((sensor) => pluginSensorIds.has(sensor.id))
+        && !backends.some((entry) => Number(entry.kind) === 3)) {
+        backends.push(createCpuLidarBackendSelection({ version: CPU_LIDAR_EXPLICIT_LAYOUT_BACKEND_VERSION }));
     }
     if (sensors.some((sensor) => sensor.type === "camera")
         && !backends.some((entry) => Number(entry.kind) === GPU_SENSOR_BACKEND_KIND)) {

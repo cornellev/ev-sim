@@ -14,6 +14,7 @@ import {
     positiveIntegerOr as positiveInteger,
     positiveOr as positive,
 } from "../../util/plainGeometry.js";
+import { createPluginSensorTypeDefinition } from "../../plugin/PluginSensorContract.js";
 
 const DEFAULT_SENSOR_TYPE = "lidar3d";
 
@@ -25,32 +26,92 @@ function anglePair(value, fallback) {
 }
 
 export class SensorTypeRegistry {
-    constructor() {
-        this.definitions = new Map();
+    #entries = new Map();
+    #sealed = false;
+
+    constructor({ entries = [], allowPlugins = true } = {}) {
+        this.allowPlugins = allowPlugins !== false;
+        for (const entry of entries) this.register(entry.definition, entry.ownership);
     }
 
-    register(definition) {
+    register(definition, ownership = "builtin") {
         const id = text(definition?.id);
         if (!id) throw new Error("Sensor type definitions require an id.");
-        if (this.definitions.has(id)) throw new Error(`Sensor type "${id}" is already registered.`);
+        if (this.#sealed) throw new Error(`Sensor type registry is sealed; cannot register "${id}".`);
         if (!definition.run || !definition.vehicle) {
             throw new Error(`Sensor type "${id}" requires run and vehicle definitions.`);
         }
+        const owner = normalizeSensorOwnership(ownership);
+        if (owner !== "builtin" && !this.allowPlugins) {
+            throw new Error("The default sensor registry accepts built-ins only.");
+        }
+        const current = this.#entries.get(id);
+        if (current) {
+            if (current.ownership === "builtin" && owner === "builtin"
+                && sameSensorDefinition(current.definition, definition)) {
+                return current.definition;
+            }
+            throw new Error(`Sensor type "${id}" is already registered.`);
+        }
         const normalized = Object.freeze({ ...definition, id });
-        this.definitions.set(id, normalized);
+        this.#entries.set(id, Object.freeze({ id, definition: normalized, ownership: owner }));
         return normalized;
     }
 
     get(id) {
-        return this.definitions.get(String(id ?? "")) || null;
+        return this.#entries.get(String(id ?? ""))?.definition ?? null;
+    }
+
+    has(id) {
+        return this.#entries.has(String(id ?? ""));
+    }
+
+    ownership(id) {
+        return this.#entries.get(String(id ?? ""))?.ownership ?? null;
     }
 
     list() {
-        return [...this.definitions.values()];
+        return [...this.#entries.values()].map((entry) => entry.definition);
+    }
+
+    snapshot() {
+        return Object.freeze([...this.#entries.values()].map((entry) => Object.freeze({
+            id: entry.id,
+            definition: entry.definition,
+            ownership: entry.ownership === "builtin" ? "builtin" : Object.freeze({ ...entry.ownership }),
+        })));
+    }
+
+    seal() {
+        this.#sealed = true;
+        return this;
     }
 }
 
-export const sensorTypeRegistry = new SensorTypeRegistry();
+function normalizeSensorOwnership(ownership) {
+    if (ownership === "builtin") return "builtin";
+    if (!ownership || typeof ownership !== "object" || Array.isArray(ownership)) {
+        throw new Error("Sensor ownership must be built-in or a plugin identity.");
+    }
+    const normalized = {
+        pluginId: String(ownership.pluginId ?? "").trim(),
+        version: String(ownership.version ?? "").trim(),
+        runtimeHash: String(ownership.runtimeHash ?? "").trim(),
+    };
+    if (!normalized.pluginId || !normalized.version || !/^[a-f0-9]{64}$/.test(normalized.runtimeHash)) {
+        throw new Error("Plugin sensor ownership is incomplete.");
+    }
+    return Object.freeze(normalized);
+}
+
+function sameSensorDefinition(left, right) {
+    const leftKeys = Object.keys(left).sort();
+    const rightKeys = Object.keys(right).sort();
+    return leftKeys.length === rightKeys.length
+        && leftKeys.every((key, index) => key === rightKeys[index] && left[key] === right[key]);
+}
+
+export const sensorTypeRegistry = new SensorTypeRegistry({ allowPlugins: false });
 
 export function registerSensorType(definition) {
     return sensorTypeRegistry.register(definition);
@@ -62,6 +123,29 @@ export function getSensorType(id) {
 
 export function listSensorTypes() {
     return sensorTypeRegistry.list();
+}
+
+export function registerBuiltInSensorTypes(registry) {
+    for (const entry of sensorTypeRegistry.snapshot()) registry.register(entry.definition, "builtin");
+    return registry;
+}
+
+export function createSensorDefinitionRegistry(verifiedPackages = [], { seal = true } = {}) {
+    const registry = registerBuiltInSensorTypes(new SensorTypeRegistry({ allowPlugins: true }));
+    for (const verified of verifiedPackages) {
+        const document = verified?.document;
+        const resource = verified?.resource;
+        if (!document || !resource) throw new Error("Verified plugin package documents are required for sensor registration.");
+        const ownership = {
+            pluginId: document.id,
+            version: document.version,
+            runtimeHash: resource.runtimeHash,
+        };
+        for (const descriptor of document.sensorTypes ?? []) {
+            registry.register(createPluginSensorTypeDefinition(descriptor, ownership), ownership);
+        }
+    }
+    return seal ? registry.seal() : registry;
 }
 
 function axisCalibration(source = {}, fallback = 0) {

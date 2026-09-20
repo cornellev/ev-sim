@@ -14,6 +14,7 @@ import {
 import { namedTensor, tensorMap } from "../../app/simulation/headless/TensorProtocol.js";
 import { createCpuLidarBackendSelection } from "../../app/simulation/sensors/CpuLidarBackend.js";
 import { createStateSensorBackendSelection } from "../../app/simulation/sensors/StateSensorBackend.js";
+import { sortBackendSelections } from "../../app/physics/PhysicsBackend.js";
 import { canonicalStringify } from "../../app/simulation/RunManifest.js";
 import { loadHeadlessGrpcSchema } from "../../server/headless/GrpcSchema.js";
 import { StorageService } from "../../server/storage/StorageService.js";
@@ -77,6 +78,14 @@ export function createGrpcClient(socket, maxMessageBytes = 64 * 1024 * 1024) {
 export function episodeSpec(environmentIndex, bundleId, bundle, overrides = {}) {
     const sensors = bundle.resolved.manifest.sensorRig.sensors.filter((sensor) => sensor.enabled !== false);
     const requestsLidar = sensors.some((sensor) => sensor.type === "lidar3d");
+    const requestsPluginLidar = Boolean(bundle.resolved.pluginSensors);
+    const backendSelections = [...bundle.resolved.backendSelections];
+    if (!backendSelections.some((entry) => Number(entry.kind) === 2)) {
+        backendSelections.push(createStateSensorBackendSelection());
+    }
+    if (requestsLidar && !backendSelections.some((entry) => Number(entry.kind) === 3)) {
+        backendSelections.push(createCpuLidarBackendSelection());
+    }
     return {
         environmentIndex,
         environmentId: `environment-${environmentIndex}`,
@@ -84,15 +93,11 @@ export function episodeSpec(environmentIndex, bundleId, bundle, overrides = {}) 
         resetSeed: String(overrides.resetSeed ?? environmentIndex),
         actionRepeat: Number(overrides.actionRepeat ?? 1),
         maxEpisodeSteps: String(overrides.maxEpisodeSteps ?? 0),
-        observationProfile: overrides.perception === true || requestsLidar
+        observationProfile: overrides.perception === true || requestsLidar || requestsPluginLidar
             ? measuredPerceptionProfileRef()
             : measuredStateProfileRef(),
         rewardProfile: routeSafetyProfileRef(),
-        backendSelections: [
-            ...bundle.resolved.backendSelections,
-            createStateSensorBackendSelection(),
-            ...(requestsLidar ? [createCpuLidarBackendSelection()] : []),
-        ],
+        backendSelections: sortBackendSelections(backendSelections),
     };
 }
 

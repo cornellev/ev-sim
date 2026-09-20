@@ -18,6 +18,7 @@ from [`docs/plugin-api.md`](plugin-api.md) rather than this roadmap.
 | PLG-02: resolved selection and deterministic unit execution | Complete in working tree | Verified | Unmerged |
 | PLG-03: systems and expanded simulator capabilities | Complete in working tree | Verified | Unmerged |
 | PLG-04: editor/UI integration and distribution acceptance | Complete in working tree | Verified | Unmerged |
+| PLG-05: custom range-image sensors and native packet products | Complete in working tree | Verified | Unmerged |
 
 Only a merged change may be marked merged. A milestone is verified only when
 all of its acceptance commands and evidence entries are present in this
@@ -124,7 +125,7 @@ The registration API is frozen and contains exactly:
 
 ```text
 pluginApi, plugin, capabilities, UnitBlock, BlockOutput, ports,
-contributeUnit, contributeSystem, log
+contributeUnit, contributeSystem, contributeSensorType, log
 ```
 
 Capabilities are a frozen, sorted array. The public `UnitBlock` fixes its
@@ -146,7 +147,7 @@ API 1 reserves:
 - `signals.write.debug`, `signals.write.mission`, and
   `scenario.flags.write`
 - `world.read`, `controls.reference`, `topics.subscribe`,
-  `topics.publish`, and `overlay.spawn`
+  `topics.publish`, `overlay.spawn`, and `sensors.sample.range-image`
 
 Grant validation separately rejects unknown names, missing required grants,
 and grants unavailable from the selected host. Browser and headless hosts
@@ -157,6 +158,53 @@ RNG, reference controls, deterministic topics, and reset-only overlay spawn.
 headless and any backend kind is `4`. Pure computation and RNG need no grant.
 Plugins must use the host RNG rather than ambient `Math.random()` for
 deterministic behavior.
+
+### Sensor ABI and host sampling
+
+PLG-05 adds optional `plugin.json.sensorTypes`, the
+`sensors.sample.range-image` capability, and synchronous
+`contributeSensorType({ type, create })` registration. Existing package
+documents keep `sensorTypes` absent, preserving their parsed form and hash
+vectors. A declaration uses sensor ABI 1 and family `range-image`; it defines
+a complete default `cev-sim.range-image-layout@1`, declarative settings,
+PointCloud2 and/or native packet products, and an optional measured
+range/incidence observation. Definitions live in a run-scoped
+`SensorTypeRegistry`; executable factories publish transactionally with block
+and system contributions.
+
+The host owns geometry, capture pose, measurement noise/dropout, scheduling,
+delivery, ROS encoding, native packet records, and resource limits. Plugins
+receive a copied metric-v2 measured range image with semantic and instance
+slots cleared. Their isolated instance implements `prepare`, `reset`,
+`captureAt`, `getDeterministicState`, `hydrateDeterministicState`, `finalize`,
+and `dispose`. Thenables, malformed products, queue overflow, and lifecycle
+exceptions are structured reset-required infrastructure failures.
+
+Authored channel and azimuth order is significant. Explicit layouts require
+kind 3 `deterministic-cpu-bvh-lidar` version `2`, config hash
+`70349dfde6494414249bbcf6e1befc13ce82b817a63eb01baac4f5402ce62c31`.
+Version 1 and its uniform scan path remain unchanged. Enabled plugin sensors
+also require portable LiDAR geometry and a prepared matching factory.
+
+### Plugin sensor identity and transports
+
+Runs with enabled plugin sensors contain conditional
+`resolved.pluginSensors` (`cev-sim.plugin-sensors@1`) and
+`dependencyHashes.pluginSensors`. Each UTF-8-sorted record binds sensor/type,
+plugin/runtime identity, ABI/family, exact effective behavior hash, required
+backend, and optional observation descriptor. Bundle verification rebuilds
+the resource from verified package declarations and normalized sensors.
+Queue sizes and `sensorTransports` are operational and excluded from
+simulation semantics; scan, parameters, products, mount, latency, noise, and
+observation mapping are semantic. Plugin-free and unit/system-only runs omit
+the resource.
+
+`manifest.sensorTransports`, when present, is the strict
+`cev-sim.sensor-transports@1` document described in
+[`sensor-packet-transports.md`](sensor-packet-transports.md). PLG-05 records
+authenticated native packet envelopes but has no PCAP or UDP adapter. Any
+requested adapter therefore fails admission before readiness; those adapters
+remain PLG-06 work and are never exposed to plugin code.
 
 ### Storage and module sources
 
@@ -282,6 +330,25 @@ Chromium distribution tests from a clean checkout, full managed browser and
 headless parity, Python integration, and documentation for package authors and
 operators.
 
+### PLG-05 — Custom range-image sensors and native packet products
+
+Add strict package declarations and transactional factories, the isolated
+sensor registry, shared admission planning, explicit range-image layouts,
+CPU LiDAR backend v2, shared browser/headless adapters, PointCloud2 and native
+packet dispatch, measured-perception tensors, conditional exact identity, and
+Python/backend propagation. Sensor hooks remain in the existing `sensors`
+phase. The generic native packet sink records complete opaque UDP payloads;
+external PCAP and UDP transports fail closed until their later milestones.
+
+Acceptance requires nonuniform sampling and PointCloud2 direction coverage,
+packet-only and measured-observation configurations, exact bundle export and
+package-directory-independent import, deterministic reset/hydration,
+concurrent package-version isolation, strict factory/grant/layout/product/
+backend failures, structured async/overflow failures, unchanged legacy
+characterization, browser and headless execution, Python integration, and a
+clean headless distribution smoke. See [`plugin-sensors.md`](plugin-sensors.md)
+for the package contract.
+
 ## PLG-01 evidence ledger
 
 | Gate | Evidence | Result / limitation |
@@ -351,7 +418,49 @@ run completed without failures.
 | Plugin-free soak | `npm run test:soak:quick` | Passed on 2026-09-20; soak remains plugin-free and does not change PR-12 obligations |
 | Clean distribution | `npm run dist:headless && npm run dist:verify` | Passed on 2026-09-20; npm tarball depends on `acorn` 8.15.0 and `semver` 7.7.3, ships `docs/plugin-plan.md` and `docs/plugin-api.md`, omits `app/plugin/browser`, plugin-free smoke stays byte-compatible, and the installed CLI completes an `acme.example` portable bundle smoke without `uiHash` in provenance |
 
+## PLG-05 evidence ledger
+
+Acceptance ran on 2026-09-20 from base commit
+`b7c4a1f6c7edc02ac9fc514bcf809a51ea142e1d` on macOS arm64, Node
+22.14.0. The implementation working-tree digest before this evidence-only
+ledger update was
+`f3a15194c0e10afabddb9a1c715e41189298fa6b1cbc4cf901c9b88cd9bd88ca`.
+
+| Gate | Exact command / evidence | Result / limitation |
+| --- | --- | --- |
+| Declarations, admission, identity, products | `node --experimental-default-type=module --test tests/plugin-sensors.test.js` plus the final full suite | Passed; strict legacy omission, grants/layouts/products/factories/shapes/backends/package closures, exact `pluginSensors`, UI/transport/queue projections, authenticated packet bytes, packet-only tensors, async/overflow errors, concurrent versions, direct runner, managed execution, reset replay, hydration, and 32 reset cycles |
+| CPU sampling compatibility | `node --experimental-default-type=module --test tests/lidar-cpu.test.js`; final full suite | Passed; authored 3×4 order and channel azimuth corrections, actor-local parent exclusion/motion, deterministic labels/no-hit values, and the committed browser GLSL reference tolerance |
+| Supervisor path | `node --experimental-default-type=module --test --test-name-pattern="PLG-05 supervisor" tests/headless-supervisor.test.js` with local Unix-socket access | 1/1 passed; a process-isolated worker imported the embedded package, exposed the measured tensor, stepped, terminated, and finalized successfully |
+| Production browser | `npx playwright test tests/ui/plugin-module-source.spec.js --workers=1` | 2/2 Chromium tests passed against the production server; the verified sensor ESM registered and executed its isolated factory and the existing runtime/UI isolation test remained green |
+| Python and generated contract | `npm run test:python`; `npm run lint:python`; `npm run proto:python` | 69/69 passed; Ruff and generated-Protobuf checks passed. Python preserves and negotiates the locked CPU-v2 selection without interpreting scan physics; no Protobuf change |
+| Characterization | `npm run fixtures:headless`; `git diff --exit-code -- tests/fixtures/headless/characterization.v1.json` | Passed with no committed fixture delta |
+| Repository lint and full Node suite | `npm run lint`; `node --experimental-default-type=module --test --test-reporter=dot tests/*.test.js`; `git diff --check` | 1,546 passed, 0 failed, 4 existing skips; ESLint had zero errors and one pre-existing `MapSurface.js` warning; diff check passed |
+| Production build | `npm run build` | Optimized Next.js build, TypeScript check, and static generation passed |
+| Clean distribution | `npm run dist:headless`; `npm run dist:verify` | Passed; installed npm tarball executed plugin-free, unit-plugin, and embedded range-image sensor CLI smokes without browser UI imports; wheel and sdist imported. Artifact digests are recorded in `dist/headless/release-manifest.json` and `SHA256SUMS` |
+
+PCAP and UDP remain unavailable by design. Requested `sensorTransports`
+bindings fail before readiness; their adapters and host permissions belong to
+PLG-06a/PLG-06b. PLG-05 does not change the outstanding headless PR-12 hosted,
+soak, x64 NVIDIA, or Jetson evidence obligations.
+
 ## Decision log
+
+- **2026-09-20 — Custom sensors use sensor ABI 1 inside plugin API 1.**
+  `sensorTypes` stays absent for legacy packages. Exact declarations and
+  synchronous `contributeSensorType` factories publish transactionally with
+  units and systems; runtime instances are per sensor and per run.
+- **2026-09-20 — Explicit scan layouts select CPU LiDAR backend v2.** Authored
+  channel/azimuth order and channel correction are semantic. Backend v1 keeps
+  its uniform path and prior hash; no GPU explicit-layout claim is made.
+- **2026-09-20 — Native packets are a host product, not plugin transport
+  authority.** Plugins return copied complete UDP payloads. The host owns the
+  authenticated envelope, queue, timestamps, recording, and future external
+  adapters. PCAP/UDP bindings are recognized and rejected as unavailable in
+  PLG-05.
+- **2026-09-20 — PLG-05 acceptance completed.** Browser, direct, CLI,
+  supervisor, managed, Python, distribution, lifecycle soak, and legacy
+  characterization gates passed. PLG-05 is verified but remains unmerged and
+  is not headless PR 13.
 
 - **2026-09-20 — Express owns `/api/scripting`.** `GET /units` and `POST /compile` load the revisioned plugin catalog and exact `graph.pluginLocks` from `StorageService`. The Next route files remain 410 stubs so `next build` does not serve a second implementation.
 - **2026-09-20 — UI ABI is separate from runtime ABI.** `createRegistrationApi()` stays UI-free. Browser `registerUi` receives host React, `Unit`, and `SettingsForm`. Integrity failures are fatal; `registerUi` and render errors fall back to generic settings. Node/headless never call `importUi`.

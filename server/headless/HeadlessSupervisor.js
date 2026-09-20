@@ -296,6 +296,7 @@ export class HeadlessSupervisor {
         const physics = listPhysicsBackendSelections();
         const sensors = createStateSensorBackendSelection();
         const lidar = createCpuLidarBackendSelection();
+        const explicitLidar = createCpuLidarBackendSelection({ version: "2" });
         const gpu = createGpuSensorBackendSelection();
         const gpuProbe = await this.rendererPool.probe();
         const pbrProbe = this.rendererPool.pbrCapability();
@@ -314,6 +315,7 @@ export class HeadlessSupervisor {
                 ...physics.map((entry) => ({ id: entry.capabilityId, version: entry.version, kind: entry.kind, description: "Deterministic swept prism/convex Rapier backend.", sensorTypes: [], features: ["fixed-step", "continuous-collision"], available: true, unavailableReason: "", determinismScope: "same-runtime-version" })),
                 { id: sensors.capabilityId, version: sensors.version, kind: sensors.kind, description: "Deterministic measured state sensors.", sensorTypes: [...STATE_SENSOR_TYPES], features: ["packed-protobuf"], available: true, unavailableReason: "", determinismScope: "same-runtime-version" },
                 { id: lidar.capabilityId, version: lidar.version, kind: lidar.kind, description: "Deterministic CPU/BVH 3D LiDAR.", sensorTypes: ["lidar3d"], features: ["pointcloud2", "semantic-pointcloud2", "fixed-step"], available: true, unavailableReason: "", determinismScope: "same-build-platform-seed-action-tape" },
+                { id: explicitLidar.capabilityId, version: explicitLidar.version, kind: explicitLidar.kind, description: "Deterministic CPU/BVH explicit-layout range-image sensors.", sensorTypes: ["plugin:range-image"], features: ["explicit-scan-layout", "pointcloud2", "native-packets", "fixed-step"], available: true, unavailableReason: "", determinismScope: "same-build-platform-seed-action-tape" },
                 gpuSensorBackendCapability({ available: gpuProbe.available, unavailableReason: gpuProbe.reason, selection: gpu }),
                 ...(pbrProbe.available ? [routedGpuSensorBackendCapability({ available: true })] : []),
             ],

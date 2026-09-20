@@ -1,0 +1,60 @@
+{
+  "kind": "cev-sim.plugin",
+  "api": 1,
+  "id": "test.range-image-fixture",
+  "version": "1.0.0",
+  "engines": { "cevSim": ">=0.1.0 <0.2.0" },
+  "entry": { "runtime": "runtime/index.js" },
+  "capabilities": ["sensors.sample.range-image"],
+  "units": [],
+  "systems": [],
+  "sensorTypes": [
+    {
+      "type": "test.range-image-fixture.synthetic-3x4",
+      "sensorAbi": 1,
+      "family": "range-image",
+      "stateVersion": 1,
+      "defaults": {
+        "rateHz": 10,
+        "scanLayout": {
+          "kind": "cev-sim.range-image-layout",
+          "version": 1,
+          "channels": [
+            { "id": 10, "elevationDeg": -8, "azimuthOffsetDeg": 0 },
+            { "id": 20, "elevationDeg": 1.5, "azimuthOffsetDeg": 0.5 },
+            { "id": 30, "elevationDeg": 11, "azimuthOffsetDeg": -0.25 }
+          ],
+          "azimuthsDeg": [-45, -10, 20, 75],
+          "minRangeM": 0.1,
+          "maxRangeM": 50
+        }
+      },
+      "settings": [
+        { "key": "measurementScale", "valueType": "float64", "default": 1, "min": 0.1, "max": 2 },
+        { "key": "statusEvery", "valueType": "int32", "default": 2, "min": 1, "max": 100 }
+      ],
+      "products": [
+        {
+          "kind": "pointCloud",
+          "productId": "points",
+          "outputKey": "pointCloudTopicId",
+          "rosType": "sensor_msgs/PointCloud2",
+          "contractId": "front-lidar-points"
+        },
+        {
+          "kind": "vendor-packets",
+          "productId": "packets",
+          "streams": [
+            { "streamId": "data", "maxPayloadBytes": 64 },
+            { "streamId": "status", "maxPayloadBytes": 32 }
+          ]
+        }
+      ],
+      "observation": {
+        "productId": "points",
+        "dtype": "float32",
+        "components": ["rangeMeters", "incidence"]
+      }
+    }
+  ]
+}

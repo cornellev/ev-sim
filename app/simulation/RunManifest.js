@@ -4,8 +4,10 @@ import {
     listSensorTypes,
     normalizeRunSensor,
     ORACLE_PRODUCT_TOGGLES,
+    sensorTypeRegistry,
     validateRunSensorDefinition,
 } from "./sensors/SensorTypeRegistry.js";
+import { normalizeSensorTransports } from "./sensors/SensorTransports.js";
 import {
     catalogMetadata,
     defaultManifestTopics,
@@ -228,8 +230,8 @@ function syncGroup(value = {}, index = 0) {
     };
 }
 
-function migrateSensorToV4(sensor, sourceVersion) {
-    const normalized = normalizeRunSensor(sensor);
+function migrateSensorToV4(sensor, sourceVersion, registry = sensorTypeRegistry) {
+    const normalized = normalizeRunSensor(sensor, 0, registry);
     if (sourceVersion >= RUN_MANIFEST_V7) return normalized;
     const migrated = {
         ...normalized,
@@ -308,10 +310,10 @@ function migrateSensorToV4(sensor, sourceVersion) {
     return migrated;
 }
 
-function normalizeSensorRig(source = {}, sourceVersion = RUN_MANIFEST_VERSION) {
+function normalizeSensorRig(source = {}, sourceVersion = RUN_MANIFEST_VERSION, registry = sensorTypeRegistry) {
     const rig = object(source);
     const sensors = (Array.isArray(rig.sensors) ? rig.sensors : [])
-        .map((entry) => migrateSensorToV4(entry, sourceVersion));
+        .map((entry) => migrateSensorToV4(entry, sourceVersion, registry));
     let syncGroups = Array.isArray(rig.syncGroups) ? rig.syncGroups.map(syncGroup) : [];
     if (sourceVersion < RUN_MANIFEST_V7 && sensors.length > 0 && syncGroups.length === 0) {
         syncGroups = defaultSyncGroups();
@@ -610,7 +612,10 @@ export function createDefaultRunManifest(overrides = {}) {
     return normalizeRunManifest({ ...base, ...overrides }, { allowMissingKind: true });
 }
 
-export function normalizeRunManifest(value, { allowMissingKind = false } = {}) {
+export function normalizeRunManifest(value, {
+    allowMissingKind = false,
+    sensorRegistry = sensorTypeRegistry,
+} = {}) {
     const source = object(value);
     if (!allowMissingKind && source.kind !== undefined && source.kind !== RUN_MANIFEST_KIND) {
         throw new Error(`Unsupported run manifest kind: ${JSON.stringify(source.kind)}.`);
@@ -635,7 +640,11 @@ export function normalizeRunManifest(value, { allowMissingKind = false } = {}) {
     if (sourceVersion < RUN_MANIFEST_VERSION && source.plugins !== undefined) {
         throw new Error("Plugin selection requires run-manifest version 11.");
     }
+    if (sourceVersion < RUN_MANIFEST_VERSION && source.sensorTransports !== undefined) {
+        throw new Error("Sensor transport bindings require run-manifest version 11.");
+    }
     const plugins = normalizePluginSelection(source.plugins);
+    const sensorTransports = normalizeSensorTransports(source.sensorTransports);
     const initial = object(source.initialState);
     const clock = object(source.clock);
     const scripts = object(source.scripts);
@@ -653,7 +662,10 @@ export function normalizeRunManifest(value, { allowMissingKind = false } = {}) {
         steeringAngle: finite(vehicle?.steeringAngle, 0),
     }));
     const defaultTarget = vehicles[0]?.id || "ego";
-    const sensorRig = reconcileSyncGroups(normalizeSensorRig(source.sensorRig, sourceVersion), topics);
+    const sensorRig = reconcileSyncGroups(
+        normalizeSensorRig(source.sensorRig, sourceVersion, sensorRegistry),
+        topics,
+    );
     const scenario = scenarioSelection(source.scenario);
     const controlsSource = {
         ...object(source.controls),
@@ -696,6 +708,7 @@ export function normalizeRunManifest(value, { allowMissingKind = false } = {}) {
             embeddedBindings: Array.isArray(scripts.embeddedBindings) ? clonePlain(scripts.embeddedBindings) : [],
         },
         ...(plugins ? { plugins } : {}),
+        ...(sensorTransports ? { sensorTransports } : {}),
         topics,
         controls: normalizeControlsConfig(controlsSource, { targetVehicleId: defaultTarget }),
         assertions: (Array.isArray(source.assertions) ? source.assertions : []).map(assertion),
@@ -714,10 +727,13 @@ export function normalizeRunManifest(value, { allowMissingKind = false } = {}) {
     };
 }
 
-export function validateRunManifest(value) {
+export function validateRunManifest(value, {
+    sensorRegistry = sensorTypeRegistry,
+    allowUnknownSensors = false,
+} = {}) {
     let manifest;
     try {
-        manifest = normalizeRunManifest(value);
+        manifest = normalizeRunManifest(value, { sensorRegistry });
     } catch (error) {
         return { ok: false, manifest: null, issues: [{ path: "", message: error.message }] };
     }
@@ -742,7 +758,10 @@ export function validateRunManifest(value) {
     duplicateIssues(manifest.parameters, "parameters");
     const topics = new Map(manifest.topics.map((entry) => [entry.id, entry]));
     for (const [index, sensorEntry] of manifest.sensorRig.sensors.entries()) {
-        for (const issue of validateRunSensorDefinition(sensorEntry)) {
+        const definition = sensorRegistry.get(sensorEntry.type);
+        const sensorIssues = allowUnknownSensors && !definition
+            ? [] : validateRunSensorDefinition(sensorEntry, sensorRegistry);
+        for (const issue of sensorIssues) {
             issues.push({ path: `sensorRig.sensors.${index}.${issue.path}`, message: issue.message });
         }
         for (const [key, topicId] of Object.entries(sensorEntry.outputs)) {

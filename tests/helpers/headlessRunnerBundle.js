@@ -8,10 +8,17 @@ import {
     normalizeRunManifest,
 } from "../../app/simulation/RunManifest.js";
 import { WORLD_BOUND_PLUGINS_IDENTITY } from "../../app/simulation/kernel/RunIdentity.js";
-import { verifyPluginPackage } from "../../app/plugin/PluginPackage.js";
+import { createPluginPackage, verifyPluginPackage } from "../../app/plugin/PluginPackage.js";
+import { createPluginSensorsResource } from "../../app/plugin/PluginSensorIdentity.js";
 import { pluginDependencyHashes } from "../../app/plugin/PluginSelection.js";
 import { computeSimulationSemanticHash } from "../../app/simulation/kernel/SimulationHashes.js";
 import { createLidarGeometryResource } from "../../app/simulation/lidar/LidarGeometry.js";
+import {
+    CPU_LIDAR_BACKEND_KIND,
+    createCpuLidarBackendSelection,
+} from "../../app/simulation/sensors/CpuLidarBackend.js";
+import { planSensorAdmission } from "../../app/simulation/sensors/SensorAdmission.js";
+import { createSensorDefinitionRegistry } from "../../app/simulation/sensors/SensorTypeRegistry.js";
 import { createPhysicsBackendSelection, PHYSICS_BACKEND_KIND, sortBackendSelections } from "../../app/physics/PhysicsBackend.js";
 import { createRenderSceneResource } from "../../app/simulation/render/RenderScene.js";
 import { resolveEnabledCameraRenderSelection } from "../../app/simulation/render/RenderSceneProviderRegistry.js";
@@ -22,6 +29,18 @@ import os from "node:os";
 import path from "node:path";
 
 const worldBoundFixtureUrl = new URL("../fixtures/visual-layer/world-bound-state.v11.json", import.meta.url);
+const pluginSensorFixtureUrl = new URL("../fixtures/plugins/test.range-image-fixture/", import.meta.url);
+
+export async function pluginSensorFixtureResource() {
+    const [document, runtime] = await Promise.all([
+        fs.readFile(new URL("plugin.json", pluginSensorFixtureUrl), "utf8"),
+        fs.readFile(new URL("runtime/index.js", pluginSensorFixtureUrl), "utf8"),
+    ]);
+    return createPluginPackage({
+        "plugin.json": document,
+        "runtime/index.js": runtime,
+    });
+}
 
 async function resolveHermeticPortableBase() {
     const fixture = JSON.parse(await fs.readFile(worldBoundFixtureUrl, "utf8"));
@@ -75,6 +94,37 @@ export function createHeadlessImu(overrides = {}) {
     };
 }
 
+export function createPluginRangeImageFixtureSensor(overrides = {}) {
+    return {
+        id: "fixture",
+        type: "test.range-image-fixture.synthetic-3x4",
+        enabled: true,
+        parentId: "ego",
+        pose: {
+            position: { x: 0, y: 0, z: 0.5 },
+            rotation: { x: 0, y: 0, z: 0, order: "XYZ" },
+        },
+        rateHz: 60,
+        phaseNs: 0,
+        calibration: {
+            parameters: { measurementScale: 1, statusEvery: 2 },
+            products: { points: true, packets: true },
+        },
+        outputs: { pointCloudTopicId: "front-lidar-points" },
+        latency: { fixedNs: 0, jitterNs: 0 },
+        noise: {
+            model: "gaussian",
+            bias: 0,
+            standardDeviation: 0,
+            dropoutProbability: 0,
+            pointDropoutProbability: 0,
+        },
+        maxQueueFrames: 8,
+        maxQueueBytes: 1024 * 1024,
+        ...overrides,
+    };
+}
+
 export function rehashRunBundle(bundle) {
     const next = structuredClone(bundle);
     next.resolved.backendSelections = sortBackendSelections([
@@ -83,7 +133,7 @@ export function rehashRunBundle(bundle) {
     ]);
     const requestsLidar = next.resolved.manifest.sensorRig.sensors.some(
         (sensor) => sensor.enabled !== false && sensor.type === "lidar3d",
-    );
+    ) || Boolean(next.resolved.pluginSensors);
     if (requestsLidar) {
         next.resolved.lidarGeometry = createLidarGeometryResource(next.resolved.world, next.resolved.vehicles);
         next.resolved.dependencyHashes.lidarGeometry = next.resolved.lidarGeometry.hash;
@@ -219,6 +269,7 @@ export async function createPluginPortableHeadlessBundle(resource, options = {})
         capabilities: [...(verified.document.capabilities || [])],
     }];
     const bundle = await createPortableHeadlessBundle(options);
+    const sensorRegistry = createSensorDefinitionRegistry([verified]);
     bundle.resolved.manifest = normalizeRunManifest({
         ...bundle.resolved.manifest,
         plugins: {
@@ -229,7 +280,7 @@ export async function createPluginPortableHeadlessBundle(resource, options = {})
                 capabilities: [...(verified.document.capabilities || [])],
             }],
         },
-    });
+    }, { sensorRegistry });
     bundle.resolved.identityProfile = { ...WORLD_BOUND_PLUGINS_IDENTITY };
     bundle.resolved.plugins = plugins;
     bundle.resolved.pluginPackages = [structuredClone(resource)];
@@ -237,6 +288,23 @@ export async function createPluginPortableHeadlessBundle(resource, options = {})
         ...bundle.resolved.dependencyHashes,
         plugins: pluginDependencyHashes(plugins),
     };
+    const requestsPluginSensor = bundle.resolved.manifest.sensorRig.sensors.some(
+        (sensor) => sensor.enabled !== false && sensorRegistry.get(sensor.type)?.pluginSensor,
+    );
+    if (requestsPluginSensor) {
+        bundle.resolved.backendSelections = sortBackendSelections([
+            ...(bundle.resolved.backendSelections ?? [])
+                .filter((entry) => Number(entry.kind) !== CPU_LIDAR_BACKEND_KIND),
+            createCpuLidarBackendSelection({ version: 2 }),
+        ]);
+        const admission = planSensorAdmission({
+            manifest: bundle.resolved.manifest,
+            sensorRegistry,
+            backendSelections: bundle.resolved.backendSelections,
+        });
+        bundle.resolved.pluginSensors = createPluginSensorsResource(admission);
+        bundle.resolved.dependencyHashes.pluginSensors = bundle.resolved.pluginSensors.hash;
+    }
     return rehashRunBundle(bundle);
 }
 

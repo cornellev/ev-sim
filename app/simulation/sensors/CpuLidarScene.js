@@ -116,9 +116,9 @@ function hitOrder(left, right) {
         || left.triangleIndex - right.triangleIndex;
 }
 
-function raycastIndex(index, ray, range) {
+function raycastIndex(index, ray, range, near = CPU_LIDAR_NEAR_METERS) {
     if (!index) return [];
-    return index.bvh.raycast(ray, DoubleSide, CPU_LIDAR_NEAR_METERS, range)
+    return index.bvh.raycast(ray, DoubleSide, near, range)
         .map((hit) => {
             const metadata = index.faces[hit.faceIndex];
             const normal = metadata.normal.clone();
@@ -128,7 +128,7 @@ function raycastIndex(index, ray, range) {
                 incidence: Math.abs(normal.dot(ray.direction)),
             };
         })
-        .filter((hit) => hit.distance >= CPU_LIDAR_NEAR_METERS && hit.distance <= range);
+        .filter((hit) => hit.distance >= near && hit.distance <= range);
 }
 
 export class CpuLidarScene {
@@ -149,10 +149,60 @@ export class CpuLidarScene {
         this.episodeIndex = createIndex(Array.isArray(primitives) ? primitives : []);
     }
 
+    _captureExplicitLayout(config, vehicles, vehicle) {
+        const matrix = sensorMatrix(vehicle, config.pose);
+        const origin = new Vector3().setFromMatrixPosition(matrix);
+        const sensorQuaternion = new Quaternion().setFromRotationMatrix(matrix);
+        const layout = config.calibration.scanLayout;
+        const width = layout.azimuthsDeg.length;
+        const height = layout.channels.length;
+        const minRange = Number(layout.minRangeM);
+        const maxRange = Number(layout.maxRangeM);
+        const buffer = new Float32Array(width * height * 4);
+        const worldRay = new Ray(origin, new Vector3());
+
+        for (let channelIndex = 0; channelIndex < height; channelIndex += 1) {
+            const channel = layout.channels[channelIndex];
+            const phi = channel.elevationDeg * Math.PI / 180;
+            const cosPhi = Math.cos(phi);
+            for (let azimuthIndex = 0; azimuthIndex < width; azimuthIndex += 1) {
+                const theta = (layout.azimuthsDeg[azimuthIndex] + channel.azimuthOffsetDeg) * Math.PI / 180;
+                worldRay.direction.set(
+                    cosPhi * Math.cos(theta),
+                    Math.sin(phi),
+                    cosPhi * Math.sin(theta),
+                ).applyQuaternion(sensorQuaternion).normalize();
+                const candidates = [
+                    ...raycastIndex(this.staticIndex, worldRay, maxRange, minRange),
+                    ...raycastIndex(this.episodeIndex, worldRay, maxRange, minRange),
+                ];
+                for (const [actorId, index] of this.actorIndexes) {
+                    if (actorId === config.parentId || !index) continue;
+                    const actor = vehicles.find((entry) => (entry.telemetryId || entry.id) === actorId);
+                    if (!actor) continue;
+                    const actorTransform = vehicleMatrix(actor);
+                    const localRay = worldRay.clone().applyMatrix4(actorTransform.clone().invert());
+                    candidates.push(...raycastIndex(index, localRay, maxRange, minRange));
+                }
+                const hit = candidates.sort(hitOrder)[0];
+                if (!hit) continue;
+                const offset = (channelIndex * width + azimuthIndex) * 4;
+                buffer[offset] = hit.distance;
+                buffer[offset + 1] = hit.incidence;
+                buffer[offset + 2] = hit.semanticId;
+                buffer[offset + 3] = hit.instanceId;
+            }
+        }
+        return buffer;
+    }
+
     capture(config, vehicles) {
         if (this.disposed) throw new Error("CPU LiDAR scene is disposed.");
         const vehicle = vehicles.find((entry) => (entry.telemetryId || entry.id) === config.parentId);
         if (!vehicle) throw new Error(`LiDAR sensor "${config.id}" references unknown parent vehicle "${config.parentId}".`);
+        if (config.calibration?.scanLayout) {
+            return this._captureExplicitLayout(config, vehicles, vehicle);
+        }
         const matrix = sensorMatrix(vehicle, config.pose);
         const origin = new Vector3().setFromMatrixPosition(matrix);
         const sensorQuaternion = new Quaternion().setFromRotationMatrix(matrix);

@@ -12,6 +12,7 @@ export function createRegistrationApi({
     capabilities = [],
     contributeUnit,
     contributeSystem,
+    contributeSensorType = () => {},
     log = () => {},
 }) {
     const identity = Object.freeze({
@@ -28,6 +29,7 @@ export function createRegistrationApi({
         ports,
         contributeUnit: (definition) => contributeUnit(definition),
         contributeSystem: (definition) => contributeSystem(definition),
+        contributeSensorType: (definition) => contributeSensorType(definition),
         log: (level, message, details) => log(level, message, details),
     });
 }

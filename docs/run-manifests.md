@@ -10,6 +10,13 @@ an exact package SHA-256 and an explicit sorted capability grant. Resolution
 admits one version per plugin ID and verifies every reachable compiled-script
 requirement against a per-run sealed registry.
 
+PLG-05 plugin sensor declarations are verified before sensor normalization.
+Enabled custom `range-image` sensors resolve through the same sealed session,
+require `sensors.sample.range-image`, CPU LiDAR backend version 2, and portable
+LiDAR geometry. Raw JSON may author the strict `calibration.scanLayout`,
+`calibration.parameters`, and explicit `calibration.products` fields. Native
+Config/Vehicle controls remain a later plugin milestone.
+
 ## Operator workflow
 
 Open **Config** from the workspace switcher. The page supports catalog create, duplicate, delete, bundle import/export, structured editing, raw JSON editing, server validation, optimistic revision saves, and **Validate & Run**. Unsaved edits are protected during catalog changes and browser navigation. Use the header **Advanced** switch to reveal frames, noise, latency, and contract fields while keeping essential sensor and topic settings visible by default; the preference persists across Config and Vehicle Editor. The **Controls** tab authors the target vehicle, authority (`candidate` / `reference`), watchdog, stale policy (`stop` default, or `hold` / `fallback`), and per-run actuator overrides. The **Provenance** tab authors hash-locked `provenance.candidateModels[]` references (role, model id, optional version, required SHA-256 digest) used as evidence lineage.
@@ -26,6 +33,22 @@ cross-checks the manifest locks, package bytes, resolved versions and hashes,
 capability grants, canonical ordering, and transitive visual-script
 `pluginRequirements`. Import installs the verified package resources into the
 local content-addressed store before saving the manifest.
+
+Enabled plugin sensors additionally add conditional
+`resolved.pluginSensors` (`cev-sim.plugin-sensors@1`) and
+`dependencyHashes.pluginSensors`. Each record binds sensor ID/type,
+plugin/runtime identity, ABI/family, exact effective behavior hash, required
+backend, and optional measured-observation descriptor. Verification rebuilds
+this resource from the exact portable packages and normalized manifest.
+Plugin-free and unit/system-only bundles omit both fields.
+
+Manifest v11 also recognizes optional operational
+`sensorTransports: cev-sim.sensor-transports@1`. Bindings name an admitted
+sensor packet stream plus `pcap` or `udp` and an operator endpoint ID. The
+document changes definition/full-resolved identity and is projected out of
+simulation semantics. PLG-05 has no external adapter, so any requested binding
+fails before readiness. See
+[`sensor-packet-transports.md`](sensor-packet-transports.md).
 
 VIS-12a activates manifest v11 and the plugin-free
 `resolved.identityProfile = { id: "world-bound", version: 2 }`, semantic and
@@ -308,6 +331,15 @@ Exactly one locked selection is required when `lidar3d` is enabled and is
 forbidden when it is unused. Point clouds retain the existing metric-v2
 Float32 and PointCloud2 schemas; they route through telemetry/topics/SFLog and
 are not added to the measured-state policy observation.
+
+Plugin range-image sensors select the same kind/capability at version `2`,
+config hash
+`70349dfde6494414249bbcf6e1befc13ce82b817a63eb01baac4f5402ce62c31`.
+This version preserves authored channel and azimuth order, applies channel
+azimuth correction, and returns metric-v2 measured range/incidence with zero
+semantic/instance slots to the plugin hook. Built-in `lidar3d` in the same CPU
+rig stays on its uniform sampling branch. Each mapped custom observation is
+`float32[channelCount,azimuthCount,2]`; packet-only sensors add no tensor.
 
 The GPU sensor backend is kind `GPU_SENSOR`, capability
 `chromium-webgl2-rendered-sensors`, version `1`, with config hash

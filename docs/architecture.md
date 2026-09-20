@@ -54,6 +54,17 @@ isolated custom UI with a generic settings fallback, HTTP/MCP library install
 and remove, Config Scripts enablement, and clean-distribution packaging. See
 [Plugin API](plugin-api.md).
 
+PLG-05 adds an isolated `SensorTypeRegistry` to the same transactional package
+session. `SensorAdmission.js` is the shared Node-safe authority used by
+resolution, bundle verification, browser preparation, and headless execution.
+It maps declared range-image types to host CPU LiDAR backend v2, portable
+geometry, PointCloud2/native packet products, and measured observation
+descriptors. `PluginSensorAdapter` owns each lifecycle instance while
+`SensorPublisher` retains scheduling and atomically dispatches ROS values,
+opaque packet envelopes, and observations. Browser `DeviceDatabase` and
+headless `PluginSensorManager` use that same adapter during the existing
+`sensors` phase. See [Plugin sensors](plugin-sensors.md).
+
 `app/scripting/UnitCatalog.meta.js` is the server-safe authority for stable built-in type IDs and metadata. `registerBuiltInBlocks.js` registers those explicit IDs, `UnitCatalog.js` attaches React components by type, and `AddMenu.js` renders placeable entries as a searchable categorized sidebar. Typed configuration changes pass through `ScriptManager.reconfigureUnitDetailed()` so ports, configuration, and graph-wide type bindings commit or roll back together. The built-in catalog includes atomic math/logic plus conversions, strings, JSON path ops, typed arrays, geometry (vec/pose), read-only route helpers, `control` temporal/PID blocks, `texture1d` arithmetic, and simulator adapters (`VehicleStateBlock`, `DeviceStateBlock`, `SimulationClockBlock`, `ScenarioStatusBlock`).
 
 ## Simulation Layer

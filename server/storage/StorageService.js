@@ -81,6 +81,9 @@ import {
 } from "../../app/plugin/PluginSelection.js";
 import { assertArtifactPluginRequirements } from "../../app/plugin/PluginRequirements.js";
 import { NodePluginModuleSource } from "../plugins/NodePluginModuleSource.js";
+import { createSensorDefinitionRegistry } from "../../app/simulation/sensors/SensorTypeRegistry.js";
+import { planSensorAdmission } from "../../app/simulation/sensors/SensorAdmission.js";
+import { createPluginSensorsResource } from "../../app/plugin/PluginSensorIdentity.js";
 import { canonicalRunBundleStringify, runBundleBytes, verifyRunBundleBytes, verifyRunBundleIntegrity } from "../headless/RunBundle.js";
 import {
     collectRunPackageAssets,
@@ -1630,8 +1633,32 @@ export class StorageService {
             .then((stored) => stored ?? (manifestId === "igvc-default" ? builtInDefaultRunManifest() : null));
     }
 
+    async _validateRunManifestWithPluginSensors(source) {
+        const envelope = validateRunManifest(source, { allowUnknownSensors: true });
+        if (!envelope.ok) return envelope;
+        try {
+            const verifiedPackages = [];
+            for (const lock of effectivePluginLocks(envelope.manifest.plugins)) {
+                const resource = await this.plugins.getPackage(lock.expectedHash);
+                const verified = verifyPluginPackage(resource);
+                if (verified.document.id !== lock.pluginId) {
+                    throw new Error(`Plugin lock "${lock.pluginId}" resolves package "${verified.document.id}".`);
+                }
+                verifiedPackages.push(verified);
+            }
+            const sensorRegistry = createSensorDefinitionRegistry(verifiedPackages);
+            return validateRunManifest(envelope.manifest, { sensorRegistry });
+        } catch (error) {
+            return {
+                ok: false,
+                manifest: envelope.manifest,
+                issues: [{ path: "plugins", message: error.message }],
+            };
+        }
+    }
+
     async createRunManifest(input = {}) {
-        const validation = validateRunManifest(input.manifest ?? input);
+        const validation = await this._validateRunManifestWithPluginSensors(input.manifest ?? input);
         if (!validation.ok) throw validationError(validation.issues);
         const id = safeSegment(validation.manifest.id);
         if (await this.getRunManifest(id)) throw new Error(`Run manifest "${id}" already exists.`);
@@ -1646,7 +1673,7 @@ export class StorageService {
         if (!Object.hasOwn(manifest, "renderRecipe") && Object.hasOwn(current ?? {}, "renderRecipe")) {
             candidate.renderRecipe = structuredClone(current.renderRecipe);
         }
-        const validation = validateRunManifest(candidate);
+        const validation = await this._validateRunManifestWithPluginSensors(candidate);
         if (!validation.ok) throw validationError(validation.issues);
         return this._writeRunManifest(manifestId, validation.manifest, { expectedRevision });
     }
@@ -1673,7 +1700,7 @@ export class StorageService {
     async validateRunManifest(manifestId, input = null) {
         const source = input?.manifest ?? (input?.kind ? input : null) ?? await this.getRunManifest(manifestId);
         if (!source) throw new Error(`Run manifest "${manifestId}" does not exist.`);
-        const validation = validateRunManifest(source);
+        const validation = await this._validateRunManifestWithPluginSensors(source);
         const dependencyIssues = validation.ok
             ? await this._validateRunDependencies(validation.manifest)
             : [];
@@ -1684,33 +1711,12 @@ export class StorageService {
     async resolveRunManifest(manifestId, input = null) {
         const source = input?.manifest ?? (input?.kind ? input : null) ?? await this.getRunManifest(manifestId);
         if (!source) throw new Error(`Run manifest "${manifestId}" does not exist.`);
-        const validation = validateRunManifest(source);
+        const validation = validateRunManifest(source, { allowUnknownSensors: true });
         if (!validation.ok) throw validationError(validation.issues);
-        const resolutionOptions = input?.kind ? {} : objectValues(input);
-        const runParameterValues = objectValues(
-            resolutionOptions.manifestParameterValues ?? resolutionOptions.parameterValues,
-        );
-        const runParameters = resolveDeclaredParameters(validation.manifest.parameters, runParameterValues, "run manifest");
-        let manifest = applyDocumentScalarParameters(
-            validation.manifest,
-            validation.manifest.parameters,
-            runParameters.values,
-            "run manifest",
-        );
-        const parameterizedValidation = validateRunManifest(manifest);
-        if (!parameterizedValidation.ok) throw validationError(parameterizedValidation.issues);
-        assertScalarParameterValuesPreserved(
-            parameterizedValidation.manifest,
-            validation.manifest.parameters,
-            runParameters.values,
-            "run manifest",
-        );
-        manifest = parameterizedValidation.manifest;
-        if (resolutionOptions.seed !== undefined) manifest.seed = resolutionOptions.seed;
-
         const pluginPackages = [];
+        const verifiedPluginPackages = [];
         const resolvedPlugins = [];
-        for (const lock of effectivePluginLocks(manifest.plugins)) {
+        for (const lock of effectivePluginLocks(validation.manifest.plugins)) {
             let resource;
             try {
                 resource = await this.plugins.getPackage(lock.expectedHash);
@@ -1722,6 +1728,7 @@ export class StorageService {
                 throw new Error(`Plugin lock "${lock.pluginId}" resolves package "${verified.document.id}".`);
             }
             pluginPackages.push(resource);
+            verifiedPluginPackages.push(verified);
             resolvedPlugins.push({
                 pluginId: verified.document.id,
                 version: verified.document.version,
@@ -1730,6 +1737,28 @@ export class StorageService {
                 capabilities: [...lock.capabilities],
             });
         }
+        const sensorRegistry = createSensorDefinitionRegistry(verifiedPluginPackages);
+        const resolutionOptions = input?.kind ? {} : objectValues(input);
+        const runParameterValues = objectValues(
+            resolutionOptions.manifestParameterValues ?? resolutionOptions.parameterValues,
+        );
+        const runParameters = resolveDeclaredParameters(validation.manifest.parameters, runParameterValues, "run manifest");
+        let manifest = applyDocumentScalarParameters(
+            validation.manifest,
+            validation.manifest.parameters,
+            runParameters.values,
+            "run manifest",
+        );
+        const parameterizedValidation = validateRunManifest(manifest, { sensorRegistry });
+        if (!parameterizedValidation.ok) throw validationError(parameterizedValidation.issues);
+        assertScalarParameterValuesPreserved(
+            parameterizedValidation.manifest,
+            validation.manifest.parameters,
+            runParameters.values,
+            "run manifest",
+        );
+        manifest = parameterizedValidation.manifest;
+        if (resolutionOptions.seed !== undefined) manifest.seed = resolutionOptions.seed;
 
         // Check the original lock before scenario selection replaces the effective environment.
         // Use this same snapshot below for direct runs, avoiding a check/use re-read.
@@ -1786,7 +1815,7 @@ export class StorageService {
                 clock: scenarioUsesExternalController(resolvedScenario.scenario)
                     ? { ...manifest.clock, pacing: "realtime" }
                     : manifest.clock,
-            }, { allowMissingKind: true });
+            }, { allowMissingKind: true, sensorRegistry });
 
             resolvedVehicles = [
                 await this._resolveVehicleDependency("ego", selectedScenario.egoVehicleId),
@@ -1808,6 +1837,8 @@ export class StorageService {
                 throw new Error(`Sensor "${sensor.id}" references unknown run vehicle "${sensor.parentId}".`);
             }
         }
+        const sensorAdmission = planSensorAdmission({ manifest, sensorRegistry });
+        const pluginSensors = createPluginSensorsResource(sensorAdmission);
 
         const environment = resolvedScenario?.environment.manifest
             ?? authoredEnvironment
@@ -1817,9 +1848,8 @@ export class StorageService {
         if (manifest.environment.expectedHash && manifest.environment.expectedHash !== environmentHash) {
             throw new Error(`Environment "${manifest.environment.id}" changed: expected ${manifest.environment.expectedHash}, received ${environmentHash}.`);
         }
-        const lidarGeometry = manifest.sensorRig.sensors.some(
-            (sensor) => sensor.enabled !== false && sensor.type === "lidar3d",
-        ) ? createLidarGeometryResource(world, resolvedVehicles) : null;
+        const lidarGeometry = sensorAdmission.requiresLidarGeometry
+            ? createLidarGeometryResource(world, resolvedVehicles) : null;
         const cameraSensors = manifest.sensorRig.sensors.filter(
             (sensor) => sensor.enabled !== false && sensor.type === "camera",
         );
@@ -1940,12 +1970,16 @@ export class StorageService {
             ...(visualLayer ? { visualLayer } : {}),
             ...(renderScene ? { renderScene } : {}),
             ...(evidence ? { evidence } : {}),
-            backendSelections: sortBackendSelections([createPhysicsBackendSelection(world)]),
+            backendSelections: sortBackendSelections([
+                createPhysicsBackendSelection(world),
+                ...(sensorAdmission.requiredCpuBackend ? [sensorAdmission.requiredCpuBackend] : []),
+            ]),
             scripts,
             ...(resolvedPlugins.length > 0 ? {
                 plugins: resolvedPlugins,
                 pluginPackages,
             } : {}),
+            ...(pluginSensors ? { pluginSensors } : {}),
             bindings: { hash: bindingsHash, entries: selectedBindings },
             scenario: resolvedScenario,
             vehicles: resolvedVehicles,
@@ -1974,12 +2008,13 @@ export class StorageService {
                 calibration: calibration.hash,
                 scripts: Object.fromEntries(scripts.map((entry) => [entry.scriptId, entry.hash])),
                 ...(resolvedPlugins.length > 0 ? { plugins: pluginDependencyHashes(resolvedPlugins) } : {}),
+                ...(pluginSensors ? { pluginSensors: pluginSensors.hash } : {}),
                 bindings: bindingsHash,
                 ...(resolvedScenario ? { scenario: resolvedScenario.definitionHash } : {}),
                 vehicles: Object.fromEntries(resolvedVehicles.map((entry) => [entry.vehicleId, entry.hash])),
                 vehicleAssets: Object.fromEntries(resolvedVehicles.map((entry) => [entry.vehicleId, entry.assetHashes])),
-            },
-        });
+                },
+            }, { sensorRegistry });
         resolved.simulationSemanticHash = computeSimulationSemanticHash(resolved);
         resolved.resolvedHash = semanticHash(resolved);
         return resolved;

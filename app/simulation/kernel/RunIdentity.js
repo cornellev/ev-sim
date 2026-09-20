@@ -15,6 +15,7 @@ function artifactUsesPlugins(artifact, seen = new WeakSet()) {
 export function resolvedUsesPlugins(resolved = {}) {
     if (resolved.manifest?.plugins?.enabled === true && (resolved.manifest.plugins.artifacts?.length ?? 0) > 0) return true;
     if ((resolved.plugins?.length ?? 0) > 0 || (resolved.pluginPackages?.length ?? 0) > 0) return true;
+    if (resolved.pluginSensors?.description?.sensors?.length > 0 || resolved.dependencyHashes?.pluginSensors) return true;
     if (resolved.dependencyHashes?.plugins && Object.keys(resolved.dependencyHashes.plugins).length > 0) return true;
     return (resolved.scripts ?? []).some((entry) => artifactUsesPlugins(entry?.artifact));
 }

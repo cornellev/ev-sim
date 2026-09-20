@@ -3,6 +3,10 @@ import { Database } from "./Database";
 import { validateDeviceTelemetryId } from "./DeviceTelemetryId";
 import { createRunSensorDevice } from "../devices/SensorRuntimeRegistry.js";
 import { getDeviceTelemetrySignals } from "./DeviceTelemetrySignals.js";
+import { PluginSensorDevice } from "../../simulation/sensors/PluginSensorAdapter.js";
+import { CpuLidarScene } from "../../simulation/sensors/CpuLidarScene.js";
+import { SensorPublisher as BrowserSensorPublisher } from "../devices/SensorPublisher.js";
+import { encodeTopicValue, registerMsgDefinition } from "../../client/TopicCodec.js";
 
 function summarizeMeasurementState(state) {
     if (state == null) return null;
@@ -36,6 +40,7 @@ export class DeviceDatabase extends Database {
         super(parent);
         this.devices = [];
         this.renderRuntime = null;
+        this.pluginSensorScene = null;
 
         this.loopDisabled = false; // set to true to disable automatic execution loop (for manual control in tests, etc.)
     }
@@ -151,6 +156,8 @@ export class DeviceDatabase extends Database {
         for (const device of previous) {
             this.removeDevice(device);
         }
+        this.pluginSensorScene?.dispose();
+        this.pluginSensorScene = null;
         for (const device of this.devices) {
             if (!device.manifestManaged && !device.vehicleOwned) {
                 device._legacyEnabledBeforeRun ??= device.enabled;
@@ -161,16 +168,48 @@ export class DeviceDatabase extends Database {
 
         const vehicles = this.parent?.vehicles?.()?.vehicles || [];
         const byId = new Map(vehicles.map((vehicle, index) => [vehicle.telemetryId || `vehicle-${index + 1}`, vehicle]));
+        const pluginRecords = new Map((options.sensorAdmission?.sensors ?? [])
+            .filter((entry) => entry.kind === "plugin-range-image")
+            .map((entry) => [entry.sensor.id, entry]));
+        if (pluginRecords.size > 0) {
+            this.pluginSensorScene = new CpuLidarScene(options.lidarGeometry);
+            for (const [type, definition] of Object.entries(options.schemas ?? {})) {
+                registerMsgDefinition(type, definition);
+            }
+        }
         for (const config of [...(sensorRig.sensors || [])].sort((left, right) => left.id.localeCompare(right.id))) {
             if (config.enabled === false) continue;
             const deviceOptions = config.type === "camera" && this.renderRuntime
                 ? { ...options, ...this.renderRuntime.cameraOptions() }
                 : options;
-            const device = createRunSensorDevice(config, deviceOptions);
-            device.transformRuntime = options.transformRuntime ?? null;
-            device.calibrationHash = options.calibrationHash ?? null;
+            const admission = pluginRecords.get(config.id);
+            const factory = admission ? options.pluginSession?.sensorFactories?.get(config.type) : null;
             const vehicle = byId.get(config.parentId);
             if (!vehicle) throw new Error(`Sensor "${config.id}" references unknown parent vehicle "${config.parentId}".`);
+            if (admission && (!factory || factory.pluginId !== admission.plugin.ownership.pluginId
+                || factory.runtimeHash !== admission.plugin.ownership.runtimeHash)) {
+                throw new Error(`Plugin sensor factory "${config.type}" does not match its admitted declaration.`);
+            }
+            const device = admission
+                ? new PluginSensorDevice(admission, {
+                    factory,
+                    scene: this.pluginSensorScene,
+                    vehicles: () => this.parent?.vehicles?.()?.vehicles || [],
+                    Publisher: BrowserSensorPublisher,
+                    transformRuntime: options.transformRuntime,
+                    publisherOptions: {
+                        seed: options.seed,
+                        topics: options.topics,
+                        topicRouter: options.topicRouter,
+                        calibrationHash: options.calibrationHash,
+                        stepNs: options.stepNs,
+                        encodeTopicValue,
+                        nativePacketSink: options.nativePacketSink,
+                    },
+                })
+                : createRunSensorDevice(config, deviceOptions);
+            device.transformRuntime = options.transformRuntime ?? null;
+            device.calibrationHash = options.calibrationHash ?? null;
             this.addDevice(device);
             device.parentVehicle = vehicle;
             vehicle.devices.push(device);
@@ -286,10 +325,12 @@ export class DeviceDatabase extends Database {
                 enabled: Boolean(device.enabled),
                 publisher: device.contractPublisher?.getDeterministicState?.() ?? null,
                 measurementState: summarizeMeasurementState(device.measurementState),
+                ...(device.admission ? { pluginSensor: device.getDeterministicState() } : {}),
             }));
     }
 
     finalizeRun() {
+        for (const device of this.devices) if (device.admission) device.finalize();
         return this.getDeterministicState();
     }
 
@@ -311,6 +352,8 @@ export class DeviceDatabase extends Database {
         }
         this.loopDisabled = false;
         this.renderRuntime = null;
+        this.pluginSensorScene?.dispose();
+        this.pluginSensorScene = null;
     }
 
     _publishDevice(device, clock = null) {

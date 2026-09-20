@@ -20,6 +20,9 @@ from cev_sim.config import (
     CPU_LIDAR_VERSION,
     DEFAULT_CPU_LIDAR_BACKEND,
     DEFAULT_GPU_SENSOR_BACKEND,
+    EXPLICIT_CPU_LIDAR_BACKEND,
+    EXPLICIT_CPU_LIDAR_CONFIG_HASH,
+    EXPLICIT_CPU_LIDAR_VERSION,
     MEASURED_PERCEPTION_PROFILE,
     MEASURED_PERCEPTION_PROFILE_VERSION,
     MEASURED_PERCEPTION_SCHEMA_HASH,
@@ -76,6 +79,12 @@ def capabilities() -> pb.GetCapabilitiesResponse:
             pb.BackendCapability(
                 id=CPU_LIDAR_CAPABILITY,
                 version=CPU_LIDAR_VERSION,
+                kind=CPU_LIDAR_KIND,
+                available=True,
+            ),
+            pb.BackendCapability(
+                id=CPU_LIDAR_CAPABILITY,
+                version=EXPLICIT_CPU_LIDAR_VERSION,
                 kind=CPU_LIDAR_KIND,
                 available=True,
             ),
@@ -156,6 +165,42 @@ def test_lidar_bundles_auto_select_the_locked_cpu_backend() -> None:
     backends = _resolved_backends(bundle, EpisodeConfig())
     assert DEFAULT_CPU_LIDAR_BACKEND in backends
     assert [entry.kind for entry in backends] == [1, STATE_SENSOR_KIND, CPU_LIDAR_KIND]
+
+
+def test_plugin_sensor_bundles_preserve_and_validate_explicit_cpu_backend_v2() -> None:
+    bundle = LoadedBundle(
+        document={
+            "resolved": {
+                "backendSelections": [
+                    {
+                        "kind": CPU_LIDAR_KIND,
+                        "capabilityId": CPU_LIDAR_CAPABILITY,
+                        "version": EXPLICIT_CPU_LIDAR_VERSION,
+                        "configHash": EXPLICIT_CPU_LIDAR_CONFIG_HASH,
+                    }
+                ],
+                "pluginSensors": {
+                    "description": {
+                        "sensors": [{"sensorId": "fixture", "type": "test.fixture.sensor"}]
+                    }
+                },
+                "manifest": {
+                    "sensorRig": {
+                        "sensors": [{"id": "fixture", "type": "test.fixture.sensor", "enabled": True}]
+                    }
+                },
+            }
+        },
+        canonical_json=b"{}",
+        bundle_id="1" * 64,
+        resolved_hash="1" * 64,
+        simulation_semantic_hash="2" * 64,
+    )
+    backends = _resolved_backends(bundle, EpisodeConfig())
+    assert EXPLICIT_CPU_LIDAR_BACKEND in backends
+    client = object.__new__(SupervisorClient)
+    client.capabilities = capabilities()
+    client._validate_episode_capabilities(EpisodeConfig(), backends)
 
 
 def test_pbr_bundles_require_routed_gpu_v2_without_v1_fallback() -> None:

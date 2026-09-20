@@ -8,6 +8,12 @@ import { clonePluginJson } from "./PluginJson.js";
 import { PLUGIN_ERROR_CODES, assertSynchronous, pluginError } from "./PluginErrors.js";
 import { comparePluginText } from "./PluginSelection.js";
 import { PLUGIN_SYSTEM_METHODS } from "./PluginSystemDispatcher.js";
+import {
+    SensorTypeRegistry,
+    registerBuiltInSensorTypes,
+} from "../simulation/sensors/SensorTypeRegistry.js";
+import { createPluginSensorTypeDefinition } from "./PluginSensorContract.js";
+import { createPluginSensorInstance } from "../simulation/sensors/PluginSensorAdapter.js";
 
 function signalNamespace(path) {
     return String(path ?? "").trim().split(".", 1)[0];
@@ -24,6 +30,7 @@ function capabilityGrants(required, granted, available, fields) {
 export class PluginHost {
     constructor({
         blockRegistry = new BlockRegistry(),
+        sensorRegistry = registerBuiltInSensorTypes(new SensorTypeRegistry({ allowPlugins: true })),
         createUnitAdapterClass = createPluginUnitAdapterClass,
         simulatorVersion = "0.1.0",
         availableCapabilities = [],
@@ -32,6 +39,7 @@ export class PluginHost {
         onUnitDispose = null,
     } = {}) {
         this.blockRegistry = blockRegistry;
+        this.sensorRegistry = sensorRegistry;
         this.createUnitAdapterClass = createUnitAdapterClass;
         this.simulatorVersion = simulatorVersion;
         this.availableCapabilities = Object.freeze([...availableCapabilities].sort(comparePluginText));
@@ -77,8 +85,13 @@ export class PluginHost {
         assertPluginCompatibility(document, { pluginApi: 1, simulatorVersion: this.simulatorVersion });
         const granted = capabilityGrants(document.capabilities, capabilities, this.availableCapabilities, fields);
         const candidate = new BlockRegistry({ entries: this.blockRegistry.snapshot(), allowPlugins: true });
+        const candidateSensors = new SensorTypeRegistry({
+            entries: this.sensorRegistry.snapshot(),
+            allowPlugins: true,
+        });
         const units = [];
         const systems = [];
+        const sensors = [];
         let active = true;
         const contribute = (target, kind) => (definition) => {
             if (!active) throw pluginError(PLUGIN_ERROR_CODES.REGISTRATION, `Late ${kind} contribution from "${document.id}".`, fields);
@@ -92,6 +105,7 @@ export class PluginHost {
             capabilities: granted,
             contributeUnit: contribute(units, "unit"),
             contributeSystem: contribute(systems, "system"),
+            contributeSensorType: contribute(sensors, "sensor type"),
             log: (level, message, details) => this.logger({
                 level: String(level),
                 message: String(message),
@@ -239,6 +253,76 @@ export class PluginHost {
                 });
             }
         }
+        const declaredSensors = new Map((document.sensorTypes ?? []).map((definition) => [definition.type, definition]));
+        if (sensors.length !== declaredSensors.size) {
+            throw pluginError(
+                PLUGIN_ERROR_CODES.REGISTRATION,
+                `Plugin "${document.id}" did not register its exact declared sensor type set.`,
+                fields,
+            );
+        }
+        const sensorFactories = [];
+        const seenSensors = new Set();
+        for (const contribution of sensors) {
+            const keys = Object.keys(contribution).sort();
+            if (keys.length !== 2 || keys[0] !== "create" || keys[1] !== "type") {
+                throw pluginError(PLUGIN_ERROR_CODES.REGISTRATION, "Sensor type contributions contain only type and create.", fields);
+            }
+            const definition = declaredSensors.get(contribution.type);
+            if (!definition) {
+                throw pluginError(PLUGIN_ERROR_CODES.REGISTRATION, `Plugin registered undeclared sensor type "${contribution.type}".`, {
+                    ...fields,
+                    contributionId: contribution.type,
+                });
+            }
+            if (seenSensors.has(contribution.type)) {
+                throw pluginError(PLUGIN_ERROR_CODES.REGISTRATION, `Plugin registered sensor type "${contribution.type}" more than once.`, {
+                    ...fields,
+                    contributionId: contribution.type,
+                });
+            }
+            if (typeof contribution.create !== "function") {
+                throw pluginError(PLUGIN_ERROR_CODES.REGISTRATION, `Plugin sensor type "${contribution.type}" create must be a function.`, {
+                    ...fields,
+                    contributionId: contribution.type,
+                });
+            }
+            const probeRecord = {
+                type: contribution.type,
+                pluginId: document.id,
+                version: document.version,
+                packageHash: resource.packageHash,
+                runtimeHash: resource.runtimeHash,
+                descriptor: definition,
+                create: contribution.create,
+            };
+            const probe = createPluginSensorInstance(probeRecord, "__plugin_sensor_validation__");
+            assertSynchronous(probe.dispose(), "dispose", {
+                ...fields,
+                contributionId: contribution.type,
+                hook: "dispose",
+            });
+            candidateSensors.register(createPluginSensorTypeDefinition(definition, ownership), ownership);
+            seenSensors.add(contribution.type);
+            sensorFactories.push(Object.freeze({
+                type: contribution.type,
+                pluginId: document.id,
+                version: document.version,
+                packageHash: resource.packageHash,
+                runtimeHash: resource.runtimeHash,
+                capabilities: granted,
+                descriptor: definition,
+                create: contribution.create,
+            }));
+        }
+        for (const type of declaredSensors.keys()) {
+            if (!seenSensors.has(type)) {
+                throw pluginError(PLUGIN_ERROR_CODES.REGISTRATION, `Plugin did not register declared sensor type "${type}".`, {
+                    ...fields,
+                    contributionId: type,
+                });
+            }
+        }
         const metadata = Object.freeze({
             pluginId: document.id,
             version: document.version,
@@ -248,15 +332,19 @@ export class PluginHost {
             units: Object.freeze([...adapterClasses.keys()].sort(comparePluginText)),
             systems: Object.freeze(systemFactories.map((entry) => entry.id).sort(comparePluginText)),
             systemFactories: Object.freeze(systemFactories),
+            sensorTypes: Object.freeze(sensorFactories.map((entry) => entry.type).sort(comparePluginText)),
+            sensorFactories: Object.freeze(sensorFactories),
         });
         this.blockRegistry = candidate;
+        this.sensorRegistry = candidateSensors;
         this.packages.set(document.id, metadata);
-        return Object.freeze({ registry: candidate, plugin: metadata });
+        return Object.freeze({ registry: candidate, sensorRegistry: candidateSensors, plugin: metadata });
     }
 
     seal() {
         this.sealed = true;
         this.blockRegistry.seal();
+        this.sensorRegistry.seal();
         return this;
     }
 }

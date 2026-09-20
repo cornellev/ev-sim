@@ -30,6 +30,8 @@ const COPY_ENTRIES = Object.freeze([
     "docs/run-manifests.md",
     "docs/plugin-plan.md",
     "docs/plugin-api.md",
+    "docs/plugin-sensors.md",
+    "docs/sensor-packet-transports.md",
     "docs/sflog.md",
     "LICENSE",
 ]);

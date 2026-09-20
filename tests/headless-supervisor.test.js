@@ -6,7 +6,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { measuredStateProfileRef, routeSafetyProfileRef } from "../app/simulation/headless/ProfileRegistry.js";
+import { sortBackendSelections } from "../app/physics/PhysicsBackend.js";
+import { measuredPerceptionProfileRef, measuredStateProfileRef, routeSafetyProfileRef } from "../app/simulation/headless/ProfileRegistry.js";
 import { namedTensor, tensorMap } from "../app/simulation/headless/TensorProtocol.js";
 import { createStateSensorBackendSelection } from "../app/simulation/sensors/StateSensorBackend.js";
 import { canonicalStringify } from "../app/simulation/RunManifest.js";
@@ -14,7 +15,14 @@ import { loadHeadlessGrpcSchema } from "../server/headless/GrpcSchema.js";
 import { HeadlessRunner } from "../server/headless/HeadlessRunner.js";
 import { parseTcpAddress, resolveSupervisorConfig, SUPERVISOR_PRESETS } from "../server/headless/SupervisorConfig.js";
 import { startHeadlessSupervisor } from "../server/headless/SupervisorServer.js";
-import { createHeadlessImu, createPortableHeadlessBundle, rehashRunBundle } from "./helpers/headlessRunnerBundle.js";
+import {
+    createHeadlessImu,
+    createPluginPortableHeadlessBundle,
+    createPluginRangeImageFixtureSensor,
+    createPortableHeadlessBundle,
+    pluginSensorFixtureResource,
+    rehashRunBundle,
+} from "./helpers/headlessRunnerBundle.js";
 
 const cliPath = path.resolve("bin/cev-sim.js");
 const parentChildPath = path.resolve("tests/helpers/headlessSupervisorParentChild.js");
@@ -35,7 +43,10 @@ function episode(environmentIndex, bundleId, bundle) {
         maxEpisodeSteps: "0",
         observationProfile: measuredStateProfileRef(),
         rewardProfile: routeSafetyProfileRef(),
-        backendSelections: [...bundle.resolved.backendSelections, createStateSensorBackendSelection()],
+        backendSelections: sortBackendSelections([
+            ...bundle.resolved.backendSelections,
+            createStateSensorBackendSelection(),
+        ]),
     };
 }
 
@@ -294,6 +305,40 @@ test("gRPC, direct runner, and CLI preserve episode hashes, trajectory hashes, a
     assert.deepEqual(firstPackedBytes(directEvents[0].observation), firstPackedBytes(grpcReset.results[0].observation));
     assert.deepEqual(firstPackedBytes(cliEvents[0].observation), firstPackedBytes(grpcReset.results[0].observation));
     assert.deepEqual(firstPackedBytes(directEvents[1].observation), firstPackedBytes(grpcStep.results[0].observation));
+    await call("closeBatch", { batchId });
+});
+
+test("PLG-05 supervisor workers execute embedded range-image plugin sensors", { timeout: 30_000 }, async (t) => {
+    const { root, call } = await fixture(t);
+    const resource = await pluginSensorFixtureResource();
+    const bundle = await createPluginPortableHeadlessBundle(resource, {
+        sensors: [createHeadlessImu(), createPluginRangeImageFixtureSensor()],
+        triggers: [{
+            id: "finish", name: "Finish", enabled: true, once: true,
+            condition: { kind: "step", step: 4 }, actions: [{ kind: "finish" }],
+        }],
+    });
+    const bundleId = "plugin-sensor";
+    const spec = {
+        ...episode(0, bundleId, bundle),
+        observationProfile: measuredPerceptionProfileRef(),
+    };
+    const created = await call("createBatch", {
+        clientProtocol: { major: 1, minor: 3 },
+        runBundles: [bundleEnvelope(bundleId, bundle)],
+        episodes: [spec],
+        artifactPolicy: { profile: 3, outputUri: path.join(root, "plugin-sensor") },
+    });
+    assert.equal(created.error.code, 0, created.error.message);
+    const batchId = created.batch.batchId;
+    const reset = await call("resetBatch", { batchId, episodes: [spec] });
+    assert.equal(reset.error.code, 0, reset.error.message);
+    assert.ok(reset.results[0].observation.entries.some((entry) => entry.name === "sensors/fixture/value"));
+    const stepped = await call("stepBatch", { batchId, actions: [zeroAction(0)] });
+    assert.equal(stepped.error.code, 0, stepped.error.message);
+    assert.equal(stepped.results[0].terminated, true);
+    const finalized = await call("finalizeBatch", { batchId, environmentIndices: [0] });
+    assert.equal(finalized.results[0].passed, true);
     await call("closeBatch", { batchId });
 });
 

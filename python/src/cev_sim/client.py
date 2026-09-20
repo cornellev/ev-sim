@@ -18,6 +18,7 @@ from .config import (
     DEFAULT_CPU_LIDAR_BACKEND,
     DEFAULT_GPU_SENSOR_BACKEND,
     DEFAULT_STATE_SENSOR_BACKEND,
+    EXPLICIT_CPU_LIDAR_BACKEND,
     GPU_SENSOR_KIND,
     MEASURED_PERCEPTION_PROFILE,
     MEASURED_PERCEPTION_PROFILE_VERSION,
@@ -574,7 +575,10 @@ class SupervisorClient:
         for requested in backends:
             if requested.kind == STATE_SENSOR_KIND and requested != DEFAULT_STATE_SENSOR_BACKEND:
                 raise CevSimCompatibilityError("The locked deterministic state-sensor backend identity is required")
-            if requested.kind == CPU_LIDAR_KIND and requested != DEFAULT_CPU_LIDAR_BACKEND:
+            if requested.kind == CPU_LIDAR_KIND and requested not in {
+                DEFAULT_CPU_LIDAR_BACKEND,
+                EXPLICIT_CPU_LIDAR_BACKEND,
+            }:
                 raise CevSimCompatibilityError("The locked deterministic CPU LiDAR backend identity is required")
             if requested.kind == GPU_SENSOR_KIND and requested not in {
                 DEFAULT_GPU_SENSOR_BACKEND,

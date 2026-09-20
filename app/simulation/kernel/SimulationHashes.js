@@ -212,12 +212,20 @@ function omitIdentityMetadata(document) {
     for (const key of VOLATILE_KEYS) delete document[key];
 }
 
-function projectSensorRig(rig) {
+function projectSensorRig(rig, pluginSensorIds = new Set()) {
     const projected = structuredClone(rig ?? null);
     for (const sensor of projected?.sensors ?? []) {
         if (sensor.enabled === false) delete sensor.render;
+        if (pluginSensorIds.has(sensor.id)) {
+            delete sensor.maxQueueFrames;
+            delete sensor.maxQueueBytes;
+        }
     }
     return projected;
+}
+
+function resolvedPluginSensorIds(resolved) {
+    return new Set((resolved?.pluginSensors?.description?.sensors ?? []).map((entry) => entry.sensorId));
 }
 
 function projectScenarioDefinition(scenario, worldHash) {
@@ -250,10 +258,11 @@ export function simulationSemanticProjection(resolved = {}) {
     projectResolvedEnvironment(projection, worldHash);
     projectEvidence(projection);
     const manifest = projection.manifest;
+    const pluginSensorIds = resolvedPluginSensorIds(resolved);
     omitIdentityMetadata(manifest);
     if (manifest) {
         manifest.environment = { worldHash };
-        manifest.sensorRig = projectSensorRig(manifest.sensorRig);
+        manifest.sensorRig = projectSensorRig(manifest.sensorRig, pluginSensorIds);
         // The selected pixel meaning is bound once by renderScene. The authored
         // recipe may carry source-bound use hashes and must not duplicate or
         // leak evidence into simulation semantics.
@@ -261,6 +270,7 @@ export function simulationSemanticProjection(resolved = {}) {
         delete manifest.logging;
         delete manifest.provenance;
         delete manifest.plugins;
+        delete manifest.sensorTransports;
         if (manifest.clock) {
             delete manifest.clock.pacing;
             delete manifest.clock.speed;
@@ -369,7 +379,7 @@ export function defaultEpisodeIdentity(resolved, overrides = {}) {
             id: "browser-runtime-state",
             version: 1,
             configHash: simulationSha256(identityVersion === 2
-                ? projectSensorRig(resolved?.manifest?.sensorRig)
+                ? projectSensorRig(resolved?.manifest?.sensorRig, resolvedPluginSensorIds(resolved))
                 : resolved?.manifest?.sensorRig ?? null),
         },
         rewardProfile: {

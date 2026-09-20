@@ -4,6 +4,7 @@ import { validateCapabilityGrants } from "../plugin-api/capabilities.js";
 import { PLUGIN_PORT_TYPES } from "../plugin-api/ports.js";
 import { clonePluginJson } from "./PluginJson.js";
 import { PLUGIN_ERROR_CODES, pluginError } from "./PluginErrors.js";
+import { normalizePluginSensorDescriptor } from "./PluginSensorContract.js";
 import { assertPluginSettingValue, normalizePluginUnitState } from "./PluginValues.js";
 
 export const PLUGIN_DOCUMENT_KIND = "cev-sim.plugin";
@@ -146,7 +147,7 @@ function deepFreeze(value) {
 export function assertPluginDocument(value) {
     try {
         const source = object(value, "plugin.json");
-        exactKeys(source, ["kind", "api", "id", "version", "engines", "entry", "capabilities", "units", "systems", "editor"], "plugin.json");
+        exactKeys(source, ["kind", "api", "id", "version", "engines", "entry", "capabilities", "units", "systems", "sensorTypes", "editor"], "plugin.json");
         if (source.kind !== PLUGIN_DOCUMENT_KIND) throw new Error(`plugin.json.kind must be "${PLUGIN_DOCUMENT_KIND}".`);
         if (source.api !== PLUGIN_DOCUMENT_API) throw new Error(`plugin.json.api must be ${PLUGIN_DOCUMENT_API}.`);
         const id = text(source.id, "plugin.json.id");
@@ -166,12 +167,29 @@ export function assertPluginDocument(value) {
         const capabilities = [...validateCapabilityGrants(source.capabilities ?? [], source.capabilities ?? [], source.capabilities ?? [])];
         if (!Array.isArray(source.units)) throw new Error("plugin.json.units must be an array.");
         if (!Array.isArray(source.systems ?? [])) throw new Error("plugin.json.systems must be an array.");
+        if (source.sensorTypes !== undefined && !Array.isArray(source.sensorTypes)) {
+            throw new Error("plugin.json.sensorTypes must be an array when present.");
+        }
         const units = source.units.map((unit, index) => normalizeUnit(unit, id, `plugin.json.units.${index}`));
         const systems = (source.systems ?? []).map((system, index) => normalizeSystem(system, id, `plugin.json.systems.${index}`));
-        for (const [label, entries] of [["unit type", units.map((unit) => unit.type)], ["system id", systems.map((system) => system.id)]]) {
+        const sensorTypes = source.sensorTypes?.map((sensorType, index) => (
+            normalizePluginSensorDescriptor(sensorType, id, `plugin.json.sensorTypes.${index}`)
+        ));
+        if ((sensorTypes?.length ?? 0) > 0 && !capabilities.includes("sensors.sample.range-image")) {
+            throw new Error("plugin.json sensorTypes require capability \"sensors.sample.range-image\".");
+        }
+        for (const [label, entries] of [
+            ["unit type", units.map((unit) => unit.type)],
+            ["system id", systems.map((system) => system.id)],
+            ["sensor type", sensorTypes?.map((sensorType) => sensorType.type) ?? []],
+        ]) {
             if (new Set(entries).size !== entries.length) throw new Error(`plugin.json contains a duplicate ${label}.`);
         }
-        const contributionIds = [...units.map((unit) => unit.type), ...systems.map((system) => system.id)];
+        const contributionIds = [
+            ...units.map((unit) => unit.type),
+            ...systems.map((system) => system.id),
+            ...(sensorTypes?.map((sensorType) => sensorType.type) ?? []),
+        ];
         if (new Set(contributionIds).size !== contributionIds.length) throw new Error("plugin.json contains duplicate contribution IDs.");
         let editor;
         if (source.editor !== undefined) {
@@ -181,7 +199,19 @@ export function assertPluginDocument(value) {
             editor = { assets: editorSource.assets.map((asset, index) => packagePath(asset, `plugin.json.editor.assets.${index}`)) };
             if (new Set(editor.assets).size !== editor.assets.length) throw new Error("plugin.json.editor.assets contains duplicates.");
         }
-        return deepFreeze({ kind: PLUGIN_DOCUMENT_KIND, api: PLUGIN_DOCUMENT_API, id, version, engines: { cevSim }, entry, capabilities, units, systems, ...(editor ? { editor } : {}) });
+        return deepFreeze({
+            kind: PLUGIN_DOCUMENT_KIND,
+            api: PLUGIN_DOCUMENT_API,
+            id,
+            version,
+            engines: { cevSim },
+            entry,
+            capabilities,
+            units,
+            systems,
+            ...(sensorTypes === undefined ? {} : { sensorTypes }),
+            ...(editor ? { editor } : {}),
+        });
     } catch (error) {
         if (error?.code === PLUGIN_ERROR_CODES.DOCUMENT_INVALID) throw error;
         throw pluginError(PLUGIN_ERROR_CODES.DOCUMENT_INVALID, error.message, { cause: error });

@@ -39,8 +39,11 @@ export async function materializeTensorMap(tensorMap, arena) {
     return tensorMap;
 }
 
-export function perceptionTensorBytes(sensor) {
+export function perceptionTensorBytes(sensor, pluginObservation = null) {
     if (sensor?.enabled === false) return 0;
+    if (pluginObservation) {
+        return pluginObservation.shape.reduce((total, size) => total * Number(size), 1) * 4;
+    }
     const products = sensor?.calibration?.products || {};
     if (sensor?.type === "camera" && products.rgb === true) {
         return Number(sensor.calibration.height) * Number(sensor.calibration.width) * 4;
@@ -85,9 +88,13 @@ export function calculateSharedTensorArenaBytes(resolved, episodeSpec = {}) {
     const usesGpu = (episodeSpec.backendSelections || episodeSpec.backend_selections || [])
         .some((entry) => Number(entry.kind) === 4);
     const pbr = resolved.renderScene?.description?.provider?.id === "pbr-mesh";
+    const pluginObservations = new Map((resolved.pluginSensors?.description?.sensors ?? [])
+        .filter((entry) => entry.observationDescriptor)
+        .map((entry) => [entry.sensorId, entry.observationDescriptor]));
     const observationBytes = isPerception ? calculatePerceptionObservationBytes(resolved, episodeSpec) : 0;
     const retainedBytes = sensors.reduce((total, sensor) => (
-        total + perceptionTensorBytes(sensor) * (Math.max(1, Number(sensor.maxQueueFrames || 1)) + 1)
+        total + perceptionTensorBytes(sensor, pluginObservations.get(sensor.id))
+            * (Math.max(1, Number(sensor.maxQueueFrames || 1)) + 1)
     ), 0);
     const rawBytes = usesGpu
         ? sensors.reduce((total, sensor) => total + rawGpuTensorBytes(sensor, { pbr }), 0)
@@ -105,6 +112,9 @@ export function calculatePerceptionObservationBytes(resolved, episodeSpec = {}) 
     const isPerception = String(episodeSpec.observationProfile?.id || episodeSpec.observation_profile?.id || "")
         === "measured-perception";
     if (!isPerception) return 0;
+    const pluginObservations = new Map((resolved.pluginSensors?.description?.sensors ?? [])
+        .filter((entry) => entry.observationDescriptor)
+        .map((entry) => [entry.sensorId, entry.observationDescriptor]));
     return (resolved.manifest?.sensorRig?.sensors || [])
-        .reduce((total, sensor) => total + perceptionTensorBytes(sensor), 0);
+        .reduce((total, sensor) => total + perceptionTensorBytes(sensor, pluginObservations.get(sensor.id)), 0);
 }

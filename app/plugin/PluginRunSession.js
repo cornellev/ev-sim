@@ -15,6 +15,10 @@ import { PLUGIN_ERROR_CODES, assertSynchronous, pluginError } from "./PluginErro
 import { PluginRandom } from "./PluginRandom.js";
 import { PluginSystemDispatcher } from "./PluginSystemDispatcher.js";
 import {
+    SensorTypeRegistry,
+    registerBuiltInSensorTypes,
+} from "../simulation/sensors/SensorTypeRegistry.js";
+import {
     PluginTopicRuntime,
     isPluginControlTopic,
     isPluginHeavyTopic,
@@ -100,6 +104,8 @@ export class PluginRunSession {
         this.host = null;
         this.loader = null;
         this.registry = null;
+        this.sensorRegistry = null;
+        this.sensorFactories = new Map();
         this.services = Object.freeze({
             signalStore: null,
             world: null,
@@ -130,6 +136,9 @@ export class PluginRunSession {
             const registry = registerBuiltInBlocks(new BlockRegistry({ allowPlugins: true }));
             registry.seal();
             this.registry = registry;
+            this.sensorRegistry = registerBuiltInSensorTypes(
+                new SensorTypeRegistry({ allowPlugins: true }),
+            ).seal();
             this.mode = "definitions";
             return this;
         }
@@ -157,8 +166,12 @@ export class PluginRunSession {
             }
         }
         const baseRegistry = registerBuiltInBlocks(new BlockRegistry({ allowPlugins: true }));
+        const baseSensorRegistry = registerBuiltInSensorTypes(
+            new SensorTypeRegistry({ allowPlugins: true }),
+        );
         this.host = new PluginHost({
             blockRegistry: baseRegistry,
+            sensorRegistry: baseSensorRegistry,
             simulatorVersion: this.simulatorVersion,
             availableCapabilities: this.availableCapabilities,
             logger: this.logger,
@@ -173,6 +186,7 @@ export class PluginRunSession {
         }
         this.host.seal();
         this.registry = this.host.registry;
+        this.sensorRegistry = this.host.sensorRegistry;
         for (const selected of this.plugins) {
             const metadata = this.host.packages.get(selected.pluginId);
             for (const factory of metadata?.systemFactories ?? []) {
@@ -180,6 +194,9 @@ export class PluginRunSession {
                     ...factory,
                     capabilities: selected.capabilities,
                 });
+            }
+            for (const factory of metadata?.sensorFactories ?? []) {
+                this.sensorFactories.set(factory.type, factory);
             }
         }
         this.dispatcher.sort();
@@ -890,6 +907,7 @@ export class PluginRunSession {
         this.random.reset("0");
         this.unitContexts = new WeakMap();
         this.commandSequences = {};
+        this.sensorFactories.clear();
         this.mode = "disposed";
         this.disposed = true;
     }

@@ -17,7 +17,7 @@ ui/icon.svg          # optional, listed in editor.assets
 ```
 
 `plugin.json` is the authority. Unknown fields are rejected. Plugin IDs are lowercase dotted names
-outside the reserved `cev` namespace. Unit types and system IDs must start with `{pluginId}.`.
+outside the reserved `cev` namespace. Unit, system, and sensor types must start with `{pluginId}.`.
 
 ```json
 {
@@ -30,11 +30,13 @@ outside the reserved `cev` namespace. Unit types and system IDs must start with 
   "capabilities": [],
   "units": [],
   "systems": [],
+  "sensorTypes": [],
   "editor": { "assets": ["ui/icon.svg"] }
 }
 ```
 
-`entry.ui` and `editor` are optional. Ports use the concrete `ProgramTypes.js` vocabulary. API 1
+`entry.ui`, `editor`, and `sensorTypes` are optional. Existing packages should omit unused
+`sensorTypes`; absence remains absent. Ports use the concrete `ProgramTypes.js` vocabulary. API 1
 does not allow `generic`, dynamic port layouts, custom value types, or program-level input/output
 roles. Settings target authored `state` (`target: "state"`). The built-in `storedData` mechanism is
 not public.
@@ -66,13 +68,13 @@ identity.
 ## Runtime ABI
 
 `runtime/index.js` must `export default { register(api) {} }`. `register` is synchronous.
-`contributeUnit` / `contributeSystem` must match `plugin.json` exactly.
+`contributeUnit`, `contributeSystem`, and `contributeSensorType` must match `plugin.json` exactly.
 
 The frozen registration API contains only:
 
 ```text
 pluginApi, plugin, capabilities, UnitBlock, BlockOutput, ports,
-contributeUnit, contributeSystem, log
+contributeUnit, contributeSystem, contributeSensorType, log
 ```
 
 Units extend `api.UnitBlock`, register fixed ports in `register()`, and return `api.BlockOutput`
@@ -87,10 +89,27 @@ Required capabilities are declared on the package and granted by the run lock. A
 - `signals.read.vehicles|devices|simulation|scenario|mission|objects|topics`
 - `signals.write.debug`, `signals.write.mission`, `scenario.flags.write`
 - `world.read`, `controls.reference`, `topics.subscribe`, `topics.publish`, `overlay.spawn`
+- `sensors.sample.range-image`
 
 Pure computation needs no grant. `overlay.spawn` is unavailable on headless GPU backends.
 
 See `tests/fixtures/plugins/acme.example/` and `examples/plugins/acme.pure-pursuit/`.
+
+## Sensor ABI 1
+
+Range-image sensor packages declare `sensorTypes` and register each exact type
+with `api.contributeSensorType({ type, create })`. The host supplies CPU
+sampling, measurement noise/dropout, timing, publishing, recording, and
+resource limits. The plugin transforms already measured ranges and may emit a
+declared PointCloud2 value and complete opaque vendor packet payloads. It does
+not receive BVH, Three.js, renderer, socket, filesystem, or arbitrary raycast
+access.
+
+The strict descriptor, scan layout, lifecycle, capture result, observation,
+and product shapes are documented in [`plugin-sensors.md`](plugin-sensors.md).
+The native envelope and currently unavailable external adapters are in
+[`sensor-packet-transports.md`](sensor-packet-transports.md). A working 3×4
+nonuniform example is `tests/fixtures/plugins/test.range-image-fixture/`.
 
 ## UI ABI
 
@@ -159,4 +178,5 @@ includes Acorn and plugin runtime sources; it does not ship `app/plugin/browser`
 ## Out of scope for API 1
 
 Marketplace, signatures, a hostile sandbox, JSX in packages, hot-swap of a live graph, CAS deletion
-on remove, Python-side plugin install, and extra Config tabs.
+on remove, Python-side plugin install, extra Config tabs, package-defined ROS messages, plugin-owned
+sockets, and GPU explicit-layout sampling.

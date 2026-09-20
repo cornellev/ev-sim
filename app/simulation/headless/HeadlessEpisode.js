@@ -45,6 +45,9 @@ import {
     hashSpace,
     normalizeAction,
 } from "./TensorProtocol.js";
+import { verifyPluginPackage } from "../../plugin/PluginPackage.js";
+import { createSensorDefinitionRegistry } from "../sensors/SensorTypeRegistry.js";
+import { planSensorAdmission } from "../sensors/SensorAdmission.js";
 
 export const TERMINATION_REASON = Object.freeze({
     NONE: 1,
@@ -88,21 +91,26 @@ function compareBackends(left, right) {
 export function normalizeEpisodeSpec(resolvedRun, spec = {}) {
     const requestsLidar = resolvedRun.manifest.sensorRig?.sensors?.some(
         (sensor) => sensor.enabled !== false && sensor.type === "lidar3d",
-    );
+    ) || (resolvedRun.pluginSensors?.description?.sensors?.length ?? 0) > 0;
     const requestsCamera = resolvedRun.manifest.sensorRig?.sensors?.some(
         (sensor) => sensor.enabled !== false && sensor.type === "camera",
     );
     const requestsPbr = resolvedRun.renderScene?.description?.provider?.id === "pbr-mesh"
         && resolvedRun.renderScene?.description?.provider?.version === 1;
     const requestedBackends = spec.backendSelections ?? spec.backend_selections;
-    const backends = ((Array.isArray(requestedBackends) && requestedBackends.length > 0) ? requestedBackends : [
-        ...(resolvedRun.backendSelections || []),
+    const resolvedBackends = resolvedRun.backendSelections || [];
+    const explicitBackends = Array.isArray(requestedBackends) && requestedBackends.length > 0;
+    const selectedBackends = explicitBackends ? requestedBackends : [
+        ...resolvedBackends,
         createStateSensorBackendSelection(),
-        ...(requestsLidar ? [createCpuLidarBackendSelection()] : []),
+        ...(requestsLidar && !resolvedBackends.some((entry) => Number(entry.kind) === CPU_LIDAR_BACKEND_KIND)
+            ? [createCpuLidarBackendSelection()] : []),
         ...(requestsCamera ? [requestsPbr
             ? createGpuSensorBackendV2Selection()
             : createGpuSensorBackendSelection()] : []),
-    ]).map(normalizedBackend);
+    ];
+    const backends = selectedBackends.map(normalizedBackend);
+    if (!explicitBackends) backends.sort(compareBackends);
     if (requestsPbr) {
         const required = normalizedBackend(createGpuSensorBackendV2Selection());
         const selected = backends.filter((entry) => entry.kind === GPU_SENSOR_BACKEND_KIND);
@@ -249,7 +257,21 @@ export class HeadlessEpisode {
         const cpuLidar = normalized.find((entry) => entry.kind === CPU_LIDAR_BACKEND_KIND);
         const gpuSensors = normalized.find((entry) => entry.kind === GPU_SENSOR_BACKEND_KIND);
         const enabledSensors = (resolvedRun.manifest.sensorRig?.sensors || []).filter((sensor) => sensor.enabled !== false);
+        let sensorAdmission;
+        try {
+            const verifiedPackages = (resolvedRun.pluginPackages ?? []).map(verifyPluginPackage);
+            const sensorRegistry = createSensorDefinitionRegistry(verifiedPackages);
+            sensorAdmission = planSensorAdmission({
+                manifest: resolvedRun.manifest,
+                sensorRegistry,
+                backendSelections: normalized,
+                execution: true,
+            });
+        } catch (error) {
+            throw new HeadlessEpisodeError("UNSUPPORTED_CAPABILITY", error.message, error.details ?? null);
+        }
         const lidarSensors = enabledSensors.filter((sensor) => sensor.type === "lidar3d");
+        const pluginRangeImageSensors = sensorAdmission.sensors.filter((entry) => entry.kind === "plugin-range-image");
         const cameraSensors = enabledSensors.filter((sensor) => sensor.type === "camera");
         const stateSensorConfigs = enabledSensors.filter((sensor) => getStateSensorModel(sensor.type));
         if (cameraSensors.length > 0 && !resolvedRun.renderScene) {
@@ -288,13 +310,14 @@ export class HeadlessEpisode {
         }
         const cpuLidarCount = normalized.filter((entry) => entry.kind === CPU_LIDAR_BACKEND_KIND).length;
         const gpuSensorCount = normalized.filter((entry) => entry.kind === GPU_SENSOR_BACKEND_KIND).length;
-        const lidarProviderValid = lidarSensors.length > 0
+        const lidarProviderValid = lidarSensors.length > 0 || pluginRangeImageSensors.length > 0
             ? cpuLidarCount + gpuSensorCount >= 1
             : cpuLidarCount === 0;
         const gpuUseValid = cameraSensors.length > 0
             ? gpuSensorCount === 1
             : gpuSensorCount === (lidarSensors.length > 0 && cpuLidarCount === 0 ? 1 : 0);
-        if (lidarSensors.length > 0 && cpuLidarCount === 0 && gpuSensorCount === 0) {
+        if ((lidarSensors.length > 0 || pluginRangeImageSensors.length > 0)
+            && cpuLidarCount === 0 && gpuSensorCount === 0) {
             throw new HeadlessEpisodeError(
                 "UNSUPPORTED_CAPABILITY",
                 "A CPU LiDAR backend selection is required unless the GPU sensor backend is selected.",
@@ -312,16 +335,10 @@ export class HeadlessEpisode {
         if (gpuSensors && !this.rendererClient) {
             throw new HeadlessEpisodeError("UNSUPPORTED_CAPABILITY", "GPU sensors require a supervisor-owned renderer sidecar.");
         }
-        const unsupported = enabledSensors.filter((sensor) => (
-            !getStateSensorModel(sensor.type) && !["lidar3d", "camera"].includes(sensor.type)
-        ));
-        if (unsupported.length) {
-            throw new HeadlessEpisodeError("UNSUPPORTED_CAPABILITY", `Unsupported headless sensor(s): ${unsupported.map((sensor) => `${sensor.id}:${sensor.type}`).sort().join(", ")}.`);
-        }
         if (stateSensorConfigs.length === 0) {
             throw new HeadlessEpisodeError("BUNDLE_INVALID", "At least one enabled state sensor is required.");
         }
-        if (lidarSensors.length > 0 && !resolvedRun.lidarGeometry) {
+        if (sensorAdmission.requiresLidarGeometry && !resolvedRun.lidarGeometry) {
             throw new HeadlessEpisodeError("BUNDLE_INVALID", "LiDAR geometry twins are missing; re-resolve and export the run manifest.");
         }
         const sensorIds = new Set();
@@ -368,7 +385,13 @@ export class HeadlessEpisode {
         const descriptors = stateSensorConfigs.map((sensor) => ({ id: sensor.id, type: sensor.type }));
         const perceptionDescriptors = enabledSensors
             .map(perceptionSensorDescriptor)
-            .filter(Boolean);
+            .filter(Boolean)
+            .concat(sensorAdmission.observations.map((descriptor) => ({
+                ...descriptor,
+                low: descriptor.componentLow,
+                high: descriptor.componentHigh,
+            })))
+            .sort((left, right) => compareUtf8(left.id, right.id));
         if (measuredPerception && perceptionDescriptors.length === 0) {
             throw new HeadlessEpisodeError(
                 "BUNDLE_INVALID",

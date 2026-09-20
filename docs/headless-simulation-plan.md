@@ -1175,3 +1175,23 @@ trajectory, and characterization contracts remain on their prior identity
 path. This is PLG-02 integration, not headless PR 13, and it does not satisfy
 or change the outstanding PR 12 hosted, soak, x64 NVIDIA, or Jetson ARM64
 evidence gates.
+
+### 2026-09-20 — PLG-05 adds explicit-layout CPU sensor backend v2
+
+The separate simulator-plugin program adds package-declared range-image
+sensors through the existing headless sensor phase. Enabled custom sensors
+require kind 3 `deterministic-cpu-bvh-lidar` version `2`, config hash
+`70349dfde6494414249bbcf6e1befc13ce82b817a63eb01baac4f5402ce62c31`,
+and portable LiDAR geometry. Backend v1 and built-in uniform LiDAR sampling
+remain unchanged. Python and supervisors accept and advertise the explicit v2
+selection; Python still delegates all sampling to JavaScript.
+
+Run-bundle v1 conditionally carries the reconstructible exact
+`cev-sim.plugin-sensors@1` resource. Measured custom observations use the
+existing Gym/tensor/shared-memory contracts, and native packet bytes travel
+through a host-owned non-ROS envelope. Optional manifest transport bindings
+are operational and excluded from simulation semantics; PLG-05 rejects PCAP
+or UDP requests because no adapter is available yet. No Protobuf fields,
+fixed-step phases, or plugin-free identity algorithms changed. This is not
+headless PR 13 and does not satisfy or change the outstanding PR 12 hosted,
+soak, x64 NVIDIA, or Jetson ARM64 evidence gates.

@@ -14,7 +14,12 @@ import {
     run,
     temporaryRoot,
 } from "./lib/headless-release-support.mjs";
-import { createPluginPortableHeadlessBundle } from "../tests/helpers/headlessRunnerBundle.js";
+import {
+    createHeadlessImu,
+    createPluginPortableHeadlessBundle,
+    createPluginRangeImageFixtureSensor,
+    pluginSensorFixtureResource,
+} from "../tests/helpers/headlessRunnerBundle.js";
 import { pluginFixtureResource } from "../tests/helpers/pluginFixtures.js";
 
 async function checked(command, args, options = {}) {
@@ -132,6 +137,32 @@ async function verifyNpm(root, tarball) {
             throw error;
         });
     if (browserUiPresent) throw new Error("Headless distribution shipped browser plugin UI modules.");
+
+    const sensorResource = await pluginSensorFixtureResource();
+    const sensorBundle = await createPluginPortableHeadlessBundle(sensorResource, {
+        sensors: [createHeadlessImu(), createPluginRangeImageFixtureSensor()],
+        triggers: [{
+            id: "finish", name: "Finish", enabled: true, once: true,
+            condition: { kind: "step", step: 1 }, actions: [{ kind: "finish" }],
+        }],
+    });
+    const sensorBundleFile = path.join(project, "plugin-sensor-bundle.json");
+    const sensorEpisodeFile = path.join(project, "plugin-sensor-episode.json");
+    await fs.writeFile(sensorBundleFile, canonicalRunBundleStringify(sensorBundle));
+    await fs.writeFile(sensorEpisodeFile, JSON.stringify(episodeSpec(
+        0,
+        sensorBundle.resolvedHash,
+        sensorBundle,
+        { perception: true },
+    )));
+    const sensorSmoke = await checked(executable, [
+        "run", "--bundle", sensorBundleFile, "--episode", sensorEpisodeFile,
+        "--output", path.join(project, "plugin-sensor-output"), "--artifact-profile", "disabled",
+    ], { cwd: project, input: '{"policyStep":1,"action":[0,0]}\n' });
+    const sensorRecords = sensorSmoke.stdout.trim().split("\n").map((line) => JSON.parse(line));
+    if (!sensorRecords.some((entry) => entry.kind === "cev-sim.headless.result" && entry.result?.passed === true)) {
+        throw new Error("Installed npm runtime did not complete the plugin sensor bundle smoke episode.");
+    }
 }
 
 async function verifyPython(root, artifact, index, expectedVersion) {

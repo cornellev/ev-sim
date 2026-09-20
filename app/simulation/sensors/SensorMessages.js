@@ -178,6 +178,15 @@ export function buildOdometryMessage({
 }
 
 function lidarGridMeta(calibration) {
+    const layout = calibration.scanLayout;
+    if (layout) {
+        return {
+            rangeLimit: Number(layout.maxRangeM),
+            azimuthCount: layout.azimuthsDeg.length,
+            elevationCount: layout.channels.length,
+            layout,
+        };
+    }
     const rangeLimit = Number(calibration.range || 20);
     const azimuth = calibration.azimuth || { startDeg: -180, endDeg: 180, stepDeg: 2 };
     const elevation = calibration.elevation || { startDeg: -20, endDeg: 20, stepDeg: 1 };
@@ -186,17 +195,22 @@ function lidarGridMeta(calibration) {
 }
 
 function forEachLidarHit(buffer, calibration, bufferEncoding, onHit) {
-    const { rangeLimit, azimuth, elevation, azimuthCount } = lidarGridMeta(calibration);
+    const { rangeLimit, azimuth, elevation, azimuthCount, layout } = lidarGridMeta(calibration);
     const legacy = bufferEncoding === "legacy-normalized";
     for (let offset = 0; offset + 3 < buffer.length; offset += 4) {
-        const hit = legacy ? buffer[offset + 3] > 0.5 : buffer[offset + 3] > 0 && buffer[offset] > 0;
+        const hit = legacy ? buffer[offset + 3] > 0.5 : layout
+            ? buffer[offset] > 0 && buffer[offset] <= rangeLimit
+            : buffer[offset + 3] > 0 && buffer[offset] > 0;
         if (!hit) continue;
         const index = offset / 4;
         const azimuthIndex = index % azimuthCount;
         const elevationIndex = Math.floor(index / azimuthCount);
-        const thetaDeg = azimuth.startDeg + azimuthIndex * azimuth.stepDeg;
-        const phiDeg = elevation.startDeg + elevationIndex * elevation.stepDeg;
-        if (thetaDeg > azimuth.endDeg || phiDeg > elevation.endDeg) continue;
+        const channel = layout?.channels[elevationIndex];
+        const thetaDeg = layout
+            ? layout.azimuthsDeg[azimuthIndex] + channel.azimuthOffsetDeg
+            : azimuth.startDeg + azimuthIndex * azimuth.stepDeg;
+        const phiDeg = layout ? channel.elevationDeg : elevation.startDeg + elevationIndex * elevation.stepDeg;
+        if (!layout && (thetaDeg > azimuth.endDeg || phiDeg > elevation.endDeg)) continue;
         onHit({
             offset,
             index,

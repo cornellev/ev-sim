@@ -18,6 +18,10 @@ import { computeSimulationSemanticHash } from "../../app/simulation/kernel/Simul
 import { HeadlessEpisodeError } from "../../app/simulation/headless/HeadlessErrors.js";
 import { verifyPluginPackage } from "../../app/plugin/PluginPackage.js";
 import {
+    assertPluginSensorsResource,
+    createPluginSensorsResource,
+} from "../../app/plugin/PluginSensorIdentity.js";
+import {
     effectivePluginLocks,
     normalizePluginSelection,
     normalizeResolvedPlugins,
@@ -26,6 +30,8 @@ import {
 import { collectArtifactPluginRequirements } from "../../app/plugin/PluginRequirements.js";
 import { assertWorldResource } from "../../app/simulation/world/WorldDescription.js";
 import { assertLidarGeometryResource } from "../../app/simulation/lidar/LidarGeometry.js";
+import { createSensorDefinitionRegistry } from "../../app/simulation/sensors/SensorTypeRegistry.js";
+import { planSensorAdmission } from "../../app/simulation/sensors/SensorAdmission.js";
 import { assertRenderSceneResource } from "../../app/simulation/render/RenderScene.js";
 import {
     RenderSceneProviderError,
@@ -185,6 +191,7 @@ function verifyPluginClosure(resolved) {
             }
         }
     }
+    return plugins.map((entry) => packageById.get(entry.pluginId));
 }
 
 function verifyBundleStructure(verified, { requireRuntime = false } = {}) {
@@ -207,7 +214,29 @@ function verifyBundleStructure(verified, { requireRuntime = false } = {}) {
     if (!Array.isArray(resolved.scripts)) {
         invalid("BUNDLE_INVALID", "The resolved run scripts must be an array of admitted artifacts.");
     }
-    verifyPluginClosure(resolved);
+    const verifiedPackages = verifyPluginClosure(resolved);
+    let sensorAdmission;
+    let expectedPluginSensors;
+    try {
+        const sensorRegistry = createSensorDefinitionRegistry(verifiedPackages);
+        sensorAdmission = planSensorAdmission({
+            manifest: resolved.manifest,
+            sensorRegistry,
+            backendSelections: resolved.backendSelections,
+            execution: requireRuntime,
+        });
+        expectedPluginSensors = createPluginSensorsResource(sensorAdmission);
+        if (resolved.pluginSensors) assertPluginSensorsResource(resolved.pluginSensors);
+    } catch (error) {
+        invalid("BUNDLE_INVALID", error.message);
+    }
+    if (canonicalExactStringify(resolved.pluginSensors ?? null)
+        !== canonicalExactStringify(expectedPluginSensors ?? null)) {
+        invalid("BUNDLE_HASH_MISMATCH", "Resolved plugin sensor contracts do not match the exact package declarations and normalized sensor rig.");
+    }
+    if ((resolved.dependencyHashes?.pluginSensors ?? null) !== (expectedPluginSensors?.hash ?? null)) {
+        invalid("BUNDLE_HASH_MISMATCH", "Resolved plugin sensor dependency hash does not match the reconstructed contract resource.");
+    }
     const resolvedScriptIds = new Set();
     for (const entry of resolved.scripts) {
         const scriptId = typeof entry?.scriptId === "string" ? entry.scriptId.trim() : "";
@@ -234,7 +263,7 @@ function verifyBundleStructure(verified, { requireRuntime = false } = {}) {
         }
     }
     const sensors = resolved.manifest.sensorRig?.sensors ?? [];
-    const requestsLidar = sensors.some((sensor) => sensor.enabled !== false && sensor.type === "lidar3d");
+    const requestsLidar = sensorAdmission.requiresLidarGeometry;
     if (requestsLidar && !resolved.lidarGeometry) {
         invalid("BUNDLE_INVALID", "This LiDAR run bundle predates persisted geometry twins; re-resolve and export the run manifest.");
     }

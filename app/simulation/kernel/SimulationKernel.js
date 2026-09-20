@@ -9,6 +9,8 @@ import { TransformRuntime } from "../TransformRuntime.js";
 import { assertEnabledCameraRenderRuntime } from "../render/RenderSceneProviderRegistry.js";
 import { resolvedUsesPlugins } from "./RunIdentity.js";
 import { PLUGIN_ERROR_CODES, pluginError } from "../../plugin/PluginErrors.js";
+import { planSensorAdmission } from "../sensors/SensorAdmission.js";
+import { sensorTypeRegistry } from "../sensors/SensorTypeRegistry.js";
 import {
     computeEpisodeHash,
     computeSimulationSemanticHash,
@@ -352,7 +354,18 @@ export class SimulationKernel {
                 ?? resolved.backendSelections
                 ?? [],
         }) ?? null;
+        const selectedBackends = episode?.backendSelections
+            ?? episode?.backend_selections
+            ?? resolved.backendSelections
+            ?? [];
+        let sensorAdmission;
         try {
+            sensorAdmission = planSensorAdmission({
+                manifest: resolved.manifest,
+                sensorRegistry: candidatePluginSession?.sensorRegistry ?? sensorTypeRegistry,
+                backendSelections: selectedBackends,
+                execution: true,
+            });
             assertEnabledCameraRenderRuntime(resolved.manifest.sensorRig?.sensors, resolved.renderScene, {
                 target: this.context.rendering?.target?.() ?? "headless",
             });
@@ -470,6 +483,8 @@ export class SimulationKernel {
                 renderScene: this.resolvedRun.renderScene ?? null,
                 renderRuntime,
                 perceptionObservations,
+                sensorAdmission,
+                pluginSession: candidatePluginSession,
             });
             await this.context.physics.configureRun({
                 manifest,
