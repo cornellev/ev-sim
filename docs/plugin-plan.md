@@ -14,8 +14,8 @@ package directory and use the contracts below.
 | Milestone | Implementation | Verification | Merge status |
 | --- | --- | --- | --- |
 | PLG-01: foundation, isolated registries, verified packages | Complete in working tree | Verified | Unmerged |
-| PLG-02: resolved selection and runner propagation | Not started | Not started | Unmerged |
-| PLG-03: deterministic effects, systems, and identity profiles | Not started | Not started | Unmerged |
+| PLG-02: resolved selection and deterministic unit execution | Complete in working tree | Verified | Unmerged |
+| PLG-03: systems and expanded simulator capabilities | Complete in working tree | Verified | Unmerged |
 | PLG-04: editor/UI integration and distribution acceptance | Not started | Not started | Unmerged |
 
 Only a merged change may be marked merged. A milestone is verified only when
@@ -26,17 +26,38 @@ document.
 
 ### Compatibility boundary
 
-PLG-01 preserves run-manifest v11, run-bundle v1, visual-script artifact v3,
-all Protobuf fields, plugin-free hashes, canonical state, and fixed-step
-ordering. Managed runs reject plugin selections, resources, dependency
-records, requirements, nested compiled-program requirements, and the reserved
-`world-bound-plugins@1` identity profile before execution changes active
-state. Plugin-specific fields are unsupported even when empty.
+PLG-02 preserves run-manifest v11, run-bundle v1, visual-script artifact v3,
+all Protobuf fields, plugin-free hashes, and fixed-step ordering. Manifest v11
+admits an optional exact plugin selection. Effective selections resolve to a
+portable package closure and activate `world-bound-plugins@1`; plugin-free
+runs retain `world-bound@2` byte-for-byte. Older manifest versions reject
+plugin fields. PLG-03 keeps those version numbers and identity algorithms. It
+folds systems, topics, and overlay spawn into the existing `"scripts"` phase
+instead of adding phase names.
+
+### Resolved selection and identity
+
+`manifest.plugins` is `{ enabled, artifacts }`; every artifact lock contains
+`pluginId`, exact `expectedHash` (`packageHash`), and sorted granted
+capabilities. Resolution emits sorted `resolved.plugins` records containing
+`pluginId`, `version`, `packageHash`, `runtimeHash`, and capabilities; matching
+`resolved.pluginPackages`; and `dependencyHashes.plugins`. Bundle verification
+checks the exact manifest lock, package bytes, resolved record, dependency
+record, canonical order, and every transitive artifact requirement.
+
+The plugin semantic projection contains only sorted
+`{ pluginId, version, runtimeHash, capabilities }` records. Package/UI-only
+changes alter full bundle identity but retain simulation and episode identity;
+runtime, grant, artifact, or plugin state changes are semantic. Plugin state,
+RNG streams, committed plugin-owned signals, system snapshots, topic queues,
+command sequences, and plugin-owned overlay records are included in canonical
+state only for effective plugin runs. Overlay, queue, and system snapshots are
+not part of the semantic hash.
 
 Packages are trusted local JavaScript. Static import validation, exact-byte
 verification, and capability-checked facades reduce accidental authority;
-they are not a hostile-code sandbox. Registration is definition-only and
-episode state belongs to unit instances.
+they are not a hostile-code sandbox. Registration is definition-only. Episode
+state belongs to unit instances and prepared system instances.
 
 ### Package document
 
@@ -51,8 +72,10 @@ Unit ports use the concrete `ProgramTypes.js` vocabulary. Plugin API v1
 excludes `generic`, dynamic port layouts, custom value types, and
 program-level input/output roles. Settings target authored `state`; the
 built-in `storedData` mechanism is not public. Systems validate as
-`{ id, phase: "scripts", priority, stateVersion }`, but PLG-01 rejects any
-package that declares one.
+`{ id, phase: "scripts", priority, stateVersion }`. Contribution is
+`{ id, create }` and `create()` returns a synchronous instance with
+`prepare`, `reset`, `onStep`, `getDeterministicState`,
+`hydrateDeterministicState`, `finalize`, and `dispose`.
 
 ### Package resource and hashes
 
@@ -125,10 +148,14 @@ API 1 reserves:
   `topics.publish`, and `overlay.spawn`
 
 Grant validation separately rejects unknown names, missing required grants,
-and grants unavailable from the selected host. PLG-01 production hosts
-advertise no simulator capabilities. Tests may inject explicit read-only
-signal services. Pure computation needs no grant. Host RNG is deferred and
-plugins must not treat ambient `Math.random()` as a deterministic service.
+and grants unavailable from the selected host. Browser and headless hosts
+implement approved signal reads, plugin-owned debug and mission writes,
+plugin-owned scenario flags, read-only world snapshots, scoped deterministic
+RNG, reference controls, deterministic topics, and reset-only overlay spawn.
+`overlay.spawn` is omitted from host availability when the render target is
+headless and any backend kind is `4`. Pure computation and RNG need no grant.
+Plugins must use the host RNG rather than ambient `Math.random()` for
+deterministic behavior.
 
 ### Storage and module sources
 
@@ -173,33 +200,45 @@ PLG-01 does not propagate plugin selection into managed simulations, expose
 production simulator services, execute systems or UI modules, or alter
 versioned run/script contracts.
 
-### PLG-02 — Resolved selection and runner propagation
+### PLG-02 — Resolved selection and deterministic unit execution
 
 Add authoring selection and immutable resolution into run manifests/bundles;
 lock selected package/runtime identities; add per-session registries and
 loader lifetime; propagate selected registries through `ScriptManager`, graph
-loading, compiler bindings, scenarios, direct execution, supervisor workers,
-and browser/headless preparation; and advertise only services actually wired
-by each backend.
+loading, compiler requirements, scenarios, direct execution, supervisor
+workers, and browser/headless preparation. Add deterministic scoped RNG and a
+nested effect journal for approved plugin-owned signal writes. Activate the
+gated `world-bound-plugins@1` identity while retaining `world-bound@2` for
+plugin-free runs. Propagate structured plugin preparation/execution failures
+through workers and Python `canonical_detail_json`, with execution failures
+requiring reset.
 
 Acceptance requires browser/headless parity for a pure unit, deterministic
 selection of one version per plugin ID, exact bundle integrity failures,
-session isolation across simultaneous runs, clean reset/disposal behavior,
-and unchanged hashes for plugin-free runs. Run/proto contract changes must be
-versioned additively and recorded in the headless roadmap as well as here.
+transactional effects and RNG replay, session isolation across simultaneous
+runs, clean reset/disposal behavior, Python bundle pass-through, and unchanged
+hashes and characterization for plugin-free runs. Run/proto contract changes
+must be versioned additively and recorded in the headless roadmap as well as
+here.
 
-### PLG-03 — Deterministic effects, systems, and identity profiles
+### PLG-03 — Systems and expanded simulator capabilities
 
-Define the effect journal and deterministic commit order; implement allowed
-write capabilities and host RNG; execute declared systems in the scripts
-phase with state versioning; add explicit plugin capability negotiation;
-version semantic projections so selected runtime identities and episode
-semantics are hashed; and implement the gated `world-bound-plugins@1` profile.
+Execute declared systems in the existing `"scripts"` phase with deterministic
+priority and state versioning. Dispatch order is ascending `priority`, then
+plugin id, then system id; package enumeration order must not leak. Implement
+the separately gated `controls.reference`, `topics.subscribe`,
+`topics.publish`, and `overlay.spawn` services. Reference commands use
+REP-103 steering through `ControlRuntime.submitSiSpeedSteer` and remain
+overwritable by a later scenario command. Topic callbacks observe without
+running plugin code, drain at the scripts cutoff, defer callback publishes to
+the next cutoff, and treat queue overflow as `PLUGIN_RESOURCE`. Overlay spawn
+is reset-only, plugin-owned, and omitted from headless GPU availability.
+Plugin-free canonical state still omits `plugins`.
 
-Acceptance requires replay and browser/headless parity for effects and
-systems, ordering tests for multiple plugins, reset/state migration tests,
-capability-negative tests, characterization of all identity projections, and
-failure before state mutation when a backend cannot honor requirements.
+Acceptance requires replay and browser/headless parity for systems, ordering
+tests for multiple plugins, reset/state migration tests, capability-negative
+tests for every expanded service, and failure before state mutation when a
+backend cannot honor requirements.
 
 ### PLG-04 — Editor integration, UI packages, and distribution
 
@@ -245,7 +284,76 @@ The full-suite loopback run was necessary because sandboxed local listening
 causes the existing HTTP tests to fail with `EPERM`; the elevated acceptance
 run completed without failures.
 
+## PLG-02 evidence ledger
+
+| Gate | Evidence | Result / limitation |
+| --- | --- | --- |
+| Selection, requirements, effects, RNG, identity | `node --experimental-default-type=module --test tests/plugin-run-session.test.js tests/plugin-admission.test.js` | 7/7 passed on 2026-09-20; covers exact locks/closure, transitive compiler requirements, atomic rollback, deterministic reset replay, UI-only edits, direct kernel and supervisor-worker execution, canonical bundle transport, and structured reset-required failures |
+| Plugin focused Node suites | `node --experimental-default-type=module --test tests/plugin-*.test.js` | 24/24 passed on 2026-09-20 |
+| Identity/runtime regression matrix | `visual-identity`, `run-manifest`, `simulation-kernel`, `headless-runtime`, `headless-runner`, and resolved-script security suites | 65/65 passed on 2026-09-20 |
+| Browser source and production build | `npx playwright test tests/ui/plugin-module-source.spec.js`; `npm run build` | 1/1 Chromium test passed and the optimized Next.js build completed on 2026-09-20 |
+| Python bundle/client and generated contract | `python/.venv/bin/python -m pytest python/tests/test_bundle.py python/tests/test_client.py -q`; `npm run lint:python`; `npm run proto:python` | 26/26 passed; Ruff and generated-Protobuf checks passed on 2026-09-20 |
+| Repository lint | `npm run lint` | Passed with zero errors on 2026-09-20; one pre-existing `MapSurface.js` warning remains |
+| Full tests and characterization | `npm test` with loopback access; `npm run fixtures:headless` | 1,510 passed, 0 failed, and 4 existing skips on 2026-09-20; regenerated action-tape characterization is unchanged |
+
+## PLG-03 evidence ledger
+
+| Gate | Evidence | Result / limitation |
+| --- | --- | --- |
+| Systems, capabilities, kernel fold-in | `node --experimental-default-type=module --test tests/plugin-systems.test.js tests/plugin-capabilities.test.js tests/plugin-run-session.test.js tests/plugin-loader.test.js tests/plugin-admission.test.js` | 23/23 passed on 2026-09-20; covers install-order-independent dispatch, failed-hook rollback, reset soak, missing required grants, headless GPU overlay deny, reset-only spawn, REP-103 reference overwrite by scenario, topic overflow, control-topic rejection, kernel scripts-phase execution, and structured system failure details |
+| Plugin focused Node suites | `node --experimental-default-type=module --test tests/plugin-*.test.js` | 36/36 passed on 2026-09-20 |
+| Identity/runtime regression matrix | `visual-identity`, `run-manifest`, `simulation-kernel`, `headless-runtime`, `headless-runner`, and resolved-script security suites | 43/43 passed on 2026-09-20 |
+| Browser source | `npx playwright test tests/ui/plugin-module-source.spec.js` | 1/1 Chromium test passed on 2026-09-20; UI entry still unevaluated |
+| Python bundle/client and generated contract | `python/.venv/bin/python -m pytest python/tests/test_bundle.py python/tests/test_client.py -q`; `npm run lint:python`; `npm run proto:python` | 26/26 passed; Ruff and generated-Protobuf checks passed on 2026-09-20 |
+| Repository lint | `npm run lint` | Passed with zero errors on 2026-09-20; one pre-existing `MapSurface.js` warning remains |
+| Full tests and characterization | `npm test` with loopback access; `npm run fixtures:headless` | 1,522 passed, 0 failed, and 4 existing skips on 2026-09-20; regenerated action-tape characterization is unchanged |
+
 ## Decision log
+
+- **2026-09-20 — PLG-03 stays in the scripts phase.** Topic callbacks and
+  system `onStep()` fold into the existing `"scripts"` cutoff after
+  `BindingRuntime.update`. No new `lastStepPhases` names. Scenario may
+  overwrite a plugin reference command because `"scenario-before-motion"`
+  already follows scripts and uses the same `producer: "reference"` path.
+  Plugin steering is REP-103.
+- **2026-09-20 — Honor overlay.spawn only where the backend can materialize
+  it.** Browser and headless CPU/physics keep the grant. Headless GPU
+  (backend kind `4`) strips `overlay.spawn` from host availability so
+  preparation fails closed before `clearRun()`. Overlay records never enter
+  `worldHash`.
+- **2026-09-20 — Overflow is fatal.** Plugin topic queues are bounded at 1024.
+  Overflow, heavy subscriptions, and control-topic publish/subscribe fail
+  with `PLUGIN_RESOURCE` or `PLUGIN_FEATURE_UNAVAILABLE` and require reset.
+- **2026-09-20 — PLG-03 acceptance completed.** Systems dispatch independently
+  of package order, expanded capabilities fail closed, overlay spawn is
+  reset-only and omitted for headless GPU, plugin-free characterization is
+  unchanged, and this milestone is not headless PR 13. PLG-03 is verified but
+  remains unmerged.
+- **2026-09-20 — PLG-02 admits deterministic units as one contract.** The
+  approved PLG-02 scope includes exact managed selection, transitive artifact
+  requirements, per-run registries, plugin-owned transactional writes,
+  deterministic RNG, `world-bound-plugins@1`, supervisor/Python propagation,
+  and canonical plugin state. Systems, controls, topics, overlay spawning, and
+  custom plugin UI remain later milestones.
+- **2026-09-20 — Keep existing version numbers.** The optional fields are
+  additive within run-manifest v11, run-bundle v1, visual-script artifact v3,
+  and Protobuf v1. Effective plugin runs select a new explicit identity
+  profile; plugin-free documents retain their prior projections and bytes.
+- **2026-09-20 — Bind behavior to runtime identity.** `packageHash` admits and
+  transports exact bytes, while semantic identity uses `runtimeHash` plus
+  grants. This lets a UI-only package edit change full bundle provenance
+  without changing replay or episode identity.
+- **2026-09-20 — Fail a plugin graph atomically.** Plugin writes and RNG share
+  the graph evaluation boundary with `SignalStore` and unit runtime state.
+  Execution errors invalidate the active step and require reset; the
+  supervisor reports structured plugin fields through existing error detail
+  bytes rather than adding a Protobuf error enum.
+- **2026-09-20 — PLG-02 acceptance completed.** Exact selection and portable
+  closure checks, transitive artifact requirements, transactional execution,
+  reset replay, managed headless propagation, browser loading, Python
+  pass-through, production build, and the complete repository suite passed.
+  Plugin-free characterization remains unchanged. PLG-02 is verified but
+  remains unmerged.
 
 - **2026-09-19 — PLG names are independent.** Use `PLG-01` through `PLG-04`;
   “PLRG-01” in early planning material means `PLG-01`. Do not treat the work

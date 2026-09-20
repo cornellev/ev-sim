@@ -225,9 +225,11 @@ export class BindingRuntime {
 
     invalidateScript(scriptId) {
         if (scriptId) {
+            this._scripts.get(scriptId)?.dispose?.();
             this._scripts.delete(scriptId);
             this._scriptLoads.delete(scriptId);
         } else {
+            for (const script of this._scripts.values()) script?.dispose?.();
             this._scripts.clear();
             this._scriptLoads.clear();
         }
@@ -250,6 +252,9 @@ export class BindingRuntime {
         parameterBindings = [],
         world = this._worldDescription,
         overlay = this._episodeOverlay,
+        blockRegistry = null,
+        pluginHost = null,
+        pluginSession = null,
     } = {}) {
         if (!Array.isArray(entries)) {
             throw new Error("Resolved scripts must be an array of admitted artifacts.");
@@ -278,13 +283,21 @@ export class BindingRuntime {
         this._resolvedParameterBindings = structuredClone(parameterBindings);
         this._worldDescription = world ?? null;
         this._episodeOverlay = overlay ?? null;
+        this._blockRegistry = blockRegistry;
+        this._pluginHost = pluginHost;
+        this._pluginSession = pluginSession;
         this._scriptParameterInputs.clear();
         for (const scriptId of this._scripts.keys()) {
-            if (!resolvedIds.has(scriptId)) this._scripts.delete(scriptId);
+            if (!resolvedIds.has(scriptId)) {
+                this._scripts.get(scriptId)?.dispose?.();
+                this._scripts.delete(scriptId);
+            }
         }
         if (entries.length === 0) return;
-        const { registerBuiltInBlocks } = await import("../registerBuiltInBlocks.js");
-        registerBuiltInBlocks();
+        if (!blockRegistry) {
+            const { registerBuiltInBlocks } = await import("../registerBuiltInBlocks.js");
+            registerBuiltInBlocks();
+        }
         this._instantiateResolvedScripts(entries, seed, parameterBindings);
     }
 
@@ -326,10 +339,16 @@ export class BindingRuntime {
             inputs[binding.target.input] = structuredClone(binding.value);
             this._scriptParameterInputs.set(binding.target.scriptId, inputs);
         }
+        for (const script of this._scripts.values()) script?.dispose?.();
+        this._scripts.clear();
         for (const entry of [...entries].sort((left, right) => left.scriptId.localeCompare(right.scriptId))) {
             this._scripts.set(entry.scriptId, createLoadedScript(entry.artifact, {
                 signalStore: this.signalStore,
                 runtimeContext: this._scriptRuntimeContext(entry.scriptId),
+                blockRegistry: this._blockRegistry,
+                pluginHost: this._pluginHost,
+                pluginSession: this._pluginSession,
+                scopeId: `binding:${entry.scriptId}`,
             }));
             this._scriptLoads.delete(entry.scriptId);
             this.signalStore.publishSignal(`scripts.${entry.scriptId}.versionHash`, stableArtifactHash(entry.artifact), {
@@ -429,8 +448,12 @@ export class BindingRuntime {
         this._overlayGeneration = 0;
         this._hostSeed = this._resolvedSeed;
         this._scriptParameterInputs.clear();
+        for (const script of this._scripts.values()) script?.dispose?.();
         this._scripts.clear();
         this._scriptLoads.clear();
+        this._blockRegistry = null;
+        this._pluginHost = null;
+        this._pluginSession = null;
         this.activateLibraryBindings();
     }
 
@@ -810,6 +833,11 @@ export class BindingRuntime {
                 lastInputs: summarizeBindingValue(inputs),
                 lastOutputs: null
             });
+            if (String(run.e?.code ?? "").startsWith("PLUGIN_")) {
+                const error = new Error(run.e?.message || "Plugin script execution failed.");
+                Object.assign(error, run.e, { requiresReset: true });
+                throw error;
+            }
             return { status: "failure", error: run.e?.message, inputs };
         }
 

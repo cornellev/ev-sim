@@ -53,6 +53,23 @@ function expectationMismatches(expect, result) {
     return mismatches;
 }
 
+function markPluginFailure(error) {
+    if (!String(error?.code ?? "").startsWith("PLUGIN_")) return false;
+    error.requiresReset = true;
+    error.details = {
+        ...(error.details && typeof error.details === "object" ? error.details : {}),
+        pluginCode: error.code,
+        pluginId: error.pluginId ?? null,
+        packageHash: error.packageHash ?? null,
+        contributionId: error.contributionId ?? null,
+        scopeId: error.scopeId ?? null,
+        unitId: error.unitId ?? null,
+        hook: error.hook ?? null,
+        requiresReset: true,
+    };
+    return true;
+}
+
 export function packedTensorMapBytes(map) {
     return (map?.entries || []).reduce((total, entry) => {
         const bytes = entry?.tensor?.payload?.packedData;
@@ -139,7 +156,16 @@ export class HeadlessSession {
         if (this.state !== "ready") {
             throw new HeadlessRunnerError("ENVIRONMENT_NOT_FOUND", "Reset the environment before stepping it.");
         }
-        const transition = this.episode.step(action);
+        let transition;
+        try {
+            transition = this.episode.step(action);
+        } catch (error) {
+            if (markPluginFailure(error)) {
+                this.state = "prepared";
+                this.abort().catch(() => {});
+            }
+            throw error;
+        }
         this._enforceObservation(transition.observation);
         this.policyStep += 1;
         this.lastTransition = transition;
@@ -151,7 +177,16 @@ export class HeadlessSession {
         if (this.state !== "ready") {
             throw new HeadlessRunnerError("ENVIRONMENT_NOT_FOUND", "Reset the environment before stepping it.");
         }
-        const transition = await this.episode.stepAsync(action);
+        let transition;
+        try {
+            transition = await this.episode.stepAsync(action);
+        } catch (error) {
+            if (markPluginFailure(error)) {
+                this.state = "prepared";
+                await this.abort();
+            }
+            throw error;
+        }
         this._enforceObservation(transition.observation);
         this.policyStep += 1;
         this.lastTransition = transition;

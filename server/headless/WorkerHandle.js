@@ -12,6 +12,7 @@ function workerError(value, fallback = "INTERNAL") {
     error.name = value?.name || "WorkerError";
     error.code = value?.code || fallback;
     error.details = value?.details ?? null;
+    error.requiresReset = value?.requiresReset === true;
     if (value?.stack) error.stack = value.stack;
     return error;
 }

@@ -323,7 +323,9 @@ class SupervisorClient:
             bundle = load_bundle(bundle_input)
         if bundle.identity_profile and (self.protocol_minor < bundle.required_protocol_minor
                                        or bundle.identity_profile not in self.capabilities.identity_profiles):
-            raise CevSimCompatibilityError("world-bound@2 requires supervisor protocol 1.3 and identity capability")
+            raise CevSimCompatibilityError(
+                f"{bundle.identity_profile} requires supervisor protocol 1.3 and identity capability"
+            )
         if type(count) is not int or not 1 <= count <= 0xFFFF_FFFF:
             raise CevSimConfigurationError("Environment count must be a positive uint32")
         try:

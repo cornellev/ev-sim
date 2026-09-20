@@ -1,3 +1,5 @@
+import { normalizePluginRequirements } from "../../plugin/PluginRequirements.js";
+
 export const VISUAL_SCRIPT_KIND = "cev-sim.visual-script.program";
 export const VISUAL_SCRIPT_VERSION = 3;
 export const SUPPORTED_ARTIFACT_VERSIONS = Object.freeze([2, 3]);
@@ -15,7 +17,17 @@ export function createRuntimeError(error) {
         return {
             name: error.name || "Error",
             message: error.message || String(error),
-            stack: error.stack || null
+            stack: error.stack || null,
+            ...(error.code ? { code: error.code } : {}),
+            ...(error.pluginId ? { pluginId: error.pluginId } : {}),
+            ...(error.packageHash ? { packageHash: error.packageHash } : {}),
+            ...(error.contributionId ? { contributionId: error.contributionId } : {}),
+            ...(error.path ? { path: error.path } : {}),
+            ...(error.details !== undefined && error.details !== null ? { details: error.details } : {}),
+            ...(error.scopeId ? { scopeId: error.scopeId } : {}),
+            ...(error.unitId ? { unitId: error.unitId } : {}),
+            ...(error.hook ? { hook: error.hook } : {}),
+            ...(error.requiresReset === true ? { requiresReset: true } : {}),
         };
     }
 
@@ -54,4 +66,5 @@ export function assertSupportedArtifact(artifact) {
     if (!artifact.interface || !Array.isArray(artifact.interface.inputs) || !Array.isArray(artifact.interface.outputs)) {
         throw new Error("Compiled program artifact is missing its interface definition.");
     }
+    normalizePluginRequirements(artifact.pluginRequirements);
 }

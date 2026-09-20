@@ -1,6 +1,8 @@
 import { assertSupportedArtifact, createRuntimeError } from "./Artifact.js";
 import { captureRuntimeState, restoreRuntimeState } from "./RuntimeState.js";
 import { SignalStore } from "./SignalStore.js";
+import { assertArtifactPluginRequirements } from "../../plugin/PluginRequirements.js";
+import { PLUGIN_ERROR_CODES, pluginError } from "../../plugin/PluginErrors.js";
 
 function makeBlockOutputMap(blockOutput) {
     if (blockOutput?.map && typeof blockOutput.map === "object") {
@@ -20,6 +22,11 @@ export class VisualScriptRunner {
 
         this.artifact = freezeArtifactCopy(artifact);
         this.getBlockClass = getBlockClass;
+        this.blockRegistry = options.blockRegistry ?? null;
+        this.pluginHost = options.pluginHost ?? null;
+        this.pluginSession = options.pluginSession ?? null;
+        this.scopeId = String(options.scopeId || "runner");
+        this.disposed = false;
         this.units = new Map();
         this.storedData = {};
         this.externalInputs = {};
@@ -27,8 +34,25 @@ export class VisualScriptRunner {
         this.runtimeContext = options.runtimeContext || {};
         this.signalStore = options.signalStore || new SignalStore(options.signalSnapshot || {});
 
-        this._hydrateUnits();
-        this._hydrateRuntimeConnections();
+        if (this.blockRegistry) {
+            try {
+                assertArtifactPluginRequirements(this.artifact, this.blockRegistry, this.pluginSession?.plugins ?? null);
+            } catch (error) {
+                if (error?.code) throw error;
+                throw pluginError(PLUGIN_ERROR_CODES.INTEGRITY, error.message, {
+                    scopeId: this.scopeId,
+                    requiresReset: true,
+                    cause: error,
+                });
+            }
+        }
+        try {
+            this._hydrateUnits();
+            this._hydrateRuntimeConnections();
+        } catch (error) {
+            this.dispose();
+            throw error;
+        }
     }
 
     _createRuntimeManager() {
@@ -60,6 +84,14 @@ export class VisualScriptRunner {
             signalChanged: (path) => this.signalStore.changed(path),
             recordSignal: (path, value, options = {}) => this.signalStore.record(path, value, options),
             getSignalHistory: (path) => this.signalStore.history(path),
+            getBlockRegistry: () => this.blockRegistry,
+            getPluginHost: () => this.pluginHost,
+            getPluginSession: () => this.pluginSession,
+            getScopeId: () => this.scopeId,
+            blockRegistry: this.blockRegistry,
+            pluginHost: this.pluginHost,
+            pluginSession: this.pluginSession,
+            scopeId: this.scopeId,
             evaluationPolicy: {
                 lazySelectors: this.artifact.version >= 3,
                 memoizeExecute: true
@@ -96,6 +128,7 @@ export class VisualScriptRunner {
 
             const unit = new UnitClass(node.uuid);
             unit.setManager(runtimeManager);
+            this.pluginSession?.attachUnit?.(unit, { scopeId: this.scopeId, unitId: node.uuid });
 
             if (node.state) {
                 unit.hydrateState(node.state);
@@ -202,6 +235,7 @@ export class VisualScriptRunner {
     }
 
     run(inputs = {}, options = {}) {
+        if (this.disposed) throw new Error("Cannot run a disposed visual-script runner.");
         if (options.signalStore) {
             this.setSignalStore(options.signalStore);
         }
@@ -220,6 +254,7 @@ export class VisualScriptRunner {
         this.evaluating = new Set();
         const signalTransaction = this.signalStore.beginTransaction();
         const runtimeState = captureRuntimeState(this.units);
+        const pluginTransaction = this.pluginSession?.beginEvaluation?.() ?? null;
 
         try {
             let result = null;
@@ -234,6 +269,9 @@ export class VisualScriptRunner {
             }
 
             this._syncRuntimeState();
+            if (pluginTransaction) {
+                this.pluginSession.commitEvaluation(pluginTransaction, this.signalStore);
+            }
             this.signalStore.commitTransaction(signalTransaction);
 
             return {
@@ -244,6 +282,7 @@ export class VisualScriptRunner {
                 e: null
             };
         } catch (error) {
+            if (pluginTransaction) this.pluginSession.rollbackEvaluation(pluginTransaction);
             this.signalStore.rollbackTransaction(signalTransaction);
             restoreRuntimeState(this.units, runtimeState);
             this._syncRuntimeState();
@@ -268,6 +307,15 @@ export class VisualScriptRunner {
     getOutputSnapshot(uuid) {
         const output = this.outputMemo?.get(uuid);
         return makeBlockOutputMap(output);
+    }
+
+    dispose() {
+        if (this.disposed) return;
+        this.disposed = true;
+        for (const unit of this.units.values()) unit?.dispose?.();
+        this.units.clear();
+        this.outputMemo?.clear?.();
+        this.evaluating?.clear?.();
     }
 }
 

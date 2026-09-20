@@ -146,7 +146,11 @@ export class LoadedVisualScript {
         this.runtimeContext = options.runtimeContext || options.context || {};
         this.runner = options.runner || ScriptManager.createRunner(artifact, {
             signalStore: this.signalStore,
-            runtimeContext: this.runtimeContext
+            runtimeContext: this.runtimeContext,
+            blockRegistry: options.blockRegistry,
+            pluginHost: options.pluginHost,
+            pluginSession: options.pluginSession,
+            scopeId: options.scopeId,
         });
     }
 
@@ -160,10 +164,16 @@ export class LoadedVisualScript {
     run(...inputs) {
         const result = this.runResult(...inputs);
         if (result.status === "failure") {
-            throw new Error(result.e?.message || "Visual script execution failed.");
+            const error = new Error(result.e?.message || "Visual script execution failed.");
+            Object.assign(error, result.e ?? {});
+            throw error;
         }
 
         return result.outputs;
+    }
+
+    dispose() {
+        this.runner?.dispose?.();
     }
 
     getSignalStore() {

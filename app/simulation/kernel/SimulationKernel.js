@@ -7,7 +7,8 @@ import { TopicContractRouter } from "../TopicContractRouter.js";
 import { TopicInputQueue } from "../TopicInputQueue.js";
 import { TransformRuntime } from "../TransformRuntime.js";
 import { assertEnabledCameraRenderRuntime } from "../render/RenderSceneProviderRegistry.js";
-import { assertManagedPluginsUnavailable } from "../../plugin/PluginAdmission.js";
+import { resolvedUsesPlugins } from "./RunIdentity.js";
+import { PLUGIN_ERROR_CODES, pluginError } from "../../plugin/PluginErrors.js";
 import {
     computeEpisodeHash,
     computeSimulationSemanticHash,
@@ -213,6 +214,11 @@ export class SimulationKernel {
         if (this.lifecycleState === "disposed") {
             throw new Error("Cannot reset a disposed simulation kernel before preparing a run.");
         }
+        const resetSeed = episodeSpec?.resetSeed
+            ?? episodeSpec?.reset_seed
+            ?? this.episodeIdentity?.resetSeed
+            ?? this.resolvedRun?.manifest?.seed
+            ?? "0";
         this.time = 0;
         this.timeNs = 0;
         this.steps = 0;
@@ -229,15 +235,10 @@ export class SimulationKernel {
         this.localizationTruthPublisher?.reset?.();
         this.candidateOutputRuntime?.reset?.();
         this.controlRuntime?.reset?.();
-
-        const resetSeed = episodeSpec?.resetSeed
-            ?? episodeSpec?.reset_seed
-            ?? this.episodeIdentity?.resetSeed
-            ?? this.resolvedRun?.manifest?.seed
-            ?? "0";
         this.context.environment.reset?.({ resetSeed });
         this.context.inputs.reset?.({ resetSeed });
         this.context.episodeOverlay?.clear?.();
+        this.context.plugins?.beginResetWindow?.({ resetSeed, signalStore: this.telemetry });
         this.context.scripts.reset?.({
             resetSeed,
             episodePhase,
@@ -246,6 +247,7 @@ export class SimulationKernel {
                 ?? null,
             overlay: this.context.episodeOverlay ?? null,
         });
+        this.context.plugins?.endResetWindow?.();
         this._episodeStartArmed = episodePhase === "start";
         this._applyEpisodeOverlayProducts(resetSeed);
         if (this.resolvedRun) {
@@ -337,126 +339,165 @@ export class SimulationKernel {
         episodePhase = "start",
     } = {}) {
         if (!resolved?.manifest) throw new Error("Resolved run manifest is required.");
-        assertManagedPluginsUnavailable(resolved, { context: "Simulation-kernel plugin execution" });
-        assertEnabledCameraRenderRuntime(resolved.manifest.sensorRig?.sensors, resolved.renderScene, {
-            target: this.context.rendering?.target?.() ?? "headless",
-        });
-
-        if (this.resolvedRun || this.lifecycleState === "finalized") await this.clearRunAsync();
-        this.lifecycleState = "preparing";
-        this.scenarioRuntime?.configure?.(null);
-        this.resolvedRun = structuredClone(resolved);
-        this.simulationSemanticHash = resolved.simulationSemanticHash
-            || computeSimulationSemanticHash(this.resolvedRun);
-        this.resolvedRun.simulationSemanticHash = this.simulationSemanticHash;
-        const manifest = this.resolvedRun.manifest;
-        await this.context.environment.prepare(
-            this.resolvedRun.environment,
-            this.resolvedRun,
-            this.resolvedRun.world,
-        );
-
-        this.stepNs = Math.max(1, Math.floor(manifest.clock.stepNs));
-        this.fixedDt = this.stepNs / 1e9;
-        this.realtime = manifest.clock.pacing === "realtime";
-        this.deterministic = true;
-        this.speed = Math.max(0, Number(manifest.clock.speed) || 0);
-        this.maxSteps = manifest.clock.maxSteps;
-        for (const [name, enabled] of Object.entries(manifest.clock.modules || {})) {
-            if (name in this.modules) this.modules[name] = Boolean(enabled);
+        if (resolvedUsesPlugins(resolved) && typeof this.context.plugins?.prepare !== "function") {
+            throw pluginError(
+                PLUGIN_ERROR_CODES.UNAVAILABLE,
+                "This simulation runtime cannot prepare selected plugins.",
+            );
         }
-
-        this.inputQueue = new TopicInputQueue(manifest.topics);
-        this.topicRouter = new TopicContractRouter(manifest, { telemetry: this.telemetry });
-        this.localizationTruthPublisher = createLocalizationTruthPublisher(manifest, this.topicRouter);
-        this.localizationTruthPublisher.stepNs = manifest.clock.stepNs;
-        this.transformRuntime = this.resolvedRun.calibration
-            ? new TransformRuntime(this.resolvedRun.calibration, this.topicRouter, {
-                client: this.context.topics.client(),
-            })
-            : null;
-        this.candidateOutputRuntime = new CandidateOutputRuntime({
-            telemetry: this.telemetry,
-            transformRuntime: this.transformRuntime,
-            manifest,
-        });
-        this.candidateOutputRuntime.setTransformRuntime(this.transformRuntime);
-        this.controlRuntime = new ControlRuntime({
-            telemetry: this.telemetry,
-            manifest,
-            controls: manifest.controls,
-        });
-        this.assertionEngine = new AssertionEngine(manifest.assertions, this.telemetry);
-        this.context.scripts.setTopicScheduler((info) => this.queueTopicInput(info));
-
-        await this.context.vehicles.configureFromManifest(manifest.initialState.vehicles, {
-            resolvedVehicles: this.resolvedRun.vehicles || [],
-            world: this.resolvedRun.world,
-            environment: this.resolvedRun.environment,
-        });
-        this._configureControlRuntimeLimits(manifest);
-        const renderRuntime = await this.context.rendering?.prepare?.(this.resolvedRun, {
-            sensorRig: manifest.sensorRig,
-            vehicles: this.context.vehicles.list(),
-        });
-
-        const selectedBindings = this.resolvedRun.bindings?.entries || [];
-        await this.context.scripts.setManifest({
-            kind: "cev-sim.script-bindings",
-            version: 2,
-            enabled: manifest.scripts.enabled,
-            folders: [],
-            bindings: selectedBindings,
-        }, { persist: false });
-        await this.context.scripts.prepareResolvedScripts(this.resolvedRun.scripts || [], {
-            seed: manifest.seed,
-            parameterBindings: [
-                ...(this.resolvedRun.parameters?.manifest?.bindings || []),
-                ...(this.resolvedRun.parameters?.scenario?.bindings || []),
-            ],
-            world: this.resolvedRun.world?.description ?? null,
-            overlay: this.context.episodeOverlay ?? null,
-        });
-        this.context.scripts.setTopicScheduler((info) => this.queueTopicInput(info));
-        this.context.scripts.setTopicRouter(this.topicRouter, manifest.topics);
-        await this.context.devices.configureFromManifest(manifest.sensorRig, {
-            seed: manifest.seed,
-            topics: manifest.topics,
-            topicRouter: this.topicRouter,
-            transformRuntime: this.transformRuntime,
-            calibrationHash: this.resolvedRun.calibration?.hash ?? null,
-            schemas: this.resolvedRun.schemas ?? {},
-            stepNs: manifest.clock.stepNs,
-            enabled: this.modules.sensors,
-            requireStateSensors,
+        const candidatePluginSession = await this.context.plugins?.prepare?.(resolved, {
+            renderTarget: this.context.rendering?.target?.() ?? "headless",
             backendSelections: episode?.backendSelections
                 ?? episode?.backend_selections
-                ?? this.resolvedRun.backendSelections
+                ?? resolved.backendSelections
                 ?? [],
-            lidarGeometry: this.resolvedRun.lidarGeometry ?? null,
-            renderScene: this.resolvedRun.renderScene ?? null,
-            renderRuntime,
-            perceptionObservations,
-        });
-        await this.context.physics.configureRun({
-            manifest,
-            worldDescription: this.resolvedRun.world?.description ?? null,
-            backendSelection: (this.resolvedRun.backendSelections ?? [])
-                .find((entry) => Number(entry.kind) === 1) ?? null,
-        });
+        }) ?? null;
+        try {
+            assertEnabledCameraRenderRuntime(resolved.manifest.sensorRig?.sensors, resolved.renderScene, {
+                target: this.context.rendering?.target?.() ?? "headless",
+            });
+        } catch (error) {
+            candidatePluginSession?.dispose?.();
+            throw error;
+        }
 
-        this.scenarioRuntime?.configure?.(this.resolvedRun);
-        this.scenarioRuntime?.setControlRuntime?.(this.controlRuntime);
-        this.reset(episode, { episodePhase: episodePhase === "stop" ? "stop" : "start" });
-        this.status = "paused";
-        this.lifecycleState = "prepared";
-        this.emitLifecycle("manifest-applied", {
-            manifestId: manifest.id,
-            resolvedHash: resolved.resolvedHash,
-            simulationSemanticHash: this.simulationSemanticHash,
-            episodeHash: this.episodeHash,
-        });
-        return this.getSnapshot();
+        if (this.resolvedRun || this.lifecycleState === "finalized") await this.clearRunAsync();
+        this.context.plugins?.activate?.(candidatePluginSession);
+        this.lifecycleState = "preparing";
+        try {
+            this.scenarioRuntime?.configure?.(null);
+            this.resolvedRun = structuredClone(resolved);
+            this.simulationSemanticHash = resolved.simulationSemanticHash
+                || computeSimulationSemanticHash(this.resolvedRun);
+            this.resolvedRun.simulationSemanticHash = this.simulationSemanticHash;
+            const manifest = this.resolvedRun.manifest;
+            await this.context.environment.prepare(
+                this.resolvedRun.environment,
+                this.resolvedRun,
+                this.resolvedRun.world,
+            );
+
+            this.stepNs = Math.max(1, Math.floor(manifest.clock.stepNs));
+            this.fixedDt = this.stepNs / 1e9;
+            this.realtime = manifest.clock.pacing === "realtime";
+            this.deterministic = true;
+            this.speed = Math.max(0, Number(manifest.clock.speed) || 0);
+            this.maxSteps = manifest.clock.maxSteps;
+            for (const [name, enabled] of Object.entries(manifest.clock.modules || {})) {
+                if (name in this.modules) this.modules[name] = Boolean(enabled);
+            }
+
+            this.inputQueue = new TopicInputQueue(manifest.topics);
+            this.topicRouter = new TopicContractRouter(manifest, { telemetry: this.telemetry });
+            this.localizationTruthPublisher = createLocalizationTruthPublisher(manifest, this.topicRouter);
+            this.localizationTruthPublisher.stepNs = manifest.clock.stepNs;
+            this.transformRuntime = this.resolvedRun.calibration
+                ? new TransformRuntime(this.resolvedRun.calibration, this.topicRouter, {
+                    client: this.context.topics.client(),
+                })
+                : null;
+            this.candidateOutputRuntime = new CandidateOutputRuntime({
+                telemetry: this.telemetry,
+                transformRuntime: this.transformRuntime,
+                manifest,
+            });
+            this.candidateOutputRuntime.setTransformRuntime(this.transformRuntime);
+            this.controlRuntime = new ControlRuntime({
+                telemetry: this.telemetry,
+                manifest,
+                controls: manifest.controls,
+            });
+            this.assertionEngine = new AssertionEngine(manifest.assertions, this.telemetry);
+            this.context.scripts.setTopicScheduler((info) => this.queueTopicInput(info));
+            this.context.plugins?.bindServices?.({
+                signalStore: this.telemetry,
+                world: this.resolvedRun.world?.description ?? null,
+                controlRuntime: this.controlRuntime,
+                topicRouter: this.topicRouter,
+                episodeOverlay: this.context.episodeOverlay ?? null,
+                clock: () => ({ step: this.steps, timeNs: this.timeNs, stepNs: this.stepNs }),
+            });
+            this.context.plugins?.prepareInstances?.();
+
+            await this.context.vehicles.configureFromManifest(manifest.initialState.vehicles, {
+                resolvedVehicles: this.resolvedRun.vehicles || [],
+                world: this.resolvedRun.world,
+                environment: this.resolvedRun.environment,
+            });
+            this._configureControlRuntimeLimits(manifest);
+            const renderRuntime = await this.context.rendering?.prepare?.(this.resolvedRun, {
+                sensorRig: manifest.sensorRig,
+                vehicles: this.context.vehicles.list(),
+            });
+
+            const selectedBindings = this.resolvedRun.bindings?.entries || [];
+            await this.context.scripts.setManifest({
+                kind: "cev-sim.script-bindings",
+                version: 2,
+                enabled: manifest.scripts.enabled,
+                folders: [],
+                bindings: selectedBindings,
+            }, { persist: false });
+            await this.context.scripts.prepareResolvedScripts(this.resolvedRun.scripts || [], {
+                seed: manifest.seed,
+                parameterBindings: [
+                    ...(this.resolvedRun.parameters?.manifest?.bindings || []),
+                    ...(this.resolvedRun.parameters?.scenario?.bindings || []),
+                ],
+                world: this.resolvedRun.world?.description ?? null,
+                overlay: this.context.episodeOverlay ?? null,
+                blockRegistry: candidatePluginSession?.registry ?? null,
+                pluginHost: candidatePluginSession?.host ?? null,
+                pluginSession: candidatePluginSession,
+            });
+            this.context.scripts.setTopicScheduler((info) => this.queueTopicInput(info));
+            this.context.scripts.setTopicRouter(this.topicRouter, manifest.topics);
+            await this.context.devices.configureFromManifest(manifest.sensorRig, {
+                seed: manifest.seed,
+                topics: manifest.topics,
+                topicRouter: this.topicRouter,
+                transformRuntime: this.transformRuntime,
+                calibrationHash: this.resolvedRun.calibration?.hash ?? null,
+                schemas: this.resolvedRun.schemas ?? {},
+                stepNs: manifest.clock.stepNs,
+                enabled: this.modules.sensors,
+                requireStateSensors,
+                backendSelections: episode?.backendSelections
+                    ?? episode?.backend_selections
+                    ?? this.resolvedRun.backendSelections
+                    ?? [],
+                lidarGeometry: this.resolvedRun.lidarGeometry ?? null,
+                renderScene: this.resolvedRun.renderScene ?? null,
+                renderRuntime,
+                perceptionObservations,
+            });
+            await this.context.physics.configureRun({
+                manifest,
+                worldDescription: this.resolvedRun.world?.description ?? null,
+                backendSelection: (this.resolvedRun.backendSelections ?? [])
+                    .find((entry) => Number(entry.kind) === 1) ?? null,
+            });
+
+            this.scenarioRuntime?.configure?.(this.resolvedRun, { pluginSession: candidatePluginSession });
+            this.scenarioRuntime?.setControlRuntime?.(this.controlRuntime);
+            this.reset(episode, { episodePhase: episodePhase === "stop" ? "stop" : "start" });
+            this.status = "paused";
+            this.lifecycleState = "prepared";
+            this.emitLifecycle("manifest-applied", {
+                manifestId: manifest.id,
+                resolvedHash: resolved.resolvedHash,
+                simulationSemanticHash: this.simulationSemanticHash,
+                episodeHash: this.episodeHash,
+            });
+            return this.getSnapshot();
+        } catch (error) {
+            try {
+                await this.clearRunAsync();
+            } catch {
+                // Preserve the original prepare failure.
+            }
+            throw error;
+        }
     }
 
     async configureRun(resolved, options = {}) {
@@ -496,7 +537,15 @@ export class SimulationKernel {
         let shouldContinue = true;
         const phase = (name, operation) => {
             this.lastStepPhases.push(name);
-            return operation?.();
+            try {
+                return operation?.();
+            } catch (error) {
+                if (String(error?.code ?? "").startsWith("PLUGIN_")) {
+                    this.lifecycleState = "failed";
+                    error.requiresReset = true;
+                }
+                throw error;
+            }
         };
 
         phase("inputs", () => {
@@ -508,8 +557,12 @@ export class SimulationKernel {
         });
 
         phase("scripts", () => {
+            const clock = { step: nextStep, timeNs: nextTimeNs };
             if (this.modules.scripting) {
-                this.context.scripts.update(dt, { step: nextStep, timeNs: nextTimeNs });
+                this.context.scripts.update(dt, clock);
+            } else {
+                this.context.plugins?.current?.()?.deliverTopics?.(clock);
+                this.context.plugins?.current?.()?.dispatchSystems?.(dt, clock);
             }
         });
 
@@ -734,6 +787,9 @@ export class SimulationKernel {
             inputs: this.inputQueue.getDeterministicState?.() ?? this.inputQueue.getStats?.() ?? null,
             topicRouter: this.topicRouter?.getDeterministicState?.() ?? null,
             scripts: this.context.scripts.getDeterministicState?.() ?? null,
+            ...(this.context.plugins?.current?.() ? {
+                plugins: this.context.plugins.getDeterministicState(),
+            } : {}),
             environment: this.context.environment.getDeterministicState?.() ?? null,
             vehicles: this.context.vehicles.getDeterministicState?.() ?? [],
             physics: this.context.physics.getDeterministicState?.() ?? {
@@ -909,6 +965,7 @@ export class SimulationKernel {
         const componentResults = {
             inputs: this.context.inputs.finalize?.({ step: this.steps, timeNs: this.timeNs }),
             scripts: this.context.scripts.finalize?.({ step: this.steps, timeNs: this.timeNs }),
+            ...(this.context.plugins?.current?.() ? { plugins: this.context.plugins.finalize() } : {}),
             vehicles: this.context.vehicles.finalize?.({ step: this.steps, timeNs: this.timeNs }),
             devices: this.context.devices.finalize?.({ step: this.steps, timeNs: this.timeNs }),
             physics: this.context.physics.finalize?.({ step: this.steps, timeNs: this.timeNs }),
@@ -945,6 +1002,7 @@ export class SimulationKernel {
         if (!renderingDisposed) this.context.rendering?.dispose?.();
         this.context.vehicles.dispose?.();
         this.context.scripts.dispose?.();
+        this.context.plugins?.dispose?.();
         this.context.inputs.dispose?.();
         this.context.environment.dispose?.();
         this.inputQueue.reset();

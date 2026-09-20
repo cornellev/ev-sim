@@ -42,9 +42,14 @@ The scripting layer has two execution modes:
 Simulator plugins follow the separate [Plugin Roadmap](plugin-plan.md).
 `BlockRegistry` instances isolate built-ins and host-selected package versions;
 the legacy default registry remains plugin-disabled. Plugin implementations use
-the public `app/plugin-api/` ABI and execute behind host-owned adapters. PLG-01
-verifies and stores exact package bytes and supports isolated Node/browser
-harnesses, while managed simulation runs continue rejecting plugin fields.
+the public `app/plugin-api/` ABI and execute behind host-owned adapters. PLG-02
+resolves exact package closures into a sealed `PluginRunSession`, propagates
+that session through browser/headless bindings and scenarios, and includes
+plugin runtime state in deterministic canonical state. Unit writes use a
+transactional effect journal. PLG-03 executes declared systems in the existing
+`"scripts"` phase after bindings, with staged reference commands, deterministic
+topics, and reset-only episode overlays. Headless GPU backends cannot honor
+`overlay.spawn`.
 
 `app/scripting/UnitCatalog.meta.js` is the server-safe authority for stable built-in type IDs and metadata. `registerBuiltInBlocks.js` registers those explicit IDs, `UnitCatalog.js` attaches React components by type, and `AddMenu.js` renders placeable entries as a searchable categorized sidebar. Typed configuration changes pass through `ScriptManager.reconfigureUnitDetailed()` so ports, configuration, and graph-wide type bindings commit or roll back together. The built-in catalog includes atomic math/logic plus conversions, strings, JSON path ops, typed arrays, geometry (vec/pose), read-only route helpers, `control` temporal/PID blocks, `texture1d` arithmetic, and simulator adapters (`VehicleStateBlock`, `DeviceStateBlock`, `SimulationClockBlock`, `ScenarioStatusBlock`).
 

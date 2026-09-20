@@ -70,11 +70,21 @@ test("registration is transactional and separate hosts may select separate versi
     assert.notEqual(first.registry.get("acme.example.ScaleBlock"), second.registry.get("acme.example.ScaleBlock"));
 });
 
-test("systems and asynchronous registration remain explicitly unavailable", async (t) => {
+test("systems register transactionally and descriptor mismatches stay rejected", async (t) => {
     const { store, moduleSource } = await harness(t);
-    const system = await pluginFixtureResource({ fixture: "unavailable-systems" });
-    await store.putPackage(system);
-    await assert.rejects(new PluginLoader({ host: new PluginHost(), moduleSource }).loadPackage(system), /unavailable until PLG-03/);
+    const systems = await pluginFixtureResource({ fixture: "acme.systems" });
+    await store.putPackage(systems);
+    const host = new PluginHost({ blockRegistry: new BlockRegistry({ allowPlugins: true }) });
+    const loaded = await new PluginLoader({ host, moduleSource }).loadPackage(systems);
+    assert.deepEqual(loaded.plugin.systems, ["acme.systems.Early", "acme.systems.Late"]);
+    assert.equal(loaded.plugin.systemFactories.length, 2);
+
+    const mismatch = await pluginFixtureResource({ fixture: "unavailable-systems" });
+    await store.putPackage(mismatch);
+    await assert.rejects(
+        new PluginLoader({ host: new PluginHost({ blockRegistry: new BlockRegistry({ allowPlugins: true }) }), moduleSource }).loadPackage(mismatch),
+        /id and create/,
+    );
 
     const asyncRegistration = await pluginFixtureResource({ mutateFiles(files) {
         files["runtime/index.js"] = new TextEncoder().encode("export default { async register() {} };");
@@ -82,14 +92,14 @@ test("systems and asynchronous registration remain explicitly unavailable", asyn
     await store.putPackage(asyncRegistration);
     await assert.rejects(new PluginLoader({ host: new PluginHost(), moduleSource }).loadPackage(asyncRegistration), (error) => error.code === "PLUGIN_ASYNC_HOOK");
 
-    const mismatch = await pluginFixtureResource({ fixture: "descriptor-mismatch" });
-    await store.putPackage(mismatch);
-    await assert.rejects(new PluginLoader({ host: new PluginHost(), moduleSource }).loadPackage(mismatch), /ports do not match/);
+    const ports = await pluginFixtureResource({ fixture: "descriptor-mismatch" });
+    await store.putPackage(ports);
+    await assert.rejects(new PluginLoader({ host: new PluginHost(), moduleSource }).loadPackage(ports), /ports do not match/);
 
     const asyncHooks = await pluginFixtureResource({ fixture: "async-hooks" });
     await store.putPackage(asyncHooks);
-    const loaded = await new PluginLoader({ host: new PluginHost(), moduleSource }).loadPackage(asyncHooks);
-    const AsyncBlock = loaded.registry.get("acme.async.AsyncBlock");
+    const loadedAsync = await new PluginLoader({ host: new PluginHost(), moduleSource }).loadPackage(asyncHooks);
+    const AsyncBlock = loadedAsync.registry.get("acme.async.AsyncBlock");
     assert.throws(() => new AsyncBlock("async-hook").execute(), (error) => error.code === "PLUGIN_ASYNC_HOOK");
     await Promise.resolve();
 });

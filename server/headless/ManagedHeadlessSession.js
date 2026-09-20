@@ -195,10 +195,16 @@ async function provenance(resolved, episodeIdentity, rendererClient) {
 
 /** One reference-controlled case lifecycle owned entirely by a worker process. */
 export class ManagedHeadlessSession {
-    constructor({ artifactSinkFactory = createHeadlessArtifactSink, limits = null, rendererClient = null } = {}) {
+    constructor({
+        artifactSinkFactory = createHeadlessArtifactSink,
+        limits = null,
+        rendererClient = null,
+        pluginModuleSource = null,
+    } = {}) {
         this.artifactSinkFactory = artifactSinkFactory;
         this.limits = limits;
         this.rendererClient = rendererClient;
+        this.pluginModuleSource = pluginModuleSource;
         this.runtime = null;
         this.kernel = null;
         this.bundle = null;
@@ -220,7 +226,10 @@ export class ManagedHeadlessSession {
             this.bundle = cloneRunBundle(bundle);
             this.metricDefinitions = structuredClone(metricDefinitions);
             this.episodeIdentity = managedEpisodeIdentity(this.verified.resolved);
-            this.runtime = createHeadlessRuntimeContext({ rendererClient: this.rendererClient });
+            this.runtime = createHeadlessRuntimeContext({
+                rendererClient: this.rendererClient,
+                pluginModuleSource: this.pluginModuleSource,
+            });
             this.kernel = new SimulationKernel(this.runtime.context);
             await this.kernel.prepare(this.verified.resolved, {
                 episode: this.episodeIdentity,

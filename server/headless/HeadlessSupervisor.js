@@ -16,7 +16,10 @@ import {
 import { computeEpisodeHash } from "../../app/simulation/kernel/SimulationHashes.js";
 import { canonicalStringify } from "../../app/simulation/RunManifest.js";
 import { canonicalRunBundleStringify, verifyRunBundle, verifyRunBundleBytes } from "./RunBundle.js";
-import { WORLD_BOUND_IDENTITY_CAPABILITY } from "../../app/simulation/kernel/RunIdentity.js";
+import {
+    WORLD_BOUND_IDENTITY_CAPABILITY,
+    WORLD_BOUND_PLUGINS_IDENTITY_CAPABILITY,
+} from "../../app/simulation/kernel/RunIdentity.js";
 import {
     ERROR_CODE,
     errorStatus,
@@ -298,7 +301,10 @@ export class HeadlessSupervisor {
         const pbrProbe = this.rendererPool.pbrCapability();
         return {
             protocol: HEADLESS_PROTOCOL,
-            identityProfiles: [WORLD_BOUND_IDENTITY_CAPABILITY],
+            identityProfiles: [
+                WORLD_BOUND_IDENTITY_CAPABILITY,
+                WORLD_BOUND_PLUGINS_IDENTITY_CAPABILITY,
+            ],
             assetAdmissionProfiles: this.admissionManager.profile ? [this.admissionManager.profile] : [],
             runtimeName: "cev-sim",
             runtimeVersion: PACKAGE_VERSION,
@@ -629,6 +635,11 @@ export class HeadlessSupervisor {
                     await this._externalizeObservation(environment, response.transition.observation);
                     return stepResult(environment.index, response.transition);
                 } catch (error) {
+                    if (error?.requiresReset === true) {
+                        environment.requiresReset = true;
+                        environment.state = "prepared";
+                        environment.detail = error.message;
+                    }
                     await this._recoverIfInfrastructure(environment, error);
                     return infrastructureResult(environment.index, error);
                 }

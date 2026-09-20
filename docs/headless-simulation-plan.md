@@ -1157,3 +1157,21 @@ characterization SHA-256 values remain
 `60dc0bd2b02a9ec768f833070ce4d8d2047f5383838f09ea3f130dd31552dd6f`.
 This is not headless PR 13 and does not satisfy or change the outstanding PR 12
 hosted, soak, x64 NVIDIA, or Jetson ARM64 evidence gates.
+
+### 2026-09-20 — PLG-02 activates explicitly selected plugin units
+
+The separate simulator-plugin program admits exact plugin package locks in
+run-manifest v11 and portable package resources in run-bundle v1. Effective
+plugin runs use `world-bound-plugins@1`; supervisors advertise that identity
+beside `world-bound@2`, and workers prepare the verified package closure in a
+run-scoped registry. Python accepts and forwards the new profile with the
+existing protocol 1.3 identity negotiation. No Protobuf field or enum changed.
+
+Plugin execution failures remain infrastructure errors rather than fabricated
+Gymnasium transitions. The worker and supervisor preserve the plugin code,
+identity, unit, hook, and reset requirement in `canonical_detail_json`; the
+environment must reset before another step. Plugin-free bundle, episode,
+trajectory, and characterization contracts remain on their prior identity
+path. This is PLG-02 integration, not headless PR 13, and it does not satisfy
+or change the outstanding PR 12 hosted, soak, x64 NVIDIA, or Jetson ARM64
+evidence gates.

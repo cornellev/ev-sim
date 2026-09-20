@@ -4,6 +4,12 @@ Every professional simulation launch is defined by a saved `cev-sim.run-manifest
 
 Binding resolution includes every global library binding plus the ids listed in `scripts.bindingIds`. The Bindings workspace manages those ids through manifest checkboxes. Scripts referenced by effective bindings are resolved automatically; entries in `scripts.artifacts` remain optional hash locks. Those locks hash the compiled artifact bytes, including `version`, so recompiling a script from v2 to v3 changes the script lock, `resolvedHash`, `simulationSemanticHash`, and `episodeHash` without changing `worldHash`. Portable manifests with `embeddedBindings` use only their frozen embedded set.
 
+Manifest v11 may also select trusted local simulator plugins with
+`plugins: { enabled, artifacts }`. Each artifact entry locks one `pluginId` to
+an exact package SHA-256 and an explicit sorted capability grant. Resolution
+admits one version per plugin ID and verifies every reachable compiled-script
+requirement against a per-run sealed registry.
+
 ## Operator workflow
 
 Open **Config** from the workspace switcher. The page supports catalog create, duplicate, delete, bundle import/export, structured editing, raw JSON editing, server validation, optimistic revision saves, and **Validate & Run**. Unsaved edits are protected during catalog changes and browser navigation. Use the header **Advanced** switch to reveal frames, noise, latency, and contract fields while keeping essential sensor and topic settings visible by default; the preference persists across Config and Vehicle Editor. The **Controls** tab authors the target vehicle, authority (`candidate` / `reference`), watchdog, stale policy (`stop` default, or `hold` / `fallback`), and per-run actuator overrides. The **Provenance** tab authors hash-locked `provenance.candidateModels[]` references (role, model id, optional version, required SHA-256 digest) used as evidence lineage.
@@ -14,13 +20,27 @@ Reset finalizes the active result and SFLog, resolves the newest saved revision,
 
 `cev-sim.run-bundle` version 1 includes the authoring manifest and its resolved environment, normalized `world: { description, hash }`, sorted backend selections, exact compiled script artifacts and bindings, ROS schemas, autonomy catalog metadata, contract endpoints, dependency hashes, full `resolvedHash`, and `simulationSemanticHash`. `dependencyHashes.world` repeats the canonical world SHA-256. Runs with enabled `lidar3d` additionally contain `lidarGeometry: { description, hash }` and `dependencyHashes.lidarGeometry`; runs with enabled cameras additionally contain `renderScene: { description, hash }` and `dependencyHashes.renderScene`. The initial scene provider is `canonical-analytic@1`, with stable material, semantic, instance, and dynamic-node IDs. Bundles without those sensors omit the corresponding conditional resources. Import verifies old and new bundles in the exact form received; old LiDAR/camera bundles must be re-resolved when their portable resources are unavailable. The additive fields do not change the v1 bundle schema. Manifest v10 adds sidecar-facing candidate-model provenance only. `resolvedHash` identifies normalized resolved content including provenance; exact byte integrity uses `bundleBytesHash`. `simulationSemanticHash` uses the world hash—not the authored environment hash—as environment identity, and projects out logging, `manifest.provenance`, artifact/resource policy, wall pacing, presentation-only settings, and the v10→v9 semantic shape before feeding `episodeHash`. Existing dependencies are reused only when hashes match; conflicting resources receive an eight-character hash suffix and all references are remapped.
 
-VIS-12a activates manifest v11 and
+Effective plugin selections add sorted `resolved.plugins`, exact portable
+`resolved.pluginPackages`, and `dependencyHashes.plugins`. Bundle verification
+cross-checks the manifest locks, package bytes, resolved versions and hashes,
+capability grants, canonical ordering, and transitive visual-script
+`pluginRequirements`. Import installs the verified package resources into the
+local content-addressed store before saving the manifest.
+
+VIS-12a activates manifest v11 and the plugin-free
 `resolved.identityProfile = { id: "world-bound", version: 2 }`, semantic and
 episode identity v2, protocol 1.3 identity negotiation, and protocol 1.4
 same-host run-package admission. Existing v10
 bundles retain their bytes, legacy algorithms, analytic resources and backend
 identities. Authoring import verifies before normalization; a newly resolved
 import uses v11. Missing or unknown identity selectors fail explicitly.
+
+PLG-02 selects `{ id: "world-bound-plugins", version: 1 }` only when the
+resolved run has an effective plugin package closure. Its semantic projection
+binds plugin ID, version, `runtimeHash`, and grants. Exact package/UI bytes stay
+in full resolved identity, so a UI-only edit changes `resolvedHash` without
+changing simulation or episode identity. Plugin-free runs continue using the
+unchanged `world-bound@2` path.
 
 Resolution validates the original manifest environment lock before scenario
 selection replaces its effective environment, plus scenario, script, binding,

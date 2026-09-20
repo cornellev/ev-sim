@@ -6,26 +6,57 @@ import { SimulationKernel } from "../app/simulation/kernel/SimulationKernel.js";
 import { verifyRunBundle } from "../server/headless/RunBundle.js";
 import { createPortableHeadlessBundle } from "./helpers/headlessRunnerBundle.js";
 
-test("run-manifest normalization rejects reserved plugin data before dropping fields", () => {
+test("run-manifest v11 admits exact plugin locks and legacy versions reject them", () => {
     const manifest = createDefaultRunManifest();
-    assert.throws(() => normalizeRunManifest({ ...manifest, plugins: {} }), (error) => error.code === "PLUGIN_EXECUTION_UNAVAILABLE");
-    assert.throws(() => normalizeRunManifest({ ...manifest, scripts: { ...manifest.scripts, embeddedBindings: [{ artifact: { pluginRequirements: [] } }] } }), /PLG-02/);
+    const normalized = normalizeRunManifest({
+        ...manifest,
+        plugins: {
+            enabled: true,
+            artifacts: [{
+                pluginId: "acme.example",
+                expectedHash: "a".repeat(64),
+                capabilities: ["signals.read.vehicles"],
+            }],
+        },
+    });
+    assert.deepEqual(normalized.plugins, {
+        enabled: true,
+        artifacts: [{
+            pluginId: "acme.example",
+            expectedHash: "a".repeat(64),
+            capabilities: ["signals.read.vehicles"],
+        }],
+    });
+    assert.throws(() => normalizeRunManifest({ ...manifest, version: 10, plugins: normalized.plugins }), /version 11/);
+    assert.throws(() => normalizeRunManifest({
+        ...manifest,
+        plugins: { enabled: true, artifacts: [{ pluginId: "cev.reserved", expectedHash: "a".repeat(64) }] },
+    }), /reserved cev namespace/);
 });
 
-test("managed bundle admission rejects plugin resources and profile before integrity execution", async () => {
+test("plugin-free bundles reject the plugin identity profile", async () => {
     const bundle = await createPortableHeadlessBundle();
-    const withPackages = structuredClone(bundle);
-    withPackages.resolved.pluginPackages = [];
-    assert.throws(() => verifyRunBundle(withPackages), (error) => error.code === "UNSUPPORTED_CAPABILITY" && /PLG-02/.test(error.message));
-    const withProfile = structuredClone(bundle);
-    withProfile.resolved.identityProfile = { id: "world-bound-plugins", version: 1 };
-    assert.throws(() => verifyRunBundle(withProfile), /PLG-02/);
+    const tampered = structuredClone(bundle);
+    tampered.resolved.identityProfile = { id: "world-bound-plugins", version: 1 };
+    assert.throws(() => verifyRunBundle(tampered), /requires an effective plugin selection/);
 });
 
-test("kernel plugin rejection preserves the active resolved run", async () => {
-    const kernel = new SimulationKernel({ telemetry: null });
+test("failed plugin preparation preserves the active resolved run", async () => {
+    const expected = Object.assign(new Error("plugin import failed"), { code: "PLUGIN_IMPORT_INVALID" });
+    const kernel = new SimulationKernel({
+        telemetry: null,
+        plugins: { prepare: async () => { throw expected; } },
+    });
     const active = { marker: "active" };
     kernel.resolvedRun = active;
-    await assert.rejects(kernel.prepare({ manifest: {}, plugins: [] }), /PLG-02/);
+    await assert.rejects(kernel.prepare({
+        manifest: {
+            plugins: {
+                enabled: true,
+                artifacts: [{ pluginId: "acme.example", expectedHash: "a".repeat(64), capabilities: [] }],
+            },
+        },
+        plugins: [{ pluginId: "acme.example" }],
+    }), expected);
     assert.equal(kernel.resolvedRun, active);
 });

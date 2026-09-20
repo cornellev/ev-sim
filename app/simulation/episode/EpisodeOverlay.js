@@ -23,6 +23,59 @@ export class EpisodeOverlay {
         return this._records.size;
     }
 
+    _overlayId(id) {
+        const overlayId = String(id ?? "").trim();
+        if (!overlayId) return "";
+        return overlayId.startsWith(EPISODE_ID_PREFIX) ? overlayId : `${EPISODE_ID_PREFIX}${overlayId}`;
+    }
+
+    get(id) {
+        const overlayId = this._overlayId(id);
+        return overlayId ? this._records.get(overlayId) ?? null : null;
+    }
+
+    assertOwner(id, scriptId) {
+        const record = this.get(id);
+        const owner = String(scriptId ?? "");
+        if (record && record.scriptId !== owner) {
+            throw new TypeError(`Overlay "${record.id}" is owned by "${record.scriptId}".`);
+        }
+        return record;
+    }
+
+    serialSnapshot() {
+        return Object.fromEntries([...this._serials.entries()]
+            .sort(([left], [right]) => compareUtf8(left, right))
+            .map(([key, serial]) => [key, serial]));
+    }
+
+    captureState() {
+        return {
+            records: this.snapshot(),
+            serials: this.serialSnapshot(),
+        };
+    }
+
+    restoreState(state = null) {
+        this.clear();
+        if (!state) return;
+        for (const [key, serial] of Object.entries(state.serials ?? {})) {
+            this._serials.set(key, serial);
+        }
+        for (const record of state.records ?? []) {
+            this.upsert({
+                id: record.id,
+                assetId: record.assetId,
+                pose: record.pose,
+                scriptId: record.scriptId,
+            });
+        }
+        this._serials.clear();
+        for (const [key, serial] of Object.entries(state.serials ?? {})) {
+            this._serials.set(key, serial);
+        }
+    }
+
     clear() {
         this._records.clear();
         this._serials.clear();

@@ -1,4 +1,8 @@
 import { HeadlessEpisode } from "../../app/simulation/headless/HeadlessEpisode.js";
+import os from "node:os";
+import path from "node:path";
+import process from "node:process";
+import { NodePluginModuleSource } from "../plugins/NodePluginModuleSource.js";
 import { simulationSha256 } from "../../app/simulation/kernel/SimulationHashes.js";
 import { createHeadlessArtifactSink } from "./HeadlessArtifactSink.js";
 import { HeadlessRunnerError } from "./HeadlessRunnerErrors.js";
@@ -69,12 +73,17 @@ export function validatePolicyActionTape(tape) {
 
 export class HeadlessRunner {
     constructor({
-        episodeFactory = () => new HeadlessEpisode(),
+        episodeFactory = null,
         artifactSinkFactory = createHeadlessArtifactSink,
         provenanceProvider = defaultHeadlessProvenance,
         sessionFactory = (options) => new HeadlessSession(options),
     } = {}) {
-        this.episodeFactory = episodeFactory;
+        this.pluginModuleSource = new NodePluginModuleSource({
+            runtimeRoot: path.join(os.tmpdir(), "cev-sim-plugin-runtime", String(process.pid)),
+        });
+        this.episodeFactory = episodeFactory ?? (() => new HeadlessEpisode({
+            pluginModuleSource: this.pluginModuleSource,
+        }));
         this.artifactSinkFactory = artifactSinkFactory;
         this.provenanceProvider = provenanceProvider;
         this.sessionFactory = sessionFactory;

@@ -107,6 +107,7 @@ export class ScenarioRuntime {
         this.active = false;
         this.controlRuntime = options.controlRuntime ?? null;
         this.resetSeed = "0";
+        this.pluginSession = null;
         this._scriptEntries = [];
         this._defineSignals();
         this._clearState();
@@ -163,7 +164,13 @@ export class ScenarioRuntime {
         this._metricCurrent = null;
     }
 
-    configure(resolvedRun) {
+    _disposeRunners() {
+        for (const runner of this.runners?.values?.() ?? []) runner?.dispose?.();
+        this.runners?.clear?.();
+    }
+
+    configure(resolvedRun, { pluginSession = null } = {}) {
+        this._disposeRunners();
         this._restoreSensorBaselines();
         this._resetScenarioSignals(this.scenario);
         // Resolved artifacts are treated as immutable. Keep the reference so
@@ -174,6 +181,7 @@ export class ScenarioRuntime {
             ?? (this.resolvedRun?.scenario?.kind === "cev-sim.scenario" ? this.resolvedRun.scenario : null);
         this.active = Boolean(this.scenario);
         this.resetSeed = String(this.resolvedRun?.manifest?.seed ?? "0");
+        this.pluginSession = pluginSession;
         this._scriptEntries = this.resolvedRun?.scripts ?? this.resolvedRun?.scenario?.scripts ?? [];
         this.reset({ clearSignals: false });
         return this.getSnapshot();
@@ -183,6 +191,7 @@ export class ScenarioRuntime {
         this.resetSeed = String(resetSeed);
         this._restoreSensorBaselines();
         if (clearSignals) this._resetScenarioSignals(this.scenario);
+        this._disposeRunners();
         this._clearState();
         if (!this.active) return;
         this.outcomes = (this.scenario.expectedOutcomes ?? []).map((outcome) => ({
@@ -321,9 +330,14 @@ export class ScenarioRuntime {
                 const runner = entry.runtime ?? entry.script ?? this.scriptFactory(entry.artifact, {
                     signalStore: this.telemetry,
                     runtimeContext: scriptRuntimeContext(this.resetSeed, `scenario:${scriptId}`),
+                    blockRegistry: this.pluginSession?.registry,
+                    pluginHost: this.pluginSession?.host,
+                    pluginSession: this.pluginSession,
+                    scopeId: `scenario:${scriptId}`,
                 });
                 this.runners.set(scriptId, runner);
             } catch (error) {
+                if (String(error?.code ?? "").startsWith("PLUGIN_")) throw error;
                 this._recordScriptError(scriptId, error, "configure");
             }
         }
@@ -932,6 +946,10 @@ export class ScenarioRuntime {
     }
 
     _scriptFailure(scriptId, error, context, onError = "fail") {
+        if (String(error?.code ?? "").startsWith("PLUGIN_")) {
+            error.requiresReset = true;
+            throw error;
+        }
         const record = this._recordScriptError(scriptId, error, context);
         if (onError !== "continue") {
             this._terminate({

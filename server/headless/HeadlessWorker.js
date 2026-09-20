@@ -1,10 +1,13 @@
 import process from "node:process";
+import os from "node:os";
+import path from "node:path";
 
 import { HeadlessSession } from "./HeadlessSession.js";
 import { ManagedHeadlessSession } from "./ManagedHeadlessSession.js";
 import { HeadlessEpisode } from "../../app/simulation/headless/HeadlessEpisode.js";
 import { validateSharedTensorReference } from "./SharedTensorArena.js";
 import { verifyRunBundleBytes } from "./RunBundle.js";
+import { NodePluginModuleSource } from "../plugins/NodePluginModuleSource.js";
 
 let session = null;
 let initialized = null;
@@ -12,6 +15,9 @@ let admittedSharedRegion = null;
 let handling = false;
 let nextRendererRequestId = 1;
 const rendererRequests = new Map();
+const pluginModuleSource = new NodePluginModuleSource({
+    runtimeRoot: path.join(os.tmpdir(), "cev-sim-plugin-runtime", String(process.pid)),
+});
 
 const rendererClient = {
     request(operation, payload) {
@@ -50,11 +56,23 @@ const rendererClient = {
 };
 
 function serializedError(error) {
+    const pluginDetails = String(error?.code ?? "").startsWith("PLUGIN_") ? {
+        ...(error?.details && typeof error.details === "object" ? error.details : {}),
+        pluginCode: error.code,
+        pluginId: error.pluginId ?? null,
+        packageHash: error.packageHash ?? null,
+        contributionId: error.contributionId ?? null,
+        scopeId: error.scopeId ?? null,
+        unitId: error.unitId ?? null,
+        hook: error.hook ?? null,
+        requiresReset: error.requiresReset === true,
+    } : null;
     return {
         name: error?.name || "Error",
         code: error?.code || "INTERNAL",
         message: error?.message || "Worker command failed.",
-        details: error?.details ?? null,
+        details: pluginDetails ?? error?.details ?? null,
+        requiresReset: error?.requiresReset === true,
         stack: error?.stack || null,
     };
 }
@@ -81,10 +99,10 @@ async function command(name, payload = {}) {
             admittedSharedRegion = payload.sharedRegionName ? String(payload.sharedRegionName) : null;
             const managed = payload.mode === "managed-experiment";
             session = managed
-                ? new ManagedHeadlessSession({ limits: payload.limits, rendererClient })
+                ? new ManagedHeadlessSession({ limits: payload.limits, rendererClient, pluginModuleSource })
                 : new HeadlessSession({
                     limits: payload.limits,
-                    episodeFactory: () => new HeadlessEpisode({ rendererClient }),
+                    episodeFactory: () => new HeadlessEpisode({ rendererClient, pluginModuleSource }),
                 });
             const bundle = payload.bundleBytes
                 ? verifyRunBundleBytes(Buffer.from(payload.bundleBytes), {

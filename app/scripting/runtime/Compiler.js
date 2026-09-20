@@ -1,4 +1,9 @@
 import { createFailureNode, FAILURE_NODE_ID, VISUAL_SCRIPT_KIND, VISUAL_SCRIPT_VERSION } from "./Artifact.js";
+import {
+    collectArtifactPluginRequirements,
+    mergePluginRequirements,
+    requirementsForTypes,
+} from "../../plugin/PluginRequirements.js";
 import { GENERIC_TYPE, isGeneric } from "../types/PortTypes.js";
 import {
     collectResolvedPortMap,
@@ -232,7 +237,7 @@ function createNodeDefinition(unit, storedData) {
     };
 }
 
-export function compileVisualScript(manager, name, getBlockClass) {
+export function compileVisualScript(manager, name, getBlockClass, blockRegistry = null) {
     const units = [...manager.units];
     const unitById = new Map(units.map((unit) => [unit.uuid, unit]));
     const unitOrder = new Map(units.map((unit, index) => [unit.uuid, index]));
@@ -263,6 +268,10 @@ export function compileVisualScript(manager, name, getBlockClass) {
         const unit = unitById.get(uuid);
         return createNodeDefinition(unit, manager.getStoredData(uuid));
     });
+    const pluginRequirements = mergePluginRequirements(
+        requirementsForTypes(nodes.map((node) => node.type), blockRegistry),
+        ...nodes.map((node) => collectArtifactPluginRequirements(node?.state?.compiledProgram)),
+    );
 
     const success = collectSuccessTransitions(units, reachable, nodeIndex);
     const reverseSuccess = createReverseSuccess(success);
@@ -290,6 +299,7 @@ export function compileVisualScript(manager, name, getBlockClass) {
         reverseSuccess,
         interface: programInterface,
         bindings,
-        entrypoints
+        entrypoints,
+        ...(pluginRequirements.length > 0 ? { pluginRequirements } : {})
     };
 }

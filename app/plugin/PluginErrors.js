@@ -7,7 +7,9 @@ export const PLUGIN_ERROR_CODES = Object.freeze({
     REGISTRATION: "PLUGIN_REGISTRATION",
     ASYNC_HOOK: "PLUGIN_ASYNC_HOOK",
     STATE_INVALID: "PLUGIN_STATE_INVALID",
+    EXECUTION: "PLUGIN_EXECUTION",
     UNAVAILABLE: "PLUGIN_FEATURE_UNAVAILABLE",
+    RESOURCE: "PLUGIN_RESOURCE",
 });
 
 export class PluginError extends Error {
@@ -17,6 +19,10 @@ export class PluginError extends Error {
         path = null,
         contributionId = null,
         details = null,
+        scopeId = null,
+        unitId = null,
+        hook = null,
+        requiresReset = false,
         cause = null,
     } = {}) {
         super(message, cause ? { cause } : undefined);
@@ -27,6 +33,10 @@ export class PluginError extends Error {
         this.path = path;
         this.contributionId = contributionId;
         this.details = details;
+        this.scopeId = scopeId;
+        this.unitId = unitId;
+        this.hook = hook;
+        this.requiresReset = requiresReset === true;
     }
 }
 

@@ -52,6 +52,14 @@ app/scripting/UnitCatalog.js
 
 `registerBuiltInBlocks.js` registers each explicit metadata type. `AddMenu.js` renders placeable entries after React components are attached by type. Every placeable block needs both a backend class and component.
 
+Managed plugin runs create a sealed registry per `PluginRunSession`. The
+registry starts with the same built-ins, then `PluginLoader` adds only the
+exact packages frozen in `resolved.plugins` / `resolved.pluginPackages`.
+`ScriptManager`, `VisualScriptRunner`, `BindingRuntime`, nested compiled
+programs, repeat programs, and `ScenarioRuntime` all receive that registry and
+session explicitly. The default registry remains plugin-disabled and is never
+mutated by managed preparation.
+
 ## Compiled Runtime
 
 `Compiler.js` walks backward from program output-role blocks, or from the current head if there are no output-role blocks. It validates reachable nodes (unbound `generic` is only an error when reachable), snapshots resolved port types, emits frozen node definitions with `version: 3`, and records success transitions plus a reverse transition table. Artifact ports never contain `generic`.
@@ -62,6 +70,28 @@ app/scripting/UnitCatalog.js
 - `status: "failure"` with a serialized runtime error.
 
 Before evaluation, editor and compiled execution snapshot every unit's JSON runtime state. Failures restore that snapshot and roll back staged signal writes; successful runs commit both.
+
+Plugin artifacts also carry sorted `pluginRequirements` records containing
+`pluginId`, `version`, `runtimeHash`, and the reachable block types. The
+compiler merges requirements from nested compiled programs. Resolution and
+runner hydration compare those records with the selected session registry, so
+missing, stale, undeclared, or unused plugin types fail before evaluation.
+
+Each graph evaluation opens a nested `PluginEffectJournal` frame and snapshots
+the session's deterministic RNG streams. Successful evaluation commits
+plugin-owned debug, mission, and scenario-flag writes into the graph's
+`SignalStore` transaction. Failure discards the effects, restores RNG and unit
+runtime state, and returns a structured `PLUGIN_*` error. Reset disposes every
+adapter, clears plugin-owned signals and RNG streams, and rebuilds binding and
+scenario runners from the immutable artifacts.
+
+Declared plugin systems run in the same `"scripts"` kernel phase after
+`BindingRuntime.update`: topic callbacks drain first, then `onStep()` in
+priority / plugin-id / system-id order. System hooks use the same journal for
+signal writes, `controls.reference` commands, output-topic publishes, and
+reset-only `overlay.spawn`. Scenario `submitSiSpeedSteer` still follows scripts
+and may overwrite a plugin reference command. Failed hooks roll back only that
+hook; the session requires reset.
 
 Compiled v2 artifacts stay eager for `If`, `WeightedSelect`, and `SignalLatch`. Compiled v3 artifacts use lazy selectors. `And`/`Or` short-circuit regardless of artifact version. Frozen ports are authoritative over the current class registration.
 

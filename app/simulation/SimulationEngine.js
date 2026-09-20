@@ -5,6 +5,8 @@ import { ScenarioDiagnostics } from "../scenarios/ScenarioDiagnostics.js";
 import { ScenarioRuntime } from "../scenarios/ScenarioRuntime.js";
 import { SimulationKernel } from "./kernel/SimulationKernel.js";
 import { createSimulationRuntimeContext } from "./kernel/SimulationRuntimeContext.js";
+import { BrowserPluginModuleSource } from "../plugin/browser/BrowserPluginModuleSource.js";
+import { PluginRunSession, pluginRuntimeCapabilitiesForRun } from "../plugin/PluginRunSession.js";
 
 const KERNEL_PROPERTIES = [
     "stepNs",
@@ -97,6 +99,7 @@ export class SimulationEngine {
         };
 
         const telemetry = this.data.bindings?.()?.signalStore ?? null;
+        const pluginModuleSource = options.pluginModuleSource ?? new BrowserPluginModuleSource();
         const scenarioRuntime = new ScenarioRuntime(this.data, { telemetry });
         this.runtimeContext = createSimulationRuntimeContext({
             telemetry,
@@ -118,6 +121,24 @@ export class SimulationEngine {
             currentRendering: () => this.renderRuntime,
             renderingStatus: () => this.renderProviderStatus,
             disposeRendering: () => this._disposeRendering(),
+            preparePlugins: async (resolvedRun, runtimeOptions = {}) => {
+                if ((resolvedRun.plugins?.length ?? 0) === 0) return null;
+                const session = new PluginRunSession({
+                    moduleSource: pluginModuleSource,
+                    plugins: resolvedRun.plugins,
+                    availableCapabilities: pluginRuntimeCapabilitiesForRun(resolvedRun, {
+                        renderTarget: runtimeOptions.renderTarget ?? "browser",
+                        backendSelections: runtimeOptions.backendSelections
+                            ?? resolvedRun.backendSelections,
+                    }),
+                });
+                try {
+                    return await session.prepareDefinitions(resolvedRun.pluginPackages);
+                } catch (error) {
+                    session.dispose();
+                    throw error;
+                }
+            },
         });
         this.kernel = new SimulationKernel(this.runtimeContext, options);
         exposeKernelProperties(this);

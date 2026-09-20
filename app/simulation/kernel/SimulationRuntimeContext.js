@@ -45,6 +45,7 @@ export function createSimulationRuntimeContext(options = {}) {
     const telemetry = options.telemetry
         ?? manager(options.scripts)?.signalStore
         ?? null;
+    let pluginSession = null;
 
     const context = {
         telemetry,
@@ -88,6 +89,44 @@ export function createSimulationRuntimeContext(options = {}) {
                 return options.disposeRendering?.();
             },
         },
+        plugins: {
+            prepare(resolvedRun, runtimeOptions) {
+                return options.preparePlugins?.(resolvedRun, runtimeOptions) ?? null;
+            },
+            activate(session) {
+                pluginSession = session ?? null;
+                return pluginSession;
+            },
+            current() {
+                return pluginSession;
+            },
+            bindServices(services) {
+                return pluginSession?.bindServices?.(services);
+            },
+            prepareInstances() {
+                return pluginSession?.prepareInstances?.();
+            },
+            beginResetWindow(runtimeOptions) {
+                return pluginSession?.beginResetWindow?.(runtimeOptions);
+            },
+            endResetWindow() {
+                return pluginSession?.endResetWindow?.();
+            },
+            reset(runtimeOptions) {
+                return pluginSession?.reset?.(runtimeOptions);
+            },
+            finalize() {
+                pluginSession?.finalizeSystems?.();
+                return pluginSession?.getDeterministicState?.() ?? null;
+            },
+            dispose() {
+                pluginSession?.dispose?.();
+                pluginSession = null;
+            },
+            getDeterministicState() {
+                return pluginSession?.getDeterministicState?.() ?? null;
+            },
+        },
         inputs: {
             update(dt) {
                 return manager(options.inputs)?.update?.(dt);
@@ -124,7 +163,10 @@ export function createSimulationRuntimeContext(options = {}) {
                 return manager(options.scripts)?.applyTopicUpdate?.(info);
             },
             update(dt, clock) {
-                return manager(options.scripts)?.update?.(dt, clock);
+                const result = manager(options.scripts)?.update?.(dt, clock);
+                pluginSession?.deliverTopics?.(clock);
+                pluginSession?.dispatchSystems?.(dt, clock);
+                return result;
             },
             reset(runtimeOptions) {
                 return manager(options.scripts)?.resetRun?.(runtimeOptions);

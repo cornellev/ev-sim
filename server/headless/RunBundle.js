@@ -16,7 +16,14 @@ import {
 } from "../../app/simulation/visual/VisualLayer.js";
 import { computeSimulationSemanticHash } from "../../app/simulation/kernel/SimulationHashes.js";
 import { HeadlessEpisodeError } from "../../app/simulation/headless/HeadlessErrors.js";
-import { assertManagedPluginsUnavailable } from "../../app/plugin/PluginAdmission.js";
+import { verifyPluginPackage } from "../../app/plugin/PluginPackage.js";
+import {
+    effectivePluginLocks,
+    normalizePluginSelection,
+    normalizeResolvedPlugins,
+    pluginDependencyHashes,
+} from "../../app/plugin/PluginSelection.js";
+import { collectArtifactPluginRequirements } from "../../app/plugin/PluginRequirements.js";
 import { assertWorldResource } from "../../app/simulation/world/WorldDescription.js";
 import { assertLidarGeometryResource } from "../../app/simulation/lidar/LidarGeometry.js";
 import { assertRenderSceneResource } from "../../app/simulation/render/RenderScene.js";
@@ -106,6 +113,80 @@ function invalidRenderSelection(error) {
     invalid(capability ? "UNSUPPORTED_CAPABILITY" : "BUNDLE_INVALID", error.message, error.details);
 }
 
+function verifyPluginClosure(resolved) {
+    let selection;
+    let plugins;
+    try {
+        selection = normalizePluginSelection(resolved.manifest?.plugins);
+        plugins = normalizeResolvedPlugins(resolved.plugins);
+    } catch (error) {
+        invalid("BUNDLE_INVALID", error.message);
+    }
+    if (resolved.manifest?.plugins !== undefined
+        && canonicalExactStringify(resolved.manifest.plugins) !== canonicalExactStringify(selection)) {
+        invalid("BUNDLE_INVALID", "Manifest plugin selection is not canonical.");
+    }
+    if (resolved.plugins !== undefined
+        && canonicalExactStringify(resolved.plugins) !== canonicalExactStringify(plugins)) {
+        invalid("BUNDLE_INVALID", "Resolved plugins are not in canonical order.");
+    }
+    const locks = effectivePluginLocks(selection);
+    const packages = resolved.pluginPackages ?? [];
+    if (!Array.isArray(packages)) invalid("BUNDLE_INVALID", "Resolved pluginPackages must be an array.");
+    if (locks.length !== plugins.length || plugins.length !== packages.length) {
+        invalid("BUNDLE_INVALID", "The resolved plugin selection and portable package closure are incomplete.");
+    }
+    const lockById = new Map(locks.map((entry) => [entry.pluginId, entry]));
+    const packageById = new Map();
+    for (const resource of packages) {
+        let verified;
+        try {
+            verified = verifyPluginPackage(resource);
+        } catch (error) {
+            invalid("BUNDLE_HASH_MISMATCH", error.message);
+        }
+        if (packageById.has(verified.document.id)) {
+            invalid("BUNDLE_INVALID", `Duplicate plugin package "${verified.document.id}".`);
+        }
+        packageById.set(verified.document.id, verified);
+    }
+    if (packages.some((resource, index) => verifyPluginPackage(resource).document.id !== plugins[index]?.pluginId)) {
+        invalid("BUNDLE_INVALID", "Resolved pluginPackages are not in canonical plugin order.");
+    }
+    for (const plugin of plugins) {
+        const lock = lockById.get(plugin.pluginId);
+        const verified = packageById.get(plugin.pluginId);
+        if (!lock || !verified || lock.expectedHash !== plugin.packageHash
+            || canonicalExactStringify(lock.capabilities) !== canonicalExactStringify(plugin.capabilities)
+            || verified.document.version !== plugin.version
+            || verified.resource.packageHash !== plugin.packageHash
+            || verified.resource.runtimeHash !== plugin.runtimeHash) {
+            invalid("BUNDLE_HASH_MISMATCH", `Resolved plugin "${plugin.pluginId}" does not match its exact manifest lock and package resource.`);
+        }
+    }
+    const expectedDependencies = pluginDependencyHashes(plugins);
+    const actualDependencies = Object.fromEntries(Object.entries(resolved.dependencyHashes?.plugins ?? {})
+        .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0));
+    if (canonicalExactStringify(actualDependencies) !== canonicalExactStringify(expectedDependencies)) {
+        invalid("BUNDLE_HASH_MISMATCH", "Resolved plugin dependency hashes do not match the selected package closure.");
+    }
+    const selected = new Map(plugins.map((entry) => [entry.pluginId, entry]));
+    for (const script of resolved.scripts ?? []) {
+        let requirements;
+        try {
+            requirements = collectArtifactPluginRequirements(script.artifact);
+        } catch (error) {
+            invalid("BUNDLE_INVALID", error.message);
+        }
+        for (const requirement of requirements) {
+            const plugin = selected.get(requirement.pluginId);
+            if (!plugin || plugin.version !== requirement.version || plugin.runtimeHash !== requirement.runtimeHash) {
+                invalid("BUNDLE_INVALID", `Script "${script.scriptId}" requires an unselected plugin runtime ${requirement.pluginId}@${requirement.version}.`);
+            }
+        }
+    }
+}
+
 function verifyBundleStructure(verified, { requireRuntime = false } = {}) {
     const { resolved } = verified;
     if (resolved.manifest?.kind !== RUN_MANIFEST_KIND || resolved.manifest.version !== resolved.version) {
@@ -126,6 +207,7 @@ function verifyBundleStructure(verified, { requireRuntime = false } = {}) {
     if (!Array.isArray(resolved.scripts)) {
         invalid("BUNDLE_INVALID", "The resolved run scripts must be an array of admitted artifacts.");
     }
+    verifyPluginClosure(resolved);
     const resolvedScriptIds = new Set();
     for (const entry of resolved.scripts) {
         const scriptId = typeof entry?.scriptId === "string" ? entry.scriptId.trim() : "";
@@ -245,11 +327,6 @@ function verifyBundleStructure(verified, { requireRuntime = false } = {}) {
 
 /** Execution accepts only implemented immutable versions; no normalization here. */
 export function verifyRunBundle(bundle) {
-    try {
-        assertManagedPluginsUnavailable(bundle, { context: "Managed run-bundle plugin execution" });
-    } catch (error) {
-        invalid("UNSUPPORTED_CAPABILITY", error.message, { path: error.path ?? null });
-    }
     const verified = verifyRunBundleIntegrity(bundle);
     const { resolved } = verified;
     if (![10, 11].includes(resolved.version)) {

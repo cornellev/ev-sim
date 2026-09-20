@@ -69,7 +69,18 @@ import {
     schemaClosureForManifest,
 } from "../../app/autonomy/AutonomyContractCatalog.js";
 import { buildCalibrationBundle } from "../../app/autonomy/CalibrationBundle.js";
-import { WORLD_BOUND_IDENTITY } from "../../app/simulation/kernel/RunIdentity.js";
+import {
+    WORLD_BOUND_IDENTITY,
+    WORLD_BOUND_PLUGINS_IDENTITY,
+} from "../../app/simulation/kernel/RunIdentity.js";
+import { PluginRunSession, PLG03_RUNTIME_CAPABILITIES } from "../../app/plugin/PluginRunSession.js";
+import { verifyPluginPackage } from "../../app/plugin/PluginPackage.js";
+import {
+    effectivePluginLocks,
+    pluginDependencyHashes,
+} from "../../app/plugin/PluginSelection.js";
+import { assertArtifactPluginRequirements } from "../../app/plugin/PluginRequirements.js";
+import { NodePluginModuleSource } from "../plugins/NodePluginModuleSource.js";
 import { canonicalRunBundleStringify, runBundleBytes, verifyRunBundleBytes, verifyRunBundleIntegrity } from "../headless/RunBundle.js";
 import {
     collectRunPackageAssets,
@@ -1677,6 +1688,24 @@ export class StorageService {
         manifest = parameterizedValidation.manifest;
         if (resolutionOptions.seed !== undefined) manifest.seed = resolutionOptions.seed;
 
+        const pluginPackages = [];
+        const resolvedPlugins = [];
+        for (const lock of effectivePluginLocks(manifest.plugins)) {
+            const resource = await this.plugins.getPackage(lock.expectedHash);
+            const verified = verifyPluginPackage(resource);
+            if (verified.document.id !== lock.pluginId) {
+                throw new Error(`Plugin lock "${lock.pluginId}" resolves package "${verified.document.id}".`);
+            }
+            pluginPackages.push(resource);
+            resolvedPlugins.push({
+                pluginId: verified.document.id,
+                version: verified.document.version,
+                packageHash: verified.resource.packageHash,
+                runtimeHash: verified.resource.runtimeHash,
+                capabilities: [...lock.capabilities],
+            });
+        }
+
         // Check the original lock before scenario selection replaces the effective environment.
         // Use this same snapshot below for direct runs, avoiding a check/use re-read.
         const authoredEnvironment = manifest.environment.expectedHash
@@ -1838,6 +1867,22 @@ export class StorageService {
             throw new Error(`Script bindings changed: expected ${manifest.scripts.expectedBindingsHash}, received ${bindingsHash}.`);
         }
 
+        const pluginSession = new PluginRunSession({
+            moduleSource: resolvedPlugins.length > 0
+                ? new NodePluginModuleSource({ pluginStore: this.plugins })
+                : null,
+            plugins: resolvedPlugins,
+            availableCapabilities: PLG03_RUNTIME_CAPABILITIES,
+        });
+        try {
+            await pluginSession.prepareDefinitions(pluginPackages);
+            for (const script of scripts) {
+                assertArtifactPluginRequirements(script.artifact, pluginSession.registry, resolvedPlugins);
+            }
+        } finally {
+            pluginSession.dispose();
+        }
+
         // All full-document locks are now validated. Only after this point may
         // selected PBR resolution touch visual access records or CAS bytes.
         if (renderSelection?.provider?.id === VISUAL_RENDER_PROVIDERS.pbrMesh.id
@@ -1858,7 +1903,9 @@ export class StorageService {
         const resolved = resolvedRunJsonSnapshot({
             kind: RUN_MANIFEST_KIND,
             version: RUN_MANIFEST_VERSION,
-            identityProfile: { ...WORLD_BOUND_IDENTITY },
+            identityProfile: {
+                ...(resolvedPlugins.length > 0 ? WORLD_BOUND_PLUGINS_IDENTITY : WORLD_BOUND_IDENTITY),
+            },
             manifest,
             definitionHash,
             calibration,
@@ -1870,6 +1917,10 @@ export class StorageService {
             ...(evidence ? { evidence } : {}),
             backendSelections: sortBackendSelections([createPhysicsBackendSelection(world)]),
             scripts,
+            ...(resolvedPlugins.length > 0 ? {
+                plugins: resolvedPlugins,
+                pluginPackages,
+            } : {}),
             bindings: { hash: bindingsHash, entries: selectedBindings },
             scenario: resolvedScenario,
             vehicles: resolvedVehicles,
@@ -1897,6 +1948,7 @@ export class StorageService {
                 ...(evidenceHash ? { evidence: evidenceHash } : {}),
                 calibration: calibration.hash,
                 scripts: Object.fromEntries(scripts.map((entry) => [entry.scriptId, entry.hash])),
+                ...(resolvedPlugins.length > 0 ? { plugins: pluginDependencyHashes(resolvedPlugins) } : {}),
                 bindings: bindingsHash,
                 ...(resolvedScenario ? { scenario: resolvedScenario.definitionHash } : {}),
                 vehicles: Object.fromEntries(resolvedVehicles.map((entry) => [entry.vehicleId, entry.hash])),
@@ -1924,6 +1976,9 @@ export class StorageService {
     async importRunBundle(bundle = {}) {
         verifyRunBundleIntegrity(bundle);
         await this._assertLocalPbrImportDependencies(bundle.resolved);
+        for (const resource of bundle.resolved.pluginPackages ?? []) {
+            await this.plugins.putPackage(resource);
+        }
         const incoming = normalizeRunManifest(bundle.manifest);
         const importedEnvironment = bundle.resolved.environment?.manifest;
         if (importedEnvironment) {

@@ -64,6 +64,10 @@ export class RepeatProgramBlock extends CompiledProgramUnitBlock {
             this.runner = ScriptManager.createRunner(compiledProgram, {
                 signalStore: this.manager?.getSignalStore?.(),
                 runtimeContext: this.manager?.getRuntimeContext?.(),
+                blockRegistry: this.manager?.getBlockRegistry?.() ?? this.manager?.blockRegistry,
+                pluginHost: this.manager?.getPluginHost?.() ?? this.manager?.pluginHost,
+                pluginSession: this.manager?.getPluginSession?.() ?? this.manager?.pluginSession,
+                scopeId: `${this.manager?.getScopeId?.() ?? this.manager?.scopeId ?? "script"}/repeat:${this.uuid}`,
             });
             if (this.pendingRuntimeState) {
                 this.runner.hydrateRuntimeState(this.pendingRuntimeState);
@@ -83,7 +87,9 @@ export class RepeatProgramBlock extends CompiledProgramUnitBlock {
                 item: index,
             });
             if (run.status === "failure") {
-                throw new Error(`Repeat Program child failed: ${run.e?.message || "unknown error"}`);
+                const error = new Error(`Repeat Program child failed: ${run.e?.message || "unknown error"}`);
+                Object.assign(error, run.e ?? {});
+                throw error;
             }
             lastOutputs = run.outputs || {};
         }

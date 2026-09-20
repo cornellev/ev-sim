@@ -22,8 +22,10 @@ function invoke(instance, name, args, fields) {
         return assertSynchronous(instance[name](...args), name, fields);
     } catch (error) {
         if (error?.code) throw error;
-        throw pluginError(PLUGIN_ERROR_CODES.REGISTRATION, `Plugin unit hook "${name}" failed: ${error.message}`, {
+        throw pluginError(PLUGIN_ERROR_CODES.EXECUTION, `Plugin unit hook "${name}" failed: ${error.message}`, {
             ...fields,
+            hook: name,
+            requiresReset: name === "execute",
             cause: error,
         });
     }
@@ -38,12 +40,29 @@ function stateValue(definition, value, path, fields) {
     }
 }
 
-export function createPluginUnitAdapterClass({ definition, blockClass, ownership, createFacade = null }) {
-    const fields = { pluginId: ownership.pluginId, contributionId: definition.type };
+export function createPluginUnitAdapterClass({
+    definition,
+    blockClass,
+    ownership,
+    createFacade = null,
+    onDispose = null,
+}) {
+    const fields = {
+        pluginId: ownership.pluginId,
+        packageHash: ownership.packageHash ?? null,
+        contributionId: definition.type,
+    };
     const expectedPorts = definition.ports ?? { inputs: {}, outputs: {} };
+    const runtimeFields = (adapter) => ({
+        ...fields,
+        scopeId: adapter?.manager?.getScopeId?.() ?? adapter?.manager?.scopeId ?? null,
+        unitId: adapter?.uuid ?? null,
+    });
 
     return class PluginUnitAdapter extends HostUnitBlock {
         static blockType = definition.type;
+        static pluginOwnership = ownership;
+        static pluginDefinition = definition;
 
         register() {
             for (const [label, type] of Object.entries(expectedPorts.inputs ?? {})) this.registerInput(label, type);
@@ -66,7 +85,7 @@ export function createPluginUnitAdapterClass({ definition, blockClass, ownership
                         };
                     },
                 });
-                const facade = Object.freeze(createFacade ? createFacade(helpers) : {
+                const facade = Object.freeze(createFacade ? createFacade(helpers, { adapter: this }) : {
                     readSignal: helpers.readSignal,
                     getContext: helpers.getContext,
                 });
@@ -97,37 +116,40 @@ export function createPluginUnitAdapterClass({ definition, blockClass, ownership
         serializeState() {
             const record = instances.get(this);
             if (!record) return clonePluginJson(definition.defaults ?? {});
-            return stateValue(definition, invoke(record.instance, "serializeState", [], fields), `${definition.type}.state`, fields);
+            const activeFields = runtimeFields(this);
+            return stateValue(definition, invoke(record.instance, "serializeState", [], activeFields), `${definition.type}.state`, activeFields);
         }
 
         hydrateState(state = {}) {
             const record = instances.get(this);
             if (!record) return;
-            const next = stateValue(definition, { ...definition.defaults, ...state }, `${definition.type}.state`, fields);
-            invoke(record.instance, "hydrateState", [next], fields);
+            const activeFields = runtimeFields(this);
+            const next = stateValue(definition, { ...definition.defaults, ...state }, `${definition.type}.state`, activeFields);
+            invoke(record.instance, "hydrateState", [next], activeFields);
         }
 
         serializeRuntimeState() {
             const record = instances.get(this);
             if (!record) return {};
-            return clonePluginJson(invoke(record.instance, "serializeRuntimeState", [], fields), `${definition.type}.runtimeState`);
+            return clonePluginJson(invoke(record.instance, "serializeRuntimeState", [], runtimeFields(this)), `${definition.type}.runtimeState`);
         }
 
         hydrateRuntimeState(state = {}) {
             const record = instances.get(this);
             if (!record) return;
-            invoke(record.instance, "hydrateRuntimeState", [clonePluginJson(state, `${definition.type}.runtimeState`)], fields);
+            invoke(record.instance, "hydrateRuntimeState", [clonePluginJson(state, `${definition.type}.runtimeState`)], runtimeFields(this));
         }
 
         valid() {
             const record = instances.get(this);
-            return record ? Boolean(invoke(record.instance, "valid", [], fields)) : false;
+            return record ? Boolean(invoke(record.instance, "valid", [], runtimeFields(this))) : false;
         }
 
         execute() {
             const record = instances.get(this);
             if (!record || record.disposed) throw pluginError(PLUGIN_ERROR_CODES.STATE_INVALID, "Plugin unit is disposed.", fields);
-            const output = invoke(record.instance, "execute", [], fields);
+            const activeFields = runtimeFields(this);
+            const output = invoke(record.instance, "execute", [], activeFields);
             if (!(output instanceof PluginBlockOutput)) {
                 throw pluginError(PLUGIN_ERROR_CODES.STATE_INVALID, `Plugin unit "${definition.type}" must return a BlockOutput.`, fields);
             }
@@ -139,7 +161,7 @@ export function createPluginUnitAdapterClass({ definition, blockClass, ownership
                     assertPluginPortValue(expectedPorts.outputs[label], value, `${definition.type}.outputs.${label}`);
                 } catch (error) {
                     if (error?.code === PLUGIN_ERROR_CODES.STATE_INVALID) throw error;
-                    throw pluginError(PLUGIN_ERROR_CODES.STATE_INVALID, error.message, { ...fields, path: `${definition.type}.outputs.${label}`, cause: error });
+                    throw pluginError(PLUGIN_ERROR_CODES.STATE_INVALID, error.message, { ...activeFields, path: `${definition.type}.outputs.${label}`, cause: error });
                 }
             }
             return output;
@@ -150,9 +172,10 @@ export function createPluginUnitAdapterClass({ definition, blockClass, ownership
             if (!record || record.disposed) return;
             record.disposed = true;
             try {
-                invoke(record.instance, "dispose", [], fields);
+                invoke(record.instance, "dispose", [], runtimeFields(this));
             } finally {
                 revokePluginUnit(record.instance);
+                onDispose?.(this);
             }
         }
     };

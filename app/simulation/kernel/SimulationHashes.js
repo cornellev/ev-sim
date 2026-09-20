@@ -1,6 +1,7 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import { simulationIdentityVersion } from "./RunIdentity.js";
+import { comparePluginText, normalizeResolvedPlugins } from "../../plugin/PluginSelection.js";
 
 export const SIMULATION_HASH_VERSION = 1;
 
@@ -259,6 +260,7 @@ export function simulationSemanticProjection(resolved = {}) {
         delete manifest.renderRecipe;
         delete manifest.logging;
         delete manifest.provenance;
+        delete manifest.plugins;
         if (manifest.clock) {
             delete manifest.clock.pacing;
             delete manifest.clock.speed;
@@ -268,6 +270,18 @@ export function simulationSemanticProjection(resolved = {}) {
             }
         }
     }
+    if ((resolved.plugins?.length ?? 0) > 0) {
+        projection.plugins = normalizeResolvedPlugins(resolved.plugins).map((entry) => ({
+            pluginId: entry.pluginId,
+            version: entry.version,
+            runtimeHash: entry.runtimeHash,
+            capabilities: [...entry.capabilities].sort(comparePluginText),
+        }));
+    } else {
+        delete projection.plugins;
+    }
+    delete projection.pluginPackages;
+    if (projection.dependencyHashes) delete projection.dependencyHashes.plugins;
     if (projection.scenario) {
         const scenario = projection.scenario;
         const scenarioWorldHash = scenario.world?.hash ?? worldHash;

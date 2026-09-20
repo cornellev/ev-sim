@@ -104,7 +104,8 @@ export function serializeManagerGraph(manager, {
         outputNodeConfig: cloneJson(outputNodeConfig),
         nodes,
         connections,
-        viewport: normalizeCanvasViewport(viewport)
+        viewport: normalizeCanvasViewport(viewport),
+        ...(manager.pluginLocks?.length ? { pluginLocks: cloneJson(manager.pluginLocks) } : {})
     };
 }
 
@@ -115,6 +116,7 @@ export function restoreManagerFromGraph(graph, getBlockClass, {
     onMissingBlock = null
 } = {}) {
     const manager = createManager();
+    manager.pluginLocks = cloneJson(graph?.pluginLocks ?? []);
     const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
     const resolvedHeadUUID = graph?.head || headUUID;
     const headInNodes = nodes.some((node) => node.uuid === resolvedHeadUUID);

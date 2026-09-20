@@ -234,16 +234,45 @@ def load_bundle(value: BundleInput, *, expected_bundle_bytes_hash: str | None = 
     identity_profile = None
     if version == 11:
         profile = resolved.get("identityProfile")
-        if (not isinstance(profile, dict) or profile != {"id": "world-bound", "version": 2}
+        supported_profiles = (
+            {"id": "world-bound", "version": 2},
+            {"id": "world-bound-plugins", "version": 1},
+        )
+        if (not isinstance(profile, dict) or profile not in supported_profiles
                 or not _json_integer(profile["version"])):
-            raise CevSimConfigurationError("Manifest v11 requires identityProfile world-bound@2")
-        identity_profile = "world-bound@2"
+            raise CevSimConfigurationError(
+                "Manifest v11 requires identityProfile world-bound@2 or world-bound-plugins@1"
+            )
+        identity_profile = f"{profile['id']}@{profile['version']}"
     elif "identityProfile" in resolved:
         raise CevSimConfigurationError("Unsupported identity profile on a legacy bundle")
     manifest = document.get("manifest")
     if (not isinstance(manifest, dict) or manifest != resolved.get("manifest")
             or manifest.get("kind") != "cev-sim.run-manifest" or manifest.get("version") != version):
         raise CevSimConfigurationError("Bundle and resolved manifest versions/content must agree")
+    if version == 11:
+        selection = manifest.get("plugins")
+        locks = (
+            selection.get("artifacts", [])
+            if isinstance(selection, dict) and selection.get("enabled") is True
+            else []
+        )
+        plugins = resolved.get("plugins", [])
+        packages = resolved.get("pluginPackages", [])
+        uses_plugins = bool(locks or plugins or packages)
+        if identity_profile == "world-bound-plugins@1" and not uses_plugins:
+            raise CevSimConfigurationError(
+                "identityProfile world-bound-plugins@1 requires an effective plugin selection"
+            )
+        if identity_profile == "world-bound@2" and uses_plugins:
+            raise CevSimConfigurationError(
+                "Resolved plugin resources require identityProfile world-bound-plugins@1"
+            )
+        if uses_plugins and not (
+            isinstance(locks, list) and isinstance(plugins, list) and isinstance(packages, list)
+            and len(locks) == len(plugins) == len(packages) > 0
+        ):
+            raise CevSimConfigurationError("Resolved plugin package closure is incomplete")
     resolved_hash = document.get("resolvedHash")
     semantic_hash = document.get("simulationSemanticHash")
     for label, digest in (("resolvedHash", resolved_hash), ("simulationSemanticHash", semantic_hash)):

@@ -1,6 +1,6 @@
 
-import { getRegisteredBlockType, registerBlockType } from "./BlockRegistry.js";
-import { assertSupportedArtifact } from "./runtime/Artifact.js";
+import { defaultBlockRegistry, registerBlockType } from "./BlockRegistry.js";
+import { assertSupportedArtifact, createRuntimeError } from "./runtime/Artifact.js";
 import { compileVisualScript } from "./runtime/Compiler.js";
 import { createVisualScriptRunner } from "./runtime/Runner.js";
 import { captureRuntimeState, restoreRuntimeState } from "./runtime/RuntimeState.js";
@@ -347,6 +347,7 @@ export class CompiledProgramUnitBlock extends UnitBlock {
     }
 
     hydrateState(state = {}) {
+        this.runner?.dispose?.();
         super.hydrateState(state);
         this.runner = null;
         this.pendingRuntimeState = null;
@@ -400,7 +401,11 @@ export class CompiledProgramUnitBlock extends UnitBlock {
         if (!this.runner) {
             this.runner = ScriptManager.createRunner(compiledProgram, {
                 signalStore: this.manager?.getSignalStore?.(),
-                runtimeContext: this.manager?.getRuntimeContext?.()
+                runtimeContext: this.manager?.getRuntimeContext?.(),
+                blockRegistry: this.manager?.getBlockRegistry?.() ?? this.manager?.blockRegistry,
+                pluginHost: this.manager?.getPluginHost?.() ?? this.manager?.pluginHost,
+                pluginSession: this.manager?.getPluginSession?.() ?? this.manager?.pluginSession,
+                scopeId: `${this.manager?.getScopeId?.() ?? this.manager?.scopeId ?? "script"}/compiled:${this.uuid}`,
             });
             if (this.pendingRuntimeState) {
                 this.runner.hydrateRuntimeState(this.pendingRuntimeState);
@@ -413,7 +418,9 @@ export class CompiledProgramUnitBlock extends UnitBlock {
 
         const run = this.runner.run(providedInputs);
         if (run.status === "failure") {
-            throw new Error(`Imported compiled program failed: ${run.e?.message || "unknown error"}`);
+            const error = new Error(`Imported compiled program failed: ${run.e?.message || "unknown error"}`);
+            Object.assign(error, run.e ?? {});
+            throw error;
         }
 
         const output = new BlockOutput();
@@ -424,6 +431,11 @@ export class CompiledProgramUnitBlock extends UnitBlock {
         });
 
         return output;
+    }
+
+    dispose() {
+        this.runner?.dispose?.();
+        this.runner = null;
     }
 }
 
@@ -449,7 +461,18 @@ registerBlockType("LocalScriptProgramBlock", LocalScriptProgramBlock);
 // Below, this I made myself
 
 export class ScriptManager {
-    constructor() {
+    constructor({
+        blockRegistry = defaultBlockRegistry,
+        pluginHost = null,
+        pluginSession = null,
+        scopeId = "script",
+    } = {}) {
+        this.blockRegistry = blockRegistry;
+        this.pluginHost = pluginHost;
+        this.pluginSession = pluginSession;
+        this.scopeId = String(scopeId || "script");
+        this.pluginLocks = [];
+        this.disposed = false;
         this.units = [];
 
         this.head = null;
@@ -629,6 +652,22 @@ export class ScriptManager {
         return this.signalStore;
     }
 
+    getBlockRegistry() {
+        return this.blockRegistry;
+    }
+
+    getPluginHost() {
+        return this.pluginHost;
+    }
+
+    getPluginSession() {
+        return this.pluginSession;
+    }
+
+    getScopeId() {
+        return this.scopeId;
+    }
+
     readSignal(path, options = {}) {
         return this.signalStore.read(path, options);
     }
@@ -669,8 +708,10 @@ export class ScriptManager {
      * @param {UnitBlock} unit 
      */
     addUnit(unit) {
+        if (this.disposed) throw new Error("Cannot add a unit to a disposed ScriptManager.");
         unit.setManager(this);
         this.units.push(unit);
+        this.pluginSession?.attachUnit?.(unit, { scopeId: this.scopeId, unitId: unit.uuid });
     }
 
     connectUnitsDetailed(outputUUID, outputLabel, inputUUID, inputLabel) {
@@ -786,8 +827,23 @@ export class ScriptManager {
             return;
         }
 
-        this._beginEvaluation();
-        return this.evaluateUnit(headUnit.uuid);
+        const signalTransaction = this.signalStore.beginTransaction();
+        const runtimeState = captureRuntimeState(this.units);
+        const pluginTransaction = this.pluginSession?.beginEvaluation?.() ?? null;
+        try {
+            this._beginEvaluation();
+            const result = this.evaluateUnit(headUnit.uuid);
+            if (pluginTransaction) {
+                this.pluginSession.commitEvaluation(pluginTransaction, this.signalStore);
+            }
+            this.signalStore.commitTransaction(signalTransaction);
+            return result;
+        } catch (error) {
+            if (pluginTransaction) this.pluginSession.rollbackEvaluation(pluginTransaction);
+            this.signalStore.rollbackTransaction(signalTransaction);
+            restoreRuntimeState(this.units, runtimeState);
+            throw error;
+        }
     }
 
     executeProgram(inputs = {}, options = {}) {
@@ -802,6 +858,7 @@ export class ScriptManager {
         this.setRuntimeContext(options.context || options.runtimeContext || this.runtimeContext);
         const signalTransaction = this.signalStore.beginTransaction();
         const runtimeState = captureRuntimeState(this.units);
+        const pluginTransaction = this.pluginSession?.beginEvaluation?.() ?? null;
 
         try {
             this.setRuntimeInputs(inputs);
@@ -815,6 +872,9 @@ export class ScriptManager {
                         this.evaluateUnit(unit.uuid);
                     }
                 });
+                if (pluginTransaction) {
+                    this.pluginSession.commitEvaluation(pluginTransaction, this.signalStore);
+                }
                 this.signalStore.commitTransaction(signalTransaction);
                 return {
                     status: "success",
@@ -826,6 +886,9 @@ export class ScriptManager {
             }
 
             const result = this.execute();
+            if (pluginTransaction) {
+                this.pluginSession.commitEvaluation(pluginTransaction, this.signalStore);
+            }
             this.signalStore.commitTransaction(signalTransaction);
             return {
                 status: "success",
@@ -835,6 +898,7 @@ export class ScriptManager {
                 e: null
             };
         } catch (err) {
+            if (pluginTransaction) this.pluginSession.rollbackEvaluation(pluginTransaction);
             this.signalStore.rollbackTransaction(signalTransaction);
             restoreRuntimeState(this.units, runtimeState);
             return {
@@ -842,17 +906,13 @@ export class ScriptManager {
                 result: null,
                 outputs: {},
                 signals: this.signalStore.snapshot({ includeHeavy: false }),
-                e: {
-                    name: err?.name || "Error",
-                    message: err?.message || String(err),
-                    stack: err?.stack || null
-                }
+                e: createRuntimeError(err)
             };
         }
     }
 
     compile(name = "compiled-program") {
-        return compileVisualScript(this, name, getRegisteredBlockType);
+        return compileVisualScript(this, name, (type) => this.blockRegistry.get(type), this.blockRegistry);
     }
 
     static fromCompiled(compiledProgram) {
@@ -864,7 +924,11 @@ export class ScriptManager {
     }
 
     static createRunner(compiledProgram, options = {}) {
-        return createVisualScriptRunner(compiledProgram, getRegisteredBlockType, options);
+        const blockRegistry = options.blockRegistry ?? defaultBlockRegistry;
+        return createVisualScriptRunner(compiledProgram, (type) => blockRegistry.get(type), {
+            ...options,
+            blockRegistry,
+        });
     }
 
     static createCompiledProgramBlock(compiledProgram) {
@@ -884,6 +948,7 @@ export class ScriptManager {
     removeUnit(uuid) {
         const unit = this.units.find((item) => item.uuid === uuid);
         if (!unit) return;
+        unit.dispose?.();
 
         const incoming = Object.values(unit.inputs);
         incoming.forEach((connection) => {
@@ -912,6 +977,15 @@ export class ScriptManager {
 
     recomputeBindings() {
         return recomputeBindings(this);
+    }
+
+    dispose() {
+        if (this.disposed) return;
+        this.disposed = true;
+        for (const unit of this.units) unit?.dispose?.();
+        this.units = [];
+        this.outputMemo.clear();
+        this.evaluating.clear();
     }
 
     checkValidity() {

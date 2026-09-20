@@ -25,7 +25,7 @@ import { assertRunIdentityCounters } from "./kernel/RunIdentity.js";
 import { canonicalNumericTree } from "./kernel/SimulationHashes.js";
 import { renderSceneProviderRegistry } from "./render/RenderSceneProviderRegistry.js";
 import { normalizePbrRenderRecipe } from "./render/PbrRenderScene.js";
-import { assertManagedPluginsUnavailable } from "../plugin/PluginAdmission.js";
+import { normalizePluginSelection } from "../plugin/PluginSelection.js";
 import {
     clonePlain,
     finiteOr as finite,
@@ -611,7 +611,6 @@ export function createDefaultRunManifest(overrides = {}) {
 }
 
 export function normalizeRunManifest(value, { allowMissingKind = false } = {}) {
-    assertManagedPluginsUnavailable(value, { context: "Run-manifest plugin selection" });
     const source = object(value);
     if (!allowMissingKind && source.kind !== undefined && source.kind !== RUN_MANIFEST_KIND) {
         throw new Error(`Unsupported run manifest kind: ${JSON.stringify(source.kind)}.`);
@@ -633,6 +632,10 @@ export function normalizeRunManifest(value, { allowMissingKind = false } = {}) {
     if (!supported.includes(sourceVersion)) {
         throw new Error(`Unsupported run manifest version ${source.version}; expected version 1–${RUN_MANIFEST_VERSION}.`);
     }
+    if (sourceVersion < RUN_MANIFEST_VERSION && source.plugins !== undefined) {
+        throw new Error("Plugin selection requires run-manifest version 11.");
+    }
+    const plugins = normalizePluginSelection(source.plugins);
     const initial = object(source.initialState);
     const clock = object(source.clock);
     const scripts = object(source.scripts);
@@ -692,6 +695,7 @@ export function normalizeRunManifest(value, { allowMissingKind = false } = {}) {
             expectedBindingsHash: text(scripts.expectedBindingsHash) || null,
             embeddedBindings: Array.isArray(scripts.embeddedBindings) ? clonePlain(scripts.embeddedBindings) : [],
         },
+        ...(plugins ? { plugins } : {}),
         topics,
         controls: normalizeControlsConfig(controlsSource, { targetVehicleId: defaultTarget }),
         assertions: (Array.isArray(source.assertions) ? source.assertions : []).map(assertion),

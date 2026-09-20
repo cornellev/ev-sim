@@ -6,6 +6,7 @@ import { createSimulationRuntimeContext } from "../kernel/SimulationRuntimeConte
 import { HeadlessSensorManager } from "../sensors/HeadlessSensorManager.js";
 import { HeadlessVehicleManager } from "./HeadlessVehicleManager.js";
 import { HeadlessWorldRuntime } from "./HeadlessWorldRuntime.js";
+import { PluginRunSession, pluginRuntimeCapabilitiesForRun } from "../../plugin/PluginRunSession.js";
 
 function nullLifecycleService() {
     return {
@@ -87,6 +88,24 @@ export function createHeadlessRuntimeContext(options = {}) {
         disposeRendering: async () => {
             if (renderRuntime) await options.rendererClient?.releasePbr?.();
             renderRuntime = null;
+        },
+        preparePlugins: async (resolvedRun, runtimeOptions = {}) => {
+            if ((resolvedRun.plugins?.length ?? 0) === 0) return null;
+            const session = new PluginRunSession({
+                moduleSource: options.pluginModuleSource,
+                plugins: resolvedRun.plugins,
+                availableCapabilities: pluginRuntimeCapabilitiesForRun(resolvedRun, {
+                    renderTarget: runtimeOptions.renderTarget ?? "headless",
+                    backendSelections: runtimeOptions.backendSelections
+                        ?? resolvedRun.backendSelections,
+                }),
+            });
+            try {
+                return await session.prepareDefinitions(resolvedRun.pluginPackages);
+            } catch (error) {
+                session.dispose();
+                throw error;
+            }
         },
     });
     return Object.freeze({

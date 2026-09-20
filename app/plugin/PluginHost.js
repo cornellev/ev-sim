@@ -6,6 +6,8 @@ import { validateCapabilityGrants } from "../plugin-api/capabilities.js";
 import { assertPluginCompatibility } from "./PluginDocument.js";
 import { clonePluginJson } from "./PluginJson.js";
 import { PLUGIN_ERROR_CODES, assertSynchronous, pluginError } from "./PluginErrors.js";
+import { comparePluginText } from "./PluginSelection.js";
+import { PLUGIN_SYSTEM_METHODS } from "./PluginSystemDispatcher.js";
 
 function signalNamespace(path) {
     return String(path ?? "").trim().split(".", 1)[0];
@@ -27,13 +29,15 @@ export class PluginHost {
         availableCapabilities = [],
         logger = () => {},
         createFacade = null,
+        onUnitDispose = null,
     } = {}) {
         this.blockRegistry = blockRegistry;
         this.createUnitAdapterClass = createUnitAdapterClass;
         this.simulatorVersion = simulatorVersion;
-        this.availableCapabilities = Object.freeze([...availableCapabilities].sort());
+        this.availableCapabilities = Object.freeze([...availableCapabilities].sort(comparePluginText));
         this.logger = logger;
         this.createFacade = createFacade;
+        this.onUnitDispose = onUnitDispose;
         this.packages = new Map();
         this.sealed = false;
     }
@@ -44,7 +48,7 @@ export class PluginHost {
 
     _facadeFactory(granted, plugin) {
         const grants = new Set(granted);
-        return (helpers) => {
+        return (helpers, adapterContext = {}) => {
             const base = {
                 readSignal(path, options = {}) {
                     const capability = `signals.read.${signalNamespace(path)}`;
@@ -55,7 +59,11 @@ export class PluginHost {
                 },
                 getContext: helpers.getContext,
             };
-            return this.createFacade ? this.createFacade(Object.freeze(base), { plugin, capabilities: Object.freeze([...granted]) }) : base;
+            return this.createFacade ? this.createFacade(Object.freeze(base), {
+                plugin,
+                capabilities: Object.freeze([...granted]),
+                ...adapterContext,
+            }) : base;
         };
     }
 
@@ -104,14 +112,16 @@ export class PluginHost {
         } finally {
             active = false;
         }
-        if (document.systems.length > 0 || systems.length > 0) {
-            throw pluginError(PLUGIN_ERROR_CODES.UNAVAILABLE, "Plugin systems are unavailable until PLG-03.", fields);
-        }
         const declared = new Map(document.units.map((definition) => [definition.type, definition]));
         if (units.length !== declared.size) {
             throw pluginError(PLUGIN_ERROR_CODES.REGISTRATION, `Plugin "${document.id}" did not register its exact declared unit set.`, fields);
         }
-        const ownership = Object.freeze({ pluginId: document.id, version: document.version, runtimeHash: resource.runtimeHash });
+        const ownership = Object.freeze({
+            pluginId: document.id,
+            version: document.version,
+            packageHash: resource.packageHash,
+            runtimeHash: resource.runtimeHash,
+        });
         const adapterClasses = new Map();
         for (const contribution of units) {
             const keys = Object.keys(contribution).sort();
@@ -133,6 +143,7 @@ export class PluginHost {
                 blockClass: contribution.blockClass,
                 ownership,
                 createFacade: this._facadeFactory(granted, document),
+                onDispose: this.onUnitDispose,
             });
             const probe = new AdapterClass("__plugin_validation__");
             try {
@@ -149,13 +160,94 @@ export class PluginHost {
                 throw pluginError(PLUGIN_ERROR_CODES.REGISTRATION, `Plugin did not register declared unit "${type}".`, { ...fields, contributionId: type });
             }
         }
+        const declaredSystems = new Map(document.systems.map((definition) => [definition.id, definition]));
+        if (systems.length !== declaredSystems.size) {
+            throw pluginError(PLUGIN_ERROR_CODES.REGISTRATION, `Plugin "${document.id}" did not register its exact declared system set.`, fields);
+        }
+        const systemFactories = [];
+        const seenSystems = new Set();
+        for (const contribution of systems) {
+            const keys = Object.keys(contribution).sort();
+            if (keys.length !== 2 || keys[0] !== "create" || keys[1] !== "id") {
+                throw pluginError(PLUGIN_ERROR_CODES.REGISTRATION, "System contributions contain only id and create.", fields);
+            }
+            const definition = declaredSystems.get(contribution.id);
+            if (!definition) {
+                throw pluginError(PLUGIN_ERROR_CODES.REGISTRATION, `Plugin registered undeclared system "${contribution.id}".`, {
+                    ...fields,
+                    contributionId: contribution.id,
+                });
+            }
+            if (seenSystems.has(contribution.id)) {
+                throw pluginError(PLUGIN_ERROR_CODES.REGISTRATION, `Plugin registered system "${contribution.id}" more than once.`, {
+                    ...fields,
+                    contributionId: contribution.id,
+                });
+            }
+            if (typeof contribution.create !== "function") {
+                throw pluginError(PLUGIN_ERROR_CODES.REGISTRATION, `Plugin system "${contribution.id}" create must be a function.`, {
+                    ...fields,
+                    contributionId: contribution.id,
+                });
+            }
+            const probe = contribution.create();
+            assertSynchronous(probe, "create", { ...fields, contributionId: contribution.id, hook: "create" });
+            if (!probe || typeof probe !== "object") {
+                throw pluginError(PLUGIN_ERROR_CODES.REGISTRATION, `Plugin system "${contribution.id}" create() must return an instance.`, {
+                    ...fields,
+                    contributionId: contribution.id,
+                });
+            }
+            try {
+                for (const name of PLUGIN_SYSTEM_METHODS) {
+                    if (typeof probe[name] !== "function") {
+                        throw pluginError(PLUGIN_ERROR_CODES.REGISTRATION, `Plugin system "${contribution.id}" is missing ${name}().`, {
+                            ...fields,
+                            contributionId: contribution.id,
+                            hook: name,
+                        });
+                    }
+                }
+            } finally {
+                try {
+                    assertSynchronous(probe.dispose(), "dispose", {
+                        ...fields,
+                        contributionId: contribution.id,
+                        hook: "dispose",
+                    });
+                } catch (error) {
+                    if (error?.code === PLUGIN_ERROR_CODES.ASYNC_HOOK) throw error;
+                }
+            }
+            seenSystems.add(contribution.id);
+            systemFactories.push(Object.freeze({
+                id: contribution.id,
+                pluginId: document.id,
+                version: document.version,
+                runtimeHash: resource.runtimeHash,
+                capabilities: granted,
+                priority: definition.priority,
+                stateVersion: definition.stateVersion,
+                create: contribution.create,
+            }));
+        }
+        for (const id of declaredSystems.keys()) {
+            if (!seenSystems.has(id)) {
+                throw pluginError(PLUGIN_ERROR_CODES.REGISTRATION, `Plugin did not register declared system "${id}".`, {
+                    ...fields,
+                    contributionId: id,
+                });
+            }
+        }
         const metadata = Object.freeze({
             pluginId: document.id,
             version: document.version,
             packageHash: resource.packageHash,
             runtimeHash: resource.runtimeHash,
             capabilities: granted,
-            units: Object.freeze([...adapterClasses.keys()].sort()),
+            units: Object.freeze([...adapterClasses.keys()].sort(comparePluginText)),
+            systems: Object.freeze(systemFactories.map((entry) => entry.id).sort(comparePluginText)),
+            systemFactories: Object.freeze(systemFactories),
         });
         this.blockRegistry = candidate;
         this.packages.set(document.id, metadata);

@@ -41,7 +41,21 @@ export class TopicContractRouter {
         this.lastActive = new Map();
         this.lastProducer = new Map();
         this.lastStatus = new Map();
+        this.observers = new Set();
         this._defineContractSignals();
+    }
+
+    addObserver(observer) {
+        if (typeof observer === "function") this.observers.add(observer);
+        return () => this.removeObserver(observer);
+    }
+
+    removeObserver(observer) {
+        this.observers.delete(observer);
+    }
+
+    _notifyObservers(envelope) {
+        for (const observer of this.observers) observer(envelope);
     }
 
     getTopic(nameOrId) {
@@ -386,6 +400,17 @@ export class TopicContractRouter {
             routeDownstream: shouldRouteDownstream(topic),
             lastGoodSequence: sequence,
         });
+
+        this._notifyObservers(Object.freeze({
+            topic: envelope.topic,
+            contractId: envelope.contractId,
+            producer: envelope.producer,
+            sequence: envelope.sequence,
+            applyTimeNs: envelope.applyTimeNs,
+            applyStep: envelope.applyStep,
+            typeStr: envelope.typeStr,
+            value: envelope.value,
+        }));
 
         return { ok: true, topic, envelope, activePath, producerPath, usedFallback };
     }

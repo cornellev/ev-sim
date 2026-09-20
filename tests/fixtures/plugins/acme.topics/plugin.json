@@ -1,0 +1,13 @@
+{
+  "kind": "cev-sim.plugin",
+  "api": 1,
+  "id": "acme.topics",
+  "version": "1.0.0",
+  "engines": { "cevSim": ">=0.1.0 <0.2.0" },
+  "entry": { "runtime": "runtime/index.js" },
+  "capabilities": ["topics.subscribe", "topics.publish"],
+  "units": [],
+  "systems": [
+    { "id": "acme.topics.Bridge", "phase": "scripts", "priority": 0, "stateVersion": 1 }
+  ]
+}

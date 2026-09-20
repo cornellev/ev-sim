@@ -1,0 +1,13 @@
+{
+  "kind": "cev-sim.plugin",
+  "api": 1,
+  "id": "acme.controls",
+  "version": "1.0.0",
+  "engines": { "cevSim": ">=0.1.0 <0.2.0" },
+  "entry": { "runtime": "runtime/index.js" },
+  "capabilities": ["controls.reference"],
+  "units": [],
+  "systems": [
+    { "id": "acme.controls.Driver", "phase": "scripts", "priority": 0, "stateVersion": 1 }
+  ]
+}
