@@ -1,10 +1,10 @@
 import { ChunkManager } from "../editor/chunks/ChunkManager.js";
 import { DEFAULT_CHUNK_SIZE } from "../editor/chunks/ChunkIndex.js";
 import { EnvironmentDocument } from "../editor/document/EnvironmentDocument.js";
-import { hydrateDocumentFromRuntime } from "../editor/document/documentRuntimeHydration.js";
 import { EditorState } from "../editor/EditorState.js";
 import { EnvironmentRegistry } from "../editor/EnvironmentRegistry.js";
 import { CommandBus } from "../editor/commands/CommandBus.js";
+import { hydrateRuntimeDocument } from "../editor/commands/importCommands.js";
 import { SceneProjector } from "../editor/projection/SceneProjector.js";
 import { SelectionStore } from "../editor/selection/SelectionStore.js";
 import { EnvironmentSkyState } from "../skybox/EnvironmentSkyState.js";
@@ -109,7 +109,6 @@ export class Environment {
         this.scene = scene;
         this.chunkManager.setScene(scene);
         this.registry.registerExistingContent(scene, this.data);
-        hydrateDocumentFromRuntime(this.data, this.document);
         this.sceneProjector?.dispose?.();
         this.assetRuntime?.previews?.dispose?.();
         this.assetRuntime?.models?.dispose?.();
@@ -121,6 +120,12 @@ export class Environment {
             registry: this.registry,
             runtime: projectorRuntime,
         }).attach();
+        const hydration = this.commandBus.execute(hydrateRuntimeDocument({ data: this.data }));
+        if (hydration && !hydration.ok) {
+            console.warn("Could not import runtime content into the environment document.", hydration.issues);
+        }
+        // Bootstrap import is not an editor undo step; the first user command starts history.
+        this.commandBus.reset();
     }
 
     editor() {

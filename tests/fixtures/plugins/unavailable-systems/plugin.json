@@ -1,0 +1,6 @@
+{
+  "kind": "cev-sim.plugin", "api": 1, "id": "acme.systems", "version": "1.0.0",
+  "engines": { "cevSim": ">=0.1.0 <0.2.0" }, "entry": { "runtime": "runtime/index.js" },
+  "capabilities": [], "units": [],
+  "systems": [{ "id": "acme.systems.Tick", "phase": "scripts", "priority": 0, "stateVersion": 1 }]
+}

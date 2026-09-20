@@ -1,6 +1,3 @@
-import { syncBuildingsFromDocument, syncRoadsFromDocument } from "../editor/document/DocumentSync.js";
-import { removeBuildingMeshesFromScene, removeFeatureFromRuntime } from "../editor/map/mapRuntimeSync.js";
-import { placeFusionObjectInScene } from "../editor/placement/placeFusionObject.js";
 import { createBrowserProjectorRuntime } from "../editor/projection/browserProjectorRuntime.js";
 import { getEnvironmentManifest } from "./EnvironmentCatalogClient.js";
 import { objectTypeRegistry, reconcileObjectGraph } from "../editor/objects/index.js";
@@ -124,9 +121,11 @@ export class EnvironmentLoader {
         }
         document.restoreSnapshot({ ...restored, objects: objectGraph.records });
 
-        syncRoadsFromDocument(this.data, this.scene, document);
-        this._rebuildBuildings();
-        this._rebuildFeatures();
+        const projector = environment.projector?.();
+        if (!projector) {
+            throw new Error("EnvironmentLoader.apply requires SceneProjector.attach() before a full document rebuild.");
+        }
+        projector.applyFullDocument({ source: "load" });
         document.roadsAuthored = roadsAuthored;
         document.buildingsAuthored = buildingsAuthored;
         document.featuresAuthored = featuresAuthored;
@@ -187,67 +186,6 @@ export class EnvironmentLoader {
 
     _restoreVisualReferences(manifest) {
         applyEnvironmentVisualReferences(this.data.environment(), manifest);
-    }
-
-    _rebuildBuildings() {
-        const environment = this.data.environment();
-        const registry = environment.objects();
-
-        for (const entity of registry.listEntities()) {
-            if (entity.kind !== "building") continue;
-            removeBuildingMeshesFromScene(this.scene, entity.sourceId);
-            registry.unregisterEntity(entity.id);
-        }
-
-        this.data.objects().replaceTriangles?.(
-            (triangle) => triangle.environmentGeometryType === "building",
-            [],
-        );
-        syncBuildingsFromDocument(this.scene, this.data, environment.getDocument());
-    }
-
-    _rebuildFeatures() {
-        const environment = this.data.environment();
-        const registry = environment.objects();
-        const document = environment.getDocument();
-
-        for (const entity of registry.listEntities()) {
-            if (entity.layer !== "props") continue;
-            removeFeatureFromRuntime(this.data, this.scene, entity.sourceId);
-        }
-
-        const restored = [];
-        for (const feature of document.features) {
-            try {
-                const { object } = placeFusionObjectInScene({
-                    data: this.data,
-                    scene: this.scene,
-                    registry,
-                    assetId: feature.type,
-                    point: { x: feature.x, y: 0, z: feature.z },
-                    sourceId: feature.id,
-                    dir: feature.dir ?? 0,
-                });
-                if (!object) continue;
-
-                object.dir = feature.dir ?? 0;
-                if (object._mesh) {
-                    object._mesh.rotation.y = feature.rotationY ?? 0;
-                    object._mesh.updateMatrixWorld(true);
-                }
-                restored.push({
-                    ...feature,
-                    id: feature.id,
-                    rotationY: feature.rotationY ?? 0,
-                    tags: [...(feature.tags ?? [])],
-                });
-            } catch (error) {
-                console.warn(`[environment] could not restore feature "${feature.type}":`, error);
-            }
-        }
-        document.features = restored;
-        document.featuresAuthored = true;
-        document.notify({ source: "restore" });
     }
 
     _restoreSky(sky) {

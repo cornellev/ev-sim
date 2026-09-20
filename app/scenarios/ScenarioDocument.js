@@ -1,4 +1,11 @@
 import { validateRouteVerification } from "./route/Route.js";
+import {
+    clonePlain as clone,
+    finiteOr as finite,
+    plainObject as object,
+    plainText as text,
+    vec3,
+} from "../util/plainGeometry.js";
 
 export const SCENARIO_KIND = "cev-sim.scenario";
 export const SCENARIO_VERSION = 1;
@@ -49,39 +56,12 @@ export const EXPECTED_OUTCOME_KINDS = Object.freeze([
 export const PARAMETER_TYPES = Object.freeze(["float64", "int32", "boolean", "string"]);
 export const PARAMETER_TARGET_KINDS = Object.freeze(["scalar-field", "script-input", "scenario-signal"]);
 
-function object(value) {
-    return value && typeof value === "object" && !Array.isArray(value) ? value : {};
-}
-
-function text(value, fallback = "") {
-    const normalized = String(value ?? "").trim();
-    return normalized || fallback;
-}
-
-function finite(value, fallback = 0) {
-    const normalized = Number(value);
-    return Number.isFinite(normalized) ? normalized : fallback;
-}
-
 function positive(value, fallback = 1) {
     return Math.max(Number.EPSILON, finite(value, fallback));
 }
 
 function nonNegativeInt(value, fallback = 0) {
     return Math.max(0, Math.floor(finite(value, fallback)));
-}
-
-function clone(value) {
-    return value === undefined ? undefined : structuredClone(value);
-}
-
-function vec3(value = {}, fallback = {}) {
-    const source = object(value);
-    return {
-        x: finite(source.x, fallback.x ?? 0),
-        y: finite(source.y, fallback.y ?? 0),
-        z: finite(source.z, fallback.z ?? 0),
-    };
 }
 
 function makeId(prefix, index) {

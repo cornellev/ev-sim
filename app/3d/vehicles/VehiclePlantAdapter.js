@@ -24,6 +24,7 @@ export function attachVehiclePlant(vehicle, entry, dependency = null, options = 
     return plant;
 }
 
+/** One-shot attach: constructor pose/velocity on the Three view seed the plant. */
 export function syncPlantFromVehicle(vehicle) {
     if (!vehicle.plant) return;
     Object.assign(vehicle.plant.position, vehicle.position);
@@ -36,6 +37,24 @@ export function syncPlantFromVehicle(vehicle) {
     Object.assign(vehicle.plant.velocity, vehicle.velocity);
     Object.assign(vehicle.plant.acceleration, vehicle.acceleration);
     vehicle.plant.steeringAngle = Number(vehicle.steeringAngle) || 0;
+}
+
+/** Drive inputs belong on the plant; the Three view is a follower. */
+export function applyManualDrive(vehicle, { speedMps, steeringRad, accelerationX } = {}) {
+    const plant = vehicle.plant || null;
+    const target = plant || vehicle;
+    if (speedMps !== undefined && target.velocity) {
+        target.velocity.x = Number(speedMps) || 0;
+        if (plant && vehicle.velocity) vehicle.velocity.x = target.velocity.x;
+    }
+    if (accelerationX !== undefined && target.acceleration) {
+        target.acceleration.x = Number(accelerationX) || 0;
+        if (plant && vehicle.acceleration) vehicle.acceleration.x = target.acceleration.x;
+    }
+    if (steeringRad !== undefined) {
+        target.steeringAngle = Number(steeringRad) || 0;
+        if (plant) vehicle.steeringAngle = target.steeringAngle;
+    }
 }
 
 export function syncVehicleFromPlant(vehicle) {
@@ -51,7 +70,6 @@ export function syncVehicleFromPlant(vehicle) {
 }
 
 export function stepVehiclePlant(vehicle, deltaTime) {
-    syncPlantFromVehicle(vehicle);
     vehicle.plant.update(deltaTime);
     syncVehicleFromPlant(vehicle);
 }

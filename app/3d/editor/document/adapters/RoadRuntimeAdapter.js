@@ -13,13 +13,13 @@ import {
 
 /**
  * Rebuild ALL city roads and intersections from the environment document.
- * Load-time path only (EnvironmentLoader.apply, Earth import apply); editor
- * commands project incrementally through SceneProjector.
+ * Used by SceneProjector.applyFullDocument and the roads projector when
+ * `roadGeometryVersion` changes.
  * @param {import("../../data/Data").Data} data
  * @param {THREE.Scene} scene
  * @param {import("../EnvironmentDocument.js").EnvironmentDocument} document
  */
-export function syncRoadsFromDocument(data, scene, document) {
+export function rebuildRoadRuntime(data, scene, document) {
     const city = data.city();
     const { vectorMap: rawMap, connections } = documentToRoadNetworkInputs(document);
     const registry = getRoadRegistry(data);
@@ -75,4 +75,9 @@ export function syncRoadsFromDocument(data, scene, document) {
     return registry?.batch
         ? registry.batch(rebuild)
         : rebuild();
+}
+
+/** @deprecated Prefer rebuildRoadRuntime; kept for tests that still import the old name. */
+export function syncRoadsFromDocument(data, scene, document) {
+    return rebuildRoadRuntime(data, scene, document);
 }

@@ -11,6 +11,7 @@ import { BakeReuseManifestStore } from "./BakeReuseManifestStore.js";
 import { BakeMaterialProposalStore } from "./BakeMaterialProposalStore.js";
 import { VisualAssetStore } from "./VisualAssetStore.js";
 import { EditorAssetStore } from "./EditorAssetStore.js";
+import { PluginStore } from "./PluginStore.js";
 import { BakePromotionController, parseBakeOutputSourceIds } from "./BakePromotionController.js";
 import {
     RUN_PACKAGE_ERROR_CODES,
@@ -310,6 +311,7 @@ export class StorageService {
                 ?? options.assetStudioEnabled
                 ?? process.env.CEV_SIM_ASSET_STUDIO !== "0",
         });
+        this._pluginStore = null;
         this.packageStagingDir = path.join(dataDir, "visual-packages", "staging");
         this.packageImportJournalDir = path.join(dataDir, "visual-packages", "import-journals");
         this._packageLimits = resolveRunPackageLimits(options.visualPackages?.limits ?? {});
@@ -340,6 +342,11 @@ export class StorageService {
         this.headlessRunBundlesDir = path.join(dataDir, "headless-run-bundles");
         this._headlessQueueWriteChain = Promise.resolve();
         this._headlessAdmissionChain = Promise.resolve();
+    }
+
+    get plugins() {
+        if (!this._pluginStore) this._pluginStore = new PluginStore(this.dataDir);
+        return this._pluginStore;
     }
 
     // --- Environments -------------------------------------------------------

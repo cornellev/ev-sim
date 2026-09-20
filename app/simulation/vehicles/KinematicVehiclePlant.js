@@ -1,25 +1,9 @@
 import { getBuiltInVehicleManifest } from "../../vehicles/BuiltInVehicleManifests.js";
 import { normalizeVehicleManifest } from "../../vehicles/VehicleManifest.js";
+import { euler, finiteOr as finite, pose, vec3 } from "../../util/plainGeometry.js";
 
 export const VEHICLE_PLANT_KIND = "cev-sim.vehicle-plant";
 export const VEHICLE_PLANT_VERSION = 1;
-
-function finite(value, fallback = 0) {
-    const number = Number(value);
-    return Number.isFinite(number) ? number : fallback;
-}
-
-function vector(value = {}) {
-    return { x: finite(value?.x), y: finite(value?.y), z: finite(value?.z) };
-}
-
-function rotation(value = {}) {
-    return { ...vector(value), order: String(value?.order || "XYZ") };
-}
-
-function pose(value = {}) {
-    return { position: vector(value?.position), rotation: rotation(value?.rotation) };
-}
 
 function normalizeKeyframes(keyframes = []) {
     return keyframes
@@ -56,11 +40,11 @@ export function createVehiclePlantDefinition(entry = {}, dependency = null, opti
         vehicleManifestId: manifest.id,
         motionModel,
         initialPose: pose(entry.pose ?? options.pose),
-        initialLinearVelocity: vector(entry.linearVelocity ?? options.linearVelocity),
-        initialLinearAcceleration: vector(entry.linearAcceleration ?? options.linearAcceleration),
+        initialLinearVelocity: vec3(entry.linearVelocity ?? options.linearVelocity),
+        initialLinearAcceleration: vec3(entry.linearAcceleration ?? options.linearAcceleration),
         initialSteeringAngle: finite(entry.steeringAngle ?? options.steeringAngle),
-        dimensions: { ...vector(manifest.boundingBox?.size) },
-        boundingBoxCenter: vector(manifest.boundingBox?.center),
+        dimensions: { ...vec3(manifest.boundingBox?.size) },
+        boundingBoxCenter: vec3(manifest.boundingBox?.center),
         kinematics: { ...manifest.kinematics },
         keyframes,
         scenario: {
@@ -98,10 +82,10 @@ export class KinematicVehiclePlant {
         this.kinematics = { ...definition.kinematics };
         this.keyframes = definition.keyframes.map((frame) => ({ ...frame }));
         this.groundSampler = null;
-        this.position = vector();
-        this.rotation = rotation();
-        this.velocity = vector();
-        this.acceleration = vector();
+        this.position = vec3();
+        this.rotation = euler();
+        this.velocity = vec3();
+        this.acceleration = vec3();
         this.steeringAngle = 0;
         this.elapsedTime = 0;
         this.started = false;
@@ -132,19 +116,19 @@ export class KinematicVehiclePlant {
     }
 
     updatePosition(value) {
-        Object.assign(this.position, vector(value));
+        Object.assign(this.position, vec3(value));
     }
 
     updateRotation(value) {
-        Object.assign(this.rotation, rotation(value));
+        Object.assign(this.rotation, euler(value));
     }
 
     resetRunState(entry = {}) {
         const sourcePose = pose(entry.pose ?? this.definition.initialPose);
         Object.assign(this.position, sourcePose.position);
         Object.assign(this.rotation, sourcePose.rotation);
-        Object.assign(this.velocity, vector(entry.linearVelocity ?? this.definition.initialLinearVelocity));
-        Object.assign(this.acceleration, vector(entry.linearAcceleration ?? this.definition.initialLinearAcceleration));
+        Object.assign(this.velocity, vec3(entry.linearVelocity ?? this.definition.initialLinearVelocity));
+        Object.assign(this.acceleration, vec3(entry.linearAcceleration ?? this.definition.initialLinearAcceleration));
         this.steeringAngle = finite(entry.steeringAngle, this.definition.initialSteeringAngle);
         this.elapsedTime = 0;
         this.completed = false;
@@ -244,10 +228,10 @@ export class KinematicVehiclePlant {
     getDeterministicState() {
         return {
             id: this.telemetryId,
-            position: vector(this.position),
-            rotation: rotation(this.rotation),
-            velocity: vector(this.velocity),
-            acceleration: vector(this.acceleration),
+            position: vec3(this.position),
+            rotation: euler(this.rotation),
+            velocity: vec3(this.velocity),
+            acceleration: vec3(this.acceleration),
             steeringAngle: finite(this.steeringAngle),
         };
     }

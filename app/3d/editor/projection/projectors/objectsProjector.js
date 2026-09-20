@@ -49,5 +49,20 @@ export function createObjectsProjector() {
             }
             if (labelsChanged) registry.notify();
         },
+        rebuildAll(ctx) {
+            const { registry, document } = ctx;
+            if (!registry || !document) return;
+            this.apply({
+                ...ctx,
+                changeSet: {
+                    domains: {
+                        objects: {
+                            before: new Map(),
+                            after: new Map((document.objects ?? []).map((record) => [String(record.id), record])),
+                        },
+                    },
+                },
+            });
+        },
     };
 }

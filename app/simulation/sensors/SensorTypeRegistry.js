@@ -4,69 +4,24 @@ import {
     renderSceneProviderRegistry,
     validateCameraRenderDeclaration,
 } from "../render/RenderSceneProviderRegistry.js";
+import {
+    clonePlainObject as cloneObject,
+    finiteOr as finite,
+    nonNegativeIntegerOr as nonNegativeInteger,
+    plainObject as object,
+    plainText as text,
+    pose,
+    positiveIntegerOr as positiveInteger,
+    positiveOr as positive,
+} from "../../util/plainGeometry.js";
 
 const DEFAULT_SENSOR_TYPE = "lidar3d";
-
-function object(value) {
-    return value && typeof value === "object" && !Array.isArray(value) ? value : {};
-}
-
-function text(value, fallback = "") {
-    const normalized = String(value ?? "").trim();
-    return normalized || fallback;
-}
-
-function finite(value, fallback) {
-    const normalized = Number(value);
-    return Number.isFinite(normalized) ? normalized : fallback;
-}
-
-function positive(value, fallback) {
-    const normalized = finite(value, fallback);
-    return normalized > 0 ? normalized : fallback;
-}
-
-function nonNegativeInteger(value, fallback = 0) {
-    const normalized = Math.floor(finite(value, fallback));
-    return normalized >= 0 ? normalized : fallback;
-}
-
-function positiveInteger(value, fallback = 1) {
-    const normalized = Math.floor(finite(value, fallback));
-    return normalized > 0 ? normalized : fallback;
-}
-
-function vec3(value = {}, fallback = {}) {
-    const source = object(value);
-    return {
-        x: finite(source.x, fallback.x ?? 0),
-        y: finite(source.y, fallback.y ?? 0),
-        z: finite(source.z, fallback.z ?? 0),
-    };
-}
-
-function euler(value = {}) {
-    const source = object(value);
-    return { ...vec3(source), order: text(source.order, "XYZ") };
-}
-
-function pose(value = {}) {
-    const source = object(value);
-    return {
-        position: vec3(source.position),
-        rotation: euler(source.rotation),
-    };
-}
 
 function anglePair(value, fallback) {
     if (!Array.isArray(value) || value.length !== 2) return [...fallback];
     const low = finite(value[0], fallback[0]);
     const high = finite(value[1], fallback[1]);
     return high > low ? [low, high] : [...fallback];
-}
-
-function cloneObject(value) {
-    return structuredClone(object(value));
 }
 
 export class SensorTypeRegistry {

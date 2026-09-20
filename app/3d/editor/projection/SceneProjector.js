@@ -1,10 +1,8 @@
 /**
  * SceneProjector: the only path from a committed or transient document change
  * to runtime meshes, registry entities, chunk membership, and LiDAR truth
- * triangles. It subscribes to the document and applies every change set
- * through domain projectors; notifications without a change set (full loads,
- * hydration) are ignored because `EnvironmentLoader.apply` rebuilds the world
- * itself.
+ * triangles. Full environment loads call {@link SceneProjector.applyFullDocument};
+ * incremental edits still arrive as change sets via {@link SceneProjector.applyChanges}.
  */
 
 import { createBuildingsProjector } from "./projectors/buildingsProjector.js";
@@ -93,6 +91,39 @@ export class SceneProjector {
         else run();
         this.applied += 1;
         this.lastEvent = event;
+        this.data?.simulation?.()?.render?.();
+    }
+
+    /**
+     * Rebuild every domain from the current document. Used after a full load
+     * (`restoreSnapshot`) instead of going around the projector.
+     */
+    applyFullDocument({ source = "load" } = {}) {
+        const context = {
+            data: this.data,
+            scene: this.scene,
+            document: this.document,
+            registry: this.registry,
+            changeSet: null,
+            event: { source },
+            transient: false,
+            runtime: this.runtime,
+            source,
+        };
+        const run = () => {
+            for (const projector of this.projectors) {
+                try {
+                    if (typeof projector.rebuildAll === "function") projector.rebuildAll(context);
+                } catch (error) {
+                    this.errors.push({ projector: projector.id, error });
+                    console.warn(`[environment] projector "${projector.id}" failed:`, error);
+                }
+            }
+        };
+        if (this.registry?.batch) this.registry.batch(run);
+        else run();
+        this.applied += 1;
+        this.lastEvent = context.event;
         this.data?.simulation?.()?.render?.();
     }
 

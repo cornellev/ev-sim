@@ -1,0 +1,17 @@
+{
+  "kind": "cev-sim.plugin",
+  "api": 1,
+  "id": "acme.example",
+  "version": "1.0.0",
+  "engines": { "cevSim": ">=0.1.0 <0.2.0" },
+  "entry": { "runtime": "runtime/index.js" },
+  "capabilities": [],
+  "units": [{
+    "type": "acme.example.ScaleBlock",
+    "ports": { "inputs": { "value": "float64" }, "outputs": { "result": "float64" } },
+    "settings": [{ "target": "state", "key": "factor", "valueType": "float64", "default": 2 }],
+    "defaults": { "factor": 2 },
+    "catalog": { "name": "Scale", "category": "math", "keywords": ["scale", "multiply"], "placeable": true, "deprecated": false, "requiresSignals": false }
+  }],
+  "systems": []
+}

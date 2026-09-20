@@ -3,7 +3,6 @@ import test from "node:test";
 import * as THREE from "three";
 
 import { PerceptionTruthIndex } from "../app/autonomy/PerceptionTruthIndex.js";
-import { syncRoadsFromDocument } from "../app/3d/editor/document/adapters/RoadRuntimeAdapter.js";
 import {
     HANDLE_PIXEL_SIZES,
     ROAD_AUTHORING_HANDLE_KINDS,
@@ -62,7 +61,7 @@ test("road authoring handles parent under one group, skip perception, and hide w
     assert.equal(harness.environment.authoringHelpersVisible, false);
     assert.equal(group.visible, false);
 
-    syncRoadsFromDocument(harness.data, harness.scene, harness.document);
+    harness.projector.applyFullDocument({ source: "load" });
     const rebuilt = harness.scene.getObjectByName(ROAD_AUTHORING_HANDLES_NAME);
     assert.equal(rebuilt.visible, false, "rebuilds while Simulation is active stay hidden");
     assert.ok(handleMarkers(rebuilt).length > 0, "meshes remain for editor picking after return");

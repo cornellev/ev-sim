@@ -23,7 +23,7 @@ import { disposeRoadRuntimeObject, planRoadNetwork, materializeCompiledRoadNetwo
 import { planRoadNetworkGeometry } from "../../../../roads/RoadNetworkGeometry.js";
 import { resolveRoadEdge, roadGeometryVersionOf } from "../../../../roads/RoadGeometryRecord.js";
 import { applyDeltaToPoint, applyDeltaToVector } from "../../objects/transformDelta.js";
-import { syncRoadsFromDocument } from "../../document/adapters/RoadRuntimeAdapter.js";
+import { rebuildRoadRuntime } from "../../document/adapters/RoadRuntimeAdapter.js";
 import { documentToRoadNetworkInputs } from "../../document/documentMutations.js";
 import {
     intersectionEntityId,
@@ -462,7 +462,7 @@ export function createRoadsProjector() {
             if (!changeSet.domains?.["roads.nodes"] && !changeSet.domains?.["roads.edges"] && !versionChanged) return;
             if (versionChanged) {
                 clearTransientPreview(scene, gestureStarts, hiddenRoots);
-                syncRoadsFromDocument(data, scene, document);
+                rebuildRoadRuntime(data, scene, document);
                 return;
             }
             if (transient) {
@@ -481,6 +481,10 @@ export function createRoadsProjector() {
             }
             clearTransientPreview(scene, gestureStarts, hiddenRoots);
             rematerializeRoadClosure({ changeSet, data, scene, registry, document });
+        },
+        rebuildAll({ data, scene, document }) {
+            clearTransientPreview(scene, gestureStarts, hiddenRoots);
+            rebuildRoadRuntime(data, scene, document);
         },
         dispose() {
             gestureStarts.clear();

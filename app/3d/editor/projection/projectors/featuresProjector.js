@@ -70,5 +70,30 @@ export function createFeaturesProjector() {
                 applyFeatureTransform(registry, entity, after);
             }
         },
+        rebuildAll({ data, scene, registry, document, runtime }) {
+            if (!registry) return;
+            const removeFeature = runtime?.removeFeature ?? removeFeatureFromRuntime;
+            for (const entity of [...registry.listEntities()]) {
+                if (entity.layer !== "props") continue;
+                removeFeature(data, scene, entity.sourceId);
+            }
+            const restored = [];
+            for (const feature of document.features ?? []) {
+                try {
+                    const { object } = placeFeatureRuntime({ data, scene, registry, feature, runtime });
+                    if (!object) continue;
+                    restored.push({
+                        ...feature,
+                        id: feature.id,
+                        rotationY: feature.rotationY ?? 0,
+                        tags: [...(feature.tags ?? [])],
+                    });
+                } catch (error) {
+                    console.warn(`[environment] could not restore feature "${feature.type}":`, error);
+                }
+            }
+            document.features = restored;
+            document.featuresAuthored = true;
+        },
     };
 }

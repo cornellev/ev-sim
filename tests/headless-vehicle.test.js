@@ -116,8 +116,8 @@ test("browser presentation adapter and headless manager match a vehicle tape wit
         { dt: 0.05, acceleration: 1.25, steering: 1 },
     ];
     for (const action of tape) {
-        browser.acceleration.x = action.acceleration;
-        browser.steeringAngle = action.steering;
+        browser.plant.acceleration.x = action.acceleration;
+        browser.plant.steeringAngle = action.steering;
         plant.acceleration.x = action.acceleration;
         plant.steeringAngle = action.steering;
         stepVehiclePlant(browser, action.dt);

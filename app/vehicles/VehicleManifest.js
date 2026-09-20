@@ -5,6 +5,15 @@ import {
     validateVehicleSensorDefinition,
 } from "../simulation/sensors/SensorTypeRegistry.js";
 import { assertAllowedBrowserResourceUrl } from "../security/BrowserResourcePolicy.js";
+import {
+    euler,
+    finiteOr as finite,
+    nonNegativeOr as nonNegative,
+    plainObject as object,
+    plainText as text,
+    positiveOr as positive,
+    vec3,
+} from "../util/plainGeometry.js";
 
 export const VEHICLE_MANIFEST_KIND = "cev-sim.vehicle";
 export const VEHICLE_MANIFEST_VERSION = 2;
@@ -27,52 +36,6 @@ export const DEFAULT_ACTUATOR_LIMITS = Object.freeze({
     maxSteeringRate: 1.2,
     responseDelayNs: 0,
 });
-
-function object(value) {
-    return value && typeof value === "object" && !Array.isArray(value) ? value : {};
-}
-
-function text(value, fallback = "") {
-    const normalized = String(value ?? "").trim();
-    return normalized || fallback;
-}
-
-function finite(value, fallback) {
-    const normalized = Number(value);
-    return Number.isFinite(normalized) ? normalized : fallback;
-}
-
-function positive(value, fallback) {
-    const normalized = finite(value, fallback);
-    return normalized > 0 ? normalized : fallback;
-}
-
-function nonNegative(value, fallback) {
-    const normalized = finite(value, fallback);
-    return normalized >= 0 ? normalized : fallback;
-}
-
-function vec3(value = {}, fallback = {}) {
-    const source = object(value);
-    return {
-        x: finite(source.x, fallback.x ?? 0),
-        y: finite(source.y, fallback.y ?? 0),
-        z: finite(source.z, fallback.z ?? 0),
-    };
-}
-
-function euler(value = {}) {
-    const source = object(value);
-    return { ...vec3(source), order: text(source.order, "XYZ") };
-}
-
-function pose(value = {}) {
-    const source = object(value);
-    return {
-        position: vec3(source.position),
-        rotation: euler(source.rotation),
-    };
-}
 
 function wheel(value = {}, index = 0) {
     const source = object(value);

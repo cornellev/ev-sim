@@ -99,6 +99,21 @@ export function createBuildingsProjector() {
             if (!transient) gestureStarts.clear();
             if (regenerated) syncBakeBuildingsFromDocument(data, document);
         },
+        rebuildAll({ data, scene, registry, document, runtime }) {
+            gestureStarts.clear();
+            for (const entity of [...(registry?.listEntities?.() ?? [])]) {
+                if (entity.kind !== "building") continue;
+                removeBuildingRuntime({ data, scene, registry, buildingId: entity.sourceId, runtime });
+            }
+            data.objects?.()?.replaceTriangles?.(
+                (triangle) => triangle.environmentGeometryType === "building",
+                [],
+            );
+            for (const record of document.buildings ?? []) {
+                regenerateBuildingRuntime({ data, scene, registry, record, runtime });
+            }
+            syncBakeBuildingsFromDocument(data, document);
+        },
         dispose() {
             gestureStarts.clear();
         },

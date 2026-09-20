@@ -8,9 +8,6 @@
 
 import * as THREE from "three";
 import { Environment } from "../../app/3d/environment/Environment.js";
-import { syncRoadsFromDocument } from "../../app/3d/editor/document/adapters/RoadRuntimeAdapter.js";
-import { regenerateBuildingRuntime } from "../../app/3d/editor/projection/projectors/buildingsProjector.js";
-import { placeFeatureRuntime } from "../../app/3d/editor/projection/projectors/featuresProjector.js";
 import { deriveObjectGraph } from "../../app/3d/editor/objects/index.js";
 import { readEnvironmentEditorFixture } from "./environmentEditorBaseline.js";
 
@@ -201,13 +198,14 @@ export async function createEditorHarness({ fixture = "legacy-v2.yard.json", man
     const registry = environment.objects();
 
     if (seedRuntime) {
-        syncRoadsFromDocument(data, scene, document);
-        for (const building of document.buildings) regenerateBuildingRuntime({ data, scene, registry, record: building, runtime });
-        for (const feature of document.features) placeFeatureRuntime({ data, scene, registry, feature, runtime });
+        environment.projector().applyFullDocument({ source: "load" });
         bakeConfig.setBuildings(document.buildings.map((record) => ({ ...record })));
         runtime.counters.generateBuildings = 0;
         runtime.counters.placeFeature = 0;
         objectDatabase.replaceCalls.length = 0;
+        environment.projector().applied = 0;
+        environment.projector().lastEvent = null;
+        environment.projector().errors = [];
     }
 
     return {

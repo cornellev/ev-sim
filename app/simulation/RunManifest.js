@@ -25,6 +25,17 @@ import { assertRunIdentityCounters } from "./kernel/RunIdentity.js";
 import { canonicalNumericTree } from "./kernel/SimulationHashes.js";
 import { renderSceneProviderRegistry } from "./render/RenderSceneProviderRegistry.js";
 import { normalizePbrRenderRecipe } from "./render/PbrRenderScene.js";
+import { assertManagedPluginsUnavailable } from "../plugin/PluginAdmission.js";
+import {
+    clonePlain,
+    finiteOr as finite,
+    nonNegativeIntegerOr as nonNegativeInteger,
+    plainObject as object,
+    plainText as text,
+    pose,
+    positiveIntegerOr as positiveInteger,
+    vec3,
+} from "../util/plainGeometry.js";
 
 export const RUN_MANIFEST_KIND = "cev-sim.run-manifest";
 export const RUN_MANIFEST_VERSION = 11;
@@ -79,52 +90,6 @@ const DEFAULT_CONTROLS = Object.freeze({
     referenceSource: "scenario-route-follower",
     actuatorOverrides: {},
 });
-
-function object(value) {
-    return value && typeof value === "object" && !Array.isArray(value) ? value : {};
-}
-
-function text(value, fallback = "") {
-    const normalized = String(value ?? "").trim();
-    return normalized || fallback;
-}
-
-function finite(value, fallback) {
-    const normalized = Number(value);
-    return Number.isFinite(normalized) ? normalized : fallback;
-}
-
-function nonNegativeInteger(value, fallback = 0) {
-    const normalized = Math.floor(finite(value, fallback));
-    return normalized >= 0 ? normalized : fallback;
-}
-
-function positiveInteger(value, fallback = 1) {
-    const normalized = Math.floor(finite(value, fallback));
-    return normalized > 0 ? normalized : fallback;
-}
-
-function vec3(value = {}, fallback = {}) {
-    const source = object(value);
-    return {
-        x: finite(source.x, fallback.x ?? 0),
-        y: finite(source.y, fallback.y ?? 0),
-        z: finite(source.z, fallback.z ?? 0),
-    };
-}
-
-function euler(value = {}) {
-    const source = object(value);
-    return { ...vec3(source), order: text(source.order, "XYZ") };
-}
-
-function pose(value = {}) {
-    const source = object(value);
-    return {
-        position: vec3(source.position),
-        rotation: euler(source.rotation),
-    };
-}
 
 function topic(value = {}, index = 0) {
     return migrateLegacyTopic(value, index);
@@ -245,7 +210,7 @@ function parameter(value = {}, index = 0) {
         type,
         default: source.default ?? parameterDefault(type),
         target: {
-            ...structuredClone(object(source.target)),
+            ...clonePlain(object(source.target)),
             kind: RUN_PARAMETER_TARGET_KINDS.includes(source.target?.kind) ? source.target.kind : null,
             path: text(source.target?.path),
             scriptId: text(source.target?.scriptId) || null,
@@ -495,7 +460,7 @@ function scenarioSelection(value) {
             : Object.entries(object(source.sensorBindings)))
             .map(([aliasId, sensorId]) => [text(aliasId), text(sensorId)])
             .filter(([aliasId, sensorId]) => aliasId && sensorId)),
-        parameterValues: structuredClone(object(source.parameterValues ?? source.parameterOverrides)),
+        parameterValues: clonePlain(object(source.parameterValues ?? source.parameterOverrides)),
     };
 }
 
@@ -646,6 +611,7 @@ export function createDefaultRunManifest(overrides = {}) {
 }
 
 export function normalizeRunManifest(value, { allowMissingKind = false } = {}) {
+    assertManagedPluginsUnavailable(value, { context: "Run-manifest plugin selection" });
     const source = object(value);
     if (!allowMissingKind && source.kind !== undefined && source.kind !== RUN_MANIFEST_KIND) {
         throw new Error(`Unsupported run manifest kind: ${JSON.stringify(source.kind)}.`);
@@ -724,7 +690,7 @@ export function normalizeRunManifest(value, { allowMissingKind = false } = {}) {
             })).filter((entry) => entry.scriptId),
             bindingIds: (Array.isArray(scripts.bindingIds) ? scripts.bindingIds : []).map((id) => text(id)).filter(Boolean),
             expectedBindingsHash: text(scripts.expectedBindingsHash) || null,
-            embeddedBindings: Array.isArray(scripts.embeddedBindings) ? structuredClone(scripts.embeddedBindings) : [],
+            embeddedBindings: Array.isArray(scripts.embeddedBindings) ? clonePlain(scripts.embeddedBindings) : [],
         },
         topics,
         controls: normalizeControlsConfig(controlsSource, { targetVehicleId: defaultTarget }),

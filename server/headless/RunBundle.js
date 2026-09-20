@@ -16,6 +16,7 @@ import {
 } from "../../app/simulation/visual/VisualLayer.js";
 import { computeSimulationSemanticHash } from "../../app/simulation/kernel/SimulationHashes.js";
 import { HeadlessEpisodeError } from "../../app/simulation/headless/HeadlessErrors.js";
+import { assertManagedPluginsUnavailable } from "../../app/plugin/PluginAdmission.js";
 import { assertWorldResource } from "../../app/simulation/world/WorldDescription.js";
 import { assertLidarGeometryResource } from "../../app/simulation/lidar/LidarGeometry.js";
 import { assertRenderSceneResource } from "../../app/simulation/render/RenderScene.js";
@@ -244,6 +245,11 @@ function verifyBundleStructure(verified, { requireRuntime = false } = {}) {
 
 /** Execution accepts only implemented immutable versions; no normalization here. */
 export function verifyRunBundle(bundle) {
+    try {
+        assertManagedPluginsUnavailable(bundle, { context: "Managed run-bundle plugin execution" });
+    } catch (error) {
+        invalid("UNSUPPORTED_CAPABILITY", error.message, { path: error.path ?? null });
+    }
     const verified = verifyRunBundleIntegrity(bundle);
     const { resolved } = verified;
     if (![10, 11].includes(resolved.version)) {

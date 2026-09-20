@@ -203,26 +203,27 @@ test("vehicle bundles round-trip manifests and assets, suffixing conflicting ids
     }
 });
 
-test("custom manifest types resolve to ManifestVehicle while built-ins keep their classes", () => {
+test("built-in and custom types resolve to ManifestVehicle except scenario-car", () => {
     assert.equal(isBuiltInVehicleType("big-car"), true);
     assert.equal(isBuiltInVehicleType("my-truck"), false);
-    assert.equal(vehicleClassNameForType("big-car"), "BigCar");
-    assert.equal(vehicleClassNameForType("igvc-car"), "IGVCCar");
+    assert.equal(vehicleClassNameForType("big-car"), "ManifestVehicle");
+    assert.equal(vehicleClassNameForType("igvc-car"), "ManifestVehicle");
     assert.equal(vehicleClassNameForType("scenario-car"), "ScenarioCar");
     assert.equal(vehicleClassNameForType("my-truck"), "ManifestVehicle");
-    assert.equal(vehicleClassNameForType(""), "BigCar");
+    assert.equal(vehicleClassNameForType(""), "ManifestVehicle");
 
-    class BigCar {}
     class ManifestVehicle {
         constructor(vehicleManifestId) {
             this.vehicleManifestId = vehicleManifestId;
         }
     }
+    class ScenarioCar {}
 
-    assert.equal(matchesVehicleType(new BigCar(), "big-car"), true);
-    assert.equal(matchesVehicleType(new BigCar(), "my-truck"), false);
+    assert.equal(matchesVehicleType(new ManifestVehicle("big-car"), "big-car"), true);
+    assert.equal(matchesVehicleType(new ManifestVehicle("big-car"), "my-truck"), false);
     assert.equal(matchesVehicleType(new ManifestVehicle("my-truck"), "my-truck"), true);
     // A vehicle spawned from a different manifest must be respawned.
     assert.equal(matchesVehicleType(new ManifestVehicle("other-truck"), "my-truck"), false);
     assert.equal(matchesVehicleType(new ManifestVehicle("my-truck"), "big-car"), false);
+    assert.equal(matchesVehicleType(new ScenarioCar(), "scenario-car"), true);
 });

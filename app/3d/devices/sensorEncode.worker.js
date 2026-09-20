@@ -6,7 +6,7 @@
 import {
 	encodeTopicValue,
 	registerMsgDefinition,
-} from "../../client/Client.js";
+} from "../../client/TopicCodec.js";
 
 let schemasReady = false;
 

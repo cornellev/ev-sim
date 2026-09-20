@@ -1,4 +1,5 @@
 import { buildCalibrationBundle } from "../../app/autonomy/CalibrationBundle.js";
+import { createBindingManifest } from "../../app/scripting/bindings/BindingDocument.js";
 import { verifyRoute } from "../../app/scenarios/route/Route.js";
 import {
     RUN_BUNDLE_KIND,
@@ -12,6 +13,38 @@ import { createRenderSceneResource } from "../../app/simulation/render/RenderSce
 import { resolveEnabledCameraRenderSelection } from "../../app/simulation/render/RenderSceneProviderRegistry.js";
 import { createWorldResource } from "../../app/simulation/world/WorldDescription.js";
 import { StorageService } from "../../server/storage/StorageService.js";
+import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+const worldBoundFixtureUrl = new URL("../fixtures/visual-layer/world-bound-state.v11.json", import.meta.url);
+
+async function resolveHermeticPortableBase() {
+    const fixture = JSON.parse(await fs.readFile(worldBoundFixtureUrl, "utf8"));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "cev-headless-bundle-"));
+    try {
+        await fs.mkdir(path.join(root, "environments"), { recursive: true });
+        await fs.mkdir(path.join(root, "run-manifests"), { recursive: true });
+        await fs.writeFile(
+            path.join(root, "environments", "igvc.json"),
+            JSON.stringify(fixture.resolved.environment.manifest),
+        );
+        await fs.writeFile(
+            path.join(root, "run-manifests", "igvc-default.json"),
+            JSON.stringify(fixture.manifest),
+        );
+        await fs.writeFile(
+            path.join(root, "bindings.json"),
+            JSON.stringify(createBindingManifest({
+                bindings: fixture.resolved.bindings.entries,
+                updatedAt: "2026-08-30T00:00:00.000Z",
+            })),
+        );
+        return await new StorageService(root).resolveRunManifest("igvc-default");
+    } finally {
+        await fs.rm(root, { recursive: true, force: true });
+    }
+}
 
 export function createHeadlessImu(overrides = {}) {
     return {
@@ -97,7 +130,7 @@ export async function createPortableHeadlessBundle({
     completion = { conditions: [] },
     environment = null,
 } = {}) {
-    const resolved = await new StorageService().resolveRunManifest("igvc-default");
+    const resolved = await resolveHermeticPortableBase();
     if (environment) {
         const source = environment.document ? structuredClone(environment) : {
             environmentId: String(environment.environmentId),

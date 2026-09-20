@@ -7,6 +7,7 @@ import { Triangle } from "../data/objects/Triangle";
 import { normalizeVehicleManifest, resolveVehicleModelUrl } from "../../vehicles/VehicleManifest.js";
 import { applyModelPlacement } from "./ModelPlacement.js";
 import { attachVehiclePlant, resetVehiclePlant, stepVehiclePlant } from "./VehiclePlantAdapter.js";
+import { resetEgoPresentation, updateEgoPresentation } from "./EgoPresentation.js";
 
 export { applyModelPlacement } from "./ModelPlacement.js";
 
@@ -23,8 +24,9 @@ export class ManifestVehicle extends PhysicalVehicle {
      * @param {object} manifest A `cev-sim.vehicle` document.
      * @param {THREE.Vector3} position
      * @param {THREE.Euler} rotation
+     * @param {{ skipManifestDevices?: boolean }} [options]
      */
-    constructor(db, manifest, position = new THREE.Vector3(), rotation = new THREE.Euler()) {
+    constructor(db, manifest, position = new THREE.Vector3(), rotation = new THREE.Euler(), options = {}) {
         super(db, position, rotation);
 
         this.manifest = normalizeVehicleManifest(manifest);
@@ -59,7 +61,7 @@ export class ManifestVehicle extends PhysicalVehicle {
 
         // The base Vehicle constructor calls setupDevices() before the
         // manifest is assigned, so devices are created here instead.
-        this._setupManifestDevices();
+        if (!options.skipManifestDevices) this._setupManifestDevices();
     }
 
     /** Devices come from the manifest; see _setupManifestDevices. */
@@ -208,6 +210,11 @@ export class ManifestVehicle extends PhysicalVehicle {
         }
 
         this._updateLidarZoneTransform();
+        updateEgoPresentation(this, deltaTime);
+    }
+
+    disableControls() {
+        this.controlsEnabled = false;
     }
 
     updatePosition(newPosition) {
@@ -229,6 +236,7 @@ export class ManifestVehicle extends PhysicalVehicle {
             if (wheel.steerable) wheel.pivot.rotation.y = this.displaySteeringAngle;
         }
         this._updateLidarZoneTransform();
+        resetEgoPresentation(this);
     }
 
     getDeterministicState() {

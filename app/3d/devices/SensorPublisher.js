@@ -1,4 +1,4 @@
-import { encodeTopicValue } from "../../client/Client.js";
+import { encodeTopicValue } from "../../client/TopicCodec.js";
 import {
     SensorPublisher as SensorPublisherCore,
     normalizeCaptureResult,

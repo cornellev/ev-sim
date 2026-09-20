@@ -1,4 +1,5 @@
 import { createLoadedScript } from "../scripting/ScriptRuntime.js";
+import { applyManualDrive } from "../3d/vehicles/VehiclePlantAdapter.js";
 import {
     createScenarioMetricCollector,
     resolveVehicleFootprint,
@@ -672,8 +673,12 @@ export class ScenarioRuntime {
             });
             return true;
         }
-        if (vehicle.velocity) vehicle.velocity.x = finite(speedMps);
-        vehicle.steeringAngle = finite(steeringRad);
+        if (vehicle.plant) {
+            applyManualDrive(vehicle, { speedMps: finite(speedMps), steeringRad: finite(steeringRad) });
+        } else {
+            if (vehicle.velocity) vehicle.velocity.x = finite(speedMps);
+            vehicle.steeringAngle = finite(steeringRad);
+        }
         return true;
     }
 

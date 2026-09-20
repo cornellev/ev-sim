@@ -7,6 +7,7 @@ import { TopicContractRouter } from "../TopicContractRouter.js";
 import { TopicInputQueue } from "../TopicInputQueue.js";
 import { TransformRuntime } from "../TransformRuntime.js";
 import { assertEnabledCameraRenderRuntime } from "../render/RenderSceneProviderRegistry.js";
+import { assertManagedPluginsUnavailable } from "../../plugin/PluginAdmission.js";
 import {
     computeEpisodeHash,
     computeSimulationSemanticHash,
@@ -336,6 +337,7 @@ export class SimulationKernel {
         episodePhase = "start",
     } = {}) {
         if (!resolved?.manifest) throw new Error("Resolved run manifest is required.");
+        assertManagedPluginsUnavailable(resolved, { context: "Simulation-kernel plugin execution" });
         assertEnabledCameraRenderRuntime(resolved.manifest.sensorRig?.sensors, resolved.renderScene, {
             target: this.context.rendering?.target?.() ?? "headless",
         });

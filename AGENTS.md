@@ -64,6 +64,23 @@ Update the progress and decision log in
 `docs/environment-editor-plan.md` whenever an ED PR changes a contract, hash,
 acceptance criterion, or milestone status.
 
+## Simulator-plugin roadmap
+
+Before changing simulator plugin packages, registration, loading, storage,
+execution, capabilities, or plugin UI code, read:
+
+1. [`docs/plugin-plan.md`](docs/plugin-plan.md)
+2. [`docs/scripting/architecture.md`](docs/scripting/architecture.md)
+3. [`docs/run-manifests.md`](docs/run-manifests.md)
+4. [`docs/architecture.md`](docs/architecture.md)
+
+This is a separate `PLG-*` program. The root `plugin.json` describes agent
+tooling and is not a simulator package. Managed runs continue rejecting
+plugins until the plugin roadmap versions and admits them explicitly.
+
+Update the progress and decision log in `docs/plugin-plan.md` whenever a PLG
+PR changes a contract, hash, acceptance criterion, or milestone status.
+
 ## Architectural invariants
 
 - JavaScript remains the single authoritative simulator implementation.

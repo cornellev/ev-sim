@@ -4,6 +4,7 @@ import { isBuiltInVehicleType, matchesVehicleType } from "../../vehicles/vehicle
 import { vehicleAssetUrl } from "../../vehicles/VehicleManifest.js";
 import { bindRoadGroundSampler } from "../../simulation/vehicles/roadGroundSampler.js";
 import { syncVehicleFromPlant } from "../vehicles/VehiclePlantAdapter.js";
+import { createBrowserVehicle } from "../vehicles/createBrowserVehicle.js";
 
 const ASSET_MIME_TYPES = Object.freeze({
     bin: "application/octet-stream",
@@ -182,28 +183,17 @@ export class VehicleDatabase extends Database {
             const frozenManifest = dependency?.manifest
                 ? await materializeResolvedVehicleManifest(dependency)
                 : null;
-            if (entry.type === "igvc-car") {
-                const [{ IGVCCar }, THREE] = await Promise.all([import("../vehicles/IGVCCar.js"), import("three")]);
-                vehicle = new IGVCCar(this, new THREE.Vector3(position.x, position.y, position.z), new THREE.Euler(rotation.x, rotation.y, rotation.z, rotation.order || "XYZ"));
-            } else if (entry.type === "scenario-car") {
-                const { ScenarioCar } = await import("../vehicles/ScenarioCar.js");
-                vehicle = new ScenarioCar(this, { id: entry.id, keyframes: entry.keyframes || [{ x: position.x, y: position.z, yaw: -rotation.y }] });
-            } else if (entry.type && !isBuiltInVehicleType(entry.type)) {
-                const manifest = frozenManifest ?? await this._loadVehicleManifest(entry.type);
-                if (!manifest) {
-                    throw new Error(`Vehicle "${entry.id}" references unknown type "${entry.type}"; no built-in or saved vehicle manifest matches.`);
-                }
-                const [{ ManifestVehicle }, THREE] = await Promise.all([import("../vehicles/ManifestVehicle.js"), import("three")]);
-                vehicle = new ManifestVehicle(this, manifest, new THREE.Vector3(position.x, position.y, position.z), new THREE.Euler(rotation.x, rotation.y, rotation.z, rotation.order || "XYZ"));
-            } else {
-                const [{ BigCar }, THREE] = await Promise.all([import("../vehicles/BigCar.js"), import("three")]);
-                vehicle = new BigCar(
-                    this,
-                    new THREE.Vector3(position.x, position.y, position.z),
-                    new THREE.Euler(rotation.x, rotation.y, rotation.z, rotation.order || "XYZ"),
-                    { modelUrl: frozenManifest?.model?.asset },
-                );
-            }
+            const manifest = frozenManifest
+                ?? (entry.type && !isBuiltInVehicleType(entry.type)
+                    ? await this._loadVehicleManifest(entry.type)
+                    : null);
+            vehicle = createBrowserVehicle(this, {
+                type: entry.type,
+                id: entry.id,
+                pose: { position, rotation },
+                manifest,
+                keyframes: entry.keyframes,
+            });
             vehicle.telemetryId = entry.id;
             if (vehicle.plant) {
                 vehicle.plant.id = entry.id;

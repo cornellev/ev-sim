@@ -28,7 +28,9 @@ export async function SensorTest(data, scene) {
     const optimizer = await TriangleOptimizer.loadFromGLTF("shell/shell.gltf", 0.001);
     optimizer.optimize(0.2);
 
-    const bigCar = data.vehicles().vehicles.find(vehicle => vehicle?.constructor?.name === "BigCar");
+    const bigCar = data.vehicles().vehicles.find((vehicle) => (
+        vehicle?.constructor?.name === "ManifestVehicle" && vehicle.vehicleManifestId === "big-car"
+    ) || vehicle?._egoPresentation);
     if (bigCar?.sceneObject) {
         const sourceBounds = new THREE.Box3().setFromPoints(optimizer.vertices);
         const sourceSize = sourceBounds.getSize(new THREE.Vector3());

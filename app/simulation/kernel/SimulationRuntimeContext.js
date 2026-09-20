@@ -1,4 +1,6 @@
 import { EpisodeOverlay } from "../episode/EpisodeOverlay.js";
+import { euler, finiteOr, vec3 } from "../../util/plainGeometry.js";
+import { applyManualDrive, syncVehicleFromPlant } from "../../3d/vehicles/VehiclePlantAdapter.js";
 
 function resolve(source) {
     return typeof source === "function" ? source() : source;
@@ -12,29 +14,25 @@ function vehicleList(source) {
     return manager(source)?.vehicles ?? [];
 }
 
-function vector(value = {}) {
-    return {
-        x: Number(value?.x) || 0,
-        y: Number(value?.y) || 0,
-        z: Number(value?.z) || 0,
-    };
-}
-
-function rotation(value = {}) {
-    return {
-        ...vector(value),
-        order: value?.order || "XYZ",
-    };
-}
-
 function defaultVehicleState(vehicle, index) {
+    const plantState = vehicle?.plant?.getDeterministicState?.();
+    if (plantState) {
+        return {
+            id: String(vehicle?.telemetryId || vehicle?.id || plantState.id || `vehicle-${index + 1}`),
+            position: vec3(plantState.position),
+            rotation: euler(plantState.rotation),
+            velocity: vec3(plantState.velocity),
+            acceleration: vec3(plantState.acceleration),
+            steeringAngle: finiteOr(plantState.steeringAngle, 0),
+        };
+    }
     return {
         id: String(vehicle?.telemetryId || vehicle?.id || `vehicle-${index + 1}`),
-        position: vector(vehicle?.position),
-        rotation: rotation(vehicle?.rotation),
-        velocity: vector(vehicle?.velocity),
-        acceleration: vector(vehicle?.acceleration),
-        steeringAngle: Number(vehicle?.steeringAngle) || 0,
+        position: vec3(vehicle?.position),
+        rotation: euler(vehicle?.rotation),
+        velocity: vec3(vehicle?.velocity),
+        acceleration: vec3(vehicle?.acceleration),
+        steeringAngle: finiteOr(vehicle?.steeringAngle, 0),
     };
 }
 
@@ -185,6 +183,11 @@ export function createSimulationRuntimeContext(options = {}) {
                         vehicle.resetRunState(configured);
                         continue;
                     }
+                    if (vehicle.plant) {
+                        vehicle.plant.resetRunState(configured);
+                        syncVehicleFromPlant(vehicle);
+                        continue;
+                    }
                     vehicle.position?.set?.(
                         configured.pose.position.x,
                         configured.pose.position.y,
@@ -296,8 +299,10 @@ export function createSimulationRuntimeContext(options = {}) {
                     const vehicle = vehicles.find((candidate) => candidate.telemetryId === vehicleId)
                         ?? (vehicleId === "ego" ? vehicles[0] : null);
                     if (!vehicle) continue;
-                    if (vehicle.velocity) vehicle.velocity.x = setpoint.speedMps;
-                    vehicle.steeringAngle = setpoint.steeringRadThree;
+                    applyManualDrive(vehicle, {
+                        speedMps: setpoint.speedMps,
+                        steeringRad: setpoint.steeringRadThree,
+                    });
                 }
             },
             sampleAchieved(controlRuntime, { targetVehicleId = "ego", step = 0, timeNs = 0 } = {}) {
@@ -307,9 +312,9 @@ export function createSimulationRuntimeContext(options = {}) {
                     ?? vehicles[0];
                 if (!vehicle) return;
                 controlRuntime.sampleAchieved(targetVehicleId, {
-                    speedMps: Number(vehicle.velocity?.x) || 0,
-                    steeringRadThree: Number(vehicle.steeringAngle) || 0,
-                    accelerationMps2: Number(vehicle.acceleration?.x) || 0,
+                    speedMps: Number(vehicle.plant?.velocity?.x ?? vehicle.velocity?.x) || 0,
+                    steeringRadThree: Number(vehicle.plant?.steeringAngle ?? vehicle.steeringAngle) || 0,
+                    accelerationMps2: Number(vehicle.plant?.acceleration?.x ?? vehicle.acceleration?.x) || 0,
                 });
                 controlRuntime._publishSnapshot(
                     controlRuntime.getSnapshot(targetVehicleId, { applyTimeNs: timeNs }),

@@ -13,7 +13,9 @@ import { LiDAR2d } from "./devices/LiDAR2d";
 import { LiDAR3d } from "./devices/LiDAR3d";
 import { PointOptimizer } from "../optimization/PointOptimizer";
 import { TriangleOptimizer } from "../optimization/TriangleOptimizer";
-import { BigCar } from "./vehicles/BigCar";
+import { createBrowserVehicle } from "./vehicles/createBrowserVehicle.js";
+import { attachEgoPresentation } from "./vehicles/EgoPresentation.js";
+import { applyManualDrive, syncPlantFromVehicle } from "./vehicles/VehiclePlantAdapter.js";
 import { TrafficScenario } from "./traffic/TrafficScenario";
 import { buildRoadNetwork } from "./city/RoadNetwork";
 import { LoadRoadsFromGeoJSON } from "./city/CityBuilder";
@@ -361,40 +363,48 @@ async function setupCity(scene, data) {
  */
 async function setupVehicles(scene, data, camera) {
     const disposers = [];
-    const car = new BigCar(
-        data.vehicles(), 
-        new THREE.Vector3(0, 0, 0), 
-        new THREE.Euler(0, 0, 0)
-    );
+    const car = createBrowserVehicle(data.vehicles(), {
+        type: "big-car",
+        pose: { position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0, order: "XYZ" } },
+        skipManifestDevices: true,
+    });
     car.telemetryId = "ego";
+    if (car.plant) {
+        car.plant.id = "ego";
+        car.plant.telemetryId = "ego";
+        car.plant.definition.id = "ego";
+    }
     await car.addToScene(scene);
+    attachEgoPresentation(car, { playgroundDevices: true });
 
     disposers.push(data.keys().registerKeyDown("w", () => {
         if (!car.controlsEnabled) return;
-        car.velocity.x = 5; // move forward at 5 units/sec
+        applyManualDrive(car, { speedMps: 5 });
     }));
     disposers.push(data.keys().registerKeyDown("s", () => {
         if (!car.controlsEnabled) return;
-        car.velocity.x = -5; // move backward at 5 units/sec
+        applyManualDrive(car, { speedMps: -5 });
     }));
     disposers.push(data.keys().registerKeyUp("w", () => {
         if (!car.controlsEnabled) return;
-        car.velocity.x = 0; // stop moving forward
+        applyManualDrive(car, { speedMps: 0 });
     }));
     disposers.push(data.keys().registerKeyUp("s", () => {
         if (!car.controlsEnabled) return;
-        car.velocity.x = 0; // stop moving backward
+        applyManualDrive(car, { speedMps: 0 });
     }));
 
     const STEER_RATE = THREE.MathUtils.degToRad(50);
 
     disposers.push(data.keys().registerWhileDown("a", (dt) => {
         if (!car.controlsEnabled) return;
-        car.steeringAngle += STEER_RATE * dt;
+        const current = car.plant?.steeringAngle ?? car.steeringAngle ?? 0;
+        applyManualDrive(car, { steeringRad: current + STEER_RATE * dt });
     }));
     disposers.push(data.keys().registerWhileDown("d", (dt) => {
         if (!car.controlsEnabled) return;
-        car.steeringAngle -= STEER_RATE * dt;
+        const current = car.plant?.steeringAngle ?? car.steeringAngle ?? 0;
+        applyManualDrive(car, { steeringRad: current - STEER_RATE * dt });
     }));
 
 
@@ -416,9 +426,7 @@ async function setupVehicles(scene, data, camera) {
             const mode = String(value.mode || "velocity");
             const speed = mode === "stop" ? 0 : Number(value.speed || 0);
             const angle = mode === "stop" ? 0 : Number(value.steering_angle || 0);
-            car.velocity.x = speed;
-            // REP-103 positive-left → Three.js plant steering.
-            car.steeringAngle = -angle;
+            applyManualDrive(car, { speedMps: speed, steeringRad: -angle });
         }
     }));
 
@@ -470,8 +478,10 @@ async function setupSimulationRuntime(data, scene, camera, startingState = {}) {
     const disposeVehicleControls = await setupVehicles(scene, data, camera);
 
     if (startingState?.startingPosition && startingState?.startingRotation) {
-        data.vehicles().vehicles[0].position.copy(startingState.startingPosition);
-        data.vehicles().vehicles[0].rotation.copy(startingState.startingRotation);
+        const ego = data.vehicles().vehicles[0];
+        ego.position.copy(startingState.startingPosition);
+        ego.rotation.copy(startingState.startingRotation);
+        syncPlantFromVehicle(ego);
     }
 
     data.objects().scene(scene);

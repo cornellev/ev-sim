@@ -12,6 +12,7 @@ This folder is the contributor guide for cev-sim. Start here when you need to ru
 - Photoreal visual layer: [Visual Layer Contracts](visual-layer.md), then the agent-facing [Visual Layer Implementation Plan](visual-layer-plan.md) — truth-first mesh/PBR baking, hashed assets, optional Google and 3DGS tracks.
 - Environment editor program (agents): [Environment Editor Implementation Plan](environment-editor-plan.md) — object registry and options contracts, the schema-v4 authoring overlay, and the presentation/command seams for the unified workspace.
 - Visual scripting work: [Scripting Overview](scripting/README.md), then [Scripting Architecture](scripting/architecture.md) and [Extension Guide](scripting/extension-guide.md).
+- Simulator plugin program (agents): [Simulator Plugin Roadmap](plugin-plan.md) — package identity, isolated registration, public unit ABI, immutable storage, managed-run integration gates, and distribution acceptance.
 - Running scripts on live data: [Script Bindings](script-bindings.md) (topics, fixed updates, signals, timers).
 - Agent tooling: [MCP Server](mcp.md) — environment, scripting, binding, logging, and replay tools for AI agents. Portable skill + MCP config: root `plugin.json` / `mcp.json` and [`skills/cev-sim/`](../skills/cev-sim/).
 - Autonomy platform roadmap (agents): [Autonomy platform gap analysis and action plan](autonomy-platform-gap-analysis.md) — full-stack whiteboard vs cev-sim gaps, dataflow-first priorities, and step-by-step simulator work.

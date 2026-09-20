@@ -3,7 +3,7 @@
  * Falls back to synchronous encodeTopicValue when Workers are unavailable.
  */
 
-import { encodeTopicValue } from "../../client/Client.js";
+import { encodeTopicValue } from "../../client/TopicCodec.js";
 import { catalogSchemas } from "../../autonomy/AutonomyContractCatalog.js";
 
 const DEFAULT_WORKER_COUNT = 1;
