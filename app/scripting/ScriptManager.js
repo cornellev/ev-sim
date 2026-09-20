@@ -1,4 +1,5 @@
 
+import { pluginOwnershipFromUnit, stampGraphPluginLock } from "../plugin/PluginGraphLocks.js";
 import { defaultBlockRegistry, registerBlockType } from "./BlockRegistry.js";
 import { assertSupportedArtifact, createRuntimeError } from "./runtime/Artifact.js";
 import { compileVisualScript } from "./runtime/Compiler.js";
@@ -653,7 +654,7 @@ export class ScriptManager {
     }
 
     getBlockRegistry() {
-        return this.blockRegistry;
+        return this.pluginHost?.blockRegistry ?? this.blockRegistry;
     }
 
     getPluginHost() {
@@ -711,6 +712,13 @@ export class ScriptManager {
         if (this.disposed) throw new Error("Cannot add a unit to a disposed ScriptManager.");
         unit.setManager(this);
         this.units.push(unit);
+        const ownership = pluginOwnershipFromUnit(unit);
+        if (ownership) {
+            this.pluginLocks = stampGraphPluginLock(this.pluginLocks, {
+                type: unit.typeId(),
+                ownership,
+            });
+        }
         this.pluginSession?.attachUnit?.(unit, { scopeId: this.scopeId, unitId: unit.uuid });
     }
 
@@ -912,7 +920,8 @@ export class ScriptManager {
     }
 
     compile(name = "compiled-program") {
-        return compileVisualScript(this, name, (type) => this.blockRegistry.get(type), this.blockRegistry);
+        const registry = this.getBlockRegistry();
+        return compileVisualScript(this, name, (type) => registry.get(type), registry);
     }
 
     static fromCompiled(compiledProgram) {

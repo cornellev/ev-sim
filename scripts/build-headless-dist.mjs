@@ -28,6 +28,8 @@ const COPY_ENTRIES = Object.freeze([
     "docs/jetson-headless.md",
     "docs/python-headless.md",
     "docs/run-manifests.md",
+    "docs/plugin-plan.md",
+    "docs/plugin-api.md",
     "docs/sflog.md",
     "LICENSE",
 ]);
@@ -98,6 +100,8 @@ function packageMetadata(rootPackage) {
         "@grpc/grpc-js",
         "@grpc/proto-loader",
         "@noble/hashes",
+        "acorn",
+        "semver",
         "three",
         "three-mesh-bvh",
     ].map((name) => [name, rootPackage.dependencies[name]]));
@@ -136,8 +140,13 @@ async function resolvePython() {
 
 async function buildNpm(rootPackage, output, stage) {
     await Promise.all(COPY_ENTRIES.map((entry) => copyEntry(entry, stage)));
-    const supportingFiles = (await requiredJavascriptFiles()).filter((file) => !copiedByEntry(file));
+    const walked = await requiredJavascriptFiles();
+    if (walked.some((file) => file.startsWith("app/plugin/browser/"))) {
+        throw new Error("Headless JS walk reached browser plugin UI modules.");
+    }
+    const supportingFiles = walked.filter((file) => !copiedByEntry(file));
     await Promise.all(supportingFiles.map((file) => copyEntry(file, stage)));
+    await fs.access(path.join(stage, "server/plugins/NodePluginModuleSource.js"));
     await fs.writeFile(path.join(stage, "package.json"), `${JSON.stringify(packageMetadata(rootPackage), null, 2)}\n`);
     await fs.writeFile(path.join(stage, "README.md"), [
         "# cev-sim headless runtime",

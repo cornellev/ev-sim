@@ -29,10 +29,11 @@ The scripting canvas is an infinite world with a pan/zoom camera. Node `position
 
 1. [Architecture](architecture.md): editor execution, compiled execution, and data flow.
 2. [Authoring Units](authoring-units.md): how to create React units and `UnitBlock` behavior.
-3. [Extension Guide](extension-guide.md): checklist for adding a block safely.
-4. [Artifact Schema v3](artifact-schema-v3.md): compiled program format.
-5. [Artifact Schema v2](artifact-schema-v2.md): historical v2 format; still runnable.
-6. [Testing](testing.md): runtime test patterns.
+3. [Extension Guide](extension-guide.md): checklist for adding a built-in block, plus third-party plugin packages.
+4. [Plugin API](../plugin-api.md): `plugin.json`, runtime/UI ABI, hashes, and install.
+5. [Artifact Schema v3](artifact-schema-v3.md): compiled program format.
+6. [Artifact Schema v2](artifact-schema-v2.md): historical v2 format; still runnable.
+7. [Testing](testing.md): runtime test patterns.
 
 ## Key Files
 

@@ -52,6 +52,7 @@ export function validationIssueRequiresAdvanced(path = "") {
         || normalized.includes("expectedBindingsHash")
         || normalized.includes("embeddedBindings")
     )) return true;
+    if (normalized === "plugins" || normalized.startsWith("plugins.")) return true;
     if (normalized.startsWith("assertions.") && (
         normalized.includes(".mode")
         || normalized.includes(".tolerance")

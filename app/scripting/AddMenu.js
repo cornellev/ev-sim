@@ -204,21 +204,27 @@ function BlockRow({ unit, onAdd }) {
             </span>
             <span className="min-w-0 flex-1">
                 <span className="block truncate text-[12px] font-medium leading-4 text-zinc-100">{unit.name}</span>
-                <span className="block truncate text-[11px] leading-4 text-zinc-500">{meta.label}</span>
+                <span className="block truncate text-[11px] leading-4 text-zinc-500">
+                    {meta.label}
+                    {unit.ownership && unit.ownership !== "builtin" ? ` · ${unit.ownership.pluginId}@${unit.ownership.version}` : ""}
+                </span>
             </span>
             <IconPlus className="h-4 w-4 shrink-0 text-zinc-500 transition-colors duration-150 group-hover:text-zinc-100" stroke={1.75} />
         </button>
     );
 }
 
-export function AddMenu({ onAddUnit = () => {} }) {
+export function AddMenu({ onAddUnit = () => {}, catalog = null }) {
     const [open, setOpen] = useState(false);
     const [query, setQuery] = useState("");
     const [activeCategory, setActiveCategory] = useState("all");
     const [categoriesCollapsed, setCategoriesCollapsed] = useState(false);
     const [lastCanvasPointer, setLastCanvasPointer] = useState({ x: 420, y: 180 });
     const { viewportRef, canvasRef } = useContext(CanvasViewportContext);
-    const groupedUnits = useMemo(() => groupedUnitCatalog(), []);
+    const groupedUnits = useMemo(
+        () => groupedUnitCatalog(catalog || undefined),
+        [catalog],
+    );
     const allUnits = useMemo(() => flattenCatalogGroups(groupedUnits), [groupedUnits]);
     const categoryOrder = useMemo(() => Object.keys(groupedUnits), [groupedUnits]);
     const categoryCounts = useMemo(() => {

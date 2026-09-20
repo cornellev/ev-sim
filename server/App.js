@@ -13,6 +13,7 @@ app.prepare().then(async () => {
     const { StorageService } = await import('./storage/StorageService.js');
     const { mountStorageApi } = await import('./routes/storageApi.js');
     const { createMcpRouter } = await import('./mcp/createMcpRouter.js');
+    const { createScriptingRouter } = await import('./scripting/scriptingRouter.js');
     const { LogService } = await import('./logging/LogService.js');
     const { createLogRouter } = await import('./routes/logRouter.js');
     const { HeadlessExperimentService } = await import('./headless/HeadlessExperimentService.js');
@@ -46,13 +47,15 @@ app.prepare().then(async () => {
     await headlessExperimentService.initialize();
 
     // Parse JSON only for Express-owned routes. A global body parser locks the
-    // request stream and breaks Next.js App Router handlers (e.g. POST
-    // /api/scripting/compile) that need to read the body themselves.
+    // request stream and breaks Next.js App Router handlers that still need to
+    // read the body themselves. Plugin catalog/compile live on Express so they
+    // can use StorageService.
     server.use(['/api', '/mcp'], createRequestSecurityMiddleware(httpSecurity));
     const jsonParser = express.json({ limit: process.env.CEV_SIM_JSON_LIMIT || '8mb' });
     const headlessJsonParser = express.json({ limit: process.env.CEV_SIM_HEADLESS_JSON_LIMIT || '1mb' });
     server.use('/api/logs', createLogRouter(logService));
     mountStorageApi(server, storageService, { jsonParser });
+    server.use('/api/scripting', jsonParser, createScriptingRouter(storageService));
     server.use('/api/headless', headlessJsonParser, createHeadlessRouter(headlessExperimentService));
     const path = require("node:path");
     // three does not export `./package.json`; resolve the pinned Basis files via

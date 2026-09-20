@@ -7,7 +7,8 @@ renumber any of those roadmaps.
 
 The repository root `plugin.json` describes cev-sim's agent tooling plugin.
 Simulator plugin packages have an independent `plugin.json` inside each
-package directory and use the contracts below.
+package directory and use the contracts below. Package authors should start
+from [`docs/plugin-api.md`](plugin-api.md) rather than this roadmap.
 
 ## Status
 
@@ -16,7 +17,7 @@ package directory and use the contracts below.
 | PLG-01: foundation, isolated registries, verified packages | Complete in working tree | Verified | Unmerged |
 | PLG-02: resolved selection and deterministic unit execution | Complete in working tree | Verified | Unmerged |
 | PLG-03: systems and expanded simulator capabilities | Complete in working tree | Verified | Unmerged |
-| PLG-04: editor/UI integration and distribution acceptance | Not started | Not started | Unmerged |
+| PLG-04: editor/UI integration and distribution acceptance | Complete in working tree | Verified | Unmerged |
 
 Only a merged change may be marked merged. A milestone is verified only when
 all of its acceptance commands and evidence entries are present in this
@@ -168,7 +169,35 @@ removal preserves CAS bytes and immutable URLs.
 The Node source imports a verified, runtime-only tree with a host-generated
 `{ "type": "module" }` marker. The browser source imports the runtime entry
 from the verified same-origin CAS route. Paths derive only from digests and
-relative member paths. UI execution is unavailable in PLG-01.
+relative member paths. UI execution is a separate browser `importUi` path;
+Node/headless never import UI modules.
+
+### Authoring catalog and graph locks
+
+The editor and MCP share a revisioned unit catalog: built-in
+`UNIT_CATALOG_META` plus plugin units from the local library. Placing a plugin
+unit stamps `graph.pluginLocks` as `{ pluginId, version, packageHash,
+runtimeHash, types[] }`. One package per plugin ID per graph. Compiled
+artifacts continue to emit `pluginRequirements` as `{ pluginId, version,
+runtimeHash, types[] }` without `packageHash`. Missing packages render
+placeholders and fail compile.
+
+### UI ABI
+
+Custom views load from `entry.ui` through `registerUi(uiApi)`. The frozen UI
+API is `pluginApi`, `plugin`, `React`, `hooks`, `Unit`, `SettingsForm`,
+`contributeUnitView`, `assetUrl`, `log`, and `diagnostics`. Integrity failures
+are fatal. `registerUi` and render errors fall back to the generic settings
+form without unloading the runtime package.
+
+### Library control plane
+
+HTTP `GET /api/storage/plugins/library`, `POST .../install`, and
+`POST .../remove`, plus MCP `plugin_list` / `plugin_get` / `plugin_install` /
+`plugin_remove`, manage library membership. Directory installs require an
+absolute path. Removal preserves CAS bytes. Config Scripts (Advanced) authors
+exact manifest locks and capability grants.
+
 
 ## Milestones and acceptance gates
 
@@ -308,8 +337,27 @@ run completed without failures.
 | Repository lint | `npm run lint` | Passed with zero errors on 2026-09-20; one pre-existing `MapSurface.js` warning remains |
 | Full tests and characterization | `npm test` with loopback access; `npm run fixtures:headless` | 1,522 passed, 0 failed, and 4 existing skips on 2026-09-20; regenerated action-tape characterization is unchanged |
 
+## PLG-04 evidence ledger
+
+| Gate | Evidence | Result / limitation |
+| --- | --- | --- |
+| Authoring, catalog, scaffold, and library | `node --experimental-default-type=module --test tests/plugin-*.test.js` | 46/46 passed on 2026-09-20; covers graph `pluginLocks`, revisioned catalogs, lock conflicts, placeholders, HTTP/MCP library install-remove, scaffold/example verify, and portable plugin bundle closure |
+| Playwright production UI | `npx playwright test tests/ui/plugin-authoring.spec.js tests/ui/plugin-config.spec.js tests/ui/plugin-module-source.spec.js tests/ui/plugin-ui.spec.js --workers=1`; `npm run build` | 4/4 Chromium tests passed on 2026-09-20 against the production server; custom `registerUi` view, throwing UI fallback, CAS asset 200, tampered UI 400 then restored, Config Advanced lock/diagnostics, and runtime import without evaluating UI |
+| MCP/HTTP control plane | `tests/mcp-tools.test.js` `tests/plugin-api-routes.test.js` | 21/21 passed on 2026-09-20; `plugin_install` stamps `graph.pluginLocks`, library GET/install/remove publishes audit events, and `plugin_remove` keeps CAS bytes so locked lint still compiles |
+| Identity/runtime regression matrix | `visual-identity`, `run-manifest`, `simulation-kernel`, `headless-runtime`, `headless-runner`, and resolved-script security suites | 43/43 passed on 2026-09-20 |
+| Python bundle/client and generated contract | `python/.venv/bin/python -m pytest python/tests/test_bundle.py python/tests/test_client.py -q`; `npm run lint:python`; `npm run proto:python` | 26/26 passed; Ruff and generated-Protobuf checks passed on 2026-09-20. No Python plugin install API. |
+| Repository lint | `npm run lint` | Passed with zero errors on 2026-09-20; one pre-existing `MapSurface.js` warning remains |
+| Full tests and characterization | `npm test` with loopback access; `npm run fixtures:headless` | 1,533 passed, 0 failed, and 4 existing skips on 2026-09-20; regenerated action-tape characterization is unchanged |
+| Plugin-free soak | `npm run test:soak:quick` | Passed on 2026-09-20; soak remains plugin-free and does not change PR-12 obligations |
+| Clean distribution | `npm run dist:headless && npm run dist:verify` | Passed on 2026-09-20; npm tarball depends on `acorn` 8.15.0 and `semver` 7.7.3, ships `docs/plugin-plan.md` and `docs/plugin-api.md`, omits `app/plugin/browser`, plugin-free smoke stays byte-compatible, and the installed CLI completes an `acme.example` portable bundle smoke without `uiHash` in provenance |
+
 ## Decision log
 
+- **2026-09-20 — Express owns `/api/scripting`.** `GET /units` and `POST /compile` load the revisioned plugin catalog and exact `graph.pluginLocks` from `StorageService`. The Next route files remain 410 stubs so `next build` does not serve a second implementation.
+- **2026-09-20 — UI ABI is separate from runtime ABI.** `createRegistrationApi()` stays UI-free. Browser `registerUi` receives host React, `Unit`, and `SettingsForm`. Integrity failures are fatal; `registerUi` and render errors fall back to generic settings. Node/headless never call `importUi`.
+- **2026-09-20 — Editor locks carry `packageHash`.** `graph.pluginLocks` pin `{ pluginId, version, packageHash, runtimeHash, types[] }`. Compiled `pluginRequirements` remain `{ pluginId, version, runtimeHash, types[] }` without `packageHash`. One package per plugin ID per graph. Open graphs keep locked CAS bytes when library membership is removed.
+- **2026-09-20 — Headless dist verifies plugins with Acorn and SemVer.** The CLI tarball lists `acorn` and `semver` because `PluginPackage` and `PluginDocument` import them. Provenance includes `plugins: [{ pluginId, version, packageHash, runtimeHash }]` only for effective plugin runs and never `uiHash`.
+- **2026-09-20 — PLG-04 acceptance completed.** Revisioned catalogs, custom UI isolation, MCP/HTTP/Config library management, scaffold/docs/example, clean-install plugin bundle smoke, and plugin-free characterization all passed. Hosted/NVIDIA/Jetson/PR-12 soak evidence is unchanged and out of scope. PLG-04 is verified but remains unmerged.
 - **2026-09-20 — PLG-03 stays in the scripts phase.** Topic callbacks and
   system `onStep()` fold into the existing `"scripts"` cutoff after
   `BindingRuntime.update`. No new `lastStepPhases` names. Scenario may

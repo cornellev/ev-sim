@@ -1,4 +1,3 @@
-import { promises as fs } from "node:fs";
 import path from "node:path";
 
 import { expect, test } from "@playwright/test";
@@ -15,12 +14,6 @@ test.beforeAll(async () => {
     resource = await pluginFixtureResource();
     store = new PluginStore(path.resolve(".playwright-data/storage"));
     await store.putPackage(resource);
-});
-
-test.afterAll(async () => {
-    if (resource && store) {
-        await fs.rm(path.join(store.casDir, resource.packageHash), { recursive: true, force: true });
-    }
 });
 
 test("verified browser module source loads runtime closure without evaluating UI", async ({ page }) => {

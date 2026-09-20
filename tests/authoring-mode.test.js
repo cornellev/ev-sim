@@ -43,6 +43,8 @@ test("validationIssueRequiresAdvanced maps hidden authoring paths", () => {
     assert.equal(validationIssueRequiresAdvanced("topics.0.producer"), true);
     assert.equal(validationIssueRequiresAdvanced("topics.0.name"), false);
     assert.equal(validationIssueRequiresAdvanced("scripts.artifacts.0.expectedHash"), true);
+    assert.equal(validationIssueRequiresAdvanced("plugins"), true);
+    assert.equal(validationIssueRequiresAdvanced("plugins.artifacts.0.expectedHash"), true);
     assert.equal(validationIssueRequiresAdvanced("assertions.0.tolerance"), true);
     assert.equal(validationIssueRequiresAdvanced("parameters.0.target.path"), true);
 });

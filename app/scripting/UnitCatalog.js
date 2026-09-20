@@ -527,13 +527,27 @@ export function getUnitCatalogEntry(type) {
     return UNIT_CATALOG_BY_TYPE.get(type) || null;
 }
 
-export function groupedUnitCatalog() {
-    return UNIT_CATALOG.reduce((groups, item) => {
+export function groupedUnitCatalog(entries = UNIT_CATALOG) {
+    return entries.reduce((groups, item) => {
         if (!item.placeable) return groups;
         if (!groups[item.category]) groups[item.category] = [];
         groups[item.category].push(item);
         return groups;
     }, {});
+}
+
+export let catalogRevision = 0;
+
+export function mergePluginCatalogEntries(snapshot) {
+    catalogRevision = Number.isSafeInteger(snapshot?.revision) ? snapshot.revision : 0;
+    const pluginEntries = (snapshot?.units || [])
+        .filter((entry) => entry.ownership && entry.ownership !== "builtin")
+        .map((entry) => ({
+            ...entry,
+            blockClass: null,
+            Component: null,
+        }));
+    return [...UNIT_CATALOG, ...pluginEntries];
 }
 
 export function catalogBlockClasses() {

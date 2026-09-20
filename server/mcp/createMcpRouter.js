@@ -2,6 +2,7 @@ import express from "express";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { registerEnvironmentTools } from "./environmentTools.js";
+import { registerPluginTools } from "./pluginTools.js";
 import { registerScriptingTools } from "./scriptingTools.js";
 import { registerBindingTools } from "./bindingTools.js";
 import { registerLoggingTools } from "./loggingTools.js";
@@ -61,6 +62,7 @@ export function createSensorFusionMcpServer(storage, logService, headlessExperim
     });
 
     registerEnvironmentTools(server, storage);
+    registerPluginTools(server, storage);
     registerScriptingTools(server, storage);
     registerBindingTools(server, storage);
     registerRunManifestTools(server, storage);

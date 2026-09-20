@@ -14,6 +14,8 @@ import {
     run,
     temporaryRoot,
 } from "./lib/headless-release-support.mjs";
+import { createPluginPortableHeadlessBundle } from "../tests/helpers/headlessRunnerBundle.js";
+import { pluginFixtureResource } from "../tests/helpers/pluginFixtures.js";
 
 async function checked(command, args, options = {}) {
     const result = await run(command, args, options);
@@ -57,6 +59,14 @@ async function verifyNpm(root, tarball) {
         "--cache", path.join(root, "npm-cache"),
         tarball,
     ], { cwd: project });
+    const installedPackage = JSON.parse(
+        await fs.readFile(path.join(project, "node_modules/cev-sim/package.json"), "utf8"),
+    );
+    for (const name of ["acorn", "semver"]) {
+        if (!installedPackage.dependencies?.[name]) {
+            throw new Error(`Headless npm package must depend on ${name} for plugin verification.`);
+        }
+    }
     const executable = path.join(project, "node_modules/.bin/cev-sim");
     const help = await checked(executable, ["--help"], { cwd: project });
     if (!help.stdout.includes("cev-sim supervisor")) throw new Error("Installed npm CLI did not expose headless commands.");
@@ -83,6 +93,45 @@ async function verifyNpm(root, tarball) {
     if (!records.some((entry) => entry.kind === "cev-sim.headless.result" && entry.result?.passed === true)) {
         throw new Error("Installed npm runtime did not complete the clean-install smoke episode.");
     }
+    const pluginResource = await pluginFixtureResource();
+    const pluginBundle = await createPluginPortableHeadlessBundle(pluginResource, {
+        triggers: [{
+            id: "finish", name: "Finish", enabled: true, once: true,
+            condition: { kind: "step", step: 1 }, actions: [{ kind: "finish" }],
+        }],
+    });
+    const pluginBundleFile = path.join(project, "plugin-bundle.json");
+    const pluginEpisodeFile = path.join(project, "plugin-episode.json");
+    await fs.writeFile(pluginBundleFile, canonicalRunBundleStringify(pluginBundle));
+    await fs.writeFile(pluginEpisodeFile, JSON.stringify(episodeSpec(0, pluginBundle.resolvedHash, pluginBundle)));
+    const pluginSmoke = await checked(executable, [
+        "run", "--bundle", pluginBundleFile, "--episode", pluginEpisodeFile,
+        "--output", path.join(project, "plugin-run-output"), "--artifact-profile", "disabled",
+    ], { cwd: project, input: '{"policyStep":1,"action":[0,0]}\n' });
+    const pluginRecords = pluginSmoke.stdout.trim().split("\n").map((line) => JSON.parse(line));
+    const pluginResult = pluginRecords.find((entry) => entry.kind === "cev-sim.headless.result");
+    if (!pluginResult?.result?.passed) {
+        throw new Error("Installed npm runtime did not complete the plugin bundle smoke episode.");
+    }
+    const provenance = pluginRecords.find((entry) => entry.kind === "cev-sim.headless.provenance")
+        || pluginResult?.provenance;
+    if (provenance?.plugins && !Array.isArray(provenance.plugins)) {
+        throw new Error("Plugin provenance must be an array when present.");
+    }
+    if ((provenance?.plugins || []).some((entry) => entry.uiHash)) {
+        throw new Error("Headless provenance must not include plugin uiHash.");
+    }
+    const installedLoader = await fs.readFile(path.join(project, "node_modules/cev-sim/app/plugin/PluginLoader.js"), "utf8");
+    const installedSource = await fs.readFile(path.join(project, "node_modules/cev-sim/server/plugins/NodePluginModuleSource.js"), "utf8");
+    if (installedLoader.includes("importUi") || installedSource.includes("importUi")) {
+        throw new Error("Headless distribution loaded a UI module source.");
+    }
+    const browserUiPresent = await fs.access(path.join(project, "node_modules/cev-sim/app/plugin/browser"))
+        .then(() => true, (error) => {
+            if (error.code === "ENOENT") return false;
+            throw error;
+        });
+    if (browserUiPresent) throw new Error("Headless distribution shipped browser plugin UI modules.");
 }
 
 async function verifyPython(root, artifact, index, expectedVersion) {

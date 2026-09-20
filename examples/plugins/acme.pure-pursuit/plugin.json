@@ -1,0 +1,69 @@
+{
+  "kind": "cev-sim.plugin",
+  "api": 1,
+  "id": "acme.pure-pursuit",
+  "version": "1.0.0",
+  "engines": {
+    "cevSim": ">=0.1.0 <0.2.0"
+  },
+  "entry": {
+    "runtime": "runtime/index.js",
+    "ui": "ui/index.js"
+  },
+  "capabilities": [],
+  "units": [
+    {
+      "type": "acme.pure-pursuit.SteerBlock",
+      "ports": {
+        "inputs": {
+          "x": "float64",
+          "y": "float64",
+          "yaw": "float64",
+          "targetX": "float64",
+          "targetY": "float64"
+        },
+        "outputs": {
+          "steer": "float64",
+          "speed": "float64"
+        }
+      },
+      "settings": [
+        {
+          "target": "state",
+          "key": "lookahead",
+          "valueType": "float64",
+          "default": 4,
+          "min": 0.1
+        },
+        {
+          "target": "state",
+          "key": "speed",
+          "valueType": "float64",
+          "default": 2,
+          "min": 0
+        },
+        {
+          "target": "state",
+          "key": "wheelbase",
+          "valueType": "float64",
+          "default": 2.5,
+          "min": 0.1
+        }
+      ],
+      "defaults": {
+        "lookahead": 4,
+        "speed": 2,
+        "wheelbase": 2.5
+      },
+      "catalog": {
+        "name": "Pure Pursuit Steer",
+        "category": "control",
+        "keywords": ["pure-pursuit", "steering", "rep-103"],
+        "placeable": true,
+        "deprecated": false,
+        "requiresSignals": false
+      }
+    }
+  ],
+  "systems": []
+}

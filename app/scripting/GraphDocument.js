@@ -2,6 +2,10 @@ import { ScriptManager } from "./ScriptManager.js";
 import { normalizeOutputNodeState } from "./units/program/ProgramTypes.js";
 import { recomputeBindings } from "./types/unifyGraph.js";
 import { normalizeCanvasViewport } from "./canvas/CanvasViewport.js";
+import {
+    normalizeGraphPluginLocks,
+    pluginOwnershipFromUnit,
+} from "../plugin/PluginGraphLocks.js";
 
 function cloneJson(value) {
     if (value === undefined) return undefined;
@@ -95,9 +99,16 @@ export function serializeManagerGraph(manager, {
             if (unit.typeBindings && Object.keys(unit.typeBindings).length > 0) {
                 node.typeBindings = cloneJson(unit.typeBindings);
             }
+            if (pluginOwnershipFromUnit(unit) || unit.constructor?.unresolvedPlugin) {
+                node.ports = cloneJson({
+                    inputs: { ...(unit.typeMap?.inputs || {}) },
+                    outputs: { ...(unit.typeMap?.outputs || {}) },
+                });
+            }
             return node;
         });
 
+    const pluginLocks = normalizeGraphPluginLocks(manager.pluginLocks);
     return {
         head: manager.head || headUUID,
         headPosition: cloneJson(positions[headUUID] || null),
@@ -105,7 +116,7 @@ export function serializeManagerGraph(manager, {
         nodes,
         connections,
         viewport: normalizeCanvasViewport(viewport),
-        ...(manager.pluginLocks?.length ? { pluginLocks: cloneJson(manager.pluginLocks) } : {})
+        ...(pluginLocks.length ? { pluginLocks: cloneJson(pluginLocks) } : {})
     };
 }
 
@@ -116,7 +127,7 @@ export function restoreManagerFromGraph(graph, getBlockClass, {
     onMissingBlock = null
 } = {}) {
     const manager = createManager();
-    manager.pluginLocks = cloneJson(graph?.pluginLocks ?? []);
+    manager.pluginLocks = normalizeGraphPluginLocks(graph?.pluginLocks);
     const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
     const resolvedHeadUUID = graph?.head || headUUID;
     const headInNodes = nodes.some((node) => node.uuid === resolvedHeadUUID);
@@ -142,12 +153,14 @@ export function restoreManagerFromGraph(graph, getBlockClass, {
 
     nodes.forEach((node) => {
         const BlockClass = getBlockClass(node.type);
-        if (!BlockClass) {
-            if (onMissingBlock) onMissingBlock(node);
-            return;
+        let block = null;
+        if (BlockClass) {
+            block = new BlockClass(node.uuid);
+        } else {
+            block = onMissingBlock ? onMissingBlock(node, manager) : null;
+            if (!block) return;
         }
 
-        const block = new BlockClass(node.uuid);
         if (node.state) block.hydrateState(node.state);
         manager.addUnit(block);
 

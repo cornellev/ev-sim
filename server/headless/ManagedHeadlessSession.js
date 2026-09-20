@@ -190,6 +190,14 @@ async function provenance(resolved, episodeIdentity, rendererClient) {
         execution: "managed-experiment",
         resolvedHash: resolved.resolvedHash,
         ...(gpuRenderer ? { gpuRenderer } : {}),
+        ...((resolved.plugins || []).length ? {
+            plugins: resolved.plugins.map((entry) => ({
+                pluginId: entry.pluginId,
+                version: entry.version,
+                packageHash: entry.packageHash,
+                runtimeHash: entry.runtimeHash,
+            })),
+        } : {}),
     };
 }
 

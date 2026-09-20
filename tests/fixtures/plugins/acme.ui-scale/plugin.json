@@ -1,0 +1,50 @@
+{
+  "kind": "cev-sim.plugin",
+  "api": 1,
+  "id": "acme.ui-scale",
+  "version": "1.0.0",
+  "engines": {
+    "cevSim": ">=0.1.0 <0.2.0"
+  },
+  "entry": {
+    "runtime": "runtime/index.js",
+    "ui": "ui/index.js"
+  },
+  "capabilities": [],
+  "units": [
+    {
+      "type": "acme.ui-scale.ScaleBlock",
+      "ports": {
+        "inputs": {
+          "value": "float64"
+        },
+        "outputs": {
+          "result": "float64"
+        }
+      },
+      "settings": [
+        {
+          "target": "state",
+          "key": "factor",
+          "valueType": "float64",
+          "default": 2
+        }
+      ],
+      "defaults": {
+        "factor": 2
+      },
+      "catalog": {
+        "name": "UI Scale",
+        "category": "math",
+        "keywords": ["scale", "ui"],
+        "placeable": true,
+        "deprecated": false,
+        "requiresSignals": false
+      }
+    }
+  ],
+  "systems": [],
+  "editor": {
+    "assets": ["ui/icon.svg"]
+  }
+}

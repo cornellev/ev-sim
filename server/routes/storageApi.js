@@ -11,7 +11,7 @@ import { createPluginRouter } from "./pluginRouter.js";
  */
 export function mountStorageApi(app, service, { jsonParser, jsonLimit = "8mb" } = {}) {
     const parser = jsonParser ?? express.json({ limit: jsonLimit });
-    app.use("/api/storage/plugins", createPluginRouter(service));
+    app.use("/api/storage/plugins", createPluginRouter(service, { jsonParser: parser }));
     app.use("/api/storage/visual-assets", createVisualAssetRouter(service));
     app.use("/api/storage/editor-assets", parser, createEditorAssetRouter(service));
     app.use("/api/storage", parser, createStorageRouter(service));

@@ -52,6 +52,8 @@ import {
 import { getRunSessionController } from "../simulation/RunSessionController.js";
 import { listVehicleManifests } from "../vehicles/VehicleManifestClient.js";
 import { subscribeStorageEvents } from "../client/storageEvents.js";
+import { PLUGIN_CAPABILITIES } from "../plugin-api/capabilities.js";
+import { getPluginManifest, listPluginLibrary } from "../plugin/PluginClient.js";
 import { getScenario, listScenarios } from "../scenarios/ScenarioClient.js";
 import {
     applyScenarioSelectionToManifest,
@@ -686,7 +688,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
                                         {item === "Clock" && <Clock draft={draft} update={update} />}
                                         {item === "Controls" && <Controls draft={draft} update={update} />}
                                         {item === "Sensors" && <Sensors draft={draft} update={update} />}
-                                        {item === "Scripts" && <Scripts draft={draft} update={update} />}
+                                        {item === "Scripts" && <Scripts draft={draft} update={update} validation={validation} />}
                                         {item === "Topics" && <Topics draft={draft} update={update} />}
                                         {item === "Assertions" && <Assertions draft={draft} update={update} />}
                                         {item === "Logging" && <Logging draft={draft} update={update} />}
@@ -1334,8 +1336,93 @@ function SensorDefinitionField({ field, sensor, change }) {
     );
 }
 
-function Scripts({ draft, update }) {
+function Scripts({ draft, update, validation = null }) {
+    const [library, setLibrary] = useState({ revision: 0, packages: [] });
+    const [manifests, setManifests] = useState({});
     const addArtifact = () => update(["scripts", "artifacts"], [...draft.scripts.artifacts, { scriptId: "", expectedHash: null }]);
+    const selection = draft.plugins || { enabled: false, artifacts: [] };
+
+    useEffect(() => {
+        let mounted = true;
+        const refresh = () => listPluginLibrary().then((payload) => {
+            if (!mounted) return;
+            setLibrary({
+                revision: payload?.revision ?? 0,
+                packages: payload?.packages ?? [],
+            });
+        }).catch(() => {
+            if (mounted) setLibrary({ revision: 0, packages: [] });
+        });
+        refresh();
+        const unsubscribe = subscribeStorageEvents((event) => {
+            if (event.domain === "plugin") refresh();
+        });
+        return () => {
+            mounted = false;
+            unsubscribe();
+        };
+    }, []);
+
+    useEffect(() => {
+        let cancelled = false;
+        const hashes = [...new Set(selection.artifacts.map((entry) => entry.expectedHash).filter(Boolean))];
+        Promise.all(hashes.map(async (packageHash) => {
+            try {
+                return [packageHash, await getPluginManifest(packageHash)];
+            } catch {
+                return [packageHash, null];
+            }
+        })).then((entries) => {
+            if (cancelled) return;
+            setManifests((current) => {
+                const next = { ...current };
+                for (const [hash, value] of entries) {
+                    if (value) next[hash] = value;
+                }
+                return next;
+            });
+        });
+        return () => { cancelled = true; };
+    }, [selection.artifacts]);
+
+    const setPluginSelection = (next) => {
+        if (!next.enabled && (!next.artifacts || next.artifacts.length === 0)) {
+            const copy = structuredClone(draft);
+            delete copy.plugins;
+            update([], copy);
+            return;
+        }
+        update(["plugins"], next);
+    };
+
+    const addPluginLock = async (packageHash) => {
+        const row = library.packages.find((entry) => entry.packageHash === packageHash);
+        if (!row) return;
+        if (selection.artifacts.some((entry) => entry.pluginId === row.pluginId)) return;
+        let parsed = manifests[packageHash];
+        if (!parsed) {
+            try {
+                parsed = await getPluginManifest(packageHash);
+                setManifests((current) => ({ ...current, [packageHash]: parsed }));
+            } catch {
+                parsed = null;
+            }
+        }
+        const required = parsed?.document?.capabilities || [];
+        setPluginSelection({
+            enabled: true,
+            artifacts: [...selection.artifacts, {
+                pluginId: row.pluginId,
+                expectedHash: row.packageHash,
+                capabilities: [...required],
+            }],
+        });
+    };
+
+    const pluginIssues = (validation?.issues || []).filter((issue) => (
+        String(issue.path || "").includes("plugin") || String(issue.message || "").toLowerCase().includes("plugin")
+    ));
+
     return (
         <div className="space-y-4">
             <Toggle label="Run deterministic scripts" value={draft.scripts.enabled} onChange={(value) => update(["scripts", "enabled"], value)} />
@@ -1354,6 +1441,119 @@ function Scripts({ draft, update }) {
                 ))}
                 <Field label="Expected bindings SHA-256"><input value={draft.scripts.expectedBindingsHash || ""} placeholder="Unlocked" onChange={(event) => update(["scripts", "expectedBindingsHash"], event.target.value || null)} /></Field>
                 <Field label="Embedded portable bindings"><JsonField value={draft.scripts.embeddedBindings} onChange={(value) => update(["scripts", "embeddedBindings"], value)} rows={9} /></Field>
+            </AdvancedFields>
+            <AdvancedFields label="Simulator plugins">
+                <Toggle
+                    label="Enable plugins"
+                    value={selection.enabled === true}
+                    onChange={(value) => setPluginSelection({
+                        enabled: value,
+                        artifacts: selection.artifacts,
+                    })}
+                />
+                <p className="text-xs text-zinc-400">
+                    Exact packageHash locks. Library revision {library.revision}. Enabling with an empty lock list does not invent packages.
+                </p>
+                <div className="flex items-center justify-between gap-2">
+                    <select
+                        aria-label="Installed plugin packages"
+                        className="sf-input min-w-0 flex-1"
+                        defaultValue=""
+                        onChange={(event) => {
+                            addPluginLock(event.target.value);
+                            event.target.value = "";
+                        }}
+                    >
+                        <option value="">Add installed package…</option>
+                        {library.packages.map((entry) => (
+                            <option key={entry.packageHash} value={entry.packageHash}>
+                                {entry.pluginId}@{entry.version}
+                            </option>
+                        ))}
+                    </select>
+                </div>
+                {selection.artifacts.map((artifact, index) => {
+                    const installed = library.packages.find((entry) => entry.pluginId === artifact.pluginId);
+                    const locked = library.packages.find((entry) => entry.packageHash === artifact.expectedHash) || installed;
+                    const parsed = manifests[artifact.expectedHash];
+                    const required = new Set(parsed?.document?.capabilities || []);
+                    return (
+                        <div key={`${artifact.pluginId}-${index}`} className="space-y-3 rounded-[var(--radius)] border border-[var(--slate-border-60)] bg-[var(--slate-surface-1)] p-3">
+                            <div className="grid gap-3 md:grid-cols-[1fr_2fr_auto]">
+                                <Field label="Plugin ID">
+                                    <input value={artifact.pluginId} readOnly />
+                                </Field>
+                                <Field label="Expected packageHash">
+                                    <input value={artifact.expectedHash || ""} readOnly />
+                                </Field>
+                                <button
+                                    type="button"
+                                    className="self-end pb-2 text-[11px] text-[var(--slate-danger)]"
+                                    onClick={() => setPluginSelection({
+                                        enabled: selection.enabled,
+                                        artifacts: selection.artifacts.filter((_, candidate) => candidate !== index),
+                                    })}
+                                >
+                                    Remove
+                                </button>
+                            </div>
+                            <div className="flex flex-wrap gap-2 text-[11px] text-zinc-400">
+                                <span>runtimeHash {locked?.runtimeHash || parsed?.resource?.runtimeHash || "unknown"}</span>
+                                {locked?.uiHash || parsed?.resource?.uiHash
+                                    ? <span>uiHash {locked?.uiHash || parsed.resource.uiHash}</span>
+                                    : null}
+                            </div>
+                            {installed && installed.packageHash !== artifact.expectedHash && (
+                                <Action
+                                    compact
+                                    label="Update lock to library package"
+                                    onClick={() => {
+                                        const next = selection.artifacts.map((entry, candidate) => (
+                                            candidate === index
+                                                ? { ...entry, expectedHash: installed.packageHash }
+                                                : entry
+                                        ));
+                                        setPluginSelection({ enabled: true, artifacts: next });
+                                    }}
+                                />
+                            )}
+                            <fieldset className="space-y-1">
+                                <legend className="text-[11px] text-zinc-400">Capabilities</legend>
+                                {PLUGIN_CAPABILITIES.map((name) => {
+                                    const checked = artifact.capabilities.includes(name);
+                                    const requiredGrant = required.has(name);
+                                    return (
+                                        <label key={name} className="flex items-center gap-2 text-[11px] text-zinc-300">
+                                            <input
+                                                type="checkbox"
+                                                aria-label={name}
+                                                checked={checked}
+                                                onChange={(event) => {
+                                                    const capabilities = event.target.checked
+                                                        ? [...artifact.capabilities, name]
+                                                        : artifact.capabilities.filter((entry) => entry !== name);
+                                                    const next = selection.artifacts.map((entry, candidate) => (
+                                                        candidate === index ? { ...entry, capabilities } : entry
+                                                    ));
+                                                    setPluginSelection({ enabled: true, artifacts: next });
+                                                }}
+                                            />
+                                            <span>{name}{requiredGrant ? " (required)" : ""}</span>
+                                        </label>
+                                    );
+                                })}
+                            </fieldset>
+                        </div>
+                    );
+                })}
+                {pluginIssues.length > 0 && (
+                    <p className="text-xs text-[var(--slate-danger)]" role="status">
+                        {pluginIssues.map((issue) => issue.message).join(" ")}
+                    </p>
+                )}
+                {validation?.ok === false && validation.error && (
+                    <p className="text-xs text-[var(--slate-danger)]">{validation.error}</p>
+                )}
             </AdvancedFields>
         </div>
     );

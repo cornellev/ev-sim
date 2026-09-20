@@ -50,7 +50,7 @@ internally — Express must be listening.
 
 No MCP prompts are registered.
 
-## Tool domains (~95 tools)
+## Tool domains (~99 tools)
 
 Modules registered in `createMcpRouter.js`:
 
@@ -58,6 +58,7 @@ Modules registered in `createMcpRouter.js`:
 |--------|----------------|
 | `environmentTools.js` | `environment_*` — worlds, roads, buildings, props, validate |
 | `scriptingTools.js` | `script_*`, `unit_*` — graph CRUD, lint/compile |
+| `pluginTools.js` | `plugin_*` — local library install/list/remove |
 | `bindingTools.js` | `binding_*` — manifest, suggest, enable |
 | `runManifestTools.js` | `run_manifest_*` — CRUD, validate, resolve, launch |
 | `scenarioTools.js` | `scenario_*` — CRUD, routes, catalog |
@@ -108,6 +109,9 @@ document, pass `expectedRevision`. Stale revision → storage error → `fail()`
   `OutputNodeBlock` via `script_add_unit`.
 - Artifact-only scripts cannot be edited as graphs.
 - `script_lint` persists `latestValidArtifact` on success; bindings need it.
+- Plugin units: `plugin_install` (absolute directory or digest) then `script_add_unit`.
+  Graphs pin `pluginLocks` (`packageHash`); artifacts pin `pluginRequirements` (`runtimeHash`).
+  Relative install paths fail. `plugin_remove` keeps CAS bytes and the last good artifact.
 
 ### Environment geometry
 

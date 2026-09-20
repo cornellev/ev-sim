@@ -1,5 +1,8 @@
 import express from "express";
 
+import { storageEvents } from "../mcp/events.js";
+import { installPluginSource, removePluginSource } from "../plugins/pluginLibrary.js";
+
 function mimeType(filePath) {
     if (filePath.endsWith(".js") || filePath.endsWith(".mjs")) return "text/javascript; charset=utf-8";
     if (filePath.endsWith(".json")) return "application/json; charset=utf-8";
@@ -11,9 +14,19 @@ function mimeType(filePath) {
 function sendError(res, error) {
     const missing = error.code === "ENOENT";
     res.status(missing ? 404 : 400).json({
+        ok: false,
         error: error.code ?? "PLUGIN_REQUEST_INVALID",
         message: error.message,
         path: error.path ?? null,
+    });
+}
+
+function publishLibrary(pluginId, action, packageHash, revision) {
+    storageEvents.publish({
+        domain: "plugin",
+        id: pluginId,
+        action,
+        data: { packageHash, revision },
     });
 }
 
@@ -39,8 +52,51 @@ export async function sendPluginFileResponse(service, { packageHash, member, hea
     }
 }
 
-export function createPluginRouter(service) {
+export function createPluginRouter(service, { jsonParser } = {}) {
+    const parser = jsonParser ?? express.json({ limit: "8mb" });
     const router = express.Router();
+
+    router.get("/library", async (_req, res) => {
+        try {
+            const library = await service.listPluginLibrary();
+            res.json({ ok: true, revision: library.revision, packages: library.packages });
+        } catch (error) {
+            sendError(res, error);
+        }
+    });
+
+    router.post("/install", parser, async (req, res) => {
+        try {
+            const metadata = await installPluginSource(service, req.body?.source);
+            const library = await service.listPluginLibrary();
+            publishLibrary(metadata.pluginId, "installed", metadata.packageHash, library.revision);
+            res.json({
+                ok: true,
+                package: metadata,
+                revision: library.revision,
+            });
+        } catch (error) {
+            sendError(res, error);
+        }
+    });
+
+    router.post("/remove", parser, async (req, res) => {
+        try {
+            const pluginId = req.body?.pluginId;
+            const packageHash = req.body?.packageHash;
+            const removed = await removePluginSource(service, { pluginId, packageHash });
+            if (!removed) {
+                const error = new Error(`Plugin "${pluginId}" package ${packageHash} is not in the library.`);
+                error.code = "ENOENT";
+                throw error;
+            }
+            const library = await service.listPluginLibrary();
+            publishLibrary(pluginId, "removed", packageHash, library.revision);
+            res.json({ ok: true, removed: true, revision: library.revision });
+        } catch (error) {
+            sendError(res, error);
+        }
+    });
 
     router.get("/packages/:packageHash", async (req, res) => {
         try {

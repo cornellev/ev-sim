@@ -37,7 +37,9 @@ MCP server id and plugin name: **`cev-sim`**. Do not configure aliases like
 | `cev-sim.vehicle-bundle` | 1 | `app/vehicles/VehicleManifest.js` |
 | `cev-sim.experiment-suite` | 1 | `app/experiments/ExperimentSuite.js` |
 | `cev-sim.experiment-result` | 1 | `app/experiments/ExperimentResult.js` |
-| `cev-sim.experiment-baseline` | 1 | `app/experiments/BaselineComparison.js` |
+| `cev-sim.plugin` | 1 | `app/plugin/PluginDocument.js` |
+| `cev-sim.plugin-package` | 1 | `app/plugin/PluginPackage.js` |
+| `cev-sim.plugin-library` | 1 | `server/storage/PluginStore.js` |
 
 Environment documents are authored via the editor model
 (`app/3d/editor/document/EnvironmentDocument.js`) and stored as environment
@@ -91,7 +93,8 @@ flowchart LR
 - [docs/visual-layer-plan.md](../../../docs/visual-layer-plan.md) — `VIS-*` photoreal visual-layer PRs (not a headless PR 13)
 - [docs/architecture.md](../../../docs/architecture.md)
 - [docs/simulation.md](../../../docs/simulation.md)
-- [docs/run-manifests.md](../../../docs/run-manifests.md)
+- [docs/plugin-plan.md](../../../docs/plugin-plan.md) — `PLG-*` simulator plugin roadmap
+- [docs/plugin-api.md](../../../docs/plugin-api.md) — package-author ABI
 - [docs/scripting/artifact-schema-v2.md](../../../docs/scripting/artifact-schema-v2.md)
 - [docs/mcp.md](../../../docs/mcp.md)
 - [docs/development.md](../../../docs/development.md)

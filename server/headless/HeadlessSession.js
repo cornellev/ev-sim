@@ -24,6 +24,14 @@ export async function defaultHeadlessProvenance(resolved, { episodeSpec = null, 
         backendSelections: structuredClone(episodeSpec?.backendSelections || resolved.backendSelections || []),
         createdAt: new Date().toISOString(),
         ...(gpuRenderer ? { gpuRenderer } : {}),
+        ...((resolved.plugins || []).length ? {
+            plugins: resolved.plugins.map((entry) => ({
+                pluginId: entry.pluginId,
+                version: entry.version,
+                packageHash: entry.packageHash,
+                runtimeHash: entry.runtimeHash,
+            })),
+        } : {}),
     };
 }
 

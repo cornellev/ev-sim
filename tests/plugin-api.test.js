@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createRegistrationApi, ports } from "../app/plugin-api/index.js";
+import { PLUGIN_UI_API_VERSION } from "../app/plugin-api/ui.js";
 import { BlockOutput } from "../app/plugin-api/BlockOutput.js";
 import { UnitBlock as PublicUnitBlock } from "../app/plugin-api/UnitBlock.js";
 import { PLUGIN_PORT_TYPES } from "../app/plugin-api/ports.js";
@@ -23,6 +24,7 @@ test("public API is frozen and tracks the concrete program port vocabulary", () 
     assert.equal(Object.isFrozen(api.capabilities), true);
     assert.deepEqual(PLUGIN_PORT_TYPES, SUPPORTED_TYPES.filter((type) => type !== "generic"));
     assert.equal(ports.types.includes("generic"), false);
+    assert.equal(PLUGIN_UI_API_VERSION, 1);
 });
 
 test("PluginUnitAdapter delegates state/output and revokes a disposed unit", () => {

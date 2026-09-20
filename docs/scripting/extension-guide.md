@@ -1,6 +1,21 @@
 # Extension Guide
 
-Use this checklist when adding a new visual scripting block.
+Use this checklist when adding a new visual scripting block. Third-party simulator
+packages do not belong in `app/scripting/units/`; see [Plugin API](../plugin-api.md)
+and the example at `examples/plugins/acme.pure-pursuit/`.
+
+## Add A Third-Party Plugin Unit
+
+1. Scaffold with `node --experimental-default-type=module scripts/create-cev-plugin.mjs --id acme.demo --out ./plugins/acme.demo`.
+2. Declare fixed ports, state settings, and catalog metadata in `plugin.json`.
+3. Implement `export default { register(api) }` in `runtime/index.js`. Extend `api.UnitBlock`.
+4. Optionally implement `export default { registerUi(uiApi) }` using `React.createElement` and `uiApi.SettingsForm`.
+5. Keep Node tests and verify scripts *outside* the package directory (the scaffold writes `{out}.verify.mjs`).
+6. Install through MCP `plugin_install` or `POST /api/storage/plugins/install` using an absolute path.
+7. Place the unit from the revisioned Add menu, or `script_add_unit` after `plugin_install`. The graph stores `pluginLocks`; compiled artifacts store `pluginRequirements`.
+8. Enable the exact `packageHash` and grants on the run manifest (Config → Scripts, or `run_manifest_update`).
+
+Do not add plugin types to `UnitCatalog.meta.js`. Do not import plugin UI from runtime modules.
 
 ## Add A Compileable Block
 

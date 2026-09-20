@@ -32,6 +32,7 @@ Environment edits, scripts, and bindings are persisted on the server rather than
 
 - `server/storage/JsonFileStore.js` - one file's worth of JSON: reads are cached in memory, writes are atomic (temp file + rename).
 - `server/storage/StorageService.js` - owns the on-disk layout under `server/data/` (`environments/<id>.json`, `scripts/<id>.json`, `bindings.json`, `settings.json`, visual-layer descriptors, visual-layer access sidecars, and the visual-asset CAS) and environment catalog operations.
+- `server/storage/PluginStore.js` - immutable plugin CAS, revisioned `library.json`, and runtime materialization.
 - `server/storage/VisualAssetStore.js` - validated immutable visual-asset bytes, use records, quotas, staging recovery, and internal roots/pins.
 - `server/storage/VisualLayerAccessStore.js` - immutable `cev-sim.visual-layer-access@1` sidecars.
 - `server/routes/storageApi.js` - mounts `/api/storage/visual-assets` streaming routes before the shared JSON parser, then the JSON storage router.

@@ -49,7 +49,10 @@ plugin runtime state in deterministic canonical state. Unit writes use a
 transactional effect journal. PLG-03 executes declared systems in the existing
 `"scripts"` phase after bindings, with staged reference commands, deterministic
 topics, and reset-only episode overlays. Headless GPU backends cannot honor
-`overlay.spawn`.
+`overlay.spawn`. PLG-04 adds a revisioned authoring catalog and `graph.pluginLocks`,
+isolated custom UI with a generic settings fallback, HTTP/MCP library install
+and remove, Config Scripts enablement, and clean-distribution packaging. See
+[Plugin API](plugin-api.md).
 
 `app/scripting/UnitCatalog.meta.js` is the server-safe authority for stable built-in type IDs and metadata. `registerBuiltInBlocks.js` registers those explicit IDs, `UnitCatalog.js` attaches React components by type, and `AddMenu.js` renders placeable entries as a searchable categorized sidebar. Typed configuration changes pass through `ScriptManager.reconfigureUnitDetailed()` so ports, configuration, and graph-wide type bindings commit or roll back together. The built-in catalog includes atomic math/logic plus conversions, strings, JSON path ops, typed arrays, geometry (vec/pose), read-only route helpers, `control` temporal/PID blocks, `texture1d` arithmetic, and simulator adapters (`VehicleStateBlock`, `DeviceStateBlock`, `SimulationClockBlock`, `ScenarioStatusBlock`).
 

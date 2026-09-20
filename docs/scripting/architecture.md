@@ -50,14 +50,20 @@ app/scripting/UnitCatalog.meta.js
 app/scripting/UnitCatalog.js
 ```
 
-`registerBuiltInBlocks.js` registers each explicit metadata type. `AddMenu.js` renders placeable entries after React components are attached by type. Every placeable block needs both a backend class and component.
+`registerBuiltInBlocks.js` registers each explicit metadata type. `AddMenu.js` renders placeable
+built-in entries after React components are attached by type, then merges the revisioned plugin
+catalog. Built-in placeable blocks still need both a backend class and component. Plugin units
+use a generic `SettingsForm` unless the package `registerUi` view loads.
 
 Managed plugin runs create a sealed registry per `PluginRunSession`. The
 registry starts with the same built-ins, then `PluginLoader` adds only the
 exact packages frozen in `resolved.plugins` / `resolved.pluginPackages`.
-`ScriptManager`, `VisualScriptRunner`, `BindingRuntime`, nested compiled
-programs, repeat programs, and `ScenarioRuntime` all receive that registry and
-session explicitly. The default registry remains plugin-disabled and is never
+Editor sessions use an unsealed lock-scoped host: missing packages become
+`UnresolvedPluginUnit` placeholders. `graph.pluginLocks` pin `packageHash`;
+compiled `pluginRequirements` pin `runtimeHash`. One package per plugin ID per
+graph. `ScriptManager`, `VisualScriptRunner`, `BindingRuntime`, nested compiled
+programs, repeat programs, and `ScenarioRuntime` all receive the session
+registry explicitly. The default registry remains plugin-disabled and is never
 mutated by managed preparation.
 
 ## Compiled Runtime

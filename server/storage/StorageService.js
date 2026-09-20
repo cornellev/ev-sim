@@ -360,6 +360,26 @@ export class StorageService {
         return this._pluginStore;
     }
 
+    listPluginLibrary() {
+        return this.plugins.listInstalled();
+    }
+
+    getPluginPackage(packageHash) {
+        return this.plugins.getPackage(packageHash);
+    }
+
+    installPluginFromDirectory(directory) {
+        return this.plugins.installFromDirectory(directory);
+    }
+
+    installPluginFromHash(packageHash) {
+        return this.plugins.installFromHash(packageHash);
+    }
+
+    removePluginFromLibrary(pluginId, packageHash) {
+        return this.plugins.removeFromLibrary(pluginId, packageHash);
+    }
+
     // --- Environments -------------------------------------------------------
 
     /** Return lightweight catalog entries for all saved and built-in worlds. */
@@ -1691,7 +1711,12 @@ export class StorageService {
         const pluginPackages = [];
         const resolvedPlugins = [];
         for (const lock of effectivePluginLocks(manifest.plugins)) {
-            const resource = await this.plugins.getPackage(lock.expectedHash);
+            let resource;
+            try {
+                resource = await this.plugins.getPackage(lock.expectedHash);
+            } catch (error) {
+                throw new Error(`Plugin "${lock.pluginId}" package ${lock.expectedHash} is not available.`, { cause: error });
+            }
             const verified = verifyPluginPackage(resource);
             if (verified.document.id !== lock.pluginId) {
                 throw new Error(`Plugin lock "${lock.pluginId}" resolves package "${verified.document.id}".`);
@@ -2788,7 +2813,8 @@ export class StorageService {
             await this.resolveRunManifest(manifest.id, manifest);
             return [];
         } catch (error) {
-            return [{ path: "dependencies", message: error.message }];
+            const path = /plugin/i.test(error.message) ? "plugins" : "dependencies";
+            return [{ path, message: error.message }];
         }
     }
 

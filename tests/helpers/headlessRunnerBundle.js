@@ -5,7 +5,11 @@ import {
     RUN_BUNDLE_KIND,
     RUN_BUNDLE_VERSION,
     computeResolvedRunHash,
+    normalizeRunManifest,
 } from "../../app/simulation/RunManifest.js";
+import { WORLD_BOUND_PLUGINS_IDENTITY } from "../../app/simulation/kernel/RunIdentity.js";
+import { verifyPluginPackage } from "../../app/plugin/PluginPackage.js";
+import { pluginDependencyHashes } from "../../app/plugin/PluginSelection.js";
 import { computeSimulationSemanticHash } from "../../app/simulation/kernel/SimulationHashes.js";
 import { createLidarGeometryResource } from "../../app/simulation/lidar/LidarGeometry.js";
 import { createPhysicsBackendSelection, PHYSICS_BACKEND_KIND, sortBackendSelections } from "../../app/physics/PhysicsBackend.js";
@@ -203,6 +207,37 @@ export async function createPortableHeadlessBundle({
         resolvedHash: resolved.resolvedHash,
         simulationSemanticHash: resolved.simulationSemanticHash,
     });
+}
+
+export async function createPluginPortableHeadlessBundle(resource, options = {}) {
+    const verified = verifyPluginPackage(resource);
+    const plugins = [{
+        pluginId: verified.document.id,
+        version: verified.document.version,
+        packageHash: verified.resource.packageHash,
+        runtimeHash: verified.resource.runtimeHash,
+        capabilities: [...(verified.document.capabilities || [])],
+    }];
+    const bundle = await createPortableHeadlessBundle(options);
+    bundle.resolved.manifest = normalizeRunManifest({
+        ...bundle.resolved.manifest,
+        plugins: {
+            enabled: true,
+            artifacts: [{
+                pluginId: verified.document.id,
+                expectedHash: verified.resource.packageHash,
+                capabilities: [...(verified.document.capabilities || [])],
+            }],
+        },
+    });
+    bundle.resolved.identityProfile = { ...WORLD_BOUND_PLUGINS_IDENTITY };
+    bundle.resolved.plugins = plugins;
+    bundle.resolved.pluginPackages = [structuredClone(resource)];
+    bundle.resolved.dependencyHashes = {
+        ...bundle.resolved.dependencyHashes,
+        plugins: pluginDependencyHashes(plugins),
+    };
+    return rehashRunBundle(bundle);
 }
 
 export function successfulTape(overrides = {}) {

@@ -56,7 +56,12 @@ import {
     putScriptDocument,
     putScriptSetting
 } from "./ScriptStorage";
-import { createCatalogUnitUUID, getUnitCatalogEntry } from "./UnitCatalog";
+import { createCatalogUnitUUID, getUnitCatalogEntry, mergePluginCatalogEntries } from "./UnitCatalog";
+import { fetchUnitCatalog } from "../plugin/PluginClient";
+import { BrowserPluginAuthoringSession } from "../plugin/browser/BrowserPluginAuthoringSession";
+import { normalizeGraphPluginLocks, stampGraphPluginLock } from "../plugin/PluginGraphLocks";
+import { createUnresolvedPluginUnit } from "./units/UnresolvedPluginUnit";
+import PluginUnitView, { UnresolvedPluginUnitView } from "./units/PluginUnitView";
 import {
     createScriptFolder,
     normalizeScriptFolders,
@@ -82,6 +87,16 @@ import {
 } from "./canvas/canvasPositions";
 
 registerBuiltInBlocks();
+
+function catalogEntryForNode(node, catalog = [], locks = []) {
+    const lock = (locks || []).find((entry) => (
+        entry.types?.includes(node.type) || String(node.type).startsWith(`${entry.pluginId}.`)
+    ));
+    return catalog.find((entry) => (
+        entry.type === node.type
+        && (!lock || entry.ownership?.packageHash === lock.packageHash)
+    )) || catalog.find((entry) => entry.type === node.type) || null;
+}
 
 const CURRENT_SCRIPT_SETTING = "currentScriptId";
 const AUTOSAVE_DELAY = 450;
@@ -928,6 +943,8 @@ export const IMPORT_CODE = {
 export default function Scripting({ onOpenWorkspace }) {
     const headUUID = useRef("head-uuid");
     const manager = useRef(new ScriptManager());
+    const authoringRef = useRef(new BrowserPluginAuthoringSession());
+    const pluginCatalogRef = useRef([]);
     const positionsRef = useRef({});
     const outputNodeConfigRef = useRef(OUTPUT_NODE_DEFAULT);
     const currentDocumentRef = useRef(null);
@@ -969,6 +986,7 @@ export default function Scripting({ onOpenWorkspace }) {
     const [connectionSnapshot, setConnectionSnapshot] = useState([]);
     const [configurationError, setConfigurationError] = useState(null);
     const [viewport, setViewportState] = useState(DEFAULT_CANVAS_VIEWPORT);
+    const [pluginCatalog, setPluginCatalog] = useState([]);
 
     const commitViewport = useCallback((next) => {
         const resolved = typeof next === "function" ? next(viewportRef.current) : next;
@@ -992,6 +1010,11 @@ export default function Scripting({ onOpenWorkspace }) {
         canvasRef,
         setViewport: commitViewport,
     }), [viewport, commitViewport]);
+    const placeableCatalog = useMemo(
+        () => mergePluginCatalogEntries({ units: pluginCatalog }),
+        [pluginCatalog],
+    );
+    pluginCatalogRef.current = pluginCatalog;
 
     const zoomCanvasAtCenter = (factor) => {
         const canvas = canvasRef.current;
@@ -1094,7 +1117,34 @@ export default function Scripting({ onOpenWorkspace }) {
             );
         }
 
-        return renderCatalogElement(getUnitCatalogEntry(node.type), node, portTypes);
+        const catalogEntry = getUnitCatalogEntry(node.type);
+        if (catalogEntry?.Component) {
+            return renderCatalogElement(catalogEntry, node, portTypes);
+        }
+        const unit = manager.current.units.find((item) => item.uuid === node.uuid);
+        const pluginEntry = catalogEntryForNode(node, pluginCatalogRef.current, manager.current.pluginLocks);
+        if (unit?.constructor?.unresolvedPlugin) {
+            return (
+                <UnresolvedPluginUnitView
+                    key={node.uuid}
+                    node={node}
+                    diagnostic="Plugin package is missing. Restore the locked package to compile."
+                />
+            );
+        }
+        if (authoringRef.current?.getBlockClass(node.type) || pluginEntry) {
+            return (
+                <PluginUnitView
+                    key={node.uuid}
+                    node={node}
+                    catalogEntry={pluginEntry}
+                    portTypes={portTypes}
+                    View={authoringRef.current?.viewFor(node.type)}
+                    diagnostic={authoringRef.current?.diagnosticFor(node.type)}
+                />
+            );
+        }
+        return null;
     };
 
     const markGraphChanged = () => {
@@ -1284,7 +1334,7 @@ export default function Scripting({ onOpenWorkspace }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    const loadDocumentIntoEditor = (document, { pushCurrent = false } = {}) => {
+    const loadDocumentIntoEditor = async (document, { pushCurrent = false } = {}) => {
         if (!document?.editable) return;
 
         loadingRef.current = true;
@@ -1295,7 +1345,26 @@ export default function Scripting({ onOpenWorkspace }) {
         const normalized = normalizeScriptDocument(document);
         const graph = normalized.graph || createEmptyGraph(OUTPUT_NODE_DEFAULT);
         const restoredOutputConfig = normalizeOutputNodeState(graph.outputNodeConfig || OUTPUT_NODE_DEFAULT);
-        const nextManager = new ScriptManager();
+        const locks = normalizeGraphPluginLocks(graph.pluginLocks);
+        const session = new BrowserPluginAuthoringSession();
+        for (const lock of locks) {
+            try {
+                await session.loadLock(lock);
+            } catch (error) {
+                console.warn(`[scripting] plugin lock ${lock.pluginId} unavailable:`, error);
+            }
+            if (loadSequenceRef.current !== loadId) {
+                session.dispose();
+                return;
+            }
+        }
+
+        const nextManager = new ScriptManager({
+            blockRegistry: session.registry,
+            pluginHost: session.host,
+            scopeId: `authoring:${normalized.id}`,
+        });
+        nextManager.pluginLocks = locks;
         const headUnit = new OutputNodeBlock(headUUID.current);
         const restoredNodes = [];
         let nextPositions = {};
@@ -1306,13 +1375,12 @@ export default function Scripting({ onOpenWorkspace }) {
         nextManager.storeData(headUUID.current, restoredOutputConfig);
         headUnit.hydrateState(restoredOutputConfig);
 
-        (graph.nodes || []).forEach((node) => {
-            const BlockClass = getRegisteredBlockType(node.type) || getUnitCatalogEntry(node.type)?.blockClass;
-            if (!BlockClass) {
-                console.warn(`Cannot restore unknown block type: ${node.type}`);
-                return;
-            }
-
+        for (const node of graph.nodes || []) {
+            const BlockClass = session.getBlockClass(node.type)
+                || getRegisteredBlockType(node.type)
+                || getUnitCatalogEntry(node.type)?.blockClass;
+            const lock = locks.find((entry) => entry.types.includes(node.type)
+                || String(node.type).startsWith(`${entry.pluginId}.`)) || null;
             const restoredState = { ...(node.state || {}) };
             if (node.type === "LocalScriptProgramBlock") {
                 const source = scriptsRef.current.find((script) => script.id === restoredState.sourceScriptId);
@@ -1323,8 +1391,11 @@ export default function Scripting({ onOpenWorkspace }) {
                 }
             }
 
-            const block = new BlockClass(node.uuid);
-            block.hydrateState(restoredState);
+            const block = BlockClass
+                ? new BlockClass(node.uuid)
+                : createUnresolvedPluginUnit(node, { lock });
+            if (BlockClass) block.hydrateState(restoredState);
+            else if (node.state) block.hydrateState?.(node.state);
             nextManager.addUnit(block);
 
             if (node.storedData !== undefined) {
@@ -1342,7 +1413,13 @@ export default function Scripting({ onOpenWorkspace }) {
 
             nextPositions[node.uuid] = normalizeRestoredPosition(node.position, nodeIndex);
             nodeIndex += 1;
-        });
+        }
+
+        if (loadSequenceRef.current !== loadId) {
+            nextManager.dispose();
+            session.dispose();
+            return;
+        }
 
         nextPositions = {
             [headUUID.current]: normalizeOutputNodePosition(graph.headPosition),
@@ -1370,6 +1447,9 @@ export default function Scripting({ onOpenWorkspace }) {
             }
         });
         nextManager.recomputeBindings();
+        authoringRef.current?.dispose?.();
+        manager.current?.dispose?.();
+        authoringRef.current = session;
 
         const nextChildren = restoredNodes
             .map((node) => {
@@ -1464,7 +1544,7 @@ export default function Scripting({ onOpenWorkspace }) {
                 || documents.find((document) => document.editable);
 
             if (current) {
-                loadDocumentIntoEditor(current);
+                await loadDocumentIntoEditor(current);
             }
         }
 
@@ -1476,6 +1556,26 @@ export default function Scripting({ onOpenWorkspace }) {
         };
     // loadDocumentIntoEditor intentionally reads the latest refs while bootstrapping once.
     // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    useEffect(() => {
+        let mounted = true;
+        const refreshCatalog = async () => {
+            try {
+                const snapshot = await fetchUnitCatalog();
+                if (mounted) setPluginCatalog(snapshot.units || []);
+            } catch (error) {
+                console.warn("[scripting] unit catalog failed:", error);
+            }
+        };
+        refreshCatalog();
+        const unsubscribe = subscribeStorageEvents((event) => {
+            if (event.domain === "plugin") refreshCatalog();
+        });
+        return () => {
+            mounted = false;
+            unsubscribe();
+        };
     }, []);
 
     // Live-sync: MCP script writes refresh the library; reload the open doc if clean.
@@ -1655,7 +1755,60 @@ export default function Scripting({ onOpenWorkspace }) {
         return result;
     };
 
-    const addUnit = (catalogEntry, uuid, position) => {
+    const placePluginUnit = (uuid, position, block, node, catalogEntry) => {
+        const element = renderNodeElement({
+            ...node,
+            type: catalogEntry.type,
+            state: block.serializeState?.() || node.state || {},
+        }, portTypesForUnit(block));
+        if (!element) return;
+        setUnitChildren((previous) => [...previous, element]);
+        if (position && uuid) {
+            positionsRef.current = {
+                ...positionsRef.current,
+                [uuid]: position
+            };
+            setPositions(positionsRef.current);
+            setTimeout(() => {
+                document.dispatchEvent(new CustomEvent("position-unit", { detail: { uuid, position } }));
+            }, 0);
+        }
+        markGraphChanged();
+    };
+
+    const addUnit = async (catalogEntry, uuid, position) => {
+        if (catalogEntry.ownership && catalogEntry.ownership !== "builtin") {
+            try {
+                stampGraphPluginLock(manager.current.pluginLocks, catalogEntry);
+            } catch (error) {
+                setConfigurationError(error.message);
+                return;
+            }
+            try {
+                await authoringRef.current.loadLock({
+                    pluginId: catalogEntry.ownership.pluginId,
+                    version: catalogEntry.ownership.version,
+                    packageHash: catalogEntry.ownership.packageHash,
+                    runtimeHash: catalogEntry.ownership.runtimeHash,
+                    types: [catalogEntry.type],
+                });
+            } catch (error) {
+                setConfigurationError(error.message);
+                return;
+            }
+            const BlockClass = authoringRef.current.getBlockClass(catalogEntry.type);
+            if (!BlockClass) {
+                setConfigurationError(`Plugin unit "${catalogEntry.type}" is unavailable.`);
+                return;
+            }
+            const block = new BlockClass(uuid);
+            if (catalogEntry.defaultState) block.hydrateState(catalogEntry.defaultState);
+            manager.current.addUnit(block);
+            setConfigurationError(null);
+            placePluginUnit(uuid, position, block, { uuid, type: catalogEntry.type }, catalogEntry);
+            return;
+        }
+
         const Component = catalogEntry.Component;
         let storedData;
         let initialState = {};
@@ -2233,7 +2386,7 @@ export default function Scripting({ onOpenWorkspace }) {
                     graphKey={renderGraphId}
                     connectionSnapshot={connectionSnapshot}
                 />
-                <AddMenu onAddUnit={addUnit} />
+                <AddMenu onAddUnit={addUnit} catalog={placeableCatalog} />
             </ScriptCanvas>
             </CanvasViewportContext.Provider>
         </>

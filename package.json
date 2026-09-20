@@ -36,6 +36,7 @@
     "lint:python": "cd python && python3 -m ruff check src tests scripts ../baking/contracts.py ../baking/backends.py ../baking/v1_service.py ../tests/test_bake_v1_service.py",
     "test:bake-python": "python3 -m pytest tests/test_bake_sample_accumulator.py tests/test_bake_v1_service.py -q",
     "proto:python": "python3 python/scripts/generate_proto.py --check",
+    "plugin:create": "node --experimental-default-type=module scripts/create-cev-plugin.mjs",
     "fixtures:headless": "node --experimental-default-type=module scripts/generate-headless-fixtures.mjs",
     "fixtures:environment-editor": "node --experimental-default-type=module scripts/generate-environment-editor-fixtures.mjs",
     "test:ui": "playwright test --grep-invert @a11y",

@@ -44,6 +44,9 @@ import { registerRunManifestTools } from "../server/mcp/runManifestTools.js";
 import { registerScenarioTools } from "../server/mcp/scenarioTools.js";
 import { registerExperimentTools } from "../server/mcp/experimentTools.js";
 import { registerScriptingTools } from "../server/mcp/scriptingTools.js";
+import { registerPluginTools } from "../server/mcp/pluginTools.js";
+import { listUnitCatalog } from "../server/scripting/scriptingHandlers.js";
+import { pluginFixtureResource } from "./helpers/pluginFixtures.js";
 import { UNIT_CATALOG_META } from "../app/scripting/UnitCatalog.meta.js";
 import { createDefaultRunManifest } from "../app/simulation/RunManifest.js";
 import { createDefaultScenario } from "../app/scenarios/ScenarioDocument.js";
@@ -960,3 +963,113 @@ test("EnvironmentDocument round-trip after MCP-style save", async () => {
         assert.ok(again.document instanceof EnvironmentDocument);
     });
 });
+
+function mcpPayload(result) {
+    return JSON.parse(result.content[0].text);
+}
+
+test("plugin MCP install stamps graph locks and lint keeps artifacts after library removal", async () => {
+    await withTempStorage(async (storage) => {
+        const resource = await pluginFixtureResource();
+        await storage.plugins.putPackage(resource);
+        const fixturePath = path.resolve("tests/fixtures/plugins/acme.example");
+        const tools = new Map();
+        const server = {
+            registerTool(name, _definition, handler) {
+                tools.set(name, handler);
+            },
+        };
+        registerPluginTools(server, storage);
+        registerScriptingTools(server, storage);
+
+        const listedEmpty = mcpPayload(await tools.get("plugin_list")({}));
+        assert.equal(listedEmpty.ok, true);
+
+        const installed = mcpPayload(await tools.get("plugin_install")({
+            source: { kind: "digest", packageHash: resource.packageHash },
+        }));
+        assert.equal(installed.ok, true);
+        assert.equal(installed.package.pluginId, "acme.example");
+        const listed = mcpPayload(await tools.get("plugin_list")({}));
+        assert.equal(listed.revision, installed.revision);
+        assert.equal(listed.packages[0].packageHash, resource.packageHash);
+
+        const got = mcpPayload(await tools.get("plugin_get")({ packageHash: resource.packageHash }));
+        assert.equal(got.package.document.id, "acme.example");
+        assert.equal(got.package.files, undefined);
+
+        const created = mcpPayload(await tools.get("script_create")({ id: "plugin-script", name: "Plugin script" }));
+        assert.equal(created.ok, true);
+        const addedNumber = mcpPayload(await tools.get("script_add_unit")({
+            scriptId: "plugin-script",
+            type: "NumberUnitClass",
+            storedData: 3,
+            uuid: "number",
+        }));
+        assert.equal(addedNumber.ok, true, addedNumber.error);
+        const added = mcpPayload(await tools.get("script_add_unit")({
+            scriptId: "plugin-script",
+            type: "acme.example.ScaleBlock",
+            state: { factor: 2 },
+            uuid: "scale",
+        }));
+        assert.equal(added.ok, true, added.error);
+        const saved = await storage.getScript("plugin-script");
+        assert.equal(saved.graph.pluginLocks[0].packageHash, resource.packageHash);
+        assert.equal(saved.graph.pluginLocks[0].runtimeHash, resource.runtimeHash);
+
+        const connectedValue = mcpPayload(await tools.get("script_connect")({
+            scriptId: "plugin-script",
+            from: "number",
+            output: "number",
+            to: "scale",
+            input: "value",
+        }));
+        assert.equal(connectedValue.ok, true, connectedValue.error);
+        const connectedOut = mcpPayload(await tools.get("script_connect")({
+            scriptId: "plugin-script",
+            from: "scale",
+            output: "result",
+            to: "head-uuid",
+            input: "output",
+        }));
+        assert.equal(connectedOut.ok, true, connectedOut.error);
+        const updated = mcpPayload(await tools.get("script_update_unit")({
+            scriptId: "plugin-script",
+            uuid: "scale",
+            state: { factor: 4 },
+        }));
+        assert.equal(updated.ok, true, updated.error);
+
+        const linted = mcpPayload(await tools.get("script_lint")({ scriptId: "plugin-script" }));
+        assert.equal(linted.ok, true, linted.error);
+        const compiled = await storage.getScript("plugin-script");
+        assert.deepEqual(compiled.latestValidArtifact.pluginRequirements[0].runtimeHash, resource.runtimeHash);
+        assert.equal(JSON.stringify(compiled.latestValidArtifact).includes(resource.packageHash), false);
+
+        const relativeInstall = await tools.get("plugin_install")({
+            source: { kind: "directory", path: "tests/fixtures/plugins/acme.example" },
+        });
+        assert.equal(relativeInstall.isError, true);
+
+        const fromDir = mcpPayload(await tools.get("plugin_install")({
+            source: { kind: "directory", path: fixturePath },
+        }));
+        assert.equal(fromDir.ok, true);
+
+        await tools.get("plugin_remove")({ pluginId: "acme.example", packageHash: resource.packageHash });
+        const afterRemoval = await storage.getScript("plugin-script");
+        assert.equal(afterRemoval.graph.pluginLocks[0].packageHash, resource.packageHash);
+        assert.ok(afterRemoval.latestValidArtifact);
+        const listedAfter = mcpPayload(await tools.get("plugin_list")({}));
+        assert.equal(listedAfter.packages.length, 0);
+        const catalogAfter = await listUnitCatalog(storage);
+        assert.equal(catalogAfter.units.some((unit) => unit.type === "acme.example.ScaleBlock"), false);
+        const lintAfterRemoval = mcpPayload(await tools.get("script_lint")({ scriptId: "plugin-script" }));
+        assert.equal(lintAfterRemoval.ok, true, lintAfterRemoval.error);
+        const retained = await storage.getScript("plugin-script");
+        assert.equal(retained.latestValidArtifact.pluginRequirements[0].runtimeHash, resource.runtimeHash);
+        assert.equal(retained.graph.pluginLocks[0].packageHash, resource.packageHash);
+    });
+});
+

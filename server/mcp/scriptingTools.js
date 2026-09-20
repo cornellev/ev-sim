@@ -9,7 +9,10 @@ import {
 } from "../../app/scripting/EditorDocument.js";
 import { mutateGraphConnections, reconfigureGraphUnit } from "../../app/scripting/GraphDocument.js";
 import { getRegisteredBlockType } from "../../app/scripting/BlockRegistry.js";
-import { registerBuiltInBlocks } from "../../app/scripting/registerBuiltInBlocks.js";
+import { ScriptManager } from "../../app/scripting/ScriptManager.js";
+import { createUnresolvedPluginUnit } from "../../app/scripting/units/UnresolvedPluginUnit.js";
+import { stampGraphPluginLock } from "../../app/plugin/PluginGraphLocks.js";
+import { compileGraph, createStorageAuthoringRegistry, listUnitCatalog } from "../scripting/scriptingHandlers.js";
 import { normalizeOutputNodeState } from "../../app/scripting/units/program/ProgramTypes.js";
 import { storageEvents } from "./events.js";
 import { fail, ok, selfFetchJson } from "./toolResult.js";
@@ -18,6 +21,48 @@ const DEFAULT_HEAD_UUID = "head-uuid";
 
 function resolveHeadUuid(graph) {
     return graph?.head || DEFAULT_HEAD_UUID;
+}
+
+function catalogPorts(meta) {
+    return {
+        inputs: Object.fromEntries((meta?.inputs || []).map((port) => [port.name, port.type])),
+        outputs: Object.fromEntries((meta?.outputs || []).map((port) => [port.name, port.type])),
+    };
+}
+
+function resolveCatalogEntry(units, type, locks = []) {
+    const matches = (units || []).filter((entry) => entry.type === type);
+    if (matches.length === 0) return null;
+    const lock = (locks || []).find((entry) => (
+        entry.types?.includes(type) || matches.some((item) => item.ownership?.pluginId === entry.pluginId)
+    ));
+    if (lock) {
+        const locked = matches.find((entry) => entry.ownership?.packageHash === lock.packageHash);
+        if (locked) return locked;
+    }
+    const hashes = new Set(matches.map((entry) => entry.ownership?.packageHash || "builtin"));
+    if (hashes.size > 1) {
+        throw new Error(`Multiple installed packages provide "${type}". Lock one package on the graph first.`);
+    }
+    return matches[0];
+}
+
+async function withAuthoringGraph(storage, graph, fn) {
+    const authoring = await createStorageAuthoringRegistry(storage, graph?.pluginLocks || []);
+    try {
+        const getBlockClass = (type) => authoring.registry.get(type) || getRegisteredBlockType(type);
+        const extras = {
+            createManager: () => new ScriptManager({
+                blockRegistry: authoring.registry,
+                pluginHost: authoring.host,
+                scopeId: "authoring:mcp",
+            }),
+            onMissingBlock: (node) => createUnresolvedPluginUnit(node),
+        };
+        return await fn(getBlockClass, extras, authoring);
+    } finally {
+        authoring.dispose();
+    }
 }
 
 function getOutputNodePorts(graph) {
@@ -172,7 +217,11 @@ export function registerScriptingTools(server, storage) {
         async () => {
             try {
                 const catalog = await selfFetchJson("/api/scripting/units");
-                return ok({ ok: true, units: catalog.units ?? catalog });
+                return ok({
+                    ok: true,
+                    revision: catalog.revision ?? 0,
+                    units: catalog.units ?? catalog,
+                });
             } catch (error) {
                 return fail(error);
             }
@@ -224,37 +273,30 @@ export function registerScriptingTools(server, storage) {
                 const document = await requireEditableScript(storage, scriptId);
                 ensureGraph(document);
 
-                // Soft-check type exists when the units API is reachable.
-                try {
-                    const catalog = await selfFetchJson("/api/scripting/units");
-                    const meta = (catalog.units ?? []).find((entry) => entry.type === type);
-                    if (!meta) {
-                        return fail(`Unknown unit type "${type}". Use unit_catalog to list types.`);
-                    }
-                    if (meta.placeable === false) {
-                        return fail(
-                            `Unit type "${type}" is not placeable. `
-                            + (meta.notes || "Configure the graph head OutputNode via script_update_unit."),
-                        );
-                    }
-                } catch {
-                    // Units API may be unavailable during early boot; allow add and rely on lint.
-                    if (type === "OutputNodeBlock" || type === "ProgramOutputBlock") {
-                        return fail(
-                            `Unit type "${type}" is not placeable. `
-                            + "Configure the graph head OutputNode via script_update_unit on the head uuid.",
-                        );
-                    }
+                const catalog = await listUnitCatalog(storage);
+                const meta = resolveCatalogEntry(catalog.units, type, document.graph.pluginLocks);
+                if (!meta) {
+                    return fail(`Unknown unit type "${type}". Use unit_catalog to list types.`);
+                }
+                if (meta.placeable === false) {
+                    return fail(
+                        `Unit type "${type}" is not placeable. `
+                        + (meta.notes || "Configure the graph head OutputNode via script_update_unit."),
+                    );
                 }
 
                 const node = {
                     uuid: uuid || createUnitId(),
                     type,
-                    state: state ?? null,
+                    state: state ?? meta.defaultState ?? null,
                     storedData: storedData === undefined ? null : storedData,
                     runtimeState: null,
                     position: { x: x ?? 0, y: y ?? 0 },
                 };
+                if (meta.ownership && meta.ownership !== "builtin") {
+                    node.ports = catalogPorts(meta);
+                    document.graph.pluginLocks = stampGraphPluginLock(document.graph.pluginLocks, meta);
+                }
                 document.graph.nodes.push(node);
                 document.updatedAt = nowIso();
                 document.compileStatus = {
@@ -304,7 +346,6 @@ export function registerScriptingTools(server, storage) {
                 let updatedNode;
 
                 if (hasConfiguration) {
-                    registerBuiltInBlocks();
                     const position = x !== undefined || y !== undefined
                         ? {
                             x: x ?? currentNode.position?.x ?? 0,
@@ -326,12 +367,9 @@ export function registerScriptingTools(server, storage) {
                         if (storedData !== undefined) unitPatch.storedData = storedData;
                     }
 
-                    const changed = reconfigureGraphUnit(
-                        document.graph,
-                        getRegisteredBlockType,
-                        uuid,
-                        unitPatch,
-                    );
+                    const changed = await withAuthoringGraph(storage, document.graph, (getBlockClass, extras) => (
+                        reconfigureGraphUnit(document.graph, getBlockClass, uuid, unitPatch, extras)
+                    ));
                     if (!changed.ok) return fail(changed.error);
                     document.graph = changed.graph;
                     updatedNode = changed.node;
@@ -436,39 +474,39 @@ export function registerScriptingTools(server, storage) {
                 if (!fromNode) return fail(`Source unit "${from}" not found.`);
                 if (!toNode && !targetingHead) return fail(`Target unit "${to}" not found.`);
 
-                try {
-                    const catalog = await selfFetchJson("/api/scripting/units");
-                    const fromMeta = (catalog.units ?? []).find((entry) => entry.type === fromNode.type);
-                    const outPort = fromMeta?.outputs?.find((port) => port.name === output);
-                    if (!outPort) {
+                const catalog = await listUnitCatalog(storage);
+                const fromMeta = resolveCatalogEntry(catalog.units, fromNode.type, document.graph.pluginLocks)
+                    || (catalog.units ?? []).find((entry) => entry.type === fromNode.type);
+                const outPort = fromMeta?.outputs?.find((port) => port.name === output)
+                    || (fromNode.ports?.outputs && Object.hasOwn(fromNode.ports.outputs, output));
+                if (!outPort) {
+                    return fail(
+                        `Output port "${output}" not found on type "${fromNode.type}". `
+                        + `Available: ${(fromMeta?.outputs ?? []).map((p) => p.name).join(", ") || "(none)"}`,
+                    );
+                }
+
+                if (targetingHead) {
+                    const headPorts = getOutputNodePorts(document.graph);
+                    const headPort = headPorts.find((port) => port.id === input || port.label === input);
+                    if (!headPort) {
                         return fail(
-                            `Output port "${output}" not found on type "${fromNode.type}". `
-                            + `Available: ${(fromMeta?.outputs ?? []).map((p) => p.name).join(", ") || "(none)"}`,
+                            `Input port "${input}" not found on OutputNode (head "${headUuid}"). `
+                            + `Available: ${headPorts.map((p) => p.id).join(", ") || "(none)"}. `
+                            + "Configure ports with script_update_unit on the head uuid.",
                         );
                     }
-
-                    if (targetingHead) {
-                        const headPorts = getOutputNodePorts(document.graph);
-                        const headPort = headPorts.find((port) => port.id === input || port.label === input);
-                        if (!headPort) {
-                            return fail(
-                                `Input port "${input}" not found on OutputNode (head "${headUuid}"). `
-                                + `Available: ${headPorts.map((p) => p.id).join(", ") || "(none)"}. `
-                                + "Configure ports with script_update_unit on the head uuid.",
-                            );
-                        }
-                    } else {
-                        const toMeta = (catalog.units ?? []).find((entry) => entry.type === toNode.type);
-                        const inPort = toMeta?.inputs?.find((port) => port.name === input) || null;
-                        if (!inPort) {
-                            return fail(
-                                `Input port "${input}" not found on type "${toNode.type}". `
-                                + `Available: ${(toMeta?.inputs ?? []).map((p) => p.name).join(", ") || "(none)"}`,
-                            );
-                        }
+                } else {
+                    const toMeta = resolveCatalogEntry(catalog.units, toNode.type, document.graph.pluginLocks)
+                        || (catalog.units ?? []).find((entry) => entry.type === toNode.type);
+                    const inPort = toMeta?.inputs?.find((port) => port.name === input)
+                        || (toNode.ports?.inputs && Object.hasOwn(toNode.ports.inputs, input));
+                    if (!inPort) {
+                        return fail(
+                            `Input port "${input}" not found on type "${toNode.type}". `
+                            + `Available: ${(toMeta?.inputs ?? []).map((p) => p.name).join(", ") || "(none)"}`,
+                        );
                     }
-                } catch {
-                    // Units API may be unavailable; ScriptManager connection is authoritative.
                 }
 
                 const duplicate = document.graph.connections.some(
@@ -478,9 +516,10 @@ export function registerScriptingTools(server, storage) {
                     return fail(`Input "${input}" on unit "${to}" already has a connection.`);
                 }
 
-                registerBuiltInBlocks();
-                const mutated = mutateGraphConnections(document.graph, getRegisteredBlockType, (manager) => (
-                    manager.connectUnitsDetailed(from, output, to, input)
+                const mutated = await withAuthoringGraph(storage, document.graph, (getBlockClass, extras) => (
+                    mutateGraphConnections(document.graph, getBlockClass, (manager) => (
+                        manager.connectUnitsDetailed(from, output, to, input)
+                    ), extras)
                 ));
                 if (!mutated.ok) return fail(mutated.error);
 
@@ -528,13 +567,14 @@ export function registerScriptingTools(server, storage) {
                 ));
                 if (!exists) return fail("Connection not found.");
 
-                registerBuiltInBlocks();
-                const mutated = mutateGraphConnections(document.graph, getRegisteredBlockType, (manager) => {
-                    const removed = manager.disconnectUnits(from, output, to, input);
-                    return removed
-                        ? { ok: true }
-                        : { ok: false, error: "Connection not found." };
-                });
+                const mutated = await withAuthoringGraph(storage, document.graph, (getBlockClass, extras) => (
+                    mutateGraphConnections(document.graph, getBlockClass, (manager) => {
+                        const removed = manager.disconnectUnits(from, output, to, input);
+                        return removed
+                            ? { ok: true }
+                            : { ok: false, error: "Connection not found." };
+                    }, extras)
+                ));
                 if (!mutated.ok) return fail(mutated.error);
 
                 document.graph = mutated.graph;
@@ -570,10 +610,12 @@ export function registerScriptingTools(server, storage) {
                     return fail("Script has no editable graph.");
                 }
 
-                const result = await selfFetchJson("/api/scripting/compile", {
-                    method: "POST",
-                    body: { graph: document.graph, name: document.name },
-                });
+                let result;
+                try {
+                    result = await compileGraph(storage, document.graph, document.name);
+                } catch (error) {
+                    result = { ok: false, error: error.message };
+                }
 
                 if (!result.ok) {
                     document.compileStatus = {
@@ -638,6 +680,7 @@ function ensureGraph(document) {
     if (!document.graph.outputNodeConfig) {
         document.graph.outputNodeConfig = normalizeOutputNodeState({});
     }
+    if (!Array.isArray(document.graph.pluginLocks)) document.graph.pluginLocks = [];
 }
 
 function createUnitId() {

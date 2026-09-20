@@ -74,7 +74,7 @@ Detail: [references/project-operations.md](references/project-operations.md).
    `set-marking`) and `set-turn-rule` → `environment_validate` (reports
    `roadsOk` plus lane/turn-rule issues). Lane edits on geometry-v2 roads make
    existing route proofs stale; re-run `scenario_verify_route`.
-2. Script: create → `unit_catalog` → add/connect units → wire into OutputNode
+2. Script: `plugin_install` if using third-party units → create → `unit_catalog` → add/connect units → wire into OutputNode
    at **`head-uuid`** → configure head outputs via `script_update_unit` →
    `script_lint`. Do **not** `script_add_unit` for `OutputNodeBlock`.
 3. Bindings: `binding_suggest` → `binding_create` (needs compiled script).

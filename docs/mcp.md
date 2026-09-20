@@ -74,7 +74,23 @@ Mutating placement tools return a `conflicts` array (road crossings, corridor ov
 | `script_connect` / `script_disconnect` | Typed wires; `script_connect` restores a `ScriptManager`, runs `connectUnitsDetailed`, and reserializes. Generic conflicts are rejected before persist. |
 | `script_lint` | Compile the graph; persists `latestValidArtifact` on success. Fails closed if stored edges cannot restore (legacy `written` / `ok` / `staged`) and keeps the previous artifact. |
 
-Compile / unit metadata run through Next API routes (`/api/scripting/compile`, `/api/scripting/units`) so the Express MCP process does not need to load React for catalog listing. `UnitCatalog.meta.js` supplies explicit stable types, keywords, settings, deprecation/placeability, and `requiresSignals`. The catalog includes atomic `math`, `logic`, `conversions`, `strings`, `collections`, JSON path `objects`, `geometry` (`MakeVec2Block`, …), mission route helpers (`RouteLengthBlock`, `WaypointAtIndexBlock`, …), `control` temporal/PID blocks (`PreviousBlock`, `IntegratorBlock`, `PidControllerBlock`, …), `texture1d` ops (`ScaleTextureBlock`, `MultiplyTexBlock`, …), and simulator adapters (`VehicleStateBlock`, `SimulationClockBlock`, …). `script_add_unit` `storedData` may be `0`, `false`, or `null`. Connection and `script_update_unit` mutations restore a real `ScriptManager` in the Express process and run graph-wide unification before persistence; a rejected update leaves configuration, positions, timestamps, and wires unchanged. Unrestored missing-port edges stay in the saved graph. `/api/scripting/compile` returns `{ ok, artifact }` with `artifact.version === 3`, or `{ ok: false, error }` when restore/compile fails.
+Compile / unit metadata run through Express `/api/scripting/compile` and `/api/scripting/units`
+so the MCP process can merge built-in `UnitCatalog.meta.js` with the revisioned plugin library.
+`script_add_unit` stamps `graph.pluginLocks` for plugin types. Connection and
+`script_update_unit` restore a lock-scoped `ScriptManager`. `script_lint` compiles through
+that registry and persists `latestValidArtifact` on success.
+
+### Plugins
+
+| Tool | Purpose |
+|------|---------|
+| `plugin_list` | Revisioned local library (`pluginId`, version, hashes). CAS bytes remain after removal. |
+| `plugin_get` | Verified metadata and parsed `plugin.json` for one `packageHash`. File bytes stay on CAS GET routes. |
+| `plugin_install` | Install from `{ source: { kind: "directory", path } }` (absolute) or `{ kind: "digest", packageHash }`. Relative paths fail. |
+| `plugin_remove` | Drop library membership for `pluginId` + `packageHash`. Immutable CAS URLs are retained. |
+
+Install is explicit. Authoring catalogs do not hot-swap an open graph. Relative directory paths are
+rejected. See [Plugin API](plugin-api.md).
 
 ### Binding
 
@@ -174,6 +190,7 @@ The resources `fusion://logs`, `fusion://logs/{logId}`, and `fusion://log-folder
 1. `environment_create` / `environment_add_road` / `environment_add_building` / `environment_add_object` — author a world, inspect `conflicts`.
 2. `script_create` → `unit_catalog` → `script_add_unit` → `script_connect` (wire into head `OutputNode` at `head-uuid`) → `script_lint`.
    Configure output ports with `script_update_unit` on the head uuid (`storedData`/`state`: `{ outputs: [{ id, label, type }] }`). Do not add `OutputNodeBlock` via `script_add_unit`.
+   Plugin units require `plugin_install` first; `script_add_unit` stamps `graph.pluginLocks`.
 3. `binding_suggest` → `binding_create` with the compiled `scriptId`.
 4. `scenario_create` / `scenario_update` → `scenario_verify_route` → `scenario_validate` for reusable scenario behavior.
 5. `run_manifest_create` or `run_manifest_update` → `run_manifest_validate` → `run_manifest_launch` to start one exact deterministic configuration.
@@ -188,5 +205,7 @@ The resources `fusion://logs`, `fusion://logs/{logId}`, and `fusion://log-folder
 - Experiment tools: [`server/mcp/experimentTools.js`](../server/mcp/experimentTools.js)
 - Browser experiment command bridge: [`app/experiments/McpExperimentBridge.js`](../app/experiments/McpExperimentBridge.js)
 - Geometry feedback: [`app/3d/editor/document/documentGeometry.js`](../app/3d/editor/document/documentGeometry.js)
-- Compile / units API: [`app/api/scripting/`](../app/api/scripting/)
+- Compile / units API: [`server/scripting/`](../server/scripting/) (`/api/scripting/units`, `/api/scripting/compile`)
+- Plugin tools: [`server/mcp/pluginTools.js`](../server/mcp/pluginTools.js)
+- Plugin API: [`docs/plugin-api.md`](plugin-api.md)
 - Live sync client: [`app/client/storageEvents.js`](../app/client/storageEvents.js)
