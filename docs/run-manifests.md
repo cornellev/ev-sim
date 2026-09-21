@@ -50,7 +50,10 @@ simulation, episode, and trajectory identity. Operator PCAP wrappers live in
 `cev-sim.sensor-transport-host-config@1` (`packetTransports` on a supervisor,
 `--sensor-transport-config` on a direct CLI run) and do not change those
 hashes. Bundle verification is structural and host-independent. Execution
-requires a local PCAP adapter and endpoint; UDP remains unavailable. See
+requires a local adapter and endpoint for each requested binding. PCAP is
+available on direct CLI, supervised, and managed runs. Live UDP requires a
+configured supervisor (`packetTransports`); browser launch and direct
+unsupervised CLI reject it. See
 [`sensor-packet-transports.md`](sensor-packet-transports.md).
 
 Root and nested scenario vehicles that declare `pluginLocks` must match the

@@ -13,7 +13,14 @@ from cev_sim import (
     CevSimSupervisorError,
 )
 from cev_sim.bundle import LoadedBundle
-from cev_sim.client import SupervisorClient, _decode_json, _error_from_status, _raise_status, _resolved_backends
+from cev_sim.client import (
+    _REQUIRES_RESET_CODES,
+    SupervisorClient,
+    _decode_json,
+    _error_from_status,
+    _raise_status,
+    _resolved_backends,
+)
 from cev_sim.config import (
     CPU_LIDAR_CAPABILITY,
     CPU_LIDAR_KIND,
@@ -109,6 +116,11 @@ def test_response_and_environment_errors_are_distinct_and_typed() -> None:
     assert error.environment_index == 3
     assert error.retryable is True
     assert error.details == {"signal": "SIGKILL"}
+
+    assert pb.ERROR_CODE_ARTIFACT_FAILURE in _REQUIRES_RESET_CODES
+    artifact = pb.ErrorStatus(code=pb.ERROR_CODE_ARTIFACT_FAILURE, message="udp send")
+    artifact_error = _error_from_status(artifact, environment_index=1)
+    assert isinstance(artifact_error, CevSimEnvironmentError)
 
     incompatible = pb.ErrorStatus(code=pb.ERROR_CODE_PROTOCOL_MISMATCH, message="protocol")
     with pytest.raises(CevSimCompatibilityError, match="protocol"):

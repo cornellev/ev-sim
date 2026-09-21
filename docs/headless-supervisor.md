@@ -172,10 +172,16 @@ limits; it cannot bypass managed correspondence admission. Optional
 `packetTransports` is the same operator-owned
 `cev-sim.sensor-transport-host-config@1` document used by direct
 `--sensor-transport-config`. Workers own PCAP files and
-`sensor-transport-evidence.json` in their artifact staging directory. Wrapper
-addresses, MTU, and filenames are operational and do not change simulator
-identity. Live UDP remains unavailable. Health includes
-`packetTransportQueueBytes` in aggregate queue usage.
+`sensor-transport-evidence.json` in their artifact staging directory. Live
+UDP is supervisor-owned: one lazy sidecar child binds sockets, and workers
+forward immutable packet batches over packet IPC without destination
+addresses. Wrapper addresses, MTU, filenames, pacing, and UDP timing are
+operational and do not change simulator identity. Direct
+`--sensor-transport-config` still rejects UDP; `run --config` and managed
+execution admit it. `GetCapabilities.diagnostic_json` reports configured UDP
+endpoints and sidecar identity without changing the Protobuf `transports`
+field. Health includes `packetTransportQueueBytes` and sidecar queue bytes
+in aggregate queue usage.
 
 `pbrEnabled` defaults to false. Initial targets are `local-development`,
 `jetson-agx-orin`, and `jetson-agx-thor`; the target must match the host.

@@ -70,8 +70,11 @@ PLG-06a distributes `cev-sim.plugin-package@1` as a portable JSON file
 writes classic Ethernet/IPv4/UDP PCAP artifacts from native `CEVP` packets.
 Host wrapper addresses and PCAP filenames are operational
 (`cev-sim.sensor-transport-host-config@1`) and do not change `resolvedHash`,
-`simulationHash`, `episodeHash`, or `trajectoryHash`. Live UDP remains
-unavailable. See [Sensor packet transports](sensor-packet-transports.md).
+`simulationHash`, `episodeHash`, or `trajectoryHash`. PLG-06b adds
+supervisor-owned live IPv4 unicast UDP as a sidecar child; workers never
+import `node:dgram` or receive endpoint addresses. Direct unsupervised CLI
+and browser execution reject UDP. See
+[Sensor packet transports](sensor-packet-transports.md).
 
 PLG-07 authors custom sensors from the revisioned catalog and exact CAS locks.
 Vehicle `pluginLocks` pin plugin provenance for templates and previews; only

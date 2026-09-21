@@ -500,6 +500,17 @@ compared with the committed characterization.
 
 ## Decision log
 
+### 2026-09-20 — PLG-06b supervisor-owned UDP (not PR 13)
+
+PLG-06b adds live IPv4 unicast UDP as a supervisor-owned Node child. Workers
+keep producing immutable native packet batches and never import `node:dgram`
+or receive endpoint addresses. PCAP stays worker-owned. Host config v1 is
+additive. Protocol 1.4 and `headless.proto` are unchanged. Direct
+`--sensor-transport-config` and browser execution reject UDP; `run --config`
+and managed execution admit it. This is not headless PR 13: run-bundle v1,
+episode/trajectory hashes, and the outstanding PR-12 hosted/soak/NVIDIA/Jetson
+evidence obligations are unchanged.
+
 ### 2026-09-20 — PLG-07 vehicle lock simulation projection (not PR 13)
 
 PLG-07 projects vehicle `pluginLocks` for simulation identity by dropping
@@ -521,7 +532,7 @@ existing `RESOURCE_LIMIT`, `UNSUPPORTED_CAPABILITY`, and `ARTIFACT_FAILURE`
 codes and are never fabricated as Gymnasium transitions. This is not headless
 PR 13: protocol 1.4, run-bundle v1, episode/trajectory hashes, and the
 outstanding PR-12 hosted/soak/NVIDIA/Jetson evidence obligations are
-unchanged. Live UDP remains a later plugin milestone.
+unchanged. Live UDP remained a later plugin milestone (PLG-06b).
 
 ### 2026-09-15 — Bicycle pose drapes to paved elevation
 

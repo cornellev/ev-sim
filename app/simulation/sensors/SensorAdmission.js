@@ -134,6 +134,65 @@ function validateTransportBindings(transports, admitted, { execution = false, ho
     return Object.freeze(resolved);
 }
 
+export function packetOffsetClockCompatible(clock) {
+    return clock?.pacing === "realtime" && Number(clock?.speed) === 1;
+}
+
+export function combinedQueueBytes(left = 0, right = 0) {
+    const first = Math.max(0, Number(left) || 0);
+    const second = Math.max(0, Number(right) || 0);
+    if (first <= 0) return second;
+    if (second <= 0) return first;
+    return Math.min(first, second);
+}
+
+export function admitUdpTransportBindings(bindings = [], {
+    clock = null,
+    maxQueueBytes = 0,
+    udpMaxQueueBytes = 0,
+    endpoints = [],
+} = {}) {
+    const requested = (bindings ?? []).filter((entry) => entry.adapter === "udp");
+    if (requested.length === 0) {
+        return Object.freeze({
+            bindings: Object.freeze([]),
+            maxQueueBytes: 0,
+        });
+    }
+    const byId = new Map((endpoints ?? []).map((entry) => [entry.id, entry]));
+    const resolved = [];
+    for (const binding of requested) {
+        const endpoint = byId.get(binding.endpointId);
+        if (!endpoint || endpoint.adapter !== "udp") {
+            throw Object.assign(
+                new Error(`Sensor transport endpoint "${binding.endpointId}" is unavailable for adapter "udp".`),
+                { code: "UNSUPPORTED_CAPABILITY" },
+            );
+        }
+        const maxPayloadBytes = Number(endpoint.maxPayloadBytes ?? (Number(endpoint.mtu) - 28));
+        const streamLimit = Number(binding.stream?.maxPayloadBytes);
+        if (Number.isSafeInteger(streamLimit) && (!Number.isSafeInteger(maxPayloadBytes) || streamLimit > maxPayloadBytes)) {
+            throw Object.assign(
+                new Error(
+                    `Sensor transport stream ${binding.sensorId}/${binding.productId}/${binding.streamId} maxPayloadBytes ${streamLimit} exceeds endpoint "${binding.endpointId}" capacity ${maxPayloadBytes}.`,
+                ),
+                { code: "UNSUPPORTED_CAPABILITY" },
+            );
+        }
+        if ((endpoint.pacing?.mode ?? "burst") === "packet-offset" && !packetOffsetClockCompatible(clock)) {
+            throw Object.assign(
+                new Error("UDP packet-offset pacing requires a realtime clock at speed 1."),
+                { code: "UNSUPPORTED_CAPABILITY" },
+            );
+        }
+        resolved.push(Object.freeze({ ...binding, endpoint }));
+    }
+    return Object.freeze({
+        bindings: Object.freeze(resolved),
+        maxQueueBytes: combinedQueueBytes(udpMaxQueueBytes, maxQueueBytes),
+    });
+}
+
 export function planSensorAdmission({
     manifest,
     sensorRegistry = sensorTypeRegistry,

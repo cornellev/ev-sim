@@ -43,6 +43,79 @@ export function fixturePcapHostConfig(overrides = {}) {
     };
 }
 
+export function fixtureUdpHostConfig(overrides = {}) {
+    const udp = overrides.udp ?? {};
+    return {
+        kind: "cev-sim.sensor-transport-host-config",
+        version: 1,
+        ...(overrides.pcap ? { pcap: overrides.pcap } : {}),
+        udp: {
+            maxQueueBytesPerEnvironment: udp.maxQueueBytesPerEnvironment ?? 16_777_216,
+            endpoints: udp.endpoints ?? [
+                {
+                    id: "helios-data",
+                    mtu: 1500,
+                    source: { address: "0.0.0.0", port: 5000 },
+                    destination: { address: "127.0.0.1", port: 6699 },
+                    pacing: { mode: "burst" },
+                },
+                {
+                    id: "helios-status",
+                    mtu: 1500,
+                    source: { address: "0.0.0.0", port: 5000 },
+                    destination: { address: "127.0.0.1", port: 6700 },
+                    pacing: { mode: "burst" },
+                },
+            ],
+        },
+    };
+}
+
+export function fixtureUdpBindings() {
+    return {
+        kind: "cev-sim.sensor-transports",
+        version: 1,
+        bindings: [
+            {
+                sensorId: "fixture",
+                productId: "packets",
+                streamId: "data",
+                adapter: "udp",
+                endpointId: "helios-data",
+            },
+            {
+                sensorId: "fixture",
+                productId: "packets",
+                streamId: "status",
+                adapter: "udp",
+                endpointId: "helios-status",
+            },
+        ],
+    };
+}
+
+export function fixtureCombinedHostConfig(overrides = {}) {
+    const pcap = fixturePcapHostConfig(overrides).pcap;
+    const udp = fixtureUdpHostConfig(overrides).udp;
+    return {
+        kind: "cev-sim.sensor-transport-host-config",
+        version: 1,
+        pcap,
+        udp,
+    };
+}
+
+export function fixtureCombinedBindings() {
+    return {
+        kind: "cev-sim.sensor-transports",
+        version: 1,
+        bindings: [
+            ...fixturePcapBindings().bindings,
+            ...fixtureUdpBindings().bindings,
+        ],
+    };
+}
+
 export function fixturePcapBindings() {
     return {
         kind: "cev-sim.sensor-transports",

@@ -1495,24 +1495,42 @@ function SensorTransportControls({ draft, sensor, definition, update }) {
         .filter((product) => product.kind === "vendor-packets");
     if (products.length === 0) return null;
     const bindings = draft.sensorTransports?.bindings ?? [];
-    const setBindings = (nextBindings) => {
-        if (nextBindings.length === 0) {
-            const copy = structuredClone(draft);
-            delete copy.sensorTransports;
-            update([], copy);
-            return;
+    const setBindings = (nextBindings, { enableProductId = null } = {}) => {
+        const copy = structuredClone(draft);
+        if (enableProductId) {
+            copy.sensorRig = {
+                ...copy.sensorRig,
+                sensors: copy.sensorRig.sensors.map((entry) => {
+                    if (entry.id !== sensor.id) return entry;
+                    return {
+                        ...entry,
+                        calibration: {
+                            ...(entry.calibration ?? {}),
+                            products: {
+                                ...(entry.calibration?.products ?? {}),
+                                [enableProductId]: true,
+                            },
+                        },
+                    };
+                }),
+            };
         }
-        update(["sensorTransports"], {
-            kind: SENSOR_TRANSPORTS_KIND,
-            version: SENSOR_TRANSPORTS_VERSION,
-            bindings: nextBindings,
-        });
+        if (nextBindings.length === 0) {
+            delete copy.sensorTransports;
+        } else {
+            copy.sensorTransports = {
+                kind: SENSOR_TRANSPORTS_KIND,
+                version: SENSOR_TRANSPORTS_VERSION,
+                bindings: nextBindings,
+            };
+        }
+        update([], copy);
     };
     return (
         <div className="mt-4 space-y-3 rounded-[var(--radius)] border border-[var(--slate-border-60)] p-3">
             <p className="text-[13px] font-medium text-[var(--slate-fg-2)]">Vendor packet streams</p>
             <p className="text-[11px] text-[var(--slate-muted)]">
-                Native recording is available. Classic PCAP is headless/supervisor-only. Live UDP is unavailable until PLG-06b.
+                Native recording is available. Classic PCAP is written by headless workers. Live UDP runs only on a configured supervisor (`packetTransports`); browser launch and direct unsupervised CLI remain unsupported. Endpoint IDs may stay unresolved while authoring.
             </p>
             {products.map((product) => (
                 <div key={product.productId} className="space-y-2">
@@ -1531,12 +1549,11 @@ function SensorTransportControls({ draft, sensor, definition, update }) {
                                 {related.map((binding, bindingIndex) => (
                                     <div key={`${binding.adapter}-${binding.endpointId}-${bindingIndex}`} className="flex flex-wrap items-end gap-2">
                                         <Field label="Adapter">
-                                            <input value={binding.adapter} readOnly disabled={binding.adapter === "udp"} />
+                                            <input value={binding.adapter} readOnly />
                                         </Field>
                                         <Field label="Endpoint ID">
                                             <input
                                                 value={binding.endpointId}
-                                                disabled={binding.adapter === "udp"}
                                                 onChange={(event) => {
                                                     const next = bindings.map((entry) => (
                                                         entry === binding ? { ...entry, endpointId: event.target.value } : entry
@@ -1554,17 +1571,30 @@ function SensorTransportControls({ draft, sensor, definition, update }) {
                                         </button>
                                     </div>
                                 ))}
-                                <Action
-                                    compact
-                                    label={`Add PCAP binding for ${stream.streamId}`}
-                                    onClick={() => setBindings([...bindings, {
-                                        sensorId: sensor.id,
-                                        productId: product.productId,
-                                        streamId: stream.streamId,
-                                        adapter: "pcap",
-                                        endpointId: `${sensor.id}-${product.productId}-${stream.streamId}`,
-                                    }])}
-                                />
+                                <div className="flex flex-wrap gap-2">
+                                    <Action
+                                        compact
+                                        label={`Add PCAP binding for ${stream.streamId}`}
+                                        onClick={() => setBindings([...bindings, {
+                                            sensorId: sensor.id,
+                                            productId: product.productId,
+                                            streamId: stream.streamId,
+                                            adapter: "pcap",
+                                            endpointId: `${sensor.id}-${product.productId}-${stream.streamId}`,
+                                        }], { enableProductId: product.productId })}
+                                    />
+                                    <Action
+                                        compact
+                                        label={`Add UDP binding for ${stream.streamId}`}
+                                        onClick={() => setBindings([...bindings, {
+                                            sensorId: sensor.id,
+                                            productId: product.productId,
+                                            streamId: stream.streamId,
+                                            adapter: "udp",
+                                            endpointId: `${sensor.id}-${product.productId}-${stream.streamId}-udp`,
+                                        }], { enableProductId: product.productId })}
+                                    />
+                                </div>
                             </div>
                         );
                     })}

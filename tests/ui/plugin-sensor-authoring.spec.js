@@ -90,6 +90,39 @@ test("Config creates, grants, edits, saves, and reloads a custom range-image sen
     await expect(page.getByText("Manifest and dependencies are valid.")).toBeVisible({ timeout: 30_000 });
 });
 
+test("Config adds, saves, reloads, and removes UDP bindings", async ({ page, request }) => {
+    test.setTimeout(180_000);
+    await waitForSensorType(request, SENSOR_TYPE);
+    await page.goto("/");
+    await openWorkspace(page, "Run configuration");
+    await page.getByRole("button", { name: "New" }).first().click();
+    const runName = `Plugin UDP ${Date.now()}`;
+    await page.getByRole("tab", { name: "Overview" }).click();
+    await page.getByRole("tabpanel", { name: "Overview" }).getByRole("textbox", { name: "Name" }).fill(runName);
+    await page.getByRole("tab", { name: "Sensors" }).click();
+    await page.getByRole("button", { name: `Add ${SENSOR_TYPE}` }).click();
+    await expect(page.getByText("Vendor packet streams")).toBeVisible();
+    await page.getByRole("button", { name: /Add UDP binding for data/ }).click();
+    const endpoint = page.getByRole("textbox", { name: "Endpoint ID" }).last();
+    await expect(endpoint).toBeVisible();
+    await endpoint.fill("helios-data");
+    await endpoint.blur();
+    await expect(page.getByText("Live UDP runs only on a configured supervisor")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Save" })).toBeEnabled();
+    await page.getByRole("button", { name: "Save" }).click();
+    await expect(page.getByRole("button", { name: "Save" })).toBeDisabled({ timeout: 15_000 });
+    await page.reload();
+    await openWorkspace(page, "Run configuration");
+    await page.getByRole("complementary").getByRole("button", { name: new RegExp(`^${runName}`) }).click();
+    await page.getByRole("tab", { name: "Sensors" }).click();
+    await expect(page.getByRole("textbox", { name: "Endpoint ID" }).last()).toHaveValue("helios-data");
+    await page.getByRole("button", { name: "Remove binding" }).click();
+    await expect(page.getByRole("textbox", { name: "Endpoint ID" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Save" })).toBeEnabled();
+    await page.getByRole("button", { name: "Save" }).click();
+    await expect(page.getByRole("button", { name: "Save" })).toBeDisabled({ timeout: 15_000 });
+});
+
 test("Vehicle editor adds a custom sensor preview and round-trips export/import", async ({ page, request }) => {
     test.setTimeout(180_000);
     await waitForSensorType(request, SENSOR_TYPE);

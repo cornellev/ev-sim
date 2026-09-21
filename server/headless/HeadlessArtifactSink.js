@@ -101,7 +101,9 @@ async function fileRef(directory, name) {
             ? "application/x-sflog"
             : name.endsWith(".pcap")
                 ? "application/vnd.tcpdump.pcap"
-                : "application/json",
+                : name.endsWith(".ndjson")
+                    ? "application/x-ndjson"
+                    : "application/json",
         sizeBytes: String(stat.size),
         sha256: createHash("sha256").update(bytes).digest("hex"),
     };

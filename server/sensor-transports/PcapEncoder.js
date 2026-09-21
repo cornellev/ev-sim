@@ -43,9 +43,7 @@ export function internetChecksum(bytes, extra = 0) {
     return (~sum) & 0xffff;
 }
 
-export function logicalEgressTimeNs(actualDeliveryStep, stepNs, offsetNs) {
-    return BigInt(actualDeliveryStep) * BigInt(stepNs) + BigInt(offsetNs);
-}
+export { logicalEgressTimeNs } from "./HostPacketOrdering.js";
 
 export function pcapTimestampUs(logicalNs) {
     return BigInt(logicalNs) / 1000n;

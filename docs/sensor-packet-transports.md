@@ -112,6 +112,16 @@ PCAP wrappers live in operator-owned
         "udp": {"sourcePort": 5000, "destinationPort": 5001}
       }
     ]
+  },
+  "udp": {
+    "maxQueueBytesPerEnvironment": 16777216,
+    "endpoints": [{
+      "id": "helios-data",
+      "mtu": 1500,
+      "source": {"address": "0.0.0.0", "port": 5000},
+      "destination": {"address": "127.0.0.1", "port": 6699},
+      "pacing": {"mode": "burst"}
+    }]
   }
 }
 ```
@@ -126,6 +136,16 @@ Resolved rules:
 - TTL defaults to 64 and must be in `[1, 255]`.
 - UDP ports are in `[1, 65535]`.
 - Multiple endpoints may share one PCAP artifact.
+- `pcap` and `udp` are independently optional; at least one must exist.
+- UDP destinations must be IPv4 unicast literals; source may be `0.0.0.0`.
+- UDP endpoint IDs are unique across PCAP and UDP.
+- UDP queue capacity is the lower bound of
+  `maxQueueBytesPerEnvironment` and `ResourceLimits.maxQueueBytes`.
+- Omitted UDP pacing is `burst`. `packet-offset` requires
+  `latenessBudgetNs` and a realtime clock at speed 1:
+  `anchor + actualDeliveryStep * stepNs + offsetNs`.
+- Direct `--sensor-transport-config` and browser hosts reject UDP.
+  Supervisors execute UDP from `packetTransports` in `--config`.
 
 ## Structural validation versus execution admission
 
@@ -138,9 +158,10 @@ Execution admission receives an app-neutral host descriptor:
 
 ```js
 {
-  adapters: ["pcap"],
+  adapters: ["pcap", "udp"],
   endpoints: [
-    { id, adapter: "pcap", mtu, maxPayloadBytes }
+    { id, adapter: "pcap", mtu, maxPayloadBytes },
+    { id, adapter: "udp", mtu, maxPayloadBytes }
   ]
 }
 ```
@@ -149,8 +170,9 @@ With `execution: false`, structurally valid bindings are returned without a
 local adapter. With `execution: true`, every binding’s adapter and endpoint
 must exist and the declared stream maximum must be at most `mtu - 28`
 (IPv4 header 20 plus UDP header 8). Browser execution exposes no host
-adapters and therefore rejects requested PCAP bindings. UDP remains
-unavailable and is rejected.
+adapters and therefore rejects requested PCAP and UDP bindings. Direct
+unsupervised CLI also rejects a UDP host section. Supervised `run --config`
+and managed execution send UDP when `packetTransports.udp` is configured.
 
 PCAP is optional globally but mandatory when a manifest binding requests it.
 Unsupported or failed capture fails the run before readiness or as an
@@ -220,17 +242,36 @@ Published `sensor-transport-evidence.json`:
 
 Each artifact records resolved filename, record count, payload bytes, first
 and last logical egress nanoseconds, output size, and SHA-256 digest.
-Artifact MIME mapping treats `.pcap` as `application/vnd.tcpdump.pcap`.
+Artifact MIME mapping treats `.pcap` as `application/vnd.tcpdump.pcap` and
+`.ndjson` as `application/x-ndjson`.
+
+When UDP ran, evidence may include an optional `udp` section (endpoint
+configuration, generation, sidecar/runtime identity, counts, payload bytes,
+sequence digest, first/last logical egress, and first/last/max submit,
+accept, and lateness values) plus `sensor-udp-timing.ndjson`. PCAP-only
+runs omit that section and file. UDP timing is operational and never enters
+canonical simulation state or semantic hashes.
+
+Internal worker-to-sidecar batches carry `environmentKey`, `generation`,
+`sensorId`, `sampleIndex`, delivery timestamps, and packets
+`[{productId, streamId, packetIndex, offsetNs, payload, payloadDigest}]`.
+The sidecar recomputes payload digests before sending.
 
 Failure mapping:
 
-- missing adapter or endpoint, or disabled artifacts → `UNSUPPORTED_CAPABILITY`
-- queue overflow → `RESOURCE_LIMIT`
-- open, write, or finalize failure → `ARTIFACT_FAILURE`
+- missing adapter or endpoint, direct/browser UDP, bind permission, or
+  pacing incompatibility → `UNSUPPORTED_CAPABILITY`
+- queue overflow or packet-offset lateness → `RESOURCE_LIMIT`
+- sidecar death or IPC disconnect → `WORKER_CRASHED`
+- socket send or evidence I/O failure → `ARTIFACT_FAILURE`
 
-These failures are never fabricated as Gymnasium termination or truncation
-transitions. Health reports `packetTransportQueueBytes` and includes it in
-aggregate queue usage.
+Canonical error details attach
+`{component:"udp-sidecar", endpointId, generation, operation,
+uncertainSubmission, requiresReset:true}`. `ARTIFACT_FAILURE` is
+reset-required. These failures are never fabricated as Gymnasium
+termination or truncation transitions. Health reports
+`packetTransportQueueBytes` and includes sidecar queue bytes in aggregate
+queue usage.
 
 Browser logs export through `POST /api/logs/:id/pcap-export` using the same
 host resolver, ordering, encoder, and writer. Export fails if the recording
@@ -240,9 +281,13 @@ transport bindings.
 ## Availability
 
 PLG-06a implements native capture, telemetry recording, portable plugin
-files, and classic PCAP artifacts. Live UDP is not available; requested `udp`
-bindings fail execution admission. The reserved host permissions
-`sensors.transport.pcap` and `sensors.transport.udp` are not plugin runtime
-capabilities and do not appear in `manifest.plugins.artifacts[].capabilities`.
-Plugins never receive sockets, host endpoints, artifact paths, or send
-operations. PLG-06b supervisor-owned UDP is deferred until after PLG-07.
+files, and classic PCAP artifacts. PLG-06b adds supervisor-owned live IPv4
+unicast UDP as a dedicated sidecar child. Browser hosts expose no adapters
+and reject requested PCAP or UDP bindings. Direct unsupervised CLI rejects a
+UDP host section. `run --config` and managed execution send UDP when the
+supervisor config includes `packetTransports.udp`. The reserved host
+permissions `sensors.transport.pcap` and `sensors.transport.udp` are not
+plugin runtime capabilities and do not appear in
+`manifest.plugins.artifacts[].capabilities`. Plugins never receive sockets,
+host endpoints, artifact paths, or send operations. Workers never import
+`node:dgram` or sidecar modules.

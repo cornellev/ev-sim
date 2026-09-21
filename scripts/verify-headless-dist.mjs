@@ -140,6 +140,34 @@ async function verifyNpm(root, tarball) {
         });
     if (browserUiPresent) throw new Error("Headless distribution shipped browser plugin UI modules.");
 
+    const installedRoot = path.join(project, "node_modules/cev-sim");
+    const forbiddenUdpOwners = [
+        "server/headless/HeadlessWorker.js",
+        "server/headless/WorkerPacketTransportSink.js",
+        "app/simulation",
+        "app/plugin",
+    ];
+    for (const relative of forbiddenUdpOwners) {
+        const target = path.join(installedRoot, relative);
+        const stats = await fs.stat(target).catch((error) => {
+            if (error.code === "ENOENT") return null;
+            throw error;
+        });
+        if (!stats) continue;
+        const files = stats.isDirectory()
+            ? await fs.readdir(target, { recursive: true, withFileTypes: true })
+                .then((entries) => entries
+                    .filter((entry) => entry.isFile() && entry.name.endsWith(".js"))
+                    .map((entry) => path.join(entry.parentPath ?? entry.path, entry.name)))
+            : [target];
+        for (const file of files) {
+            const source = await fs.readFile(file, "utf8");
+            if (source.includes("node:dgram") || source.includes("UdpTransportSidecar")) {
+                throw new Error(`Installed ${path.relative(installedRoot, file)} must not import UDP sockets or the sidecar.`);
+            }
+        }
+    }
+
     const sensorResource = await pluginSensorFixtureResource();
     const sensorBundle = await createPluginPortableHeadlessBundle(sensorResource, {
         sensors: [createHeadlessImu(), createPluginRangeImageFixtureSensor()],

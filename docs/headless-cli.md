@@ -166,8 +166,10 @@ with `--config`; supervisors read the same document from
 MTU, and PCAP filenames are operational and do not change `resolvedHash`,
 `simulationHash`, `episodeHash`, or `trajectoryHash`. Requested `pcap`
 bindings require artifact output and fail with `UNSUPPORTED_CAPABILITY` when
-the host adapter, endpoint, or capture is unavailable. Live UDP is rejected.
-See [Sensor packet transports](sensor-packet-transports.md).
+the host adapter, endpoint, or capture is unavailable. Live UDP is rejected
+on this direct path. Supervised `run --config` reads the same document from
+`packetTransports` and executes UDP in a supervisor-owned sidecar. See
+[Sensor packet transports](sensor-packet-transports.md).
 
 ## Exit codes
 

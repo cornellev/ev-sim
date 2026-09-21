@@ -69,6 +69,9 @@ export async function startHeadlessSupervisor(options = {}) {
         workerFactory: options.workerFactory,
         rendererPool: options.rendererPool,
         rendererAdapterFactory: options.rendererAdapterFactory,
+        admissionManager: options.admissionManager,
+        udpSidecarOwner: options.udpSidecarOwner,
+        inlineObservations: options.inlineObservations,
     });
     const { grpc, service } = loadHeadlessGrpcSchema();
     const server = new grpc.Server({

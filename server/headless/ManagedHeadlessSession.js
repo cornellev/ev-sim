@@ -29,6 +29,7 @@ import {
 } from "../../app/simulation/render/RenderSceneProviderRegistry.js";
 import { createHeadlessArtifactSink, resolveArtifactPolicy } from "./HeadlessArtifactSink.js";
 import { HeadlessRunnerError } from "./HeadlessRunnerErrors.js";
+import { assertDirectUdpDisabled, markResetRequiredFailure } from "./HeadlessSession.js";
 import { cloneRunBundle, verifyRunBundle } from "./RunBundle.js";
 import { HostPacketTransportHub } from "../sensor-transports/HostPacketTransportHub.js";
 import {
@@ -232,6 +233,8 @@ export class ManagedHeadlessSession {
         pluginModuleSource = null,
         hostConfig = null,
         packetHub = null,
+        sensorTransportHost = null,
+        udpMaxQueueBytes = null,
     } = {}) {
         this.artifactSinkFactory = artifactSinkFactory;
         this.limits = limits;
@@ -241,6 +244,10 @@ export class ManagedHeadlessSession {
             ? resolveSensorTransportHostConfig(hostConfig)
             : null;
         this.packetHub = packetHub ?? new HostPacketTransportHub();
+        assertDirectUdpDisabled(this.hostConfig, this.packetHub);
+        this.sensorTransportHost = sensorTransportHost
+            ?? hostDescriptorFromConfig(this.hostConfig);
+        this.udpMaxQueueBytes = udpMaxQueueBytes;
         this.runtime = null;
         this.kernel = null;
         this.bundle = null;
@@ -267,12 +274,13 @@ export class ManagedHeadlessSession {
                 hostConfig: this.hostConfig,
                 stepNs: this.verified.resolved.manifest.clock.stepNs,
                 maxQueueBytes: this.limits?.maxQueueBytes ?? 0,
+                udpMaxQueueBytes: this.udpMaxQueueBytes,
             });
             this.runtime = createHeadlessRuntimeContext({
                 rendererClient: this.rendererClient,
                 pluginModuleSource: this.pluginModuleSource,
                 nativePacketSink: this.packetHub,
-                sensorTransportHost: hostDescriptorFromConfig(this.hostConfig),
+                sensorTransportHost: this.sensorTransportHost,
             });
             this.kernel = new SimulationKernel(this.runtime.context);
             await this.kernel.prepare(this.verified.resolved, {
@@ -300,81 +308,90 @@ export class ManagedHeadlessSession {
     async run({ artifactPolicy = null, outputUri = null, yieldEverySteps = 100 } = {}) {
         if (this.state !== "prepared") invalid("ENVIRONMENT_NOT_FOUND", "Prepare the managed worker before running it.");
         const policy = resolveArtifactPolicy(artifactPolicy, this.verified.resolved.manifest, outputUri);
-        if (this.packetHub.hasPcapBindings() && policy.profile === "disabled") {
-            invalid("UNSUPPORTED_CAPABILITY", "Requested PCAP bindings require artifact output.");
+        if (this.packetHub.hasPacketBindings() && policy.profile === "disabled") {
+            invalid("UNSUPPORTED_CAPABILITY", "Requested packet transport bindings require artifact output.");
         }
         this.metricCollector = new ExperimentMetricCollector(this.metricDefinitions, this.runtime.signalStore).start();
-        this.artifactSink = await this.artifactSinkFactory({
-            bundle: this.bundle,
-            episode: this,
-            policy,
-            provenance: await provenance(this.verified.resolved, this.episodeIdentity, this.rendererClient),
-            limits: this.limits,
-        });
-        await this.artifactSink.start();
-        if (this.packetHub.hasPcapBindings()) {
-            await this.packetHub.attachArtifactRoot(this.artifactSink.stagingDirectory);
-        }
-        this.kernel.play();
-        this.state = "running";
-        const interval = Math.max(1, Math.floor(Number(yieldEverySteps) || 100));
-        let shouldContinue = true;
-        while (shouldContinue) {
-            shouldContinue = await this.kernel.advanceStepAsync();
-            this.completedStep = this.kernel.steps;
-            await this.packetHub.drain();
-            if (shouldContinue && this.kernel.steps % interval === 0) {
-                await new Promise((resolve) => setImmediate(resolve));
+        try {
+            this.artifactSink = await this.artifactSinkFactory({
+                bundle: this.bundle,
+                episode: this,
+                policy,
+                provenance: await provenance(this.verified.resolved, this.episodeIdentity, this.rendererClient),
+                limits: this.limits,
+            });
+            await this.artifactSink.start();
+            if (this.packetHub.hasPacketBindings()) {
+                await this.packetHub.attachArtifactRoot(this.artifactSink.stagingDirectory);
             }
+            await this.packetHub.activateGeneration();
+            this.kernel.play();
+            this.state = "running";
+            const interval = Math.max(1, Math.floor(Number(yieldEverySteps) || 100));
+            let shouldContinue = true;
+            while (shouldContinue) {
+                shouldContinue = await this.kernel.advanceStepAsync();
+                this.completedStep = this.kernel.steps;
+                await this.packetHub.drain();
+                if (shouldContinue && this.kernel.steps % interval === 0) {
+                    await new Promise((resolve) => setImmediate(resolve));
+                }
+            }
+            const finalization = this.kernel.finalize({ status: "completed" });
+            const scenario = finalization.scenario;
+            const assertionFailures = (finalization.assertions || [])
+                .filter((entry) => entry.status === "failed" && entry.severity === "error");
+            const passed = Boolean(scenario?.passed) && assertionFailures.length === 0;
+            const runResult = {
+                kind: "cev-sim.run-result",
+                version: 1,
+                runId: `run-${finalization.episodeHash.slice(0, 16)}`,
+                manifestId: this.verified.resolved.manifest.id,
+                scenarioId: this.verified.resolved.scenario.scenario.id,
+                status: passed ? "passed" : "failed",
+                completed: true,
+                passed,
+                resolvedHash: this.verified.resolvedHash,
+                simulationSemanticHash: finalization.simulationSemanticHash,
+                episodeHash: finalization.episodeHash,
+                trajectoryHash: finalization.trajectoryHash,
+                step: String(finalization.step),
+                timeNs: String(finalization.timeNs),
+                terminationReason: scenario?.terminationReason
+                    || (this.kernel.maxSteps !== null && this.kernel.steps >= this.kernel.maxSteps ? "max-steps" : "completed"),
+                latestTrigger: scenario?.latestTrigger ?? null,
+                terminalEvent: scenario?.terminalEvent ?? null,
+                assertions: finalization.assertions || [],
+                outcomes: scenario?.outcomes || [],
+                metrics: scenario?.metrics || {},
+                failureReason: passed ? null : failureReason(finalization),
+                degraded: false,
+                artifactWarnings: [],
+                ...(this.artifactSink?.provenance?.gpuRenderer ? {
+                    diagnostics: {
+                        gpuRenderer: structuredClone(this.artifactSink.provenance.gpuRenderer),
+                    },
+                } : {}),
+                completedAt: new Date().toISOString(),
+            };
+            const experimentMetrics = this.metricCollector.finalize({
+                ...runResult,
+                status: passed ? "completed" : "failed",
+            });
+            this.metricCollector.stop();
+            await this.packetHub.drain();
+            await this.packetHub.finalize();
+            const published = await this.artifactSink.finalize({ ...runResult, experimentMetrics });
+            this.artifactSink = null;
+            this.state = "finalized";
+            return { finalization, experimentMetrics, ...published };
+        } catch (error) {
+            if (markResetRequiredFailure(error)) {
+                this.state = "prepared";
+                await this.abort();
+            }
+            throw error;
         }
-        const finalization = this.kernel.finalize({ status: "completed" });
-        const scenario = finalization.scenario;
-        const assertionFailures = (finalization.assertions || [])
-            .filter((entry) => entry.status === "failed" && entry.severity === "error");
-        const passed = Boolean(scenario?.passed) && assertionFailures.length === 0;
-        const runResult = {
-            kind: "cev-sim.run-result",
-            version: 1,
-            runId: `run-${finalization.episodeHash.slice(0, 16)}`,
-            manifestId: this.verified.resolved.manifest.id,
-            scenarioId: this.verified.resolved.scenario.scenario.id,
-            status: passed ? "passed" : "failed",
-            completed: true,
-            passed,
-            resolvedHash: this.verified.resolvedHash,
-            simulationSemanticHash: finalization.simulationSemanticHash,
-            episodeHash: finalization.episodeHash,
-            trajectoryHash: finalization.trajectoryHash,
-            step: String(finalization.step),
-            timeNs: String(finalization.timeNs),
-            terminationReason: scenario?.terminationReason
-                || (this.kernel.maxSteps !== null && this.kernel.steps >= this.kernel.maxSteps ? "max-steps" : "completed"),
-            latestTrigger: scenario?.latestTrigger ?? null,
-            terminalEvent: scenario?.terminalEvent ?? null,
-            assertions: finalization.assertions || [],
-            outcomes: scenario?.outcomes || [],
-            metrics: scenario?.metrics || {},
-            failureReason: passed ? null : failureReason(finalization),
-            degraded: false,
-            artifactWarnings: [],
-            ...(this.artifactSink?.provenance?.gpuRenderer ? {
-                diagnostics: {
-                    gpuRenderer: structuredClone(this.artifactSink.provenance.gpuRenderer),
-                },
-            } : {}),
-            completedAt: new Date().toISOString(),
-        };
-        const experimentMetrics = this.metricCollector.finalize({
-            ...runResult,
-            status: passed ? "completed" : "failed",
-        });
-        this.metricCollector.stop();
-        await this.packetHub.drain();
-        await this.packetHub.finalize();
-        const published = await this.artifactSink.finalize({ ...runResult, experimentMetrics });
-        this.artifactSink = null;
-        this.state = "finalized";
-        return { finalization, experimentMetrics, ...published };
     }
 
     health() {

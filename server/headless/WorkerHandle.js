@@ -26,6 +26,8 @@ export class WorkerHandle {
         onHealth = null,
         onExit = null,
         rendererHandler = null,
+        packetHandler = null,
+        environmentKey = null,
     } = {}) {
         this.limits = limits;
         this.shutdownGraceMs = shutdownGraceMs;
@@ -33,6 +35,8 @@ export class WorkerHandle {
         this.onHealth = onHealth;
         this.onExit = onExit;
         this.rendererHandler = rendererHandler;
+        this.packetHandler = packetHandler;
+        this.environmentKey = environmentKey;
         this.nextRequestId = 1;
         this.pending = null;
         this.pendingBytes = 0;
@@ -68,6 +72,10 @@ export class WorkerHandle {
             this._rendererRequest(message);
             return;
         }
+        if (message?.kind === "cev-sim.packet-request") {
+            this._packetRequest(message);
+            return;
+        }
         if (message?.kind !== "cev-sim.worker-response") return;
         if (!this.pending || message.requestId !== this.pending.requestId) return;
         const pending = this.pending;
@@ -97,6 +105,37 @@ export class WorkerHandle {
         if (!this.exited && this.child.connected) {
             this.child.send({
                 kind: "cev-sim.renderer-response",
+                requestId: message.requestId,
+                result,
+                error,
+            });
+        }
+    }
+
+    async _packetRequest(message) {
+        let result;
+        let error = null;
+        try {
+            if (!this.packetHandler) throw supervisorError("UNSUPPORTED_CAPABILITY", "UDP packet transport is unavailable.");
+            const payload = {
+                ...(message.payload && typeof message.payload === "object" ? message.payload : {}),
+                environmentKey: this.environmentKey,
+            };
+            delete payload.childEnvironmentKey;
+            result = await this.packetHandler(message.operation, payload);
+        } catch (caught) {
+            error = {
+                name: caught?.name || "Error",
+                code: caught?.code || "WORKER_CRASHED",
+                message: caught?.message || "Packet transport request failed.",
+                details: caught?.details ?? null,
+                requiresReset: caught?.requiresReset === true || caught?.details?.requiresReset === true,
+                infrastructureFailure: caught?.infrastructureFailure === true,
+            };
+        }
+        if (!this.exited && this.child.connected) {
+            this.child.send({
+                kind: "cev-sim.packet-response",
                 requestId: message.requestId,
                 result,
                 error,

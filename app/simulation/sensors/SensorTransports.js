@@ -53,7 +53,9 @@ export function reconcileSensorTransportBindings(transports, sensors = [], { sen
     const bindings = (transports.bindings ?? []).filter((binding) => {
         const sensor = enabled.get(binding.sensorId);
         if (!sensor) return false;
-        const plugin = sensorRegistry?.get?.(sensor.type)?.pluginSensor;
+        const definition = sensorRegistry?.get?.(sensor.type);
+        if (!definition) return true;
+        const plugin = definition.pluginSensor;
         if (!plugin) return false;
         if (sensor.calibration?.products?.[binding.productId] !== true) return false;
         const product = plugin.descriptor.products.find((entry) => entry.productId === binding.productId);

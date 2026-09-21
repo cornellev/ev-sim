@@ -21,6 +21,7 @@ import { ManagedHeadlessSession } from "../server/headless/ManagedHeadlessSessio
 import { verifyRunBundle } from "../server/headless/RunBundle.js";
 import { NodePluginModuleSource } from "../server/plugins/NodePluginModuleSource.js";
 import { hostDescriptorFromConfig } from "../server/sensor-transports/SensorTransportConfig.js";
+import { normalizeRunManifest } from "../app/simulation/RunManifest.js";
 import {
     createHeadlessImu,
     createPluginPortableHeadlessBundle,
@@ -29,6 +30,8 @@ import {
 import {
     fixturePcapBindings,
     fixturePcapHostConfig,
+    fixtureUdpBindings,
+    fixtureUdpHostConfig,
 } from "./helpers/sensorTransportFixtures.js";
 
 const fixtureRoot = new URL("./fixtures/plugins/test.range-image-fixture/", import.meta.url);
@@ -231,6 +234,26 @@ test("PLG-06a verifies packet transports structurally and admits them only on a 
     });
     assert.equal(admitted.transportBindings.length, 2);
 
+    const udpHost = hostDescriptorFromConfig(fixtureUdpHostConfig());
+    const udpBundle = structuredClone(bundle);
+    udpBundle.resolved.manifest.sensorTransports = fixtureUdpBindings();
+    const udpSealed = rehashRunBundle(udpBundle);
+    const udpAdmitted = planSensorAdmission({
+        manifest: udpSealed.resolved.manifest,
+        sensorRegistry: registry,
+        backendSelections: udpSealed.resolved.backendSelections,
+        execution: true,
+        host: udpHost,
+    });
+    assert.equal(udpAdmitted.transportBindings.length, 2);
+    assert.throws(() => planSensorAdmission({
+        manifest: udpSealed.resolved.manifest,
+        sensorRegistry: registry,
+        backendSelections: udpSealed.resolved.backendSelections,
+        execution: true,
+        host: { adapters: [], endpoints: [] },
+    }), /adapter "udp" is unavailable/);
+
     const undersized = hostDescriptorFromConfig(fixturePcapHostConfig({
         pcap: {
             artifacts: [{ id: "sensors", fileName: "sensors.pcap" }],
@@ -263,6 +286,22 @@ test("PLG-06a verifies packet transports structurally and admits them only on a 
         execution: true,
         host: undersized,
     }), /exceeds endpoint/);
+});
+
+test("PLG-06b preserves UDP bindings when the plugin sensor registry is unavailable", () => {
+    const manifest = normalizeRunManifest({
+        sensorRig: {
+            sensors: [{
+                id: "fixture",
+                type: FIXTURE_TYPE,
+                calibration: { products: { packets: true } },
+            }],
+        },
+        sensorTransports: fixtureUdpBindings(),
+    });
+    assert.equal(manifest.sensorTransports.bindings.length, 2);
+    assert.equal(manifest.sensorTransports.bindings[0].adapter, "udp");
+    assert.equal(manifest.sensorTransports.bindings[0].endpointId, "helios-data");
 });
 
 test("PLG-05 identity binds runtime sensor behavior and excludes UI, transport, and queue policy", async () => {

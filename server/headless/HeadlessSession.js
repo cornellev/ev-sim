@@ -83,6 +83,30 @@ function markPluginFailure(error) {
     return true;
 }
 
+export function markResetRequiredFailure(error) {
+    if (markPluginFailure(error)) return true;
+    const infrastructure = error?.infrastructureFailure === true
+        || error?.requiresReset === true
+        || ["RESOURCE_LIMIT", "ARTIFACT_FAILURE", "WORKER_CRASHED", "STEP_TIMEOUT"].includes(error?.code);
+    if (!infrastructure) return false;
+    error.requiresReset = true;
+    error.infrastructureFailure = true;
+    error.details = {
+        ...(error.details && typeof error.details === "object" ? error.details : {}),
+        requiresReset: true,
+    };
+    return true;
+}
+
+export function assertDirectUdpDisabled(hostConfig, packetHub) {
+    if (hostConfig?.udp && !packetHub?.udpDelegate) {
+        throw new HeadlessRunnerError(
+            "UNSUPPORTED_CAPABILITY",
+            "Live UDP requires a configured supervisor; browser launch and direct unsupervised CLI remain unsupported.",
+        );
+    }
+}
+
 export function packedTensorMapBytes(map) {
     return (map?.entries || []).reduce((total, entry) => {
         const bytes = entry?.tensor?.payload?.packedData;
@@ -104,6 +128,8 @@ export class HeadlessSession {
         limits = null,
         hostConfig = null,
         packetHub = null,
+        sensorTransportHost = null,
+        udpMaxQueueBytes = null,
     } = {}) {
         this.episodeFactory = episodeFactory;
         this.artifactSinkFactory = artifactSinkFactory;
@@ -113,6 +139,10 @@ export class HeadlessSession {
             ? resolveSensorTransportHostConfig(hostConfig)
             : null;
         this.packetHub = packetHub ?? new HostPacketTransportHub();
+        assertDirectUdpDisabled(this.hostConfig, this.packetHub);
+        this.sensorTransportHost = sensorTransportHost
+            ?? hostDescriptorFromConfig(this.hostConfig);
+        this.udpMaxQueueBytes = udpMaxQueueBytes;
         this.episode = null;
         this.bundle = null;
         this.verified = null;
@@ -128,7 +158,7 @@ export class HeadlessSession {
     _episodeOptions() {
         return {
             nativePacketSink: this.packetHub,
-            sensorTransportHost: hostDescriptorFromConfig(this.hostConfig),
+            sensorTransportHost: this.sensorTransportHost,
         };
     }
 
@@ -143,6 +173,7 @@ export class HeadlessSession {
             hostConfig: this.hostConfig,
             stepNs: this.verified.resolved.manifest.clock.stepNs,
             maxQueueBytes: this.limits?.maxQueueBytes ?? 0,
+            udpMaxQueueBytes: this.udpMaxQueueBytes,
         });
         this.episode = this.episodeFactory(this._episodeOptions());
         this.descriptor = await this.episode.prepare(this.verified.resolved, episodeSpec);
@@ -161,37 +192,46 @@ export class HeadlessSession {
         this.finalized = null;
         this.lastTransition = null;
         this.policyStep = 0;
-        const reset = this.episode.reset(episodeSpec);
-        this.episode.kernel.publishSimulationEntities();
-        this.episode.kernel.publishRuntimeState();
-        this._enforceObservation(reset.observation);
-        this.artifactPolicy = resolveArtifactPolicy(artifactPolicy, this.verified.resolved.manifest, outputUri);
-        await this.packetHub.beginEpisode();
-        if (this.packetHub.hasPcapBindings() && this.artifactPolicy.profile === "disabled") {
-            throw new HeadlessRunnerError(
-                "UNSUPPORTED_CAPABILITY",
-                "Requested PCAP bindings require artifact output.",
-            );
+        try {
+            const reset = this.episode.reset(episodeSpec);
+            this.episode.kernel.publishSimulationEntities();
+            this.episode.kernel.publishRuntimeState();
+            this._enforceObservation(reset.observation);
+            this.artifactPolicy = resolveArtifactPolicy(artifactPolicy, this.verified.resolved.manifest, outputUri);
+            await this.packetHub.beginEpisode();
+            if (this.packetHub.hasPacketBindings() && this.artifactPolicy.profile === "disabled") {
+                throw new HeadlessRunnerError(
+                    "UNSUPPORTED_CAPABILITY",
+                    "Requested packet transport bindings require artifact output.",
+                );
+            }
+            const resolvedProvenance = provenance ?? await this.provenanceProvider(this.verified.resolved, {
+                bundle: this.bundle,
+                descriptor: this.descriptor,
+                episodeSpec: this.episode.episodeSpec,
+                episode: this.episode,
+            });
+            this.artifactSink = await this.artifactSinkFactory({
+                bundle: this.bundle,
+                episode: this.episode,
+                policy: this.artifactPolicy,
+                provenance: resolvedProvenance,
+                limits: this.limits,
+            });
+            await this.artifactSink.start();
+            if (this.packetHub.hasPacketBindings()) {
+                await this.packetHub.attachArtifactRoot(this.artifactSink.stagingDirectory);
+            }
+            await this.packetHub.activateGeneration();
+            this.state = "ready";
+            return reset;
+        } catch (error) {
+            if (markResetRequiredFailure(error)) {
+                this.state = "prepared";
+                await this.abort();
+            }
+            throw error;
         }
-        const resolvedProvenance = provenance ?? await this.provenanceProvider(this.verified.resolved, {
-            bundle: this.bundle,
-            descriptor: this.descriptor,
-            episodeSpec: this.episode.episodeSpec,
-            episode: this.episode,
-        });
-        this.artifactSink = await this.artifactSinkFactory({
-            bundle: this.bundle,
-            episode: this.episode,
-            policy: this.artifactPolicy,
-            provenance: resolvedProvenance,
-            limits: this.limits,
-        });
-        await this.artifactSink.start();
-        if (this.packetHub.hasPcapBindings()) {
-            await this.packetHub.attachArtifactRoot(this.artifactSink.stagingDirectory);
-        }
-        this.state = "ready";
-        return reset;
     }
 
     step(action) {
@@ -202,7 +242,7 @@ export class HeadlessSession {
         try {
             transition = this.episode.step(action);
         } catch (error) {
-            if (markPluginFailure(error)) {
+            if (markResetRequiredFailure(error)) {
                 this.state = "prepared";
                 this.abort().catch(() => {});
             }
@@ -223,7 +263,7 @@ export class HeadlessSession {
         try {
             transition = await this.episode.stepAsync(action);
         } catch (error) {
-            if (markPluginFailure(error)) {
+            if (markResetRequiredFailure(error)) {
                 this.state = "prepared";
                 await this.abort();
             }

@@ -107,7 +107,7 @@ access.
 
 The strict descriptor, scan layout, lifecycle, capture result, observation,
 and product shapes are documented in [`plugin-sensors.md`](plugin-sensors.md).
-The native envelope and currently unavailable live UDP adapter are in
+The native envelope and supervisor-owned live UDP adapter are in
 [`sensor-packet-transports.md`](sensor-packet-transports.md). Classic PCAP
 artifacts are operator-owned and optional unless a manifest binding requests
 them. A working 3×4

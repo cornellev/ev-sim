@@ -20,6 +20,7 @@ from [`docs/plugin-api.md`](plugin-api.md) rather than this roadmap.
 | PLG-04: editor/UI integration and distribution acceptance | Complete in working tree | Verified | Unmerged |
 | PLG-05: custom range-image sensors and native packet products | Complete in working tree | Verified | Unmerged |
 | PLG-06a: portable plugin files and classic PCAP artifacts | Complete in working tree | Verified | Unmerged |
+| PLG-06b: supervisor-owned live UDP transport | Complete in working tree | Verified | Unmerged |
 | PLG-07: custom sensor authoring and UI | Complete in working tree | Verified | Unmerged |
 
 Only a merged change may be marked merged. A milestone is verified only when
@@ -211,10 +212,11 @@ addresses, PCAP filenames, MTU, and other host settings live in a separate
 operator-owned `cev-sim.sensor-transport-host-config@1` document and never
 enter those hashes.
 
-PLG-06a implements classic Ethernet/IPv4/UDP PCAP capture. Live UDP remains
-unavailable and is rejected at execution; that adapter is PLG-06b and is
-deferred until after PLG-07. Plugins never receive sockets, host endpoints,
-artifact paths, or send operations.
+PLG-06a implements classic Ethernet/IPv4/UDP PCAP capture. PLG-06b adds
+supervisor-owned live IPv4 unicast UDP. Simulation workers continue to
+produce immutable native packet batches and never import `node:dgram`,
+create sockets, or receive endpoint addresses. Plugins never receive
+sockets, host endpoints, artifact paths, or send operations.
 
 ### Portable plugin files
 
@@ -370,7 +372,8 @@ CPU LiDAR backend v2, shared browser/headless adapters, PointCloud2 and native
 packet dispatch, measured-perception tensors, conditional exact identity, and
 Python/backend propagation. Sensor hooks remain in the existing `sensors`
 phase. The generic native packet sink records complete opaque UDP payloads;
-external PCAP and UDP transports fail closed until their later milestones.
+external PCAP and UDP transports failed closed in PLG-05 (PCAP in PLG-06a,
+live UDP in PLG-06b).
 
 Acceptance requires nonuniform sampling and PointCloud2 direction coverage,
 packet-only and measured-observation configurations, exact bundle export and
@@ -402,7 +405,9 @@ Locked contracts:
   `{ adapters, endpoints: [{ id, adapter, mtu, maxPayloadBytes }] }`. With
   `execution: true`, every binding’s adapter and endpoint must exist and each
   stream maximum must be at most `mtu - 28`. Browser hosts expose no adapters
-  and therefore reject requested PCAP bindings. UDP is rejected.
+  and therefore reject requested PCAP and UDP bindings. Direct unsupervised
+  CLI rejects a UDP host section. Supervised `run --config` and managed
+  execution admit UDP when `packetTransports.udp` is configured.
 - Host configuration is operational and does not affect `resolvedHash`,
   `simulationHash`, `episodeHash`, or `trajectoryHash`.
 - Classic PCAP is little-endian, microsecond-resolution, Ethernet link type 1.
@@ -430,7 +435,57 @@ ordering, and payloads; identical PCAP bytes from direct, worker-supervised,
 and managed runs; browser SFLog export equivalence; unchanged action-tape
 characterization; and the focused plus full verification commands below.
 
-PLG-06b live UDP stays deferred until after PLG-07.
+PLG-06b implements supervisor-owned live IPv4 unicast UDP as a dedicated
+sidecar child. Protocol 1.4, run-manifest v11, run-bundle v1, plugin/sensor
+ABI 1, Protobuf field numbers, and semantic hashes stay unchanged.
+
+### PLG-06b — Supervisor-owned UDP transport
+
+Keep run-manifest v11, run-bundle v1, plugin/sensor ABI 1, headless protocol
+1.4, Protobuf field numbers, and all semantic hashes unchanged.
+`headless.proto` is unchanged. Live IPv4 unicast UDP executes in one lazy
+supervisor-owned Node child. Workers emit immutable native packet batches
+over `cev-sim.packet-request/response` IPC and never import `node:dgram` or
+sidecar modules. PCAP remains worker-owned.
+
+Locked contracts:
+
+- `cev-sim.sensor-transport-host-config@1` is additive: `pcap` and `udp` are
+  independently optional, and at least one must exist. PCAP-only documents
+  remain byte/shape compatible. UDP destinations are IPv4 unicast literals;
+  source may be `0.0.0.0`. Ports are `[1, 65535]`. MTU defaults to 1500 and
+  stays `[576, 65535]`. Endpoint IDs are unique across PCAP and UDP.
+- UDP queue capacity is `min(udp.maxQueueBytesPerEnvironment,
+  ResourceLimits.maxQueueBytes)`. Omitted pacing is `burst`. `packet-offset`
+  requires an explicit nonnegative `latenessBudgetNs` and a manifest clock of
+  `pacing: "realtime", speed: 1`. Configured UDP endpoints are host
+  permissions, not plugin grants.
+- Host descriptors advertise UDP as `{ id, adapter: "udp", mtu,
+  maxPayloadBytes }`. Workers receive only the PCAP projection needed for
+  local writers, that app-neutral combined descriptor, and a packet-bridge
+  identity. Destination/source addresses never enter the kernel or plugin
+  APIs.
+- The sidecar binds exclusive IPv4 sockets, reuses one socket per shared
+  source address/port, validates and reserves a whole batch before the first
+  send, and transmits in logical-egress/identity order. Overflow sends
+  nothing. A mid-batch error is uncertain; the sidecar never retries. Burst
+  submits immediately. Packet-offset anchors after artifact staging and
+  socket readiness, at
+  `anchor + actualDeliveryStep * stepNs + offsetNs`. Lateness is measured at
+  socket submission. Callback success is OS socket acceptance only.
+- Sidecar death, bind failure, queue overflow, lateness, and evidence I/O
+  map to `WORKER_CRASHED`, `UNSUPPORTED_CAPABILITY`, `RESOURCE_LIMIT`, and
+  `ARTIFACT_FAILURE`. Those codes are never fabricated as Gymnasium
+  transitions. `ARTIFACT_FAILURE` is reset-required. Evidence adds an
+  optional `udp` section and `sensor-udp-timing.ndjson` only when UDP ran.
+  PCAP-only `sensor-transport-evidence.json` stays exactly the PCAP shape.
+
+Acceptance requires loopback datagram recovery, byte-identical PCAP/UDP
+payload sequences, fake-clock packet-offset coverage, burst stress, sidecar
+crash/reset without orphans, direct/browser rejection, supervised and
+managed success, Python `CevSimEnvironmentError`/`requires_reset` mapping,
+unchanged semantic hashes, Config UDP authoring, and worker/plugin import
+graphs with no socket or sidecar modules.
 
 ### PLG-07 — Custom sensor authoring and UI
 
@@ -558,10 +613,10 @@ ledger update was
 | Production build | `npm run build` | Optimized Next.js build, TypeScript check, and static generation passed |
 | Clean distribution | `npm run dist:headless`; `npm run dist:verify` | Passed; installed npm tarball executed plugin-free, unit-plugin, and embedded range-image sensor CLI smokes without browser UI imports; wheel and sdist imported. Artifact digests are recorded in `dist/headless/release-manifest.json` and `SHA256SUMS` |
 
-PCAP and UDP remain unavailable by design. Requested `sensorTransports`
-bindings fail before readiness; their adapters and host permissions belong to
-PLG-06a/PLG-06b. PLG-05 does not change the outstanding headless PR-12 hosted,
-soak, x64 NVIDIA, or Jetson evidence obligations.
+At PLG-05 close, PCAP and UDP remained unavailable by design. Requested
+`sensorTransports` bindings failed before readiness; their adapters and host
+permissions belong to PLG-06a/PLG-06b. PLG-05 does not change the outstanding
+headless PR-12 hosted, soak, x64 NVIDIA, or Jetson evidence obligations.
 
 ## PLG-06a evidence ledger
 
@@ -584,9 +639,10 @@ Acceptance ran on 2026-09-20 from base commit
 | Production build | `npm run build` | Optimized Next.js build, TypeScript check, and static generation passed |
 | Clean distribution | `npm run dist:headless`; `npm run dist:verify` | Passed; installed tarball exposes `cev-sim` and `cev-sim-plugin`, packs/verifies a copied fixture without loading runtime code, consumes the external package file, and writes `sensors.pcap`. Artifact digests: npm `ea0a6a7d52ce65ccf51fdf5f19acecfa0a74b224c3f0a2ec2b6fbe85c63d9aab`, wheel `f27397510f3ebf641ea1e89ea380cbe825cc721cc53470070d3edfd0a6f7263f`, sdist `6656e47a1557a485a29369669ca2ea6a30fd261d24b32eaf8d7048ab368e485f` |
 
-Live UDP remains unavailable and is rejected. PLG-06a does not change the
-outstanding headless PR-12 hosted, soak, x64 NVIDIA, or Jetson evidence
-obligations and is not a headless PR 13.
+At PLG-06a close, live UDP remained unavailable and was rejected; PLG-06b
+later added supervisor-owned UDP. PLG-06a does not change the outstanding
+headless PR-12 hosted, soak, x64 NVIDIA, or Jetson evidence obligations and
+is not a headless PR 13.
 
 ## PLG-07 evidence ledger
 
@@ -602,17 +658,51 @@ Acceptance ran on 2026-09-21 on macOS arm64, Node 22.14.0.
 | Production build | `npm run build` | Optimized Next.js build, TypeScript check, and static generation passed |
 | Clean distribution | `npm run dist:headless`; `npm run dist:verify` | Passed; installed tarball omits `app/plugin/browser`. Artifact digests: npm `134066330eadab2002112a1ceb61157a22f22a44ae5fc3641266631ed86804ea`, wheel `b50891d9dbeaa1528df80d6a83953dd7c64d50ca5a14fcebcd0dd34251d4edae`, sdist `bc943539e1421a34483dfee6495d991d9a926967b9f212f72cf9bc083635bb11` |
 
-Live UDP, GPU explicit layouts, package-defined ROS schemas, marketplace behavior, and plugin-owned transport remain out of scope. PLG-07 does not change the outstanding headless PR-12 hosted, soak, x64 NVIDIA, or Jetson evidence obligations and is not a headless PR 13.
+GPU explicit layouts, package-defined ROS schemas, marketplace behavior, and
+plugin-owned transport remain out of scope. Live UDP is implemented in
+PLG-06b. PLG-07 does not change the outstanding headless PR-12 hosted, soak,
+x64 NVIDIA, or Jetson evidence obligations and is not a headless PR 13.
+
+## PLG-06b evidence ledger
+
+Acceptance ran on 2026-09-21 from base commit
+`d38bb17fd17e66021bfb4b7b1d6c6983d7981e42` on macOS 15.6 arm64, Node 22.14.0.
+Protocol 1.4 and `headless.proto` are unchanged. PLG-06b does not close or
+change the outstanding PR-12 hosted, soak, NVIDIA x64, or Jetson ARM64 gates.
+
+| Group | Gate | Exact command / evidence | Result / limitation |
+| --- | --- | --- | --- |
+| Transport correctness | Loopback, PCAP parity, fake-clock, burst | `node --experimental-default-type=module --test tests/sensor-udp.test.js tests/sensor-pcap.test.js tests/plugin-sensors.test.js` | 28/28 passed. Loopback recovered datagram boundaries and per-stream order; combined PCAP+UDP runs matched extracted payload bytes; fake-clock covered packet-offset targets, equal-offset order, pause, lateness, generation reset, and cancel; burst covered atomic overflow, 64 generations, cancel, and drain. `HeadlessWorker`, `app/simulation`, and `app/plugin` import graphs cannot reach `node:dgram` or sidecar modules. Direct `--sensor-transport-config` and in-process managed sessions reject UDP; `run --config` and `runManagedExperiment` send loopback datagrams. |
+| Lifecycle / failure | Supervisor, managed, runner, CLI | `node --experimental-default-type=module --test tests/headless-supervisor.test.js tests/headless-experiment.test.js tests/headless-runner.test.js tests/headless-cli.test.js` | 48/48 passed. Sidecar crash marks registered UDP environments reset-required without automatic resend; missing endpoint, bind conflict, and packet-offset clock mismatches fail before readiness; PCAP-only evidence omits `udp`; owner close leaves no orphan child. |
+| Host / client admission | Python mapping and Config UDP authoring | `python3 -m pytest python/tests/test_client.py python/tests/test_integration.py -q`; `npx playwright test tests/ui/plugin-sensor-authoring.spec.js --workers=1` | 24/24 Python focused tests passed; full `python/tests` was 69/69. `ERROR_CODE_ARTIFACT_FAILURE` is in `_REQUIRES_RESET_CODES` and maps to `CevSimEnvironmentError` / `requires_reset`. Playwright 4/4 passed, including Config add/save/reload/remove of UDP bindings. |
+| Identity / distribution | Characterization, lint, soak, dist | `npm run fixtures:headless`; `git diff --exit-code -- tests/fixtures/headless/characterization.v1.json`; `npm run lint`; `npm test`; `npm run test:python`; `npm run lint:python`; `npm run proto:python`; `npm run build`; `npm run test:soak:quick`; `npm run dist:headless`; `npm run dist:verify`; `git diff --check` | Characterization unchanged. ESLint 0 errors, one pre-existing `MapSurface.js` warning. Node 1,582 passed, 0 failed, 4 existing skips. Python 69/69; Ruff and generated-Protobuf checks passed. Production Next.js build passed. Quick soak passed (`protocol` 1.4). Dist verify passed, including installed-worker/plugin `node:dgram` exclusion. Whitespace check passed. Artifact digests: npm `6b51acaa1d30650b703bea584b265bb7f5290e9f60e10c293af069497ddf4b27`, wheel `736545a3b617474d35c44b5e818c651da4deb27a52ac2067647ee3c1ed606def`, sdist `d7e2d2515dd3e066d2b8fb8d710e0800b16daff0f6814dc05b5064f8e4bc80e2` |
 
 ## Decision log
+
+- **2026-09-21 — PLG-06b acceptance completed.** Supervisor-owned live IPv4
+  unicast UDP passed focused transport, lifecycle, Python/Config admission,
+  characterization, lint, full Node, soak, production-build, and
+  clean-distribution gates. Protocol 1.4 and `headless.proto` are unchanged.
+  PLG-06b is verified but remains unmerged. It is not headless PR 13 and does
+  not change outstanding PR-12 hosted, soak, NVIDIA x64, or Jetson ARM64
+  gates.
+
+- **2026-09-20 — PLG-06b supervisor-owned UDP.** Live IPv4 unicast UDP is a
+  supervisor-owned sidecar child. Workers keep producing immutable native
+  packets and never import `node:dgram` or receive endpoint addresses. PCAP
+  stays worker-owned. Host config v1 is additive. Protocol 1.4,
+  `headless.proto`, run-manifest v11, run-bundle v1, and semantic hashes are
+  unchanged. Direct `--sensor-transport-config` and browser execution reject
+  UDP; `run --config` and managed execution admit it. This is not headless
+  PR 13 and does not change outstanding PR-12 gates.
 
 - **2026-09-21 — PLG-07 acceptance completed.** Catalog/lock/storage/hash Node
   tests, Config and Vehicle browser authoring, throwing-view fallback,
   portable/headless distribution without `app/plugin/browser`, and unchanged
   action-tape characterization passed. Scripts plugin locks stay visible
   outside Advanced so stamped range-image grants can be inspected and
-  repaired. PLG-07 is verified but remains unmerged. Live UDP stays deferred
-  to PLG-06b.
+  repaired. PLG-07 is verified but remains unmerged. Live UDP was still
+  deferred to PLG-06b at that close.
 
 - **2026-09-20 — PLG-07 custom sensor authoring.** Config and Vehicle Editor
   consume a revisioned sensor catalog plus exact CAS locks. Vehicle
@@ -625,14 +715,13 @@ Live UDP, GPU explicit layouts, package-defined ROS schemas, marketplace behavio
 - **2026-09-20 — PLG-06a acceptance completed.** Portable plugin files and
   classic PCAP artifacts passed focused, full Node, Python, characterization,
   production-build, Playwright fail-closed export, and clean-distribution
-  gates. PLG-06a is verified but remains unmerged. Live UDP stays deferred
-  until after PLG-07.
+  gates. PLG-06a is verified but remains unmerged. Live UDP was still
+  deferred until after PLG-07.
 - **2026-09-20 — PLG-06a portable files and classic PCAP.** The existing
   package resource is the portable file. Ingestion limits do not version or
   invalidate embedded run-bundle packages. PCAP host configuration is
   operational and is not a headless PR 13, protobuf, or identity change.
-  Live UDP remains unavailable until PLG-06b, which is deferred until after
-  PLG-07.
+  Live UDP remained unavailable until PLG-06b, which followed PLG-07.
 - **2026-09-20 — Custom sensors use sensor ABI 1 inside plugin API 1.**
   `sensorTypes` stays absent for legacy packages. Exact declarations and
   synchronous `contributeSensorType` factories publish transactionally with

@@ -8,6 +8,8 @@ import { HeadlessEpisode } from "../../app/simulation/headless/HeadlessEpisode.j
 import { validateSharedTensorReference } from "./SharedTensorArena.js";
 import { verifyRunBundleBytes } from "./RunBundle.js";
 import { NodePluginModuleSource } from "../plugins/NodePluginModuleSource.js";
+import { HostPacketTransportHub } from "../sensor-transports/HostPacketTransportHub.js";
+import { WorkerPacketTransportSink } from "./WorkerPacketTransportSink.js";
 
 let session = null;
 let initialized = null;
@@ -15,6 +17,8 @@ let admittedSharedRegion = null;
 let handling = false;
 let nextRendererRequestId = 1;
 const rendererRequests = new Map();
+let nextPacketRequestId = 1;
+const packetRequests = new Map();
 const pluginModuleSource = new NodePluginModuleSource({
     runtimeRoot: path.join(os.tmpdir(), "cev-sim-plugin-runtime", String(process.pid)),
 });
@@ -54,6 +58,33 @@ const rendererClient = {
         });
     },
 };
+
+const packetClient = {
+    request(operation, payload) {
+        if (!process.connected) {
+            return Promise.reject(Object.assign(new Error("Packet transport IPC is disconnected."), {
+                code: "WORKER_CRASHED",
+                infrastructureFailure: true,
+                requiresReset: true,
+            }));
+        }
+        const requestId = nextPacketRequestId++;
+        return new Promise((resolve, reject) => {
+            packetRequests.set(requestId, { resolve, reject });
+            process.send?.({ kind: "cev-sim.packet-request", requestId, operation, payload });
+        });
+    },
+};
+
+function createPacketHub(payload) {
+    const udpSink = payload?.packetTransportBridge
+        ? new WorkerPacketTransportSink({
+            request: (operation, data) => packetClient.request(operation, data),
+            maxQueueBytes: payload.limits?.maxQueueBytes ?? 0,
+        })
+        : null;
+    return new HostPacketTransportHub({ udpDelegate: udpSink });
+}
 
 function serializedError(error) {
     const pluginDetails = String(error?.code ?? "").startsWith("PLUGIN_") ? {
@@ -101,16 +132,23 @@ async function command(name, payload = {}) {
             admittedSharedRegion = payload.sharedRegionName ? String(payload.sharedRegionName) : null;
             const managed = payload.mode === "managed-experiment";
             const hostConfig = payload.packetTransports ?? payload.hostConfig ?? null;
+            const packetHub = createPacketHub(payload);
             session = managed
                 ? new ManagedHeadlessSession({
                     limits: payload.limits,
                     rendererClient,
                     pluginModuleSource,
                     hostConfig,
+                    packetHub,
+                    sensorTransportHost: payload.sensorTransportHost,
+                    udpMaxQueueBytes: payload.udpMaxQueueBytes,
                 })
                 : new HeadlessSession({
                     limits: payload.limits,
                     hostConfig,
+                    packetHub,
+                    sensorTransportHost: payload.sensorTransportHost,
+                    udpMaxQueueBytes: payload.udpMaxQueueBytes,
                     episodeFactory: (options = {}) => new HeadlessEpisode({
                         rendererClient,
                         pluginModuleSource,
@@ -174,6 +212,16 @@ process.on("message", async (message) => {
         } else pending.resolve(message.result);
         return;
     }
+    if (message?.kind === "cev-sim.packet-response") {
+        const pending = packetRequests.get(message.requestId);
+        if (!pending) return;
+        packetRequests.delete(message.requestId);
+        if (message.error) {
+            const error = Object.assign(new Error(message.error.message), message.error);
+            pending.reject(error);
+        } else pending.resolve(message.result);
+        return;
+    }
     if (!message || message.kind !== "cev-sim.worker-request" || !Number.isSafeInteger(message.requestId)) return;
     if (handling) {
         process.send?.({
@@ -206,6 +254,14 @@ process.on("disconnect", async () => {
         pending.reject(Object.assign(new Error("Renderer IPC disconnected."), { code: "WORKER_CRASHED", infrastructureFailure: true }));
     }
     rendererRequests.clear();
+    for (const pending of packetRequests.values()) {
+        pending.reject(Object.assign(new Error("Packet transport IPC disconnected."), {
+            code: "WORKER_CRASHED",
+            infrastructureFailure: true,
+            requiresReset: true,
+        }));
+    }
+    packetRequests.clear();
     try {
         await session?.close();
     } finally {

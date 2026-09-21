@@ -42,13 +42,33 @@ import {
     externalizeTensorMap,
     materializeTensorMap,
 } from "./SharedTensorTransport.js";
+import { verifyPluginPackage } from "../../app/plugin/PluginPackage.js";
+import { createSensorDefinitionRegistry } from "../../app/simulation/sensors/SensorTypeRegistry.js";
+import {
+    admitUdpTransportBindings,
+    planSensorAdmission,
+} from "../../app/simulation/sensors/SensorAdmission.js";
+import {
+    hostDescriptorFromConfig,
+    pcapOnlyHostConfig,
+} from "../sensor-transports/SensorTransportConfig.js";
+import {
+    PACKET_TRANSPORT_BRIDGE_KIND,
+    PACKET_TRANSPORT_BRIDGE_VERSION,
+} from "../sensor-transports/UdpTransportContract.js";
+import { UdpTransportSidecarOwner } from "../sensor-transports/UdpTransportSidecarOwner.js";
+import { udpTransportError } from "../sensor-transports/UdpTransportErrors.js";
 
 const HEALTH = Object.freeze({ SERVING: 1, DEGRADED: 2, NOT_SERVING: 3 });
-const INFRASTRUCTURE_CODES = new Set(["RESOURCE_LIMIT", "STEP_TIMEOUT", "WORKER_CRASHED"]);
+const INFRASTRUCTURE_CODES = new Set(["RESOURCE_LIMIT", "STEP_TIMEOUT", "WORKER_CRASHED", "ARTIFACT_FAILURE"]);
 const PACKAGE_VERSION = createRequire(import.meta.url)("../../package.json").version;
 
 function compareUtf8(left, right) {
     return Buffer.from(String(left)).compare(Buffer.from(String(right)));
+}
+
+function environmentKeyOf(environment) {
+    return environment.environmentKey ?? `${environment.batch.id}:${environment.index}`;
 }
 
 function normalizedArtifactPolicy(value = {}) {
@@ -283,6 +303,10 @@ export class HeadlessSupervisor {
         this.startedAt = Date.now();
         this.shuttingDown = false;
         this.closed = false;
+        this.udpSidecarOwner = options.udpSidecarOwner ?? null;
+        this.udpEnvironments = new Map();
+        this._udpSidecarExitHooked = false;
+        if (this.udpSidecarOwner) this._hookUdpSidecarExit(this.udpSidecarOwner);
     }
 
     get activeEnvironmentCount() {
@@ -326,6 +350,22 @@ export class HeadlessSupervisor {
                 gpuRenderer: this.rendererPool.diagnostics(),
                 gpuProbe,
                 pbrProbe,
+                packetTransports: (() => {
+                    const descriptor = hostDescriptorFromConfig(this.config.packetTransports);
+                    return {
+                        configured: Boolean(this.config.packetTransports),
+                        adapters: descriptor.adapters,
+                        endpoints: descriptor.endpoints,
+                        udp: this.config.packetTransports?.udp
+                            ? {
+                                maxQueueBytesPerEnvironment: this.config.packetTransports.udp.maxQueueBytesPerEnvironment,
+                                endpointIds: this.config.packetTransports.udp.endpoints.map((entry) => entry.id),
+                                sidecar: this.udpSidecarOwner?.identity ?? null,
+                                preflight: this.udpSidecarOwner?.started === true,
+                            }
+                            : null,
+                    };
+                })(),
             })),
             error: okStatus(),
         };
@@ -492,10 +532,13 @@ export class HeadlessSupervisor {
                     recoveryPromise: null,
                     sharedArena: null,
                     transportSequence: 0n,
+                    packetTransportGeneration: 0,
+                    udpAdmission: null,
                     assetReader: bundle.admissionHandle
                         ? this.admissionManager.createDigestReader(bundle.admissionHandle, `${batch.id}:${episodeSpec.environmentIndex}`)
                         : null,
                 };
+                environment.environmentKey = `${batch.id}:${environment.index}`;
                 created.push(environment);
                 if ((batch.sharedMemory || requestsGpu) && arenaBytes > 0) {
                     environment.sharedArena = await SharedTensorArena.create({
@@ -507,6 +550,8 @@ export class HeadlessSupervisor {
                     const revalidated = await this.admissionManager.revalidate(bundle.admissionHandle);
                     bundle.exactBytes = Buffer.from(revalidated.exactBytes);
                 }
+                environment.udpAdmission = this._admitUdp(environment, limits);
+                await this._prepareUdpEnvironment(environment);
                 environment.worker = this._newWorker(environment);
                 batch.environments.push(environment);
             }
@@ -518,7 +563,7 @@ export class HeadlessSupervisor {
                     episodeSpec: environment.episodeSpec,
                     sharedRegionName: environment.sharedArena?.regionName ?? null,
                     limits,
-                    ...this._packetTransportPayload(),
+                    ...this._packetTransportPayload(environment),
                 }, { signal });
                 environment.health = environment.worker.health;
                 const resourceError = this._resourceError(environment, environment.health);
@@ -550,6 +595,7 @@ export class HeadlessSupervisor {
                 error: okStatus(),
             };
         } catch (error) {
+            await Promise.allSettled(created.map((environment) => this._releaseUdpEnvironment(environment)));
             await Promise.allSettled(created.flatMap((environment) => [...environment.workers]).map((worker) => worker.close()));
             await Promise.allSettled(created.map(async (environment) => {
                 await this.rendererPool.releaseEnvironment(`${environment.batch.id}:${environment.index}`);
@@ -586,6 +632,7 @@ export class HeadlessSupervisor {
                 try {
                     environment.episodeSequence += 1;
                     const artifact = episodeArtifactPath(batch, environment, episode, environment.episodeSequence);
+                    await this._ensureUdpPrepared(environment);
                     const response = await this._dispatch(environment, "reset", {
                         episodeSpec: episode,
                         artifactPolicy: batch.artifactPolicy,
@@ -697,7 +744,9 @@ export class HeadlessSupervisor {
             }
             await Promise.allSettled(batch.environments.map(async (environment) => {
                 await environment.recoveryPromise?.catch(() => {});
+                await this._cancelUdpGeneration(environment);
                 await Promise.allSettled([...environment.workers].map((worker) => worker.close()));
+                await this._releaseUdpEnvironment(environment);
                 await environment.sharedArena?.close();
                 await this.rendererPool.releaseEnvironment(`${batch.id}:${environment.index}`);
                 await environment.assetReader?.close();
@@ -776,6 +825,7 @@ export class HeadlessSupervisor {
         }
         this.reservedWorkers += 1;
         let worker = null;
+        let environment = null;
         let resourceFailure = null;
         const environmentKey = `managed:${randomUUID()}`;
         try {
@@ -793,7 +843,7 @@ export class HeadlessSupervisor {
                 && !request.assetReader) {
                 throw supervisorError("UNSUPPORTED_CAPABILITY", "Managed PBR requires a scoped visual-asset reader.");
             }
-            const environment = {
+            environment = {
                 environmentKey,
                 bundle: { verified },
                 batch: { id: environmentKey, limits },
@@ -801,26 +851,42 @@ export class HeadlessSupervisor {
                 assetReader: request.assetReader ?? null,
                 sharedArena: null,
                 transportSequence: 0n,
+                packetTransportGeneration: 0,
+                udpAdmission: null,
+                worker: null,
+                workers: new Set(),
+                state: "preparing",
+                requiresReset: true,
+                detail: "",
             };
+            environment.udpAdmission = this._admitUdp(environment, limits);
+            await this._prepareUdpEnvironment(environment);
             worker = this.workerFactory({
                 limits,
                 memoryPollIntervalMs: this.config.memoryPollIntervalMs,
                 shutdownGraceMs: this.config.shutdownGraceMs,
                 killGraceMs: this.config.killGraceMs,
+                environmentKey,
+                packetHandler: (operation, payload) => this._packetTransportRequest(environment, operation, payload),
                 onHealth: (health, handle) => {
                     onHealth?.(health);
+                    const queueBytes = Number(health.queueBytes || 0)
+                        + Number(handle.pendingBytes || 0)
+                        + this._udpQueueBytes(environment);
                     if (Number(health.rssBytes) > limits.maxRssBytesPerEnvironment) {
                         resourceFailure = supervisorError("RESOURCE_LIMIT", "Managed environment exceeded its RSS limit.", { rssBytes: health.rssBytes, limit: limits.maxRssBytesPerEnvironment });
                     } else if (Number(health.heapBytes) > limits.maxHeapBytesPerEnvironment) {
                         resourceFailure = supervisorError("RESOURCE_LIMIT", "Managed environment exceeded its heap limit.", { heapBytes: health.heapBytes, limit: limits.maxHeapBytesPerEnvironment });
-                    } else if (Number(health.queueBytes || 0) + Number(handle.pendingBytes || 0) > limits.maxQueueBytes) {
-                        resourceFailure = supervisorError("RESOURCE_LIMIT", "Managed environment exceeded its aggregate queue limit.", { queueBytes: health.queueBytes, pendingIpcBytes: handle.pendingBytes || 0, limit: limits.maxQueueBytes });
+                    } else if (queueBytes > limits.maxQueueBytes) {
+                        resourceFailure = supervisorError("RESOURCE_LIMIT", "Managed environment exceeded its aggregate queue limit.", { queueBytes, pendingIpcBytes: handle.pendingBytes || 0, limit: limits.maxQueueBytes });
                     }
                     if (resourceFailure) handle.terminate();
                 },
                 onExit: (_event, handle) => this.workers.delete(handle),
                 rendererHandler: (operation, payload) => this._rendererRequest(environment, operation, payload),
             });
+            environment.worker = worker;
+            environment.workers.add(worker);
             this.workers.add(worker);
             onStarted?.({ pid: worker.pid });
             await worker.dispatch("initialize", {
@@ -831,7 +897,7 @@ export class HeadlessSupervisor {
                 } : { bundle: request.bundle }),
                 metricDefinitions: request.metricDefinitions || [],
                 limits,
-                ...this._packetTransportPayload(),
+                ...this._packetTransportPayload(environment),
             }, { signal });
             if (resourceFailure) throw resourceFailure;
             const response = await worker.dispatch("run-managed", {
@@ -845,8 +911,10 @@ export class HeadlessSupervisor {
             throw resourceFailure || error;
         } finally {
             this.reservedWorkers -= 1;
+            if (environment) await this._cancelUdpGeneration(environment).catch(() => {});
             await worker?.close().catch(() => {});
             if (worker) this.workers.delete(worker);
+            if (environment) await this._releaseUdpEnvironment(environment).catch(() => {});
             try { await this.rendererPool.releaseEnvironment(environmentKey); }
             catch { /* best-effort cleanup after worker teardown */ }
             if (request.outputUri) await cleanupPartialDirectories(path.dirname(path.resolve(request.outputUri)));
@@ -867,6 +935,7 @@ export class HeadlessSupervisor {
         const ids = [...this.batches.keys()];
         await Promise.allSettled(ids.map((batchId) => this.closeBatch({ batchId, finalizeActiveEpisodes: false })));
         await Promise.allSettled([...this.workers].map((worker) => worker.close()));
+        await this.udpSidecarOwner?.close?.().catch(() => {});
         await this.rendererPool.close();
         await this.admissionManager.close();
     }
@@ -878,6 +947,8 @@ export class HeadlessSupervisor {
             memoryPollIntervalMs: this.config.memoryPollIntervalMs,
             shutdownGraceMs: this.config.shutdownGraceMs,
             killGraceMs: this.config.killGraceMs,
+            environmentKey: environmentKeyOf(environment),
+            packetHandler: (operation, payload) => this._packetTransportRequest(environment, operation, payload),
             onHealth: (health) => this._observeHealth(environment, health),
             onExit: ({ error }, handle) => {
                 const exitedWorker = handle ?? worker;
@@ -892,10 +963,176 @@ export class HeadlessSupervisor {
         return worker;
     }
 
-    _packetTransportPayload() {
-        return this.config.packetTransports
-            ? { packetTransports: this.config.packetTransports }
-            : {};
+    _udpBindings(environment) {
+        return environment?.udpAdmission?.bindings ?? [];
+    }
+
+    _udpQueueBytes(environment) {
+        if (!this._udpBindings(environment).length || !this.udpSidecarOwner) return 0;
+        return this.udpSidecarOwner.queuedBytesFor(environmentKeyOf(environment));
+    }
+
+    _admitUdp(environment, limits) {
+        const bindings = environment.bundle.verified.resolved.manifest.sensorTransports?.bindings ?? [];
+        const requested = bindings.filter((entry) => entry.adapter === "udp");
+        if (requested.length === 0) {
+            return Object.freeze({ bindings: Object.freeze([]), maxQueueBytes: 0 });
+        }
+        try {
+            return admitUdpTransportBindings(bindings, {
+                clock: environment.bundle.verified.resolved.manifest.clock,
+                maxQueueBytes: limits.maxQueueBytes,
+                udpMaxQueueBytes: this.config.packetTransports?.udp?.maxQueueBytesPerEnvironment ?? 0,
+                endpoints: this.config.packetTransports?.udp?.endpoints ?? [],
+            });
+        } catch (error) {
+            const code = error?.code === "UNSUPPORTED_CAPABILITY" || error?.code === "RESOURCE_LIMIT"
+                ? error.code
+                : "UNSUPPORTED_CAPABILITY";
+            throw supervisorError(code, error.message, {
+                component: "udp-sidecar",
+                requiresReset: true,
+            });
+        }
+    }
+
+    _hookUdpSidecarExit(owner) {
+        if (!owner || this._udpSidecarExitHooked) return owner;
+        const previous = owner.onExit;
+        owner.onExit = (event, handle) => {
+            previous?.(event, handle);
+            this._handleUdpSidecarExit(event);
+        };
+        this._udpSidecarExitHooked = true;
+        return owner;
+    }
+
+    _ensureUdpSidecarOwner() {
+        if (!this.udpSidecarOwner) {
+            this.udpSidecarOwner = new UdpTransportSidecarOwner({
+                shutdownGraceMs: this.config.shutdownGraceMs,
+                killGraceMs: this.config.killGraceMs,
+                onExit: (event) => this._handleUdpSidecarExit(event),
+            });
+            this._udpSidecarExitHooked = true;
+        } else {
+            this._hookUdpSidecarExit(this.udpSidecarOwner);
+        }
+        return this.udpSidecarOwner;
+    }
+
+    _handleUdpSidecarExit(event = {}) {
+        const error = event.error ?? udpTransportError("WORKER_CRASHED", "UDP sidecar exited.", {
+            operation: "sidecar",
+        });
+        const keys = event.environments?.length
+            ? event.environments
+            : [...this.udpEnvironments.keys()];
+        for (const key of keys) {
+            const environment = this.udpEnvironments.get(String(key));
+            if (!environment) continue;
+            environment.requiresReset = true;
+            environment.detail = error.message;
+            environment.worker?.terminate?.();
+            if (environment.batch?.id && this.batches.has(environment.batch.id)
+                && !["closing", "faulted", "restarting"].includes(environment.state)) {
+                this._recover(environment, error).catch(() => {});
+            }
+        }
+    }
+
+    async _prepareUdpEnvironment(environment) {
+        return this._ensureUdpPrepared(environment);
+    }
+
+    async _ensureUdpPrepared(environment) {
+        const admission = environment.udpAdmission;
+        if (!admission?.bindings?.length) return null;
+        const owner = this._ensureUdpSidecarOwner();
+        const key = environmentKeyOf(environment);
+        if (owner.started && owner.environments.has(key)) return { prepared: true, reused: true };
+        const endpoints = [...new Map(
+            admission.bindings.map((binding) => [binding.endpoint.id, binding.endpoint]),
+        ).values()];
+        const result = await owner.prepareEnvironment({
+            environmentKey: key,
+            endpoints,
+            bindings: admission.bindings.map((binding) => ({
+                sensorId: binding.sensorId,
+                productId: binding.productId,
+                streamId: binding.streamId,
+                adapter: "udp",
+                endpointId: binding.endpointId,
+            })),
+            maxQueueBytes: admission.maxQueueBytes,
+            stepNs: environment.bundle.verified.resolved.manifest.clock.stepNs,
+        });
+        this.udpEnvironments.set(key, environment);
+        return result;
+    }
+
+    async _cancelUdpGeneration(environment) {
+        if (!environment || !this._udpBindings(environment).length) return { cancelled: false };
+        if (!this.udpSidecarOwner?.started) return { cancelled: false };
+        return this.udpSidecarOwner.cancelGeneration({
+            environmentKey: environmentKeyOf(environment),
+            generation: environment.packetTransportGeneration,
+        }).catch(() => ({ cancelled: false }));
+    }
+
+    async _releaseUdpEnvironment(environment) {
+        if (!environment) return { released: false };
+        const key = environmentKeyOf(environment);
+        this.udpEnvironments.delete(key);
+        if (!this.udpSidecarOwner) return { released: false };
+        return this.udpSidecarOwner.releaseEnvironment({ environmentKey: key }).catch(() => ({ released: false }));
+    }
+
+    _packetTransportPayload(environment = null) {
+        const pcap = pcapOnlyHostConfig(this.config.packetTransports);
+        const payload = {
+            sensorTransportHost: hostDescriptorFromConfig(this.config.packetTransports),
+        };
+        if (pcap) payload.packetTransports = pcap;
+        if (this._udpBindings(environment).length) {
+            payload.packetTransportBridge = Object.freeze({
+                kind: PACKET_TRANSPORT_BRIDGE_KIND,
+                version: PACKET_TRANSPORT_BRIDGE_VERSION,
+            });
+            payload.udpMaxQueueBytes = environment.udpAdmission.maxQueueBytes;
+        }
+        return payload;
+    }
+
+    async _packetTransportRequest(environment, operation, payload = {}) {
+        if (!this._udpBindings(environment).length) {
+            throw supervisorError("UNSUPPORTED_CAPABILITY", "UDP packet transport is unavailable.");
+        }
+        const owner = this._ensureUdpSidecarOwner();
+        const environmentKey = environmentKeyOf(environment);
+        switch (operation) {
+            case "begin-generation": {
+                await this._ensureUdpPrepared(environment);
+                const generation = environment.packetTransportGeneration + 1;
+                const result = await owner.beginGeneration({ environmentKey, generation });
+                environment.packetTransportGeneration = generation;
+                return { ...result, generation };
+            }
+            case "submit-batch":
+                return owner.submitBatch({ ...payload, environmentKey });
+            case "finalize-generation":
+                return owner.finalizeGeneration({
+                    environmentKey,
+                    generation: payload.generation ?? environment.packetTransportGeneration,
+                });
+            case "cancel-generation":
+                return owner.cancelGeneration({
+                    environmentKey,
+                    generation: payload.generation ?? environment.packetTransportGeneration,
+                });
+            default:
+                throw supervisorError("INVALID_REQUEST", `Unknown packet transport operation ${operation}.`);
+        }
     }
 
     _observeExit(environment, error) {
@@ -920,8 +1157,13 @@ export class HeadlessSupervisor {
         if (Number(health.heapBytes) > limits.maxHeapBytesPerEnvironment) {
             return supervisorError("RESOURCE_LIMIT", `Environment ${environment.index} exceeded its heap limit.`, { heapBytes: health.heapBytes, limit: limits.maxHeapBytesPerEnvironment });
         }
-        if (Number(health.queueBytes || 0) + Number(environment.worker?.pendingBytes || 0) > limits.maxQueueBytes) {
-            return supervisorError("RESOURCE_LIMIT", `Environment ${environment.index} exceeded its aggregate queue limit.`, { queueBytes: health.queueBytes, pendingIpcBytes: environment.worker?.pendingBytes || 0, limit: limits.maxQueueBytes });
+        if (Number(health.queueBytes || 0) + Number(environment.worker?.pendingBytes || 0) + this._udpQueueBytes(environment) > limits.maxQueueBytes) {
+            return supervisorError("RESOURCE_LIMIT", `Environment ${environment.index} exceeded its aggregate queue limit.`, {
+                queueBytes: health.queueBytes,
+                pendingIpcBytes: environment.worker?.pendingBytes || 0,
+                sidecarQueueBytes: this._udpQueueBytes(environment),
+                limit: limits.maxQueueBytes,
+            });
         }
         return null;
     }
@@ -948,6 +1190,7 @@ export class HeadlessSupervisor {
         if (environment.recoveryPromise) return environment.recoveryPromise;
         environment.recoveryPromise = (async () => {
             this._clearEpisodeWatchdog(environment);
+            await this._cancelUdpGeneration(environment);
             await environment.sharedArena?.invalidate();
             this.rendererPool.releaseEnvironment(`${environment.batch.id}:${environment.index}`);
             environment.requiresReset = true;
@@ -975,7 +1218,7 @@ export class HeadlessSupervisor {
                     episodeSpec: environment.episodeSpec,
                     sharedRegionName: environment.sharedArena?.regionName ?? null,
                     limits: environment.batch.limits,
-                    ...this._packetTransportPayload(),
+                    ...this._packetTransportPayload(environment),
                 });
                 environment.health = environment.worker.health;
                 const resourceError = this._resourceError(environment, environment.health);
