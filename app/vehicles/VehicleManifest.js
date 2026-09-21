@@ -2,8 +2,13 @@ import {
     createVehicleSensor,
     listSensorTypes,
     normalizeVehicleSensor,
+    sensorTypeRegistry,
     validateVehicleSensorDefinition,
 } from "../simulation/sensors/SensorTypeRegistry.js";
+import {
+    collectVehiclePluginLockIssues,
+    reconcileVehiclePluginLocks,
+} from "../plugin/PluginSensorAuthoring.js";
 import { assertAllowedBrowserResourceUrl } from "../security/BrowserResourcePolicy.js";
 import {
     euler,
@@ -139,7 +144,10 @@ export function createDefaultVehicleManifest(overrides = {}) {
     return normalizeVehicleManifest({ ...base, ...overrides }, { allowMissingKind: true });
 }
 
-export function normalizeVehicleManifest(value, { allowMissingKind = false } = {}) {
+export function normalizeVehicleManifest(value, {
+    allowMissingKind = false,
+    sensorRegistry = sensorTypeRegistry,
+} = {}) {
     const source = object(value);
     if (!allowMissingKind && source.kind !== undefined && source.kind !== VEHICLE_MANIFEST_KIND) {
         throw new Error(`Unsupported vehicle manifest kind: ${JSON.stringify(source.kind)}.`);
@@ -160,6 +168,11 @@ export function normalizeVehicleManifest(value, { allowMissingKind = false } = {
         ...object(source.kinematics),
         wheelbase: object(source.kinematics).wheelbase ?? (deriveWheelbase(wheels) ?? 1.5),
     }, { migrateFromV1: sourceVersion < VEHICLE_MANIFEST_VERSION });
+    const sensors = (Array.isArray(source.sensors) ? source.sensors : [])
+        .map((entry, index) => normalizeVehicleSensor(entry, index, sensorRegistry));
+    const pluginLocks = source.pluginLocks === undefined || source.pluginLocks === null
+        ? undefined
+        : reconcileVehiclePluginLocks(source.pluginLocks, sensors, { sensorRegistry });
     return {
         kind: VEHICLE_MANIFEST_KIND,
         version: VEHICLE_MANIFEST_VERSION,
@@ -179,16 +192,19 @@ export function normalizeVehicleManifest(value, { allowMissingKind = false } = {
         egoCenter: vec3(source.egoCenter, { x: 0, y: size.y / 2, z: 0 }),
         wheels,
         kinematics,
-        sensors: (Array.isArray(source.sensors) ? source.sensors : [])
-            .map((entry, index) => normalizeVehicleSensor(entry, index)),
+        sensors,
+        ...(pluginLocks ? { pluginLocks } : {}),
         lidarZone: lidarZone(source.lidarZone),
     };
 }
 
-export function validateVehicleManifest(value) {
+export function validateVehicleManifest(value, {
+    sensorRegistry = sensorTypeRegistry,
+    allowUnknownSensors = false,
+} = {}) {
     let manifest;
     try {
-        manifest = normalizeVehicleManifest(value);
+        manifest = normalizeVehicleManifest(value, { sensorRegistry });
     } catch (error) {
         return { ok: false, manifest: null, issues: [{ path: "", message: error.message }] };
     }
@@ -207,10 +223,14 @@ export function validateVehicleManifest(value) {
     duplicateIssues(manifest.wheels, "wheels");
     duplicateIssues(manifest.sensors, "sensors");
     for (const [index, sensorEntry] of manifest.sensors.entries()) {
-        for (const issue of validateVehicleSensorDefinition(sensorEntry)) {
+        const definition = sensorRegistry.get(sensorEntry.type);
+        const sensorIssues = allowUnknownSensors && !definition
+            ? [] : validateVehicleSensorDefinition(sensorEntry, sensorRegistry);
+        for (const issue of sensorIssues) {
             issues.push({ path: `sensors.${index}.${issue.path}`, message: issue.message });
         }
     }
+    issues.push(...collectVehiclePluginLockIssues(manifest, { sensorRegistry }));
     const vertexCount = manifest.lidarZone.vertices.length;
     for (const [index, triangle] of manifest.lidarZone.triangles.entries()) {
         if (triangle.some((vertexIndex) => vertexIndex < 0 || vertexIndex >= vertexCount)) {

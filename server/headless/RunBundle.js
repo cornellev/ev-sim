@@ -28,6 +28,7 @@ import {
     pluginDependencyHashes,
 } from "../../app/plugin/PluginSelection.js";
 import { collectArtifactPluginRequirements } from "../../app/plugin/PluginRequirements.js";
+import { assertVehiclePluginLocksMatchRun } from "../../app/plugin/PluginSensorAuthoring.js";
 import { assertWorldResource } from "../../app/simulation/world/WorldDescription.js";
 import { assertLidarGeometryResource } from "../../app/simulation/lidar/LidarGeometry.js";
 import { createSensorDefinitionRegistry } from "../../app/simulation/sensors/SensorTypeRegistry.js";
@@ -215,6 +216,18 @@ function verifyBundleStructure(verified, { requireRuntime = false } = {}) {
         invalid("BUNDLE_INVALID", "The resolved run scripts must be an array of admitted artifacts.");
     }
     const verifiedPackages = verifyPluginClosure(resolved);
+    try {
+        assertVehiclePluginLocksMatchRun({
+            vehicles: [
+                ...(resolved.vehicles ?? []),
+                ...(resolved.scenario?.vehicles ?? []),
+            ],
+            plugins: resolved.plugins ?? [],
+            pluginPackages: resolved.pluginPackages ?? [],
+        });
+    } catch (error) {
+        invalid("BUNDLE_INVALID", error.message);
+    }
     let sensorAdmission;
     let expectedPluginSensors;
     try {

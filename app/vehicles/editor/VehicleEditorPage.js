@@ -1,6 +1,6 @@
 'use client';
 
-import { cloneElement, isValidElement, useEffect, useRef, useState } from "react";
+import { cloneElement, isValidElement, useEffect, useMemo, useRef, useState } from "react";
 import {
     IconArrowsMove,
     IconCheck,
@@ -31,7 +31,17 @@ import {
     getSensorFieldValue,
     getSensorType,
     listSensorTypes,
+    sensorTypeRegistry,
 } from "../../3d/devices/SensorTypeRegistry.js";
+import { createAuthoringSensorRuntimeRegistry } from "../../3d/devices/SensorRuntimeRegistry.js";
+import { fetchSensorCatalog } from "../../plugin/PluginClient.js";
+import { BrowserSensorAuthoringSession } from "../../plugin/browser/BrowserSensorAuthoringSession.js";
+import PluginSensorAuthoringPanel from "../../plugin/browser/PluginSensorAuthoringPanel.js";
+import {
+    pluginSensorCatalogEntryForType,
+    stampVehiclePluginSensorLock,
+} from "../../plugin/PluginSensorAuthoring.js";
+import { subscribeStorageEvents } from "../../client/storageEvents.js";
 import {
     getBuiltInVehicleManifest,
     isBuiltInVehicleManifest,
@@ -73,7 +83,6 @@ import {
 const TABS = ["Model", "LiDAR Zone", "Sensors", "Wheels", "Body", "JSON"];
 const HISTORY_LIMIT = 100;
 const EDIT_COALESCE_MS = 750;
-const SENSOR_TYPE_DEFINITIONS = listSensorTypes();
 const FaArrowsAlt = (props) => <IconArrowsMove size={14} stroke={1.75} {...props} />;
 const FaCube = (props) => <IconCube size={14} stroke={1.75} {...props} />;
 const FaPlus = (props) => <IconPlus size={14} stroke={1.75} {...props} />;
@@ -144,8 +153,23 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
     const [fitTarget, setFitTarget] = useState({ length: 2.7, width: 1.25 });
     const [catalogOpen, setCatalogOpen] = useState(false);
     const [inspectorOpen, setInspectorOpen] = useState(false);
+    const sensorSessionRef = useRef(null);
+    if (!sensorSessionRef.current) sensorSessionRef.current = new BrowserSensorAuthoringSession();
+    const [sensorCatalog, setSensorCatalog] = useState({ revision: 0, sensors: [] });
+    const [sensorRegistryTick, setSensorRegistryTick] = useState(0);
+    const authoringOptions = () => ({
+        sensorRegistry: sensorSessionRef.current?.registry ?? sensorTypeRegistry,
+    });
+    const bumpSensorRegistry = () => setSensorRegistryTick((value) => value + 1);
+    const authoringRuntime = useMemo(() => {
+        void sensorRegistryTick;
+        return createAuthoringSensorRuntimeRegistry({ definitions: authoringOptions().sensorRegistry });
+    }, [sensorRegistryTick]);
 
-    const dirty = Boolean(saved && draft && differenceCount(normalizeVehicleManifest(saved), normalizeVehicleManifest(draft)) > 0);
+    const dirty = Boolean(saved && draft && differenceCount(
+        normalizeVehicleManifest(saved, authoringOptions()),
+        normalizeVehicleManifest(draft, authoringOptions()),
+    ) > 0);
     const readOnly = isBuiltInVehicleManifest(selectedId);
 
     const resetHistory = () => {
@@ -155,7 +179,7 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
     };
 
     const applyDocument = (id, document) => {
-        const normalized = normalizeVehicleManifest(document);
+        const normalized = normalizeVehicleManifest(document, authoringOptions());
         resetHistory();
         setSelectedId(id);
         setSaved(document);
@@ -225,12 +249,15 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
         const studio = new VehicleStudio(viewportRef.current, {
             onTransform: (pick, transform) => studioHandlers.current.onTransform?.(pick, transform),
             onSelect: (pick) => studioHandlers.current.onSelect?.(pick),
+            sensorRuntime: authoringRuntime,
         });
         studioRef.current = studio;
         return () => {
             studio.dispose();
             studioRef.current = null;
         };
+        // Recreate only when a draft appears; runtime updates go through setSensorRuntime.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [hasDraft]);
 
     useEffect(() => {
@@ -239,6 +266,53 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
         studioRef.current.setManifest(draft, url);
     }, [draft, selectedId, assetVersion]);
 
+    useEffect(() => {
+        studioRef.current?.setSensorRuntime(authoringRuntime);
+    }, [authoringRuntime]);
+
+    useEffect(() => () => {
+        sensorSessionRef.current?.dispose();
+        sensorSessionRef.current = null;
+    }, []);
+
+    useEffect(() => {
+        let mounted = true;
+        const refresh = async () => {
+            try {
+                const snapshot = await fetchSensorCatalog();
+                if (!mounted) return;
+                sensorSessionRef.current?.registerCatalog(snapshot);
+                setSensorCatalog(snapshot);
+                bumpSensorRegistry();
+            } catch (caught) {
+                if (mounted) setError(caught.message);
+            }
+        };
+        refresh();
+        return subscribeStorageEvents((event) => {
+            if (event.domain === "plugin") refresh();
+        });
+    }, []);
+
+    useEffect(() => {
+        const session = sensorSessionRef.current;
+        if (!session || !draft) return undefined;
+        let cancelled = false;
+        (async () => {
+            for (const lock of draft.pluginLocks ?? []) {
+                try {
+                    await session.loadLock(lock);
+                } catch {
+                    // Missing packages remain visible as unresolved authoring state.
+                }
+                if (cancelled) return;
+            }
+            if (!cancelled) bumpSensorRegistry();
+        })();
+        return () => { cancelled = true; };
+        // Locks are derived from pluginLocks, not the whole draft.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [draft?.pluginLocks, sensorCatalog.revision]);
     useEffect(() => { studioRef.current?.setSelection(readOnly ? null : selection); }, [selection, readOnly]);
     useEffect(() => { studioRef.current?.setGizmoMode(gizmoMode); }, [gizmoMode]);
     useEffect(() => { studioRef.current?.setZoneVisible(zoneVisible); }, [zoneVisible]);
@@ -266,14 +340,16 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
             recordHistory(current, path.join("."), {
                 coalesce: options.coalesce ?? ["number", "string"].includes(typeof value),
             });
-            const next = structuredClone(current);
-            let cursor = next;
-            path.slice(0, -1).forEach((part) => { cursor = cursor[part]; });
-            cursor[path.at(-1)] = value;
-            const normalized = normalizeVehicleManifest(next);
+            const next = path.length === 0 ? structuredClone(value) : structuredClone(current);
+            if (path.length > 0) {
+                let cursor = next;
+                path.slice(0, -1).forEach((part) => { cursor = cursor[part]; });
+                cursor[path.at(-1)] = value;
+            }
+            const normalized = normalizeVehicleManifest(next, authoringOptions());
             // Keep the active string field verbatim while the user is typing;
             // normalization would trim a trailing space mid-keystroke.
-            if (typeof value === "string") {
+            if (path.length > 0 && typeof value === "string") {
                 let normalizedCursor = normalized;
                 path.slice(0, -1).forEach((part) => { normalizedCursor = normalizedCursor[part]; });
                 normalizedCursor[path.at(-1)] = value;
@@ -292,7 +368,7 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
                 if (!current) return current;
                 destination.current.push(structuredClone(current));
                 if (destination.current.length > HISTORY_LIMIT) destination.current.shift();
-                const normalized = normalizeVehicleManifest(snapshot);
+                const normalized = normalizeVehicleManifest(snapshot, authoringOptions());
                 setRaw(JSON.stringify(normalized, null, 2));
                 setRawError(null);
                 setValidation(null);
@@ -403,15 +479,15 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
     };
 
     const save = async () => perform(async () => {
-        const local = validateVehicleManifest(draft);
+        const local = validateVehicleManifest(draft, authoringOptions());
         if (!local.ok) {
             setValidation(local);
             throw new Error("Fix validation errors before saving.");
         }
         const stored = await saveVehicleManifest(selectedId, local.manifest, saved.revision);
         setSaved(stored);
-        setDraft(normalizeVehicleManifest(stored));
-        setRaw(JSON.stringify(normalizeVehicleManifest(stored), null, 2));
+        setDraft(normalizeVehicleManifest(stored, authoringOptions()));
+        setRaw(JSON.stringify(normalizeVehicleManifest(stored, authoringOptions()), null, 2));
         lastEdit.current = null;
         setCatalog((items) => items.map((entry) => entry.id === stored.id
             ? { ...entry, name: stored.name, revision: stored.revision, definitionHash: stored.definitionHash, modelAsset: stored.model?.asset ?? null }
@@ -525,7 +601,7 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
         setRaw(value);
         try {
             const parsed = JSON.parse(value);
-            const local = validateVehicleManifest(parsed);
+            const local = validateVehicleManifest(parsed, authoringOptions());
             if (!local.ok) {
                 setRawError(local.issues.map((issue) => `${issue.path || "manifest"}: ${issue.message}`).join("\n"));
                 return;
@@ -691,7 +767,18 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
                                                     setZoneVisible={setZoneVisible}
                                                 />
                                             )}
-                                            {item === "Sensors" && <SensorsTab draft={draft} update={update} selection={selection} setSelection={setSelection} />}
+                                            {item === "Sensors" && (
+                                                <SensorsTab
+                                                    draft={draft}
+                                                    update={update}
+                                                    selection={selection}
+                                                    setSelection={setSelection}
+                                                    catalog={sensorCatalog}
+                                                    session={sensorSessionRef.current}
+                                                    onError={setError}
+                                                    bumpRegistry={bumpSensorRegistry}
+                                                />
+                                            )}
                                             {item === "Wheels" && <WheelsTab draft={draft} update={update} selection={selection} setSelection={setSelection} derivedWheelbase={derivedWheelbase} />}
                                             {item === "Body" && <BodyTab draft={draft} update={update} selection={selection} setSelection={setSelection} fitBodyToModel={fitBodyToModel} />}
                                             {item === "JSON" && (
@@ -795,29 +882,93 @@ function LidarZoneTab({ draft, update, voxelSize, setVoxelSize, generateZone, zo
     );
 }
 
-function SensorsTab({ draft, update, selection, setSelection }) {
-    const add = (type) => {
-        const definition = getSensorType(type);
-        const id = nextId(draft.sensors, definition?.idPrefix || "sensor");
-        const sensor = createVehicleSensor(type, {
-            id,
-            pose: { position: { x: 0.3, y: 0.8, z: 0 }, rotation: { x: 0, y: 0, z: 0, order: "XYZ" } },
-        }, draft.sensors.length);
-        update(["sensors"], [...draft.sensors, sensor]);
-        setSelection({ kind: "sensor", id });
+function SensorsTab({
+    draft,
+    update,
+    selection,
+    setSelection,
+    catalog = { sensors: [] },
+    session = null,
+    onError = () => {},
+    bumpRegistry = () => {},
+}) {
+    const registry = session?.registry ?? sensorTypeRegistry;
+    const catalogEntries = catalog.sensors?.length
+        ? catalog.sensors
+        : listSensorTypes().map((definition) => ({
+            type: definition.id,
+            label: definition.label,
+            addLabel: definition.addLabel,
+            ownership: "builtin",
+        }));
+    const addEntry = async (entry) => {
+        try {
+            const next = structuredClone(draft);
+            if (entry.ownership && entry.ownership !== "builtin") {
+                await session.loadLock({
+                    pluginId: entry.ownership.pluginId,
+                    version: entry.ownership.version,
+                    packageHash: entry.ownership.packageHash,
+                    runtimeHash: entry.ownership.runtimeHash,
+                    sensorTypes: [entry.type],
+                });
+                bumpRegistry();
+                next.pluginLocks = stampVehiclePluginSensorLock(next.pluginLocks, entry);
+            }
+            const definition = session?.registry.get(entry.type) || getSensorType(entry.type);
+            const id = nextId(next.sensors, definition?.idPrefix || "sensor");
+            const sensor = createVehicleSensor(entry.type, {
+                id,
+                pose: { position: { x: 0.3, y: 0.8, z: 0 }, rotation: { x: 0, y: 0, z: 0, order: "XYZ" } },
+            }, next.sensors.length, session?.registry ?? registry);
+            next.sensors = [...next.sensors, sensor];
+            update([], next);
+            setSelection({ kind: "sensor", id });
+        } catch (caught) {
+            onError(caught.message);
+        }
     };
     return (
         <div className="space-y-3">
             <div className="flex flex-wrap gap-1.5">
-                {SENSOR_TYPE_DEFINITIONS.map((definition) => (
-                    <Action key={definition.id} compact icon={<FaPlus />} label={definition.addLabel || `Add ${definition.label}`} onClick={() => add(definition.id)} />
+                {catalogEntries.map((entry) => (
+                    <Action
+                        key={`${entry.type}:${entry.ownership?.packageHash || "builtin"}`}
+                        compact
+                        icon={<FaPlus />}
+                        label={entry.addLabel || `Add ${entry.label || entry.type}`}
+                        onClick={() => addEntry(entry)}
+                    />
                 ))}
             </div>
             {draft.sensors.length === 0 && <p className="py-8 text-center text-[11px] text-zinc-600">No sensors on this vehicle.</p>}
             {draft.sensors.map((sensor, index) => {
                 const selected = selection?.kind === "sensor" && selection.id === sensor.id;
                 const change = (parts, value) => update(["sensors", index, ...parts], value);
-                const definition = getSensorType(sensor.type);
+                const definition = registry.get(sensor.type) || getSensorType(sensor.type);
+                const plugin = definition?.pluginSensor;
+                const unresolved = Boolean(plugin && session?.unresolvedLocks?.includes(plugin.ownership?.packageHash));
+                const changeType = async (type) => {
+                    try {
+                        const entry = pluginSensorCatalogEntryForType(catalog, type);
+                        const next = structuredClone(draft);
+                        if (entry?.ownership && entry.ownership !== "builtin") {
+                            await session.loadLock({
+                                pluginId: entry.ownership.pluginId,
+                                version: entry.ownership.version,
+                                packageHash: entry.ownership.packageHash,
+                                runtimeHash: entry.ownership.runtimeHash,
+                                sensorTypes: [entry.type],
+                            });
+                            bumpRegistry();
+                            next.pluginLocks = stampVehiclePluginSensorLock(next.pluginLocks, entry);
+                        }
+                        next.sensors[index] = changeVehicleSensorType(sensor, type, session?.registry ?? registry);
+                        update([], next);
+                    } catch (caught) {
+                        onError(caught.message);
+                    }
+                };
                 return (
                     <div key={`sensor-${index}`} className={`rounded-[var(--radius)] border p-3 transition-[background-color,border-color] ${selected ? "border-[var(--slate-border)] bg-[var(--slate-surface-3)]" : "border-[var(--slate-border-60)] bg-[var(--slate-surface-1)]"}`}>
                         <button type="button" onClick={() => setSelection(selected ? null : { kind: "sensor", id: sensor.id })} className="mb-2 flex w-full items-center justify-between text-left">
@@ -836,8 +987,12 @@ function SensorsTab({ draft, update, selection, setSelection }) {
                                 />
                             </Field>
                             <Field label="Type">
-                                <select value={sensor.type} onChange={(event) => update(["sensors", index], changeVehicleSensorType(sensor, event.target.value))}>
-                                    {SENSOR_TYPE_DEFINITIONS.map((entry) => <option key={entry.id} value={entry.id}>{entry.label}</option>)}
+                                <select value={sensor.type} onChange={(event) => changeType(event.target.value)}>
+                                    {catalogEntries.map((entry) => (
+                                        <option key={`${entry.type}:${entry.ownership?.packageHash || "builtin"}`} value={entry.type}>
+                                            {entry.label || entry.type}
+                                        </option>
+                                    ))}
                                     {!definition && <option value={sensor.type}>{sensor.type} (unsupported)</option>}
                                 </select>
                             </Field>
@@ -856,6 +1011,18 @@ function SensorsTab({ draft, update, selection, setSelection }) {
                                 ))}
                             </div>
                         </AdvancedFields>
+                        {plugin && (
+                            <PluginSensorAuthoringPanel
+                                context={{ kind: "vehicle" }}
+                                sensor={sensor}
+                                definition={definition}
+                                diagnostic={session?.diagnosticFor(sensor.type)}
+                                Component={session?.sensorViewFor(sensor.type)}
+                                unresolved={unresolved}
+                                sensorRegistry={registry}
+                                onCommit={(next) => update(["sensors", index], next)}
+                            />
+                        )}
                         {!definition && <p className="mt-3 text-[11px] text-[var(--slate-warning)]">This sensor type is not registered. Its data is preserved, but this vehicle cannot run until a supported type is selected.</p>}
                         <button type="button" onClick={() => update(["sensors"], draft.sensors.filter((_, candidate) => candidate !== index))} className="mt-3 text-[11px] text-[var(--slate-danger)]">Remove sensor</button>
                     </div>

@@ -8,23 +8,9 @@ import { verifyPluginPackage } from "../../app/plugin/PluginPackage.js";
 import { PluginStore } from "../../server/storage/PluginStore.js";
 import { pluginFixtureResource } from "../helpers/pluginFixtures.js";
 import { waitForCatalogType } from "./pluginCatalog.js";
+import { openWorkspace } from "./openWorkspace.js";
 
 const storageRoot = path.resolve(process.env.CEV_SIM_DATA_DIR ?? ".playwright-data/storage");
-
-async function openWorkspace(page, label) {
-    const opener = page.getByRole("button", { name: "Open workspace switcher" }).first();
-    if (await opener.isVisible()) {
-        await opener.click();
-    } else {
-        await page.evaluate(() => document.activeElement instanceof HTMLElement && document.activeElement.blur());
-        await page.keyboard.press("Escape");
-    }
-    const dialog = page.getByRole("dialog", { name: "Workspaces" });
-    await expect(dialog).toBeVisible();
-    await dialog.getByRole("button", { name: new RegExp(`^${label}`, "i") }).click();
-    const discard = page.getByRole("button", { name: "Discard and switch" });
-    if (await discard.isVisible()) await discard.click();
-}
 
 async function addBlock(page, query, namePattern) {
     const library = page.locator("[data-block-library]");

@@ -5,10 +5,7 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 
 import { TriangleOptimizer } from "../../optimization/TriangleOptimizer.js";
 import { applyModelPlacement } from "../../3d/vehicles/ModelPlacement.js";
-import {
-    createSensorPreview,
-    getSensorPreviewSignature,
-} from "../../3d/devices/SensorRuntimeRegistry.js";
+import { sensorRuntimeRegistry } from "../../3d/devices/SensorRuntimeRegistry.js";
 
 const COLORS = {
     background: 0x09090b,
@@ -35,10 +32,11 @@ export class VehicleStudio {
      *   onSelect?: (selection: {kind: string, id: string|null} | null) => void,
      * }} callbacks
      */
-    constructor(container, { onTransform, onSelect } = {}) {
+    constructor(container, { onTransform, onSelect, sensorRuntime = sensorRuntimeRegistry } = {}) {
         this.container = container;
         this.onTransform = onTransform;
         this.onSelect = onSelect;
+        this.sensorRuntime = sensorRuntime;
 
         this.scene = new THREE.Scene();
         this.scene.background = new THREE.Color(COLORS.background);
@@ -269,7 +267,9 @@ export class VehicleStudio {
     }
 
     _syncSensors(sensors) {
-        this._syncMarkerGroup(this.sensorsGroup, sensors, "sensor", createSensorPreview, (object, sensor) => {
+        this._syncMarkerGroup(this.sensorsGroup, sensors, "sensor", (sensor) => (
+            this.sensorRuntime.createPreview(sensor)
+        ), (object, sensor) => {
             object.position.set(sensor.pose.position.x, sensor.pose.position.y, sensor.pose.position.z);
             object.rotation.set(
                 sensor.pose.rotation.x,
@@ -277,8 +277,12 @@ export class VehicleStudio {
                 sensor.pose.rotation.z,
             );
             if (sensor.pose.rotation.order) object.rotation.order = sensor.pose.rotation.order;
-            return getSensorPreviewSignature(sensor);
+            return this.sensorRuntime.previewSignature(sensor);
         });
+    }
+
+    setSensorRuntime(sensorRuntime) {
+        this.sensorRuntime = sensorRuntime || sensorRuntimeRegistry;
     }
 
     /**

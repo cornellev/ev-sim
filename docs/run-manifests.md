@@ -53,6 +53,14 @@ hashes. Bundle verification is structural and host-independent. Execution
 requires a local PCAP adapter and endpoint; UDP remains unavailable. See
 [`sensor-packet-transports.md`](sensor-packet-transports.md).
 
+Root and nested scenario vehicles that declare `pluginLocks` must match the
+resolved plugin selection exactly (id, version, package hash, runtime hash,
+and `sensors.sample.range-image`). Simulation identity replaces those locks
+with `{ pluginId, version, runtimeHash, sensorTypes }` and recomputes only
+those vehicle dependency hashes. Vehicles without locks keep their prior
+projections. Full `definitionHash` / `resolvedHash` still include exact
+package and UI bytes.
+
 VIS-12a activates manifest v11 and the plugin-free
 `resolved.identityProfile = { id: "world-bound", version: 2 }`, semantic and
 episode identity v2, protocol 1.3 identity negotiation, and protocol 1.4

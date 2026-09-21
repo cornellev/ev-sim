@@ -1,5 +1,15 @@
-import { assertRangeImageLayout } from "../simulation/sensors/RangeImageLayout.js";
+import {
+    assertRangeImageLayout,
+    rangeImageDimensions,
+} from "../simulation/sensors/RangeImageLayout.js";
+import { CPU_LIDAR_EXPLICIT_LAYOUT_BACKEND_VERSION } from "../simulation/sensors/CpuLidarBackend.js";
 import { clonePluginJson } from "./PluginJson.js";
+
+export const PLUGIN_SENSOR_RANGE_IMAGE_CAPABILITY = "sensors.sample.range-image";
+
+export function pluginSensorRangeImageCapability() {
+    return PLUGIN_SENSOR_RANGE_IMAGE_CAPABILITY;
+}
 
 export const PLUGIN_SENSOR_ABI = 1;
 export const PLUGIN_SENSOR_FAMILY = "range-image";
@@ -286,9 +296,76 @@ export function createPluginSensorTypeDefinition(descriptor, ownership) {
         vehicle: Object.freeze({
             fields: Object.freeze([]),
             normalize(source = {}) {
-                return clonePluginJson(source.config ?? {}, "vehicle sensor config");
+                const config = source.config && typeof source.config === "object"
+                    && !Array.isArray(source.config) ? source.config : {};
+                const authoredProducts = config.products && typeof config.products === "object"
+                    && !Array.isArray(config.products) ? config.products : {};
+                const products = Object.fromEntries(descriptor.products.map((product) => [
+                    product.productId,
+                    authoredProducts[product.productId] === true,
+                ]));
+                const rateHz = typeof config.rateHz === "number" && Number.isFinite(config.rateHz) && config.rateHz > 0
+                    ? config.rateHz
+                    : descriptor.defaults.rateHz;
+                return {
+                    rateHz,
+                    scanLayout: config.scanLayout === undefined
+                        ? descriptor.defaults.scanLayout
+                        : assertRangeImageLayout(config.scanLayout, { path: "config.scanLayout" }),
+                    parameters: normalizePluginSensorParameters(
+                        descriptor,
+                        config.parameters ?? {},
+                        "config.parameters",
+                    ),
+                    products,
+                };
             },
-            validate: () => [],
+            validate(sensor) {
+                const issues = [];
+                try {
+                    assertRangeImageLayout(sensor.config?.scanLayout, { path: "config.scanLayout" });
+                    normalizePluginSensorParameters(descriptor, sensor.config?.parameters ?? {}, "config.parameters");
+                } catch (error) {
+                    issues.push({ path: "config", message: error.message });
+                }
+                const declaredProducts = new Set(descriptor.products.map((product) => product.productId));
+                const unknown = Object.keys(sensor.config?.products ?? {}).find((key) => !declaredProducts.has(key));
+                if (unknown) issues.push({ path: `config.products.${unknown}`, message: `Unknown product "${unknown}".` });
+                if (typeof sensor.config?.rateHz !== "number" || !Number.isFinite(sensor.config.rateHz)
+                    || sensor.config.rateHz <= 0) {
+                    issues.push({ path: "config.rateHz", message: "rateHz must be positive and finite." });
+                }
+                return issues;
+            },
         }),
+    });
+}
+
+export function describePluginSensorObservation(descriptor, source = {}, { context = "run" } = {}) {
+    const root = context === "vehicle" ? source.config ?? {} : source.calibration ?? {};
+    const layout = root.scanLayout ?? descriptor.defaults.scanLayout;
+    const products = root.products && typeof root.products === "object" && !Array.isArray(root.products)
+        ? root.products : {};
+    const mapping = descriptor.observation ?? null;
+    let dimensions = { channelCount: 0, azimuthCount: 0, rayCount: 0 };
+    try {
+        dimensions = rangeImageDimensions(layout);
+    } catch {
+        dimensions = { channelCount: 0, azimuthCount: 0, rayCount: 0 };
+    }
+    const enabled = Boolean(mapping && products[mapping.productId] === true);
+    const outputKey = mapping
+        ? descriptor.products.find((product) => product.productId === mapping.productId)?.outputKey ?? null
+        : null;
+    return Object.freeze({
+        dtype: mapping?.dtype ?? "float32",
+        shape: Object.freeze([dimensions.channelCount, dimensions.azimuthCount, 2]),
+        byteCount: dimensions.rayCount * 2 * Float32Array.BYTES_PER_ELEMENT,
+        maxRangeM: layout?.maxRangeM ?? null,
+        requiresCpuV2: true,
+        cpuBackendVersion: CPU_LIDAR_EXPLICIT_LAYOUT_BACKEND_VERSION,
+        outputMapping: mapping?.productId ?? null,
+        outputKey,
+        enabled,
     });
 }

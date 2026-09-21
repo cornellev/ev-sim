@@ -4,7 +4,7 @@
   "id": "test.range-image-fixture",
   "version": "1.0.0",
   "engines": { "cevSim": ">=0.1.0 <0.2.0" },
-  "entry": { "runtime": "runtime/index.js" },
+  "entry": { "runtime": "runtime/index.js", "ui": "ui/index.js" },
   "capabilities": ["sensors.sample.range-image"],
   "units": [],
   "systems": [],

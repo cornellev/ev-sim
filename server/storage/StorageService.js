@@ -78,12 +78,18 @@ import { verifyPluginPackage } from "../../app/plugin/PluginPackage.js";
 import {
     effectivePluginLocks,
     pluginDependencyHashes,
+    comparePluginText,
 } from "../../app/plugin/PluginSelection.js";
 import { assertArtifactPluginRequirements } from "../../app/plugin/PluginRequirements.js";
 import { NodePluginModuleSource } from "../plugins/NodePluginModuleSource.js";
 import { createSensorDefinitionRegistry } from "../../app/simulation/sensors/SensorTypeRegistry.js";
 import { planSensorAdmission } from "../../app/simulation/sensors/SensorAdmission.js";
 import { createPluginSensorsResource } from "../../app/plugin/PluginSensorIdentity.js";
+import {
+    assertVehiclePluginLocksMatchRun,
+    normalizeVehiclePluginLocks,
+    verifyVehiclePluginLockAgainstPackage,
+} from "../../app/plugin/PluginSensorAuthoring.js";
 import { canonicalRunBundleStringify, runBundleBytes, verifyRunBundleBytes, verifyRunBundleIntegrity } from "../headless/RunBundle.js";
 import {
     collectRunPackageAssets,
@@ -1641,20 +1647,29 @@ export class StorageService {
             .then((stored) => stored ?? (manifestId === "igvc-default" ? builtInDefaultRunManifest() : null));
     }
 
+    async _sensorRegistryForRunManifest(manifest) {
+        const verifiedPackages = [];
+        for (const lock of effectivePluginLocks(manifest?.plugins)) {
+            let resource;
+            try {
+                resource = await this.plugins.getPackage(lock.expectedHash);
+            } catch (error) {
+                throw new Error(`Plugin "${lock.pluginId}" package ${lock.expectedHash} is not available.`, { cause: error });
+            }
+            const verified = verifyPluginPackage(resource);
+            if (verified.document.id !== lock.pluginId) {
+                throw new Error(`Plugin lock "${lock.pluginId}" resolves package "${verified.document.id}".`);
+            }
+            verifiedPackages.push(verified);
+        }
+        return createSensorDefinitionRegistry(verifiedPackages);
+    }
+
     async _validateRunManifestWithPluginSensors(source) {
         const envelope = validateRunManifest(source, { allowUnknownSensors: true });
         if (!envelope.ok) return envelope;
         try {
-            const verifiedPackages = [];
-            for (const lock of effectivePluginLocks(envelope.manifest.plugins)) {
-                const resource = await this.plugins.getPackage(lock.expectedHash);
-                const verified = verifyPluginPackage(resource);
-                if (verified.document.id !== lock.pluginId) {
-                    throw new Error(`Plugin lock "${lock.pluginId}" resolves package "${verified.document.id}".`);
-                }
-                verifiedPackages.push(verified);
-            }
-            const sensorRegistry = createSensorDefinitionRegistry(verifiedPackages);
+            const sensorRegistry = await this._sensorRegistryForRunManifest(envelope.manifest);
             return validateRunManifest(envelope.manifest, { sensorRegistry });
         } catch (error) {
             return {
@@ -1847,6 +1862,11 @@ export class StorageService {
         }
         const sensorAdmission = planSensorAdmission({ manifest, sensorRegistry });
         const pluginSensors = createPluginSensorsResource(sensorAdmission);
+        assertVehiclePluginLocksMatchRun({
+            vehicles: resolvedVehicles,
+            plugins: resolvedPlugins,
+            pluginPackages,
+        });
 
         const environment = resolvedScenario?.environment.manifest
             ?? authoredEnvironment
@@ -2521,7 +2541,7 @@ export class StorageService {
     }
 
     async createVehicleManifest(input = {}) {
-        const validation = validateVehicleManifest(input.manifest ?? input);
+        const validation = await this._validateVehicleManifestWithPluginSensors(input.manifest ?? input);
         if (!validation.ok) throw vehicleValidationError(validation.issues);
         const id = safeSegment(validation.manifest.id);
         if (await this.getVehicleManifest(id)) throw new Error(`Vehicle "${id}" already exists.`);
@@ -2531,7 +2551,7 @@ export class StorageService {
     async putVehicleManifest(vehicleId, input = {}) {
         const manifest = input.manifest ?? input;
         const expectedRevision = input.expectedRevision ?? manifest.revision;
-        const validation = validateVehicleManifest({ ...manifest, id: vehicleId });
+        const validation = await this._validateVehicleManifestWithPluginSensors({ ...manifest, id: vehicleId });
         if (!validation.ok) throw vehicleValidationError(validation.issues);
         return this._writeVehicleManifest(vehicleId, validation.manifest, { expectedRevision });
     }
@@ -2539,11 +2559,12 @@ export class StorageService {
     async duplicateVehicleManifest(sourceId, input = {}) {
         const source = await this.getVehicleManifest(sourceId);
         if (!source) throw new Error(`Vehicle "${sourceId}" does not exist.`);
+        const { registry } = await this._sensorRegistryForVehicle(source);
         const duplicate = normalizeVehicleManifest({
             ...source,
             id: input.id,
             name: input.name || `${source.name} Copy`,
-        });
+        }, { sensorRegistry: registry });
         const created = await this.createVehicleManifest(duplicate);
         for (const fileName of await this.listVehicleAssets(sourceId)) {
             await this.putVehicleAsset(created.id, fileName, await this.readVehicleAsset(sourceId, fileName));
@@ -2563,25 +2584,38 @@ export class StorageService {
     async validateVehicleManifest(vehicleId, input = null) {
         const source = input?.manifest ?? (input?.kind ? input : null) ?? await this.getVehicleManifest(vehicleId);
         if (!source) throw new Error(`Vehicle "${vehicleId}" does not exist.`);
-        return validateVehicleManifest(source);
+        return this._validateVehicleManifestWithPluginSensors(source);
     }
 
     async exportVehicleBundle(vehicleId) {
         const stored = await this.getVehicleManifest(vehicleId);
         if (!stored) throw new Error(`Vehicle "${vehicleId}" does not exist.`);
-        const manifest = normalizeVehicleManifest(stored);
+        const { registry } = await this._sensorRegistryForVehicle(stored);
+        const manifest = normalizeVehicleManifest(stored, { sensorRegistry: registry });
         const assets = {};
         for (const fileName of await this.listVehicleAssets(vehicleId)) {
             assets[fileName] = (await this.readVehicleAsset(vehicleId, fileName)).toString("base64");
         }
+        const pluginPackages = [];
+        for (const lock of normalizeVehiclePluginLocks(manifest.pluginLocks) ?? []) {
+            const resource = await this.plugins.getPackage(lock.packageHash);
+            const verified = verifyPluginPackage(resource);
+            verifyVehiclePluginLockAgainstPackage(lock, verified, "pluginLocks");
+            pluginPackages.push(verified.resource);
+        }
+        pluginPackages.sort((left, right) => comparePluginText(
+            verifyPluginPackage(left).document.id,
+            verifyPluginPackage(right).document.id,
+        ));
         const bundle = {
             kind: VEHICLE_BUNDLE_KIND,
             version: VEHICLE_BUNDLE_VERSION,
             exportedAt: new Date().toISOString(),
             manifest,
             assets,
+            ...(pluginPackages.length > 0 ? { pluginPackages } : {}),
         };
-        bundle.bundleHash = semanticHash({ manifest: bundle.manifest, assets: bundle.assets });
+        bundle.bundleHash = semanticHash(vehicleBundleHashSource(bundle));
         return bundle;
     }
 
@@ -2590,19 +2624,54 @@ export class StorageService {
             throw new Error(`Unsupported vehicle bundle; expected ${VEHICLE_BUNDLE_KIND} version ${VEHICLE_BUNDLE_VERSION}.`);
         }
         const assets = bundle.assets && typeof bundle.assets === "object" ? bundle.assets : {};
-        if (bundle.bundleHash && semanticHash({ manifest: bundle.manifest, assets }) !== bundle.bundleHash) {
+        if (bundle.bundleHash && semanticHash(vehicleBundleHashSource({
+            manifest: bundle.manifest,
+            assets,
+            ...(Array.isArray(bundle.pluginPackages) ? { pluginPackages: bundle.pluginPackages } : {}),
+        })) !== bundle.bundleHash) {
             throw new Error("Vehicle bundle hash is invalid.");
         }
-        const incoming = normalizeVehicleManifest(bundle.manifest);
+        const locks = normalizeVehiclePluginLocks(bundle.manifest?.pluginLocks) ?? [];
+        const embedded = Array.isArray(bundle.pluginPackages) ? bundle.pluginPackages : [];
+        const verifiedById = new Map();
+        for (const resource of embedded) {
+            const verified = verifyPluginPackage(resource);
+            if (verifiedById.has(verified.document.id)) {
+                throw new Error(`Vehicle bundle contains duplicate plugin package "${verified.document.id}".`);
+            }
+            verifiedById.set(verified.document.id, verified);
+        }
+        for (const lock of locks) {
+            const verified = verifiedById.get(lock.pluginId);
+            if (!verified) {
+                throw new Error(`Vehicle bundle is missing embedded plugin package "${lock.pluginId}".`);
+            }
+            verifyVehiclePluginLockAgainstPackage(lock, verified, "pluginLocks");
+        }
+        const sensorRegistry = createSensorDefinitionRegistry([...verifiedById.values()]);
+        const incoming = normalizeVehicleManifest(bundle.manifest, { sensorRegistry });
+        const validation = validateVehicleManifest(incoming, { sensorRegistry });
+        if (!validation.ok) throw vehicleValidationError(validation.issues);
+        for (const verified of [...verifiedById.values()].sort((left, right) => (
+            comparePluginText(left.document.id, right.document.id)
+        ))) {
+            await this.plugins.putPackage(verified.resource);
+        }
         if (await this.getVehicleManifest(incoming.id)) {
             const suffix = semanticHash({ manifest: incoming, assets }).slice(0, 8);
             incoming.id = `${incoming.id}-${suffix}`;
         }
-        const created = await this.createVehicleManifest(incoming);
-        for (const [fileName, base64] of Object.entries(assets)) {
-            await this.putVehicleAsset(created.id, fileName, Buffer.from(String(base64), "base64"));
+        let created = null;
+        try {
+            created = await this.createVehicleManifest(incoming);
+            for (const [fileName, base64] of Object.entries(assets)) {
+                await this.putVehicleAsset(created.id, fileName, Buffer.from(String(base64), "base64"));
+            }
+            return created;
+        } catch (error) {
+            if (created) await this.deleteVehicleManifest(created.id);
+            throw error;
         }
-        return created;
     }
 
     // --- Vehicle model assets (binary files next to the manifest) -----------
@@ -2642,7 +2711,8 @@ export class StorageService {
                 throw new Error(`Vehicle manifest revision conflict: expected ${expectedRevision}, current revision is ${currentRevision}.`);
             }
             const now = new Date().toISOString();
-            const normalized = normalizeVehicleManifest({ ...manifest, id: vehicleId });
+            const { registry } = await this._sensorRegistryForVehicle({ ...manifest, id: vehicleId });
+            const normalized = normalizeVehicleManifest({ ...manifest, id: vehicleId }, { sensorRegistry: registry });
             const stored = {
                 ...normalized,
                 revision: currentRevision + 1,
@@ -2657,6 +2727,40 @@ export class StorageService {
             if (this._vehicleWriteChains.get(vehicleId) === operation) this._vehicleWriteChains.delete(vehicleId);
         }).catch(() => {});
         return operation;
+    }
+
+    async _sensorRegistryForVehicle(manifest) {
+        const locks = normalizeVehiclePluginLocks(manifest?.pluginLocks) ?? [];
+        const verified = [];
+        const issues = [];
+        for (const [index, lock] of locks.entries()) {
+            try {
+                const resource = await this.plugins.getPackage(lock.packageHash);
+                const packed = verifyPluginPackage(resource);
+                verifyVehiclePluginLockAgainstPackage(lock, packed, `pluginLocks.${index}`);
+                verified.push(packed);
+            } catch (error) {
+                issues.push({
+                    path: `pluginLocks.${index}`,
+                    message: error.message || `Plugin package ${lock.packageHash} is not available.`,
+                });
+            }
+        }
+        return {
+            registry: createSensorDefinitionRegistry(verified),
+            issues,
+        };
+    }
+
+    async _validateVehicleManifestWithPluginSensors(source) {
+        const { registry, issues: packageIssues } = await this._sensorRegistryForVehicle(source);
+        const envelope = validateVehicleManifest(source, { sensorRegistry: registry });
+        const issues = [...envelope.issues, ...packageIssues];
+        return {
+            ok: issues.length === 0,
+            manifest: envelope.manifest,
+            issues,
+        };
     }
 
     async _writeScenario(scenarioId, scenario, { expectedRevision, create = false } = {}) {
@@ -2834,7 +2938,8 @@ export class StorageService {
                 throw new Error(`Run manifest revision conflict: expected ${expectedRevision}, current revision is ${currentRevision}.`);
             }
             const now = new Date().toISOString();
-            const normalized = normalizeRunManifest({ ...manifest, id: manifestId });
+            const sensorRegistry = await this._sensorRegistryForRunManifest({ ...manifest, id: manifestId });
+            const normalized = normalizeRunManifest({ ...manifest, id: manifestId }, { sensorRegistry });
             const stored = {
                 ...normalized,
                 revision: currentRevision + 1,
@@ -3614,6 +3719,19 @@ function experimentBaselineValidationError(issues) {
 function headlessQueueValidationError(issues) {
     const detail = issues.map((issue) => `${issue.path || "queue"}: ${issue.message}`).join("; ");
     return new Error(`Headless experiment queue validation failed: ${detail}`);
+}
+
+function vehicleBundleHashSource(bundle = {}) {
+    const source = {
+        manifest: bundle.manifest,
+        assets: bundle.assets,
+    };
+    if (!Array.isArray(bundle.pluginPackages)) return source;
+    const pluginPackages = [...bundle.pluginPackages].sort((left, right) => comparePluginText(
+        verifyPluginPackage(left).document.id,
+        verifyPluginPackage(right).document.id,
+    ));
+    return { ...source, pluginPackages };
 }
 
 function vehicleValidationError(issues) {

@@ -2,6 +2,7 @@ import express from "express";
 
 import { storageEvents } from "../mcp/events.js";
 import { installPluginSource, removePluginSource } from "../plugins/pluginLibrary.js";
+import { listSensorCatalog } from "../plugins/sensorCatalog.js";
 import { PLUGIN_PACKAGE_MEDIA_TYPE, PORTABLE_PLUGIN_MAX_JSON_BYTES } from "../plugins/PortablePluginFile.js";
 
 function mimeType(filePath) {
@@ -60,6 +61,15 @@ export function createPluginRouter(service, { jsonParser } = {}) {
         limit: PORTABLE_PLUGIN_MAX_JSON_BYTES,
     });
     const router = express.Router();
+
+    router.get("/sensors", async (_req, res) => {
+        try {
+            const catalog = await listSensorCatalog(service);
+            res.json(catalog);
+        } catch (error) {
+            sendError(res, error);
+        }
+    });
 
     router.get("/library", async (_req, res) => {
         try {

@@ -7,7 +7,7 @@ import {
     sensorTypeRegistry,
     validateRunSensorDefinition,
 } from "./sensors/SensorTypeRegistry.js";
-import { normalizeSensorTransports } from "./sensors/SensorTransports.js";
+import { normalizeSensorTransports, reconcileSensorTransportBindings } from "./sensors/SensorTransports.js";
 import {
     catalogMetadata,
     defaultManifestTopics,
@@ -666,6 +666,11 @@ export function normalizeRunManifest(value, {
         normalizeSensorRig(source.sensorRig, sourceVersion, sensorRegistry),
         topics,
     );
+    const reconciledTransports = reconcileSensorTransportBindings(
+        sensorTransports,
+        sensorRig.sensors,
+        { sensorRegistry },
+    );
     const scenario = scenarioSelection(source.scenario);
     const controlsSource = {
         ...object(source.controls),
@@ -708,7 +713,7 @@ export function normalizeRunManifest(value, {
             embeddedBindings: Array.isArray(scripts.embeddedBindings) ? clonePlain(scripts.embeddedBindings) : [],
         },
         ...(plugins ? { plugins } : {}),
-        ...(sensorTransports ? { sensorTransports } : {}),
+        ...(reconciledTransports ? { sensorTransports: reconciledTransports } : {}),
         topics,
         controls: normalizeControlsConfig(controlsSource, { targetVehicleId: defaultTarget }),
         assertions: (Array.isArray(source.assertions) ? source.assertions : []).map(assertion),

@@ -139,3 +139,28 @@ test("plugin library HTTP installs, lists, removes, and publishes audit events",
     assert.equal(served.status, 200);
 });
 
+test("plugin sensor catalog HTTP is revisioned and includes installed plugin types", async (t) => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "cev-plugin-sensors-"));
+    t.after(() => fs.rm(root, { recursive: true, force: true }));
+    const storage = new StorageService(root);
+    const resource = await pluginFixtureResource({ fixture: "test.range-image-fixture" });
+    await storage.plugins.putPackage(resource);
+    await storage.plugins.installFromHash(resource.packageHash);
+    const app = (await import("express")).default();
+    app.use("/api/storage/plugins", createPluginRouter(storage));
+    const { createServer } = await import("node:http");
+    const server = createServer(app);
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    t.after(() => new Promise((resolve) => server.close(resolve)));
+    const { port } = server.address();
+    const catalog = await (await fetch(`http://127.0.0.1:${port}/api/storage/plugins/sensors`)).json();
+    assert.equal(catalog.ok, true);
+    assert.equal(catalog.revision, 1);
+    const pluginRow = catalog.sensors.find((entry) => entry.type === "test.range-image-fixture.synthetic-3x4");
+    assert.equal(pluginRow.ownership.pluginId, "test.range-image-fixture");
+    assert.equal(pluginRow.ownership.packageHash, resource.packageHash);
+    assert.equal(pluginRow.ui.fallback, "generic");
+    assert.ok(pluginRow.requiredCapabilities.includes("sensors.sample.range-image"));
+    assert.ok(catalog.sensors.some((entry) => entry.ownership === "builtin"));
+});
+

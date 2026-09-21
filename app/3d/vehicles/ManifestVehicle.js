@@ -2,7 +2,8 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader";
 
 import { PhysicalVehicle } from "./Vehicle";
-import { createVehicleSensorDevice } from "../devices/SensorRuntimeRegistry.js";
+import { getSensorType } from "../devices/SensorTypeRegistry.js";
+import { createVehicleSensorDevice, sensorRuntimeRegistry } from "../devices/SensorRuntimeRegistry.js";
 import { Triangle } from "../data/objects/Triangle";
 import { normalizeVehicleManifest, resolveVehicleModelUrl } from "../../vehicles/VehicleManifest.js";
 import { applyModelPlacement } from "./ModelPlacement.js";
@@ -69,6 +70,9 @@ export class ManifestVehicle extends PhysicalVehicle {
 
     _setupManifestDevices() {
         for (const entry of this.manifest.sensors) {
+            const definition = getSensorType(entry.type);
+            if (definition?.pluginSensor) continue;
+            if (!sensorRuntimeRegistry.get(entry.type)?.createVehicleDevice) continue;
             const device = createVehicleSensorDevice(entry, { vehicleManifestId: this.vehicleManifestId });
             if (typeof device.setEnabled === "function") device.setEnabled(entry.enabled !== false);
             else device.enabled = entry.enabled !== false;

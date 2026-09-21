@@ -244,6 +244,42 @@ function projectEvidence(envelope) {
     }
 }
 
+function projectLockedVehicleRecord(record) {
+    const locks = record?.manifest?.pluginLocks;
+    if (!Array.isArray(locks) || locks.length === 0) return record;
+    const manifest = structuredClone(record.manifest);
+    manifest.pluginLocks = locks.map((lock) => ({
+        pluginId: lock.pluginId,
+        version: lock.version,
+        runtimeHash: lock.runtimeHash,
+        sensorTypes: [...(lock.sensorTypes ?? [])],
+    }));
+    return {
+        ...record,
+        manifest,
+        hash: simulationSha256({
+            manifest,
+            assetHashes: record.assetHashes ?? {},
+        }),
+    };
+}
+
+function projectVehiclePluginDependencies(projection) {
+    const apply = (vehicles, hashes) => {
+        if (!Array.isArray(vehicles)) return;
+        for (const [index, record] of vehicles.entries()) {
+            const next = projectLockedVehicleRecord(record);
+            vehicles[index] = next;
+            if (hashes && next?.vehicleId && Array.isArray(next.manifest?.pluginLocks)
+                && next.manifest.pluginLocks.length > 0) {
+                hashes[next.vehicleId] = next.hash;
+            }
+        }
+    };
+    apply(projection.vehicles, projection.dependencyHashes?.vehicles);
+    apply(projection.scenario?.vehicles, projection.scenario?.dependencyHashes?.vehicles);
+}
+
 function projectResolvedEnvironment(envelope, worldHash) {
     if (envelope.environment) envelope.environment = { worldHash };
     if (envelope.dependencyHashes) delete envelope.dependencyHashes.environment;
@@ -258,6 +294,7 @@ export function simulationSemanticProjection(resolved = {}) {
     omitIdentityMetadata(projection);
     projectResolvedEnvironment(projection, worldHash);
     projectEvidence(projection);
+    projectVehiclePluginDependencies(projection);
     const manifest = projection.manifest;
     const pluginSensorIds = resolvedPluginSensorIds(resolved);
     omitIdentityMetadata(manifest);

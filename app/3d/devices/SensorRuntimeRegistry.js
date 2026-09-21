@@ -1,6 +1,6 @@
 import * as THREE from "three";
 
-import { getSensorType } from "./SensorTypeRegistry.js";
+import { getSensorType, sensorTypeRegistry } from "./SensorTypeRegistry.js";
 import { SensorRuntimeFactoryRegistry } from "./SensorRuntimeFactoryRegistry.js";
 import { ManifestCamera } from "./ManifestCamera.js";
 import { ManifestLidar3d } from "./ManifestLidar3d.js";
@@ -32,6 +32,76 @@ export function createSensorPreview(sensor) {
 
 export function getSensorPreviewSignature(sensor) {
     return sensorRuntimeRegistry.previewSignature(sensor);
+}
+
+const MAX_PREVIEW_CHANNELS = 24;
+const MAX_PREVIEW_AZIMUTHS = 48;
+
+function subsamplePreviewValues(values, limit) {
+    if (!Array.isArray(values) || values.length <= limit) return values ?? [];
+    if (limit <= 1) return [values[0]];
+    const step = (values.length - 1) / (limit - 1);
+    return Array.from({ length: limit }, (_, index) => values[Math.round(index * step)]);
+}
+
+export function createPluginRangeImagePreview(sensor, definition) {
+    const layout = sensor?.config?.scanLayout
+        ?? sensor?.calibration?.scanLayout
+        ?? definition?.pluginSensor?.descriptor?.defaults?.scanLayout
+        ?? {};
+    const color = 0x38bdf8;
+    const holder = new THREE.Group();
+    holder.add(new THREE.Mesh(
+        new THREE.CylinderGeometry(0.05, 0.05, 0.08, 12),
+        new THREE.MeshStandardMaterial({ color, roughness: 0.35 }),
+    ));
+    const channels = subsamplePreviewValues(layout.channels, MAX_PREVIEW_CHANNELS);
+    const azimuths = subsamplePreviewValues(layout.azimuthsDeg, MAX_PREVIEW_AZIMUTHS);
+    const displayRange = Math.min(Number(layout.maxRangeM) > 0 ? Number(layout.maxRangeM) * 0.2 : 2, 2.5);
+    const positions = [];
+    for (const channel of channels) {
+        const elevation = THREE.MathUtils.degToRad(Number(channel?.elevationDeg) || 0);
+        const offset = Number(channel?.azimuthOffsetDeg) || 0;
+        for (const azimuthDeg of azimuths) {
+            const azimuth = THREE.MathUtils.degToRad((Number(azimuthDeg) || 0) + offset);
+            const x = Math.cos(elevation) * Math.cos(azimuth) * displayRange;
+            const y = Math.sin(elevation) * displayRange;
+            const z = Math.cos(elevation) * Math.sin(azimuth) * displayRange;
+            positions.push(0, 0, 0, x, y, z);
+        }
+    }
+    if (positions.length > 0) {
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+        holder.add(new THREE.LineSegments(
+            geometry,
+            new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.55 }),
+        ));
+    }
+    return holder;
+}
+
+export function createAuthoringSensorRuntimeRegistry({ definitions } = {}) {
+    const registry = new SensorRuntimeFactoryRegistry({
+        definitions: definitions ?? sensorTypeRegistry,
+        createUnknownPreview,
+    });
+    for (const [type, factories] of sensorRuntimeRegistry.factories) {
+        const definition = registry.definitions.get(type);
+        if (!definition || definition.pluginSensor) continue;
+        registry.register(type, factories);
+    }
+    for (const definition of registry.definitions.list()) {
+        if (!definition.pluginSensor || registry.get(definition.id)) continue;
+        registry.register(definition.id, {
+            createPreview: (sensor) => createPluginRangeImagePreview(sensor, definition),
+            previewSignature: (sensor) => {
+                const layout = sensor?.config?.scanLayout ?? sensor?.calibration?.scanLayout ?? null;
+                return `${sensor?.type}:${JSON.stringify(layout)}`;
+            },
+        });
+    }
+    return registry;
 }
 
 registerSensorRuntime("camera", {

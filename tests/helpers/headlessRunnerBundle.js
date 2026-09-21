@@ -32,14 +32,18 @@ const worldBoundFixtureUrl = new URL("../fixtures/visual-layer/world-bound-state
 const pluginSensorFixtureUrl = new URL("../fixtures/plugins/test.range-image-fixture/", import.meta.url);
 
 export async function pluginSensorFixtureResource() {
-    const [document, runtime] = await Promise.all([
+    const [document, runtime, ui] = await Promise.all([
         fs.readFile(new URL("plugin.json", pluginSensorFixtureUrl), "utf8"),
         fs.readFile(new URL("runtime/index.js", pluginSensorFixtureUrl), "utf8"),
+        fs.readFile(new URL("ui/index.js", pluginSensorFixtureUrl), "utf8"),
     ]);
-    return createPluginPackage({
+    const parsed = JSON.parse(document);
+    const files = {
         "plugin.json": document,
         "runtime/index.js": runtime,
-    });
+    };
+    if (parsed.entry?.ui) files[parsed.entry.ui] = ui;
+    return createPluginPackage(files);
 }
 
 async function resolveHermeticPortableBase() {

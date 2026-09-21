@@ -121,15 +121,17 @@ UI is a separate browser entry. Node and headless never import it. The runtime A
 frozen UI API contains:
 
 ```text
-pluginApi, plugin, React, hooks, Unit, SettingsForm, contributeUnitView, assetUrl, log, diagnostics
+pluginApi, plugin, React, hooks, Unit, SettingsForm, contributeUnitView, contributeSensorView, assetUrl, log, diagnostics
 ```
 
 `hooks` is the approved React hook set (`useState`, `useEffect`, `useMemo`, `useCallback`,
-`useRef`, `useId`). Views receive `{ uuid, state, settings, ports }`. `assetUrl(path)` only serves
-paths listed in `editor.assets`.
+`useRef`, `useId`). Unit views receive `{ uuid, state, settings, ports }`. Sensor views receive
+frozen `{ context, sensor, descriptor, fields, diagnostics, onChange }`. `onChange({ path, value })`
+may edit only declared scan-layout, parameter, product, and output paths; the host validates
+before committing. `assetUrl(path)` only serves paths listed in `editor.assets`.
 
 Integrity failures (tampered CAS bytes, invalid imports) are fatal. `registerUi` / render errors
-are isolated: the editor keeps the generic `SettingsForm` fallback and does not unload the runtime
+are isolated: the editor keeps the generic settings fallback and does not unload the runtime
 package. Do not ship JSX; use `React.createElement`.
 
 ## Authoring vs execution
@@ -137,6 +139,7 @@ package. Do not ship JSX; use `React.createElement`.
 | Document | Field | Pins |
 | --- | --- | --- |
 | Editor graph | `graph.pluginLocks` | `{ pluginId, version, packageHash, runtimeHash, types[] }` |
+| Vehicle document | `pluginLocks` | `{ pluginId, version, packageHash, runtimeHash, sensorTypes[] }` |
 | Compiled artifact | `pluginRequirements` | `{ pluginId, version, runtimeHash, types[] }` |
 | Run manifest | `plugins.artifacts` | `{ pluginId, expectedHash: packageHash, capabilities[] }` |
 

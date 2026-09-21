@@ -35,18 +35,21 @@ const fixtureRoot = new URL("./fixtures/plugins/test.range-image-fixture/", impo
 const FIXTURE_TYPE = "test.range-image-fixture.synthetic-3x4";
 
 async function fixtureResource({ mutateDocument = null, mutateRuntime = null, extraFiles = {} } = {}) {
-    const [document, runtime] = await Promise.all([
+    const [document, runtime, ui] = await Promise.all([
         fs.readFile(new URL("plugin.json", fixtureRoot), "utf8"),
         fs.readFile(new URL("runtime/index.js", fixtureRoot), "utf8"),
+        fs.readFile(new URL("ui/index.js", fixtureRoot), "utf8"),
     ]);
     const parsed = JSON.parse(document);
     mutateDocument?.(parsed);
     const runtimeSource = mutateRuntime ? mutateRuntime(runtime) : runtime;
-    return createPluginPackage({
+    const files = {
         "plugin.json": JSON.stringify(parsed),
         "runtime/index.js": runtimeSource,
         ...extraFiles,
-    });
+    };
+    if (parsed.entry?.ui && files[parsed.entry.ui] === undefined) files[parsed.entry.ui] = ui;
+    return createPluginPackage(files);
 }
 
 function fixtureSensor(overrides = {}) {

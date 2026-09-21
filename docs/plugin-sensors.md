@@ -156,3 +156,15 @@ observations, and deterministic lifecycle state.
 PLG-06a portable files and classic PCAP artifacts are documented in
 [`sensor-packet-transports.md`](sensor-packet-transports.md) and
 [`plugin-plan.md`](plugin-plan.md).
+
+## Authoring and UI
+
+PLG-07 adds a revisioned `GET /api/storage/plugins/sensors` catalog and exact
+CAS authoring sessions. Config stamps `manifest.plugins.artifacts` plus
+`sensors.sample.range-image` when creating a custom sensor. Vehicle documents
+store optional `pluginLocks`; those sensors are templates and previews and
+never auto-populate `sensorRig`. Custom `contributeSensorView` components
+receive frozen `{ context, sensor, descriptor, fields, diagnostics, onChange }`.
+Generic fallbacks edit scan layout JSON, declared parameters, and explicit
+products without mutating the draft on validation failure. Integrity failures
+are fatal; `registerUi` and render errors fall back to the generic form.

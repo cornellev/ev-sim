@@ -35,6 +35,7 @@ export class PluginViewBoundary extends Component {
 export function createUiApi({
     plugin,
     contributeUnitView,
+    contributeSensorView = () => {},
     assetUrl,
     log = () => {},
     diagnostics = [],
@@ -47,10 +48,16 @@ export function createUiApi({
         Unit,
         SettingsForm: PluginSettingsForm,
         contributeUnitView: (definition) => contributeUnitView(definition),
+        contributeSensorView: (definition) => contributeSensorView(definition),
         assetUrl: (path) => assetUrl(path),
         log: (level, message, details) => log(level, message, details),
         diagnostics,
     });
+}
+
+function isIntegrityError(error) {
+    return error?.code === PLUGIN_ERROR_CODES.INTEGRITY
+        || error?.code === PLUGIN_ERROR_CODES.IMPORT_INVALID;
 }
 
 export class PluginUiHost {
@@ -58,11 +65,16 @@ export class PluginUiHost {
         this.moduleSource = moduleSource;
         this.logger = logger;
         this.views = new Map();
+        this.sensorViews = new Map();
         this.diagnostics = new Map();
     }
 
     get(type) {
         return this.views.get(type) || null;
+    }
+
+    getSensorView(type) {
+        return this.sensorViews.get(type) || null;
     }
 
     diagnostic(type) {
@@ -76,12 +88,23 @@ export class PluginUiHost {
             packageHash: verified.resource.packageHash,
             runtimeHash: verified.resource.runtimeHash,
         };
-        const declared = new Set(verified.document.units.map((unit) => unit.type));
-        const contributions = [];
+        const declaredUnits = new Set((verified.document.units || []).map((unit) => unit.type));
+        const declaredSensors = new Set((verified.document.sensorTypes || []).map((sensor) => sensor.type));
+        const unitContributions = [];
+        const sensorContributions = [];
         const diagnostics = [];
-        if (!verified.document.entry?.ui) return { views: new Map(), diagnostics };
+        if (!verified.document.entry?.ui) return { views: new Map(), sensorViews: new Map(), diagnostics };
+        let namespace;
         try {
-            const namespace = await this.moduleSource.importUi(verified);
+            namespace = await this.moduleSource.importUi(verified);
+        } catch (error) {
+            throw pluginError(
+                PLUGIN_ERROR_CODES.INTEGRITY,
+                error?.message || `Plugin "${plugin.id}" UI module failed integrity checks.`,
+                { pluginId: plugin.id, packageHash: plugin.packageHash, cause: error },
+            );
+        }
+        try {
             const registerUi = namespace?.default?.registerUi;
             if (typeof registerUi !== "function") {
                 throw pluginError(PLUGIN_ERROR_CODES.REGISTRATION, `Plugin "${plugin.id}" UI must export default.registerUi(uiApi).`, {
@@ -108,28 +131,56 @@ export class PluginUiHost {
                             packageHash: plugin.packageHash,
                         });
                     }
-                    if (!declared.has(definition.type)) {
+                    if (!declaredUnits.has(definition.type)) {
                         throw pluginError(PLUGIN_ERROR_CODES.REGISTRATION, `Plugin registered undeclared unit view "${definition.type}".`, {
                             pluginId: plugin.id,
                             packageHash: plugin.packageHash,
                             contributionId: definition.type,
                         });
                     }
-                    if (contributions.some((entry) => entry.type === definition.type)) {
+                    if (unitContributions.some((entry) => entry.type === definition.type)) {
                         throw pluginError(PLUGIN_ERROR_CODES.REGISTRATION, `Plugin registered unit view "${definition.type}" more than once.`, {
                             pluginId: plugin.id,
                             packageHash: plugin.packageHash,
                             contributionId: definition.type,
                         });
                     }
-                    contributions.push(definition);
+                    unitContributions.push(definition);
+                },
+                contributeSensorView: (definition) => {
+                    if (!definition || typeof definition !== "object" || typeof definition.type !== "string"
+                        || typeof definition.Component !== "function") {
+                        throw pluginError(PLUGIN_ERROR_CODES.REGISTRATION, "Sensor view contributions contain type and Component.", {
+                            pluginId: plugin.id,
+                            packageHash: plugin.packageHash,
+                        });
+                    }
+                    if (!declaredSensors.has(definition.type)) {
+                        throw pluginError(PLUGIN_ERROR_CODES.REGISTRATION, `Plugin registered undeclared sensor view "${definition.type}".`, {
+                            pluginId: plugin.id,
+                            packageHash: plugin.packageHash,
+                            contributionId: definition.type,
+                        });
+                    }
+                    if (sensorContributions.some((entry) => entry.type === definition.type)) {
+                        throw pluginError(PLUGIN_ERROR_CODES.REGISTRATION, `Plugin registered sensor view "${definition.type}" more than once.`, {
+                            pluginId: plugin.id,
+                            packageHash: plugin.packageHash,
+                            contributionId: definition.type,
+                        });
+                    }
+                    sensorContributions.push(definition);
                 },
             });
             assertSynchronous(registerUi(api), "registerUi", { pluginId: plugin.id, packageHash: plugin.packageHash });
-            for (const contribution of contributions) {
+            for (const contribution of unitContributions) {
                 this.views.set(contribution.type, contribution.component);
             }
+            for (const contribution of sensorContributions) {
+                this.sensorViews.set(contribution.type, contribution.Component);
+            }
         } catch (error) {
+            if (isIntegrityError(error)) throw error;
             diagnostics.push(error?.message || String(error));
             this.logger({
                 level: "error",
@@ -138,9 +189,9 @@ export class PluginUiHost {
                 packageHash: plugin.packageHash,
             });
         }
-        for (const type of declared) {
+        for (const type of [...declaredUnits, ...declaredSensors]) {
             if (diagnostics.length) this.diagnostics.set(type, diagnostics.join(" "));
         }
-        return { views: this.views, diagnostics };
+        return { views: this.views, sensorViews: this.sensorViews, diagnostics };
     }
 }

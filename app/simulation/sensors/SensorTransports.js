@@ -45,3 +45,26 @@ export function normalizeSensorTransports(value, { path = "sensorTransports" } =
     });
 }
 
+export function reconcileSensorTransportBindings(transports, sensors = [], { sensorRegistry = null } = {}) {
+    if (!transports) return null;
+    const enabled = new Map((sensors ?? [])
+        .filter((sensor) => sensor?.enabled !== false)
+        .map((sensor) => [sensor.id, sensor]));
+    const bindings = (transports.bindings ?? []).filter((binding) => {
+        const sensor = enabled.get(binding.sensorId);
+        if (!sensor) return false;
+        const plugin = sensorRegistry?.get?.(sensor.type)?.pluginSensor;
+        if (!plugin) return false;
+        if (sensor.calibration?.products?.[binding.productId] !== true) return false;
+        const product = plugin.descriptor.products.find((entry) => entry.productId === binding.productId);
+        if (!product || product.kind !== "vendor-packets") return false;
+        return product.streams.some((stream) => stream.streamId === binding.streamId);
+    });
+    if (bindings.length === 0) return null;
+    return Object.freeze({
+        kind: SENSOR_TRANSPORTS_KIND,
+        version: SENSOR_TRANSPORTS_VERSION,
+        bindings: Object.freeze(bindings),
+    });
+}
+

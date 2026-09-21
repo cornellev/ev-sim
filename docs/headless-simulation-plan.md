@@ -500,6 +500,15 @@ compared with the committed characterization.
 
 ## Decision log
 
+### 2026-09-20 — PLG-07 vehicle lock simulation projection (not PR 13)
+
+PLG-07 projects vehicle `pluginLocks` for simulation identity by dropping
+`packageHash` and retaining `{ pluginId, version, runtimeHash, sensorTypes }`.
+Only vehicles that already declare `pluginLocks` change; plugin-free vehicles
+and the committed action-tape characterization remain byte-identical. This is
+not headless PR 13: run-bundle v1, protocol 1.4, Protobuf, and the outstanding
+PR-12 hosted/soak/NVIDIA/Jetson evidence obligations are unchanged.
+
 ### 2026-09-20 — PLG-06a headless PCAP artifacts (not PR 13)
 
 PLG-06a extends headless artifact ownership so workers write classic PCAP

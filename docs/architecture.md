@@ -73,6 +73,13 @@ Host wrapper addresses and PCAP filenames are operational
 `simulationHash`, `episodeHash`, or `trajectoryHash`. Live UDP remains
 unavailable. See [Sensor packet transports](sensor-packet-transports.md).
 
+PLG-07 authors custom sensors from the revisioned catalog and exact CAS locks.
+Vehicle `pluginLocks` pin plugin provenance for templates and previews; only
+`manifest.sensorRig.sensors` execute. Vehicle-bundle v1 may embed sorted
+`pluginPackages` without changing the legacy hash projection. Simulation
+identity replaces locked vehicle `packageHash` with runtime identity and
+leaves unlocked vehicles unchanged.
+
 `app/scripting/UnitCatalog.meta.js` is the server-safe authority for stable built-in type IDs and metadata. `registerBuiltInBlocks.js` registers those explicit IDs, `UnitCatalog.js` attaches React components by type, and `AddMenu.js` renders placeable entries as a searchable categorized sidebar. Typed configuration changes pass through `ScriptManager.reconfigureUnitDetailed()` so ports, configuration, and graph-wide type bindings commit or roll back together. The built-in catalog includes atomic math/logic plus conversions, strings, JSON path ops, typed arrays, geometry (vec/pose), read-only route helpers, `control` temporal/PID blocks, `texture1d` arithmetic, and simulator adapters (`VehicleStateBlock`, `DeviceStateBlock`, `SimulationClockBlock`, `ScenarioStatusBlock`).
 
 ## Simulation Layer

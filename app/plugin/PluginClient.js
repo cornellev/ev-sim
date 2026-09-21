@@ -42,6 +42,15 @@ export function removePlugin({ pluginId, packageHash }) {
     return storagePost("plugins/remove", { pluginId, packageHash });
 }
 
+export async function fetchSensorCatalog() {
+    const response = await fetch("/api/storage/plugins/sensors", { headers: { Accept: "application/json" } });
+    const payload = await response.json();
+    if (!response.ok || payload?.ok === false) {
+        throw new Error(payload?.error || payload?.message || "Could not load the sensor catalog.");
+    }
+    return payload;
+}
+
 export async function fetchUnitCatalog() {
     const response = await fetch("/api/scripting/units", { headers: { Accept: "application/json" } });
     const payload = await response.json();

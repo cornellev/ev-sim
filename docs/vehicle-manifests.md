@@ -10,7 +10,7 @@ Editing areas:
 
 - **Model**: upload a `.glb`/`.gltf`, then place it in the vehicle frame with scale, rotation, and offset. "Fit to size" rescales the model so its footprint matches a target length and width in meters.
 - **LiDAR zone**: generates the reduced-polygon collision mesh that LiDAR and other GPU sensors raycast against. Generation runs the voxel-clustering simplifier (`TriangleOptimizer`) over the placed model and bakes the resulting vertex and triangle arrays into the manifest. Larger voxel sizes produce fewer triangles.
-- **Sensors**: 3D LiDAR and camera sensors with vehicle-local poses and per-type configuration.
+- **Sensors**: 3D LiDAR, camera, and catalog plugin range-image templates with vehicle-local poses and per-type configuration. Plugin sensors are authoring templates and previews; they do not execute from the vehicle document.
 - **Wheels**: wheel positions, radius, width, and steerable flags. The bicycle-model wheelbase is derived from steerable vs. fixed wheel placement unless overridden.
 - **Body**: the bounding box (drives the physics AABB via `collisionDimensions`) and the ego center marker.
 
@@ -79,4 +79,4 @@ Under `/api/storage`:
 - `POST /vehicles/import`
 - `GET|PUT|DELETE /vehicle-assets/:id/:file` (raw binary model assets)
 
-`PUT /vehicles/:id` accepts `{ manifest, expectedRevision }` with the same optimistic-revision conflict behavior as run manifests. Export produces a `cev-sim.vehicle-bundle` version 1 document embedding the manifest and its model assets as base64; import restores both, suffixing the id when it collides with an existing vehicle.
+`PUT /vehicles/:id` accepts `{ manifest, expectedRevision }` with the same optimistic-revision conflict behavior as run manifests. Optional `pluginLocks` pin `{ pluginId, version, packageHash, runtimeHash, sensorTypes[] }` and are omitted when empty. Export produces a `cev-sim.vehicle-bundle` version 1 document embedding the manifest, model assets as base64, and—when locks exist—sorted exact `pluginPackages`. Legacy bundles without `pluginPackages` keep their existing hash projection. Import verifies embedded packages into CAS without adding library membership, suffixing the id when it collides with an existing vehicle.

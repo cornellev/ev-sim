@@ -20,6 +20,7 @@ from [`docs/plugin-api.md`](plugin-api.md) rather than this roadmap.
 | PLG-04: editor/UI integration and distribution acceptance | Complete in working tree | Verified | Unmerged |
 | PLG-05: custom range-image sensors and native packet products | Complete in working tree | Verified | Unmerged |
 | PLG-06a: portable plugin files and classic PCAP artifacts | Complete in working tree | Verified | Unmerged |
+| PLG-07: custom sensor authoring and UI | Complete in working tree | Verified | Unmerged |
 
 Only a merged change may be marked merged. A milestone is verified only when
 all of its acceptance commands and evidence entries are present in this
@@ -431,6 +432,43 @@ characterization; and the focused plus full verification commands below.
 
 PLG-06b live UDP stays deferred until after PLG-07.
 
+### PLG-07 — Custom sensor authoring and UI
+
+Author custom range-image sensors in Config and the Vehicle Editor without
+changing run-manifest v11, run-bundle v1, plugin API/UI API 1, vehicle
+manifest v2, vehicle-bundle v1, or Protobuf. Vehicle-mounted custom sensors
+are authoring templates and previews; only `manifest.sensorRig.sensors`
+execute. Vehicle bundles embed exact locked plugin packages for portable
+import. Installed packages populate creation choices; exact CAS locks remain
+readable after library removal.
+
+Locked contracts:
+
+- `GET /api/storage/plugins/sensors` is revisioned and built from
+  `verifyPluginPackage()` documents. It never executes runtime or UI modules.
+- UI API 1 adds `uiApi.contributeSensorView({ type, Component })`. `Component`
+  receives frozen `{ context, sensor, descriptor, fields, diagnostics, onChange }`.
+  `onChange({ path, value })` may edit only declared scan-layout, parameter,
+  product, and output paths and validates before committing.
+- Optional vehicle `pluginLocks` are `{ pluginId, version, packageHash,
+  runtimeHash, sensorTypes[] }`, UTF-8 sorted, unique by `pluginId`, and
+  omitted when empty. Locks pin authoring provenance and grant no capabilities.
+- Plugin vehicle templates normalize to
+  `{ rateHz, scanLayout, parameters, products }` with product defaults false.
+- Vehicle-bundle v1 may include optional sorted `pluginPackages`. Legacy
+  bundles without the field retain their hash projection.
+- One package per plugin ID. Adding a type from another package version fails
+  visibly. Removing a sensor does not remove a run plugin selection.
+- Integrity failures are fatal. `registerUi` and component-render errors fall
+  back to `PluginSensorSettingsForm`.
+- Simulation identity projects locked vehicles as
+  `{ pluginId, version, runtimeHash, sensorTypes }` and drops `packageHash`.
+  Unlocked vehicles retain prior projections byte-for-byte.
+
+Acceptance requires catalog/lock/storage/hash Node tests, Config and Vehicle
+browser authoring, throwing-view fallback, portable/headless execution without
+evaluating `app/plugin/browser`, and unchanged action-tape characterization.
+
 ## PLG-01 evidence ledger
 
 | Gate | Evidence | Result / limitation |
@@ -550,7 +588,39 @@ Live UDP remains unavailable and is rejected. PLG-06a does not change the
 outstanding headless PR-12 hosted, soak, x64 NVIDIA, or Jetson evidence
 obligations and is not a headless PR 13.
 
+## PLG-07 evidence ledger
+
+Acceptance ran on 2026-09-21 on macOS arm64, Node 22.14.0.
+
+| Gate | Exact command / evidence | Result / limitation |
+| --- | --- | --- |
+| Catalog, locks, storage, hashes | `node --experimental-default-type=module --test tests/plugin-sensor-authoring.test.js tests/vehicle-manifest.test.js tests/simulation-hashes.test.js tests/plugin-sensors.test.js` | 34/34 passed; catalog revision/order without module execution, vehicle-lock normalize/conflict/reconcile/legacy omission, Config/Vehicle patches, missing package/wrong runtime hash/undeclared type/missing grant, vehicle save/duplicate/export/import with embedded packages, CAS after library removal, UI-only vs runtime identity, and plugin-free vehicle projections |
+| Plugin focused Node suites | `node --experimental-default-type=module --test tests/plugin-*.test.js` | 69/69 passed |
+| Browser authoring | `npx playwright test tests/ui/plugin-sensor-authoring.spec.js tests/ui/plugin-config.spec.js tests/ui/plugin-ui.spec.js tests/ui/plugin-module-source.spec.js --workers=1` | 7/7 Chromium tests passed against the production server; Config create/grant/edit/save/reload/validate, Vehicle add/edit/save/reload, throwing-view generic fallback, missing-package diagnostics, custom unit UI, and runtime import without evaluating UI |
+| Characterization | `npm run fixtures:headless`; `git diff --exit-code -- tests/fixtures/headless/characterization.v1.json` | Passed with no committed fixture delta |
+| Repository lint and full Node suite | `npm run lint`; `npm test`; `git diff --check` | 1,567 passed, 0 failed, 4 existing skips; ESLint had zero errors and one pre-existing `MapSurface.js` warning; whitespace check passed |
+| Production build | `npm run build` | Optimized Next.js build, TypeScript check, and static generation passed |
+| Clean distribution | `npm run dist:headless`; `npm run dist:verify` | Passed; installed tarball omits `app/plugin/browser`. Artifact digests: npm `134066330eadab2002112a1ceb61157a22f22a44ae5fc3641266631ed86804ea`, wheel `b50891d9dbeaa1528df80d6a83953dd7c64d50ca5a14fcebcd0dd34251d4edae`, sdist `bc943539e1421a34483dfee6495d991d9a926967b9f212f72cf9bc083635bb11` |
+
+Live UDP, GPU explicit layouts, package-defined ROS schemas, marketplace behavior, and plugin-owned transport remain out of scope. PLG-07 does not change the outstanding headless PR-12 hosted, soak, x64 NVIDIA, or Jetson evidence obligations and is not a headless PR 13.
+
 ## Decision log
+
+- **2026-09-21 — PLG-07 acceptance completed.** Catalog/lock/storage/hash Node
+  tests, Config and Vehicle browser authoring, throwing-view fallback,
+  portable/headless distribution without `app/plugin/browser`, and unchanged
+  action-tape characterization passed. Scripts plugin locks stay visible
+  outside Advanced so stamped range-image grants can be inspected and
+  repaired. PLG-07 is verified but remains unmerged. Live UDP stays deferred
+  to PLG-06b.
+
+- **2026-09-20 — PLG-07 custom sensor authoring.** Config and Vehicle Editor
+  consume a revisioned sensor catalog plus exact CAS locks. Vehicle
+  `pluginLocks` pin authoring provenance without granting capabilities.
+  Vehicle custom sensors are templates/previews; only `sensorRig` executes.
+  Vehicle bundles embed exact packages without library membership.
+  Simulation identity drops `packageHash` from locked vehicles only. This is
+  not headless PR 13 and does not alter plugin-free hashes.
 
 - **2026-09-20 — PLG-06a acceptance completed.** Portable plugin files and
   classic PCAP artifacts passed focused, full Node, Python, characterization,
