@@ -4,6 +4,22 @@ export function listPluginLibrary() {
     return storageGet("plugins/library");
 }
 
+export async function listLocalPlugins() {
+    const payload = await storageGet("plugins/local");
+    if (!payload || payload.ok === false) {
+        throw new Error(payload?.message || payload?.error || "Could not load local plugins.");
+    }
+    return payload;
+}
+
+export async function getPluginDocument(packageHash) {
+    const document = await storageGet(`plugins/packages/${encodeURIComponent(packageHash)}/files/plugin.json`);
+    if (!document || typeof document !== "object" || Array.isArray(document)) {
+        throw new Error(`Plugin package ${packageHash} is missing plugin.json.`);
+    }
+    return document;
+}
+
 export function getPluginPackage(packageHash) {
     return storageGet(`plugins/packages/${encodeURIComponent(packageHash)}`);
 }

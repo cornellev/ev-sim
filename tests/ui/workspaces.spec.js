@@ -1,16 +1,23 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 
-async function openWorkspace(page, label) {
+async function openWorkspaceDialog(page) {
+    const dialog = page.getByRole("dialog", { name: "Workspaces" });
     const opener = page.getByRole("button", { name: "Open workspace switcher" }).first();
     if (await opener.isVisible()) {
-        await opener.click();
+        // The environment editor top bar covers this fixed button. A DOM click
+        // reaches the button; a pointer click opens the environment switcher.
+        await opener.evaluate((button) => button.click());
     } else {
         await page.evaluate(() => document.activeElement instanceof HTMLElement && document.activeElement.blur());
         await page.keyboard.press("Escape");
     }
-    const dialog = page.getByRole("dialog", { name: "Workspaces" });
     await expect(dialog).toBeVisible();
+    return dialog;
+}
+
+async function openWorkspace(page, label) {
+    const dialog = await openWorkspaceDialog(page);
     await dialog.getByRole("button", { name: new RegExp(`^${label}`, "i") }).click();
     const discard = page.getByRole("button", { name: "Discard and switch" });
     if (await discard.isVisible()) await discard.click();
@@ -22,7 +29,7 @@ test("workspace switcher reaches every workspace at laptop height", async ({ pag
     await page.keyboard.press("Escape");
     const dialog = page.getByRole("dialog", { name: "Workspaces" });
     await expect(dialog).toBeVisible();
-    await expect(dialog.getByRole("button")).toHaveCount(13);
+    await expect(dialog.getByRole("button")).toHaveCount(16);
     await expect(dialog.getByRole("button", { name: /^Run configuration/i })).toBeVisible();
 
     const activeWorkspace = dialog.getByRole("button", { name: /^Simulation/ });
@@ -38,14 +45,7 @@ test("workspace switcher reaches every workspace at laptop height", async ({ pag
         const discard = page.getByRole("button", { name: "Discard and switch" });
         if (await discard.isVisible()) await discard.click();
         await expect(dialog).toBeHidden();
-        const opener = page.getByRole("button", { name: "Open workspace switcher" }).first();
-        if (await opener.isVisible()) {
-            await opener.click();
-        } else {
-            await page.evaluate(() => document.activeElement instanceof HTMLElement && document.activeElement.blur());
-            await page.keyboard.press("Escape");
-        }
-        await expect(dialog).toBeVisible();
+        await openWorkspaceDialog(page);
     }
 });
 

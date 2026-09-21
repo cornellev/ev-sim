@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useRef } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
     IconAdjustments,
     IconCar,
@@ -9,8 +9,10 @@ import {
     IconCube,
     IconHistory,
     IconFiles,
+    IconLayoutGrid,
     IconLink,
     IconPlayerPlay,
+    IconPuzzle,
     IconRoute,
     IconFlask2,
     IconTerminal2,
@@ -19,10 +21,17 @@ import {
 } from "@tabler/icons-react";
 import { Dialog } from "radix-ui";
 
+import { PluginLibraryPanel } from "../../../plugin/ui/PluginLibraryPanel.js";
 import { IconButton } from "../../../ui";
 import { APP_VIEWS, THREE_D_MODES } from "../../viewState";
 
 const ICON_PROPS = { size: 16, stroke: 1.75 };
+
+const DIALOG_SECTIONS = [
+    { id: "workspaces", label: "Workspaces", icon: IconLayoutGrid, disabled: false },
+    { id: "plugins", label: "Plugins", icon: IconPuzzle, disabled: false },
+    { id: "settings", label: "Settings", icon: IconAdjustments, disabled: true },
+];
 
 export default function Menu({
     activeView = APP_VIEWS.SCRIPTING,
@@ -43,6 +52,12 @@ export default function Menu({
     instant = false,
 }) {
     const selectedRef = useRef(null);
+    const [pane, setPane] = useState("workspaces");
+    const selectPane = (id) => {
+        const section = DIALOG_SECTIONS.find((entry) => entry.id === id);
+        if (!section || section.disabled) return;
+        setPane(id);
+    };
     const sections = useMemo(() => [
         {
             label: "Build and run",
@@ -110,34 +125,59 @@ export default function Menu({
                             </IconButton>
                         </Dialog.Close>
                     </header>
-                    <div className="sf-workspace-menu__body">
-                        {sections.map((section) => (
-                            <section className="sf-workspace-menu__section" key={section.label}>
-                                <h2 className="sf-workspace-menu__section-title">{section.label}</h2>
-                                <div className="sf-workspace-menu__items">
-                                    {section.items.map((item) => {
-                                        const Icon = item.icon || IconCube;
-                                        return (
-                                            <button
-                                                key={item.key}
-                                                ref={item.active ? selectedRef : undefined}
-                                                type="button"
-                                                className="sf-workspace-menu__item"
-                                                data-active={item.active || undefined}
-                                                aria-current={item.active ? "page" : undefined}
-                                                onClick={() => item.active ? onClose?.() : item.onSelect?.()}
-                                            >
-                                                <Icon className="sf-workspace-menu__icon" {...ICON_PROPS} aria-hidden="true" />
-                                                <span className="sf-workspace-menu__copy">
-                                                    <span className="sf-workspace-menu__label">{item.label}</span>
-                                                    <span className="sf-workspace-menu__hint">{item.hint}</span>
-                                                </span>
-                                            </button>
-                                        );
-                                    })}
+                    <div className="sf-workspace-menu__shell">
+                        <nav className="sf-workspace-menu__rail" aria-label="Workspace dialog sections">
+                            {DIALOG_SECTIONS.map((section) => {
+                                const Icon = section.icon;
+                                const active = pane === section.id;
+                                return (
+                                    <IconButton
+                                        key={section.id}
+                                        label={section.label}
+                                        tooltip={section.disabled ? "Settings is not available yet." : section.label}
+                                        disabled={section.disabled}
+                                        active={active}
+                                        aria-current={active ? "page" : undefined}
+                                        onClick={() => selectPane(section.id)}
+                                    >
+                                        <Icon {...ICON_PROPS} aria-hidden="true" />
+                                    </IconButton>
+                                );
+                            })}
+                        </nav>
+                        <div className="sf-workspace-menu__pane">
+                            {pane === "plugins" ? <PluginLibraryPanel /> : (
+                                <div className="sf-workspace-menu__body">
+                                    {sections.map((section) => (
+                                        <section className="sf-workspace-menu__section" key={section.label}>
+                                            <h2 className="sf-workspace-menu__section-title">{section.label}</h2>
+                                            <div className="sf-workspace-menu__items">
+                                                {section.items.map((item) => {
+                                                    const Icon = item.icon || IconCube;
+                                                    return (
+                                                        <button
+                                                            key={item.key}
+                                                            ref={item.active ? selectedRef : undefined}
+                                                            type="button"
+                                                            className="sf-workspace-menu__item"
+                                                            data-active={item.active || undefined}
+                                                            aria-current={item.active ? "page" : undefined}
+                                                            onClick={() => item.active ? onClose?.() : item.onSelect?.()}
+                                                        >
+                                                            <Icon className="sf-workspace-menu__icon" {...ICON_PROPS} aria-hidden="true" />
+                                                            <span className="sf-workspace-menu__copy">
+                                                                <span className="sf-workspace-menu__label">{item.label}</span>
+                                                                <span className="sf-workspace-menu__hint">{item.hint}</span>
+                                                            </span>
+                                                        </button>
+                                                    );
+                                                })}
+                                            </div>
+                                        </section>
+                                    ))}
                                 </div>
-                            </section>
-                        ))}
+                            )}
+                        </div>
                     </div>
                 </Dialog.Content>
             </Dialog.Portal>
