@@ -8,14 +8,14 @@ manifests or starts the web server.
 ## Commands
 
 ```bash
-cev-sim validate (--bundle bundle.json | --package run.run-package) [--episode episode.json] [--config supervisor.json]
+cev-sim validate (--bundle bundle.json | --package run.run-package) [--episode episode.json] [--config supervisor.json] [--sensor-transport-config host.json]
 cev-sim create-smoke-bundle --output bundle.json
 cev-sim inspect bundle.json
 cev-sim inspect run.run-package
 cev-sim inspect output-directory
 cev-sim inspect output-directory/run.sflog
-cev-sim run (--bundle bundle.json | --package run.run-package) --output result-root [--episode episode.json] [--actions actions.jsonl] [--config supervisor.json]
-cev-sim replay (--bundle bundle.json | --package run.run-package) --tape tape.json --output result-dir [--config supervisor.json]
+cev-sim run (--bundle bundle.json | --package run.run-package) --output result-root [--episode episode.json] [--actions actions.jsonl] [--config supervisor.json] [--sensor-transport-config host.json]
+cev-sim replay (--bundle bundle.json | --package run.run-package) --tape tape.json --output result-dir [--config supervisor.json] [--sensor-transport-config host.json]
 cev-sim gpu-preflight --config supervisor.json
 ```
 
@@ -158,6 +158,16 @@ an explicit caller profile selects evaluation, training, or disabled; without
 one, optional logging produces a degradable evaluation log and disabled
 logging omits SFLog. Artifact policy and paths never enter episode or
 trajectory identity.
+
+Direct runs accept `--sensor-transport-config <file>`, an operator-owned
+`cev-sim.sensor-transport-host-config@1` document. It is mutually exclusive
+with `--config`; supervisors read the same document from
+`packetTransports` in the supervisor config. Wrapper MAC/IPv4/UDP addresses,
+MTU, and PCAP filenames are operational and do not change `resolvedHash`,
+`simulationHash`, `episodeHash`, or `trajectoryHash`. Requested `pcap`
+bindings require artifact output and fail with `UNSUPPORTED_CAPABILITY` when
+the host adapter, endpoint, or capture is unavailable. Live UDP is rejected.
+See [Sensor packet transports](sensor-packet-transports.md).
 
 ## Exit codes
 

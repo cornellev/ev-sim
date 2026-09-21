@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -1056,6 +1056,16 @@ test("plugin MCP install stamps graph locks and lint keeps artifacts after libra
             source: { kind: "directory", path: fixturePath },
         }));
         assert.equal(fromDir.ok, true);
+
+        const packedDir = await mkdtemp(path.join(os.tmpdir(), "sf-mcp-plugin-file-"));
+        const packedPath = path.join(packedDir, "acme.example.plugin.json");
+        await writeFile(packedPath, JSON.stringify(resource));
+        const fromFile = mcpPayload(await tools.get("plugin_install")({
+            source: { kind: "file", path: packedPath },
+        }));
+        assert.equal(fromFile.ok, true);
+        assert.equal(fromFile.package.packageHash, resource.packageHash);
+        await rm(packedDir, { recursive: true, force: true });
 
         await tools.get("plugin_remove")({ pluginId: "acme.example", packageHash: resource.packageHash });
         const afterRemoval = await storage.getScript("plugin-script");

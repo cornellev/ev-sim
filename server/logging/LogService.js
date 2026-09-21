@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync, gunzipSync } from "node:zlib";
@@ -23,6 +24,14 @@ import {
 } from "../../app/logging/LogEvidenceDocument.js";
 import { MAX_LOG_BATCH_BYTES } from "../../app/logging/LogLimits.js";
 import { collectAttachments, readAutonomySnapshot, readPoseSeries } from "./spatialLogQueries.js";
+import {
+    decodeNativeSensorPacket,
+    NATIVE_SENSOR_PACKET_KIND,
+    NATIVE_SENSOR_PACKET_VERSION,
+} from "../../app/simulation/sensors/NativeSensorPacket.js";
+import { normalizeSensorTransports } from "../../app/simulation/sensors/SensorTransports.js";
+import { HostPacketTransportHub } from "../sensor-transports/HostPacketTransportHub.js";
+import { resolveSensorTransportHostConfig } from "../sensor-transports/SensorTransportConfig.js";
 
 const DEFAULT_LOGS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "data", "logs");
 const textEncoder = new TextEncoder();
@@ -46,6 +55,20 @@ const INDEX_DECODE_OPTIONS = Object.freeze({
 
 function importError(statusCode, message) {
     return Object.assign(new Error(message), { statusCode });
+}
+
+function isNativeSensorPacketSchema(schema) {
+    const metadata = schema?.metadata;
+    return metadata?.kind === NATIVE_SENSOR_PACKET_KIND
+        && Number(metadata?.version) === NATIVE_SENSOR_PACKET_VERSION;
+}
+
+function clockStepNsFromResolved(resolved) {
+    const stepNs = Number(resolved?.manifest?.clock?.stepNs ?? resolved?.clock?.stepNs);
+    if (!Number.isSafeInteger(stepNs) || stepNs < 1) {
+        throw importError(400, "The attached run manifest does not include a valid clock.stepNs.");
+    }
+    return stepNs;
 }
 
 function inflateChunk(compressed, expectedLength) {
@@ -1083,6 +1106,120 @@ export class LogService {
 
     getFilePath(idValue) {
         return this._finalPath(safeSegment(idValue));
+    }
+
+    async iterateNativeSensorPackets(idValue) {
+        const packets = [];
+        const schemas = new Map();
+        for await (const chunk of this.iterateChunks(idValue)) {
+            const decoded = decodeRecordStream(chunk.raw, schemas, {
+                includeEvents: false,
+                includeCheckpointValues: false,
+                includeAttachments: false,
+            });
+            for (const [schemaId, schema] of decoded.schemas) schemas.set(schemaId, schema);
+            for (const update of decoded.updates) {
+                if (!isNativeSensorPacketSchema(update.descriptor)) continue;
+                const bytes = update.value instanceof Uint8Array
+                    ? update.value
+                    : new Uint8Array(update.value || []);
+                const decodedPacket = decodeNativeSensorPacket(bytes);
+                packets.push({
+                    description: decodedPacket.description,
+                    payload: decodedPacket.payload,
+                    envelope: bytes,
+                    timeUs: update.timeUs,
+                    cycle: update.cycle,
+                });
+            }
+        }
+        return packets;
+    }
+
+    async exportNativePacketPcap(idValue, {
+        artifactId = null,
+        sensorTransports = null,
+        hostConfig = null,
+    } = {}) {
+        const resolvedHost = resolveSensorTransportHostConfig(hostConfig, { path: "hostConfig" });
+        if (!resolvedHost) {
+            throw importError(400, "PCAP export requires a sensor-transport host configuration.");
+        }
+        const attachments = await collectAttachments(this, idValue, { names: ["run-manifest.json"] });
+        const resolved = attachments[0]?.bytes
+            ? JSON.parse(new TextDecoder().decode(attachments[0].bytes))
+            : null;
+        if (!resolved) {
+            throw importError(400, "PCAP export requires an attached run manifest or run bundle.");
+        }
+        const transports = normalizeSensorTransports(
+            sensorTransports ?? resolved.manifest?.sensorTransports ?? resolved.sensorTransports,
+            { path: "sensorTransports" },
+        );
+        if (!transports?.bindings?.length) {
+            throw importError(400, "PCAP export requires sensor transport bindings.");
+        }
+        const packets = await this.iterateNativeSensorPackets(idValue);
+        if (packets.length === 0) {
+            throw importError(400, "The recording does not contain native sensor packet envelopes.");
+        }
+        const staging = await fs.mkdtemp(path.join(os.tmpdir(), "cev-pcap-export-"));
+        const hub = new HostPacketTransportHub();
+        try {
+            hub.configure({
+                bindings: transports.bindings,
+                hostConfig: resolvedHost,
+                stepNs: clockStepNsFromResolved(resolved),
+                maxQueueBytes: 0,
+            });
+            if (!hub.hasPcapBindings()) {
+                throw importError(400, "PCAP export requires at least one pcap sensor transport binding.");
+            }
+            await hub.attachArtifactRoot(staging);
+            const byStep = new Map();
+            for (const packet of packets) {
+                const step = Number(packet.description.actualDeliveryStep);
+                if (!byStep.has(step)) byStep.set(step, []);
+                byStep.get(step).push(packet);
+            }
+            for (const step of [...byStep.keys()].sort((left, right) => left - right)) {
+                for (const packet of byStep.get(step)) {
+                    hub.enqueueBatch({
+                        sensorId: packet.description.sensorId,
+                        sampleIndex: packet.description.sampleIndex,
+                        captureTimeNs: packet.description.captureTimeNs,
+                        scheduledDeliveryTimeNs: packet.description.scheduledDeliveryTimeNs,
+                        deliveryTimeNs: packet.description.deliveryTimeNs,
+                        actualDeliveryStep: packet.description.actualDeliveryStep,
+                        packets: [{
+                            productId: packet.description.productId,
+                            streamId: packet.description.streamId,
+                            packetIndex: packet.description.packetIndex,
+                            offsetNs: packet.description.offsetNs,
+                            payload: packet.payload,
+                            envelope: packet.envelope,
+                            payloadDigest: packet.description.payloadDigest,
+                        }],
+                    });
+                }
+                hub.endDeliveryStep({ step });
+            }
+            await hub.drain();
+            const evidence = await hub.finalize();
+            const selectedId = artifactId
+                || (evidence.artifacts.length === 1 ? evidence.artifacts[0].id : null);
+            const artifact = evidence.artifacts.find((entry) => entry.id === selectedId);
+            if (!artifact) {
+                throw importError(400, "PCAP export requires a known artifactId.");
+            }
+            const bytes = new Uint8Array(await fs.readFile(path.join(staging, artifact.fileName)));
+            return { bytes, fileName: artifact.fileName, evidence };
+        } catch (error) {
+            await hub.abort().catch(() => {});
+            throw error;
+        } finally {
+            await fs.rm(staging, { recursive: true, force: true });
+        }
     }
 
     _finalPath(id) { return path.join(this.logsDir, `${id}.sflog`); }

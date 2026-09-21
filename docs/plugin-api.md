@@ -107,8 +107,10 @@ access.
 
 The strict descriptor, scan layout, lifecycle, capture result, observation,
 and product shapes are documented in [`plugin-sensors.md`](plugin-sensors.md).
-The native envelope and currently unavailable external adapters are in
-[`sensor-packet-transports.md`](sensor-packet-transports.md). A working 3×4
+The native envelope and currently unavailable live UDP adapter are in
+[`sensor-packet-transports.md`](sensor-packet-transports.md). Classic PCAP
+artifacts are operator-owned and optional unless a manifest binding requests
+them. A working 3×4
 nonuniform example is `tests/fixtures/plugins/test.range-image-fixture/`.
 
 ## UI ABI
@@ -157,12 +159,24 @@ node --experimental-default-type=module scripts/create-cev-plugin.mjs \
   --id acme.demo --out examples/plugins/acme.demo
 ```
 
-Install into the local library (absolute directory or an existing CAS digest):
+Install into the local library (absolute directory, portable package file, or an
+existing CAS digest):
 
-- HTTP: `POST /api/storage/plugins/install` with `{ source: { kind: "directory", path } }` or
-  `{ source: { kind: "digest", packageHash } }`
+- HTTP: `POST /api/storage/plugins/install` with `{ source: { kind: "directory", path } }`,
+  `{ source: { kind: "file", path } }`, or `{ source: { kind: "digest", packageHash } }`
+- HTTP upload: `POST /api/storage/plugins/install-file` with
+  `Content-Type: application/vnd.cev-sim.plugin-package+json` and the raw
+  `cev-sim.plugin-package@1` JSON body (16 MiB limit)
 - MCP: `plugin_install`, `plugin_list`, `plugin_get`, `plugin_remove`
-- Remove drops library membership only. CAS bytes and immutable URLs remain.
+- Standalone: `cev-sim-plugin pack --directory <plugin-dir> --output <package.json>`
+  then `cev-sim-plugin verify --file <package.json>`. Verify never loads runtime
+  modules.
+
+Portable-file ingestion limits (16 MiB JSON, 256 members, 8 MiB decoded, 4 MiB
+per member, 240 UTF-8 path bytes) apply to pack/install tooling only. Embedded
+run-bundle packages are not re-validated against those limits.
+
+Remove drops library membership only. CAS bytes and immutable URLs remain.
 
 `GET /api/storage/plugins/library` lists revisioned membership.
 `GET /api/storage/plugins/packages/{packageHash}/files/...` serves verified members.

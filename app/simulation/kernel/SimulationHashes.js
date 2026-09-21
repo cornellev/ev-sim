@@ -175,6 +175,7 @@ function legacySimulationSemanticProjection(resolved = {}) {
     projectWorldEnvironmentIdentity(projection);
     if (projection.manifest) {
         delete projection.manifest.logging;
+        delete projection.manifest.sensorTransports;
         // Candidate-model declarations are evidence provenance only. Project v10
         // back to the prior semantic shape so otherwise-identical runs keep the
         // same simulationSemanticHash / episodeHash / trajectoryHash.

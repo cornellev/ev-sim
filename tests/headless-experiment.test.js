@@ -13,6 +13,9 @@ import { createDefaultRunManifest, RUN_BUNDLE_KIND, RUN_BUNDLE_VERSION } from ".
 import { createRunSensor } from "../app/3d/devices/SensorTypeRegistry.js";
 import { createGpuSensorBackendSelection } from "../app/simulation/sensors/GpuSensorBackend.js";
 import { ManagedHeadlessSession, managedEpisodeIdentity } from "../server/headless/ManagedHeadlessSession.js";
+import { NodePluginModuleSource } from "../server/plugins/NodePluginModuleSource.js";
+import { createPluginPcapHeadlessBundle, rehashRunBundle } from "./helpers/headlessRunnerBundle.js";
+import { fixturePcapHostConfig } from "./helpers/sensorTransportFixtures.js";
 import { HeadlessExperimentService } from "../server/headless/HeadlessExperimentService.js";
 import { inspectReplay, readReplaySeries } from "../server/mcp/loggingTools.js";
 import { LogService } from "../server/logging/LogService.js";
@@ -515,4 +518,39 @@ test("cancellation exits workers and startup reconciliation touches only headles
     assert.equal((await current.storage.getExperimentResult("stale-headless")).status, "interrupted");
     assert.equal((await current.storage.getExperimentResult("stale-browser")).status, "running");
     await restarted.close();
+});
+
+test("PLG-06a managed sessions publish deterministic PCAP artifacts", async (t) => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "cev-managed-pcap-"));
+    t.after(() => fs.rm(root, { recursive: true, force: true }));
+    const hostConfig = fixturePcapHostConfig();
+    const bundle = await createPluginPcapHeadlessBundle();
+    const managedBundle = structuredClone(bundle);
+    managedBundle.resolved.manifest.controls.authority = "reference";
+    managedBundle.resolved.scenario.scenario.routes[0].controller = {
+        kind: "route-follower",
+        activation: { kind: "start" },
+    };
+    const resealed = rehashRunBundle(managedBundle);
+    const sessions = [];
+    t.after(async () => {
+        await Promise.all(sessions.map((session) => session.close()));
+    });
+    async function runOnce(name) {
+        const session = new ManagedHeadlessSession({
+            pluginModuleSource: new NodePluginModuleSource({ runtimeRoot: path.join(root, `${name}-runtime`) }),
+            hostConfig,
+        });
+        sessions.push(session);
+        await session.prepare(resealed);
+        const result = await session.run({
+            artifactPolicy: { profile: "evaluation" },
+            outputUri: path.join(root, name),
+        });
+        assert.equal(result.runResult.passed, true);
+        assert.equal(result.artifacts.some((entry) => entry.name === "sensors.pcap"), true);
+        return fs.readFile(path.join(root, name, "sensors.pcap"));
+    }
+    const [firstPcap, secondPcap] = [await runOnce("managed-pcap-a"), await runOnce("managed-pcap-b")];
+    assert.deepEqual(secondPcap, firstPcap);
 });

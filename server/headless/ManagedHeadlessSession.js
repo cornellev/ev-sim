@@ -30,6 +30,11 @@ import {
 import { createHeadlessArtifactSink, resolveArtifactPolicy } from "./HeadlessArtifactSink.js";
 import { HeadlessRunnerError } from "./HeadlessRunnerErrors.js";
 import { cloneRunBundle, verifyRunBundle } from "./RunBundle.js";
+import { HostPacketTransportHub } from "../sensor-transports/HostPacketTransportHub.js";
+import {
+    hostDescriptorFromConfig,
+    resolveSensorTransportHostConfig,
+} from "../sensor-transports/SensorTransportConfig.js";
 
 const PACKAGE_VERSION = createRequire(import.meta.url)("../../package.json").version;
 const MANAGED_CONTROLLERS = new Set(["route-follower", "script", "script-with-route"]);
@@ -225,11 +230,17 @@ export class ManagedHeadlessSession {
         limits = null,
         rendererClient = null,
         pluginModuleSource = null,
+        hostConfig = null,
+        packetHub = null,
     } = {}) {
         this.artifactSinkFactory = artifactSinkFactory;
         this.limits = limits;
         this.rendererClient = rendererClient;
         this.pluginModuleSource = pluginModuleSource;
+        this.hostConfig = hostConfig
+            ? resolveSensorTransportHostConfig(hostConfig)
+            : null;
+        this.packetHub = packetHub ?? new HostPacketTransportHub();
         this.runtime = null;
         this.kernel = null;
         this.bundle = null;
@@ -251,9 +262,17 @@ export class ManagedHeadlessSession {
             this.bundle = cloneRunBundle(bundle);
             this.metricDefinitions = structuredClone(metricDefinitions);
             this.episodeIdentity = managedEpisodeIdentity(this.verified.resolved);
+            this.packetHub.configure({
+                bindings: this.verified.resolved.manifest.sensorTransports?.bindings ?? [],
+                hostConfig: this.hostConfig,
+                stepNs: this.verified.resolved.manifest.clock.stepNs,
+                maxQueueBytes: this.limits?.maxQueueBytes ?? 0,
+            });
             this.runtime = createHeadlessRuntimeContext({
                 rendererClient: this.rendererClient,
                 pluginModuleSource: this.pluginModuleSource,
+                nativePacketSink: this.packetHub,
+                sensorTransportHost: hostDescriptorFromConfig(this.hostConfig),
             });
             this.kernel = new SimulationKernel(this.runtime.context);
             await this.kernel.prepare(this.verified.resolved, {
@@ -281,6 +300,9 @@ export class ManagedHeadlessSession {
     async run({ artifactPolicy = null, outputUri = null, yieldEverySteps = 100 } = {}) {
         if (this.state !== "prepared") invalid("ENVIRONMENT_NOT_FOUND", "Prepare the managed worker before running it.");
         const policy = resolveArtifactPolicy(artifactPolicy, this.verified.resolved.manifest, outputUri);
+        if (this.packetHub.hasPcapBindings() && policy.profile === "disabled") {
+            invalid("UNSUPPORTED_CAPABILITY", "Requested PCAP bindings require artifact output.");
+        }
         this.metricCollector = new ExperimentMetricCollector(this.metricDefinitions, this.runtime.signalStore).start();
         this.artifactSink = await this.artifactSinkFactory({
             bundle: this.bundle,
@@ -290,6 +312,9 @@ export class ManagedHeadlessSession {
             limits: this.limits,
         });
         await this.artifactSink.start();
+        if (this.packetHub.hasPcapBindings()) {
+            await this.packetHub.attachArtifactRoot(this.artifactSink.stagingDirectory);
+        }
         this.kernel.play();
         this.state = "running";
         const interval = Math.max(1, Math.floor(Number(yieldEverySteps) || 100));
@@ -297,6 +322,7 @@ export class ManagedHeadlessSession {
         while (shouldContinue) {
             shouldContinue = await this.kernel.advanceStepAsync();
             this.completedStep = this.kernel.steps;
+            await this.packetHub.drain();
             if (shouldContinue && this.kernel.steps % interval === 0) {
                 await new Promise((resolve) => setImmediate(resolve));
             }
@@ -343,6 +369,8 @@ export class ManagedHeadlessSession {
             status: passed ? "completed" : "failed",
         });
         this.metricCollector.stop();
+        await this.packetHub.drain();
+        await this.packetHub.finalize();
         const published = await this.artifactSink.finalize({ ...runResult, experimentMetrics });
         this.artifactSink = null;
         this.state = "finalized";
@@ -364,6 +392,7 @@ export class ManagedHeadlessSession {
             catch { return total; }
         }, 0);
         const recordingQueueBytes = Number(this.artifactSink?.recording?.queuedBytes || 0);
+        const packetTransportQueueBytes = Number(this.packetHub?.queuedBytes || 0);
         return {
             state: this.state,
             rssBytes: memory.rss,
@@ -371,15 +400,17 @@ export class ManagedHeadlessSession {
             cpuUserMicros: cpu.user,
             cpuSystemMicros: cpu.system,
             lastCompletedStep: this.completedStep,
-            queueBytes: queueBytes + sensorQueueBytes + recordingQueueBytes,
+            queueBytes: queueBytes + sensorQueueBytes + recordingQueueBytes + packetTransportQueueBytes,
             sensorQueueBytes,
             inputQueueBytes: queueBytes,
             recordingQueueBytes,
+            packetTransportQueueBytes,
         };
     }
 
     async abort() {
         this.metricCollector?.stop();
+        await this.packetHub?.abort?.();
         await this.artifactSink?.abort?.();
         this.artifactSink = null;
     }

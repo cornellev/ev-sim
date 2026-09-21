@@ -137,6 +137,30 @@ the selected preset, whose fallback is `safety`.
     "registryPath": "/path/to/visual-source-registry.json",
     "unusedTtlMs": 3600000,
     "limits": {}
+  },
+  "packetTransports": {
+    "kind": "cev-sim.sensor-transport-host-config",
+    "version": 1,
+    "pcap": {
+      "artifacts": [{"id": "sensors", "fileName": "sensors.pcap"}],
+      "endpoints": [
+        {
+          "id": "camera-data",
+          "artifactId": "sensors",
+          "mtu": 1500,
+          "ethernet": {
+            "sourceMac": "02:00:00:00:00:01",
+            "destinationMac": "02:00:00:00:00:02"
+          },
+          "ipv4": {
+            "sourceAddress": "192.0.2.1",
+            "destinationAddress": "192.0.2.2",
+            "ttl": 64
+          },
+          "udp": {"sourcePort": 5000, "destinationPort": 5001}
+        }
+      ]
+    }
   }
 }
 ```
@@ -144,7 +168,14 @@ the selected preset, whose fallback is `safety`.
 The embedded Express service reads this document from
 `CEV_SIM_HEADLESS_SUPERVISOR_CONFIG`. When unset it keeps the existing embedded
 `safety` defaults. Renderer configuration changes capability probes and resource
-limits; it cannot bypass managed correspondence admission.
+limits; it cannot bypass managed correspondence admission. Optional
+`packetTransports` is the same operator-owned
+`cev-sim.sensor-transport-host-config@1` document used by direct
+`--sensor-transport-config`. Workers own PCAP files and
+`sensor-transport-evidence.json` in their artifact staging directory. Wrapper
+addresses, MTU, and filenames are operational and do not change simulator
+identity. Live UDP remains unavailable. Health includes
+`packetTransportQueueBytes` in aggregate queue usage.
 
 `pbrEnabled` defaults to false. Initial targets are `local-development`,
 `jetson-agx-orin`, and `jetson-agx-thor`; the target must match the host.

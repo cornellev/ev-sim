@@ -97,7 +97,11 @@ async function fileRef(directory, name) {
     return {
         name,
         uri: name,
-        mimeType: name.endsWith(".sflog") ? "application/x-sflog" : "application/json",
+        mimeType: name.endsWith(".sflog")
+            ? "application/x-sflog"
+            : name.endsWith(".pcap")
+                ? "application/vnd.tcpdump.pcap"
+                : "application/json",
         sizeBytes: String(stat.size),
         sha256: createHash("sha256").update(bytes).digest("hex"),
     };

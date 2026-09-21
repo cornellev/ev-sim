@@ -65,6 +65,14 @@ opaque packet envelopes, and observations. Browser `DeviceDatabase` and
 headless `PluginSensorManager` use that same adapter during the existing
 `sensors` phase. See [Plugin sensors](plugin-sensors.md).
 
+PLG-06a distributes `cev-sim.plugin-package@1` as a portable JSON file
+(`cev-sim-plugin pack/verify` plus `{kind:"file"}` / raw HTTP install) and
+writes classic Ethernet/IPv4/UDP PCAP artifacts from native `CEVP` packets.
+Host wrapper addresses and PCAP filenames are operational
+(`cev-sim.sensor-transport-host-config@1`) and do not change `resolvedHash`,
+`simulationHash`, `episodeHash`, or `trajectoryHash`. Live UDP remains
+unavailable. See [Sensor packet transports](sensor-packet-transports.md).
+
 `app/scripting/UnitCatalog.meta.js` is the server-safe authority for stable built-in type IDs and metadata. `registerBuiltInBlocks.js` registers those explicit IDs, `UnitCatalog.js` attaches React components by type, and `AddMenu.js` renders placeable entries as a searchable categorized sidebar. Typed configuration changes pass through `ScriptManager.reconfigureUnitDetailed()` so ports, configuration, and graph-wide type bindings commit or roll back together. The built-in catalog includes atomic math/logic plus conversions, strings, JSON path ops, typed arrays, geometry (vec/pose), read-only route helpers, `control` temporal/PID blocks, `texture1d` arithmetic, and simulator adapters (`VehicleStateBlock`, `DeviceStateBlock`, `SimulationClockBlock`, `ScenarioStatusBlock`).
 
 ## Simulation Layer
@@ -193,7 +201,11 @@ supervisor-owned Chromium pool and publishes artifacts under the supervisor
 batch layout.
 Worker IPC uses request IDs and advanced serialization with one command in
 flight. Operational RSS/heap, actor/sensor, observation, queue, artifact,
-watchdog, and restart limits cannot alter simulation hashes. Crashes and
+watchdog, and restart limits cannot alter simulation hashes. Requested PCAP
+bindings are mandatory at execution: missing adapters, disabled artifact
+output, queue overflow, and write/finalize failures use
+`UNSUPPORTED_CAPABILITY`, `RESOURCE_LIMIT`, and `ARTIFACT_FAILURE` and are
+never fabricated as Gymnasium transitions. Crashes and
 uncertain dispatches replace the process and require a reset; they are never
 fabricated as RL transitions.
 

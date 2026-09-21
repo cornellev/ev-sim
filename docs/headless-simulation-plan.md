@@ -500,6 +500,20 @@ compared with the committed characterization.
 
 ## Decision log
 
+### 2026-09-20 — PLG-06a headless PCAP artifacts (not PR 13)
+
+PLG-06a extends headless artifact ownership so workers write classic PCAP
+files and `sensor-transport-evidence.json` beside existing SFLog/result
+artifacts. Execution admission now distinguishes structural transport
+validation (bundle-verifiable on any machine) from host adapter/endpoint
+availability. Direct, supervised, and managed runs share one hub per
+environment; queue overflow, missing adapters, and write failures use the
+existing `RESOURCE_LIMIT`, `UNSUPPORTED_CAPABILITY`, and `ARTIFACT_FAILURE`
+codes and are never fabricated as Gymnasium transitions. This is not headless
+PR 13: protocol 1.4, run-bundle v1, episode/trajectory hashes, and the
+outstanding PR-12 hosted/soak/NVIDIA/Jetson evidence obligations are
+unchanged. Live UDP remains a later plugin milestone.
+
 ### 2026-09-15 — Bicycle pose drapes to paved elevation
 
 After planar XZ/yaw integration, `KinematicVehiclePlant` samples the canonical

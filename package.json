@@ -4,7 +4,8 @@
   "private": true,
   "license": "Apache-2.0",
   "bin": {
-    "cev-sim": "bin/cev-sim.js"
+    "cev-sim": "bin/cev-sim.js",
+    "cev-sim-plugin": "bin/cev-sim-plugin.js"
   },
   "scripts": {
     "dev": "node server/App.js",
@@ -37,6 +38,8 @@
     "test:bake-python": "python3 -m pytest tests/test_bake_sample_accumulator.py tests/test_bake_v1_service.py -q",
     "proto:python": "python3 python/scripts/generate_proto.py --check",
     "plugin:create": "node --experimental-default-type=module scripts/create-cev-plugin.mjs",
+    "plugin:pack": "node --experimental-default-type=module bin/cev-sim-plugin.js pack",
+    "plugin:verify": "node --experimental-default-type=module bin/cev-sim-plugin.js verify",
     "fixtures:headless": "node --experimental-default-type=module scripts/generate-headless-fixtures.mjs",
     "fixtures:environment-editor": "node --experimental-default-type=module scripts/generate-environment-editor-fixtures.mjs",
     "test:ui": "playwright test --grep-invert @a11y",

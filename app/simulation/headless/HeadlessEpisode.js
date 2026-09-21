@@ -203,6 +203,9 @@ export class HeadlessEpisode {
     constructor(options = {}) {
         this.runtime = options.runtime ?? createHeadlessRuntimeContext(options);
         this.kernel = options.kernel ?? new SimulationKernel(this.runtime.context);
+        this.sensorTransportHost = options.sensorTransportHost
+            ?? this.runtime.context.devices.sensorTransportHost?.()
+            ?? { adapters: [], endpoints: [] };
         this.lifecycleState = "idle";
         this.policyStep = 0;
         this.terminal = false;
@@ -266,6 +269,7 @@ export class HeadlessEpisode {
                 sensorRegistry,
                 backendSelections: normalized,
                 execution: true,
+                host: this.sensorTransportHost,
             });
         } catch (error) {
             throw new HeadlessEpisodeError("UNSUPPORTED_CAPABILITY", error.message, error.details ?? null);
@@ -585,7 +589,11 @@ export class HeadlessEpisode {
     async stepAsync(action) {
         const sequence = this._stepSequence(action);
         let state = sequence.next();
-        while (!state.done) state = sequence.next(await this.kernel.advanceStepAsync());
+        while (!state.done) {
+            const continued = await this.kernel.advanceStepAsync();
+            await this.runtime.context.devices.nativePacketSink?.()?.drain?.();
+            state = sequence.next(continued);
+        }
         return state.value;
     }
 

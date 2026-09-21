@@ -45,9 +45,12 @@ Plugin-free and unit/system-only bundles omit both fields.
 Manifest v11 also recognizes optional operational
 `sensorTransports: cev-sim.sensor-transports@1`. Bindings name an admitted
 sensor packet stream plus `pcap` or `udp` and an operator endpoint ID. The
-document changes definition/full-resolved identity and is projected out of
-simulation semantics. PLG-05 has no external adapter, so any requested binding
-fails before readiness. See
+document changes definition and full-resolved identity and is projected out of
+simulation, episode, and trajectory identity. Operator PCAP wrappers live in
+`cev-sim.sensor-transport-host-config@1` (`packetTransports` on a supervisor,
+`--sensor-transport-config` on a direct CLI run) and do not change those
+hashes. Bundle verification is structural and host-independent. Execution
+requires a local PCAP adapter and endpoint; UDP remains unavailable. See
 [`sensor-packet-transports.md`](sensor-packet-transports.md).
 
 VIS-12a activates manifest v11 and the plugin-free

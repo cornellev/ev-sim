@@ -9,7 +9,9 @@ import { main } from "../server/headless/Cli.js";
 import { sha256ExactBytes } from "../app/simulation/visual/VisualLayer.js";
 import { simulationSha256 } from "../app/simulation/kernel/SimulationHashes.js";
 import { encodeRunPackage } from "../server/headless/VisualAssetPack.js";
-import { createPortableHeadlessBundle, successfulTape } from "./helpers/headlessRunnerBundle.js";
+import { createPortableHeadlessBundle, createPluginPcapHeadlessBundle, successfulTape } from "./helpers/headlessRunnerBundle.js";
+import { fixturePcapHostConfig } from "./helpers/sensorTransportFixtures.js";
+import { measuredPerceptionProfileRef } from "../app/simulation/headless/ProfileRegistry.js";
 
 const cliPath = path.resolve("bin/cev-sim.js");
 
@@ -362,4 +364,46 @@ test("SIGTERM package execution closes its batch before releasing admission", { 
     assert.equal(jsonLines(result.stdout).at(-1).result.interruptedBySignal, true);
     assert.deepEqual(await fs.readdir(path.join(store, "admissions")), []);
     assert.deepEqual(await fs.readdir(inbox), []);
+});
+
+test("direct CLI writes PCAP artifacts from --sensor-transport-config", async (t) => {
+    const root = await temporaryRoot(t);
+    const bundlePath = path.join(root, "pcap-bundle.json");
+    const hostPath = path.join(root, "host-config.json");
+    const episodePath = path.join(root, "pcap-episode.json");
+    const actionsPath = path.join(root, "pcap-actions.jsonl");
+    const output = path.join(root, "pcap-out");
+    const bundle = await createPluginPcapHeadlessBundle();
+    await writeJson(bundlePath, bundle);
+    await writeJson(hostPath, fixturePcapHostConfig());
+    await writeJson(episodePath, {
+        actionRepeat: 1,
+        observationProfile: measuredPerceptionProfileRef(),
+    });
+    await fs.writeFile(
+        actionsPath,
+        [1, 2, 3, 4].map((policyStep) => JSON.stringify({ policyStep, action: [0, 0] })).join("\n") + "\n",
+    );
+    const missingHost = await runCli([
+        "run", "--bundle", bundlePath, "--episode", episodePath, "--actions", actionsPath,
+        "--output", path.join(root, "pcap-missing"), "--artifact-profile", "evaluation",
+    ]);
+    assert.equal(missingHost.code, 3, missingHost.stderr);
+    assert.match(missingHost.stderr, /UNSUPPORTED_CAPABILITY|host configuration|unavailable/i);
+
+    const combined = await runCli([
+        "run", "--bundle", bundlePath, "--episode", episodePath, "--actions", actionsPath,
+        "--output", path.join(root, "pcap-combined"), "--config", hostPath,
+        "--sensor-transport-config", hostPath,
+    ]);
+    assert.equal(combined.code, 2, combined.stderr);
+
+    const run = await runCli([
+        "run", "--bundle", bundlePath, "--episode", episodePath, "--actions", actionsPath,
+        "--output", output, "--artifact-profile", "evaluation",
+        "--sensor-transport-config", hostPath,
+    ]);
+    assert.equal(run.code, 0, run.stderr);
+    await fs.access(path.join(output, "sensors.pcap"));
+    await fs.access(path.join(output, "sensor-transport-evidence.json"));
 });

@@ -173,6 +173,7 @@ export function rehashRunBundle(bundle) {
 export async function createPortableHeadlessBundle({
     sensors = [createHeadlessImu()],
     assertions = [],
+    sensorTransports = null,
     triggers = [{
         id: "finish",
         name: "Finish",
@@ -213,6 +214,7 @@ export async function createPortableHeadlessBundle({
     resolved.manifest.clock.maxSteps = null;
     resolved.manifest.controls.authority = "candidate";
     resolved.manifest.assertions = assertions;
+    if (sensorTransports) resolved.manifest.sensorTransports = sensorTransports;
     const initial = resolved.manifest.initialState.vehicles.find((entry) => entry.id === "ego")
         ?? resolved.manifest.initialState.vehicles[0];
     const roads = resolved.environment.manifest.document.roads;
@@ -306,6 +308,42 @@ export async function createPluginPortableHeadlessBundle(resource, options = {})
         bundle.resolved.dependencyHashes.pluginSensors = bundle.resolved.pluginSensors.hash;
     }
     return rehashRunBundle(bundle);
+}
+
+export async function createPluginPcapHeadlessBundle(options = {}) {
+    const resource = options.resource ?? await pluginSensorFixtureResource();
+    return createPluginPortableHeadlessBundle(resource, {
+        sensors: options.sensors ?? [createHeadlessImu(), createPluginRangeImageFixtureSensor()],
+        sensorTransports: options.sensorTransports ?? {
+            kind: "cev-sim.sensor-transports",
+            version: 1,
+            bindings: [
+                {
+                    sensorId: "fixture",
+                    productId: "packets",
+                    streamId: "data",
+                    adapter: "pcap",
+                    endpointId: "camera-data",
+                },
+                {
+                    sensorId: "fixture",
+                    productId: "packets",
+                    streamId: "status",
+                    adapter: "pcap",
+                    endpointId: "camera-status",
+                },
+            ],
+        },
+        triggers: options.triggers ?? [{
+            id: "finish",
+            name: "Finish",
+            enabled: true,
+            once: true,
+            condition: { kind: "step", step: 4 },
+            actions: [{ kind: "finish" }],
+        }],
+        ...options.bundleOptions,
+    });
 }
 
 export function successfulTape(overrides = {}) {

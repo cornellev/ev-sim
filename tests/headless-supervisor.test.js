@@ -17,12 +17,14 @@ import { parseTcpAddress, resolveSupervisorConfig, SUPERVISOR_PRESETS } from "..
 import { startHeadlessSupervisor } from "../server/headless/SupervisorServer.js";
 import {
     createHeadlessImu,
+    createPluginPcapHeadlessBundle,
     createPluginPortableHeadlessBundle,
     createPluginRangeImageFixtureSensor,
     createPortableHeadlessBundle,
     pluginSensorFixtureResource,
     rehashRunBundle,
 } from "./helpers/headlessRunnerBundle.js";
+import { fixturePcapHostConfig } from "./helpers/sensorTransportFixtures.js";
 
 const cliPath = path.resolve("bin/cev-sim.js");
 const parentChildPath = path.resolve("tests/helpers/headlessSupervisorParentChild.js");
@@ -341,6 +343,52 @@ test("PLG-05 supervisor workers execute embedded range-image plugin sensors", { 
     assert.equal(finalized.results[0].passed, true);
     await call("closeBatch", { batchId });
 });
+
+test("PLG-06a supervisor workers publish the same PCAP bytes as the direct runner", { timeout: 30_000 }, async (t) => {
+    const hostConfig = fixturePcapHostConfig();
+    const { root, call } = await fixture(t, { packetTransports: hostConfig });
+    const bundle = await createPluginPcapHeadlessBundle();
+    const bundleId = "plugin-pcap";
+    const spec = {
+        ...episode(0, bundleId, bundle),
+        actionRepeat: 1,
+        observationProfile: measuredPerceptionProfileRef(),
+    };
+    const direct = await new HeadlessRunner({ hostConfig }).run(bundle, {
+        episodeSpec: spec,
+        actions: [1, 2, 3, 4].map((policyStep) => ({ policyStep, action: [0, 0] })),
+        artifactPolicy: { profile: "evaluation" },
+        outputUri: path.join(root, "direct-pcap"),
+    });
+    const created = await call("createBatch", {
+        clientProtocol: { major: 1, minor: 3 },
+        runBundles: [bundleEnvelope(bundleId, bundle)],
+        episodes: [spec],
+        artifactPolicy: { profile: 1, outputUri: path.join(root, "grpc-pcap") },
+    });
+    assert.equal(created.error.code, 0, created.error.message);
+    const batchId = created.batch.batchId;
+    assert.equal((await call("resetBatch", { batchId, episodes: [spec] })).error.code, 0);
+    for (const policyStep of [1, 2, 3, 4]) {
+        const stepped = await call("stepBatch", { batchId, actions: [zeroAction(0)] });
+        assert.equal(stepped.error.code, 0, stepped.error.message);
+        if (stepped.results[0].terminated) break;
+    }
+    const finalized = await call("finalizeBatch", { batchId, environmentIndices: [0] });
+    assert.equal(finalized.results[0].passed, true);
+    const workerDir = path.join(root, "grpc-pcap");
+    const listed = await fs.readdir(workerDir, { recursive: true });
+    const pcapName = listed.find((name) => String(name).endsWith("sensors.pcap"));
+    assert.ok(pcapName, `PCAP was not published under ${workerDir}: ${listed.join(",")}`);
+    const [directBytes, workerPcap] = await Promise.all([
+        fs.readFile(path.join(root, "direct-pcap", "sensors.pcap")),
+        fs.readFile(path.join(workerDir, pcapName)),
+    ]);
+    assert.deepEqual(workerPcap, directBytes);
+    assert.equal(direct.result.passed, true);
+    await call("closeBatch", { batchId });
+});
+
 
 test("insecure TCP requires opt-in for remote hosts and works on loopback", async (t) => {
     const port = await availableTcpPort();

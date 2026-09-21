@@ -64,6 +64,8 @@ export function createHeadlessRuntimeContext(options = {}) {
         devices,
         physics,
         scenarios,
+        nativePacketSink: options.nativePacketSink ?? null,
+        sensorTransportHost: options.sensorTransportHost ?? { adapters: [], endpoints: [] },
         prepareRendering: async (resolvedRun) => {
             const provider = resolvedRun.renderScene?.description?.provider;
             if (provider?.id !== "pbr-mesh" || provider.version !== 1) {

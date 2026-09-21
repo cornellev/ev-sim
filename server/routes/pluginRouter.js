@@ -2,6 +2,7 @@ import express from "express";
 
 import { storageEvents } from "../mcp/events.js";
 import { installPluginSource, removePluginSource } from "../plugins/pluginLibrary.js";
+import { PLUGIN_PACKAGE_MEDIA_TYPE, PORTABLE_PLUGIN_MAX_JSON_BYTES } from "../plugins/PortablePluginFile.js";
 
 function mimeType(filePath) {
     if (filePath.endsWith(".js") || filePath.endsWith(".mjs")) return "text/javascript; charset=utf-8";
@@ -54,6 +55,10 @@ export async function sendPluginFileResponse(service, { packageHash, member, hea
 
 export function createPluginRouter(service, { jsonParser } = {}) {
     const parser = jsonParser ?? express.json({ limit: "8mb" });
+    const packageParser = express.raw({
+        type: [PLUGIN_PACKAGE_MEDIA_TYPE, "application/json"],
+        limit: PORTABLE_PLUGIN_MAX_JSON_BYTES,
+    });
     const router = express.Router();
 
     router.get("/library", async (_req, res) => {
@@ -68,6 +73,31 @@ export function createPluginRouter(service, { jsonParser } = {}) {
     router.post("/install", parser, async (req, res) => {
         try {
             const metadata = await installPluginSource(service, req.body?.source);
+            const library = await service.listPluginLibrary();
+            publishLibrary(metadata.pluginId, "installed", metadata.packageHash, library.revision);
+            res.json({
+                ok: true,
+                package: metadata,
+                revision: library.revision,
+            });
+        } catch (error) {
+            sendError(res, error);
+        }
+    });
+
+    router.post("/install-file", packageParser, async (req, res) => {
+        try {
+            const bytes = req.body instanceof Uint8Array
+                ? req.body
+                : Buffer.isBuffer(req.body)
+                    ? new Uint8Array(req.body)
+                    : null;
+            if (!bytes) {
+                const error = new Error("Plugin file install requires a raw package body.");
+                error.code = "PLUGIN_DOCUMENT_INVALID";
+                throw error;
+            }
+            const metadata = await service.installPluginFromBytes(bytes);
             const library = await service.listPluginLibrary();
             publishLibrary(metadata.pluginId, "installed", metadata.packageHash, library.revision);
             res.json({

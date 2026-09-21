@@ -4,6 +4,12 @@ import { randomUUID } from "node:crypto";
 
 import { createPluginPackage, verifyPluginPackage } from "../../app/plugin/PluginPackage.js";
 import { PLUGIN_ERROR_CODES, pluginError } from "../../app/plugin/PluginErrors.js";
+import {
+    PORTABLE_PLUGIN_MAX_JSON_BYTES,
+    assertPortablePluginLimits,
+    collectPluginDirectory,
+    parsePortablePluginFile,
+} from "../plugins/PortablePluginFile.js";
 
 const LIBRARY_KIND = "cev-sim.plugin-library";
 const LIBRARY_VERSION = 1;
@@ -28,7 +34,7 @@ async function writeDurable(filePath, bytes) {
     }
 }
 
-async function collectDirectoryFiles(root) {
+async function collectCasFiles(root) {
     const files = [];
     const visit = async (directory, prefix = "") => {
         let names;
@@ -121,7 +127,7 @@ export class PluginStore {
         if (verified.resource.packageHash !== packageHash) {
             throw pluginError(PLUGIN_ERROR_CODES.INTEGRITY, "Plugin CAS directory does not match its package hash.", { packageHash });
         }
-        const diskFiles = await collectDirectoryFiles(path.join(root, "files"));
+        const diskFiles = await collectCasFiles(path.join(root, "files"));
         const expected = [...verified.fileBytes.keys()].sort();
         const actual = diskFiles.map((entry) => entry.path).sort();
         if (JSON.stringify(expected) !== JSON.stringify(actual)) {
@@ -149,15 +155,36 @@ export class PluginStore {
     }
 
     async installFromDirectory(directory) {
-        const root = path.resolve(directory);
-        const stat = await fs.lstat(root);
-        if (!stat.isDirectory() || stat.isSymbolicLink()) {
-            throw pluginError(PLUGIN_ERROR_CODES.INTEGRITY, "Plugin install source must be a regular directory.");
-        }
-        const files = await collectDirectoryFiles(root);
+        const files = await collectPluginDirectory(directory);
         const resource = createPluginPackage(files);
-        await this.putPackage(resource);
-        return this.installFromHash(resource.packageHash);
+        assertPortablePluginLimits(resource);
+        return this.installFromBytes(new TextEncoder().encode(JSON.stringify(resource)));
+    }
+
+    async installFromFile(filePath) {
+        const absolute = path.resolve(filePath);
+        const stat = await fs.lstat(absolute);
+        if (!stat.isFile() || stat.isSymbolicLink()) {
+            throw pluginError(PLUGIN_ERROR_CODES.INTEGRITY, "Plugin file installs require a regular, non-symlink file.");
+        }
+        if (stat.size > PORTABLE_PLUGIN_MAX_JSON_BYTES) {
+            throw pluginError(
+                PLUGIN_ERROR_CODES.INTEGRITY,
+                `Portable plugin file exceeds ${PORTABLE_PLUGIN_MAX_JSON_BYTES} bytes.`,
+            );
+        }
+        const bytes = new Uint8Array(await fs.readFile(absolute));
+        if (bytes.byteLength !== stat.size) {
+            throw pluginError(PLUGIN_ERROR_CODES.INTEGRITY, "Portable plugin file is truncated.");
+        }
+        return this.installFromBytes(bytes);
+    }
+
+    async installFromBytes(bytes) {
+        const resource = parsePortablePluginFile(bytes);
+        const verified = verifyPluginPackage(resource);
+        await this.putPackage(verified.resource);
+        return this.installFromHash(verified.resource.packageHash);
     }
 
     async _readLibrary() {

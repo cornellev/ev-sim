@@ -20,6 +20,35 @@ packets, and observations. Packet bytes count toward the sensor's bounded
 delivery queue. Overflow is a reset-required infrastructure error for plugin
 sensors.
 
+Per-packet telemetry publication preserves that envelope. Host transports
+consume a copied batch after the publisher has frozen payload bytes:
+
+```js
+nativePacketSink.enqueueBatch({
+  sensorId,
+  sampleIndex,
+  captureTimeNs,
+  scheduledDeliveryTimeNs,
+  deliveryTimeNs,
+  actualDeliveryStep,
+  packets: [{
+    productId,
+    streamId,
+    packetIndex,
+    offsetNs,
+    payload,
+    envelope,
+    payloadDigest
+  }]
+});
+
+nativePacketSink.endDeliveryStep(clock);
+```
+
+`endDeliveryStep()` runs after every sorted device has delivered for that
+simulation step. Sink state, queue state, and wrapper configuration are not
+canonical simulator state.
+
 ## Manifest bindings
 
 Run manifest v11 recognizes an optional strict operational document:
@@ -50,12 +79,170 @@ is projected out of simulation semantics and episode identity. Endpoint
 addresses, paths, pacing, wrapper settings, and transport budgets never alter
 payload bytes or canonical simulator state.
 
-## PLG-05 availability
+## Host configuration
 
-PLG-05 implements native capture and telemetry recording only. No PCAP or UDP
-adapter is available, so any nonempty requested binding fails admission before
-the run becomes ready. The reserved host permissions
+PCAP wrappers live in operator-owned
+`cev-sim.sensor-transport-host-config` version 1. Direct CLI runs accept
+`--sensor-transport-config <file>`. Supervisors store the same document under
+`packetTransports`. The document does not affect `resolvedHash`,
+`simulationHash`, `episodeHash`, or `trajectoryHash`.
+
+```json
+{
+  "kind": "cev-sim.sensor-transport-host-config",
+  "version": 1,
+  "pcap": {
+    "artifacts": [
+      {"id": "sensors", "fileName": "sensors.pcap"}
+    ],
+    "endpoints": [
+      {
+        "id": "camera-data",
+        "artifactId": "sensors",
+        "mtu": 1500,
+        "ethernet": {
+          "sourceMac": "02:00:00:00:00:01",
+          "destinationMac": "02:00:00:00:00:02"
+        },
+        "ipv4": {
+          "sourceAddress": "192.0.2.1",
+          "destinationAddress": "192.0.2.2",
+          "ttl": 64
+        },
+        "udp": {"sourcePort": 5000, "destinationPort": 5001}
+      }
+    ]
+  }
+}
+```
+
+Resolved rules:
+
+- Artifact and endpoint IDs are unique after trim.
+- `fileName` is a safe `.pcap` basename with no path traversal.
+- MTU defaults to 1500 and must be in `[576, 65535]`.
+- MAC addresses are canonical six-octet colon form.
+- Addresses are IPv4 only.
+- TTL defaults to 64 and must be in `[1, 255]`.
+- UDP ports are in `[1, 65535]`.
+- Multiple endpoints may share one PCAP artifact.
+
+## Structural validation versus execution admission
+
+Structural validation is responsible for sensor, product, and stream
+references, duplicate binding keys, adapter names, and endpoint identifiers.
+Immutable bundle verification uses that structural pass and does not require a
+local adapter, so a bundle can be verified on any machine.
+
+Execution admission receives an app-neutral host descriptor:
+
+```js
+{
+  adapters: ["pcap"],
+  endpoints: [
+    { id, adapter: "pcap", mtu, maxPayloadBytes }
+  ]
+}
+```
+
+With `execution: false`, structurally valid bindings are returned without a
+local adapter. With `execution: true`, every binding’s adapter and endpoint
+must exist and the declared stream maximum must be at most `mtu - 28`
+(IPv4 header 20 plus UDP header 8). Browser execution exposes no host
+adapters and therefore rejects requested PCAP bindings. UDP remains
+unavailable and is rejected.
+
+PCAP is optional globally but mandatory when a manifest binding requests it.
+Unsupported or failed capture fails the run before readiness or as an
+infrastructure failure during stepping.
+
+## Classic PCAP encoding
+
+Classic PCAP is little-endian, microsecond-resolution, version 2.4, snap
+length 65535, link type Ethernet (1). Each record contains Ethernet + IPv4 +
+UDP + the unchanged native payload.
+
+- Ethernet: 14 bytes, EtherType `0x0800`.
+- IPv4: IHL 5, protocol 17, DF set, deterministic 16-bit record ID, valid
+  header checksum. No fragmentation, VLAN, IPv6, or payload substitution.
+- UDP: pseudo-header checksum; write `0xffff` when the computed checksum is
+  zero.
+
+Logical egress time is:
+
+```js
+BigInt(actualDeliveryStep) * BigInt(manifest.clock.stepNs) + BigInt(offsetNs)
+```
+
+PCAP timestamps use `logicalEgressTimeNs / 1_000n`, truncated toward zero.
+Exact nanoseconds remain in the `CEVP` envelope and evidence metadata.
+
+Host-bound packets sort by:
+
+1. logical egress nanoseconds
+2. UTF-8 sensor ID
+3. product ID
+4. stream ID
+5. sample index
+6. packet index
+
+Queued encoded bytes are bounded by the environment `limits.maxQueueBytes`.
+
+## Artifacts, evidence, and failures
+
+Workers own PCAP files. Writers open with exclusive creation inside artifact
+staging, drain after each completed simulation step, and finalize before
+artifact enumeration and directory rename. Abort closes writers and removes
+staging, leaving no published partial artifact.
+
+Published `sensor-transport-evidence.json`:
+
+```json
+{
+  "kind": "cev-sim.sensor-transport-evidence",
+  "version": 1,
+  "bindings": [],
+  "wrappers": [],
+  "artifacts": [
+    {
+      "id": "sensors",
+      "fileName": "sensors.pcap",
+      "recordCount": 0,
+      "payloadBytes": 0,
+      "firstLogicalEgressTimeNs": null,
+      "lastLogicalEgressTimeNs": null,
+      "sizeBytes": 0,
+      "sha256": null
+    }
+  ]
+}
+```
+
+Each artifact records resolved filename, record count, payload bytes, first
+and last logical egress nanoseconds, output size, and SHA-256 digest.
+Artifact MIME mapping treats `.pcap` as `application/vnd.tcpdump.pcap`.
+
+Failure mapping:
+
+- missing adapter or endpoint, or disabled artifacts → `UNSUPPORTED_CAPABILITY`
+- queue overflow → `RESOURCE_LIMIT`
+- open, write, or finalize failure → `ARTIFACT_FAILURE`
+
+These failures are never fabricated as Gymnasium termination or truncation
+transitions. Health reports `packetTransportQueueBytes` and includes it in
+aggregate queue usage.
+
+Browser logs export through `POST /api/logs/:id/pcap-export` using the same
+host resolver, ordering, encoder, and writer. Export fails if the recording
+lacks native envelopes, an attached manifest or run bundle, or required
+transport bindings.
+
+## Availability
+
+PLG-06a implements native capture, telemetry recording, portable plugin
+files, and classic PCAP artifacts. Live UDP is not available; requested `udp`
+bindings fail execution admission. The reserved host permissions
 `sensors.transport.pcap` and `sensors.transport.udp` are not plugin runtime
 capabilities and do not appear in `manifest.plugins.artifacts[].capabilities`.
-PCAP is assigned to PLG-06a and supervisor-owned UDP to PLG-06b. Plugins never
-receive sockets, host endpoints, artifact paths, or send operations.
+Plugins never receive sockets, host endpoints, artifact paths, or send
+operations. PLG-06b supervisor-owned UDP is deferred until after PLG-07.

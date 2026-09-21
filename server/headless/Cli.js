@@ -11,6 +11,7 @@ import { inspectTarget } from "./Inspection.js";
 import { stringifyJsonProtocol } from "./JsonProtocol.js";
 import { createHeadlessSmokeBundle } from "./SmokeBundle.js";
 import { readSupervisorConfig } from "./SupervisorConfig.js";
+import { resolveSensorTransportHostConfig } from "../sensor-transports/SensorTransportConfig.js";
 import { SupervisorRunner } from "./SupervisorRunner.js";
 import { startHeadlessSupervisor } from "./SupervisorServer.js";
 import { validateBundleWithSupervisor } from "./SupervisorValidation.js";
@@ -29,17 +30,17 @@ export const CLI_EXIT = Object.freeze({
 
 const VALUE_OPTIONS = new Set([
     "bundle", "episode", "output", "actions", "tape", "artifact-profile", "sflog-sample-rate",
-    "socket", "tcp", "preset", "config", "package",
+    "socket", "tcp", "preset", "config", "package", "sensor-transport-config",
 ]);
 const FLAG_OPTIONS = new Set(["sflog-on-failure", "no-sflog-on-failure", "allow-remote-tcp"]);
 
 function usage() {
     return [
-        "cev-sim validate (--bundle <file> | --package <file>) [--episode <file>] [--config <supervisor.json>]",
+        "cev-sim validate (--bundle <file> | --package <file>) [--episode <file>] [--config <supervisor.json>] [--sensor-transport-config <file>]",
         "cev-sim create-smoke-bundle --output <bundle.json>",
         "cev-sim inspect <bundle|package|output-directory|sflog>",
-        "cev-sim run (--bundle <file> | --package <file>) --output <directory> [--episode <file>] [--actions <jsonl-file>] [--config <supervisor.json>]",
-        "cev-sim replay (--bundle <file> | --package <file>) --tape <file> --output <directory> [--config <supervisor.json>]",
+        "cev-sim run (--bundle <file> | --package <file>) --output <directory> [--episode <file>] [--actions <jsonl-file>] [--config <supervisor.json>] [--sensor-transport-config <file>]",
+        "cev-sim replay (--bundle <file> | --package <file>) --tape <file> --output <directory> [--config <supervisor.json>] [--sensor-transport-config <file>]",
         "cev-sim supervisor (--socket <path> | --tcp <host:port>) [--preset safety|permissive] [--config <json>] [--allow-remote-tcp]",
         "cev-sim gpu-preflight --config <json>",
     ].join("\n");
@@ -77,6 +78,11 @@ async function readJson(filePath, label) {
     } catch (error) {
         throw new HeadlessRunnerError("INVALID_REQUEST", `Could not read ${label} ${filePath}: ${error.message}`, null, { cause: error });
     }
+}
+
+async function readHostConfig(filePath) {
+    const document = await readJson(filePath, "sensor-transport host configuration");
+    return resolveSensorTransportHostConfig(document, { path: "sensor-transport-config" });
 }
 
 async function* jsonlActions(stream, label, signal = null) {
@@ -221,6 +227,15 @@ export async function main(argv = process.argv.slice(2), io = {}) {
             throw new HeadlessRunnerError("USAGE", `--config is required with --package for ${command}.`);
         }
         if (positional.length > 0) throw new HeadlessRunnerError("USAGE", `Unexpected positional argument: ${positional[0]}`);
+        if (options["sensor-transport-config"] && options.config) {
+            throw new HeadlessRunnerError(
+                "USAGE",
+                "--sensor-transport-config applies to direct runs; supervisor hosts use packetTransports in --config.",
+            );
+        }
+        const hostConfig = options["sensor-transport-config"]
+            ? await readHostConfig(options["sensor-transport-config"])
+            : null;
         const packagePath = options.package || null;
         const abortController = new AbortController();
         const onSignal = () => abortController.abort();
@@ -232,7 +247,7 @@ export async function main(argv = process.argv.slice(2), io = {}) {
                 : verifyRunBundleBytes(await fs.readFile(options.bundle)).bundle;
             abortController.signal.throwIfAborted();
             if (command === "validate") {
-                const allowed = new Set(["bundle", "package", "episode", "config"]);
+                const allowed = new Set(["bundle", "package", "episode", "config", "sensor-transport-config"]);
                 const unsupported = Object.keys(options).find((key) => !allowed.has(key));
                 if (unsupported) throw new HeadlessRunnerError("USAGE", `validate does not accept --${unsupported}.`);
                 const episodeSpec = options.episode ? await readJson(options.episode, "episode specification") : {};
@@ -241,7 +256,7 @@ export async function main(argv = process.argv.slice(2), io = {}) {
                     const supervisorValidator = io.supervisorValidator ?? validateBundleWithSupervisor;
                     writeJson(stdout, await supervisorValidator(bundle, { config, episodeSpec, packagePath, signal: abortController.signal }));
                 } else {
-                    writeJson(stdout, await runner.validate(bundle, { episodeSpec }));
+                    writeJson(stdout, await runner.validate(bundle, { episodeSpec, hostConfig }));
                 }
                 return CLI_EXIT.OK;
             }
@@ -258,7 +273,7 @@ export async function main(argv = process.argv.slice(2), io = {}) {
                 const configured = options.config ? await readSupervisorConfig(options.config) : null;
                 const replayRunner = configured ? (io.supervisorRunner ?? new SupervisorRunner()) : runner;
                 final = await replayRunner.replay(bundle, tape, {
-                    ...(configured ? { config: configured } : {}),
+                    ...(configured ? { config: configured } : { hostConfig }),
                     ...(packagePath ? { packagePath } : {}),
                     artifactPolicy: artifactPolicy(options),
                     outputUri: options.output,
@@ -277,7 +292,7 @@ export async function main(argv = process.argv.slice(2), io = {}) {
                     ? (io.supervisorRunner ?? new SupervisorRunner())
                     : runner;
                 final = await executionRunner.run(bundle, {
-                    ...(configured ? { config: configured } : {}),
+                    ...(configured ? { config: configured } : { hostConfig }),
                     ...(packagePath ? { packagePath } : {}),
                     episodeSpec,
                     actions: jsonlActions(actionStream, options.actions || "stdin", abortController.signal),

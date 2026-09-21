@@ -365,6 +365,7 @@ export class SimulationKernel {
                 sensorRegistry: candidatePluginSession?.sensorRegistry ?? sensorTypeRegistry,
                 backendSelections: selectedBackends,
                 execution: true,
+                host: this.context.devices.sensorTransportHost?.() ?? { adapters: [], endpoints: [] },
             });
             assertEnabledCameraRenderRuntime(resolved.manifest.sensorRig?.sensors, resolved.renderScene, {
                 target: this.context.rendering?.target?.() ?? "headless",
@@ -485,6 +486,7 @@ export class SimulationKernel {
                 perceptionObservations,
                 sensorAdmission,
                 pluginSession: candidatePluginSession,
+                nativePacketSink: this.context.devices.nativePacketSink?.() ?? null,
             });
             await this.context.physics.configureRun({
                 manifest,

@@ -88,7 +88,9 @@ function health() {
         lastCompletedStep: 0,
         queueBytes: 0,
         sensorQueueBytes: 0,
+        inputQueueBytes: 0,
         recordingQueueBytes: 0,
+        packetTransportQueueBytes: 0,
     };
 }
 
@@ -98,11 +100,22 @@ async function command(name, payload = {}) {
             await session?.close();
             admittedSharedRegion = payload.sharedRegionName ? String(payload.sharedRegionName) : null;
             const managed = payload.mode === "managed-experiment";
+            const hostConfig = payload.packetTransports ?? payload.hostConfig ?? null;
             session = managed
-                ? new ManagedHeadlessSession({ limits: payload.limits, rendererClient, pluginModuleSource })
+                ? new ManagedHeadlessSession({
+                    limits: payload.limits,
+                    rendererClient,
+                    pluginModuleSource,
+                    hostConfig,
+                })
                 : new HeadlessSession({
                     limits: payload.limits,
-                    episodeFactory: () => new HeadlessEpisode({ rendererClient, pluginModuleSource }),
+                    hostConfig,
+                    episodeFactory: (options = {}) => new HeadlessEpisode({
+                        rendererClient,
+                        pluginModuleSource,
+                        ...options,
+                    }),
                 });
             const bundle = payload.bundleBytes
                 ? verifyRunBundleBytes(Buffer.from(payload.bundleBytes), {

@@ -518,6 +518,7 @@ export class HeadlessSupervisor {
                     episodeSpec: environment.episodeSpec,
                     sharedRegionName: environment.sharedArena?.regionName ?? null,
                     limits,
+                    ...this._packetTransportPayload(),
                 }, { signal });
                 environment.health = environment.worker.health;
                 const resourceError = this._resourceError(environment, environment.health);
@@ -830,6 +831,7 @@ export class HeadlessSupervisor {
                 } : { bundle: request.bundle }),
                 metricDefinitions: request.metricDefinitions || [],
                 limits,
+                ...this._packetTransportPayload(),
             }, { signal });
             if (resourceFailure) throw resourceFailure;
             const response = await worker.dispatch("run-managed", {
@@ -888,6 +890,12 @@ export class HeadlessSupervisor {
         environment.workers.add(worker);
         this.workers.add(worker);
         return worker;
+    }
+
+    _packetTransportPayload() {
+        return this.config.packetTransports
+            ? { packetTransports: this.config.packetTransports }
+            : {};
     }
 
     _observeExit(environment, error) {
@@ -967,6 +975,7 @@ export class HeadlessSupervisor {
                     episodeSpec: environment.episodeSpec,
                     sharedRegionName: environment.sharedArena?.regionName ?? null,
                     limits: environment.batch.limits,
+                    ...this._packetTransportPayload(),
                 });
                 environment.health = environment.worker.health;
                 const resourceError = this._resourceError(environment, environment.health);

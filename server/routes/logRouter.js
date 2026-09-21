@@ -36,6 +36,17 @@ export function createLogRouter(service) {
         name: req.get("x-sflog-name"),
         contentLength: req.get("content-length"),
     })));
+    router.post("/:id/pcap-export", json, async (req, res) => {
+        try {
+            const exported = await service.exportNativePacketPcap(req.params.id, req.body || {});
+            res.type("application/vnd.tcpdump.pcap");
+            res.setHeader("Content-Disposition", `attachment; filename="${exported.fileName}"`);
+            res.setHeader("Content-Length", String(exported.bytes.byteLength));
+            res.end(Buffer.from(exported.bytes));
+        } catch (error) {
+            respondError(req, res, error);
+        }
+    });
     router.get("/:id/metadata", handle(async (req) => service.getMetadata(req.params.id)));
     router.get("/:id/index", handle(async (req) => service.getIndex(req.params.id)));
     router.get("/:id/chunks/:chunkIndex", async (req, res) => {

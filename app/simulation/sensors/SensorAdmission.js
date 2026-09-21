@@ -87,9 +87,14 @@ function validatePluginProducts(sensor, plugin, topics, producerTopics) {
     return Object.freeze(enabledProducts);
 }
 
-function validateTransportBindings(transports, admitted, { execution, availableTransports }) {
-    if (!transports) return;
-    const available = new Set(availableTransports);
+function validateTransportBindings(transports, admitted, { execution = false, host = null } = {}) {
+    if (!transports) return Object.freeze([]);
+    const descriptor = host && typeof host === "object" && !Array.isArray(host)
+        ? host
+        : { adapters: [], endpoints: [] };
+    const adapters = new Set(descriptor.adapters ?? []);
+    const endpoints = new Map((descriptor.endpoints ?? []).map((entry) => [entry.id, entry]));
+    const resolved = [];
     for (const binding of transports.bindings) {
         const sensor = admitted.get(binding.sensorId);
         const product = sensor?.products.find((entry) => entry.productId === binding.productId);
@@ -98,10 +103,35 @@ function validateTransportBindings(transports, admitted, { execution, availableT
         if (!sensor || !product || !stream) {
             throw new Error(`Sensor transport binding references unavailable stream ${binding.sensorId}/${binding.productId}/${binding.streamId}.`);
         }
-        if (execution && !available.has(binding.adapter)) {
-            throw new Error(`Sensor transport adapter "${binding.adapter}" is unavailable in PLG-05.`);
+        if (!execution) {
+            resolved.push(Object.freeze({ ...binding, stream }));
+            continue;
         }
+        if (!adapters.has(binding.adapter)) {
+            throw Object.assign(
+                new Error(`Sensor transport adapter "${binding.adapter}" is unavailable.`),
+                { code: "UNSUPPORTED_CAPABILITY" },
+            );
+        }
+        const endpoint = endpoints.get(binding.endpointId);
+        if (!endpoint || endpoint.adapter !== binding.adapter) {
+            throw Object.assign(
+                new Error(`Sensor transport endpoint "${binding.endpointId}" is unavailable for adapter "${binding.adapter}".`),
+                { code: "UNSUPPORTED_CAPABILITY" },
+            );
+        }
+        const maxPayloadBytes = Number(endpoint.maxPayloadBytes ?? (Number(endpoint.mtu) - 28));
+        if (!Number.isSafeInteger(maxPayloadBytes) || stream.maxPayloadBytes > maxPayloadBytes) {
+            throw Object.assign(
+                new Error(
+                    `Sensor transport stream ${binding.sensorId}/${binding.productId}/${binding.streamId} maxPayloadBytes ${stream.maxPayloadBytes} exceeds endpoint "${binding.endpointId}" capacity ${maxPayloadBytes}.`,
+                ),
+                { code: "UNSUPPORTED_CAPABILITY" },
+            );
+        }
+        resolved.push(Object.freeze({ ...binding, stream, endpoint }));
     }
+    return Object.freeze(resolved);
 }
 
 export function planSensorAdmission({
@@ -109,7 +139,8 @@ export function planSensorAdmission({
     sensorRegistry = sensorTypeRegistry,
     backendSelections = [],
     execution = false,
-    availableTransports = [],
+    host = null,
+    availableTransports = undefined,
     maxPluginSensorWorkingBytes = DEFAULT_PLUGIN_SENSOR_WORKING_BYTES,
 } = {}) {
     if (!manifest?.sensorRig || !Array.isArray(manifest.sensorRig.sensors)) {
@@ -166,7 +197,15 @@ export function planSensorAdmission({
         requiresCpuV2 = true;
     }
     const transports = normalizeSensorTransports(manifest.sensorTransports);
-    validateTransportBindings(transports, admitted, { execution, availableTransports });
+    const hostDescriptor = host ?? (
+        availableTransports === undefined
+            ? null
+            : { adapters: availableTransports, endpoints: [] }
+    );
+    const transportBindings = validateTransportBindings(transports, admitted, {
+        execution,
+        host: hostDescriptor,
+    });
     if (requiresCpuV2 && backendSelections.length > 0) {
         const selected = backendSelections.filter((entry) => Number(entry.kind) === CPU_LIDAR_BACKEND_KIND);
         if (selected.length !== 1 || String(selected[0].version) !== CPU_LIDAR_EXPLICIT_LAYOUT_BACKEND_VERSION) {
@@ -181,5 +220,6 @@ export function planSensorAdmission({
         requiredCpuBackend: requiresCpuV2
             ? createCpuLidarBackendSelection({ version: CPU_LIDAR_EXPLICIT_LAYOUT_BACKEND_VERSION }) : null,
         transports,
+        transportBindings,
     });
 }

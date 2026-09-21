@@ -288,3 +288,49 @@ test("logs evidence search and provenance deep links open manifest, result, case
         await request.delete(`/api/storage/scenarios/${scenarioId}`);
     }
 });
+
+test("pcap export fails closed when a recording has no native packets", async ({ request }) => {
+    const suffix = Date.now().toString(36);
+    const created = await request.post("/api/logs/sessions", { data: { name: `PW pcap empty ${suffix}` } });
+    expect(created.ok(), await created.text()).toBeTruthy();
+    const session = await created.json();
+    const logId = session.id || session.metadata?.id;
+    expect(logId).toBeTruthy();
+    const finalized = await request.post(`/api/logs/sessions/${encodeURIComponent(logId)}/finalize`, { data: {} });
+    expect(finalized.ok(), await finalized.text()).toBeTruthy();
+    try {
+        const exported = await request.post(`/api/logs/${encodeURIComponent(logId)}/pcap-export`, {
+            data: {
+                artifactId: "sensors",
+                hostConfig: {
+                    kind: "cev-sim.sensor-transport-host-config",
+                    version: 1,
+                    pcap: {
+                        artifacts: [{ id: "sensors", fileName: "sensors.pcap" }],
+                        endpoints: [{
+                            id: "camera-data",
+                            artifactId: "sensors",
+                            mtu: 1500,
+                            ethernet: {
+                                sourceMac: "02:00:00:00:00:01",
+                                destinationMac: "02:00:00:00:00:02",
+                            },
+                            ipv4: {
+                                sourceAddress: "192.0.2.1",
+                                destinationAddress: "192.0.2.2",
+                                ttl: 64,
+                            },
+                            udp: { sourcePort: 5000, destinationPort: 5001 },
+                        }],
+                    },
+                },
+            },
+        });
+        expect(exported.ok()).toBeFalsy();
+        expect(exported.status()).toBe(400);
+        const body = await exported.json();
+        expect(String(body.error || body.message || "")).toMatch(/native sensor packet|run manifest|transport binding/i);
+    } finally {
+        await request.delete(`/api/logs/${encodeURIComponent(logId)}`);
+    }
+});

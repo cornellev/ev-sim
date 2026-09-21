@@ -20,11 +20,16 @@ import { HeadlessRunner } from "../server/headless/HeadlessRunner.js";
 import { ManagedHeadlessSession } from "../server/headless/ManagedHeadlessSession.js";
 import { verifyRunBundle } from "../server/headless/RunBundle.js";
 import { NodePluginModuleSource } from "../server/plugins/NodePluginModuleSource.js";
+import { hostDescriptorFromConfig } from "../server/sensor-transports/SensorTransportConfig.js";
 import {
     createHeadlessImu,
     createPluginPortableHeadlessBundle,
     rehashRunBundle,
 } from "./helpers/headlessRunnerBundle.js";
+import {
+    fixturePcapBindings,
+    fixturePcapHostConfig,
+} from "./helpers/sensorTransportFixtures.js";
 
 const fixtureRoot = new URL("./fixtures/plugins/test.range-image-fixture/", import.meta.url);
 const FIXTURE_TYPE = "test.range-image-fixture.synthetic-3x4";
@@ -182,7 +187,7 @@ test("PLG-05 rejects invalid factories, capture shapes, backends, and package cl
     assert.throws(() => verifyRunBundle(rehashRunBundle(corruptClosure)), /byte verification/i);
 });
 
-test("PLG-05 resolves exact plugin sensor identity and rejects unavailable packet transports", async () => {
+test("PLG-06a verifies packet transports structurally and admits them only on a capable host", async () => {
     const { resource, bundle } = await fixtureBundle();
     const verified = verifyPluginPackage(resource);
     const registry = createSensorDefinitionRegistry([verified]);
@@ -197,20 +202,64 @@ test("PLG-05 resolves exact plugin sensor identity and rejects unavailable packe
     assert.deepEqual(createPluginSensorsResource(admission), bundle.resolved.pluginSensors);
     assert.equal(verifyRunBundle(bundle).resolved, bundle.resolved);
 
-    const unavailable = structuredClone(bundle);
-    unavailable.resolved.manifest.sensorTransports = {
+    const withPcap = structuredClone(bundle);
+    withPcap.resolved.manifest.sensorTransports = fixturePcapBindings();
+    const resealed = rehashRunBundle(withPcap);
+    assert.equal(verifyRunBundle(resealed).resolvedHash, resealed.resolvedHash);
+    assert.equal(resealed.simulationSemanticHash, bundle.simulationSemanticHash);
+    assert.notEqual(resealed.resolvedHash, bundle.resolvedHash);
+    assert.notEqual(resealed.resolved.definitionHash, bundle.resolved.definitionHash);
+
+    assert.throws(() => planSensorAdmission({
+        manifest: resealed.resolved.manifest,
+        sensorRegistry: registry,
+        backendSelections: resealed.resolved.backendSelections,
+        execution: true,
+        host: { adapters: [], endpoints: [] },
+    }), /adapter "pcap" is unavailable/);
+
+    const host = hostDescriptorFromConfig(fixturePcapHostConfig());
+    const admitted = planSensorAdmission({
+        manifest: resealed.resolved.manifest,
+        sensorRegistry: registry,
+        backendSelections: resealed.resolved.backendSelections,
+        execution: true,
+        host,
+    });
+    assert.equal(admitted.transportBindings.length, 2);
+
+    const undersized = hostDescriptorFromConfig(fixturePcapHostConfig({
+        pcap: {
+            artifacts: [{ id: "sensors", fileName: "sensors.pcap" }],
+            endpoints: [{
+                id: "camera-data",
+                artifactId: "sensors",
+                mtu: 576,
+                ethernet: { sourceMac: "02:00:00:00:00:01", destinationMac: "02:00:00:00:00:02" },
+                ipv4: { sourceAddress: "192.0.2.1", destinationAddress: "192.0.2.2", ttl: 64 },
+                udp: { sourcePort: 5000, destinationPort: 5001 },
+            }],
+        },
+    }));
+    const hugeResource = await fixtureResource({
+        mutateDocument(document) {
+            document.sensorTypes[0].products[1].streams[0].maxPayloadBytes = 2000;
+        },
+    });
+    const hugeBundle = (await fixtureBundle(hugeResource)).bundle;
+    hugeBundle.resolved.manifest.sensorTransports = {
         kind: "cev-sim.sensor-transports",
         version: 1,
-        bindings: [{
-            sensorId: "fixture",
-            productId: "packets",
-            streamId: "data",
-            adapter: "pcap",
-            endpointId: "capture-0",
-        }],
+        bindings: [fixturePcapBindings().bindings[0]],
     };
-    const resealed = rehashRunBundle(unavailable);
-    assert.throws(() => verifyRunBundle(resealed), /adapter "pcap" is unavailable in PLG-05/);
+    const hugeSealed = rehashRunBundle(hugeBundle);
+    assert.throws(() => planSensorAdmission({
+        manifest: hugeSealed.resolved.manifest,
+        sensorRegistry: createSensorDefinitionRegistry([verifyPluginPackage(hugeResource)]),
+        backendSelections: hugeSealed.resolved.backendSelections,
+        execution: true,
+        host: undersized,
+    }), /exceeds endpoint/);
 });
 
 test("PLG-05 identity binds runtime sensor behavior and excludes UI, transport, and queue policy", async () => {
@@ -249,6 +298,7 @@ test("PLG-05 identity binds runtime sensor behavior and excludes UI, transport, 
     assert.equal(operationalResealed.simulationSemanticHash, base.simulationSemanticHash);
     assert.equal(operationalResealed.resolved.pluginSensors.hash, base.resolved.pluginSensors.hash);
     assert.notEqual(operationalResealed.resolvedHash, base.resolvedHash);
+    assert.notEqual(operationalResealed.resolved.definitionHash, base.resolved.definitionHash);
 
     const changed = (await fixtureBundle(baseResource, {
         calibration: {

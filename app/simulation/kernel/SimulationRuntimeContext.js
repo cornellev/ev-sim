@@ -264,7 +264,10 @@ export function createSimulationRuntimeContext(options = {}) {
                 return manager(options.devices)?.devices ?? [];
             },
             configureFromManifest(sensorRig, runtimeOptions) {
-                return manager(options.devices)?.configureFromManifest?.(sensorRig, runtimeOptions);
+                return manager(options.devices)?.configureFromManifest?.(sensorRig, {
+                    ...runtimeOptions,
+                    nativePacketSink: runtimeOptions?.nativePacketSink ?? options.nativePacketSink ?? null,
+                });
             },
             resetSchedule() {
                 return manager(options.devices)?.resetSchedule?.();
@@ -277,7 +280,9 @@ export function createSimulationRuntimeContext(options = {}) {
                 return target?.updateAsync ? target.updateAsync(dt, clock) : target?.update?.(dt, clock);
             },
             deliver(clock) {
-                return manager(options.devices)?.deliver?.(clock);
+                const result = manager(options.devices)?.deliver?.(clock);
+                options.nativePacketSink?.endDeliveryStep?.(clock);
+                return result;
             },
             reset(runtimeOptions) {
                 const target = manager(options.devices);
@@ -292,6 +297,12 @@ export function createSimulationRuntimeContext(options = {}) {
             },
             getDeterministicState() {
                 return manager(options.devices)?.getDeterministicState?.() ?? [];
+            },
+            nativePacketSink() {
+                return options.nativePacketSink ?? null;
+            },
+            sensorTransportHost() {
+                return options.sensorTransportHost ?? { adapters: [], endpoints: [] };
             },
         },
         physics: {

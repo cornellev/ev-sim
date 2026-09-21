@@ -19,6 +19,7 @@ from [`docs/plugin-api.md`](plugin-api.md) rather than this roadmap.
 | PLG-03: systems and expanded simulator capabilities | Complete in working tree | Verified | Unmerged |
 | PLG-04: editor/UI integration and distribution acceptance | Complete in working tree | Verified | Unmerged |
 | PLG-05: custom range-image sensors and native packet products | Complete in working tree | Verified | Unmerged |
+| PLG-06a: portable plugin files and classic PCAP artifacts | Complete in working tree | Verified | Unmerged |
 
 Only a merged change may be marked merged. A milestone is verified only when
 all of its acceptance commands and evidence entries are present in this
@@ -201,10 +202,39 @@ the resource.
 
 `manifest.sensorTransports`, when present, is the strict
 `cev-sim.sensor-transports@1` document described in
-[`sensor-packet-transports.md`](sensor-packet-transports.md). PLG-05 records
-authenticated native packet envelopes but has no PCAP or UDP adapter. Any
-requested adapter therefore fails admission before readiness; those adapters
-remain PLG-06 work and are never exposed to plugin code.
+[`sensor-packet-transports.md`](sensor-packet-transports.md). Bindings name an
+admitted vendor-packet stream plus `pcap` or `udp` and an operator endpoint
+ID. The saved document changes definition and full resolved identity and is
+projected out of simulation, episode, and trajectory identity. Wrapper
+addresses, PCAP filenames, MTU, and other host settings live in a separate
+operator-owned `cev-sim.sensor-transport-host-config@1` document and never
+enter those hashes.
+
+PLG-06a implements classic Ethernet/IPv4/UDP PCAP capture. Live UDP remains
+unavailable and is rejected at execution; that adapter is PLG-06b and is
+deferred until after PLG-07. Plugins never receive sockets, host endpoints,
+artifact paths, or send operations.
+
+### Portable plugin files
+
+The existing `cev-sim.plugin-package@1` JSON resource is also a portable file.
+`PluginStore.installFromFile(filePath)` and `installFromBytes(bytes)` verify
+every member before CAS publication and update the library only after CAS
+success. A library-write failure may leave the verified CAS object, but the
+library revision and membership remain unchanged. Directory, byte, and file
+installs of the same members produce identical package, runtime, UI, and
+library hashes.
+
+Portable-file ingestion limits are tooling limits, not immutable run-bundle
+rules: 16 MiB outer JSON, 256 members, 8 MiB decoded total, 4 MiB per member,
+and 240 UTF-8 bytes per member path. Previously valid embedded packages remain
+valid. Verification never imports or executes package code.
+
+Install sources include `{ kind: "file", path }` (absolute) and raw HTTP
+`POST /api/storage/plugins/install-file` with
+`application/vnd.cev-sim.plugin-package+json`. Standalone tooling is
+`cev-sim-plugin pack --directory … --output …` and
+`cev-sim-plugin verify --file …`.
 
 ### Storage and module sources
 
@@ -240,11 +270,12 @@ form without unloading the runtime package.
 
 ### Library control plane
 
-HTTP `GET /api/storage/plugins/library`, `POST .../install`, and
-`POST .../remove`, plus MCP `plugin_list` / `plugin_get` / `plugin_install` /
-`plugin_remove`, manage library membership. Directory installs require an
-absolute path. Removal preserves CAS bytes. Config Scripts (Advanced) authors
-exact manifest locks and capability grants.
+HTTP `GET /api/storage/plugins/library`, `POST .../install`,
+`POST .../install-file`, and `POST .../remove`, plus MCP `plugin_list` /
+`plugin_get` / `plugin_install` / `plugin_remove`, manage library membership.
+Directory and file installs require an absolute path. Removal preserves CAS
+bytes. Config Scripts (Advanced) authors exact manifest locks and capability
+grants.
 
 
 ## Milestones and acceptance gates
@@ -349,6 +380,57 @@ characterization, browser and headless execution, Python integration, and a
 clean headless distribution smoke. See [`plugin-sensors.md`](plugin-sensors.md)
 for the package contract.
 
+### PLG-06a — Portable plugin files and classic PCAP artifacts
+
+Distribute `cev-sim.plugin-package@1` as a portable file and convert native
+`CEVP` packets into deterministic classic-PCAP artifacts in direct,
+supervised, managed, and browser-log export paths. Keep plugin package v1,
+run-manifest v11, run-bundle v1, native packet v1, SFLog v1, and headless
+protocol v1.4. Live UDP, worker-to-parent packet IPC, PLG-07 management UI,
+new plugin privileges, and protobuf changes are out of scope.
+
+Locked contracts:
+
+- Portable install verifies every member, publishes CAS, then updates the
+  library. Limits above apply only to file/directory ingestion and
+  `cev-sim-plugin` tooling.
+- Bundle verification is structural: sensor/product/stream references,
+  duplicate binding keys, adapter names, and endpoint identifiers. It does
+  not require a local adapter.
+- Execution admission uses an app-neutral host descriptor
+  `{ adapters, endpoints: [{ id, adapter, mtu, maxPayloadBytes }] }`. With
+  `execution: true`, every binding’s adapter and endpoint must exist and each
+  stream maximum must be at most `mtu - 28`. Browser hosts expose no adapters
+  and therefore reject requested PCAP bindings. UDP is rejected.
+- Host configuration is operational and does not affect `resolvedHash`,
+  `simulationHash`, `episodeHash`, or `trajectoryHash`.
+- Classic PCAP is little-endian, microsecond-resolution, Ethernet link type 1.
+  Each record is Ethernet + IPv4 + UDP + the unchanged native payload. Logical
+  egress time is
+  `BigInt(actualDeliveryStep) * BigInt(manifest.clock.stepNs) + BigInt(offsetNs)`;
+  PCAP timestamps are that value `/ 1000n`, truncated toward zero.
+- Host-bound packets sort by logical egress nanoseconds, then UTF-8 sensor,
+  product, stream, sample, and packet indexes. Sink and queue state are not
+  canonical simulator state.
+- Missing adapter/endpoint or disabled artifacts map to
+  `UNSUPPORTED_CAPABILITY`; queue overflow to `RESOURCE_LIMIT`; open, write,
+  or finalize failure to `ARTIFACT_FAILURE`. These are never fabricated as
+  Gymnasium termination or truncation. Abort leaves no published partial
+  artifact.
+- Published `sensor-transport-evidence.json` is
+  `cev-sim.sensor-transport-evidence` version 1.
+
+Acceptance requires identical hashes for directory/byte/file install; pack,
+verify, and clean-dist consumption without executing package code; a bundle
+that verifies on any machine and fails before readiness when its PCAP
+endpoint is missing or undersized; byte-identical `CEVP` envelopes in browser
+and headless; an independent PCAP decoder for framing, checksums, timestamps,
+ordering, and payloads; identical PCAP bytes from direct, worker-supervised,
+and managed runs; browser SFLog export equivalence; unchanged action-tape
+characterization; and the focused plus full verification commands below.
+
+PLG-06b live UDP stays deferred until after PLG-07.
+
 ## PLG-01 evidence ledger
 
 | Gate | Evidence | Result / limitation |
@@ -443,8 +525,44 @@ bindings fail before readiness; their adapters and host permissions belong to
 PLG-06a/PLG-06b. PLG-05 does not change the outstanding headless PR-12 hosted,
 soak, x64 NVIDIA, or Jetson evidence obligations.
 
+## PLG-06a evidence ledger
+
+Acceptance ran on 2026-09-20 from base commit
+`f18e41284005a76fa3f0ff1771f6bd72560261f2` on macOS arm64, Node 22.14.0.
+
+| Gate | Exact command / evidence | Result / limitation |
+| --- | --- | --- |
+| Portable file install | `node --experimental-default-type=module --test tests/plugin-store.test.js tests/plugin-package-cli.test.js` | Passed; directory/byte/file installs share package, runtime, UI, and library hashes; malformed/truncated/oversize/symlink input fails; library-write interruption leaves verified CAS unpublished; `cev-sim-plugin pack/verify` never loads runtime modules |
+| Control plane | `tests/plugin-api-routes.test.js` `tests/mcp-tools.test.js` | Passed; `{kind:"file"}` install, raw `POST /api/storage/plugins/install-file`, and MCP `plugin_install` return the same membership/audit metadata as directory installs |
+| Structural vs execution admission | `node --experimental-default-type=module --test tests/plugin-sensors.test.js tests/simulation-hashes.test.js` | Passed; bundles verify without a local adapter; execution requires PCAP adapter/endpoint and `maxPayloadBytes <= mtu - 28`; host wrapper changes preserve simulation/episode/trajectory identity; manifest bindings change definition/full identity only |
+| Independent PCAP decoder | `node --experimental-default-type=module --test tests/sensor-pcap.test.js` | Passed without importing `PcapEncoder.js`; classic v2.4 Ethernet/IPv4/UDP framing, checksums, timestamps, two-stream shared artifact, MTU rejection, and queue overflow |
+| Direct / CLI / abort | `tests/headless-runner.test.js` `tests/headless-cli.test.js` | Passed; identical PCAP bytes across direct reruns; disabled artifacts and missing host are `UNSUPPORTED_CAPABILITY`; drain failure is `ARTIFACT_FAILURE` with no published output; abort leaves no destination; `--sensor-transport-config` is mutually exclusive with `--config` |
+| Supervisor and managed | `tests/headless-supervisor.test.js` `tests/headless-experiment.test.js` with local Unix-socket access | Passed; worker-supervised PCAP bytes match the direct runner for the same bundle and host config; two sequential managed runs with reference authority produce identical PCAP bytes |
+| Browser-log export | `tests/telemetry-logging.test.js`; `npx playwright test tests/ui/logs.spec.js --grep "pcap export" --workers=1` | Passed; evaluation SFLog export matches live `sensors.pcap` payloads and timestamps via `LogService` and `POST /api/logs/:id/pcap-export`; production-server empty recordings fail closed (400) without a partial file. No PLG-07 UI |
+| Plugin focused Node suites | `node --experimental-default-type=module --test tests/plugin-*.test.js` | 60/60 passed on 2026-09-20 |
+| Python and generated contract | `npm run test:python`; `npm run lint:python`; `npm run proto:python` | 69/69 passed; Ruff and generated-Protobuf checks passed. No Python API or Protobuf shape change; Gymnasium/SB3 checkers still auto-reset after finalize |
+| Characterization | `npm run fixtures:headless`; `git diff --exit-code -- tests/fixtures/headless/characterization.v1.json` | Passed with no committed fixture delta |
+| Repository lint and full Node suite | `npm run lint`; `node --experimental-default-type=module --test tests/*.test.js`; `git diff --check` | 1,558 passed, 0 failed, 4 existing skips; ESLint had zero errors and one pre-existing `MapSurface.js` warning; whitespace check passed |
+| Production build | `npm run build` | Optimized Next.js build, TypeScript check, and static generation passed |
+| Clean distribution | `npm run dist:headless`; `npm run dist:verify` | Passed; installed tarball exposes `cev-sim` and `cev-sim-plugin`, packs/verifies a copied fixture without loading runtime code, consumes the external package file, and writes `sensors.pcap`. Artifact digests: npm `ea0a6a7d52ce65ccf51fdf5f19acecfa0a74b224c3f0a2ec2b6fbe85c63d9aab`, wheel `f27397510f3ebf641ea1e89ea380cbe825cc721cc53470070d3edfd0a6f7263f`, sdist `6656e47a1557a485a29369669ca2ea6a30fd261d24b32eaf8d7048ab368e485f` |
+
+Live UDP remains unavailable and is rejected. PLG-06a does not change the
+outstanding headless PR-12 hosted, soak, x64 NVIDIA, or Jetson evidence
+obligations and is not a headless PR 13.
+
 ## Decision log
 
+- **2026-09-20 — PLG-06a acceptance completed.** Portable plugin files and
+  classic PCAP artifacts passed focused, full Node, Python, characterization,
+  production-build, Playwright fail-closed export, and clean-distribution
+  gates. PLG-06a is verified but remains unmerged. Live UDP stays deferred
+  until after PLG-07.
+- **2026-09-20 — PLG-06a portable files and classic PCAP.** The existing
+  package resource is the portable file. Ingestion limits do not version or
+  invalidate embedded run-bundle packages. PCAP host configuration is
+  operational and is not a headless PR 13, protobuf, or identity change.
+  Live UDP remains unavailable until PLG-06b, which is deferred until after
+  PLG-07.
 - **2026-09-20 — Custom sensors use sensor ABI 1 inside plugin API 1.**
   `sensorTypes` stays absent for legacy packages. Exact declarations and
   synchronous `contributeSensorType` factories publish transactionally with

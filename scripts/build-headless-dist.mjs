@@ -20,6 +20,8 @@ const COPY_ENTRIES = Object.freeze([
     "proto",
     "server/headless",
     "server/logging",
+    "server/plugins",
+    "server/sensor-transports",
     "server/storage",
     "docs/architecture.md",
     "docs/headless-cli.md",
@@ -35,7 +37,14 @@ const COPY_ENTRIES = Object.freeze([
     "docs/sflog.md",
     "LICENSE",
 ]);
-const JAVASCRIPT_ROOTS = Object.freeze(["bin", "server/headless", "server/logging", "server/storage"]);
+const JAVASCRIPT_ROOTS = Object.freeze([
+    "bin",
+    "server/headless",
+    "server/logging",
+    "server/plugins",
+    "server/sensor-transports",
+    "server/storage",
+]);
 const JAVASCRIPT_ENTRY_FILES = Object.freeze(["app/3d/devices/sensorEncode.worker.js"]);
 
 async function readJson(file) {
@@ -117,7 +126,7 @@ function packageMetadata(rootPackage) {
         engines: { node: ">=22.14" },
         os: ["darwin", "linux"],
         cpu: ["x64", "arm64"],
-        bin: { "cev-sim": "bin/cev-sim.js" },
+        bin: { "cev-sim": "bin/cev-sim.js", "cev-sim-plugin": "bin/cev-sim-plugin.js" },
         exports: {
             ".": "./server/headless/HeadlessRunner.js",
             "./protocol": "./server/headless/HeadlessProtocol.js",

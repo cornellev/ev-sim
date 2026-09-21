@@ -28,6 +28,12 @@ import { AssertionEngine } from "../app/simulation/AssertionEngine.js";
 import { TimelineStore } from "../app/logging/TimelineStore.js";
 import { TelemetryTabBridge } from "../app/telemetry/TelemetryRuntime.js";
 import { LogService } from "../server/logging/LogService.js";
+import { createLogRouter } from "../server/routes/logRouter.js";
+import express from "express";
+import { HeadlessRunner } from "../server/headless/HeadlessRunner.js";
+import { createPluginPcapHeadlessBundle } from "./helpers/headlessRunnerBundle.js";
+import { fixturePcapHostConfig, parseClassicPcapIndependently } from "./helpers/sensorTransportFixtures.js";
+import { measuredPerceptionProfileRef } from "../app/simulation/headless/ProfileRegistry.js";
 
 test("SFLog JSON decoding never resolves typed-array names through globalThis", () => {
     let constructed = 0;
@@ -1115,4 +1121,52 @@ test("recording flushes leftover encoder bytes when the simulation clock stops",
     assert.equal(flushed, 1);
     listener({ status: "stopped", lifecycleState: "finalized" });
     assert.equal(flushed, 1);
+});
+
+test("native packet SFLog export reproduces headless PCAP payloads and timestamps", { timeout: 30_000 }, async (t) => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "fusion-pcap-export-"));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const hostConfig = fixturePcapHostConfig();
+    const bundle = await createPluginPcapHeadlessBundle();
+    const output = path.join(root, "headless");
+    const ran = await new HeadlessRunner({ hostConfig }).run(bundle, {
+        episodeSpec: { actionRepeat: 1, observationProfile: measuredPerceptionProfileRef() },
+        actions: [1, 2, 3, 4].map((policyStep) => ({ policyStep, action: [0, 0] })),
+        artifactPolicy: { profile: "evaluation" },
+        outputUri: output,
+    });
+    assert.equal(ran.result.passed, true);
+    const livePcap = await readFile(path.join(output, "sensors.pcap"));
+    const logs = new LogService(path.join(root, "logs"));
+    const imported = await logs.importLog(await readFile(path.join(output, "run.sflog")), { name: "pcap-export" });
+    const exported = await logs.exportNativePacketPcap(imported.id, {
+        artifactId: "sensors",
+        sensorTransports: bundle.resolved.manifest.sensorTransports,
+        hostConfig,
+    });
+    const liveBytes = new Uint8Array(livePcap);
+    assert.deepEqual(exported.bytes, liveBytes);
+    const records = parseClassicPcapIndependently(exported.bytes);
+    assert.ok(records.length > 0);
+
+    const app = express();
+    app.use("/api/logs", createLogRouter(logs));
+    const server = await new Promise((resolve) => {
+        const listening = app.listen(0, "127.0.0.1", () => resolve(listening));
+    });
+    t.after(() => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())));
+    const { port } = server.address();
+    const response = await fetch(`http://127.0.0.1:${port}/api/logs/${encodeURIComponent(imported.id)}/pcap-export`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+            artifactId: "sensors",
+            sensorTransports: bundle.resolved.manifest.sensorTransports,
+            hostConfig,
+        }),
+    });
+    assert.equal(response.ok, true, `pcap-export failed: ${response.status}`);
+    assert.match(String(response.headers.get("content-type") || ""), /application\/vnd\.tcpdump\.pcap/);
+    const httpBytes = new Uint8Array(await response.arrayBuffer());
+    assert.deepEqual(httpBytes, liveBytes);
 });

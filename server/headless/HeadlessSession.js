@@ -6,6 +6,11 @@ import { HeadlessEpisode, TERMINATION_REASON } from "../../app/simulation/headle
 import { createHeadlessArtifactSink, resolveArtifactPolicy } from "./HeadlessArtifactSink.js";
 import { HeadlessRunnerError } from "./HeadlessRunnerErrors.js";
 import { cloneRunBundle, verifyRunBundle } from "./RunBundle.js";
+import { HostPacketTransportHub } from "../sensor-transports/HostPacketTransportHub.js";
+import {
+    hostDescriptorFromConfig,
+    resolveSensorTransportHostConfig,
+} from "../sensor-transports/SensorTransportConfig.js";
 
 const PACKAGE_VERSION = createRequire(import.meta.url)("../../package.json").version;
 
@@ -93,15 +98,21 @@ export function packedTensorMapBytes(map) {
 /** Reusable owner for one prepared environment and its episode/artifact lifecycle. */
 export class HeadlessSession {
     constructor({
-        episodeFactory = () => new HeadlessEpisode(),
+        episodeFactory = (options = {}) => new HeadlessEpisode(options),
         artifactSinkFactory = createHeadlessArtifactSink,
         provenanceProvider = defaultHeadlessProvenance,
         limits = null,
+        hostConfig = null,
+        packetHub = null,
     } = {}) {
         this.episodeFactory = episodeFactory;
         this.artifactSinkFactory = artifactSinkFactory;
         this.provenanceProvider = provenanceProvider;
         this.limits = limits;
+        this.hostConfig = hostConfig
+            ? resolveSensorTransportHostConfig(hostConfig)
+            : null;
+        this.packetHub = packetHub ?? new HostPacketTransportHub();
         this.episode = null;
         this.bundle = null;
         this.verified = null;
@@ -114,13 +125,26 @@ export class HeadlessSession {
         this.finalized = null;
     }
 
+    _episodeOptions() {
+        return {
+            nativePacketSink: this.packetHub,
+            sensorTransportHost: hostDescriptorFromConfig(this.hostConfig),
+        };
+    }
+
     async prepare(bundle, episodeSpec = {}) {
         if (this.state !== "idle" && this.state !== "closed") {
             throw new HeadlessRunnerError("INVALID_REQUEST", "The session is already prepared.");
         }
         this.verified = verifyRunBundle(bundle);
         this.bundle = cloneRunBundle(bundle);
-        this.episode = this.episodeFactory();
+        this.packetHub.configure({
+            bindings: this.verified.resolved.manifest.sensorTransports?.bindings ?? [],
+            hostConfig: this.hostConfig,
+            stepNs: this.verified.resolved.manifest.clock.stepNs,
+            maxQueueBytes: this.limits?.maxQueueBytes ?? 0,
+        });
+        this.episode = this.episodeFactory(this._episodeOptions());
         this.descriptor = await this.episode.prepare(this.verified.resolved, episodeSpec);
         this.state = "prepared";
         return this.descriptor;
@@ -142,6 +166,13 @@ export class HeadlessSession {
         this.episode.kernel.publishRuntimeState();
         this._enforceObservation(reset.observation);
         this.artifactPolicy = resolveArtifactPolicy(artifactPolicy, this.verified.resolved.manifest, outputUri);
+        await this.packetHub.beginEpisode();
+        if (this.packetHub.hasPcapBindings() && this.artifactPolicy.profile === "disabled") {
+            throw new HeadlessRunnerError(
+                "UNSUPPORTED_CAPABILITY",
+                "Requested PCAP bindings require artifact output.",
+            );
+        }
         const resolvedProvenance = provenance ?? await this.provenanceProvider(this.verified.resolved, {
             bundle: this.bundle,
             descriptor: this.descriptor,
@@ -156,6 +187,9 @@ export class HeadlessSession {
             limits: this.limits,
         });
         await this.artifactSink.start();
+        if (this.packetHub.hasPcapBindings()) {
+            await this.packetHub.attachArtifactRoot(this.artifactSink.stagingDirectory);
+        }
         this.state = "ready";
         return reset;
     }
@@ -199,6 +233,7 @@ export class HeadlessSession {
         this.policyStep += 1;
         this.lastTransition = transition;
         if (transition.terminated || transition.truncated) this.state = "terminal";
+        await this.packetHub.drain();
         return transition;
     }
 
@@ -267,6 +302,8 @@ export class HeadlessSession {
                 failureReason: `Replay expectations did not match: ${mismatches.map((entry) => entry.field).join(", ")}.`,
             };
         }
+        await this.packetHub.drain();
+        await this.packetHub.finalize();
         const published = await this.artifactSink.finalize(runResult);
         this.artifactSink = null;
         this.finalized = { finalization, runResult: published.runResult, ...published };
@@ -290,6 +327,7 @@ export class HeadlessSession {
         }, 0);
         const inputQueueBytes = Number(this.episode?.kernel?.inputQueue?.queuedBytes || 0);
         const recordingQueueBytes = Number(this.artifactSink?.recording?.queuedBytes || 0);
+        const packetTransportQueueBytes = Number(this.packetHub?.queuedBytes || 0);
         return {
             state: this.state,
             rssBytes: memory.rss,
@@ -297,14 +335,16 @@ export class HeadlessSession {
             cpuUserMicros: cpu.user,
             cpuSystemMicros: cpu.system,
             lastCompletedStep: this.episode?.kernel?.steps ?? 0,
-            queueBytes: sensorQueueBytes + inputQueueBytes + recordingQueueBytes,
+            queueBytes: sensorQueueBytes + inputQueueBytes + recordingQueueBytes + packetTransportQueueBytes,
             sensorQueueBytes,
             inputQueueBytes,
             recordingQueueBytes,
+            packetTransportQueueBytes,
         };
     }
 
     async abort() {
+        await this.packetHub?.abort?.();
         await this.artifactSink?.abort?.();
         this.artifactSink = null;
     }

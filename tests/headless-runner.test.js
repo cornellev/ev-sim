@@ -7,15 +7,21 @@ import test from "node:test";
 import { computeResolvedRunHash } from "../app/simulation/RunManifest.js";
 import { isTrainingLogSampled, resolveArtifactPolicy } from "../server/headless/HeadlessArtifactSink.js";
 import { HeadlessRunner } from "../server/headless/HeadlessRunner.js";
+import { HeadlessRunnerError } from "../server/headless/HeadlessRunnerErrors.js";
+import { HeadlessSession } from "../server/headless/HeadlessSession.js";
+import { HostPacketTransportHub } from "../server/sensor-transports/HostPacketTransportHub.js";
 import { inspectSflog } from "../server/headless/Inspection.js";
 import { verifyRunBundle } from "../server/headless/RunBundle.js";
 import { StorageService } from "../server/storage/StorageService.js";
 import {
     createHeadlessImu,
+    createPluginPcapHeadlessBundle,
     createPortableHeadlessBundle,
     rehashRunBundle,
     successfulTape,
 } from "./helpers/headlessRunnerBundle.js";
+import { fixturePcapHostConfig, parseClassicPcapIndependently } from "./helpers/sensorTransportFixtures.js";
+import { measuredPerceptionProfileRef } from "../app/simulation/headless/ProfileRegistry.js";
 
 async function temporaryRoot(t) {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "cev-sim-runner-test-"));
@@ -208,4 +214,124 @@ test("replay expectations fail semantically without changing the generated traje
     });
     assert.equal(result.result.passed, false);
     assert.deepEqual(result.result.expectationMismatches.map((entry) => entry.field), ["trajectoryHash"]);
+});
+
+test("direct runner publishes deterministic PCAP artifacts and rejects disabled capture", async (t) => {
+    const root = await temporaryRoot(t);
+    const bundle = await createPluginPcapHeadlessBundle();
+    const hostConfig = fixturePcapHostConfig();
+    const episodeSpec = { actionRepeat: 1, observationProfile: measuredPerceptionProfileRef() };
+    const actions = [1, 2, 3, 4].map((policyStep) => ({ policyStep, action: [0, 0] }));
+    await assert.rejects(() => new HeadlessRunner({ hostConfig }).run(bundle, {
+        episodeSpec,
+        actions,
+        artifactPolicy: { profile: "disabled" },
+        outputUri: path.join(root, "disabled"),
+    }), (error) => error.code === "UNSUPPORTED_CAPABILITY");
+
+    const firstOutput = path.join(root, "pcap-a");
+    const secondOutput = path.join(root, "pcap-b");
+    const runner = new HeadlessRunner({ hostConfig });
+    const first = await runner.run(bundle, {
+        episodeSpec,
+        actions,
+        artifactPolicy: { profile: "evaluation" },
+        outputUri: firstOutput,
+    });
+    const second = await runner.run(bundle, {
+        episodeSpec,
+        actions,
+        artifactPolicy: { profile: "evaluation" },
+        outputUri: secondOutput,
+    });
+    assert.equal(first.result.passed, true);
+    assert.equal(second.result.trajectoryHash, first.result.trajectoryHash);
+    const [left, right] = await Promise.all([
+        fs.readFile(path.join(firstOutput, "sensors.pcap")),
+        fs.readFile(path.join(secondOutput, "sensors.pcap")),
+    ]);
+    assert.deepEqual(left, right);
+    const records = parseClassicPcapIndependently(left);
+    assert.ok(records.length > 0);
+    assert.equal(first.artifacts.some((entry) => entry.name === "sensors.pcap"), true);
+    assert.equal(first.artifacts.some((entry) => entry.name === "sensor-transport-evidence.json"), true);
+
+    const altHost = fixturePcapHostConfig({
+        pcap: {
+            artifacts: [{ id: "sensors", fileName: "sensors.pcap" }],
+            endpoints: fixturePcapHostConfig().pcap.endpoints.map((endpoint, index) => ({
+                ...endpoint,
+                ethernet: {
+                    sourceMac: index === 0 ? "02:00:00:00:00:11" : endpoint.ethernet.sourceMac,
+                    destinationMac: endpoint.ethernet.destinationMac,
+                },
+            })),
+        },
+    });
+    const altOutput = path.join(root, "pcap-alt-host");
+    const alt = await new HeadlessRunner({ hostConfig: altHost }).run(bundle, {
+        episodeSpec,
+        actions,
+        artifactPolicy: { profile: "evaluation" },
+        outputUri: altOutput,
+    });
+    assert.equal(alt.result.trajectoryHash, first.result.trajectoryHash);
+    assert.equal(alt.result.episodeHash, first.result.episodeHash);
+    assert.notDeepEqual(
+        await fs.readFile(path.join(altOutput, "sensors.pcap")),
+        left,
+    );
+
+    class FailingDrainHub extends HostPacketTransportHub {
+        async drain() {
+            throw new HeadlessRunnerError("ARTIFACT_FAILURE", "injected write failure");
+        }
+    }
+    const failedOutput = path.join(root, "pcap-fail");
+    await assert.rejects(() => new HeadlessRunner({
+        hostConfig,
+        sessionFactory: (options) => new HeadlessSession({
+            ...options,
+            packetHub: new FailingDrainHub(),
+        }),
+    }).run(bundle, {
+        episodeSpec,
+        actions,
+        artifactPolicy: { profile: "evaluation" },
+        outputUri: failedOutput,
+    }), (error) => error.code === "ARTIFACT_FAILURE");
+    await assert.rejects(fs.access(failedOutput));
+
+    const abortOutput = path.join(root, "pcap-abort");
+    const abortSession = runner._session();
+    t.after(() => abortSession.close());
+    await abortSession.prepare(bundle, episodeSpec);
+    await abortSession.reset(undefined, {
+        artifactPolicy: { profile: "evaluation" },
+        outputUri: abortOutput,
+    });
+    await abortSession.stepAsync([0, 0]);
+    await abortSession.abort();
+    await abortSession.close();
+    await assert.rejects(fs.access(abortOutput));
+});
+
+test("headless sessions can reset after finalize without a packet-transport host", async (t) => {
+    const root = await temporaryRoot(t);
+    const bundle = await createPortableHeadlessBundle();
+    const session = new HeadlessRunner()._session();
+    t.after(() => session.close());
+    await session.prepare(bundle, { actionRepeat: 1 });
+    await session.reset(undefined, {
+        artifactPolicy: { profile: "disabled" },
+        outputUri: path.join(root, "reuse-a"),
+    });
+    await session.stepAsync([0, 0]);
+    await session.finalize({ status: "interrupted" });
+    await session.reset(undefined, {
+        artifactPolicy: { profile: "disabled" },
+        outputUri: path.join(root, "reuse-b"),
+    });
+    const transition = await session.stepAsync([0, 0]);
+    assert.equal(Number.isFinite(transition.reward), true);
 });

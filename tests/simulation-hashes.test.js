@@ -135,3 +135,22 @@ test("canonical numbers absorb sub-micrometer float noise across hashers", () =>
     assert.equal(computeResolvedRunHash({ x: value }), computeResolvedRunHash({ x: perturbed }));
     assert.equal(canonicalSimulationStringify({ x: Math.PI }), '{"x":3.141593}');
 });
+
+test("sensor transport bindings change definition identity but not simulation identity", () => {
+    const first = resolved();
+    const second = resolved();
+    second.manifest.sensorTransports = {
+        kind: "cev-sim.sensor-transports",
+        version: 1,
+        bindings: [{
+            sensorId: "fixture",
+            productId: "packets",
+            streamId: "data",
+            adapter: "pcap",
+            endpointId: "camera-data",
+        }],
+    };
+    assert.equal(computeSimulationSemanticHash(first), computeSimulationSemanticHash(second));
+    assert.notEqual(computeResolvedRunHash(first.manifest), computeResolvedRunHash(second.manifest));
+    assert.equal(simulationSemanticProjection(second).resolved.manifest.sensorTransports, undefined);
+});

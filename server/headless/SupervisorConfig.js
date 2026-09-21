@@ -2,6 +2,7 @@ import { promises as fs } from "node:fs";
 import net from "node:net";
 
 import { HeadlessRunnerError } from "./HeadlessRunnerErrors.js";
+import { resolveSensorTransportHostConfig } from "../sensor-transports/SensorTransportConfig.js";
 import { resolveRunPackageLimits } from "./VisualAssetPack.js";
 
 export const SUPERVISOR_CONFIG_KIND = "cev-sim.headless-supervisor-config";
@@ -186,6 +187,7 @@ export function resolveSupervisorConfig(options = {}) {
         throw invalid(`Refusing insecure non-loopback TCP listener ${tcp.address}; pass --allow-remote-tcp to opt in.`);
     }
     const listener = socket ? { kind: "socket", path: String(socket) } : { kind: "tcp", ...tcp };
+    const packetTransports = options.packetTransports ?? supplied.packetTransports ?? null;
     return Object.freeze({
         kind: SUPERVISOR_CONFIG_KIND,
         version: SUPERVISOR_CONFIG_VERSION,
@@ -201,6 +203,9 @@ export function resolveSupervisorConfig(options = {}) {
         allowRemoteTcp,
         renderer: normalizeRenderer(supplied.renderer),
         assetAdmission: normalizeAssetAdmission(supplied.assetAdmission, listener),
+        packetTransports: packetTransports
+            ? resolveSensorTransportHostConfig(packetTransports)
+            : null,
     });
 }
 

@@ -22,6 +22,22 @@ export function installPlugin(source) {
     return storagePost("plugins/install", { source });
 }
 
+export async function installPluginFile(file) {
+    const response = await fetch("/api/storage/plugins/install-file", {
+        method: "POST",
+        headers: {
+            Accept: "application/json",
+            "Content-Type": "application/vnd.cev-sim.plugin-package+json",
+        },
+        body: file,
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || payload?.ok === false) {
+        throw new Error(payload?.message || payload?.error || "Plugin file install failed.");
+    }
+    return payload;
+}
+
 export function removePlugin({ pluginId, packageHash }) {
     return storagePost("plugins/remove", { pluginId, packageHash });
 }

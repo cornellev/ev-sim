@@ -13,6 +13,13 @@ export async function installPluginSource(storage, source) {
         }
         return storage.installPluginFromDirectory(directory);
     }
+    if (source.kind === "file") {
+        const filePath = String(source.path ?? "").trim();
+        if (!filePath || !path.isAbsolute(filePath)) {
+            throw pluginError(PLUGIN_ERROR_CODES.INTEGRITY, "Plugin file installs require an absolute path.");
+        }
+        return storage.installPluginFromFile(filePath);
+    }
     if (source.kind === "digest") {
         const packageHash = String(source.packageHash ?? "").trim();
         if (!/^[a-f0-9]{64}$/.test(packageHash)) {

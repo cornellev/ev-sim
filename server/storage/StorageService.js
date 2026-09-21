@@ -375,6 +375,14 @@ export class StorageService {
         return this.plugins.installFromDirectory(directory);
     }
 
+    installPluginFromFile(filePath) {
+        return this.plugins.installFromFile(filePath);
+    }
+
+    installPluginFromBytes(bytes) {
+        return this.plugins.installFromBytes(bytes);
+    }
+
     installPluginFromHash(packageHash) {
         return this.plugins.installFromHash(packageHash);
     }

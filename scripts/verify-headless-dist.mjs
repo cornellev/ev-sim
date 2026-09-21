@@ -16,11 +16,13 @@ import {
 } from "./lib/headless-release-support.mjs";
 import {
     createHeadlessImu,
+    createPluginPcapHeadlessBundle,
     createPluginPortableHeadlessBundle,
     createPluginRangeImageFixtureSensor,
     pluginSensorFixtureResource,
 } from "../tests/helpers/headlessRunnerBundle.js";
 import { pluginFixtureResource } from "../tests/helpers/pluginFixtures.js";
+import { fixturePcapHostConfig } from "../tests/helpers/sensorTransportFixtures.js";
 
 async function checked(command, args, options = {}) {
     const result = await run(command, args, options);
@@ -163,6 +165,57 @@ async function verifyNpm(root, tarball) {
     if (!sensorRecords.some((entry) => entry.kind === "cev-sim.headless.result" && entry.result?.passed === true)) {
         throw new Error("Installed npm runtime did not complete the plugin sensor bundle smoke episode.");
     }
+
+    const pluginCli = path.join(project, "node_modules/.bin/cev-sim-plugin");
+    const pluginHelp = await checked(pluginCli, ["--help"], { cwd: project });
+    if (!pluginHelp.stdout.includes("cev-sim-plugin pack")) {
+        throw new Error("Installed npm CLI did not expose cev-sim-plugin pack/verify.");
+    }
+    const standalonePlugin = path.join(project, "external-plugin");
+    await fs.cp(
+        path.resolve("tests/fixtures/plugins/test.range-image-fixture"),
+        standalonePlugin,
+        { recursive: true },
+    );
+    const packedPlugin = path.join(project, "external.plugin.json");
+    await checked(pluginCli, ["pack", "--directory", standalonePlugin, "--output", packedPlugin], { cwd: project });
+    const verifiedPacked = await checked(pluginCli, ["verify", "--file", packedPlugin], { cwd: project });
+    const packedMeta = JSON.parse(verifiedPacked.stdout);
+    const packedResource = JSON.parse(await fs.readFile(packedPlugin, "utf8"));
+    if (packedMeta.packageHash !== packedResource.packageHash) {
+        throw new Error("cev-sim-plugin verify did not match the packed packageHash.");
+    }
+    const packedBundle = await createPluginPcapHeadlessBundle({
+        resource: packedResource,
+        bundleOptions: {
+            triggers: [{
+                id: "finish", name: "Finish", enabled: true, once: true,
+                condition: { kind: "step", step: 1 }, actions: [{ kind: "finish" }],
+            }],
+        },
+    });
+    const packedBundleFile = path.join(project, "packed-plugin-bundle.json");
+    const packedEpisodeFile = path.join(project, "packed-plugin-episode.json");
+    const hostConfigFile = path.join(project, "sensor-transport-host.json");
+    await fs.writeFile(packedBundleFile, canonicalRunBundleStringify(packedBundle));
+    await fs.writeFile(packedEpisodeFile, JSON.stringify(episodeSpec(
+        0,
+        packedBundle.resolvedHash,
+        packedBundle,
+        { perception: true },
+    )));
+    await fs.writeFile(hostConfigFile, `${JSON.stringify(fixturePcapHostConfig(), null, 2)}\n`);
+    const packedSmoke = await checked(executable, [
+        "run", "--bundle", packedBundleFile, "--episode", packedEpisodeFile,
+        "--output", path.join(project, "packed-plugin-output"),
+        "--artifact-profile", "evaluation",
+        "--sensor-transport-config", hostConfigFile,
+    ], { cwd: project, input: '{"policyStep":1,"action":[0,0]}\n' });
+    const packedRecords = packedSmoke.stdout.trim().split("\n").map((line) => JSON.parse(line));
+    if (!packedRecords.some((entry) => entry.kind === "cev-sim.headless.result" && entry.result?.passed === true)) {
+        throw new Error("Installed npm runtime did not consume the packed plugin file as a run bundle.");
+    }
+    await fs.access(path.join(project, "packed-plugin-output", "sensors.pcap"));
 }
 
 async function verifyPython(root, artifact, index, expectedVersion) {

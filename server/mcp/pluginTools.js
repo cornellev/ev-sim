@@ -6,7 +6,7 @@ import { fail, ok } from "./toolResult.js";
 import { installPluginSource, removePluginSource } from "../plugins/pluginLibrary.js";
 
 const SourceSchema = z.object({
-    kind: z.enum(["directory", "digest"]),
+    kind: z.enum(["directory", "file", "digest"]),
     path: z.string().optional(),
     packageHash: z.string().optional(),
 });
@@ -71,7 +71,7 @@ export function registerPluginTools(server, storage) {
         "plugin_install",
         {
             title: "Install plugin",
-            description: "Install a verified plugin into the local library from an absolute directory or an existing CAS digest.",
+            description: "Install a verified plugin into the local library from an absolute directory, a portable package file, or an existing CAS digest.",
             inputSchema: {
                 source: SourceSchema,
             },

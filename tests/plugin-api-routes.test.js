@@ -107,6 +107,24 @@ test("plugin library HTTP installs, lists, removes, and publishes audit events",
     })).json();
     assert.equal(directory.ok, true);
 
+    const packedPath = path.join(root, "acme.example.plugin.json");
+    await fs.writeFile(packedPath, JSON.stringify(resource));
+    const fromFileSource = await (await fetch(`${origin}/api/storage/plugins/install`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ source: { kind: "file", path: packedPath } }),
+    })).json();
+    assert.equal(fromFileSource.ok, true);
+    assert.equal(fromFileSource.package.packageHash, resource.packageHash);
+
+    const uploaded = await (await fetch(`${origin}/api/storage/plugins/install-file`, {
+        method: "POST",
+        headers: { "content-type": "application/vnd.cev-sim.plugin-package+json" },
+        body: JSON.stringify(resource),
+    })).json();
+    assert.equal(uploaded.ok, true);
+    assert.equal(uploaded.package.runtimeHash, resource.runtimeHash);
+
     const removed = await (await fetch(`${origin}/api/storage/plugins/remove`, {
         method: "POST",
         headers: { "content-type": "application/json" },

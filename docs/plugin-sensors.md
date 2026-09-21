@@ -152,3 +152,7 @@ Plugin-free runs omit the resource and retain their prior hashes and state.
 See `tests/fixtures/plugins/test.range-image-fixture/` for nonuniform channels,
 azimuth correction, measured scaling, PointCloud2, two packet streams,
 observations, and deterministic lifecycle state.
+
+PLG-06a portable files and classic PCAP artifacts are documented in
+[`sensor-packet-transports.md`](sensor-packet-transports.md) and
+[`plugin-plan.md`](plugin-plan.md).

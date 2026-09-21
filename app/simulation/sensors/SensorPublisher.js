@@ -483,7 +483,7 @@ export class SensorPublisher {
             }
             const transportStartNs = this._time();
             for (const message of frame.messages || []) this._deliverMessage(message, frame, clock);
-            for (const packet of frame.nativePackets || []) this._deliverNativePacket(packet, frame, clock);
+            this._deliverNativePackets(frame, clock);
             const transportDurationNs = Math.max(0, this._time() - transportStartNs);
             this.health.transportTimeNs = transportDurationNs;
             this.health.transportTimeTotalNs += transportDurationNs;
@@ -626,50 +626,68 @@ export class SensorPublisher {
         });
     }
 
-    _deliverNativePacket(packet, frame, clock) {
-        let encoded;
-        try {
-            encoded = encodeNativeSensorPacket(packet, {
+    _deliverNativePackets(frame, clock) {
+        const packets = [];
+        for (const packet of frame.nativePackets || []) {
+            try {
+                const payload = new Uint8Array(packet.payload);
+                const encoded = encodeNativeSensorPacket({ ...packet, payload }, {
+                    sensorId: this.config.id,
+                    sampleIndex: frame.sampleIndex,
+                    captureTimeNs: frame.captureTimeNs,
+                    scheduledDeliveryTimeNs: frame.scheduledDeliveryTimeNs,
+                    deliveryTimeNs: frame.deliveryTimeNs,
+                    actualDeliveryStep: clock.step,
+                });
+                const data = this._data();
+                const telemetry = data?.bindings?.()?.signalStore;
+                const path = `devices.${this.device.telemetryId}.packets.${packet.productId}.${packet.streamId}`;
+                telemetry?.publishSignal?.(path, encoded.bytes, {
+                    timeUs: Math.round(frame.deliveryTimeNs / 1000),
+                    cycle: clock.step,
+                    source: "sensors",
+                    type: "bytes",
+                    category: "devices",
+                    replayRole: "derived",
+                    logClass: "heavy",
+                    retention: "none",
+                    descriptorMetadata: {
+                        kind: "cev-sim.native-sensor-packet",
+                        version: 1,
+                        sensorId: this.config.id,
+                        productId: packet.productId,
+                        streamId: packet.streamId,
+                    },
+                });
+                packets.push(Object.freeze({
+                    productId: packet.productId,
+                    streamId: packet.streamId,
+                    packetIndex: packet.packetIndex,
+                    offsetNs: packet.offsetNs,
+                    payload,
+                    envelope: new Uint8Array(encoded.bytes),
+                    payloadDigest: encoded.description.payloadDigest ?? packetPayloadDigest(payload),
+                }));
+            } catch (error) {
+                this._event("publish-failed", "error", {
+                    sampleIndex: frame.sampleIndex,
+                    productId: packet.productId,
+                    streamId: packet.streamId,
+                    reason: error.message,
+                });
+                if (this.pluginStrict) throw this._strictPublishError(error.message, frame, "native-packet", error);
+            }
+        }
+        if (packets.length > 0) {
+            this.nativePacketSink?.enqueueBatch?.({
                 sensorId: this.config.id,
                 sampleIndex: frame.sampleIndex,
                 captureTimeNs: frame.captureTimeNs,
                 scheduledDeliveryTimeNs: frame.scheduledDeliveryTimeNs,
                 deliveryTimeNs: frame.deliveryTimeNs,
                 actualDeliveryStep: clock.step,
+                packets: Object.freeze(packets),
             });
-            const data = this._data();
-            const telemetry = data?.bindings?.()?.signalStore;
-            const path = `devices.${this.device.telemetryId}.packets.${packet.productId}.${packet.streamId}`;
-            telemetry?.publishSignal?.(path, encoded.bytes, {
-                timeUs: Math.round(frame.deliveryTimeNs / 1000),
-                cycle: clock.step,
-                source: "sensors",
-                type: "bytes",
-                category: "devices",
-                replayRole: "derived",
-                logClass: "heavy",
-                retention: "none",
-                descriptorMetadata: {
-                    kind: "cev-sim.native-sensor-packet",
-                    version: 1,
-                    sensorId: this.config.id,
-                    productId: packet.productId,
-                    streamId: packet.streamId,
-                },
-            });
-            this.nativePacketSink?.(Object.freeze({
-                ...encoded.description,
-                payload: new Uint8Array(packet.payload),
-                envelope: new Uint8Array(encoded.bytes),
-            }));
-        } catch (error) {
-            this._event("publish-failed", "error", {
-                sampleIndex: frame.sampleIndex,
-                productId: packet.productId,
-                streamId: packet.streamId,
-                reason: error.message,
-            });
-            if (this.pluginStrict) throw this._strictPublishError(error.message, frame, "native-packet", error);
         }
     }
 

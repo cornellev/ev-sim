@@ -223,7 +223,7 @@ function verifyBundleStructure(verified, { requireRuntime = false } = {}) {
             manifest: resolved.manifest,
             sensorRegistry,
             backendSelections: resolved.backendSelections,
-            execution: requireRuntime,
+            execution: false,
         });
         expectedPluginSensors = createPluginSensorsResource(sensorAdmission);
         if (resolved.pluginSensors) assertPluginSensorsResource(resolved.pluginSensors);

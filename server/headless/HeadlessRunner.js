@@ -77,28 +77,35 @@ export class HeadlessRunner {
         artifactSinkFactory = createHeadlessArtifactSink,
         provenanceProvider = defaultHeadlessProvenance,
         sessionFactory = (options) => new HeadlessSession(options),
+        hostConfig = null,
+        limits = null,
     } = {}) {
         this.pluginModuleSource = new NodePluginModuleSource({
             runtimeRoot: path.join(os.tmpdir(), "cev-sim-plugin-runtime", String(process.pid)),
         });
-        this.episodeFactory = episodeFactory ?? (() => new HeadlessEpisode({
+        this.hostConfig = hostConfig;
+        this.limits = limits;
+        this.episodeFactory = episodeFactory ?? ((options = {}) => new HeadlessEpisode({
             pluginModuleSource: this.pluginModuleSource,
+            ...options,
         }));
         this.artifactSinkFactory = artifactSinkFactory;
         this.provenanceProvider = provenanceProvider;
         this.sessionFactory = sessionFactory;
     }
 
-    _session() {
+    _session(overrides = {}) {
         return this.sessionFactory({
             episodeFactory: this.episodeFactory,
             artifactSinkFactory: this.artifactSinkFactory,
             provenanceProvider: this.provenanceProvider,
+            hostConfig: overrides.hostConfig ?? this.hostConfig,
+            limits: overrides.limits ?? this.limits,
         });
     }
 
-    async validate(bundle, { episodeSpec = {} } = {}) {
-        const session = this._session();
+    async validate(bundle, { episodeSpec = {}, hostConfig = this.hostConfig, limits = this.limits } = {}) {
+        const session = this._session({ hostConfig, limits });
         try {
             const descriptor = await session.prepare(bundle, episodeSpec);
             const verified = session.verified;
@@ -125,8 +132,10 @@ export class HeadlessRunner {
         signal = null,
         expect = null,
         actionTapeHash = null,
+        hostConfig = this.hostConfig,
+        limits = this.limits,
     } = {}) {
-        const session = this._session();
+        const session = this._session({ hostConfig, limits });
         let iterator = null;
         const emit = async (event) => {
             if (onEvent) await onEvent(event);
@@ -158,7 +167,7 @@ export class HeadlessRunner {
                 }
                 if (next.done) break;
                 const action = normalizeActionRecord(next.value, expectedPolicyStep);
-                const lastTransition = session.step(action);
+                const lastTransition = await session.stepAsync(action);
                 await emit({
                     kind: "cev-sim.headless.transition",
                     version: 1,

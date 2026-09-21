@@ -133,6 +133,16 @@ export async function getLogAutonomySnapshot(id, timeUs, { exactSync = false, ca
     return (await assertOk(await fetch(`${BASE_URL}/${encodeURIComponent(id)}/autonomy-snapshot?${params}`), "Log autonomy snapshot load")).json();
 }
 
+export async function exportNativePacketPcap(id, body = {}) {
+    const response = await fetch(`${BASE_URL}/${encodeURIComponent(id)}/pcap-export`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+    });
+    await assertOk(response, "Native packet PCAP export");
+    return response.blob();
+}
+
 export async function importLog(file) {
     const response = await fetch(`${BASE_URL}/import`, {
         method: "POST",

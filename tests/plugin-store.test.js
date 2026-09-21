@@ -66,3 +66,59 @@ test("a failed library publication leaves verified CAS content uninstalled", asy
     await store.installFromHash(resource.packageHash);
     assert.equal((await store.listInstalled()).revision, 1);
 });
+
+test("directory, byte, and file installs produce identical hashes without loading plugin code", async (t) => {
+    const { root, store } = await temporaryStore(t);
+    const files = await pluginFixtureFiles();
+    const directory = path.join(root, "plugin-src");
+    for (const [member, bytes] of Object.entries(files)) {
+        const destination = path.join(directory, ...member.split("/"));
+        await fs.mkdir(path.dirname(destination), { recursive: true });
+        await fs.writeFile(destination, bytes);
+    }
+    const fromDirectory = await store.installFromDirectory(directory);
+    const packedPath = path.join(root, "acme.example.plugin.json");
+    const packedBytes = new TextEncoder().encode(JSON.stringify(await pluginFixtureResource()));
+    await fs.writeFile(packedPath, packedBytes);
+    const fromFile = await store.installFromFile(packedPath);
+    const fromBytes = await store.installFromBytes(packedBytes);
+    assert.equal(fromDirectory.packageHash, fromFile.packageHash);
+    assert.equal(fromDirectory.runtimeHash, fromBytes.runtimeHash);
+    assert.equal(fromDirectory.uiHash, fromFile.uiHash);
+    assert.equal((await store.listInstalled()).packages.length, 1);
+
+    const hostile = await pluginFixtureResource({
+        mutateFiles(next) {
+            next["runtime/index.js"] = new TextEncoder().encode(
+                "throw new Error('plugin runtime must not load during install');\nexport default { register() {} };\n",
+            );
+        },
+    });
+    const hostileStore = new PluginStore(path.join(root, "hostile"));
+    const installedHostile = await hostileStore.installFromBytes(new TextEncoder().encode(JSON.stringify(hostile)));
+    assert.equal(installedHostile.packageHash, hostile.packageHash);
+    assert.equal((await hostileStore.listInstalled()).revision, 1);
+});
+
+test("portable file install rejects malformed input, oversize, truncated JSON, and file symlinks", async (t) => {
+    const { root, store } = await temporaryStore(t);
+    await assert.rejects(store.installFromBytes(new TextEncoder().encode("{")), /not valid JSON|truncated/i);
+    await assert.rejects(store.installFromBytes(new Uint8Array([0xff])), /UTF-8/);
+    await assert.rejects(store.installFromBytes(new Uint8Array(16 * 1024 * 1024 + 1)), /exceeds/);
+    const packedPath = path.join(root, "plugin.json");
+    await fs.writeFile(packedPath, JSON.stringify(await pluginFixtureResource()));
+    const linkPath = path.join(root, "plugin-link.json");
+    await fs.symlink(packedPath, linkPath);
+    await assert.rejects(store.installFromFile(linkPath), /regular, non-symlink file/);
+
+    const interrupted = await pluginFixtureResource();
+    const originalWrite = store._writeLibrary.bind(store);
+    store._writeLibrary = async () => { throw new Error("injected library failure"); };
+    await assert.rejects(
+        store.installFromBytes(new TextEncoder().encode(JSON.stringify(interrupted))),
+        /injected library failure/,
+    );
+    assert.equal((await store.getPackage(interrupted.packageHash)).packageHash, interrupted.packageHash);
+    assert.equal((await store.listInstalled()).revision, 0);
+    store._writeLibrary = originalWrite;
+});
