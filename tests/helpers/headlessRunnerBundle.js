@@ -174,6 +174,31 @@ export function rehashRunBundle(bundle) {
     return next;
 }
 
+function sensorsWithDeclaredOutputs(sensors, topics) {
+    const declared = new Set((topics || []).map((topic) => topic.id));
+    return sensors.map((sensor) => {
+        const outputs = { ...(sensor.outputs || {}) };
+        let products = sensor.calibration?.products;
+        let changed = false;
+        for (const [key, topicId] of Object.entries(outputs)) {
+            if (!topicId || declared.has(topicId)) continue;
+            delete outputs[key];
+            changed = true;
+            if (key === "diagnosticsTopicId" && products) {
+                products = { ...products, diagnostics: false };
+            }
+        }
+        if (!changed) return sensor;
+        return {
+            ...sensor,
+            outputs,
+            ...(products === sensor.calibration?.products ? {} : {
+                calibration: { ...sensor.calibration, products },
+            }),
+        };
+    });
+}
+
 export async function createPortableHeadlessBundle({
     sensors = [createHeadlessImu()],
     assertions = [],
@@ -211,7 +236,7 @@ export async function createPortableHeadlessBundle({
         resolved.dependencyHashes.environment = environmentHash;
         resolved.dependencyHashes.world = resolved.world.hash;
     }
-    resolved.manifest.sensorRig.sensors = sensors;
+    resolved.manifest.sensorRig.sensors = sensorsWithDeclaredOutputs(sensors, resolved.manifest.topics);
     resolved.manifest.sensorRig.syncGroups = [];
     resolved.manifest.clock.modules.physics = true;
     resolved.manifest.clock.modules.sensors = true;

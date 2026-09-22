@@ -28,6 +28,8 @@ async function lidarBundle() {
     lidar.calibration.elevation = { startDeg: 0, endDeg: 1, stepDeg: 1 };
     lidar.calibration.products.pointCloud = true;
     lidar.calibration.products.semanticPointCloud = true;
+    lidar.calibration.products.diagnostics = true;
+    lidar.outputs = { ...lidar.outputs, diagnosticsTopicId: "front-lidar-diagnostics" };
     lidar.noise = {
         ...lidar.noise,
         dropoutProbability: 0,
@@ -46,6 +48,10 @@ async function lidarBundle() {
 
 test("headless LiDAR publishes deterministic products without changing measured observations", async () => {
     const bundle = await lidarBundle();
+    const lidarSensor = bundle.resolved.manifest.sensorRig.sensors.find((sensor) => sensor.type === "lidar3d");
+    assert.equal(bundle.resolved.manifest.topics.some((topic) => topic.id === "front-lidar-diagnostics"), false);
+    assert.equal(lidarSensor.outputs.diagnosticsTopicId, undefined);
+    assert.equal(lidarSensor.calibration.products.diagnostics, false);
     const episode = new HeadlessEpisode();
     const descriptor = await episode.prepare(bundle.resolved, { actionRepeat: 1 });
     assert.deepEqual(episode.episodeSpec.backendSelections.map((entry) => entry.kind), [1, 2, 3]);

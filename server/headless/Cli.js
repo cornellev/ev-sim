@@ -170,6 +170,11 @@ export async function main(argv = process.argv.slice(2), io = {}) {
                 ...(options.preset ? { preset: options.preset } : {}),
                 ...(options["allow-remote-tcp"] ? { allowRemoteTcp: true } : {}),
             });
+            const stopped = new Promise((resolve) => {
+                const stop = () => resolve();
+                process.once("SIGINT", stop);
+                process.once("SIGTERM", stop);
+            });
             writeJson(stdout, {
                 kind: "cev-sim.headless.supervisor-listening",
                 version: 1,
@@ -177,11 +182,7 @@ export async function main(argv = process.argv.slice(2), io = {}) {
                 address: running.address,
                 transport: running.config.listener.kind,
             });
-            await new Promise((resolve) => {
-                const stop = () => resolve();
-                process.once("SIGINT", stop);
-                process.once("SIGTERM", stop);
-            });
+            await stopped;
             await running.close();
             return CLI_EXIT.OK;
         }
