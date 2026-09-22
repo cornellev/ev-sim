@@ -23,6 +23,10 @@ export function saveRunManifest(id, manifest, expectedRevision) {
     return storagePut(`${collection}/${encodeURIComponent(id)}`, { manifest, expectedRevision });
 }
 
+export function changeRunManifestId(id, manifest, expectedRevision) {
+    return storagePatch(`${collection}/${encodeURIComponent(id)}/id`, { manifest, expectedRevision });
+}
+
 export function duplicateRunManifest(id, input) {
     return storagePost(`${collection}/${encodeURIComponent(id)}/duplicate`, input);
 }

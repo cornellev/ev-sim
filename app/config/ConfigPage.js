@@ -38,6 +38,7 @@ import {
     topicFromContract,
 } from "../autonomy/AutonomyContractCatalog.js";
 import {
+    changeRunManifestId,
     createRunManifest,
     deleteRunManifest,
     duplicateRunManifest,
@@ -238,6 +239,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
     const [manifestLoadState, setManifestLoadState] = useState("loading");
     const [environmentError, setEnvironmentError] = useState(null);
     const [selectedId, setSelectedId] = useState(null);
+    const [editorSession, setEditorSession] = useState(0);
     const [saved, setSaved] = useState(null);
     const [draft, setDraft] = useState(null);
     const [raw, setRaw] = useState("");
@@ -335,6 +337,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
 
     const applyManifestDocument = (id, document) => {
         const normalized = normalizeRunManifest(document, authoringOptions());
+        setEditorSession((value) => value + 1);
         setSelectedId(id);
         setSaved(document);
         setDraft(normalized);
@@ -484,6 +487,26 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
             listRunManifests().then(async (items) => {
                 if (cancelled) return;
                 setCatalog(items || []);
+                if (event.action === "id-changed") {
+                    if (dirty) return;
+                    const previousId = event.data?.previousId;
+                    const nextId = event.id;
+                    const alreadyApplied = saved?.id === nextId
+                        && Number(saved?.revision) === Number(event.data?.revision);
+                    if (alreadyApplied || !nextId || selectedId !== previousId) return;
+                    const document = await getRunManifest(nextId);
+                    if (cancelled || !document) return;
+                    const normalized = normalizeRunManifest(document, authoringOptions());
+                    setEditorSession((value) => value + 1);
+                    setSelectedId(nextId);
+                    setSaved(document);
+                    setDraft(normalized);
+                    setRaw(JSON.stringify(normalized, null, 2));
+                    setRawError(null);
+                    setValidation(null);
+                    controller.selectManifest(nextId);
+                    return;
+                }
                 if (dirty) return;
 
                 const selectedWasDeleted = event.action === "deleted" && event.id === selectedId;
@@ -494,6 +517,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
                 const document = await getRunManifest(nextId);
                 if (cancelled) return;
                 const normalized = normalizeRunManifest(document, authoringOptions());
+                setEditorSession((value) => value + 1);
                 setSelectedId(nextId);
                 setSaved(document);
                 setDraft(normalized);
@@ -505,7 +529,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
                 if (!cancelled) setError(caught.message);
             });
         });
-    }, [controller, dirty, selectedId]);
+    }, [controller, dirty, selectedId, saved]);
 
     const update = (path, value) => {
         setDraft((current) => {
@@ -548,13 +572,21 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
             setValidation(local);
             throw new Error(formatValidationIssues(local.issues, { prefix: "Fix validation errors before saving" }));
         }
-        const stored = await saveRunManifest(selectedId, local.manifest, saved.revision);
+        const previousId = selectedId;
+        const stored = local.manifest.id === previousId
+            ? await saveRunManifest(previousId, local.manifest, saved.revision)
+            : await changeRunManifestId(previousId, local.manifest, saved.revision);
+        const normalized = normalizeRunManifest(stored, authoringOptions());
         setSaved(stored);
-        setDraft(normalizeRunManifest(stored, authoringOptions()));
-        setRaw(JSON.stringify(normalizeRunManifest(stored, authoringOptions()), null, 2));
-        setCatalog((items) => items.map((entry) => entry.id === stored.id
-            ? { ...entry, name: stored.name, revision: stored.revision, definitionHash: stored.definitionHash }
+        setDraft(normalized);
+        setRaw(JSON.stringify(normalized, null, 2));
+        setCatalog((items) => items.map((entry) => entry.id === previousId
+            ? { ...entry, id: stored.id, name: stored.name, revision: stored.revision, definitionHash: stored.definitionHash }
             : entry));
+        if (stored.id !== previousId) {
+            setSelectedId(stored.id);
+            controller.selectManifest(stored.id);
+        }
         return stored;
     });
 
@@ -568,10 +600,11 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
     const launch = async () => perform(async () => {
         let current = saved;
         if (dirty) current = await save();
-        const result = await validateRunManifestOnServer(selectedId, current);
+        const manifestId = current.id;
+        const result = await validateRunManifestOnServer(manifestId, current);
         setValidation(result);
         if (!result.ok) throw new Error(formatValidationIssues(result.issues, { prefix: "Cannot launch until validation passes" }));
-        const resolved = await resolveRunManifest(selectedId);
+        const resolved = await resolveRunManifest(manifestId);
         await controller.prepare(resolved, { autoplay: true });
         onLaunch?.(resolved);
     }, { nested: true });
@@ -622,9 +655,9 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
     });
 
     const exportBundle = () => perform(async () => {
-        if (dirty) await save();
-        const bundle = await exportRunManifest(selectedId);
-        downloadJson(`${selectedId}.run-bundle.json`, bundle);
+        const current = dirty ? await save() : saved;
+        const bundle = await exportRunManifest(current.id);
+        downloadJson(`${current.id}.run-bundle.json`, bundle);
     });
 
     const importBundleFile = (event) => perform(async () => {
@@ -760,7 +793,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
                                 {TABS.map((item) => <TabsTrigger key={item} value={item}>{item}</TabsTrigger>)}
                             </TabsList>
 
-                            <div key={selectedId} className="border-t border-[var(--slate-border)] pt-5">
+                            <div key={editorSession} className="border-t border-[var(--slate-border)] pt-5">
                                 {TABS.map((item) => (
                                     <TabsContent key={item} value={item} forceMount>
                                         {item === "Overview" && <Overview draft={draft} environments={environments} update={update} />}
@@ -818,7 +851,7 @@ function ConfigLoadState({ title, detail, action = null, error = false }) {
 }
 
 function Overview({ draft, environments, update }) {
-    return <div className="grid gap-4 md:grid-cols-2"><Field label="Name"><input value={draft.name} onChange={(event) => update(["name"], event.target.value)} /></Field><Field label="Stable ID"><input value={draft.id} disabled /></Field><Field wide label="Description"><textarea rows={3} value={draft.description} onChange={(event) => update(["description"], event.target.value)} /></Field><Field label="Environment"><select disabled={Boolean(draft.scenario)} value={draft.environment.id} onChange={(event) => update(["environment", "id"], event.target.value)}>{environments.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select></Field><Field label="Expected environment hash"><input disabled={Boolean(draft.scenario)} value={draft.environment.expectedHash || ""} placeholder={draft.scenario ? "Supplied by scenario" : "Unlocked"} onChange={(event) => update(["environment", "expectedHash"], event.target.value || null)} /></Field><Field label="Seed"><input value={draft.seed} onChange={(event) => update(["seed"], event.target.value)} /></Field>{draft.scenario && <p className="md:col-span-2 text-[12px] text-[var(--slate-muted)]">The selected scenario supplies the environment, actors, poses, routes, and events. This run configuration supplies the Ego vehicle, sensors, scripts, assertions, clock, and logging.</p>}</div>;
+    return <div className="grid gap-4 md:grid-cols-2"><Field label="Name"><input value={draft.name} onChange={(event) => update(["name"], event.target.value)} /></Field><Field label="Stable ID"><input value={draft.id} onChange={(event) => update(["id"], event.target.value)} /></Field><Field wide label="Description"><textarea rows={3} value={draft.description} onChange={(event) => update(["description"], event.target.value)} /></Field><Field label="Environment"><select disabled={Boolean(draft.scenario)} value={draft.environment.id} onChange={(event) => update(["environment", "id"], event.target.value)}>{environments.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select></Field><Field label="Expected environment hash"><input disabled={Boolean(draft.scenario)} value={draft.environment.expectedHash || ""} placeholder={draft.scenario ? "Supplied by scenario" : "Unlocked"} onChange={(event) => update(["environment", "expectedHash"], event.target.value || null)} /></Field><Field label="Seed"><input value={draft.seed} onChange={(event) => update(["seed"], event.target.value)} /></Field>{draft.scenario && <p className="md:col-span-2 text-[12px] text-[var(--slate-muted)]">The selected scenario supplies the environment, actors, poses, routes, and events. This run configuration supplies the Ego vehicle, sensors, scripts, assertions, clock, and logging.</p>}</div>;
 }
 
 const BUILT_IN_VEHICLE_OPTIONS = [

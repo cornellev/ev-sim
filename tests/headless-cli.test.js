@@ -5,7 +5,14 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import { createDefaultScenario } from "../app/scenarios/ScenarioDocument.js";
+import { verifyRoute } from "../app/scenarios/route/index.js";
+import { createDefaultRunManifest } from "../app/simulation/RunManifest.js";
+import { loadBundleReference, parseBundleReference } from "../server/headless/BundleSource.js";
 import { main } from "../server/headless/Cli.js";
+import { HeadlessRunnerError } from "../server/headless/HeadlessRunnerErrors.js";
+import { canonicalRunBundleStringify } from "../server/headless/RunBundle.js";
+import { StorageService } from "../server/storage/StorageService.js";
 import { sha256ExactBytes } from "../app/simulation/visual/VisualLayer.js";
 import { simulationSha256 } from "../app/simulation/kernel/SimulationHashes.js";
 import { encodeRunPackage } from "../server/headless/VisualAssetPack.js";
@@ -21,9 +28,13 @@ async function temporaryRoot(t) {
     return directory;
 }
 
-function runCli(args, { input = null } = {}) {
+function runCli(args, { input = null, env = null } = {}) {
     return new Promise((resolve, reject) => {
-        const child = spawn(cliPath, args, { cwd: path.resolve("."), stdio: ["pipe", "pipe", "pipe"] });
+        const child = spawn(cliPath, args, {
+            cwd: path.resolve("."),
+            stdio: ["pipe", "pipe", "pipe"],
+            ...(env ? { env: { ...process.env, ...env } } : {}),
+        });
         let stdout = "";
         let stderr = "";
         child.stdout.setEncoding("utf8");
@@ -39,6 +50,84 @@ function runCli(args, { input = null } = {}) {
 
 function jsonLines(text) {
     return text.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+}
+
+function captureStream() {
+    let text = "";
+    return {
+        text: () => text,
+        write(chunk) {
+            text += chunk;
+            return true;
+        },
+    };
+}
+
+async function createCatalogFixture(t) {
+    const root = await temporaryRoot(t);
+    const storage = new StorageService(path.join(root, "data"));
+    const environment = await storage.getEnvironment("igvc");
+    const edge = environment.document.roads.edges[0];
+    const nodes = new Map(environment.document.roads.nodes.map((node) => [node.id, node]));
+    const start = nodes.get(edge.startNodeId);
+    const finish = nodes.get(edge.endNodeId);
+    const verified = verifyRoute(environment, {
+        id: "ego-route",
+        actorId: "ego",
+        waypoints: [
+            { id: "start", position: { x: start.x, y: 0, z: start.z } },
+            { id: "finish", position: { x: finish.x, y: 0, z: finish.z } },
+        ],
+    });
+    assert.equal(verified.ok, true, verified.issues?.[0]?.message);
+    const scenario = await storage.createScenario(createDefaultScenario({
+        id: "catalog-scenario",
+        environment: { id: "igvc", expectedHash: null },
+        routes: [{
+            id: "ego-route",
+            actorId: "ego",
+            initialSpeedMps: 0,
+            waypoints: verified.waypoints,
+            verification: verified.verification,
+        }],
+        triggers: [{
+            id: "finish",
+            name: "Finish",
+            enabled: true,
+            once: true,
+            condition: { kind: "step", step: 2 },
+            actions: [{ kind: "finish" }],
+        }],
+        completion: { conditions: [] },
+        expectedOutcomes: [],
+    }));
+    const template = createDefaultRunManifest();
+    const imu = template.sensorRig.sensors.find((sensor) => sensor.type === "imu");
+    await storage.createRunManifest(createDefaultRunManifest({
+        id: "catalog-headless",
+        name: "Catalog Headless",
+        scenario: {
+            id: scenario.id,
+            expectedHash: scenario.definitionHash,
+            egoVehicleId: "igvc-car",
+            sensorBindings: {},
+            parameterValues: {},
+        },
+        controls: { authority: "candidate", targetVehicleId: "ego" },
+        sensorRig: {
+            mapFrameId: template.sensorRig.mapFrameId,
+            odomFrameId: template.sensorRig.odomFrameId,
+            rootFrameId: template.sensorRig.rootFrameId,
+            vehicleId: "ego",
+            syncGroups: [],
+            sensors: [imu],
+        },
+    }));
+    await storage.createRunManifest(createDefaultRunManifest({
+        id: "stale-env",
+        environment: { id: "igvc", expectedHash: "0".repeat(64) },
+    }));
+    return { root, storage, dataDir: path.join(root, "data") };
 }
 
 async function writeJson(filePath, value) {
@@ -406,4 +495,102 @@ test("direct CLI writes PCAP artifacts from --sensor-transport-config", async (t
     assert.equal(run.code, 0, run.stderr);
     await fs.access(path.join(output, "sensors.pcap"));
     await fs.access(path.join(output, "sensor-transport-evidence.json"));
+});
+
+test("bundle reference loads a file or a saved catalog manifest", async (t) => {
+    const { root, storage } = await createCatalogFixture(t);
+    const exported = await storage.exportRunManifest("catalog-headless");
+    const bundlePath = path.join(root, "bundle.json");
+    await fs.writeFile(bundlePath, canonicalRunBundleStringify(exported));
+    const fromFile = await loadBundleReference(bundlePath);
+    assert.equal(fromFile.bundle.resolvedHash, exported.resolvedHash);
+    const fromCatalog = await loadBundleReference("use:catalog-headless", { storage });
+    assert.equal(fromCatalog.bundle.resolvedHash, exported.resolvedHash);
+    assert.equal(parseBundleReference("./use:catalog-headless").kind, "file");
+    assert.equal(parseBundleReference("use:catalog-headless").manifestId, "catalog-headless");
+
+    await assert.rejects(
+        () => loadBundleReference("use:missing-manifest", { storage }),
+        (error) => error instanceof HeadlessRunnerError && error.code === "INVALID_REQUEST" && /does not exist/.test(error.message),
+    );
+    let exportedAfterInvalid = false;
+    await assert.rejects(
+        () => loadBundleReference("use:stale-env", {
+            storage: {
+                getRunManifest: (id) => storage.getRunManifest(id),
+                validateRunManifest: (id) => storage.validateRunManifest(id),
+                exportRunManifest: async (id) => {
+                    exportedAfterInvalid = true;
+                    return storage.exportRunManifest(id);
+                },
+            },
+        }),
+        (error) => error instanceof HeadlessRunnerError
+            && error.code === "INVALID_REQUEST"
+            && error.details.issues.some((issue) => issue.path && issue.message),
+    );
+    assert.equal(exportedAfterInvalid, false);
+    assert.throws(() => parseBundleReference("use:"), (error) => error.code === "USAGE");
+    assert.throws(() => parseBundleReference("use:."), (error) => error.code === "USAGE");
+    assert.throws(() => parseBundleReference("use:.."), (error) => error.code === "USAGE");
+    assert.throws(() => parseBundleReference("use:a/b"), (error) => error.code === "USAGE");
+});
+
+test("CLI reports catalog usage and validation failures", async (t) => {
+    const { storage } = await createCatalogFixture(t);
+    const usageErr = captureStream();
+    const usage = await main(["validate", "--bundle", "use:"], { stderr: usageErr, stdout: captureStream() });
+    assert.equal(usage, 2);
+    assert.equal(JSON.parse(usageErr.text().trim().split("\n")[0]).code, "USAGE");
+
+    const missingErr = captureStream();
+    const missing = await main(["validate", "--bundle", "use:missing-manifest"], {
+        storage,
+        stderr: missingErr,
+        stdout: captureStream(),
+    });
+    assert.equal(missing, 3);
+    assert.equal(JSON.parse(missingErr.text().trim().split("\n")[0]).code, "INVALID_REQUEST");
+
+    const staleErr = captureStream();
+    const stale = await main(["validate", "--bundle", "use:stale-env"], {
+        storage,
+        stderr: staleErr,
+        stdout: captureStream(),
+    });
+    assert.equal(stale, 3);
+    const staleRecord = JSON.parse(staleErr.text().trim().split("\n")[0]);
+    assert.equal(staleRecord.code, "INVALID_REQUEST");
+    assert.ok(staleRecord.details.issues.length > 0);
+});
+
+test("catalog use: reference matches an exported bundle episode", async (t) => {
+    const { root, storage, dataDir } = await createCatalogFixture(t);
+    const exported = await storage.exportRunManifest("catalog-headless");
+    const bundlePath = path.join(root, "bundle.json");
+    const actionsPath = path.join(root, "actions.jsonl");
+    const episode = await episodeFile(root);
+    await fs.writeFile(bundlePath, canonicalRunBundleStringify(exported));
+    await fs.writeFile(actionsPath, `${JSON.stringify({ policyStep: 1, action: [0, 0] })}\n`);
+    const env = { CEV_SIM_DATA_DIR: dataDir };
+    const fileRun = await runCli([
+        "run", "--bundle", bundlePath, "--output", path.join(root, "file-run"),
+        "--actions", actionsPath, "--artifact-profile", "disabled", "--episode", episode,
+    ], { env });
+    const catalogRun = await runCli([
+        "run", "--bundle", "use:catalog-headless", "--output", path.join(root, "catalog-run"),
+        "--actions", actionsPath, "--artifact-profile", "disabled", "--episode", episode,
+    ], { env });
+    assert.equal(fileRun.code, 0, fileRun.stderr);
+    assert.equal(catalogRun.code, 0, catalogRun.stderr);
+    const fileResult = jsonLines(fileRun.stdout).at(-1).result;
+    const catalogResult = jsonLines(catalogRun.stdout).at(-1).result;
+    assert.equal(catalogResult.episodeHash, fileResult.episodeHash);
+    assert.equal(catalogResult.simulationSemanticHash, fileResult.simulationSemanticHash);
+
+    const validation = await runCli([
+        "validate", "--bundle", "use:catalog-headless", "--episode", episode,
+    ], { env });
+    assert.equal(validation.code, 0, validation.stderr);
+    assert.equal(jsonLines(validation.stdout)[0].kind, "cev-sim.headless.validation");
 });

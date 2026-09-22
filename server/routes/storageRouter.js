@@ -157,6 +157,18 @@ export function createStorageRouter(service) {
     router.post("/run-manifests", handle(async (req) => service.createRunManifest(req.body ?? {})));
     router.post("/run-manifests/import", handle(async (req) => service.importRunBundle(req.body ?? {})));
     router.post("/run-manifests/:id/duplicate", handle(async (req) => service.duplicateRunManifest(req.params.id, req.body ?? {})));
+    router.patch("/run-manifests/:id/id", handle(async (req) => {
+        const manifest = await service.changeRunManifestId(req.params.id, req.body ?? {});
+        if (manifest.id !== req.params.id) {
+            storageEvents.publish({
+                domain: "run-manifest",
+                action: "id-changed",
+                id: manifest.id,
+                data: { previousId: req.params.id, revision: manifest.revision },
+            });
+        }
+        return manifest;
+    }));
     router.post("/run-manifests/:id/validate", handle(async (req) => service.validateRunManifest(req.params.id, req.body ?? null)));
     router.post("/run-manifests/:id/resolve", handle(async (req) => service.resolveRunManifest(req.params.id, req.body ?? null)));
     router.get("/run-manifests/:id/export", handle(async (req) => service.exportRunManifest(req.params.id)));

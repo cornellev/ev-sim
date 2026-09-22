@@ -19,7 +19,7 @@ Config/Vehicle controls remain a later plugin milestone.
 
 ## Operator workflow
 
-Open **Config** from the workspace switcher. The page supports catalog create, duplicate, delete, bundle import/export, structured editing, raw JSON editing, server validation, optimistic revision saves, and **Validate & Run**. Unsaved edits are protected during catalog changes and browser navigation. Use the header **Advanced** switch to reveal frames, noise, latency, and contract fields while keeping essential sensor and topic settings visible by default; the preference persists across Config and Vehicle Editor. The **Controls** tab authors the target vehicle, authority (`candidate` / `reference`), watchdog, stale policy (`stop` default, or `hold` / `fallback`), and per-run actuator overrides. The **Provenance** tab authors hash-locked `provenance.candidateModels[]` references (role, model id, optional version, required SHA-256 digest) used as evidence lineage.
+Open **Config** from the workspace switcher. The page supports catalog create, duplicate, delete, bundle import/export, structured editing, raw JSON editing, server validation, optimistic revision saves, and **Validate & Run**. The Overview **Stable ID** edits the draft only. Save moves `run-manifests/<id>.json` to that id and changes `definitionHash`. An invalid id, a collision, `igvc-default`, or a revision conflict throws and leaves the open draft on the stored id. Experiment suites, logs, and results keep the previous id. Unsaved edits are protected during catalog changes and browser navigation. Use the header **Advanced** switch to reveal frames, noise, latency, and contract fields while keeping essential sensor and topic settings visible by default; the preference persists across Config and Vehicle Editor. The **Controls** tab authors the target vehicle, authority (`candidate` / `reference`), watchdog, stale policy (`stop` default, or `hold` / `fallback`), and per-run actuator overrides. The **Provenance** tab authors hash-locked `provenance.candidateModels[]` references (role, model id, optional version, required SHA-256 digest) used as evidence lineage.
 
 Reset finalizes the active result and SFLog, resolves the newest saved revision, rebuilds run-scoped resources, and leaves the replacement run paused at step zero. If the environment changed, the workspace loads that environment before applying the pending run.
 
@@ -452,7 +452,12 @@ Run logs contain `run-manifest.json` at start and `run-results.json` at finaliza
 PR 6 consumes exported `cev-sim.run-bundle` v1 envelopes directly through the
 [`cev-sim` CLI](headless-cli.md). The runner verifies the full resolved hash,
 simulation-semantic hash, embedded manifest, world, and backend selections; it
-does not accept an authoring manifest or call the storage resolver. Streaming
+does not accept an authoring manifest or call the storage resolver. Before that
+handoff, `--bundle use:<manifestId>` loads the last saved catalog document from
+`CEV_SIM_DATA_DIR`, validates it, and exports a bundle in memory through
+`StorageService`. A validation failure returns the issue list and does not run.
+`HeadlessRunner`, `SupervisorRunner`, and supervisor `CreateBatch` still accept
+only the verified bundle. Streaming
 and tape actions both enter the existing normalized policy/action-repeat
 contract. Core results, the verified bundle, and runtime provenance publish
 atomically, with evaluation/training/disabled policies controlling SFLog

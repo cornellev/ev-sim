@@ -75,6 +75,26 @@ export function registerRunManifestTools(server, storage) {
         } catch (error) { return fail(error); }
     });
 
+    server.registerTool("run_manifest_change_id", {
+        title: "Change run manifest id",
+        description: "Move a saved run manifest to a new stable id and store the submitted document. Checks the expected revision against the current id. Experiment suites, logs, and results keep the previous id.",
+        inputSchema: {
+            manifestId: z.string().min(1),
+            expectedRevision: z.number().int().nonnegative(),
+            manifest: JsonObjectSchema,
+        },
+    }, async ({ manifestId, expectedRevision, manifest }) => {
+        try {
+            const updated = await storage.changeRunManifestId(manifestId, { manifest, expectedRevision });
+            if (updated.id !== manifestId) {
+                publish(updated.id, "id-changed", { previousId: manifestId, revision: updated.revision });
+            } else {
+                publish(manifestId, "updated", { revision: updated.revision });
+            }
+            return ok({ ok: true, manifest: updated });
+        } catch (error) { return fail(error); }
+    });
+
     server.registerTool("run_manifest_duplicate", {
         title: "Duplicate run manifest",
         description: "Copy a saved run manifest to a new stable id.",

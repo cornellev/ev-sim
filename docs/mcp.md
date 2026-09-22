@@ -109,6 +109,7 @@ Triggers (`topic`, `fixed-update`, `signal-update`, `timer`, `simulation-timer`,
 |------|---------|
 | `run_manifest_list` / `run_manifest_get` | Discover and read versioned authoring manifests |
 | `run_manifest_create` / `run_manifest_update` / `run_manifest_duplicate` / `run_manifest_delete` | Catalog CRUD with optimistic revisions |
+| `run_manifest_change_id` | Move a saved manifest to a new stable id using its expected revision. Suites, logs, and results keep the previous id |
 | `run_manifest_validate` | Validate schema, deterministic constraints, and dependency hashes |
 | `run_manifest_resolve` | Produce the immutable resolved run snapshot |
 | `run_manifest_export` / `run_manifest_import` | Portable run-bundle round trips |

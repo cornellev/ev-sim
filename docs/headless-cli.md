@@ -1,21 +1,25 @@
 # Headless CLI
 
 PR 6 adds a single-process, single-environment command-line runner around the
-authoritative JavaScript `HeadlessEpisode`. It loads immutable portable
-`cev-sim.run-bundle` version 1 documents directly; it never resolves authoring
-manifests or starts the web server.
+authoritative JavaScript `HeadlessEpisode`. It executes immutable portable
+`cev-sim.run-bundle` version 1 documents and does not start the web server.
+`--bundle` accepts a bundle file or `use:<manifestId>`. The catalog form reads
+the last saved run manifest from `CEV_SIM_DATA_DIR` (the same store the browser
+writes), validates it, and resolves a bundle in memory. Unsaved Config drafts
+are not visible. `HeadlessRunner` and `SupervisorRunner` still accept only the
+verified bundle.
 
 ## Commands
 
 ```bash
-cev-sim validate (--bundle bundle.json | --package run.run-package) [--episode episode.json] [--config supervisor.json] [--sensor-transport-config host.json]
+cev-sim validate (--bundle bundle.json | --bundle use:manifestId | --package run.run-package) [--episode episode.json] [--config supervisor.json] [--sensor-transport-config host.json]
 cev-sim create-smoke-bundle --output bundle.json
 cev-sim inspect bundle.json
 cev-sim inspect run.run-package
 cev-sim inspect output-directory
 cev-sim inspect output-directory/run.sflog
-cev-sim run (--bundle bundle.json | --package run.run-package) --output result-root [--episode episode.json] [--actions actions.jsonl] [--config supervisor.json] [--sensor-transport-config host.json]
-cev-sim replay (--bundle bundle.json | --package run.run-package) --tape tape.json --output result-dir [--config supervisor.json] [--sensor-transport-config host.json]
+cev-sim run (--bundle bundle.json | --bundle use:manifestId | --package run.run-package) --output result-root [--episode episode.json] [--actions actions.jsonl] [--config supervisor.json] [--sensor-transport-config host.json]
+cev-sim replay (--bundle bundle.json | --bundle use:manifestId | --package run.run-package) --tape tape.json --output result-dir [--config supervisor.json] [--sensor-transport-config host.json]
 cev-sim gpu-preflight --config supervisor.json
 ```
 
@@ -55,6 +59,14 @@ temporary authoring data. Use this command for host smoke tests; exporting the
 built-in `igvc-default` directly is not sufficient because that browser
 default intentionally has `scenario: null`, while every current headless
 observation/reward profile requires a verified Ego route.
+
+`use:<manifestId>` is one saved catalog id: no slashes, and not `.` or `..`.
+`./use:<manifestId>` is still a file path. Validation issues are a stderr
+`cev-sim.headless.error` record with exit code `3` and the issue list in
+`details.issues`; the command does not export or run after that failure. A
+successful catalog load is not written to a temporary file. `exportedAt` can
+differ from a previously downloaded bundle, while `resolvedHash` and episode
+identity follow the resolved run. `--package` remains a file.
 
 The local repository executable is `./bin/cev-sim.js`. Installed packages
 expose the `cev-sim` bin. JSON and JSONL are written to stdout; diagnostics are

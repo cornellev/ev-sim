@@ -606,6 +606,7 @@ test("run manifest MCP suite exposes catalog, lifecycle, portable, and launch ca
         "run_manifest_get",
         "run_manifest_create",
         "run_manifest_update",
+        "run_manifest_change_id",
         "run_manifest_duplicate",
         "run_manifest_delete",
         "run_manifest_validate",
@@ -662,6 +663,20 @@ test("run manifest MCP tools preserve descriptions, enforce revisions, and publi
             assert.equal(launch.resolvedHash.length, 64);
             assert.equal(events.at(-1).action, "launch");
             assert.equal(events.at(-1).data.autoplay, false);
+
+            const renamedResult = await tools.get("run_manifest_change_id")({
+                manifestId: updated.id,
+                expectedRevision: updated.revision,
+                manifest: { ...updated, id: "mcp-run-renamed" },
+            });
+            const renamed = JSON.parse(renamedResult.content[0].text).manifest;
+            assert.equal(renamed.id, "mcp-run-renamed");
+            assert.equal(renamed.revision, updated.revision + 1);
+            assert.equal(await storage.getRunManifest("mcp-run"), null);
+            assert.equal(events.at(-1).action, "id-changed");
+            assert.equal(events.at(-1).id, "mcp-run-renamed");
+            assert.equal(events.at(-1).data.previousId, "mcp-run");
+            assert.equal(events.at(-1).data.revision, renamed.revision);
         } finally {
             storageEvents.off("change", onChange);
         }

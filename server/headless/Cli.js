@@ -3,7 +3,8 @@ import process from "node:process";
 import readline from "node:readline";
 
 import { HeadlessEpisodeError } from "../../app/simulation/headless/HeadlessErrors.js";
-import { canonicalRunBundleStringify, verifyRunBundleBytes } from "./RunBundle.js";
+import { loadBundleReference } from "./BundleSource.js";
+import { canonicalRunBundleStringify } from "./RunBundle.js";
 import { HEADLESS_PROTOCOL } from "./HeadlessProtocol.js";
 import { HeadlessRunner } from "./HeadlessRunner.js";
 import { HeadlessRunnerError } from "./HeadlessRunnerErrors.js";
@@ -36,11 +37,11 @@ const FLAG_OPTIONS = new Set(["sflog-on-failure", "no-sflog-on-failure", "allow-
 
 function usage() {
     return [
-        "cev-sim validate (--bundle <file> | --package <file>) [--episode <file>] [--config <supervisor.json>] [--sensor-transport-config <file>]",
+        "cev-sim validate (--bundle <file | use:manifestId> | --package <file>) [--episode <file>] [--config <supervisor.json>] [--sensor-transport-config <file>]",
         "cev-sim create-smoke-bundle --output <bundle.json>",
         "cev-sim inspect <bundle|package|output-directory|sflog>",
-        "cev-sim run (--bundle <file> | --package <file>) --output <directory> [--episode <file>] [--actions <jsonl-file>] [--config <supervisor.json>] [--sensor-transport-config <file>]",
-        "cev-sim replay (--bundle <file> | --package <file>) --tape <file> --output <directory> [--config <supervisor.json>] [--sensor-transport-config <file>]",
+        "cev-sim run (--bundle <file | use:manifestId> | --package <file>) --output <directory> [--episode <file>] [--actions <jsonl-file>] [--config <supervisor.json>] [--sensor-transport-config <file>]",
+        "cev-sim replay (--bundle <file | use:manifestId> | --package <file>) --tape <file> --output <directory> [--config <supervisor.json>] [--sensor-transport-config <file>]",
         "cev-sim supervisor (--socket <path> | --tcp <host:port>) [--preset safety|permissive] [--config <json>] [--allow-remote-tcp]",
         "cev-sim gpu-preflight --config <json>",
     ].join("\n");
@@ -245,7 +246,10 @@ export async function main(argv = process.argv.slice(2), io = {}) {
         try {
             const bundle = packagePath
                 ? (await verifyRunPackageArchive(createReadStream(packagePath, { signal: abortController.signal }))).bundle
-                : verifyRunBundleBytes(await fs.readFile(options.bundle)).bundle;
+                : (await loadBundleReference(options.bundle, {
+                    storage: io.storage ?? null,
+                    readFile: (filePath) => fs.readFile(filePath),
+                })).bundle;
             abortController.signal.throwIfAborted();
             if (command === "validate") {
                 const allowed = new Set(["bundle", "package", "episode", "config", "sensor-transport-config"]);

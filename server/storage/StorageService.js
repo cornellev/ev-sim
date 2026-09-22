@@ -1701,6 +1701,23 @@ export class StorageService {
         return this._writeRunManifest(manifestId, validation.manifest, { expectedRevision });
     }
 
+    /**
+     * Move a run manifest to a new stable id and store the submitted document.
+     * The route id still wins for {@link putRunManifest}; only this method renames.
+     */
+    async changeRunManifestId(manifestId, input = {}) {
+        const currentId = String(manifestId ?? "").trim();
+        const manifest = input.manifest ?? input;
+        const nextId = String(manifest?.id ?? "").trim();
+        safeSegment(currentId);
+        safeSegment(nextId);
+        if (nextId === currentId) return this.putRunManifest(currentId, input);
+        const ids = [currentId, nextId].sort();
+        return this._withRunManifestWrite(ids[0], () => (
+            this._withRunManifestWrite(ids[1], () => this._moveRunManifestLocked(currentId, nextId, input))
+        ));
+    }
+
     async duplicateRunManifest(sourceId, input = {}) {
         const source = await this.getRunManifest(sourceId);
         if (!source) throw new Error(`Run manifest "${sourceId}" does not exist.`);
@@ -1713,10 +1730,7 @@ export class StorageService {
     }
 
     async deleteRunManifest(manifestId) {
-        const filePath = this._runManifestPath(manifestId);
-        this._stores.get(filePath)?.invalidate();
-        this._stores.delete(filePath);
-        await fs.rm(filePath, { force: true });
+        await this._removeRunManifestFile(manifestId);
         return true;
     }
 
@@ -2926,6 +2940,78 @@ export class StorageService {
 
     _vehicleAssetPath(vehicleId, fileName) {
         return path.join(this._vehicleAssetDir(vehicleId), safeSegment(fileName));
+    }
+
+    _withRunManifestWrite(manifestId, operation) {
+        safeSegment(manifestId);
+        const previous = this._runManifestWriteChains.get(manifestId) ?? Promise.resolve();
+        const current = previous.catch(() => {}).then(operation);
+        this._runManifestWriteChains.set(manifestId, current);
+        current.finally(() => {
+            if (this._runManifestWriteChains.get(manifestId) === current) {
+                this._runManifestWriteChains.delete(manifestId);
+            }
+        }).catch(() => {});
+        return current;
+    }
+
+    /**
+     * Write the destination, then delete the source. Does not call
+     * {@link _writeRunManifest}: that waits on this same chain and would deadlock.
+     */
+    async _moveRunManifestLocked(currentId, nextId, input) {
+        if (currentId === "igvc-default" || nextId === "igvc-default") {
+            throw new Error("Built-in run manifest \"igvc-default\" cannot change its id.");
+        }
+        const manifest = input.manifest ?? input;
+        const expectedRevision = input.expectedRevision ?? manifest.revision;
+        const current = await this.getRunManifest(currentId);
+        if (!current) throw new Error(`Run manifest "${currentId}" does not exist.`);
+        const currentRevision = Number(current.revision || 0);
+        if (expectedRevision !== undefined && Number(expectedRevision) !== currentRevision) {
+            throw new Error(`Run manifest revision conflict: expected ${expectedRevision}, current revision is ${currentRevision}.`);
+        }
+        if (await this.getRunManifest(nextId)) {
+            throw new Error(`Run manifest "${nextId}" already exists.`);
+        }
+        const candidate = { ...manifest, id: nextId };
+        if (!Object.hasOwn(manifest, "renderRecipe") && Object.hasOwn(current, "renderRecipe")) {
+            candidate.renderRecipe = structuredClone(current.renderRecipe);
+        }
+        const validation = await this._validateRunManifestWithPluginSensors(candidate);
+        if (!validation.ok) throw validationError(validation.issues);
+        const now = new Date().toISOString();
+        const sensorRegistry = await this._sensorRegistryForRunManifest(validation.manifest);
+        const normalized = normalizeRunManifest(validation.manifest, { sensorRegistry });
+        const stored = {
+            ...normalized,
+            revision: currentRevision + 1,
+            definitionHash: semanticHash(normalized),
+            createdAt: current.createdAt ?? now,
+            updatedAt: now,
+        };
+        const written = await this._fileStore(this._runManifestPath(nextId), null).write(stored);
+        try {
+            await this._removeRunManifestFile(currentId);
+        } catch (error) {
+            try {
+                await this._removeRunManifestFile(nextId);
+            } catch (rollbackError) {
+                throw new Error(
+                    `${error.message} Rollback of "${nextId}" also failed: ${rollbackError.message}`,
+                    { cause: error },
+                );
+            }
+            throw error;
+        }
+        return written;
+    }
+
+    async _removeRunManifestFile(manifestId) {
+        const filePath = this._runManifestPath(manifestId);
+        this._stores.get(filePath)?.invalidate();
+        this._stores.delete(filePath);
+        await fs.rm(filePath, { force: true });
     }
 
     async _writeRunManifest(manifestId, manifest, { expectedRevision, create = false } = {}) {

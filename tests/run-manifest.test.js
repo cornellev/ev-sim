@@ -304,3 +304,115 @@ test("portable imports suffix conflicting dependencies and remap binding script 
         await fs.rm(target.dir, { recursive: true, force: true });
     }
 });
+
+test("changeRunManifestId moves the file, edits content, and preserves createdAt", async () => {
+    const { dir, service } = await temporaryService();
+    try {
+        const created = await service.createRunManifest(createDefaultRunManifest({
+            id: "alpha-run",
+            name: "Alpha",
+            description: "Before",
+        }));
+        const moved = await service.changeRunManifestId(created.id, {
+            manifest: { ...created, id: "beta-run", description: "After" },
+            expectedRevision: created.revision,
+        });
+        assert.equal(moved.id, "beta-run");
+        assert.equal(moved.description, "After");
+        assert.equal(moved.revision, created.revision + 1);
+        assert.equal(moved.createdAt, created.createdAt);
+        assert.notEqual(moved.definitionHash, created.definitionHash);
+        assert.equal(await service.getRunManifest("alpha-run"), null);
+        const stored = await service.getRunManifest("beta-run");
+        assert.equal(stored.description, "After");
+        assert.equal(stored.revision, moved.revision);
+        assert.deepEqual((await service.listRunManifests()).map((entry) => entry.id), ["beta-run"]);
+    } finally {
+        await fs.rm(dir, { recursive: true, force: true });
+    }
+});
+
+test("changeRunManifestId with the same id saves in place and putRunManifest keeps the route id", async () => {
+    const { dir, service } = await temporaryService();
+    try {
+        const created = await service.createRunManifest(createDefaultRunManifest({
+            id: "stable-run",
+            name: "Stable",
+        }));
+        const saved = await service.changeRunManifestId(created.id, {
+            manifest: { ...created, description: "Edited" },
+            expectedRevision: created.revision,
+        });
+        assert.equal(saved.id, "stable-run");
+        assert.equal(saved.description, "Edited");
+        assert.equal(saved.revision, created.revision + 1);
+        assert.equal((await service.listRunManifests()).filter((entry) => entry.id === "stable-run").length, 1);
+
+        const replaced = await service.putRunManifest(saved.id, {
+            manifest: { ...saved, id: "sneaky-run", description: "Kept" },
+            expectedRevision: saved.revision,
+        });
+        assert.equal(replaced.id, "stable-run");
+        assert.equal(replaced.description, "Kept");
+        assert.equal(await service.getRunManifest("sneaky-run"), null);
+    } finally {
+        await fs.rm(dir, { recursive: true, force: true });
+    }
+});
+
+test("changeRunManifestId rejects collisions, the built-in id, revision conflicts, and invalid ids", async () => {
+    const { dir, service } = await temporaryService();
+    try {
+        const alpha = await service.createRunManifest(createDefaultRunManifest({ id: "alpha-run", name: "Alpha" }));
+        const beta = await service.createRunManifest(createDefaultRunManifest({ id: "beta-run", name: "Beta" }));
+        await assert.rejects(
+            service.changeRunManifestId(alpha.id, {
+                manifest: { ...alpha, id: beta.id },
+                expectedRevision: alpha.revision,
+            }),
+            /already exists/,
+        );
+        assert.equal((await service.getRunManifest(alpha.id)).id, alpha.id);
+        assert.equal((await service.getRunManifest(beta.id)).id, beta.id);
+
+        const builtIn = await service.getRunManifest("igvc-default");
+        await assert.rejects(
+            service.changeRunManifestId("igvc-default", {
+                manifest: { ...builtIn, id: "renamed-default" },
+                expectedRevision: builtIn.revision,
+            }),
+            /cannot change its id/,
+        );
+        assert.equal((await service.getRunManifest("igvc-default")).id, "igvc-default");
+        assert.equal(await service.getRunManifest("renamed-default"), null);
+
+        await assert.rejects(
+            service.changeRunManifestId(alpha.id, {
+                manifest: { ...alpha, id: "igvc-default" },
+                expectedRevision: alpha.revision,
+            }),
+            /cannot change its id/,
+        );
+        assert.equal((await service.getRunManifest(alpha.id)).id, alpha.id);
+
+        await assert.rejects(
+            service.changeRunManifestId(alpha.id, {
+                manifest: { ...alpha, id: "gamma-run" },
+                expectedRevision: alpha.revision + 5,
+            }),
+            /revision conflict/,
+        );
+        assert.equal(await service.getRunManifest("gamma-run"), null);
+
+        await assert.rejects(
+            service.changeRunManifestId(alpha.id, {
+                manifest: { ...alpha, id: "a/b" },
+                expectedRevision: alpha.revision,
+            }),
+            /Invalid storage id/,
+        );
+        assert.equal((await service.getRunManifest(alpha.id)).id, alpha.id);
+    } finally {
+        await fs.rm(dir, { recursive: true, force: true });
+    }
+});
