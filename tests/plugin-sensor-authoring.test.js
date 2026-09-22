@@ -9,6 +9,9 @@ import {
     commitPluginSensorAuthoringPatch,
     normalizeVehiclePluginLocks,
     reconcileVehiclePluginLocks,
+    sensorCatalogEntries,
+    sensorCatalogEntryKey,
+    sensorCatalogEntryLabel,
     stampManifestPluginSelectionForSensor,
     stampVehiclePluginSensorLock,
     assertVehiclePluginLocksMatchRun,
@@ -76,6 +79,23 @@ test("sensor catalog is revisioned, ordered, and built without executing modules
     } finally {
         await fs.rm(dir, { recursive: true, force: true });
     }
+});
+
+test("sensor catalog entries fall back to the registry and keep package identity", () => {
+    const fallback = sensorCatalogEntries({ sensors: [] });
+    assert.deepEqual(fallback.map((entry) => entry.type), ["camera", "lidar3d", "imu", "gnss", "wheel-odometry"]);
+    assert.equal(sensorCatalogEntryKey(fallback[0]), "camera:builtin");
+    assert.equal(sensorCatalogEntryLabel(fallback[0]), "Camera");
+    assert.equal(sensorCatalogEntryLabel({ type: "unnamed" }), "unnamed");
+
+    const packageHash = "ab".repeat(32);
+    const plugin = {
+        type: FIXTURE_TYPE,
+        label: FIXTURE_TYPE,
+        ownership: { packageHash },
+    };
+    assert.deepEqual(sensorCatalogEntries({ sensors: [plugin] }), [plugin]);
+    assert.equal(sensorCatalogEntryKey(plugin), `${FIXTURE_TYPE}:${packageHash}`);
 });
 
 test("vehicle plugin locks normalize, conflict, reconcile, and omit legacy empties", async () => {

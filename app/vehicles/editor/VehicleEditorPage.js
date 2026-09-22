@@ -30,7 +30,6 @@ import {
     createVehicleSensor,
     getSensorFieldValue,
     getSensorType,
-    listSensorTypes,
     sensorTypeRegistry,
 } from "../../3d/devices/SensorTypeRegistry.js";
 import { createAuthoringSensorRuntimeRegistry } from "../../3d/devices/SensorRuntimeRegistry.js";
@@ -39,8 +38,10 @@ import { BrowserSensorAuthoringSession } from "../../plugin/browser/BrowserSenso
 import PluginSensorAuthoringPanel from "../../plugin/browser/PluginSensorAuthoringPanel.js";
 import {
     pluginSensorCatalogEntryForType,
+    sensorCatalogEntries,
     stampVehiclePluginSensorLock,
 } from "../../plugin/PluginSensorAuthoring.js";
+import SensorTypeAdder from "../../ui/SensorTypeAdder.js";
 import { subscribeStorageEvents } from "../../client/storageEvents.js";
 import {
     getBuiltInVehicleManifest,
@@ -893,14 +894,7 @@ function SensorsTab({
     bumpRegistry = () => {},
 }) {
     const registry = session?.registry ?? sensorTypeRegistry;
-    const catalogEntries = catalog.sensors?.length
-        ? catalog.sensors
-        : listSensorTypes().map((definition) => ({
-            type: definition.id,
-            label: definition.label,
-            addLabel: definition.addLabel,
-            ownership: "builtin",
-        }));
+    const catalogEntries = sensorCatalogEntries(catalog, registry);
     const addEntry = async (entry) => {
         try {
             const next = structuredClone(draft);
@@ -930,17 +924,7 @@ function SensorsTab({
     };
     return (
         <div className="space-y-3">
-            <div className="flex flex-wrap gap-1.5">
-                {catalogEntries.map((entry) => (
-                    <Action
-                        key={`${entry.type}:${entry.ownership?.packageHash || "builtin"}`}
-                        compact
-                        icon={<FaPlus />}
-                        label={entry.addLabel || `Add ${entry.label || entry.type}`}
-                        onClick={() => addEntry(entry)}
-                    />
-                ))}
-            </div>
+            <SensorTypeAdder entries={catalogEntries} onAdd={addEntry} />
             {draft.sensors.length === 0 && <p className="py-8 text-center text-[11px] text-zinc-600">No sensors on this vehicle.</p>}
             {draft.sensors.map((sensor, index) => {
                 const selected = selection?.kind === "sensor" && selection.id === sensor.id;

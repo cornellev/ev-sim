@@ -105,8 +105,19 @@
     white-space: nowrap;
 }
 
-.packageVersion {
+.packageVersion,
+.packageStatus {
     color: var(--slate-muted);
+    font-size: 12px;
+}
+
+.detailActions {
+    margin-top: 14px;
+}
+
+.installError {
+    margin: 8px 0 0;
+    color: var(--slate-danger);
     font-size: 12px;
 }
 

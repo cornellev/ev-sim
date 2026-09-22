@@ -360,7 +360,6 @@ function validateLidarCalibration(sensor) {
 registerSensorType({
     id: "camera",
     label: "Camera",
-    addLabel: "Add camera",
     idPrefix: "camera",
     accentClass: "text-amber-300",
     color: 0xf59e0b,
@@ -457,7 +456,6 @@ registerSensorType({
 registerSensorType({
     id: "lidar3d",
     label: "3D LiDAR",
-    addLabel: "Add LiDAR",
     idPrefix: "lidar",
     accentClass: "text-sky-300",
     color: 0x38bdf8,
@@ -526,7 +524,6 @@ registerSensorType({
 registerSensorType({
     id: "imu",
     label: "IMU",
-    addLabel: "Add IMU",
     idPrefix: "imu",
     accentClass: "text-violet-300",
     color: 0xa78bfa,
@@ -570,7 +567,6 @@ registerSensorType({
 registerSensorType({
     id: "gnss",
     label: "GNSS",
-    addLabel: "Add GNSS",
     idPrefix: "gnss",
     accentClass: "text-emerald-300",
     color: 0x34d399,
@@ -621,7 +617,6 @@ registerSensorType({
 registerSensorType({
     id: "wheel-odometry",
     label: "Wheel odometry",
-    addLabel: "Add wheel odometry",
     idPrefix: "wheel",
     accentClass: "text-orange-300",
     color: 0xfb923c,

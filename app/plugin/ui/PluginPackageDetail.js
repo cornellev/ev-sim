@@ -1,4 +1,4 @@
-import { AsyncState } from "../../ui";
+import { AsyncState, Button } from "../../ui";
 import styles from "./PluginsPage.module.css";
 
 function Field({ label, value }) {
@@ -19,7 +19,23 @@ function Block({ title, children }) {
     );
 }
 
-export function PluginPackageDetail({ entry, document, status, error, onRetry }) {
+function installLabel(installState) {
+    if (installState === "installed") return "Installed";
+    if (installState === "detected") return "Not installed";
+    return null;
+}
+
+export function PluginPackageDetail({
+    entry,
+    document,
+    status,
+    error,
+    onRetry,
+    installState = "unavailable",
+    installing = false,
+    installError = null,
+    onInstall,
+}) {
     if (status === "loading") {
         return <div className={styles.centerState}><AsyncState title="Loading plugin" /></div>;
     }
@@ -47,6 +63,13 @@ export function PluginPackageDetail({ entry, document, status, error, onRetry })
             <header className={styles.detailHeader}>
                 <h1>{document.id}</h1>
                 <p>{document.version}</p>
+                {installLabel(installState) ? <p className={styles.packageStatus}>{installLabel(installState)}</p> : null}
+                {installState === "detected" ? (
+                    <div className={styles.detailActions}>
+                        <Button size="compact" loading={installing} onClick={onInstall}>Install</Button>
+                    </div>
+                ) : null}
+                {installError ? <p className={styles.installError}>{installError}</p> : null}
             </header>
             <dl className={styles.meta}>
                 <Field label="Engine" value={document.engines?.cevSim || "Unknown"} />

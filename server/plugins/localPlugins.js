@@ -2,6 +2,8 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { PLUGIN_ERROR_CODES, pluginError } from "../../app/plugin/PluginErrors.js";
+
 const LOCAL_PLUGINS_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "plugins");
 
 export function localPluginsRoot() {
@@ -81,4 +83,55 @@ export async function listLocalPlugins(root = LOCAL_PLUGINS_ROOT) {
         || left.version.localeCompare(right.version)
         || left.directory.localeCompare(right.directory));
     return rows;
+}
+
+function localPluginDirectoryKey(directory) {
+    if (typeof directory !== "string") {
+        throw pluginError(PLUGIN_ERROR_CODES.INTEGRITY, "Plugin directory must be a relative path under plugins/.");
+    }
+    const value = directory.trim();
+    if (!value || path.isAbsolute(value)) {
+        throw pluginError(PLUGIN_ERROR_CODES.INTEGRITY, "Plugin directory must be a relative path under plugins/.");
+    }
+    const segments = value.split(/[\\/]+/);
+    if (segments.some((segment) => segment === "" || segment === "." || segment === "..")) {
+        throw pluginError(PLUGIN_ERROR_CODES.INTEGRITY, "Plugin directory must stay inside plugins/.");
+    }
+    return segments.join("/");
+}
+
+/**
+ * Resolve a detected package directory. `directory` is the relative key from
+ * `listLocalPlugins` (`acme.controls` or `helios32/package`).
+ *
+ * @param {string} directory
+ * @param {string} [root]
+ */
+export function resolveLocalPluginDirectory(directory, root = LOCAL_PLUGINS_ROOT) {
+    const key = localPluginDirectoryKey(directory);
+    const resolved = path.resolve(root, key);
+    const relative = path.relative(root, resolved);
+    if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
+        throw pluginError(PLUGIN_ERROR_CODES.INTEGRITY, "Plugin directory must stay inside plugins/.");
+    }
+    return resolved;
+}
+
+/**
+ * Pack a detected package into the caller's plugin library. The library write
+ * stays on `storage` (the server data directory). This does not modify `plugins/`.
+ *
+ * @param {{ installPluginFromDirectory: (directory: string) => Promise<unknown> }} storage
+ * @param {string} directory
+ * @param {string} [root]
+ */
+export async function installDetectedPlugin(storage, directory, root = LOCAL_PLUGINS_ROOT) {
+    const resolved = resolveLocalPluginDirectory(directory, root);
+    const key = path.relative(root, resolved).split(path.sep).join("/");
+    const rows = await listLocalPlugins(root);
+    const match = rows.find((row) => row.directory === key && row.document && !row.error);
+    if (!match) {
+        throw pluginError(PLUGIN_ERROR_CODES.DOCUMENT_INVALID, "That folder is not a detected plugin package.");
+    }
+    return storage.installPluginFromDirectory(resolved);
 }

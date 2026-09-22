@@ -2,23 +2,25 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { listLocalPlugins } from "../PluginClient.js";
+import { listLocalPlugins, listPluginLibrary } from "../PluginClient.js";
 
 export function usePluginLibrary() {
     const [state, setState] = useState({
         status: "loading",
         packages: [],
+        installed: [],
         error: null,
     });
     const mountedRef = useRef(true);
     const hasReadyRef = useRef(false);
 
-    const refresh = useCallback(() => listLocalPlugins().then((payload) => {
+    const refresh = useCallback(() => Promise.all([listLocalPlugins(), listPluginLibrary()]).then(([local, library]) => {
         if (!mountedRef.current) return;
         hasReadyRef.current = true;
         setState({
             status: "ready",
-            packages: Array.isArray(payload?.packages) ? payload.packages : [],
+            packages: Array.isArray(local?.packages) ? local.packages : [],
+            installed: Array.isArray(library?.packages) ? library.packages : [],
             error: null,
         });
     }).catch((caught) => {
@@ -27,6 +29,7 @@ export function usePluginLibrary() {
         setState((current) => ({
             status: "error",
             packages: hasReadyRef.current ? current.packages : [],
+            installed: hasReadyRef.current ? current.installed : [],
             error: message,
         }));
     }), []);

@@ -7,7 +7,18 @@ import { pluginFixtureFiles } from "../helpers/pluginFixtures.js";
 
 const destination = path.resolve("plugins/acme.controls");
 
-test.beforeAll(async () => {
+async function removeFixturePackage(request) {
+    const library = await request.get("/api/storage/plugins/library");
+    const payload = await library.json();
+    for (const entry of payload?.packages ?? []) {
+        if (entry.pluginId !== "acme.controls" || entry.version !== "1.0.0") continue;
+        await request.post("/api/storage/plugins/remove", {
+            data: { pluginId: entry.pluginId, packageHash: entry.packageHash },
+        });
+    }
+}
+
+test.beforeAll(async ({ request }) => {
     const files = await pluginFixtureFiles("acme.controls");
     await fs.rm(destination, { recursive: true, force: true });
     for (const [relative, bytes] of Object.entries(files)) {
@@ -15,10 +26,12 @@ test.beforeAll(async () => {
         await fs.mkdir(path.dirname(target), { recursive: true });
         await fs.writeFile(target, bytes);
     }
+    await removeFixturePackage(request);
 });
 
-test.afterAll(async () => {
+test.afterAll(async ({ request }) => {
     await fs.rm(destination, { recursive: true, force: true });
+    await removeFixturePackage(request);
 });
 
 test("plugins pane lists a local package and its details", async ({ page }) => {
@@ -43,5 +56,9 @@ test("plugins pane lists a local package and its details", async ({ page }) => {
     await expect(detail.getByText("1.0.0")).toBeVisible();
     await expect(detail.getByText("controls.reference")).toBeVisible();
     await expect(detail.getByText("acme.controls.Driver")).toBeVisible();
+    await expect(detail.getByText("Not installed")).toBeVisible();
+    await detail.getByRole("button", { name: "Install" }).click();
+    await expect(detail.getByText("Installed")).toBeVisible();
+    await expect(detail.getByRole("button", { name: "Install" })).toHaveCount(0);
     await expect(dialog).toBeVisible();
 });

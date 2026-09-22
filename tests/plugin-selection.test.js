@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { selectLocalPackage, selectPackageHash } from "../app/plugin/ui/pluginSelection.js";
+import { localPackageInstallState, selectLocalPackage, selectPackageHash } from "../app/plugin/ui/pluginSelection.js";
 
 const first = { pluginId: "acme.controls", version: "1.0.0", packageHash: "a".repeat(64) };
 const second = { pluginId: "acme.controls", version: "2.0.0", packageHash: "b".repeat(64) };
@@ -28,6 +28,17 @@ test("selectLocalPackage keeps the current directory and otherwise uses the firs
     assert.equal(selectLocalPackage(packages, "helios32/package"), "helios32/package");
     assert.equal(selectLocalPackage(packages, "missing"), "acme.controls");
     assert.equal(selectLocalPackage([], "helios32/package"), null);
+});
+
+test("localPackageInstallState matches plugin id and version", () => {
+    const detected = { id: "acme.controls", version: "1.0.0", document: { id: "acme.controls", version: "1.0.0" } };
+    const otherVersion = { pluginId: "acme.controls", version: "2.0.0" };
+    const same = { pluginId: "acme.controls", version: "1.0.0" };
+    assert.equal(localPackageInstallState(detected, []), "detected");
+    assert.equal(localPackageInstallState(detected, [otherVersion]), "detected");
+    assert.equal(localPackageInstallState(detected, [same]), "installed");
+    assert.equal(localPackageInstallState({ id: "broken", error: "plugin.json is not valid JSON.", document: null }, [same]), "unavailable");
+    assert.equal(localPackageInstallState(null, [same]), "unavailable");
 });
 
 test("selectPackageHash distinguishes versions of the same plugin id", () => {

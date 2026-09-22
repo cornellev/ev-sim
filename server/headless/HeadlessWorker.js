@@ -9,6 +9,7 @@ import { validateSharedTensorReference } from "./SharedTensorArena.js";
 import { verifyRunBundleBytes } from "./RunBundle.js";
 import { NodePluginModuleSource } from "../plugins/NodePluginModuleSource.js";
 import { HostPacketTransportHub } from "../sensor-transports/HostPacketTransportHub.js";
+import { reviveUdpError } from "../sensor-transports/UdpTransportErrors.js";
 import { WorkerPacketTransportSink } from "./WorkerPacketTransportSink.js";
 
 let session = null;
@@ -216,10 +217,8 @@ process.on("message", async (message) => {
         const pending = packetRequests.get(message.requestId);
         if (!pending) return;
         packetRequests.delete(message.requestId);
-        if (message.error) {
-            const error = Object.assign(new Error(message.error.message), message.error);
-            pending.reject(error);
-        } else pending.resolve(message.result);
+        if (message.error) pending.reject(reviveUdpError(message.error));
+        else pending.resolve(message.result);
         return;
     }
     if (!message || message.kind !== "cev-sim.worker-request" || !Number.isSafeInteger(message.requestId)) return;

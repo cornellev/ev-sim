@@ -487,4 +487,23 @@ export function pluginSensorCatalogEntryForType(catalog, type) {
     return (catalog?.sensors ?? []).find((entry) => entry.type === type) || null;
 }
 
+export function sensorCatalogEntries(catalog, registry = sensorTypeRegistry) {
+    if (catalog?.sensors?.length) return catalog.sensors;
+    return registry.list().map((definition) => ({
+        type: definition.id,
+        label: definition.label,
+        ownership: "builtin",
+    }));
+}
+
+export function sensorCatalogEntryKey(entry) {
+    const owner = entry?.ownership;
+    const hash = owner && owner !== "builtin" ? owner.packageHash : "builtin";
+    return `${entry?.type ?? ""}:${hash || "builtin"}`;
+}
+
+export function sensorCatalogEntryLabel(entry) {
+    return entry?.label || entry?.type || "";
+}
+
 export { describePluginSensorObservation };

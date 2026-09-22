@@ -1,7 +1,6 @@
 import { fork } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-import { supervisorError } from "../headless/HeadlessProtocol.js";
 import { reviveUdpError, udpTransportError } from "./UdpTransportErrors.js";
 
 const SIDECAR_PATH = fileURLToPath(new URL("./UdpTransportSidecar.js", import.meta.url));
@@ -150,12 +149,12 @@ export class UdpTransportSidecarOwner {
                 const accepted = this.child.send(request, (error) => {
                     if (error) fail(crashed(`UDP sidecar dispatch failed: ${error.message}`, { operation: command }));
                 });
-                if (!accepted) {
-                    fail(supervisorError("RESOURCE_LIMIT", `UDP sidecar IPC backpressure made ${command} dispatch uncertain.`, {
-                        component: "udp-sidecar",
-                        operation: command,
-                        requiresReset: true,
-                    }));
+                // Node's IPC writable high-water mark is 16 KiB. A Helios scan
+                // is one submit-batch well above that, so send() returns false
+                // while the message remains queued. The callback reports a real
+                // write failure; the sidecar response resolves this request.
+                if (!accepted && !this.child.connected) {
+                    fail(crashed("UDP sidecar is unavailable.", { operation: command }));
                 }
             } catch (error) {
                 fail(crashed(`UDP sidecar dispatch failed: ${error.message}`, { operation: command }));

@@ -257,6 +257,15 @@ Internal worker-to-sidecar batches carry `environmentKey`, `generation`,
 `[{productId, streamId, packetIndex, offsetNs, payload, payloadDigest}]`.
 The sidecar recomputes payload digests before sending.
 
+One `submit-batch` may exceed Node's 16 KiB IPC writable high-water mark. A
+600 RPM Helios scan is 150 payloads of 1248 bytes, about 187 KiB, before
+serialization overhead. `UdpTransportSidecarOwner.dispatch` treats
+`child.send()` returning false on a still-connected channel as flow control:
+the message stays queued, and the pending request resolves from the sidecar
+response. The send callback, IPC disconnect, and sidecar exit remain the
+failure signals. This is the Node IPC pipe, not the UDP socket buffer, and it
+does not change `maxQueueBytesPerEnvironment`.
+
 Failure mapping:
 
 - missing adapter or endpoint, direct/browser UDP, bind permission, or

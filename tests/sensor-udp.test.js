@@ -882,6 +882,76 @@ test("PCAP-only evidence omits the udp section", async (t) => {
     assert.equal(Object.hasOwn(written, "udp"), false);
 });
 
+test("sidecar owner delivers a Helios-sized scan above the IPC high-water mark", async (t) => {
+    const data = await listenUdp(t);
+    data.socket.setRecvBufferSize(1024 * 1024);
+    const src = await sourcePort(t);
+    const owner = new UdpTransportSidecarOwner({ shutdownGraceMs: 500, killGraceMs: 500 });
+    t.after(() => owner.close());
+    const host = resolveSensorTransportHostConfig(fixtureUdpHostConfig({
+        udp: {
+            maxQueueBytesPerEnvironment: 16_777_216,
+            endpoints: [{
+                id: "helios-data",
+                mtu: 1500,
+                source: { address: "127.0.0.1", port: src },
+                destination: { address: "127.0.0.1", port: data.port },
+                pacing: { mode: "burst" },
+            }],
+        },
+    }));
+    const packetCount = 150;
+    const packetBytes = 1248;
+    await owner.prepareEnvironment({
+        environmentKey: "helios-scan",
+        endpoints: host.udp.endpoints,
+        bindings: [{
+            sensorId: "helios32",
+            productId: "packets",
+            streamId: "msop",
+            adapter: "udp",
+            endpointId: "helios-data",
+        }],
+        maxQueueBytes: 16_777_216,
+        stepNs: 10_000_000,
+    });
+    await owner.beginGeneration({ environmentKey: "helios-scan", generation: 1 });
+    const packets = Array.from({ length: packetCount }, (_, packetIndex) => {
+        const payload = new Uint8Array(packetBytes);
+        payload[0] = packetIndex & 0xff;
+        payload[1] = (packetIndex >> 8) & 0xff;
+        return {
+            productId: "packets",
+            streamId: "msop",
+            packetIndex,
+            offsetNs: packetIndex,
+            payload,
+        };
+    });
+    const result = await owner.submitBatch({
+        environmentKey: "helios-scan",
+        generation: 1,
+        sensorId: "helios32",
+        sampleIndex: 0,
+        actualDeliveryStep: 1,
+        captureTimeNs: 1,
+        scheduledDeliveryTimeNs: 1,
+        deliveryTimeNs: 1,
+        packets,
+    });
+    assert.equal(result.accepted, packetCount);
+    assert.equal(result.payloadBytes, packetCount * packetBytes);
+    await waitFor(() => data.received.length === packetCount);
+    const byIndex = new Map(data.received.map((payload) => [payload[0] | (payload[1] << 8), payload]));
+    assert.equal(byIndex.size, packetCount);
+    for (let index = 0; index < packetCount; index += 1) {
+        const payload = byIndex.get(index);
+        assert.equal(payload?.byteLength, packetBytes);
+        assert.equal(payload[0], index & 0xff);
+        assert.equal(payload[1], (index >> 8) & 0xff);
+    }
+});
+
 test("sidecar owner close does not leave an orphan child", async () => {
     const owner = new UdpTransportSidecarOwner({ shutdownGraceMs: 500, killGraceMs: 500 });
     await owner.ensureStarted();

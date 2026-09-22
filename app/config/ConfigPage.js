@@ -19,7 +19,6 @@ import {
     createRunSensor,
     getSensorFieldValue,
     getSensorType,
-    listSensorTypes,
     ORACLE_PRODUCT_TOGGLES,
     sensorTypeRegistry,
 } from "../3d/devices/SensorTypeRegistry.js";
@@ -59,8 +58,10 @@ import { BrowserSensorAuthoringSession } from "../plugin/browser/BrowserSensorAu
 import PluginSensorAuthoringPanel from "../plugin/browser/PluginSensorAuthoringPanel.js";
 import {
     pluginSensorCatalogEntryForType,
+    sensorCatalogEntries,
     stampManifestPluginSelectionForSensor,
 } from "../plugin/PluginSensorAuthoring.js";
+import SensorTypeAdder from "../ui/SensorTypeAdder.js";
 import { PLUGIN_SENSOR_RANGE_IMAGE_CAPABILITY } from "../plugin/PluginSensorContract.js";
 import {
     SENSOR_TRANSPORTS_KIND,
@@ -1292,14 +1293,7 @@ function Sensors({
     bumpRegistry = () => {},
 }) {
     const registry = session?.registry ?? sensorTypeRegistry;
-    const catalogEntries = catalog.sensors?.length
-        ? catalog.sensors
-        : listSensorTypes().map((definition) => ({
-            type: definition.id,
-            label: definition.label,
-            addLabel: definition.addLabel,
-            ownership: "builtin",
-        }));
+    const catalogEntries = sensorCatalogEntries(catalog, registry);
     const addEntry = async (entry) => {
         try {
             const next = structuredClone(draft);
@@ -1336,19 +1330,7 @@ function Sensors({
                     <Field label="Owning vehicle"><input value={draft.sensorRig.vehicleId || "ego"} onChange={(event) => update(["sensorRig", "vehicleId"], event.target.value)} /></Field>
                 </div>
             </AdvancedFields>
-            <div className="flex flex-wrap items-end justify-between gap-3">
-                <div className="flex flex-wrap gap-1.5">
-                    {catalogEntries.map((entry) => (
-                        <Action
-                            key={`${entry.type}:${entry.ownership?.packageHash || "builtin"}`}
-                            compact
-                            icon={<FaPlus />}
-                            label={entry.addLabel || `Add ${entry.label || entry.type}`}
-                            onClick={() => addEntry(entry)}
-                        />
-                    ))}
-                </div>
-            </div>
+            <SensorTypeAdder entries={catalogEntries} onAdd={addEntry} />
             {draft.sensorRig.sensors.map((sensor, index) => {
                 const sensorPath = ["sensorRig", "sensors", index];
                 const change = (parts, value) => update([...sensorPath, ...parts], value);
@@ -1380,7 +1362,7 @@ function Sensors({
                     }
                 };
                 return (
-                    <div key={`${sensor.id}-${index}`} className="rounded-[var(--radius)] border border-[var(--slate-border-60)] bg-[var(--slate-surface-1)] p-4">
+                    <div key={`sensor-${index}`} className="rounded-[var(--radius)] border border-[var(--slate-border-60)] bg-[var(--slate-surface-1)] p-4">
                         <div className="grid gap-3 md:grid-cols-4">
                             <Toggle label="Enabled" value={sensor.enabled} onChange={(value) => change(["enabled"], value)} />
                             <Field label="Stable ID">

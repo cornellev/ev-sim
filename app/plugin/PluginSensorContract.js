@@ -224,7 +224,6 @@ export function createPluginSensorTypeDefinition(descriptor, ownership) {
     return Object.freeze({
         id: descriptor.type,
         label: descriptor.type,
-        addLabel: `Add ${descriptor.type}`,
         idPrefix: descriptor.type.split(".").at(-1) || "sensor",
         pluginSensor: Object.freeze({ descriptor, ownership: Object.freeze({ ...ownership }) }),
         run: Object.freeze({

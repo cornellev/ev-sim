@@ -679,6 +679,15 @@ change the outstanding PR-12 hosted, soak, NVIDIA x64, or Jetson ARM64 gates.
 
 ## Decision log
 
+- **2026-09-21 — Helios scan IPC flow control.** A full Helios `submit-batch`
+  exceeds Node's 16 KiB IPC high-water mark, so `child.send()` returns false
+  while the message remains queued. `UdpTransportSidecarOwner.dispatch` now
+  waits for the sidecar response instead of failing that connected send.
+  Packet responses are revived with their sidecar code, so queue overflow and
+  lateness stay `RESOURCE_LIMIT`. Protocol 1.4, `headless.proto`, semantic
+  hashes, and the PLG-06b acceptance gates are unchanged. Prior UDP tests used
+  tiny payloads and did not cross the mark.
+
 - **2026-09-21 — PLG-06b acceptance completed.** Supervisor-owned live IPv4
   unicast UDP passed focused transport, lifecycle, Python/Config admission,
   characterization, lint, full Node, soak, production-build, and

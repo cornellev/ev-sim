@@ -9,6 +9,12 @@ import { openWorkspace } from "./openWorkspace.js";
 const storageRoot = path.resolve(process.env.CEV_SIM_DATA_DIR ?? ".playwright-data/storage");
 const SENSOR_TYPE = "test.range-image-fixture.synthetic-3x4";
 
+async function addCatalogSensor(page, type) {
+    const panel = page.getByRole("tabpanel", { name: "Sensors" });
+    await panel.getByRole("combobox", { name: "Sensor type" }).selectOption({ label: type });
+    await panel.getByRole("button", { name: "Add sensor" }).click();
+}
+
 async function waitForSensorType(request, type) {
     await expect.poll(async () => {
         const response = await request.get("/api/storage/plugins/sensors");
@@ -66,7 +72,7 @@ test("Config creates, grants, edits, saves, and reloads a custom range-image sen
     await page.getByRole("tab", { name: "Overview" }).click();
     await page.getByRole("tabpanel", { name: "Overview" }).getByRole("textbox", { name: "Name" }).fill(runName);
     await page.getByRole("tab", { name: "Sensors" }).click();
-    await page.getByRole("button", { name: `Add ${SENSOR_TYPE}` }).click();
+    await addCatalogSensor(page, SENSOR_TYPE);
     await expect(page.getByText("Measured observation").first()).toBeVisible();
     await expect(page.getByText("CPU LiDAR backend v2 required").first()).toBeVisible();
     const scale = page.getByLabel("measurementScale").first();
@@ -100,7 +106,7 @@ test("Config adds, saves, reloads, and removes UDP bindings", async ({ page, req
     await page.getByRole("tab", { name: "Overview" }).click();
     await page.getByRole("tabpanel", { name: "Overview" }).getByRole("textbox", { name: "Name" }).fill(runName);
     await page.getByRole("tab", { name: "Sensors" }).click();
-    await page.getByRole("button", { name: `Add ${SENSOR_TYPE}` }).click();
+    await addCatalogSensor(page, SENSOR_TYPE);
     await expect(page.getByText("Vendor packet streams")).toBeVisible();
     await page.getByRole("button", { name: /Add UDP binding for data/ }).click();
     const endpoint = page.getByRole("textbox", { name: "Endpoint ID" }).last();
@@ -130,7 +136,7 @@ test("Vehicle editor adds a custom sensor preview and round-trips export/import"
     await openWorkspace(page, "Vehicle editor");
     await page.getByRole("button", { name: "New" }).first().click();
     await page.getByRole("tab", { name: "Sensors" }).click();
-    await page.getByRole("button", { name: `Add ${SENSOR_TYPE}` }).click();
+    await addCatalogSensor(page, SENSOR_TYPE);
     await expect(page.getByText(/plugin test\.range-image-fixture@/)).toBeVisible();
     const scale = page.getByLabel("measurementScale").first();
     await expect(scale).toBeVisible();
@@ -152,7 +158,7 @@ test("throwing custom sensor view falls back without changing configuration", as
     await openWorkspace(page, "Run configuration");
     await page.getByRole("button", { name: "New" }).first().click();
     await page.getByRole("tab", { name: "Sensors" }).click();
-    await page.getByRole("button", { name: "Add test.range-image-throwing.synthetic-3x4" }).click();
+    await addCatalogSensor(page, "test.range-image-throwing.synthetic-3x4");
     await expect(page.getByLabel("Scan layout JSON")).toBeVisible();
     const scale = page.getByLabel("measurementScale").first();
     await expect(scale).toBeVisible();
