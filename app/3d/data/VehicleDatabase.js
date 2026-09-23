@@ -1,123 +1,9 @@
 import { Vehicle } from "../vehicles/Vehicle";
 import { Database } from "./Database";
 import { isBuiltInVehicleType, matchesVehicleType } from "../../vehicles/vehicleTypeResolution.js";
-import { vehicleAssetUrl } from "../../vehicles/VehicleManifest.js";
 import { bindRoadGroundSampler } from "../../simulation/vehicles/roadGroundSampler.js";
 import { syncVehicleFromPlant } from "../vehicles/VehiclePlantAdapter.js";
 import { createBrowserVehicle } from "../vehicles/createBrowserVehicle.js";
-
-const ASSET_MIME_TYPES = Object.freeze({
-    bin: "application/octet-stream",
-    glb: "model/gltf-binary",
-    gltf: "model/gltf+json",
-    jpeg: "image/jpeg",
-    jpg: "image/jpeg",
-    json: "application/json",
-    png: "image/png",
-    webp: "image/webp",
-});
-
-function assetMimeType(fileName) {
-    const extension = String(fileName).split(".").pop()?.toLowerCase();
-    return ASSET_MIME_TYPES[extension] || "application/octet-stream";
-}
-
-function bytesToBase64(bytes) {
-    let binary = "";
-    const chunkSize = 0x8000;
-    for (let offset = 0; offset < bytes.length; offset += chunkSize) {
-        binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
-    }
-    return btoa(binary);
-}
-
-function bytesToDataUrl(bytes, mimeType) {
-    return `data:${mimeType};base64,${bytesToBase64(bytes)}`;
-}
-
-async function sha256Hex(bytes) {
-    if (!globalThis.crypto?.subtle) {
-        throw new Error("This browser cannot verify frozen vehicle assets because Web Crypto is unavailable.");
-    }
-    const digest = new Uint8Array(await globalThis.crypto.subtle.digest("SHA-256", bytes));
-    return [...digest].map((value) => value.toString(16).padStart(2, "0")).join("");
-}
-
-function resolvedAssetKey(uri) {
-    const value = String(uri ?? "").trim();
-    if (!value || /^(?:data:|blob:|https?:)/i.test(value)) return null;
-    const pathname = decodeURIComponent(value.split(/[?#]/, 1)[0]);
-    return pathname.startsWith("/") ? pathname : pathname.replace(/^\.\//, "");
-}
-
-function freezeGltfDocument(bytes, assetDataUrls, modelAsset) {
-    let document;
-    try {
-        document = JSON.parse(new TextDecoder().decode(bytes));
-    } catch (error) {
-        throw new Error(`Vehicle model asset "${modelAsset}" is not valid glTF JSON: ${error.message}`);
-    }
-    for (const collection of [document.buffers, document.images]) {
-        for (const entry of Array.isArray(collection) ? collection : []) {
-            const assetKey = resolvedAssetKey(entry?.uri);
-            if (!assetKey) continue;
-            const frozenUrl = assetDataUrls.get(assetKey);
-            if (!frozenUrl) {
-                throw new Error(`Vehicle model asset "${modelAsset}" references missing asset "${assetKey}".`);
-            }
-            entry.uri = frozenUrl;
-        }
-    }
-    return new TextEncoder().encode(JSON.stringify(document));
-}
-
-/**
- * Verify every resolved asset and replace a stored glTF/GLB model with an
- * in-memory data URL. The model therefore executes the exact bytes included in
- * the resolved dependency hash even if the saved vehicle changes mid-run.
- */
-async function materializeResolvedVehicleManifest(dependency) {
-    const manifest = structuredClone(dependency.manifest);
-    const expectedHashes = dependency.assetHashes || {};
-    if (Object.keys(expectedHashes).length === 0) return manifest;
-
-    const bytesByName = new Map();
-    const dataUrls = new Map();
-    for (const [fileName, expectedHash] of Object.entries(expectedHashes).sort(([left], [right]) => left.localeCompare(right))) {
-        const assetUrl = fileName.startsWith("/") ? fileName : vehicleAssetUrl(dependency.vehicleId, fileName);
-        const response = await fetch(assetUrl, { cache: "no-store" });
-        if (!response.ok) {
-            throw new Error(`Could not load frozen vehicle asset "${dependency.vehicleId}/${fileName}" (${response.status}).`);
-        }
-        const bytes = new Uint8Array(await response.arrayBuffer());
-        const actualHash = await sha256Hex(bytes);
-        if (actualHash !== expectedHash) {
-            throw new Error(`Vehicle asset "${dependency.vehicleId}/${fileName}" changed after resolution; resolve the run again.`);
-        }
-        bytesByName.set(fileName, bytes);
-        dataUrls.set(fileName, bytesToDataUrl(bytes, assetMimeType(fileName)));
-    }
-
-    const modelAsset = resolvedAssetKey(manifest.model?.asset);
-    if (!modelAsset) return manifest;
-    if (modelAsset.startsWith("/")) {
-        const modelDirectory = modelAsset.slice(0, modelAsset.lastIndexOf("/") + 1);
-        for (const [assetKey, dataUrl] of [...dataUrls]) {
-            if (assetKey.startsWith(modelDirectory)) {
-                dataUrls.set(assetKey.slice(modelDirectory.length), dataUrl);
-            }
-        }
-    }
-    let modelBytes = bytesByName.get(modelAsset);
-    if (!modelBytes) {
-        throw new Error(`Resolved vehicle "${dependency.vehicleId}" is missing model asset "${modelAsset}".`);
-    }
-    if (modelAsset.toLowerCase().endsWith(".gltf")) {
-        modelBytes = freezeGltfDocument(modelBytes, dataUrls, modelAsset);
-    }
-    manifest.model.asset = bytesToDataUrl(modelBytes, assetMimeType(modelAsset));
-    return manifest;
-}
 
 export class VehicleDatabase extends Database {
     constructor(parent) {
@@ -180,10 +66,7 @@ export class VehicleDatabase extends Database {
             if (vehicle) continue;
             const position = entry.pose?.position || { x: 0, y: 0, z: 0 };
             const rotation = entry.pose?.rotation || { x: 0, y: 0, z: 0, order: "XYZ" };
-            const frozenManifest = dependency?.manifest
-                ? await materializeResolvedVehicleManifest(dependency)
-                : null;
-            const manifest = frozenManifest
+            const manifest = dependency?.manifest
                 ?? (entry.type && !isBuiltInVehicleType(entry.type)
                     ? await this._loadVehicleManifest(entry.type)
                     : null);

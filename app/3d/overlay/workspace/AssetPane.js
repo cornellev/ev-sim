@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { IconFolder, IconFolderPlus, IconList, IconPhoto, IconSearch, IconSquares, IconTrafficCone, IconUpload } from "@tabler/icons-react";
+import { IconFolder, IconFolderPlus, IconPhoto, IconTrafficCone } from "@tabler/icons-react";
 import { EDITOR_MODES, EDITOR_TOOLS, MAP_TOOLS } from "../../editor/EditorState";
 import {
     CATALOG_GRID_GAP,
@@ -12,6 +12,8 @@ import {
 import { PLACEMENT_CATALOG } from "../../editor/placement/PlacementCatalog";
 import { cn } from "../ui/cn";
 import { ContextMenuSurface } from "../ui/ContextMenuSurface.js";
+import { AssetCatalogBar } from "./AssetCatalogBar.js";
+import { resolveImportSource } from "./assetCatalogBarState.js";
 import {
     CATALOG_DRAG_MIME,
     PLACEMENT_DRAG_MIME,
@@ -88,11 +90,7 @@ export function AssetPane({ data }) {
             ]);
             setCatalog(nextCatalog);
             setCapabilities(nextCapabilities);
-            setSourceId((current) => {
-                const ids = nextCapabilities.sources?.map((source) => source.id) ?? [];
-                if (current && ids.includes(current)) return current;
-                return ids[0] ?? "";
-            });
+            setSourceId((current) => resolveImportSource(nextCapabilities.sources, current));
         } catch (error) {
             setMessage(error.message);
         }
@@ -110,7 +108,6 @@ export function AssetPane({ data }) {
         return PLACEMENT_CATALOG.filter((asset) => !needle || `${asset.label} ${asset.id}`.toLowerCase().includes(needle));
     }, [query]);
     const models = catalog.assets.filter((asset) => (showArchived || !asset.archived) && (folder === "all" || asset.folderId === (folder === "root" ? null : folder)));
-    const selectedFolder = catalog.folders.find((entry) => entry.id === folder) ?? null;
     const catalogRows = useMemo(() => {
         const visibleBuiltins = kind !== "models" && (folder === "all" || folder === "built-ins") ? builtins : [];
         const visibleModels = kind !== "builtins" && folder !== "built-ins" ? models : [];
@@ -478,59 +475,52 @@ export function AssetPane({ data }) {
                 <button type="button" disabled={busy} onClick={createFolder} className="mt-1 flex h-8 items-center gap-2 px-2 text-left text-[12px] text-[var(--slate-muted)] hover:text-[var(--slate-fg)]"><IconFolderPlus size={14} />New folder</button>
             </nav>
             <div className="flex min-w-0 flex-1 flex-col">
-                <div data-editor-chrome className="pointer-events-auto flex min-h-10 shrink-0 flex-wrap items-center gap-1.5 border-b border-[var(--slate-border-60)] px-3 py-1.5">
-                    <span aria-label="Asset breadcrumb" className="max-w-28 truncate text-xs text-zinc-400">Assets / {selectedFolder?.name ?? (folder === "built-ins" ? "Built-ins" : folder === "root" ? "Unfiled" : "All")}</span>
-                    <label className="flex h-7 min-w-40 flex-1 items-center gap-1.5 rounded border border-[var(--slate-border-70)] px-2"><IconSearch size={13} /><input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search names or tags" aria-label="Search assets" className="min-w-0 flex-1 bg-transparent text-[12px] outline-none" /></label>
-                    <select aria-label="Asset kind" value={kind} onChange={(event) => setKind(event.target.value)} className="h-7 rounded bg-[var(--slate-surface-2)] px-1 text-xs"><option value="all">All kinds</option><option value="builtins">Built-ins</option><option value="models">Models</option></select>
-                    <select aria-label="Sort assets" value={sort} onChange={(event) => setSort(event.target.value)} className="h-7 rounded bg-[var(--slate-surface-2)] px-1 text-xs"><option value="name">Name</option><option value="updated">Updated</option></select>
-                    <label className="flex items-center gap-1 text-xs"><input type="checkbox" checked={showArchived} onChange={(event) => setShowArchived(event.target.checked)} />Archived</label>
-                    <button type="button" aria-label="Grid view" aria-pressed={view === "grid"} onClick={() => setView("grid")}><IconSquares size={16} /></button>
-                    <button type="button" aria-label="List view" aria-pressed={view === "list"} onClick={() => setView("list")}><IconList size={16} /></button>
-                    {uploadSources.length > 0
-                        ? <select aria-label="Import source" value={sourceId} onChange={(event) => setSourceId(event.target.value)} className="h-7 max-w-32 rounded bg-[var(--slate-surface-2)] px-1 text-xs">{uploadSources.map((source) => <option key={source.id} value={source.id}>{source.label}</option>)}</select>
-                        : <span className="text-xs text-zinc-500">No upload source</span>}
-                    <label
-                        htmlFor={canImport ? importInputId : undefined}
-                        data-editor-asset-import
-                        aria-disabled={!canImport || undefined}
-                        aria-describedby={statusText ? importHintId : undefined}
-                        title={importTitle}
-                        className={cn(
-                            "flex h-7 items-center gap-1 rounded px-2 text-xs",
-                            canImport ? "cursor-pointer hover:bg-[var(--slate-surface-hover)]" : "cursor-not-allowed opacity-45",
-                        )}
-                        onClick={() => {
-                            if (!canImport) {
-                                setMessage(importReason);
-                                return;
-                            }
-                            if (fileInputRef.current) fileInputRef.current.dataset.reimport = "";
-                        }}
-                    >
-                        <IconUpload size={14} aria-hidden="true" />
-                        Import
-                    </label>
-                    <input
-                        id={importInputId}
-                        ref={fileInputRef}
-                        type="file"
-                        multiple
-                        accept=".gltf,.glb,.bin,image/*,.ktx2"
-                        aria-label="Import"
-                        tabIndex={canImport ? undefined : -1}
-                        className="sr-only"
-                        onChange={(event) => {
-                            if (!canImport) {
-                                event.currentTarget.value = "";
-                                return;
-                            }
-                            const targetId = event.currentTarget.dataset.reimport;
-                            const target = catalog.assets.find((asset) => asset.id === targetId) ?? null;
-                            void beginFiles(event.currentTarget.files, target);
+                <AssetCatalogBar
+                    query={query}
+                    onQueryChange={setQuery}
+                    kind={kind}
+                    onKindChange={setKind}
+                    sort={sort}
+                    onSortChange={setSort}
+                    view={view}
+                    onViewChange={setView}
+                    showArchived={showArchived}
+                    onShowArchivedChange={setShowArchived}
+                    sources={uploadSources}
+                    sourceId={sourceId}
+                    onSourceIdChange={setSourceId}
+                    canImport={canImport}
+                    importTitle={importTitle}
+                    importDescribedBy={statusText ? importHintId : undefined}
+                    importInputId={importInputId}
+                    onImportClick={() => {
+                        if (!canImport) {
+                            setMessage(importReason);
+                            return;
+                        }
+                        if (fileInputRef.current) fileInputRef.current.dataset.reimport = "";
+                    }}
+                />
+                <input
+                    id={importInputId}
+                    ref={fileInputRef}
+                    type="file"
+                    multiple
+                    accept=".gltf,.glb,.bin,image/*,.ktx2"
+                    aria-label="Import"
+                    tabIndex={canImport ? undefined : -1}
+                    className="sr-only"
+                    onChange={(event) => {
+                        if (!canImport) {
                             event.currentTarget.value = "";
-                        }}
-                    />
-                </div>
+                            return;
+                        }
+                        const targetId = event.currentTarget.dataset.reimport;
+                        const target = catalog.assets.find((asset) => asset.id === targetId) ?? null;
+                        void beginFiles(event.currentTarget.files, target);
+                        event.currentTarget.value = "";
+                    }}
+                />
                 {pendingImport && <div className="flex items-center gap-2 border-b border-amber-700/40 bg-amber-950/30 px-2 py-1 text-xs"><span>Entry model</span><select aria-label="Entry model" value={pendingImport.entryPath} onChange={(event) => setPendingImport((current) => ({ ...current, entryPath: event.target.value }))}><option value="">Choose…</option>{pendingImport.entries.map((entry) => <option key={entry} value={entry}>{entry}</option>)}</select><button type="button" disabled={busy || !pendingImport.entryPath} onClick={publishImport}>Publish</button><button type="button" onClick={() => setPendingImport(null)}>Cancel</button></div>}
                 {statusText && <p id={importHintId} role="status" className="border-b border-[var(--slate-border-60)] px-2 py-1 text-xs text-amber-300">{statusText}</p>}
                 <div

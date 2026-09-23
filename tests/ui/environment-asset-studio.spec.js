@@ -124,7 +124,9 @@ async function openEditor(page) {
 
 async function importModel(page, fixture) {
     const library = page.locator("[data-editor-asset-library]");
-    await expect(library.getByRole("combobox", { name: "Import source" })).toHaveValue("pw-editor-assets");
+    await expect(library.getByRole("combobox", { name: "Import source" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Upload grant" })).toHaveCount(0);
+    await expect(library.locator("[data-editor-asset-import]")).toHaveAttribute("data-import-source", "pw-editor-assets");
     const [chooser] = await Promise.all([
         page.waitForEvent("filechooser"),
         library.locator("[data-editor-asset-import]").click(),

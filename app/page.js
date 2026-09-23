@@ -34,7 +34,7 @@ import {
     useShortcut,
     useWorkspaceNavigation,
 } from './ui';
-
+import { usePerspectiveViewActive } from './3d/camera/perspectiveViewBridge';
 
 export default function Home() {
     return (
@@ -63,6 +63,7 @@ function HomeContent() {
     const [headlessPreselectedSuiteId, setHeadlessPreselectedSuiteId] = useState(null);
     const [configInitialManifestId, setConfigInitialManifestId] = useState(null);
     const [experimentNavigation, setExperimentNavigation] = useState(null);
+    const perspectiveActive = usePerspectiveViewActive();
 
     useEffect(() => {
         const query = window.matchMedia("(max-width: 767px)");
@@ -320,7 +321,7 @@ function HomeContent() {
                 />
             )
         }
-        {view === APP_VIEWS.THREE_D && (
+        {view === APP_VIEWS.THREE_D && !perspectiveActive && (
             <button
                 type="button"
                 className="sf-canvas-workspace-button"

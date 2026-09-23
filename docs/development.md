@@ -106,7 +106,7 @@ For environment editor or earth import changes, also verify:
 
 See [Earth Import](earth-import.md) for setup and troubleshooting.
 
-Editor **Import** (Assets pane) only lists sources that are `active` and grant `persistent-cache`, `machine-interpretation`, and `retention`. Copy an owned-lab grant into the registry path above, then restart the server. Built-in props still place without a grant.
+Editor **Import** (Assets pane) uses sources that are `active` and grant `persistent-cache`, `machine-interpretation`, and `retention`. A missing registry fails closed and the pane explains that. With one eligible grant, Import uses it and does not show the grant id. With two or more, **Upload grant** chooses which id is stamped on the import; that choice does not filter the catalog. Copy an owned-lab grant into the registry path above, then restart the server. Built-in props still place without a grant.
 
 ```json
 {

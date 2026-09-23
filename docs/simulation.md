@@ -52,7 +52,7 @@ Changing between these modes no longer reloads the world: both use the same sele
 - Module toggles for physics, vehicles, sensors, controls, rendering, environment, and scripting.
 - Per-frame `earthTilesManager.update()` while Google 3D Tiles are loaded in environment mode.
 
-The bottom simulation menu in `app/3d/overlay/SimulationMenu.js` exposes some of these controls.
+The bottom simulation menu in `app/3d/overlay/SimulationMenu.js` exposes some of these controls. Its camera button enters perspective view. That hides the hierarchy, sensor panel, controls HUD, run status, bottom menu, and the workspace switcher. The viewport then locks to the first enabled vehicle camera, preferring the run's target vehicle and otherwise `ego`. While that lock is held, the predicted driving path and the steering-prediction ribbons are hidden so they do not sit in the middle of the camera. With no vehicle camera, the chrome still hides and orbit stays available; the transport says so. A small playback bar (exit, pause, play) fades in while the pointer moves and hides after it rests, the same way a video player does. Escape or the transport's exit control leaves perspective and restores the previous orbit camera. The `f` key is still the chase camera behind the car.
 
 ## Vehicles And Sensors
 

@@ -16,6 +16,7 @@ import {
     IconDatabase as FaDatabase,
     IconStack2 as FaLayerGroup,
     IconCircle as FaCircle,
+    IconCamera as FaCamera,
 } from "@tabler/icons-react";
 import { FlyoutPanel } from "./ui/FlyoutPanel";
 import { MenuButton } from "./ui/MenuButton";
@@ -27,6 +28,7 @@ import { getRecordingController } from "../../logging/RecordingController";
 import { getRunSessionController } from "../../simulation/RunSessionController";
 import { SimulationRunStatus } from "./SimulationRunStatus";
 import { deriveSimulationStatus, formatSimulationTime } from "./simulationStatus";
+import { pauseSimulation, playSimulation } from "./runPlayback";
 
 const SIMULATION_MENU_CONTROL_LOCK = "simulation-menu";
 
@@ -282,7 +284,7 @@ export function SimulationMenu({
                             iconOnly
                             variant="primary"
                             active={simState?.status === "playing"}
-                            onClick={() => invokeRunControl(() => runController.play(), () => sim?.play())}
+                            onClick={() => playSimulation(data)}
                             title="Run simulation"
                             ariaLabel="Play"
                         >
@@ -291,7 +293,7 @@ export function SimulationMenu({
                         <MenuButton
                             iconOnly
                             active={simState?.status === "paused"}
-                            onClick={() => invokeRunControl(() => runController.pause(), () => sim?.pause())}
+                            onClick={() => pauseSimulation(data)}
                             title="Pause simulation"
                             ariaLabel="Pause"
                         >
@@ -372,6 +374,14 @@ export function SimulationMenu({
                             ariaLabel="Toggle vehicle hierarchy"
                         >
                             <FaLayerGroup className="h-3 w-3" />
+                        </MenuButton>
+                        <MenuButton
+                            iconOnly
+                            onClick={() => data?.simulation?.()?.perspectiveView?.enter()}
+                            title="Vehicle camera perspective"
+                            ariaLabel="Vehicle camera perspective"
+                        >
+                            <FaCamera className="h-3 w-3" />
                         </MenuButton>
                     </div>
 

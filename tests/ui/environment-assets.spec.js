@@ -80,7 +80,9 @@ async function expectImportHittable(page, locator) {
 
 async function importModel(page, reimportName = null) {
     const library = page.locator("[data-editor-asset-library]");
-    await expect(library.getByRole("combobox", { name: "Import source" })).toHaveValue("pw-editor-assets");
+    await expect(library.getByRole("combobox", { name: "Import source" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Upload grant" })).toHaveCount(0);
+    await expect(library.locator("[data-editor-asset-import]")).toHaveAttribute("data-import-source", "pw-editor-assets");
     let trigger;
     if (reimportName) {
         const item = library.locator("[data-asset-id]").filter({ hasText: reimportName });
@@ -242,7 +244,9 @@ test("ED-06 Import is hittable and opens the file chooser", async ({ page, reque
     await openEditor(page);
     const library = page.locator("[data-editor-asset-library]");
     const importControl = library.locator("[data-editor-asset-import]");
-    await expect(library.getByRole("combobox", { name: "Import source" })).toHaveValue("pw-editor-assets");
+    await expect(library.getByRole("combobox", { name: "Import source" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Upload grant" })).toHaveCount(0);
+    await expect(importControl).toHaveAttribute("data-import-source", "pw-editor-assets");
     await expectImportHittable(page, importControl);
     const [chooser] = await Promise.all([
         page.waitForEvent("filechooser"),
@@ -266,6 +270,7 @@ test("ED-06 Import explains a missing upload source without opening a chooser", 
     const importControl = library.locator("[data-editor-asset-import]");
     await expectImportHittable(page, importControl);
     await expect(library.getByRole("combobox", { name: "Import source" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Upload grant" })).toHaveCount(0);
     await expect(library.getByRole("status")).toContainText("No upload source is configured");
     const opened = page.waitForEvent("filechooser", { timeout: 1_000 }).then(() => true).catch(() => false);
     // aria-disabled keeps the control clickable in the browser; Playwright's
@@ -273,6 +278,36 @@ test("ED-06 Import explains a missing upload source without opening a chooser", 
     await importControl.click({ force: true });
     expect(await opened).toBeFalsy();
     await expect(library.getByRole("status")).toContainText("No upload source is configured");
+});
+
+test("ED-06 upload grant is a choice only when two sources are eligible", async ({ page, request }) => {
+    test.setTimeout(300_000);
+    await page.route("**/api/storage/editor-assets/capabilities**", async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+                assetStudio: true,
+                limits: {},
+                sources: [
+                    { id: "owned-lab", label: "Owned lab" },
+                    { id: "field-kit", label: "Field kit" },
+                ],
+            }),
+        });
+    });
+    await activateBlank(request, "ED-06 two sources");
+    await openEditor(page);
+    const importControl = page.locator("[data-editor-asset-library] [data-editor-asset-import]");
+    await expect(page.getByRole("combobox", { name: "Import source" })).toHaveCount(0);
+    await expect(importControl).toHaveAttribute("data-import-source", "owned-lab");
+    await page.getByRole("button", { name: "Upload grant" }).click();
+    const grants = page.getByRole("radiogroup", { name: "Upload grant" });
+    await expect(grants.getByRole("radio", { name: "Owned lab" })).toBeChecked();
+    await expect(page.getByText("Rights source stamped on this import. It does not filter the catalog.")).toBeVisible();
+    await grants.getByRole("radio", { name: "Field kit" }).click();
+    await expect(grants.getByRole("radio", { name: "Field kit" })).toBeChecked();
+    await expect(importControl).toHaveAttribute("data-import-source", "field-kit");
 });
 
 test("ED-06 catalog folders use untitled names, inline rename, and context menus", async ({ page, request }) => {

@@ -160,7 +160,8 @@ test.describe("ED-09 environment editor acceptance", () => {
         expect((await request.put("/api/storage/settings/activeEnvironmentId", { data: { value: id } })).ok()).toBeTruthy();
         await openEditor(page);
         const assets = page.locator('[data-pane="assets"]');
-        await assets.getByRole("combobox", { name: "Asset kind" }).selectOption("models");
+        await assets.getByRole("button", { name: "Display options" }).click();
+        await page.getByRole("radiogroup", { name: "Asset kind" }).getByRole("radio", { name: "Models" }).click();
         await assets.getByRole("button", { name: "List view" }).click();
         const list = assets.getByRole("list", { name: "Assets" });
         await expect.poll(async () => Number(await list.getAttribute("data-row-count")), { timeout: 30_000 }).toBe(CATALOG_COUNT);
@@ -172,8 +173,9 @@ test.describe("ED-09 environment editor acceptance", () => {
         await list.evaluate((element) => { element.scrollTop = element.scrollHeight; element.dispatchEvent(new Event("scroll")); });
         const finalItem = list.locator('[data-asset-id="model-0799"]');
         await expect(finalItem).toBeVisible({ timeout: 30_000 });
-        await finalItem.getByRole("button", { name: "Place Catalog model 799" }).click();
-        await expect(finalItem.getByRole("button", { name: "Place Catalog model 799" })).toHaveAttribute("aria-pressed", "true");
+        await finalItem.click({ button: "right" });
+        await page.getByRole("menu").getByRole("menuitem", { name: "Place" }).click();
+        await expect(page.getByRole("toolbar", { name: "Scene tools" }).getByRole("button", { name: "Select", exact: true })).toHaveAttribute("aria-pressed", "false");
 
         const search = assets.getByRole("searchbox", { name: "Search assets" });
         await search.fill("Catalog model 317");

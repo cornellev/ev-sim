@@ -1,4 +1,6 @@
 import { clamp } from "three/src/math/MathUtils.js";
+import { PerspectiveViewController } from "../3d/camera/PerspectiveViewController.js";
+import { attachPerspectiveView, detachPerspectiveView } from "../3d/camera/perspectiveViewRegistry.js";
 import { AutonomyOverlay } from "../3d/overlay/AutonomyOverlay.js";
 import { BrowserPbrRenderRuntime } from "../3d/perception/BrowserPbrRenderRuntime.js";
 import { ScenarioDiagnostics } from "../scenarios/ScenarioDiagnostics.js";
@@ -90,6 +92,13 @@ export class SimulationEngine {
 
         this.scenarioDiagnostics = new ScenarioDiagnostics();
         this.autonomyOverlay = new AutonomyOverlay();
+        this.perspectiveView = new PerspectiveViewController({
+            data: this.data,
+            getCamera: () => this.camera,
+            getControls: () => this.controls,
+            getRenderer: () => this.renderer,
+        });
+        attachPerspectiveView(this.perspectiveView);
         this._autonomyOverlayEnabled = {
             oracle: true,
             candidate: true,
@@ -396,6 +405,8 @@ export class SimulationEngine {
 
     dispose() {
         if (this.kernel.lifecycleState === "disposed") return;
+        this.perspectiveView?.exit?.();
+        detachPerspectiveView(this.perspectiveView);
         this.stopLoop();
         this.controls?.dispose();
         this.kernel.dispose();
@@ -777,6 +788,7 @@ export class SimulationEngine {
 
     render() {
         if (!this.sceneRenderEnabled || !this.scene || !this.camera || !this.renderer) return;
+        this.perspectiveView?.applyFrame?.(this.camera, this.controls);
         this._applyDisplayPerformance();
         this.data.earthTilesManager?.()?.update?.(this.camera, {
             width: this.renderer.domElement?.width,

@@ -175,7 +175,13 @@ export class AutonomyOverlay {
         this._boxes.visible = this.layers.oracle || this.layers.candidate;
         this._lanes.visible = this.layers.lanes;
         this._ekf.visible = this.layers.ekf;
-        this._controls.visible = this.layers.controls !== false;
+        this._controls.visible = !this._predictedPathHidden && this.layers.controls !== false;
+    }
+
+    /** Hide the steering prediction ribbons while a vehicle camera fills the view. */
+    setPredictedPathHidden(hidden) {
+        this._predictedPathHidden = Boolean(hidden);
+        this._controls.visible = !this._predictedPathHidden && this.layers.controls !== false;
     }
 
     clear() {
@@ -275,6 +281,7 @@ export class AutonomyOverlay {
             meshIndex += 1;
         }
         hideExtra(this._controls, meshIndex);
+        if (this._predictedPathHidden) this._controls.visible = false;
     }
 
     _ensureControlArc(index, pose, steeringRadThree, color, wheelbase, opacity) {
@@ -291,7 +298,7 @@ export class AutonomyOverlay {
             })));
             this._controls.add(mesh);
         }
-        mesh.visible = true;
+        mesh.visible = !this._predictedPathHidden;
         mesh.material.color.setHex(color);
         mesh.material.opacity = opacity;
         updateControlsPathRibbon(mesh.geometry, pose, steeringRadThree, {
