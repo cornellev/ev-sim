@@ -3323,3 +3323,11 @@ Browser callers now admit bake, sky, and vehicle resources through explicit
 origin policy before issuing a request or creating a loader. These changes do
 not alter visual descriptors, render-scene identity, CAS hashes, or the VIS
 milestone ledger.
+
+### 2026-09-23 — CLIP-01 transfer clip does not change visual identity
+
+CLIP-01 exports paired analytic RGB and oracle depth from a camera that
+already selects `canonical-analytic@1` with
+`measured-rgba-analytic-oracle@1`. It does not add a VIS milestone, change
+render-scene identity, `worldHash`, PBR, splats, or weather, and it does not
+invoke Cosmos. Completed visual-layer milestone status is unchanged.

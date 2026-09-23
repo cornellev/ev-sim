@@ -105,6 +105,8 @@ class HeadlessGpuSensorDevice {
             };
         }
         const material = this.manager.scene.description?.materials?.[0]?.colorRgba || [64, 96, 128, 255];
+        const products = this.config.calibration?.products || {};
+        const outputs = this.config.outputs || {};
         return {
             id: this.id,
             type: this.type,
@@ -113,10 +115,17 @@ class HeadlessGpuSensorDevice {
             captureTimeNs: context.captureTimeNs,
             sampleIndex: context.sampleIndex,
             rngState: context.rng._state,
+            ...(this.type === "camera" ? {
+                provider: { id: "canonical-analytic", version: 1 },
+                products: {
+                    rgb: products.rgb === true && Boolean(outputs.imageTopicId),
+                    depth: products.depth === true && Boolean(outputs.depthTopicId),
+                },
+            } : {}),
             includeObservation: this.perceptionObservations
                 && (this.type === "camera"
-                    ? this.config.calibration.products?.rgb === true
-                    : this.config.calibration.products?.pointCloud === true),
+                    ? products.rgb === true
+                    : products.pointCloud === true),
             sensor: this.config,
             vehicles: vehicles.map((vehicle) => ({
                 id: vehicle.telemetryId || vehicle.id,
@@ -156,6 +165,7 @@ class HeadlessGpuSensorDevice {
             }
             return result;
         }
+        if (this._usesAnalyticProducts(rendered)) return this.processAnalyticProducts(rendered, context);
         const calibration = this.config.calibration;
         const upright = this.manager.visualCapture.flipRows(raw, calibration.width, calibration.height, 4);
         const pixels = this.manager.visualCapture.warpBrownConrady({
@@ -213,6 +223,152 @@ class HeadlessGpuSensorDevice {
             await this.manager.rendererClient.releaseSharedTensor?.(rendered.rawSharedMemory);
         }
         return result;
+    }
+
+    _usesAnalyticProducts(rendered) {
+        return Boolean(
+            rendered?.products?.rgb
+            || rendered?.products?.depth
+            || rendered?.productSharedMemory?.rgb
+            || rendered?.productSharedMemory?.depth
+        );
+    }
+
+    async processAnalyticProducts(rendered, context) {
+        const calibration = this.config.calibration;
+        const width = calibration.width;
+        const height = calibration.height;
+        const pixels = width * height;
+        const shared = rendered.productSharedMemory || {};
+        const captured = { ...(rendered.products || {}) };
+        const requested = rendered.requestedProducts || {};
+        const depthRequired = requested.depth === true
+            || (calibration.products?.depth === true && Boolean(this.config.outputs?.depthTopicId));
+        try {
+            if (rendered.captureTimeNs !== context.captureTimeNs
+                || rendered.sampleIndex !== context.sampleIndex) {
+                throw new Error(`Analytic camera ${this.id} capture identity does not match the scheduled sample.`);
+            }
+            for (const [name, reference] of Object.entries(shared)) {
+                if (name !== "rgb" && name !== "depth") {
+                    throw new Error(`Unknown analytic shared product ${name}.`);
+                }
+                const bytes = await this.manager.rendererClient.readSharedTensor(reference, {
+                    dtype: name === "rgb" ? 4 : 1,
+                    shape: [height, width, name === "rgb" ? 4 : 1],
+                    byteOrder: 1,
+                });
+                const copy = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+                captured[name] = name === "rgb" ? new Uint8Array(copy) : new Float32Array(copy);
+            }
+            if (requested.rgb === true
+                && (!(captured.rgb instanceof Uint8Array) || captured.rgb.length !== pixels * 4)) {
+                throw new Error("Analytic RGB product has an invalid type or shape.");
+            }
+            if (depthRequired
+                && (!(captured.depth instanceof Float32Array) || captured.depth.length !== pixels)) {
+                throw new Error("Analytic depth product has an invalid type or shape.");
+            }
+            const noise = this.config.noise;
+            let rgba = null;
+            if (captured.rgb) {
+                const upright = this.manager.visualCapture.flipRows(captured.rgb, width, height, 4);
+                rgba = this.manager.visualCapture.warpBrownConrady({
+                    data: upright,
+                    width,
+                    height,
+                    intrinsics: calibration.intrinsics,
+                    distortion: calibration.distortion,
+                    channels: 4,
+                    interpolation: "linear",
+                });
+                if (noise.model === "gaussian" || Number(noise.bias) !== 0) {
+                    for (let offset = 0; offset < rgba.length; offset += 4) {
+                        for (let channel = 0; channel < 3; channel += 1) {
+                            const perturbation = Number(noise.bias || 0)
+                                + (noise.model === "gaussian"
+                                    ? gaussian(context.rng) * Number(noise.standardDeviation || 0)
+                                    : 0);
+                            rgba[offset + channel] = Math.max(
+                                0,
+                                Math.min(255, Math.round(rgba[offset + channel] + perturbation)),
+                            );
+                        }
+                    }
+                }
+            }
+            let depth = null;
+            if (captured.depth) {
+                const upright = this.manager.visualCapture.flipRows(captured.depth, width, height, 1);
+                depth = this.manager.visualCapture.warpBrownConrady({
+                    data: upright,
+                    width,
+                    height,
+                    intrinsics: calibration.intrinsics,
+                    distortion: calibration.distortion,
+                    channels: 1,
+                    interpolation: "nearest",
+                });
+            }
+            const frameId = this.config.measurementFrameId || this.config.frameId;
+            const outputs = this.config.outputs || {};
+            const messages = [];
+            if (calibration.products?.rgb === true && outputs.imageTopicId && rgba) {
+                messages.push({
+                    topicId: outputs.imageTopicId,
+                    signal: "image",
+                    frameId,
+                    value: buildImageMessage({
+                        data: rgba,
+                        width,
+                        height,
+                        timeNs: context.captureTimeNs,
+                        frameId,
+                        encoding: "rgba8",
+                    }),
+                });
+            }
+            if (calibration.products?.cameraInfo === true && outputs.cameraInfoTopicId) {
+                messages.push({
+                    topicId: outputs.cameraInfoTopicId,
+                    signal: "cameraInfo",
+                    frameId,
+                    value: buildCameraInfo({ ...calibration, timeNs: context.captureTimeNs, frameId }),
+                });
+            }
+            if (depthRequired && outputs.depthTopicId) {
+                messages.push({
+                    topicId: outputs.depthTopicId,
+                    signal: "depth",
+                    frameId,
+                    value: buildImageMessage({
+                        data: depth,
+                        width,
+                        height,
+                        timeNs: context.captureTimeNs,
+                        frameId,
+                        encoding: "32FC1",
+                    }),
+                });
+            }
+            return {
+                messages,
+                observation: this.perceptionObservations && rgba
+                    ? rendered.observation || {
+                        dtype: "uint8",
+                        shape: [height, width, 4],
+                        value: rgba,
+                    }
+                    : null,
+            };
+        } finally {
+            await Promise.all([
+                ...Object.values(shared),
+                rendered.rawSharedMemory,
+            ].filter(Boolean).map(
+                (reference) => this.manager.rendererClient.releaseSharedTensor?.(reference),
+            ));
+        }
     }
 
     async processPbr(rendered, context) {
@@ -397,6 +553,11 @@ export class HeadlessGpuSensorManager {
         if (typeof messageCodec?.encodeTopicValue !== "function") {
             throw new Error("GPU sensors require a headless message-codec adapter.");
         }
+        if (typeof messageCodec.registerMsgDefinition === "function") {
+            for (const [type, definition] of Object.entries(options.schemas ?? {})) {
+                messageCodec.registerMsgDefinition(type, definition);
+            }
+        }
         const visualCapture = options.visualCapture ?? this.visualCapture;
         const requiredVisualMethods = [
             "createOwnedCaptureScene",
@@ -516,7 +677,9 @@ export class HeadlessGpuSensorManager {
                 }
                 return entries.map((entry) => {
                     const captured = byId.get(entry.device.id);
-                    if (route === "pbr-camera") captured.requestedProducts = entry.request.products;
+                    if (route === "pbr-camera" || captured.products || captured.productSharedMemory) {
+                        captured.requestedProducts ??= entry.request.products;
+                    }
                     return { entry, captured };
                 });
             }));

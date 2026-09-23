@@ -324,11 +324,23 @@ function validateCameraCalibration(sensor) {
     const fov = finite(calibration.verticalFovDeg, 0);
     if (!(fov > 0 && fov < 180)) issues.push({ path: "calibration.verticalFovDeg", message: "Vertical FOV must be in (0, 180)." });
     const distortion = calibration.distortion;
-    if (Array.isArray(distortion) && (distortion.length < 4 || distortion.length > 8)) {
-        issues.push({ path: "calibration.distortion", message: "plumb_bob distortion requires 4–8 coefficients." });
-    }
-    if (calibration.distortionModel && calibration.distortionModel !== "plumb_bob") {
-        issues.push({ path: "calibration.distortionModel", message: "Only plumb_bob distortion is supported." });
+    const distortionModel = calibration.distortionModel || "plumb_bob";
+    if (distortionModel === "none") {
+        const coefficients = distortion == null ? [] : distortion;
+        const zeroCoefficients = Array.isArray(coefficients)
+            && coefficients.every((value) => Number(value) === 0);
+        if (!Array.isArray(coefficients) || !zeroCoefficients) {
+            issues.push({
+                path: "calibration.distortion",
+                message: "Distortion model none requires absent or all-zero coefficients.",
+            });
+        }
+    } else if (distortionModel === "plumb_bob") {
+        if (Array.isArray(distortion) && (distortion.length < 4 || distortion.length > 8)) {
+            issues.push({ path: "calibration.distortion", message: "plumb_bob distortion requires 4–8 coefficients." });
+        }
+    } else {
+        issues.push({ path: "calibration.distortionModel", message: "Only none and plumb_bob distortion are supported." });
     }
     const outputs = object(sensor.outputs);
     const oracleKeys = ["depthTopicId", "semanticTopicId", "instanceTopicId", "detections2dTopicId", "detections3dTopicId", "lanesTopicId", "trafficControlsTopicId"];

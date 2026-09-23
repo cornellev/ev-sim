@@ -280,6 +280,21 @@ async function cleanupPartialDirectories(root) {
     }
 }
 
+/** Publish every capture product, releasing all of them if any allocation fails. */
+export async function allocateCaptureProducts(arena, publishAll) {
+    const allocations = [];
+    try {
+        return await publishAll(async (bytes, spec, options) => {
+            const reference = await arena.publishTensor(bytes, spec, options);
+            allocations.push(reference);
+            return reference;
+        });
+    } catch (error) {
+        await Promise.allSettled(allocations.map((reference) => arena.release(reference)));
+        throw error;
+    }
+}
+
 export class HeadlessSupervisor {
     constructor(options = {}) {
         this.config = options.kind === "cev-sim.headless-supervisor-config" && options.listener
@@ -1376,41 +1391,96 @@ export class HeadlessSupervisor {
         if (!environment.sharedArena) return captured;
         const sequence = environment.transportSequence + 1n;
         const requests = new Map(payload.requests.map((entry) => [entry.id, entry]));
-        return Promise.all(captured.map(async (entry) => {
-            const request = requests.get(entry.id);
-            const rawSpec = {
-                dtype: entry.type === "camera" ? 4 : 1,
-                shape: [request.height, request.width, 4],
-                byteOrder: 1,
-            };
-            const rawBytes = new Uint8Array(entry.data.buffer, entry.data.byteOffset, entry.data.byteLength);
-            const rawSharedMemory = await environment.sharedArena.publishTensor(rawBytes, rawSpec, {
-                generation: sequence,
-                sequence,
-            });
-            const observation = request.includeObservation
-                ? postProcessGpuObservation(entry.data, request)
-                : null;
-            const sharedMemory = observation ? await environment.sharedArena.publishTensor(new Uint8Array(
-                observation.values.buffer,
-                observation.values.byteOffset,
-                observation.values.byteLength,
-            ), {
-                dtype: observation.scalarType,
-                shape: observation.shape,
-                byteOrder: 1,
-            }, { generation: sequence, sequence, retained: true }) : null;
-            return {
-                id: entry.id,
-                type: entry.type,
-                rawSharedMemory,
-                ...(observation ? { observation: {
-                    dtype: observation.dtype,
+        return allocateCaptureProducts(environment.sharedArena, async (publish) => {
+            const externalized = [];
+            for (const entry of captured) {
+                const request = requests.get(entry.id);
+                if (!request) throw new Error(`GPU result ${entry.id} has no matching request.`);
+                const analyticProducts = entry.type === "camera"
+                    && (entry.products?.rgb || entry.products?.depth);
+                if (analyticProducts) {
+                    const productSharedMemory = {};
+                    const specs = {
+                        rgb: { dtype: 4, channels: 4, values: entry.products.rgb },
+                        depth: { dtype: 1, channels: 1, values: entry.products.depth },
+                    };
+                    for (const [name, spec] of Object.entries(specs)) {
+                        if (entry.requestedProducts?.[name] !== true) continue;
+                        if (!spec.values) throw new Error(`Analytic camera ${entry.id} is missing ${name}.`);
+                        productSharedMemory[name] = await publish(
+                            new Uint8Array(spec.values.buffer, spec.values.byteOffset, spec.values.byteLength),
+                            {
+                                dtype: spec.dtype,
+                                shape: [request.height, request.width, spec.channels],
+                                byteOrder: 1,
+                            },
+                            { generation: sequence, sequence },
+                        );
+                    }
+                    const observation = request.includeObservation && entry.products.rgb
+                        ? postProcessGpuObservation(entry.products.rgb, request)
+                        : null;
+                    const sharedMemory = observation ? await publish(new Uint8Array(
+                        observation.values.buffer,
+                        observation.values.byteOffset,
+                        observation.values.byteLength,
+                    ), {
+                        dtype: observation.scalarType,
+                        shape: observation.shape,
+                        byteOrder: 1,
+                    }, { generation: sequence, sequence, retained: true }) : null;
+                    externalized.push({
+                        id: entry.id,
+                        type: entry.type,
+                        productSharedMemory,
+                        requestedProducts: entry.requestedProducts,
+                        captureTimeNs: entry.captureTimeNs,
+                        sampleIndex: entry.sampleIndex,
+                        ...(observation ? { observation: {
+                            dtype: observation.dtype,
+                            shape: observation.shape,
+                            sharedMemory,
+                            digest: observation.digest,
+                        } } : {}),
+                    });
+                    continue;
+                }
+                const rawSpec = {
+                    dtype: entry.type === "camera" ? 4 : 1,
+                    shape: [request.height, request.width, 4],
+                    byteOrder: 1,
+                };
+                const rawBytes = new Uint8Array(entry.data.buffer, entry.data.byteOffset, entry.data.byteLength);
+                const rawSharedMemory = await publish(rawBytes, rawSpec, {
+                    generation: sequence,
+                    sequence,
+                });
+                const observation = request.includeObservation
+                    ? postProcessGpuObservation(entry.data, request)
+                    : null;
+                const sharedMemory = observation ? await publish(new Uint8Array(
+                    observation.values.buffer,
+                    observation.values.byteOffset,
+                    observation.values.byteLength,
+                ), {
+                    dtype: observation.scalarType,
                     shape: observation.shape,
-                    sharedMemory,
-                    digest: observation.digest,
-                } } : {}),
-            };
-        }));
+                    byteOrder: 1,
+                }, { generation: sequence, sequence, retained: true }) : null;
+                externalized.push({
+                    id: entry.id,
+                    type: entry.type,
+                    rawSharedMemory,
+                    ...(observation ? { observation: {
+                        dtype: observation.dtype,
+                        shape: observation.shape,
+                        sharedMemory,
+                        digest: observation.digest,
+                    } } : {}),
+                });
+            }
+            environment.transportSequence = sequence;
+            return externalized;
+        });
     }
 }

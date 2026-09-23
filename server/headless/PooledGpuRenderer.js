@@ -105,6 +105,22 @@ function utf8Bytes(value) {
     return Buffer.byteLength(JSON.stringify(value));
 }
 
+/** RGBA8 target, pack buffer, and returned bytes, plus the float depth target when requested. */
+export function analyticGpuCaptureBytes(request) {
+    const pixels = Math.max(0, Number(request?.width) || 0) * Math.max(0, Number(request?.height) || 0);
+    const products = request?.products;
+    if (!products || typeof products !== "object" || Array.isArray(products)) return pixels * 4 * 3;
+    let bytes = 0;
+    if (products.rgb === true) bytes += pixels * 4 * 3;
+    if (products.depth === true) bytes += pixels * 16 * 2 + pixels * 4;
+    return bytes;
+}
+
+export function analyticAxialDepthMeters(viewZ) {
+    const depth = -Number(viewZ);
+    return Number.isFinite(depth) && depth > 0 ? depth : 0;
+}
+
 function outputBytes(request) {
     if (request.provider?.id === "pbr-mesh") {
         const pixels = request.width * request.height;
@@ -115,7 +131,7 @@ function outputBytes(request) {
             + (request.products?.instance ? 4 : 0)
         );
     }
-    if (request.type === "camera") return request.width * request.height * 4 * 3;
+    if (request.type === "camera") return analyticGpuCaptureBytes(request);
     return request.width * request.height * 4 * 4 * 3;
 }
 
@@ -631,9 +647,29 @@ export class ChromiumWebGlRendererAdapter {
                     gl.deleteShader(fragment);
                     return [triangleTexture];
                 };
-                const renderCamera = (job) => {
+                const bytesToBase64 = (bytes) => {
+                    const chunk = 4096;
+                    let binary = "";
+                    for (let offset = 0; offset < bytes.length; offset += chunk) {
+                        const slice = bytes.subarray(offset, Math.min(bytes.length, offset + chunk));
+                        binary += String.fromCharCode.apply(null, slice);
+                    }
+                    return btoa(binary);
+                };
+                const orientReadback = (job, output) => {
+                    if (job.captureMode !== "calibrated-projection@1") return output;
+                    const topLeft = new output.constructor(output.length);
+                    const rowLength = job.width * 4;
+                    for (let row = 0; row < job.height; row += 1) {
+                        topLeft.set(
+                            output.subarray((job.height - row - 1) * rowLength, (job.height - row) * rowLength),
+                            row * rowLength,
+                        );
+                    }
+                    return topLeft;
+                };
+                const prepareCamera = (job) => {
                     const triangles = trianglesFor(job);
-                    if (triangles.length === 0) return;
                     const materials = new Map((resolvedScene.materials || []).map((entry) => [
                         Number(entry.semanticId),
                         (entry.colorRgba || [128, 128, 128, 255]).map((value) => Number(value) / 255),
@@ -647,7 +683,106 @@ export class ChromiumWebGlRendererAdapter {
                             cursor += 7;
                         }
                     }
-                    const vertex = compile(gl.VERTEX_SHADER, `#version 300 es
+                    const buffer = gl.createBuffer();
+                    const vao = gl.createVertexArray();
+                    gl.bindVertexArray(vao);
+                    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+                    gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STREAM_DRAW);
+                    gl.enableVertexAttribArray(0);
+                    gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 28, 0);
+                    gl.enableVertexAttribArray(1);
+                    gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 28, 12);
+                    gl.bindVertexArray(null);
+                    const calibrated = job.captureMode === "calibrated-projection@1";
+                    const pose = (() => {
+                        if (triangles.length === 0) return null;
+                        if (calibrated && job.products?.depth !== true) return null;
+                        if (!job.sensor) throw new Error(`GPU camera ${job.id} is missing its sensor.`);
+                        const parent = (job.vehicles || []).find((vehicle) => vehicle.id === job.sensor.parentId);
+                        if (!parent) throw new Error(`GPU sensor parent ${job.sensor.parentId} is missing.`);
+                        const vehicleQ = quaternion(parent.rotation);
+                        const sensorPose = job.sensor.pose || {};
+                        const localPosition = [sensorPose.position?.x || 0, sensorPose.position?.z || 0, sensorPose.position?.y || 0];
+                        const rotatedPosition = rotate(localPosition, vehicleQ);
+                        const origin = rotatedPosition.map((value, index) => value
+                            + [parent.position.x, parent.position.y, parent.position.z][index]);
+                        const mountQ = multiplyQuaternion(vehicleQ, quaternion({
+                            x: sensorPose.rotation?.x || 0,
+                            y: sensorPose.rotation?.z || 0,
+                            z: sensorPose.rotation?.y || 0,
+                        }));
+                        const cameraQ = multiplyQuaternion(mountQ, quaternion({ y: -Math.PI / 2 }));
+                        return {
+                            origin,
+                            inverseQ: [-cameraQ[0], -cameraQ[1], -cameraQ[2], cameraQ[3]],
+                            projection: [
+                                1 / Math.tan(job.sensor.calibration.verticalFovDeg * Math.PI / 360),
+                                job.width / job.height,
+                                job.sensor.calibration.near,
+                                job.sensor.calibration.far,
+                            ],
+                        };
+                    })();
+                    const linkProgram = (vertexSource, fragmentSource) => {
+                        const vertex = compile(gl.VERTEX_SHADER, vertexSource);
+                        const fragment = compile(gl.FRAGMENT_SHADER, fragmentSource);
+                        const program = gl.createProgram();
+                        gl.attachShader(program, vertex);
+                        gl.attachShader(program, fragment);
+                        gl.linkProgram(program);
+                        gl.deleteShader(vertex);
+                        gl.deleteShader(fragment);
+                        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+                            const message = gl.getProgramInfoLog(program) || "GPU camera shader linking failed.";
+                            gl.deleteProgram(program);
+                            throw new Error(message);
+                        }
+                        return program;
+                    };
+                    const bindPose = (program) => {
+                        gl.uniform1i(gl.getUniformLocation(program, "uCalibrated"), calibrated ? 1 : 0);
+                        if (calibrated) {
+                            gl.uniformMatrix4fv(
+                                gl.getUniformLocation(program, "uViewProjection"),
+                                false,
+                                new Float32Array(job.captureInput.viewProjectionMatrix),
+                            );
+                            return;
+                        }
+                        gl.uniform3fv(gl.getUniformLocation(program, "uOrigin"), pose.origin);
+                        gl.uniform4fv(gl.getUniformLocation(program, "uInverseQuaternion"), pose.inverseQ);
+                        gl.uniform4f(
+                            gl.getUniformLocation(program, "uProjection"),
+                            pose.projection[0],
+                            pose.projection[1],
+                            pose.projection[2],
+                            pose.projection[3],
+                        );
+                    };
+                    const draw = (program, bind) => {
+                        if (triangles.length === 0) {
+                            gl.deleteProgram(program);
+                            return;
+                        }
+                        gl.bindVertexArray(vao);
+                        gl.enable(gl.DEPTH_TEST);
+                        gl.depthFunc(gl.LEQUAL);
+                        gl.useProgram(program);
+                        bind(program);
+                        gl.drawArrays(gl.TRIANGLES, 0, triangles.length * 3);
+                        gl.disable(gl.DEPTH_TEST);
+                        gl.bindVertexArray(null);
+                        gl.deleteProgram(program);
+                    };
+                    const bindDepth = (program) => {
+                        bindPose(program);
+                        if (!calibrated || !pose) return;
+                        gl.uniform3fv(gl.getUniformLocation(program, "uOrigin"), pose.origin);
+                        gl.uniform4fv(gl.getUniformLocation(program, "uInverseQuaternion"), pose.inverseQ);
+                    };
+                    return {
+                        drawRgb() {
+                            draw(linkProgram(`#version 300 es
                         precision highp float;
                         layout(location=0) in vec3 position; layout(location=1) in vec4 inputColor;
                         uniform vec3 uOrigin; uniform vec4 uInverseQuaternion;
@@ -664,77 +799,44 @@ export class ChromiumWebGlRendererAdapter {
                                 gl_Position=vec4(p.x*f/aspect,p.y*f,((far+near)/(near-far))*p.z+(2.*far*near)/(near-far),-p.z);
                             }
                             vertexColor=inputColor;
-                        }`);
-                    const fragment = compile(gl.FRAGMENT_SHADER, `#version 300 es
+                        }`, `#version 300 es
                         precision highp float; in vec4 vertexColor; out vec4 color;
-                        void main(){color=vertexColor;}`);
-                    const program = gl.createProgram();
-                    gl.attachShader(program, vertex);
-                    gl.attachShader(program, fragment);
-                    gl.linkProgram(program);
-                    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-                        throw new Error(gl.getProgramInfoLog(program) || "GPU camera shader linking failed.");
-                    }
-                    const buffer = gl.createBuffer();
-                    const vao = gl.createVertexArray();
-                    gl.bindVertexArray(vao);
-                    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-                    gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STREAM_DRAW);
-                    gl.enableVertexAttribArray(0);
-                    gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 28, 0);
-                    gl.enableVertexAttribArray(1);
-                    gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 28, 12);
-                    gl.enable(gl.DEPTH_TEST);
-                    gl.depthFunc(gl.LEQUAL);
-                    gl.useProgram(program);
-                    const calibrated = job.captureMode === "calibrated-projection@1";
-                    gl.uniform1i(gl.getUniformLocation(program, "uCalibrated"), calibrated ? 1 : 0);
-                    if (calibrated) {
-                        gl.uniformMatrix4fv(
-                            gl.getUniformLocation(program, "uViewProjection"),
-                            false,
-                            new Float32Array(job.captureInput.viewProjectionMatrix),
-                        );
-                    } else {
-                        const parent = (job.vehicles || []).find((vehicle) => vehicle.id === job.sensor.parentId);
-                        if (!parent) throw new Error(`GPU sensor parent ${job.sensor.parentId} is missing.`);
-                        const vehicleQ = quaternion(parent.rotation);
-                        const pose = job.sensor.pose || {};
-                        const localPosition = [pose.position?.x || 0, pose.position?.z || 0, pose.position?.y || 0];
-                        const rotatedPosition = rotate(localPosition, vehicleQ);
-                        const origin = rotatedPosition.map((value, index) => value
-                            + [parent.position.x, parent.position.y, parent.position.z][index]);
-                        const mountQ = multiplyQuaternion(vehicleQ, quaternion({
-                            x: pose.rotation?.x || 0,
-                            y: pose.rotation?.z || 0,
-                            z: pose.rotation?.y || 0,
-                        }));
-                        const cameraQ = multiplyQuaternion(mountQ, quaternion({ y: -Math.PI / 2 }));
-                        const inverseQ = [-cameraQ[0], -cameraQ[1], -cameraQ[2], cameraQ[3]];
-                        gl.uniform3fv(gl.getUniformLocation(program, "uOrigin"), origin);
-                        gl.uniform4fv(gl.getUniformLocation(program, "uInverseQuaternion"), inverseQ);
-                        const calibration = job.sensor.calibration;
-                        gl.uniform4f(
-                            gl.getUniformLocation(program, "uProjection"),
-                            1 / Math.tan(calibration.verticalFovDeg * Math.PI / 360),
-                            job.width / job.height,
-                            calibration.near,
-                            calibration.far,
-                        );
-                    }
-                    gl.drawArrays(gl.TRIANGLES, 0, triangles.length * 3);
-                    gl.disable(gl.DEPTH_TEST);
-                    gl.bindVertexArray(null);
-                    gl.deleteVertexArray(vao);
-                    gl.deleteBuffer(buffer);
-                    gl.deleteProgram(program);
-                    gl.deleteShader(vertex);
-                    gl.deleteShader(fragment);
+                        void main(){color=vertexColor;}`), bindPose);
+                        },
+                        drawDepth() {
+                            draw(linkProgram(`#version 300 es
+                        precision highp float;
+                        layout(location=0) in vec3 position;
+                        uniform vec3 uOrigin; uniform vec4 uInverseQuaternion;
+                        uniform vec4 uProjection; uniform mat4 uViewProjection;
+                        uniform bool uCalibrated; out float vViewZ;
+                        vec3 rotateQ(vec3 v, vec4 q){return v+2.*cross(q.xyz,cross(q.xyz,v)+q.w*v);}
+                        void main(){
+                            vec3 p=rotateQ(position-uOrigin,uInverseQuaternion);
+                            vViewZ=p.z;
+                            if(uCalibrated){
+                                gl_Position=uViewProjection*vec4(position,1.);
+                            }else{
+                                float f=uProjection.x; float aspect=uProjection.y;
+                                float near=uProjection.z; float far=uProjection.w;
+                                gl_Position=vec4(p.x*f/aspect,p.y*f,((far+near)/(near-far))*p.z+(2.*far*near)/(near-far),-p.z);
+                            }
+                        }`, `#version 300 es
+                        precision highp float; in float vViewZ; out vec4 color;
+                        void main(){color=vec4(-vViewZ,0.,0.,1.);}`), bindDepth);
+                        },
+                        dispose() {
+                            gl.deleteVertexArray(vao);
+                            gl.deleteBuffer(buffer);
+                        },
+                    };
                 };
-                const readback = async (job, float, clearColor) => {
+                const readback = async (job, float, clearColor, draw, { resize = true } = {}) => {
                     const { width, height } = job;
-                    context.canvas.width = width;
-                    context.canvas.height = height;
+                    if (resize) {
+                        context.canvas.width = width;
+                        context.canvas.height = height;
+                    }
                     const texture = gl.createTexture();
                     const framebuffer = gl.createFramebuffer();
                     const pbo = gl.createBuffer();
@@ -751,7 +853,7 @@ export class ChromiumWebGlRendererAdapter {
                     gl.clearColor(...clearColor);
                     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
                     const renderResources = job.type === "lidar3d" ? renderLidar(job) : [];
-                    if (job.type === "camera") renderCamera(job);
+                    if (draw) draw();
                     const byteLength = width * height * 4 * (float ? 4 : 1);
                     gl.bindBuffer(gl.PIXEL_PACK_BUFFER, pbo);
                     gl.bufferData(gl.PIXEL_PACK_BUFFER, byteLength, gl.STREAM_READ);
@@ -775,39 +877,83 @@ export class ChromiumWebGlRendererAdapter {
                     gl.deleteFramebuffer(framebuffer);
                     gl.deleteTexture(texture);
                     for (const resource of renderResources) gl.deleteTexture(resource);
-                    if (job.type === "camera" && job.captureMode === "calibrated-projection@1") {
-                        const topLeft = new output.constructor(output.length);
-                        const rowLength = width * 4;
-                        for (let row = 0; row < height; row += 1) {
-                            topLeft.set(
-                                output.subarray((height - row - 1) * rowLength, (height - row) * rowLength),
-                                row * rowLength,
-                            );
-                        }
-                        return Array.from(topLeft);
-                    }
-                    return Array.from(output);
+                    return orientReadback(job, output);
                 };
                 const output = [];
                 for (const job of jobs) {
-                    output.push({
-                        id: job.id,
-                        type: job.type,
-                        data: await readback(
+                    if (job.type !== "camera") {
+                        output.push({
+                            id: job.id,
+                            type: job.type,
+                            data: Array.from(await readback(job, true, [0, 0, 0, 0], null)),
+                        });
+                        continue;
+                    }
+                    context.canvas.width = job.width;
+                    context.canvas.height = job.height;
+                    const prepared = prepareCamera(job);
+                    try {
+                        const rgb = await readback(
                             job,
-                            job.type === "lidar3d",
-                            job.type === "camera" ? job.clearColor : [0, 0, 0, 0],
-                        ),
-                    });
+                            false,
+                            job.clearColor || [0, 0, 0, 1],
+                            () => prepared.drawRgb(),
+                            { resize: false },
+                        );
+                        const products = { rgb: bytesToBase64(rgb) };
+                        if (job.products?.depth === true) {
+                            const rendered = await readback(
+                                job,
+                                true,
+                                [0, 0, 0, 0],
+                                () => prepared.drawDepth(),
+                                { resize: false },
+                            );
+                            const depth = new Float32Array(job.width * job.height);
+                            for (let index = 0; index < depth.length; index += 1) depth[index] = rendered[index * 4];
+                            products.depth = bytesToBase64(new Uint8Array(depth.buffer));
+                        }
+                        output.push({
+                            id: job.id,
+                            type: job.type,
+                            rgbBase64: products.rgb,
+                            depthBase64: products.depth || null,
+                            requestedProducts: {
+                                rgb: job.products?.rgb === true,
+                                depth: job.products?.depth === true,
+                            },
+                            captureTimeNs: job.captureTimeNs ?? null,
+                            sampleIndex: job.sampleIndex ?? null,
+                        });
+                    } finally {
+                        prepared.dispose();
+                    }
                 }
                 return output;
             }, { jobs: requests, resolvedScene: scene, slot: contextIndex });
-            return values.map((entry) => ({
-                ...entry,
-                data: entry.type === "camera"
-                    ? Uint8Array.from(entry.data)
-                    : Float32Array.from(entry.data),
-            }));
+            const decodeBase64 = (value) => Buffer.from(String(value || ""), "base64");
+            return values.map((entry) => {
+                if (entry.type !== "camera") {
+                    return { ...entry, data: Float32Array.from(entry.data) };
+                }
+                const rgb = new Uint8Array(decodeBase64(entry.rgbBase64));
+                const products = {};
+                if (entry.requestedProducts?.rgb) products.rgb = rgb;
+                if (entry.requestedProducts?.depth) {
+                    if (!entry.depthBase64) throw new Error(`Analytic camera ${entry.id} did not return depth.`);
+                    const bytes = Uint8Array.from(decodeBase64(entry.depthBase64));
+                    products.depth = new Float32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 4);
+                }
+                return {
+                    id: entry.id,
+                    type: entry.type,
+                    data: rgb,
+                    products,
+                    requestedProducts: entry.requestedProducts,
+                    captureTimeNs: entry.captureTimeNs,
+                    sampleIndex: entry.sampleIndex,
+                };
+            });
         } catch (error) {
             throw infrastructureError(`GPU capture failed: ${error.message}`);
         }

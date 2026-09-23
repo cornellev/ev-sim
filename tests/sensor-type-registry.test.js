@@ -35,6 +35,30 @@ test("built-in sensor definitions own defaults, fields, outputs, and determinism
     assert.equal(camera.calibration.products.depth, false);
     assert.equal(camera.calibration.distortionModel, "plumb_bob");
     assert.equal(camera.calibration.distortion.length, 5);
+    const undistorted = createRunSensor("camera", {
+        calibration: { distortionModel: "none", distortion: [] },
+    });
+    assert.equal(undistorted.calibration.distortionModel, "none");
+    assert.deepEqual(undistorted.calibration.distortion, [0, 0, 0, 0, 0]);
+    assert.deepEqual(validateRunSensorDefinition(undistorted), []);
+    const omittedDistortion = createRunSensor("camera", {
+        calibration: { distortionModel: "none" },
+    });
+    assert.deepEqual(validateRunSensorDefinition(omittedDistortion), []);
+    const nonzeroNone = createRunSensor("camera", {
+        calibration: { distortionModel: "none", distortion: [0, 0, 0, 0.01, 0] },
+    });
+    assert.ok(validateRunSensorDefinition(nonzeroNone).some((issue) => issue.path === "calibration.distortion"));
+    const shortPlumbBob = createRunSensor("camera");
+    shortPlumbBob.calibration.distortion = [0, 0, 0];
+    assert.ok(validateRunSensorDefinition(shortPlumbBob).some((issue) => /plumb_bob/.test(issue.message)));
+    const longPlumbBob = createRunSensor("camera");
+    longPlumbBob.calibration.distortion = [0, 0, 0, 0, 0, 0, 0, 0, 1];
+    assert.ok(validateRunSensorDefinition(longPlumbBob).some((issue) => /plumb_bob/.test(issue.message)));
+    const zeroPlumbBob = createRunSensor("camera", {
+        calibration: { distortionModel: "plumb_bob", distortion: [0, 0, 0, 0, 0] },
+    });
+    assert.equal(validateRunSensorDefinition(zeroPlumbBob).some((issue) => issue.path === "calibration.distortion"), false);
     assert.ok(camera.calibration.intrinsics.fx > 0);
     assert.equal(camera.determinism.comparison, "semantic-tolerance");
     assert.deepEqual(

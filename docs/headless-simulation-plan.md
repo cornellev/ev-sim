@@ -10,7 +10,7 @@ language-neutral API authority is
 - Current milestone: **PR 12 — implementation complete; external hardware acceptance pending**
 - Next planned milestone: **None — the numbered headless implementation roadmap is complete**
 - Default implementation/review reasoning level: **Extra High**
-- Last updated: **2026-09-19** (security capability closure; characterization tape unchanged)
+- Last updated: **2026-09-23** (CLIP-01 analytic clip export; milestone status unchanged)
 
 Progress:
 
@@ -499,6 +499,17 @@ compared with the committed characterization.
 - [Isaac Lab reinforcement-learning architecture](https://docs.nvidia.com/learning/physical-ai/getting-started-with-isaac-lab/latest/train-your-first-robot-with-isaac-lab/02-how-isaac-lab-accelerates-reinforcement-learning.html)
 
 ## Decision log
+
+### 2026-09-23 — CLIP-01 analytic RGB/depth clip export (not PR 13)
+
+Maintenance adds one offline exporter for a finalized headless analytic run.
+The analytic camera publishes frame-locked measured `rgba8` and oracle
+`32FC1` depth; `python -m cev_sim.cosmos_clip` encodes and checks the
+1280×720, 121-frame, 30 fps clip after the episode is finalized. This is not
+headless PR 13. `SimulationKernel`, Gym observation schemas, world,
+simulation, and episode hashes, PBR, and the completed PR 12 milestone status
+are unchanged. Cosmos Framework, NIM, prompt processing, and generated-output
+ingestion are not added.
 
 ### 2026-09-20 — PLG-06b supervisor-owned UDP (not PR 13)
 

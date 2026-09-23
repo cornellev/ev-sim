@@ -62,7 +62,12 @@ function rawGpuTensorBytes(sensor, { pbr = false } = {}) {
     if (sensor?.enabled === false) return 0;
     if (sensor?.type === "camera") {
         const pixels = Number(sensor.calibration?.height) * Number(sensor.calibration?.width);
-        if (!pbr) return pixels * 4;
+        if (!pbr) {
+            const products = sensor.calibration?.products || {};
+            const rgb = products.rgb !== false ? pixels * 4 : 0;
+            const depth = products.depth === true ? pixels * 4 : 0;
+            return rgb + depth || pixels * 4;
+        }
         const products = sensor.calibration?.products || {};
         return pixels * (
             (products.rgb === true ? 4 : 0)
